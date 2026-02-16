@@ -1,0 +1,118 @@
+"""Performance Overview page."""
+
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+import streamlit as st
+from dashboard.utils import api_get, sidebar_api_key
+
+st.set_page_config(page_title="Performance | CBB Edge", layout="wide")
+sidebar_api_key()
+
+st.title("Performance Overview")
+
+perf = api_get("/api/performance/summary")
+
+if not perf or perf.get("total_bets", 0) == 0:
+    st.info("No settled bets yet.")
+    st.stop()
+
+overall = perf.get("overall", perf)  # works for both old and new shapes
+
+# --- Key metrics ---
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("Total Bets",  overall.get("total_bets", 0))
+c2.metric("Win Rate",    f"{overall.get('win_rate', 0):.1%}")
+c3.metric("ROI",         f"{overall.get('roi', 0):.2%}")
+c4.metric("Mean CLV",    f"{overall.get('mean_clv', 0) or 0:.2%}")
+c5.metric("Drawdown",    f"{overall.get('current_drawdown', 0):.1%}")
+
+status = overall.get("status", "UNKNOWN")
+if status == "HEALTHY":
+    st.success("System Status: HEALTHY — positive CLV sustained")
+elif status == "WARNING":
+    st.warning("System Status: WARNING — CLV near zero, monitor closely")
+elif status == "STOP":
+    st.error("System Status: STOP BETTING — CLV negative")
+else:
+    st.info("Status: insufficient data")
+
+st.markdown("---")
+
+# --- Timeline window selector ---
+days = st.select_slider("History window (days)", [7, 14, 30, 60, 90, 180], value=30)
+timeline_data = api_get("/api/performance/timeline", {"days": days})
+
+if timeline_data and timeline_data.get("timeline"):
+    df = pd.DataFrame(timeline_data["timeline"])
+    cum_profit = timeline_data.get("cumulative_profit", [])
+
+    # Cumulative P&L
+    st.subheader("Cumulative P&L")
+    fig_pl = go.Figure()
+    fig_pl.add_trace(go.Scatter(
+        x=list(range(1, len(cum_profit) + 1)),
+        y=cum_profit,
+        mode="lines",
+        fill="tozeroy",
+        fillcolor="rgba(0,180,0,0.1)" if (cum_profit[-1] if cum_profit else 0) >= 0 else "rgba(220,0,0,0.1)",
+        line=dict(color="green" if (cum_profit[-1] if cum_profit else 0) >= 0 else "red"),
+    ))
+    fig_pl.add_hline(y=0, line_dash="dash", line_color="gray")
+    fig_pl.update_layout(
+        xaxis_title="Bet Number", yaxis_title="Cumulative P&L ($)", height=320,
+    )
+    st.plotly_chart(fig_pl, use_container_width=True)
+
+    col_l, col_r = st.columns(2)
+
+    # Win rate by bet type
+    by_type = perf.get("by_bet_type", {})
+    if by_type:
+        with col_l:
+            st.subheader("Win Rate by Bet Type")
+            df_type = pd.DataFrame(
+                [{"type": t, **v} for t, v in by_type.items()]
+            )
+            fig_type = px.bar(
+                df_type, x="type", y="win_rate", color="roi",
+                color_continuous_scale="RdYlGn",
+                labels={"win_rate": "Win Rate", "type": "Bet Type"},
+                text_auto=".1%",
+            )
+            fig_type.update_layout(height=280, coloraxis_showscale=False)
+            st.plotly_chart(fig_type, use_container_width=True)
+
+    # Edge bucket breakdown
+    by_edge = perf.get("by_edge_bucket", {})
+    if by_edge:
+        with col_r:
+            st.subheader("Performance by Edge Bucket")
+            df_edge = pd.DataFrame(
+                [{"edge": k, **v} for k, v in by_edge.items()]
+            )
+            fig_edge = px.bar(
+                df_edge, x="edge", y="roi", color="win_rate",
+                color_continuous_scale="RdYlGn",
+                labels={"roi": "ROI", "edge": "Conservative Edge"},
+                text_auto=".1%",
+            )
+            fig_edge.update_layout(height=280, coloraxis_showscale=False)
+            st.plotly_chart(fig_edge, use_container_width=True)
+
+st.markdown("---")
+
+# --- Rolling windows ---
+rolling = perf.get("rolling_windows", {})
+if rolling:
+    st.subheader("Rolling Windows")
+    cols = st.columns(len(rolling))
+    for col, (label, data) in zip(cols, rolling.items()):
+        col.metric(
+            label.replace("_", " ").title(),
+            f"Win Rate {data.get('win_rate', 0):.1%}",
+            delta=f"CLV {data.get('mean_clv', 0) or 0:.2%}",
+        )
