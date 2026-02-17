@@ -41,6 +41,8 @@ from backend.services.performance import (
     generate_daily_snapshot,
 )
 from backend.services.alerts import check_performance_alerts, persist_alerts, run_alert_check
+from backend.services.odds_monitor import get_odds_monitor
+from backend.services.portfolio import get_portfolio_manager
 from backend.schemas import (
     BetLogCreate,
     BetLogResponse,
@@ -107,10 +109,21 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Odds monitor — poll every 5 minutes for line movements
+    odds_monitor_interval = int(os.getenv("ODDS_MONITOR_INTERVAL_MIN", "5"))
+    scheduler.add_job(
+        _odds_monitor_job,
+        IntervalTrigger(minutes=odds_monitor_interval),
+        id="odds_monitor",
+        name="Odds Line Movement Monitor",
+        replace_existing=True,
+    )
+
     scheduler.start()
     logger.info(
-        "Scheduler started: nightly@%02d:00, outcomes every 2h, lines every 30min, snapshot@04:00 %s",
-        nightly_hour, timezone,
+        "Scheduler started: nightly@%02d:00, outcomes every 2h, lines every 30min, "
+        "odds monitor every %dmin, snapshot@04:00 %s",
+        nightly_hour, odds_monitor_interval, timezone,
     )
     
     yield
@@ -179,6 +192,20 @@ def _daily_snapshot_job():
         logger.error("Daily snapshot job failed: %s", exc, exc_info=True)
     finally:
         db.close()
+
+
+def _odds_monitor_job():
+    """Poll odds API for line movements — runs every 5 min (configurable)."""
+    try:
+        monitor = get_odds_monitor()
+        result = monitor.poll()
+        if result.get("significant_movements", 0) > 0:
+            logger.info(
+                "Odds monitor: %d significant movements detected",
+                result["significant_movements"],
+            )
+    except Exception as exc:
+        logger.error("Odds monitor job failed: %s", exc, exc_info=True)
 
 
 # ============================================================================
@@ -750,11 +777,34 @@ async def get_scheduler_status(user: str = Depends(verify_admin_api_key)):
             "name": job.name,
             "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
         })
-    
+
     return {
         "running": scheduler.running,
         "jobs": jobs,
     }
+
+
+@app.get("/admin/portfolio/status")
+async def get_portfolio_status(user: str = Depends(verify_admin_api_key)):
+    """Return current portfolio state: exposure, drawdown, pending positions."""
+    pm = get_portfolio_manager()
+    state = pm.get_state()
+    return {
+        "current_bankroll": state.current_bankroll,
+        "starting_bankroll": state.starting_bankroll,
+        "drawdown_pct": round(state.drawdown_pct, 2),
+        "total_exposure_pct": round(state.total_exposure_pct, 2),
+        "is_halted": state.is_halted,
+        "halt_reason": state.halt_reason,
+        "pending_positions": len(state.positions),
+    }
+
+
+@app.get("/admin/odds-monitor/status")
+async def get_odds_monitor_status(user: str = Depends(verify_admin_api_key)):
+    """Return odds monitor status: tracked games, last poll time."""
+    monitor = get_odds_monitor()
+    return monitor.get_status()
 
 
 # ============================================================================
