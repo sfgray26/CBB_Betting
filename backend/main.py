@@ -41,6 +41,8 @@ from backend.services.performance import (
     generate_daily_snapshot,
 )
 from backend.services.alerts import check_performance_alerts, persist_alerts, run_alert_check
+from backend.services.odds_monitor import get_odds_monitor
+from backend.services.portfolio import get_portfolio_manager
 from backend.schemas import (
     BetLogCreate,
     BetLogResponse,
@@ -107,10 +109,42 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Odds monitor — poll every 5 minutes for line movements
+    odds_monitor_interval = int(os.getenv("ODDS_MONITOR_INTERVAL_MIN", "5"))
+    scheduler.add_job(
+        _odds_monitor_job,
+        IntervalTrigger(minutes=odds_monitor_interval),
+        id="odds_monitor",
+        name="Odds Line Movement Monitor",
+        replace_existing=True,
+    )
+
+    # Opening line attack — run when overnight lines are posted.
+    # Books typically hang openers between 10 PM and midnight ET.
+    # We run analysis at 10:30 PM and 12:30 AM to catch early value.
+    opener_enabled = os.getenv("OPENER_ATTACK_ENABLED", "false").lower() == "true"
+    if opener_enabled:
+        scheduler.add_job(
+            _opener_attack_job,
+            CronTrigger(hour=22, minute=30, timezone=timezone),
+            id="opener_attack_2230",
+            name="Opening Line Attack (10:30 PM)",
+            replace_existing=True,
+        )
+        scheduler.add_job(
+            _opener_attack_job,
+            CronTrigger(hour=0, minute=30, timezone=timezone),
+            id="opener_attack_0030",
+            name="Opening Line Attack (12:30 AM)",
+            replace_existing=True,
+        )
+        logger.info("Opening line attack scheduler enabled (22:30, 00:30 %s)", timezone)
+
     scheduler.start()
     logger.info(
-        "Scheduler started: nightly@%02d:00, outcomes every 2h, lines every 30min, snapshot@04:00 %s",
-        nightly_hour, timezone,
+        "Scheduler started: nightly@%02d:00, outcomes every 2h, lines every 30min, "
+        "odds monitor every %dmin, snapshot@04:00 %s",
+        nightly_hour, odds_monitor_interval, timezone,
     )
     
     yield
@@ -122,8 +156,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="CBB Edge Analyzer",
-    description="College Basketball Betting Framework - Version 7",
-    version="7.0",
+    description="College Basketball Betting Framework - Version 8",
+    version="8.0",
     lifespan=lifespan,
 )
 
@@ -179,6 +213,44 @@ def _daily_snapshot_job():
         logger.error("Daily snapshot job failed: %s", exc, exc_info=True)
     finally:
         db.close()
+
+
+def _odds_monitor_job():
+    """Poll odds API for line movements — runs every 5 min (configurable)."""
+    try:
+        monitor = get_odds_monitor()
+        result = monitor.poll()
+        if result.get("significant_movements", 0) > 0:
+            logger.info(
+                "Odds monitor: %d significant movements detected",
+                result["significant_movements"],
+            )
+    except Exception as exc:
+        logger.error("Odds monitor job failed: %s", exc, exc_info=True)
+
+
+def _opener_attack_job():
+    """
+    Run analysis when overnight opening lines are posted.
+
+    Bookmakers hang openers with lower limits because their models are
+    vulnerable — they rely on sharp action to shape the line.  Running
+    analysis immediately catches early value before the line moves.
+    """
+    logger.info("Opening line attack triggered — running analysis on fresh openers")
+    try:
+        results = run_nightly_analysis()
+        bets = results.get("bets_recommended", 0)
+        if bets > 0:
+            logger.info(
+                "Opener attack: %d bets found in %d games (%.1fs)",
+                bets, results.get("games_analyzed", 0),
+                results.get("duration_seconds", 0),
+            )
+        else:
+            logger.info("Opener attack: no value found in current openers")
+    except Exception as exc:
+        logger.error("Opener attack job failed: %s", exc, exc_info=True)
 
 
 # ============================================================================
@@ -750,11 +822,34 @@ async def get_scheduler_status(user: str = Depends(verify_admin_api_key)):
             "name": job.name,
             "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
         })
-    
+
     return {
         "running": scheduler.running,
         "jobs": jobs,
     }
+
+
+@app.get("/admin/portfolio/status")
+async def get_portfolio_status(user: str = Depends(verify_admin_api_key)):
+    """Return current portfolio state: exposure, drawdown, pending positions."""
+    pm = get_portfolio_manager()
+    state = pm.get_state()
+    return {
+        "current_bankroll": state.current_bankroll,
+        "starting_bankroll": state.starting_bankroll,
+        "drawdown_pct": round(state.drawdown_pct, 2),
+        "total_exposure_pct": round(state.total_exposure_pct, 2),
+        "is_halted": state.is_halted,
+        "halt_reason": state.halt_reason,
+        "pending_positions": len(state.positions),
+    }
+
+
+@app.get("/admin/odds-monitor/status")
+async def get_odds_monitor_status(user: str = Depends(verify_admin_api_key)):
+    """Return odds monitor status: tracked games, last poll time."""
+    monitor = get_odds_monitor()
+    return monitor.get_status()
 
 
 # ============================================================================

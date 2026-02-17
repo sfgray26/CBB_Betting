@@ -1,12 +1,20 @@
 """
-Nightly analysis orchestration.
+Nightly analysis orchestration — Version 8.
 
 Workflow:
     1. Fetch current odds from The Odds API
     2. Fetch ratings from KenPom / BartTorvik / EvanMiya
-    3. For each game: run model, persist Game + Prediction records
-    4. Auto-create a paper-trade BetLog for every "Bet" verdict
-    5. Log DataFetch records for monitoring
+    3. Fetch injury reports (ESPN scraper + manual overrides)
+    4. Load team play-style profiles (matchup engine)
+    5. For each game: run model with all inputs, persist Game + Prediction
+    6. Apply portfolio-level Kelly sizing before creating paper trades
+    7. Log DataFetch records for monitoring
+
+V8 changes vs V7:
+    - Injuries are fetched and passed to the model (no more injuries=None)
+    - Team play-style profiles drive matchup-specific variance
+    - Portfolio manager enforces total-exposure caps and drawdown halts
+    - Weight re-normalization in the model handles missing rating sources
 """
 
 import logging
@@ -21,6 +29,9 @@ from backend.models import SessionLocal, Game, Prediction, BetLog, DataFetch
 from backend.betting_model import CBBEdgeModel
 from backend.services.odds import fetch_current_odds
 from backend.services.ratings import fetch_current_ratings, get_ratings_service
+from backend.services.injuries import get_injury_service
+from backend.services.portfolio import get_portfolio_manager, PortfolioPosition
+from backend.services.matchup_engine import get_profile_cache
 
 logger = logging.getLogger(__name__)
 
@@ -55,15 +66,23 @@ def get_or_create_game(db: Session, game_data: Dict) -> Game:
     return game
 
 
-def _create_paper_bet(db: Session, game: Game, prediction: Prediction) -> BetLog:
+def _create_paper_bet(
+    db: Session,
+    game: Game,
+    prediction: Prediction,
+    adjusted_units: Optional[float] = None,
+) -> BetLog:
     """
     Auto-create a paper-trade BetLog from a Bet verdict.
 
     Called immediately after the Prediction row is flushed so prediction.id
     is available as a foreign key.
+
+    If *adjusted_units* is provided (from the portfolio manager), use that
+    instead of the model's raw recommendation.
     """
     starting_bankroll = float(os.getenv("STARTING_BANKROLL", "1000"))
-    recommended_units = prediction.recommended_units or 0.0
+    recommended_units = adjusted_units if adjusted_units is not None else (prediction.recommended_units or 0.0)
     bet_dollars = recommended_units * (starting_bankroll / 100.0)
 
     # Pull odds from the stored full_analysis to avoid re-parsing
@@ -130,7 +149,7 @@ def run_nightly_analysis() -> Dict:
             'duration_seconds': float,
         }
     """
-    logger.info("Starting nightly analysis")
+    logger.info("Starting nightly analysis (v8)")
     start_time = datetime.utcnow()
 
     db = SessionLocal()
@@ -204,6 +223,41 @@ def run_nightly_analysis() -> Dict:
             return _summary(start_time, 0, 0, 0, errors)
 
         # ----------------------------------------------------------------
+        # STEP 2b: Fetch injuries
+        # ----------------------------------------------------------------
+        injury_service = get_injury_service()
+        try:
+            injury_service.fetch_injuries()
+            logger.info("Injury data refreshed")
+        except Exception as exc:
+            logger.warning("Injury fetch failed (continuing without): %s", exc)
+            errors.append(f"Injury fetch warning: {exc}")
+
+        # ----------------------------------------------------------------
+        # STEP 2c: Load team play-style profiles
+        # ----------------------------------------------------------------
+        profile_cache = get_profile_cache()
+        if not profile_cache.has_profiles():
+            try:
+                loaded = profile_cache.load_from_barttorvik()
+                logger.info("Loaded %d team play-style profiles", loaded)
+            except Exception as exc:
+                logger.warning("Profile load failed (using base SD): %s", exc)
+
+        # ----------------------------------------------------------------
+        # STEP 2d: Initialise portfolio manager
+        # ----------------------------------------------------------------
+        portfolio = get_portfolio_manager()
+        portfolio.load_from_db(db)
+
+        if portfolio.is_halted:
+            logger.warning(
+                "Portfolio HALTED — drawdown %.1f%% >= %.1f%%. No new bets.",
+                portfolio.drawdown_pct,
+                portfolio.max_drawdown_pct,
+            )
+
+        # ----------------------------------------------------------------
         # STEP 3: Initialise model (reads env vars, consistent with .env.example)
         # ----------------------------------------------------------------
         model = CBBEdgeModel(
@@ -268,12 +322,42 @@ def run_nightly_analysis() -> Dict:
                     "is_neutral": game_data.get("is_neutral", False),
                 }
 
+                # Fetch game-specific injuries
+                game_injuries = injury_service.get_game_injuries(home_team, away_team)
+                if game_injuries:
+                    logger.info(
+                        "Injuries for %s @ %s: %s",
+                        away_team,
+                        home_team,
+                        ", ".join(f"{i['player']} ({i['status']})" for i in game_injuries),
+                    )
+
+                # Get team play-style profiles for matchup-specific SD
+                home_profile = profile_cache.get(home_team)
+                away_profile = profile_cache.get(away_team)
+                home_style = None
+                away_style = None
+                if home_profile:
+                    home_style = {
+                        'pace': home_profile.pace,
+                        'three_par': home_profile.three_par,
+                        'ft_rate': home_profile.ft_rate,
+                    }
+                if away_profile:
+                    away_style = {
+                        'pace': away_profile.pace,
+                        'three_par': away_profile.three_par,
+                        'ft_rate': away_profile.ft_rate,
+                    }
+
                 analysis = model.analyze_game(
                     game_data=game_input,
                     odds=odds_input,
                     ratings=ratings_input,
-                    injuries=None,
+                    injuries=game_injuries or None,
                     data_freshness=odds_freshness,
+                    home_style=home_style,
+                    away_style=away_style,
                 )
 
                 # Persist Game (idempotent)
@@ -294,7 +378,7 @@ def run_nightly_analysis() -> Dict:
                 prediction = Prediction(
                     game_id=game.id,
                     prediction_date=today,
-                    model_version="v7.0",
+                    model_version="v8.0",
                     kenpom_home=ratings_input["kenpom"]["home"],
                     kenpom_away=ratings_input["kenpom"]["away"],
                     barttorvik_home=ratings_input["barttorvik"]["home"],
@@ -324,15 +408,47 @@ def run_nightly_analysis() -> Dict:
 
                 if analysis.verdict.startswith("Bet"):
                     bets_recommended += 1
-                    paper_bet = _create_paper_bet(db, game, prediction)
-                    paper_trades_created += 1
-                    logger.info(
-                        "BET: %s @ %s — %s (paper trade: %s)",
-                        away_team,
-                        home_team,
-                        analysis.verdict,
-                        paper_bet.pick,
+
+                    # Portfolio-level sizing adjustment
+                    sizing = portfolio.adjust_kelly(
+                        raw_kelly_frac=analysis.kelly_fractional,
+                        raw_units=analysis.recommended_units,
                     )
+
+                    if sizing.adjusted_units > 0:
+                        paper_bet = _create_paper_bet(
+                            db, game, prediction,
+                            adjusted_units=sizing.adjusted_units,
+                        )
+                        paper_trades_created += 1
+
+                        # Register with portfolio manager
+                        portfolio.add_position(
+                            PortfolioPosition(
+                                game_id=game.id,
+                                pick=paper_bet.pick,
+                                kelly_fractional=sizing.portfolio_kelly,
+                                recommended_units=sizing.adjusted_units,
+                                edge_conservative=analysis.edge_conservative,
+                            )
+                        )
+
+                        logger.info(
+                            "BET: %s @ %s — %s (portfolio: %.2fu, scaling %.2fx)",
+                            away_team,
+                            home_team,
+                            analysis.verdict,
+                            sizing.adjusted_units,
+                            sizing.scaling_factor,
+                        )
+                    else:
+                        logger.info(
+                            "BET BLOCKED by portfolio: %s @ %s — %s (%s)",
+                            away_team,
+                            home_team,
+                            analysis.verdict,
+                            sizing.reason,
+                        )
                 else:
                     logger.debug(
                         "PASS: %s @ %s (%s)",
