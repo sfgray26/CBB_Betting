@@ -50,9 +50,15 @@ class OddsAPIClient:
         odds_format: str = "american",
     ) -> List[Dict]:
         """
+<<<<<<< HEAD
         Fetch current CBB odds.
 
         Returns list of games with odds from multiple bookmakers.
+=======
+        Fetch current CBB odds
+
+        Returns list of games with odds from multiple bookmakers
+>>>>>>> 1910748cc9f44c7683c55f55c45b54c14871456c
         """
         url = f"{BASE_URL}/sports/basketball_ncaab/odds"
 
@@ -69,21 +75,70 @@ class OddsAPIClient:
 
             data = response.json()
 
+<<<<<<< HEAD
             remaining = response.headers.get("x-requests-remaining")
             used = response.headers.get("x-requests-used")
             logger.info(
                 "📡 Odds API: %d games fetched. Quota: %s used, %s remaining",
                 len(data), used, remaining,
             )
+=======
+            # Log API quota usage
+            remaining = response.headers.get("x-requests-remaining")
+            used = response.headers.get("x-requests-used")
+            logger.info(f"Odds API: {len(data)} games fetched. Quota: {used} used, {remaining} remaining")
+>>>>>>> 1910748cc9f44c7683c55f55c45b54c14871456c
 
             return data
 
         except requests.exceptions.RequestException as e:
+<<<<<<< HEAD
             logger.error("❌ Odds API error: %s", e)
+=======
+            logger.error(f"Odds API error: {e}")
+            return []
+
+    def get_cbb_derivative_odds(
+        self,
+        markets: str = "alternate_spreads,alternate_totals",
+        regions: str = "us",
+        odds_format: str = "american",
+    ) -> List[Dict]:
+        """
+        Fetch derivative market odds (1st half, team totals, alt lines).
+
+        Many retail books derive 1H lines by halving the full-game spread.
+        A possession simulator can identify structural mispricing here.
+        """
+        url = f"{BASE_URL}/sports/basketball_ncaab/odds"
+
+        params = {
+            "apiKey": self.api_key,
+            "regions": regions,
+            "markets": markets,
+            "oddsFormat": odds_format,
+        }
+
+        try:
+            response = requests.get(url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            remaining = response.headers.get("x-requests-remaining")
+            logger.info(
+                "Derivative odds: %d games fetched. Remaining: %s",
+                len(data), remaining,
+            )
+            return data
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Derivative odds API error: {e}")
+>>>>>>> 1910748cc9f44c7683c55f55c45b54c14871456c
             return []
 
     def parse_odds_for_game(self, game_data: Dict) -> Dict:
         """
+<<<<<<< HEAD
         Parse raw odds data into standardised format.
 
         Produces two independent line sets:
@@ -98,6 +153,12 @@ class OddsAPIClient:
             sharp_books_available
             best_spread, best_spread_odds, best_total
             best_moneyline_home, best_moneyline_away
+=======
+        Parse raw odds data into standardized format
+
+        Returns best available odds across all bookmakers,
+        including derivative markets when available.
+>>>>>>> 1910748cc9f44c7683c55f55c45b54c14871456c
         """
         home_team = game_data.get("home_team")
         away_team = game_data.get("away_team")
@@ -119,6 +180,12 @@ class OddsAPIClient:
             "best_total": None,
             "best_moneyline_home": None,
             "best_moneyline_away": None,
+            # Derivative markets
+            "best_1h_spread": None,
+            "best_1h_spread_odds": None,
+            "best_1h_total": None,
+            "best_team_total_home": None,
+            "best_team_total_away": None,
         }
 
         sharp_parsed: List[Dict] = []
@@ -154,6 +221,7 @@ class OddsAPIClient:
                         else:
                             book_odds["moneyline_away"] = outcome.get("price")
 
+<<<<<<< HEAD
             result["bookmakers"].append(book_odds)
 
             if book_key in SHARP_BOOKS:
@@ -225,6 +293,76 @@ class OddsAPIClient:
             result["best_moneyline_home"] = max(ml_home)
         if ml_away:
             result["best_moneyline_away"] = max(ml_away)
+=======
+                # --- Derivative markets ---
+                elif market_key in ("spreads_h1", "h2h_h1"):
+                    for outcome in market.get("outcomes", []):
+                        if outcome.get("name") == result["home_team"]:
+                            book_odds["spread_1h_home"] = outcome.get("point")
+                            book_odds["spread_1h_home_odds"] = outcome.get("price")
+
+                elif market_key in ("totals_h1",):
+                    for outcome in market.get("outcomes", []):
+                        book_odds["total_1h"] = outcome.get("point")
+
+                elif market_key in ("team_totals",):
+                    for outcome in market.get("outcomes", []):
+                        if outcome.get("description", "").lower().find("over") >= 0:
+                            team_name = outcome.get("name", "")
+                            if team_name == result["home_team"]:
+                                book_odds["team_total_home"] = outcome.get("point")
+                            elif team_name == result["away_team"]:
+                                book_odds["team_total_away"] = outcome.get("point")
+
+            result["bookmakers"].append(book_odds)
+        
+        # Find best available lines (line shopping)
+        if result["bookmakers"]:
+            # Best spread (most favorable for bettor)
+            spreads = [(b.get("spread_home"), b.get("spread_home_odds")) 
+                      for b in result["bookmakers"] if b.get("spread_home")]
+            if spreads:
+                # Best = smallest spread with best odds
+                result["best_spread"] = spreads[0][0]
+                result["best_spread_odds"] = max(s[1] for s in spreads)
+            
+            # Best total
+            totals = [b.get("total") for b in result["bookmakers"] if b.get("total")]
+            if totals:
+                result["best_total"] = totals[0]
+            
+            # Best moneylines
+            ml_home = [b.get("moneyline_home") for b in result["bookmakers"] if b.get("moneyline_home")]
+            ml_away = [b.get("moneyline_away") for b in result["bookmakers"] if b.get("moneyline_away")]
+
+            if ml_home:
+                result["best_moneyline_home"] = max(ml_home)  # Best for home team
+            if ml_away:
+                result["best_moneyline_away"] = max(ml_away)  # Best for away team
+
+            # Derivative markets
+            spreads_1h = [
+                (b.get("spread_1h_home"), b.get("spread_1h_home_odds"))
+                for b in result["bookmakers"]
+                if b.get("spread_1h_home") is not None
+            ]
+            if spreads_1h:
+                result["best_1h_spread"] = spreads_1h[0][0]
+                result["best_1h_spread_odds"] = max(
+                    s[1] for s in spreads_1h if s[1] is not None
+                ) if any(s[1] for s in spreads_1h) else -110
+
+            totals_1h = [b.get("total_1h") for b in result["bookmakers"] if b.get("total_1h")]
+            if totals_1h:
+                result["best_1h_total"] = totals_1h[0]
+
+            tt_home = [b.get("team_total_home") for b in result["bookmakers"] if b.get("team_total_home")]
+            tt_away = [b.get("team_total_away") for b in result["bookmakers"] if b.get("team_total_away")]
+            if tt_home:
+                result["best_team_total_home"] = tt_home[0]
+            if tt_away:
+                result["best_team_total_away"] = tt_away[0]
+>>>>>>> 1910748cc9f44c7683c55f55c45b54c14871456c
 
         return result
 
