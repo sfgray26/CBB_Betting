@@ -4,8 +4,8 @@ Portfolio-level Kelly sizing and concurrent exposure management.
 Prevents the "30 bets on Saturday" problem where independent Kelly
 sizing ignores shared bankroll risk.  Implements:
 
-    1. Simultaneous Kelly — scales individual Kelly fractions based on
-       total capital deployed across all concurrent bets.
+    1. Simultaneous Kelly multiplier — mathematically constrains
+       worst-case drawdown when N bets resolve concurrently.
     2. Dynamic bankroll tracking — uses current bankroll (not starting)
        for unit sizing.
     3. Max-drawdown circuit breaker — halts new bets when cumulative
@@ -13,14 +13,26 @@ sizing ignores shared bankroll risk.  Implements:
     4. Correlation-aware bucketing — groups bets by conference to
        apply a small correlation penalty (conference outcomes are
        weakly correlated through officiating crews, travel, etc.).
+
+The key mathematical fix vs naive fractional Kelly:
+
+    Standard Kelly assumes *sequential* betting — bet, resolve, recalculate.
+    When N bets are placed simultaneously, the worst-case loss is the sum
+    of all individual bet sizes.  The simultaneous Kelly multiplier
+    scales each bet's Kelly fraction so that even under a total-loss
+    scenario, the bankroll drawdown stays within survival parameters.
+
+    Multiplier = min(1.0, max_risk / (N * avg_kelly))
 """
 
 import logging
 import os
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple
 
+import numpy as np
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -154,6 +166,65 @@ class PortfolioManager:
     # Portfolio-adjusted sizing
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Simultaneous Kelly math
+    # ------------------------------------------------------------------
+
+    def simultaneous_kelly_multiplier(self, n_new_bets: int = 1) -> float:
+        """
+        Compute the simultaneous Kelly multiplier.
+
+        Standard Kelly assumes sequential betting.  When N bets are
+        concurrent, the worst-case drawdown is the sum of all bet sizes.
+
+        The multiplier constrains total risk so that a total-loss
+        scenario (all N bets lose) keeps drawdown within
+        ``max_total_exposure_pct``.
+
+        Formula:
+            M = max_risk / (N * avg_kelly)
+
+        Where:
+            max_risk = max_total_exposure_pct (as fraction, e.g. 0.15)
+            N = total concurrent bets (existing + new)
+            avg_kelly = average Kelly fraction across pending bets
+
+        Returns a multiplier in (0, 1].  All individual Kelly fractions
+        should be multiplied by this before sizing.
+        """
+        n_existing = len(self._pending_positions)
+        n_total = n_existing + n_new_bets
+
+        if n_total <= 1:
+            return 1.0
+
+        # Average Kelly across existing positions
+        if n_existing > 0:
+            avg_kelly = sum(p.kelly_fractional for p in self._pending_positions) / n_existing
+        else:
+            avg_kelly = 0.05  # Assume moderate Kelly for new-only batches
+
+        avg_kelly = max(avg_kelly, 0.01)  # Floor to prevent division by zero
+
+        max_risk_frac = self.max_total_exposure_pct / 100.0
+        multiplier = max_risk_frac / (n_total * avg_kelly)
+
+        return min(1.0, max(0.05, multiplier))
+
+    def worst_case_drawdown(self) -> float:
+        """
+        Calculate worst-case drawdown if ALL pending bets lose simultaneously.
+
+        Returns percentage of current bankroll.
+        """
+        if self.current_bankroll <= 0:
+            return 100.0
+        total_at_risk = sum(
+            p.recommended_units * (self.current_bankroll / 100.0)
+            for p in self._pending_positions
+        )
+        return (total_at_risk / self.current_bankroll) * 100.0
+
     def adjust_kelly(
         self,
         raw_kelly_frac: float,
@@ -161,16 +232,15 @@ class PortfolioManager:
         conference: Optional[str] = None,
     ) -> AdjustedSizing:
         """
-        Scale a raw Kelly fraction to account for total portfolio exposure.
+        Scale a raw Kelly fraction using simultaneous Kelly optimization.
 
         The algorithm:
         1. Check circuit breaker (drawdown halt).
-        2. Cap single-bet exposure at ``max_single_bet_pct``.
-        3. If adding this bet would push total exposure above
-           ``max_total_exposure_pct``, scale it down so the cap is
-           not breached.
-        4. Apply a small correlation penalty if other bets share the
-           same conference.
+        2. Apply simultaneous Kelly multiplier based on concurrent bet count.
+        3. Cap single-bet exposure at ``max_single_bet_pct``.
+        4. If adding this bet would push total exposure above
+           ``max_total_exposure_pct``, scale to fit.
+        5. Apply conference correlation penalty.
         """
         # 1. Circuit breaker
         if self.is_halted:
@@ -183,15 +253,21 @@ class PortfolioManager:
                 reason=f"HALTED: drawdown {self.drawdown_pct:.1f}% >= {self.max_drawdown_pct}%",
             )
 
-        # 2. Single-bet cap
-        capped_units = min(raw_units, self.max_single_bet_pct)
-        scaling = capped_units / raw_units if raw_units > 0 else 1.0
+        # 2. Simultaneous Kelly multiplier
+        sim_mult = self.simultaneous_kelly_multiplier(n_new_bets=1)
+        scaled_units = raw_units * sim_mult
+        scaling = sim_mult
 
-        # 3. Total exposure cap
+        # 3. Single-bet cap
+        if scaled_units > self.max_single_bet_pct:
+            scaling *= self.max_single_bet_pct / scaled_units
+            scaled_units = self.max_single_bet_pct
+
+        # 4. Total exposure cap
         current_total = self.total_exposure_pct
         headroom = max(0.0, self.max_total_exposure_pct - current_total)
 
-        if capped_units > headroom:
+        if scaled_units > headroom:
             if headroom <= 0:
                 return AdjustedSizing(
                     raw_kelly=raw_kelly_frac,
@@ -201,10 +277,10 @@ class PortfolioManager:
                     scaling_factor=0.0,
                     reason=f"No headroom: total exposure {current_total:.1f}% >= cap {self.max_total_exposure_pct}%",
                 )
-            capped_units = headroom
-            scaling = capped_units / raw_units if raw_units > 0 else 0.0
+            scaling *= headroom / scaled_units
+            scaled_units = headroom
 
-        # 4. Conference correlation penalty
+        # 5. Conference correlation penalty
         if conference:
             same_conf_count = sum(
                 1
@@ -214,14 +290,16 @@ class PortfolioManager:
             if same_conf_count > 0:
                 corr_penalty = 1.0 - self.conference_correlation * same_conf_count
                 corr_penalty = max(corr_penalty, 0.5)  # Floor at 50%
-                capped_units *= corr_penalty
+                scaled_units *= corr_penalty
                 scaling *= corr_penalty
 
         adjusted_kelly = raw_kelly_frac * scaling
 
         reason_parts = []
-        if scaling < 1.0:
-            reason_parts.append(f"scaled {scaling:.2f}x")
+        if sim_mult < 1.0:
+            reason_parts.append(f"sim_kelly {sim_mult:.2f}x ({len(self._pending_positions)} concurrent)")
+        if scaling < sim_mult:
+            reason_parts.append(f"capped to {scaled_units:.2f}%")
         if current_total > 0:
             reason_parts.append(f"existing exposure {current_total:.1f}%")
         reason = "; ".join(reason_parts) if reason_parts else "no adjustment needed"
@@ -230,7 +308,7 @@ class PortfolioManager:
             raw_kelly=raw_kelly_frac,
             portfolio_kelly=adjusted_kelly,
             raw_units=raw_units,
-            adjusted_units=round(capped_units, 4),
+            adjusted_units=round(scaled_units, 4),
             scaling_factor=round(scaling, 4),
             reason=reason,
         )

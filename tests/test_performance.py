@@ -54,7 +54,7 @@ def test_win_rate():
 
 @pytest.mark.parametrize("clv, expected", [
     (0.01,   "HEALTHY"),
-    (0.005,  "HEALTHY"),   # exactly at threshold — >0.005 → HEALTHY
+    (0.005,  "WARNING"),   # exactly at threshold — >0.005 is strict, so 0.005 → WARNING
     (0.004,  "WARNING"),
     (-0.004, "WARNING"),
     (-0.005, "WARNING"),   # exactly at lower threshold

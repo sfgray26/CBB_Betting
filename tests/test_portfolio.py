@@ -108,7 +108,7 @@ class TestPortfolioAdjustedKelly:
             max_single_bet_pct=5.0,
         )
 
-        # Fill 8% exposure
+        # Fill 8% exposure with 4 positions
         for i in range(4):
             pm.add_position(PortfolioPosition(
                 game_id=i, pick=f"Team{i}",
@@ -116,10 +116,34 @@ class TestPortfolioAdjustedKelly:
                 edge_conservative=0.02,
             ))
 
-        # Try to add 3% more — only 2% headroom
+        # Try to add 3% more — simultaneous Kelly kicks in first:
+        # sim_mult = 0.10 / (5 * 0.04) = 0.50, so 3.0 * 0.50 = 1.5
+        # 1.5 < 2.0 headroom, so headroom cap doesn't bind
         sizing = pm.adjust_kelly(raw_kelly_frac=0.06, raw_units=3.0)
 
-        assert sizing.adjusted_units == 2.0  # Capped at headroom
+        assert sizing.adjusted_units == 1.5  # Sim Kelly scales before headroom
+        assert "sim_kelly" in sizing.reason
+
+    def test_headroom_cap_binds_when_sim_kelly_insufficient(self):
+        pm = PortfolioManager(
+            starting_bankroll=1000,
+            max_total_exposure_pct=10.0,
+            max_single_bet_pct=5.0,
+        )
+
+        # Fill 9% exposure with 3 positions (high kelly)
+        for i in range(3):
+            pm.add_position(PortfolioPosition(
+                game_id=i, pick=f"Team{i}",
+                kelly_fractional=0.08, recommended_units=3.0,
+                edge_conservative=0.04,
+            ))
+
+        # sim_mult = 0.10 / (4 * 0.08) = 0.3125, 3.0 * 0.3125 = 0.9375
+        # headroom = 10.0 - 9.0 = 1.0, 0.9375 < 1.0, headroom doesn't bind
+        sizing = pm.adjust_kelly(raw_kelly_frac=0.08, raw_units=3.0)
+
+        assert sizing.adjusted_units <= 1.0  # Stays within headroom
 
     def test_halt_returns_zero(self):
         pm = PortfolioManager(

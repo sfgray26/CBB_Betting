@@ -119,6 +119,27 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Opening line attack — run when overnight lines are posted.
+    # Books typically hang openers between 10 PM and midnight ET.
+    # We run analysis at 10:30 PM and 12:30 AM to catch early value.
+    opener_enabled = os.getenv("OPENER_ATTACK_ENABLED", "false").lower() == "true"
+    if opener_enabled:
+        scheduler.add_job(
+            _opener_attack_job,
+            CronTrigger(hour=22, minute=30, timezone=timezone),
+            id="opener_attack_2230",
+            name="Opening Line Attack (10:30 PM)",
+            replace_existing=True,
+        )
+        scheduler.add_job(
+            _opener_attack_job,
+            CronTrigger(hour=0, minute=30, timezone=timezone),
+            id="opener_attack_0030",
+            name="Opening Line Attack (12:30 AM)",
+            replace_existing=True,
+        )
+        logger.info("Opening line attack scheduler enabled (22:30, 00:30 %s)", timezone)
+
     scheduler.start()
     logger.info(
         "Scheduler started: nightly@%02d:00, outcomes every 2h, lines every 30min, "
@@ -135,8 +156,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="CBB Edge Analyzer",
-    description="College Basketball Betting Framework - Version 7",
-    version="7.0",
+    description="College Basketball Betting Framework - Version 8",
+    version="8.0",
     lifespan=lifespan,
 )
 
@@ -206,6 +227,30 @@ def _odds_monitor_job():
             )
     except Exception as exc:
         logger.error("Odds monitor job failed: %s", exc, exc_info=True)
+
+
+def _opener_attack_job():
+    """
+    Run analysis when overnight opening lines are posted.
+
+    Bookmakers hang openers with lower limits because their models are
+    vulnerable — they rely on sharp action to shape the line.  Running
+    analysis immediately catches early value before the line moves.
+    """
+    logger.info("Opening line attack triggered — running analysis on fresh openers")
+    try:
+        results = run_nightly_analysis()
+        bets = results.get("bets_recommended", 0)
+        if bets > 0:
+            logger.info(
+                "Opener attack: %d bets found in %d games (%.1fs)",
+                bets, results.get("games_analyzed", 0),
+                results.get("duration_seconds", 0),
+            )
+        else:
+            logger.info("Opener attack: no value found in current openers")
+    except Exception as exc:
+        logger.error("Opener attack job failed: %s", exc, exc_info=True)
 
 
 # ============================================================================
