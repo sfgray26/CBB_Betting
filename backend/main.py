@@ -694,12 +694,34 @@ async def trigger_analysis_manually(
 
 @app.post("/admin/recalibrate")
 async def manual_recalibration(
+    dry_run: bool = False,
     user: str = Depends(verify_admin_api_key),
     db: Session = Depends(get_db),
 ):
-    """Manually trigger model recalibration (admin only)"""
-    logger.info("Manual recalibration triggered by %s", user)
-    return {"message": "Recalibration started (TODO: implement)"}
+    """
+    Manually trigger model parameter recalibration (admin only).
+
+    Analyses settled bets vs. predictions and adjusts:
+      - home_advantage  (corrects systematic home-team margin bias)
+      - sd_multiplier   (corrects probability over/under-confidence)
+
+    All changes are persisted to model_parameters and take effect on the
+    next nightly analysis run.
+
+    Query params:
+        dry_run=true  — compute and return diagnostics without writing changes.
+    """
+    from backend.services.recalibration import run_recalibration
+
+    logger.info(
+        "Recalibration triggered by %s (dry_run=%s)", user, dry_run
+    )
+    try:
+        result = run_recalibration(db, changed_by=user, apply_changes=not dry_run)
+        return result
+    except Exception as exc:
+        logger.error("Recalibration failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/admin/force-update-outcomes")

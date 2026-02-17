@@ -184,31 +184,39 @@ class CBBEdgeModel:
     
     def adjusted_sd(
         self,
-        penalties_dict: Optional[Dict[str, float]] = None
+        penalties_dict: Optional[Dict[str, float]] = None,
+        base_sd_override: Optional[float] = None,
     ) -> float:
         """
-        Calculate adjusted SD with penalty budget and ceiling
-        
-        Formula: SD_adj = base_SD * (1 + min(sqrt(sum(penalty²)), 6) / 15)
+        Calculate adjusted SD with penalty budget and ceiling.
+
+        Formula: SD_adj = effective_base * (1 + min(sqrt(sum(penalty²)), 6) / 15)
         Ceiling: Never exceed 15.5
-        
+
+        Args:
+            penalties_dict:   Dict of penalty name → penalty value.
+            base_sd_override: If provided, replaces self.base_sd as the starting
+                              point (used for dynamic total-based SD).
+
         Returns: adjusted SD in points
         """
+        effective_base = base_sd_override if base_sd_override is not None else self.base_sd
+
         if penalties_dict is None:
-            return self.base_sd
-        
+            return effective_base
+
         # Sqrt-sum (diminishing returns on penalty stacking)
         total_penalty = np.sqrt(sum(v**2 for v in penalties_dict.values()))
-        
+
         # Cap penalty at 6 (prevents runaway)
         total_penalty = min(total_penalty, 6.0)
-        
+
         # Calculate adjusted SD
-        adj_sd = self.base_sd * (1 + total_penalty / 15)
-        
+        adj_sd = effective_base * (1 + total_penalty / 15)
+
         # Absolute ceiling
         adj_sd = min(adj_sd, 15.5)
-        
+
         return adj_sd
     
     def american_to_decimal(self, american_odds: float) -> float:
@@ -224,36 +232,42 @@ class CBBEdgeModel:
         odds: Dict,
         ratings: Dict,
         injuries: Optional[List[Dict]] = None,
-        data_freshness: Optional[Dict] = None
+        data_freshness: Optional[Dict] = None,
+        base_sd_override: Optional[float] = None,
     ) -> GameAnalysis:
         """
         Complete game analysis using Version 7 framework
         
         Args:
-            game_data: {home_team, away_team, is_neutral, etc.}
-            odds: {spread, total, moneyline, etc.}
-            ratings: {kenpom: {home: X, away: Y}, barttorvik: {...}, ...}
-            injuries: [  {team, player, impact_tier}]
-            data_freshness: {lines_age_min, ratings_age_hours}
-        
+            game_data:        {home_team, away_team, is_neutral, etc.}
+            odds:             {spread, total, moneyline, etc.}
+            ratings:          {kenpom: {home: X, away: Y}, barttorvik: {...}, ...}
+            injuries:         [{team, player, impact_tier}]
+            data_freshness:   {lines_age_min, ratings_age_hours}
+            base_sd_override: If provided, replaces self.base_sd as the
+                              baseline for adjusted_sd().  Pass the dynamic
+                              total-based SD (sqrt(total)*0.85) from analysis.py.
+
         Returns: GameAnalysis dataclass with full verdict
         """
         notes = []
         penalties = {}
-        
+        # Effective base SD: caller-supplied dynamic value takes priority
+        _effective_base_sd = base_sd_override if base_sd_override is not None else self.base_sd
+
         # ================================================================
         # STEP 0: DATA FRESHNESS CHECK
         # ================================================================
         if data_freshness:
             lines_age = data_freshness.get('lines_age_min', 0)
             ratings_age = data_freshness.get('ratings_age_hours', 0)
-            
+
             # Tier enforcement
             if lines_age > 30:
                 return GameAnalysis(
                     verdict="PASS",
                     pass_reason="Tier 3 staleness - lines >30 min old",
-                    projected_margin=0, adjusted_sd=self.base_sd,
+                    projected_margin=0, adjusted_sd=_effective_base_sd,
                     home_advantage=self.home_advantage,
                     point_prob=0.5, lower_ci_prob=0.5, upper_ci_prob=0.5,
                     edge_point=0, edge_conservative=0,
@@ -266,12 +280,12 @@ class CBBEdgeModel:
             elif lines_age > 10:
                 penalties['stale_lines'] = 0.5
                 notes.append(f"Lines {lines_age:.0f} min old (Tier 2 - analyze only)")
-            
+
             if ratings_age > 168:  # 7 days
                 return GameAnalysis(
                     verdict="PASS",
                     pass_reason="Ratings >7 days old",
-                    projected_margin=0, adjusted_sd=self.base_sd,
+                    projected_margin=0, adjusted_sd=_effective_base_sd,
                     home_advantage=self.home_advantage,
                     point_prob=0.5, lower_ci_prob=0.5, upper_ci_prob=0.5,
                     edge_point=0, edge_conservative=0,
@@ -302,7 +316,7 @@ class CBBEdgeModel:
             return GameAnalysis(
                 verdict="PASS",
                 pass_reason="Missing KenPom ratings",
-                projected_margin=0, adjusted_sd=self.base_sd,
+                projected_margin=0, adjusted_sd=_effective_base_sd,
                 home_advantage=self.home_advantage,
                 point_prob=0.5, lower_ci_prob=0.5, upper_ci_prob=0.5,
                 edge_point=0, edge_conservative=0,
@@ -313,20 +327,36 @@ class CBBEdgeModel:
                 full_analysis={}
             )
         
-        # Weighted margin calculation
-        margin = 0
-        if kp_home and kp_away:
-            margin += self.weights['kenpom'] * (kp_home - kp_away)
+        # Weighted margin calculation — renormalize weights for available sources.
+        # Without renormalization, missing EvanMiya silently bleeds 32.5% of the
+        # projection, systematically under-weighting the available signals.
+        available_sources: list = []
+
+        # KenPom is required (already checked above)
+        available_sources.append(('kenpom', kp_home - kp_away))
+
         if bt_home and bt_away:
-            margin += self.weights['barttorvik'] * (bt_home - bt_away)
+            available_sources.append(('barttorvik', bt_home - bt_away))
         else:
             penalties['missing_barttorvik'] = 1.0
-            notes.append("BartTorvik unavailable - using KenPom only")
-        
+            notes.append("BartTorvik unavailable — weights renormalized to KenPom only")
+
         if em_home and em_away:
-            margin += self.weights['evanmiya'] * (em_home - em_away)
+            available_sources.append(('evanmiya', em_home - em_away))
         else:
             penalties['missing_evanmiya'] = 0.8
+            # No note: EvanMiya is frequently absent; the penalty communicates this
+
+        # Renormalize to the sum of available source weights so the projected
+        # margin magnitude is consistent regardless of how many sources are live.
+        total_weight = sum(self.weights.get(src, 0.0) for src, _ in available_sources)
+        if total_weight <= 0:
+            total_weight = 1.0  # safety guard (should never happen with KenPom required)
+
+        margin = sum(
+            (self.weights.get(src, 0.0) / total_weight) * diff
+            for src, diff in available_sources
+        )
         
         # Home advantage
         if not game_data.get('is_neutral', False):
@@ -362,8 +392,8 @@ class CBBEdgeModel:
             penalties['large_gap'] = 1.0
             notes.append(f"Large rating gap ({rating_gap:.1f}) - blowout variance")
         
-        # Compute adjusted SD
-        adj_sd = self.adjusted_sd(penalties)
+        # Compute adjusted SD (uses dynamic total-based base if override provided)
+        adj_sd = self.adjusted_sd(penalties, base_sd_override=base_sd_override)
         
         # If SD exceeds limit, PASS
         if adj_sd >= 15.5:
@@ -438,18 +468,17 @@ class CBBEdgeModel:
             'inputs': {
                 'ratings': ratings,
                 'margin_components': {
-                    'kenpom': self.weights['kenpom'] * (kp_home - kp_away) if kp_home and kp_away else None,
-                    'barttorvik': self.weights['barttorvik'] * (bt_home - bt_away) if bt_home and bt_away else None,
-                    'evanmiya': self.weights['evanmiya'] * (em_home - em_away) if em_home and em_away else None,
-                    'home_adv': self.home_advantage,
-                    'injury_adj': injury_adj,
-                },
+                    src: (self.weights.get(src, 0.0) / total_weight) * diff
+                    for src, diff in available_sources
+                } | {'home_adv': self.home_advantage, 'injury_adj': injury_adj},
+                'active_sources': [src for src, _ in available_sources],
+                'total_weight_used': total_weight,
                 'odds': odds,
                 'injuries': injuries,
             },
             'calculations': {
                 'projected_margin': margin,
-                'base_sd': self.base_sd,
+                'base_sd': _effective_base_sd,
                 'adjusted_sd': adj_sd,
                 'penalties': penalties,
                 'point_prob': point_prob,

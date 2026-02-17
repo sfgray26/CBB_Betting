@@ -2,14 +2,31 @@
 Nightly analysis orchestration.
 
 Workflow:
-    1. Fetch current odds from The Odds API
+    1. Fetch current odds from The Odds API (sharp + retail lines)
     2. Fetch ratings from KenPom / BartTorvik / EvanMiya
-    3. For each game: run model, persist Game + Prediction records
+    3. For each game:
+         - compute dynamic SD from game total: SD ≈ sqrt(Total) × 0.85
+         - run model with dynamic SD override
+         - persist Game + Prediction records
     4. Auto-create a paper-trade BetLog for every "Bet" verdict
-    5. Log DataFetch records for monitoring
+    5. Single bulk commit at the end (savepoints guard per-game errors)
+    6. Log DataFetch records for monitoring
+
+Quantitative improvements
+--------------------------
+  Dynamic SD:   Each game's base_sd is computed from its sharp-consensus
+                total (or best_total) as sqrt(total) × 0.85 instead of
+                the hardcoded 11.0.  This is passed as base_sd_override to
+                model.analyze_game().
+
+  Bulk insert:  Predictions and BetLogs are flushed per-prediction (to
+                satisfy the FK chain) but only committed once at the end
+                of the loop.  SQLAlchemy savepoints (begin_nested) isolate
+                per-game errors so a single bad game never aborts the batch.
 """
 
 import logging
+import math
 import os
 from datetime import datetime, date
 from typing import Dict, List, Optional
@@ -21,6 +38,7 @@ from backend.models import SessionLocal, Game, Prediction, BetLog, DataFetch
 from backend.betting_model import CBBEdgeModel
 from backend.services.odds import fetch_current_odds
 from backend.services.ratings import fetch_current_ratings, get_ratings_service
+from backend.services.recalibration import load_current_params
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +73,27 @@ def get_or_create_game(db: Session, game_data: Dict) -> Game:
     return game
 
 
-def _create_paper_bet(db: Session, game: Game, prediction: Prediction) -> BetLog:
+def _daily_exposure(db: Session) -> float:
+    """
+    Total dollars committed in pending paper trades placed today.
+
+    Used to enforce the portfolio daily cap so independent Kelly bets
+    don't silently stack into runaway bankroll exposure on busy days.
+    """
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    result = (
+        db.query(func.sum(BetLog.bet_size_dollars))
+        .filter(
+            BetLog.timestamp >= today_start,
+            BetLog.outcome.is_(None),           # still pending
+            BetLog.is_paper_trade.is_(True),
+        )
+        .scalar()
+    )
+    return float(result or 0.0)
+
+
+def _create_paper_bet(db: Session, game: Game, prediction: Prediction, daily_exposure: float = 0.0) -> BetLog:
     """
     Auto-create a paper-trade BetLog from a Bet verdict.
 
@@ -66,7 +104,24 @@ def _create_paper_bet(db: Session, game: Game, prediction: Prediction) -> BetLog
     recommended_units = prediction.recommended_units or 0.0
     bet_dollars = recommended_units * (starting_bankroll / 100.0)
 
-    # Pull odds from the stored full_analysis to avoid re-parsing
+    # --- Portfolio daily cap -------------------------------------------------
+    # Scale down if total daily exposure would exceed MAX_DAILY_EXPOSURE_PCT.
+    # This guards against a busy slate of games stacking independent Kelly bets
+    # into a combined exposure far larger than intended.
+    max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "5.0"))
+    max_daily_dollars = starting_bankroll * max_daily_pct / 100.0
+    remaining_capacity = max(0.0, max_daily_dollars - daily_exposure)
+
+    if bet_dollars > remaining_capacity:
+        original = bet_dollars
+        bet_dollars = remaining_capacity
+        recommended_units = (bet_dollars / starting_bankroll) * 100.0
+        logger.info(
+            "Daily cap: scaled %.2f → %.2f (capacity=%.2f, max=%.2f)",
+            original, bet_dollars, remaining_capacity, max_daily_dollars,
+        )
+    # -------------------------------------------------------------------------
+
     spread_odds: float = -110
     spread_value: Optional[float] = None
     if prediction.full_analysis:
@@ -74,15 +129,12 @@ def _create_paper_bet(db: Session, game: Game, prediction: Prediction) -> BetLog
         spread_odds = odds_block.get("spread_odds", -110) or -110
         spread_value = odds_block.get("spread")
 
-    # Build a human-readable pick string
     if prediction.projected_margin is not None and prediction.projected_margin > 0:
-        # Home team favored
         if spread_value is not None:
             pick = f"{game.home_team} {spread_value:+.1f}"
         else:
             pick = game.home_team
     else:
-        # Away team favored
         if spread_value is not None:
             pick = f"{game.away_team} {-spread_value:+.1f}"
         else:
@@ -141,7 +193,7 @@ def run_nightly_analysis() -> Dict:
 
     try:
         # ----------------------------------------------------------------
-        # STEP 1: Fetch odds
+        # STEP 1: Fetch odds (sharp + retail)
         # ----------------------------------------------------------------
         logger.info("Fetching odds from The Odds API...")
         try:
@@ -152,9 +204,9 @@ def run_nightly_analysis() -> Dict:
                 records_fetched=len(odds_games),
             ))
             db.commit()
-            logger.info(f"Fetched {len(odds_games)} games from The Odds API")
+            logger.info("Fetched %d games from The Odds API", len(odds_games))
         except Exception as exc:
-            logger.error(f"Odds API failed: {exc}", exc_info=True)
+            logger.error("Odds API failed: %s", exc, exc_info=True)
             db.add(DataFetch(
                 data_source="the_odds_api",
                 success=False,
@@ -193,7 +245,7 @@ def run_nightly_analysis() -> Dict:
                 len(all_ratings.get("evanmiya", {})),
             )
         except Exception as exc:
-            logger.error(f"Ratings fetch failed: {exc}", exc_info=True)
+            logger.error("Ratings fetch failed: %s", exc, exc_info=True)
             db.add(DataFetch(
                 data_source="ratings_aggregate",
                 success=False,
@@ -204,22 +256,39 @@ def run_nightly_analysis() -> Dict:
             return _summary(start_time, 0, 0, 0, errors)
 
         # ----------------------------------------------------------------
-        # STEP 3: Initialise model (reads env vars, consistent with .env.example)
+        # STEP 3: Initialise model — prefer calibrated params from DB,
+        #         fall back to env vars
         # ----------------------------------------------------------------
+        calibrated = load_current_params(db)
+        sd_multiplier = calibrated.get(
+            "sd_multiplier", float(os.getenv("SD_MULTIPLIER", "0.85"))
+        )
+
         model = CBBEdgeModel(
             base_sd=float(os.getenv("BASE_SD", "11.0")),
             weights={
-                "kenpom": float(os.getenv("WEIGHT_KENPOM", "0.342")),
+                "kenpom":    float(os.getenv("WEIGHT_KENPOM",    "0.342")),
                 "barttorvik": float(os.getenv("WEIGHT_BARTTORVIK", "0.333")),
-                "evanmiya": float(os.getenv("WEIGHT_EVANMIYA", "0.325")),
+                "evanmiya":  float(os.getenv("WEIGHT_EVANMIYA",  "0.325")),
             },
-            home_advantage=float(os.getenv("HOME_ADVANTAGE", "3.09")),
-            max_kelly=float(os.getenv("MAX_KELLY_FRACTION", "0.20")),
+            home_advantage=calibrated.get(
+                "home_advantage",
+                float(os.getenv("HOME_ADVANTAGE", "3.09")),
+            ),
+            max_kelly=float(os.getenv("MAX_KELLY_FRACTION",             "0.20")),
             fractional_kelly_divisor=float(os.getenv("FRACTIONAL_KELLY_DIVISOR", "2.0")),
+        )
+        logger.info(
+            "Model initialised — home_adv=%.3f, sd_multiplier=%.4f",
+            model.home_advantage, sd_multiplier,
         )
 
         # ----------------------------------------------------------------
         # STEP 4: Analyse each game and persist results
+        #
+        # Strategy: SQLAlchemy savepoints (begin_nested) isolate per-game
+        # errors.  All successful games are committed in a single call at
+        # the end, reducing N database round-trips to 1.
         # ----------------------------------------------------------------
         logger.info("Analysing %d games...", len(odds_games))
 
@@ -228,132 +297,156 @@ def run_nightly_analysis() -> Dict:
             away_team = game_data.get("away_team", "Unknown")
 
             try:
-                ratings_input = {
-                    "kenpom": {
-                        "home": ratings_service.get_team_rating(
-                            home_team, all_ratings.get("kenpom", {})
-                        ),
-                        "away": ratings_service.get_team_rating(
-                            away_team, all_ratings.get("kenpom", {})
-                        ),
-                    },
-                    "barttorvik": {
-                        "home": ratings_service.get_team_rating(
-                            home_team, all_ratings.get("barttorvik", {})
-                        ),
-                        "away": ratings_service.get_team_rating(
-                            away_team, all_ratings.get("barttorvik", {})
-                        ),
-                    },
-                    "evanmiya": {
-                        "home": ratings_service.get_team_rating(
-                            home_team, all_ratings.get("evanmiya", {})
-                        ),
-                        "away": ratings_service.get_team_rating(
-                            away_team, all_ratings.get("evanmiya", {})
-                        ),
-                    },
-                }
-
-                odds_input = {
-                    "spread": game_data.get("best_spread"),
-                    "spread_odds": game_data.get("best_spread_odds", -110),
-                    "total": game_data.get("best_total"),
-                }
-
-                game_input = {
-                    "home_team": home_team,
-                    "away_team": away_team,
-                    # Respect the neutral-site flag if the Odds API provides it
-                    "is_neutral": game_data.get("is_neutral", False),
-                }
-
-                analysis = model.analyze_game(
-                    game_data=game_input,
-                    odds=odds_input,
-                    ratings=ratings_input,
-                    injuries=None,
-                    data_freshness=odds_freshness,
-                )
-
-                # Persist Game (idempotent)
-                game = get_or_create_game(db, game_data)
-
-                # Check for duplicate prediction for the same game on the same day
-                today = datetime.utcnow().date()
-                existing_prediction = db.query(Prediction).filter(
-                    Prediction.game_id == game.id,
-                    Prediction.prediction_date == today
-                ).first()
-
-                if existing_prediction:
-                    logger.info(f"Skipping game {game.id} ({away_team} @ {home_team}): already analyzed today.")
-                    continue
-
-                # Persist Prediction
-                prediction = Prediction(
-                    game_id=game.id,
-                    prediction_date=today,
-                    model_version="v7.0",
-                    kenpom_home=ratings_input["kenpom"]["home"],
-                    kenpom_away=ratings_input["kenpom"]["away"],
-                    barttorvik_home=ratings_input["barttorvik"]["home"],
-                    barttorvik_away=ratings_input["barttorvik"]["away"],
-                    evanmiya_home=ratings_input["evanmiya"]["home"],
-                    evanmiya_away=ratings_input["evanmiya"]["away"],
-                    projected_margin=analysis.projected_margin,
-                    adjusted_sd=analysis.adjusted_sd,
-                    point_prob=analysis.point_prob,
-                    lower_ci_prob=analysis.lower_ci_prob,
-                    upper_ci_prob=analysis.upper_ci_prob,
-                    edge_point=analysis.edge_point,
-                    edge_conservative=analysis.edge_conservative,
-                    kelly_full=analysis.kelly_full,
-                    kelly_fractional=analysis.kelly_fractional,
-                    recommended_units=analysis.recommended_units,
-                    verdict=analysis.verdict,
-                    pass_reason=analysis.pass_reason,
-                    full_analysis=analysis.full_analysis,
-                    data_freshness_tier=analysis.data_freshness_tier,
-                    penalties_applied=analysis.penalties_applied,
-                )
-                db.add(prediction)
-                db.flush()  # Populate prediction.id before BetLog FK
-
-                games_analyzed += 1
-
-                if analysis.verdict.startswith("Bet"):
-                    bets_recommended += 1
-                    paper_bet = _create_paper_bet(db, game, prediction)
-                    paper_trades_created += 1
-                    logger.info(
-                        "BET: %s @ %s — %s (paper trade: %s)",
-                        away_team,
-                        home_team,
-                        analysis.verdict,
-                        paper_bet.pick,
+                with db.begin_nested():  # Savepoint — rolls back only this game on error
+                    # ---- Dynamic SD from game total ----------------------
+                    # Prefer sharp consensus total; fall back to retail best.
+                    game_total = (
+                        game_data.get("sharp_consensus_total")
+                        or game_data.get("best_total")
                     )
-                else:
-                    logger.debug(
-                        "PASS: %s @ %s (%s)",
-                        away_team,
-                        home_team,
-                        analysis.pass_reason,
+                    if game_total and game_total > 0:
+                        # Use calibrated sd_multiplier (default 0.85)
+                        dynamic_base_sd = math.sqrt(game_total) * sd_multiplier
+                    else:
+                        dynamic_base_sd = None  # model uses its own base_sd
+
+                    # ---- Build model inputs ------------------------------
+                    ratings_input = {
+                        "kenpom": {
+                            "home": ratings_service.get_team_rating(
+                                home_team, all_ratings.get("kenpom", {})
+                            ),
+                            "away": ratings_service.get_team_rating(
+                                away_team, all_ratings.get("kenpom", {})
+                            ),
+                        },
+                        "barttorvik": {
+                            "home": ratings_service.get_team_rating(
+                                home_team, all_ratings.get("barttorvik", {})
+                            ),
+                            "away": ratings_service.get_team_rating(
+                                away_team, all_ratings.get("barttorvik", {})
+                            ),
+                        },
+                        "evanmiya": {
+                            "home": ratings_service.get_team_rating(
+                                home_team, all_ratings.get("evanmiya", {})
+                            ),
+                            "away": ratings_service.get_team_rating(
+                                away_team, all_ratings.get("evanmiya", {})
+                            ),
+                        },
+                    }
+
+                    odds_input = {
+                        "spread": game_data.get("best_spread"),
+                        "spread_odds": game_data.get("best_spread_odds", -110),
+                        "total": game_total,
+                        # Sharp consensus for CLV benchmarking
+                        "sharp_consensus_spread": game_data.get("sharp_consensus_spread"),
+                        "sharp_consensus_total": game_data.get("sharp_consensus_total"),
+                        "sharp_books_available": game_data.get("sharp_books_available", 0),
+                    }
+
+                    game_input = {
+                        "home_team": home_team,
+                        "away_team": away_team,
+                        "is_neutral": game_data.get("is_neutral", False),
+                    }
+
+                    # ---- Run model with dynamic SD -----------------------
+                    analysis = model.analyze_game(
+                        game_data=game_input,
+                        odds=odds_input,
+                        ratings=ratings_input,
+                        injuries=None,
+                        data_freshness=odds_freshness,
+                        base_sd_override=dynamic_base_sd,
                     )
 
-                db.commit()
+                    # ---- Persist Game (idempotent) -----------------------
+                    game = get_or_create_game(db, game_data)
+
+                    # Skip if already analysed today
+                    today = datetime.utcnow().date()
+                    existing_prediction = db.query(Prediction).filter(
+                        Prediction.game_id == game.id,
+                        Prediction.prediction_date == today,
+                    ).first()
+
+                    if existing_prediction:
+                        logger.info(
+                            "Skipping %s @ %s: already analyzed today.",
+                            away_team, home_team,
+                        )
+                        continue
+
+                    # ---- Persist Prediction ------------------------------
+                    prediction = Prediction(
+                        game_id=game.id,
+                        prediction_date=today,
+                        model_version="v7.0",
+                        kenpom_home=ratings_input["kenpom"]["home"],
+                        kenpom_away=ratings_input["kenpom"]["away"],
+                        barttorvik_home=ratings_input["barttorvik"]["home"],
+                        barttorvik_away=ratings_input["barttorvik"]["away"],
+                        evanmiya_home=ratings_input["evanmiya"]["home"],
+                        evanmiya_away=ratings_input["evanmiya"]["away"],
+                        projected_margin=analysis.projected_margin,
+                        adjusted_sd=analysis.adjusted_sd,
+                        point_prob=analysis.point_prob,
+                        lower_ci_prob=analysis.lower_ci_prob,
+                        upper_ci_prob=analysis.upper_ci_prob,
+                        edge_point=analysis.edge_point,
+                        edge_conservative=analysis.edge_conservative,
+                        kelly_full=analysis.kelly_full,
+                        kelly_fractional=analysis.kelly_fractional,
+                        recommended_units=analysis.recommended_units,
+                        verdict=analysis.verdict,
+                        pass_reason=analysis.pass_reason,
+                        full_analysis=analysis.full_analysis,
+                        data_freshness_tier=analysis.data_freshness_tier,
+                        penalties_applied=analysis.penalties_applied,
+                    )
+                    db.add(prediction)
+                    db.flush()  # Populate prediction.id for BetLog FK
+
+                    games_analyzed += 1
+
+                    if analysis.verdict.startswith("Bet"):
+                        bets_recommended += 1
+                        current_exposure = _daily_exposure(db)
+                        paper_bet = _create_paper_bet(
+                            db, game, prediction, daily_exposure=current_exposure
+                        )
+                        paper_trades_created += 1
+                        logger.info(
+                            "BET: %s @ %s — %s (paper: %s)",
+                            away_team, home_team, analysis.verdict, paper_bet.pick,
+                        )
+                    else:
+                        logger.debug(
+                            "PASS: %s @ %s (%s)",
+                            away_team, home_team, analysis.pass_reason,
+                        )
 
             except Exception as exc:
                 logger.error(
                     "Error analysing %s @ %s: %s",
-                    away_team,
-                    home_team,
-                    exc,
-                    exc_info=True,
+                    away_team, home_team, exc, exc_info=True,
                 )
                 errors.append(f"{away_team} @ {home_team}: {str(exc)[:100]}")
-                db.rollback()
+                # Savepoint was automatically rolled back; outer transaction intact
                 continue
+
+        # ----------------------------------------------------------------
+        # STEP 5: Single bulk commit for all successful games
+        # ----------------------------------------------------------------
+        db.commit()
+        logger.info(
+            "Bulk commit: %d games, %d bets, %d paper trades",
+            games_analyzed, bets_recommended, paper_trades_created,
+        )
 
         return _summary(start_time, games_analyzed, bets_recommended, paper_trades_created, errors)
 
