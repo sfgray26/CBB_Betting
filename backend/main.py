@@ -37,6 +37,7 @@ from backend.services.performance import (
     calculate_summary_stats,
     calculate_clv_analysis,
     calculate_calibration,
+    calculate_model_accuracy,
     calculate_timeline,
     generate_daily_snapshot,
 )
@@ -262,7 +263,7 @@ async def root():
     """Health check"""
     return {
         "app": "CBB Edge Analyzer",
-        "version": "7.0",
+        "version": "8.0",
         "status": "operational",
         "timestamp": datetime.utcnow().isoformat(),
     }
@@ -389,6 +390,23 @@ async def get_calibration_data(
 ):
     """Model calibration: predicted probability vs actual win rate + Brier score."""
     return calculate_calibration(db)
+
+
+@app.get("/api/performance/model-accuracy")
+async def get_model_accuracy(
+    days: int = Query(default=90, ge=1, le=365),
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Model accuracy metrics over resolved predictions.
+
+    Returns margin MAE (mean absolute error between projected and actual margin),
+    per-rating-source MAE, probability calibration bins, and Brier score.
+    Only includes predictions where the game has completed and actual_margin
+    has been populated by the automated outcome-settlement job.
+    """
+    return calculate_model_accuracy(db, days=days)
 
 
 @app.get("/api/performance/timeline")

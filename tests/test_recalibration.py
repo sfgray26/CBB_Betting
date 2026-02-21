@@ -297,11 +297,14 @@ def test_recalibration_insufficient_data_partial():
 def test_recalibration_no_changes_small_bias():
     """Bias below trigger thresholds → status='no_changes'."""
     # ha_bias threshold = 0.5, overconfidence threshold = 0.03
-    # Create records with near-zero bias
+    # home error = 0.1 (below 0.5 HA threshold)
+    # overconfidence: model_prob=0.55, 17 wins / 13 losses → win_rate=0.567
+    #   overconfidence = 0.55 - 0.567 = -0.017 (below 0.03 threshold)
     recs = []
-    for _ in range(30):
-        # Home game, error ≈ 0.1 (well below 0.5)
+    for _ in range(17):
         recs.append(_rec(5.1, 5.0, model_prob=0.55, outcome=1, is_neutral=False))
+    for _ in range(13):
+        recs.append(_rec(5.1, 5.0, model_prob=0.55, outcome=0, is_neutral=False))
 
     def _fake_load(db):
         return {"home_advantage": 3.09, "sd_multiplier": 0.85}

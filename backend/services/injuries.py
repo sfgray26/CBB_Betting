@@ -81,11 +81,23 @@ TIER_IMPACT = {
 
 
 def estimate_impact(tier: str, usage_rate: Optional[float] = None) -> float:
-    """Estimate the margin swing (points) from a player being out."""
+    """Estimate the margin swing (points) from a player being out.
+
+    When usage_rate is provided, scales the tier base by the player's usage
+    relative to the D1 starter average (~22%).  The multiplier is clamped to
+    [0.5, 1.8] so outlier usage rates never produce absurd point swings.
+
+    Examples:
+        star (3.5 base) at 22% usage  → 3.5 * 1.00 = 3.50
+        star (3.5 base) at 35% usage  → 3.5 * 1.59 = 5.57
+        star (3.5 base) at 44%+ usage → 3.5 * 1.80 = 6.30  (capped)
+        star (3.5 base) at 10% usage  → 3.5 * 0.50 = 1.75  (floored)
+    """
     base = TIER_IMPACT.get(tier, 0.2)
     if usage_rate is not None and usage_rate > 0:
-        # Scale linearly by usage relative to a 20% baseline.
-        return base * (usage_rate / 20.0)
+        D1_STARTER_USAGE = 22.0
+        multiplier = min(1.8, max(0.5, usage_rate / D1_STARTER_USAGE))
+        return base * multiplier
     return base
 
 

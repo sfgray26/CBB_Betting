@@ -13,7 +13,7 @@ from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session, joinedload
 
-from backend.models import BetLog, Game, PerformanceSnapshot
+from backend.models import BetLog, Game, Prediction, PerformanceSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -391,19 +391,142 @@ def calculate_timeline(db: Session, days: int = 30) -> Dict:
 
 
 # ---------------------------------------------------------------------------
+# calculate_model_accuracy
+# ---------------------------------------------------------------------------
+
+def calculate_model_accuracy(db: Session, days: int = 90) -> Dict:
+    """
+    Margin prediction accuracy for all model predictions with a known result.
+
+    Compares ``Prediction.projected_margin`` against ``Prediction.actual_margin``
+    (populated automatically by ``update_completed_games()`` after each game
+    completes).  Covers ALL predictions — BET and PASS verdicts — because the
+    model's calibration matters across the full slate, not just the bets placed.
+
+    Returns:
+        count           — number of resolved predictions
+        mean_mae        — mean absolute error between projected and actual margin
+        median_mae      — median absolute error
+        mean_error      — signed mean error (positive = model over-predicts home)
+        mae_by_verdict  — {"BET": float, "PASS": float}
+        mae_by_sources  — per-rating-source margin MAE {kenpom, barttorvik, evanmiya}
+        calibration     — predicted win prob vs actual win rate in probability buckets
+    """
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    preds = (
+        db.query(Prediction)
+        .join(Game)
+        .filter(
+            Prediction.actual_margin.isnot(None),
+            Game.game_date >= cutoff,
+        )
+        .all()
+    )
+
+    if not preds:
+        return {
+            "message": "No resolved predictions yet. Games settle within 2 hours of completion.",
+            "count": 0,
+        }
+
+    errors = [abs(p.projected_margin - p.actual_margin) for p in preds]
+    signed = [p.projected_margin - p.actual_margin for p in preds]
+
+    # --- By verdict ---
+    by_verdict: Dict[str, List[float]] = {}
+    for p in preds:
+        label = "BET" if p.verdict and p.verdict.startswith("Bet") else "PASS"
+        by_verdict.setdefault(label, []).append(abs(p.projected_margin - p.actual_margin))
+
+    # --- Per-source margin MAE (individual rating diffs vs actual) ---
+    mae_by_source: Dict[str, Optional[float]] = {}
+    for source, home_attr, away_attr in [
+        ("kenpom",    "kenpom_home",    "kenpom_away"),
+        ("barttorvik", "barttorvik_home", "barttorvik_away"),
+        ("evanmiya",  "evanmiya_home",  "evanmiya_away"),
+    ]:
+        src_errors = []
+        for p in preds:
+            h = getattr(p, home_attr)
+            a = getattr(p, away_attr)
+            if h is not None and a is not None and p.actual_margin is not None:
+                src_errors.append(abs((h - a) - p.actual_margin))
+        mae_by_source[source] = round(_mean(src_errors), 3) if src_errors else None
+
+    # --- Probability calibration (model_prob vs actual outcome) ---
+    # Use BetLog records that have both model_prob and a settled outcome.
+    from backend.models import BetLog as _BetLog
+    bet_cutoff = datetime.utcnow() - timedelta(days=days)
+    calib_bets = (
+        db.query(_BetLog)
+        .join(Game)
+        .filter(
+            _BetLog.model_prob.isnot(None),
+            _BetLog.outcome.isnot(None),
+            _BetLog.outcome != -1,  # exclude pushes
+            Game.game_date >= bet_cutoff,
+        )
+        .all()
+    )
+
+    bins_config = [
+        (0.50, 0.55, "50-55%"),
+        (0.55, 0.60, "55-60%"),
+        (0.60, 0.65, "60-65%"),
+        (0.65, 0.70, "65-70%"),
+        (0.70, 1.00, "70%+"),
+    ]
+    calib_rows = []
+    brier_parts: List[float] = []
+    for lo, hi, label in bins_config:
+        grp = [b for b in calib_bets if lo <= b.model_prob < hi]
+        if not grp:
+            continue
+        actual_rate = sum(b.outcome for b in grp) / len(grp)
+        mid = (lo + hi) / 2.0
+        brier_parts.extend((b.model_prob - b.outcome) ** 2 for b in grp)
+        calib_rows.append({
+            "bin": label,
+            "predicted_prob": round(mid, 3),
+            "actual_win_rate": round(actual_rate, 4),
+            "count": len(grp),
+            "error": round(abs(mid - actual_rate), 4),
+        })
+
+    return {
+        "count": len(preds),
+        "days": days,
+        "mean_mae": round(_mean(errors), 3) if errors else None,
+        "median_mae": round(_median(errors), 3) if errors else None,
+        "mean_signed_error": round(_mean(signed), 3) if signed else None,
+        "mae_by_verdict": {k: round(_mean(v), 3) for k, v in by_verdict.items()},
+        "mae_by_source": mae_by_source,
+        "calibration": calib_rows,
+        "brier_score": round(_mean(brier_parts), 4) if brier_parts else None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # generate_daily_snapshot
 # ---------------------------------------------------------------------------
 
 def generate_daily_snapshot(db: Session) -> PerformanceSnapshot:
     """
-    Aggregate yesterday's settled bets into a PerformanceSnapshot row.
-    Called by the scheduler at 4 AM daily.
+    Aggregate yesterday's settled bets and resolved predictions into a
+    PerformanceSnapshot row.  Called by the scheduler at 4 AM daily.
+
+    Populates all previously-empty columns:
+        calibration_error, calibration_bins  — probability calibration MAE
+        mean_edge, bets_recommended          — model edge quality
+        pass_rate                            — fraction of games model passed
+        kenpom_mae, barttorvik_mae,
+        evanmiya_mae                         — per-source margin MAE
     """
-    from datetime import date as _date
     yesterday = datetime.utcnow().date() - timedelta(days=1)
     period_start = datetime(yesterday.year, yesterday.month, yesterday.day)
     period_end = period_start + timedelta(days=1)
 
+    # --- Settled bets for yesterday ---
     bets = (
         db.query(BetLog)
         .join(Game)
@@ -422,6 +545,61 @@ def generate_daily_snapshot(db: Session) -> PerformanceSnapshot:
     risked = sum(b.bet_size_dollars or 0.0 for b in bets)
     pl = sum(b.profit_loss_dollars or 0.0 for b in bets)
     clv_vals = [b.clv_prob for b in bets if b.clv_prob is not None]
+    edge_vals = [b.conservative_edge for b in bets if b.conservative_edge is not None]
+
+    # --- Probability calibration from settled bets ---
+    calib_bets = [b for b in bets if b.model_prob is not None]
+    bins_config = [
+        (0.50, 0.55, "50-55%"),
+        (0.55, 0.60, "55-60%"),
+        (0.60, 0.65, "60-65%"),
+        (0.65, 0.70, "65-70%"),
+        (0.70, 1.00, "70%+"),
+    ]
+    calib_errors: List[float] = []
+    calib_bins_data = {}
+    brier_parts: List[float] = []
+    for lo, hi, label in bins_config:
+        grp = [b for b in calib_bets if lo <= b.model_prob < hi]
+        if not grp:
+            continue
+        actual = sum(b.outcome for b in grp) / len(grp)
+        mid = (lo + hi) / 2.0
+        calib_errors.append(abs(mid - actual))
+        brier_parts.extend((b.model_prob - b.outcome) ** 2 for b in grp)
+        calib_bins_data[label] = {
+            "predicted": round(mid, 3),
+            "actual": round(actual, 4),
+            "count": len(grp),
+        }
+
+    # --- Resolved predictions for yesterday (all verdicts) ---
+    preds = (
+        db.query(Prediction)
+        .join(Game)
+        .filter(
+            Prediction.actual_margin.isnot(None),
+            Game.game_date >= period_start,
+            Game.game_date < period_end,
+        )
+        .all()
+    )
+
+    total_preds = len(preds)
+    bets_recommended = sum(
+        1 for p in preds if p.verdict and p.verdict.startswith("Bet")
+    )
+    pass_rate = (total_preds - bets_recommended) / total_preds if total_preds else None
+
+    # Per-source margin MAE
+    def _source_mae(home_attr: str, away_attr: str) -> Optional[float]:
+        errs = []
+        for p in preds:
+            h = getattr(p, home_attr)
+            a = getattr(p, away_attr)
+            if h is not None and a is not None:
+                errs.append(abs((h - a) - p.actual_margin))
+        return round(_mean(errs), 3) if errs else None
 
     snap = PerformanceSnapshot(
         snapshot_date=datetime.utcnow(),
@@ -437,12 +615,24 @@ def generate_daily_snapshot(db: Session) -> PerformanceSnapshot:
         roi=_safe_roi(pl, risked),
         mean_clv=_mean(clv_vals),
         median_clv=_median(clv_vals),
+        # Previously empty — now populated
+        calibration_error=round(_mean(calib_errors), 4) if calib_errors else None,
+        calibration_bins=calib_bins_data or None,
+        mean_edge=round(_mean(edge_vals), 5) if edge_vals else None,
+        bets_recommended=bets_recommended,
+        pass_rate=round(pass_rate, 4) if pass_rate is not None else None,
+        kenpom_mae=_source_mae("kenpom_home", "kenpom_away"),
+        barttorvik_mae=_source_mae("barttorvik_home", "barttorvik_away"),
+        evanmiya_mae=_source_mae("evanmiya_home", "evanmiya_away"),
     )
     db.add(snap)
     db.commit()
 
     logger.info(
-        "Daily snapshot %s: %d bets W%d-L%d ROI %.1f%%",
-        yesterday, total, wins, total - wins, snap.roi * 100,
+        "Daily snapshot %s: %d bets W%d-L%d ROI %.1f%% | %d predictions MAE=%.2f",
+        yesterday, total, wins, total - wins,
+        (snap.roi or 0) * 100,
+        total_preds,
+        (_mean([abs(p.projected_margin - p.actual_margin) for p in preds]) or 0),
     )
     return snap

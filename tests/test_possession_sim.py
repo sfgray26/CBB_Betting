@@ -226,5 +226,93 @@ class TestProfileBuilder:
         assert profile.pace == 72.0
 
 
+class TestLog5Blending:
+    """Test that _blend_rate uses Log5 and handles extremes correctly"""
+
+    def test_average_vs_average_returns_d1_avg(self):
+        sim = PossessionSimulator()
+        # When both rates equal the D1 average, the blended result should ≈ d1_avg
+        d1_avg = 0.170
+        result = sim._blend_rate(d1_avg, d1_avg, d1_avg)
+        assert abs(result - d1_avg) < 0.005
+
+    def test_output_always_in_unit_interval(self):
+        sim = PossessionSimulator()
+        # Extreme values that would break the old linear formula
+        extreme_cases = [
+            (0.45, 0.40, 0.170),  # both very high TO rates
+            (0.60, 0.58, 0.500),  # elite eFG on both sides
+            (0.01, 0.01, 0.170),  # very low rates
+            (0.95, 0.95, 0.500),  # near-ceiling rates
+        ]
+        for off, def_, avg in extreme_cases:
+            result = sim._blend_rate(off, def_, avg)
+            assert 0.0 < result < 1.0, (
+                f"_blend_rate({off}, {def_}, {avg}) = {result} — out of (0,1)"
+            )
+
+    def test_better_offense_raises_blended_rate(self):
+        sim = PossessionSimulator()
+        d1_avg = 0.500
+        # Elite offense (0.58 eFG) vs average defense should beat average offense
+        elite_off = sim._blend_rate(0.58, d1_avg, d1_avg)
+        avg_off = sim._blend_rate(d1_avg, d1_avg, d1_avg)
+        assert elite_off > avg_off
+
+    def test_better_defense_lowers_blended_rate(self):
+        sim = PossessionSimulator()
+        d1_avg = 0.500
+        # Average offense vs elite defense (0.44 allowed) should be below average
+        elite_def = sim._blend_rate(d1_avg, 0.44, d1_avg)
+        avg_def = sim._blend_rate(d1_avg, d1_avg, d1_avg)
+        assert elite_def < avg_def
+
+    def test_extreme_inputs_do_not_exceed_old_clamp_bounds(self):
+        sim = PossessionSimulator()
+        # The safety clamp [0.001, 0.999] should never activate on realistic inputs
+        realistic_cases = [
+            (0.35, 0.30, 0.170),  # high TO scenario
+            (0.55, 0.52, 0.500),  # high eFG scenario
+            (0.38, 0.35, 0.280),  # high ORB scenario
+        ]
+        for off, def_, avg in realistic_cases:
+            result = sim._blend_rate(off, def_, avg)
+            assert result != 0.001 and result != 0.999, (
+                f"Safety clamp activated for ({off}, {def_}, {avg}) — check inputs"
+            )
+
+    def test_simulation_scores_remain_realistic_with_log5(self):
+        sim = PossessionSimulator()
+        home = TeamSimProfile(team="Duke")
+        away = TeamSimProfile(team="UNC")
+
+        result = sim.simulate_game(home, away, n_sims=2000, seed=99)
+
+        avg_home = np.mean(result.home_scores)
+        avg_away = np.mean(result.away_scores)
+
+        # Scores should still be in the realistic college basketball range
+        assert 50 < avg_home < 95, f"Home avg {avg_home:.1f} out of realistic range"
+        assert 50 < avg_away < 95, f"Away avg {avg_away:.1f} out of realistic range"
+
+    def test_no_hard_clamp_on_valid_inputs(self):
+        """Log5 should not hard-clamp to 0.001/0.999 — it stays in (0,1) naturally."""
+        sim = PossessionSimulator()
+        # Moderate inputs that are NOT at the boundaries
+        result = sim._blend_rate(0.30, 0.25, 0.170)
+        # Should be somewhere in (0.1, 0.5) range, NOT at clamp boundaries
+        assert 0.001 < result < 0.999
+        assert result != 0.001 and result != 0.999
+
+    def test_log5_normalization_against_league_average(self):
+        """When off=avg and def=avg, result should equal the league average."""
+        sim = PossessionSimulator()
+        for avg in [0.170, 0.280, 0.500, 0.300]:
+            result = sim._blend_rate(avg, avg, avg)
+            assert abs(result - avg) < 0.001, (
+                f"Log5({avg}, {avg}, {avg}) = {result}, expected {avg}"
+            )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

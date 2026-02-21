@@ -7,6 +7,9 @@ Upgrades from V7:
 - Shin (1993) method for true probability extraction from odds
 - Portfolio-aware Kelly sizing support
 - Injury impact quantification
+- Spread-adjusted cover probability (P(cover) not P(win))
+- Deterministic RNG for reproducible Monte Carlo results
+- Both-side edge evaluation (home or away value detection)
 
 Retained from V7:
 - 2-layer Monte Carlo CI
@@ -30,41 +33,42 @@ class GameAnalysis:
     """Complete analysis output"""
     verdict: str
     pass_reason: Optional[str]
-    
+
     # Model inputs
     projected_margin: float
     adjusted_sd: float
     home_advantage: float
-    
+
     # Probabilities
-    point_prob: float
+    point_prob: float           # P(home wins) — for calibration tracking
     lower_ci_prob: float
     upper_ci_prob: float
-    
-    # Edges
+
+    # Edges (computed from spread cover probability, not win probability)
     edge_point: float
     edge_conservative: float
-    
+
     # Betting
     kelly_full: float
     kelly_fractional: float
     recommended_units: float
-    
+    bet_side: Optional[str] = None  # "home" or "away" — which side has value
+
     # Metadata
-    data_freshness_tier: str
-    penalties_applied: Dict
-    notes: List[str]
-    
+    data_freshness_tier: str = "Unknown"
+    penalties_applied: Dict = field(default_factory=dict)
+    notes: List[str] = field(default_factory=list)
+
     # Full details for storage
-    full_analysis: Dict
+    full_analysis: Dict = field(default_factory=dict)
 
 
 class CBBEdgeModel:
     """
-    Production betting model implementing Version 7 framework
-    Conservative, transparent, and designed to PASS 85-95% of games
+    Production betting model implementing Version 8 framework.
+    Conservative, transparent, and designed to PASS 85-95% of games.
     """
-    
+
     def __init__(
         self,
         base_sd: float = 11.0,
@@ -72,6 +76,7 @@ class CBBEdgeModel:
         home_advantage: float = 3.09,
         max_kelly: float = 0.20,
         fractional_kelly_divisor: float = 2.0,
+        seed: Optional[int] = None,
     ):
         self.base_sd = base_sd
         self.weights = weights or {
@@ -82,39 +87,55 @@ class CBBEdgeModel:
         self.home_advantage = home_advantage
         self.max_kelly = max_kelly
         self.fractional_kelly_divisor = fractional_kelly_divisor
+        self.rng = np.random.default_rng(seed)
     
     def monte_carlo_prob_ci(
         self,
         projected_margin: float,
         adjusted_sd: float,
-        n_samples: int = 10000
+        n_samples: int = 10000,
+        spread: float = 0.0,
     ) -> Tuple[float, float, float]:
         """
-        Two-layer Monte Carlo for win probability with confidence interval
-        
+        Two-layer Monte Carlo for probability with confidence interval.
+
         Layer 1: Parameter uncertainty in margin estimate (±10%)
         Layer 2: Outcome variance around realized margin
-        
+
+        Args:
+            projected_margin: Model's projected home margin (positive = home favored).
+            adjusted_sd:      Game-level standard deviation after penalties.
+            n_samples:        Monte Carlo sample count.
+            spread:           Home team's spread handicap (e.g. -4.5 for 4.5-pt
+                              favourite).  When spread=0 (default), returns
+                              P(home wins).  When spread is non-zero, returns
+                              P(home covers the spread).
+
         Returns: (point_estimate, lower_95_ci, upper_95_ci)
         """
-        # Layer 1: Uncertainty in our margin projection itself
-        margin_se = abs(projected_margin) * 0.10  # 10% parameter uncertainty
-        margin_se = max(margin_se, 1.5)  # Floor at 1.5 points
-        
-        margin_samples = np.random.normal(
+        # Layer 1: Uncertainty in our margin projection itself.
+        # The SE is roughly constant — a multi-source ratings composite has
+        # similar prediction uncertainty whether the margin is 2 or 20.
+        # Using abs(margin)*0.10 would create false confidence on blowouts
+        # (exactly where the model has the least edge).
+        margin_se = 2.0  # ~2 pts parameter uncertainty, constant across all games
+
+        margin_samples = self.rng.normal(
             projected_margin,
             margin_se,
             n_samples
         )
-        
-        # Layer 2: Convert margins to probabilities using adjusted SD
-        # This represents outcome variance for each projected margin
-        prob_samples = norm.cdf(margin_samples / adjusted_sd)
-        
+
+        # Layer 2: Convert margins to probabilities using adjusted SD.
+        # Cover condition: actual_margin + spread > 0
+        # P(cover) = Phi((projected_margin + spread) / sd)
+        # When spread=0 this reduces to P(home wins) = Phi(margin / sd).
+        prob_samples = norm.cdf((margin_samples + spread) / adjusted_sd)
+
         point_est = float(np.mean(prob_samples))
         lower_ci = float(np.percentile(prob_samples, 2.5))
         upper_ci = float(np.percentile(prob_samples, 97.5))
-        
+
         return point_est, lower_ci, upper_ci
     
     def remove_vig_american(
@@ -227,6 +248,95 @@ class CBBEdgeModel:
 
         return self.base_sd
 
+    # Minimum model weight when the model has material injury alpha.
+    # When abs(injury_adj) > INJURY_ALPHA_THRESHOLD, the market line is
+    # likely stale w.r.t. lineup changes and the model should not defer
+    # below this floor.
+    INJURY_ALPHA_THRESHOLD: float = 1.5
+    INJURY_ALPHA_FLOOR: float = 0.65
+
+    def _dynamic_model_weight(
+        self,
+        hours_to_tipoff: Optional[float] = None,
+        sharp_books_available: int = 0,
+        injury_adj: float = 0.0,
+    ) -> float:
+        """
+        Compute the model-vs-market blending weight dynamically.
+
+        **Rationale:** Far from tipoff the market is thin and our ratings
+        composite is the best available signal.  As tipoff approaches, sharp
+        books (Pinnacle, Circa) incorporate late-breaking information (injuries,
+        weather, lineup locks) that our model cannot observe — so we should
+        defer more to the market.
+
+        **Formula (three factors):**
+
+        1. *Time decay* — logistic sigmoid centred at 6 hours:
+
+               w_time = 0.20 + 0.70 / (1 + exp(-0.5 * (hours - 6)))
+
+           - At 24 h: w ≈ 0.90  (model dominates — market is thin)
+           - At  6 h: w ≈ 0.55  (equal blend)
+           - At  1 h: w ≈ 0.27  (market dominates — sharp lines are set)
+           - At  0 h: w ≈ 0.23  (floor — never fully discard model)
+
+           The 0.20 floor ensures the model always contributes at least 20%.
+           The 0.90 ceiling (0.20 + 0.70) prevents full model reliance.
+
+        2. *Sharp book discount* — when multiple sharp books agree, the
+           consensus is more informative.  Each additional sharp book beyond
+           the first reduces model weight by 5% (multiplicative):
+
+               w_sharp = max(0.80, 1.0 - 0.05 * (n_sharp - 1))
+
+           With 1 sharp book: 1.00 (no discount).
+           With 3 sharp books: 0.90.
+           Floor at 0.80 to prevent over-discounting.
+
+        3. *Injury alpha floor* — when the model has incorporated a material
+           injury adjustment (``abs(injury_adj) > 1.5 pts``), the market line
+           is likely stale with respect to the lineup change.  The model
+           weight is floored at ``INJURY_ALPHA_FLOOR`` (0.65) to prevent
+           deferring to a line that hasn't priced in the injury.
+
+        **Combined:**
+            model_weight = max(w_time * w_sharp, injury_floor)
+
+        Args:
+            hours_to_tipoff:      Hours until game start (None → assume 12h).
+            sharp_books_available: Count of sharp books with live lines.
+            injury_adj:           Total injury margin adjustment (signed, pts).
+
+        Returns:
+            Model weight in [0.16, 0.90] for the margin blend.
+        """
+        # --- Time decay (logistic sigmoid) ---
+        h = hours_to_tipoff if hours_to_tipoff is not None else 12.0
+        h = max(h, 0.0)
+        w_time = 0.20 + 0.70 / (1.0 + float(np.exp(-0.5 * (h - 6.0))))
+
+        # --- Sharp book discount ---
+        n = max(sharp_books_available, 0)
+        if n <= 1:
+            w_sharp = 1.0
+        else:
+            w_sharp = max(0.80, 1.0 - 0.05 * (n - 1))
+
+        weight = float(w_time * w_sharp)
+
+        # --- Injury alpha floor ---
+        # When the model has material injury information that the market
+        # may not have priced in, don't let the weight drop below the floor.
+        if abs(injury_adj) > self.INJURY_ALPHA_THRESHOLD:
+            weight = max(weight, self.INJURY_ALPHA_FLOOR)
+            logger.debug(
+                "Injury alpha floor: injury_adj=%.2f, weight floored at %.2f",
+                injury_adj, weight,
+            )
+
+        return weight
+
     def kelly_fraction(
         self,
         prob: float,
@@ -256,27 +366,70 @@ class CBBEdgeModel:
         self,
         penalties_dict: Optional[Dict[str, float]] = None,
         base_sd_override: Optional[float] = None,
+        market_volatility: Optional[float] = None,
+        hours_to_tipoff: Optional[float] = None,
     ) -> float:
         """
-        Calculate adjusted SD with penalty budget and ceiling.
+        Calculate adjusted SD with dynamic penalty budget and ceiling.
 
-        Formula: SD_adj = effective_base * (1 + min(sqrt(sum(penalty²)), 6) / 15)
-        Ceiling: Never exceed 15.5
+        **Formula:**
+            SD_adj = effective_base * volatility_scalar * (1 + min(sqrt(sum(penalty²)), 6) / 15)
+
+        **Dynamic scaling (two new dimensions):**
+
+        1. ``market_volatility`` — a non-negative scalar derived from
+           line movement (e.g. abs(spread_open - spread_current) / base_sd).
+           When present, it scales the base SD:
+
+               volatility_scalar = 1.0 + 0.15 * tanh(market_volatility)
+
+           ``tanh`` saturates for extreme movements.  A market_volatility
+           of 1.0 (approx 1 SD of spread movement) adds ~11.4% to the base;
+           3.0 adds ~14.9% (near ceiling).
+
+        2. ``hours_to_tipoff`` — when provided, injury-class penalties are
+           decayed by a time-to-tipoff factor.  A "Questionable" player's
+           penalty should be higher 24 hours out (lineup uncertainty) than
+           10 minutes out (lineup confirmed).  The decay curve is:
+
+               time_decay = 1.0 - 0.6 * exp(-hours / 6)
+
+           This gives: 24h -> 0.99 (full penalty), 6h -> 0.63, 1h -> 0.49,
+           0.2h (12 min) -> 0.42 (lineups mostly known).
+
+        **Ceiling:** Never exceed 15.5.
 
         Args:
-            penalties_dict:   Dict of penalty name → penalty value.
-            base_sd_override: If provided, replaces self.base_sd as the starting
-                              point (used for dynamic total-based SD).
+            penalties_dict:    Dict of penalty name -> penalty value.
+            base_sd_override:  If provided, replaces self.base_sd as the starting
+                               point (used for dynamic total-based SD).
+            market_volatility: Non-negative scalar from line movement (0 = stable,
+                               >1 = significant movement).  None = no adjustment.
+            hours_to_tipoff:   Hours until game start.  None = no time decay.
 
-        Returns: adjusted SD in points
+        Returns: adjusted SD in points.
         """
         effective_base = base_sd_override if base_sd_override is not None else self.base_sd
 
+        # Market volatility scaling: line movement implies information the
+        # model hasn't captured.  Scale base SD upward proportionally.
+        if market_volatility is not None and market_volatility > 0:
+            vol_scalar = 1.0 + 0.15 * float(np.tanh(market_volatility))
+            effective_base *= vol_scalar
+
         if penalties_dict is None:
-            return effective_base
+            return min(effective_base, 15.5)
+
+        # Time-decay for injury-class penalties — uncertainty about lineup
+        # resolves as tipoff approaches.
+        if hours_to_tipoff is not None:
+            time_decay = 1.0 - 0.6 * float(np.exp(-hours_to_tipoff / 6.0))
+            injury_keys = [k for k in penalties_dict if 'injury' in k]
+            for k in injury_keys:
+                penalties_dict[k] *= time_decay
 
         # Sqrt-sum (diminishing returns on penalty stacking)
-        total_penalty = np.sqrt(sum(v**2 for v in penalties_dict.values()))
+        total_penalty = float(np.sqrt(sum(v**2 for v in penalties_dict.values())))
 
         # Cap penalty at 6 (prevents runaway)
         total_penalty = min(total_penalty, 6.0)
@@ -303,25 +456,34 @@ class CBBEdgeModel:
         ratings: Dict,
         injuries: Optional[List[Dict]] = None,
         data_freshness: Optional[Dict] = None,
-<<<<<<< HEAD
         base_sd_override: Optional[float] = None,
-=======
         home_style: Optional[Dict[str, float]] = None,
         away_style: Optional[Dict[str, float]] = None,
->>>>>>> 1910748cc9f44c7683c55f55c45b54c14871456c
+        market_volatility: Optional[float] = None,
+        hours_to_tipoff: Optional[float] = None,
+        matchup_margin_adj: float = 0.0,
     ) -> GameAnalysis:
         """
-        Complete game analysis using Version 7 framework
-        
+        Complete game analysis using Version 8 framework.
+
         Args:
-            game_data:        {home_team, away_team, is_neutral, etc.}
-            odds:             {spread, total, moneyline, etc.}
-            ratings:          {kenpom: {home: X, away: Y}, barttorvik: {...}, ...}
-            injuries:         [{team, player, impact_tier}]
-            data_freshness:   {lines_age_min, ratings_age_hours}
-            base_sd_override: If provided, replaces self.base_sd as the
-                              baseline for adjusted_sd().  Pass the dynamic
-                              total-based SD (sqrt(total)*0.85) from analysis.py.
+            game_data:         {home_team, away_team, is_neutral, etc.}
+            odds:              {spread, total, moneyline, etc.}
+            ratings:           {kenpom: {home: X, away: Y}, barttorvik: {...}, ...}
+            injuries:          [{team, player, impact_tier}]
+            data_freshness:    {lines_age_min, ratings_age_hours}
+            base_sd_override:  If provided, replaces self.base_sd as the
+                               baseline for adjusted_sd().  Pass the dynamic
+                               total-based SD (sqrt(total)*0.85) from analysis.py.
+            market_volatility: Non-negative scalar derived from spread/total line
+                               movement.  Scales base SD via tanh activation when
+                               line movement suggests hidden information.
+            hours_to_tipoff:   Hours until game start.  Decays injury-class SD
+                               penalties as tipoff approaches and lineups solidify.
+            matchup_margin_adj: Additive margin adjustment from the MatchupEngine,
+                               reflecting second-order play-style interactions
+                               (pace mismatch, 3PA vs drop, transition gap, etc.).
+                               Applied BEFORE the market blend.
 
         Returns: GameAnalysis dataclass with full verdict
         """
@@ -402,7 +564,6 @@ class CBBEdgeModel:
                 full_analysis={}
             )
         
-<<<<<<< HEAD
         # Weighted margin calculation — renormalize weights for available sources.
         # Without renormalization, missing EvanMiya silently bleeds 32.5% of the
         # projection, systematically under-weighting the available signals.
@@ -415,13 +576,13 @@ class CBBEdgeModel:
             available_sources.append(('barttorvik', bt_home - bt_away))
         else:
             penalties['missing_barttorvik'] = 1.0
-            notes.append("BartTorvik unavailable — weights renormalized to KenPom only")
+            notes.append("BartTorvik unavailable — weights renormalized to remaining sources")
 
         if em_home and em_away:
             available_sources.append(('evanmiya', em_home - em_away))
         else:
             penalties['missing_evanmiya'] = 0.8
-            # No note: EvanMiya is frequently absent; the penalty communicates this
+            notes.append("EvanMiya unavailable — weights re-normalized to remaining sources")
 
         # Renormalize to the sum of available source weights so the projected
         # margin magnitude is consistent regardless of how many sources are live.
@@ -433,58 +594,125 @@ class CBBEdgeModel:
             (self.weights.get(src, 0.0) / total_weight) * diff
             for src, diff in available_sources
         )
-=======
-        # Weighted margin calculation with dynamic re-normalization.
-        # When sources are missing, redistribute their weight proportionally
-        # to prevent silent margin deflation (V8 fix).
-        available_diffs = {}
-        if kp_home is not None and kp_away is not None:
-            available_diffs['kenpom'] = kp_home - kp_away
-        if bt_home is not None and bt_away is not None:
-            available_diffs['barttorvik'] = bt_home - bt_away
-        else:
-            penalties['missing_barttorvik'] = 1.0
-            notes.append("BartTorvik unavailable — weight re-normalized to remaining sources")
-        if em_home is not None and em_away is not None:
-            available_diffs['evanmiya'] = em_home - em_away
-        else:
-            penalties['missing_evanmiya'] = 0.8
-            notes.append("EvanMiya unavailable — weight re-normalized to remaining sources")
 
-        raw_weight_sum = sum(self.weights[k] for k in available_diffs)
-        if raw_weight_sum > 0:
-            margin = sum(
-                (self.weights[k] / raw_weight_sum) * diff
-                for k, diff in available_diffs.items()
+        # Confidence shrinkage when rating sources are absent.
+        # Re-normalization preserves margin magnitude but not confidence —
+        # a game missing from an advanced source is likely a low-major game
+        # with higher true variance.  Shrink the ratings-derived margin toward
+        # zero (10% per missing source, floor at 70% of the point estimate).
+        n_available = len(available_sources)
+        n_total = len(self.weights)
+        if n_available < n_total:
+            n_missing = n_total - n_available
+            _SHRINKAGE_ALPHA = 0.10
+            shrinkage = max(0.70, 1.0 - _SHRINKAGE_ALPHA * n_missing)
+            margin *= shrinkage
+            notes.append(
+                f"Margin shrunk {(1 - shrinkage):.0%} — {n_missing} source(s) missing "
+                f"({n_available}/{n_total} available)"
             )
-        else:
-            margin = 0
->>>>>>> 1910748cc9f44c7683c55f55c45b54c14871456c
-        
-        # Home advantage
+
+        # Pace-Adjusted Home Court Advantage
+        #
+        # A flat 3.09 point HCA is mathematically flawed across different tempos.
+        # High-pace teams (75+ possessions) generate more scoring opportunities,
+        # amplifying the home court effect.  Low-pace grinders (60 possessions)
+        # see diminished HCA impact due to fewer total possessions.
+        #
+        # Scale HCA by (game_pace / 68.0) where 68.0 is the D1 average pace.
+        # Fall back to (game_total / 140.0) if pace profiles are missing.
+        adjusted_hca = 0.0
         if not game_data.get('is_neutral', False):
-            margin += self.home_advantage
-        
-        # Injury adjustments (simplified tier system)
-        injury_adj = 0
+            if home_style and away_style:
+                # Compute expected pace from team profiles
+                game_pace = (home_style.get('pace', 68.0) + away_style.get('pace', 68.0)) / 2.0
+                pace_ratio = game_pace / 68.0
+            else:
+                # Fallback: scale by game total (140.0 = D1 average total)
+                game_total = odds.get('total', 140.0) or 140.0
+                pace_ratio = game_total / 140.0
+
+            adjusted_hca = self.home_advantage * pace_ratio
+            margin += adjusted_hca
+            notes.append(
+                f"Pace-adjusted HCA: {adjusted_hca:.2f}pts (base={self.home_advantage:.2f}, "
+                f"ratio={pace_ratio:.3f})"
+            )
+
+        # Injury adjustments — delegate to injuries.py estimate_impact()
+        # which handles all 4 tiers, usage-rate scaling, and status weighting.
+        from backend.services.injuries import estimate_impact
+
+        STATUS_WEIGHT = {
+            "Out": 1.0, "Doubtful": 0.75, "Questionable": 0.40, "Probable": 0.10,
+        }
+
+        injury_adj = 0.0
         if injuries:
             for inj in injuries:
-                if inj.get('team') == game_data['home_team']:
-                    multiplier = 1
-                else:
-                    multiplier = -1
-                
                 tier = inj.get('impact_tier', 'bench')
-                if tier == 'star':
-                    injury_adj += multiplier * -2.5  # Star out hurts
-                    penalties['star_injury'] = 2.5
-                    notes.append(f"{inj.get('player')} out (star) - high uncertainty")
-                elif tier == 'role':
-                    injury_adj += multiplier * -1.0
-                    penalties['role_injury'] = 1.5
-        
+                usage = inj.get('usage_rate')
+                status = inj.get('status', 'Out')
+                player = inj.get('player', 'Unknown')
+
+                # Raw impact in points (positive = points lost by that team)
+                raw_impact = estimate_impact(tier, usage)
+                # Weight by injury status probability
+                weight = STATUS_WEIGHT.get(status, 0.5)
+                weighted_impact = raw_impact * weight
+
+                # Direction: if home player is out, home margin shrinks (negative)
+                if inj.get('team') == game_data['home_team']:
+                    injury_adj -= weighted_impact
+                else:
+                    injury_adj += weighted_impact
+
+                # Track penalty for SD inflation
+                if tier in ('star', 'starter'):
+                    penalties[f'{tier}_injury'] = max(
+                        penalties.get(f'{tier}_injury', 0), weighted_impact
+                    )
+                    notes.append(
+                        f"{player} {status} ({tier}, {weighted_impact:.1f}pts impact)"
+                    )
+
         margin += injury_adj
-        
+
+        # Matchup geometry adjustment — second-order play-style interactions
+        # computed by MatchupEngine (3PA vs drop, transition gap, etc.).
+        # Applied BEFORE the market blend so it contributes to the model's
+        # independent view.
+        if matchup_margin_adj != 0.0:
+            margin += matchup_margin_adj
+            notes.append(
+                f"Matchup adjustment: {matchup_margin_adj:+.2f}pts"
+            )
+
+        # Market-aware margin blend — shrink model margin toward sharp line.
+        # Sharp books (Pinnacle/Circa) are extremely efficient; our ratings-only
+        # margin is noisy.  The model weight decays dynamically based on two
+        # signals: time-to-tipoff and sharp book availability.
+        sharp_spread = odds.get('sharp_consensus_spread')
+        if sharp_spread is not None:
+            market_margin = -sharp_spread
+            sharp_count = odds.get('sharp_books_available', 0)
+            model_weight = self._dynamic_model_weight(
+                hours_to_tipoff, sharp_count, injury_adj=injury_adj,
+            )
+            raw_margin = margin
+            margin = model_weight * margin + (1 - model_weight) * market_margin
+            notes.append(
+                f"Market blend: model {raw_margin:.1f} → blended {margin:.1f} "
+                f"(sharp line {sharp_spread:+.1f}, w_model={model_weight:.2f}, "
+                f"h={hours_to_tipoff}, sharp_n={sharp_count})"
+            )
+            logger.debug(
+                "Dynamic model weight: %.3f (hours=%.1f, sharp_n=%d)",
+                model_weight,
+                hours_to_tipoff if hours_to_tipoff is not None else -1,
+                sharp_count,
+            )
+
         # ================================================================
         # STEP 2: ADJUST SD FOR UNCERTAINTY
         # ================================================================
@@ -499,19 +727,24 @@ class CBBEdgeModel:
         if rating_gap > 25:
             penalties['large_gap'] = 1.0
             notes.append(f"Large rating gap ({rating_gap:.1f}) - blowout variance")
-<<<<<<< HEAD
-        
-        # Compute adjusted SD (uses dynamic total-based base if override provided)
-        adj_sd = self.adjusted_sd(penalties, base_sd_override=base_sd_override)
-=======
 
-        # Temporarily swap base_sd for the matchup-specific value before
-        # applying the penalty budget.
-        original_base = self.base_sd
-        self.base_sd = base
-        adj_sd = self.adjusted_sd(penalties)
-        self.base_sd = original_base
->>>>>>> 1910748cc9f44c7683c55f55c45b54c14871456c
+        # Compute adjusted SD.
+        # Blend caller-supplied dynamic SD (sqrt(total) heuristic from analysis.py)
+        # with matchup_sd (style-based adjustments) instead of hard override.
+        # This preserves matchup-specific variance info that hard override discards.
+        if base_sd_override is not None and base != self.base_sd:
+            # Both dynamic SD and matchup SD are available — blend 50/50
+            effective_sd_base = 0.5 * base_sd_override + 0.5 * base
+        elif base_sd_override is not None:
+            effective_sd_base = base_sd_override
+        else:
+            effective_sd_base = base
+        adj_sd = self.adjusted_sd(
+            penalties,
+            base_sd_override=effective_sd_base,
+            market_volatility=market_volatility,
+            hours_to_tipoff=hours_to_tipoff,
+        )
         
         # If SD exceeds limit, PASS
         if adj_sd >= 15.5:
@@ -530,50 +763,139 @@ class CBBEdgeModel:
             )
         
         # ================================================================
-        # STEP 3: MONTE CARLO PROBABILITY + CI
+        # STEP 3: PRICING ENGINE SELECTION (Markov primary, Gaussian fallback)
         # ================================================================
-        
+        #
+        # **Philosophy change**: The Markov simulator is now the PRIMARY
+        # pricing engine when team profiles are available.  It directly
+        # models possession-level variance through play-by-play geometry,
+        # avoiding the "Gaussian + heuristic SD" approximation.
+        #
+        # Gaussian monte_carlo_prob_ci is used ONLY as the ultimate fallback
+        # when profiles are missing or the Markov simulator fails.
+        #
+        # This promotes the Markov engine from a "cross-validator" to
+        # "first-class pricing authority."
+
+        spread = odds.get('spread', 0)
+        pricing_engine = "Gaussian"  # Default
+        markov_cover_prob = None
+
+        # P(home wins) — always Gaussian for calibration tracking
         point_prob, lower_ci, upper_ci = self.monte_carlo_prob_ci(margin, adj_sd)
-        
+
+        # Attempt Markov pricing if profiles available
+        if home_style and away_style and spread is not None:
+            try:
+                from backend.services.possession_sim import (
+                    PossessionSimulator, TeamSimProfile,
+                )
+                home_sim = TeamSimProfile(
+                    team=game_data.get('home_team', 'Home'),
+                    pace=home_style.get('pace', 68.0),
+                    to_pct=home_style.get('to_pct', 0.17),
+                    ft_rate=home_style.get('ft_rate', 0.30),
+                    three_rate=home_style.get('three_par', 0.36),
+                )
+                away_sim = TeamSimProfile(
+                    team=game_data.get('away_team', 'Away'),
+                    pace=away_style.get('pace', 68.0),
+                    to_pct=away_style.get('to_pct', 0.17),
+                    ft_rate=away_style.get('ft_rate', 0.30),
+                    three_rate=away_style.get('three_par', 0.36),
+                )
+                sim = PossessionSimulator(home_advantage_pts=self.home_advantage)
+                sim_edge = sim.simulate_spread_edge(
+                    home_sim, away_sim,
+                    spread=spread,
+                    n_sims=2000,
+                    is_neutral=game_data.get('is_neutral', False),
+                )
+                # Markov succeeded — use it as primary
+                markov_cover_prob = sim_edge['cover_prob']
+                cover_prob = markov_cover_prob
+                cover_lower = sim_edge['cover_lower']
+                cover_upper = sim_edge['cover_upper']
+                pricing_engine = "Markov"
+                logger.debug(
+                    "Markov pricing: cover=%.3f [%.3f, %.3f]",
+                    cover_prob, cover_lower, cover_upper,
+                )
+            except Exception as exc:
+                logger.warning("Markov pricing failed, falling back to Gaussian: %s", exc)
+                # Fall through to Gaussian
+
+        # Gaussian fallback (if Markov didn't run or failed)
+        if pricing_engine == "Gaussian":
+            cover_prob, cover_lower, cover_upper = self.monte_carlo_prob_ci(
+                margin, adj_sd, spread=spread,
+            )
+            logger.debug(
+                "Gaussian pricing: cover=%.3f [%.3f, %.3f]",
+                cover_prob, cover_lower, cover_upper,
+            )
+
+        notes.append(f"Primary pricing engine: {pricing_engine}")
+
         # ================================================================
         # STEP 4: VIG REMOVAL & EDGE CALCULATION
         # ================================================================
-        
-        # Get market odds (assuming we're analyzing spread bet)
-        spread = odds.get('spread', 0)
-        spread_odds = odds.get('spread_odds', -110)
-        
-        # No-vig probability via Shin (1993) method
-        fav_novig, dog_novig = self.remove_vig_shin(spread_odds, spread_odds)
-        market_prob = fav_novig if margin > 0 else dog_novig
-        
-        # Edge calculations
-        edge_point = point_prob - market_prob
-        edge_conservative = lower_ci - market_prob  # Decision threshold
-        
+
+        # Extract BOTH sides' odds for proper Shin vig removal
+        spread_odds_home = odds.get('spread_odds', -110)
+        spread_odds_away = odds.get('spread_away_odds', -110)
+
+        # No-vig probability via Shin (1993) method — needs both sides
+        home_novig, away_novig = self.remove_vig_shin(
+            spread_odds_home, spread_odds_away,
+        )
+
+        # Determine which side has value by checking home-side edge
+        edge_home = cover_prob - home_novig
+
+        if edge_home >= 0:
+            # Value on home side
+            our_cover_prob = cover_prob
+            our_cover_lower = cover_lower
+            market_prob = home_novig
+            bet_side = "home"
+            bet_odds = spread_odds_home
+        else:
+            # Value on away side (flip cover probability)
+            our_cover_prob = 1.0 - cover_prob
+            our_cover_lower = 1.0 - cover_upper   # upper flips to lower
+            market_prob = away_novig
+            bet_side = "away"
+            bet_odds = spread_odds_away
+
+        edge_point = our_cover_prob - market_prob
+        edge_conservative = our_cover_lower - market_prob
+
         # ================================================================
         # STEP 5: KELLY & BET SIZING
         # ================================================================
-        
-        decimal_odds = self.american_to_decimal(spread_odds)
-        kelly_full = self.kelly_fraction(point_prob, decimal_odds)
+
+        decimal_odds = self.american_to_decimal(bet_odds)
+        kelly_full = self.kelly_fraction(our_cover_prob, decimal_odds)
         kelly_frac = kelly_full / self.fractional_kelly_divisor
-        
+
         # Decision rule: only bet if conservative edge > 0
         if edge_conservative <= 0:
             verdict = "PASS"
-            pass_reason = f"Conservative edge {edge_conservative:.3%} ≤ 0"
+            pass_reason = f"Conservative edge {edge_conservative:.3%} <= 0"
             recommended_units = 0
         else:
             # Additional safety: cap at 1.5% of bankroll
             recommended_pct = min(kelly_frac * 100, 1.5)
             recommended_units = recommended_pct
-            
+
             if recommended_units < 0.25:
-                verdict = f"Thin edge - max 0.25u only"
+                # Thin edge — still a real bet but floored at minimum size
+                recommended_units = 0.25
+                verdict = f"Bet {recommended_units:.2f}u @ {bet_odds:+.0f} (min size)"
             else:
-                verdict = f"Bet {recommended_units:.2f}u @ {spread_odds:+.0f}"
-            
+                verdict = f"Bet {recommended_units:.2f}u @ {bet_odds:+.0f}"
+
             pass_reason = None
         
         # ================================================================
@@ -582,37 +904,30 @@ class CBBEdgeModel:
         
         # Build margin component breakdown using re-normalized weights
         margin_components = {}
-        for source, diff in available_diffs.items():
-            if raw_weight_sum > 0:
-                effective_weight = self.weights[source] / raw_weight_sum
-            else:
-                effective_weight = 0
+        for source, diff in available_sources:
+            eff_w = self.weights.get(source, 0.0) / total_weight
             margin_components[source] = {
-                'raw_weight': self.weights[source],
-                'effective_weight': round(effective_weight, 4),
+                'raw_weight': self.weights.get(source, 0.0),
+                'effective_weight': round(eff_w, 4),
                 'diff': diff,
-                'contribution': round(effective_weight * diff, 3),
+                'contribution': round(eff_w * diff, 3),
             }
-        margin_components['home_adv'] = self.home_advantage if not game_data.get('is_neutral', False) else 0
+        margin_components['home_adv'] = adjusted_hca
         margin_components['injury_adj'] = injury_adj
+        margin_components['matchup_adj'] = matchup_margin_adj
 
         full_analysis_dict = {
             'model_version': 'v8.0',
             'timestamp': datetime.utcnow().isoformat(),
             'inputs': {
                 'ratings': ratings,
-<<<<<<< HEAD
                 'margin_components': {
                     src: (self.weights.get(src, 0.0) / total_weight) * diff
                     for src, diff in available_sources
-                } | {'home_adv': self.home_advantage, 'injury_adj': injury_adj},
+                } | {'home_adv': adjusted_hca, 'injury_adj': injury_adj, 'matchup_adj': matchup_margin_adj},
                 'active_sources': [src for src, _ in available_sources],
                 'total_weight_used': total_weight,
-=======
-                'margin_components': margin_components,
-                'sources_available': list(available_diffs.keys()),
-                'weight_renormalized': raw_weight_sum < 0.999,
->>>>>>> 1910748cc9f44c7683c55f55c45b54c14871456c
+                'weight_renormalized': total_weight < 0.999,
                 'odds': odds,
                 'injuries': injuries,
                 'home_style': home_style,
@@ -620,23 +935,37 @@ class CBBEdgeModel:
             },
             'calculations': {
                 'projected_margin': margin,
-<<<<<<< HEAD
-                'base_sd': _effective_base_sd,
-=======
                 'matchup_base_sd': base,
-                'base_sd': self.base_sd,
->>>>>>> 1910748cc9f44c7683c55f55c45b54c14871456c
+                'base_sd': effective_sd_base,
                 'adjusted_sd': adj_sd,
                 'penalties': penalties,
                 'point_prob': point_prob,
                 'lower_ci': lower_ci,
                 'upper_ci': upper_ci,
+                'cover_prob': cover_prob,
+                'cover_lower': cover_lower,
+                'cover_upper': cover_upper,
+                'home_novig': home_novig,
+                'away_novig': away_novig,
+                'bet_side': bet_side,
+                'bet_odds': bet_odds,
                 'market_prob': market_prob,
                 'edge_point': edge_point,
                 'edge_conservative': edge_conservative,
                 'kelly_full': kelly_full,
                 'kelly_fractional': kelly_frac,
+                'markov_cover_prob': markov_cover_prob,
+                'pricing_engine': pricing_engine,
                 'vig_removal_method': 'shin_1993',
+                'market_volatility': market_volatility,
+                'hours_to_tipoff': hours_to_tipoff,
+                'model_weight': (
+                    self._dynamic_model_weight(
+                        hours_to_tipoff, odds.get('sharp_books_available', 0),
+                        injury_adj=injury_adj,
+                    )
+                    if sharp_spread is not None else None
+                ),
             },
             'notes': notes,
         }
@@ -655,6 +984,7 @@ class CBBEdgeModel:
             kelly_full=kelly_full,
             kelly_fractional=kelly_frac,
             recommended_units=recommended_units,
+            bet_side=bet_side,
             data_freshness_tier=data_freshness.get('tier', 'Unknown') if data_freshness else 'Unknown',
             penalties_applied=penalties,
             notes=notes,

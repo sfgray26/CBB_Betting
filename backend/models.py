@@ -82,6 +82,7 @@ class Prediction(Base):
     # Model metadata
     model_version = Column(String, default="v7.0")
     prediction_date = Column(Date, nullable=False, index=True, default=date.today)
+    run_tier = Column(String, default="nightly", nullable=False)  # "opener" | "nightly" | "closing"
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     
     # Ratings used (for auditing)
@@ -98,7 +99,11 @@ class Prediction(Base):
     point_prob = Column(Float)  # Point estimate probability
     lower_ci_prob = Column(Float)  # Lower 95% CI
     upper_ci_prob = Column(Float)  # Upper 95% CI
-    
+
+    # Actual outcome — populated by update_completed_games() after game finishes.
+    # NULL while game is pending.  home_score - away_score (positive = home won).
+    actual_margin = Column(Float)
+
     # Edge calculations
     edge_point = Column(Float)  # Point estimate edge
     edge_conservative = Column(Float)  # Lower CI edge (decision threshold)
@@ -120,7 +125,7 @@ class Prediction(Base):
     # Relationship
     game = relationship("Game", back_populates="predictions")
 
-    __table_args__ = (UniqueConstraint('game_id', 'prediction_date', name='_game_prediction_date_uc'),)
+    __table_args__ = (UniqueConstraint('game_id', 'prediction_date', 'run_tier', name='_game_prediction_date_tier_uc'),)
 
 
 class BetLog(Base):

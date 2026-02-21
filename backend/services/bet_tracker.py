@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 
-from backend.models import BetLog, ClosingLine, DataFetch, Game, SessionLocal
+from backend.models import BetLog, ClosingLine, DataFetch, Game, Prediction, SessionLocal
 from backend.services.clv import calculate_clv_full
 
 logger = logging.getLogger(__name__)
@@ -233,6 +233,26 @@ def update_completed_games() -> Dict:
                     game.id, game.home_team, home_s, game.away_team, away_s,
                 )
 
+                # Backfill actual_margin on every Prediction linked to this game.
+                # This enables margin-prediction MAE and calibration tracking
+                # for ALL model predictions, not just ones where a bet was placed.
+                actual_margin = home_s - away_s  # positive = home team won
+                unresolved_preds = (
+                    db.query(Prediction)
+                    .filter(
+                        Prediction.game_id == game.id,
+                        Prediction.actual_margin.is_(None),
+                    )
+                    .all()
+                )
+                for pred in unresolved_preds:
+                    pred.actual_margin = actual_margin
+                if unresolved_preds:
+                    logger.info(
+                        "Backfilled actual_margin=%.1f on %d prediction(s) for game %d",
+                        actual_margin, len(unresolved_preds), game.id,
+                    )
+
             # Settle pending bets
             pending = (
                 db.query(BetLog)
@@ -390,11 +410,24 @@ def capture_closing_lines() -> Dict:
                 )
                 for bet in pending:
                     try:
-                        _, opening_spread = parse_pick(bet.pick)
+                        team_name, opening_spread_team = parse_pick(bet.pick)
+
+                        # Normalize opening spread to home perspective.
+                        # Closing spread from the API is already home-side;
+                        # opening spread from parse_pick is team-side.
+                        team_is_home = team_name.lower() == game.home_team.lower()
+                        if opening_spread_team is not None:
+                            opening_spread_home = (
+                                opening_spread_team if team_is_home
+                                else -opening_spread_team
+                            )
+                        else:
+                            opening_spread_home = None
+
                         clv = calculate_clv_full(
                             opening_odds=bet.odds_taken,
                             closing_odds=best_spread_odds,
-                            opening_spread=opening_spread,
+                            opening_spread=opening_spread_home,
                             closing_spread=best_spread,
                             base_sd=base_sd,
                         )

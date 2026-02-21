@@ -167,6 +167,26 @@ class SimulationResult:
         alpha = (1 - confidence) / 2
         return float(np.percentile(probs, alpha * 100)), float(np.percentile(probs, (1 - alpha) * 100))
 
+    def ci_cover_prob(self, spread: float, confidence: float = 0.95) -> Tuple[float, float, float]:
+        """
+        Bootstrap CI on spread cover probability.
+
+        Returns (point_estimate, lower_bound, upper_bound).
+        """
+        n = len(self.home_scores)
+        margins = self.home_scores - self.away_scores
+        covers = (margins + spread > 0).astype(float)
+        point_est = float(np.mean(covers))
+
+        # Bootstrap CI
+        bootstrap = np.random.choice(covers, size=(1000, n), replace=True)
+        probs = np.mean(bootstrap, axis=1)
+        alpha = (1 - confidence) / 2
+        lower = float(np.percentile(probs, alpha * 100))
+        upper = float(np.percentile(probs, (1 - alpha) * 100))
+
+        return point_est, lower, upper
+
     def to_dict(self) -> Dict:
         return {
             "n_sims": self.n_sims,
@@ -206,15 +226,58 @@ class PossessionSimulator:
 
     def _blend_rate(self, off_rate: float, def_rate: float, d1_avg: float) -> float:
         """
-        Blend offensive tendency with defensive resistance.
+        Blend offensive tendency with defensive resistance using the
+        Log5 formula (Bill James, 1981).
 
-        Uses the "opponent-adjusted" formula common in tempo-free analytics:
-            adjusted = off_rate + def_rate - d1_avg
+        **Mathematical justification:**
+        The Log5 method models a binary outcome between two teams whose
+        independent success probabilities are measured against a common
+        baseline (the D1 average).  The formula normalizes each input
+        against the league average, then combines them multiplicatively:
 
-        Clamped to [0.01, 0.99] for safety.
+            A = off_rate / d1_avg       (offensive strength ratio)
+            B = def_rate / d1_avg       (defensive weakness ratio)
+            Numerator   = A * B
+            Denominator = A * B + ((1-off_rate)/(1-d1_avg)) * ((1-def_rate)/(1-d1_avg))
+
+        This is algebraically equivalent to the compact form:
+
+            P = (a*b/c) / (a*b/c + (1-a)*(1-b)/(1-c))
+
+        where a = off_rate, b = def_rate, c = d1_avg.
+
+        **Key properties:**
+        - Result is always in (0, 1) for inputs in (0, 1) — no clamping needed.
+        - When both rates equal the D1 average, returns d1_avg (identity).
+        - Non-linear: extreme offence + extreme defence converges rather than
+          diverging like the additive formula (off + def - avg).
+
+        **Orientation of call sites** (all four pass rates in the same
+        "event-success probability" orientation):
+            - TO rate:  off.to_pct, def.def_to_forced_pct  → "P(turnover)"
+            - FT rate:  off.ft_rate, def.def_ft_rate_allowed → "P(FT trip)"
+            - eFG:      off.efg_pct, def.def_efg_pct         → "P(eFG success)"
+            - ORB:      off.orb_pct, (1 - def.def_drb_pct)   → "P(off rebound)"
+
+        Args:
+            off_rate: Offensive team's event probability vs average defence.
+            def_rate: Defence's event probability allowed vs average offence
+                      (higher = worse defence).
+            d1_avg:   D1 baseline rate for the event.
+
+        Returns:
+            Blended probability in (0, 1).
         """
-        blended = off_rate + def_rate - d1_avg
-        return max(0.01, min(0.99, blended))
+        # Normalize inputs against the league-average baseline.
+        # Guard only against exact 0 or 1 to prevent division by zero;
+        # Log5 naturally stays in (0, 1) for all valid probability inputs.
+        a = np.clip(off_rate, 1e-9, 1.0 - 1e-9)
+        b = np.clip(def_rate, 1e-9, 1.0 - 1e-9)
+        c = np.clip(d1_avg, 1e-9, 1.0 - 1e-9)
+
+        num = (a * b) / c
+        denom = num + ((1.0 - a) * (1.0 - b)) / (1.0 - c)
+        return float(num / denom)
 
     def _compute_possession_probs(
         self,
@@ -358,8 +421,14 @@ class PossessionSimulator:
         })
 
         if not is_neutral:
+            # Pace-adjusted home-court advantage:
+            # Scale HCA by (game_pace / 68.0) to account for tempo variance.
+            # High-pace games have more possessions → larger HCA impact.
+            pace_ratio = game_pace / 68.0
+            adjusted_hca_pts = self.home_advantage_pts * pace_ratio
+            ha_factor = adjusted_hca_pts / 100.0  # Convert to % boost
+
             # Home team gets slight offensive boost, away gets slight penalty
-            ha_factor = self.home_advantage_pts / 100.0  # ~3% boost
             home_off.efg_pct = min(0.65, home.efg_pct + ha_factor)
             home_off.to_pct = max(0.08, home.to_pct - ha_factor * 0.3)
             away_off.efg_pct = max(0.35, away.efg_pct - ha_factor * 0.5)
@@ -417,12 +486,13 @@ class PossessionSimulator:
         """
         Run simulation and compute edge against a given spread.
 
-        Returns a dict with win/cover probabilities, projected margin,
-        edge, and Kelly fraction.
+        Returns a dict with win/cover probabilities (with CI bounds),
+        projected margin, edge, and Kelly fraction.
         """
         result = self.simulate_game(home, away, n_sims, is_neutral)
 
-        cover_prob = result.spread_cover_prob(spread)
+        # Compute cover probability with 95% CI bounds
+        cover_prob, cover_lower, cover_upper = result.ci_cover_prob(spread, confidence=0.95)
 
         # Convert spread odds to implied prob (no-vig)
         if spread_odds > 0:
@@ -448,6 +518,8 @@ class PossessionSimulator:
             "sim_result": result.to_dict(),
             "spread": spread,
             "cover_prob": round(cover_prob, 4),
+            "cover_lower": round(cover_lower, 4),
+            "cover_upper": round(cover_upper, 4),
             "implied_prob": round(implied, 4),
             "edge": round(edge, 4),
             "kelly_full": round(kelly, 4),

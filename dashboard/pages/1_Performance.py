@@ -116,3 +116,54 @@ if rolling:
             f"Win Rate {data.get('win_rate', 0):.1%}",
             delta=f"CLV {data.get('mean_clv', 0) or 0:.2%}",
         )
+
+st.markdown("---")
+
+# --- Model Accuracy (margin prediction + calibration) ---
+st.subheader("Model Accuracy")
+acc_days = st.select_slider("Accuracy window (days)", [14, 30, 60, 90, 180], value=90)
+acc = api_get("/api/performance/model-accuracy", {"days": acc_days})
+
+if not acc or acc.get("count", 0) == 0:
+    st.info(
+        "No resolved predictions yet. "
+        "Outcome data populates automatically within 2 hours of each game finishing."
+    )
+else:
+    a1, a2, a3, a4 = st.columns(4)
+    a1.metric("Predictions resolved", acc.get("count", 0))
+    a2.metric("Margin MAE",  f"{acc.get('mean_mae', 0) or 0:.2f} pts")
+    a3.metric("Signed error", f"{acc.get('mean_signed_error', 0) or 0:+.2f} pts",
+              help="Positive = model over-predicts home margin on average")
+    a4.metric("Brier score", f"{acc.get('brier_score', 0) or 0:.4f}",
+              help="Lower is better. Perfect calibration = 0, random = 0.25")
+
+    col_l, col_r = st.columns(2)
+
+    # MAE by verdict
+    mae_verdict = acc.get("mae_by_verdict", {})
+    if mae_verdict:
+        with col_l:
+            st.markdown("**Margin MAE by verdict**")
+            for verdict, mae in mae_verdict.items():
+                st.write(f"- {verdict}: **{mae:.2f} pts**")
+
+    # MAE by rating source
+    mae_source = acc.get("mae_by_source", {})
+    if any(v is not None for v in mae_source.values()):
+        with col_r:
+            st.markdown("**Margin MAE by rating source**")
+            for src, mae in mae_source.items():
+                if mae is not None:
+                    st.write(f"- {src.title()}: **{mae:.2f} pts**")
+
+    # Probability calibration table
+    calib = acc.get("calibration", [])
+    if calib:
+        st.markdown("**Probability calibration (predicted win prob vs actual win rate)**")
+        calib_df = pd.DataFrame(calib)
+        calib_df["gap"] = (calib_df["actual_win_rate"] - calib_df["predicted_prob"]).map(
+            lambda x: f"{x:+.1%}"
+        )
+        calib_df.columns = [c.replace("_", " ").title() for c in calib_df.columns]
+        st.dataframe(calib_df, use_container_width=True, hide_index=True)
