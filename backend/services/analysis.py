@@ -36,7 +36,7 @@ import logging
 import math
 import os
 from collections import defaultdict
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -50,6 +50,8 @@ from backend.services.ratings import fetch_current_ratings, get_ratings_service
 from backend.services.recalibration import load_current_params
 from backend.services.injuries import get_injury_service
 from backend.services.matchup_engine import get_profile_cache, get_matchup_engine
+from backend.services.parlay_engine import build_optimal_parlays, format_parlay_ticket
+from backend.services.team_mapping import normalize_team_name
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +59,111 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+# D1 average four-factor baselines used when profile cache misses.
+_D1_AVG_ADJ_O   = 105.0   # Adjusted offensive efficiency (pts / 100 poss)
+_D1_AVG_ADJ_DE  = 105.0   # D1 average adjusted defensive efficiency (pts / 100 poss)
+_D1_AVG_EFG     = 0.505   # Effective FG%
+_D1_AVG_TO_PCT  = 0.175   # Turnover rate
+_D1_AVG_ORB     = 0.280   # Offensive rebound rate
+_D1_AVG_FT_RATE = 0.320   # Free-throw attempt rate (FTA/FGA)
+_D1_AVG_PACE    = 68.0    # Possessions per 40 min
+_D1_AVG_THREE   = 0.360   # 3PA / FGA
+
+
+def _heuristic_style_from_rating(
+    off_rating_raw: Optional[float],
+    def_rating_raw: Optional[float] = None,
+) -> Optional[Dict]:
+    """
+    Estimate a Markov-engine style dict from top-line efficiency numbers.
+
+    Handles two different scales in the wild:
+      - BartTorvik AdjOE: absolute offensive efficiency (~90–130, D1 avg ≈ 105)
+      - KenPom / EvanMiya AdjEM: margin relative to average (~-30 to +40)
+
+    When only a margin is available, it is converted to an estimated AdjO by
+    assuming offense contributes ~55% and defense ~45% of the margin:
+        AdjO ≈ D1_AVG_ADJ_O + margin × 0.55
+        AdjDE ≈ D1_AVG_ADJ_DE − margin × 0.45
+
+    Passing ``def_rating_raw`` enables two improvements over pure D1 defaults:
+      1. Defensive eFG% allowed: ``0.505 × (AdjDE / 105.0)``
+         (lower AdjDE = better defence = lower eFG% allowed)
+      2. Forced turnover rate: ``0.175 × (105.0 / AdjDE)``
+         (lower AdjDE = better defence = more TOs forced)
+      3. ``is_heuristic`` is set to ``False``, allowing the Markov engine to
+         use these synthetic profiles rather than the Gaussian fallback.
+
+    Convention for ``def_rating_raw`` when on the margin scale:
+      - Pass the **negated** overall AdjEM so that a positive-AdjEM team gets a
+        lower estimated AdjDE (better defence):
+            AdjDE_est ≈ 105 + (−AdjEM) × 0.45 = 105 − AdjEM × 0.45
+      - Pass the raw AdjDE directly when on the absolute (~90-130) scale.
+
+    Args:
+        off_rating_raw: Offensive efficiency or margin from any ratings source.
+        def_rating_raw: Negated AdjEM margin, or raw AdjDE.  When not supplied,
+                        defensive four-factor baselines default to D1 averages
+                        and ``is_heuristic`` remains ``True``.
+
+    Returns:
+        Style dict compatible with ``betting_model.analyze_game()`` or ``None``
+        if ``off_rating_raw`` is ``None`` (no data available at all).
+    """
+    if off_rating_raw is None:
+        return None
+
+    # Detect scale: absolute efficiencies are > 50; margins are typically ≤ 45
+    if abs(off_rating_raw) < 50:
+        # Margin scale (KenPom AdjEM, EvanMiya BPR) → convert to estimated AdjO
+        adj_o = _D1_AVG_ADJ_O + off_rating_raw * 0.55
+    else:
+        adj_o = off_rating_raw  # Already on absolute-efficiency scale
+
+    # Scale eFG% from offensive efficiency; clamp to realistic CBB range
+    estimated_efg = _D1_AVG_EFG * (adj_o / _D1_AVG_ADJ_O)
+    estimated_efg = max(0.400, min(0.650, estimated_efg))
+
+    # Defensive four-factor estimates.
+    # When def_rating_raw is provided we can compute AdjDE-scaled values:
+    #   def_efg_pct = 0.505 × (AdjDE / 105.0)   — lower AdjDE → lower eFG% allowed
+    #   def_to_pct  = 0.175 × (105.0 / AdjDE)   — lower AdjDE → higher TOs forced
+    # Both are clamped to physically plausible CBB ranges.
+    has_def_data = def_rating_raw is not None
+    if has_def_data:
+        if abs(def_rating_raw) < 50:  # type: ignore[arg-type]
+            # Margin scale (negated AdjEM is passed by callers):
+            #   adj_d = 105 + (−AdjEM) × 0.45 = 105 − AdjEM × 0.45
+            adj_d = _D1_AVG_ADJ_DE + def_rating_raw * 0.45  # type: ignore[operator]
+        else:
+            adj_d = def_rating_raw  # Already on absolute AdjDE scale (~90-130)
+        # Guard against degenerate adj_d values (e.g. ±∞ from bad inputs)
+        adj_d = max(75.0, min(130.0, adj_d))
+
+        def_efg = _D1_AVG_EFG * (adj_d / _D1_AVG_ADJ_DE)
+        def_efg = max(0.390, min(0.620, def_efg))
+
+        def_to = _D1_AVG_TO_PCT * (_D1_AVG_ADJ_DE / adj_d)
+        def_to = max(0.120, min(0.260, def_to))
+    else:
+        # No defensive data — fall back to D1 averages and keep the heuristic
+        # flag so the Markov guard can choose to use the Gaussian path.
+        def_efg = _D1_AVG_EFG
+        def_to  = _D1_AVG_TO_PCT
+
+    return {
+        "pace":        _D1_AVG_PACE,           # Tempo unknown without granular data
+        "efg_pct":     round(estimated_efg, 4),
+        "to_pct":      _D1_AVG_TO_PCT,         # Offensive TO: no per-team data
+        "ft_rate":     _D1_AVG_FT_RATE,
+        "three_par":   _D1_AVG_THREE,
+        "def_efg_pct": round(def_efg, 4),
+        "def_to_pct":  round(def_to, 4),
+        # is_heuristic=False unlocks the Markov engine; True keeps Gaussian fallback.
+        "is_heuristic": not has_def_data,
+    }
+
 
 def get_or_create_game(db: Session, game_data: Dict) -> Game:
     """Return existing Game row or create a new one (idempotent)."""
@@ -249,14 +356,23 @@ def _apply_simultaneous_kelly(
     return pending_bets
 
 
-def _create_paper_bet(db: Session, game: Game, prediction: Prediction, daily_exposure: float = 0.0) -> BetLog:
+def _create_paper_bet(db: Session, game: Game, prediction: Prediction, daily_exposure: float = 0.0) -> tuple[BetLog, float]:
     """
     Auto-create a paper-trade BetLog from a Bet verdict.
 
     Called immediately after the Prediction row is flushed so prediction.id
     is available as a foreign key.
 
-    daily_exposure: dollars already committed today (for daily cap enforcement).
+    Args:
+        db: Database session
+        game: Game object
+        prediction: Prediction object
+        daily_exposure: dollars already committed today (for daily cap enforcement)
+
+    Returns:
+        (BetLog, net_exposure_change) where net_exposure_change is the
+        actual change in deployed capital, accounting for any EV displacement.
+        If displacement occurred, net_change = new_bet_size - displaced_capital.
     """
     starting_bankroll = float(os.getenv("STARTING_BANKROLL", "1000"))
     recommended_units = prediction.recommended_units or 0.0
@@ -275,6 +391,7 @@ def _create_paper_bet(db: Session, game: Game, prediction: Prediction, daily_exp
     remaining_capacity = max(0.0, max_daily_dollars - daily_exposure)
 
     ev_displacement_applied = False
+    displaced_capital = 0.0  # Track freed capital from displacement
     if bet_dollars > remaining_capacity and remaining_capacity < bet_dollars * 0.5:
         # Capacity is tight — check for EV displacement opportunity
         new_edge = prediction.edge_conservative or 0.0
@@ -292,22 +409,59 @@ def _create_paper_bet(db: Session, game: Game, prediction: Prediction, daily_exp
             lowest_ev_bet = pending_bets[0]
             lowest_edge = lowest_ev_bet.conservative_edge or 0.0
 
-            # Displacement threshold: new bet must have >= 1.5% higher edge
-            if new_edge >= (lowest_edge + 0.015):
+            # Volatility-scaled displacement threshold
+            # Higher-variance games require a larger edge bump to justify
+            # displacing an existing bet.  This prevents frequent displacement
+            # churn in high-SD environments where edge estimates are noisier.
+            #
+            # Heuristic: threshold_bump = 0.001 * adjusted_sd
+            # Example: SD=15.0 → 1.5% bump required, SD=10.0 → 1.0% bump
+            game_sd = prediction.adjusted_sd or 11.0
+            threshold_bump = 0.001 * game_sd
+
+            # Floor the threshold at 0.5% (for very low-variance games)
+            # and cap at 2.5% (for extreme high-variance games)
+            threshold_bump = max(0.005, min(threshold_bump, 0.025))
+
+            logger.debug(
+                "EV displacement threshold: %.3f (SD=%.2f, base=%.3f)",
+                threshold_bump, game_sd, 0.001 * game_sd,
+            )
+
+            # Displacement condition: new edge must exceed lowest edge + threshold
+            if new_edge >= (lowest_edge + threshold_bump):
                 ev_displacement_applied = True
-                # Flag the inferior bet
+
+                # CRITICAL FIX: Cancel the displaced bet and free its capital
+                # This prevents the bankroll leak where both the displaced bet
+                # AND the new bet would be "pending" simultaneously, violating
+                # the daily exposure limit.
+                #
+                # UPDATE: We now track displaced_capital and return it to the
+                # caller so the outer exposure accumulator stays synchronized
+                # with the database state.
+                displaced_capital = lowest_ev_bet.bet_size_dollars or 0.0
+
+                # Cancel the displaced bet
+                lowest_ev_bet.outcome = -1  # -1 = Cancelled/Push
+                lowest_ev_bet.profit_loss_dollars = 0.0
+                lowest_ev_bet.profit_loss_units = 0.0
+
+                # Update notes to reflect cancellation
                 old_notes = lowest_ev_bet.notes or ""
                 lowest_ev_bet.notes = (
-                    f"{old_notes} | WARNING: EV Displacement - Hedge Recommended "
-                    f"(displaced by {new_edge:.3f} > {lowest_edge:.3f})"
+                    f"{old_notes} | CANCELLED via EV Displacement "
+                    f"(displaced by new bet: edge={new_edge:.3f} > {lowest_edge:.3f})"
                 )
+
+                # Free the cancelled bet's capital so the new bet can use it
+                remaining_capacity += displaced_capital
+
                 logger.warning(
                     "EV Displacement: New bet edge=%.3f displaces %s (edge=%.3f). "
-                    "Temporary overcap allowed.",
-                    new_edge, lowest_ev_bet.pick, lowest_edge,
+                    "Cancelled bet freed %.2f capacity.",
+                    new_edge, lowest_ev_bet.pick, lowest_edge, displaced_capital,
                 )
-                # Allow the new bet at full size (temporary overcap)
-                # bet_dollars unchanged
 
     if not ev_displacement_applied and bet_dollars > remaining_capacity:
         # Standard cap enforcement — scale down
@@ -363,7 +517,12 @@ def _create_paper_bet(db: Session, game: Game, prediction: Prediction, daily_exp
         notes=f"Auto paper trade — nightly analysis {prediction.model_version}",
     )
     db.add(bet)
-    return bet
+
+    # Return net exposure change: new bet size minus any displaced capital.
+    # If no displacement occurred, this equals bet_dollars.
+    # If displacement occurred, this equals the incremental increase in exposure.
+    net_exposure_change = bet_dollars - displaced_capital
+    return bet, net_exposure_change
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +661,16 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
             except Exception as exc:
                 logger.warning("Could not load team profiles: %s", exc)
 
+        # Persist profiles to the DB so CLV / performance pages have real data.
+        # Always refresh on each nightly run (not guarded by has_profiles) so
+        # that a stale in-memory cache from a previous run doesn't prevent a
+        # DB update when BartTorvik publishes fresher data.
+        try:
+            saved = ratings_service.save_team_profiles(db)
+            logger.info("Persisted %d TeamProfile rows to DB", saved)
+        except Exception as exc:
+            logger.warning("save_team_profiles failed (non-fatal): %s", exc)
+
         # ----------------------------------------------------------------
         # STEP 4: Analyse each game and persist predictions
         #
@@ -510,6 +679,11 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
         # adjustments are applied AFTER the full slate is known.
         # ----------------------------------------------------------------
         logger.info("Analysing %d games...", len(odds_games))
+
+        # Pre-compute valid team names from the profile cache once so that
+        # normalize_team_name can fuzzy-match raw Odds API names against
+        # the BartTorvik vocabulary on every game without re-building the list.
+        profile_valid_teams: List[str] = profile_cache.teams()
 
         # Collect bet candidates for simultaneous Kelly post-processing
         bet_candidates: List[Dict] = []
@@ -531,6 +705,7 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                         dynamic_base_sd = None
 
                     # ---- Build model inputs ------------------------------
+                    _meta = all_ratings.get("_meta", {})
                     ratings_input = {
                         "kenpom": {
                             "home": ratings_service.get_team_rating(
@@ -556,6 +731,10 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                                 away_team, all_ratings.get("evanmiya", {})
                             ),
                         },
+                        # Propagate auto-drop flag so the model can suppress
+                        # the missing-evanmiya SD penalty when it was
+                        # dropped due to Cloudflare blocking, not bad data.
+                        "_meta": _meta,
                     }
 
                     odds_input = {
@@ -575,24 +754,131 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                     }
 
                     # ---- Injuries + team profiles --------------------------
+                    # Normalize raw Odds API names to the profile-cache vocabulary
+                    # (BartTorvik names) before querying.  Without this step,
+                    # profile_cache.get() always returns None for Odds API teams
+                    # because the key space differs (e.g. "Saint Mary's" vs
+                    # "Saint Mary's (CA)").  Falls back to the raw name if no
+                    # match is found so existing code paths are unaffected.
+                    norm_home = (
+                        normalize_team_name(home_team, profile_valid_teams) or home_team
+                    )
+                    norm_away = (
+                        normalize_team_name(away_team, profile_valid_teams) or away_team
+                    )
+                    if norm_home != home_team or norm_away != away_team:
+                        logger.debug(
+                            "Team normalization: '%s'→'%s', '%s'→'%s'",
+                            home_team, norm_home, away_team, norm_away,
+                        )
+
                     try:
-                        game_injuries = injury_service.get_game_injuries(home_team, away_team)
+                        game_injuries = injury_service.get_game_injuries(norm_home, norm_away)
                     except Exception as exc:
                         logger.warning("Injury lookup failed for %s @ %s: %s", away_team, home_team, exc)
                         game_injuries = None
 
-                    home_profile = profile_cache.get(home_team)
-                    away_profile = profile_cache.get(away_team)
-                    home_style = (
-                        {"pace": home_profile.pace, "three_par": home_profile.three_par,
-                         "ft_rate": home_profile.ft_rate, "to_pct": home_profile.to_pct}
-                        if home_profile else None
-                    )
-                    away_style = (
-                        {"pace": away_profile.pace, "three_par": away_profile.three_par,
-                         "ft_rate": away_profile.ft_rate, "to_pct": away_profile.to_pct}
-                        if away_profile else None
-                    )
+                    home_profile = profile_cache.get(norm_home)
+                    away_profile = profile_cache.get(norm_away)
+
+                    # Build style dicts from the BartTorvik Four-Factors cache
+                    # (most accurate path).  If the cache misses — because the
+                    # BartTorvik scrape failed, the team name didn't normalize,
+                    # or the season data isn't loaded yet — fall back to a
+                    # heuristic estimate from top-line efficiency ratings so the
+                    # Markov engine can ALWAYS run when we have any rating data.
+                    if home_profile:
+                        # Safe fallbacks guard against 0-valued BartTorvik rows.
+                        # efg_pct is computed from component shooting rates because
+                        # TeamPlayStyle does not store it as a direct attribute.
+                        _h3par = home_profile.three_par or 0.36
+                        _hefg = (
+                            (home_profile.rim_rate or 0.30) * (home_profile.rim_fg_pct or 0.62)
+                            + (home_profile.mid_range_rate or 0.15) * (home_profile.mid_fg_pct or 0.38)
+                            + 1.5 * _h3par * (home_profile.three_fg_pct or 0.34)
+                        )
+                        home_style = {
+                            "pace":        (home_profile.pace or 68.0),
+                            "three_par":   _h3par,
+                            "ft_rate":     (home_profile.ft_rate or 0.32),
+                            "to_pct":      (home_profile.to_pct or 0.175),
+                            "efg_pct":     round(max(0.40, min(0.65, _hefg)), 4),
+                            # Defensive metrics: BartTorvik profiles may carry these
+                            # as extended attributes.  Fall back to D1 averages so
+                            # the Markov engine always gets a valid input rather than
+                            # silently applying the simulator's own hardcoded default.
+                            "def_efg_pct": getattr(home_profile, "def_efg_pct", None) or 0.505,
+                            "def_to_pct":  getattr(home_profile, "def_to_pct", None) or 0.175,
+                            "is_heuristic": False,  # Real profile — unlock Markov engine
+                        }
+                        logger.debug(
+                            "Profile style for %s: efg=%.3f, pace=%.1f",
+                            home_team, home_style["efg_pct"], home_style["pace"],
+                        )
+                    else:
+                        _home_em: Optional[float] = (
+                            ratings_input.get("barttorvik", {}).get("home")
+                            or ratings_input.get("kenpom", {}).get("home")
+                        )
+                        home_style = _heuristic_style_from_rating(
+                            off_rating_raw=_home_em,
+                            # Negate AdjEM so the function derives AdjDE:
+                            #   AdjDE ≈ 105 − AdjEM × 0.45  (better team → lower AdjDE)
+                            def_rating_raw=-_home_em if _home_em is not None else None,
+                        )
+                        if home_style:
+                            logger.debug(
+                                "Synthetic style for %s: efg=%.3f def_efg=%.3f "
+                                "def_to=%.3f is_heuristic=%s (cache miss)",
+                                home_team,
+                                home_style["efg_pct"],
+                                home_style["def_efg_pct"],
+                                home_style["def_to_pct"],
+                                home_style["is_heuristic"],
+                            )
+
+                    if away_profile:
+                        _a3par = away_profile.three_par or 0.36
+                        _aefg = (
+                            (away_profile.rim_rate or 0.30) * (away_profile.rim_fg_pct or 0.62)
+                            + (away_profile.mid_range_rate or 0.15) * (away_profile.mid_fg_pct or 0.38)
+                            + 1.5 * _a3par * (away_profile.three_fg_pct or 0.34)
+                        )
+                        away_style = {
+                            "pace":        (away_profile.pace or 68.0),
+                            "three_par":   _a3par,
+                            "ft_rate":     (away_profile.ft_rate or 0.32),
+                            "to_pct":      (away_profile.to_pct or 0.175),
+                            "efg_pct":     round(max(0.40, min(0.65, _aefg)), 4),
+                            "def_efg_pct": getattr(away_profile, "def_efg_pct", None) or 0.505,
+                            "def_to_pct":  getattr(away_profile, "def_to_pct", None) or 0.175,
+                            "is_heuristic": False,  # Real profile — unlock Markov engine
+                        }
+                        logger.debug(
+                            "Profile style for %s: efg=%.3f, pace=%.1f",
+                            away_team, away_style["efg_pct"], away_style["pace"],
+                        )
+                    else:
+                        _away_em: Optional[float] = (
+                            ratings_input.get("barttorvik", {}).get("away")
+                            or ratings_input.get("kenpom", {}).get("away")
+                        )
+                        away_style = _heuristic_style_from_rating(
+                            off_rating_raw=_away_em,
+                            # Negate AdjEM so the function derives AdjDE:
+                            #   AdjDE ≈ 105 − AdjEM × 0.45  (better team → lower AdjDE)
+                            def_rating_raw=-_away_em if _away_em is not None else None,
+                        )
+                        if away_style:
+                            logger.debug(
+                                "Synthetic style for %s: efg=%.3f def_efg=%.3f "
+                                "def_to=%.3f is_heuristic=%s (cache miss)",
+                                away_team,
+                                away_style["efg_pct"],
+                                away_style["def_efg_pct"],
+                                away_style["def_to_pct"],
+                                away_style["is_heuristic"],
+                            )
 
                     # ---- Matchup engine analysis -------------------------
                     matchup_margin_adj = 0.0
@@ -614,6 +900,41 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                                 away_team, home_team, exc,
                             )
 
+                    # ---- Compute hours to tipoff (used for dynamic Kelly/SD) --
+                    hours_to_tipoff: Optional[float] = None
+                    _commence_raw = game_data.get("commence_time")
+                    if _commence_raw:
+                        try:
+                            _game_time = datetime.fromisoformat(
+                                _commence_raw.replace("Z", "+00:00")
+                            )
+                            # Guard: fromisoformat can return a naive datetime when
+                            # the string has no offset (rare but possible if the Odds
+                            # API omits the trailing Z).  Subtraction against the
+                            # timezone-aware datetime.now(timezone.utc) would raise
+                            # a TypeError, so explicitly localise to UTC first.
+                            if _game_time.tzinfo is None:
+                                _game_time = _game_time.replace(tzinfo=timezone.utc)
+                            _delta = _game_time - datetime.now(timezone.utc)
+                            hours_to_tipoff = _delta.total_seconds() / 3600.0
+                        except (ValueError, TypeError) as _exc:
+                            logger.debug(
+                                "Could not parse commence_time '%s': %s",
+                                _commence_raw, _exc,
+                            )
+
+                    # ---- Live-game guard ------------------------------------
+                    # Skip games that have already tipped off.  A negative
+                    # hours_to_tipoff means the scheduled start has passed;
+                    # -0.1 gives a 6-minute grace window for late tip-offs.
+                    if hours_to_tipoff is not None and hours_to_tipoff < -0.1:
+                        logger.debug(
+                            "Skipping %s @ %s — game already started "
+                            "(%.1fh past tipoff).",
+                            away_team, home_team, abs(hours_to_tipoff),
+                        )
+                        continue
+
                     # ---- Run model with dynamic SD -----------------------
                     analysis = model.analyze_game(
                         game_data=game_input,
@@ -625,6 +946,7 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                         home_style=home_style,
                         away_style=away_style,
                         matchup_margin_adj=matchup_margin_adj,
+                        hours_to_tipoff=hours_to_tipoff,
                     )
 
                     # ---- Persist Game (idempotent) -----------------------
@@ -720,6 +1042,7 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                             "conference": game_data.get("conference"),
                             "spread": odds_input.get("spread", 0) or 0,
                             "bet_side": calcs.get("bet_side", "home"),
+                            "bet_odds": calcs.get("bet_odds"),
                             "recommended_units": analysis.recommended_units,
                             "kelly_fractional": analysis.kelly_fractional,
                             "edge_conservative": analysis.edge_conservative,
@@ -760,6 +1083,43 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                 if slate_reason:
                     prediction.notes = f"Slate adj: {slate_reason}"
 
+                # Sync verdict string with post-Kelly unit adjustments.
+                # _apply_simultaneous_kelly may reduce or zero recommended_units
+                # without touching the verdict string, creating a "phantom bet"
+                # where the label says "Bet 1.50u @ -110" but the units are 0.5
+                # or 0.  We reconstruct the verdict here from the adjusted units
+                # so the dashboard filter (verdict.startswith("Bet")), paper-bet
+                # size, and the displayed text are always in sync.
+                bet_odds = candidate.get("bet_odds")
+                if adjusted_units == 0.0 and (prediction.verdict or "").startswith("Bet"):
+                    prediction.verdict = "PASS - Slate Cap Reached"
+                    prediction.pass_reason = f"Simultaneous Kelly: {slate_reason}"
+                    logger.debug(
+                        "Ghost-bet prevention: %s @ %s verdict → PASS (units zeroed by slate cap)",
+                        candidate.get("away_team", "?"), candidate.get("home_team", "?"),
+                    )
+                elif (
+                    adjusted_units > 0.0
+                    and (prediction.verdict or "").startswith("Bet")
+                    and bet_odds is not None
+                ):
+                    # Units were reduced (partial fill) — rebuild the verdict
+                    # label so the displayed size matches the actual exposure.
+                    if adjusted_units < 0.25:
+                        adjusted_units = 0.25
+                        prediction.recommended_units = adjusted_units
+                        candidate["recommended_units"] = adjusted_units
+                    prediction.verdict = (
+                        f"Bet {adjusted_units:.2f}u @ {bet_odds:+.0f}"
+                    )
+                    logger.debug(
+                        "Verdict resync: %s @ %s → %s (slate adj: %s)",
+                        candidate.get("away_team", "?"),
+                        candidate.get("home_team", "?"),
+                        prediction.verdict,
+                        slate_reason or "none",
+                    )
+
                 # BetLog guard: only create paper trades when flipping
                 # from PASS (or first analysis) to Bet.  If old_verdict
                 # was already a Bet, we updated the Prediction in-place
@@ -772,10 +1132,13 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                     )
                     continue
 
-                paper_bet = _create_paper_bet(
+                # Unpack bet and net exposure change (accounts for displacement)
+                paper_bet, net_change = _create_paper_bet(
                     db, game, prediction, daily_exposure=current_exposure,
                 )
-                current_exposure += paper_bet.bet_size_dollars or 0
+                # Use net_change instead of bet_size_dollars to correctly track
+                # exposure when EV displacement has occurred
+                current_exposure += net_change
                 paper_trades_created += 1
                 logger.info(
                     "BET: %s @ %s — %.2fu%s (paper: %s)",
@@ -785,6 +1148,69 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                     f" [{slate_reason}]" if slate_reason else "",
                     paper_bet.pick,
                 )
+
+        # ----------------------------------------------------------------
+        # STEP 4c: Cross-game parlay recommendations
+        # Build a parlay slate from qualifying straight bets (units > 0),
+        # then enforce the remaining portfolio capacity so parlay sizing
+        # never overflows what straight bets have already consumed.
+        # ----------------------------------------------------------------
+        parlay_slate = []
+        for candidate in bet_candidates:
+            if candidate["recommended_units"] <= 0:
+                continue  # Zeroed by slate cap — skip for parlays too
+            game = candidate["game"]
+            calcs = candidate["analysis"].full_analysis.get("calculations", {})
+            bet_side = candidate["bet_side"]
+            spread = candidate["spread"]
+            home_team = candidate["home_team"]
+            away_team = candidate["away_team"]
+
+            # Build human-readable pick string (e.g. "Duke -4.5", "UNC +3.5")
+            if bet_side == "away":
+                away_spread = -spread
+                sign = "+" if away_spread > 0 else ""
+                pick = f"{away_team} {sign}{away_spread:.1f}"
+            else:
+                sign = "+" if spread > 0 else ""
+                pick = f"{home_team} {sign}{spread:.1f}"
+
+            parlay_slate.append({
+                "game_id": game.id,
+                "pick": pick,
+                "edge_conservative": candidate["edge_conservative"],
+                "full_analysis": {
+                    "calculations": {
+                        "bet_odds": calcs.get("bet_odds", -110),
+                        "market_prob": calcs.get("market_prob", 0.5),
+                        "edge_conservative": calcs.get("edge_conservative", 0.0),
+                    }
+                },
+            })
+
+        if len(parlay_slate) >= 2:
+            _starting_bankroll = float(os.getenv("STARTING_BANKROLL", "1000"))
+            _max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "5.0"))
+            _max_daily_dollars = _starting_bankroll * _max_daily_pct / 100.0
+            _remaining_capacity = max(0.0, _max_daily_dollars - current_exposure)
+
+            recommended_parlays = build_optimal_parlays(
+                parlay_slate,
+                max_legs=3,
+                max_parlays=5,
+                remaining_capacity_dollars=_remaining_capacity,
+                bankroll=_starting_bankroll,
+            )
+
+            if recommended_parlays:
+                logger.info(
+                    "=== PARLAY RECOMMENDATIONS (%d tickets, $%.2f remaining capacity) ===",
+                    len(recommended_parlays), _remaining_capacity,
+                )
+                for parlay in recommended_parlays:
+                    logger.info(format_parlay_ticket(parlay))
+            else:
+                logger.info("No parlay opportunities met the edge threshold today.")
 
         # ----------------------------------------------------------------
         # STEP 5: Single bulk commit for all successful games

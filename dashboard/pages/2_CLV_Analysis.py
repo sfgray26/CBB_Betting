@@ -3,6 +3,7 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -112,3 +113,68 @@ if bot_10:
         df_bot["outcome"] = df_bot["outcome"].map({1: "Win", 0: "Loss"})
         st.dataframe(df_bot[["bet_id", "pick", "game_date", "clv_prob", "outcome"]],
                      hide_index=True, use_container_width=True)
+
+st.markdown("---")
+
+# --- CLV vs. Realization Scatter Plot ---
+scatter_data = clv.get("scatter_data", [])
+if scatter_data and len(scatter_data) > 0:
+    st.subheader("CLV vs. Realized Profit")
+    st.caption(
+        "This plot shows the relationship between Closing Line Value (CLV) and actual profit/loss. "
+        "A positive correlation indicates that CLV is predictive of profitability."
+    )
+
+    df_scatter = pd.DataFrame(scatter_data)
+
+    # Create scatter plot with trendline (try with OLS, fall back to no trendline if statsmodels not available)
+    try:
+        fig_scatter = px.scatter(
+            df_scatter,
+            x="clv_prob",
+            y="profit_loss_units",
+            color="outcome",
+            color_discrete_map={"Win": "#2ca02c", "Loss": "#d62728"},
+            hover_data=["pick"],
+            trendline="ols",
+            labels={
+                "clv_prob": "CLV (Probability Edge)",
+                "profit_loss_units": "Profit/Loss (Units)",
+                "outcome": "Result",
+            },
+        )
+    except Exception as e:
+        # Fallback without trendline if statsmodels not installed
+        st.warning("Trendline unavailable (install statsmodels for OLS regression line)")
+        fig_scatter = px.scatter(
+            df_scatter,
+            x="clv_prob",
+            y="profit_loss_units",
+            color="outcome",
+            color_discrete_map={"Win": "#2ca02c", "Loss": "#d62728"},
+            hover_data=["pick"],
+            labels={
+                "clv_prob": "CLV (Probability Edge)",
+                "profit_loss_units": "Profit/Loss (Units)",
+                "outcome": "Result",
+            },
+        )
+
+    # Add quadrant lines
+    fig_scatter.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+    fig_scatter.add_vline(x=0, line_dash="dash", line_color="gray", opacity=0.5)
+
+    fig_scatter.update_layout(
+        height=450,
+        xaxis_tickformat=".1%",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+
+    st.plotly_chart(fig_scatter, use_container_width=True)
+
+    # Calculate correlation
+    if len(df_scatter) > 1:
+        corr = np.corrcoef(df_scatter["clv_prob"], df_scatter["profit_loss_units"])[0, 1]
+        st.caption(f"📊 Correlation: **{corr:.3f}** (1.0 = perfect positive, -1.0 = perfect negative, 0.0 = no correlation)")
+else:
+    st.info("Scatter plot requires settled bets with both CLV and P&L data.")

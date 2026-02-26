@@ -95,11 +95,12 @@ class CBBEdgeModel:
         adjusted_sd: float,
         n_samples: int = 10000,
         spread: float = 0.0,
+        margin_se: float = 0.85,
     ) -> Tuple[float, float, float]:
         """
         Two-layer Monte Carlo for probability with confidence interval.
 
-        Layer 1: Parameter uncertainty in margin estimate (±10%)
+        Layer 1: Parameter uncertainty in margin estimate (margin_se)
         Layer 2: Outcome variance around realized margin
 
         Args:
@@ -110,15 +111,19 @@ class CBBEdgeModel:
                               favourite).  When spread=0 (default), returns
                               P(home wins).  When spread is non-zero, returns
                               P(home covers the spread).
+            margin_se:        Standard error of the margin estimate (Layer 1).
+                              Default 0.85 — 1.96 * 0.85 ≈ 1.66 pts, yielding a
+                              ~4–5% EV haircut on the conservative lower bound
+                              (norm.pdf(0) * 1.96 * 0.85 / 11 ≈ 5.5%).
+                              Previous value of 2.0 stripped ~13%, destroying
+                              valid edges on well-priced markets.
 
         Returns: (point_estimate, lower_95_ci, upper_95_ci)
         """
         # Layer 1: Uncertainty in our margin projection itself.
-        # The SE is roughly constant — a multi-source ratings composite has
-        # similar prediction uncertainty whether the margin is 2 or 20.
-        # Using abs(margin)*0.10 would create false confidence on blowouts
-        # (exactly where the model has the least edge).
-        margin_se = 2.0  # ~2 pts parameter uncertainty, constant across all games
+        # margin_se is a caller-supplied parameter (default 0.85).
+        # A multi-source ratings composite has similar prediction uncertainty
+        # whether the margin is 2 or 20 pts, so a constant SE is appropriate.
 
         margin_samples = self.rng.normal(
             projected_margin,
@@ -344,22 +349,160 @@ class CBBEdgeModel:
     ) -> float:
         """
         Kelly Criterion for binary outcome
-        
+
         Formula: f = (p * d - 1) / (d - 1)
         where p = win probability, d = decimal odds
-        
+
         Returns: fraction of bankroll (0 if no edge, capped at max_kelly)
         """
         # Edge case handling
         if decimal_odds <= 1.0 or prob <= 0 or prob >= 1:
             return 0.0
-        
+
         # Standard Kelly
         f = (prob * decimal_odds - 1) / (decimal_odds - 1)
-        
+
         # Cap at maximum (disaster prevention)
         f = max(0.0, min(f, self.max_kelly))
-        
+
+        return f
+
+    def _portfolio_kelly_divisor(
+        self,
+        concurrent_exposure: float = 0.0,
+        target_exposure: float = 0.15,
+    ) -> float:
+        """
+        Compute the effective Kelly divisor that accounts for bankroll
+        already deployed in concurrent, overlapping time-slot bets.
+
+        Motivation
+        ----------
+        The standard fractional Kelly (divide full-Kelly by a fixed scalar)
+        assumes each bet is placed in isolation.  When multiple bets overlap
+        in time (e.g. three games tip off within the same 2-hour window),
+        the total variance of the portfolio grows and the per-bet sizing
+        should shrink proportionally — this is the core insight of
+        multi-asset portfolio Kelly.
+
+        Approximation used
+        ------------------
+        A closed-form portfolio Kelly requires solving a quadratic for every
+        bet pair (expensive for 5+ concurrent bets).  Instead we use a
+        continuous divisor that:
+
+        1. Equals ``self.fractional_kelly_divisor`` (the base half-Kelly) when
+           no bankroll is deployed (concurrent_exposure = 0).
+        2. Grows linearly as ``concurrent_exposure`` fills toward
+           ``target_exposure``, doubling the divisor at full utilisation.
+        3. Continues growing (divisor > 2×base) when exposure exceeds the
+           target, providing a soft guardrail against over-commitment.
+
+        Formula::
+
+            scale  = 1 + concurrent_exposure / max(target_exposure, 1e-6)
+            divisor = self.fractional_kelly_divisor × scale
+
+        Examples (base divisor = 2.0, target_exposure = 15%):
+            concurrent = 0 %  → divisor = 2.0  (half-Kelly baseline)
+            concurrent = 7.5% → divisor = 3.0  (¾ utilisation → 1.5× base)
+            concurrent = 15%  → divisor = 4.0  (full utilisation → 2× base)
+            concurrent = 22%  → divisor = 4.93 (over-deployed → further cut)
+
+        Args:
+            concurrent_exposure: Fraction of bankroll currently deployed in
+                                 open, overlapping bets (e.g. 0.10 = 10%).
+            target_exposure:     Soft ceiling for total concurrent exposure
+                                 (default 0.15 = 15%).  Should match the
+                                 ``MAX_TOTAL_EXPOSURE`` in portfolio.py.
+
+        Returns:
+            Effective Kelly divisor ≥ self.fractional_kelly_divisor.
+        """
+        exposure = max(0.0, concurrent_exposure)
+        denom = max(target_exposure, 1e-6)
+        scale = 1.0 + exposure / denom
+        return self.fractional_kelly_divisor * scale
+
+    def _edge_breaker_threshold(self, hours_to_tipoff: Optional[float]) -> float:
+        """
+        Dynamic alpha circuit-breaker threshold that tightens as tipoff approaches.
+
+        Rationale
+        ---------
+        Far from tipoff (24 h) the market is thinner and model edges can
+        legitimately be larger — sharp money hasn't fully settled the line.
+        Within 2 hours of tip, Pinnacle and Circa have absorbed almost all
+        available information.  Any edge that appears above ~6% at that point
+        is almost certainly a data artefact (stale rating, incorrect team
+        mapping, unreported injury) rather than a genuine opportunity.
+
+        Decay curve
+        -----------
+        Linear interpolation between the two anchor points:
+
+            At ≥ 24 h : threshold = 12%  (market is thin, model leads)
+            At ≤  2 h : threshold =  6%  (market is fully informed)
+            Between   : threshold = 6% + (h − 2) / 22 × 6%
+
+        The linear decay is deliberate: it produces a predictable, auditable
+        policy that traders can reason about without curve-fitting a sigmoid.
+
+        Args:
+            hours_to_tipoff: Hours until game start.  None defaults to the
+                             24-hour (maximum) threshold.
+
+        Returns:
+            Threshold in [0.06, 0.12] as a probability (not percentage).
+        """
+        h = max(0.0, hours_to_tipoff if hours_to_tipoff is not None else 24.0)
+        if h >= 24.0:
+            return 0.12
+        if h <= 2.0:
+            return 0.06
+        # Linear interpolation: 0.0 → 6% at 2 h, 1.0 → 12% at 24 h
+        frac = (h - 2.0) / 22.0
+        return 0.06 + frac * 0.06
+
+    def kelly_fraction_with_push(
+        self,
+        p_win: float,
+        p_loss: float,
+        decimal_odds: float
+    ) -> float:
+        """
+        Kelly Criterion with explicit push handling.
+
+        Because the Markov simulator generates discrete integer scores,
+        exact ties (pushes) can occur for integer spreads.  On a push,
+        the bettor gets their stake back with zero profit/loss.
+
+        Formula: f = (p_win * (b - 1) - p_loss) / (b - 1)
+        where b = decimal_odds - 1 (net profit per dollar risked)
+
+        This reduces to the standard Kelly when p_push = 0:
+            f = (p_win * b - p_loss) / b
+
+        Args:
+            p_win: Probability of winning the bet
+            p_loss: Probability of losing the bet
+            decimal_odds: Decimal odds (e.g., 1.909 for -110)
+
+        Returns:
+            Optimal Kelly fraction (0 if no edge, capped at max_kelly)
+        """
+        b = decimal_odds - 1.0  # Net profit per dollar risked
+
+        # Edge case handling
+        if b <= 0 or p_win <= 0 or p_win + p_loss > 1.0:
+            return 0.0
+
+        # Kelly with push handling
+        f = (p_win * b - p_loss) / b
+
+        # Cap at maximum (disaster prevention)
+        f = max(0.0, min(f, self.max_kelly))
+
         return f
     
     def adjusted_sd(
@@ -462,6 +605,8 @@ class CBBEdgeModel:
         market_volatility: Optional[float] = None,
         hours_to_tipoff: Optional[float] = None,
         matchup_margin_adj: float = 0.0,
+        concurrent_exposure: float = 0.0,
+        target_exposure: float = 0.15,
     ) -> GameAnalysis:
         """
         Complete game analysis using Version 8 framework.
@@ -484,6 +629,15 @@ class CBBEdgeModel:
                                reflecting second-order play-style interactions
                                (pace mismatch, 3PA vs drop, transition gap, etc.).
                                Applied BEFORE the market blend.
+            concurrent_exposure: Fraction of bankroll already deployed in
+                               open bets whose windows overlap with this game
+                               (e.g. 0.10 = 10%).  Used by
+                               _portfolio_kelly_divisor() to scale the Kelly
+                               divisor dynamically — see that method for the
+                               full derivation.  Defaults to 0.0 (no overlap).
+            target_exposure:   Soft ceiling for total concurrent exposure
+                               passed through to _portfolio_kelly_divisor().
+                               Should match portfolio.py MAX_TOTAL_EXPOSURE.
 
         Returns: GameAnalysis dataclass with full verdict
         """
@@ -572,17 +726,28 @@ class CBBEdgeModel:
         # KenPom is required (already checked above)
         available_sources.append(('kenpom', kp_home - kp_away))
 
-        if bt_home and bt_away:
+        if bt_home is not None and bt_away is not None:
             available_sources.append(('barttorvik', bt_home - bt_away))
         else:
             penalties['missing_barttorvik'] = 1.0
             notes.append("BartTorvik unavailable — weights renormalized to remaining sources")
 
-        if em_home and em_away:
+        if em_home is not None and em_away is not None:
             available_sources.append(('evanmiya', em_home - em_away))
         else:
-            penalties['missing_evanmiya'] = 0.8
-            notes.append("EvanMiya unavailable — weights re-normalized to remaining sources")
+            # EvanMiya missing → weights re-normalised to remaining sources only.
+            # No SD penalty is applied: EvanMiya is frequently unavailable due
+            # to Cloudflare blocking (a scraper issue, not a signal of elevated
+            # game uncertainty).  Adding a 0.8-pt SD penalty for its absence
+            # inflates the adjusted SD by ~5 % on every game, destroying edges
+            # on otherwise well-priced markets.
+            _evanmiya_dropped = ratings.get("_meta", {}).get("evanmiya_dropped", False)
+            notes.append(
+                "EvanMiya unavailable%s — weights re-normalized to remaining sources "
+                "(no SD penalty)" % (
+                    " [auto-dropped]" if _evanmiya_dropped else ""
+                )
+            )
 
         # Renormalize to the sum of available source weights so the projected
         # margin magnitude is consistent regardless of how many sources are live.
@@ -601,7 +766,14 @@ class CBBEdgeModel:
         # with higher true variance.  Shrink the ratings-derived margin toward
         # zero (10% per missing source, floor at 70% of the point estimate).
         n_available = len(available_sources)
-        n_total = len(self.weights)
+        # Exclude EvanMiya from the expected-source count when it returned null.
+        # EvanMiya is structurally unavailable (Cloudflare / scraper failure) on
+        # most runs — counting it as "expected but missing" would apply a 10%
+        # shrinkage penalty to every game, depressing margins for a scraper
+        # limitation rather than a genuine signal of elevated model uncertainty.
+        # BartTorvik absence (a more anomalous failure) still triggers shrinkage.
+        _em_null = (em_home is None and em_away is None)
+        n_total = len(self.weights) - (1 if _em_null else 0)
         if n_available < n_total:
             n_missing = n_total - n_available
             _SHRINKAGE_ALPHA = 0.10
@@ -648,6 +820,9 @@ class CBBEdgeModel:
         }
 
         injury_adj = 0.0
+        home_injury_impact = 0.0  # Points lost by home team (positive = worse)
+        away_injury_impact = 0.0  # Points lost by away team (positive = worse)
+
         if injuries:
             for inj in injuries:
                 tier = inj.get('impact_tier', 'bench')
@@ -661,11 +836,13 @@ class CBBEdgeModel:
                 weight = STATUS_WEIGHT.get(status, 0.5)
                 weighted_impact = raw_impact * weight
 
-                # Direction: if home player is out, home margin shrinks (negative)
+                # Track impact separately for home and away teams
                 if inj.get('team') == game_data['home_team']:
-                    injury_adj -= weighted_impact
+                    home_injury_impact += weighted_impact
+                    injury_adj -= weighted_impact  # Home worse → negative margin adj
                 else:
-                    injury_adj += weighted_impact
+                    away_injury_impact += weighted_impact
+                    injury_adj += weighted_impact  # Away worse → positive margin adj
 
                 # Track penalty for SD inflation
                 if tier in ('star', 'starter'):
@@ -695,16 +872,69 @@ class CBBEdgeModel:
         sharp_spread = odds.get('sharp_consensus_spread')
         if sharp_spread is not None:
             market_margin = -sharp_spread
+            raw_model_margin = margin  # model's independent view before blend
+
+            # ============================================================
+            # Z-SCORE DIVERGENCE GUARD
+            # ============================================================
+            # If the absolute distance between the model's margin and the
+            # sharp market margin exceeds 2.5 standard deviations of the
+            # game's expected scoring spread, the discrepancy is anomalous.
+            # It almost always signals a missing/unreported injury or
+            # suspension, a team-mapping collision, or a stale rating scrape
+            # — not a genuine edge.  Hard-PASS to avoid trading on bad data.
+            #
+            # Reference SD: _effective_base_sd is the dynamic total-derived
+            # SD (sqrt(total)*0.85) or model base_sd — the game's pre-penalty
+            # scoring variance baseline.  This is used rather than the
+            # fully-adjusted adj_sd (computed in STEP 2) because we need
+            # to gate the blend before STEP 2 runs.
+            _Z_DIVERGENCE_THRESHOLD = 2.5
+            divergence_pts = abs(raw_model_margin - market_margin)
+            divergence_z = divergence_pts / max(_effective_base_sd, 1.0)
+
+            if divergence_z > _Z_DIVERGENCE_THRESHOLD:
+                _div_reason = (
+                    f"Model margin {raw_model_margin:+.1f} vs market margin "
+                    f"{market_margin:+.1f} = {divergence_pts:.1f}pt divergence "
+                    f"({divergence_z:.2f}sigma > {_Z_DIVERGENCE_THRESHOLD}sigma limit). "
+                    "Likely missing injury/suspension or team-mapping error."
+                )
+                logger.warning(
+                    "Z-score divergence PASS [%s vs %s]: model=%.1f, market=%.1f, "
+                    "divergence=%.1fpts (%.2f sigma, threshold=%.1f sigma)",
+                    game_data.get('home_team', '?'), game_data.get('away_team', '?'),
+                    raw_model_margin, market_margin,
+                    divergence_pts, divergence_z, _Z_DIVERGENCE_THRESHOLD,
+                )
+                return GameAnalysis(
+                    verdict="PASS - Market Divergence Anomaly",
+                    pass_reason=_div_reason,
+                    projected_margin=raw_model_margin,
+                    adjusted_sd=_effective_base_sd,
+                    home_advantage=self.home_advantage,
+                    point_prob=0.5, lower_ci_prob=0.5, upper_ci_prob=0.5,
+                    edge_point=0, edge_conservative=0,
+                    kelly_full=0, kelly_fractional=0, recommended_units=0,
+                    data_freshness_tier=data_freshness.get('tier', 'Unknown') if data_freshness else 'Unknown',
+                    penalties_applied=penalties,
+                    notes=notes + [_div_reason],
+                    full_analysis={},
+                )
+
+            # ============================================================
+            # Margin blend
+            # ============================================================
             sharp_count = odds.get('sharp_books_available', 0)
             model_weight = self._dynamic_model_weight(
                 hours_to_tipoff, sharp_count, injury_adj=injury_adj,
             )
-            raw_margin = margin
-            margin = model_weight * margin + (1 - model_weight) * market_margin
+            margin = model_weight * raw_model_margin + (1 - model_weight) * market_margin
             notes.append(
-                f"Market blend: model {raw_margin:.1f} → blended {margin:.1f} "
+                f"Market blend: model {raw_model_margin:.1f} → blended {margin:.1f} "
                 f"(sharp line {sharp_spread:+.1f}, w_model={model_weight:.2f}, "
-                f"h={hours_to_tipoff}, sharp_n={sharp_count})"
+                f"h={hours_to_tipoff}, sharp_n={sharp_count}, "
+                f"divergence={divergence_z:.2f}sigma)"
             )
             logger.debug(
                 "Dynamic model weight: %.3f (hours=%.1f, sharp_n=%d)",
@@ -780,29 +1010,89 @@ class CBBEdgeModel:
         spread = odds.get('spread', 0)
         pricing_engine = "Gaussian"  # Default
         markov_cover_prob = None
+        markov_win_prob = None
+        markov_loss_prob = None
+        markov_push_prob = None
 
         # P(home wins) — always Gaussian for calibration tracking
         point_prob, lower_ci, upper_ci = self.monte_carlo_prob_ci(margin, adj_sd)
 
         # Attempt Markov pricing if profiles available
-        if home_style and away_style and spread is not None:
+        logger.info(
+            "Markov check [%s vs %s]: home_style=%s, away_style=%s, spread=%s",
+            game_data.get('home_team', '?'),
+            game_data.get('away_team', '?'),
+            "present" if home_style else "MISSING",
+            "present" if away_style else "MISSING",
+            spread,
+        )
+        if (
+            home_style
+            and away_style
+            and not home_style.get("is_heuristic")
+            and not away_style.get("is_heuristic")
+            and spread is not None
+        ):
             try:
                 from backend.services.possession_sim import (
                     PossessionSimulator, TeamSimProfile,
                 )
+
+                # Intrinsic Injury Integration
+                # =============================
+                # Translate injury point impact into stat penalties that the Markov
+                # simulator can natively model. This allows Markov to correctly
+                # simulate altered variance and push probabilities.
+                #
+                # Calibration: 1 point of injury impact ≈ -0.005 eFG% and +0.003 TO%
+                # (derived from empirical relationship between efficiency and margin)
+                #
+                # home_injury_impact > 0 means home team is worse
+                # away_injury_impact > 0 means away team is worse
+
+                EFG_PENALTY_PER_POINT = 0.005  # eFG% reduction per point of impact
+                TO_PENALTY_PER_POINT = 0.003   # TO% increase per point of impact
+
+                home_efg_base = home_style.get('efg_pct', 0.500)
+                home_to_base = home_style.get('to_pct', 0.170)
+                away_efg_base = away_style.get('efg_pct', 0.500)
+                away_to_base = away_style.get('to_pct', 0.170)
+
+                # Apply injury penalties
+                home_efg_adjusted = max(0.35, home_efg_base - home_injury_impact * EFG_PENALTY_PER_POINT)
+                home_to_adjusted = min(0.30, home_to_base + home_injury_impact * TO_PENALTY_PER_POINT)
+                away_efg_adjusted = max(0.35, away_efg_base - away_injury_impact * EFG_PENALTY_PER_POINT)
+                away_to_adjusted = min(0.30, away_to_base + away_injury_impact * TO_PENALTY_PER_POINT)
+
+                if home_injury_impact > 0.1 or away_injury_impact > 0.1:
+                    logger.debug(
+                        "Intrinsic injury applied: home_impact=%.2f (eFG %.3f→%.3f, TO %.3f→%.3f), "
+                        "away_impact=%.2f (eFG %.3f→%.3f, TO %.3f→%.3f)",
+                        home_injury_impact, home_efg_base, home_efg_adjusted,
+                        home_to_base, home_to_adjusted,
+                        away_injury_impact, away_efg_base, away_efg_adjusted,
+                        away_to_base, away_to_adjusted,
+                    )
+
                 home_sim = TeamSimProfile(
                     team=game_data.get('home_team', 'Home'),
                     pace=home_style.get('pace', 68.0),
-                    to_pct=home_style.get('to_pct', 0.17),
+                    to_pct=home_to_adjusted,
                     ft_rate=home_style.get('ft_rate', 0.30),
                     three_rate=home_style.get('three_par', 0.36),
+                    efg_pct=home_efg_adjusted,
+                    def_efg_pct=home_style.get('def_efg_pct', 0.505),
+                    def_to_pct=home_style.get('def_to_pct', 0.175),
                 )
                 away_sim = TeamSimProfile(
                     team=game_data.get('away_team', 'Away'),
                     pace=away_style.get('pace', 68.0),
-                    to_pct=away_style.get('to_pct', 0.17),
+                    to_pct=away_to_adjusted,
                     ft_rate=away_style.get('ft_rate', 0.30),
                     three_rate=away_style.get('three_par', 0.36),
+                    efg_pct=away_efg_adjusted,
+                    def_efg_pct=away_style.get('def_efg_pct', 0.505),
+                    def_to_pct=away_style.get('def_to_pct', 0.175),
                 )
                 sim = PossessionSimulator(home_advantage_pts=self.home_advantage)
                 sim_edge = sim.simulate_spread_edge(
@@ -810,23 +1100,41 @@ class CBBEdgeModel:
                     spread=spread,
                     n_sims=2000,
                     is_neutral=game_data.get('is_neutral', False),
+                    matchup_margin_adj=matchup_margin_adj,
                 )
                 # Markov succeeded — use it as primary
                 markov_cover_prob = sim_edge['cover_prob']
                 cover_prob = markov_cover_prob
                 cover_lower = sim_edge['cover_lower']
                 cover_upper = sim_edge['cover_upper']
+
+                # Extract win/loss/push breakdown for proper Kelly calculation
+                markov_win_prob = sim_edge.get('win_prob', cover_prob)
+                markov_loss_prob = sim_edge.get('loss_prob', 1.0 - cover_prob)
+                markov_push_prob = sim_edge.get('push_prob', 0.0)
+
                 pricing_engine = "Markov"
                 logger.debug(
-                    "Markov pricing: cover=%.3f [%.3f, %.3f]",
-                    cover_prob, cover_lower, cover_upper,
+                    "Markov pricing: cover=%.3f [%.3f, %.3f], push=%.3f",
+                    cover_prob, cover_lower, cover_upper, markov_push_prob,
                 )
+
+                # When Markov succeeds, injury impact is intrinsically modeled
+                if home_injury_impact > 0.1 or away_injury_impact > 0.1:
+                    notes.append(
+                        f"Injury impact intrinsic to Markov: home={home_injury_impact:.1f}pts, "
+                        f"away={away_injury_impact:.1f}pts (stat penalties applied)"
+                    )
+
             except Exception as exc:
                 logger.warning("Markov pricing failed, falling back to Gaussian: %s", exc)
                 # Fall through to Gaussian
 
         # Gaussian fallback (if Markov didn't run or failed)
         if pricing_engine == "Gaussian":
+            # margin_se defaults to 0.85 — 1.96 * 0.85 ≈ 1.66 pt CI half-width
+            # → ~5.5% EV haircut at adj_sd=11.  Uniform across heuristic and
+            # non-heuristic profiles; no special-casing needed.
             cover_prob, cover_lower, cover_upper = self.monte_carlo_prob_ci(
                 margin, adj_sd, spread=spread,
             )
@@ -850,37 +1158,155 @@ class CBBEdgeModel:
             spread_odds_home, spread_odds_away,
         )
 
+        # Push-adjusted market probability when Markov is the pricing engine.
+        # Market odds assume binary outcomes (p_win + p_loss = 1.0), but Markov
+        # generates discrete scores with potential pushes. Adjust the market
+        # baseline to the "action space" probability:
+        #   adjusted_market_prob = market_prob * (1.0 - push_prob)
+        # When pricing_engine == "Gaussian", push_prob is 0.0 (binary outcomes).
+        if pricing_engine == "Markov" and markov_push_prob is not None:
+            push_adjustment = 1.0 - markov_push_prob
+        else:
+            push_adjustment = 1.0  # Gaussian: binary outcomes, no adjustment
+
+        adjusted_home_novig = home_novig * push_adjustment
+        adjusted_away_novig = away_novig * push_adjustment
+
         # Determine which side has value by checking home-side edge
-        edge_home = cover_prob - home_novig
+        edge_home = cover_prob - adjusted_home_novig
 
         if edge_home >= 0:
             # Value on home side
             our_cover_prob = cover_prob
             our_cover_lower = cover_lower
-            market_prob = home_novig
+            market_prob = adjusted_home_novig
             bet_side = "home"
             bet_odds = spread_odds_home
         else:
             # Value on away side (flip cover probability)
             our_cover_prob = 1.0 - cover_prob
             our_cover_lower = 1.0 - cover_upper   # upper flips to lower
-            market_prob = away_novig
+            market_prob = adjusted_away_novig
             bet_side = "away"
             bet_odds = spread_odds_away
 
-        edge_point = our_cover_prob - market_prob
-        edge_conservative = our_cover_lower - market_prob
+        edge_point = float(our_cover_prob - market_prob)
+        edge_conservative = float(our_cover_lower - market_prob)
 
         # ================================================================
         # STEP 5: KELLY & BET SIZING
         # ================================================================
 
         decimal_odds = self.american_to_decimal(bet_odds)
-        kelly_full = self.kelly_fraction(our_cover_prob, decimal_odds)
-        kelly_frac = kelly_full / self.fractional_kelly_divisor
+
+        # Use push-aware Kelly when Markov is the pricing engine
+        if pricing_engine == "Markov" and markov_win_prob is not None and markov_loss_prob is not None:
+            # Markov provides discrete win/loss/push probabilities
+            # Adjust for bet_side (if away, we need to flip)
+            if bet_side == "home":
+                p_win = markov_win_prob
+                p_loss = markov_loss_prob
+            else:
+                # Away side — flip the probabilities
+                p_win = markov_loss_prob
+                p_loss = markov_win_prob
+
+            kelly_full = self.kelly_fraction_with_push(p_win, p_loss, decimal_odds)
+            logger.debug(
+                "Kelly (push-aware): p_win=%.3f, p_loss=%.3f, p_push=%.3f, kelly=%.3f",
+                p_win, p_loss, markov_push_prob or 0, kelly_full,
+            )
+        else:
+            # Gaussian pricing or Markov failed — use standard Kelly
+            kelly_full = self.kelly_fraction(our_cover_prob, decimal_odds)
+
+        # ================================================================
+        # Portfolio-Aware Kelly Divisor
+        # ================================================================
+        # Base divisor grows with concurrent bankroll exposure so that each
+        # new bet in an already-loaded slate is sized smaller — approximating
+        # true portfolio Kelly without a full quadratic solve.
+        # See _portfolio_kelly_divisor() for the full derivation.
+        effective_kelly_divisor = self._portfolio_kelly_divisor(
+            concurrent_exposure=concurrent_exposure,
+            target_exposure=target_exposure,
+        )
+        adverse_selection_penalty = 1.0
+
+        if concurrent_exposure > 0.0:
+            logger.debug(
+                "Portfolio Kelly: concurrent_exposure=%.1f%%, target=%.1f%% → divisor=%.2f",
+                concurrent_exposure * 100, target_exposure * 100, effective_kelly_divisor,
+            )
+
+        # ================================================================
+        # Adverse Selection Overlay
+        # ================================================================
+        # A massive edge very close to tipoff is a red flag. Sharp money has
+        # information we don't, and we risk being adversely selected. Multiply
+        # the divisor further to drastically reduce bet size in these scenarios.
+        #
+        # Triggers: hours_to_tipoff < 1.5 AND edge_conservative > 2.5%
+        # Penalty: Additional 3.0× on top of the portfolio-adjusted divisor.
+        if hours_to_tipoff is not None and hours_to_tipoff < 1.5 and edge_conservative > 0.025:
+            adverse_selection_penalty = 3.0
+            effective_kelly_divisor *= adverse_selection_penalty
+
+            logger.warning(
+                "Adverse Selection Risk: edge=%.3f%%, hours=%.2f → Kelly divisor scaled %.1fx "
+                "(portfolio-adjusted base=%.2f, final=%.2f)",
+                edge_conservative * 100, hours_to_tipoff, adverse_selection_penalty,
+                self._portfolio_kelly_divisor(concurrent_exposure, target_exposure),
+                effective_kelly_divisor,
+            )
+            notes.append(
+                f"Adverse Selection Kelly Penalty: {adverse_selection_penalty:.1f}x divisor "
+                f"(edge={edge_conservative:.2%}, tipoff in {hours_to_tipoff:.1f}h)"
+            )
+
+        kelly_frac = kelly_full / effective_kelly_divisor
+
+        # ================================================================
+        # ALPHA CIRCUIT BREAKER (dynamic threshold)
+        # True CBB closing-line edges rarely exceed 10-12% far from tipoff
+        # and virtually never exceed 6% within 2 hours (sharp books are fully
+        # informed by then).  A dynamic threshold that tightens toward tipoff
+        # provides both a safety valve against data errors AND a defence
+        # against adverse-selection by pre-game sharp movement.
+        #
+        # Threshold schedule (see _edge_breaker_threshold() for derivation):
+        #   ≥ 24 h  →  12%  (thin market; model may legitimately lead)
+        #   ≤  2 h  →   6%  (fully efficient; any larger edge is a data flag)
+        #   Between →  linear interpolation
+        # ================================================================
+        _EDGE_BREAKER_THRESHOLD = self._edge_breaker_threshold(hours_to_tipoff)
+        if edge_conservative > _EDGE_BREAKER_THRESHOLD:
+            err_msg = (
+                f"ERROR: Edge {edge_conservative:.1%} exceeds dynamic threshold "
+                f"{_EDGE_BREAKER_THRESHOLD:.0%} "
+                f"(hours_to_tipoff={hours_to_tipoff}). "
+                "This indicates a likely team-mapping, injury scrape failure, "
+                "or late-breaking information not yet in ratings. Bet rejected."
+            )
+            notes.append(err_msg)
+            logger.error(
+                "Alpha circuit breaker triggered — edge_conservative=%.1f%% "
+                "exceeds dynamic %.0f%% threshold (h=%.1f). Rejecting bet.",
+                edge_conservative * 100, _EDGE_BREAKER_THRESHOLD * 100,
+                hours_to_tipoff if hours_to_tipoff is not None else -1,
+            )
+            verdict = "PASS - Edge Circuit Breaker (Data Error?)"
+            pass_reason = (
+                f"edge_conservative={edge_conservative:.1%} > "
+                f"dynamic threshold {_EDGE_BREAKER_THRESHOLD:.0%} "
+                f"(at h={hours_to_tipoff})"
+            )
+            recommended_units = 0
+            kelly_frac = 0.0
+            kelly_full = 0.0
 
         # Decision rule: only bet if conservative edge > 0
-        if edge_conservative <= 0:
+        elif edge_conservative <= 0:
             verdict = "PASS"
             pass_reason = f"Conservative edge {edge_conservative:.3%} <= 0"
             recommended_units = 0

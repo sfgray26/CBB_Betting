@@ -75,6 +75,13 @@ class TeamPlayStyle:
     to_pct: float = 0.17              # Turnover rate
     steal_pct: float = 0.09           # Steal rate (defensive)
 
+    # Defensive four factors (opponent stats allowed) — D1 averages as defaults.
+    # Populated from BartTorvik EFGD%/TORD/FTRD/3PAD% columns.
+    def_efg_pct: float = 0.505        # Opponent eFG% allowed
+    def_to_pct: float = 0.175         # Opponent TO rate forced
+    def_ft_rate: float = 0.280        # Opponent FT rate allowed
+    def_three_par: float = 0.360      # Opponent 3PA rate allowed
+
 
 # ---------------------------------------------------------------------------
 # Matchup adjustment
@@ -133,12 +140,17 @@ class MatchupEngine:
     without bound.
     """
 
-    # Hard cap on total margin adjustment (points).
+    # Default hard cap on total margin adjustment (points).
+    # At the D1-average game total of ~145, this is ≈ 2.75% of total — a
+    # realistic upper bound on play-style-driven edge.
     MAX_TOTAL_ADJ: float = 4.0
 
-    # Per-category RSS cap (points).  The L2-norm output for each category
-    # is clamped at this value before the global tanh activation.
+    # Default per-category RSS cap (points).
     CATEGORY_CAP: float = 3.0
+
+    # Reference game total used to normalise dynamic caps.
+    # At D1 average pace (~68 poss/40 min) and eFG ≈ 0.50, expected total ≈ 145.
+    _REFERENCE_TOTAL: float = 145.0
 
     # Factor → category mapping.  Factors not listed here are placed in
     # an "uncategorised" bucket and pass through without RSS dampening.
@@ -154,10 +166,71 @@ class MatchupEngine:
         "away_zone_vs_home_3": "shot_quality",
     }
 
+    def _effective_caps(
+        self,
+        game_total: Optional[float] = None,
+        base_sd: Optional[float] = None,
+    ) -> Tuple[float, float]:
+        """
+        Compute dynamic (MAX_TOTAL_ADJ, CATEGORY_CAP) scaled to the game's
+        expected scoring environment.
+
+        Rationale
+        ---------
+        A rigid 4.0 / 3.0 cap treats a 120-point slow grind and a 170-point
+        run-and-gun game identically.  But matchup factors (pace mismatch,
+        3PA vs drop) represent a larger absolute edge in high-total games
+        because more possessions amplify every per-possession advantage.
+
+        Scaling rule::
+
+            scale = sqrt(effective_total / _REFERENCE_TOTAL)
+
+        where ``effective_total`` is derived (in priority order) from:
+          1. ``game_total`` — sharp consensus total (most direct).
+          2. ``base_sd``    — back-solve from SD ≈ sqrt(total) × 0.85, so
+                             total ≈ (base_sd / 0.85)².
+          3. Class defaults — if neither is available.
+
+        ``sqrt`` ensures the caps grow sub-linearly: doubling the total adds
+        only ~41% to the caps rather than doubling them, reflecting that
+        individual play-style interactions do not scale 1-for-1 with pace.
+
+        The caps are clamped to [0.5×default, 2.0×default] to prevent
+        degenerate values on extreme inputs.
+
+        Args:
+            game_total: Expected combined score (over/under line).
+            base_sd:    Effective game standard deviation (used if total absent).
+
+        Returns:
+            (effective_max_total_adj, effective_category_cap)
+        """
+        # Derive effective total from the best available source.
+        if game_total is not None and game_total > 0:
+            effective_total = game_total
+        elif base_sd is not None and base_sd > 0:
+            # Invert dynamic-SD formula: total ≈ (sd / 0.85)²
+            effective_total = (base_sd / 0.85) ** 2
+        else:
+            return self.MAX_TOTAL_ADJ, self.CATEGORY_CAP
+
+        scale = float(np.sqrt(effective_total / self._REFERENCE_TOTAL))
+
+        # Clamp to [50%, 200%] of the class defaults.
+        scale = max(0.5, min(scale, 2.0))
+
+        return (
+            round(self.MAX_TOTAL_ADJ * scale, 3),
+            round(self.CATEGORY_CAP * scale, 3),
+        )
+
     def analyze_matchup(
         self,
         home: TeamPlayStyle,
         away: TeamPlayStyle,
+        game_total: Optional[float] = None,
+        base_sd: Optional[float] = None,
     ) -> MatchupAdjustment:
         """
         Run the full matchup analysis between two team profiles.
@@ -167,7 +240,17 @@ class MatchupEngine:
         The raw factor vector is aggregated via ``_apply_diminishing_returns``
         which applies:
           1. Per-category RSS dampening (``FACTOR_CATEGORIES``).
-          2. Global ``tanh`` activation with ``MAX_TOTAL_ADJ`` ceiling.
+          2. Global ``tanh`` activation with a dynamic ceiling derived from
+             ``game_total`` or ``base_sd`` (see ``_effective_caps()``).
+
+        Args:
+            home:       Home team play-style profile.
+            away:       Away team play-style profile.
+            game_total: Expected combined score (sharp consensus over/under).
+                        When provided, scales MAX_TOTAL_ADJ and CATEGORY_CAP
+                        relative to the D1-average reference total of 145.
+            base_sd:    Effective game SD used to back-solve for a total when
+                        ``game_total`` is unavailable.
         """
         adj = MatchupAdjustment()
 
@@ -178,10 +261,19 @@ class MatchupEngine:
         self._turnover_battle(home, away, adj)
         self._zone_vs_three(home, away, adj)
 
-        adj.margin_adj = round(self._apply_diminishing_returns(adj.factors), 3)
+        max_adj, cat_cap = self._effective_caps(game_total=game_total, base_sd=base_sd)
+        adj.margin_adj = round(
+            self._apply_diminishing_returns(adj.factors, max_total_adj=max_adj, category_cap=cat_cap),
+            3,
+        )
         return adj
 
-    def _apply_diminishing_returns(self, factors: Dict[str, float]) -> float:
+    def _apply_diminishing_returns(
+        self,
+        factors: Dict[str, float],
+        max_total_adj: Optional[float] = None,
+        category_cap: Optional[float] = None,
+    ) -> float:
         """
         Aggregate raw matchup factors with categorical RSS + global tanh.
 
@@ -205,28 +297,37 @@ class MatchupEngine:
         - For a single factor it equals the raw value (no distortion).
         - For N equal factors of magnitude m it equals m*sqrt(N), which
           grows sub-linearly vs the raw sum N*m.
-        - ``CATEGORY_CAP`` prevents any single category from dominating.
+        - ``category_cap`` prevents any single category from dominating.
 
         Factors not assigned to a category pass through at full value.
 
         **Layer 2 — Global tanh activation:**
         The sum of all category contributions is passed through:
 
-            adjusted = MAX_TOTAL_ADJ * tanh(category_sum / MAX_TOTAL_ADJ)
+            adjusted = max_total_adj * tanh(category_sum / max_total_adj)
 
         This ensures:
             - Small adjustments are approximately linear (tanh ≈ x for |x| << cap).
-            - Large adjustments saturate toward ±MAX_TOTAL_ADJ.
-            - The output never exceeds MAX_TOTAL_ADJ in absolute value.
+            - Large adjustments saturate toward ±max_total_adj.
+            - The output never exceeds max_total_adj in absolute value.
 
         Args:
-            factors: Dict mapping factor name → point adjustment.
+            factors:       Dict mapping factor name → point adjustment.
+            max_total_adj: Override the global tanh ceiling (points).  If None,
+                           uses ``self.MAX_TOTAL_ADJ``.  Callers that have already
+                           computed dynamic caps via ``_effective_caps()`` pass the
+                           result in here; tests can also pass explicit values.
+            category_cap:  Override the per-category RSS ceiling (points).  If None,
+                           uses ``self.CATEGORY_CAP``.
 
         Returns:
             Total margin adjustment after diminishing returns (float).
         """
         if not factors:
             return 0.0
+
+        _max_adj = max_total_adj if max_total_adj is not None else self.MAX_TOTAL_ADJ
+        _cat_cap = category_cap if category_cap is not None else self.CATEGORY_CAP
 
         # Layer 1: group factors into categories and apply per-category RSS
         buckets: Dict[str, List[float]] = {}
@@ -240,7 +341,7 @@ class MatchupEngine:
                 uncategorised_sum += value
 
         category_sum = uncategorised_sum
-        for cat, values in buckets.items():
+        for _cat, values in buckets.items():
             # Split positive and negative factors to avoid L2-norm
             # amplification on mixed-sign inputs.
             pos = [v for v in values if v > 0]
@@ -249,10 +350,10 @@ class MatchupEngine:
             rss_pos = float(np.sqrt(sum(v ** 2 for v in pos))) if pos else 0.0
             rss_neg = float(np.sqrt(sum(v ** 2 for v in neg))) if neg else 0.0
 
-            category_sum += min(rss_pos, self.CATEGORY_CAP) - min(rss_neg, self.CATEGORY_CAP)
+            category_sum += min(rss_pos, _cat_cap) - min(rss_neg, _cat_cap)
 
-        # Layer 2: global tanh activation with hard cap
-        adjusted = self.MAX_TOTAL_ADJ * float(np.tanh(category_sum / self.MAX_TOTAL_ADJ))
+        # Layer 2: global tanh activation with dynamic cap
+        adjusted = _max_adj * float(np.tanh(category_sum / _max_adj))
         return adjusted
 
     # ------------------------------------------------------------------
@@ -402,43 +503,65 @@ class TeamProfileCache:
 
     def load_from_barttorvik(self) -> int:
         """
-        Scrape team four-factors from BartTorvik and build profiles.
+        Load team four-factors (including defensive stats) from BartTorvik.
+
+        Delegates to RatingsService.get_barttorvik_full_stats() which uses
+        robust CSV header detection and the _safe_pct() scale normalizer.
+        This replaces the previous hardcoded positional parser which mapped
+        parts[4] to 'Rec' (win-loss record) instead of pace, causing all
+        BartTorvik profiles to silently load with D1-average defaults and
+        the profile cache to be functionally identical to the heuristic path.
+
+        Defensive stats (def_efg_pct, def_to_pct, def_ft_rate, def_three_par)
+        are now populated from the EFGD%/TORD/FTRD/3PAD% columns so the Markov
+        simulator uses real per-team defensive data instead of D1 averages.
 
         Returns the number of teams loaded.
         """
-        import requests
+        from backend.services.ratings import get_ratings_service
 
-        url = "https://barttorvik.com/2026_team_results.csv"
-        try:
-            resp = requests.get(url, timeout=15)
-            resp.raise_for_status()
-        except Exception as exc:
-            logger.warning("BartTorvik profile scrape failed: %s", exc)
+        service = get_ratings_service()
+        full_stats = service.get_barttorvik_full_stats()
+        if not full_stats:
+            logger.warning("BartTorvik profile scrape returned no data")
             return 0
 
         count = 0
-        lines = resp.text.strip().split('\n')
-        for line in lines[1:]:
-            parts = line.split(',')
-            if len(parts) < 20:
-                continue
-            try:
-                team_name = parts[1].strip()
-                profile = TeamPlayStyle(
-                    team=team_name,
-                    pace=float(parts[4]) if len(parts) > 4 and parts[4] else 68.0,
-                    three_par=float(parts[10]) / 100.0 if len(parts) > 10 and parts[10] else 0.36,
-                    ft_rate=float(parts[12]) / 100.0 if len(parts) > 12 and parts[12] else 0.30,
-                    to_pct=float(parts[14]) / 100.0 if len(parts) > 14 and parts[14] else 0.17,
-                    orb_pct=float(parts[16]) / 100.0 if len(parts) > 16 and parts[16] else 0.28,
-                )
-                self._profiles[team_name] = profile
-                count += 1
-            except (ValueError, IndexError):
-                continue
+        for team_name, stat in full_stats.items():
+            def _f(key: str, default: float) -> float:
+                v = stat.get(key)
+                return v if v is not None else default
 
-        logger.info("Loaded %d team profiles from BartTorvik", count)
+            profile = TeamPlayStyle(
+                team=team_name,
+                pace=_f("pace", 68.0),
+                three_par=_f("three_par", 0.36),
+                ft_rate=_f("ft_rate", 0.30),
+                to_pct=_f("to_pct", 0.175),
+                # Offensive four-factors
+                # (rim_rate / mid_range_rate / shooting pcts not in BartTorvik CSV;
+                #  leave at dataclass defaults so the matchup engine uses sensible values)
+                # Defensive four factors — the core fix
+                def_efg_pct=_f("def_efg_pct", 0.505),
+                def_to_pct=_f("def_to_pct", 0.175),
+                def_ft_rate=_f("def_ft_rate", 0.280),
+                def_three_par=_f("def_three_par", 0.360),
+            )
+            self._profiles[team_name] = profile
+            count += 1
+
+        n_def = sum(
+            1 for t in full_stats.values() if t.get("def_efg_pct") is not None
+        )
+        logger.info(
+            "Loaded %d team profiles from BartTorvik (%d with real def_efg_pct)",
+            count, n_def,
+        )
         return count
+
+    def teams(self) -> List[str]:
+        """Return the list of team names currently in the cache."""
+        return list(self._profiles.keys())
 
     def has_profiles(self) -> bool:
         return len(self._profiles) > 0

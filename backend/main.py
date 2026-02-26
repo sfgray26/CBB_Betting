@@ -7,7 +7,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import text
+from sqlalchemy import text, func
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from contextlib import asynccontextmanager
@@ -328,7 +328,7 @@ async def get_recommended_bets(
 ):
     """Get all recommended bets from the last N days"""
     cutoff = datetime.utcnow() - timedelta(days=days)
-    
+
     bets = (
         db.query(Prediction)
         .join(Game)
@@ -339,7 +339,7 @@ async def get_recommended_bets(
         .order_by(Prediction.created_at.desc())
         .all()
     )
-    
+
     return {
         "period_days": days,
         "total_bets": len(bets),
@@ -355,6 +355,189 @@ async def get_recommended_bets(
             }
             for b in bets
         ]
+    }
+
+
+@app.get("/api/predictions/game/{game_id}")
+async def get_game_prediction(
+    game_id: int,
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    Get the most recent prediction for a specific game.
+    Returns the latest prediction regardless of run_tier.
+    """
+    prediction = (
+        db.query(Prediction)
+        .filter(Prediction.game_id == game_id)
+        .order_by(Prediction.created_at.desc())
+        .first()
+    )
+
+    if not prediction:
+        return {"message": "No prediction found for this game", "game_id": game_id}
+
+    # Parse verdict to extract bet details
+    import re
+    bet_details = {
+        "has_bet": prediction.verdict.startswith("Bet"),
+        "pick": None,
+        "bet_type": None,
+        "odds": None,
+        "units": prediction.recommended_units,
+    }
+
+    if bet_details["has_bet"]:
+        # Extract pick and odds from verdict
+        # Example verdicts:
+        # "Bet 1.2u Duke -4.5 @ -110 (edge: 3.2%, kelly: 2.4%)"
+        # "Bet 0.8u UNC/Duke U145.5 @ -110 (edge: 2.8%, kelly: 1.6%)"
+        match = re.search(r'Bet\s+[\d.]+u\s+([^@]+)\s+@\s+([-+]?\d+)', prediction.verdict)
+        if match:
+            pick_str = match.group(1).strip()
+            odds_str = match.group(2).strip()
+
+            bet_details["pick"] = pick_str
+            bet_details["odds"] = int(odds_str)
+
+            # Determine bet type from pick format
+            if "/" in pick_str and ("U" in pick_str or "O" in pick_str):
+                bet_details["bet_type"] = "total"
+            elif "-" in pick_str or "+" in pick_str:
+                bet_details["bet_type"] = "spread"
+            else:
+                bet_details["bet_type"] = "moneyline"
+        else:
+            # Fallback if regex doesn't match - provide safe defaults
+            bet_details["pick"] = ""
+            bet_details["bet_type"] = "spread"
+            bet_details["odds"] = -110
+
+    return {
+        "game_id": game_id,
+        "prediction_id": prediction.id,
+        "verdict": prediction.verdict,
+        "projected_margin": prediction.projected_margin,
+        "point_prob": prediction.point_prob,
+        "edge_point": prediction.edge_point,
+        "edge_conservative": prediction.edge_conservative,
+        "recommended_units": prediction.recommended_units,
+        "bet_details": bet_details,
+    }
+
+
+@app.get("/api/predictions/parlays")
+async def get_optimal_parlays(
+    max_legs: int = Query(default=3, ge=2, le=4),
+    max_parlays: int = Query(default=10, ge=1, le=50),
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    Build optimal cross-game parlays from today's +EV straight bets.
+
+    Uses conservative probability estimates (lower CI) and applies
+    a 4x Kelly divisor to respect parlay variance.
+
+    Args:
+        max_legs: Maximum number of legs per parlay (2-4)
+        max_parlays: Maximum number of parlay tickets to return
+
+    Returns:
+        List of parlay tickets sorted by expected value
+    """
+    from backend.services.parlay_engine import build_optimal_parlays
+
+    # ── Portfolio capacity ──────────────────────────────────────────────────
+    # Parlay Kelly sizing must respect what straight bets have already consumed
+    # from the daily exposure budget.  Query today's paper-trade BetLogs to
+    # compute capital already allocated, then derive the true remaining dollars.
+    starting_bankroll = float(os.getenv("STARTING_BANKROLL", "1000"))
+    max_daily_pct     = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "5.0"))
+    max_daily_dollars = starting_bankroll * max_daily_pct / 100.0
+
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    already_allocated: float = (
+        db.query(func.sum(BetLog.bet_size_dollars))
+        .filter(BetLog.timestamp >= today_start)   # BetLog uses 'timestamp', not 'created_at'
+        .filter(BetLog.is_paper_trade.is_(True))
+        .scalar()
+        or 0.0
+    )
+
+    true_remaining_capacity = max(0.0, max_daily_dollars - already_allocated)
+
+    if true_remaining_capacity <= 0.0:
+        return {
+            "date": datetime.utcnow().date().isoformat(),
+            "message": "Portfolio capacity exhausted — no room for parlay sizing",
+            "capital_allocated_dollars": round(already_allocated, 2),
+            "max_daily_dollars": round(max_daily_dollars, 2),
+            "parlays": [],
+        }
+
+    # ── Today's +EV straight bets ───────────────────────────────────────────
+    today_utc = datetime.utcnow().date()
+    predictions = (
+        db.query(Prediction)
+        .join(Game)
+        .filter(Prediction.prediction_date == today_utc)
+        .filter(Prediction.verdict.like("Bet%"))
+        .options(joinedload(Prediction.game))
+        .all()
+    )
+
+    if not predictions:
+        return {
+            "message": "No +EV bets available today for parlay construction",
+            "parlays": [],
+        }
+
+    # Format predictions into slate_bets for parlay engine.
+    # Derive a clean pick string from bet_side + spread stored in full_analysis.
+    slate_bets = []
+    for pred in predictions:
+        game  = pred.game
+        calcs = (pred.full_analysis or {}).get("calculations", {})
+        bet_side = calcs.get("bet_side", "home")
+        spread   = calcs.get("spread") or (
+            (pred.full_analysis or {}).get("inputs", {}).get("odds", {}).get("spread")
+        ) or 0.0
+        if bet_side == "away":
+            away_spread = -spread
+            sign = "+" if away_spread > 0 else ""
+            pick = f"{game.away_team} {sign}{away_spread:.1f}"
+        else:
+            sign = "+" if spread > 0 else ""
+            pick = f"{game.home_team} {sign}{spread:.1f}"
+
+        slate_bets.append({
+            "game_id":           pred.game_id,
+            "pick":              pick,
+            "edge_conservative": pred.edge_conservative,
+            "lower_ci_prob":     pred.lower_ci_prob,
+            "full_analysis":     pred.full_analysis or {},
+        })
+
+    # ── Build parlays ────────────────────────────────────────────────────────
+    parlays = build_optimal_parlays(
+        slate_bets,
+        max_legs=max_legs,
+        max_parlays=max_parlays,
+        remaining_capacity_dollars=true_remaining_capacity,
+        bankroll=starting_bankroll,
+    )
+
+    return {
+        "date":                        today_utc.isoformat(),
+        "capital_allocated_dollars":   round(already_allocated, 2),
+        "remaining_capacity_dollars":  round(true_remaining_capacity, 2),
+        "max_daily_dollars":           round(max_daily_dollars, 2),
+        "straight_bets_available":     len(slate_bets),
+        "parlays_generated":           len(parlays),
+        "max_legs":                    max_legs,
+        "parlays":                     parlays,
     }
 
 

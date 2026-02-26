@@ -247,6 +247,17 @@ def calculate_clv_analysis(db: Session) -> Dict:
     top_10 = [_bet_row(b) for b in bets_with_clv[:10]]
     bottom_10 = [_bet_row(b) for b in bets_with_clv[-10:]]
 
+    # Scatter data for CLV vs. Realization plot
+    scatter_data = []
+    for b in bets:
+        if b.clv_prob is not None and b.profit_loss_units is not None:
+            scatter_data.append({
+                "clv_prob": b.clv_prob,
+                "profit_loss_units": b.profit_loss_units,
+                "outcome": "Win" if b.outcome == 1 else "Loss",
+                "pick": b.pick,
+            })
+
     status = _clv_status(mean_clv)
     rec_map = {
         "HEALTHY": "Continue betting — positive CLV sustained.",
@@ -265,6 +276,7 @@ def calculate_clv_analysis(db: Session) -> Dict:
         "clv_by_confidence": clv_by_confidence,
         "top_10_clv": top_10,
         "bottom_10_clv": bottom_10,
+        "scatter_data": scatter_data,
         "status": status,
         "recommendation": rec_map.get(status, ""),
     }
@@ -367,6 +379,7 @@ def calculate_timeline(db: Session, days: int = 30) -> Dict:
         day_wins = sum(1 for b in day if b.outcome == 1)
         day_pl = sum(b.profit_loss_dollars or 0.0 for b in day)
         day_risked = sum(b.bet_size_dollars or 0.0 for b in day)
+        day_units = sum(b.bet_size_units or 0.0 for b in day)
         day_clv = [b.clv_prob for b in day if b.clv_prob is not None]
 
         cum_pl += day_pl
@@ -381,6 +394,8 @@ def calculate_timeline(db: Session, days: int = 30) -> Dict:
             "roi": _safe_roi(day_pl, day_risked),
             "clv": round(_mean(day_clv), 5) if day_clv else None,
             "profit": round(day_pl, 2),
+            "capital_deployed_dollars": round(day_risked, 2),
+            "capital_deployed_units": round(day_units, 2),
         })
 
     return {

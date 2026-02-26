@@ -31,6 +31,64 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# FT trip-type distribution (NCAA baseline, 2024-25 season)
+# ---------------------------------------------------------------------------
+# Empirical breakdown of the *type* of FT trip drawn from play-by-play data:
+#   AND1        – shooter made the FG and earns 1 bonus FT  (~12%)
+#   TWO_SHOT    – standard shooting foul (double-bonus) → 2 FTs  (~65%)
+#   THREE_SHOT  – fouled on a 3-point attempt → 3 FTs  (~8%)
+#   ONE_AND_ONE – single-bonus situation (7th–9th foul, college only)  (~15%)
+#
+# The weights are used in two places:
+#   1. To compute the *trip-implied ft_prob multiplier* that maps the
+#      blended FTA/FGA rate onto a per-possession FT-trip probability.
+#   2. To simulate the actual FT sequence in _simulate_possession().
+#
+# Math:  ft_prob = blended_ftr × (FGA_PER_POSS / E[FTs per trip])
+#        E[FTs | 1-and-1] ≈ 1 + ft_make_prob  (first hit triggers second)
+
+_FT_TRIP_AND1        = 0  # index into arrays below
+_FT_TRIP_TWO_SHOT    = 1
+_FT_TRIP_THREE_SHOT  = 2
+_FT_TRIP_ONE_AND_ONE = 3
+
+_FT_TRIP_WEIGHTS: np.ndarray = np.array([0.12, 0.65, 0.08, 0.15])
+
+# Average FGA generated per possession (accounts for ~17% TO rate reducing
+# the fraction of possessions that reach a shot attempt).
+_FGA_PER_POSS: float = 0.65
+
+# D1-average FT make probability used for 1-and-1 EV pre-computation.
+_D1_FT_MAKE: float = 0.72
+
+def _compute_ft_multiplier() -> float:
+    """
+    Derive the scalar that converts a blended FTA/FGA rate to a
+    per-possession FT-trip probability.
+
+    Derivation
+    ----------
+    FT trips / possession = (FTA/FGA) × (FGA/poss) / E[FTs per trip]
+
+    For 1-and-1, E[FTs] = 1 + ft_make_prob (only if first is made).
+    """
+    e_fts_and1       = 1.0
+    e_fts_two        = 2.0
+    e_fts_three      = 3.0
+    e_fts_one_and_one = 1.0 + _D1_FT_MAKE   # ≈ 1.72
+
+    e_fts_per_trip = (
+        _FT_TRIP_WEIGHTS[_FT_TRIP_AND1]        * e_fts_and1 +
+        _FT_TRIP_WEIGHTS[_FT_TRIP_TWO_SHOT]    * e_fts_two +
+        _FT_TRIP_WEIGHTS[_FT_TRIP_THREE_SHOT]  * e_fts_three +
+        _FT_TRIP_WEIGHTS[_FT_TRIP_ONE_AND_ONE] * e_fts_one_and_one
+    )
+    return _FGA_PER_POSS / e_fts_per_trip  # ≈ 0.339
+
+# Cached at import time — pure function, no I/O.
+_FT_PROB_MULTIPLIER: float = _compute_ft_multiplier()
+
 
 # ---------------------------------------------------------------------------
 # Team profile for simulation
@@ -84,9 +142,10 @@ class TeamSimProfile:
     pace: float = 68.0
 
     # Defence (opponent-adjusted rates, used when defending)
-    def_efg_pct: float = 0.480       # Opponent eFG% allowed
-    def_to_forced_pct: float = 0.190  # Turnovers forced rate
-    def_drb_pct: float = 0.720       # Defensive rebound rate (= 1 - opponent ORB)
+    def_efg_pct: float = 0.505        # Opponent eFG% allowed (D1 avg baseline)
+    def_to_pct: float = 0.175         # Opponent TO rate forced (D1 avg baseline)
+    def_to_forced_pct: float = 0.190  # Legacy alias — def_to_pct is now canonical
+    def_drb_pct: float = 0.720        # Defensive rebound rate (= 1 - opponent ORB)
     def_ft_rate_allowed: float = 0.280
 
 
@@ -131,9 +190,38 @@ class SimulationResult:
         return float(np.std(self.home_scores + self.away_scores))
 
     def spread_cover_prob(self, spread: float) -> float:
-        """Probability home team covers the given spread (e.g. -4.5)."""
+        """
+        Probability home team covers the given spread (e.g. -4.5).
+
+        Does NOT include pushes in the cover probability.
+        For integer spreads, use spread_cover_probs() to get win/loss/push breakdown.
+        """
         margins = self.home_scores - self.away_scores
         return float(np.mean(margins + spread > 0))
+
+    def spread_cover_probs(self, spread: float) -> Dict[str, float]:
+        """
+        Return win/loss/push probabilities for a spread bet.
+
+        Because Markov generates discrete integer scores, exact ties
+        (pushes) can occur for integer spreads. This method explicitly
+        calculates all three outcomes.
+
+        Returns:
+            {'win': P(cover), 'loss': P(don't cover), 'push': P(tie)}
+        """
+        margins = self.home_scores - self.away_scores
+        adjusted = margins + spread
+
+        win_prob = float(np.mean(adjusted > 0))
+        push_prob = float(np.mean(adjusted == 0))
+        loss_prob = float(np.mean(adjusted < 0))
+
+        return {
+            'win': win_prob,
+            'loss': loss_prob,
+            'push': push_prob,
+        }
 
     def total_over_prob(self, total: float) -> float:
         """Probability the game goes over the given total."""
@@ -172,6 +260,9 @@ class SimulationResult:
         Bootstrap CI on spread cover probability.
 
         Returns (point_estimate, lower_bound, upper_bound).
+
+        Note: This returns the WIN probability only (not including pushes).
+        For full win/loss/push breakdown, use ci_cover_probs_full().
         """
         n = len(self.home_scores)
         margins = self.home_scores - self.away_scores
@@ -186,6 +277,45 @@ class SimulationResult:
         upper = float(np.percentile(probs, (1 - alpha) * 100))
 
         return point_est, lower, upper
+
+    def ci_cover_probs_full(self, spread: float, confidence: float = 0.95) -> Dict:
+        """
+        Bootstrap CI on win/loss/push probabilities with full breakdown.
+
+        Returns dict with:
+            'win': point estimate
+            'win_lower': lower CI bound
+            'win_upper': upper CI bound
+            'loss': point estimate
+            'push': point estimate
+        """
+        n = len(self.home_scores)
+        margins = self.home_scores - self.away_scores
+        adjusted = margins + spread
+
+        # Point estimates
+        wins = (adjusted > 0).astype(float)
+        pushes = (adjusted == 0).astype(float)
+        losses = (adjusted < 0).astype(float)
+
+        win_prob = float(np.mean(wins))
+        push_prob = float(np.mean(pushes))
+        loss_prob = float(np.mean(losses))
+
+        # Bootstrap CI for win probability
+        bootstrap = np.random.choice(wins, size=(1000, n), replace=True)
+        probs = np.mean(bootstrap, axis=1)
+        alpha = (1 - confidence) / 2
+        win_lower = float(np.percentile(probs, alpha * 100))
+        win_upper = float(np.percentile(probs, (1 - alpha) * 100))
+
+        return {
+            'win': win_prob,
+            'win_lower': win_lower,
+            'win_upper': win_upper,
+            'loss': loss_prob,
+            'push': push_prob,
+        }
 
     def to_dict(self) -> Dict:
         return {
@@ -227,34 +357,37 @@ class PossessionSimulator:
     def _blend_rate(self, off_rate: float, def_rate: float, d1_avg: float) -> float:
         """
         Blend offensive tendency with defensive resistance using the
-        Log5 formula (Bill James, 1981).
+        multiplicative baseline method (Dean Oliver, *Basketball on Paper*, 2004).
+
+        **Formula:**
+
+            blended = (off_rate × def_rate) / d1_avg
 
         **Mathematical justification:**
-        The Log5 method models a binary outcome between two teams whose
-        independent success probabilities are measured against a common
-        baseline (the D1 average).  The formula normalizes each input
-        against the league average, then combines them multiplicatively:
+        Each input is expressed as a rate relative to league-average performance.
+        Multiplying them and dividing by the baseline yields a combined rate that:
 
-            A = off_rate / d1_avg       (offensive strength ratio)
-            B = def_rate / d1_avg       (defensive weakness ratio)
-            Numerator   = A * B
-            Denominator = A * B + ((1-off_rate)/(1-d1_avg)) * ((1-def_rate)/(1-d1_avg))
+          - Scales linearly in each factor (doubling offensive tendency doubles
+            the blended rate, holding defence constant).
+          - Preserves the identity: when both inputs equal d1_avg, the output
+            equals d1_avg.
+          - Amplifies extremes: a historically strong offence matched against a
+            historically weak defence produces a rate above d1_avg, and vice
+            versa — consistent with how basketball efficiency metrics compound.
 
-        This is algebraically equivalent to the compact form:
-
-            P = (a*b/c) / (a*b/c + (1-a)*(1-b)/(1-c))
-
-        where a = off_rate, b = def_rate, c = d1_avg.
-
-        **Key properties:**
-        - Result is always in (0, 1) for inputs in (0, 1) — no clamping needed.
-        - When both rates equal the D1 average, returns d1_avg (identity).
-        - Non-linear: extreme offence + extreme defence converges rather than
-          diverging like the additive formula (off + def - avg).
+        This differs from the previous Log5 (Bill James) implementation:
+          - Log5 is logistic / odds-ratio based and saturates strongly at
+            extremes, which is appropriate for win-probability estimation but
+            over-compresses at the tails for *rate* estimation of box-score stats.
+          - The multiplicative baseline is the standard for efficiency metrics
+            (eFG%, TO%, ORB%) in basketball analytics because those rates can
+            legitimately exceed 100% in extreme matchups (e.g. an elite 3PT
+            offense attacking a historically bad 3PT defense).  The hard clip
+            to [0.01, 0.99] prevents numerically degenerate possession chains.
 
         **Orientation of call sites** (all four pass rates in the same
         "event-success probability" orientation):
-            - TO rate:  off.to_pct, def.def_to_forced_pct  → "P(turnover)"
+            - TO rate:  off.to_pct, def.def_to_pct          → "P(turnover)"
             - FT rate:  off.ft_rate, def.def_ft_rate_allowed → "P(FT trip)"
             - eFG:      off.efg_pct, def.def_efg_pct         → "P(eFG success)"
             - ORB:      off.orb_pct, (1 - def.def_drb_pct)   → "P(off rebound)"
@@ -263,21 +396,21 @@ class PossessionSimulator:
             off_rate: Offensive team's event probability vs average defence.
             def_rate: Defence's event probability allowed vs average offence
                       (higher = worse defence).
-            d1_avg:   D1 baseline rate for the event.
+            d1_avg:   D1 baseline rate for the event.  Must be > 0.
 
         Returns:
-            Blended probability in (0, 1).
+            Blended probability clipped to [0.01, 0.99].
         """
-        # Normalize inputs against the league-average baseline.
-        # Guard only against exact 0 or 1 to prevent division by zero;
-        # Log5 naturally stays in (0, 1) for all valid probability inputs.
-        a = np.clip(off_rate, 1e-9, 1.0 - 1e-9)
-        b = np.clip(def_rate, 1e-9, 1.0 - 1e-9)
-        c = np.clip(d1_avg, 1e-9, 1.0 - 1e-9)
+        # Clip inputs to defensible probability bounds before multiplying.
+        # Unlike Log5, the multiplicative formula can produce values > 1.0 when
+        # both teams are extreme (e.g. eFG 62% × 60% / 50% = 74.4%), which is
+        # numerically valid but must be clamped to keep downstream code stable.
+        a = float(np.clip(off_rate, 0.01, 0.99))
+        b = float(np.clip(def_rate, 0.01, 0.99))
+        c = float(np.clip(d1_avg,   1e-6, 1.0 - 1e-6))
 
-        num = (a * b) / c
-        denom = num + ((1.0 - a) * (1.0 - b)) / (1.0 - c)
-        return float(num / denom)
+        raw = (a * b) / c
+        return float(np.clip(raw, 0.01, 0.99))
 
     def _compute_possession_probs(
         self,
@@ -299,13 +432,17 @@ class PossessionSimulator:
         D1_EFG = 0.500
         D1_FTR = 0.300
 
-        # Turnover probability (blend offence TO rate with defence forced-TO rate)
-        to_prob = self._blend_rate(offence.to_pct, defence.def_to_forced_pct, D1_TO)
+        # Turnover probability — blend offence TO rate with defence's canonical
+        # def_to_pct (opponent-TO rate forced, D1 avg 0.175).  def_to_forced_pct
+        # is kept for legacy callers but def_to_pct is now the live field.
+        to_prob = self._blend_rate(offence.to_pct, defence.def_to_pct, D1_TO)
 
         # Free throw trip probability
+        # Convert blended FTA/FGA rate → per-possession FT-trip probability
+        # using the trip-type-distribution-derived multiplier instead of a
+        # hardcoded 0.35 scalar.
         ft_prob = self._blend_rate(offence.ft_rate, defence.def_ft_rate_allowed, D1_FTR)
-        # FT trips are a fraction of non-TO possessions, scale down
-        ft_prob = ft_prob * 0.35  # ~35% of FTA/FGA converts to actual FT possessions
+        ft_prob = ft_prob * _FT_PROB_MULTIPLIER  # ≈ 0.339 (derived from trip distribution)
 
         # Shot attempt probability = 1 - TO - FT trips
         shot_prob = max(0.01, 1.0 - to_prob - ft_prob)
@@ -345,48 +482,101 @@ class PossessionSimulator:
             "ft_make_prob": 0.72,  # D1 average FT%
         }
 
+    def _simulate_ft_trip(self, probs: Dict[str, float], rng: np.random.Generator) -> int:
+        """
+        Simulate a free-throw trip using the empirical NCAA trip-type distribution.
+
+        Trip types and their rules:
+            AND1        (12%) — FG already made; 1 bonus FT → 2 or 3 pts total.
+            TWO_SHOT    (65%) — Standard shooting foul; 2 independent FTs.
+            THREE_SHOT  ( 8%) — Fouled on 3PA; 3 independent FTs.
+            ONE_AND_ONE (15%) — 1-and-1 bonus; second FT only if first is made.
+
+        Returns points scored (1, 2, or 3 for non-AND1; 0–3 for AND1 and others).
+        """
+        ft_p = probs["ft_make_prob"]
+        trip = int(rng.choice(4, p=_FT_TRIP_WEIGHTS))
+
+        if trip == _FT_TRIP_AND1:
+            # Field goal was already made (2 pts); add 1 bonus FT.
+            return 2 + (1 if rng.random() < ft_p else 0)
+
+        if trip == _FT_TRIP_TWO_SHOT:
+            return (1 if rng.random() < ft_p else 0) + (1 if rng.random() < ft_p else 0)
+
+        if trip == _FT_TRIP_THREE_SHOT:
+            return sum(1 for _ in range(3) if rng.random() < ft_p)
+
+        # ONE_AND_ONE: first FT is the gate; second only if first is made.
+        if rng.random() < ft_p:
+            return 1 + (1 if rng.random() < ft_p else 0)
+        return 0
+
+    def _attempt_shot(self, probs: Dict[str, float], rng: np.random.Generator) -> Optional[int]:
+        """
+        Simulate a single shot attempt.
+
+        Returns:
+            2 or 3 if the shot is made, None if missed.
+        """
+        shot_r = rng.random()
+        if shot_r < probs["rim_prob"]:
+            return 2 if rng.random() < probs["rim_make"] else None
+        elif shot_r < probs["rim_prob"] + probs["mid_prob"]:
+            return 2 if rng.random() < probs["mid_make"] else None
+        else:
+            return 3 if rng.random() < probs["three_make"] else None
+
     def _simulate_possession(self, probs: Dict[str, float], rng: np.random.Generator) -> int:
         """
         Simulate a single possession using the Markov chain.
 
         Returns points scored (0, 1, 2, or 3).
+
+        OREB fix
+        --------
+        The original code returned 0 after exhausting all OREB cycles, which
+        silently discards the expected value of the possession at that point.
+        After ``max_rebounds`` consecutive offensive rebounds, the team still
+        has the ball and must shoot.  The fix: the inner loop exits via
+        ``continue`` on every OREB; if the range is fully exhausted, we fall
+        through to a mandatory final shot evaluation.
+
+        This prevents a downward bias of approximately:
+            ORB^max_rebounds × shot_make_prob × pts_per_made_shot
+        per simulation (negligible per possession, material across 680 k calls).
         """
         max_rebounds = 3  # Cap OREB cycles to prevent infinite loops
 
+        # Pre-compute once per possession; avoids redundant division inside loop.
+        ft_relative = probs["ft_prob"] / (probs["ft_prob"] + probs["shot_prob"])
+
         for _ in range(max_rebounds + 1):
-            # First branch: turnover?
-            r = rng.random()
-            if r < probs["to_prob"]:
+            # Branch 1: turnover — possession ends with 0 pts.
+            if rng.random() < probs["to_prob"]:
                 return 0
 
-            r = rng.random()
-            if r < probs["ft_prob"] / (probs["ft_prob"] + probs["shot_prob"]):
-                # Free throw trip (assume 2 FTs, each with ft_make_prob)
-                pts = 0
-                for _ in range(2):
-                    if rng.random() < probs["ft_make_prob"]:
-                        pts += 1
-                return pts
+            # Branch 2: free throw trip — weighted trip-type distribution.
+            if rng.random() < ft_relative:
+                return self._simulate_ft_trip(probs, rng)
 
-            # Shot attempt — determine type
-            shot_r = rng.random()
-            if shot_r < probs["rim_prob"]:
-                if rng.random() < probs["rim_make"]:
-                    return 2
-            elif shot_r < probs["rim_prob"] + probs["mid_prob"]:
-                if rng.random() < probs["mid_make"]:
-                    return 2
-            else:
-                if rng.random() < probs["three_make"]:
-                    return 3
+            # Branch 3: shot attempt.
+            result = self._attempt_shot(probs, rng)
+            if result is not None:
+                return result
 
-            # Miss — check for offensive rebound
+            # Miss → check for offensive rebound.
             if rng.random() < probs["orb_prob"]:
-                continue  # Re-enter possession
-            else:
-                return 0  # Defensive rebound
+                continue  # OREB: re-enter possession (loop advances)
+            return 0     # Defensive rebound: possession ends.
 
-        return 0  # Exhausted OREB cycles
+        # ---------------------------------------------------------------
+        # Exhausted OREB budget (max_rebounds consecutive OREBs, all with
+        # missed shots).  The team still has the ball — force a final shot
+        # to preserve the EV of the possession.
+        # ---------------------------------------------------------------
+        result = self._attempt_shot(probs, rng)
+        return result if result is not None else 0
 
     def simulate_game(
         self,
@@ -482,17 +672,39 @@ class PossessionSimulator:
         spread_odds: float = -110,
         n_sims: int = 10000,
         is_neutral: bool = False,
+        matchup_margin_adj: float = 0.0,
     ) -> Dict:
         """
         Run simulation and compute edge against a given spread.
 
-        Returns a dict with win/cover probabilities (with CI bounds),
+        Returns a dict with win/loss/push probabilities (with CI bounds),
         projected margin, edge, and Kelly fraction.
+
+        **Push handling**: Because Markov generates discrete integer scores,
+        exact ties can occur for integer spreads. The Kelly calculation
+        accounts for pushes: f = (p_win * (b - 1) - p_loss) / (b - 1).
+
+        **matchup_margin_adj**: Additive margin shift from MatchupEngine
+        (positive = favours home). Applied by shifting the effective spread:
+        P(margin + adj + spread > 0) ≡ P(margin + effective_spread > 0)
+        where effective_spread = spread + matchup_margin_adj.
+        This is mathematically equivalent to shifting every simulated margin
+        by +matchup_margin_adj before computing cover probabilities.
         """
         result = self.simulate_game(home, away, n_sims, is_neutral)
 
-        # Compute cover probability with 95% CI bounds
-        cover_prob, cover_lower, cover_upper = result.ci_cover_prob(spread, confidence=0.95)
+        # Apply matchup geometry: shifting margins by +adj is equivalent to
+        # using an effective spread = spread + adj for all cover-prob checks.
+        effective_spread = spread + matchup_margin_adj
+
+        # Get full win/loss/push breakdown with CI bounds
+        full_probs = result.ci_cover_probs_full(effective_spread, confidence=0.95)
+        win_prob = full_probs['win']
+        loss_prob = full_probs['loss']
+        push_prob = full_probs['push']
+
+        # Also get simple cover prob + CI for backward compatibility
+        cover_prob, cover_lower, cover_upper = result.ci_cover_prob(effective_spread, confidence=0.95)
 
         # Convert spread odds to implied prob (no-vig)
         if spread_odds > 0:
@@ -500,16 +712,29 @@ class PossessionSimulator:
         else:
             implied = abs(spread_odds) / (abs(spread_odds) + 100.0)
 
-        edge = cover_prob - implied
+        # Push-adjusted edge calculation
+        # The market-implied probability assumes a binary outcome (win or loss),
+        # but Markov generates discrete scores with possible pushes. We adjust
+        # the implied probability to account for the action space:
+        #   adjusted_implied = implied * (1.0 - push_prob)
+        # This prevents false negatives on integer spreads where push probability
+        # is material (e.g., 8-12% for common NBA/CBB spreads).
+        adjusted_implied = implied * (1.0 - push_prob)
+        edge = win_prob - adjusted_implied
 
-        # Kelly
+        # Kelly with push handling
+        # Standard formula: f = (p * b - q) / b  where p=win, q=loss, b=decimal_odds-1
+        # With pushes: f = (p_win * (b - 1) - p_loss) / (b - 1)
+        # This is equivalent to f = (p_win * b - 1) / b  when pushes are 0
         if spread_odds > 0:
             decimal_odds = (spread_odds / 100.0) + 1.0
         else:
             decimal_odds = (100.0 / abs(spread_odds)) + 1.0
 
-        if decimal_odds > 1.0 and edge > 0:
-            kelly = (cover_prob * decimal_odds - 1.0) / (decimal_odds - 1.0)
+        b = decimal_odds - 1.0  # Net profit per dollar risked
+        if b > 0 and edge > 0:
+            # Kelly with explicit push handling
+            kelly = (win_prob * b - loss_prob) / b
             kelly = max(0.0, min(kelly, 0.20))
         else:
             kelly = 0.0
@@ -520,6 +745,9 @@ class PossessionSimulator:
             "cover_prob": round(cover_prob, 4),
             "cover_lower": round(cover_lower, 4),
             "cover_upper": round(cover_upper, 4),
+            "win_prob": round(win_prob, 4),
+            "loss_prob": round(loss_prob, 4),
+            "push_prob": round(push_prob, 4),
             "implied_prob": round(implied, 4),
             "edge": round(edge, 4),
             "kelly_full": round(kelly, 4),

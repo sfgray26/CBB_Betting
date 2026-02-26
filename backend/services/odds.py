@@ -123,16 +123,31 @@ class OddsAPIClient:
             logger.error("Derivative odds API error: %s", e)
             return []
 
-    def parse_odds_for_game(self, game_data: Dict) -> Dict:
+    def parse_odds_for_game(
+        self,
+        game_data: Dict,
+        active_books: Optional[List[str]] = None,
+    ) -> Dict:
         """
         Parse raw odds data into standardised format.
 
         Produces two independent line sets:
           - Sharp consensus (Pinnacle / Circa) — use for CLV measurement.
-          - Best available across all books    — use for bet placement.
+            **Never filtered by** ``active_books``.
+          - Best available (line shopping)     — use for bet placement.
+            Restricted to ``active_books`` when the list is non-empty.
 
         Also captures derivative markets (1H spreads/totals, team totals)
         when present in the API response.
+
+        Args:
+            game_data:    Raw game dict from The Odds API.
+            active_books: Optional allowlist of bookmaker keys for the
+                          ``best_*`` line-shopping fields (e.g.
+                          ``["draftkings", "fanduel"]``).  Keys are
+                          normalised to lowercase before comparison.
+                          Pass ``None`` or an empty list to include all
+                          available bookmakers (default behaviour).
 
         Returns
         -------
@@ -144,9 +159,16 @@ class OddsAPIClient:
             best_moneyline_home, best_moneyline_away
             best_1h_spread, best_1h_spread_odds, best_1h_total
             best_team_total_home, best_team_total_away
+            active_books_used  — normalised list that was actually applied
         """
         home_team = game_data.get("home_team")
         away_team = game_data.get("away_team")
+
+        # Normalise active_books to a frozenset of lowercase strings.
+        # An empty or None list means "no filter — use all books."
+        _active_filter: Optional[frozenset] = None
+        if active_books:
+            _active_filter = frozenset(b.strip().lower() for b in active_books if b)
 
         result: Dict = {
             "game_id": game_data.get("id"),
@@ -154,12 +176,12 @@ class OddsAPIClient:
             "home_team": home_team,
             "away_team": away_team,
             "bookmakers": [],
-            # --- Sharp consensus (CLV benchmark) ---
+            # --- Sharp consensus (CLV benchmark) — unaffected by active_books ---
             "sharp_consensus_spread": None,
             "sharp_consensus_total": None,
             "sharp_spread_odds": None,
             "sharp_books_available": 0,
-            # --- Best available (line shopping) ---
+            # --- Best available (line shopping) — filtered by active_books ---
             "best_spread": None,
             "best_spread_odds": None,
             "best_spread_away_odds": None,
@@ -172,6 +194,8 @@ class OddsAPIClient:
             "best_1h_total": None,
             "best_team_total_home": None,
             "best_team_total_away": None,
+            # Audit field: which books were eligible for line shopping
+            "active_books_used": sorted(_active_filter) if _active_filter else None,
         }
 
         sharp_parsed: List[Dict] = []
@@ -261,9 +285,22 @@ class OddsAPIClient:
                 result["sharp_spread_odds"] = int(round(sum(sharp_odds) / len(sharp_odds)))
 
         # ------------------------------------------------------------------
-        # Best available — line shopping across all bookmakers
+        # Best available — line shopping across eligible bookmakers
         # ------------------------------------------------------------------
-        all_books = result["bookmakers"]
+        # When active_books is specified, restrict shopping to that subset.
+        # The full result["bookmakers"] list is preserved unchanged so callers
+        # that inspect raw book data still see the complete picture.
+        if _active_filter is not None:
+            shop_books = [b for b in result["bookmakers"] if b.get("name", "").lower() in _active_filter]
+            if not shop_books:
+                logger.warning(
+                    "active_books filter %s matched 0 bookmakers for game %s — "
+                    "best_* fields will remain None",
+                    sorted(_active_filter), result.get("game_id"),
+                )
+        else:
+            shop_books = result["bookmakers"]
+        all_books = shop_books
 
         # Find bookmaker with best home spread juice — take spread + away odds
         # from that SAME book to avoid phantom lines (spread from A, juice from B)
@@ -324,19 +361,31 @@ class OddsAPIClient:
 
         return result
 
-    def get_todays_games(self) -> List[Dict]:
-        """Get all CBB games for today with best odds and sharp consensus."""
+    def get_todays_games(
+        self,
+        active_books: Optional[List[str]] = None,
+    ) -> List[Dict]:
+        """
+        Get all CBB games for today with best odds and sharp consensus.
+
+        Args:
+            active_books: Optional allowlist of bookmaker keys to use for
+                          the ``best_*`` line-shopping fields.  Forwarded
+                          directly to ``parse_odds_for_game``.  Pass None
+                          (default) to include all available bookmakers.
+        """
         raw_odds = self.get_cbb_odds()
 
         games = []
         for game in raw_odds:
-            parsed = self.parse_odds_for_game(game)
+            parsed = self.parse_odds_for_game(game, active_books=active_books)
             games.append(parsed)
 
         sharp_count = sum(1 for g in games if g["sharp_books_available"] > 0)
         logger.info(
-            "Parsed odds for %d games (%d with sharp lines)",
+            "Parsed odds for %d games (%d with sharp lines, active_books=%s)",
             len(games), sharp_count,
+            sorted(active_books) if active_books else "all",
         )
         return games
 

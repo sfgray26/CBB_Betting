@@ -12,6 +12,32 @@ from rapidfuzz import fuzz, process
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# High-priority manual overrides — checked FIRST, before ODDS_TO_KENPOM and
+# before any fuzzy matching.  Use this dict for production-confirmed mismatches
+# where the standard dictionary or fuzzy logic would produce a wrong result
+# (e.g. short forms that have too little token overlap for a confident score).
+#
+# All entries here should also appear in ODDS_TO_KENPOM for backwards
+# compatibility with callers that iterate the full dict directly.
+# ---------------------------------------------------------------------------
+_MANUAL_OVERRIDES: dict[str, str] = {
+    "Sam Houston St Bearkats":       "Sam Houston State",
+    "Sam Houston St":                "Sam Houston State",
+    "Florida Int'l Golden Panthers": "FIU",
+    "Florida Int'l":                 "FIU",
+    "St. Thomas (MN) Tommies":       "St. Thomas - Minnesota",
+    "St. Thomas (MN)":               "St. Thomas - Minnesota",
+    "CSU Northridge Matadors":       "Cal State Northridge",
+    "CSU Northridge":                "Cal State Northridge",
+    "Cal Baptist Lancers":           "California Baptist",
+    "Cal Baptist":                   "California Baptist",
+    "Tenn-Martin Skyhawks":          "UT Martin",
+    "Tenn-Martin":                   "UT Martin",
+    "IUPUI Jaguars":                 "IU Indianapolis",
+    "IUPUI":                         "IU Indianapolis",
+}
+
 # Primary, comprehensive mapping from Odds API names to KenPom names.
 # KenPom is the "standard" name format we're normalizing to.
 ODDS_TO_KENPOM: dict[str, str] = {
@@ -134,7 +160,8 @@ ODDS_TO_KENPOM: dict[str, str] = {
     "Cal State Fullerton Titans": "Cal St. Fullerton",
     "CSU Fullerton Titans": "Cal St. Fullerton",
     "Cal State Northridge Matadors": "Cal St. Northridge",
-    "CSU Northridge Matadors": "Cal St. Northridge",
+    "CSU Northridge Matadors": "Cal State Northridge",
+    "CSU Northridge": "Cal State Northridge",
     "Cal State Bakersfield Roadrunners": "Cal St. Bakersfield",
     "CSU Bakersfield Roadrunners": "Cal St. Bakersfield",
     "CSU Bakersfield": "Cal St. Bakersfield",
@@ -151,6 +178,89 @@ ODDS_TO_KENPOM: dict[str, str] = {
     "UC San Diego Tritons": "UC San Diego",
     "UC Davis Aggies": "UC Davis",
     "UC Santa Cruz Banana Slugs": "UC Santa Cruz", # :)
+
+    # Texas A&M regional campuses — MUST be listed explicitly so they never
+    # fall through to fuzzy and land on "Texas A&M" (the main campus).
+    "Texas A&M-CC Islanders": "Texas A&M-CC",
+    "Texas A&M-CC": "Texas A&M-CC",
+    "Texas A&M-Corpus Christi Islanders": "Texas A&M-CC",
+    "Texas A&M-Corpus Christi": "Texas A&M-CC",
+    "Texas A&M-Commerce Lions": "Texas A&M-Commerce",
+    "Texas A&M-Commerce": "Texas A&M-Commerce",
+
+    # Michigan schools — explicit entries so fuzzy never maps a regional
+    # campus to the flagship "Michigan".
+    "Central Michigan Chippewas": "Central Michigan",
+    "Eastern Michigan Eagles": "Eastern Michigan",
+    "Western Michigan Broncos": "Western Michigan",
+    "Northern Michigan Wildcats": "Northern Michigan",
+
+    # Patriot League / small-program names observed failing in production logs
+    "American Eagles": "American",
+    "Lehigh Mountain Hawks": "Lehigh",
+    "Holy Cross Crusaders": "Holy Cross",
+    "Bucknell Bison": "Bucknell",
+    "Colgate Raiders": "Colgate",
+    "Lafayette Leopards": "Lafayette",
+    "Loyola (MD) Greyhounds": "Loyola MD",
+    "Loyola Maryland Greyhounds": "Loyola MD",
+    "Boston Univ. Terriers": "Boston University",
+    "Boston University Terriers": "Boston University",
+
+    # Horizon / Summit League
+    "Cleveland St Vikings": "Cleveland St.",
+    "Cleveland State Vikings": "Cleveland St.",
+    "Northern Kentucky Norse": "Northern Kentucky",
+    "Robert Morris Colonials": "Robert Morris",
+    "Detroit Mercy Titans": "Detroit Mercy",
+    "IUPUI Jaguars": "IUPUI",
+    "Fort Wayne Mastodons": "Fort Wayne",
+    "Wright St Raiders": "Wright St.",
+    "Oakland Golden Grizzlies": "Oakland",
+
+    # Big South / ASUN
+    "Eastern Kentucky Colonels": "Eastern Kentucky",
+    "Queens University Royals": "Queens NC",
+    "Lipscomb Bisons": "Lipscomb",
+    "West Georgia Wolves": "West Georgia",
+
+    # Summit / WAC
+    "South Dakota Coyotes": "South Dakota",
+    "Omaha Mavericks": "Nebraska Omaha",
+
+    # Southern / SoCon
+    "East Tennessee St Buccaneers": "East Tennessee St.",
+    "Wofford Terriers": "Wofford",
+    "Furman Paladins": "Furman",
+    "The Citadel Bulldogs": "The Citadel",
+    "Western Carolina Catamounts": "Western Carolina",
+    "Mercer Bears": "Mercer",
+    "VMI Keydets": "VMI",
+    "Samford Bulldogs": "Samford",
+
+    # MEAC / SWAC
+    "South Carolina St Bulldogs": "South Carolina St.",
+    "Morgan St Bears": "Morgan St.",
+    "Navy Midshipmen": "Navy",
+    "Army Knights": "Army",
+
+    # MVC
+    "Northern Iowa Panthers": "Northern Iowa",
+    "Illinois St Redbirds": "Illinois St.",
+    "Indiana St Sycamores": "Indiana St.",
+    "Missouri St Bears": "Missouri St.",
+    "Bradley Braves": "Bradley",
+    "Evansville Purple Aces": "Evansville",
+    "Southern Illinois Salukis": "Southern Illinois",
+    "Valparaiso Beacons": "Valparaiso",
+
+    # A-10 / Atlantic 10
+    "Charlotte 49ers": "Charlotte",
+    "Saint Joseph's Hawks": "St. Joseph's",
+    "Duquesne Dukes": "Duquesne",
+    "Davidson Wildcats": "Davidson",
+    "George Mason Patriots": "George Mason",
+    "North Texas Mean Green": "North Texas",
 
     # Tricky mid-majors and other common mismatches
     "Appalachian State Mountaineers": "Appalachian St.",
@@ -212,6 +322,20 @@ ODDS_TO_KENPOM: dict[str, str] = {
     "Western Kentucky Hilltoppers": "Western Kentucky",
     "Wright State Raiders": "Wright St.",
     "Youngstown State Penguins": "Youngstown St.",
+
+    # Mid-major API-to-KenPom/Torvik discrepancies confirmed in production logs
+    # (Feb 2026) — short forms and nickname-first variants that bypass fuzzy
+    # matching because the token overlap is too low for a confident score.
+    "Sam Houston St Bearkats": "Sam Houston State",
+    "Sam Houston St": "Sam Houston State",
+    "Florida Int'l Golden Panthers": "FIU",
+    "Florida Int'l": "FIU",
+    "St. Thomas (MN) Tommies": "St. Thomas - Minnesota",
+    "St. Thomas (MN)": "St. Thomas - Minnesota",
+    "Cal Baptist Lancers": "California Baptist",
+    "Cal Baptist": "California Baptist",
+    "Tenn-Martin Skyhawks": "UT Martin",
+    "Tenn-Martin": "UT Martin",
 }
 
 # A list of mascots, used as a fallback if the main dictionary misses.
@@ -256,6 +380,44 @@ def _strip_mascot(name: str) -> str:
     return name
 
 
+def _is_dangerous_substring_match(query: str, matched: str) -> bool:
+    """
+    Returns True when a fuzzy match is likely a false positive caused by
+    token_set_ratio's tolerance for extra tokens.
+
+    Two failure patterns are caught:
+
+    1. **Hyphen-suffix regional variants** — "Texas A&M-CC" fuzzy-matches
+       "Texas A&M" because the shared prefix dominates the score.
+       Detected by: query contains a hyphen, the match does not, and the
+       pre-hyphen fragment of the query equals the match.
+
+    2. **Short-base substring** — "Central Michigan Chippewas" fuzzy-matches
+       "Michigan" because token_set_ratio ignores the extra "Central" and
+       "Chippewas" tokens and returns 100 on the shared "Michigan" token.
+       Detected by: one string is a case-insensitive substring of the other
+       AND the character-level fuzz.ratio is below 75 (the strings differ
+       substantially in length).
+    """
+    q = query.lower().strip()
+    m = matched.lower().strip()
+
+    # Guard 1: hyphen-suffix regional campus
+    # e.g. "Texas A&M-CC" must never match "Texas A&M"
+    if "-" in q and "-" not in m:
+        base = q.split("-")[0].strip()
+        if base == m or q.startswith(m + "-"):
+            return True
+
+    # Guard 2: one string is a bare substring of the other
+    # AND character-level similarity is low (large length disparity)
+    if m in q or q in m:
+        if fuzz.ratio(q, m) < 75:
+            return True
+
+    return False
+
+
 def normalize_team_name(name: str, valid_choices: list[str]) -> str | None:
     """
     Finds the best match for a team name against a list of valid choices.
@@ -268,8 +430,23 @@ def normalize_team_name(name: str, valid_choices: list[str]) -> str | None:
     Returns:
         The best matching name from valid_choices, or None if no good match is found.
     """
+    # Strip surrounding whitespace first so API names like "  IUPUI " still hit
+    # the override dict before any downstream normalisation runs.
+    name = name.strip()
+
     if not name or not valid_choices:
         return None
+
+    # Strategy 0: High-priority manual overrides (O(1) exact lookup).
+    # These are production-confirmed mismatches that must never fall through
+    # to fuzzy matching.  Checked before ODDS_TO_KENPOM and before any scorer.
+    if name in _MANUAL_OVERRIDES:
+        mapped_name = _MANUAL_OVERRIDES[name]
+        if mapped_name in valid_choices:
+            return mapped_name
+        # Mapped target not in valid_choices — pass the canonical name into
+        # the remaining strategies so fuzzy has a better base to work with.
+        name = mapped_name
 
     # Strategy 1: Direct hit in the primary mapping dictionary
     if name in ODDS_TO_KENPOM:
@@ -294,7 +471,16 @@ def normalize_team_name(name: str, valid_choices: list[str]) -> str | None:
     # Strategy 4: Fuzzy matching (the fallback)
     # Use token_set_ratio, which is good for when one string is a subset of another
     # and word order doesn't matter (e.g., "St. John's NY" vs "St. John's").
-    result = process.extractOne(clean_name, valid_choices, scorer=fuzz.token_set_ratio, score_cutoff=80)
+    # Threshold: 85 — high enough to avoid cross-conference false positives
+    # while still catching "Cleveland St Vikings" → "Cleveland St." etc.
+    result = process.extractOne(clean_name, valid_choices, scorer=fuzz.token_set_ratio, score_cutoff=85)
+
+    if result and _is_dangerous_substring_match(clean_name, result[0]):
+        logger.warning(
+            "Substring guard blocked fuzzy match '%s' → '%s'",
+            clean_name, result[0],
+        )
+        result = None
 
     if result:
         # result is a tuple: (matched_string, score, index)
@@ -303,6 +489,14 @@ def normalize_team_name(name: str, valid_choices: list[str]) -> str | None:
 
     # Final attempt with a lower-quality but more permissive scorer
     partial_result = process.extractOne(clean_name, valid_choices, scorer=fuzz.partial_ratio, score_cutoff=85)
+
+    if partial_result and _is_dangerous_substring_match(clean_name, partial_result[0]):
+        logger.warning(
+            "Substring guard blocked partial match '%s' → '%s'",
+            clean_name, partial_result[0],
+        )
+        partial_result = None
+
     if partial_result:
         logger.debug(f"Partial matched '{name}' to '{partial_result[0]}' with score {partial_result[1]}")
         return partial_result[0]

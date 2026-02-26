@@ -1,6 +1,7 @@
 """Performance Overview page."""
 
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import pandas as pd
@@ -66,6 +67,37 @@ if timeline_data and timeline_data.get("timeline"):
         xaxis_title="Bet Number", yaxis_title="Cumulative P&L ($)", height=320,
     )
     st.plotly_chart(fig_pl, use_container_width=True)
+
+    # Daily Capital Deployed chart
+    st.subheader("Daily Capital Deployed")
+    if "capital_deployed_units" in df.columns:
+        max_daily_exposure_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "15.0"))
+
+        fig_capital = go.Figure()
+        fig_capital.add_trace(go.Bar(
+            x=df["date"],
+            y=df["capital_deployed_units"],
+            name="Capital Deployed",
+            marker_color="steelblue",
+            text=df["capital_deployed_units"].round(1),
+            textposition="outside",
+        ))
+        fig_capital.add_hline(
+            y=max_daily_exposure_pct,
+            line_dash="dash",
+            line_color="red",
+            annotation_text=f"Max Daily Exposure ({max_daily_exposure_pct:.0f}u)",
+            annotation_position="right",
+        )
+        fig_capital.update_layout(
+            xaxis_title="Date",
+            yaxis_title="Units Deployed",
+            height=320,
+            showlegend=False,
+        )
+        st.plotly_chart(fig_capital, use_container_width=True)
+    else:
+        st.info("Capital deployment data not available. Update backend to latest version.")
 
     col_l, col_r = st.columns(2)
 

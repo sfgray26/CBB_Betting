@@ -6,8 +6,7 @@ into a market that has already priced in a key absence.
 
 Sources (in priority order):
     1. Manual overrides via API / database
-    2. ESPN CBB injury reports (public, scraped)
-    3. CBS Sports injury feed (fallback)
+    2. CBS Sports college basketball injury page (primary scrape source)
 
 Impact tiers quantify the expected margin swing when a player
 is out, based on their usage rate and team depth.
@@ -118,60 +117,157 @@ def classify_tier(usage_rate: Optional[float] = None) -> str:
 # Scrapers
 # ---------------------------------------------------------------------------
 
-def scrape_espn_injuries() -> List[InjuryReport]:
+def _normalize_status(raw: str) -> Optional[str]:
     """
-    Scrape ESPN college basketball injury reports.
+    Map a raw CBS Sports status string to one of our four canonical values.
 
-    Returns a list of InjuryReport entries.  If the scrape fails the list
-    is empty and the caller should apply a stale-injury penalty.
+    Returns None for statuses that indicate a healthy player (Active, Full,
+    Day-To-Day with no imminent game risk) so callers can skip them cleanly.
+
+    CBS Sports uses these status labels (non-exhaustive):
+        Out, Doubtful, Questionable, Probable, GTD (Game Time Decision),
+        Active, Full, Expected, Healthy
     """
-    url = "https://www.espn.com/mens-college-basketball/injuries"
+    s = raw.strip().lower()
+    if not s:
+        return None
+    if "out" in s:
+        return "Out"
+    if "doubtful" in s:
+        return "Doubtful"
+    # "GTD" and "game time" are operationally equivalent to Questionable.
+    if "questionable" in s or "gtd" in s or "game time" in s:
+        return "Questionable"
+    if "probable" in s:
+        return "Probable"
+    # Healthy / Active / Full — not a meaningful injury for the model.
+    return None
+
+
+def scrape_injuries() -> List[InjuryReport]:
+    """
+    Scrape college basketball injury reports from CBS Sports.
+
+    Target: https://www.cbssports.com/college-basketball/injuries/
+
+    CBS Sports renders each team's injury data in a ``div.TableBaseWrapper``
+    block that contains:
+      - A heading element (``h3.TableBase-title`` or ``h4``) with the team
+        name, optionally wrapped in an anchor tag.
+      - A ``TableBase-table`` table whose body rows follow the column order:
+        Player (0) | Pos (1) | Injury (2) | Status (3) | Expected Return (4)
+
+    A secondary CSS selector strategy (``div.PlayerInjuries``) is tried when
+    the primary TableBaseWrapper pattern yields zero teams, providing forward
+    compatibility if CBS restructures their layout.
+
+    Output format is identical to the previous ESPN scraper so no callers
+    need to change: a list of ``InjuryReport`` objects with the same fields.
+    The ``source`` field changes from ``"espn"`` to ``"cbssports"``.
+
+    Returns an empty list on any HTTP or parse failure; callers should apply
+    a stale-injury penalty when the list is empty.
+    """
+    url = "https://www.cbssports.com/college-basketball/injuries/"
     headers = {
+        # Modern Chrome UA is required — CBS Sports aggressively blocks default
+        # Python requests UAs and older browser strings.
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
+            "Chrome/131.0.0.0 Safari/537.36"
         ),
+        "Accept": (
+            "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/avif,image/webp,image/apng,*/*;q=0.8,"
+            "application/signed-exchange;v=b3;q=0.7"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer": "https://www.cbssports.com/",
+        "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+        "Upgrade-Insecure-Requests": "1",
     }
 
     try:
-        resp = requests.get(url, headers=headers, timeout=15)
+        resp = requests.get(url, headers=headers, timeout=20)
         resp.raise_for_status()
+    except requests.exceptions.HTTPError as exc:
+        # 404 / 4xx: endpoint moved or Cloudflare-blocked — suppress recurring
+        # log spam by using INFO rather than WARNING.
+        logger.info(
+            "CBS Sports injury scrape HTTP error (endpoint may have moved): %s", exc
+        )
+        return []
     except requests.RequestException as exc:
-        logger.warning("ESPN injury scrape failed: %s", exc)
+        # Network-level failures are transient and warrant operator attention.
+        logger.warning("CBS Sports injury scrape failed (network error): %s", exc)
         return []
 
     injuries: List[InjuryReport] = []
     soup = BeautifulSoup(resp.text, "lxml")
 
-    # ESPN structures injury data in team-based tables.
-    for table in soup.select("div.ResponsiveTable"):
-        team_header = table.select_one("div.Table__Title")
-        if not team_header:
-            continue
-        team_name = team_header.get_text(strip=True)
+    # ---- Primary strategy: TableBaseWrapper blocks (standard CBS layout) ---
+    wrappers = soup.select("div.TableBaseWrapper")
 
-        for row in table.select("tbody tr"):
-            cols = row.select("td")
-            if len(cols) < 3:
+    # ---- Secondary strategy: PlayerInjuries sections (alt CBS layout) ------
+    if not wrappers:
+        wrappers = soup.select("section.PlayerInjuries, div.PlayerInjuries")
+
+    for wrapper in wrappers:
+        # Extract team name from the nearest heading / link element.
+        # CBS uses a few different patterns depending on the sport/page:
+        #   <h3 class="TableBase-title"><a href="...">Duke Blue Devils</a></h3>
+        #   <span class="TeamName">Duke Blue Devils</span>
+        #   <h4 class="team-name">Duke Blue Devils</h4>
+        team_el = wrapper.select_one(
+            "h3.TableBase-title a, h3.TableBase-title, "
+            "span.TeamName, .PlayerInjuries-teamName, "
+            "h4, h3, h2"
+        )
+        if team_el is None:
+            continue
+        team_name = team_el.get_text(strip=True)
+        if not team_name:
+            continue
+
+        # CBS marks data rows with class "TableBase-bodyTr".  Try that selector
+        # first (precise), fall back to generic tbody tr for forward-compat.
+        data_rows = (
+            wrapper.select("tr.TableBase-bodyTr")
+            or wrapper.select("tbody tr")
+        )
+        for row in data_rows:
+            cells = row.select("td")
+            # Expect at minimum: Player | Pos | Injury | Status
+            if len(cells) < 4:
                 continue
 
-            player = cols[0].get_text(strip=True)
-            status_raw = cols[1].get_text(strip=True)
+            player = cells[0].get_text(strip=True)
+            # Skip any header rows that sneak into tbody
+            if not player or player.lower() in ("player", "name", "athlete"):
+                continue
 
-            # Normalize status
-            status = "Questionable"
-            status_lower = status_raw.lower()
-            if "out" in status_lower:
-                status = "Out"
-            elif "doubtful" in status_lower:
-                status = "Doubtful"
-            elif "probable" in status_lower:
-                status = "Probable"
-            elif "questionable" in status_lower:
-                status = "Questionable"
+            # CBS column order: Player(0) Pos(1) Injury(2) Status(3) Return(4)
+            # Also check for an explicit status class in case CBS highlights
+            # the status cell with a dedicated element (e.g. injury-status span).
+            status_el = (
+                cells[3].select_one(".injury-status, [class*='status']")
+                or cells[3]
+            )
+            status_raw = status_el.get_text(strip=True)
 
-            tier = "role"  # Default; will be enriched with usage data later
+            status = _normalize_status(status_raw)
+            if status is None:
+                # Healthy / Active — not relevant for the model.
+                continue
+
+            tier = "role"  # Default; enriched with usage data in later pipeline stages
             impact = estimate_impact(tier)
 
             injuries.append(
@@ -181,12 +277,22 @@ def scrape_espn_injuries() -> List[InjuryReport]:
                     status=status,
                     impact_tier=tier,
                     margin_impact=impact,
-                    source="espn",
+                    source="cbssports",
                     updated_at=datetime.utcnow(),
                 )
             )
 
-    logger.info("ESPN injury scrape: %d entries across teams", len(injuries))
+    if not injuries and wrappers:
+        # Page loaded but no rows parsed — log the first 500 chars for debugging.
+        logger.warning(
+            "CBS Sports injury page loaded (%d wrapper blocks) but no injury "
+            "rows were extracted. Page snippet: %.500s",
+            len(wrappers), resp.text,
+        )
+    else:
+        logger.info(
+            "CBS Sports injury scrape: %d entries across teams", len(injuries)
+        )
     return injuries
 
 
@@ -223,7 +329,7 @@ class InjuryService:
         ):
             return self._merge_with_overrides(self._cache)
 
-        scraped = scrape_espn_injuries()
+        scraped = scrape_injuries()
         if scraped:
             self._cache = scraped
             self._cache_time = now

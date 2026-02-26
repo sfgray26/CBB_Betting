@@ -182,12 +182,18 @@ elif page == "🎯 Today's Bets":
         predictions = today_data.get("predictions", [])
         bets = [p for p in predictions if p["verdict"].startswith("Bet")]
 
+        # Sort by conservative edge (highest EV first)
+        bets.sort(key=lambda b: b.get("edge_conservative") or 0.0, reverse=True)
+
         if bets:
             st.success(f"{len(bets)} betting opportunity(s) found!")
             for bet in bets:
                 g = bet.get("game", {})
                 matchup = f"{g.get('away_team')} @ {g.get('home_team')}"
-                game_time = datetime.fromisoformat(g.get("game_date")).strftime("%b %d, %I:%M %p UTC")
+                try:
+                    game_time = datetime.fromisoformat(g.get("game_date") or "").strftime("%b %d, %I:%M %p UTC")
+                except (ValueError, TypeError):
+                    game_time = "TBD"
 
                 # Determine pick string from full_analysis
                 spread_value = None
@@ -216,6 +222,60 @@ elif page == "🎯 Today's Bets":
     else:
         st.warning("No prediction data available for today.")
 
+    # ── Optimal Parlays ───────────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("🎫 Optimal Parlays")
+    st.caption(
+        "Cross-game parlays built from today's +EV straight bets. "
+        "Sizing respects the remaining daily portfolio budget after straight bets."
+    )
+
+    parlay_data = make_request("/api/predictions/parlays")
+
+    if parlay_data is None:
+        st.warning("Could not reach the parlay endpoint — is the API running?")
+    else:
+        capacity_remaining = parlay_data.get("remaining_capacity_dollars")
+        if capacity_remaining is not None:
+            st.caption(
+                f"Portfolio capacity remaining today: **${capacity_remaining:.2f}** "
+                f"(of ${parlay_data.get('max_daily_dollars', 0):.2f} max daily)"
+            )
+
+        parlays = parlay_data.get("parlays", [])
+        exhausted_msg = parlay_data.get("message", "")
+
+        if not parlays:
+            if "exhausted" in exhausted_msg.lower():
+                st.info("Portfolio capacity exhausted — no parlay sizing available today.")
+            else:
+                st.info("No qualifying parlay combinations found today.")
+                st.caption(
+                    "Parlays require 2+ straight bets each with edge > 1%. "
+                    "Check back after the nightly analysis runs."
+                )
+        else:
+            st.success(f"{len(parlays)} parlay ticket(s) recommended today.")
+            for i, parlay in enumerate(parlays, start=1):
+                leg_summary   = parlay.get("leg_summary", "—")
+                american_odds = parlay.get("parlay_american_odds", 0)
+                joint_prob    = parlay.get("joint_prob", 0.0)
+                edge          = parlay.get("edge", 0.0)
+                rec_units     = parlay.get("recommended_units", 0.0)
+                num_legs      = parlay.get("num_legs", "?")
+                ev            = parlay.get("expected_value", 0.0)
+
+                odds_str = f"+{american_odds:.0f}" if american_odds >= 0 else f"{american_odds:.0f}"
+                header   = f"Parlay {i} — {num_legs}-Leg @ {odds_str}"
+
+                with st.expander(header, expanded=(i == 1)):
+                    st.markdown(f"**Legs:** {leg_summary}")
+                    pcol1, pcol2, pcol3, pcol4 = st.columns(4)
+                    pcol1.metric("Joint Prob",      f"{joint_prob:.1%}")
+                    pcol2.metric("Edge (EV/unit)",  f"{edge:.3f}")
+                    pcol3.metric("Expected Value",  f"{ev:.3f} u")
+                    pcol4.metric("Rec. Stake",      f"{rec_units:.2f} u")
+
 
 # Performance page has moved to pages/1_Performance.py
 
@@ -241,36 +301,81 @@ elif page == "📋 Bet Log":
         game_options = {}
         if games_data and games_data.get("games"):
             for g in games_data["games"]:
-                dt = datetime.fromisoformat(g["game_date"]).strftime("%b %d")
+                try:
+                    dt = datetime.fromisoformat(g.get("game_date") or "").strftime("%b %d")
+                except (ValueError, TypeError):
+                    dt = "?"
                 label = f"{g['matchup']} ({dt})"
                 game_options[label] = g["id"]
 
-        with st.form("add_bet_form", clear_on_submit=True):
-            if game_options:
-                selected_label = st.selectbox("Game", list(game_options.keys()))
-                game_id = game_options[selected_label]
-            else:
-                st.warning("No recent/upcoming games found. Enter game ID manually.")
-                game_id = st.number_input("Game ID", min_value=1, step=1, value=1)
+        # Game selector OUTSIDE the form to allow dynamic updates
+        if game_options:
+            selected_label = st.selectbox(
+                "Select Game",
+                list(game_options.keys()),
+                key="bet_game_selector",
+                help="Model recommendation will auto-populate when you select a game."
+            )
+            game_id = game_options[selected_label]
 
+            # Fetch prediction for selected game
+            prediction_data = make_request(f"/api/predictions/game/{game_id}")
+            bet_details = prediction_data.get("bet_details", {}) if prediction_data else {}
+
+            # Show model recommendation if available
+            if prediction_data and bet_details.get("has_bet"):
+                st.success(f"✓ **Model Recommendation:** {prediction_data.get('verdict', 'N/A')}")
+            elif prediction_data:
+                st.info(f"**Model Verdict:** {prediction_data.get('verdict', 'PASS')} — You can still log a manual bet.")
+            else:
+                st.warning("No prediction found for this game.")
+
+            # Default values from model recommendation
+            default_pick = bet_details.get("pick") or ""
+            default_type = bet_details.get("bet_type") or "spread"
+            default_odds = bet_details.get("odds") or -110
+            default_units = bet_details.get("units") or 1.0
+        else:
+            st.warning("No recent/upcoming games found. Enter game ID manually.")
+            game_id = st.number_input("Game ID", min_value=1, step=1, value=1)
+            default_pick = ""
+            default_type = "spread"
+            default_odds = -110
+            default_units = 1.0
+
+        # Ensure default_type is valid
+        if default_type not in ["spread", "moneyline", "total"]:
+            default_type = "spread"
+
+        with st.form("add_bet_form", clear_on_submit=True):
             col1, col2 = st.columns(2)
             with col1:
                 pick = st.text_input(
                     "Pick",
+                    value=default_pick,
                     placeholder='e.g. "Duke -4.5" or "Kansas +3"',
-                    help="Team name + spread, exactly as you bet it.",
+                    help="Team name + spread, exactly as you bet it. Auto-populated from model.",
                 )
-                bet_type = st.selectbox("Bet Type", ["spread", "moneyline", "total"])
+                bet_type = st.selectbox(
+                    "Bet Type",
+                    ["spread", "moneyline", "total"],
+                    index=["spread", "moneyline", "total"].index(default_type)
+                )
                 odds_taken = st.number_input(
                     "Odds Taken (American)",
-                    value=-110,
+                    value=int(default_odds),
                     step=5,
-                    help="e.g. -110, +105, -220",
+                    help="e.g. -110, +105, -220. Auto-populated from model.",
                 )
 
             with col2:
                 bet_size_units = st.number_input(
-                    "Bet Size (units)", min_value=0.1, max_value=10.0, value=1.0, step=0.5
+                    "Bet Size (units)",
+                    min_value=0.1,
+                    max_value=10.0,
+                    value=float(default_units),
+                    step=0.5,
+                    help="Auto-populated from model's Kelly recommendation."
                 )
                 bet_size_dollars = st.number_input(
                     "Bet Size ($)", min_value=1.0, value=10.0, step=5.0
@@ -320,7 +425,10 @@ elif page == "📋 Bet Log":
             st.write(f"**{len(pending_bets)} pending bet(s)**")
 
             for bet in pending_bets:
-                ts = datetime.fromisoformat(bet["timestamp"]).strftime("%b %d") if bet.get("timestamp") else "?"
+                try:
+                    ts = datetime.fromisoformat(bet["timestamp"]).strftime("%b %d") if bet.get("timestamp") else "?"
+                except (ValueError, TypeError):
+                    ts = "?"
                 header = f"#{bet['id']} — {bet['pick']} | {bet['matchup']} | {ts}"
 
                 with st.expander(header):

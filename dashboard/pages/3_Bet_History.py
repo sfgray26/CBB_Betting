@@ -41,7 +41,7 @@ if df.empty:
 
 # Derived columns
 df["result"] = df["outcome"].map({1: "Win", 0: "Loss", -1: "Push", None: "Pending"}).fillna("Pending")
-df["game_date"] = pd.to_datetime(df["game_date"]).dt.strftime("%Y-%m-%d")
+df["game_date"] = pd.to_datetime(df["game_date"], format="mixed", errors="coerce").dt.strftime("%Y-%m-%d")
 
 # --- Sort controls ---
 sort_col, sort_dir = st.columns(2)

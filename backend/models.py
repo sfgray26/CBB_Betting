@@ -271,6 +271,50 @@ class ClosingLine(Base):
     game = relationship("Game")
 
 
+class TeamProfile(Base):
+    """
+    Per-team offensive and defensive four-factor stats persisted from BartTorvik.
+
+    Columns mirror the TeamSimProfile / TeamPlayStyle dataclasses so that the
+    Markov simulator and matchup engine can load real per-team defensive data
+    from the database instead of D1-average defaults.
+    """
+
+    __tablename__ = "team_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    team_name = Column(String, nullable=False, index=True)
+    season_year = Column(Integer, nullable=False, index=True)
+    source = Column(String, nullable=False, default="barttorvik")  # "barttorvik" | "kenpom"
+
+    # Efficiency margins (KenPom / BartTorvik AdjEM scale, ≈ -30 to +30)
+    adj_oe = Column(Float)
+    adj_de = Column(Float)
+    adj_em = Column(Float)
+
+    # Offensive four factors
+    pace = Column(Float)          # Possessions per 40 min
+    efg_pct = Column(Float)       # Effective FG% (offensive)
+    to_pct = Column(Float)        # Turnover rate (offensive, lower is better)
+    ft_rate = Column(Float)       # FT attempts / FGA (offensive)
+    three_par = Column(Float)     # 3PA / FGA (offensive)
+
+    # Defensive four factors — the data the Markov engine was previously blind to
+    def_efg_pct = Column(Float)   # Opponent eFG% allowed
+    def_to_pct = Column(Float)    # Opponent TO rate forced
+    def_ft_rate = Column(Float)   # Opponent FT rate allowed
+    def_three_par = Column(Float) # Opponent 3PA rate allowed
+
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "team_name", "season_year", "source",
+            name="_team_season_source_uc",
+        ),
+    )
+
+
 class DBAlert(Base):
     """Persisted performance alerts surfaced in the dashboard."""
 
