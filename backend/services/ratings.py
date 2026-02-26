@@ -307,22 +307,43 @@ class RatingsService:
                 "adj_de":        adj_de,
                 "adj_em":        adj_em,
                 # Offensive four factors
-                "efg_pct":       _get_pct(item, ["efg_pct", "efg%", "EFG%", "efg", "EFG_Pct"]),
-                "to_pct":        _get_pct(item, ["tor", "TOR", "tov%", "to_rate", "TO_Pct"]),
-                "ft_rate":       _get_pct(item, ["ftr", "FTR", "ft_rate", "FT_Rate"]),
-                "three_par":     _get_pct(item, ["3par%", "3par", "3PA_Rate", "3PAR", "tpar"]),
+                "efg_pct":       _get_pct(item, [
+                    "efg_pct", "efgpct", "efg%", "EFG%", "efg", "EFG_Pct",
+                    "off_efg", "o_efg",
+                ]),
+                "to_pct":        _get_pct(item, [
+                    "tor", "TOR", "torp", "torpp", "tov%", "to_rate", "TO_Pct",
+                    "off_tor", "o_tor",
+                ]),
+                "ft_rate":       _get_pct(item, [
+                    "ftr", "FTR", "ft_rate", "FT_Rate", "off_ftr",
+                ]),
+                "three_par":     _get_pct(item, [
+                    "3par%", "3par", "3parp", "3PA_Rate", "3PAR", "tpar",
+                ]),
                 # Defensive four factors
-                "def_efg_pct":   _get_pct(item, ["efgd_pct", "efgd%", "EFGd%", "efgd",
-                                                   "def_efg_pct", "EFGd_Pct"]),
-                "def_to_pct":    _get_pct(item, ["tord", "TORd", "tov%d", "def_to_rate",
-                                                   "TOd_Pct", "def_tor"]),
-                "def_ft_rate":   _get_pct(item, ["ftrd", "FTRd", "def_ft_rate",
-                                                   "FTd_Rate", "def_ftr"]),
-                "def_three_par": _get_pct(item, ["3pard%", "3pard", "3PAd_Rate",
-                                                   "def_3par", "3pard_pct"]),
+                "def_efg_pct":   _get_pct(item, [
+                    "efgd_pct", "efgpctd", "efgd%", "EFGd%", "efgd",
+                    "def_efg_pct", "EFGd_Pct", "opp_efg", "d_efg", "efg_d",
+                    "opp_efgpct",
+                ]),
+                "def_to_pct":    _get_pct(item, [
+                    "tord", "TORd", "torpp_d", "tov%d", "def_to_rate",
+                    "TOd_Pct", "def_tor", "opp_tor", "d_tor",
+                ]),
+                "def_ft_rate":   _get_pct(item, [
+                    "ftrd", "FTRd", "def_ft_rate", "FTd_Rate", "def_ftr",
+                    "opp_ftr", "d_ftr",
+                ]),
+                "def_three_par": _get_pct(item, [
+                    "3pard%", "3pard", "3parpp_d", "3PAd_Rate",
+                    "def_3par", "3pard_pct", "opp_3par",
+                ]),
                 # Pace (absolute — not rescaled)
-                "pace":          _get_f(item, ["adj_t", "adj_tempo", "tempo", "pace",
-                                                "adjt", "Adj. T.", "adj. t."]),
+                "pace":          _get_f(item, [
+                    "adj_t", "adj_tempo", "tempo", "pace",
+                    "adjt", "Adj. T.", "adj. t.",
+                ]),
             }
 
         return stats
@@ -354,8 +375,17 @@ class RatingsService:
         # Primary: JSON endpoint (no header parsing needed)
         # ----------------------------------------------------------------
         _json_url = f"https://barttorvik.com/{_CURRENT_YEAR}_super_standings.json"
+        _json_headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://barttorvik.com/",
+        }
         try:
-            _resp = requests.get(_json_url, timeout=10)
+            _resp = requests.get(_json_url, headers=_json_headers, timeout=10)
             _resp.raise_for_status()
             _raw = _resp.json()
             if isinstance(_raw, list) and _raw:
@@ -638,8 +668,28 @@ class RatingsService:
                 ("def_three_par","def_three_par"),
                 ("pace",         "pace"),
             ]
+            # Validity ranges — reject scraped values outside D1 plausible bounds.
+            # Ranking columns stored as decimals (e.g. rank 346 → 3.46) would fail
+            # these checks and be discarded rather than poisoning the Markov engine.
+            _EFG_RANGE = (0.35, 0.65)   # D1 eFG% always 39%–62%
+            _TO_RANGE  = (0.10, 0.32)   # D1 TO rate always 10%–32%
+            _CLAMPED_FIELDS = {
+                "efg_pct":     _EFG_RANGE,
+                "def_efg_pct": _EFG_RANGE,
+                "to_pct":      _TO_RANGE,
+                "def_to_pct":  _TO_RANGE,
+            }
             for attr, key in _FIELD_MAP:
                 val: Optional[float] = stat.get(key)
+                if val is not None:
+                    lo, hi = _CLAMPED_FIELDS.get(key, (None, None))
+                    if lo is not None and not (lo <= val <= hi):
+                        logger.debug(
+                            "save_team_profiles: rejected %s=%s for %s "
+                            "(valid range [%s, %s]) — likely a ranking column",
+                            key, val, team_name, lo, hi,
+                        )
+                        val = None
                 if val is not None:
                     setattr(existing, attr, val)
             existing.fetched_at = datetime.utcnow()

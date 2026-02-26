@@ -432,10 +432,33 @@ class PossessionSimulator:
         D1_EFG = 0.500
         D1_FTR = 0.300
 
+        # ------------------------------------------------------------------
+        # Markov safety guards — reject defensive stats that are outside
+        # D1-plausible ranges.  BartTorvik occasionally stores national
+        # rankings instead of rates in poisoned CSV rows (e.g. def_efg_pct
+        # stored as 3.46 instead of 0.346).  Silently replacing with the D1
+        # average is safer than propagating the corrupted value through the
+        # Markov chain, where it would cause _blend_rate to clip to 0.99 and
+        # produce extreme (0 or 1) cover probabilities.
+        # ------------------------------------------------------------------
+        _DEF_EFG_D1 = 0.505
+        _DEF_TO_D1  = 0.175
+
+        def_efg_safe = (
+            defence.def_efg_pct
+            if 0.35 <= defence.def_efg_pct <= 0.65
+            else _DEF_EFG_D1
+        )
+        def_to_safe = (
+            defence.def_to_pct
+            if 0.10 <= defence.def_to_pct <= 0.32
+            else _DEF_TO_D1
+        )
+
         # Turnover probability — blend offence TO rate with defence's canonical
         # def_to_pct (opponent-TO rate forced, D1 avg 0.175).  def_to_forced_pct
         # is kept for legacy callers but def_to_pct is now the live field.
-        to_prob = self._blend_rate(offence.to_pct, defence.def_to_pct, D1_TO)
+        to_prob = self._blend_rate(offence.to_pct, def_to_safe, D1_TO)
 
         # Free throw trip probability
         # Convert blended FTA/FGA rate → per-possession FT-trip probability
@@ -457,7 +480,7 @@ class PossessionSimulator:
             rim_prob, mid_prob, three_prob = 0.38, 0.18, 0.44
 
         # Shot accuracy (blend offence accuracy with defence eFG allowed)
-        efg_blend = self._blend_rate(offence.efg_pct, defence.def_efg_pct, D1_EFG)
+        efg_blend = self._blend_rate(offence.efg_pct, def_efg_safe, D1_EFG)
         # Scale individual shot types by the eFG blend ratio
         efg_ratio = efg_blend / max(offence.efg_pct, 0.01)
 

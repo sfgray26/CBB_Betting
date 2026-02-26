@@ -36,6 +36,20 @@ _MANUAL_OVERRIDES: dict[str, str] = {
     "Tenn-Martin":                   "UT Martin",
     "IUPUI Jaguars":                 "IU Indianapolis",
     "IUPUI":                         "IU Indianapolis",
+    # Elite programs whose nickname-only Odds API form fuzzes poorly
+    "Gonzaga Bulldogs":              "Gonzaga",
+    "Creighton Bluejays":            "Creighton",
+    # San Diego State — Odds API omits the period in KenPom's "San Diego St."
+    "San Diego St Aztecs":           "San Diego St.",
+    "San Diego State Aztecs":        "San Diego St.",
+    "San Diego State":               "San Diego St.",
+    # Mid-majors absent from ODDS_TO_KENPOM
+    "Austin Peay Governors":         "Austin Peay",
+    "Pepperdine Waves":              "Pepperdine",
+    "SIU-Edwardsville Cougars":      "SIU Edwardsville",
+    "SIU-Edwardsville":              "SIU Edwardsville",
+    "SE Missouri St Redhawks":       "Southeast Missouri St.",
+    "SE Missouri State":             "Southeast Missouri St.",
 }
 
 # Primary, comprehensive mapping from Odds API names to KenPom names.

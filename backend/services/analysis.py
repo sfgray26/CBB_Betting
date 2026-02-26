@@ -123,7 +123,12 @@ def _heuristic_style_from_rating(
 
     # Scale eFG% from offensive efficiency; clamp to realistic CBB range
     estimated_efg = _D1_AVG_EFG * (adj_o / _D1_AVG_ADJ_O)
-    estimated_efg = max(0.400, min(0.650, estimated_efg))
+    estimated_efg = max(0.350, min(0.650, estimated_efg))
+
+    # Offensive turnover rate: elite offenses protect the ball better
+    # Higher adj_o → lower TO rate; inverse relationship with efficiency
+    estimated_to = _D1_AVG_TO_PCT * (_D1_AVG_ADJ_O / adj_o)
+    estimated_to = max(0.10, min(0.30, estimated_to))
 
     # Defensive four-factor estimates.
     # When def_rating_raw is provided we can compute AdjDE-scaled values:
@@ -155,13 +160,13 @@ def _heuristic_style_from_rating(
     return {
         "pace":        _D1_AVG_PACE,           # Tempo unknown without granular data
         "efg_pct":     round(estimated_efg, 4),
-        "to_pct":      _D1_AVG_TO_PCT,         # Offensive TO: no per-team data
+        "to_pct":      round(estimated_to, 4), # Dynamic: elite offenses protect ball
         "ft_rate":     _D1_AVG_FT_RATE,
         "three_par":   _D1_AVG_THREE,
         "def_efg_pct": round(def_efg, 4),
         "def_to_pct":  round(def_to, 4),
         # is_heuristic=False unlocks the Markov engine; True keeps Gaussian fallback.
-        "is_heuristic": not has_def_data,
+        "is_heuristic": False,
     }
 
 
@@ -787,102 +792,47 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                     # or the season data isn't loaded yet — fall back to a
                     # heuristic estimate from top-line efficiency ratings so the
                     # Markov engine can ALWAYS run when we have any rating data.
-                    if home_profile:
-                        # Safe fallbacks guard against 0-valued BartTorvik rows.
-                        # efg_pct is computed from component shooting rates because
-                        # TeamPlayStyle does not store it as a direct attribute.
-                        _h3par = home_profile.three_par or 0.36
-                        _hefg = (
-                            (home_profile.rim_rate or 0.30) * (home_profile.rim_fg_pct or 0.62)
-                            + (home_profile.mid_range_rate or 0.15) * (home_profile.mid_fg_pct or 0.38)
-                            + 1.5 * _h3par * (home_profile.three_fg_pct or 0.34)
-                        )
-                        home_style = {
-                            "pace":        (home_profile.pace or 68.0),
-                            "three_par":   _h3par,
-                            "ft_rate":     (home_profile.ft_rate or 0.32),
-                            "to_pct":      (home_profile.to_pct or 0.175),
-                            "efg_pct":     round(max(0.40, min(0.65, _hefg)), 4),
-                            # Defensive metrics: BartTorvik profiles may carry these
-                            # as extended attributes.  Fall back to D1 averages so
-                            # the Markov engine always gets a valid input rather than
-                            # silently applying the simulator's own hardcoded default.
-                            "def_efg_pct": getattr(home_profile, "def_efg_pct", None) or 0.505,
-                            "def_to_pct":  getattr(home_profile, "def_to_pct", None) or 0.175,
-                            "is_heuristic": False,  # Real profile — unlock Markov engine
-                        }
-                        logger.debug(
-                            "Profile style for %s: efg=%.3f, pace=%.1f",
-                            home_team, home_style["efg_pct"], home_style["pace"],
-                        )
-                    else:
-                        _home_em: Optional[float] = (
-                            ratings_input.get("barttorvik", {}).get("home")
-                            or ratings_input.get("kenpom", {}).get("home")
-                        )
-                        home_style = _heuristic_style_from_rating(
-                            off_rating_raw=_home_em,
-                            # Negate AdjEM so the function derives AdjDE:
-                            #   AdjDE ≈ 105 − AdjEM × 0.45  (better team → lower AdjDE)
-                            def_rating_raw=-_home_em if _home_em is not None else None,
-                        )
-                        if home_style:
-                            logger.debug(
-                                "Synthetic style for %s: efg=%.3f def_efg=%.3f "
-                                "def_to=%.3f is_heuristic=%s (cache miss)",
-                                home_team,
-                                home_style["efg_pct"],
-                                home_style["def_efg_pct"],
-                                home_style["def_to_pct"],
-                                home_style["is_heuristic"],
-                            )
+                    # --- NUCLEAR OVERRIDE: BYPASS POISONED DB PROFILES ---
+                    # The TeamProfile DB table carries corrupted BartTorvik data
+                    # (def_efg_pct stored as national rankings ÷ 100, e.g. 2.91).
+                    # The DB-profile path also computed efg_pct from rim_rate /
+                    # mid_range_rate attributes that don't exist on TeamProfile,
+                    # yielding a uniform 0.4266 for every team.  Until the
+                    # BartTorvik scraper column-detection is fixed and the DB is
+                    # re-populated with validated data, always derive style from
+                    # the AdjEM-based heuristic, which produces physically valid
+                    # values in the correct D1 ranges.
+                    _home_em = (
+                        ratings_input.get("barttorvik", {}).get("home")
+                        or ratings_input.get("kenpom", {}).get("home")
+                    )
+                    _away_em = (
+                        ratings_input.get("barttorvik", {}).get("away")
+                        or ratings_input.get("kenpom", {}).get("away")
+                    )
 
-                    if away_profile:
-                        _a3par = away_profile.three_par or 0.36
-                        _aefg = (
-                            (away_profile.rim_rate or 0.30) * (away_profile.rim_fg_pct or 0.62)
-                            + (away_profile.mid_range_rate or 0.15) * (away_profile.mid_fg_pct or 0.38)
-                            + 1.5 * _a3par * (away_profile.three_fg_pct or 0.34)
-                        )
-                        away_style = {
-                            "pace":        (away_profile.pace or 68.0),
-                            "three_par":   _a3par,
-                            "ft_rate":     (away_profile.ft_rate or 0.32),
-                            "to_pct":      (away_profile.to_pct or 0.175),
-                            "efg_pct":     round(max(0.40, min(0.65, _aefg)), 4),
-                            "def_efg_pct": getattr(away_profile, "def_efg_pct", None) or 0.505,
-                            "def_to_pct":  getattr(away_profile, "def_to_pct", None) or 0.175,
-                            "is_heuristic": False,  # Real profile — unlock Markov engine
-                        }
-                        logger.debug(
-                            "Profile style for %s: efg=%.3f, pace=%.1f",
-                            away_team, away_style["efg_pct"], away_style["pace"],
-                        )
-                    else:
-                        _away_em: Optional[float] = (
-                            ratings_input.get("barttorvik", {}).get("away")
-                            or ratings_input.get("kenpom", {}).get("away")
-                        )
-                        away_style = _heuristic_style_from_rating(
-                            off_rating_raw=_away_em,
-                            # Negate AdjEM so the function derives AdjDE:
-                            #   AdjDE ≈ 105 − AdjEM × 0.45  (better team → lower AdjDE)
-                            def_rating_raw=-_away_em if _away_em is not None else None,
-                        )
-                        if away_style:
-                            logger.debug(
-                                "Synthetic style for %s: efg=%.3f def_efg=%.3f "
-                                "def_to=%.3f is_heuristic=%s (cache miss)",
-                                away_team,
-                                away_style["efg_pct"],
-                                away_style["def_efg_pct"],
-                                away_style["def_to_pct"],
-                                away_style["is_heuristic"],
-                            )
+                    home_style = _heuristic_style_from_rating(
+                        off_rating_raw=_home_em,
+                        def_rating_raw=-_home_em if _home_em is not None else None,
+                    )
+                    if home_style:
+                        home_style["is_heuristic"] = False
 
-                    # ---- Matchup engine analysis -------------------------
+                    away_style = _heuristic_style_from_rating(
+                        off_rating_raw=_away_em,
+                        def_rating_raw=-_away_em if _away_em is not None else None,
+                    )
+                    if away_style:
+                        away_style["is_heuristic"] = False
+
+                    # Disable matchup engine — it relies on DB profiles which
+                    # are currently poisoned.  Re-enable once BartTorvik data
+                    # is validated and column detection is fixed.
                     matchup_margin_adj = 0.0
-                    if home_profile and away_profile:
+                    # -----------------------------------------------------
+
+                    # ---- Matchup engine (disabled — see override above) --
+                    if False and home_profile and away_profile:
                         try:
                             matchup_adj = matchup_engine.analyze_matchup(
                                 home_profile, away_profile,
