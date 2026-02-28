@@ -50,6 +50,10 @@ _MANUAL_OVERRIDES: dict[str, str] = {
     "SIU-Edwardsville":              "SIU Edwardsville",
     "SE Missouri St Redhawks":       "Southeast Missouri St.",
     "SE Missouri State":             "Southeast Missouri St.",
+    # Georgia State — fuzzy-matches "Georgia" (UGA, +20 AdjEM) without override
+    "Georgia St Panthers":           "Georgia St.",
+    "Georgia State Panthers":        "Georgia St.",
+    "Georgia St. Panthers":          "Georgia St.",
 }
 
 # Primary, comprehensive mapping from Odds API names to KenPom names.
@@ -89,6 +93,9 @@ ODDS_TO_KENPOM: dict[str, str] = {
     "Florida State Seminoles": "Florida St.",
     "Georgia Bulldogs": "Georgia",
     "Georgia Tech Yellow Jackets": "Georgia Tech",
+    "Georgia State Panthers": "Georgia St.",
+    "Georgia St Panthers": "Georgia St.",
+    "Georgia St. Panthers": "Georgia St.",
     "Gonzaga Bulldogs": "Gonzaga",
     "Iowa Hawkeyes": "Iowa",
     "Iowa State Cyclones": "Iowa St.",
@@ -241,6 +248,8 @@ ODDS_TO_KENPOM: dict[str, str] = {
     # Summit / WAC
     "South Dakota Coyotes": "South Dakota",
     "Omaha Mavericks": "Nebraska Omaha",
+    "North Dakota Fighting Hawks": "North Dakota",
+    "North Dakota St Bison": "North Dakota St.",
 
     # Southern / SoCon
     "East Tennessee St Buccaneers": "East Tennessee St.",
@@ -255,6 +264,10 @@ ODDS_TO_KENPOM: dict[str, str] = {
     # MEAC / SWAC
     "South Carolina St Bulldogs": "South Carolina St.",
     "Morgan St Bears": "Morgan St.",
+    "Alabama A&M Bulldogs": "Alabama A&M",
+    "Alabama A&M": "Alabama A&M",
+    "Alabama St Hornets": "Alabama St.",
+    "Alabama St": "Alabama St.",
     "Navy Midshipmen": "Navy",
     "Army Knights": "Army",
 

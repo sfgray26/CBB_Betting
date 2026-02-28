@@ -8,7 +8,9 @@
       "Bash(python -:*)",
       "Bash(ls *.cfg *.ini *.toml setup.py)",
       "Bash(python3 -c \":*)",
-      "Bash(python scripts/purge_cache.py)"
+      "Bash(python scripts/purge_cache.py)",
+      "Bash(wmic process where \"commandline like ''%%uvicorn%%backend%%''\" get processid,commandline)",
+      "Bash(curl:*)"
     ]
   }
 }

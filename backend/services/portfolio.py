@@ -96,8 +96,8 @@ class PortfolioManager:
     def __init__(
         self,
         starting_bankroll: Optional[float] = None,
-        max_total_exposure_pct: float = 15.0,
-        max_single_bet_pct: float = 3.0,
+        max_total_exposure_pct: float = 20.0,
+        max_single_bet_pct: float = 4.0,
         max_drawdown_pct: Optional[float] = None,
         conference_correlation: float = 0.05,
     ):

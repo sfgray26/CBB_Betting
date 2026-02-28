@@ -49,7 +49,7 @@ from backend.services.odds import fetch_current_odds
 from backend.services.ratings import fetch_current_ratings, get_ratings_service
 from backend.services.recalibration import load_current_params
 from backend.services.injuries import get_injury_service
-from backend.services.matchup_engine import get_profile_cache, get_matchup_engine
+from backend.services.matchup_engine import get_profile_cache, get_matchup_engine, TeamPlayStyle
 from backend.services.parlay_engine import build_optimal_parlays, format_parlay_ticket
 from backend.services.team_mapping import normalize_team_name
 
@@ -168,6 +168,35 @@ def _heuristic_style_from_rating(
         # is_heuristic=False unlocks the Markov engine; True keeps Gaussian fallback.
         "is_heuristic": False,
     }
+
+
+def _build_profile_from_style(style: Dict, team_name: str) -> TeamPlayStyle:
+    """
+    Construct a minimal TeamPlayStyle from a four-factor style dict when the
+    BartTorvik profile cache returns None for a team.
+
+    Populates only the fields available from KenPom/BartTorvik four-factor
+    data.  PBP-derived fields (drop_coverage_pct, zone_pct, transition_freq,
+    rim_rate, etc.) are left at TeamPlayStyle defaults — the factors that
+    depend on them (_three_point_vs_drop, _zone_vs_three, _transition_gap)
+    require non-default thresholds to fire (drop_coverage_pct > 0.30, etc.),
+    so they remain dormant.  The four-factor-driven factors (_efg_pressure_gap,
+    _turnover_pressure_gap) WILL fire when real eFG%/TO% data is present.
+    """
+    return TeamPlayStyle(
+        team=team_name,
+        pace=style.get("pace", 68.0),
+        efg_pct=style.get("efg_pct"),          # None when heuristic path
+        to_pct=style.get("to_pct", 0.175),
+        ft_rate=style.get("ft_rate", 0.280),
+        three_par=style.get("three_par", 0.360),
+        def_efg_pct=style.get("def_efg_pct", 0.505),
+        def_to_pct=style.get("def_to_pct", 0.175),
+        def_ft_rate=style.get("def_ft_rate", 0.280),
+        def_three_par=style.get("def_three_par", 0.360),
+        # PBP-derived fields intentionally at defaults — no data available:
+        # drop_coverage_pct=0.0, zone_pct=0.0, transition_freq=0.15, etc.
+    )
 
 
 def get_or_create_game(db: Session, game_data: Dict) -> Game:
@@ -361,7 +390,13 @@ def _apply_simultaneous_kelly(
     return pending_bets
 
 
-def _create_paper_bet(db: Session, game: Game, prediction: Prediction, daily_exposure: float = 0.0) -> tuple[BetLog, float]:
+def _create_paper_bet(
+    db: Session,
+    game: Game,
+    prediction: Prediction,
+    daily_exposure: float = 0.0,
+    scaled_bet_dollars: Optional[float] = None
+) -> tuple[BetLog, float]:
     """
     Auto-create a paper-trade BetLog from a Bet verdict.
 
@@ -373,6 +408,8 @@ def _create_paper_bet(db: Session, game: Game, prediction: Prediction, daily_exp
         game: Game object
         prediction: Prediction object
         daily_exposure: dollars already committed today (for daily cap enforcement)
+        scaled_bet_dollars: If provided, use this exact dollar amount (Global Scaling).
+                           If None, calculate from prediction.recommended_units.
 
     Returns:
         (BetLog, net_exposure_change) where net_exposure_change is the
@@ -380,8 +417,14 @@ def _create_paper_bet(db: Session, game: Game, prediction: Prediction, daily_exp
         If displacement occurred, net_change = new_bet_size - displaced_capital.
     """
     starting_bankroll = float(os.getenv("STARTING_BANKROLL", "1000"))
-    recommended_units = prediction.recommended_units or 0.0
-    bet_dollars = recommended_units * (starting_bankroll / 100.0)
+
+    if scaled_bet_dollars is not None:
+        bet_dollars = scaled_bet_dollars
+        # Sync recommended_units to match the scaled dollar amount
+        recommended_units = (bet_dollars / starting_bankroll) * 100.0
+    else:
+        recommended_units = prediction.recommended_units or 0.0
+        bet_dollars = recommended_units * (starting_bankroll / 100.0)
 
     # --- Portfolio daily cap with EV displacement logic ----------------------
     # Scale down if total daily exposure would exceed MAX_DAILY_EXPOSURE_PCT.
@@ -391,12 +434,15 @@ def _create_paper_bet(db: Session, game: Game, prediction: Prediction, daily_exp
     # **EV Displacement**: If the daily cap is full but a new high-EV bet
     # arrives (e.g., late-breaking line movement), allow it to displace
     # an inferior pending bet instead of dropping it entirely.
-    max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "5.0"))
+    max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0"))
     max_daily_dollars = starting_bankroll * max_daily_pct / 100.0
     remaining_capacity = max(0.0, max_daily_dollars - daily_exposure)
 
     ev_displacement_applied = False
     displaced_capital = 0.0  # Track freed capital from displacement
+
+    # Only attempt displacement if we haven't already provided a scaled amount
+    # OR if the scaled amount still exceeds remaining capacity.
     if bet_dollars > remaining_capacity and remaining_capacity < bet_dollars * 0.5:
         # Capacity is tight — check for EV displacement opportunity
         new_edge = prediction.edge_conservative or 0.0
@@ -415,36 +461,13 @@ def _create_paper_bet(db: Session, game: Game, prediction: Prediction, daily_exp
             lowest_edge = lowest_ev_bet.conservative_edge or 0.0
 
             # Volatility-scaled displacement threshold
-            # Higher-variance games require a larger edge bump to justify
-            # displacing an existing bet.  This prevents frequent displacement
-            # churn in high-SD environments where edge estimates are noisier.
-            #
-            # Heuristic: threshold_bump = 0.001 * adjusted_sd
-            # Example: SD=15.0 → 1.5% bump required, SD=10.0 → 1.0% bump
             game_sd = prediction.adjusted_sd or 11.0
             threshold_bump = 0.001 * game_sd
-
-            # Floor the threshold at 0.5% (for very low-variance games)
-            # and cap at 2.5% (for extreme high-variance games)
             threshold_bump = max(0.005, min(threshold_bump, 0.025))
-
-            logger.debug(
-                "EV displacement threshold: %.3f (SD=%.2f, base=%.3f)",
-                threshold_bump, game_sd, 0.001 * game_sd,
-            )
 
             # Displacement condition: new edge must exceed lowest edge + threshold
             if new_edge >= (lowest_edge + threshold_bump):
                 ev_displacement_applied = True
-
-                # CRITICAL FIX: Cancel the displaced bet and free its capital
-                # This prevents the bankroll leak where both the displaced bet
-                # AND the new bet would be "pending" simultaneously, violating
-                # the daily exposure limit.
-                #
-                # UPDATE: We now track displaced_capital and return it to the
-                # caller so the outer exposure accumulator stays synchronized
-                # with the database state.
                 displaced_capital = lowest_ev_bet.bet_size_dollars or 0.0
 
                 # Cancel the displaced bet
@@ -468,13 +491,16 @@ def _create_paper_bet(db: Session, game: Game, prediction: Prediction, daily_exp
                     new_edge, lowest_ev_bet.pick, lowest_edge, displaced_capital,
                 )
 
-    if not ev_displacement_applied and bet_dollars > remaining_capacity:
-        # Standard cap enforcement — scale down
+    # NOTE: In Global Scaling mode (scaled_bet_dollars is not None), we skip
+    # the sequential 'remaining_capacity' scale-down because the caller has
+    # already ensured the total fits the cap.
+    if scaled_bet_dollars is None and not ev_displacement_applied and bet_dollars > remaining_capacity:
+        # Standard sequential cap enforcement — scale down
         original = bet_dollars
         bet_dollars = remaining_capacity
         recommended_units = (bet_dollars / starting_bankroll) * 100.0
         logger.info(
-            "Daily cap: scaled %.2f → %.2f (capacity=%.2f, max=%.2f)",
+            "Daily cap (sequential): scaled %.2f -> %.2f (capacity=%.2f, max=%.2f)",
             original, bet_dollars, remaining_capacity, max_daily_dollars,
         )
     # -------------------------------------------------------------------------
@@ -561,6 +587,7 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
     errors: List[str] = []
     games_analyzed = 0
     bets_recommended = 0
+    games_considered = 0   # CONSIDER-verdict games (edge positive but below MIN_BET_EDGE)
     paper_trades_created = 0
 
     try:
@@ -693,6 +720,117 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
         # Collect bet candidates for simultaneous Kelly post-processing
         bet_candidates: List[Dict] = []
 
+        # Running exposure tracker for Pass 2.  Updated each time a game
+        # produces a BET verdict so that analyze_game() sees a realistic
+        # concurrent_exposure for every subsequent game in the slate.
+        _pass2_concurrent_exposure: float = 0.0
+
+        # ================================================================
+        # TWO-PASS SLATE: PASS 1 — pre-score by raw edge
+        # ================================================================
+        # Goal: sort the slate so the main Pass-2 loop processes the
+        # highest-EV games first.  The portfolio Kelly divisor in
+        # analyze_game() grows with concurrent_exposure, so if low-edge
+        # games are evaluated first they consume exposure budget before the
+        # high-EV opportunities are reached — causing greedy_drop verdicts
+        # on the best bets.
+        #
+        # Pass 1 calls analyze_game(concurrent_exposure=0.0) for every
+        # game using only ratings + odds (no injuries / profiles / DB ops).
+        # The resulting edge_conservative is used purely as a sort key;
+        # final Kelly sizing with proper concurrent_exposure happens in
+        # Pass 2.
+        # ================================================================
+        logger.info(
+            "Two-pass pre-sort: Pass 1 scoring %d games for slate ordering...",
+            len(odds_games),
+        )
+        _prescore_edges: Dict[str, float] = {}
+        for _gd in odds_games:
+            _ht = _gd.get("home_team", "")
+            _at = _gd.get("away_team", "")
+            _game_key = f"{_at}@{_ht}"
+            try:
+                _gt = _gd.get("sharp_consensus_total") or _gd.get("best_total")
+                _dyn_sd = math.sqrt(float(_gt)) * sd_multiplier if _gt else None
+                _ri: Dict = {
+                    "kenpom": {
+                        "home": ratings_service.get_team_rating(
+                            _ht, all_ratings.get("kenpom", {})
+                        ),
+                        "away": ratings_service.get_team_rating(
+                            _at, all_ratings.get("kenpom", {})
+                        ),
+                    },
+                    "barttorvik": {
+                        "home": ratings_service.get_team_rating(
+                            _ht, all_ratings.get("barttorvik", {})
+                        ),
+                        "away": ratings_service.get_team_rating(
+                            _at, all_ratings.get("barttorvik", {})
+                        ),
+                    },
+                    "evanmiya": {
+                        "home": ratings_service.get_team_rating(
+                            _ht, all_ratings.get("evanmiya", {})
+                        ),
+                        "away": ratings_service.get_team_rating(
+                            _at, all_ratings.get("evanmiya", {})
+                        ),
+                    },
+                    "_meta": all_ratings.get("_meta", {}),
+                }
+                _oi: Dict = {
+                    "spread":                  _gd.get("best_spread"),
+                    "spread_odds":             _gd.get("best_spread_odds", -110),
+                    "spread_away_odds":        _gd.get("best_spread_away_odds", -110),
+                    "total":                   _gt,
+                    "sharp_consensus_spread":  _gd.get("sharp_consensus_spread"),
+                    "sharp_consensus_total":   _gd.get("sharp_consensus_total"),
+                    "sharp_books_available":   _gd.get("sharp_books_available", 0),
+                }
+                _gi: Dict = {
+                    "home_team":  _ht,
+                    "away_team":  _at,
+                    "is_neutral": _gd.get("is_neutral", False),
+                }
+                _ps = model.analyze_game(
+                    game_data=_gi,
+                    odds=_oi,
+                    ratings=_ri,
+                    base_sd_override=_dyn_sd,
+                    concurrent_exposure=0.0,
+                )
+                _prescore_edges[_game_key] = _ps.edge_conservative
+            except Exception as _exc:
+                logger.debug(
+                    "Pass-1 pre-score skipped for %s: %s", _game_key, _exc
+                )
+                _prescore_edges[_game_key] = -999.0  # sink to end of sorted slate
+
+        # Sort slate descending by raw edge so the main loop processes
+        # the highest-EV games first and the portfolio receives capital
+        # in priority order.
+        odds_games = sorted(
+            odds_games,
+            key=lambda g: _prescore_edges.get(
+                f"{g.get('away_team', '')}@{g.get('home_team', '')}",
+                -999.0,
+            ),
+            reverse=True,
+        )
+        if _prescore_edges:
+            _n_pos_edge = sum(1 for e in _prescore_edges.values() if e > 0.0)
+            _top_edge   = max(_prescore_edges.values(), default=0.0)
+            logger.info(
+                "Two-pass pre-sort complete: %d games sorted by edge "
+                "(%d with positive raw edge, top=%.2f%%)",
+                len(odds_games), _n_pos_edge, _top_edge * 100,
+            )
+
+        # ================================================================
+        # TWO-PASS SLATE: PASS 2 — main loop (edge-sorted order)
+        # ================================================================
         for game_data in odds_games:
             home_team = game_data.get("home_team", "Unknown")
             away_team = game_data.get("away_team", "Unknown")
@@ -792,16 +930,14 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                     # or the season data isn't loaded yet — fall back to a
                     # heuristic estimate from top-line efficiency ratings so the
                     # Markov engine can ALWAYS run when we have any rating data.
-                    # --- NUCLEAR OVERRIDE: BYPASS POISONED DB PROFILES ---
-                    # The TeamProfile DB table carries corrupted BartTorvik data
-                    # (def_efg_pct stored as national rankings ÷ 100, e.g. 2.91).
-                    # The DB-profile path also computed efg_pct from rim_rate /
-                    # mid_range_rate attributes that don't exist on TeamProfile,
-                    # yielding a uniform 0.4266 for every team.  Until the
-                    # BartTorvik scraper column-detection is fixed and the DB is
-                    # re-populated with validated data, always derive style from
-                    # the AdjEM-based heuristic, which produces physically valid
-                    # values in the correct D1 ranges.
+                    #
+                    # Architecture: generate heuristic baseline first (gives a
+                    # physically valid efg_pct from AdjEM since TeamPlayStyle
+                    # has no direct efg_pct field), then overlay the real
+                    # BartTorvik four-factor data where the profile cache has
+                    # an entry.  Validity clamps in save_team_profiles() and
+                    # Markov safety guards in possession_sim.py ensure the
+                    # overlaid values are in D1-plausible ranges.
                     _home_em = (
                         ratings_input.get("barttorvik", {}).get("home")
                         or ratings_input.get("kenpom", {}).get("home")
@@ -815,27 +951,131 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                         off_rating_raw=_home_em,
                         def_rating_raw=-_home_em if _home_em is not None else None,
                     )
-                    if home_style:
-                        home_style["is_heuristic"] = False
-
                     away_style = _heuristic_style_from_rating(
                         off_rating_raw=_away_em,
                         def_rating_raw=-_away_em if _away_em is not None else None,
                     )
-                    if away_style:
-                        away_style["is_heuristic"] = False
 
-                    # Disable matchup engine — it relies on DB profiles which
-                    # are currently poisoned.  Re-enable once BartTorvik data
-                    # is validated and column detection is fixed.
+                    # Overlay real BartTorvik stats from profile cache.
+                    # All values have been range-validated inside load_from_barttorvik()
+                    # (same clamps as save_team_profiles), so they are D1-plausible
+                    # before reaching the Markov engine.
+                    # efg_pct: use real BartTorvik value when the scraper found it
+                    # (profile.efg_pct is not None); otherwise keep the heuristic.
+                    #
+                    # four_factors_heuristic: propagated from profile_cache so the
+                    # adaptive circuit breaker in betting_model.py can widen its
+                    # threshold when pricing is based on AdjOE/AdjDE derivatives
+                    # rather than scraped four-factor columns.
+                    _ff_heuristic = profile_cache.four_factors_heuristic
+                    if home_profile and home_style:
+                        home_style["pace"]                   = home_profile.pace
+                        home_style["ft_rate"]                = home_profile.ft_rate
+                        home_style["three_par"]              = home_profile.three_par
+                        home_style["to_pct"]                 = home_profile.to_pct
+                        home_style["def_efg_pct"]            = home_profile.def_efg_pct
+                        home_style["def_to_pct"]             = home_profile.def_to_pct
+                        home_style["four_factors_heuristic"] = _ff_heuristic
+                        if home_profile.efg_pct is not None:
+                            home_style["efg_pct"] = home_profile.efg_pct
+
+                    if away_profile and away_style:
+                        away_style["pace"]                   = away_profile.pace
+                        away_style["ft_rate"]                = away_profile.ft_rate
+                        away_style["three_par"]              = away_profile.three_par
+                        away_style["to_pct"]                 = away_profile.to_pct
+                        away_style["def_efg_pct"]            = away_profile.def_efg_pct
+                        away_style["def_to_pct"]             = away_profile.def_to_pct
+                        away_style["four_factors_heuristic"] = _ff_heuristic
+                        if away_profile.efg_pct is not None:
+                            away_style["efg_pct"] = away_profile.efg_pct
+
+                    # ---- KenPom four-factor overlay (highest priority) -------
+                    # KenPom API data is authoritative for Markov inputs because:
+                    #   (a) it is fetched via an authenticated token — not scraped
+                    #   (b) field names are stable and documented
+                    #   (c) it removes the primary source of phantom edges that
+                    #       arose from corrupted BartTorvik CSV columns
+                    #
+                    # This overlay runs AFTER the BartTorvik profile-cache overlay
+                    # so that any KenPom field that is non-None overwrites the
+                    # potentially-heuristic BartTorvik value.  When KenPom is
+                    # unavailable (API down), kenpom_ff_home / kenpom_ff_away will
+                    # be empty dicts and this block is a no-op — BartTorvik / heuristic
+                    # data from the block above remains in effect and the degraded-mode
+                    # SD penalty in betting_model.py provides the risk buffer.
+                    _kp_ff: Dict = all_ratings.get("kenpom_four_factors", {})
+
+                    # Try both the normalized name (BartTorvik vocabulary) and
+                    # the raw Odds API name so KenPom's name space is searched.
+                    kenpom_ff_home: Dict = (
+                        _kp_ff.get(norm_home) or _kp_ff.get(home_team) or {}
+                    )
+                    kenpom_ff_away: Dict = (
+                        _kp_ff.get(norm_away) or _kp_ff.get(away_team) or {}
+                    )
+
+                    _KP_FF_FIELDS = (
+                        "efg_pct", "to_pct", "ft_rate", "three_par",
+                        "def_efg_pct", "def_to_pct", "def_ft_rate", "def_three_par",
+                        "pace",
+                    )
+                    if kenpom_ff_home and home_style:
+                        for _f in _KP_FF_FIELDS:
+                            _v = kenpom_ff_home.get(_f)
+                            if _v is not None:
+                                home_style[_f] = _v
+                        # KenPom data is verified — clear the heuristic flag so the
+                        # degraded-mode SD penalty and circuit-breaker lift are suppressed.
+                        home_style["four_factors_heuristic"] = False
+                        home_style["kenpom_four_factors"]    = True
+                        logger.debug(
+                            "KenPom four-factor overlay applied for %s", home_team
+                        )
+
+                    if kenpom_ff_away and away_style:
+                        for _f in _KP_FF_FIELDS:
+                            _v = kenpom_ff_away.get(_f)
+                            if _v is not None:
+                                away_style[_f] = _v
+                        away_style["four_factors_heuristic"] = False
+                        away_style["kenpom_four_factors"]    = True
+                        logger.debug(
+                            "KenPom four-factor overlay applied for %s", away_team
+                        )
+
                     matchup_margin_adj = 0.0
-                    # -----------------------------------------------------
 
-                    # ---- Matchup engine (disabled — see override above) --
-                    if False and home_profile and away_profile:
+                    # ---- Profile fallback: synthesize TeamPlayStyle from style dicts --
+                    # profile_cache.get() returns None when:
+                    #   (a) BartTorvik scrape failed / returned empty data
+                    #   (b) Team name normalization missed (profile_valid_teams=[])
+                    #   (c) Odds API name differs from BartTorvik vocabulary
+                    # In all cases, build a minimal TeamPlayStyle from the enriched
+                    # home_style / away_style dicts (which have KenPom + BartTorvik
+                    # four-factor overlays applied above). PBP-derived fields default
+                    # to 0.0 / D1 averages — the four-factor factors (_efg_pressure_gap,
+                    # _turnover_pressure_gap) will still fire; PBP factors won't.
+                    if home_profile is None and home_style:
+                        home_profile = _build_profile_from_style(home_style, home_team)
+                        logger.debug(
+                            "Profile fallback: synthesized TeamPlayStyle for %s from style dict",
+                            home_team,
+                        )
+                    if away_profile is None and away_style:
+                        away_profile = _build_profile_from_style(away_style, away_team)
+                        logger.debug(
+                            "Profile fallback: synthesized TeamPlayStyle for %s from style dict",
+                            away_team,
+                        )
+
+                    # ---- Matchup engine ----------------------------------------
+                    if home_profile and away_profile:
                         try:
                             matchup_adj = matchup_engine.analyze_matchup(
                                 home_profile, away_profile,
+                                game_total=game_total,
+                                base_sd=dynamic_base_sd,
                             )
                             matchup_margin_adj = matchup_adj.margin_adj
                             if matchup_adj.notes:
@@ -897,6 +1137,15 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                         away_style=away_style,
                         matchup_margin_adj=matchup_margin_adj,
                         hours_to_tipoff=hours_to_tipoff,
+                        # Pass running portfolio exposure so _portfolio_kelly_divisor
+                        # scales each game's Kelly fraction relative to capital already
+                        # committed to higher-EV games earlier in the sorted slate.
+                        concurrent_exposure=_pass2_concurrent_exposure,
+                        # Sharp-book count — widens MC CI when Pinnacle/Circa absent.
+                        sharp_books_available=odds_input.get("sharp_books_available", 0),
+                        # Soft-proxy flag — applies half SE penalty (0.15) instead of
+                        # full NO_SHARP_BOOKS_SE_ADDEND (0.30).
+                        sharp_proxy_used=bool(game_data.get("sharp_proxy_used", False)),
                     )
 
                     # ---- Persist Game (idempotent) -----------------------
@@ -999,6 +1248,35 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                             "home_team": home_team,
                             "away_team": away_team,
                         })
+                        # Advance the running exposure so games evaluated later
+                        # in this edge-sorted slate see a realistic portfolio load.
+                        # recommended_units is in percentage-point units (e.g. 2.5
+                        # = 2.5% of bankroll); concurrent_exposure uses 0-1 fractions.
+                        if analysis.recommended_units > 0:
+                            _max_exp_frac = (
+                                float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0")) / 100.0
+                            )
+                            _pass2_concurrent_exposure = min(
+                                _pass2_concurrent_exposure
+                                + analysis.recommended_units / 100.0,
+                                _max_exp_frac,
+                            )
+                            logger.debug(
+                                "Pass-2 exposure: +%.2f%% → cumulative=%.2f%% "
+                                "after %s @ %s",
+                                analysis.recommended_units,
+                                _pass2_concurrent_exposure * 100,
+                                away_team,
+                                home_team,
+                            )
+                    elif analysis.verdict.startswith("CONSIDER"):
+                        # CONSIDER: positive edge below MIN_BET_EDGE floor.
+                        # Stored in Prediction for CLV tracking; no paper trade created.
+                        games_considered += 1
+                        logger.info(
+                            "CONSIDER [%s @ %s]: %s (no paper trade)",
+                            away_team, home_team, analysis.verdict,
+                        )
                     else:
                         logger.debug(
                             "PASS: %s @ %s (%s)",
@@ -1014,66 +1292,78 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                 continue
 
         # ----------------------------------------------------------------
-        # STEP 4b: Simultaneous Kelly adjustment across the full slate
+        # STEP 4b: Simultaneous Kelly adjustment & Global Proportional Scaling
         # ----------------------------------------------------------------
         if bet_candidates:
-            max_exposure = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "5.0"))
-            _apply_simultaneous_kelly(bet_candidates, max_total_exposure_pct=max_exposure)
+            starting_bankroll = float(os.getenv("STARTING_BANKROLL", "1000"))
+            max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0"))
+            max_daily_dollars = starting_bankroll * max_daily_pct / 100.0
 
-            current_exposure = _daily_exposure(db)
+            # 1. Apply simultaneous Kelly covariance penalty
+            _apply_simultaneous_kelly(bet_candidates, max_total_exposure_pct=max_daily_pct)
+
+            # 2. Calculate Global Scaling Factor
+            # We check how many dollars we WANT to bet across all candidates
+            # after Kelly adjustments, and compare to REMAINING daily capacity.
+            current_exposure_before = _daily_exposure(db)
+            remaining_capacity = max(0.0, max_daily_dollars - current_exposure_before)
+
+            total_requested_dollars = sum(
+                (c["recommended_units"] * starting_bankroll / 100.0)
+                for c in bet_candidates
+            )
+
+            scaling_factor = 1.0
+            if total_requested_dollars > remaining_capacity and total_requested_dollars > 0:
+                scaling_factor = remaining_capacity / total_requested_dollars
+                logger.warning(
+                    "Global Scaling: Total requested $%.2f exceeds capacity $%.2f. "
+                    "Applying scaling factor %.4f to all %d bets.",
+                    total_requested_dollars, remaining_capacity, scaling_factor, len(bet_candidates)
+                )
+
+            # 3. Create paper trades with scaled amounts
+            current_exposure_acc = current_exposure_before
             for candidate in bet_candidates:
                 prediction = candidate["prediction"]
                 game = candidate["game"]
-                adjusted_units = candidate["recommended_units"]
-                slate_reason = candidate.get("slate_adjustment_reason", "")
-                prev_verdict = candidate.get("old_verdict")
+                orig_units = candidate["recommended_units"]
+                
+                # Apply global scaling factor
+                scaled_units = orig_units * scaling_factor
+                scaled_dollars = (scaled_units * starting_bankroll / 100.0)
+                
+                # Floor check: if scaled below 0.25u, keep at 0.25u UNLESS that would 
+                # violate the cap again (highly unlikely with large slates).
+                if 0 < scaled_units < 0.25:
+                    scaled_units = 0.25
+                    scaled_dollars = (scaled_units * starting_bankroll / 100.0)
 
-                # Update prediction with slate-adjusted units
-                prediction.recommended_units = adjusted_units
+                candidate["recommended_units"] = scaled_units
+                prediction.recommended_units = scaled_units
+
+                slate_reason = candidate.get("slate_adjustment_reason", "")
+                if scaling_factor < 1.0:
+                    scaling_note = f"Global scale: {scaling_factor:.2f}x"
+                    slate_reason = f"{slate_reason} | {scaling_note}" if slate_reason else scaling_note
+                
                 if slate_reason:
                     prediction.notes = f"Slate adj: {slate_reason}"
 
-                # Sync verdict string with post-Kelly unit adjustments.
-                # _apply_simultaneous_kelly may reduce or zero recommended_units
-                # without touching the verdict string, creating a "phantom bet"
-                # where the label says "Bet 1.50u @ -110" but the units are 0.5
-                # or 0.  We reconstruct the verdict here from the adjusted units
-                # so the dashboard filter (verdict.startswith("Bet")), paper-bet
-                # size, and the displayed text are always in sync.
+                # Sync verdict string
                 bet_odds = candidate.get("bet_odds")
-                if adjusted_units == 0.0 and (prediction.verdict or "").startswith("Bet"):
+                if scaled_units == 0.0 and (prediction.verdict or "").startswith("Bet"):
                     prediction.verdict = "PASS - Slate Cap Reached"
-                    prediction.pass_reason = f"Simultaneous Kelly: {slate_reason}"
-                    logger.debug(
-                        "Ghost-bet prevention: %s @ %s verdict → PASS (units zeroed by slate cap)",
-                        candidate.get("away_team", "?"), candidate.get("home_team", "?"),
-                    )
+                    prediction.pass_reason = f"Global Scaling: {slate_reason}"
                 elif (
-                    adjusted_units > 0.0
+                    scaled_units > 0.0
                     and (prediction.verdict or "").startswith("Bet")
                     and bet_odds is not None
                 ):
-                    # Units were reduced (partial fill) — rebuild the verdict
-                    # label so the displayed size matches the actual exposure.
-                    if adjusted_units < 0.25:
-                        adjusted_units = 0.25
-                        prediction.recommended_units = adjusted_units
-                        candidate["recommended_units"] = adjusted_units
-                    prediction.verdict = (
-                        f"Bet {adjusted_units:.2f}u @ {bet_odds:+.0f}"
-                    )
-                    logger.debug(
-                        "Verdict resync: %s @ %s → %s (slate adj: %s)",
-                        candidate.get("away_team", "?"),
-                        candidate.get("home_team", "?"),
-                        prediction.verdict,
-                        slate_reason or "none",
-                    )
+                    prediction.verdict = f"Bet {scaled_units:.2f}u @ {bet_odds:+.0f}"
 
-                # BetLog guard: only create paper trades when flipping
-                # from PASS (or first analysis) to Bet.  If old_verdict
-                # was already a Bet, we updated the Prediction in-place
-                # but do NOT duplicate the BetLog.
+                # BetLog guard
+                prev_verdict = candidate.get("old_verdict")
                 if prev_verdict is not None and prev_verdict.startswith("Bet"):
                     logger.debug(
                         "Skipping duplicate paper trade for %s @ %s "
@@ -1082,22 +1372,29 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                     )
                     continue
 
-                # Unpack bet and net exposure change (accounts for displacement)
+                # Create the bet using our pre-calculated scaled dollar amount
                 paper_bet, net_change = _create_paper_bet(
-                    db, game, prediction, daily_exposure=current_exposure,
+                    db, game, prediction, 
+                    daily_exposure=current_exposure_acc,
+                    scaled_bet_dollars=scaled_dollars
                 )
-                # Use net_change instead of bet_size_dollars to correctly track
-                # exposure when EV displacement has occurred
-                current_exposure += net_change
+                
+                current_exposure_acc += net_change
                 paper_trades_created += 1
                 logger.info(
                     "BET: %s @ %s — %.2fu%s (paper: %s)",
                     candidate["away_team"],
                     candidate["home_team"],
-                    adjusted_units,
+                    scaled_units,
                     f" [{slate_reason}]" if slate_reason else "",
                     paper_bet.pick,
                 )
+
+            # Update current_exposure for parlay logic below
+            current_exposure = current_exposure_acc
+        else:
+            # Still need to define current_exposure if no candidates
+            current_exposure = _daily_exposure(db)
 
         # ----------------------------------------------------------------
         # STEP 4c: Cross-game parlay recommendations
@@ -1140,7 +1437,7 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
 
         if len(parlay_slate) >= 2:
             _starting_bankroll = float(os.getenv("STARTING_BANKROLL", "1000"))
-            _max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "5.0"))
+            _max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0"))
             _max_daily_dollars = _starting_bankroll * _max_daily_pct / 100.0
             _remaining_capacity = max(0.0, _max_daily_dollars - current_exposure)
 
@@ -1171,7 +1468,10 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
             games_analyzed, bets_recommended, paper_trades_created,
         )
 
-        return _summary(start_time, games_analyzed, bets_recommended, paper_trades_created, errors)
+        return _summary(
+            start_time, games_analyzed, bets_recommended,
+            paper_trades_created, errors, games_considered=games_considered,
+        )
 
     except Exception as exc:
         logger.error("Fatal error in nightly analysis: %s", exc, exc_info=True)
@@ -1185,6 +1485,7 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
             bets_recommended,
             paper_trades_created,
             errors + [f"Fatal: {exc}"],
+            games_considered=games_considered,
         )
     finally:
         db.close()
@@ -1197,22 +1498,31 @@ def _summary(
     paper_trades_created: int,
     errors: List[str],
     status: str = "ok",
+    games_considered: int = 0,
 ) -> Dict:
     duration = (datetime.utcnow() - start_time).total_seconds()
+    n = max(games_analyzed, 1)
     result = {
         "status": status,
         "games_analyzed": games_analyzed,
         "bets_recommended": bets_recommended,
+        "games_considered": games_considered,
         "paper_trades_created": paper_trades_created,
+        "bet_rate": round(bets_recommended / n, 3),
+        "consider_rate": round(games_considered / n, 3),
+        "pass_rate": round((games_analyzed - bets_recommended - games_considered) / n, 3),
         "errors": errors,
         "timestamp": datetime.utcnow().isoformat(),
         "duration_seconds": round(duration, 2),
     }
     logger.info(
-        "Analysis complete in %.1fs — %d games, %d bets, %d paper trades, %d errors",
+        "Analysis complete in %.1fs — %d games | %d BET (%.0f%%) | "
+        "%d CONSIDER (%.0f%%) | %d PASS | %d paper trades | %d errors",
         duration,
         games_analyzed,
-        bets_recommended,
+        bets_recommended, 100 * bets_recommended / n,
+        games_considered, 100 * games_considered / n,
+        games_analyzed - bets_recommended - games_considered,
         paper_trades_created,
         len(errors),
     )

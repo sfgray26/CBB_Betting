@@ -36,7 +36,17 @@ BASE_URL = "https://api.the-odds-api.com/v4"
 
 # Books that represent the sharpest, most accurate market consensus.
 # CLV should always be measured against these lines, not retail.
+# Pinnacle is an "eu" region book; CircaSports is US but limited NCAAB coverage.
 SHARP_BOOKS: frozenset = frozenset({"pinnacle", "circasports"})
+
+# High-volume retail books used as a soft-sharp proxy when SHARP_BOOKS are
+# unavailable.  Both must agree within PROXY_SPREAD_AGREEMENT_PT for the
+# proxy to activate.  Never added to SHARP_BOOKS — proxy consensus carries
+# higher uncertainty (SE inflation via SOFT_PROXY_SE_ADDEND in betting_model).
+SOFT_SHARP_BOOKS: frozenset = frozenset({"draftkings", "fanduel"})
+PROXY_SPREAD_AGREEMENT_PT: float = float(
+    os.getenv("PROXY_AGREEMENT_PT", "0.5")
+)
 
 
 class OddsAPIClient:
@@ -50,7 +60,7 @@ class OddsAPIClient:
     def get_cbb_odds(
         self,
         markets: str = "h2h,spreads,totals",
-        regions: str = "us",
+        regions: str = os.getenv("ODDS_API_REGIONS", "us,eu"),
         odds_format: str = "american",
     ) -> List[Dict]:
         """
@@ -196,6 +206,8 @@ class OddsAPIClient:
             "best_team_total_away": None,
             # Audit field: which books were eligible for line shopping
             "active_books_used": sorted(_active_filter) if _active_filter else None,
+            # Soft-sharp proxy fields (populated below when SHARP_BOOKS absent)
+            "sharp_proxy_used": False,
         }
 
         sharp_parsed: List[Dict] = []
@@ -283,6 +295,40 @@ class OddsAPIClient:
             if sharp_odds:
                 # Integer average (American odds are always integers)
                 result["sharp_spread_odds"] = int(round(sum(sharp_odds) / len(sharp_odds)))
+
+        # ------------------------------------------------------------------
+        # Soft-sharp proxy — activates when SHARP_BOOKS are absent.
+        # DraftKings + FanDuel must both post a spread AND agree within
+        # PROXY_SPREAD_AGREEMENT_PT.  Produces a weaker consensus than true
+        # sharp lines; the SE addend in betting_model is halved (0.15 vs 0.30).
+        # ------------------------------------------------------------------
+        if result["sharp_books_available"] == 0:
+            proxy_parsed = [
+                b for b in result["bookmakers"]
+                if b.get("name") in SOFT_SHARP_BOOKS
+                and b.get("spread_home") is not None
+            ]
+            if len(proxy_parsed) == 2:
+                s0 = proxy_parsed[0]["spread_home"]
+                s1 = proxy_parsed[1]["spread_home"]
+                if abs(s0 - s1) <= PROXY_SPREAD_AGREEMENT_PT:
+                    result["sharp_consensus_spread"] = (s0 + s1) / 2.0
+                    t0 = proxy_parsed[0].get("total")
+                    t1 = proxy_parsed[1].get("total")
+                    if t0 is not None and t1 is not None:
+                        result["sharp_consensus_total"] = (t0 + t1) / 2.0
+                    result["sharp_proxy_used"] = True
+                    logger.info(
+                        "Sharp proxy activated for %s@%s: DK=%s FD=%s → consensus=%s",
+                        result["away_team"], result["home_team"],
+                        s0, s1, result["sharp_consensus_spread"],
+                    )
+                else:
+                    logger.debug(
+                        "Sharp proxy suppressed for %s@%s: DK=%s FD=%s disagree by %.1fpt",
+                        result["away_team"], result["home_team"],
+                        s0, s1, abs(s0 - s1),
+                    )
 
         # ------------------------------------------------------------------
         # Best available — line shopping across eligible bookmakers
@@ -382,9 +428,10 @@ class OddsAPIClient:
             games.append(parsed)
 
         sharp_count = sum(1 for g in games if g["sharp_books_available"] > 0)
+        proxy_count = sum(1 for g in games if g.get("sharp_proxy_used"))
         logger.info(
-            "Parsed odds for %d games (%d with sharp lines, active_books=%s)",
-            len(games), sharp_count,
+            "Parsed odds for %d games (%d true sharp, %d proxy, active_books=%s)",
+            len(games), sharp_count, proxy_count,
             sorted(active_books) if active_books else "all",
         )
         return games

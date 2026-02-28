@@ -35,6 +35,12 @@ from typing import Optional, Tuple
 
 from scipy.stats import skellam
 
+from backend.core.odds_math import (
+    remove_vig_shin as _shin,
+    implied_prob as _implied_prob_core,
+    dynamic_sd as _dynamic_sd_core,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -91,84 +97,6 @@ def _validate_american_odds(odds: float, name: str = "odds") -> None:
             "Must be >= +100 (underdog) or <= -100 (favourite)."
         )
 
-
-def _implied_prob(american_odds: float) -> float:
-    """Convert American odds to raw implied probability (vig included)."""
-    if american_odds > 0:
-        return 100.0 / (american_odds + 100.0)
-    return abs(american_odds) / (abs(american_odds) + 100.0)
-
-
-def _dynamic_sd(total: Optional[float]) -> float:
-    """
-    Game-total-based standard deviation: SD ≈ sqrt(Total) × 0.85.
-
-    Replaces the hard-coded base_sd=11.0 with a value that scales with
-    the expected combined score. At T=145 (typical CBB), SD ≈ 10.2 pts.
-    Falls back to 11.0 when total is unavailable or non-positive.
-    """
-    if total is None or total <= 0:
-        return 11.0
-    return math.sqrt(total) * 0.85
-
-
-def _remove_vig_shin(odds_a: float, odds_b: float) -> Tuple[float, float]:
-    """
-    Remove vig using Shin (1993) method for true probability extraction.
-
-    Unlike proportional normalisation, Shin's method accounts for insider
-    information embedded in the overround, giving more accurate true
-    probabilities for asymmetric markets (e.g. moneylines).
-
-    For symmetric spread markets (-110/-110) the result equals proportional
-    normalisation and the function short-circuits immediately.
-
-    Algorithm
-    ---------
-    1. Estimate insider fraction z from overround using the closed-form
-       symmetric approximation (Shin 1992): k ≈ 1/(1 − z/2) ⟹ z ≈ 2(k−1)/k.
-    2. Solve the Shin equation for true prob q_a via bisection:
-           ω_a/K = (1−z)·q_a + z·q_a²/(q_a²+(1−q_a)²)
-       where ω_a/K is the normalised implied probability of side A.
-
-    Returns
-    -------
-    (true_prob_a, true_prob_b) summing to 1.0.
-    """
-    p_a = _implied_prob(odds_a)
-    p_b = _implied_prob(odds_b)
-    k = p_a + p_b  # total overround (> 1 due to vig)
-
-    if k <= 0:
-        raise ValueError(f"Sum of implied probabilities is {k}; check odds inputs.")
-
-    # Symmetric market: proportional == Shin (short-circuit)
-    if abs(p_a - p_b) < 1e-9:
-        return p_a / k, p_b / k
-
-    # Insider fraction z estimated from overround (Shin 1992)
-    z = 2.0 * (k - 1.0) / k
-    z = max(0.0, min(z, 0.999))
-
-    # Normalised implied prob for side A
-    w_a = p_a / k
-
-    # Shin equation residual: f(q) = (1−z)·q + z·q²/(q²+(1−q)²) − w_a
-    def residual(q: float) -> float:
-        D = q * q + (1.0 - q) * (1.0 - q)
-        return (1.0 - z) * q + z * q * q / D - w_a
-
-    lo, hi = 1e-9, 1.0 - 1e-9
-    for _ in range(64):
-        mid = 0.5 * (lo + hi)
-        if residual(mid) < 0.0:
-            lo = mid
-        else:
-            hi = mid
-
-    q_a = 0.5 * (lo + hi)
-    q_b = 1.0 - q_a
-    return q_a, q_b
 
 
 def _bivariate_poisson_skellam(
@@ -293,7 +221,7 @@ def _spread_cover_prob(
 
     # ---- Normal fallback (dynamic SD) --------------------------------------
     from scipy.stats import norm as _norm
-    sd = base_sd if base_sd is not None else _dynamic_sd(total)
+    sd = base_sd if base_sd is not None else _dynamic_sd_core(total)
     if sd <= 0:
         sd = 11.0
     clv_points = opening_spread - closing_spread
@@ -363,8 +291,8 @@ def calculate_clv_spread(
     clv_prob_spread = cover_prob - 0.5  # Edge vs 50%
 
     # No-vig probs via Shin's method for diagnostic / juice-side CLV
-    opening_novig, _ = _remove_vig_shin(opening_odds, other_open)
-    closing_novig, _ = _remove_vig_shin(closing_odds, other_close)
+    opening_novig, _ = _shin(opening_odds, other_open)
+    closing_novig, _ = _shin(closing_odds, other_close)
 
     return CLVResult(
         clv_points=clv_points,
@@ -407,8 +335,8 @@ def calculate_clv_juice_only(
     other_open = other_side_opening_odds or -110
     other_close = other_side_closing_odds or -110
 
-    opening_novig, _ = _remove_vig_shin(opening_odds, other_open)
-    closing_novig, _ = _remove_vig_shin(closing_odds, other_close)
+    opening_novig, _ = _shin(opening_odds, other_open)
+    closing_novig, _ = _shin(closing_odds, other_close)
 
     clv_prob = closing_novig - opening_novig
 

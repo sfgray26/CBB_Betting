@@ -454,5 +454,165 @@ class TestSimultaneousKelly:
         assert "conf_corr" in result[1]["slate_adjustment_reason"]
 
 
+class TestEfgPressureGap:
+    """Test _efg_pressure_gap matchup factor (Task 4.3)."""
+
+    def test_home_offense_exploits_weak_away_defense(self):
+        """Home has elite offense vs poor away defense → positive margin adj."""
+        engine = MatchupEngine()
+        from backend.services.matchup_engine import MatchupAdjustment
+        # home_off_edge = 0.560 - 0.510 = 0.050
+        # away_off_edge = 0.500 - 0.505 = -0.005
+        # net = 0.055 → 0.055 * 15 = 0.825 > threshold
+        home = TeamPlayStyle(team="Home", efg_pct=0.560, def_efg_pct=0.505)
+        away = TeamPlayStyle(team="Away", efg_pct=0.500, def_efg_pct=0.510)
+        adj = MatchupAdjustment()
+        engine._efg_pressure_gap(home, away, adj)
+        assert adj.factors.get("efg_pressure", 0) > 0
+
+    def test_away_offense_exploits_weak_home_defense(self):
+        """Away dominant offense vs poor home defense → negative margin adj."""
+        engine = MatchupEngine()
+        from backend.services.matchup_engine import MatchupAdjustment
+        home = TeamPlayStyle(team="Home", efg_pct=0.480, def_efg_pct=0.530)
+        away = TeamPlayStyle(team="Away", efg_pct=0.560, def_efg_pct=0.505)
+        adj = MatchupAdjustment()
+        engine._efg_pressure_gap(home, away, adj)
+        assert adj.factors.get("efg_pressure", 0) < 0
+
+    def test_below_threshold_no_adjustment(self):
+        """Net eFG edge < 2pp → no factor added."""
+        engine = MatchupEngine()
+        from backend.services.matchup_engine import MatchupAdjustment
+        home = TeamPlayStyle(team="Home", efg_pct=0.505, def_efg_pct=0.505)
+        away = TeamPlayStyle(team="Away", efg_pct=0.505, def_efg_pct=0.505)
+        adj = MatchupAdjustment()
+        engine._efg_pressure_gap(home, away, adj)
+        assert "efg_pressure" not in adj.factors
+
+    def test_none_efg_skips_factor(self):
+        """When efg_pct is None (BartTorvik miss), factor is skipped."""
+        engine = MatchupEngine()
+        from backend.services.matchup_engine import MatchupAdjustment
+        home = TeamPlayStyle(team="Home", efg_pct=None)
+        away = TeamPlayStyle(team="Away", efg_pct=0.500)
+        adj = MatchupAdjustment()
+        engine._efg_pressure_gap(home, away, adj)
+        assert "efg_pressure" not in adj.factors
+
+    def test_none_away_efg_skips_factor(self):
+        """When away efg_pct is None, factor is also skipped."""
+        engine = MatchupEngine()
+        from backend.services.matchup_engine import MatchupAdjustment
+        home = TeamPlayStyle(team="Home", efg_pct=0.520)
+        away = TeamPlayStyle(team="Away", efg_pct=None)
+        adj = MatchupAdjustment()
+        engine._efg_pressure_gap(home, away, adj)
+        assert "efg_pressure" not in adj.factors
+
+    def test_note_appended_when_factor_fires(self):
+        """When factor fires, a descriptive note is added to adj.notes."""
+        engine = MatchupEngine()
+        from backend.services.matchup_engine import MatchupAdjustment
+        home = TeamPlayStyle(team="Home", efg_pct=0.570, def_efg_pct=0.505)
+        away = TeamPlayStyle(team="Away", efg_pct=0.490, def_efg_pct=0.505)
+        adj = MatchupAdjustment()
+        engine._efg_pressure_gap(home, away, adj)
+        assert any("eFG pressure" in note for note in adj.notes)
+
+    def test_scale_is_correct(self):
+        """Factor value equals round(net * 15, 2)."""
+        engine = MatchupEngine()
+        from backend.services.matchup_engine import MatchupAdjustment
+        # home_off_edge = 0.550 - 0.500 = 0.050
+        # away_off_edge = 0.500 - 0.505 = -0.005
+        # net = 0.055 → 0.055 * 15 = 0.825
+        home = TeamPlayStyle(team="Home", efg_pct=0.550, def_efg_pct=0.505)
+        away = TeamPlayStyle(team="Away", efg_pct=0.500, def_efg_pct=0.500)
+        adj = MatchupAdjustment()
+        engine._efg_pressure_gap(home, away, adj)
+        expected = round((0.550 - 0.500 - (0.500 - 0.505)) * 15.0, 2)
+        assert adj.factors["efg_pressure"] == pytest.approx(expected)
+
+
+class TestTurnoverPressureGap:
+    """Test _turnover_pressure_gap matchup factor (P1)."""
+
+    def test_home_pressure_advantage_positive(self):
+        """Home D forces more TOs than away D → positive to_pressure."""
+        from backend.services.matchup_engine import MatchupAdjustment
+        engine = MatchupEngine()
+        # home forces: 0.210 - 0.175 = +0.035; away forces: 0.175 - 0.175 = 0; net=0.035
+        home = TeamPlayStyle(team="Home", def_to_pct=0.210, to_pct=0.175)
+        away = TeamPlayStyle(team="Away", def_to_pct=0.175, to_pct=0.175)
+        adj = MatchupAdjustment()
+        engine._turnover_pressure_gap(home, away, adj)
+        assert adj.factors.get("to_pressure", 0) > 0
+
+    def test_away_pressure_advantage_negative(self):
+        """Away D forces more TOs than home D → negative to_pressure."""
+        from backend.services.matchup_engine import MatchupAdjustment
+        engine = MatchupEngine()
+        home = TeamPlayStyle(team="Home", def_to_pct=0.175, to_pct=0.175)
+        away = TeamPlayStyle(team="Away", def_to_pct=0.210, to_pct=0.175)
+        adj = MatchupAdjustment()
+        engine._turnover_pressure_gap(home, away, adj)
+        assert adj.factors.get("to_pressure", 0) < 0
+
+    def test_below_threshold_no_factor(self):
+        """Net < 1.5pp → no factor added."""
+        from backend.services.matchup_engine import MatchupAdjustment
+        engine = MatchupEngine()
+        # home_def=0.005, away_def=-0.005 → net=0.010 < 0.015 threshold
+        home = TeamPlayStyle(team="Home", def_to_pct=0.180, to_pct=0.175)
+        away = TeamPlayStyle(team="Away", def_to_pct=0.175, to_pct=0.175)
+        adj = MatchupAdjustment()
+        engine._turnover_pressure_gap(home, away, adj)
+        assert "to_pressure" not in adj.factors
+
+    def test_scale_is_correct(self):
+        """Factor value equals round(net * 23.0, 2)."""
+        from backend.services.matchup_engine import MatchupAdjustment
+        engine = MatchupEngine()
+        # home_def = 0.200 - 0.175 = 0.025; away_def = 0.175 - 0.175 = 0; net = 0.025
+        home = TeamPlayStyle(team="Home", def_to_pct=0.200, to_pct=0.175)
+        away = TeamPlayStyle(team="Away", def_to_pct=0.175, to_pct=0.175)
+        adj = MatchupAdjustment()
+        engine._turnover_pressure_gap(home, away, adj)
+        expected = round(0.025 * 23.0, 2)
+        assert adj.factors["to_pressure"] == pytest.approx(expected)
+
+    def test_note_appended_when_fires(self):
+        """A descriptive note is appended to adj.notes when factor fires."""
+        from backend.services.matchup_engine import MatchupAdjustment
+        engine = MatchupEngine()
+        home = TeamPlayStyle(team="Home", def_to_pct=0.220, to_pct=0.175)
+        away = TeamPlayStyle(team="Away", def_to_pct=0.175, to_pct=0.175)
+        adj = MatchupAdjustment()
+        engine._turnover_pressure_gap(home, away, adj)
+        assert any("TO pressure" in note for note in adj.notes)
+
+
+class TestTeamMapping:
+    """Test team name normalization, especially P2 manual override additions."""
+
+    def test_georgia_st_manual_override(self):
+        """'Georgia St Panthers' maps to 'Georgia St.' via _MANUAL_OVERRIDES."""
+        from backend.services.team_mapping import normalize_team_name
+        result = normalize_team_name(
+            "Georgia St Panthers", ["Georgia St.", "Georgia", "Georgia Tech"]
+        )
+        assert result == "Georgia St."
+
+    def test_georgia_bulldogs_not_confused_with_georgia_st(self):
+        """'Georgia Bulldogs' → 'Georgia', never 'Georgia St.' (collision guard)."""
+        from backend.services.team_mapping import normalize_team_name
+        result = normalize_team_name(
+            "Georgia Bulldogs", ["Georgia", "Georgia St.", "Georgia Tech"]
+        )
+        assert result != "Georgia St."
+        assert result == "Georgia"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

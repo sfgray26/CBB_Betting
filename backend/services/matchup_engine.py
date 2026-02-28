@@ -75,6 +75,11 @@ class TeamPlayStyle:
     to_pct: float = 0.17              # Turnover rate
     steal_pct: float = 0.09           # Steal rate (defensive)
 
+    # Offensive eFG% — populated from BartTorvik EFG% column when available.
+    # None means "not scraped yet"; the heuristic path in analysis.py fills in
+    # an AdjEM-derived estimate so the Markov engine always gets a value.
+    efg_pct: Optional[float] = None   # Offensive eFG% (None = use heuristic)
+
     # Defensive four factors (opponent stats allowed) — D1 averages as defaults.
     # Populated from BartTorvik EFGD%/TORD/FTRD/3PAD% columns.
     def_efg_pct: float = 0.505        # Opponent eFG% allowed
@@ -159,11 +164,16 @@ class MatchupEngine:
         "rebounding": "possession_generating",
         "turnover_battle": "possession_generating",
         "transition_gap": "possession_generating",
+        # Turnover Pressure — defensive TO forcing vs offensive TO tendency
+        # (four-factor driven; correlated with turnover_battle via shared TO pool)
+        "to_pressure": "possession_generating",
         # Shot Quality — per-possession efficiency from scheme/matchup geometry
         "home_3_vs_drop": "shot_quality",
         "away_3_vs_drop": "shot_quality",
         "home_zone_vs_away_3": "shot_quality",
         "away_zone_vs_home_3": "shot_quality",
+        # eFG% Pressure — four-factor offensive efficiency vs defensive efficiency
+        "efg_pressure": "shot_quality",
     }
 
     def _effective_caps(
@@ -260,6 +270,11 @@ class MatchupEngine:
         self._rebounding_impact(home, away, adj)
         self._turnover_battle(home, away, adj)
         self._zone_vs_three(home, away, adj)
+        # Four-factor driven factors — fire when real eFG%/TO% data is available.
+        # These complement the PBP-derived factors above and are the primary
+        # source of margin adjustment when play-by-play fields are at defaults.
+        self._efg_pressure_gap(home, away, adj)
+        self._turnover_pressure_gap(home, away, adj)
 
         max_adj, cat_cap = self._effective_caps(game_total=game_total, base_sd=base_sd)
         adj.margin_adj = round(
@@ -475,6 +490,60 @@ class MatchupEngine:
             zone_bonus = 0.5 * away.zone_pct * (home.three_fg_pct - 0.34) * 10
             adj.factors['away_zone_vs_home_3'] = round(zone_bonus, 2)
 
+    def _efg_pressure_gap(
+        self, home: TeamPlayStyle, away: TeamPlayStyle, adj: MatchupAdjustment
+    ) -> None:
+        """
+        eFG% offensive efficiency vs defensive eFG% allowed.
+
+        Positive result → home offense exploits away defense more than vice versa.
+        Scale: a 0.10 eFG% net edge ≈ ~1.5 margin pts (15.0 multiplier).
+
+        Only fires when real four-factor data is available (efg_pct not None on
+        both sides).  Heuristic-derived efg_pct values are excluded because they
+        are computed from the same AdjEM that already drives the ratings margin,
+        which would double-count the efficiency signal.
+        """
+        if home.efg_pct is None or away.efg_pct is None:
+            return
+        home_off_edge = home.efg_pct - away.def_efg_pct   # home offense vs away D
+        away_off_edge = away.efg_pct - home.def_efg_pct   # away offense vs home D
+        net = home_off_edge - away_off_edge
+        if abs(net) > 0.020:   # 2pp threshold — below this is within noise
+            adj.factors["efg_pressure"] = round(net * 15.0, 2)
+            adj.notes.append(
+                f"eFG pressure: home_edge={home_off_edge:+.3f} "
+                f"away_edge={away_off_edge:+.3f} net={net:+.3f} "
+                f"→ {net * 15.0:+.2f}pts"
+            )
+
+    def _turnover_pressure_gap(
+        self, home: TeamPlayStyle, away: TeamPlayStyle, adj: MatchupAdjustment
+    ) -> None:
+        """
+        Defensive TO forcing rate vs offensive TO tendency.
+
+        Positive result → home defense disrupts away offense more than away
+        defense disrupts home offense.
+
+        Scale: a 3pp net defensive advantage over 68 possessions, each turnover
+        worth ~0.33 pt swing (possession value differential):
+            0.03 net × 23.0 ≈ 0.69 margin pts.
+
+        Threshold: 1.5pp net (0.015) to filter noise in TO% estimates.
+        """
+        # def_to_pct = fraction of opponent possessions ended by forced TO
+        home_def_pressure = home.def_to_pct - away.to_pct   # + = home D disrupts away O
+        away_def_pressure = away.def_to_pct - home.to_pct   # + = away D disrupts home O
+        net = home_def_pressure - away_def_pressure
+        if abs(net) > 0.015:   # 1.5pp threshold
+            adj.factors["to_pressure"] = round(net * 23.0, 2)
+            adj.notes.append(
+                f"TO pressure: home_def={home_def_pressure:+.3f} "
+                f"away_def={away_def_pressure:+.3f} net={net:+.3f} "
+                f"→ {net * 23.0:+.2f}pts"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Team profile cache / loader
@@ -492,6 +561,11 @@ class TeamProfileCache:
 
     def __init__(self):
         self._profiles: Dict[str, TeamPlayStyle] = {}
+        # True when all profiles were built from AdjOE/AdjDE heuristics
+        # (i.e. the BartTorvik CSV had no four-factor columns).  Used by
+        # analysis.py to set is_heuristic=True on the style dict so the
+        # adaptive circuit breaker can widen its threshold.
+        self.four_factors_heuristic: bool = False
 
     def get(self, team: str) -> Optional[TeamPlayStyle]:
         """Return profile for a team, or None if not available."""
@@ -526,26 +600,48 @@ class TeamProfileCache:
             logger.warning("BartTorvik profile scrape returned no data")
             return 0
 
+        # Validity ranges: same as save_team_profiles() clamps in ratings.py so
+        # both the DB write path and the in-memory cache path reject bad values.
+        _EFG_LO,  _EFG_HI  = 0.35, 0.65
+        _TO_LO,   _TO_HI   = 0.10, 0.32
+        _FTR_LO,  _FTR_HI  = 0.10, 0.60
+        _PACE_LO, _PACE_HI = 55.0, 85.0
+
         count = 0
         for team_name, stat in full_stats.items():
             def _f(key: str, default: float) -> float:
+                """Return raw value or default (no range check)."""
                 v = stat.get(key)
                 return v if v is not None else default
 
+            def _fc(key: str, default: float, lo: float, hi: float) -> float:
+                """Return clamped value or default when out of D1-plausible range."""
+                v = stat.get(key)
+                if v is None or not (lo <= v <= hi):
+                    return default
+                return v
+
+            def _fc_opt(key: str, lo: float, hi: float) -> Optional[float]:
+                """Return value or None when out of range (for Optional fields)."""
+                v = stat.get(key)
+                if v is None or not (lo <= v <= hi):
+                    return None
+                return v
+
             profile = TeamPlayStyle(
                 team=team_name,
-                pace=_f("pace", 68.0),
-                three_par=_f("three_par", 0.36),
-                ft_rate=_f("ft_rate", 0.30),
-                to_pct=_f("to_pct", 0.175),
-                # Offensive four-factors
-                # (rim_rate / mid_range_rate / shooting pcts not in BartTorvik CSV;
-                #  leave at dataclass defaults so the matchup engine uses sensible values)
-                # Defensive four factors — the core fix
-                def_efg_pct=_f("def_efg_pct", 0.505),
-                def_to_pct=_f("def_to_pct", 0.175),
-                def_ft_rate=_f("def_ft_rate", 0.280),
-                def_three_par=_f("def_three_par", 0.360),
+                pace=_fc("pace", 68.0, _PACE_LO, _PACE_HI),
+                three_par=_fc("three_par", 0.36, 0.15, 0.60),
+                ft_rate=_fc("ft_rate", 0.30, _FTR_LO, _FTR_HI),
+                to_pct=_fc("to_pct", 0.175, _TO_LO, _TO_HI),
+                # Real offensive eFG% from BartTorvik when available and valid.
+                # None signals the analysis.py overlay to keep the heuristic value.
+                efg_pct=_fc_opt("efg_pct", _EFG_LO, _EFG_HI),
+                # Defensive four factors
+                def_efg_pct=_fc("def_efg_pct", 0.505, _EFG_LO, _EFG_HI),
+                def_to_pct=_fc("def_to_pct", 0.175, _TO_LO, _TO_HI),
+                def_ft_rate=_fc("def_ft_rate", 0.280, _FTR_LO, _FTR_HI),
+                def_three_par=_fc("def_three_par", 0.360, 0.15, 0.65),
             )
             self._profiles[team_name] = profile
             count += 1
@@ -553,9 +649,17 @@ class TeamProfileCache:
         n_def = sum(
             1 for t in full_stats.values() if t.get("def_efg_pct") is not None
         )
+        # Propagate heuristic flag from ratings service so analysis.py can
+        # tag style dicts and the adaptive circuit breaker can widen its
+        # threshold for games priced on AdjEM-derived four-factors.
+        any_heuristic = any(
+            t.get("four_factors_heuristic") for t in full_stats.values()
+        )
+        self.four_factors_heuristic = bool(any_heuristic)
         logger.info(
-            "Loaded %d team profiles from BartTorvik (%d with real def_efg_pct)",
-            count, n_def,
+            "Loaded %d team profiles from BartTorvik "
+            "(%d with real def_efg_pct, heuristic_mode=%s)",
+            count, n_def, self.four_factors_heuristic,
         )
         return count
 

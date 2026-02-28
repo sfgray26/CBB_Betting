@@ -18,12 +18,21 @@ Retained from V7:
 - Conservative decision threshold
 """
 
+import math
 import numpy as np
 from scipy.stats import norm
 from dataclasses import dataclass, asdict, field
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime
 import logging
+import os
+
+from backend.core.odds_math import (
+    remove_vig_shin as _core_shin,
+    american_to_decimal as _core_a2d,
+    dynamic_sd as _core_dynamic_sd,
+)
+from backend.core.sport_config import SportConfig
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +85,10 @@ class CBBEdgeModel:
         home_advantage: float = 3.09,
         max_kelly: float = 0.20,
         fractional_kelly_divisor: float = 2.0,
+        config: Optional[SportConfig] = None,
         seed: Optional[int] = None,
     ):
+        self._cfg = config if config is not None else SportConfig.ncaa_basketball()
         self.base_sd = base_sd
         self.weights = weights or {
             'kenpom': 0.342,
@@ -112,11 +123,12 @@ class CBBEdgeModel:
                               P(home wins).  When spread is non-zero, returns
                               P(home covers the spread).
             margin_se:        Standard error of the margin estimate (Layer 1).
-                              Default 0.85 — 1.96 * 0.85 ≈ 1.66 pts, yielding a
-                              ~4–5% EV haircut on the conservative lower bound
-                              (norm.pdf(0) * 1.96 * 0.85 / 11 ≈ 5.5%).
-                              Previous value of 2.0 stripped ~13%, destroying
-                              valid edges on well-priced markets.
+                              In production, computed dynamically by
+                              ``_compute_margin_se()`` — wider when EvanMiya is
+                              down or no sharp books are available.  Default
+                              0.85 is used only when called directly (tests,
+                              one-off calcs).  At 0.85: 1.96 * 0.85 ≈ 1.66 pts
+                              → ~5.5% EV haircut at adj_sd=11.
 
         Returns: (point_estimate, lower_95_ci, upper_95_ci)
         """
@@ -142,7 +154,11 @@ class CBBEdgeModel:
         upper_ci = float(np.percentile(prob_samples, 97.5))
 
         return point_est, lower_ci, upper_ci
-    
+
+    def remove_vig_shin(self, odds1: float, odds2: float) -> Tuple[float, float]:
+        """Delegate to core Shin vig removal (backward-compatibility wrapper)."""
+        return _core_shin(odds1, odds2)
+
     def remove_vig_american(
         self,
         odds1: float,
@@ -167,53 +183,6 @@ class CBBEdgeModel:
         total = p1 + p2
         return p1 / total, p2 / total
 
-    def remove_vig_shin(
-        self,
-        odds1: float,
-        odds2: float,
-    ) -> Tuple[float, float]:
-        """
-        Shin (1993) method for true probability extraction.
-
-        Unlike the naive proportional method, the Shin method accounts for
-        the fact that bookmakers shade odds towards favourites.  For a binary
-        market this is equivalent to solving a quadratic for the implied
-        insider-trading fraction *z* and then de-biasing.
-
-        Falls back to the naive proportional method when the Shin solution
-        is degenerate (e.g. odds on one side only).
-        """
-        def _implied(o: float) -> float:
-            if o > 0:
-                return 100.0 / (o + 100.0)
-            return abs(o) / (abs(o) + 100.0)
-
-        p1 = _implied(odds1)
-        p2 = _implied(odds2)
-        total = p1 + p2
-
-        if total <= 1.0:
-            # No vig detected — return as-is (shouldn't happen in practice)
-            return p1, p2
-
-        # Shin closed-form for 2-outcome market:
-        #   z = (total - 1) / (n - 1)  where n = number of outcomes
-        # For n = 2: z = total - 1
-        z = total - 1.0
-
-        # De-biased probabilities
-        shin1 = (np.sqrt(z**2 + 4 * (1 - z) * (p1**2 / total)) - z) / (2 * (1 - z))
-        shin2 = (np.sqrt(z**2 + 4 * (1 - z) * (p2**2 / total)) - z) / (2 * (1 - z))
-
-        # Sanity check — ensure valid probabilities
-        if not (0 < shin1 < 1 and 0 < shin2 < 1):
-            # Fallback to proportional
-            return p1 / total, p2 / total
-
-        # Re-normalize to exactly 1.0 (numerical precision)
-        s = shin1 + shin2
-        return shin1 / s, shin2 / s
-
     def matchup_sd(
         self,
         home_style: Optional[Dict[str, float]] = None,
@@ -234,21 +203,20 @@ class CBBEdgeModel:
         missing, falls back to a game-total-based heuristic, then to base_sd.
         """
         if home_style and away_style:
-            avg_pace = (home_style.get('pace', 68.0) + away_style.get('pace', 68.0)) / 2.0
-            avg_3par = (home_style.get('three_par', 0.36) + away_style.get('three_par', 0.36)) / 2.0
-            avg_ftr = (home_style.get('ft_rate', 0.30) + away_style.get('ft_rate', 0.30)) / 2.0
+            avg_pace = (home_style.get('pace', self._cfg.d1_avg_pace) + away_style.get('pace', self._cfg.d1_avg_pace)) / 2.0
+            avg_3par = (home_style.get('three_par', self._cfg.d1_avg_three_par) + away_style.get('three_par', self._cfg.d1_avg_three_par)) / 2.0
+            avg_ftr = (home_style.get('ft_rate', self._cfg.d1_avg_ft_rate) + away_style.get('ft_rate', self._cfg.d1_avg_ft_rate)) / 2.0
 
             # More possessions → more variance; more 3PA → fatter tails.
-            pace_factor = avg_pace / 68.0          # Normalized to D1 average
-            volatility_factor = 1.0 + 0.15 * (avg_3par - 0.36) / 0.10  # ~15% per 10pp above mean
-            ftr_damper = 1.0 - 0.05 * (avg_ftr - 0.30) / 0.10  # FTs slightly reduce variance
+            pace_factor = avg_pace / self._cfg.d1_avg_pace  # Normalized to D1 average
+            volatility_factor = 1.0 + 0.15 * (avg_3par - self._cfg.d1_avg_three_par) / 0.10  # ~15% per 10pp above mean
+            ftr_damper = 1.0 - 0.05 * (avg_ftr - self._cfg.d1_avg_ft_rate) / 0.10  # FTs slightly reduce variance
 
             sd = self.base_sd * np.sqrt(pace_factor) * volatility_factor * ftr_damper
             return float(np.clip(sd, 8.0, 16.0))
 
         if game_total is not None and game_total > 0:
-            # Heuristic: SD ≈ sqrt(total) * 0.85
-            sd = np.sqrt(game_total) * 0.85
+            sd = _core_dynamic_sd(game_total, self._cfg.base_sd_multiplier)
             return float(np.clip(sd, 8.0, 16.0))
 
         return self.base_sd
@@ -419,10 +387,12 @@ class CBBEdgeModel:
         Returns:
             Effective Kelly divisor ≥ self.fractional_kelly_divisor.
         """
-        exposure = max(0.0, concurrent_exposure)
-        denom = max(target_exposure, 1e-6)
-        scale = 1.0 + exposure / denom
-        return self.fractional_kelly_divisor * scale
+        from backend.core.kelly import portfolio_kelly_divisor
+        return portfolio_kelly_divisor(
+            concurrent_exposure,
+            target_exposure=target_exposure,
+            base_divisor=self.fractional_kelly_divisor,
+        )
 
     def _edge_breaker_threshold(self, hours_to_tipoff: Optional[float]) -> float:
         """
@@ -430,39 +400,42 @@ class CBBEdgeModel:
 
         Rationale
         ---------
-        Far from tipoff (24 h) the market is thinner and model edges can
-        legitimately be larger — sharp money hasn't fully settled the line.
-        Within 2 hours of tip, Pinnacle and Circa have absorbed almost all
-        available information.  Any edge that appears above ~6% at that point
-        is almost certainly a data artefact (stale rating, incorrect team
-        mapping, unreported injury) rather than a genuine opportunity.
+        Sharp books hold wide spreads until roughly T-4h, then compress rapidly
+        as pre-game sharp action settles the line.  A plateau-exponential model
+        mirrors this information propagation: allow larger edges while the market
+        is still forming, then steepen the decay only in the final window.
 
-        Decay curve
-        -----------
-        Linear interpolation between the two anchor points:
+        Decay curve (exponential plateau)
+        ----------------------------------
+            h >= 24 h  : threshold = 15%  (thin market; model legitimately leads)
+            4 <= h < 24: threshold = 12%  (plateau; market still forming)
+            h < 4 h    : threshold = 6% + 6% * exp(-1.5 * (4 - h))
 
-            At ≥ 24 h : threshold = 12%  (market is thin, model leads)
-            At ≤  2 h : threshold =  6%  (market is fully informed)
-            Between   : threshold = 6% + (h − 2) / 22 × 6%
+        Spot checks:
+            T-4h  -> 6% + 6%*exp(0)    = 12.0%  (continuous join)
+            T-3h  -> 6% + 6%*exp(-1.5) ~= 7.3%
+            T-2h  -> 6% + 6%*exp(-3.0) ~= 6.3%
+            T-0h  -> 6% + 6%*exp(-6.0) ~= 6.0%  (floor)
 
-        The linear decay is deliberate: it produces a predictable, auditable
-        policy that traders can reason about without curve-fitting a sigmoid.
+        The floor of ~6% means any edge above that within 2 hours of tip is
+        still flagged as a potential data artefact.
 
         Args:
             hours_to_tipoff: Hours until game start.  None defaults to the
-                             24-hour (maximum) threshold.
+                             24-hour (plateau) threshold.
 
         Returns:
-            Threshold in [0.06, 0.12] as a probability (not percentage).
+            Threshold in [0.06, 0.15] as a probability (not percentage).
         """
         h = max(0.0, hours_to_tipoff if hours_to_tipoff is not None else 24.0)
         if h >= 24.0:
-            return 0.12
-        if h <= 2.0:
-            return 0.06
-        # Linear interpolation: 0.0 → 6% at 2 h, 1.0 → 12% at 24 h
-        frac = (h - 2.0) / 22.0
-        return 0.06 + frac * 0.06
+            return 0.15
+        if h >= 4.0:
+            # Plateau raised 12% → 13% to account for active matchup engine
+            # contributing ~1-2pp of legitimate edge (post-P1 fix).
+            # Env-var override allows operator rollback to 0.12 if needed.
+            return float(os.getenv("CB_PLATEAU_PCT", "13")) / 100.0
+        return 0.06 + 0.06 * math.exp(-1.5 * (4.0 - h))
 
     def kelly_fraction_with_push(
         self,
@@ -584,14 +557,48 @@ class CBBEdgeModel:
         adj_sd = min(adj_sd, 15.5)
 
         return adj_sd
-    
-    def american_to_decimal(self, american_odds: float) -> float:
-        """Convert American odds to decimal"""
-        if american_odds > 0:
-            return (american_odds / 100) + 1
-        else:
-            return (100 / abs(american_odds)) + 1
-    
+
+    def _compute_margin_se(
+        self,
+        n_missing: int = 0,
+        sharp_books: int = 0,
+        evanmiya_down: bool = False,
+        sharp_proxy_used: bool = False,
+    ) -> float:
+        """
+        Dynamic margin SE for monte_carlo_prob_ci Layer 1 uncertainty.
+
+        Wider CI when data is degraded (EvanMiya absent or no sharp books).
+        Base 0.85 — worst case ~1.65 (EvanMiya down + no sharp books + 1 source missing).
+
+        Env-var overrides (all have defaults baked in):
+            BASE_MARGIN_SE            0.85
+            EVANMIYA_DOWN_SE_ADDEND   0.30
+            NO_SHARP_BOOKS_SE_ADDEND  0.30
+            SOFT_PROXY_SE_ADDEND      0.15  (half-penalty when proxy used, not true sharp)
+            MISSING_SOURCE_SE_PTS     0.15  (per missing source)
+            MAX_MARGIN_SE             1.65
+
+        Args:
+            n_missing:      Number of missing rating sources.
+            sharp_books:    Count of true SHARP_BOOKS (Pinnacle/Circa) present.
+            evanmiya_down:  Whether EvanMiya is unavailable.
+            sharp_proxy_used: Whether the soft-sharp proxy (DK+FD) is active.
+                            Applies a half-penalty (0.15) instead of the full
+                            NO_SHARP_BOOKS_SE_ADDEND (0.30).
+        """
+        se = float(os.getenv("BASE_MARGIN_SE", "0.85"))
+        if evanmiya_down:
+            se += float(os.getenv("EVANMIYA_DOWN_SE_ADDEND", "0.30"))
+        if sharp_books < 1:
+            if sharp_proxy_used:
+                # Proxy present: half-penalty (less reliable than true sharp)
+                se += float(os.getenv("SOFT_PROXY_SE_ADDEND", "0.15"))
+            else:
+                se += float(os.getenv("NO_SHARP_BOOKS_SE_ADDEND", "0.30"))
+        se += float(os.getenv("MISSING_SOURCE_SE_PTS", "0.15")) * n_missing
+        return min(se, float(os.getenv("MAX_MARGIN_SE", "1.65")))
+
     def analyze_game(
         self,
         game_data: Dict,
@@ -607,6 +614,8 @@ class CBBEdgeModel:
         matchup_margin_adj: float = 0.0,
         concurrent_exposure: float = 0.0,
         target_exposure: float = 0.15,
+        sharp_books_available: int = 0,
+        sharp_proxy_used: bool = False,
     ) -> GameAnalysis:
         """
         Complete game analysis using Version 8 framework.
@@ -638,6 +647,10 @@ class CBBEdgeModel:
             target_exposure:   Soft ceiling for total concurrent exposure
                                passed through to _portfolio_kelly_divisor().
                                Should match portfolio.py MAX_TOTAL_EXPOSURE.
+            sharp_books_available: Number of sharp books (Pinnacle, Circa) with
+                               lines for this game.  0 = no sharp consensus;
+                               passed to _compute_margin_se() to widen the
+                               Monte Carlo CI under thin-market conditions.
 
         Returns: GameAnalysis dataclass with full verdict
         """
@@ -743,8 +756,7 @@ class CBBEdgeModel:
             # on otherwise well-priced markets.
             _evanmiya_dropped = ratings.get("_meta", {}).get("evanmiya_dropped", False)
             notes.append(
-                "EvanMiya unavailable%s — weights re-normalized to remaining sources "
-                "(no SD penalty)" % (
+                "EvanMiya unavailable%s — weights re-normalized to remaining sources" % (
                     " [auto-dropped]" if _evanmiya_dropped else ""
                 )
             )
@@ -774,8 +786,10 @@ class CBBEdgeModel:
         # BartTorvik absence (a more anomalous failure) still triggers shrinkage.
         _em_null = (em_home is None and em_away is None)
         n_total = len(self.weights) - (1 if _em_null else 0)
-        if n_available < n_total:
-            n_missing = n_total - n_available
+        # Always define n_missing so the SD-penalty block below has it in scope
+        # regardless of whether shrinkage fires.
+        n_missing: int = max(0, n_total - n_available)
+        if n_missing > 0:
             _SHRINKAGE_ALPHA = 0.10
             shrinkage = max(0.70, 1.0 - _SHRINKAGE_ALPHA * n_missing)
             margin *= shrinkage
@@ -975,7 +989,61 @@ class CBBEdgeModel:
             market_volatility=market_volatility,
             hours_to_tipoff=hours_to_tipoff,
         )
-        
+
+        # ================================================================
+        # DEGRADED-MODE VOLATILITY PENALTIES
+        # ================================================================
+        # These two adjustments widen the probability distribution when
+        # the model is operating on degraded data, preventing phantom
+        # edges from thin or synthetic signals from passing Kelly sizing.
+        #
+        # Both are applied AFTER the base SD is computed so they interact
+        # correctly with the market-volatility and time-decay scalars
+        # already baked in.  The 15.5-point ceiling is re-enforced after
+        # each adjustment.
+        # ================================================================
+
+        # Penalty 1 — Missing rating sources
+        # +1.25 SD points per missing source (floor/cap still 15.5).
+        # EvanMiya null-only case: _em_null is True → n_total was already
+        # decremented by 1 → n_missing == 0 → no addend.  BartTorvik
+        # absence (more anomalous) still fires.
+        _MISSING_SOURCE_SD_PTS = float(os.getenv("MISSING_SOURCE_SD_PTS", "1.25"))
+        if n_missing > 0:
+            _sd_addend = _MISSING_SOURCE_SD_PTS * n_missing
+            adj_sd = min(adj_sd + _sd_addend, 15.5)
+            notes.append(
+                f"Degraded-mode SD +{_sd_addend:.2f} pts "
+                f"({n_missing} source(s) missing) → adj_sd={adj_sd:.2f}"
+            )
+            logger.debug(
+                "Degraded-mode SD penalty: n_missing=%d addend=+%.2f adj_sd=%.2f",
+                n_missing, _sd_addend, adj_sd,
+            )
+
+        # Penalty 2 — Heuristic four-factor data
+        # When team profiles are AdjOE/AdjDE-derived rather than scraped
+        # eFG%/TO%/etc., the Markov cover-probability is noisier.  Multiply
+        # adj_sd by a configurable factor (default ×1.15) so the CI haircut
+        # in monte_carlo_prob_ci() automatically discounts the output.
+        # This is computed once here and reused later at the circuit-breaker
+        # threshold block (which also widens its threshold for heuristic data).
+        _using_heuristic_ff: bool = bool(
+            (home_style and home_style.get("four_factors_heuristic"))
+            or (away_style and away_style.get("four_factors_heuristic"))
+        )
+        if _using_heuristic_ff:
+            _HEURISTIC_FF_SD_MULT = float(os.getenv("HEURISTIC_FF_SD_MULT", "1.15"))
+            adj_sd = min(adj_sd * _HEURISTIC_FF_SD_MULT, 15.5)
+            notes.append(
+                f"Heuristic four-factor data: SD x{_HEURISTIC_FF_SD_MULT:.2f} "
+                f"→ adj_sd={adj_sd:.2f}"
+            )
+            logger.debug(
+                "Heuristic FF SD multiplier applied: mult=%.2f adj_sd=%.2f",
+                _HEURISTIC_FF_SD_MULT, adj_sd,
+            )
+
         # If SD exceeds limit, PASS
         if adj_sd >= 15.5:
             return GameAnalysis(
@@ -1014,8 +1082,24 @@ class CBBEdgeModel:
         markov_loss_prob = None
         markov_push_prob = None
 
+        # Compute dynamic margin SE — wider CI when data is degraded.
+        # EvanMiya down (+0.30) and/or no sharp books (+0.30) each add penalty.
+        # Computed once here; reused for both the win-prob and cover-prob calls.
+        _margin_se = self._compute_margin_se(
+            n_missing=n_missing,
+            sharp_books=sharp_books_available,
+            evanmiya_down=_em_null,
+            sharp_proxy_used=sharp_proxy_used,
+        )
+        logger.debug(
+            "margin_se=%.2f (n_missing=%d, sharp_books=%d, em_null=%s)",
+            _margin_se, n_missing, sharp_books_available, _em_null,
+        )
+
         # P(home wins) — always Gaussian for calibration tracking
-        point_prob, lower_ci, upper_ci = self.monte_carlo_prob_ci(margin, adj_sd)
+        point_prob, lower_ci, upper_ci = self.monte_carlo_prob_ci(
+            margin, adj_sd, margin_se=_margin_se,
+        )
 
         # Attempt Markov pricing if profiles available
         logger.info(
@@ -1094,13 +1178,20 @@ class CBBEdgeModel:
                     def_efg_pct=away_style.get('def_efg_pct', 0.505),
                     def_to_pct=away_style.get('def_to_pct', 0.175),
                 )
-                sim = PossessionSimulator(home_advantage_pts=self.home_advantage)
+                sim = PossessionSimulator(home_advantage_pts=self._cfg.home_advantage_pts)
                 sim_edge = sim.simulate_spread_edge(
                     home_sim, away_sim,
                     spread=spread,
                     n_sims=2000,
                     is_neutral=game_data.get('is_neutral', False),
                     matchup_margin_adj=matchup_margin_adj,
+                    # Mean-Centering: the AdjEM-based `margin` is SOS-adjusted and
+                    # is the authoritative expected outcome.  The Markov distribution
+                    # is shifted to align its mean with this value, correcting for
+                    # the SOS contamination in raw KenPom/BartTorvik four-factors.
+                    # Without this, Markov produces ~0.28 cover prob for a game where
+                    # AdjEM says the favourite wins by 41 against a -13.5 spread.
+                    projected_margin=margin,
                 )
                 # Markov succeeded — use it as primary
                 markov_cover_prob = sim_edge['cover_prob']
@@ -1132,11 +1223,12 @@ class CBBEdgeModel:
 
         # Gaussian fallback (if Markov didn't run or failed)
         if pricing_engine == "Gaussian":
-            # margin_se defaults to 0.85 — 1.96 * 0.85 ≈ 1.66 pt CI half-width
-            # → ~5.5% EV haircut at adj_sd=11.  Uniform across heuristic and
-            # non-heuristic profiles; no special-casing needed.
+            # _margin_se was computed above via _compute_margin_se() —
+            # dynamically wider under degraded-data conditions (EvanMiya down,
+            # no sharp books).  At baseline 0.85: 1.96 * 0.85 ≈ 1.66 pt CI
+            # half-width → ~5.5% EV haircut at adj_sd=11.
             cover_prob, cover_lower, cover_upper = self.monte_carlo_prob_ci(
-                margin, adj_sd, spread=spread,
+                margin, adj_sd, spread=spread, margin_se=_margin_se,
             )
             logger.debug(
                 "Gaussian pricing: cover=%.3f [%.3f, %.3f]",
@@ -1154,7 +1246,7 @@ class CBBEdgeModel:
         spread_odds_away = odds.get('spread_away_odds', -110)
 
         # No-vig probability via Shin (1993) method — needs both sides
-        home_novig, away_novig = self.remove_vig_shin(
+        home_novig, away_novig = _core_shin(
             spread_odds_home, spread_odds_away,
         )
 
@@ -1197,7 +1289,7 @@ class CBBEdgeModel:
         # STEP 5: KELLY & BET SIZING
         # ================================================================
 
-        decimal_odds = self.american_to_decimal(bet_odds)
+        decimal_odds = _core_a2d(bet_odds)
 
         # Use push-aware Kelly when Markov is the pricing engine
         if pricing_engine == "Markov" and markov_win_prob is not None and markov_loss_prob is not None:
@@ -1275,12 +1367,93 @@ class CBBEdgeModel:
         # against adverse-selection by pre-game sharp movement.
         #
         # Threshold schedule (see _edge_breaker_threshold() for derivation):
-        #   ≥ 24 h  →  12%  (thin market; model may legitimately lead)
-        #   ≤  2 h  →   6%  (fully efficient; any larger edge is a data flag)
-        #   Between →  linear interpolation
+        #   >= 24 h      ->  15%  (thin market; model may legitimately lead)
+        #   4 <= h < 24  ->  12%  (plateau; market still forming)
+        #   h < 4 h      ->  exponential decay 12% -> 6% (floor at ~6%)
+        #
+        # Adaptive heuristic lift: when four-factor stats are AdjOE/AdjDE-derived
+        # (rather than scraped), the Markov cover-probability estimate carries
+        # higher uncertainty.  The base threshold is widened by +2 pp to avoid
+        # false circuit-breaker trips from the noisier heuristic Markov output.
+        # Note: this is a permissive adjustment — tighter risk management would
+        # widen the SD instead.  Operators may disable via HEURISTIC_CB_LIFT_PCT.
         # ================================================================
         _EDGE_BREAKER_THRESHOLD = self._edge_breaker_threshold(hours_to_tipoff)
-        if edge_conservative > _EDGE_BREAKER_THRESHOLD:
+
+        # _using_heuristic_ff was computed and used in the SD-penalty block above;
+        # reference it here to also widen the edge-breaker threshold.
+        if _using_heuristic_ff:
+            _lift = float(os.getenv("HEURISTIC_CB_LIFT_PCT", "2")) / 100.0
+            _EDGE_BREAKER_THRESHOLD += _lift
+            notes.append(
+                f"Heuristic four-factor data: circuit-breaker threshold widened "
+                f"+{_lift:.0%} to {_EDGE_BREAKER_THRESHOLD:.0%}"
+            )
+        else:
+            # Real four-factor data: apply matchup lift when MatchupEngine
+            # contributed substantive signal (abs(adj) > threshold).
+            # The +1pp lift directly accommodates the ~1-2pp edge shift that a
+            # real matchup adjustment adds (e.g. +0.517pt → ~+1.9pp cover_prob).
+            _MATCHUP_CB_MIN_ADJ = float(os.getenv("MATCHUP_CB_MIN_ADJ_PT", "0.20"))
+            _MATCHUP_CB_LIFT    = float(os.getenv("MATCHUP_CB_LIFT_PCT",    "1.0")) / 100.0
+            if abs(matchup_margin_adj) > _MATCHUP_CB_MIN_ADJ:
+                _EDGE_BREAKER_THRESHOLD += _MATCHUP_CB_LIFT
+                notes.append(
+                    f"Matchup CB lift +{_MATCHUP_CB_LIFT:.0%} (real FF adj "
+                    f"{matchup_margin_adj:+.3f}pt) → threshold {_EDGE_BREAKER_THRESHOLD:.0%}"
+                )
+
+        # ----------------------------------------------------------------
+        # FAVORITE PROTECTION SANITY CHECK
+        # If we are betting a favourite (spread < 0 AND bet_side = "home",
+        # or spread > 0 AND bet_side = "away") but the model's projected margin
+        # falls short of the spread handicap, the cover probability is < 50%
+        # by definition — we cannot have genuine edge betting a favourite to
+        # cover when the model says they'll fall short.  Zero-out the bet.
+        # This is a safeguard against Shin vig asymmetries producing a tiny
+        # positive edge_conservative from rounding.
+        # ----------------------------------------------------------------
+        spread_for_check = odds.get('spread', 0.0) or 0.0
+        _fav_protection_triggered = False
+        if bet_side == "home" and spread_for_check < 0:
+            # Home is the favourite — model margin must exceed the handicap
+            if margin < abs(spread_for_check):
+                _fav_protection_triggered = True
+                notes.append(
+                    f"Favorite Protection: home bet on -{abs(spread_for_check):.1f} "
+                    f"but projected margin only {margin:+.1f} pts — insufficient "
+                    f"to cover. Units zeroed."
+                )
+                logger.warning(
+                    "Favorite Protection: home (-%s) but projected margin %.1f < spread %.1f",
+                    abs(spread_for_check), margin, abs(spread_for_check),
+                )
+        elif bet_side == "away" and spread_for_check > 0:
+            # Away is the favourite (spread > 0 means home gets points = away favoured)
+            away_margin = -margin  # flip to away perspective
+            if away_margin < abs(spread_for_check):
+                _fav_protection_triggered = True
+                notes.append(
+                    f"Favorite Protection: away bet on -{abs(spread_for_check):.1f} "
+                    f"but projected away margin only {away_margin:+.1f} pts — "
+                    f"insufficient to cover. Units zeroed."
+                )
+                logger.warning(
+                    "Favorite Protection: away (-%s) but projected away margin %.1f < spread %.1f",
+                    abs(spread_for_check), away_margin, abs(spread_for_check),
+                )
+
+        if _fav_protection_triggered:
+            verdict = "PASS - Favorite Protection (Margin < Spread)"
+            pass_reason = (
+                f"bet_side={bet_side}, spread={spread_for_check:+.1f}, "
+                f"projected_margin={margin:+.1f}"
+            )
+            recommended_units = 0
+            kelly_frac = 0.0
+            kelly_full = 0.0
+
+        elif edge_conservative > _EDGE_BREAKER_THRESHOLD:
             err_msg = (
                 f"ERROR: Edge {edge_conservative:.1%} exceeds dynamic threshold "
                 f"{_EDGE_BREAKER_THRESHOLD:.0%} "
@@ -1291,9 +1464,10 @@ class CBBEdgeModel:
             notes.append(err_msg)
             logger.error(
                 "Alpha circuit breaker triggered — edge_conservative=%.1f%% "
-                "exceeds dynamic %.0f%% threshold (h=%.1f). Rejecting bet.",
+                "exceeds dynamic %.0f%% threshold (h=%.1f, heuristic=%s). Rejecting bet.",
                 edge_conservative * 100, _EDGE_BREAKER_THRESHOLD * 100,
                 hours_to_tipoff if hours_to_tipoff is not None else -1,
+                _using_heuristic_ff,
             )
             verdict = "PASS - Edge Circuit Breaker (Data Error?)"
             pass_reason = (
@@ -1310,17 +1484,97 @@ class CBBEdgeModel:
             verdict = "PASS"
             pass_reason = f"Conservative edge {edge_conservative:.3%} <= 0"
             recommended_units = 0
-        else:
-            # Additional safety: cap at 1.5% of bankroll
-            recommended_pct = min(kelly_frac * 100, 1.5)
-            recommended_units = recommended_pct
 
-            if recommended_units < 0.25:
-                # Thin edge — still a real bet but floored at minimum size
-                recommended_units = 0.25
-                verdict = f"Bet {recommended_units:.2f}u @ {bet_odds:+.0f} (min size)"
+        # ================================================================
+        # D4: Minimum edge floor (MIN_BET_EDGE)
+        # Positive edges below this threshold are real but too marginal to
+        # size.  They are logged as CONSIDER — stored in Prediction, not
+        # placed as paper trades, not counted in BET rate.
+        # Tune upward toward 4-5% once market blend is confirmed live.
+        # ================================================================
+        elif edge_conservative <= float(os.getenv("MIN_BET_EDGE", "2.5")) / 100.0:
+            _min_bet_edge = float(os.getenv("MIN_BET_EDGE", "2.5")) / 100.0
+            _home_team = game_data.get('home_team', 'Home')
+            _away_team = game_data.get('away_team', 'Away')
+            _bet_team  = _home_team if bet_side == "home" else _away_team
+            _bet_label = f"{_bet_team} ({bet_side} {spread_for_check:+.1f})"
+            verdict = (
+                f"CONSIDER {edge_conservative:.1%} edge "
+                f"{_bet_label} @ {bet_odds:+.0f}"
+            )
+            pass_reason = (
+                f"Edge {edge_conservative:.1%} below MIN_BET_EDGE "
+                f"{_min_bet_edge:.1%} — signal too marginal to size"
+            )
+            recommended_units = 0
+            kelly_frac = 0.0
+
+        else:
+            # ============================================================
+            # D3: Edge-tiered unit sizing (replaces flat 1.5u cap)
+            #
+            # Tier thresholds and unit values are env-configurable.
+            # T4+ premium requires confirmed sharp consensus AND real FF data.
+            #
+            # T1 (0–2%):  0.50u  — never reached (D4 catches these as CONSIDER)
+            # T2 (2–5%):  0.75u  — standard solid edge
+            # T3 (5–8%):  1.00u  — strong signal
+            # T4  (8%+):  1.25u  — base ceiling (no premium without sharp data)
+            # T4+ (8%+):  1.50u  — premium: sharp_books>=1 + real FF data
+            # ============================================================
+            _T1_EDGE   = float(os.getenv("KELLY_TIER_1_EDGE",   "2.0")) / 100.0
+            _T2_EDGE   = float(os.getenv("KELLY_TIER_2_EDGE",   "5.0")) / 100.0
+            _T3_EDGE   = float(os.getenv("KELLY_TIER_3_EDGE",   "8.0")) / 100.0
+
+            _T1_UNITS  = float(os.getenv("KELLY_TIER_1_UNITS",  "0.50"))
+            _T2_UNITS  = float(os.getenv("KELLY_TIER_2_UNITS",  "0.75"))
+            _T3_UNITS  = float(os.getenv("KELLY_TIER_3_UNITS",  "1.00"))
+            _T4_UNITS  = float(os.getenv("KELLY_TIER_4_UNITS",  "1.25"))
+            _T4P_UNITS = float(os.getenv("KELLY_TIER_4P_UNITS", "1.50"))
+
+            # T4+ premium: Pinnacle/Circa consensus present AND real FF data
+            _t4_premium = (
+                sharp_books_available >= 1
+                and not _using_heuristic_ff
+            )
+
+            if edge_conservative <= _T1_EDGE:
+                recommended_units = _T1_UNITS
+                _tier_tag = "T1"
+            elif edge_conservative <= _T2_EDGE:
+                recommended_units = _T2_UNITS
+                _tier_tag = "T2"
+            elif edge_conservative <= _T3_EDGE:
+                recommended_units = _T3_UNITS
+                _tier_tag = "T3"
             else:
-                verdict = f"Bet {recommended_units:.2f}u @ {bet_odds:+.0f}"
+                recommended_units = _T4P_UNITS if _t4_premium else _T4_UNITS
+                _tier_tag = "T4+" if _t4_premium else "T4"
+
+            # Adverse selection overlay: when the Kelly divisor penalty was
+            # triggered (hours < 1.5), demote one tier step. The divisor
+            # mechanism alone is bypassed by tier-based sizing.
+            if adverse_selection_penalty > 1.0:
+                _as_step = float(os.getenv("ADVERSE_SEL_TIER_STEP", "0.25"))
+                recommended_units = max(recommended_units - _as_step, _T1_UNITS)
+                _tier_tag = _tier_tag + "-AS"
+
+            # Resolve team labels for verdict string
+            _home_team = game_data.get('home_team', 'Home')
+            _away_team = game_data.get('away_team', 'Away')
+            _bet_team  = _home_team if bet_side == "home" else _away_team
+            _bet_label = f"{_bet_team} ({bet_side} {spread_for_check:+.1f})"
+
+            if _tier_tag.startswith("T1"):
+                verdict = (
+                    f"Bet {recommended_units:.2f}u [{_tier_tag}] "
+                    f"{_bet_label} @ {bet_odds:+.0f} (consider)"
+                )
+            else:
+                verdict = (
+                    f"Bet {recommended_units:.2f}u [{_tier_tag}] "
+                    f"{_bet_label} @ {bet_odds:+.0f}"
+                )
 
             pass_reason = None
         

@@ -129,6 +129,160 @@ class RatingsService:
             logger.error("KenPom API error: %s", exc)
             return {}
 
+    def get_kenpom_full_stats(self) -> Dict[str, Dict[str, Optional[float]]]:
+        """
+        Fetch full Markov-engine inputs from the KenPom API.
+
+        Makes three sequential authenticated calls:
+
+          1. ``four-factors``  — eFG%, TO%, FT Rate, defensive equivalents, Tempo
+          2. ``misc-stats``    — F3GRate (off 3PA/FGA) and OppF3GRate (def 3PA allowed)
+
+        The results are merged on ``TeamName`` and returned as a unified per-team
+        dict with keys matching the ``TeamPlayStyle`` / ``save_team_profiles``
+        field names used by the Markov simulator.
+
+        Scale conversion
+        ----------------
+        KenPom returns percentage stats as floats on the 0–100 scale
+        (e.g. 52.4 for 52.4 % eFG).  The Markov engine expects decimals
+        (0.524).  Any value > 1.5 is divided by 100; values already on the
+        decimal scale pass through unchanged.  Tempo / pace is absolute
+        (possessions per 40 min, ~65-75) and is never rescaled.
+
+        Returns
+        -------
+        Dict[str, Dict[str, Optional[float]]]
+            Keyed by exact KenPom TeamName.  Inner keys:
+            efg_pct, to_pct, ft_rate, three_par,
+            def_efg_pct, def_to_pct, def_ft_rate, def_three_par, pace.
+            Value is None when the field was absent in the API response.
+        """
+        if not self.kenpom_key:
+            logger.warning(
+                "KenPom full stats: API key not set — skipping four-factor fetch."
+            )
+            return {}
+
+        _headers = {
+            "Authorization": f"Bearer {self.kenpom_key}",
+            "Accept":        "application/json",
+        }
+
+        def _pct(v: object) -> Optional[float]:
+            """Convert a raw API value to a decimal fraction.
+
+            KenPom may return percentages as 52.4 (→ 0.524) or already as
+            0.524.  Values > 1.5 are unambiguously percentage-scale.
+            """
+            if v is None:
+                return None
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                return None
+            return f / 100.0 if f > 1.5 else f
+
+        def _abs(v: object) -> Optional[float]:
+            """Return a raw float for absolute stats (pace, AdjT)."""
+            if v is None:
+                return None
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+
+        def _fetch(endpoint: str) -> List[dict]:
+            """GET one KenPom endpoint; return the parsed list or []."""
+            try:
+                resp = requests.get(
+                    _KENPOM_URL,
+                    headers=_headers,
+                    params={"endpoint": endpoint, "y": _CURRENT_YEAR},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                raw = resp.json()
+                if isinstance(raw, list):
+                    return raw
+                # Some endpoints wrap in {"teams": [...]} or similar
+                for key in ("teams", "data", "results"):
+                    if isinstance(raw.get(key), list):
+                        return raw[key]
+                logger.warning(
+                    "KenPom %s: unexpected response shape — %s",
+                    endpoint, type(raw).__name__,
+                )
+                return []
+            except Exception as exc:
+                logger.error("KenPom %s endpoint error: %s", endpoint, exc)
+                return []
+
+        # ---- Call 1: four-factors  ------------------------------------------
+        ff_data = _fetch("four-factors")
+        logger.info("KenPom four-factors: received %d records", len(ff_data))
+
+        # Build primary dict from four-factors
+        stats: Dict[str, Dict[str, Optional[float]]] = {}
+        for item in ff_data:
+            if not isinstance(item, dict):
+                continue
+            name = (item.get("TeamName") or item.get("team") or "").strip()
+            if not name:
+                continue
+            stats[name] = {
+                "efg_pct":     _pct(item.get("eFG_Pct")  or item.get("efg_pct")),
+                "to_pct":      _pct(item.get("TO_Pct")   or item.get("to_pct")),
+                "ft_rate":     _pct(item.get("FT_Rate")  or item.get("ft_rate")),
+                "def_efg_pct": _pct(item.get("DeFG_Pct") or item.get("def_efg_pct")
+                                    or item.get("opp_efg_pct")),
+                "def_to_pct":  _pct(item.get("DTO_Pct")  or item.get("def_to_pct")
+                                    or item.get("opp_to_pct")),
+                "def_ft_rate": _pct(item.get("DFT_Rate") or item.get("def_ft_rate")
+                                    or item.get("opp_ft_rate")),
+                "pace":        _abs(item.get("Tempo")    or item.get("AdjT")
+                                    or item.get("tempo")),
+                # Placeholders — filled in from misc-stats below
+                "three_par":     None,
+                "def_three_par": None,
+            }
+
+        if not stats:
+            logger.warning(
+                "KenPom four-factors: parsed 0 teams — field names may have changed. "
+                "Falling back to BartTorvik for Markov inputs."
+            )
+            return {}
+
+        # ---- Call 2: misc-stats  (3PA rate) ---------------------------------
+        ms_data = _fetch("misc-stats")
+        logger.info("KenPom misc-stats: received %d records", len(ms_data))
+
+        _merged = 0
+        for item in ms_data:
+            if not isinstance(item, dict):
+                continue
+            name = (item.get("TeamName") or item.get("team") or "").strip()
+            if not name or name not in stats:
+                continue
+            # F3GRate = offensive 3PA/FGA; OppF3GRate = defensive 3PA allowed/FGA
+            three_par_raw     = item.get("F3GRate") or item.get("three_par")
+            def_three_par_raw = item.get("OppF3GRate") or item.get("def_three_par")
+            stats[name]["three_par"]     = _pct(three_par_raw)
+            stats[name]["def_three_par"] = _pct(def_three_par_raw)
+            _merged += 1
+
+        logger.info(
+            "KenPom full stats: %d teams built | misc-stats merged=%d | "
+            "efg_pct populated=%d | pace populated=%d | three_par populated=%d",
+            len(stats),
+            _merged,
+            sum(1 for s in stats.values() if s.get("efg_pct") is not None),
+            sum(1 for s in stats.values() if s.get("pace")    is not None),
+            sum(1 for s in stats.values() if s.get("three_par") is not None),
+        )
+        return stats
+
     # -----------------------------------------------------------------------
     # BartTorvik
     # -----------------------------------------------------------------------
@@ -449,24 +603,48 @@ class RatingsService:
         # Offensive four factors (percentage scale in BartTorvik CSV)
         # NOTE: "3p%" is intentionally excluded from tpar_col — it is the
         # 3-point *shooting percentage*, not the attempt rate (3PA/FGA).
-        efg_col  = _find_col(["efg%", "efg", "efg_pct", "efgpct", "off efg%", "o efg%",
-                               "eff fg%", "efg pct"])
-        tor_col  = _find_col(["tor", "to%", "to rate", "to_rate", "torate", "off to%",
-                               "tov%", "tov", "turnover%"])
-        ftr_col  = _find_col(["ftr", "ft rate", "ft_rate", "ftrate", "off ftr",
-                               "fta/fga", "ft/fga"])
-        tpar_col = _find_col(["3par%", "3par", "3p rate", "3p ar", "3pa rate",
-                               "three par", "3pa%", "3pr%"])
+        # Candidate lists are intentionally broad; BartTorvik has changed column
+        # naming conventions across seasons (e.g. "adj. t." for pace).
+        efg_col  = _find_col([
+            "efg%", "efg", "efg_pct", "efgpct", "off efg%", "o efg%",
+            "eff fg%", "efg pct", "o.efg%", "oefg%", "off.efg%",
+            "effective fg%", "efg% off", "off efg",
+        ])
+        tor_col  = _find_col([
+            "tor", "to%", "to rate", "to_rate", "torate", "off to%",
+            "tov%", "tov", "turnover%", "o.tor", "otor", "off.tor",
+            "off to rate", "to% off", "off turnover%",
+        ])
+        ftr_col  = _find_col([
+            "ftr", "ft rate", "ft_rate", "ftrate", "off ftr",
+            "fta/fga", "ft/fga", "o.ftr", "oftr", "off.ftr",
+        ])
+        tpar_col = _find_col([
+            "3par%", "3par", "3p rate", "3p ar", "3pa rate",
+            "three par", "3pa%", "3pr%", "3pa/fga", "o.3par",
+        ])
 
         # Defensive four factors (percentage scale in BartTorvik CSV)
-        defg_col  = _find_col(["efgd%", "efgd", "efgd_pct", "efgd pct",
-                                "def efg%", "d efg%", "opp efg%", "efg_d", "efg%d"])
-        tord_col  = _find_col(["tord", "to%d", "to rate d", "to_rate_d",
-                                "def to%", "d to%", "opp to%", "tov%d", "tovd"])
-        ftrd_col  = _find_col(["ftrd", "ftr d", "ftr_d", "ftrate_d",
-                                "def ftr", "d ftr", "opp ftr", "ftrd%"])
-        tpard_col = _find_col(["3pard%", "3pad%", "3pard", "3pad",
-                                "3p rate d", "3par_d", "def 3par%", "opp 3par%", "3prd%"])
+        defg_col  = _find_col([
+            "efgd%", "efgd", "efgd_pct", "efgd pct",
+            "def efg%", "d efg%", "opp efg%", "efg_d", "efg%d",
+            "d.efg%", "defg%", "def.efg%", "opponent efg%",
+        ])
+        tord_col  = _find_col([
+            "tord", "to%d", "to rate d", "to_rate_d",
+            "def to%", "d to%", "opp to%", "tov%d", "tovd",
+            "d.tor", "def.tor", "def to rate", "opp turnover%",
+        ])
+        ftrd_col  = _find_col([
+            "ftrd", "ftr d", "ftr_d", "ftrate_d",
+            "def ftr", "d ftr", "opp ftr", "ftrd%",
+            "d.ftr", "def.ftr", "opp fta/fga",
+        ])
+        tpard_col = _find_col([
+            "3pard%", "3pad%", "3pard", "3pad",
+            "3p rate d", "3par_d", "def 3par%", "opp 3par%", "3prd%",
+            "d.3par", "opp 3pa/fga",
+        ])
 
         # Pace (absolute — possessions per 40 min, ~60-80; no rescaling).
         # BartTorvik header is "Adj. T." → strip().lower() → "adj. t."
@@ -475,14 +653,21 @@ class RatingsService:
                                "adj tempo", "poss", "possessions"])
 
         # ----------------------------------------------------------------
-        # Hard positional fallbacks — standard BartTorvik T-Rank CSV layout:
-        #   Rk(0) Team(1) Conf(2) G(3) Rec(4) AdjOE(5) AdjDE(6) Barthag(7)
-        #   EFG%(8) EFGd%(9) TOR(10) TORd(11) ORB(12) DRB(13) FTR(14) FTRd(15)
-        #   2P%(16) 2PD%(17) 3P%(18) 3PD%(19) Adj.T.(20) ...
+        # Positional fallbacks — ONLY for AdjOE, AdjDE, and Pace.
         #
-        # Applied only when header detection returns None so that explicit
-        # header matches always take priority.  A WARNING is emitted so
-        # operators can detect a CSV format change early.
+        # BartTorvik CSV layout has changed over time.  The old T-Rank layout
+        # (EFG%=8, EFGd%=9, TOR=10, ...) is no longer valid: col 8 is now
+        # "barthag", col 9 is "rank", col 10 is "proj. w", col 11 is "proj. l",
+        # etc.  Using those positions as EFG%/TOR fallbacks injects garbage into
+        # the Markov engine (barthag ≈ 0.65 looks like a valid eFG%).
+        #
+        # AdjOE (col 5), AdjDE (col 6) have been stable across T-Rank CSV versions.
+        # Adj.T. (pace) is at col 44 in the 2025-26 T-Rank format; the positional
+        # fallback is a last-resort safety net — named detection via "adj. t." fires
+        # first and is expected to succeed in normal operation.
+        # Four-factor columns (EFG%, TOR, FTR, EFGd, TORd, FTRd) must be found
+        # by named header detection; if they are missing, the stat remains None
+        # and D1 defaults flow through the Markov engine cleanly.
         # ----------------------------------------------------------------
         _fallback_used: List[str] = []
 
@@ -494,25 +679,20 @@ class RatingsService:
 
         oe_col   = _fallback(oe_col,   5,  "AdjOE")
         de_col   = _fallback(de_col,   6,  "AdjDE")
-        efg_col  = _fallback(efg_col,  8,  "EFG%")
-        defg_col = _fallback(defg_col, 9,  "EFGd%")
-        tor_col  = _fallback(tor_col,  10, "TOR")
-        tord_col = _fallback(tord_col, 11, "TORd")
-        ftr_col  = _fallback(ftr_col,  14, "FTR")
-        ftrd_col = _fallback(ftrd_col, 15, "FTRd")
-        pace_col = _fallback(pace_col, 20, "Adj.T.")
-        # tpar_col / tpard_col intentionally have NO positional fallback:
-        # columns 18/19 are 3-point *shooting* % (3P%/3PD%), not attempt rate.
-        # Missing 3PAR keeps three_par=None so the model uses the 0.36 D1 default.
+        # efg_col, defg_col, tor_col, tord_col, ftr_col, ftrd_col:
+        # intentionally NO positional fallback — old positions now read
+        # barthag/rank/proj.w/proj.l/con.rec/sos (wrong data).
+        pace_col = _fallback(pace_col, 44, "Adj.T.")
+        # tpar_col / tpard_col intentionally have NO positional fallback.
 
         if _fallback_used:
             logger.warning(
                 "BartTorvik full-stats: header detection missed %d column(s); "
                 "falling back to positional indexes: %s  |  "
-                "Actual CSV headers (first 25): %s",
+                "Full CSV headers: %s",
                 len(_fallback_used),
                 ", ".join(_fallback_used),
-                header[:25],
+                header,
             )
 
         logger.info(
@@ -567,6 +747,53 @@ class RatingsService:
             return val
 
         # ----------------------------------------------------------------
+        # Heuristic four-factor synthesis constants.
+        # When the active CSV URL (e.g. _team_results.csv) contains no
+        # four-factor columns, we derive plausible team-specific estimates
+        # from AdjOE and AdjDE so that each team's Markov profile reflects
+        # its actual efficiency rather than a flat D1 average for all 360
+        # programs.  These are NOT substitutes for real scraped four-factor
+        # data — they are AdjEM-derived heuristics tagged so the adaptive
+        # circuit breaker can widen its threshold accordingly.
+        #
+        # Relationships used (Dean Oliver, Basketball on Paper):
+        #   eFG% scales linearly with scoring efficiency.
+        #   TO rate is inversely related — elite offences protect the ball.
+        #   Defensive analogues derived symmetrically from AdjDE.
+        # ----------------------------------------------------------------
+        _D1_ADJ_O = 105.0   # D1-average adjusted offensive efficiency
+        _D1_ADJ_D = 105.0   # D1-average adjusted defensive efficiency
+        _D1_EFG   = 0.505   # D1-average offensive eFG%
+        _D1_TO    = 0.175   # D1-average turnover rate
+
+        # True when the CSV has no four-factor columns at all — we synthesise
+        # heuristics for the entire dataset rather than per-row.
+        _no_four_factors = (
+            efg_col is None and tor_col is None
+            and defg_col is None and tord_col is None
+        )
+
+        def _heur_off_efg(ao: Optional[float]) -> Optional[float]:
+            if ao is None or ao <= 0:
+                return None
+            return round(max(0.350, min(0.650, _D1_EFG * (ao / _D1_ADJ_O))), 4)
+
+        def _heur_off_to(ao: Optional[float]) -> Optional[float]:
+            if ao is None or ao <= 0:
+                return None
+            return round(max(0.100, min(0.300, _D1_TO * (_D1_ADJ_O / ao))), 4)
+
+        def _heur_def_efg(ad: Optional[float]) -> Optional[float]:
+            if ad is None or ad <= 0:
+                return None
+            return round(max(0.350, min(0.650, _D1_EFG * (ad / _D1_ADJ_D))), 4)
+
+        def _heur_def_to(ad: Optional[float]) -> Optional[float]:
+            if ad is None or ad <= 0:
+                return None
+            return round(max(0.100, min(0.300, _D1_TO * (_D1_ADJ_D / ad))), 4)
+
+        # ----------------------------------------------------------------
         # Build stats dict
         # ----------------------------------------------------------------
         stats: Dict[str, Dict[str, Optional[float]]] = {}
@@ -581,39 +808,61 @@ class RatingsService:
             adj_de = _safe_float(row, de_col)
             adj_em = (adj_oe - adj_de) if (adj_oe is not None and adj_de is not None) else None
 
+            # Four-factor values: real scraped data takes priority.
+            # When the CSV has no four-factor columns (_no_four_factors), we
+            # synthesise heuristic estimates from AdjOE/AdjDE and tag the
+            # row so downstream code can widen uncertainty margins.
+            if _no_four_factors:
+                efg_val      = _heur_off_efg(adj_oe)
+                to_val       = _heur_off_to(adj_oe)
+                def_efg_val  = _heur_def_efg(adj_de)
+                def_to_val   = _heur_def_to(adj_de)
+                is_heuristic = True
+            else:
+                efg_val      = _safe_pct(row, efg_col)
+                to_val       = _safe_pct(row, tor_col)
+                def_efg_val  = _safe_pct(row, defg_col)
+                def_to_val   = _safe_pct(row, tord_col)
+                is_heuristic = False
+
             stats[name] = {
                 "adj_oe":        adj_oe,
                 "adj_de":        adj_de,
                 "adj_em":        adj_em,
-                # Offensive four factors — converted pct→decimal
-                "efg_pct":       _safe_pct(row, efg_col),
-                "to_pct":        _safe_pct(row, tor_col),
+                # Offensive four factors
+                "efg_pct":       efg_val,
+                "to_pct":        to_val,
                 "ft_rate":       _safe_pct(row, ftr_col),
                 "three_par":     _safe_pct(row, tpar_col),
-                # Defensive four factors — converted pct→decimal
-                "def_efg_pct":   _safe_pct(row, defg_col),
-                "def_to_pct":    _safe_pct(row, tord_col),
+                # Defensive four factors
+                "def_efg_pct":   def_efg_val,
+                "def_to_pct":    def_to_val,
                 "def_ft_rate":   _safe_pct(row, ftrd_col),
                 "def_three_par": _safe_pct(row, tpard_col),
                 # Pace — absolute (no rescaling)
                 "pace":          _safe_float(row, pace_col),
+                # Flag for adaptive circuit breaker
+                "four_factors_heuristic": is_heuristic,
             }
 
-        n_def_efg = sum(1 for s in stats.values() if s.get("def_efg_pct") is not None)
-        n_def_to  = sum(1 for s in stats.values() if s.get("def_to_pct")  is not None)
-        logger.info(
-            "BartTorvik full-stats: %d teams | "
-            "def_efg populated=%d, def_to populated=%d | "
-            "efg col=%s, defg col=%s, tord col=%s",
-            len(stats), n_def_efg, n_def_to,
-            efg_col, defg_col, tord_col,
-        )
-        if n_def_efg == 0:
+        n_def_efg   = sum(1 for s in stats.values() if s.get("def_efg_pct") is not None)
+        n_def_to    = sum(1 for s in stats.values() if s.get("def_to_pct")  is not None)
+        n_heuristic = sum(1 for s in stats.values() if s.get("four_factors_heuristic"))
+        if _no_four_factors:
             logger.warning(
-                "BartTorvik: ZERO teams have def_efg_pct — "
-                "defensive column headers may have changed. "
-                "Known candidates: %s",
-                ["efgd%", "efgd", "def efg%", "d efg%", "opp efg%"],
+                "BartTorvik full-stats: CSV has NO four-factor columns "
+                "(efg=%s, tor=%s, defg=%s, tord=%s). "
+                "Using AdjOE/AdjDE-derived heuristics for all %d teams. "
+                "Adaptive circuit breaker will use widened threshold.",
+                efg_col, tor_col, defg_col, tord_col, len(stats),
+            )
+        else:
+            logger.info(
+                "BartTorvik full-stats: %d teams | "
+                "def_efg populated=%d, def_to populated=%d | "
+                "heuristic=%d | efg col=%s, defg col=%s, tord col=%s",
+                len(stats), n_def_efg, n_def_to, n_heuristic,
+                efg_col, defg_col, tord_col,
             )
         return stats
 
@@ -1020,13 +1269,26 @@ class RatingsService:
         evanmiya_data = self.get_evanmiya_ratings()
         evanmiya_dropped = self._evanmiya_dropped  # re-read post-call
 
+        # KenPom four-factor data — primary source for Markov team profiles.
+        # Fetched separately from the AdjEM ratings call so callers can use
+        # get_kenpom_ratings() for composite-margin weights while using
+        # get_kenpom_full_stats() for Markov simulator inputs without
+        # redundant API calls.  Falls back to {} gracefully if the API
+        # is unavailable; BartTorvik / heuristic paths then take over.
+        kenpom_full_stats = self.get_kenpom_full_stats()
+
         ratings = {
-            "kenpom":    self.get_kenpom_ratings(),
-            "barttorvik": self.get_barttorvik_ratings(),
-            "evanmiya":  evanmiya_data,
+            "kenpom":             self.get_kenpom_ratings(),
+            "barttorvik":         self.get_barttorvik_ratings(),
+            "evanmiya":           evanmiya_data,
+            # Four-factor profiles for Markov engine — KenPom is authoritative;
+            # analysis.py overlays this onto team style dicts AFTER the BartTorvik
+            # profile-cache overlay, giving KenPom the highest priority.
+            "kenpom_four_factors": kenpom_full_stats,
             "_meta": {
-                "evanmiya_dropped": evanmiya_dropped,
-                "evanmiya_fail_count": self._evanmiya_fail_count,
+                "evanmiya_dropped":      evanmiya_dropped,
+                "evanmiya_fail_count":   self._evanmiya_fail_count,
+                "kenpom_ff_teams":       len(kenpom_full_stats),
             },
         }
 
@@ -1034,12 +1296,33 @@ class RatingsService:
         self.cache_timestamp = datetime.utcnow()
 
         logger.info(
-            "Ratings loaded — KenPom: %d, BartTorvik: %d, EvanMiya: %d%s",
+            "Ratings loaded — KenPom: %d (4F: %d), BartTorvik: %d, EvanMiya: %d%s",
             len(ratings["kenpom"]),
+            len(kenpom_full_stats),
             len(ratings["barttorvik"]),
             len(evanmiya_data),
             " [DROPPED]" if evanmiya_dropped else "",
         )
+
+        # Source health-check: warn loudly when fewer than 2 of the 3 sources
+        # are returning data so operators can investigate before trusting outputs.
+        _active = {
+            "kenpom":    bool(ratings["kenpom"]),
+            "barttorvik": bool(ratings["barttorvik"]),
+            "evanmiya":  not evanmiya_dropped and bool(evanmiya_data),
+        }
+        _n_active = sum(_active.values())
+        if _n_active < 2:
+            logger.warning(
+                "SOURCE HEALTH CRITICAL: %d/3 rating sources active "
+                "(KenPom=%s BartTorvik=%s EvanMiya=%s). "
+                "Model in severely degraded mode — review before trusting outputs.",
+                _n_active,
+                "UP" if _active["kenpom"] else "DOWN",
+                "UP" if _active["barttorvik"] else "DOWN",
+                "UP" if _active["evanmiya"] else "DROPPED",
+            )
+
         return ratings
 
 

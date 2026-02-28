@@ -246,6 +246,56 @@ class SimulationResult:
     def percentile_margin(self, pct: float) -> float:
         return float(np.percentile(self.home_scores - self.away_scores, pct))
 
+    def center_on_margin(self, target_margin: float) -> "SimulationResult":
+        """Return a new SimulationResult whose mean score differential equals target_margin.
+
+        **Why this is needed — the SOS contamination problem**
+
+        The KenPom / BartTorvik four-factor API returns *raw season-average* eFG%,
+        TO%, FTR — not schedule-adjusted values.  A Sun Belt team with raw eFG%=0.540
+        accumulated that number against Sun Belt defenses; a Power-5 team with raw
+        eFG%=0.500 did so against ACC/SEC defenses.  The Markov multiplicative blend
+        ``(off_efg × def_efg) / d1_avg`` partially corrects for the *opponent's*
+        defensive quality in THIS game, but cannot correct for the raw rate itself
+        being inflated by a weak prior schedule.
+
+        The result: Markov sees two teams with similar-looking raw stats and simulates
+        a competitive game (mean margin ~+8), while ``projected_margin`` (AdjEM-based,
+        SOS-adjusted) correctly predicts a blowout (+41).  The Markov cover probability
+        at a −13.5 spread is then ~0.28 instead of the correct ~0.92, generating a
+        massive phantom edge on the underdog that trips every circuit breaker.
+
+        **The fix — Mixture-of-Experts**
+
+        * AdjEM-based ``projected_margin`` owns the **mean** (SOS-adjusted, calibrated).
+        * The Markov distribution owns the **shape** (pace-driven variance, FT trip
+          tails, discrete push probabilities from integer scoring).
+
+        After centering, score arrays become ``float64``.  Push probability drops to
+        near-zero because a non-integer shift destroys the integer-alignment needed
+        for exact ties at the spread — this is mathematically correct for a
+        continuously-shifted distribution.
+
+        Args:
+            target_margin: The AdjEM-based projected margin (home perspective, positive
+                = home favoured).  Must be finite.
+
+        Returns:
+            New SimulationResult with home_scores shifted by
+            ``(target_margin − current_mean_margin)``.  away_scores are unchanged;
+            the shift is applied entirely to home scores to keep total distributions
+            reasonable (NBA/CBB totals are not affected by spread-side quality).
+        """
+        markov_mean = self.projected_margin  # float(np.mean(home - away))
+        shift = target_margin - markov_mean
+        return SimulationResult(
+            n_sims=self.n_sims,
+            home_scores=self.home_scores.astype(float) + shift,
+            away_scores=self.away_scores.astype(float),
+            home_1h_scores=self.home_1h_scores,
+            away_1h_scores=self.away_1h_scores,
+        )
+
     def ci_win_prob(self, confidence: float = 0.95) -> Tuple[float, float]:
         """Bootstrap CI on win probability."""
         n = len(self.home_scores)
@@ -433,16 +483,18 @@ class PossessionSimulator:
         D1_FTR = 0.300
 
         # ------------------------------------------------------------------
-        # Markov safety guards — reject defensive stats that are outside
-        # D1-plausible ranges.  BartTorvik occasionally stores national
-        # rankings instead of rates in poisoned CSV rows (e.g. def_efg_pct
-        # stored as 3.46 instead of 0.346).  Silently replacing with the D1
-        # average is safer than propagating the corrupted value through the
-        # Markov chain, where it would cause _blend_rate to clip to 0.99 and
-        # produce extreme (0 or 1) cover probabilities.
+        # Markov safety guards — reject stats outside D1-plausible ranges.
+        # BartTorvik occasionally stores national rankings instead of rates
+        # in corrupted CSV rows (e.g. def_efg_pct = 3.46, to_pct = 0.042).
+        # Silently replacing with D1 averages is safer than propagating a
+        # corrupted value through the Markov chain, where _blend_rate clips
+        # to 0.99 and produces extreme (0 or 1) cover probabilities.
+        # Guards are applied to BOTH offensive and defensive stats.
         # ------------------------------------------------------------------
         _DEF_EFG_D1 = 0.505
         _DEF_TO_D1  = 0.175
+        _OFF_EFG_D1 = 0.505
+        _OFF_TO_D1  = 0.175
 
         def_efg_safe = (
             defence.def_efg_pct
@@ -454,11 +506,21 @@ class PossessionSimulator:
             if 0.10 <= defence.def_to_pct <= 0.32
             else _DEF_TO_D1
         )
+        off_efg_safe = (
+            offence.efg_pct
+            if 0.35 <= offence.efg_pct <= 0.65
+            else _OFF_EFG_D1
+        )
+        off_to_safe = (
+            offence.to_pct
+            if 0.08 <= offence.to_pct <= 0.32
+            else _OFF_TO_D1
+        )
 
         # Turnover probability — blend offence TO rate with defence's canonical
         # def_to_pct (opponent-TO rate forced, D1 avg 0.175).  def_to_forced_pct
         # is kept for legacy callers but def_to_pct is now the live field.
-        to_prob = self._blend_rate(offence.to_pct, def_to_safe, D1_TO)
+        to_prob = self._blend_rate(off_to_safe, def_to_safe, D1_TO)
 
         # Free throw trip probability
         # Convert blended FTA/FGA rate → per-possession FT-trip probability
@@ -480,7 +542,7 @@ class PossessionSimulator:
             rim_prob, mid_prob, three_prob = 0.38, 0.18, 0.44
 
         # Shot accuracy (blend offence accuracy with defence eFG allowed)
-        efg_blend = self._blend_rate(offence.efg_pct, def_efg_safe, D1_EFG)
+        efg_blend = self._blend_rate(off_efg_safe, def_efg_safe, D1_EFG)
         # Scale individual shot types by the eFG blend ratio
         efg_ratio = efg_blend / max(offence.efg_pct, 0.01)
 
@@ -696,6 +758,7 @@ class PossessionSimulator:
         n_sims: int = 10000,
         is_neutral: bool = False,
         matchup_margin_adj: float = 0.0,
+        projected_margin: Optional[float] = None,
     ) -> Dict:
         """
         Run simulation and compute edge against a given spread.
@@ -713,8 +776,41 @@ class PossessionSimulator:
         where effective_spread = spread + matchup_margin_adj.
         This is mathematically equivalent to shifting every simulated margin
         by +matchup_margin_adj before computing cover probabilities.
+
+        **projected_margin** (Mean-Centering): When provided, the raw Markov
+        distribution is shifted so its mean equals this value before cover
+        probabilities are computed.  This corrects the SOS contamination in raw
+        four-factor inputs: KenPom/BartTorvik four-factors are season averages
+        accumulated against each team's actual schedule, not D1-average defenses.
+        The Markov simulator therefore produces a distribution centred on a naive
+        raw-stat mean that ignores schedule strength.
+
+        ``projected_margin`` (from AdjEM ratings, SOS-adjusted) provides the
+        authoritative expected outcome.  Centering the Markov distribution on it
+        gives a Mixture-of-Experts model:
+
+        * **Mean**   ← AdjEM projected_margin (schedule-adjusted, calibrated)
+        * **Shape**  ← Markov (discrete scoring, pace variance, FT tails)
+
+        Without centering, a +41 AdjEM blowout at a -13.5 spread can produce
+        Markov cover_prob ≈ 0.28 (phantom underdog edge, trips circuit breakers).
+        With centering, cover_prob correctly rises to ~0.92.
         """
         result = self.simulate_game(home, away, n_sims, is_neutral)
+
+        # Mean-Centering: align Markov distribution mean with the SOS-adjusted
+        # AdjEM projected_margin.  See SimulationResult.center_on_margin() for
+        # the full explanation of why this is necessary.
+        if projected_margin is not None:
+            markov_mean = result.projected_margin
+            shift = projected_margin - markov_mean
+            logger.debug(
+                "Markov mean-centering: markov_raw_mean=%.2f, target_margin=%.2f, "
+                "shift=%.2f pts (%s vs %s)",
+                markov_mean, projected_margin, shift,
+                home.team, away.team,
+            )
+            result = result.center_on_margin(projected_margin)
 
         # Apply matchup geometry: shifting margins by +adj is equivalent to
         # using an effective spread = spread + adj for all cover-prob checks.

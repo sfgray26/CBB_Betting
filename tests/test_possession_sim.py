@@ -314,5 +314,170 @@ class TestLog5Blending:
             )
 
 
+class TestMeanCentering:
+    """Tests for SimulationResult.center_on_margin() — the SOS contamination fix."""
+
+    def _make_result(self, n: int = 3000, seed: int = 42) -> SimulationResult:
+        sim = PossessionSimulator()
+        home = TeamSimProfile(team="AverageHome", efg_pct=0.505, to_pct=0.175, pace=68.0)
+        away = TeamSimProfile(team="AverageAway", efg_pct=0.505, to_pct=0.175, pace=68.0)
+        return sim.simulate_game(home, away, n_sims=n, seed=seed)
+
+    def test_identity_property(self):
+        """Centering to the raw Markov mean should barely change cover_prob."""
+        result = self._make_result()
+        raw_mean = result.projected_margin
+        centered = result.center_on_margin(raw_mean)
+        assert abs(centered.projected_margin - raw_mean) < 1e-6
+
+    def test_centering_shifts_mean_to_target(self):
+        """After centering, projected_margin should equal the target."""
+        result = self._make_result()
+        target = 15.0
+        centered = result.center_on_margin(target)
+        assert abs(centered.projected_margin - target) < 1e-6
+
+    def test_centering_corrects_blowout_cover_prob(self):
+        """
+        Raw Markov sees two average teams → near-50% cover.
+        Centering to +41 (blowout AdjEM margin) at spread=-13.5 → high cover prob.
+        """
+        sim = PossessionSimulator()
+        home = TeamSimProfile(team="Power5", efg_pct=0.540, to_pct=0.165, pace=72.0)
+        away = TeamSimProfile(team="MidMajor", efg_pct=0.505, to_pct=0.180, pace=70.0)
+        result = sim.simulate_game(home, away, n_sims=5000, seed=42)
+
+        # Before centering: competitive-looking stats → cover prob near 50% at -13.5
+        raw_probs = result.spread_cover_probs(-13.5)
+        raw_cover = raw_probs["win"]
+        assert raw_cover < 0.50, f"Expected raw cover < 0.50, got {raw_cover:.3f}"
+
+        # After centering to blowout margin: cover prob should be high
+        centered = result.center_on_margin(41.0)
+        centered_probs = centered.spread_cover_probs(-13.5)
+        assert centered_probs["win"] > 0.85, (
+            f"Expected centered cover > 0.85, got {centered_probs['win']:.3f}"
+        )
+
+    def test_push_prob_drops_to_zero_after_float_shift(self):
+        """Non-integer centering target destroys integer alignment → push_prob == 0."""
+        result = self._make_result(seed=7)
+        centered = result.center_on_margin(5.3)  # non-integer shift
+        probs = centered.spread_cover_probs(-5.0)  # integer spread
+        assert probs["push"] == 0.0, f"Expected push=0.0, got {probs['push']}"
+
+    def test_win_plus_loss_sums_to_one_after_centering(self):
+        result = self._make_result()
+        centered = result.center_on_margin(8.0)
+        probs = centered.spread_cover_probs(-7.5)
+        total = probs["win"] + probs["loss"] + probs["push"]
+        assert abs(total - 1.0) < 1e-9, f"Probs sum to {total}, expected 1.0"
+
+    def test_scores_become_float64_after_centering(self):
+        result = self._make_result()
+        centered = result.center_on_margin(10.0)
+        assert centered.home_scores.dtype == np.float64
+
+    def test_away_scores_numerically_unchanged(self):
+        result = self._make_result()
+        centered = result.center_on_margin(10.0)
+        np.testing.assert_array_equal(
+            centered.away_scores,
+            result.away_scores.astype(float),
+        )
+
+    def test_n_sims_and_shape_preserved(self):
+        n = 2000
+        result = self._make_result(n=n)
+        centered = result.center_on_margin(-3.0)
+        assert centered.n_sims == n
+        assert len(centered.home_scores) == n
+        assert len(centered.away_scores) == n
+
+
+class TestSimulateSpreadEdgeWithCentering:
+    """Tests for simulate_spread_edge(projected_margin=...) end-to-end."""
+
+    def _sim(self) -> PossessionSimulator:
+        return PossessionSimulator()
+
+    def test_none_projected_margin_backward_compatible(self):
+        """projected_margin=None must not crash and must return a valid result."""
+        sim = self._sim()
+        home = TeamSimProfile(team="Home", efg_pct=0.510, to_pct=0.172, pace=70.0)
+        away = TeamSimProfile(team="Away", efg_pct=0.500, to_pct=0.180, pace=68.0)
+
+        r = sim.simulate_spread_edge(home, away, spread=-3.5, n_sims=2000,
+                                     projected_margin=None)
+        assert 0.0 <= r["cover_prob"] <= 1.0
+        assert abs(r["cover_prob"] + r["loss_prob"] + r["push_prob"] - 1.0) < 1e-6
+
+    def test_blowout_cover_prob_corrected(self):
+        """AdjEM blowout scenario: cover prob corrected from <0.50 → >0.85."""
+        sim = self._sim()
+        home = TeamSimProfile(team="Power5", efg_pct=0.540, to_pct=0.165, pace=72.0)
+        away = TeamSimProfile(team="MidMajor", efg_pct=0.505, to_pct=0.180, pace=70.0)
+
+        raw = sim.simulate_spread_edge(home, away, spread=-13.5, n_sims=5000)
+        assert raw["cover_prob"] < 0.50, (
+            f"Expected raw cover < 0.50 before centering, got {raw['cover_prob']:.3f}"
+        )
+
+        centered = sim.simulate_spread_edge(
+            home, away, spread=-13.5, n_sims=5000,
+            projected_margin=41.0,
+        )
+        assert centered["cover_prob"] > 0.85, (
+            f"Expected centered cover > 0.85, got {centered['cover_prob']:.3f}"
+        )
+
+    def test_close_game_preserves_uncertainty(self):
+        """Close game: centering near the spread should keep cover_prob near 50%."""
+        sim = self._sim()
+        home = TeamSimProfile(team="Home", efg_pct=0.510, to_pct=0.172, pace=70.0)
+        away = TeamSimProfile(team="Away", efg_pct=0.505, to_pct=0.178, pace=69.0)
+
+        result = sim.simulate_spread_edge(
+            home, away, spread=-3.5, n_sims=4000,
+            projected_margin=3.0,  # close game, home slightly favoured
+        )
+        assert 0.35 < result["cover_prob"] < 0.65, (
+            f"Expected cover_prob near 0.50 for close game, got {result['cover_prob']:.3f}"
+        )
+
+    def test_push_prob_zero_with_float_centering(self):
+        """Non-integer projected_margin shift → no integer alignment → push_prob == 0."""
+        sim = self._sim()
+        home = TeamSimProfile(team="Home", efg_pct=0.510, to_pct=0.172, pace=70.0)
+        away = TeamSimProfile(team="Away", efg_pct=0.505, to_pct=0.178, pace=69.0)
+
+        result = sim.simulate_spread_edge(
+            home, away, spread=-5.0, n_sims=2000,
+            projected_margin=5.3,  # non-integer target
+        )
+        assert result["push_prob"] == 0.0, (
+            f"Expected push_prob=0.0 after float centering, got {result['push_prob']}"
+        )
+
+    def test_logger_emits_shift_magnitude(self, caplog):
+        """DEBUG log must mention 'mean-centering' with both team names."""
+        import logging
+        sim = self._sim()
+        home = TeamSimProfile(team="Alpha", efg_pct=0.510, to_pct=0.172, pace=70.0)
+        away = TeamSimProfile(team="Beta", efg_pct=0.505, to_pct=0.178, pace=69.0)
+
+        with caplog.at_level(logging.DEBUG, logger="backend.services.possession_sim"):
+            sim.simulate_spread_edge(
+                home, away, spread=-3.5, n_sims=500,
+                projected_margin=12.0,
+            )
+
+        combined = " ".join(caplog.messages)
+        assert "mean-centering" in combined.lower() or "Markov mean-centering" in combined, (
+            f"Expected 'mean-centering' in debug log; got: {caplog.messages}"
+        )
+        assert "Alpha" in combined or "Beta" in combined
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

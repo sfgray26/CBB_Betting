@@ -9,6 +9,8 @@ import itertools
 import logging
 from typing import List, Dict, Optional
 
+from backend.core.odds_math import american_to_decimal as _american_to_decimal
+
 logger = logging.getLogger(__name__)
 
 # Conservative Kelly divisor for parlays (4x more conservative than singles)
@@ -22,13 +24,6 @@ MIN_EDGE_THRESHOLD = 0.01  # 1%
 # capacity (e.g. 0.03 units = $0.30 on a $1000 bankroll).
 MIN_PARLAY_UNITS = 0.05
 
-
-def _american_to_decimal(american_odds: float) -> float:
-    """Convert American odds to decimal odds."""
-    if american_odds > 0:
-        return (american_odds / 100.0) + 1.0
-    else:
-        return (100.0 / abs(american_odds)) + 1.0
 
 
 def _calculate_parlay_metrics(
