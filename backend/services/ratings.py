@@ -1159,19 +1159,46 @@ class RatingsService:
             if ratings:
                 self._evanmiya_fail_count = 0
                 logger.info("EvanMiya: %d teams via HTML table", len(ratings))
+                return ratings
             else:
                 logger.warning(
                     "EvanMiya: page loaded but no BPR data found. "
                     "Set EVANMIYA_API_URL in .env to override the endpoint."
                 )
                 self._evanmiya_fail_count = getattr(self, "_evanmiya_fail_count", 0) + 1
-
-            return ratings
+                # Fall through to final guard below
 
         except Exception as exc:
             logger.warning("EvanMiya parse error: %s", exc)
             self._evanmiya_fail_count = getattr(self, "_evanmiya_fail_count", 0) + 1
-            return {}
+            ratings = {}
+
+        # --- Final guard: if ALL strategies returned empty, treat as failure ---
+        # This catches the case where HTTP 200 succeeds but parsing yields
+        # zero teams (e.g. fully JS-rendered SPA with no embedded JSON).
+        # Without this, fail_count may only increment once per call even
+        # though the scraper is effectively dead.
+        if not ratings:
+            # Ensure fail_count was incremented at least once this call
+            # (some paths above already increment; this is a safety net)
+            if self._evanmiya_fail_count == 0:
+                self._evanmiya_fail_count = 1
+            _AUTO_DROP_THRESHOLD = int(os.getenv("EVANMIYA_AUTO_DROP_AFTER", "3"))
+            if self._evanmiya_fail_count >= _AUTO_DROP_THRESHOLD:
+                logger.error(
+                    "EvanMiya auto-drop: %d consecutive failures (0 teams on HTTP 200). "
+                    "All strategies exhausted. Set EVANMIYA_API_URL in .env to override.",
+                    self._evanmiya_fail_count,
+                )
+                self._evanmiya_dropped = True
+            else:
+                logger.warning(
+                    "EvanMiya: 0 teams returned (fail_count=%d/%d). "
+                    "Will auto-drop after %d consecutive failures.",
+                    self._evanmiya_fail_count, _AUTO_DROP_THRESHOLD, _AUTO_DROP_THRESHOLD,
+                )
+
+        return ratings
 
     def _parse_evanmiya_json(self, data: object) -> Dict[str, float]:
         """

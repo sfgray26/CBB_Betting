@@ -65,13 +65,11 @@ if hist_alerts:
             st.caption(f"Value: {a.get('current_value')} | Threshold: {a.get('threshold')}")
             if not a.get("acknowledged") and ADMIN_KEY:
                 if st.button(f"Acknowledge alert #{a['id']}", key=f"ack_{a['id']}"):
-                    import requests
-                    r = requests.post(
-                        f"{os.getenv('API_URL', 'http://localhost:8000')}/admin/alerts/{a['id']}/acknowledge",
-                        headers={"X-API-Key": ADMIN_KEY},
-                        timeout=10,
+                    result = api_post(
+                        f"/admin/alerts/{a['id']}/acknowledge",
+                        {},
                     )
-                    if r.ok:
+                    if result is not None:
                         st.success("Acknowledged")
                         st.rerun()
 else:

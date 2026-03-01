@@ -106,7 +106,7 @@ class CBBEdgeModel:
         adjusted_sd: float,
         n_samples: int = 10000,
         spread: float = 0.0,
-        margin_se: float = 0.85,
+        margin_se: float = 1.50,
     ) -> Tuple[float, float, float]:
         """
         Two-layer Monte Carlo for probability with confidence interval.
@@ -126,14 +126,14 @@ class CBBEdgeModel:
                               In production, computed dynamically by
                               ``_compute_margin_se()`` — wider when EvanMiya is
                               down or no sharp books are available.  Default
-                              0.85 is used only when called directly (tests,
-                              one-off calcs).  At 0.85: 1.96 * 0.85 ≈ 1.66 pts
-                              → ~5.5% EV haircut at adj_sd=11.
+                              1.50 is used only when called directly (tests,
+                              one-off calcs).  At 1.50: 1.96 * 1.50 ≈ 2.94 pts
+                              → ~9.3% EV haircut at adj_sd=11.
 
         Returns: (point_estimate, lower_95_ci, upper_95_ci)
         """
         # Layer 1: Uncertainty in our margin projection itself.
-        # margin_se is a caller-supplied parameter (default 0.85).
+        # margin_se is a caller-supplied parameter (default 1.50).
         # A multi-source ratings composite has similar prediction uncertainty
         # whether the margin is 2 or 20 pts, so a constant SE is appropriate.
 
@@ -245,17 +245,20 @@ class CBBEdgeModel:
 
         **Formula (three factors):**
 
-        1. *Time decay* — logistic sigmoid centred at 6 hours:
+        1. *Time decay* — logistic sigmoid centred at 10 hours:
 
-               w_time = 0.20 + 0.70 / (1 + exp(-0.5 * (hours - 6)))
+               w_time = 0.20 + 0.70 / (1 + exp(-0.5 * (hours - 10)))
 
-           - At 24 h: w ≈ 0.90  (model dominates — market is thin)
-           - At  6 h: w ≈ 0.55  (equal blend)
-           - At  1 h: w ≈ 0.27  (market dominates — sharp lines are set)
-           - At  0 h: w ≈ 0.23  (floor — never fully discard model)
+           - At 24 h: w ≈ 0.89  (model dominates — market is thin)
+           - At 10 h: w ≈ 0.55  (equal blend)
+           - At  6 h: w ≈ 0.33  (market dominates — sharp lines are set)
+           - At  1 h: w ≈ 0.21  (near floor — defer to market)
+           - At  0 h: w ≈ 0.20  (floor — never fully discard model)
 
            The 0.20 floor ensures the model always contributes at least 20%.
            The 0.90 ceiling (0.20 + 0.70) prevents full model reliance.
+           Midpoint at 10h (not 6h) defers more to sharp lines at typical
+           4-8h pre-game windows when running on 2 degraded sources.
 
         2. *Sharp book discount* — when multiple sharp books agree, the
            consensus is more informative.  Each additional sharp book beyond
@@ -287,7 +290,7 @@ class CBBEdgeModel:
         # --- Time decay (logistic sigmoid) ---
         h = hours_to_tipoff if hours_to_tipoff is not None else 12.0
         h = max(h, 0.0)
-        w_time = 0.20 + 0.70 / (1.0 + float(np.exp(-0.5 * (h - 6.0))))
+        w_time = 0.20 + 0.70 / (1.0 + float(np.exp(-0.5 * (h - 10.0))))
 
         # --- Sharp book discount ---
         n = max(sharp_books_available, 0)
@@ -569,15 +572,15 @@ class CBBEdgeModel:
         Dynamic margin SE for monte_carlo_prob_ci Layer 1 uncertainty.
 
         Wider CI when data is degraded (EvanMiya absent or no sharp books).
-        Base 0.85 — worst case ~1.65 (EvanMiya down + no sharp books + 1 source missing).
+        Base 1.50 — worst case ~2.50 (EvanMiya down + no sharp books + 1 source missing).
 
         Env-var overrides (all have defaults baked in):
-            BASE_MARGIN_SE            0.85
+            BASE_MARGIN_SE            1.50
             EVANMIYA_DOWN_SE_ADDEND   0.30
             NO_SHARP_BOOKS_SE_ADDEND  0.30
             SOFT_PROXY_SE_ADDEND      0.15  (half-penalty when proxy used, not true sharp)
             MISSING_SOURCE_SE_PTS     0.15  (per missing source)
-            MAX_MARGIN_SE             1.65
+            MAX_MARGIN_SE             2.50
 
         Args:
             n_missing:      Number of missing rating sources.
@@ -587,7 +590,7 @@ class CBBEdgeModel:
                             Applies a half-penalty (0.15) instead of the full
                             NO_SHARP_BOOKS_SE_ADDEND (0.30).
         """
-        se = float(os.getenv("BASE_MARGIN_SE", "0.85"))
+        se = float(os.getenv("BASE_MARGIN_SE", "1.50"))
         if evanmiya_down:
             se += float(os.getenv("EVANMIYA_DOWN_SE_ADDEND", "0.30"))
         if sharp_books < 1:
@@ -597,7 +600,7 @@ class CBBEdgeModel:
             else:
                 se += float(os.getenv("NO_SHARP_BOOKS_SE_ADDEND", "0.30"))
         se += float(os.getenv("MISSING_SOURCE_SE_PTS", "0.15")) * n_missing
-        return min(se, float(os.getenv("MAX_MARGIN_SE", "1.65")))
+        return min(se, float(os.getenv("MAX_MARGIN_SE", "2.50")))
 
     def analyze_game(
         self,
@@ -1182,7 +1185,7 @@ class CBBEdgeModel:
                 sim_edge = sim.simulate_spread_edge(
                     home_sim, away_sim,
                     spread=spread,
-                    n_sims=2000,
+                    n_sims=5000,
                     is_neutral=game_data.get('is_neutral', False),
                     matchup_margin_adj=matchup_margin_adj,
                     # Mean-Centering: the AdjEM-based `margin` is SOS-adjusted and

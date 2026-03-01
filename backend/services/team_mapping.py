@@ -251,23 +251,14 @@ ODDS_TO_KENPOM: dict[str, str] = {
     "North Dakota Fighting Hawks": "North Dakota",
     "North Dakota St Bison": "North Dakota St.",
 
-    # Southern / SoCon
-    "East Tennessee St Buccaneers": "East Tennessee St.",
-    "Wofford Terriers": "Wofford",
-    "Furman Paladins": "Furman",
-    "The Citadel Bulldogs": "The Citadel",
-    "Western Carolina Catamounts": "Western Carolina",
-    "Mercer Bears": "Mercer",
-    "VMI Keydets": "VMI",
-    "Samford Bulldogs": "Samford",
-
     # MEAC / SWAC
     "South Carolina St Bulldogs": "South Carolina St.",
     "Morgan St Bears": "Morgan St.",
-    "Alabama A&M Bulldogs": "Alabama A&M",
-    "Alabama A&M": "Alabama A&M",
-    "Alabama St Hornets": "Alabama St.",
-    "Alabama St": "Alabama St.",
+    "Alabama A&M Bulldogs": "Alabama A&M",  # Substring Guard: prevents fuzzy-matching flagship Alabama
+    "Alabama A&M": "Alabama A&M",           # Substring Guard
+    "Alabama State Hornets": "Alabama St.", # Substring Guard
+    "Alabama St Hornets": "Alabama St.",    # Substring Guard
+    "Alabama St": "Alabama St.",           # Substring Guard
     "Navy Midshipmen": "Navy",
     "Army Knights": "Army",
 

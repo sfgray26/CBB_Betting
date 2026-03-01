@@ -1,0 +1,8 @@
+{
+  "name": "cbb-edge-guardian",
+  "version": "1.0.0",
+  "description": "Expertise in monitoring, validating, and recalibrating the College Basketball Edge Analyzer model.",
+  "openclaw": {
+    "type": "skill"
+  }
+}

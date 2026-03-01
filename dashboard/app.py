@@ -189,23 +189,27 @@ elif page == "🎯 Today's Bets":
             st.success(f"{len(bets)} betting opportunity(s) found!")
             for bet in bets:
                 g = bet.get("game", {})
-                matchup = f"{g.get('away_team')} @ {g.get('home_team')}"
+                fa = bet.get("full_analysis", {})
+                inputs = fa.get("inputs", {})
+                # Team names: try game object first, fall back to odds data in full_analysis
+                odds_data = inputs.get("odds", {})
+                home = g.get("home_team") or odds_data.get("home_team") or "Home"
+                away = g.get("away_team") or odds_data.get("away_team") or "Away"
+                matchup = f"{away} @ {home}"
                 try:
                     game_time = datetime.fromisoformat(g.get("game_date") or "").strftime("%b %d, %I:%M %p UTC")
                 except (ValueError, TypeError):
                     game_time = "TBD"
 
                 # Determine pick string from full_analysis
-                spread_value = None
-                if bet.get("full_analysis"):
-                    spread_value = bet["full_analysis"].get("inputs", {}).get("odds", {}).get("spread")
+                spread_value = inputs.get("odds", {}).get("spread")
 
                 projected_margin = bet.get("projected_margin", 0.0)
                 if spread_value is not None:
                     if projected_margin > spread_value:
-                        pick_str = f"{g.get('home_team')} {spread_value:+.1f}"
+                        pick_str = f"{home} {spread_value:+.1f}"
                     else:
-                        pick_str = f"{g.get('away_team')} {-spread_value:+.1f}"
+                        pick_str = f"{away} {-spread_value:+.1f}"
                 else:
                     pick_str = "See verdict"
 
@@ -218,7 +222,39 @@ elif page == "🎯 Today's Bets":
                     st.info(f"**Verdict:** {bet['verdict']}")
         else:
             st.info("No bets recommended today (PASS on all games).")
-            st.caption("This is expected 85–95% of the time in efficient markets.")
+            st.caption("This is expected 85-95% of the time in efficient markets.")
+
+        # ── CONSIDER verdicts ─────────────────────────────────────────────────
+        considers = [p for p in predictions if p["verdict"].upper().startswith("CONSIDER")]
+        considers.sort(key=lambda b: b.get("edge_conservative") or 0.0, reverse=True)
+
+        if considers:
+            st.markdown("---")
+            st.subheader("CONSIDER — Marginal Edges (monitoring)")
+            st.caption(
+                "These games have a detectable edge below the MIN_BET_EDGE threshold. "
+                "Watch for line movement toward the model's side before tipoff."
+            )
+            for c in considers:
+                g = c.get("game", {})
+                fa = c.get("full_analysis", {})
+                inputs = fa.get("inputs", {})
+                odds_data = inputs.get("odds", {})
+                home = g.get("home_team") or odds_data.get("home_team") or "Home"
+                away = g.get("away_team") or odds_data.get("away_team") or "Away"
+                matchup = f"{away} @ {home}"
+                edge = c.get("edge_conservative", 0)
+                margin = c.get("projected_margin", 0)
+                try:
+                    game_time = datetime.fromisoformat(g.get("game_date") or "").strftime("%I:%M %p")
+                except (ValueError, TypeError):
+                    game_time = "TBD"
+
+                with st.expander(f"{matchup} | Edge {edge:.1%} | {game_time}"):
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Projected Margin", f"{margin:.1f} pts")
+                    col2.metric("Conservative Edge", f"{edge:.2%}")
+                    col3.metric("Verdict", c["verdict"])
     else:
         st.warning("No prediction data available for today.")
 
@@ -567,4 +603,4 @@ elif page == "📋 Bet Log":
 
 # Footer
 st.markdown("---")
-st.caption("CBB Edge Analyzer v7.0 | Built with Streamlit")
+st.caption("CBB Edge Analyzer v8.0 | Built with Streamlit")

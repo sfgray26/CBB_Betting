@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "skills": {
+    "ollama-local": {
+      "version": "1.1.0",
+      "installedAt": 1772311983590
+    },
+    "ollama-integration": {
+      "version": "1.0.0",
+      "installedAt": 1772372800175
+    }
+  }
+}

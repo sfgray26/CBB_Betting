@@ -2036,40 +2036,40 @@ class TestDynamicMarginSE:
     """Test _compute_margin_se dynamic uncertainty scaling (Task 4.2)."""
 
     def test_base_case_unchanged(self):
-        """Default conditions produce 0.85 SE."""
+        """Default conditions produce 1.50 SE."""
         m = CBBEdgeModel()
-        assert m._compute_margin_se(n_missing=0, sharp_books=1, evanmiya_down=False) == pytest.approx(0.85)
+        assert m._compute_margin_se(n_missing=0, sharp_books=1, evanmiya_down=False) == pytest.approx(1.50)
 
     def test_evanmiya_down_raises_se(self):
-        """EvanMiya down adds 0.30 addend → 1.15."""
+        """EvanMiya down adds 0.30 addend → 1.80."""
         m = CBBEdgeModel()
         se = m._compute_margin_se(n_missing=0, sharp_books=1, evanmiya_down=True)
-        assert se == pytest.approx(1.15)
+        assert se == pytest.approx(1.80)
 
     def test_no_sharp_books_raises_se(self):
-        """No sharp books available adds 0.30 addend → 1.15."""
+        """No sharp books available adds 0.30 addend → 1.80."""
         m = CBBEdgeModel()
         se = m._compute_margin_se(n_missing=0, sharp_books=0, evanmiya_down=False)
-        assert se == pytest.approx(1.15)
+        assert se == pytest.approx(1.80)
 
     def test_fully_degraded_raises_se(self):
         """Both EvanMiya down AND no sharp books = today's worst case."""
         m = CBBEdgeModel()
         se = m._compute_margin_se(n_missing=0, sharp_books=0, evanmiya_down=True)
-        assert se == pytest.approx(1.45)
+        assert se == pytest.approx(2.10)
 
     def test_fully_degraded_wider_ci(self):
         """Degraded mode produces materially wider CI than base mode."""
         m = CBBEdgeModel(seed=42)
-        _, lo_base, hi_base = m.monte_carlo_prob_ci(0.0, 11.0, margin_se=0.85)
-        _, lo_deg, hi_deg = m.monte_carlo_prob_ci(0.0, 11.0, margin_se=1.45)
-        assert (hi_deg - lo_deg) > (hi_base - lo_base) * 1.4
+        _, lo_base, hi_base = m.monte_carlo_prob_ci(0.0, 11.0, margin_se=1.50)
+        _, lo_deg, hi_deg = m.monte_carlo_prob_ci(0.0, 11.0, margin_se=2.10)
+        assert (hi_deg - lo_deg) > (hi_base - lo_base) * 1.2
 
     def test_se_capped_at_max(self):
-        """Many missing sources + all degraders cannot exceed the 1.65 cap."""
+        """Many missing sources + all degraders cannot exceed the 2.50 cap."""
         m = CBBEdgeModel()
         se = m._compute_margin_se(n_missing=5, sharp_books=0, evanmiya_down=True)
-        assert se <= 1.65
+        assert se <= 2.50
 
     def test_missing_source_addend(self):
         """Each missing source adds 0.15 pts SE."""

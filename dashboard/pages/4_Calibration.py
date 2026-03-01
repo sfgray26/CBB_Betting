@@ -79,8 +79,8 @@ fig.add_trace(go.Scatter(
 ))
 
 fig.update_layout(
-    xaxis=dict(title="Predicted Win Probability", tickformat=".0%", range=[0.48, 0.84]),
-    yaxis=dict(title="Actual Win Rate",           tickformat=".0%", range=[0.30, 0.95]),
+    xaxis=dict(title="Predicted Win Probability", tickformat=".0%", range=[0.40, 0.95]),
+    yaxis=dict(title="Actual Win Rate",           tickformat=".0%", range=[0.30, 0.98]),
     height=420,
 )
 st.plotly_chart(fig, use_container_width=True)
