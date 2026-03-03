@@ -90,7 +90,6 @@ class OddsMonitor:
         self._history: Dict[str, List[LineSnapshot]] = {}  # game_id -> snapshots
         self._callbacks: List[Callable[[LineMovement], None]] = []
         self._last_poll: Optional[datetime] = None
-        self._polls_remaining: Optional[int] = None
 
     # ------------------------------------------------------------------
     # Callback registration
@@ -112,13 +111,16 @@ class OddsMonitor:
         """
         now = datetime.utcnow()
 
-        # Quota guard
-        if self._polls_remaining is not None and self._polls_remaining < self.MIN_API_QUOTA_RESERVE:
+        # Quota guard — use shared class-level state updated by OddsAPIClient
+        if OddsAPIClient.quota_is_low():
             logger.warning(
-                "Odds monitor paused — API quota low (%d remaining)",
-                self._polls_remaining,
+                "Odds monitor paused — API quota low (%s remaining)",
+                OddsAPIClient._shared_quota,
             )
-            return {"status": "quota_paused", "remaining": self._polls_remaining}
+            return {
+                "status": "quota_paused",
+                "remaining": OddsAPIClient._shared_quota,
+            }
 
         try:
             games = self._client.get_todays_games()
@@ -261,7 +263,12 @@ class OddsMonitor:
             "active": True,
             "games_tracked": len(self._history),
             "last_poll": self._last_poll.isoformat() if self._last_poll else None,
-            "polls_remaining": self._polls_remaining,
+            "quota_remaining": OddsAPIClient._shared_quota,
+            "quota_updated_at": (
+                OddsAPIClient._quota_updated_at.isoformat()
+                if OddsAPIClient._quota_updated_at else None
+            ),
+            "quota_is_low": OddsAPIClient.quota_is_low(),
         }
 
 

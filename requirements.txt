@@ -7,6 +7,7 @@ pydantic-settings==2.1.0
 # Database
 sqlalchemy==2.0.25
 psycopg2-binary==2.9.9
+asyncpg==0.29.0
 alembic==1.13.1
 
 # Scientific Computing (Version 7 model)
@@ -18,10 +19,13 @@ pandas==2.1.4
 requests==2.31.0
 beautifulsoup4==4.12.3
 lxml==5.1.0
-httpx==0.26.0
+httpx[http2]==0.27.0
+anyio==4.3.0
 
 # Scheduling
 apscheduler==3.10.4
+tenacity==8.3.0
+tzdata
 
 # Logging
 structlog==24.1.0

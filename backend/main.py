@@ -8,13 +8,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import text, func
-from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import List, Optional
 import logging
 import os
+from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -23,6 +24,7 @@ from backend.models import (
     Game,
     Prediction,
     BetLog,
+    ClosingLine,
     PerformanceSnapshot,
     ModelParameter,
     DBAlert,
@@ -42,8 +44,14 @@ from backend.services.performance import (
     generate_daily_snapshot,
 )
 from backend.services.alerts import check_performance_alerts, persist_alerts, run_alert_check
+from backend.services.discord_notifier import send_todays_bets
+from backend.services.dk_import import (
+    parse_dk_csv, preview_import, apply_import,
+    preview_direct_import, apply_direct_import,
+)
 from backend.services.odds_monitor import get_odds_monitor
 from backend.services.portfolio import get_portfolio_manager
+from backend.services.ratings import get_ratings_service
 from backend.schemas import (
     BetLogCreate,
     BetLogResponse,
@@ -61,8 +69,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Scheduler instance
-scheduler = BackgroundScheduler()
+# Scheduler instance — AsyncIOScheduler runs jobs inside FastAPI's event loop,
+# allowing async job handlers (nightly_job, _opener_attack_job) to await coroutines.
+scheduler = AsyncIOScheduler()
 
 
 @asynccontextmanager
@@ -101,12 +110,31 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # Daily performance snapshot + alert check at 4 AM
+    # Daily performance snapshot + alert check at 4:30 AM (after settle job)
     scheduler.add_job(
         _daily_snapshot_job,
-        CronTrigger(hour=4, minute=0, timezone=timezone),
+        CronTrigger(hour=4, minute=30, timezone=timezone),
         id="daily_snapshot",
         name="Daily Performance Snapshot",
+        replace_existing=True,
+    )
+
+    # Settle outcomes once daily at 4 AM (in addition to every-2h interval job)
+    scheduler.add_job(
+        _update_outcomes_job,
+        CronTrigger(hour=4, minute=0, timezone=timezone),
+        id="settle_games_daily",
+        name="Daily Settle Completed Games",
+        replace_existing=True,
+    )
+
+    # Pre-warm ratings cache at 8 AM so nightly analysis uses fresh data
+    ratings_prewarm_hour = int(os.getenv("RATINGS_PREWARM_HOUR", "8"))
+    scheduler.add_job(
+        _fetch_ratings_job,
+        CronTrigger(hour=ratings_prewarm_hour, minute=0, timezone=timezone),
+        id="fetch_ratings",
+        name="Pre-warm Ratings Cache",
         replace_existing=True,
     )
 
@@ -143,9 +171,10 @@ async def lifespan(app: FastAPI):
 
     scheduler.start()
     logger.info(
-        "Scheduler started: nightly@%02d:00, outcomes every 2h, lines every 30min, "
-        "odds monitor every %dmin, snapshot@04:00 %s",
-        nightly_hour, odds_monitor_interval, timezone,
+        "Scheduler started: nightly@%02d:00, outcomes every 2h + daily@04:00, "
+        "lines every 30min, odds monitor every %dmin, snapshot@04:30, "
+        "ratings prewarm@%02d:00 %s",
+        nightly_hour, odds_monitor_interval, ratings_prewarm_hour, timezone,
     )
     
     yield
@@ -176,12 +205,16 @@ app.add_middleware(
 # SCHEDULED JOB
 # ============================================================================
 
-def nightly_job():
+async def nightly_job():
     """Main nightly analysis job — runs at 3 AM ET by default."""
     logger.info("Starting nightly analysis job")
     try:
-        results = run_nightly_analysis()
+        results = await run_nightly_analysis()
         logger.info("Nightly analysis complete: %s", results)
+        try:
+            send_todays_bets(results.get("bet_details"), results)
+        except Exception as disc_exc:
+            logger.warning("Discord notification failed: %s", disc_exc)
     except Exception as exc:
         logger.error("Nightly job failed: %s", exc, exc_info=True)
 
@@ -217,7 +250,26 @@ def _daily_snapshot_job():
 
 
 def _odds_monitor_job():
-    """Poll odds API for line movements — runs every 5 min (configurable)."""
+    """Poll odds API for line movements — runs every 5 min (configurable).
+
+    Only active during the configured operating window (default 12–23 ET)
+    to avoid burning API quota when no games are scheduled.
+    """
+    _tz_name = os.getenv("NIGHTLY_CRON_TIMEZONE", "America/New_York")
+    _start_h = int(os.getenv("ODDS_MONITOR_START_HOUR", "12"))
+    _end_h   = int(os.getenv("ODDS_MONITOR_END_HOUR",   "23"))
+    try:
+        _local_hour = datetime.now(ZoneInfo(_tz_name)).hour
+    except Exception:
+        _local_hour = datetime.utcnow().hour  # fallback if tzdata missing
+
+    if not (_start_h <= _local_hour < _end_h):
+        logger.debug(
+            "Odds monitor: outside window [%d, %d) %s (current=%d) — skipping",
+            _start_h, _end_h, _tz_name, _local_hour,
+        )
+        return
+
     try:
         monitor = get_odds_monitor()
         result = monitor.poll()
@@ -230,7 +282,37 @@ def _odds_monitor_job():
         logger.error("Odds monitor job failed: %s", exc, exc_info=True)
 
 
-def _opener_attack_job():
+async def _fetch_ratings_job():
+    """Pre-warm ratings cache at 8 AM — fetches all sources concurrently.
+
+    Runs get_ratings_service().async_get_all_ratings(use_cache=False) so
+    the nightly analysis (3 AM next day) hits a warm 6-hour cache.
+    DB profile save is attempted but non-fatal on failure.
+    """
+    logger.info("Ratings pre-warm job starting")
+    try:
+        ratings_service = get_ratings_service()
+        await ratings_service.async_get_all_ratings(use_cache=False)
+        logger.info("Ratings pre-warm: cache refreshed successfully")
+
+        # Also persist team profiles to DB (non-fatal)
+        try:
+            db = SessionLocal()
+            ratings_service.save_team_profiles(db)
+            db.commit()
+        except Exception as db_exc:
+            logger.warning("Ratings pre-warm: DB profile save failed: %s", db_exc)
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    except Exception as exc:
+        logger.warning("Ratings pre-warm job failed (non-fatal): %s", exc)
+
+
+async def _opener_attack_job():
     """
     Run analysis when overnight opening lines are posted.
 
@@ -240,7 +322,7 @@ def _opener_attack_job():
     """
     logger.info("Opening line attack triggered — running analysis on fresh openers")
     try:
-        results = run_nightly_analysis()
+        results = await run_nightly_analysis()
         bets = results.get("bets_recommended", 0)
         if bets > 0:
             logger.info(
@@ -886,6 +968,33 @@ async def get_bet_logs(
     }
 
 
+@app.get("/api/closing-lines/{game_id}")
+async def get_closing_lines(
+    game_id: int,
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """Return the most recent closing line capture for a game."""
+    cl = (
+        db.query(ClosingLine)
+        .filter(ClosingLine.game_id == game_id)
+        .order_by(ClosingLine.captured_at.desc())
+        .first()
+    )
+    if not cl:
+        raise HTTPException(status_code=404, detail="No closing line found for this game")
+    return {
+        "game_id": cl.game_id,
+        "captured_at": cl.captured_at.isoformat() if cl.captured_at else None,
+        "spread": cl.spread,
+        "spread_odds": cl.spread_odds,
+        "total": cl.total,
+        "total_odds": cl.total_odds,
+        "moneyline_home": cl.moneyline_home,
+        "moneyline_away": cl.moneyline_away,
+    }
+
+
 @app.get("/api/performance/history")
 async def get_performance_history(
     days: int = Query(default=90, ge=1, le=365),
@@ -945,12 +1054,21 @@ async def get_performance_history(
 
 @app.post("/admin/run-analysis", response_model=AnalysisTriggerResponse)
 async def trigger_analysis_manually(
+    notify_discord: bool = False,
     user: str = Depends(verify_admin_api_key),
 ):
-    """Manually trigger nightly analysis (admin only). Runs synchronously and returns results."""
-    logger.info("Manual analysis triggered by %s", user)
+    """Manually trigger nightly analysis (admin only). Runs synchronously and returns results.
+
+    Pass ?notify_discord=true to also fire a Discord notification after analysis.
+    """
+    logger.info("Manual analysis triggered by %s (discord=%s)", user, notify_discord)
     try:
-        results = run_nightly_analysis()
+        results = await run_nightly_analysis()
+        if notify_discord:
+            try:
+                send_todays_bets(results.get("bet_details"), results)
+            except Exception as disc_exc:
+                logger.warning("Discord notification failed: %s", disc_exc)
         return AnalysisTriggerResponse(
             message="Analysis complete",
             status=results.get("status", "ok"),
@@ -963,6 +1081,118 @@ async def trigger_analysis_manually(
     except Exception as exc:
         logger.error("Manual analysis failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/admin/discord/test")
+async def discord_test(user: str = Depends(verify_admin_api_key)):
+    """Send a test Discord message to verify bot token and channel ID (admin only)."""
+    from backend.services.discord_notifier import _bot_token, _channel_id, _post
+    token = _bot_token()
+    if not token:
+        raise HTTPException(status_code=400, detail="DISCORD_BOT_TOKEN not configured")
+    payload = {
+        "embeds": [{
+            "title": "CBB Edge — Discord Test",
+            "description": "Bot connected successfully. Notifications are working.",
+            "color": 0x2ECC71,
+            "footer": {"text": f"Triggered by {user}"},
+            "timestamp": datetime.utcnow().isoformat(),
+        }]
+    }
+    ok = _post(payload)
+    if ok:
+        return {"status": "ok", "channel_id": _channel_id()}
+    raise HTTPException(status_code=502, detail="Discord API call failed — check logs")
+
+
+@app.post("/admin/discord/send-todays-bets")
+async def discord_send_todays_bets(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Send today's BET predictions to Discord from the database (admin only).
+    Use this to push notifications without re-running the full analysis.
+    """
+    from backend.services.discord_notifier import send_todays_bets as _send, _channel_id
+
+    today_utc = datetime.utcnow().date()
+    now_utc = datetime.utcnow()
+
+    predictions = (
+        db.query(Prediction)
+        .join(Game)
+        .filter(
+            Prediction.prediction_date == today_utc,
+            Prediction.verdict.like("Bet%"),
+            Game.game_date > now_utc,          # upcoming games only
+            Game.external_id.isnot(None),      # skip orphan records with no Odds API ID
+        )
+        .options(joinedload(Prediction.game))
+        .all()
+    )
+
+    all_today = (
+        db.query(Prediction)
+        .join(Game)
+        .filter(
+            Prediction.prediction_date == today_utc,
+            Game.game_date > now_utc,
+            Game.external_id.isnot(None),
+        )
+        .count()
+    )
+
+    # Deduplicate — keep the highest-edge prediction per game
+    seen_games: set = set()
+    bet_details = []
+    for p in sorted(predictions, key=lambda x: x.edge_conservative or 0.0, reverse=True):
+        if p.game_id in seen_games:
+            continue
+        seen_games.add(p.game_id)
+        fa = p.full_analysis or {}
+        calcs = fa.get("calculations", {})
+        inputs = fa.get("inputs", {})
+        odds = inputs.get("odds", {})
+        bet_details.append({
+            "home_team": p.game.home_team,
+            "away_team": p.game.away_team,
+            "spread": odds.get("spread"),
+            "bet_side": calcs.get("bet_side", "home"),
+            "edge_conservative": p.edge_conservative,
+            "recommended_units": p.recommended_units,
+            "bet_odds": calcs.get("bet_odds"),
+            "kelly_fractional": p.kelly_fractional,
+            "projected_margin": p.projected_margin,
+            "verdict": p.verdict,
+        })
+
+    n_bets = len(predictions)
+    n_considered = (
+        db.query(Prediction)
+        .join(Game)
+        .filter(
+            Prediction.prediction_date == today_utc,
+            Prediction.verdict.like("CONSIDER%"),
+            Game.game_date > now_utc,
+            Game.external_id.isnot(None),
+        )
+        .count()
+    )
+
+    summary = {
+        "games_analyzed": all_today,
+        "bets_recommended": n_bets,
+        "games_considered": n_considered,
+        "duration_seconds": 0,
+    }
+
+    _send(bet_details, summary)
+    return {
+        "status": "ok",
+        "bets_sent": len(bet_details),
+        "channel_id": _channel_id(),
+    }
 
 
 @app.post("/admin/recalibrate")
@@ -1073,6 +1303,249 @@ async def get_odds_monitor_status(user: str = Depends(verify_admin_api_key)):
     """Return odds monitor status: tracked games, last poll time."""
     monitor = get_odds_monitor()
     return monitor.get_status()
+
+
+# ============================================================================
+# BANKROLL OVERRIDE
+# ============================================================================
+
+def _get_model_param(db: Session, name: str) -> Optional[ModelParameter]:
+    return (
+        db.query(ModelParameter)
+        .filter(ModelParameter.parameter_name == name)
+        .order_by(ModelParameter.effective_date.desc())
+        .first()
+    )
+
+
+def get_effective_bankroll(db: Session) -> float:
+    """Return the active bankroll: DB override if set, else STARTING_BANKROLL env var."""
+    row = _get_model_param(db, "current_bankroll")
+    if row and row.parameter_value and row.parameter_value > 0:
+        return row.parameter_value
+    return float(os.getenv("STARTING_BANKROLL", "1000"))
+
+
+@app.get("/admin/bankroll")
+async def get_bankroll(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """Return current effective bankroll and its source."""
+    row = _get_model_param(db, "current_bankroll")
+    effective = get_effective_bankroll(db)
+    return {
+        "effective_bankroll": effective,
+        "source": "db_override" if (row and row.parameter_value) else "env_var",
+        "env_starting_bankroll": float(os.getenv("STARTING_BANKROLL", "1000")),
+        "last_set": row.effective_date.isoformat() if row else None,
+        "set_by": row.changed_by if row else None,
+    }
+
+
+@app.post("/admin/bankroll")
+async def set_bankroll(
+    amount: float = Query(..., gt=0, description="New bankroll in dollars"),
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """Override the effective bankroll used for Kelly sizing (admin only)."""
+    db.add(ModelParameter(
+        parameter_name="current_bankroll",
+        parameter_value=round(amount, 2),
+        reason="manual_override",
+        changed_by=user,
+    ))
+    db.commit()
+    logger.info("Bankroll overridden to $%.2f by %s", amount, user)
+    return {"status": "ok", "bankroll_set": round(amount, 2)}
+
+
+# ============================================================================
+# PARLAY FORCE OVERRIDE
+# ============================================================================
+
+@app.get("/admin/parlay/override")
+async def get_parlay_override(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """Return current parlay force-sizing override status."""
+    row = _get_model_param(db, "force_parlay_sizing")
+    active = bool(row and row.parameter_value == 1.0)
+    return {
+        "force_parlay_sizing": active,
+        "last_set": row.effective_date.isoformat() if row else None,
+    }
+
+
+@app.post("/admin/parlay/override")
+async def set_parlay_override(
+    active: bool = Query(..., description="True to force parlay sizing regardless of capacity"),
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """Toggle force-parlay sizing. When active, parlays are recommended even when
+    the daily straight-bet budget is fully consumed (admin only)."""
+    db.add(ModelParameter(
+        parameter_name="force_parlay_sizing",
+        parameter_value=1.0 if active else 0.0,
+        reason="manual_override",
+        changed_by=user,
+    ))
+    db.commit()
+    logger.info("Force parlay sizing set to %s by %s", active, user)
+    return {"status": "ok", "force_parlay_sizing": active}
+
+
+# ============================================================================
+# DRAFTKINGS CSV IMPORT
+# ============================================================================
+
+@app.post("/admin/dk/preview")
+async def dk_import_preview(
+    payload: dict,
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Parse a DraftKings CSV and return proposed BetLog matches for review.
+
+    Request body: {"csv_content": "<raw csv text>"}
+
+    Returns a list of proposed matches with confidence scores.
+    No database writes occur — call /admin/dk/confirm to apply.
+    """
+    csv_content = payload.get("csv_content", "")
+    if not csv_content:
+        raise HTTPException(status_code=400, detail="csv_content is required")
+
+    data = parse_dk_csv(csv_content)
+    matches = preview_import(db, data)
+
+    return {
+        "wagers_found": len(data.wagers),
+        "payouts_found": len(data.payouts),
+        "skipped_rows": data.skipped_rows,
+        "matches": [
+            {
+                "bet_log_id": m.bet_log_id,
+                "pick": m.pick,
+                "bet_log_timestamp": m.bet_log_timestamp.isoformat(),
+                "bet_log_dollars": m.bet_log_dollars,
+                "dk_wager_id": m.dk_wager_id,
+                "dk_wager_amount": m.dk_wager_amount,
+                "dk_wager_timestamp": m.dk_wager_timestamp.isoformat(),
+                "outcome": m.outcome,
+                "profit_dollars": m.profit_dollars,
+                "payout_amount": m.payout_amount,
+                "confidence": m.confidence,
+            }
+            for m in matches
+        ],
+        "unmatched_wagers": len(data.wagers) - len(matches),
+    }
+
+
+@app.post("/admin/dk/confirm")
+async def dk_import_confirm(
+    payload: dict,
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Apply confirmed DraftKings import matches to the database.
+
+    Request body: {"matches": [...list from /admin/dk/preview...]}
+
+    Each match in the list may have ``outcome`` overridden before confirming.
+    Matches with outcome=null are skipped (left pending).
+    """
+    confirmed = payload.get("matches", [])
+    if not confirmed:
+        raise HTTPException(status_code=400, detail="matches list is required")
+
+    summary = apply_import(db, confirmed)
+    return {
+        "status": "ok",
+        "applied": summary.applied,
+        "wins": summary.wins,
+        "losses": summary.losses,
+        "pending_skipped": summary.pending,
+        "total_profit_dollars": round(summary.total_profit, 2),
+        "errors": summary.errors,
+    }
+
+
+@app.post("/admin/dk/direct-preview")
+async def dk_direct_import_preview(
+    payload: dict,
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Preview DraftKings wagers for direct creation as real BetLog entries.
+
+    No paper trades required — creates brand-new BetLog rows for each wager,
+    matched to games by calendar date.
+
+    Request body: {"csv_content": "<raw csv text>"}
+    """
+    csv_content = payload.get("csv_content", "")
+    if not csv_content:
+        raise HTTPException(status_code=400, detail="csv_content is required")
+
+    data = parse_dk_csv(csv_content)
+    items = preview_direct_import(db, data)
+
+    return {
+        "wagers_found": len(data.wagers),
+        "payouts_found": len(data.payouts),
+        "items_with_game": sum(1 for i in items if i.suggested_game_id),
+        "items_no_game": sum(1 for i in items if not i.suggested_game_id),
+        "items": [
+            {
+                "dk_wager_id": i.dk_wager_id,
+                "dk_amount": i.dk_amount,
+                "dk_timestamp": i.dk_timestamp.isoformat(),
+                "outcome": i.outcome,
+                "profit_dollars": i.profit_dollars,
+                "payout_amount": i.payout_amount,
+                "candidate_games": i.candidate_games,
+                "suggested_game_id": i.suggested_game_id,
+                "suggested_game_label": getattr(i, "_suggested_game_label", ""),
+            }
+            for i in items
+        ],
+    }
+
+
+@app.post("/admin/dk/direct-confirm")
+async def dk_direct_import_confirm(
+    payload: dict,
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Create real BetLog entries from confirmed DK direct-import items.
+
+    Request body: {"items": [...list from /admin/dk/direct-preview...]}
+    Items with no game_id are skipped.
+    """
+    items = payload.get("items", [])
+    if not items:
+        raise HTTPException(status_code=400, detail="items list is required")
+
+    summary = apply_direct_import(db, items)
+    return {
+        "status": "ok",
+        "applied": summary.applied,
+        "wins": summary.wins,
+        "losses": summary.losses,
+        "pending_added": summary.pending,
+        "total_profit_dollars": round(summary.total_profit, 2),
+        "errors": summary.errors,
+    }
 
 
 # ============================================================================

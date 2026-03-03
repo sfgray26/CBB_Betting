@@ -24,15 +24,33 @@ The parse_odds_for_game method now returns two distinct sets of lines:
 """
 
 import requests
+import httpx
 import os
 import logging
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
 
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log,
+)
+
+from backend.core.circuit_breaker import CircuitBreaker
+
 logger = logging.getLogger(__name__)
 
 API_KEY = os.getenv("THE_ODDS_API_KEY")
 BASE_URL = "https://api.the-odds-api.com/v4"
+
+# Module-level circuit breaker shared across all OddsAPIClient instances.
+_odds_api_cb: CircuitBreaker = CircuitBreaker(
+    failure_threshold=3,
+    recovery_timeout=300,
+    window_seconds=600,
+)
 
 # Books that represent the sharpest, most accurate market consensus.
 # CLV should always be measured against these lines, not retail.
@@ -52,11 +70,44 @@ PROXY_SPREAD_AGREEMENT_PT: float = float(
 class OddsAPIClient:
     """Client for The Odds API"""
 
+    # Class-level shared quota so all instances track the same remaining count.
+    _shared_quota: Optional[int] = None
+    _quota_updated_at: Optional[datetime] = None
+
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or API_KEY
         if not self.api_key:
             raise ValueError("THE_ODDS_API_KEY not set in environment")
 
+    @classmethod
+    def quota_is_low(cls) -> bool:
+        """Return True when the shared quota is below the configured reserve."""
+        reserve = int(os.getenv("ODDS_API_QUOTA_RESERVE", "10"))
+        if cls._shared_quota is None:
+            return False
+        return cls._shared_quota < reserve
+
+    @classmethod
+    def _update_quota(cls, response_headers: Dict) -> None:
+        """Parse x-requests-remaining from response headers into shared state."""
+        remaining = response_headers.get("x-requests-remaining")
+        if remaining is not None:
+            try:
+                cls._shared_quota = int(remaining)
+                cls._quota_updated_at = datetime.utcnow()
+            except (ValueError, TypeError):
+                pass
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+        )),
+        reraise=True,
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+    )
     def get_cbb_odds(
         self,
         markets: str = "h2h,spreads,totals",
@@ -68,6 +119,10 @@ class OddsAPIClient:
 
         Returns list of games with odds from multiple bookmakers.
         """
+        if not _odds_api_cb.should_allow_request():
+            logger.warning("Odds API circuit breaker OPEN — skipping request")
+            return []
+
         url = f"{BASE_URL}/sports/basketball_ncaab/odds"
 
         params = {
@@ -79,22 +134,29 @@ class OddsAPIClient:
 
         try:
             response = requests.get(url, params=params, timeout=10)
+
+            if response.status_code == 429:
+                logger.warning("Odds API 429 — quota exhausted; backing off")
+                _odds_api_cb.record_failure()
+                response.raise_for_status()   # triggers tenacity retry
+
             response.raise_for_status()
+            OddsAPIClient._update_quota(response.headers)
+            _odds_api_cb.record_success()
 
             data = response.json()
-
-            remaining = response.headers.get("x-requests-remaining")
             used = response.headers.get("x-requests-used")
             logger.info(
                 "Odds API: %d games fetched. Quota: %s used, %s remaining",
-                len(data), used, remaining,
+                len(data), used, OddsAPIClient._shared_quota,
             )
 
             return data
 
         except requests.exceptions.RequestException as e:
+            _odds_api_cb.record_failure()
             logger.error("Odds API error: %s", e)
-            return []
+            raise
 
     def get_cbb_derivative_odds(
         self,
@@ -108,6 +170,10 @@ class OddsAPIClient:
         Many retail books derive 1H lines by halving the full-game spread.
         A possession simulator can identify structural mispricing here.
         """
+        if not _odds_api_cb.should_allow_request():
+            logger.warning("Odds API circuit breaker OPEN — skipping derivative request")
+            return []
+
         url = f"{BASE_URL}/sports/basketball_ncaab/odds"
 
         params = {
@@ -120,18 +186,92 @@ class OddsAPIClient:
         try:
             response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
+            OddsAPIClient._update_quota(response.headers)
+            _odds_api_cb.record_success()
             data = response.json()
 
-            remaining = response.headers.get("x-requests-remaining")
             logger.info(
                 "Derivative odds: %d games fetched. Remaining: %s",
-                len(data), remaining,
+                len(data), OddsAPIClient._shared_quota,
             )
             return data
 
         except requests.exceptions.RequestException as e:
+            _odds_api_cb.record_failure()
             logger.error("Derivative odds API error: %s", e)
             return []
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type((
+            httpx.ConnectError,
+            httpx.TimeoutException,
+        )),
+        reraise=True,
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+    )
+    async def async_get_cbb_odds(
+        self,
+        markets: str = "h2h,spreads,totals",
+        regions: str = os.getenv("ODDS_API_REGIONS", "us,eu"),
+        odds_format: str = "american",
+    ) -> List[Dict]:
+        """Async version of get_cbb_odds using httpx."""
+        if not _odds_api_cb.should_allow_request():
+            logger.warning("Odds API circuit breaker OPEN — skipping async request")
+            return []
+
+        url = f"{BASE_URL}/sports/basketball_ncaab/odds"
+        params = {
+            "apiKey": self.api_key,
+            "regions": regions,
+            "markets": markets,
+            "oddsFormat": odds_format,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.get(url, params=params)
+
+            if response.status_code == 429:
+                logger.warning("Odds API 429 — quota exhausted (async); backing off")
+                _odds_api_cb.record_failure()
+                response.raise_for_status()
+
+            response.raise_for_status()
+            OddsAPIClient._update_quota(dict(response.headers))
+            _odds_api_cb.record_success()
+
+            data = response.json()
+            used = response.headers.get("x-requests-used")
+            logger.info(
+                "Odds API: %d games fetched. Quota: %s used, %s remaining",
+                len(data), used, OddsAPIClient._shared_quota,
+            )
+            return data
+        except httpx.HTTPStatusError:
+            _odds_api_cb.record_failure()
+            raise
+        except httpx.HTTPError as e:
+            _odds_api_cb.record_failure()
+            logger.error("Odds API error: %s", e)
+            raise
+
+    async def async_get_todays_games(
+        self,
+        active_books: Optional[List[str]] = None,
+    ) -> List[Dict]:
+        """Async version of get_todays_games."""
+        raw_odds = await self.async_get_cbb_odds()
+        games = [self.parse_odds_for_game(g, active_books=active_books) for g in raw_odds]
+        sharp_count = sum(1 for g in games if g["sharp_books_available"] > 0)
+        proxy_count = sum(1 for g in games if g.get("sharp_proxy_used"))
+        logger.info(
+            "Parsed odds for %d games (%d true sharp, %d proxy, active_books=%s)",
+            len(games), sharp_count, proxy_count,
+            sorted(active_books) if active_books else "all",
+        )
+        return games
 
     def parse_odds_for_game(
         self,
@@ -464,6 +604,15 @@ def fetch_current_odds() -> tuple:
     client = OddsAPIClient()
     fetched_at = datetime.utcnow()
     games = client.get_todays_games()
+    freshness = get_data_freshness(fetched_at)
+    return games, freshness
+
+
+async def async_fetch_current_odds() -> tuple:
+    """Async version — used by run_nightly_analysis for parallel gather."""
+    client = OddsAPIClient()
+    fetched_at = datetime.utcnow()
+    games = await client.async_get_todays_games()
     freshness = get_data_freshness(fetched_at)
     return games, freshness
 

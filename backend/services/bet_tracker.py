@@ -13,7 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
-import requests
+import httpx
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from backend.models import BetLog, ClosingLine, DataFetch, Game, Prediction, SessionLocal
 from backend.services.clv import calculate_clv_full
@@ -125,6 +126,12 @@ def calculate_bet_outcome(
 # The Odds API — scores
 # ---------------------------------------------------------------------------
 
+@retry(
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=1, min=2, max=20),
+    retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
+    reraise=True,
+)
 def _fetch_scores(days_from: int = 2) -> List[Dict]:
     """Return completed NCAAB games from the last `days_from` days."""
     if not API_KEY:
@@ -133,7 +140,7 @@ def _fetch_scores(days_from: int = 2) -> List[Dict]:
     url = f"{BASE_URL}/sports/basketball_ncaab/scores"
     params = {"apiKey": API_KEY, "daysFrom": days_from}
 
-    resp = requests.get(url, params=params, timeout=15)
+    resp = httpx.get(url, params=params, timeout=15)
     resp.raise_for_status()
     data = resp.json()
 
@@ -302,6 +309,19 @@ def update_completed_games() -> Dict:
 # Job 2: capture_closing_lines
 # ---------------------------------------------------------------------------
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=20),
+    retry=retry_if_exception_type((httpx.ConnectError, httpx.TimeoutException)),
+    reraise=True,
+)
+def _fetch_live_odds_for_closing(url: str, params: Dict) -> List[Dict]:
+    """Fetch live odds for closing-line capture with retry on transient errors."""
+    resp = httpx.get(url, params=params, timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def capture_closing_lines() -> Dict:
     """
     For games starting within the next 90 minutes, capture current lines
@@ -340,16 +360,14 @@ def capture_closing_lines() -> Dict:
         ext_id_to_game = {g.external_id: g for g in upcoming if g.external_id}
 
         # Fetch live odds
-        url = f"{BASE_URL}/sports/basketball_ncaab/odds"
-        params = {
+        _odds_url = f"{BASE_URL}/sports/basketball_ncaab/odds"
+        _odds_params = {
             "apiKey": API_KEY,
             "regions": "us",
             "markets": "spreads,totals,h2h",
             "oddsFormat": "american",
         }
-        resp = requests.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        raw_odds = resp.json()
+        raw_odds = _fetch_live_odds_for_closing(_odds_url, _odds_params)
 
         base_sd = float(os.getenv("BASE_SD", "11.0"))
 
@@ -438,7 +456,8 @@ def capture_closing_lines() -> Dict:
                     except Exception as exc:
                         errors.append(f"CLV bet {bet.id}: {exc}")
 
-            db.commit()
+        # Single commit after processing all games (was per-game previously)
+        db.commit()
 
     except Exception as exc:
         logger.error("Fatal error in capture_closing_lines: %s", exc, exc_info=True)
