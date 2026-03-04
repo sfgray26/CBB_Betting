@@ -1873,6 +1873,7 @@ class CachedGameContext:
     sharp_books_available: int = 0
     sharp_proxy_used: bool = False
     integrity_verdict: Optional[str] = None
+    base_sd_override: Optional[float] = None  # dynamic SD used in original analyze_game call
 
 
 class ReanalysisEngine:
@@ -1928,7 +1929,10 @@ class ReanalysisEngine:
             sd_multiplier = float(os.getenv("SD_MULTIPLIER", "0.85"))
             base_sd_override: Optional[float] = math.sqrt(new_total) * sd_multiplier
         else:
-            base_sd_override = None  # model uses cached value from original call
+            # Use the dynamic SD that was computed during the original analysis pass.
+            # Without this, analyze_game() falls back to self.base_sd (11.0), producing
+            # a different SD than the original and breaking the unchanged-spread invariant.
+            base_sd_override = self._ctx.base_sd_override
 
         return self._model.analyze_game(
             game_data=self._ctx.game_data,
@@ -1965,9 +1969,16 @@ class ReanalysisEngine:
         sharp_books_available: int = 0,
         sharp_proxy_used: bool = False,
         integrity_verdict: Optional[str] = None,
+        base_sd_override: Optional[float] = None,
     ) -> "ReanalysisEngine":
         """
         Factory: build a ReanalysisEngine from the same args used in analyze_game().
+
+        ``base_sd_override`` must be the same dynamic SD value passed to
+        ``analyze_game()`` during the nightly pass (``sqrt(total) * sd_multiplier``).
+        Storing it ensures ``reanalyze()`` reproduces the identical SD distribution
+        when the spread changes but the total does not, preserving the
+        unchanged-spread invariant.
 
         Call this at the end of the nightly analysis pass for each BET or
         CONSIDER game so the engine is ready before the odds_monitor starts polling.
@@ -1986,6 +1997,7 @@ class ReanalysisEngine:
             sharp_books_available=sharp_books_available,
             sharp_proxy_used=sharp_proxy_used,
             integrity_verdict=integrity_verdict,
+            base_sd_override=base_sd_override,
         )
         return cls(model, ctx)
 

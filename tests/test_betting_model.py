@@ -2407,5 +2407,215 @@ class TestD4MinBetEdge:
         assert env_val == pytest.approx(2.5)
 
 
+class TestReanalysisEngine:
+    """
+    EMAC-021: Unit tests for ReanalysisEngine and CachedGameContext.
+
+    Run with: pytest tests/test_betting_model.py::TestReanalysisEngine -v
+    """
+
+    # Shared fixtures --------------------------------------------------------
+
+    def _model(self):
+        return CBBEdgeModel(seed=42)
+
+    def _game_data(self):
+        return {"home_team": "Duke", "away_team": "UNC", "is_neutral": False}
+
+    def _ratings(self):
+        return {
+            "kenpom":    {"home": 22.0, "away": 8.0},
+            "barttorvik": {"home": 21.5, "away": 8.1},
+            "evanmiya":  {"home": 22.5, "away": 7.9},
+        }
+
+    def _odds(self, spread=-6.0, total=145.0):
+        return {
+            "spread": spread,
+            "spread_odds": -110,
+            "spread_away_odds": -110,
+            "total": total,
+        }
+
+    def _engine(self, model=None, spread=-6.0, total=145.0):
+        import math, os
+        m = model or self._model()
+        odds = self._odds(spread=spread, total=total)
+        sd_mult = float(os.getenv("SD_MULTIPLIER", "0.85"))
+        base_sd = math.sqrt(total) * sd_mult
+        from backend.betting_model import ReanalysisEngine
+        return ReanalysisEngine.from_analysis_pass(
+            model=m,
+            game_data=self._game_data(),
+            odds=odds,
+            ratings=self._ratings(),
+            base_sd_override=base_sd,
+        ), m, odds, base_sd
+
+    # -------------------------------------------------------------------------
+
+    def test_unchanged_spread_returns_same_verdict(self):
+        """
+        reanalyze() with the same spread as the original analysis must produce
+        the same verdict and projected margin as analyze_game() did initially.
+
+        This validates the unchanged-spread invariant: the ReanalysisEngine is
+        a faithful replay of the nightly pass, not an approximation.
+        """
+        engine, model, odds, base_sd = self._engine()
+        original = model.analyze_game(
+            game_data=self._game_data(),
+            odds=odds,
+            ratings=self._ratings(),
+            base_sd_override=base_sd,
+        )
+        replayed = engine.reanalyze(new_spread=odds["spread"])
+
+        assert replayed.verdict == original.verdict, (
+            f"Verdict mismatch: original={original.verdict!r}, replayed={replayed.verdict!r}"
+        )
+        assert abs(replayed.projected_margin - original.projected_margin) < 0.01, (
+            f"Margin drift: {original.projected_margin:.4f} vs {replayed.projected_margin:.4f}"
+        )
+
+    def test_spread_shift_flips_bet_side_past_fair_value(self):
+        """
+        Moving the spread well past the model's fair value must flip the
+        recommended bet_side from home to away (or vice versa), proving that
+        reanalyze() is live and responds to line changes.
+
+        With Duke projecting to win by ~14 pts vs UNC:
+        - At spread -3.0 (Duke -3):  home is underpriced → bet_side="home"
+        - At spread -25.0 (Duke -25): home is massively overpriced → bet_side="away"
+        """
+        from backend.betting_model import ReanalysisEngine
+        import math, os
+
+        model = CBBEdgeModel(seed=42)
+        total = 145.0
+        sd_mult = float(os.getenv("SD_MULTIPLIER", "0.85"))
+        base_sd = math.sqrt(total) * sd_mult
+        odds_tight = self._odds(spread=-3.0, total=total)
+
+        engine = ReanalysisEngine.from_analysis_pass(
+            model=model,
+            game_data=self._game_data(),
+            odds=odds_tight,
+            ratings=self._ratings(),
+            base_sd_override=base_sd,
+        )
+
+        result_tight = engine.reanalyze(new_spread=-3.0)
+        result_heavy = engine.reanalyze(new_spread=-25.0)
+
+        side_tight = result_tight.full_analysis.get("calculations", {}).get("bet_side")
+        side_heavy = result_heavy.full_analysis.get("calculations", {}).get("bet_side")
+
+        # Spread shifted 22 pts: bet_side must flip from home to away, OR the
+        # heavy spread produces PASS (both outcomes prove the engine is live).
+        assert side_tight != side_heavy or result_heavy.verdict == "PASS", (
+            f"Expected bet_side to flip or PASS after 22pt spread shift. "
+            f"tight={result_tight.verdict!r} ({side_tight}), "
+            f"heavy={result_heavy.verdict!r} ({side_heavy})"
+        )
+
+    def test_new_total_updates_base_sd_override(self):
+        """
+        reanalyze() with new_total must derive a fresh base_sd from sqrt(new_total)
+        and NOT use the cached SD from the original pass.
+
+        We verify this by checking that adjusted_sd is consistent with the new
+        total's dynamic SD rather than the original total's.
+        """
+        import math, os
+        engine, model, odds, _ = self._engine(total=130.0)
+
+        new_total = 155.0
+        sd_mult = float(os.getenv("SD_MULTIPLIER", "0.85"))
+        expected_base = math.sqrt(new_total) * sd_mult  # ~10.58
+
+        original_base = math.sqrt(130.0) * sd_mult     # ~9.69
+
+        result_original_total = engine.reanalyze(new_spread=odds["spread"])
+        result_new_total      = engine.reanalyze(new_spread=odds["spread"], new_total=new_total)
+
+        # Higher total → higher SD → wider distribution → adjusted_sd must be larger
+        assert result_new_total.adjusted_sd > result_original_total.adjusted_sd, (
+            f"adjusted_sd should be larger for total={new_total} vs total=130.0, "
+            f"got {result_new_total.adjusted_sd:.4f} vs {result_original_total.adjusted_sd:.4f}"
+        )
+
+    def test_from_analysis_pass_snapshots_all_context_fields(self):
+        """
+        from_analysis_pass() factory must faithfully snapshot every context field
+        into the CachedGameContext so that a later reanalyze() call uses
+        exactly the data from the nightly pass — not live API data.
+        """
+        import math, os
+        from backend.betting_model import ReanalysisEngine, CachedGameContext
+        model = self._model()
+        game_data = self._game_data()
+        odds = self._odds()
+        ratings = self._ratings()
+        injuries = [{"team": "UNC", "player": "test_player", "impact": 1.2}]
+        home_style = {"pace": 70.0, "efg_pct": 0.53}
+        away_style = {"pace": 65.0, "efg_pct": 0.49}
+        sd_mult = float(os.getenv("SD_MULTIPLIER", "0.85"))
+        base_sd = math.sqrt(odds["total"]) * sd_mult
+
+        engine = ReanalysisEngine.from_analysis_pass(
+            model=model,
+            game_data=game_data,
+            odds=odds,
+            ratings=ratings,
+            injuries=injuries,
+            home_style=home_style,
+            away_style=away_style,
+            matchup_margin_adj=1.5,
+            hours_to_tipoff=4.0,
+            concurrent_exposure=0.08,
+            target_exposure=0.12,
+            sharp_books_available=2,
+            sharp_proxy_used=True,
+            integrity_verdict="CONFIRMED - all clear",
+            base_sd_override=base_sd,
+        )
+
+        ctx: CachedGameContext = engine._ctx
+
+        # Game identity
+        assert ctx.game_data["home_team"] == "Duke"
+        assert ctx.game_data["away_team"] == "UNC"
+
+        # Odds snapshot — must be a copy (mutation of original must not affect ctx)
+        assert ctx.base_odds["spread"] == odds["spread"]
+        assert ctx.base_odds["total"] == odds["total"]
+        odds["spread"] = 99.0  # mutate original
+        assert ctx.base_odds["spread"] != 99.0, "Context must hold a deep copy of odds"
+
+        # Ratings snapshot
+        assert ctx.ratings["kenpom"]["home"] == pytest.approx(22.0)
+
+        # Injury list is a copy
+        assert ctx.injuries is not None and len(ctx.injuries) == 1
+        assert ctx.injuries[0]["player"] == "test_player"
+
+        # Style dicts
+        assert ctx.home_style is not None
+        assert ctx.home_style["pace"] == pytest.approx(70.0)
+        assert ctx.away_style is not None
+        assert ctx.away_style["pace"] == pytest.approx(65.0)
+
+        # Scalar fields
+        assert ctx.matchup_margin_adj == pytest.approx(1.5)
+        assert ctx.hours_to_tipoff == pytest.approx(4.0)
+        assert ctx.concurrent_exposure == pytest.approx(0.08)
+        assert ctx.target_exposure == pytest.approx(0.12)
+        assert ctx.sharp_books_available == 2
+        assert ctx.sharp_proxy_used is True
+        assert ctx.integrity_verdict == "CONFIRMED - all clear"
+        assert ctx.base_sd_override == pytest.approx(base_sd)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

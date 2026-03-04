@@ -44,7 +44,7 @@ import numpy as np
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from backend.models import SessionLocal, Game, Prediction, BetLog, DataFetch, ModelParameter
-from backend.betting_model import CBBEdgeModel, GameAnalysis
+from backend.betting_model import CBBEdgeModel, GameAnalysis, ReanalysisEngine
 from backend.services.odds import fetch_current_odds, async_fetch_current_odds
 from backend.services.ratings import fetch_current_ratings, get_ratings_service, async_fetch_current_ratings
 from backend.services.recalibration import load_current_params
@@ -634,7 +634,9 @@ async def _integrity_sweep(bet_tier_games: list) -> dict:
     }
 
 
-async def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
+async def run_nightly_analysis(
+    run_tier: str = "nightly",
+) -> Tuple[Dict, Dict[str, ReanalysisEngine]]:
     """
     Main analysis job (called by APScheduler and /admin/run-analysis).
 
@@ -644,17 +646,9 @@ async def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                   "closing" for near-tipoff re-analysis.  Each tier can
                   create its own Prediction row for the same game + date.
 
-    Returns a summary dict:
-        {
-            'games_analyzed': int,
-            'bets_recommended': int,
-            'paper_trades_created': int,
-            'errors': List[str],
-            'timestamp': str,
-            'duration_seconds': float,
-        }
+    Returns a tuple (summary_dict, reanalysis_cache).
     """
-    logger.info("Starting analysis (v8, tier=%s)", run_tier)
+    logger.info("Starting analysis (v9, tier=%s)", run_tier)
     start_time = datetime.utcnow()
 
     db = SessionLocal()
@@ -663,6 +657,7 @@ async def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
     bets_recommended = 0
     games_considered = 0   # CONSIDER-verdict games (edge positive but below MIN_BET_EDGE)
     paper_trades_created = 0
+    _reanalysis_cache: Dict[str, ReanalysisEngine] = {}
 
     try:
         # ----------------------------------------------------------------
@@ -1269,6 +1264,27 @@ async def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                         integrity_verdict=integrity_verdict,
                     )
 
+                    # EMAC-021: Capture reanalysis engine for Level 5 real-time pulse
+                    try:
+                        _reanalysis_cache[_game_key] = ReanalysisEngine.from_analysis_pass(
+                            model=model,
+                            game_data=game_input,
+                            odds=odds_input,
+                            ratings=ratings_input,
+                            injuries=game_injuries,
+                            home_style=home_style,
+                            away_style=away_style,
+                            matchup_margin_adj=matchup_margin_adj,
+                            hours_to_tipoff=hours_to_tipoff,
+                            concurrent_exposure=_pass2_concurrent_exposure,
+                            sharp_books_available=odds_input.get("sharp_books_available", 0),
+                            sharp_proxy_used=bool(game_data.get("sharp_proxy_used", False)),
+                            integrity_verdict=integrity_verdict,
+                            base_sd_override=dynamic_base_sd,  # preserve original SD for unchanged-spread invariant
+                        )
+                    except Exception as re_exc:
+                        logger.warning("Failed to build ReanalysisEngine for %s: %s", _game_key, re_exc)
+
                     # ---- Persist Game (idempotent) -----------------------
                     game = get_or_create_game(db, game_data)
 
@@ -1658,10 +1674,11 @@ def _summary(
     status: str = "ok",
     games_considered: int = 0,
     bet_details: Optional[List[Dict]] = None,
-) -> Dict:
+    reanalysis_cache: Optional[Dict[str, ReanalysisEngine]] = None,
+) -> Tuple[Dict, Dict[str, ReanalysisEngine]]:
     duration = (datetime.utcnow() - start_time).total_seconds()
     n = max(games_analyzed, 1)
-    result = {
+    summary = {
         "status": status,
         "games_analyzed": games_analyzed,
         "bets_recommended": bets_recommended,
@@ -1686,4 +1703,4 @@ def _summary(
         paper_trades_created,
         len(errors),
     )
-    return result
+    return summary, reanalysis_cache or {}
