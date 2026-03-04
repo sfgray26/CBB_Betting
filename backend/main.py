@@ -200,6 +200,62 @@ async def lifespan(app: FastAPI):
         nightly_hour, odds_monitor_interval, ratings_prewarm_hour, timezone,
     )
     
+    # Pre-warm reanalysis cache for OddsMonitor
+    try:
+        db = SessionLocal()
+        try:
+            from backend.models import Prediction
+            from backend.services.odds_monitor import get_odds_monitor
+            from backend.services.recalibration import load_current_params
+            
+            today_utc = datetime.utcnow().date()
+            preds = db.query(Prediction).filter(Prediction.prediction_date == today_utc).all()
+            
+            if preds:
+                from backend.betting_model import ReanalysisEngine, CBBEdgeModel
+                params = load_current_params(db)
+                model = CBBEdgeModel(params)
+                
+                cache = {}
+                for p in preds:
+                    if p.full_analysis:
+                        # Extract context from full_analysis blob
+                        fa = p.full_analysis
+                        inputs = fa.get("inputs", {})
+                        calcs = fa.get("calculations", {})
+                        
+                        game_at = inputs.get("game", {}).get("away_team") or p.game.away_team
+                        game_ht = inputs.get("game", {}).get("home_team") or p.game.home_team
+                        _key = f"{game_at}@{game_ht}"
+                        
+                        try:
+                            engine = ReanalysisEngine.from_analysis_pass(
+                                model=model,
+                                game_data=inputs.get("game_data", inputs.get("game", {})),
+                                odds=inputs.get("odds", {}),
+                                ratings=inputs.get("ratings", {}),
+                                injuries=inputs.get("injuries"),
+                                home_style=inputs.get("home_style"),
+                                away_style=inputs.get("away_style"),
+                                matchup_margin_adj=inputs.get("margin_components", {}).get("matchup_adj", 0.0),
+                                hours_to_tipoff=calcs.get("hours_to_tipoff"),
+                                concurrent_exposure=0.0, # approximation for startup
+                                sharp_books_available=inputs.get("odds", {}).get("sharp_books_available", 0),
+                                sharp_proxy_used=bool(inputs.get("game_data", {}).get("sharp_proxy_used", False)),
+                                integrity_verdict=p.integrity_verdict
+                            )
+                            cache[_key] = engine
+                        except Exception:
+                            continue
+                
+                if cache:
+                    get_odds_monitor().set_reanalysis_cache(cache)
+                    logger.info("Lifespan: Pre-warmed reanalysis cache with %d engines", len(cache))
+        finally:
+            db.close()
+    except Exception as startup_exc:
+        logger.warning("Lifespan: Failed to pre-warm reanalysis cache: %s", startup_exc)
+
     yield
     
     # Shutdown
@@ -232,8 +288,15 @@ async def nightly_job():
     """Main nightly analysis job — runs at 3 AM ET by default."""
     logger.info("Starting nightly analysis job")
     try:
-        results = await run_nightly_analysis()
+        results, cache = await run_nightly_analysis()
         logger.info("Nightly analysis complete: %s", results)
+        
+        # EMAC-021: Update OddsMonitor cache for real-time pulse
+        try:
+            get_odds_monitor().set_reanalysis_cache(cache)
+        except Exception as cache_exc:
+            logger.warning("Failed to update OddsMonitor cache: %s", cache_exc)
+
         try:
             send_todays_bets(results.get("bet_details"), results)
         except Exception as disc_exc:
@@ -328,6 +391,7 @@ def _odds_monitor_job():
 
     try:
         monitor = get_odds_monitor()
+        # The monitor now uses the _reanalysis_cache populated by the latest analysis run
         result = monitor.poll()
         if result.get("significant_movements", 0) > 0:
             logger.info(
@@ -378,7 +442,14 @@ async def _opener_attack_job():
     """
     logger.info("Opening line attack triggered — running analysis on fresh openers")
     try:
-        results = await run_nightly_analysis()
+        results, cache = await run_nightly_analysis()
+        
+        # EMAC-021: Update OddsMonitor cache for real-time pulse
+        try:
+            get_odds_monitor().set_reanalysis_cache(cache)
+        except Exception as cache_exc:
+            logger.warning("Failed to update OddsMonitor cache: %s", cache_exc)
+
         bets = results.get("bets_recommended", 0)
         if bets > 0:
             logger.info(
@@ -1193,7 +1264,14 @@ async def trigger_analysis_manually(
     """
     logger.info("Manual analysis triggered by %s (discord=%s)", user, notify_discord)
     try:
-        results = await run_nightly_analysis()
+        results, cache = await run_nightly_analysis()
+        
+        # EMAC-021: Update OddsMonitor cache for real-time pulse
+        try:
+            get_odds_monitor().set_reanalysis_cache(cache)
+        except Exception as cache_exc:
+            logger.warning("Failed to update OddsMonitor cache: %s", cache_exc)
+
         if notify_discord:
             try:
                 send_todays_bets(results.get("bet_details"), results)

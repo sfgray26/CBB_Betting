@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional
 
+from backend.betting_model import ReanalysisEngine
 from backend.services.odds import OddsAPIClient, get_data_freshness
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,16 @@ class OddsMonitor:
         self._history: Dict[str, List[LineSnapshot]] = {}  # game_id -> snapshots
         self._callbacks: List[Callable[[LineMovement], None]] = []
         self._last_poll: Optional[datetime] = None
+        self._reanalysis_cache: Dict[str, ReanalysisEngine] = {}
+
+    # ------------------------------------------------------------------
+    # Cache management
+    # ------------------------------------------------------------------
+
+    def set_reanalysis_cache(self, cache: Dict[str, ReanalysisEngine]) -> None:
+        """Update the in-memory cache of reanalysis engines."""
+        self._reanalysis_cache = cache
+        logger.info("OddsMonitor: Reanalysis cache updated (%d engines)", len(cache))
 
     # ------------------------------------------------------------------
     # Callback registration
