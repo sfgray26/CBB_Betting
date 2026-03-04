@@ -55,3 +55,4 @@ mypy==1.8.0
 # Deployment
 gunicorn==21.2.0
 duckduckgo-search>=5.0
+rapidfuzz==3.6.1
