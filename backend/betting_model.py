@@ -1874,6 +1874,7 @@ class CachedGameContext:
     sharp_proxy_used: bool = False
     integrity_verdict: Optional[str] = None
     base_sd_override: Optional[float] = None  # dynamic SD used in original analyze_game call
+    original_verdict: Optional[str] = None    # model verdict from the nightly pass (BET/CONSIDER/PASS)
 
 
 class ReanalysisEngine:
@@ -1970,6 +1971,7 @@ class ReanalysisEngine:
         sharp_proxy_used: bool = False,
         integrity_verdict: Optional[str] = None,
         base_sd_override: Optional[float] = None,
+        original_verdict: Optional[str] = None,
     ) -> "ReanalysisEngine":
         """
         Factory: build a ReanalysisEngine from the same args used in analyze_game().
@@ -1979,6 +1981,10 @@ class ReanalysisEngine:
         Storing it ensures ``reanalyze()`` reproduces the identical SD distribution
         when the spread changes but the total does not, preserving the
         unchanged-spread invariant.
+
+        ``original_verdict`` is the model verdict from the nightly pass.  It is
+        used by OddsMonitor to detect true PASS→BET flips vs re-alerting on
+        games that were already BET.
 
         Call this at the end of the nightly analysis pass for each BET or
         CONSIDER game so the engine is ready before the odds_monitor starts polling.
@@ -1998,6 +2004,7 @@ class ReanalysisEngine:
             sharp_proxy_used=sharp_proxy_used,
             integrity_verdict=integrity_verdict,
             base_sd_override=base_sd_override,
+            original_verdict=original_verdict,
         )
         return cls(model, ctx)
 

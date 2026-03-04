@@ -1281,6 +1281,7 @@ async def run_nightly_analysis(
                             sharp_proxy_used=bool(game_data.get("sharp_proxy_used", False)),
                             integrity_verdict=integrity_verdict,
                             base_sd_override=dynamic_base_sd,  # preserve original SD for unchanged-spread invariant
+                            original_verdict=analysis.verdict,  # enables true PASS->BET flip detection
                         )
                     except Exception as re_exc:
                         logger.warning("Failed to build ReanalysisEngine for %s: %s", _game_key, re_exc)

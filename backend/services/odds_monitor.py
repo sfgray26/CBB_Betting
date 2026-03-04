@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional
 
-from backend.betting_model import ReanalysisEngine
+from backend.betting_model import ReanalysisEngine, GameAnalysis
 from backend.services.odds import OddsAPIClient, get_data_freshness
 
 logger = logging.getLogger(__name__)
@@ -62,6 +62,8 @@ class LineMovement:
     timestamp: datetime = field(default_factory=datetime.utcnow)
     is_significant: bool = False
     minutes_to_tipoff: Optional[float] = None
+    event_type: str = "MOVE"  # "MOVE" or "VERDICT_FLIP"
+    fresh_analysis: Optional[GameAnalysis] = None
 
 
 # ---------------------------------------------------------------------------
@@ -92,14 +94,22 @@ class OddsMonitor:
         self._callbacks: List[Callable[[LineMovement], None]] = []
         self._last_poll: Optional[datetime] = None
         self._reanalysis_cache: Dict[str, ReanalysisEngine] = {}
+        # One-fire dedup: tracks game_keys that have already triggered a VERDICT_FLIP
+        # this session so the same alert doesn't retrigger on every 5-minute poll.
+        self._verdict_flip_fired: set = set()
 
     # ------------------------------------------------------------------
     # Cache management
     # ------------------------------------------------------------------
 
     def set_reanalysis_cache(self, cache: Dict[str, ReanalysisEngine]) -> None:
-        """Update the in-memory cache of reanalysis engines."""
+        """Update the in-memory cache of reanalysis engines.
+
+        Clears the one-fire set so games from a fresh nightly run can trigger
+        new VERDICT_FLIP alerts if the line moves after the new analysis runs.
+        """
         self._reanalysis_cache = cache
+        self._verdict_flip_fired.clear()
         logger.info("OddsMonitor: Reanalysis cache updated (%d engines)", len(cache))
 
     # ------------------------------------------------------------------
@@ -170,6 +180,31 @@ class OddsMonitor:
         # Fire callbacks for significant movements
         significant = [m for m in movements if m.is_significant]
         for movement in significant:
+            # EMAC-022: Level 5 Verdict Flip Logic
+            game_key = f"{movement.away_team}@{movement.home_team}"
+            engine = self._reanalysis_cache.get(game_key)
+            
+            if engine and movement.field == "spread":
+                try:
+                    updated = engine.reanalyze(new_spread=movement.new_value)
+                    movement.fresh_analysis = updated
+
+                    # True PASS→BET flip: original nightly verdict was not a BET,
+                    # the new line produces a BET, and we haven't already alerted.
+                    original_was_bet = (engine._ctx.original_verdict or "").startswith("Bet")
+                    new_is_bet = updated.verdict.startswith("Bet")
+                    already_fired = game_key in self._verdict_flip_fired
+
+                    if not original_was_bet and new_is_bet and not already_fired:
+                        movement.event_type = "VERDICT_FLIP"
+                        self._verdict_flip_fired.add(game_key)
+                        logger.info(
+                            "Real-Time Pulse: %s flipped PASS->BET at spread %.1f (edge=%.3f)",
+                            game_key, movement.new_value, updated.edge_conservative,
+                        )
+                except Exception as re_exc:
+                    logger.error("OddsMonitor: Reanalysis failed for %s: %s", game_key, re_exc)
+
             for cb in self._callbacks:
                 try:
                     cb(movement)

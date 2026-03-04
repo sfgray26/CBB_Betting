@@ -216,22 +216,35 @@ async def lifespan(app: FastAPI):
                 params = load_current_params(db)
                 model = CBBEdgeModel(params)
                 
+                import math as _math
+                _sd_mult = float(os.getenv("SD_MULTIPLIER", "0.85"))
                 cache = {}
                 for p in preds:
                     if p.full_analysis:
-                        # Extract context from full_analysis blob
                         fa = p.full_analysis
                         inputs = fa.get("inputs", {})
                         calcs = fa.get("calculations", {})
-                        
-                        game_at = inputs.get("game", {}).get("away_team") or p.game.away_team
-                        game_ht = inputs.get("game", {}).get("home_team") or p.game.home_team
+
+                        # full_analysis.inputs has no "game" key — reconstruct
+                        # game_data directly from the SQLAlchemy Game relationship.
+                        game_at = p.game.away_team or ""
+                        game_ht = p.game.home_team or ""
                         _key = f"{game_at}@{game_ht}"
-                        
+
+                        # Derive base_sd_override from odds total so the
+                        # unchanged-spread invariant holds for pre-warmed engines.
+                        _total = (inputs.get("odds", {}).get("total")
+                                  or inputs.get("odds", {}).get("sharp_consensus_total"))
+                        _base_sd = _math.sqrt(float(_total)) * _sd_mult if _total else None
+
                         try:
                             engine = ReanalysisEngine.from_analysis_pass(
                                 model=model,
-                                game_data=inputs.get("game_data", inputs.get("game", {})),
+                                game_data={
+                                    "home_team": game_ht,
+                                    "away_team": game_at,
+                                    "is_neutral": getattr(p.game, "is_neutral", False) or False,
+                                },
                                 odds=inputs.get("odds", {}),
                                 ratings=inputs.get("ratings", {}),
                                 injuries=inputs.get("injuries"),
@@ -239,10 +252,11 @@ async def lifespan(app: FastAPI):
                                 away_style=inputs.get("away_style"),
                                 matchup_margin_adj=inputs.get("margin_components", {}).get("matchup_adj", 0.0),
                                 hours_to_tipoff=calcs.get("hours_to_tipoff"),
-                                concurrent_exposure=0.0, # approximation for startup
+                                concurrent_exposure=0.0,  # approximation for startup
                                 sharp_books_available=inputs.get("odds", {}).get("sharp_books_available", 0),
-                                sharp_proxy_used=bool(inputs.get("game_data", {}).get("sharp_proxy_used", False)),
-                                integrity_verdict=p.integrity_verdict
+                                integrity_verdict=p.integrity_verdict,
+                                base_sd_override=_base_sd,
+                                original_verdict=p.verdict,
                             )
                             cache[_key] = engine
                         except Exception:
