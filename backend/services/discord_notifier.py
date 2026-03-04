@@ -279,3 +279,59 @@ def send_health_briefing(summary: Dict) -> None:
 
     _post({"embeds": [embed]})
 
+
+def send_verdict_flip_alert(movement: "LineMovement") -> None:
+    """
+    Send a real-time alert when a line move flips a PASS to a BET.
+    """
+    if not _bot_token() or not movement.fresh_analysis:
+        return
+
+    analysis = movement.fresh_analysis
+    # Guard None fields — edge/units are always set for BET verdicts but
+    # defensive coding prevents TypeError crashes that would silently kill the alert.
+    edge  = analysis.edge_conservative  or 0.0
+    units = analysis.recommended_units or 0.0
+
+    # Resolve pick string from calculations dict, not fragile verdict string parsing.
+    calcs     = (analysis.full_analysis or {}).get("calculations", {})
+    bet_side  = calcs.get("bet_side", "home")
+    pick_team = movement.home_team if bet_side == "home" else movement.away_team
+    if movement.new_value is not None:
+        side_spread = movement.new_value if bet_side == "home" else -movement.new_value
+        sign = "+" if side_spread > 0 else ""
+        pick_str = f"{pick_team} {sign}{side_spread:.1f}"
+    else:
+        pick_str = pick_team
+
+    # Safe spread movement string — old_value may be None on first observed snap.
+    old_str = f"{movement.old_value:+.1f}" if movement.old_value is not None else "N/A"
+    new_str = f"{movement.new_value:+.1f}" if movement.new_value is not None else "N/A"
+
+    # Generate fresh scouting insight for the flip.
+    insight = generate_scouting_report(
+        home_team=movement.home_team,
+        away_team=movement.away_team,
+        matchup_notes=analysis.notes or [],
+        verdict=analysis.verdict,
+        edge=edge,
+    )
+
+    embed = {
+        "title": f"LINE FLIP: {movement.away_team} @ {movement.home_team}",
+        "description": "New **BET** opportunity detected via Real-Time Pulse.",
+        "color": _COLOR_GREEN,
+        "fields": [
+            {"name": "New Pick",      "value": f"**{pick_str}**",             "inline": True},
+            {"name": "Edge",          "value": f"{edge:.1%}",                  "inline": True},
+            {"name": "Stake",         "value": f"{units:.2f}u",                "inline": True},
+            {"name": "Movement",      "value": f"{old_str} -> **{new_str}**",  "inline": True},
+            {"name": "Model Insight", "value": f"*{insight}*",                 "inline": False},
+        ],
+        "footer": {"text": "Level 5 Real-Time Pulse"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    _post({"embeds": [embed]})
+
+
