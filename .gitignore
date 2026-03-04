@@ -57,3 +57,8 @@ htmlcov/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Temp/scratch data files
+full_today_data.json
+tmp_today_data.json
+nul
