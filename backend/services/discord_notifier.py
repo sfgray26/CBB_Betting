@@ -21,6 +21,12 @@ from typing import Dict, List, Optional
 
 import requests
 
+from backend.services.scout import (
+    generate_scouting_report,
+    generate_morning_briefing_narrative,
+    generate_health_narrative,
+)
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CHANNEL_ID = "1477436117426110615"
@@ -35,6 +41,7 @@ _COLOR_GREY = 0x95A5A6    # all pass
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
 
 def _bot_token() -> Optional[str]:
     return os.getenv("DISCORD_BOT_TOKEN")
@@ -104,6 +111,23 @@ def _bet_embed(bet: Dict) -> Dict:
     margin = bet.get("projected_margin", 0.0) or 0.0
     kelly = bet.get("kelly_fractional", 0.0) or 0.0
     verdict = bet.get("verdict", "")
+    snr = bet.get("snr")
+
+    # Generate LLM-based scouting insight
+    insight = generate_scouting_report(
+        home_team=bet.get("home_team", "Home"),
+        away_team=bet.get("away_team", "Away"),
+        matchup_notes=bet.get("matchup_notes", []),
+        verdict=verdict,
+        edge=edge
+    )
+
+    # Use the V9 integrity_verdict computed during analysis Pass 2.
+    # This is the exact verdict that was used for Kelly sizing — no second
+    # DDGS search needed, and Discord stays consistent with the model.
+    integrity = bet.get("integrity_verdict") or "Not run"
+
+    snr_str = f"{snr:.0%}" if snr is not None else "N/A"
 
     return {
         "title": f"PICK: {pick}",
@@ -114,8 +138,11 @@ def _bet_embed(bet: Dict) -> Dict:
             {"name": "Stake",        "value": f"{units:.2f}u",       "inline": True},
             {"name": "Odds",         "value": _odds_str(bet.get("bet_odds")), "inline": True},
             {"name": "Proj. Margin", "value": f"{margin:+.1f} pts",  "inline": True},
-            {"name": "Kelly",        "value": f"{kelly:.1%}",         "inline": True},
-            {"name": "Tier",         "value": _tier(verdict),         "inline": True},
+            {"name": "Kelly",        "value": f"{kelly:.1%}",        "inline": True},
+            {"name": "Tier",         "value": _tier(verdict),        "inline": True},
+            {"name": "Source SNR",   "value": snr_str,               "inline": True},
+            {"name": "Model Insight", "value": f"*{insight}*",       "inline": False},
+            {"name": "V9 Integrity Verdict", "value": f"**{integrity}**", "inline": False},
         ],
     }
 
@@ -174,7 +201,7 @@ def send_todays_bets(
             {"name": "PASS",           "value": str(n_pass),        "inline": True},
             {"name": "Run Time",       "value": f"{duration:.0f}s", "inline": True},
         ],
-        "footer": {"text": "CBB Edge Analyzer v8"},
+        "footer": {"text": "CBB Edge Analyzer v9"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -185,8 +212,70 @@ def send_todays_bets(
     if not bet_details:
         return
 
-    # Sort highest-edge first, send in batches of 10 (Discord embed limit per message)
+    # Sort highest-edge first
     ordered = sorted(bet_details, key=lambda b: b.get("edge_conservative") or 0.0, reverse=True)
-    for i in range(0, len(ordered), 10):
-        chunk = ordered[i : i + 10]
-        _post({"embeds": [_bet_embed(b) for b in chunk]})
+
+    # Send each bet as an individual message to ensure delivery and avoid char limits
+    for bet in ordered:
+        try:
+            logger.info("Sending Discord embed for %s @ %s", bet.get("away_team"), bet.get("home_team"))
+            _post({"embeds": [_bet_embed(bet)]})
+        except Exception as e:
+            logger.error("Failed to send bet embed for %s: %s", bet.get("home_team"), e)
+
+
+def send_health_briefing(summary: Dict) -> None:
+    """
+    Send a system health report to Discord.
+    """
+    if not _bot_token():
+        return
+
+    # Use LLM to write a professional narrative
+    perf = summary.get("performance", {})
+    port = summary.get("portfolio", {})
+    sys_status = summary.get("system", {})
+    
+    status_str = (
+        f"Performance: {perf.get('status')} (MAE: {perf.get('mean_mae', 'N/A')}), "
+        f"Portfolio: {port.get('status')} (Drawdown: {port.get('current_drawdown_pct', 0.0):.1%}), "
+        f"System: {sys_status.get('status')} (Tests: {sys_status.get('passed', False)})"
+    )
+    
+    # Use dedicated health narrative logic
+    narrative = generate_health_narrative(summary)
+
+    color_map = {"GREEN": 0x2ECC71, "YELLOW": 0xF1C40F, "RED": 0xE74C3C}
+    overall_status = "GREEN"
+    if "RED" in [perf.get("status"), port.get("status"), sys_status.get("status")]:
+        overall_status = "RED"
+    elif "YELLOW" in [perf.get("status"), port.get("status"), sys_status.get("status")]:
+        overall_status = "YELLOW"
+
+    embed = {
+        "title": "🛰️ Performance Sentinel — Health Report",
+        "description": f"*{narrative}*",
+        "color": color_map.get(overall_status, 0x95A5A6),
+        "fields": [
+            {
+                "name": "Model Accuracy (30d)", 
+                "value": f"MAE: `{perf.get('mean_mae', 'N/A')}`\nStatus: {perf.get('status')}", 
+                "inline": True
+            },
+            {
+                "name": "Portfolio Health", 
+                "value": f"Drawdown: `{port.get('current_drawdown_pct', 0.0):.1%}`\nStatus: {port.get('status')}", 
+                "inline": True
+            },
+            {
+                "name": "System Integrity", 
+                "value": f"Pytest: `{'PASSED' if sys_status.get('passed') else 'FAILED'}`\nStatus: {sys_status.get('status')}", 
+                "inline": True
+            }
+        ],
+        "footer": {"text": "CBB Edge Sentinel Unit"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    _post({"embeds": [embed]})
+

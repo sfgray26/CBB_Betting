@@ -21,6 +21,8 @@ from typing import Dict, List, Optional
 import requests
 from bs4 import BeautifulSoup
 
+from backend.services.scout import generate_injury_impact
+
 logger = logging.getLogger(__name__)
 
 

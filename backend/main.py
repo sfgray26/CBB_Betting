@@ -47,6 +47,7 @@ from backend.services.performance import (
 from backend.services.alerts import check_performance_alerts, persist_alerts, run_alert_check
 from backend.services.recalibration import compute_dynamic_weights
 from backend.services.discord_notifier import send_todays_bets
+from backend.services.sentinel import run_nightly_health_check
 from backend.services.dk_import import (
     parse_dk_csv, preview_import, apply_import,
     preview_direct_import, apply_direct_import,
@@ -171,7 +172,18 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Opening line attack scheduler enabled (22:30, 00:30 %s)", timezone)
 
+    # Performance Sentinel — MAE, drawdown, pytest health check at 5:00 AM
+    # (30 min after daily snapshot, ensuring fresh data is available)
+    scheduler.add_job(
+        _nightly_health_check_job,
+        CronTrigger(hour=5, minute=0, timezone=timezone),
+        id="nightly_health_check",
+        name="Performance Sentinel Health Check",
+        replace_existing=True,
+    )
+
     # Weekly model parameter recalibration — Sunday 5 AM ET
+    # Note: recalibration and sentinel both run at 5:00 AM; they are independent.
     scheduler.add_job(
         _weekly_recalibration_job,
         CronTrigger(day_of_week="sun", hour=5, minute=0, timezone=timezone),
@@ -184,7 +196,7 @@ async def lifespan(app: FastAPI):
     logger.info(
         "Scheduler started: nightly@%02d:00, outcomes every 2h + daily@04:00, "
         "lines every 30min, odds monitor every %dmin, snapshot@04:30, "
-        "ratings prewarm@%02d:00, recalibration@sun05:00 %s",
+        "sentinel@05:00, ratings prewarm@%02d:00, recalibration@sun05:00 %s",
         nightly_hour, odds_monitor_interval, ratings_prewarm_hour, timezone,
     )
     
@@ -263,6 +275,15 @@ def _weekly_recalibration_job():
             db.close()
     except Exception:
         logger.exception("Weekly recalibration job failed")
+
+
+def _nightly_health_check_job():
+    """Performance Sentinel — model accuracy, portfolio drawdown, pytest suite — runs at 5:00 AM."""
+    try:
+        result = run_nightly_health_check()
+        logger.info("Sentinel health check complete: %s", result)
+    except Exception:
+        logger.exception("Sentinel health check job failed")
 
 
 def _daily_snapshot_job():

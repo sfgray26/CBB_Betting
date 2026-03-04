@@ -158,6 +158,11 @@ class Prediction(Base):
     kelly_full = Column(Float)
     kelly_fractional = Column(Float)
     recommended_units = Column(Float)
+
+    # V9 SNR & Integrity
+    snr = Column(Float)
+    snr_kelly_scalar = Column(Float)
+    integrity_verdict = Column(String)
     
     # Verdict
     verdict = Column(String, nullable=False, index=True)  # "PASS" or "Bet X units..."

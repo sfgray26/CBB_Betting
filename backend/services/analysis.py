@@ -43,7 +43,6 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-
 from backend.models import SessionLocal, Game, Prediction, BetLog, DataFetch, ModelParameter
 from backend.betting_model import CBBEdgeModel, GameAnalysis
 from backend.services.odds import fetch_current_odds, async_fetch_current_odds
@@ -53,6 +52,7 @@ from backend.services.injuries import get_injury_service
 from backend.services.matchup_engine import get_profile_cache, get_matchup_engine, TeamPlayStyle
 from backend.services.parlay_engine import build_optimal_parlays, format_parlay_ticket
 from backend.services.team_mapping import normalize_team_name
+from backend.services.scout import perform_sanity_check
 
 logger = logging.getLogger(__name__)
 
@@ -595,6 +595,45 @@ def _create_paper_bet(
 # Main entry point
 # ---------------------------------------------------------------------------
 
+async def _ddgs_and_check(game: dict) -> str:
+    """Run one DDGS search + sanity check for a single game."""
+    try:
+        from duckduckgo_search import DDGS
+        from backend.services.scout import perform_sanity_check
+        away = game.get("away_team", "")
+        home = game.get("home_team", "")
+        # Use the pre-score verdict as a placeholder for the agent
+        verdict = f"Potential Bet (Edge {game.get('edge', 0):.1%})"
+        
+        today_str = datetime.utcnow().strftime("%Y-%m-%d")
+        query = f"{away} {home} injury suspension lineup {today_str}"
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=5))
+        context = " | ".join(r.get("body", "") for r in results)
+        return perform_sanity_check(home, away, verdict, context)
+    except Exception as e:
+        return f"Sanity check unavailable ({type(e).__name__})"
+
+
+async def _integrity_sweep(bet_tier_games: list) -> dict:
+    """Run integrity checks on all BET-tier games concurrently (max 8 workers)."""
+    if not bet_tier_games:
+        return {}
+    semaphore = asyncio.Semaphore(8)
+
+    async def _one(game):
+        async with semaphore:
+            return await _ddgs_and_check(game)
+
+    results = await asyncio.gather(
+        *[_one(g) for g in bet_tier_games], return_exceptions=True
+    )
+    return {
+        g.get("game_key"): (r if not isinstance(r, Exception) else "Sanity check unavailable")
+        for g, r in zip(bet_tier_games, results)
+    }
+
+
 async def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
     """
     Main analysis job (called by APScheduler and /admin/run-analysis).
@@ -869,9 +908,48 @@ async def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
         # ================================================================
         # TWO-PASS SLATE: PASS 2 — main loop (edge-sorted order)
         # ================================================================
+        _min_bet_edge = float(os.getenv("MIN_BET_EDGE", "2.5")) / 100.0
+        
+        # Build list of game dicts for sweep from Pass 1 candidates
+        _sweep_inputs = []
+        for _gd in odds_games:
+            _ht = _gd.get("home_team", "")
+            _at = _gd.get("away_team", "")
+            _game_key = f"{_at}@{_ht}"
+            _pre_edge = _prescore_edges.get(_game_key, -999.0)
+            
+            if _pre_edge >= _min_bet_edge:
+                _sweep_inputs.append({
+                    "game_key": _game_key,
+                    "home_team": _ht,
+                    "away_team": _at,
+                    "edge": _pre_edge
+                })
+
+        # Execute concurrent sweep
+        if _sweep_inputs:
+            logger.info("Triggering concurrent integrity sweep for %d candidates...", len(_sweep_inputs))
+            try:
+                # Try to get the current event loop
+                _integrity_results = await _integrity_sweep(_sweep_inputs)
+            except Exception as e:
+                logger.warning("Async integrity sweep failed, falling back to sync: %s", e)
+                _integrity_results = {}
+                for _s in _sweep_inputs:
+                    _integrity_results[_s["game_key"]] = "Sanity check unavailable (loop error)"
+            
+            # Escalation: flag if >20% VOLATILE
+            _volatile_count = sum(1 for v in _integrity_results.values() if "VOLATILE" in str(v).upper())
+            if len(_integrity_results) > 0 and (_volatile_count / len(_integrity_results)) > 0.20:
+                logger.warning("SYSTEM_RISK_ELEVATED: %d/%d games flagged VOLATILE",
+                               _volatile_count, len(_integrity_results))
+        else:
+            _integrity_results = {}
+
         for game_data in odds_games:
             home_team = game_data.get("home_team", "Unknown")
             away_team = game_data.get("away_team", "Unknown")
+            _game_key = f"{away_team}@{home_team}"
 
             try:
                 with db.begin_nested():  # Savepoint — rolls back only this game on error
@@ -1164,6 +1242,10 @@ async def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                         continue
 
                     # ---- Run model with dynamic SD -----------------------
+                    # EMAC-002: Narrative Intel Unit (OpenClaw) Sanity Check
+                    # EMAC-004: Converted to concurrent sweep results.
+                    integrity_verdict = _integrity_results.get(_game_key)
+
                     analysis = model.analyze_game(
                         game_data=game_input,
                         odds=odds_input,
@@ -1184,6 +1266,7 @@ async def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                         # Soft-proxy flag — applies half SE penalty (0.15) instead of
                         # full NO_SHARP_BOOKS_SE_ADDEND (0.30).
                         sharp_proxy_used=bool(game_data.get("sharp_proxy_used", False)),
+                        integrity_verdict=integrity_verdict,
                     )
 
                     # ---- Persist Game (idempotent) -----------------------
@@ -1228,14 +1311,14 @@ async def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                             old_verdict[:20], new_verdict[:20], edge_diff,
                         )
                         prediction = existing_prediction
-                        prediction.model_version = "v8.0"
+                        prediction.model_version = "v9.0"
                     else:
                         # No existing prediction for this tier — create new
                         prediction = Prediction(
                             game_id=game.id,
                             prediction_date=today,
                             run_tier=run_tier,
-                            model_version="v8.0",
+                            model_version="v9.0",
                         )
                         db.add(prediction)
                         old_verdict = None
@@ -1262,6 +1345,13 @@ async def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                     prediction.full_analysis = analysis.full_analysis
                     prediction.data_freshness_tier = analysis.data_freshness_tier
                     prediction.penalties_applied = analysis.penalties_applied
+                    
+                    # EMAC-002: Persist V9 fields
+                    calcs = analysis.full_analysis.get("calculations", {})
+                    prediction.snr = calcs.get("snr")
+                    prediction.snr_kelly_scalar = calcs.get("snr_kelly_scalar")
+                    prediction.integrity_verdict = integrity_verdict
+                    
                     db.flush()
 
                     games_analyzed += 1
@@ -1446,6 +1536,11 @@ async def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                     if hasattr(c.get("analysis"), "projected_margin")
                     else None,
                     "verdict": c["prediction"].verdict if c.get("prediction") else "",
+                    "matchup_notes": c["analysis"].notes if hasattr(c.get("analysis"), "notes") else [],
+                    # V9 fields — use the persisted values so Discord shows the exact
+                    # verdict that was used for sizing, not a newly generated one.
+                    "integrity_verdict": c["prediction"].integrity_verdict if c.get("prediction") else None,
+                    "snr": c["prediction"].snr if c.get("prediction") else None,
                 }
                 for c in bet_candidates
                 if (c.get("recommended_units") or 0) > 0

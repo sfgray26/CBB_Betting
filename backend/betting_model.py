@@ -397,6 +397,104 @@ class CBBEdgeModel:
             base_divisor=self.fractional_kelly_divisor,
         )
 
+    # ------------------------------------------------------------------ #
+    #  V9 — Signal-to-Noise Ratio (SNR) Confidence Engine               #
+    # ------------------------------------------------------------------ #
+
+    def calculate_snr(self, available_sources: List[Tuple[str, float]]) -> float:
+        """
+        Signal-to-Noise Ratio: measures agreement across rating sources.
+
+        SNR ∈ [0.0, 1.0]
+
+        - 1.0 → all available sources report identical margins (maximum confidence)
+        - 0.5 → sources diverge by one full base_sd (~11 pts) — moderate uncertainty
+        - 0.0 → divergence ≥ 2 × base_sd, or only one source available (minimum)
+
+        Formula
+        -------
+        ``spread = max(diffs) - min(diffs)`` across available sources
+        ``snr    = 1 - spread / (2 × base_sd)``  clipped to [0, 1]
+
+        The normalization factor ``2 × base_sd`` equals the maximum
+        *interpretable* disagreement between sources — a spread larger than
+        that collapses SNR to 0.
+
+        When fewer than 2 sources are available, agreement cannot be measured;
+        we return a conservative floor (0.3) rather than 1.0 to prevent
+        artificially high confidence.
+
+        Args:
+            available_sources: List of (source_name, margin_diff) tuples from
+                               analyze_game's composite margin computation.
+
+        Returns:
+            SNR float ∈ [0.0, 1.0].
+        """
+        values = [diff for _, diff in available_sources]
+        if len(values) < 2:
+            return 0.3  # single source — agreement is undefined; apply partial penalty
+        spread = max(values) - min(values)
+        norm = 2.0 * self.base_sd        # normalization: full disagreement = 2 × base SD
+        return max(0.0, min(1.0, 1.0 - spread / norm))
+
+    def _snr_kelly_scalar(self, snr: float) -> float:
+        """
+        Map SNR ∈ [0, 1] to a Kelly multiplier ∈ [SNR_KELLY_FLOOR, 1.0].
+
+        Linear mapping from (SNR=0 → floor) to (SNR=1 → 1.0):
+            scalar = floor + (1 - floor) × snr
+
+        Defaults (overridable via environment variables):
+            SNR=1.0 → 1.00× (sources fully agree — no size reduction)
+            SNR=0.5 → 0.75× (one-SD divergence — 25% Kelly cut)
+            SNR=0.0 → 0.50× (maximum disagreement — half-Kelly floor)
+
+        Args:
+            snr: Signal-to-Noise Ratio from ``calculate_snr()``.
+
+        Returns:
+            Kelly multiplier ∈ [floor, 1.0].
+        """
+        floor = float(os.getenv("SNR_KELLY_FLOOR", "0.5"))
+        return floor + (1.0 - floor) * max(0.0, min(1.0, snr))
+
+    def _integrity_kelly_scalar(self, integrity_verdict: Optional[str]) -> float:
+        """
+        Map scout.py Integrity Officer verdict to a Kelly multiplier.
+
+        Verdict keywords matched case-insensitively as substrings so that
+        formats like ``'CAUTION - Injury Alert'`` and ``'VOLATILE'`` both work.
+
+        +-----------+--------+----------------------------------------------+
+        | Verdict   | Scalar | Rationale                                    |
+        +===========+========+==============================================+
+        | None      |  1.00× | Sanity check not run — no penalty            |
+        | CONFIRMED |  1.00× | Scout found no contradicting information     |
+        | CAUTION   |  0.75× | Elevated risk; treat like SNR=0.5 signal     |
+        | VOLATILE  |  0.50× | High risk; mirrors adverse-selection penalty |
+        +-----------+--------+----------------------------------------------+
+
+        Scalars are overridable via environment variables:
+            INTEGRITY_CAUTION_SCALAR  (default 0.75)
+            INTEGRITY_VOLATILE_SCALAR (default 0.50)
+
+        Args:
+            integrity_verdict: String from ``scout.perform_sanity_check()``,
+                               or None if the check was not run.
+
+        Returns:
+            Kelly multiplier ∈ (0, 1.0].
+        """
+        if integrity_verdict is None:
+            return 1.0
+        v = integrity_verdict.upper()
+        if "VOLATILE" in v:
+            return float(os.getenv("INTEGRITY_VOLATILE_SCALAR", "0.5"))
+        if "CAUTION" in v:
+            return float(os.getenv("INTEGRITY_CAUTION_SCALAR", "0.75"))
+        return 1.0  # CONFIRMED or unrecognized → no penalty
+
     def _edge_breaker_threshold(self, hours_to_tipoff: Optional[float]) -> float:
         """
         Dynamic alpha circuit-breaker threshold that tightens as tipoff approaches.
@@ -619,6 +717,7 @@ class CBBEdgeModel:
         target_exposure: float = 0.15,
         sharp_books_available: int = 0,
         sharp_proxy_used: bool = False,
+        integrity_verdict: Optional[str] = None,
     ) -> GameAnalysis:
         """
         Complete game analysis using Version 8 framework.
@@ -1362,6 +1461,64 @@ class CBBEdgeModel:
         kelly_frac = kelly_full / effective_kelly_divisor
 
         # ================================================================
+        # V9 SIGNAL-TO-NOISE RATIO (SNR) RISK-PREMIUM ADJUSTMENT
+        # ================================================================
+        # When rating sources disagree significantly, the composite margin
+        # carries higher epistemic uncertainty than the CI alone captures.
+        # SNR ∈ [0, 1] measures source agreement; the SNR scalar reduces
+        # bet size when that agreement is low.  The Integrity scalar adds
+        # a further discount when the Scout's sanity check returns CAUTION
+        # or VOLATILE for this matchup.
+        #
+        # Both scalars are applied multiplicatively so the combined effect
+        # cannot reduce kelly_frac below SNR_KELLY_FLOOR² (by default 0.25).
+        # ================================================================
+        snr = self.calculate_snr(available_sources)
+        snr_scalar = self._snr_kelly_scalar(snr)
+        integrity_scalar = self._integrity_kelly_scalar(integrity_verdict)
+        v9_scalar = snr_scalar * integrity_scalar
+        if v9_scalar < 1.0:
+            notes.append(
+                f"V9 Risk-Premium: SNR={snr:.2f} (Kelly {snr_scalar:.2f}x); "
+                f"Integrity='{integrity_verdict or 'CONFIRMED'}' ({integrity_scalar:.2f}x)"
+            )
+            logger.debug(
+                "V9 Kelly adj: SNR=%.2f scalar=%.2f, integrity='%s' scalar=%.2f → net %.2fx",
+                snr, snr_scalar, integrity_verdict or "CONFIRMED", integrity_scalar, v9_scalar,
+            )
+        kelly_frac *= v9_scalar
+
+        # ================================================================
+        # V9 INTEGRITY ABORT GATE
+        # ================================================================
+        # A hard PASS for any integrity_verdict containing "ABORT" or
+        # "RED FLAG".  These keywords signal a high-confidence risk that
+        # the Integrity Officer has identified — e.g. a confirmed key
+        # injury not yet reflected in the line, or a line-move that
+        # suggests sharp money is already on the opposite side.
+        #
+        # This check runs BEFORE every other sizing gate so that no
+        # downstream logic (tier sizing, circuit breaker) can accidentally
+        # re-open the bet.
+        # ================================================================
+        _ABORT_KEYWORDS = ("ABORT", "RED FLAG")
+        _integrity_abort = (
+            integrity_verdict is not None
+            and any(kw in integrity_verdict.upper() for kw in _ABORT_KEYWORDS)
+        )
+        if _integrity_abort:
+            logger.warning(
+                "Integrity Abort: %s @ %s — '%s'",
+                game_data.get("away_team", "?"),
+                game_data.get("home_team", "?"),
+                integrity_verdict[:120],
+            )
+            notes.append(
+                f"INTEGRITY ABORT: Integrity Officer flagged high-confidence risk — "
+                f"'{integrity_verdict[:80]}'"
+            )
+
+        # ================================================================
         # ALPHA CIRCUIT BREAKER (dynamic threshold)
         # True CBB closing-line edges rarely exceed 10-12% far from tipoff
         # and virtually never exceed 6% within 2 hours (sharp books are fully
@@ -1446,7 +1603,14 @@ class CBBEdgeModel:
                     abs(spread_for_check), away_margin, abs(spread_for_check),
                 )
 
-        if _fav_protection_triggered:
+        if _integrity_abort:
+            verdict = "PASS — Integrity Abort"
+            pass_reason = f"INTEGRITY_ABORT: {(integrity_verdict or '')[:200]}"
+            recommended_units = 0
+            kelly_frac = 0.0
+            kelly_full = 0.0
+
+        elif _fav_protection_triggered:
             verdict = "PASS - Favorite Protection (Margin < Spread)"
             pass_reason = (
                 f"bet_side={bet_side}, spread={spread_for_check:+.1f}, "
@@ -1604,7 +1768,7 @@ class CBBEdgeModel:
         margin_components['matchup_adj'] = matchup_margin_adj
 
         full_analysis_dict = {
-            'model_version': 'v8.0',
+            'model_version': 'v9.0',
             'timestamp': datetime.utcnow().isoformat(),
             'inputs': {
                 'ratings': ratings,
@@ -1641,6 +1805,10 @@ class CBBEdgeModel:
                 'edge_conservative': edge_conservative,
                 'kelly_full': kelly_full,
                 'kelly_fractional': kelly_frac,
+                'snr': snr,
+                'snr_kelly_scalar': snr_scalar,
+                'integrity_verdict': integrity_verdict,
+                'integrity_kelly_scalar': integrity_scalar,
                 'markov_cover_prob': markov_cover_prob,
                 'pricing_engine': pricing_engine,
                 'vig_removal_method': 'shin_1993',
@@ -1677,6 +1845,149 @@ class CBBEdgeModel:
             notes=notes,
             full_analysis=full_analysis_dict,
         )
+
+
+# ---------------------------------------------------------------------------
+# Real-Time Pulse: ReanalysisEngine (Level 5 prep)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class CachedGameContext:
+    """
+    Snapshot of a game's analysis context captured during the nightly pass.
+
+    Stored per-game after Pass 1/2 completes for any BET or CONSIDER verdict.
+    Used by ReanalysisEngine.reanalyze() to re-run the Monte Carlo when a
+    line moves, without re-fetching odds, ratings, or profiles from external APIs.
+    """
+    game_data: Dict
+    ratings: Dict
+    base_odds: Dict                          # Original odds snapshot at analysis time
+    injuries: Optional[List[Dict]] = None
+    home_style: Optional[Dict[str, float]] = None
+    away_style: Optional[Dict[str, float]] = None
+    matchup_margin_adj: float = 0.0
+    hours_to_tipoff: Optional[float] = None
+    concurrent_exposure: float = 0.0
+    target_exposure: float = 0.15
+    sharp_books_available: int = 0
+    sharp_proxy_used: bool = False
+    integrity_verdict: Optional[str] = None
+
+
+class ReanalysisEngine:
+    """
+    Real-Time Pulse reanalysis engine (Level 5 prep).
+
+    Caches a game's full context from the nightly analysis pass and exposes
+    a fast ``reanalyze()`` method that accepts updated spread/total values
+    and re-runs the Monte Carlo simulation without hitting any external APIs.
+
+    Designed for the odds_monitor callback path:  when a significant line
+    movement is detected, the monitor retrieves the engine for the affected
+    game and calls ``reanalyze(new_spread)`` to get a fresh verdict in < 5 ms.
+
+    Usage::
+
+        # During nightly pass (after model.analyze_game()):
+        engine = ReanalysisEngine.from_analysis_pass(model, game_data, odds, ...)
+        cache[game_key] = engine
+
+        # When odds_monitor detects a line move:
+        updated = cache[game_key].reanalyze(new_spread=-3.5)
+        if updated.verdict.startswith("Bet") and original_verdict == "PASS":
+            trigger_alert(game_key, updated)
+    """
+
+    def __init__(self, model: "CBBEdgeModel", context: CachedGameContext) -> None:
+        self._model = model
+        self._ctx = context
+
+    def reanalyze(
+        self,
+        new_spread: float,
+        new_total: Optional[float] = None,
+    ) -> GameAnalysis:
+        """
+        Re-run the Monte Carlo with an updated spread (and optional total).
+
+        Args:
+            new_spread:  Updated home-team spread, e.g. -3.5.
+            new_total:   Updated game total.  If None, reuses the cached total
+                         and keeps the same dynamic base_sd.
+
+        Returns:
+            A fresh GameAnalysis reflecting the new line.  Staleness checks
+            are intentionally bypassed — the data was fetched moments ago.
+        """
+        updated_odds = dict(self._ctx.base_odds)
+        updated_odds["spread"] = new_spread
+
+        if new_total is not None:
+            updated_odds["total"] = new_total
+            sd_multiplier = float(os.getenv("SD_MULTIPLIER", "0.85"))
+            base_sd_override: Optional[float] = math.sqrt(new_total) * sd_multiplier
+        else:
+            base_sd_override = None  # model uses cached value from original call
+
+        return self._model.analyze_game(
+            game_data=self._ctx.game_data,
+            odds=updated_odds,
+            ratings=self._ctx.ratings,
+            injuries=self._ctx.injuries,
+            # data_freshness intentionally omitted — bypasses staleness gate
+            base_sd_override=base_sd_override,
+            home_style=self._ctx.home_style,
+            away_style=self._ctx.away_style,
+            matchup_margin_adj=self._ctx.matchup_margin_adj,
+            hours_to_tipoff=self._ctx.hours_to_tipoff,
+            concurrent_exposure=self._ctx.concurrent_exposure,
+            target_exposure=self._ctx.target_exposure,
+            sharp_books_available=self._ctx.sharp_books_available,
+            sharp_proxy_used=self._ctx.sharp_proxy_used,
+            integrity_verdict=self._ctx.integrity_verdict,
+        )
+
+    @classmethod
+    def from_analysis_pass(
+        cls,
+        model: "CBBEdgeModel",
+        game_data: Dict,
+        odds: Dict,
+        ratings: Dict,
+        injuries: Optional[List[Dict]] = None,
+        home_style: Optional[Dict[str, float]] = None,
+        away_style: Optional[Dict[str, float]] = None,
+        matchup_margin_adj: float = 0.0,
+        hours_to_tipoff: Optional[float] = None,
+        concurrent_exposure: float = 0.0,
+        target_exposure: float = 0.15,
+        sharp_books_available: int = 0,
+        sharp_proxy_used: bool = False,
+        integrity_verdict: Optional[str] = None,
+    ) -> "ReanalysisEngine":
+        """
+        Factory: build a ReanalysisEngine from the same args used in analyze_game().
+
+        Call this at the end of the nightly analysis pass for each BET or
+        CONSIDER game so the engine is ready before the odds_monitor starts polling.
+        """
+        ctx = CachedGameContext(
+            game_data=dict(game_data),
+            ratings=dict(ratings),
+            base_odds=dict(odds),
+            injuries=list(injuries) if injuries else None,
+            home_style=dict(home_style) if home_style else None,
+            away_style=dict(away_style) if away_style else None,
+            matchup_margin_adj=matchup_margin_adj,
+            hours_to_tipoff=hours_to_tipoff,
+            concurrent_exposure=concurrent_exposure,
+            target_exposure=target_exposure,
+            sharp_books_available=sharp_books_available,
+            sharp_proxy_used=sharp_proxy_used,
+            integrity_verdict=integrity_verdict,
+        )
+        return cls(model, ctx)
 
 
 # Export for testing

@@ -8,6 +8,8 @@ import streamlit as st
 from dashboard.utils import api_get, sidebar_api_key
 from dashboard.shared import inject_custom_css, SEVERITY_COLORS
 
+from backend.services.scout import generate_morning_briefing_narrative
+
 st.set_page_config(page_title="Morning Briefing | CBB Edge", layout="wide")
 sidebar_api_key()
 inject_custom_css()
@@ -25,6 +27,16 @@ if today_data:
     considers = [p for p in predictions if p["verdict"].upper().startswith("CONSIDER")]
     passes = len(predictions) - len(bets) - len(considers)
 
+    # Narrative Briefing
+    top_bet = bets[0] if bets else None
+    top_bet_info = None
+    if top_bet and "game" in top_bet:
+        g = top_bet["game"]
+        top_bet_info = f"{g.get('away_team')} @ {g.get('home_team')} (Edge {top_bet.get('edge_conservative', 0):.1%})"
+    
+    narrative = generate_morning_briefing_narrative(len(bets), len(considers), top_bet_info)
+    st.info(narrative)
+
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Games Analyzed", today_data.get("total_games", 0))
     c2.metric("BET", len(bets))
@@ -37,6 +49,73 @@ if today_data:
         st.info(f"{len(considers)} marginal edge(s) — monitoring for line movement.")
     else:
         st.info("All games PASS today. No action needed.")
+
+    # --- V9 Risk Intelligence ---
+    if bets:
+        st.markdown("---")
+        st.subheader("V9 Risk Intelligence")
+        st.caption(
+            "SNR measures source agreement (KenPom / BartTorvik / EvanMiya). "
+            "Integrity is the real-time OpenClaw sanity check."
+        )
+
+        _any_flag = False
+        for bet in bets:
+            fa    = bet.get("full_analysis", {})
+            calcs = fa.get("calculations", {})
+            g     = bet.get("game", {})
+            fa_inputs = fa.get("inputs", {})
+            odds_data = fa_inputs.get("odds", {})
+            home = g.get("home_team") or odds_data.get("home_team") or "Home"
+            away = g.get("away_team") or odds_data.get("away_team") or "Away"
+
+            snr_val    = calcs.get("snr")
+            int_verdict = calcs.get("integrity_verdict")
+            int_scalar  = calcs.get("integrity_kelly_scalar", 1.0)
+            snr_scalar  = calcs.get("snr_kelly_scalar", 1.0)
+
+            # SNR badge
+            if snr_val is None:
+                snr_badge = "— SNR"
+            elif snr_val >= 0.75:
+                snr_badge = f"✅ SNR {snr_val:.0%}"
+            elif snr_val >= 0.50:
+                snr_badge = f"⚠️ SNR {snr_val:.0%}"
+                _any_flag = True
+            else:
+                snr_badge = f"🔴 SNR {snr_val:.0%}"
+                _any_flag = True
+
+            # Integrity badge
+            _iv_upper = (int_verdict or "").upper()
+            if "ABORT" in _iv_upper or "RED FLAG" in _iv_upper:
+                int_badge = f"🛑 ABORT"
+                _any_flag = True
+            elif "VOLATILE" in _iv_upper:
+                int_badge = f"🔴 VOLATILE"
+                _any_flag = True
+            elif "CAUTION" in _iv_upper:
+                int_badge = f"⚠️ CAUTION"
+                _any_flag = True
+            elif int_verdict:
+                int_badge = "✅ CONFIRMED"
+            else:
+                int_badge = "— Not run"
+
+            net_v9 = snr_scalar * int_scalar
+            net_badge = f"Kelly {net_v9:.2f}×"
+
+            col_m, col_s, col_i, col_k = st.columns([3, 2, 3, 2])
+            col_m.markdown(f"**{away} @ {home}**")
+            col_s.markdown(snr_badge)
+            col_i.markdown(int_badge)
+            col_k.markdown(net_badge)
+
+        if _any_flag:
+            st.warning(
+                "One or more bets have elevated risk flags. "
+                "Review the full V9 panel on Today's Bets before placing action."
+            )
 else:
     st.warning("No prediction data available. Has the nightly analysis run?")
 

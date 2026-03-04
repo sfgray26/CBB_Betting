@@ -27,6 +27,43 @@ if today_data:
 
     if bets:
         st.success(f"{len(bets)} betting opportunity(s) found!")
+
+        # ---- High-Confidence Alpha Signals ----
+        alpha_bets = []
+        for _b in bets:
+            _c = _b.get("full_analysis", {}).get("calculations", {})
+            _snr = _c.get("snr") or 0.0
+            _iv  = (_c.get("integrity_verdict") or "").upper()
+            if _snr >= 0.9 and "CONFIRMED" in _iv:
+                alpha_bets.append(_b)
+
+        if alpha_bets:
+            st.markdown("---")
+            st.markdown("### ⭐ High-Confidence Alpha Signals")
+            st.caption(
+                "These bets pass every V9 filter: SNR ≥ 90% (near-perfect source agreement) "
+                "and Integrity = CONFIRMED (real-time news check passed). "
+                "Full Kelly sizing applies — no additional discount."
+            )
+            for _ab in alpha_bets:
+                _g   = _ab.get("game", {})
+                _fa  = _ab.get("full_analysis", {})
+                _inp = _fa.get("inputs", {})
+                _od  = _inp.get("odds", {})
+                _h   = _g.get("home_team") or _od.get("home_team") or "Home"
+                _a   = _g.get("away_team") or _od.get("away_team") or "Away"
+                _c   = _fa.get("calculations", {})
+                _snr = _c.get("snr", 0.0)
+                _net = (_c.get("snr_kelly_scalar", 1.0)) * (_c.get("integrity_kelly_scalar", 1.0))
+                _eu  = _ab.get("recommended_units", 0.0) or 0.0
+                _edge = _ab.get("edge_conservative", 0.0) or 0.0
+                st.success(
+                    f"⭐ **{_a} @ {_h}** — "
+                    f"Edge {_edge:.1%} · {_eu:.2f}u · "
+                    f"SNR {_snr:.0%} · Net Kelly {_net:.2f}×"
+                )
+            st.markdown("---")
+
         for bet in bets:
             g = bet.get("game", {})
             fa = bet.get("full_analysis", {})
@@ -56,9 +93,32 @@ if today_data:
             rec_units = bet.get("recommended_units", 0.0) or 0.0
             game_id = g.get("id") or bet.get("game_id")
             pred_id = bet.get("id")
-            log_key = f"log_{game_id}"
+            log_key = f"log_{pred_id}"
 
-            with st.expander(f"{matchup} — {game_time}", expanded=True):
+            # V9 confidence fields
+            snr_val       = calcs.get("snr")
+            int_verdict   = calcs.get("integrity_verdict")
+            int_scalar    = calcs.get("integrity_kelly_scalar", 1.0)
+            snr_scalar_v  = calcs.get("snr_kelly_scalar", 1.0)
+
+            # Determine integrity badge
+            _iv_upper = (int_verdict or "").upper()
+            if "ABORT" in _iv_upper or "RED FLAG" in _iv_upper:
+                _int_icon, _int_color = "🛑", "red"
+            elif "VOLATILE" in _iv_upper:
+                _int_icon, _int_color = "🔴", "red"
+            elif "CAUTION" in _iv_upper:
+                _int_icon, _int_color = "⚠️", "orange"
+            elif int_verdict:
+                _int_icon, _int_color = "✅", "green"
+            else:
+                _int_icon, _int_color = "—", "grey"
+
+            _expander_label = f"{matchup} — {game_time}"
+            if _int_color in ("red", "orange"):
+                _expander_label += f"  {_int_icon}"
+
+            with st.expander(_expander_label, expanded=True):
                 st.subheader(pick_str)
                 col1, col2, col3 = st.columns(3)
                 col1.metric("Projected Margin", f"{bet.get('projected_margin', 0):.1f} pts")
@@ -66,19 +126,59 @@ if today_data:
                 col3.metric("Recommended Stake", f"{rec_units:.2f} units")
                 st.info(f"**Verdict:** {bet['verdict']}")
 
+                # ---- V9 Confidence Panel ----
+                if snr_val is not None or int_verdict:
+                    st.markdown("**V9 Confidence Assessment**")
+                    v_col1, v_col2, v_col3 = st.columns(3)
+
+                    if snr_val is not None:
+                        if snr_val >= 0.75:
+                            _snr_icon = "✅"
+                        elif snr_val >= 0.50:
+                            _snr_icon = "⚠️"
+                        else:
+                            _snr_icon = "🔴"
+                        v_col1.metric(
+                            f"{_snr_icon} Source SNR",
+                            f"{snr_val:.0%}",
+                            delta=f"Kelly {snr_scalar_v:.2f}×",
+                            delta_color="off",
+                            help="Agreement across KenPom / BartTorvik / EvanMiya. Low = sources disagree → smaller bet.",
+                        )
+
+                    if int_verdict:
+                        v_col2.metric(
+                            f"{_int_icon} Integrity",
+                            int_verdict[:24],
+                            delta=f"Kelly {int_scalar:.2f}×",
+                            delta_color="off",
+                            help="OpenClaw Integrity Officer verdict based on real-time DuckDuckGo search.",
+                        )
+                    else:
+                        v_col2.metric("— Integrity", "Not run", help="Sanity check only runs for BET-tier pre-scores.")
+
+                    net_v9 = snr_scalar_v * int_scalar
+                    v_col3.metric(
+                        "Net V9 Kelly",
+                        f"{net_v9:.2f}×",
+                        delta="of base size",
+                        delta_color="off",
+                        help="Combined SNR × Integrity multiplier applied to Kelly fraction.",
+                    )
+
                 # ---- "I placed this bet" button ----
-                if st.session_state.get(f"logged_{game_id}"):
+                if st.session_state.get(f"logged_{pred_id}"):
                     st.success("Bet logged!")
                 elif st.session_state.get(log_key):
                     # Inline mini-form
-                    with st.form(key=f"form_{game_id}", border=False):
+                    with st.form(key=f"form_{pred_id}", border=False):
                         fc1, fc2, fc3 = st.columns(3)
                         stake_dollars = fc1.number_input(
                             "Stake ($)", min_value=1.0, value=round(rec_units * 10, 2), step=5.0,
-                            key=f"stake_{game_id}",
+                            key=f"stake_{pred_id}",
                         )
                         odds_taken = fc2.number_input(
-                            "Odds", value=default_odds, step=5, key=f"odds_{game_id}",
+                            "Odds", value=default_odds, step=5, key=f"odds_{pred_id}",
                         )
                         submitted = fc3.form_submit_button("Confirm", type="primary", use_container_width=True)
 
@@ -95,13 +195,13 @@ if today_data:
                         }
                         result = api_post("/api/bets/log", payload)
                         if result:
-                            st.session_state[f"logged_{game_id}"] = True
+                            st.session_state[f"logged_{pred_id}"] = True
                             st.session_state.pop(log_key, None)
                             st.rerun()
                         else:
                             st.error("Failed to log bet — check API connection.")
                 else:
-                    if st.button("I placed this bet", key=f"btn_{game_id}"):
+                    if st.button("I placed this bet", key=f"btn_{pred_id}"):
                         st.session_state[log_key] = True
                         st.rerun()
     else:

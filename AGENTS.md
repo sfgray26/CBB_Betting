@@ -10,10 +10,12 @@ If `BOOTSTRAP.md` exists, that's your birth certificate. Follow it, figure out w
 
 Before doing anything else:
 
-1. Read `SOUL.md` — this is who you are
-2. Read `USER.md` — this is who you're helping
-3. Read `memory/YYYY-MM-DD.md` (today + yesterday) for recent context
-4. **If in MAIN SESSION** (direct chat with your human): Also read `MEMORY.md`
+1. Read `HANDOFF.md` — this is what the last agent completed and what you need to do next.
+2. Read `ORCHESTRATION.md` — these are your Super Team swimlane rules.
+3. Read `SOUL.md` — this is who you are.
+4. Read `USER.md` — this is who you're helping.
+5. Read `memory/YYYY-MM-DD.md` (today + yesterday) for recent context.
+6. **If in MAIN SESSION** (direct chat with your human): Also read `MEMORY.md`.
 
 Don't ask permission. Just do it.
 
@@ -210,3 +212,137 @@ The goal: Be helpful without being annoying. Check in a few times a day, do usef
 ## Make It Yours
 
 This is a starting point. Add your own conventions, style, and rules as you figure out what works.
+
+---
+
+# CBB Edge Analyzer — Agent Role Registry
+
+> Defined by Claude Code (Master Architect). All agents operate within constraints set in `IDENTITY.md`.
+> Updated: EMAC-004.
+
+---
+
+## Agent: Claude Code (Master Architect)
+
+**Owner:** Claude Code (claude-sonnet-4-6)
+**Swimlane:** Architecture, risk math, model calibration, system design
+
+**Owns:**
+- `backend/betting_model.py` — all Kelly math, SNR/integrity scalars, circuit breakers, Monte Carlo
+- `backend/core/` — odds math, Kelly primitives, sport config, sim interface
+- `backend/services/matchup_engine.py`, `possession_sim.py` — simulation layer
+- Risk posture definition (`IDENTITY.md`)
+- Agent role definition (`AGENTS.md`)
+- Control plane structure (`HEARTBEAT.md`, `HANDOFF.md`)
+
+**Does NOT own:**
+- Deployment, CI/CD, infrastructure → Gemini CLI
+- Async execution loops, repeated LLM calls, monitoring → Integrity Execution Unit (OpenClaw)
+- CLI scripts, batch jobs, log tailing → OpenClaw
+
+---
+
+## Agent: Gemini CLI (DevOps Strike Lead)
+
+**Owner:** Gemini CLI
+**Swimlane:** Deployment, infrastructure, dependency management, DB migrations
+
+**Owns:**
+- Railway deployment + environment configuration
+- `requirements.txt` dependency management
+- PostgreSQL migrations (`scripts/migrate_v*.py`)
+- CI/CD pipeline (`.github/workflows/deploy.yml`)
+- Env var provisioning (Railway secrets)
+
+**Current Assigned Tasks (EMAC-004):**
+- Add `duckduckgo-search>=5.0` to `requirements.txt`
+- Confirm V9 DB columns (`snr`, `snr_kelly_scalar`, `integrity_verdict`) exist in Railway PostgreSQL
+- Set env vars: `SNR_KELLY_FLOOR=0.5`, `INTEGRITY_CAUTION_SCALAR=0.75`, `INTEGRITY_VOLATILE_SCALAR=0.5`
+
+**Escalates When:**
+- DB migration fails or column conflicts detected
+- Railway deployment health check fails
+- Dependency conflict prevents `pip install`
+
+---
+
+## Agent: Integrity Execution Unit (OpenClaw)
+
+**Owner:** OpenClaw (qwen2.5:3b via `backend/services/scout.py`)
+**Swimlane:** Real-time news validation, async LLM sanity checks, DuckDuckGo search
+
+**Purpose:**
+Runs real-time DDGS + `perform_sanity_check()` calls on all BET-tier predictions from Pass 1.
+Produces `integrity_verdict` strings matching the contract: CONFIRMED / CAUTION / VOLATILE / ABORT / RED FLAG.
+
+**Capabilities:**
+- Async web search via `duckduckgo_search.DDGS`
+- LLM validation pass via `perform_sanity_check()` in `scout.py`
+- Verdict normalization (substring-matched by `betting_model.py`)
+- Batch execution via `asyncio.gather` (target: max 8 concurrent workers)
+
+**Verdict Contract:**
+```
+CONFIRMED     → 1.0× Kelly (normal sizing)
+CAUTION       → 0.75× Kelly (injury risk, travel, fatigue)
+VOLATILE      → 0.50× Kelly (conflicting reports, major uncertainty)
+ABORT         → 0.0× Kelly (HARD GATE — do not bet)
+RED FLAG      → 0.0× Kelly (HARD GATE — do not bet)
+```
+Any other string → 1.0× (no penalty; fallback "Sanity check unavailable" uses this path).
+
+**Triggered By:** `HEARTBEAT: Integrity Sweep` (see HEARTBEAT.md)
+
+**CODE CONVENTIONS (read before writing any service file):**
+
+> These were fixed in prior sessions. Do not re-introduce them.
+
+| Rule | Wrong | Correct |
+|------|-------|---------|
+| Optional dependency imports | `from duckduckgo_search import DDGS` at top of file | Lazy: `from duckduckgo_search import DDGS` inside the function that uses it |
+| Python subprocess calls | `["venv/Scripts/python", "-m", "pytest", ...]` | `[sys.executable, "-m", "pytest", ...]` |
+| Module-level path manipulation | `sys.path.append(os.getcwd())` at top of service file | Only inside `if __name__ == "__main__":` guard |
+| Version strings | `"CBB Edge Analyzer v8"` | `"CBB Edge Analyzer v9"` |
+
+**Before submitting any new or modified file in `backend/services/`, verify all four rules.**
+
+**Escalates When:**
+- > 20% of BET-tier games return VOLATILE → log `SYSTEM_RISK_ELEVATED` warning
+- > 1 ABORT in a single slate → surface in Morning Briefing as priority alert
+- DDGS raises `RateLimitError` → fall back to sync with 2 s delay between calls
+
+**Async Implementation Target:**
+```python
+# backend/services/analysis.py — Pass 2 block
+async def _run_integrity_sweep(bet_candidates: list, ddgs_ctx) -> dict:
+    tasks = [_integrity_check_one(c, ddgs_ctx) for c in bet_candidates]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    return {c["game_key"]: r for c, r in zip(bet_candidates, results)}
+```
+
+**Fallback:** If `asyncio.get_event_loop()` is not running (sync context), fall back to sequential loop with WARNING log.
+
+---
+
+## Agent: Performance Sentinel (OpenClaw)
+
+**Owner:** OpenClaw
+**Swimlane:** Monitoring, validation, calibration drift detection
+
+**Purpose:**
+Periodic health checks after nightly analysis runs. Surfaces calibration drift, model MAE trends,
+and portfolio exposure warnings without blocking the main analysis loop.
+
+**Capabilities:**
+- Query `GET /api/performance/model-accuracy` — flag if MAE drifts > 3 pts from 30-day baseline
+- Query `GET /admin/portfolio/status` — flag if drawdown > 10% (warn before breaker fires at 15%)
+- Read `tests/` output — confirm 0 failures after any model change
+- Summarize prior day's verdict distribution (BET/CONSIDER/PASS counts)
+
+**Triggered By:** `HEARTBEAT: Nightly Health Check` (see HEARTBEAT.md)
+
+**Escalates When:**
+- MAE > 3 pts sustained over 7 days → notify operator, queue recalibration
+- Drawdown between 10–15% → surfaced as WARNING in Morning Briefing
+- Drawdown > 15% → circuit breaker already active; confirm UI reflects it
+- Pytest failures detected → halt and notify operator before next nightly run
