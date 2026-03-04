@@ -595,16 +595,19 @@ def _create_paper_bet(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-async def _ddgs_and_check(game: dict) -> str:
-    """Run one DDGS search + sanity check for a single game."""
+def _ddgs_and_check_sync(game: dict) -> str:
+    """Synchronous DDGS search + LLM sanity check for a single game.
+
+    Kept as a plain function so it can be safely offloaded to a thread pool
+    via asyncio.to_thread() without blocking the event loop.
+    """
     try:
         from duckduckgo_search import DDGS
         from backend.services.scout import perform_sanity_check
         away = game.get("away_team", "")
         home = game.get("home_team", "")
-        # Use the pre-score verdict as a placeholder for the agent
         verdict = f"Potential Bet (Edge {game.get('edge', 0):.1%})"
-        
+
         today_str = datetime.utcnow().strftime("%Y-%m-%d")
         query = f"{away} {home} injury suspension lineup {today_str}"
         with DDGS() as ddgs:
@@ -613,6 +616,15 @@ async def _ddgs_and_check(game: dict) -> str:
         return perform_sanity_check(home, away, verdict, context)
     except Exception as e:
         return f"Sanity check unavailable ({type(e).__name__})"
+
+
+async def _ddgs_and_check(game: dict) -> str:
+    """Async wrapper — runs _ddgs_and_check_sync in the default thread pool.
+
+    This allows asyncio.gather() in _integrity_sweep to achieve real I/O
+    concurrency (up to Semaphore limit) without blocking the event loop.
+    """
+    return await asyncio.to_thread(_ddgs_and_check_sync, game)
 
 
 async def _integrity_sweep(bet_tier_games: list) -> dict:
