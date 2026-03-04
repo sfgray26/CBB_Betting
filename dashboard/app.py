@@ -1,13 +1,17 @@
 """
 Streamlit Dashboard for CBB Edge Analyzer
-Simple, functional UI for monitoring predictions and performance
+Landing page — system health, quick stats, navigation guide.
+Individual views live in dashboard/pages/.
 """
 
-import streamlit as st
-import pandas as pd
-import requests
-from datetime import datetime, timedelta
+import sys
 import os
+# Ensure the project root (parent of dashboard/) is on the path so that
+# "from dashboard.shared import ..." resolves correctly regardless of how
+# Streamlit was launched.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -22,79 +26,15 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.markdown("""
-    <style>
-    .big-metric { font-size: 24px; font-weight: bold; }
-    .positive { color: green; }
-    .negative { color: red; }
-    .warning { color: orange; }
-    </style>
-""", unsafe_allow_html=True)
+from dashboard.shared import inject_custom_css
+from dashboard.utils import api_get, sidebar_api_key
 
+inject_custom_css()
 
-# ==============================================================================
-# API HELPERS
-# ==============================================================================
-
-def _headers():
-    return {"X-API-Key": st.session_state.get("api_key", API_KEY)}
-
-
-def make_request(endpoint: str, params: dict = None):
-    try:
-        r = requests.get(f"{API_URL}{endpoint}", headers=_headers(), params=params, timeout=10)
-        r.raise_for_status()
-        return r.json()
-    except Exception as e:
-        st.error(f"API Error: {e}")
-        return None
-
-
-def make_post_request(endpoint: str, payload: dict):
-    try:
-        r = requests.post(
-            f"{API_URL}{endpoint}",
-            headers={**_headers(), "Content-Type": "application/json"},
-            json=payload,
-            timeout=10,
-        )
-        r.raise_for_status()
-        return r.json()
-    except requests.HTTPError as e:
-        detail = e.response.json().get("detail", str(e)) if e.response else str(e)
-        st.error(f"API Error {e.response.status_code}: {detail}")
-        return None
-    except Exception as e:
-        st.error(f"Request failed: {e}")
-        return None
-
-
-def make_put_request(endpoint: str, payload: dict):
-    try:
-        r = requests.put(
-            f"{API_URL}{endpoint}",
-            headers={**_headers(), "Content-Type": "application/json"},
-            json=payload,
-            timeout=10,
-        )
-        r.raise_for_status()
-        return r.json()
-    except requests.HTTPError as e:
-        detail = e.response.json().get("detail", str(e)) if e.response else str(e)
-        st.error(f"API Error {e.response.status_code}: {detail}")
-        return None
-    except Exception as e:
-        st.error(f"Request failed: {e}")
-        return None
-
-
-# ==============================================================================
-# SIDEBAR
-# ==============================================================================
-
+# Sidebar — API key setup
 with st.sidebar:
-    st.title("🏀 CBB Edge")
-    st.caption("Version 7 Betting Framework")
+    st.title("CBB Edge")
+    st.caption("v8.0 Betting Framework")
 
     if not API_KEY:
         key_input = st.text_input("API Key", type="password", key="api_key_input")
@@ -105,502 +45,52 @@ with st.sidebar:
         st.session_state.setdefault("api_key", API_KEY)
 
     st.markdown("---")
-
-    page = st.radio(
-        "Navigate",
-        ["📊 Dashboard", "🎯 Today's Bets", "📋 Bet Log"],
-    )
-    st.caption("See sidebar pages for Performance, CLV, History, Calibration & Alerts.")
-
-    st.markdown("---")
-
-    st.subheader("Quick Stats")
-    perf = make_request("/api/performance/summary")
-    if perf and perf.get("total_bets", 0) > 0:
-        st.metric("Total Bets", perf["total_bets"])
-        st.metric("Win Rate", f"{perf.get('win_rate', 0):.1%}")
-        roi = perf.get("roi", 0)
-        st.metric("ROI", f"{roi:.1%}", delta=f"{'↑' if roi > 0 else '↓'}")
-        clv = perf.get("mean_clv", 0)
-        st.metric("Mean CLV", f"{clv:.2%}", delta=perf.get("status", ""))
-    else:
-        st.info("No settled bets yet")
-
-
-# ==============================================================================
-# DASHBOARD PAGE
-# ==============================================================================
-
-if page == "📊 Dashboard":
-    st.title("CBB Edge Analyzer")
-
-    col1, col2, col3, col4 = st.columns(4)
-    if perf and perf.get("total_bets", 0) > 0:
-        with col1:
-            st.metric("Total Bets", perf["total_bets"])
-        with col2:
-            st.metric("Win Rate", f"{perf['win_rate']:.1%}")
-        with col3:
-            roi = perf["roi"]
-            st.metric("ROI", f"{roi:.1%}", delta="positive" if roi > 0 else "negative")
-        with col4:
-            st.metric("Mean CLV", f"{perf['mean_clv']:.2%}")
-
-        st.markdown("---")
-        status = perf.get("status", "UNKNOWN")
-        if status == "HEALTHY":
-            st.success("System Status: HEALTHY (CLV > 0.5%)")
-        elif status == "WARNING":
-            st.warning("System Status: WARNING (CLV near zero)")
-        else:
-            st.error("System Status: STOP BETTING (CLV negative)")
-    else:
-        st.info("No settled bets yet — predictions and paper trades will appear here once games complete.")
-
-    st.markdown("---")
-    st.subheader("Recent Bet Recommendations (last 7 days)")
-    bets_data = make_request("/api/predictions/bets", {"days": 7})
-    if bets_data and bets_data.get("bets"):
-        st.dataframe(pd.DataFrame(bets_data["bets"]), use_container_width=True)
-    else:
-        st.info("No bets recommended in the last 7 days.")
-
-
-# ==============================================================================
-# TODAY'S BETS PAGE
-# ==============================================================================
-
-elif page == "🎯 Today's Bets":
-    st.title("Today's Betting Opportunities")
-    today_data = make_request("/api/predictions/today")
-
-    if today_data:
-        c1, c2 = st.columns(2)
-        c1.metric("Games Analyzed", today_data.get("total_games", 0))
-        c2.metric("Bets Recommended", today_data.get("bets_recommended", 0))
-
-        predictions = today_data.get("predictions", [])
-        bets = [p for p in predictions if p["verdict"].startswith("Bet")]
-
-        # Sort by conservative edge (highest EV first)
-        bets.sort(key=lambda b: b.get("edge_conservative") or 0.0, reverse=True)
-
-        if bets:
-            st.success(f"{len(bets)} betting opportunity(s) found!")
-            for bet in bets:
-                g = bet.get("game", {})
-                fa = bet.get("full_analysis", {})
-                inputs = fa.get("inputs", {})
-                # Team names: try game object first, fall back to odds data in full_analysis
-                odds_data = inputs.get("odds", {})
-                home = g.get("home_team") or odds_data.get("home_team") or "Home"
-                away = g.get("away_team") or odds_data.get("away_team") or "Away"
-                matchup = f"{away} @ {home}"
-                try:
-                    game_time = datetime.fromisoformat(g.get("game_date") or "").strftime("%b %d, %I:%M %p UTC")
-                except (ValueError, TypeError):
-                    game_time = "TBD"
-
-                # Determine pick string from full_analysis
-                spread_value = inputs.get("odds", {}).get("spread")
-
-                projected_margin = bet.get("projected_margin", 0.0)
-                if spread_value is not None:
-                    if projected_margin > spread_value:
-                        pick_str = f"{home} {spread_value:+.1f}"
-                    else:
-                        pick_str = f"{away} {-spread_value:+.1f}"
-                else:
-                    pick_str = "See verdict"
-
-                with st.expander(f"{matchup} — {game_time}", expanded=True):
-                    st.subheader(pick_str)
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("Projected Margin", f"{bet.get('projected_margin', 0):.1f} pts")
-                    col2.metric("Conservative Edge", f"{bet.get('edge_conservative', 0):.2%}")
-                    col3.metric("Recommended Stake", f"{bet.get('recommended_units', 0):.2f} units")
-                    st.info(f"**Verdict:** {bet['verdict']}")
-        else:
-            st.info("No bets recommended today (PASS on all games).")
-            st.caption("This is expected 85-95% of the time in efficient markets.")
-
-        # ── CONSIDER verdicts ─────────────────────────────────────────────────
-        considers = [p for p in predictions if p["verdict"].upper().startswith("CONSIDER")]
-        considers.sort(key=lambda b: b.get("edge_conservative") or 0.0, reverse=True)
-
-        if considers:
-            st.markdown("---")
-            st.subheader("CONSIDER — Marginal Edges (monitoring)")
-            st.caption(
-                "These games have a detectable edge below the MIN_BET_EDGE threshold. "
-                "Watch for line movement toward the model's side before tipoff."
-            )
-            for c in considers:
-                g = c.get("game", {})
-                fa = c.get("full_analysis", {})
-                inputs = fa.get("inputs", {})
-                odds_data = inputs.get("odds", {})
-                home = g.get("home_team") or odds_data.get("home_team") or "Home"
-                away = g.get("away_team") or odds_data.get("away_team") or "Away"
-                matchup = f"{away} @ {home}"
-                edge = c.get("edge_conservative", 0)
-                margin = c.get("projected_margin", 0)
-                try:
-                    game_time = datetime.fromisoformat(g.get("game_date") or "").strftime("%I:%M %p")
-                except (ValueError, TypeError):
-                    game_time = "TBD"
-
-                with st.expander(f"{matchup} | Edge {edge:.1%} | {game_time}"):
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("Projected Margin", f"{margin:.1f} pts")
-                    col2.metric("Conservative Edge", f"{edge:.2%}")
-                    col3.metric("Verdict", c["verdict"])
-    else:
-        st.warning("No prediction data available for today.")
-
-    # ── Optimal Parlays ───────────────────────────────────────────────────────
-    st.markdown("---")
-    st.subheader("🎫 Optimal Parlays")
-    st.caption(
-        "Cross-game parlays built from today's +EV straight bets. "
-        "Sizing respects the remaining daily portfolio budget after straight bets."
-    )
-
-    parlay_data = make_request("/api/predictions/parlays")
-
-    if parlay_data is None:
-        st.warning("Could not reach the parlay endpoint — is the API running?")
-    else:
-        capacity_remaining = parlay_data.get("remaining_capacity_dollars")
-        if capacity_remaining is not None:
-            st.caption(
-                f"Portfolio capacity remaining today: **${capacity_remaining:.2f}** "
-                f"(of ${parlay_data.get('max_daily_dollars', 0):.2f} max daily)"
-            )
-
-        parlays = parlay_data.get("parlays", [])
-        exhausted_msg = parlay_data.get("message", "")
-
-        if not parlays:
-            if "exhausted" in exhausted_msg.lower():
-                st.info("Portfolio capacity exhausted — no parlay sizing available today.")
-            else:
-                st.info("No qualifying parlay combinations found today.")
-                st.caption(
-                    "Parlays require 2+ straight bets each with edge > 1%. "
-                    "Check back after the nightly analysis runs."
-                )
-        else:
-            st.success(f"{len(parlays)} parlay ticket(s) recommended today.")
-            for i, parlay in enumerate(parlays, start=1):
-                leg_summary   = parlay.get("leg_summary", "—")
-                american_odds = parlay.get("parlay_american_odds", 0)
-                joint_prob    = parlay.get("joint_prob", 0.0)
-                edge          = parlay.get("edge", 0.0)
-                rec_units     = parlay.get("recommended_units", 0.0)
-                num_legs      = parlay.get("num_legs", "?")
-                ev            = parlay.get("expected_value", 0.0)
-
-                odds_str = f"+{american_odds:.0f}" if american_odds >= 0 else f"{american_odds:.0f}"
-                header   = f"Parlay {i} — {num_legs}-Leg @ {odds_str}"
-
-                with st.expander(header, expanded=(i == 1)):
-                    st.markdown(f"**Legs:** {leg_summary}")
-                    pcol1, pcol2, pcol3, pcol4 = st.columns(4)
-                    pcol1.metric("Joint Prob",      f"{joint_prob:.1%}")
-                    pcol2.metric("Edge (EV/unit)",  f"{edge:.3f}")
-                    pcol3.metric("Expected Value",  f"{ev:.3f} u")
-                    pcol4.metric("Rec. Stake",      f"{rec_units:.2f} u")
-
-
-# Performance page has moved to pages/1_Performance.py
-
-
-# ==============================================================================
-# BET LOG PAGE
-# ==============================================================================
-
-elif page == "📋 Bet Log":
-    st.title("Bet Log")
-
-    tab_add, tab_settle, tab_history = st.tabs(["Add Bet", "Settle Pending", "History"])
-
-    # --------------------------------------------------------------------------
-    # TAB 1: ADD BET
-    # --------------------------------------------------------------------------
-    with tab_add:
-        st.subheader("Log a New Bet")
-        st.caption("Use this to record bets you placed at a sportsbook, or manually add paper trades.")
-
-        # Fetch recent games for the selector
-        games_data = make_request("/api/games/recent", {"days_back": 7, "days_ahead": 2})
-        game_options = {}
-        if games_data and games_data.get("games"):
-            for g in games_data["games"]:
-                try:
-                    dt = datetime.fromisoformat(g.get("game_date") or "").strftime("%b %d")
-                except (ValueError, TypeError):
-                    dt = "?"
-                label = f"{g['matchup']} ({dt})"
-                game_options[label] = g["id"]
-
-        # Game selector OUTSIDE the form to allow dynamic updates
-        if game_options:
-            selected_label = st.selectbox(
-                "Select Game",
-                list(game_options.keys()),
-                key="bet_game_selector",
-                help="Model recommendation will auto-populate when you select a game."
-            )
-            game_id = game_options[selected_label]
-
-            # Fetch prediction for selected game
-            prediction_data = make_request(f"/api/predictions/game/{game_id}")
-            bet_details = prediction_data.get("bet_details", {}) if prediction_data else {}
-
-            # Show model recommendation if available
-            if prediction_data and bet_details.get("has_bet"):
-                st.success(f"✓ **Model Recommendation:** {prediction_data.get('verdict', 'N/A')}")
-            elif prediction_data:
-                st.info(f"**Model Verdict:** {prediction_data.get('verdict', 'PASS')} — You can still log a manual bet.")
-            else:
-                st.warning("No prediction found for this game.")
-
-            # Default values from model recommendation
-            default_pick = bet_details.get("pick") or ""
-            default_type = bet_details.get("bet_type") or "spread"
-            default_odds = bet_details.get("odds") or -110
-            default_units = bet_details.get("units") or 1.0
-        else:
-            st.warning("No recent/upcoming games found. Enter game ID manually.")
-            game_id = st.number_input("Game ID", min_value=1, step=1, value=1)
-            default_pick = ""
-            default_type = "spread"
-            default_odds = -110
-            default_units = 1.0
-
-        # Ensure default_type is valid
-        if default_type not in ["spread", "moneyline", "total"]:
-            default_type = "spread"
-
-        with st.form("add_bet_form", clear_on_submit=True):
-            col1, col2 = st.columns(2)
-            with col1:
-                pick = st.text_input(
-                    "Pick",
-                    value=default_pick,
-                    placeholder='e.g. "Duke -4.5" or "Kansas +3"',
-                    help="Team name + spread, exactly as you bet it. Auto-populated from model.",
-                )
-                bet_type = st.selectbox(
-                    "Bet Type",
-                    ["spread", "moneyline", "total"],
-                    index=["spread", "moneyline", "total"].index(default_type)
-                )
-                odds_taken = st.number_input(
-                    "Odds Taken (American)",
-                    value=int(default_odds),
-                    step=5,
-                    help="e.g. -110, +105, -220. Auto-populated from model.",
-                )
-
-            with col2:
-                bet_size_units = st.number_input(
-                    "Bet Size (units)",
-                    min_value=0.1,
-                    max_value=10.0,
-                    value=float(default_units),
-                    step=0.5,
-                    help="Auto-populated from model's Kelly recommendation."
-                )
-                bet_size_dollars = st.number_input(
-                    "Bet Size ($)", min_value=1.0, value=10.0, step=5.0
-                )
-                is_paper_trade = st.checkbox("Paper Trade (simulated)", value=False)
-
-            notes = st.text_area("Notes (optional)", max_chars=500)
-
-            submitted = st.form_submit_button("Log Bet", type="primary")
-
-        if submitted:
-            if not pick or len(pick) < 2:
-                st.error("Pick is required (minimum 2 characters).")
-            elif odds_taken == 0 or (-99 < odds_taken < 100):
-                st.error("Odds must be valid American odds (>= +100 or <= -100).")
-            else:
-                payload = {
-                    "game_id": int(game_id),
-                    "pick": pick,
-                    "bet_type": bet_type,
-                    "odds_taken": float(odds_taken),
-                    "bet_size_units": float(bet_size_units),
-                    "bet_size_dollars": float(bet_size_dollars),
-                    "is_paper_trade": is_paper_trade,
-                    "notes": notes or None,
-                }
-                result = make_post_request("/api/bets/log", payload)
-                if result:
-                    st.success(
-                        f"Bet #{result['bet_id']} logged: **{result['pick']}** "
-                        f"({result['bet_size_units']} units)"
-                    )
-
-    # --------------------------------------------------------------------------
-    # TAB 2: SETTLE PENDING BETS
-    # --------------------------------------------------------------------------
-    with tab_settle:
-        st.subheader("Pending Bets — Record Outcomes")
-        st.caption("Update each pending bet with its result and closing line.")
-
-        pending_data = make_request("/api/bets", {"status": "pending", "days": 60})
-
-        if not pending_data or not pending_data.get("bets"):
-            st.info("No pending bets found.")
-        else:
-            pending_bets = pending_data["bets"]
-            st.write(f"**{len(pending_bets)} pending bet(s)**")
-
-            for bet in pending_bets:
-                try:
-                    ts = datetime.fromisoformat(bet["timestamp"]).strftime("%b %d") if bet.get("timestamp") else "?"
-                except (ValueError, TypeError):
-                    ts = "?"
-                header = f"#{bet['id']} — {bet['pick']} | {bet['matchup']} | {ts}"
-
-                with st.expander(header):
-                    col1, col2, col3 = st.columns(3)
-                    model_prob_str = f"{bet['model_prob']:.1%}" if bet.get("model_prob") else "N/A"
-                    col1.write(f"**Odds taken:** {bet['odds_taken']:+g}")
-                    col2.write(f"**Size:** {bet['bet_size_units']} u / ${bet['bet_size_dollars']:.2f}")
-                    col3.write(f"**Model prob:** {model_prob_str}")
-
-                    with st.form(f"settle_{bet['id']}"):
-                        outcome = st.radio(
-                            "Result", ["Win", "Loss"],
-                            horizontal=True,
-                            key=f"outcome_{bet['id']}",
-                        )
-
-                        st.markdown("**Closing Line (optional — enables CLV calculation)**")
-                        cl1, cl2, cl3 = st.columns(3)
-                        with cl1:
-                            closing_spread = st.number_input(
-                                "Closing Spread",
-                                value=0.0,
-                                step=0.5,
-                                key=f"cs_{bet['id']}",
-                                help="Closing spread for your side (e.g. -6.0)",
-                            )
-                        with cl2:
-                            closing_odds = st.number_input(
-                                "Closing Odds",
-                                value=-110,
-                                step=5,
-                                key=f"co_{bet['id']}",
-                            )
-                        with cl3:
-                            closing_odds_other = st.number_input(
-                                "Closing Odds (other side)",
-                                value=-110,
-                                step=5,
-                                key=f"coo_{bet['id']}",
-                            )
-                        use_clv = st.checkbox(
-                            "Include closing line data",
-                            value=False,
-                            key=f"use_clv_{bet['id']}",
-                        )
-
-                        settle_notes = st.text_input("Notes", key=f"notes_{bet['id']}")
-
-                        if st.form_submit_button("Record Outcome", type="primary"):
-                            payload = {"outcome": 1 if outcome == "Win" else 0}
-                            if use_clv:
-                                payload["closing_spread"] = float(closing_spread) if closing_spread != 0 else None
-                                payload["closing_odds"] = float(closing_odds)
-                                payload["closing_odds_other_side"] = float(closing_odds_other)
-                            if settle_notes:
-                                payload["notes"] = settle_notes
-
-                            result = make_put_request(f"/api/bets/{bet['id']}/outcome", payload)
-                            if result:
-                                pl = result.get("profit_loss_dollars", 0) or 0
-                                clv_grade = result.get("clv_grade") or ""
-                                st.success(
-                                    f"{'Win' if result['outcome'] == 1 else 'Loss'} recorded. "
-                                    f"P&L: **${pl:+.2f}**"
-                                    + (f" | CLV: {clv_grade}" if clv_grade else "")
-                                )
-                                st.rerun()
-
-    # --------------------------------------------------------------------------
-    # TAB 3: HISTORY
-    # --------------------------------------------------------------------------
-    with tab_history:
-        st.subheader("Bet History")
-
-        col_filter1, col_filter2 = st.columns(2)
-        with col_filter1:
-            history_days = st.selectbox("Window", [7, 14, 30, 60, 90, 180], index=3, key="hist_days")
-        with col_filter2:
-            history_status = st.selectbox("Status", ["all", "settled", "pending"], key="hist_status")
-
-        all_bets = make_request("/api/bets", {"status": history_status, "days": history_days})
-
-        if all_bets and all_bets.get("bets"):
-            bets_list = all_bets["bets"]
-            df = pd.DataFrame(bets_list)
-
-            # Format outcome column
-            df["result"] = df["outcome"].map({1: "Win", 0: "Loss", None: "Pending"}).fillna("Pending")
-
-            display_cols = [
-                "id", "matchup", "game_date", "pick", "bet_type",
-                "odds_taken", "bet_size_units", "bet_size_dollars",
-                "result", "profit_loss_dollars", "profit_loss_units",
-                "clv_points", "clv_prob", "is_paper_trade",
-            ]
-            # Keep only columns that exist in the dataframe
-            display_cols = [c for c in display_cols if c in df.columns]
-
-            st.write(f"**{len(df)} bet(s)**")
-            st.dataframe(
-                df[display_cols].rename(columns={
-                    "id": "ID",
-                    "matchup": "Matchup",
-                    "game_date": "Game Date",
-                    "pick": "Pick",
-                    "bet_type": "Type",
-                    "odds_taken": "Odds",
-                    "bet_size_units": "Units",
-                    "bet_size_dollars": "Dollars",
-                    "result": "Result",
-                    "profit_loss_dollars": "P&L ($)",
-                    "profit_loss_units": "P&L (u)",
-                    "clv_points": "CLV pts",
-                    "clv_prob": "CLV prob",
-                    "is_paper_trade": "Paper?",
-                }),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-            # Summary row for settled bets
-            settled = df[df["result"] != "Pending"]
-            if not settled.empty:
-                total_pl = settled["profit_loss_dollars"].sum()
-                total_risked = settled["bet_size_dollars"].sum()
-                wins = (settled["result"] == "Win").sum()
-                st.markdown(
-                    f"**Summary:** {len(settled)} settled | "
-                    f"{wins}W-{len(settled)-wins}L | "
-                    f"P&L: **${total_pl:+.2f}** | "
-                    f"ROI: **{total_pl/total_risked:.1%}**" if total_risked > 0 else ""
-                )
-        else:
-            st.info("No bets found for this filter.")
-
+    st.caption("Use the sidebar pages to navigate.")
+
+# Main content — landing page
+st.title("CBB Edge Analyzer")
+
+# System health check
+health = api_get("/health")
+if health and health.get("status") == "healthy":
+    st.success("API is healthy")
+else:
+    st.error("Could not reach the API. Is the backend running?")
+
+# Quick stats
+perf = api_get("/api/performance/summary")
+overall = perf.get("overall", perf) if perf else {}
+_total = perf.get("total_bets", 0) or overall.get("total_bets", 0) if perf else 0
+if perf and _total > 0:
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Bets", _total)
+    c2.metric("Win Rate", f"{overall.get('win_rate', 0):.1%}")
+    roi = overall.get("roi", 0) or 0
+    c3.metric("ROI", f"{roi:.1%}")
+    clv = overall.get("mean_clv", 0) or 0
+    c4.metric("Mean CLV", f"{clv:.2%}")
+else:
+    st.info("No settled bets yet. Start by running the nightly analysis.")
+
+st.markdown("---")
+
+# Navigation guide
+st.subheader("Pages")
+st.markdown("""
+| Page | Description |
+|------|-------------|
+| **Dashboard** | Overview metrics and recent recommendations |
+| **Today's Bets** | BET/CONSIDER verdicts and parlay tickets |
+| **Bet Log** | Add bets, settle pending, view history |
+| **Morning Briefing** | Daily snapshot before first tipoff |
+| **Admin Panel** | Manual job triggers, portfolio gauges, config |
+| **Performance** | ROI, win rate, cumulative P&L charts |
+| **CLV Analysis** | Closing line value distribution and trends |
+| **Bet History** | Filterable table with CSV export |
+| **Calibration** | Model probability calibration curve |
+| **Alerts** | Active alerts and system monitoring |
+""")
 
 # Footer
 st.markdown("---")
-st.caption("CBB Edge Analyzer v8.0 | Built with Streamlit")
+st.caption("CBB Edge Analyzer v8.0")

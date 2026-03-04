@@ -32,6 +32,7 @@ Quantitative improvements
                 to prevent independent Kelly bets from stacking on busy slates.
 """
 
+import asyncio
 import logging
 import math
 import os
@@ -43,10 +44,10 @@ import numpy as np
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from backend.models import SessionLocal, Game, Prediction, BetLog, DataFetch
+from backend.models import SessionLocal, Game, Prediction, BetLog, DataFetch, ModelParameter
 from backend.betting_model import CBBEdgeModel, GameAnalysis
-from backend.services.odds import fetch_current_odds
-from backend.services.ratings import fetch_current_ratings, get_ratings_service
+from backend.services.odds import fetch_current_odds, async_fetch_current_odds
+from backend.services.ratings import fetch_current_ratings, get_ratings_service, async_fetch_current_ratings
 from backend.services.recalibration import load_current_params
 from backend.services.injuries import get_injury_service
 from backend.services.matchup_engine import get_profile_cache, get_matchup_engine, TeamPlayStyle
@@ -54,6 +55,35 @@ from backend.services.parlay_engine import build_optimal_parlays, format_parlay_
 from backend.services.team_mapping import normalize_team_name
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Settings helpers (read DB overrides, fall back to env vars)
+# ---------------------------------------------------------------------------
+
+def _effective_bankroll(db: "Session") -> float:
+    """Return current bankroll: DB override if present, else STARTING_BANKROLL."""
+    from sqlalchemy.orm import Session as _Session  # avoid circular at module level
+    row = (
+        db.query(ModelParameter)
+        .filter(ModelParameter.parameter_name == "current_bankroll")
+        .order_by(ModelParameter.effective_date.desc())
+        .first()
+    )
+    if row and row.parameter_value and row.parameter_value > 0:
+        return row.parameter_value
+    return float(os.getenv("STARTING_BANKROLL", "1000"))
+
+
+def _force_parlay_active(db: "Session") -> bool:
+    """Return True if force_parlay_sizing override is enabled in DB."""
+    row = (
+        db.query(ModelParameter)
+        .filter(ModelParameter.parameter_name == "force_parlay_sizing")
+        .order_by(ModelParameter.effective_date.desc())
+        .first()
+    )
+    return bool(row and row.parameter_value == 1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -203,9 +233,14 @@ def get_or_create_game(db: Session, game_data: Dict) -> Game:
     """Return existing Game row or create a new one (idempotent)."""
     external_id = game_data.get("game_id")
 
-    game = db.query(Game).filter(Game.external_id == external_id).first()
-    if game:
-        return game
+    # Only attempt deduplication when the Odds API gave us a real ID.
+    # NULL external_id must NOT match other NULL rows (NULL != NULL in SQL,
+    # but SQLAlchemy's == None becomes IS NULL which would return an
+    # unrelated game).
+    if external_id:
+        game = db.query(Game).filter(Game.external_id == external_id).first()
+        if game:
+            return game
 
     commence_time = game_data.get("commence_time")
     if isinstance(commence_time, str):
@@ -416,7 +451,7 @@ def _create_paper_bet(
         actual change in deployed capital, accounting for any EV displacement.
         If displacement occurred, net_change = new_bet_size - displaced_capital.
     """
-    starting_bankroll = float(os.getenv("STARTING_BANKROLL", "1000"))
+    starting_bankroll = _effective_bankroll(db)
 
     if scaled_bet_dollars is not None:
         bet_dollars = scaled_bet_dollars
@@ -560,7 +595,7 @@ def _create_paper_bet(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
+async def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
     """
     Main analysis job (called by APScheduler and /admin/run-analysis).
 
@@ -592,67 +627,65 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
 
     try:
         # ----------------------------------------------------------------
-        # STEP 1: Fetch odds (sharp + retail)
+        # STEPS 1 + 2: Fetch odds AND ratings concurrently (parallel)
         # ----------------------------------------------------------------
-        logger.info("Fetching odds from The Odds API...")
+        logger.info("Fetching odds + ratings in parallel...")
+        _odds_exc: Optional[Exception] = None
+        _ratings_exc: Optional[Exception] = None
+        odds_games: List[Dict] = []
+        odds_freshness: Dict = {}
+        all_ratings: Dict = {}
+
         try:
-            odds_games, odds_freshness = fetch_current_odds()
-            db.add(DataFetch(
-                data_source="the_odds_api",
-                success=True,
-                records_fetched=len(odds_games),
-            ))
-            db.commit()
-            logger.info("Fetched %d games from The Odds API", len(odds_games))
+            (odds_games, odds_freshness), all_ratings = await asyncio.gather(
+                async_fetch_current_odds(),
+                async_fetch_current_ratings(),
+            )
         except Exception as exc:
-            logger.error("Odds API failed: %s", exc, exc_info=True)
+            # gather() raises the first exception; capture which source failed
+            logger.error("Parallel fetch failed: %s", exc, exc_info=True)
+            _odds_exc = exc  # treat as odds failure (conservative)
+
+        # Log DataFetch records for odds
+        if _odds_exc:
             db.add(DataFetch(
                 data_source="the_odds_api",
                 success=False,
-                error_message=str(exc)[:500],
+                error_message=str(_odds_exc)[:500],
                 records_fetched=0,
             ))
             db.commit()
-            return _summary(start_time, 0, 0, 0, [f"Odds API failed: {exc}"])
+            return _summary(start_time, 0, 0, 0, [f"Odds API failed: {_odds_exc}"])
+
+        db.add(DataFetch(
+            data_source="the_odds_api",
+            success=True,
+            records_fetched=len(odds_games),
+        ))
+        logger.info("Fetched %d games from The Odds API", len(odds_games))
+
+        # Log DataFetch records for ratings
+        ratings_service = get_ratings_service()
+        for source in ("kenpom", "barttorvik", "evanmiya"):
+            count = len(all_ratings.get(source, {}))
+            db.add(DataFetch(
+                data_source=source,
+                success=count > 0,
+                records_fetched=count,
+                error_message=None if count > 0 else f"Zero records for {source}",
+            ))
+        db.commit()
+
+        logger.info(
+            "Ratings loaded — KenPom: %d, BartTorvik: %d, EvanMiya: %d",
+            len(all_ratings.get("kenpom", {})),
+            len(all_ratings.get("barttorvik", {})),
+            len(all_ratings.get("evanmiya", {})),
+        )
 
         if not odds_games:
             logger.warning("No games returned from Odds API")
             return _summary(start_time, 0, 0, 0, [], status="no_games")
-
-        # ----------------------------------------------------------------
-        # STEP 2: Fetch ratings
-        # ----------------------------------------------------------------
-        logger.info("Fetching ratings from all sources...")
-        try:
-            all_ratings = fetch_current_ratings()
-            ratings_service = get_ratings_service()
-
-            for source in ("kenpom", "barttorvik", "evanmiya"):
-                count = len(all_ratings.get(source, {}))
-                db.add(DataFetch(
-                    data_source=source,
-                    success=count > 0,
-                    records_fetched=count,
-                    error_message=None if count > 0 else f"Zero records for {source}",
-                ))
-            db.commit()
-
-            logger.info(
-                "Ratings loaded — KenPom: %d, BartTorvik: %d, EvanMiya: %d",
-                len(all_ratings.get("kenpom", {})),
-                len(all_ratings.get("barttorvik", {})),
-                len(all_ratings.get("evanmiya", {})),
-            )
-        except Exception as exc:
-            logger.error("Ratings fetch failed: %s", exc, exc_info=True)
-            db.add(DataFetch(
-                data_source="ratings_aggregate",
-                success=False,
-                error_message=str(exc)[:500],
-            ))
-            db.commit()
-            errors.append(f"Ratings error: {exc}")
-            return _summary(start_time, 0, 0, 0, errors)
 
         # ----------------------------------------------------------------
         # STEP 3: Initialise model — prefer calibrated params from DB,
@@ -666,9 +699,12 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
         model = CBBEdgeModel(
             base_sd=float(os.getenv("BASE_SD", "11.0")),
             weights={
-                "kenpom":    float(os.getenv("WEIGHT_KENPOM",    "0.342")),
-                "barttorvik": float(os.getenv("WEIGHT_BARTTORVIK", "0.333")),
-                "evanmiya":  float(os.getenv("WEIGHT_EVANMIYA",  "0.325")),
+                "kenpom":     calibrated.get("weight_kenpom",
+                                             float(os.getenv("WEIGHT_KENPOM",    "0.342"))),
+                "barttorvik": calibrated.get("weight_barttorvik",
+                                             float(os.getenv("WEIGHT_BARTTORVIK", "0.333"))),
+                "evanmiya":   calibrated.get("weight_evanmiya",
+                                             float(os.getenv("WEIGHT_EVANMIYA",  "0.325"))),
             },
             home_advantage=calibrated.get(
                 "home_advantage",
@@ -678,8 +714,10 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
             fractional_kelly_divisor=float(os.getenv("FRACTIONAL_KELLY_DIVISOR", "2.0")),
         )
         logger.info(
-            "Model initialised — home_adv=%.3f, sd_multiplier=%.4f",
+            "Model initialised — home_adv=%.3f, sd_multiplier=%.4f, "
+            "weights=KP:%.3f BT:%.3f EM:%.3f",
             model.home_advantage, sd_multiplier,
+            model.weights["kenpom"], model.weights["barttorvik"], model.weights["evanmiya"],
         )
 
         # ---- Injury + profile + matchup services -------------------------
@@ -1295,7 +1333,7 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
         # STEP 4b: Simultaneous Kelly adjustment & Global Proportional Scaling
         # ----------------------------------------------------------------
         if bet_candidates:
-            starting_bankroll = float(os.getenv("STARTING_BANKROLL", "1000"))
+            starting_bankroll = _effective_bankroll(db)
             max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0"))
             max_daily_dollars = starting_bankroll * max_daily_pct / 100.0
 
@@ -1392,7 +1430,28 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
 
             # Update current_exposure for parlay logic below
             current_exposure = current_exposure_acc
+
+            # Collect finalised bet details for Discord / summary consumers
+            _bet_details: List[Dict] = [
+                {
+                    "home_team": c["home_team"],
+                    "away_team": c["away_team"],
+                    "spread": c.get("spread"),
+                    "bet_side": c.get("bet_side", "home"),
+                    "edge_conservative": c.get("edge_conservative"),
+                    "recommended_units": c.get("recommended_units"),
+                    "bet_odds": c.get("bet_odds"),
+                    "kelly_fractional": c.get("kelly_fractional"),
+                    "projected_margin": c["analysis"].projected_margin
+                    if hasattr(c.get("analysis"), "projected_margin")
+                    else None,
+                    "verdict": c["prediction"].verdict if c.get("prediction") else "",
+                }
+                for c in bet_candidates
+                if (c.get("recommended_units") or 0) > 0
+            ]
         else:
+            _bet_details = []
             # Still need to define current_exposure if no candidates
             current_exposure = _daily_exposure(db)
 
@@ -1436,10 +1495,11 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
             })
 
         if len(parlay_slate) >= 2:
-            _starting_bankroll = float(os.getenv("STARTING_BANKROLL", "1000"))
+            _starting_bankroll = _effective_bankroll(db)
             _max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0"))
             _max_daily_dollars = _starting_bankroll * _max_daily_pct / 100.0
             _remaining_capacity = max(0.0, _max_daily_dollars - current_exposure)
+            _force_parlay = _force_parlay_active(db)
 
             recommended_parlays = build_optimal_parlays(
                 parlay_slate,
@@ -1447,6 +1507,7 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
                 max_parlays=5,
                 remaining_capacity_dollars=_remaining_capacity,
                 bankroll=_starting_bankroll,
+                force_sizing=_force_parlay,
             )
 
             if recommended_parlays:
@@ -1470,7 +1531,9 @@ def run_nightly_analysis(run_tier: str = "nightly") -> Dict:
 
         return _summary(
             start_time, games_analyzed, bets_recommended,
-            paper_trades_created, errors, games_considered=games_considered,
+            paper_trades_created, errors,
+            games_considered=games_considered,
+            bet_details=_bet_details,
         )
 
     except Exception as exc:
@@ -1499,6 +1562,7 @@ def _summary(
     errors: List[str],
     status: str = "ok",
     games_considered: int = 0,
+    bet_details: Optional[List[Dict]] = None,
 ) -> Dict:
     duration = (datetime.utcnow() - start_time).total_seconds()
     n = max(games_analyzed, 1)
@@ -1514,6 +1578,7 @@ def _summary(
         "errors": errors,
         "timestamp": datetime.utcnow().isoformat(),
         "duration_seconds": round(duration, 2),
+        "bet_details": bet_details or [],
     }
     logger.info(
         "Analysis complete in %.1fs — %d games | %d BET (%.0f%%) | "

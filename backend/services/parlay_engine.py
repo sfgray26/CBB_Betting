@@ -91,6 +91,7 @@ def build_optimal_parlays(
     max_parlays: int = 10,
     remaining_capacity_dollars: Optional[float] = None,
     bankroll: float = 1000.0,
+    force_sizing: bool = False,
 ) -> List[Dict]:
     """
     Build mathematically optimal cross-game parlays from a slate of +EV bets.
@@ -113,6 +114,10 @@ def build_optimal_parlays(
             suppress all parlay recommendations (no capacity left).
         bankroll: Starting bankroll in dollars (default 1000).  Used only when
             remaining_capacity_dollars is provided to convert units ↔ dollars.
+        force_sizing: When True, ignore the capacity=0 suppression block.
+            Parlays are sized at a minimum of 0.25u regardless of remaining
+            portfolio capacity.  Use to push parlay recommendations even on
+            days when straight bets have consumed the daily budget.
 
     Returns:
         List of parlay dictionaries sorted by expected value, each containing:
@@ -202,19 +207,24 @@ def build_optimal_parlays(
                 #     are dropped immediately so they never appear in output.
                 kelly_frac = metrics["kelly_fractional"]
                 if remaining_capacity_dollars is not None and bankroll > 0:
-                    if remaining_capacity_dollars <= 0.0:
+                    if remaining_capacity_dollars <= 0.0 and not force_sizing:
                         # Portfolio fully consumed — skip all parlay combos.
                         continue
                     bet_dollars = kelly_frac * bankroll
-                    if bet_dollars > remaining_capacity_dollars:
-                        bet_dollars = remaining_capacity_dollars
+                    if remaining_capacity_dollars > 0:
+                        if bet_dollars > remaining_capacity_dollars:
+                            bet_dollars = remaining_capacity_dollars
+                    elif force_sizing:
+                        # Capacity exhausted but force override: floor at 0.25u
+                        bet_dollars = max(bet_dollars, bankroll * 0.0025)
                     kelly_frac = bet_dollars / bankroll
                     recommended_units = round((bet_dollars / bankroll) * 100.0, 2)
                 else:
                     recommended_units = metrics["recommended_units"]
 
-                if recommended_units < MIN_PARLAY_UNITS:
+                if recommended_units < MIN_PARLAY_UNITS and not force_sizing:
                     continue  # Too small to recommend after clamping
+                recommended_units = max(recommended_units, MIN_PARLAY_UNITS if force_sizing else 0)
 
                 # Convert parlay decimal odds back to American for display
                 if metrics["parlay_odds"] >= 2.0:

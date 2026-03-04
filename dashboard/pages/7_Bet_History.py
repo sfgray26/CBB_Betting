@@ -6,9 +6,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 import pandas as pd
 import streamlit as st
 from dashboard.utils import api_get, sidebar_api_key
+from dashboard.shared import inject_custom_css
 
 st.set_page_config(page_title="Bet History | CBB Edge", layout="wide")
 sidebar_api_key()
+inject_custom_css()
 
 st.title("Bet History")
 

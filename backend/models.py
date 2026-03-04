@@ -17,31 +17,79 @@ from sqlalchemy import (
     Date,
     UniqueConstraint,
 )
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, date
 import os
-from dotenv import load_dotenv  # Add this import
+from dotenv import load_dotenv
 
 # 1. Force load the .env file BEFORE defining DATABASE_URL
 load_dotenv()
 
-# 2. Get the URL from environment, or use the explicit postgres user as fallback
-# This prevents it from using your OS username 'sfgra'
+# 2. Sync URL — used by background scripts, migrations, and legacy sync code.
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres@127.0.0.1:5432/cbb_edge")
 
-# 3. pool_pre_ping=True helps keep the connection alive with the Docker container
+# 3. Async URL — swaps psycopg2 driver for asyncpg.
+#    Falls back gracefully if DATABASE_URL is not set (e.g. test environments).
+_ASYNC_DATABASE_URL = DATABASE_URL.replace(
+    "postgresql://", "postgresql+asyncpg://"
+).replace(
+    "postgresql+psycopg2://", "postgresql+asyncpg://"
+)
+
+# ── Sync engine (keep for all existing sync paths) ──────────────────────────
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# ── Async engine (used by nightly analysis hot path and APScheduler coroutines)
+# Wrapped in try/except so the server still starts if asyncpg is not installed.
+# Install asyncpg to enable the async hot path: pip install asyncpg==0.29.0
+try:
+    async_engine = create_async_engine(
+        _ASYNC_DATABASE_URL,
+        pool_pre_ping=False,
+        pool_size=10,
+        max_overflow=20,
+        echo=False,
+    )
+    AsyncSessionLocal = async_sessionmaker(
+        async_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+except Exception as _async_engine_exc:  # noqa: BLE001
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        "asyncpg not available — async DB engine disabled (%s). "
+        "Install asyncpg to enable the async hot path.",
+        _async_engine_exc,
+    )
+    async_engine = None  # type: ignore[assignment]
+    AsyncSessionLocal = None  # type: ignore[assignment]
+
 Base = declarative_base()
 
-# Dependency for FastAPI
+
+# ── Session dependencies ─────────────────────────────────────────────────────
+
 def get_db():
+    """Sync session dependency for FastAPI routes that are not yet async."""
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+
+async def get_async_db():
+    """Async session dependency for FastAPI async routes."""
+    async with AsyncSessionLocal() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
 
 # ... (rest of your classes like Game, Prediction, etc. remain exactly the same)
 

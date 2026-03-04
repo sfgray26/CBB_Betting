@@ -1500,7 +1500,9 @@ class CBBEdgeModel:
             _home_team = game_data.get('home_team', 'Home')
             _away_team = game_data.get('away_team', 'Away')
             _bet_team  = _home_team if bet_side == "home" else _away_team
-            _bet_label = f"{_bet_team} ({bet_side} {spread_for_check:+.1f})"
+            # Show spread from the bet side's perspective, not always home spread
+            _side_spread = spread_for_check if bet_side == "home" else -spread_for_check
+            _bet_label = f"{_bet_team} ({bet_side} {_side_spread:+.1f})"
             verdict = (
                 f"CONSIDER {edge_conservative:.1%} edge "
                 f"{_bet_label} @ {bet_odds:+.0f}"
@@ -1566,7 +1568,9 @@ class CBBEdgeModel:
             _home_team = game_data.get('home_team', 'Home')
             _away_team = game_data.get('away_team', 'Away')
             _bet_team  = _home_team if bet_side == "home" else _away_team
-            _bet_label = f"{_bet_team} ({bet_side} {spread_for_check:+.1f})"
+            # Show spread from the bet side's perspective, not always home spread
+            _side_spread = spread_for_check if bet_side == "home" else -spread_for_check
+            _bet_label = f"{_bet_team} ({bet_side} {_side_spread:+.1f})"
 
             if _tier_tag.startswith("T1"):
                 verdict = (

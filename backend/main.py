@@ -42,8 +42,10 @@ from backend.services.performance import (
     calculate_model_accuracy,
     calculate_timeline,
     generate_daily_snapshot,
+    calculate_financial_metrics,
 )
 from backend.services.alerts import check_performance_alerts, persist_alerts, run_alert_check
+from backend.services.recalibration import compute_dynamic_weights
 from backend.services.discord_notifier import send_todays_bets
 from backend.services.dk_import import (
     parse_dk_csv, preview_import, apply_import,
@@ -169,11 +171,20 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Opening line attack scheduler enabled (22:30, 00:30 %s)", timezone)
 
+    # Weekly model parameter recalibration — Sunday 5 AM ET
+    scheduler.add_job(
+        _weekly_recalibration_job,
+        CronTrigger(day_of_week="sun", hour=5, minute=0, timezone=timezone),
+        id="weekly_recalibration",
+        name="Weekly Model Parameter Recalibration",
+        replace_existing=True,
+    )
+
     scheduler.start()
     logger.info(
         "Scheduler started: nightly@%02d:00, outcomes every 2h + daily@04:00, "
         "lines every 30min, odds monitor every %dmin, snapshot@04:30, "
-        "ratings prewarm@%02d:00 %s",
+        "ratings prewarm@%02d:00, recalibration@sun05:00 %s",
         nightly_hour, odds_monitor_interval, ratings_prewarm_hour, timezone,
     )
     
@@ -237,11 +248,35 @@ def _capture_lines_job():
         logger.error("Closing lines job failed: %s", exc, exc_info=True)
 
 
+def _weekly_recalibration_job():
+    """Auto-recalibrate model parameters weekly (Sunday 5 AM ET)."""
+    try:
+        from backend.services.recalibration import run_recalibration
+        db = SessionLocal()
+        try:
+            result = run_recalibration(db, changed_by="scheduler", apply_changes=True)
+            if result.get("skipped"):
+                logger.info("Weekly recalibration skipped: %s", result.get("reason"))
+            else:
+                logger.info("Weekly recalibration complete: %s", result)
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("Weekly recalibration job failed")
+
+
 def _daily_snapshot_job():
-    """Generate daily performance snapshot and run alert checks — runs at 4 AM."""
+    """Generate daily performance snapshot, adjust source weights, and run alert checks — runs at 4:30 AM."""
     db = SessionLocal()
     try:
         generate_daily_snapshot(db)
+        # Dynamic ensemble weight adjustment — runs after snapshot so today's
+        # MAE data is available in PerformanceSnapshot for the rolling window.
+        try:
+            weight_result = compute_dynamic_weights(db, changed_by="auto_daily")
+            logger.info("Dynamic weight calibration: %s", weight_result.get("status"))
+        except Exception as w_exc:
+            logger.warning("Dynamic weight calibration failed (non-fatal): %s", w_exc)
         run_alert_check()
     except Exception as exc:
         logger.error("Daily snapshot job failed: %s", exc, exc_info=True)
@@ -682,6 +717,59 @@ async def get_performance_timeline(
 ):
     """Daily performance timeline with cumulative P&L and ROI series."""
     return calculate_timeline(db, days=days)
+
+
+@app.get("/api/performance/financial-metrics")
+async def get_financial_metrics(
+    days: int = Query(default=90, ge=7, le=365),
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """Sharpe ratio, Sortino ratio, expected Kelly growth, max drawdown, Calmar."""
+    return calculate_financial_metrics(db, days=days)
+
+
+@app.get("/api/performance/source-weights")
+async def get_source_weights(
+    history_days: int = Query(default=30, ge=1, le=365),
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """Current dynamic source weights and 30-day change history."""
+    from backend.services.recalibration import load_current_params
+    current = load_current_params(db)
+    weights = {
+        "weight_kenpom":     current.get("weight_kenpom",     0.342),
+        "weight_barttorvik": current.get("weight_barttorvik",  0.333),
+        "weight_evanmiya":   current.get("weight_evanmiya",    0.325),
+    }
+    cutoff = datetime.utcnow() - timedelta(days=history_days)
+    history = (
+        db.query(ModelParameter)
+        .filter(
+            ModelParameter.parameter_name.in_(
+                ["weight_kenpom", "weight_barttorvik", "weight_evanmiya"]
+            ),
+            ModelParameter.effective_date >= cutoff,
+        )
+        .order_by(ModelParameter.effective_date.desc())
+        .limit(300)
+        .all()
+    )
+    history_data = [
+        {
+            "date":      h.effective_date.isoformat() if h.effective_date else None,
+            "parameter": h.parameter_name,
+            "value":     h.parameter_value,
+            "reason":    h.reason,
+        }
+        for h in history
+    ]
+    return {
+        "current_weights": weights,
+        "history":         history_data,
+        "history_days":    history_days,
+    }
 
 
 @app.get("/api/performance/alerts")

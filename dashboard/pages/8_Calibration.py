@@ -7,9 +7,11 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from dashboard.utils import api_get, sidebar_api_key
+from dashboard.shared import inject_custom_css
 
 st.set_page_config(page_title="Calibration | CBB Edge", layout="wide")
 sidebar_api_key()
+inject_custom_css()
 
 st.title("Model Calibration")
 st.caption(

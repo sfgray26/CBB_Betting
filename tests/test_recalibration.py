@@ -242,11 +242,12 @@ def test_load_current_params_env_fallback():
 
 
 def test_load_current_params_db_override():
-    """DB values override env-var defaults."""
+    """DB values override env-var defaults; weight keys fall back to env defaults."""
     ha_param = _make_param("home_advantage", 4.00)
     sd_param = _make_param("sd_multiplier", 0.95)
 
-    results = iter([ha_param, sd_param])
+    # load_current_params iterates over 5 keys; the 3 weight keys return None
+    results = iter([ha_param, sd_param, None, None, None])
 
     db = MagicMock()
     q = MagicMock()
@@ -258,6 +259,11 @@ def test_load_current_params_db_override():
     result = load_current_params(db)
     assert result["home_advantage"] == pytest.approx(4.00)
     assert result["sd_multiplier"] == pytest.approx(0.95)
+    # weight keys exist and are valid floats (exact value depends on env)
+    for wk in ("weight_kenpom", "weight_barttorvik", "weight_evanmiya"):
+        assert wk in result
+        assert isinstance(result[wk], float)
+        assert 0.0 < result[wk] < 1.0
 
 
 # ---------------------------------------------------------------------------

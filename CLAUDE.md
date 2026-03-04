@@ -1,5 +1,10 @@
 # CLAUDE.md — CBB Edge Analyzer
 
+## Critical: Operating Procedures
+- Follow the high-rigor workflow defined in `.claude/rules/workflow.md`.
+- Always **Plan First** in `tasks/todo.md` before executing logic changes to the V8 model.
+- Maintain `tasks/lessons.md` to record nuances about team mapping or Shin vig removal failures.
+
 ## Project Overview
 
 College Basketball (CBB) Edge Analyzer — a production betting framework for NCAA Division 1 basketball. The system fetches real-time odds, integrates multi-source ratings (KenPom, BartTorvik, EvanMiya), runs a **Version 8** Monte Carlo betting model with matchup-specific variance and portfolio-level risk management, and tracks performance via Closing Line Value (CLV). It is **conservative by design**: the model PASSes on 85-95% of games and only recommends bets when the lower-bound edge is positive after uncertainty adjustments.

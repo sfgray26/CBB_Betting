@@ -27,12 +27,12 @@ Minimum sample requirement: MIN_BETS_FOR_RECALIBRATION (env var, default 30).
 import logging
 import math
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session, joinedload
 
-from backend.models import BetLog, Game, Prediction, ModelParameter
+from backend.models import BetLog, Game, Prediction, ModelParameter, PerformanceSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -176,10 +176,17 @@ def load_current_params(db: Session) -> Dict[str, float]:
     Falls back to environment-variable defaults if no DB overrides exist.
     This is called by analysis.py before constructing CBBEdgeModel so that
     each nightly run uses the most recent calibrated values.
+
+    Returned keys include:
+        home_advantage, sd_multiplier               — core model params
+        weight_kenpom, weight_barttorvik, weight_evanmiya — dynamic weights
     """
     defaults: Dict[str, float] = {
-        "home_advantage": float(os.getenv("HOME_ADVANTAGE", "3.09")),
-        "sd_multiplier":  float(os.getenv("SD_MULTIPLIER",  "0.85")),
+        "home_advantage":    float(os.getenv("HOME_ADVANTAGE",      "3.09")),
+        "sd_multiplier":     float(os.getenv("SD_MULTIPLIER",       "0.85")),
+        "weight_kenpom":     float(os.getenv("WEIGHT_KENPOM",       "0.342")),
+        "weight_barttorvik": float(os.getenv("WEIGHT_BARTTORVIK",   "0.333")),
+        "weight_evanmiya":   float(os.getenv("WEIGHT_EVANMIYA",     "0.325")),
     }
 
     result = dict(defaults)
@@ -361,4 +368,212 @@ def run_recalibration(
         "changes": changes,
         "diagnostics": diag,
         "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Dynamic source-weight calibration
+# ---------------------------------------------------------------------------
+
+# Bounds on any individual source weight
+_WEIGHT_MIN = float(os.getenv("WEIGHT_MIN", "0.10"))
+_WEIGHT_MAX = float(os.getenv("WEIGHT_MAX", "0.60"))
+
+# How quickly we shift toward performance-based weights (0 = never, 1 = instant)
+_LEARNING_RATE = float(os.getenv("WEIGHT_LEARNING_RATE", "0.15"))
+
+# Minimum lookback days with valid per-source MAE data required before adjusting
+_MIN_SNAPSHOT_DAYS = int(os.getenv("WEIGHT_MIN_SNAPSHOT_DAYS", "7"))
+
+# Minimum MAE floor to prevent 1/MAE exploding when error is near zero
+_MAE_FLOOR = 0.5
+
+
+def compute_dynamic_weights(
+    db: Session,
+    changed_by: str = "auto",
+    apply_changes: bool = True,
+    lookback_days: int = 14,
+) -> Dict:
+    """
+    Adjust KenPom / BartTorvik / EvanMiya ensemble weights based on rolling
+    per-source margin prediction accuracy.
+
+    Algorithm
+    ---------
+    1. Fetch the last ``lookback_days`` PerformanceSnapshot rows that have at
+       least one non-NULL source MAE column.
+    2. Compute mean MAE per source over the window.  Sources with no data in
+       the window are excluded from the adjustment (their prior weight is kept).
+    3. Convert MAE → performance score via ``score = 1 / max(mae, _MAE_FLOOR)``.
+       Lower error → higher score → higher weight.
+    4. Compute raw performance weights (normalised scores).
+    5. Blend with prior weights: ``new = prior*(1-lr) + raw*lr`` where
+       ``lr = _LEARNING_RATE``.
+    6. Clamp each weight to ``[_WEIGHT_MIN, _WEIGHT_MAX]`` then renormalise to
+       sum to 1.0.
+    7. Only persist if any weight changes by more than 0.5 pp.
+
+    Returns
+    -------
+    dict with keys: status, lookback_days, snapshots_used, changes, weights,
+    diagnostics, timestamp.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=lookback_days)
+
+    snapshots = (
+        db.query(PerformanceSnapshot)
+        .filter(
+            PerformanceSnapshot.period_start >= cutoff,
+            # At least one source MAE must be populated
+            (
+                PerformanceSnapshot.kenpom_mae.isnot(None)
+                | PerformanceSnapshot.barttorvik_mae.isnot(None)
+                | PerformanceSnapshot.evanmiya_mae.isnot(None)
+            ),
+        )
+        .order_by(PerformanceSnapshot.period_start.desc())
+        .all()
+    )
+
+    if len(snapshots) < _MIN_SNAPSHOT_DAYS:
+        logger.info(
+            "Dynamic weights: only %d valid snapshot(s) in last %d days "
+            "(need %d) — skipping",
+            len(snapshots), lookback_days, _MIN_SNAPSHOT_DAYS,
+        )
+        return {
+            "status": "insufficient_data",
+            "snapshots_available": len(snapshots),
+            "min_required": _MIN_SNAPSHOT_DAYS,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+    # --- Compute rolling mean MAE per source ---
+    def _mean_mae(attr: str) -> Optional[float]:
+        vals = [getattr(s, attr) for s in snapshots if getattr(s, attr) is not None]
+        return (sum(vals) / len(vals)) if vals else None
+
+    mae_kenpom     = _mean_mae("kenpom_mae")
+    mae_barttorvik = _mean_mae("barttorvik_mae")
+    mae_evanmiya   = _mean_mae("evanmiya_mae")
+
+    diag = {
+        "snapshots_used":    len(snapshots),
+        "mae_kenpom":        mae_kenpom,
+        "mae_barttorvik":    mae_barttorvik,
+        "mae_evanmiya":      mae_evanmiya,
+    }
+
+    # --- Load prior weights ---
+    prior = load_current_params(db)
+    prior_w = {
+        "kenpom":     prior.get("weight_kenpom",     0.342),
+        "barttorvik": prior.get("weight_barttorvik",  0.333),
+        "evanmiya":   prior.get("weight_evanmiya",    0.325),
+    }
+
+    # --- Performance scores ---
+    scores: Dict[str, Optional[float]] = {
+        "kenpom":     1.0 / max(mae_kenpom,     _MAE_FLOOR) if mae_kenpom     is not None else None,
+        "barttorvik": 1.0 / max(mae_barttorvik, _MAE_FLOOR) if mae_barttorvik is not None else None,
+        "evanmiya":   1.0 / max(mae_evanmiya,   _MAE_FLOOR) if mae_evanmiya   is not None else None,
+    }
+
+    active_sources = {k: v for k, v in scores.items() if v is not None}
+    if not active_sources:
+        logger.info("Dynamic weights: no source MAE data available — skipping")
+        return {
+            "status": "no_mae_data",
+            "diagnostics": diag,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+    total_score = sum(active_sources.values())
+
+    # --- Blend: performance-driven raw weight, then blend with prior ---
+    blended: Dict[str, float] = {}
+    for src in ("kenpom", "barttorvik", "evanmiya"):
+        if scores[src] is not None:
+            raw_w = scores[src] / total_score        # performance share
+        else:
+            # Source had no MAE data — keep prior weight proportionally
+            raw_w = prior_w[src]
+
+        blended[src] = prior_w[src] * (1 - _LEARNING_RATE) + raw_w * _LEARNING_RATE
+
+    # --- Clamp to [WEIGHT_MIN, WEIGHT_MAX] then renormalise ---
+    for src in blended:
+        blended[src] = max(_WEIGHT_MIN, min(_WEIGHT_MAX, blended[src]))
+    total_blended = sum(blended.values())
+    new_w = {src: round(v / total_blended, 6) for src, v in blended.items()}
+
+    diag["raw_scores"]     = {k: round(v, 6) if v is not None else None for k, v in scores.items()}
+    diag["prior_weights"]  = prior_w
+    diag["blended_weights"] = new_w
+
+    # --- Detect meaningful changes (> 0.5 pp) ---
+    param_map = {
+        "kenpom":     "weight_kenpom",
+        "barttorvik": "weight_barttorvik",
+        "evanmiya":   "weight_evanmiya",
+    }
+    changes: List[Dict] = []
+    for src, param_name in param_map.items():
+        old_val = prior_w[src]
+        new_val = new_w[src]
+        if abs(new_val - old_val) > 0.005:
+            reason = (
+                f"mae_{src}={diag['mae_'+src]:.3f} | "
+                f"score_share={scores[src]/total_score:.3f} | "
+                f"lr={_LEARNING_RATE} | n_days={len(snapshots)}"
+                if scores[src] is not None
+                else "no MAE data — blended from prior"
+            )
+            if apply_changes:
+                db.add(ModelParameter(
+                    parameter_name=param_name,
+                    parameter_value=new_val,
+                    parameter_value_json={
+                        "old":    old_val,
+                        "new":    new_val,
+                        "mae":    diag[f"mae_{src}"],
+                        "n_days": len(snapshots),
+                    },
+                    reason=reason,
+                    changed_by=changed_by,
+                ))
+            changes.append({
+                "parameter": param_name,
+                "old": round(old_val, 6),
+                "new": new_val,
+                "delta": round(new_val - old_val, 6),
+                "reason": reason,
+                "applied": apply_changes,
+            })
+
+    if apply_changes and changes:
+        db.commit()
+        logger.info(
+            "Dynamic weights updated: KP=%.3f BT=%.3f EM=%.3f "
+            "(from KP=%.3f BT=%.3f EM=%.3f) | %d snapshot(s)",
+            new_w["kenpom"], new_w["barttorvik"], new_w["evanmiya"],
+            prior_w["kenpom"], prior_w["barttorvik"], prior_w["evanmiya"],
+            len(snapshots),
+        )
+    elif not changes:
+        logger.info(
+            "Dynamic weights: no significant change "
+            "(KP=%.3f BT=%.3f EM=%.3f stable)",
+            new_w["kenpom"], new_w["barttorvik"], new_w["evanmiya"],
+        )
+
+    return {
+        "status":        "ok" if changes else "no_changes",
+        "lookback_days": lookback_days,
+        "snapshots_used": len(snapshots),
+        "changes":       changes,
+        "weights":       new_w,
+        "diagnostics":   diag,
+        "timestamp":     datetime.utcnow().isoformat(),
     }

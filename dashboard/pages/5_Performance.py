@@ -9,15 +9,18 @@ import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
 from dashboard.utils import api_get, sidebar_api_key
+from dashboard.shared import inject_custom_css
 
 st.set_page_config(page_title="Performance | CBB Edge", layout="wide")
 sidebar_api_key()
+inject_custom_css()
 
 st.title("Performance Overview")
 
 perf = api_get("/api/performance/summary")
 
-if not perf or perf.get("total_bets", 0) == 0:
+_total_bets = perf.get("total_bets", 0) or perf.get("overall", {}).get("total_bets", 0) if perf else 0
+if not perf or _total_bets == 0:
     st.info("No settled bets yet.")
     st.stop()
 
@@ -199,3 +202,98 @@ else:
         )
         calib_df.columns = [c.replace("_", " ").title() for c in calib_df.columns]
         st.dataframe(calib_df, use_container_width=True, hide_index=True)
+
+st.markdown("---")
+
+# --- Financial / Risk Metrics ---
+st.subheader("Financial Risk Metrics")
+fin_days = st.select_slider("Financial metrics window (days)", [30, 60, 90, 180], value=90,
+                             key="fin_days_slider")
+fin = api_get("/api/performance/financial-metrics", {"days": fin_days})
+
+if not fin or fin.get("total_bets", 0) == 0:
+    st.info("Not enough settled bets for financial metrics (requires at least 10 bets with P&L data).")
+else:
+    f1, f2, f3, f4, f5 = st.columns(5)
+    sharpe  = fin.get("sharpe")
+    sortino = fin.get("sortino")
+    eg      = fin.get("expected_kelly_growth")
+    dd_pct  = fin.get("max_drawdown_pct")
+    calmar  = fin.get("calmar")
+
+    def _fmt_ratio(v, decimals=2):
+        return f"{v:.{decimals}f}" if v is not None else "—"
+
+    f1.metric("Sharpe Ratio",    _fmt_ratio(sharpe),
+              help="Annualised risk-adjusted return. > 1.0 is good, > 2.0 is excellent.")
+    f2.metric("Sortino Ratio",   _fmt_ratio(sortino),
+              help="Like Sharpe but penalises only downside volatility.")
+    f3.metric("Exp. Kelly Growth", _fmt_ratio(eg, 4),
+              help="Log-utility expected growth per bet. Positive = edge over book.")
+    f4.metric("Max Drawdown",    f"{dd_pct:.1%}" if dd_pct is not None else "—",
+              help="Largest peak-to-trough loss as a percentage of peak equity.")
+    f5.metric("Calmar Ratio",    _fmt_ratio(calmar),
+              help="Annualised return ÷ max drawdown. > 1.0 is healthy.")
+
+    # Daily P&L bar chart
+    daily_series = fin.get("daily_pl_series", {})
+    if daily_series:
+        st.subheader("Daily P&L")
+        pl_dates  = sorted(daily_series.keys())
+        pl_values = [daily_series[d] for d in pl_dates]
+        bar_colors = ["#2ecc71" if v >= 0 else "#e74c3c" for v in pl_values]
+        fig_daily = go.Figure(go.Bar(
+            x=pl_dates, y=pl_values,
+            marker_color=bar_colors,
+            hovertemplate="%{x}: $%{y:.2f}<extra></extra>",
+        ))
+        fig_daily.add_hline(y=0, line_dash="dash", line_color="gray")
+        fig_daily.update_layout(
+            xaxis_title="Date", yaxis_title="Daily P&L ($)",
+            height=280, showlegend=False,
+        )
+        st.plotly_chart(fig_daily, use_container_width=True)
+
+st.markdown("---")
+
+# --- Dynamic Source Weights ---
+st.subheader("Dynamic Ensemble Weights")
+st.caption("Per-source weights auto-calibrated from rolling 14-day margin MAE. Updates nightly.")
+
+weights_data = api_get("/api/performance/source-weights")
+if weights_data:
+    w_kenpom = weights_data.get("weight_kenpom", 0.342)
+    w_bt     = weights_data.get("weight_barttorvik", 0.333)
+    w_em     = weights_data.get("weight_evanmiya", 0.325)
+    changed  = weights_data.get("last_changed_at")
+    method   = weights_data.get("last_changed_by", "—")
+
+    wc1, wc2, wc3 = st.columns(3)
+    wc1.metric("KenPom",     f"{w_kenpom:.3f}", help="Proportion of composite margin attributed to KenPom ratings")
+    wc2.metric("BartTorvik", f"{w_bt:.3f}",     help="Proportion attributed to BartTorvik")
+    wc3.metric("EvanMiya",   f"{w_em:.3f}",     help="Proportion attributed to EvanMiya")
+
+    if changed:
+        try:
+            ts = datetime.fromisoformat(changed.replace("Z", "+00:00")).strftime("%b %d %H:%M UTC")
+        except Exception:
+            ts = changed[:16]
+        st.caption(f"Last calibrated: **{ts}** (via *{method}*)")
+
+    # Visual weight bar
+    total = w_kenpom + w_bt + w_em or 1.0
+    fig_w = go.Figure(go.Bar(
+        x=["KenPom", "BartTorvik", "EvanMiya"],
+        y=[w_kenpom / total, w_bt / total, w_em / total],
+        marker_color=["#3498db", "#e67e22", "#9b59b6"],
+        text=[f"{v/total:.1%}" for v in [w_kenpom, w_bt, w_em]],
+        textposition="outside",
+    ))
+    fig_w.update_layout(
+        yaxis=dict(range=[0, 0.7], title="Weight"),
+        height=250,
+        showlegend=False,
+    )
+    st.plotly_chart(fig_w, use_container_width=True)
+else:
+    st.info("Source weight data unavailable — run the nightly analysis to initialise.")

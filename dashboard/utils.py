@@ -29,13 +29,13 @@ def api_get(endpoint: str, params: dict = None):
         return None
 
 
-def api_post(endpoint: str, payload: dict):
+def api_post(endpoint: str, payload: dict, timeout: int = 15):
     try:
         r = requests.post(
             f"{_API_URL}{endpoint}",
             headers={**_headers(), "Content-Type": "application/json"},
             json=payload,
-            timeout=15,
+            timeout=timeout,
         )
         r.raise_for_status()
         return r.json()
@@ -75,10 +75,3 @@ def sidebar_api_key() -> None:
             if key_input:
                 st.session_state["api_key"] = key_input
                 st.rerun()
-
-
-SEVERITY_COLORS = {
-    "CRITICAL": "🔴",
-    "WARNING":  "🟡",
-    "INFO":     "🔵",
-}

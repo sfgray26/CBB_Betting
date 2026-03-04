@@ -8,10 +8,12 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-from dashboard.utils import api_get, sidebar_api_key, SEVERITY_COLORS
+from dashboard.utils import api_get, sidebar_api_key
+from dashboard.shared import inject_custom_css, SEVERITY_COLORS
 
 st.set_page_config(page_title="CLV Analysis | CBB Edge", layout="wide")
 sidebar_api_key()
+inject_custom_css()
 
 st.title("CLV Analysis")
 st.caption(
@@ -143,9 +145,7 @@ if scatter_data and len(scatter_data) > 0:
                 "outcome": "Result",
             },
         )
-    except Exception as e:
-        # Fallback without trendline if statsmodels not installed
-        st.warning("Trendline unavailable (install statsmodels for OLS regression line)")
+    except Exception:
         fig_scatter = px.scatter(
             df_scatter,
             x="clv_prob",

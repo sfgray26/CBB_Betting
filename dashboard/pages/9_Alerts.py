@@ -5,10 +5,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import streamlit as st
 from datetime import datetime
-from dashboard.utils import api_get, api_post, sidebar_api_key, SEVERITY_COLORS
+from dashboard.utils import api_get, api_post, sidebar_api_key
+from dashboard.shared import inject_custom_css, SEVERITY_COLORS
 
 st.set_page_config(page_title="Alerts | CBB Edge", layout="wide")
 sidebar_api_key()
+inject_custom_css()
 
 ADMIN_KEY = os.getenv("API_KEY_USER1", "")
 

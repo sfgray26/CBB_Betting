@@ -182,6 +182,7 @@ def calculate_summary_stats(db: Session) -> Dict:
     }
 
     return {
+        "total_bets": total,   # top-level convenience field for dashboard guard
         "overall": overall,
         "by_bet_type": by_bet_type,
         "by_edge_bucket": by_edge_bucket,
@@ -651,3 +652,132 @@ def generate_daily_snapshot(db: Session) -> PerformanceSnapshot:
         (_mean([abs(p.projected_margin - p.actual_margin) for p in preds]) or 0),
     )
     return snap
+
+
+# ---------------------------------------------------------------------------
+# calculate_financial_metrics
+# ---------------------------------------------------------------------------
+
+def calculate_financial_metrics(
+    db: Session,
+    days: int = 90,
+    risk_free_rate: float = 0.05,
+) -> Dict:
+    """
+    Compute hedge-fund-style portfolio performance metrics.
+
+    Metrics returned
+    ----------------
+    sharpe_ratio
+        Annualised Sharpe: (mean_daily_pl - rf) / std_daily_pl * sqrt(252).
+        Uses daily P&L grouped by game_date.
+    sortino_ratio
+        Annualised Sortino: mean_daily_pl / downside_std * sqrt(252).
+        Downside std is computed only on negative-return days.
+    expected_growth
+        Mean per-bet expected log-utility growth using Kelly formula:
+        E[g] = p*log(1 + f*b) + (1-p)*log(1-f), averaged over all bets
+        with available model_prob, Kelly fraction, and odds.
+    max_drawdown_pct
+        Maximum peak-to-trough % drawdown of cumulative P&L over the window.
+    calmar_ratio
+        Annualised return / |max_drawdown_pct| (risk-adjusted return).
+    total_return_pct
+        Total P&L as a % of total risked capital.
+
+    Args
+    ----
+    days            : Lookback window in days (default 90).
+    risk_free_rate  : Annual risk-free rate for Sharpe computation (default 5%).
+    """
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    bets = _settled_bets(db, cutoff=cutoff)
+
+    if not bets:
+        return {
+            "message": "No settled bets in window",
+            "days": days,
+            "bets": 0,
+        }
+
+    # --- Group into daily P&L ---
+    from collections import defaultdict
+    daily_pl: Dict[str, float] = defaultdict(float)
+    daily_risked: Dict[str, float] = defaultdict(float)
+    for b in bets:
+        day_key = (b.game.game_date.date() if b.game else datetime.utcnow().date()).isoformat()
+        daily_pl[day_key]     += (b.profit_loss_dollars or 0.0)
+        daily_risked[day_key] += (b.bet_size_dollars or 0.0)
+
+    pl_series = sorted(daily_pl.items())           # [(date, pl), ...]
+    daily_returns = [pl for _, pl in pl_series]
+    n_trading_days = len(daily_returns)
+
+    # --- Sharpe ---
+    mean_daily = _mean(daily_returns) or 0.0
+    std_daily  = _std(daily_returns)
+    rf_daily = risk_free_rate / 252.0
+    sharpe = None
+    if std_daily and std_daily > 0:
+        sharpe = round((mean_daily - rf_daily) / std_daily * math.sqrt(252), 3)
+
+    # --- Sortino ---
+    downside = [r for r in daily_returns if r < 0]
+    sortino = None
+    if downside and len(downside) >= 2:
+        downside_std = _std(downside)
+        if downside_std and downside_std > 0:
+            sortino = round(mean_daily / downside_std * math.sqrt(252), 3)
+
+    # --- Expected Kelly Growth (per-bet log utility) ---
+    growth_terms: List[float] = []
+    for b in bets:
+        p = b.model_prob
+        odds = b.odds_taken
+        f = b.kelly_fraction
+        if p is None or odds is None or f is None or f <= 0:
+            continue
+        try:
+            b_decimal = (odds / 100.0) if odds > 0 else (100.0 / abs(odds))
+            win_term  = p * math.log(1 + f * b_decimal)
+            lose_term = (1 - p) * math.log(max(1 - f, 1e-9))
+            growth_terms.append(win_term + lose_term)
+        except (ValueError, ZeroDivisionError):
+            continue
+    expected_growth = round(_mean(growth_terms) or 0.0, 6)
+
+    # --- Max drawdown ---
+    cum_pl = 0.0
+    peak   = 0.0
+    max_dd = 0.0
+    total_risked = sum(b.bet_size_dollars or 0 for b in bets)
+    for _, pl in pl_series:
+        cum_pl += pl
+        if cum_pl > peak:
+            peak = cum_pl
+        dd = (peak - cum_pl)
+        if dd > max_dd:
+            max_dd = dd
+    max_dd_pct = round(-max_dd / total_risked * 100, 3) if total_risked > 0 else 0.0
+
+    # --- Calmar ---
+    total_pl = sum(b.profit_loss_dollars or 0 for b in bets)
+    total_return_pct = round(total_pl / total_risked * 100, 3) if total_risked > 0 else 0.0
+    annualised_return = total_return_pct / days * 365 if days > 0 else 0.0
+    calmar = round(annualised_return / abs(max_dd_pct), 3) if max_dd_pct < 0 else None
+
+    return {
+        "days":              days,
+        "bets":              len(bets),
+        "trading_days":      n_trading_days,
+        "sharpe_ratio":      sharpe,
+        "sortino_ratio":     sortino,
+        "expected_growth":   expected_growth,
+        "max_drawdown_pct":  max_dd_pct,
+        "calmar_ratio":      calmar,
+        "total_return_pct":  total_return_pct,
+        "annualised_return_pct": round(annualised_return, 3),
+        "mean_daily_pl":     round(mean_daily, 2),
+        "std_daily_pl":      round(std_daily, 2) if std_daily else None,
+        "daily_pl_series":   [{"date": d, "pl": round(p, 2)} for d, p in pl_series],
+    }
