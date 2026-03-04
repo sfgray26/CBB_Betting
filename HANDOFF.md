@@ -1,6 +1,6 @@
-# 🦅 OPERATIONAL HANDOFF (EMAC-020)
+# 🦅 OPERATIONAL HANDOFF (EMAC-021)
 
-> Ground truth as of EMAC-020. Operator: Claude Code (Master Architect).
+> Ground truth as of EMAC-021. Operator: Claude Code (Master Architect).
 > Read `IDENTITY.md` for risk policy. Read `AGENTS.md` for roles. Read `HEARTBEAT.md` for loops.
 
 ---
@@ -8,42 +8,38 @@
 ### 1. MISSION INTEL (Ground Truth)
 
 **Operator:** Claude Code (Master Architect)
-**Mission accomplished:** EMAC-019 — SNR Calibration Audit, ReanalysisEngine Design, Circuit Breaker Audit, Peer Review.
+**Mission accomplished:** EMAC-020 — Data Deduplication & UI Integrity (Mission Clean Sweep)
 
 **Technical State (cumulative):**
 
 | Component | Status | Detail |
 |-----------|--------|--------|
-| A-8: SNR Calibration Audit | ✅ | n=3 resolved BET predictions (not 50 as anticipated). 0/3 cover rate — statistically meaningless. `SNR_KELLY_FLOOR=0.5` maintained. Re-audit when n >= 20 per tier. |
-| A-9: ReanalysisEngine | ✅ | `CachedGameContext` + `ReanalysisEngine` added to `betting_model.py`. Exposes `reanalyze(new_spread, new_total)` + factory `from_analysis_pass()`. Ready for Level 5 wiring. |
-| A-10: Circuit Breaker Audit | ✅ | Single integrity abort path at `betting_model.py:1608`, already prefixed `INTEGRITY_ABORT:`. All other reject paths use distinct prefixes. No changes needed. |
-| Peer Review: pred_id fix | ✅ | **APPROVED.** `pred_id` (Prediction PK) is the correct unique key. Full assessment in Section 2. |
-| Full test suite | ✅ | **408/408 passing** after ReanalysisEngine addition. |
+| A-11: API Deduplication | ✅ | `/api/predictions/today` now deduplicates by `game_id`. Priority: nightly > opener, then best edge. Fixes the 28-bets-on-77-games anomaly. |
+| A-12: UI Dedup Guard | ✅ | `dashboard/pages/1_Todays_Bets.py` adds last-resort client-side dedup by `game_id`. Even if API response contains duplicates, UI shows one card per matchup. |
+| A-13: Code Sweep | ✅ | All service files audited. Zero production `print()` calls — only in `__main__` script blocks (betting_model, odds, sentinel, models). No misaligned args found. |
+| A-14: SNR Floor Audit | ✅ | `_snr_kelly_scalar()` correctly reads `SNR_KELLY_FLOOR` env (default 0.5). Not being bypassed. Audit confirms n=3 resolved BETs — SNR calibration deferred until n >= 20 per tier. |
+| Confidence audit (90d) | ✅ | 3 resolved BETs. 0/3 cover rate (statistically meaningless). SNR_KELLY_FLOOR=0.5 maintained. Re-audit when n >= 20. |
+| Full test suite | ✅ | **408/408 passing** after clean sweep. |
 | G-3 Railway Env Vars | ⚠️ | **USER ACTION REQUIRED.** Set `SNR_KELLY_FLOOR`, `INTEGRITY_CAUTION_SCALAR`, `INTEGRITY_VOLATILE_SCALAR` in Railway Dashboard. |
 
 ---
 
-### 2. ARCHITECT PEER REVIEW — Gemini's pred_id Fix
+### 2. ROOT CAUSE: The 28-Bet Anomaly
 
-**File reviewed:** `dashboard/pages/1_Todays_Bets.py`
+The inflated bet count was caused by **run_tier duplication**, not a model bug:
+- `analysis.py` correctly deduplicates per `run_tier` (nightly vs opener in isolation)
+- BUT if both `nightly` and `opener_attack` jobs run on the same day, the same game gets **two separate Prediction rows** (one per tier)
+- `/api/predictions/today` previously returned ALL predictions → duplicates surfaced in UI
 
-**Change:** Widget keys derived from `pred_id` (Prediction PK) instead of `game_id`.
+**Fix applied (two-layer defense):**
+1. **API layer** (`backend/main.py:434`): `seen{}` dict keyed by `game_id`, priority `nightly > opener > others`, then best edge tiebreaker
+2. **UI layer** (`dashboard/pages/1_Todays_Bets.py:24`): `_seen_gids{}` guard before rendering any card
 
-**Assessment: APPROVED — correct fix, correct data model alignment.**
-
-Reasoning:
-- `game_id` is NOT unique per page render on busy slates — multiple predictions can exist for the same game (re-runs, test data). `pred_id` is the Prediction PK and is guaranteed unique.
-- Streamlit requires unique widget keys within a page. Using `pred_id` eliminates the `DuplicateWidgetID` exception on multi-bet slates.
-- The bet log `notes` field correctly preserves both IDs for traceability: `f"Logged from Today's Bets | pred_id={pred_id}"`.
-- Session state keys (`log_key`, `logged_{pred_id}`, form + input keys) are all consistently `pred_id`-scoped.
-
-**No follow-up action required.**
+The SNR math and Kelly floor logic were NOT the culprits — confirmed clean.
 
 ---
 
 ### 3. DELEGATION BUNDLE: Gemini CLI (DevOps Strike Lead)
-
-**Objective:** Railway env vars + Level 5 Real-Time Pulse wiring.
 
 **Task G-3 — Railway Env Vars (STILL PENDING USER ACTION)**
 - Add to Railway Dashboard: `SNR_KELLY_FLOOR=0.5`, `INTEGRITY_CAUTION_SCALAR=0.75`, `INTEGRITY_VOLATILE_SCALAR=0.5`
@@ -51,14 +47,14 @@ Reasoning:
 
 **Task G-5 — ReanalysisEngine Wiring (Level 5 Prep)**
 - `ReanalysisEngine` + `CachedGameContext` are live in `betting_model.py`. Wire them in `analysis.py`:
-  1. After the BET/CONSIDER model.analyze_game() call, create an engine and store it:
+  1. After the BET/CONSIDER `model.analyze_game()` call, create an engine and store it:
      ```python
      engine = ReanalysisEngine.from_analysis_pass(model, game_data, odds_input, ratings, ...)
      _reanalysis_cache[_game_key] = engine
      ```
   2. Return `_reanalysis_cache` from `run_nightly_analysis()` alongside the summary dict.
   3. Pass the cache to the `OddsMonitor` so its callback can call `engine.reanalyze(new_spread)`.
-- This is EMAC-021 scope.
+- This is EMAC-022 scope.
 
 ---
 
@@ -75,6 +71,7 @@ Reasoning:
 
 - **Level 5 wiring**: After Gemini completes G-5, peer-review `analysis.py` changes + add ReanalysisEngine tests.
 - **SNR re-audit**: Trigger when n >= 20 alpha bets in DB. Run `python scripts/audit_confidence.py --days 90 --min-bets 20`.
+- **run_tier strategy review**: Consider whether opener_attack predictions should automatically supersede nightly when they run after (currently nightly always wins). This is a product decision.
 
 ---
 
@@ -88,6 +85,7 @@ Reasoning:
 | OpenClaw verbal claims without log evidence are unacceptable for O-5 class tasks. | EMAC-017/018 |
 | n=50 in directive was aspirational. DB had only 3 resolved BETs. Always verify DB count via audit script before acting on sample-size claims. | EMAC-019 |
 | `pred_id` (Prediction PK) is the correct Streamlit widget key — never `game_id` which is not unique per-render. | EMAC-019 |
+| Inflated bet count (28 on 77-game slate) was run_tier deduplication failure, not model logic. Fix at API + UI layers. | EMAC-020 |
 
 ---
 
@@ -95,19 +93,19 @@ Reasoning:
 
 #### PROMPT FOR GEMINI CLI
 ```
-MISSION: EMAC-020 — Railway Env Vars + Level 5 ReanalysisEngine Wiring
+MISSION: EMAC-021 — Railway Env Vars + Level 5 ReanalysisEngine Wiring
 You are the DevOps Strike Lead (Gemini CLI).
 Read HANDOFF.md Sections 3 and 7 for your directives (Tasks G-3, G-5).
 
 Execute in order:
 1. Complete G-3: Set SNR_KELLY_FLOOR, INTEGRITY_CAUTION_SCALAR, INTEGRITY_VOLATILE_SCALAR in Railway Dashboard. Redeploy + verify GET /health returns 200.
 2. Begin G-5: Wire ReanalysisEngine.from_analysis_pass() into the BET/CONSIDER loop in analysis.py. Store engines in _reanalysis_cache dict keyed by game_key. Return cache from run_nightly_analysis(). Pass to OddsMonitor callback.
-3. Update HANDOFF.md to EMAC-021 when complete.
+3. Update HANDOFF.md to EMAC-022 when complete.
 ```
 
 #### PROMPT FOR OPENCLAW
 ```
-MISSION: EMAC-020 — O-5 Async Sweep Live Log Evidence (final)
+MISSION: EMAC-021 — O-5 Async Sweep Live Log Evidence (final)
 You are the Integrity Execution Unit (OpenClaw).
 Read HANDOFF.md Section 4 for your directive.
 
@@ -120,7 +118,7 @@ Execute:
 
 #### PROMPT FOR CLAUDE CODE
 ```
-MISSION: EMAC-021 — ReanalysisEngine Test Coverage + Level 5 Peer Review
+MISSION: EMAC-022 — ReanalysisEngine Test Coverage + Level 5 Peer Review
 You are Claude Code, Master Architect for CBB Edge Analyzer.
 Read HANDOFF.md Section 5 for your review queue.
 
@@ -132,5 +130,5 @@ When Gemini completes G-5 (ReanalysisEngine wiring in analysis.py):
    - reanalyze() with new_total updates base_sd_override correctly
    - from_analysis_pass() factory correctly snapshots all context fields
 3. Run pytest tests/ -q --tb=short — must pass.
-4. Update HANDOFF.md to EMAC-022.
+4. Update HANDOFF.md to EMAC-023.
 ```

@@ -22,6 +22,21 @@ if today_data:
     c2.metric("Bets Recommended", today_data.get("bets_recommended", 0))
 
     predictions = today_data.get("predictions", [])
+
+    # Last-resort UI dedup guard: API should already deduplicate, but protect
+    # against stale cache or test data serving duplicate game_ids.
+    _seen_gids: dict = {}
+    for _p in predictions:
+        _gid = _p.get("game_id") or (_p.get("game") or {}).get("id")
+        if _gid is None:
+            continue
+        if _gid not in _seen_gids or (
+            (_p.get("edge_conservative") or 0)
+            > (_seen_gids[_gid].get("edge_conservative") or 0)
+        ):
+            _seen_gids[_gid] = _p
+    predictions = list(_seen_gids.values())
+
     bets = [p for p in predictions if p["verdict"].startswith("Bet")]
     bets.sort(key=lambda b: b.get("edge_conservative") or 0.0, reverse=True)
 
