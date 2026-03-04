@@ -1,4 +1,4 @@
-# OPERATIONAL HANDOFF (EMAC-026)
+# OPERATIONAL HANDOFF (EMAC-027)
 
 > Ground truth as of EMAC-026. Operator: Claude Code (Master Architect).
 > Read `IDENTITY.md` for risk policy. Read `AGENTS.md` for roles. Read `HEARTBEAT.md` for loops.
@@ -8,7 +8,7 @@
 ### 1. MISSION INTEL (Ground Truth)
 
 **Operator:** Claude Code (Master Architect)
-**Mission accomplished:** EMAC-025 — VERDICT_FLIP Discord Peer Review + G-7 Close-Out
+**Mission accomplished:** EMAC-026/027 — OpenClaw Integrity Sweep Root Cause Fix + O-5 Close-Out
 
 **Technical State (cumulative):**
 
@@ -23,12 +23,38 @@
 | A-17: VERDICT_FLIP Audit Fixes | ✅ | 4 bugs fixed (see below). `_verdict_flip_fired` one-fire set. `original_verdict` in context. Pre-warm reconstructed correctly. |
 | G-7: VERDICT_FLIP Discord Alert | ✅ | `_verdict_flip_handler` in lifespan. `send_verdict_flip_alert()` hardened. (EMAC-025) |
 | A-18: Discord Alert Hardening | ✅ | 4 crash paths fixed in `send_verdict_flip_alert()`. (EMAC-025) |
-| Full test suite | ✅ | **413/413 passing.** |
+| O-5: Integrity Sweep Async | ✅ | **CLOSED.** Root cause found + fixed: sync-in-async bug in `_ddgs_and_check`. 14 tests added. (EMAC-027) |
+| Full test suite | ✅ | **427/427 passing.** |
 | G-3 Railway Env Vars | ⚠️ | **USER ACTION REQUIRED.** Set `SNR_KELLY_FLOOR`, `INTEGRITY_CAUTION_SCALAR`, `INTEGRITY_VOLATILE_SCALAR` in Railway Dashboard. |
 
 ---
 
-### 2. EMAC-025 PEER REVIEW FINDINGS — 4 CRASH PATHS FIXED
+### 2. EMAC-027 — OPENCLAW O-5 ROOT CAUSE + FIX
+
+**Task O-5 has been outstanding since EMAC-017.** OpenClaw repeatedly failed to deliver log evidence because the task was premised on a code bug: the async integrity sweep never actually ran concurrently.
+
+**Root Cause — Sync-in-Async (`_ddgs_and_check`):**
+`_ddgs_and_check()` was declared `async def` but contained exclusively synchronous blocking I/O:
+- `DDGS().text()` — synchronous HTTP to DuckDuckGo
+- `perform_sanity_check()` → `requests.post(OLLAMA_URL)` — synchronous HTTP to Ollama
+
+`asyncio.gather() + Semaphore(8)` provided zero concurrency. All 8 "concurrent" sweep tasks ran serially on the event loop main thread. The log line `"Triggering concurrent integrity sweep..."` fired, but no actual concurrency occurred.
+
+**Fix Applied (`backend/services/analysis.py`):**
+- Extracted blocking logic into `_ddgs_and_check_sync(game)` — plain synchronous function
+- `_ddgs_and_check(game)` is now a true `async def` wrapper: `return await asyncio.to_thread(_ddgs_and_check_sync, game)`
+- Thread pool provides real I/O concurrency — 8 DDGS+Ollama calls now run truly parallel
+
+**Tests Added (`tests/test_integrity_sweep.py`, 14 tests):**
+- Concurrency timing test proves true parallelism (<0.20s for 5×50ms tasks)
+- Fault isolation: one failing game does not abort the rest
+- VOLATILE verdict passthrough, semaphore boundary (12 > 8), fallback paths
+
+**O-5 STATUS: CLOSED.** The sweep is architecturally correct. No further OpenClaw verification needed.
+
+---
+
+### 3. EMAC-025 PEER REVIEW FINDINGS — 4 CRASH PATHS FIXED
 
 **Reviewed:** `discord_notifier.py::send_verdict_flip_alert()`, `main.py` lifespan callback registration
 
@@ -85,10 +111,12 @@ All V9 components correctly wired and tested:
 
 ### 5. DELEGATION BUNDLE: OpenClaw (Integrity Execution Unit)
 
-**Task O-5 — Async Verification (outstanding since EMAC-017)**
-- Call `POST /admin/run-analysis` with `X-API-Key` header.
-- Paste the exact log lines showing `"Triggering concurrent integrity sweep for N candidates..."` with timestamps.
-- Verbal claim without log evidence will be rejected.
+**O-5 is CLOSED.** The async integrity sweep bug was found and fixed by architect review (EMAC-027). OpenClaw does not need to re-verify.
+
+**Future O-6 — Prod Integrity Verdicts:**
+When Railway env vars are set (G-3) and a real nightly analysis runs against live games:
+- Spot-check 1 Prediction in the DB and confirm `full_analysis["calculations"]["integrity_verdict"]` is NOT `"Sanity check unavailable"` (i.e., Ollama or DDGS returned a real verdict)
+- If all verdicts are "unavailable", it means Ollama is not configured in Railway — escalate as a new G-task for Gemini
 
 ---
 
@@ -115,6 +143,8 @@ All V9 components correctly wired and tested:
 | Discord embed fields using `:.1%` or `:.2f` on None fields crash silently in prod. Always guard with `or 0.0`. | EMAC-025 |
 | Never parse verdict strings to extract pick info — use `full_analysis["calculations"]["bet_side"]` directly. | EMAC-025 |
 | Callback accumulation risk: register Discord/alert handlers in lifespan, not in nightly_job. | EMAC-025 |
+| `async def` without `asyncio.to_thread` wrapping sync I/O provides ZERO concurrency. `asyncio.gather` only yields at `await` points — blocking calls stall the loop. Always use `asyncio.to_thread()` for sync network calls inside async functions. | EMAC-027 |
+| When a recurring task is "blocked" for multiple sessions, suspect a code bug — not a coordination failure. Audit the implementation before escalating to agents. | EMAC-027 |
 
 ---
 
@@ -154,7 +184,7 @@ Execute:
 
 #### PROMPT FOR CLAUDE CODE
 ```
-MISSION: EMAC-027 — SNR Re-Audit + Season Calibration Prep
+MISSION: EMAC-028 — SNR Re-Audit + Season Calibration Prep
 You are Claude Code, Master Architect for CBB Edge Analyzer.
 Read HANDOFF.md Section 6 for your review queue.
 
@@ -168,6 +198,6 @@ Tasks:
 3. V9 live verification: If Railway env vars (G-3) have been set, query the DB for
    the most recent prediction and verify `full_analysis["calculations"]` contains
    `snr`, `snr_kelly_scalar`, `integrity_verdict`, `integrity_kelly_scalar` fields.
-4. Run pytest tests/ -q --tb=short — must pass.
-5. Update HANDOFF.md to EMAC-028.
+4. Run pytest tests/ -q --tb=short — must pass (should be 427+).
+5. Update HANDOFF.md to EMAC-029.
 ```
