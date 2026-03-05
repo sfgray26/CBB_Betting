@@ -6,20 +6,18 @@ import os
 import sys
 import json
 
-# Add project root to path
-sys.path.append(os.getcwd())
-
-from backend.services.scout import (
-    generate_scouting_report, 
-    generate_morning_briefing_narrative
-)
 
 def run_real_test():
-    with open("tmp_today_data.json", "r") as f:
+    from backend.services.scout import (
+        generate_scouting_report,
+        generate_morning_briefing_narrative,
+    )
+    data_path = os.path.join(os.path.dirname(__file__), "..", "tmp_today_data.json")
+    with open(data_path, "r") as f:
         data = json.load(f)
 
     print("="*60)
-    print(f"📊 GENERATING INSIGHTS FOR SLATE: {data['date']}")
+    print(f"GENERATING INSIGHTS FOR SLATE: {data['date']}")
     print(f"Stats: {data['total_games']} Games, {data['bets_recommended']} Bets")
     print("="*60)
 
@@ -50,4 +48,5 @@ def run_real_test():
     print("\n" + "="*60)
 
 if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     run_real_test()
