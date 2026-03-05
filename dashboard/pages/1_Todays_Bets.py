@@ -244,12 +244,13 @@ if today_data:
             matchup = f"{away} @ {home}"
             edge = c.get("edge_conservative", 0)
             margin = c.get("projected_margin", 0)
+            pred_id = c.get("id")
             try:
                 game_time = datetime.fromisoformat(g.get("game_date") or "").strftime("%I:%M %p")
             except (ValueError, TypeError):
                 game_time = "TBD"
 
-            with st.expander(f"{matchup} | Edge {edge:.1%} | {game_time}"):
+            with st.expander(f"{matchup} | Edge {edge:.1%} | {game_time}", key=f"exp_{pred_id}"):
                 col1, col2, col3 = st.columns(3)
                 col1.metric("Projected Margin", f"{margin:.1f} pts")
                 col2.metric("Conservative Edge", f"{edge:.2%}")

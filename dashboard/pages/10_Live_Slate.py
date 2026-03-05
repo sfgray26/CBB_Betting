@@ -256,7 +256,7 @@ if rows:
 
     styled = (
         df.style
-          .applymap(_colour_tier, subset=["Tier"])
+          .map(_colour_tier, subset=["Tier"])
           .set_properties(**{"text-align": "center"}, subset=df.columns[2:])
     )
     st.dataframe(styled, use_container_width=True, hide_index=True)

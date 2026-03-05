@@ -9,22 +9,12 @@ import os
 # Ensure the project root (parent of dashboard/) is on the path so that
 # "from dashboard.shared import ..." resolves correctly regardless of how
 # Streamlit was launched.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
-
-API_URL = os.getenv("API_URL", "http://localhost:8000")
-API_KEY = os.getenv("API_KEY_USER1", "")
-
-st.set_page_config(
-    page_title="CBB Edge Analyzer",
-    page_icon="🏀",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
 
 from dashboard.shared import inject_custom_css
 from dashboard.utils import api_get, sidebar_api_key

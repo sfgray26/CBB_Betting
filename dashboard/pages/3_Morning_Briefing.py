@@ -30,9 +30,16 @@ if today_data:
     # Narrative Briefing
     top_bet = bets[0] if bets else None
     top_bet_info = None
-    if top_bet and "game" in top_bet:
-        g = top_bet["game"]
-        top_bet_info = f"{g.get('away_team')} @ {g.get('home_team')} (Edge {top_bet.get('edge_conservative', 0):.1%})"
+    if top_bet:
+        g = top_bet.get("game", {})
+        fa = top_bet.get("full_analysis", {})
+        inputs = fa.get("inputs", {})
+        odds_data = inputs.get("odds", {})
+        
+        home = g.get("home_team") or odds_data.get("home_team") or "Home"
+        away = g.get("away_team") or odds_data.get("away_team") or "Away"
+        edge = top_bet.get("edge_conservative", 0)
+        top_bet_info = f"{away} @ {home} (Edge {edge:.1%})"
     
     narrative = generate_morning_briefing_narrative(len(bets), len(considers), top_bet_info)
     st.info(narrative)
