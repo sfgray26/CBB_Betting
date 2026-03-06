@@ -6,7 +6,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import streamlit as st
-from dashboard.utils import api_get, api_post, sidebar_api_key, get_float_env
+from dashboard.utils import api_get, api_post, api_delete, sidebar_api_key, get_float_env
 from dashboard.shared import inject_custom_css
 
 st.set_page_config(page_title="Admin Panel | CBB Edge", layout="wide")
@@ -48,6 +48,26 @@ with col3:
             st.success(f"Captured lines for {result.get('games_captured', '?')} games")
         else:
             st.error("Capture failed — check API logs.")
+
+st.markdown("---")
+
+# ============================================================================
+# DATA CLEANUP — delete stale/test game records
+# ============================================================================
+st.subheader("Data Cleanup")
+st.caption("Delete a stale or test game and all its associated predictions. Blocked if real bet logs exist.")
+
+with st.form("delete_game_form"):
+    del_game_id = st.number_input("Game ID to delete", min_value=1, step=1, value=1)
+    del_submitted = st.form_submit_button("Delete Game", type="secondary")
+
+if del_submitted:
+    result = api_delete(f"/admin/games/{int(del_game_id)}")
+    if result:
+        st.success(
+            f"Deleted game {result['game_id']} ({result['matchup']}) — "
+            f"{result['predictions_deleted']} prediction(s) removed."
+        )
 
 st.markdown("---")
 

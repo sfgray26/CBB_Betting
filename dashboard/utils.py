@@ -78,6 +78,20 @@ def api_put(endpoint: str, payload: dict):
         return None
 
 
+def api_delete(endpoint: str):
+    try:
+        r = requests.delete(f"{_API_URL}{endpoint}", headers=_headers(), timeout=15)
+        r.raise_for_status()
+        return r.json()
+    except requests.HTTPError as exc:
+        detail = exc.response.json().get("detail", str(exc)) if exc.response else str(exc)
+        st.error(f"API {exc.response.status_code}: {detail}")
+        return None
+    except Exception as exc:
+        st.error(f"Request failed: {exc}")
+        return None
+
+
 def sidebar_api_key() -> None:
     """Show API key input in sidebar if the key is not yet set."""
     if not _key():
