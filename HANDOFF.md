@@ -1,215 +1,359 @@
-# OPERATIONAL HANDOFF (EMAC-030)
+# OPERATIONAL HANDOFF (EMAC-036)
 
-> Ground truth as of EMAC-030. Operator: Claude Code (Master Architect).
+> Ground truth as of EMAC-036. Operator: Claude Code (Master Architect).
 > Read `IDENTITY.md` for risk policy. Read `AGENTS.md` for roles. Read `HEARTBEAT.md` for loops.
 
 ---
 
-### 1. MISSION INTEL (Ground Truth)
+### 1. SYSTEM STATUS
 
-**Operator:** Claude Code (Master Architect)
-**Mission accomplished:** EMAC-029 — Recalibration Run + generate_real_insights.py Fixes
+**Last completed:** A-26 Task 1 — Tournament Mode SD bump (Claude). 438/438 tests passing.
+**Prod DB:** Railway PostgreSQL provisioned + `init_db.py` run successfully (9 tables confirmed). CBB Edge service still needs `DATABASE_URL = ${{ Postgres.DATABASE_URL }}` set and a redeploy.
 
-**Technical State (cumulative):**
+**Technical State:**
 
 | Component | Status | Detail |
 |-----------|--------|--------|
-| A-11: API Deduplication | OK | `/api/predictions/today` deduplicates by `game_id`. nightly > opener priority. (EMAC-020) |
-| A-12: UI Dedup Guard | OK | `1_Todays_Bets.py` last-resort client-side dedup guard. (EMAC-020) |
-| G-5: ReanalysisEngine Wiring | OK | `analysis.py` returns `(summary, cache)` tuple. `main.py` passes cache to `OddsMonitor`. (EMAC-021) |
-| A-15: base_sd_override Invariant | OK | `CachedGameContext` stores dynamic SD. Unchanged-spread invariant holds. (EMAC-021) |
-| A-16: ReanalysisEngine Tests | OK | 4 unit tests in `TestReanalysisEngine`. (EMAC-021) |
-| G-6: VERDICT_FLIP Callback | OK | `OddsMonitor.poll()` detects true PASS->BET flips. (EMAC-022/023) |
-| A-17: VERDICT_FLIP Audit Fixes | OK | 4 bugs fixed. One-fire set. `original_verdict` in context. Pre-warm correct. (EMAC-023) |
-| G-7: VERDICT_FLIP Discord Alert | OK | `_verdict_flip_handler` in lifespan. `send_verdict_flip_alert()` hardened. (EMAC-025) |
-| A-18: Discord Alert Hardening | OK | 4 crash paths fixed in `send_verdict_flip_alert()`. (EMAC-025) |
-| O-5: Integrity Sweep Async | OK | CLOSED. `asyncio.to_thread()` wrapper. 14 tests. (EMAC-027) |
-| A-19: SNR Re-Audit | DEFERRED | V9 DB data too new. Trigger: run after first successful `run_recalibration()` with V9 rows. (EMAC-028) |
-| A-20: Calibration Script Audit | OK | `generate_real_insights.py` corrected — it is a narrative demo. True calibration: `recalibration.py`. (EMAC-028) |
-| A-21: First Recalibration | OK | **COMPLETE.** 663 settled BetLogs. 2 parameters updated. Written to `model_parameters`. (EMAC-029) |
-| A-22: generate_real_insights.py | OK | 3 bugs fixed: sys.path, relative path, emoji. (EMAC-029) |
-| G-3: Railway Env Vars | PENDING | **USER ACTION REQUIRED.** Set `SNR_KELLY_FLOOR`, `INTEGRITY_CAUTION_SCALAR`, `INTEGRITY_VOLATILE_SCALAR` in Railway Dashboard. |
-| V9 Live Verification | PENDING | G-3 not set. Most recent DB prediction is v8.0. Verify after G-3 + fresh nightly run. |
-| Full test suite | OK | **427/427 passing.** |
+| V9 Model | OK | SNR + Integrity Kelly scalars. `model_version='v9.0'` |
+| Neutral-Site Fix (A-25) | OK | `parse_odds_for_game` extracts `neutral_site` → `is_neutral`. 5 tests. (EMAC-034) |
+| Tournament SD Bump (A-26 T1) | OK | `TOURNAMENT_MODE_SD_BUMP` (default 1.15x) applied when `is_neutral=True`. 4 tests. (EMAC-036) |
+| Recalibration | OK | ha=2.419, sd=1.0. 663 settled bets. sd_multiplier oscillation guard added. (EMAC-029/031) |
+| Railway Env Vars (G-3) | OK | `SNR_KELLY_FLOOR`, `INTEGRITY_CAUTION_SCALAR`, `INTEGRITY_VOLATILE_SCALAR` set. |
+| Railway DB | PARTIAL | PostgreSQL provisioned. `init_db.py` confirmed 9 tables. CBB Edge service needs `DATABASE_URL` variable + redeploy to connect. |
+| Kimi CLI | OK | Onboarded as Deep Intelligence Unit. K-1 complete. (EMAC-034) |
+| Seed-Spread Scalars (A-26 T2) | DEFERRED | Needs K-2 seed data research + bracket (Selection Sunday March 16). |
+| V9 Prod Verification | PENDING | Blocked on Railway redeploy. Once done, trigger nightly and confirm v9.0 predictions. |
+| SNR Re-Audit (A-19) | DEFERRED | Needs 20+ settled V9-era bets. Trigger after nightly run. |
 
 ---
 
-### 2. EMAC-029 FINDINGS
+### 2. K-1 FINDINGS (Kimi Tournament Intelligence — full report: `reports/2026-03-06-tournament-intelligence.md`)
 
-#### A. Recalibration — COMPLETE (663 settled bets)
+| Finding | Risk | Action |
+|---------|------|--------|
+| ha=2.419 unvalidated on neutral-site data | MEDIUM | A-25 zeros HCA correctly; no further action needed pre-tournament |
+| SD multiplier understates tournament variance by 15-25% | HIGH | Add `TOURNAMENT_MODE_SD_BUMP=1.15` env var; apply when `is_neutral=True` |
+| Matchup engine factors degraded in tournament | MEDIUM | Pace/3PA/drop less reliable; eFG pressure remains stable — no code change needed yet |
+| #5 seeds as 6+pt favorites: 33% ATS since 2009 | OPPORTUNITY | 0.75x Kelly scalar for these scenarios |
+| #2 seeds favored 17+pts: 37% ATS since 2005 | OPPORTUNITY | 0.75x Kelly scalar for large #2 spreads |
+| #8 seeds as small favorites (≤3): 23% ATS | OPPORTUNITY | 0.80x Kelly scalar |
+| SEC 46% ATS, MWC 34% ATS in tournament over last decade | MEDIUM | Conference-specific Kelly scalars |
 
-First recalibration with substantial data. `run_recalibration()` analyzed 200 most-recent settled bets and updated two parameters:
-
-| Parameter | Old | New | Signal | Interpretation |
-|-----------|-----|-----|--------|----------------|
-| `home_advantage` | 2.000 | **2.419** | ha_bias = -1.675 | Model was under-predicting home team margins by 1.7 pts on average. Home court is worth more than we were giving it. |
-| `sd_multiplier` | 0.970 | **1.000** | overconfidence = +0.064, brier = 0.331 | Model was 6.4% overconfident — probabilities too extreme. Widening distribution by returning to 1.0. |
-
-Both changes written to `model_parameters` DB table (IDs 17, 18, effective 2026-03-05).
-
-**sd_multiplier oscillation note:** This is the third time sd_multiplier has flipped between 0.97 and 1.0 (Feb 23, Feb 25, Feb 27, Mar 5). The overconfidence signal is small and noisy at the edge. Consider adding a minimum change threshold (e.g., only update if |delta| > 0.05) to prevent flip-flopping once data volume grows. Not urgent.
-
-**Prior recalibration history (model_parameters table):**
-- 2026-02-23: ha 1.59→1.5, sd 0.94→0.97
-- 2026-02-25: sd 0.97→1.0
-- 2026-02-27: sd 1.0→0.97, ha 1.5→2.0
-- 2026-03-04: weight_kenpom 0.45→0.444, weight_barttorvik 0.40→0.409 (auto_daily)
-- 2026-03-05: ha 2.0→2.419, sd 0.97→1.0 (EMAC-029)
-
-#### B. V9 Live Verification — BLOCKED
-
-G-3 env vars not set. Most recent Prediction in DB: `model_version=v8.0`, `snr=None`, `integrity_verdict=None`. This is expected — no V9 nightly analysis has run against prod yet. V9 fields will appear after G-3 is set in Railway and the next nightly job fires.
-
-#### C. generate_real_insights.py — 3 bugs fixed
-
-- `sys.path.append(os.getcwd())` at module level → moved inside `__main__` guard as `sys.path.insert(0, ...)`
-- `from backend.services.scout import ...` at module level → moved inside `run_real_test()` (lazy import, decouples from path setup)
-- Hard-coded `open("tmp_today_data.json")` → `os.path.join(os.path.dirname(__file__), "..", "tmp_today_data.json")`
-- Emoji removed from print statement (CP-1252 Windows terminal)
+**Claude's A-26 task** is to implement the HIGH-priority SD bump and the seed-spread scalars. See Section 4.
 
 ---
 
-### 3. V9 SYSTEM STATUS — OPERATIONAL (pending prod verification)
+### 3. RECALIBRATION HISTORY (for context)
 
-```
-+----------------------------------------------------------+
-|  V9 OPERATIONAL STACK                                    |
-+------------------+---------------------------------------+
-| Layer            | Status                                |
-+------------------+---------------------------------------+
-| Model (v9.0)     | OK  SNR + Integrity Kelly scalars     |
-| Analysis         | OK  Returns (summary, cache) tuple    |
-| Integrity Sweep  | OK  asyncio.to_thread, truly async    |
-| ReanalysisEngine | OK  Unchanged-spread invariant holds  |
-| OddsMonitor      | OK  VERDICT_FLIP with one-fire dedup  |
-| Startup Pre-Warm | OK  Correct game_data + base_sd       |
-| API Dedup        | OK  nightly > opener priority         |
-| UI Dedup         | OK  Last-resort guard in Todays_Bets  |
-| Discord Alerts   | OK  send_verdict_flip_alert hardened  |
-| Callback Wiring  | OK  lifespan, no accumulation risk    |
-| Recalibration    | OK  ha=2.419, sd=1.0 (200 bets)       |
-| V9 DB Verify     | PENDING  Needs G-3 + fresh nightly    |
-| Test suite       | OK  427/427 passing                   |
-+------------------+---------------------------------------+
-```
+| Date | Change |
+|------|--------|
+| 2026-02-23 | ha 1.59→1.5, sd 0.94→0.97 |
+| 2026-02-25 | sd 0.97→1.0 |
+| 2026-02-27 | sd 1.0→0.97, ha 1.5→2.0 |
+| 2026-03-04 | weight_kenpom 0.45→0.444, weight_barttorvik 0.40→0.409 (auto_daily) |
+| 2026-03-05 | ha 2.0→2.419, sd 0.97→1.0 (EMAC-029) |
 
 ---
 
-### 4. DELEGATION BUNDLE: Gemini CLI (DevOps Strike Lead)
-
-**Task G-3 — Railway Env Vars (USER ACTION — not a code change)**
-- Go to Railway Dashboard for the CBB Edge project
-- Add: `SNR_KELLY_FLOOR=0.5`, `INTEGRITY_CAUTION_SCALAR=0.75`, `INTEGRITY_VOLATILE_SCALAR=0.5`
-- Redeploy + verify `GET /health` returns 200
-- This unblocks V9 live verification (next nightly run will write v9.0 predictions with SNR fields)
+### 4. ACTIVE MISSIONS
 
 ---
 
-### 5. DELEGATION BUNDLE: OpenClaw (Integrity Execution Unit)
+#### CLAUDE CODE — A-26 Task 2: Seed-Spread Kelly Scalars (DEFERRED — wait for K-2 + bracket)
 
-**O-5 is CLOSED.**
+**Priority:** MEDIUM. Deferred until Selection Sunday March 16 + K-2 findings from Kimi.
 
-**Task O-6 — Prod Integrity Verdict Spot-Check**
-Prerequisites: G-3 must be set + live nightly analysis must have run + prediction `model_version = 'v9.0'` in DB.
-1. Query DB: `SELECT integrity_verdict, full_analysis FROM predictions WHERE model_version='v9.0' ORDER BY created_at DESC LIMIT 1`
-2. Check `full_analysis["calculations"]["integrity_verdict"]`
-3. If NOT "Sanity check unavailable": report `O-6 CONFIRMED: [verdict]`
-4. If all unavailable: Ollama not in Railway — escalate to Gemini as G-8
+**What was done (EMAC-036):**
+- A-26 Task 1 complete: `TOURNAMENT_MODE_SD_BUMP` (default 1.15x) applied in `analyze_game()`
+  when `is_neutral=True`. 4 tests added. 438/438 passing.
+- Implementation: `backend/betting_model.py` lines ~1149-1163 (after heuristic FF block)
+- Env var `TOURNAMENT_MODE_SD_BUMP=1.15` should be added to Railway CBB Edge service
 
----
-
-### 6. ARCHITECT REVIEW QUEUE (Next EMAC)
-
-- **V9 live verification (A-23)**: After G-3 is set and nightly runs, query DB for a v9.0 Prediction. Confirm `snr`, `snr_kelly_scalar`, `integrity_verdict`, `integrity_kelly_scalar` in `full_analysis["calculations"]`.
-- **SNR re-audit (A-19)**: Deferred until V9 data accumulates. Run `python scripts/audit_confidence.py --days 90 --min-bets 20` once V9 predictions start being settled.
-- **sd_multiplier oscillation**: Consider adding `MIN_RECAL_DELTA=0.05` guard to `recalibration.py` to prevent flip-flopping between 0.97 and 1.0 on noisy small signals.
-- **Season-end**: At season end, run full recalibration on the complete dataset to re-tune all parameters with N > 500 V9-era bets.
+**What's next (implement after March 16):**
+Once K-2 findings confirm seed data source, implement seed-spread Kelly scalars:
+- `#5 seed favored by 6+ pts` → 0.75x Kelly
+- `#2 seed favored by 17+ pts` → 0.75x Kelly
+- `#8 seed favored by ≤3 pts` → 0.80x Kelly
+Implementation point: post-Kelly scaling in `analyze_game()` using `game_data['seed_home']` / `game_data['seed_away']`.
+Requires K-2 research on how to inject seed data into game_data.
 
 ---
 
-### 7. HIVE WISDOM (Operational Lessons)
+#### GEMINI CLI — G-10: Railway Redeploy + V9 Prod Verification
+
+**Context:** PostgreSQL provisioned. `init_db.py` run locally with Railway's public DATABASE_URL —
+all 9 tables confirmed (`model_parameters, performance_snapshots, data_fetches, team_profiles,
+alerts, games, predictions, closing_lines, bet_logs`). The CBB Edge app service is still
+connecting to the wrong DB — it needs its Variables tab updated and a redeploy.
+
+**Steps:**
+1. Open Railway Dashboard → CBB Edge project → CBB Edge service → Variables
+2. Set `DATABASE_URL = ${{ Postgres.DATABASE_URL }}` (Railway internal reference)
+3. Set `TOURNAMENT_MODE_SD_BUMP = 1.15` (new env var from A-26)
+4. Redeploy the CBB Edge service
+5. Confirm `GET /health` returns `{"status": "healthy"}`
+6. Trigger `POST /admin/run-analysis` (header: `X-API-Key: <API_KEY_USER1>`)
+7. Query: `SELECT id, model_version, snr, created_at FROM predictions ORDER BY created_at DESC LIMIT 3`
+8. Confirm at least one row with `model_version='v9.0'` and non-null `snr`
+9. Update HANDOFF.md status table (Railway DB → OK) and HEARTBEAT.md with confirmation
+
+---
+
+#### KIMI CLI — K-2: Seed Data Research
+
+**Goal:** Determine how to get tournament seed data into the system before the bracket
+is announced (Selection Sunday March 16). This unblocks Claude's A-26 Task 2.
+
+**Questions to answer:**
+1. Does The Odds API include seed numbers in the team name or event metadata for
+   NCAA tournament games? (e.g., does it return "Duke" or "1 Duke"?)
+2. If not, what is the best secondary data source for seed → team name mapping?
+   Options: ESPN API, BartTorvik tournament page, NCAA.com, manual entry.
+3. What is the earliest reliable source for seed data after Selection Sunday (March 16)?
+   How quickly does it propagate to available APIs?
+4. What code change is needed in `backend/services/odds.py` or `analysis.py` to
+   attach seed data to `game_data` before it reaches `betting_model.py`?
+
+**Output:** Save findings to `reports/2026-03-06-seed-data-research.md`.
+Add K-2 FINDINGS section to HANDOFF.md and update title to EMAC-036.
+
+---
+
+#### OPENCLAW — O-6: V9 Integrity Verdict Spot-Check
+
+**Prerequisite:** G-10 must be complete first (prod DB must be connected).
+Do not run until Gemini confirms G-10 done and a nightly analysis has produced
+`model_version='v9.0'` predictions.
+
+Once unblocked:
+1. Query: `SELECT id, verdict, integrity_verdict, full_analysis->>'calculations' FROM predictions WHERE model_version='v9.0' ORDER BY created_at DESC LIMIT 1`
+2. Check `full_analysis["calculations"]["integrity_verdict"]` — must not be "Sanity check unavailable"
+3. Report `O-6 CONFIRMED: [verdict]` or escalate to Gemini as G-11 if Ollama is unreachable in Railway
+4. Update HEARTBEAT.md with result
+
+---
+
+### 5. ARCHITECT REVIEW QUEUE
+
+- **A-26 seed scalars**: Design is done. Deferred until bracket (March 16). Unblocked by K-2 seed data research.
+- **Tiered integrity (post-tournament)**: After season, implement OpenClaw → Kimi escalation path in `analysis.py` for Elite Eight+ games.
+- **SNR re-audit (A-19)**: Deferred. Trigger: 20+ settled V9-era bets after G-10 + nightly run.
+- **Season-end recalibration**: At season end, run on full V9-era dataset (N > 500 target).
+
+---
+
+### 6. HIVE WISDOM (Operational Lessons)
 
 | Lesson | Source |
 |--------|--------|
 | `pred_id` (Prediction PK) is the correct Streamlit widget key — never `game_id`. | EMAC-019 |
-| Inflated bet count was run_tier dedup failure, not model logic. Fix at API + UI layers. | EMAC-020 |
 | Always store `base_sd_override` in context. `None` != "same as original" — means "use model default". | EMAC-021 |
 | `full_analysis.inputs` has no "game" or "game_data" key. Reconstruct from `p.game` DB relationship. | EMAC-023 |
-| `MagicMock()._ctx.field` is truthy — always explicitly set mock context fields that drive conditional logic. | EMAC-023 |
-| Scout `integrity_verdict` != model `verdict`. Never use one as proxy for the other. | EMAC-023 |
 | One-fire sets must be cleared on cache refresh — otherwise new nightly runs cannot trigger new flips. | EMAC-023 |
 | Discord embed fields using `:.1%` or `:.2f` on None crash silently. Guard with `or 0.0`. | EMAC-025 |
-| Never parse verdict strings — use `full_analysis["calculations"]["bet_side"]` directly. | EMAC-025 |
-| Register Discord/alert handlers in lifespan, not nightly_job — prevents callback accumulation. | EMAC-025 |
 | `async def` without `asyncio.to_thread` wrapping sync I/O = ZERO concurrency. | EMAC-027 |
-| When a recurring task is blocked for many sessions, suspect a code bug — audit before re-delegating. | EMAC-027 |
-| Script names in HANDOFF may not match their actual function. Always read the code to verify. | EMAC-028 |
 | True calibration entry point is `backend/services/recalibration.py::run_recalibration()`. | EMAC-028 |
 | `sys.path` manipulation belongs inside `if __name__ == "__main__":` guards, never at module level. | EMAC-029 |
 | `ModelParameter` columns: `id, effective_date, parameter_name, parameter_value, parameter_value_json, reason, changed_by, created_at`. No `updated_at` or `version`. | EMAC-029 |
-| sd_multiplier oscillates at the noise boundary (0.97 <-> 1.0). Add a min-delta guard to recalibration before season end. | EMAC-029 |
+| sd_multiplier oscillates at the noise boundary. Min-delta guard (0.03) added to prevent flip-flopping. | EMAC-031 |
+| `parse_odds_for_game` result dict is the single source of truth for game metadata. Extract all needed fields here. | EMAC-034 |
+| Calibration data is only as good as its neutrality distribution. If <20 neutral-site bets in training, tournament ha=0 is unvalidated. | EMAC-034 |
+| Use Kimi for tasks requiring >50K tokens of simultaneous context. Gemini hits limits; Claude chunks; Kimi reads whole. | EMAC-034 |
+| Single-elimination tournament variance is 15-25% higher than regular season. Apply SD bump (1.15x) when is_neutral=True. | K-1 |
+| Seed-spread patterns are exploitable via Kelly scalars, not margin adjustments. Scalars preserve model integrity while respecting market inefficiency. | K-1 |
+| Tournament SD bump applies AFTER all other SD penalties (degraded-mode, heuristic FF). Order matters — bump last, ceiling check after. | EMAC-036 |
 
 ---
 
-### 8. HANDOFF PROMPTS — COPY AND PASTE THESE
+### 7. HANDOFF PROMPTS
+
+#### PROMPT FOR CLAUDE CODE
+```
+MISSION: EMAC-036 / A-26 Task 2 — Seed-Spread Kelly Scalars (DEFERRED)
+You are Claude Code, Master Architect for CBB Edge Analyzer.
+Read HANDOFF.md Section 4 (Claude task) for full details.
+
+CONTEXT:
+- Tournament starts March 18. 438/438 tests passing.
+- A-26 Task 1 complete: TOURNAMENT_MODE_SD_BUMP=1.15 applied when is_neutral=True.
+- Next: implement seed-spread Kelly scalars AFTER Selection Sunday (March 16) + K-2 findings.
+
+WHEN UNBLOCKED (after March 16 + K-2 from Kimi):
+Implement seed-spread Kelly scalars per the lookup table in Section 4.
+Requires seed_home / seed_away in game_data (K-2 tells you how to source this).
+Run pytest (must pass 438+). Update HANDOFF.md to EMAC-037.
+```
 
 #### PROMPT FOR GEMINI CLI
 ```
-MISSION: EMAC-030 — Railway Env Vars (G-3 Final)
-You are the DevOps Strike Lead (Gemini CLI).
+MISSION: EMAC-036 / G-10 — Railway CBB Edge Service Variables + Redeploy
+You are the DevOps Strike Lead (Gemini CLI) for CBB Edge Analyzer.
+Read HANDOFF.md Section 4 (Gemini task) for exact steps.
 
-V9 code is fully operational and tested (427/427). Recalibration ran successfully with 663 settled bets.
-The only blocker to V9 live verification is G-3 (Railway Dashboard — NOT a code change).
+CONTEXT:
+- Railway PostgreSQL is now provisioned and init_db.py has been run (9 tables created).
+- The CBB Edge app service still needs DATABASE_URL and TOURNAMENT_MODE_SD_BUMP set.
+- 438/438 tests passing locally.
 
-Action required:
-1. Go to Railway Dashboard for the CBB Edge project.
-2. Add: SNR_KELLY_FLOOR=0.5, INTEGRITY_CAUTION_SCALAR=0.75, INTEGRITY_VOLATILE_SCALAR=0.5
-3. Redeploy the service.
-4. Verify GET /health returns 200.
-5. Report back with the health check response body.
-6. Update HEARTBEAT.md with the verification date.
+MISSION: Set variables on CBB Edge service, redeploy, confirm health,
+trigger nightly analysis, verify V9 predictions in DB.
+Update HEARTBEAT.md with confirmation.
+```
 
-Once G-3 is done, the next nightly analysis will write v9.0 predictions with full SNR and
-integrity fields, enabling O-6 verification by OpenClaw.
+#### PROMPT FOR KIMI CLI
+```
+MISSION: EMAC-036 / K-2 — Seed Data Research
+You are the Deep Intelligence Unit (Kimi CLI) for CBB Edge Analyzer.
+Read HANDOFF.md Section 4 (Kimi task) for full details.
+
+CONTEXT:
+- Tournament bracket announced Selection Sunday March 16 (10 days away)
+- Claude needs seed data (1-16 per region) attached to game_data to implement
+  seed-spread Kelly scalars from K-1 findings
+- Your job: research how to get this data into the system
+
+TASK: Answer the 4 questions in Section 4 (Kimi task).
+Save findings to reports/2026-03-06-seed-data-research.md.
+Add K-2 FINDINGS section to HANDOFF.md. Update title to EMAC-036.
 ```
 
 #### PROMPT FOR OPENCLAW
 ```
-MISSION: EMAC-030 — O-6 Prod Integrity Verdict Spot-Check
-You are the Integrity Execution Unit (OpenClaw). O-5 is CLOSED.
-Read HANDOFF.md Section 5 for O-6 prerequisites.
+MISSION: EMAC-036 / O-6 — V9 Integrity Spot-Check
+You are the Integrity Execution Unit (OpenClaw).
 
-Prerequisites (both must be true before proceeding):
-- G-3 Railway env vars are set (confirm with GET /health response)
-- A nightly analysis has run and produced predictions with model_version='v9.0'
+PREREQUISITE: Do not run until Gemini confirms G-10 (Railway DB) is fixed
+and a nightly analysis has completed with model_version='v9.0' in predictions.
 
-Execute:
-1. Query: SELECT id, verdict, integrity_verdict, full_analysis->>'calculations'
-   FROM predictions WHERE model_version='v9.0' ORDER BY created_at DESC LIMIT 1
-2. Check if full_analysis["calculations"]["integrity_verdict"] is set and not "Sanity check unavailable".
-3. Report "O-6 CONFIRMED: [verdict]" or escalate to Gemini as G-8 if Ollama is not in Railway.
-4. Update HEARTBEAT.md with today's date and result.
+Once unblocked, execute per HANDOFF.md Section 4 (OpenClaw task).
+Report O-6 CONFIRMED or escalate to Gemini as G-11.
+Update HEARTBEAT.md with result.
 ```
 
-#### PROMPT FOR CLAUDE CODE
+
+---
+
+### 10. OPENCLAW v2.0 COORDINATION (New)
+
+**Lead Coordinator:** Kimi CLI (Deep Intelligence Unit)  
+**Local Engine:** qwen2.5:3b via Ollama  
+**Deployed:** 2026-03-06
+
+#### A. Architecture Changes
+
+OpenClaw has been upgraded from simple Ollama wrapper to an intelligent routing system:
+
+**New Components:**
+| File | Purpose |
+|------|---------|
+| `.openclaw/config.yaml` | Routing rules, budgets, circuit breaker settings |
+| `.openclaw/coordinator.py` | Task routing logic with Circuit Breaker pattern |
+| `.openclaw/README.md` | Usage guide for hive agents |
+| `.openclaw/token-usage.jsonl` | Cost tracking (auto-generated) |
+
+**Routing Logic:**
 ```
-MISSION: EMAC-030 — V9 Live Verification + sd_multiplier Oscillation Fix
-You are Claude Code, Master Architect for CBB Edge Analyzer.
-Read HANDOFF.md Section 6 for your review queue.
-
-Tasks:
-1. V9 live verification: After G-3 is confirmed set in Railway, trigger POST /admin/run-analysis.
-   Query DB for most recent Prediction where model_version='v9.0'.
-   Confirm full_analysis["calculations"] contains: snr, snr_kelly_scalar,
-   integrity_verdict, integrity_kelly_scalar.
-   If G-3 not done yet: skip and note it.
-
-2. sd_multiplier oscillation fix: Add a MIN_RECAL_DELTA guard to recalibration.py.
-   If |old_value - new_value| < threshold (suggest 0.03), skip the update and log
-   "Recalibration delta too small to apply ({delta:.4f} < {threshold})".
-   This prevents flip-flopping between 0.97 and 1.0 on noisy signals.
-   Add 2 unit tests: one where delta is below threshold (no update), one above (update applies).
-
-3. Run pytest tests/ -q --tb=short — must pass (427+).
-4. Update HANDOFF.md to EMAC-031.
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   Task Request  │────▶│  Coordinator    │────▶│  Local (qwen)   │
+│  (with context) │     │  (Kimi logic)   │     │  Fast, Free     │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+                               │
+                               ▼ (if high-stakes)
+                        ┌─────────────────┐
+                        │  Kimi CLI       │
+                        │  Deep analysis  │
+                        └─────────────────┘
 ```
+
+#### B. Routing Rules (v2.0)
+
+| Condition | Route | Rationale |
+|-----------|-------|-----------|
+| `recommended_units >= 1.5` | **Kimi** | High exposure requires synthesis |
+| `tournament_round >= 4` (Elite Eight+) | **Kimi** | Stakes too high for local |
+| `integrity_verdict contains VOLATILE` | **Kimi** | Complex risk scenario |
+| `sources_disagree AND edge > 5%` | **Kimi** | Contradictory signals |
+| Standard integrity checks | Local → Kimi fallback | Pattern-based, fast |
+| Scouting reports | Local only | Low-stakes narrative |
+| Health narratives | Local only | Templated output |
+
+#### C. Circuit Breaker Protection
+
+If local LLM fails 5+ times in 60 seconds:
+1. Circuit **OPENS** → all traffic routes to Kimi
+2. After 60s cooldown → **HALF_OPEN** (test calls)
+3. If healthy → **CLOSED** → resume local routing
+
+**Monitor:** `get_coordinator().circuit_breaker.state`
+
+#### D. Cost Budgeting
+
+Daily budget: `$5.00 USD` for Kimi escalations  
+Alert at: `80%` ($4.00)  
+Log file: `.openclaw/token-usage.jsonl`
+
+**Current Status:**
+```bash
+# Check daily spend
+cat .openclaw/token-usage.jsonl | jq -s '[.[] | select(.engine=="kimi") | .cost_usd] | add'
+```
+
+#### E. Hive Responsibilities
+
+**Kimi CLI (Coordinator):**
+- Monitor routing effectiveness
+- Handle escalated high-stakes tasks
+- Adjust routing rules in `config.yaml`
+- Review circuit breaker logs weekly
+
+**Claude Code (Architect):**
+- Review `coordinator.py` architecture
+- Approve routing rule changes
+- Ensure circuit breaker doesn't mask systemic issues
+
+**Gemini CLI (DevOps):**
+- Keep Ollama service running: `ollama run qwen2.5:3b`
+- Monitor disk usage for token logs
+- Alert if local LLM repeatedly fails (circuit breaker flapping)
+
+**OpenClaw (Local LLM):**
+- Handle all low-stakes tasks
+- Escalate on uncertainty
+- Maintain <10s response time
+- Report failures immediately
+
+#### F. Migration Notes
+
+**Backward Compatibility:**
+- `scout.py::perform_sanity_check()` unchanged
+- New `coordinator.py::check_integrity()` wraps it with routing
+- Existing code continues working
+
+**Gradual Migration:**
+```python
+# Old way (still works)
+from backend.services.scout import perform_sanity_check
+result = await perform_sanity_check(...)
+
+# New way (with routing)
+from .openclaw.coordinator import check_integrity, TaskContext
+ctx = TaskContext(recommended_units=1.5)
+result = await check_integrity(..., context=ctx)
+# → Auto-escalates to Kimi if high-stakes
+```
+
+#### G. Escalation Protocol
+
+When OpenClaw routes to Kimi, the return value is `"KIMI_ESCALATION"`:
+
+```python
+result = await check_integrity(..., context=high_stakes_ctx)
+if result == "KIMI_ESCALATION":
+    # Log to HANDOFF.md or notify operator
+    # Kimi CLI will handle this task directly
+    pass
+```
+
+---
+
+**Questions about OpenClaw v2.0?** Coordinate through Kimi CLI as lead.

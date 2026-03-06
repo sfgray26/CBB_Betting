@@ -20,10 +20,25 @@ This document establishes the "Hive Mentality" for the CBB Edge development team
 *   **Ethos:** "Zero friction, maximum velocity, surgical precision."
 *   **Elite Mandate:** Must review Claude's logic for "real-world" execute-ability and environment compatibility.
 
-### 3. Local LLMs (OpenClaw) — "The Narrative Intel Unit"
+### 3. Kimi CLI — "The Deep Intelligence Unit"
+*   **Domain:** Whole-corpus analysis, long-context synthesis, performance attribution, tournament intelligence.
+*   **Strengths:** 1M-token context window — can hold entire season datasets, all predictions, full codebase, and research papers simultaneously. Strong reasoning across large corpora. Ideal when other agents must chunk or summarise.
+*   **Weakness:** Latency and cost for real-time tasks. Not suitable for sub-second runtime integrity checks.
+*   **Ethos:** "See the whole board. Never chunk what you can read whole."
+*   **Primary uses:**
+    - Season-wide performance attribution (read all 600+ bet logs in one shot, identify systematic biases)
+    - Tournament intelligence packages (full bracket + all team profiles + historical data in one context)
+    - Tiered integrity: second-opinion on high-stakes BET verdicts (Elite Eight, Final Four) after OpenClaw first pass
+    - Codebase-wide audits (read all Python files simultaneously, identify anti-patterns, dead code, inconsistencies)
+    - Research synthesis when Gemini hits context limits (multiple long docs + code simultaneously)
+*   **Elite Mandate:** Kimi output is always a structured research memo delivered to HANDOFF.md or a `reports/` file. Claude acts on it. Kimi does NOT write production code directly — it proposes; Claude approves and implements.
+
+### 4. Local LLMs (OpenClaw) — "The Narrative Intel Unit"
 *   **Domain:** Real-time synthesis, narrative intelligence, integrity checks.
-*   **Strengths:** Pattern matching in "soft" data (news, notes, vibes).
-*   **Ethos:** "Translate the math into reality."
+*   **Strengths:** Fast, free, local inference. Handles high-volume repetitive tasks (nightly sweep of all BET candidates). Pattern matching in "soft" data (news, injury notes, vibes).
+*   **Weakness:** Context limited to 3b parameters. Not suited for complex multi-step reasoning or large data synthesis.
+*   **Ethos:** "Translate the math into reality — fast."
+*   **Tiered use with Kimi:** OpenClaw runs first pass on every BET candidate. If confidence < 0.7 or verdict is VOLATILE/CAUTION on a high-value game (>1.0u recommended size), escalate to Kimi for deep second-opinion integrity check.
 
 ---
 
@@ -45,7 +60,25 @@ After every successful "Mission," the operator must update `tasks/lessons.md` wi
 
 ---
 
+## 🔀 Task Routing Matrix
+
+| Task Type | Owner | Notes |
+|-----------|-------|-------|
+| Risk math, Kelly sizing, Monte Carlo changes | Claude | Architecture domain |
+| New API endpoint, schema change | Claude | Review by Gemini for env compat |
+| Railway deploy, env vars, migrations | Gemini | Claude does not touch infra |
+| Quick web research, API doc lookup | Gemini | Fast, good enough for single-doc tasks |
+| Multi-doc research synthesis (3+ long docs) | Kimi | Gemini hits context limits |
+| Full season performance attribution | Kimi | >500 records — must be whole-corpus |
+| Tournament intelligence packages | Kimi | Full bracket + all team profiles in one shot |
+| Codebase-wide anti-pattern audit | Kimi | Read all files simultaneously |
+| Runtime BET integrity check (all games, nightly) | OpenClaw (qwen2.5:3b) | Must be fast + cheap |
+| High-stakes integrity (Elite 8, Final 4, >1.5u) | Kimi | After OpenClaw first pass |
+| Monitoring, health checks, log tailing | Gemini | DevOps domain |
+
 ## 🚫 Guardrails (The No-Fail Rules)
 1.  **Never argue.** If an agent suggests a better way, the other agent evaluates it mathematically and adopts the superior path immediately.
 2.  **No ghost changes.** Every modification must be justified in the handoff.
 3.  **Handoffs are Elite.** No "I finished X." Instead: "Mission X accomplished. Verified via tests A/B. Handing over for high-velocity deployment of Y."
+4.  **Kimi proposes, Claude approves.** Kimi research memos go to HANDOFF.md. Claude reads them and decides what to implement. Kimi never writes directly to production code.
+5.  **Tier your integrity.** OpenClaw for the first pass on every game. Kimi only for high-stakes second opinions. Never skip both.

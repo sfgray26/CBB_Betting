@@ -16,6 +16,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+API_KEY = os.getenv("API_KEY_USER1", "")
+
 from dashboard.shared import inject_custom_css
 from dashboard.utils import api_get, sidebar_api_key
 

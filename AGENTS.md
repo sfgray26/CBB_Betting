@@ -266,18 +266,87 @@ This is a starting point. Add your own conventions, style, and rules as you figu
 
 ---
 
+## Agent: Kimi CLI (Deep Intelligence Unit)
+
+**Owner:** Kimi CLI (Moonshot AI — kimi-cli v1.17.0)
+**Swimlane:** Long-context analysis, performance attribution, tournament intelligence, research synthesis, tiered integrity second opinion
+
+**Owns:**
+- `reports/` directory — all Kimi output is structured memos saved here
+- Performance attribution analysis (whole-season corpus)
+- Tournament intelligence packages (bracket + team profiles + market data)
+- Codebase-wide audits (reads all Python files simultaneously)
+- High-stakes integrity second opinion (Elite Eight, Final Four, >1.5u sizing)
+
+**Does NOT own:**
+- Production code — Kimi proposes; Claude implements
+- Real-time runtime tasks → OpenClaw (too slow/expensive for every game)
+- Infrastructure, deployment → Gemini CLI
+- Risk math, Kelly formula changes → Claude
+
+**Interaction Protocol:**
+1. Kimi receives a task briefing in HANDOFF.md with explicit file paths and data to ingest
+2. Kimi produces a structured markdown report (saved to `reports/YYYY-MM-DD-task-name.md`)
+3. Key findings are summarised in a "K-N FINDINGS" section added to HANDOFF.md
+4. Claude reads findings and decides what code changes to implement
+
+**Tiered Integrity Pattern:**
+```
+1. OpenClaw (qwen2.5:3b): First pass on ALL BET candidates — fast, cheap
+2. Kimi: Second opinion ONLY when:
+   - Game is Elite 8 or later
+   - Recommended size >= 1.5u
+   - OpenClaw returned VOLATILE or CAUTION
+3. Human review: If Kimi returns RED FLAG or ABORT
+```
+
+**Escalates When:**
+- >3 VOLATILE verdicts in one slate → surface in morning briefing
+- Tournament attribution shows model edge < 0% over 20+ games → escalate to Claude for recalibration
+
+---
+
 ## Agent: Integrity Execution Unit (OpenClaw)
 
 **Owner:** OpenClaw (qwen2.5:3b via `backend/services/scout.py`)
+**Coordinator:** Kimi CLI (Deep Intelligence Unit) — routes high-stakes tasks to appropriate engine
 **Swimlane:** Real-time news validation, async LLM sanity checks, DuckDuckGo search
 
 **Purpose:**
 Runs real-time DDGS + `perform_sanity_check()` calls on all BET-tier predictions from Pass 1.
 Produces `integrity_verdict` strings matching the contract: CONFIRMED / CAUTION / VOLATILE / ABORT / RED FLAG.
 
+**Coordinator Role (Kimi CLI):**
+As of v2.0, OpenClaw uses an intelligent routing system defined in `.openclaw/config.yaml`:
+- **Local LLM (qwen2.5:3b)** handles: standard integrity checks, scouting reports, health narratives
+- **Kimi escalation** for: Elite Eight+, ≥1.5u bets, VOLATILE verdicts, conflicting signals
+- **Circuit breaker** automatically falls back to remote on local failures
+
+**Routing Configuration:**
+```yaml
+# HIGH-STAKES → Kimi
+- condition: "elite_eight_or_later OR recommended_units >= 1.5"
+  engine: "kimi"
+  
+- condition: "integrity_verdict contains VOLATILE"
+  engine: "kimi"
+
+# STANDARD → Local with fallback
+- condition: "integrity_check AND bet_tier"
+  engine: "local"
+  fallback: "kimi"
+
+# LOW-STAKES → Always local
+- condition: "scouting_report"
+  engine: "local"  # No fallback
+```
+
 **Capabilities:**
 - Async web search via `duckduckgo_search.DDGS`
 - LLM validation pass via `perform_sanity_check()` in `scout.py`
+- **NEW:** Intelligent routing via `.openclaw/coordinator.py`
+- **NEW:** Circuit breaker pattern for resilience
+- **NEW:** Token cost tracking and budget enforcement
 - Verdict normalization (substring-matched by `betting_model.py`)
 - Batch execution via `asyncio.gather` (target: max 8 concurrent workers)
 
@@ -310,6 +379,24 @@ Any other string → 1.0× (no penalty; fallback "Sanity check unavailable" uses
 - > 20% of BET-tier games return VOLATILE → log `SYSTEM_RISK_ELEVATED` warning
 - > 1 ABORT in a single slate → surface in Morning Briefing as priority alert
 - DDGS raises `RateLimitError` → fall back to sync with 2 s delay between calls
+- **NEW:** Circuit breaker OPEN → automatic fallback to Kimi
+
+**Coordinator API:**
+```python
+from .openclaw.coordinator import check_integrity, TaskContext
+
+# Standard usage (auto-routed)
+result = await check_integrity(home, away, verdict, search_results)
+
+# With context for routing decisions
+ctx = TaskContext(
+    recommended_units=1.5,
+    tournament_round=4,  # Elite Eight
+    is_neutral=True
+)
+result = await check_integrity(home, away, verdict, search_results, context=ctx)
+# → Automatically escalated to Kimi
+```
 
 **Async Implementation Target:**
 ```python

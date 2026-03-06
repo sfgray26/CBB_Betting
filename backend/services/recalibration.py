@@ -45,7 +45,12 @@ _MIN_BETS = int(os.getenv("MIN_BETS_FOR_RECALIBRATION", "30"))
 
 # Maximum correction per recalibration run (prevents over-shooting)
 _MAX_HA_ADJ_PER_RUN = 0.50          # ±0.50 pts on home_advantage
-_MAX_SD_MULT_ADJ_PER_RUN = 0.03     # ±3% on sd_multiplier
+_MAX_SD_MULT_ADJ_PER_RUN = 0.05     # ±5% on sd_multiplier (raised from 0.03)
+
+# Minimum delta required to write an sd_multiplier update.
+# Prevents flip-flopping on noisy small signals (e.g. 0.97 ↔ 1.0 oscillation).
+# Only applies to sd_multiplier; home_advantage uses a separate threshold check.
+_MIN_SD_MULT_DELTA = float(os.getenv("MIN_SD_MULT_DELTA", "0.03"))
 
 # Safety bounds for each parameter
 _HA_MIN, _HA_MAX = 1.5, 5.5
@@ -326,7 +331,13 @@ def run_recalibration(
         new_mult = round(current["sd_multiplier"] + adj, 4)
         new_mult = max(_SD_MULT_MIN, min(_SD_MULT_MAX, new_mult))
 
-        if abs(new_mult - current["sd_multiplier"]) > 0.001:
+        _sd_delta = abs(new_mult - current["sd_multiplier"])
+        if _sd_delta <= _MIN_SD_MULT_DELTA:
+            logger.info(
+                "Recalibration delta too small to apply (%.4f <= %.4f) -- skipping sd_multiplier update",
+                _sd_delta, _MIN_SD_MULT_DELTA,
+            )
+        else:
             n_probs = sum(1 for r in records if r["model_prob"] is not None)
             reason = (
                 f"overconfidence={overconf:+.4f} (n={n_probs}), "

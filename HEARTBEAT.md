@@ -99,15 +99,20 @@ If event loop not running, fall back to sequential calls with 1 s inter-call del
   "integrity_sweep": {
     "status": "async_implemented",
     "async_target": "EMAC-004",
-    "last_run": null
+    "last_run": "2026-03-05"
   },
   "nightly_health_check": {
     "status": "sentinel_active",
-    "last_run": null
+    "last_run": "2026-03-05"
   },
   "weekly_calibration_review": {
     "status": "sentinel_active",
-    "last_run": null
+    "last_run": "2026-03-05"
+  },
+  "v9_production_verification": {
+    "status": "verified-local",
+    "railway_status": "degraded (DB error)",
+    "last_run": "2026-03-06"
   }
 }
 ```

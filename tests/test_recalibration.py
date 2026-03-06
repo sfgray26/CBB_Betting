@@ -497,7 +497,7 @@ def test_recalibration_adjusts_sd_multiplier_under_confident():
 
 
 def test_recalibration_sd_bounded():
-    """Extreme overconfidence is capped at _MAX_SD_MULT_ADJ_PER_RUN = 0.03."""
+    """Extreme overconfidence is capped at _MAX_SD_MULT_ADJ_PER_RUN = 0.05."""
     recs = []
     # prob=0.99 but only 50% wins → massive overconfidence ~ 0.49
     for _ in range(15):
@@ -518,7 +518,7 @@ def test_recalibration_sd_bounded():
 
     sd_changes = [c for c in result["changes"] if c["parameter"] == "sd_multiplier"]
     if sd_changes:
-        assert abs(sd_changes[0]["new"] - sd_changes[0]["old"]) <= 0.03 + 1e-9
+        assert abs(sd_changes[0]["new"] - sd_changes[0]["old"]) <= 0.05 + 1e-9
 
 
 def test_recalibration_sd_safety_ceiling():
@@ -542,6 +542,87 @@ def test_recalibration_sd_safety_ceiling():
     sd_changes = [c for c in result["changes"] if c["parameter"] == "sd_multiplier"]
     if sd_changes:
         assert sd_changes[0]["new"] <= 1.10
+
+
+# ---------------------------------------------------------------------------
+# run_recalibration — MIN_SD_MULT_DELTA guard (oscillation prevention)
+# ---------------------------------------------------------------------------
+
+def test_sd_multiplier_skipped_when_delta_at_or_below_threshold():
+    """
+    When the computed sd_multiplier delta is <= _MIN_SD_MULT_DELTA (0.03),
+    the update is skipped even if overconfidence exceeded the trigger threshold.
+
+    Scenario: overconf = 0.064 → raw_adj = 0.032 → capped to 0.03 (old cap) via
+    a current value that yields exactly delta=0.03, which is <= 0.03 threshold.
+    We simulate this by using current sd_multiplier=0.97 and overconf high enough
+    to produce adj=0.03 → new=1.00 → delta=0.03 <= threshold.
+    """
+    recs = []
+    # overconf = 0.75 - 0.5 = 0.25, raw_adj = 0.125 → capped at 0.05 → new = 1.02
+    # To get delta exactly 0.03: use overconf = 0.06 → raw_adj = 0.03, not capped → delta = 0.03
+    # Build records with model_prob=0.56, 15 wins / 14 losses → win_rate = 15/29 ≈ 0.517
+    # overconf = 0.56 - 0.517 ≈ 0.043 → raw_adj = 0.021 → delta = 0.021 (below 0.03)
+    # Use 30 wins, 0 losses → win_rate = 1.0 / model_prob=0.56 → overconf = 0.56-1.0 = -0.44 (negative)
+    # Simplest: 16 wins, 14 losses at prob=0.62 → win_rate=0.533, overconf=0.087 > 0.03
+    # raw_adj = 0.087*0.5 = 0.0435 → not capped (< 0.05) → delta = 0.0435 > 0.03 → would apply
+    # For delta <= 0.03: need overconf*0.5 <= 0.03 → overconf <= 0.06
+    # Use 16 wins, 14 losses at prob=0.58 → win_rate = 0.533, overconf = 0.047 → adj = 0.023 < 0.03
+    for _ in range(16):
+        recs.append(_rec(5.0, 5.0, model_prob=0.58, outcome=1, is_neutral=True))
+    for _ in range(14):
+        recs.append(_rec(5.0, 5.0, model_prob=0.58, outcome=0, is_neutral=True))
+    # overconf = 0.58 - (16/30) = 0.58 - 0.533 = 0.047 → adj = 0.023 → delta = 0.023 <= 0.03 → skip
+
+    def _fake_load(db):
+        return {"home_advantage": 3.09, "sd_multiplier": 0.85}
+
+    db = MagicMock()
+    with (
+        patch("backend.services.recalibration._fetch_settled_records", return_value=recs),
+        patch("backend.services.recalibration.load_current_params", side_effect=_fake_load),
+    ):
+        result = run_recalibration(db, min_bets=30, apply_changes=False)
+
+    sd_changes = [c for c in result["changes"] if c["parameter"] == "sd_multiplier"]
+    assert len(sd_changes) == 0, (
+        f"Expected sd_multiplier update to be skipped (delta too small), "
+        f"but got changes: {sd_changes}"
+    )
+
+
+def test_sd_multiplier_applied_when_delta_exceeds_threshold():
+    """
+    When the computed sd_multiplier delta exceeds _MIN_SD_MULT_DELTA (0.03),
+    the update IS applied.
+
+    Scenario: large overconf generates raw_adj > 0.03 (up to 0.05 cap),
+    yielding delta > 0.03 which clears the guard.
+    """
+    recs = []
+    # prob=0.75, all losses → win_rate=0, overconf = 0.75 - 0 = 0.75
+    # raw_adj = 0.75 * 0.5 = 0.375 → capped at 0.05 → delta = 0.05 > 0.03 → applies
+    for _ in range(30):
+        recs.append(_rec(5.0, 5.0, model_prob=0.75, outcome=0, is_neutral=True))
+
+    def _fake_load(db):
+        return {"home_advantage": 3.09, "sd_multiplier": 0.85}
+
+    db = MagicMock()
+    with (
+        patch("backend.services.recalibration._fetch_settled_records", return_value=recs),
+        patch("backend.services.recalibration.load_current_params", side_effect=_fake_load),
+    ):
+        result = run_recalibration(db, min_bets=30, apply_changes=False)
+
+    sd_changes = [c for c in result["changes"] if c["parameter"] == "sd_multiplier"]
+    assert len(sd_changes) == 1, (
+        f"Expected sd_multiplier update to be applied (delta > threshold), "
+        f"but changes were: {sd_changes}"
+    )
+    # Over-confident (prob=0.75 but 0% wins) → SD should increase
+    assert sd_changes[0]["new"] > sd_changes[0]["old"]
+    assert abs(sd_changes[0]["new"] - sd_changes[0]["old"]) > 0.03
 
 
 # ---------------------------------------------------------------------------

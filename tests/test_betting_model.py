@@ -2617,5 +2617,79 @@ class TestReanalysisEngine:
         assert ctx.base_sd_override == pytest.approx(base_sd)
 
 
+class TestTournamentSDbump:
+    """
+    A-26: Tournament Mode SD bump applied on neutral-site games.
+
+    When game_data['is_neutral'] is True, analyze_game() must multiply
+    adj_sd by TOURNAMENT_MODE_SD_BUMP (default 1.15) AFTER all other
+    SD penalties.  Non-neutral games must be unaffected.
+
+    Run with: pytest tests/test_betting_model.py::TestTournamentSDump -v
+    """
+
+    def _model(self):
+        return CBBEdgeModel(seed=42)
+
+    def _ratings(self):
+        return {
+            "kenpom":     {"home": 10.0, "away": 5.0},
+            "barttorvik":  {"home": 10.2, "away": 5.1},
+            "evanmiya":   {"home": 9.8,  "away": 5.2},
+        }
+
+    def _odds(self, total=140.0):
+        return {
+            "spread": -4.0,
+            "spread_odds": -110,
+            "spread_away_odds": -110,
+            "total": total,
+        }
+
+    def _analyze(self, is_neutral, monkeypatch_bump=None, total=140.0):
+        import math, os
+        m = self._model()
+        game_data = {
+            "home_team": "Kansas",
+            "away_team": "Gonzaga",
+            "is_neutral": is_neutral,
+        }
+        sd_override = math.sqrt(total) * 0.85
+        env = {}
+        if monkeypatch_bump is not None:
+            env["TOURNAMENT_MODE_SD_BUMP"] = str(monkeypatch_bump)
+        with __import__("unittest.mock", fromlist=["patch"]).patch.dict(os.environ, env):
+            return m.analyze_game(
+                game_data=game_data,
+                odds=self._odds(total=total),
+                ratings=self._ratings(),
+                base_sd_override=sd_override,
+            )
+
+    def test_neutral_site_sd_is_higher_than_non_neutral(self):
+        """Neutral-site game SD must exceed same-params non-neutral game SD."""
+        result_neutral = self._analyze(is_neutral=True)
+        result_home    = self._analyze(is_neutral=False)
+        assert result_neutral.adjusted_sd > result_home.adjusted_sd
+
+    def test_neutral_site_bump_note_present(self):
+        """Tournament SD bump note must appear in analysis notes."""
+        result = self._analyze(is_neutral=True)
+        bump_notes = [n for n in result.notes if "Tournament SD bump" in n]
+        assert bump_notes, f"Expected Tournament SD bump note, got: {result.notes}"
+
+    def test_non_neutral_site_no_bump_note(self):
+        """Non-neutral game must NOT have Tournament SD bump note."""
+        result = self._analyze(is_neutral=False)
+        bump_notes = [n for n in result.notes if "Tournament SD bump" in n]
+        assert not bump_notes, f"Unexpected bump note on home game: {bump_notes}"
+
+    def test_bump_env_override_applied(self):
+        """Custom TOURNAMENT_MODE_SD_BUMP=1.25 produces larger SD than default 1.15."""
+        result_default = self._analyze(is_neutral=True, monkeypatch_bump=1.15)
+        result_larger  = self._analyze(is_neutral=True, monkeypatch_bump=1.25)
+        assert result_larger.adjusted_sd >= result_default.adjusted_sd
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

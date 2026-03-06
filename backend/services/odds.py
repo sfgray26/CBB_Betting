@@ -302,7 +302,7 @@ class OddsAPIClient:
         Returns
         -------
         Dict with keys:
-            game_id, commence_time, home_team, away_team, bookmakers
+            game_id, commence_time, home_team, away_team, is_neutral, bookmakers
             sharp_consensus_spread, sharp_consensus_total, sharp_spread_odds
             sharp_books_available
             best_spread, best_spread_odds, best_total
@@ -325,6 +325,9 @@ class OddsAPIClient:
             "commence_time": game_data.get("commence_time"),
             "home_team": home_team,
             "away_team": away_team,
+            # The Odds API sets neutral_site=True for NCAA tournament games.
+            # Map to is_neutral so betting_model.py can zero home court advantage.
+            "is_neutral": bool(game_data.get("neutral_site", False)),
             "bookmakers": [],
             # --- Sharp consensus (CLV benchmark) — unaffected by active_books ---
             "sharp_consensus_spread": None,

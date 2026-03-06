@@ -1,0 +1,232 @@
+# OpenClaw Configuration v2.0
+# Local LLM Coordination System with Tiered Routing
+# Coordinator: Kimi CLI (Deep Intelligence Unit)
+# Last Updated: 2026-03-06
+
+---
+meta:
+  version: "2.0"
+  coordinator: "kimi-cli"
+  last_review: "2026-03-06"
+  next_review: "2026-03-20"
+
+# =============================================================================
+# ROUTING POLICY
+# =============================================================================
+# Task routing follows the "Trust but Verify" principle:
+# - Local LLM (qwen2.5:3b) handles high-volume, low-stakes, pattern-based tasks
+# - Kimi handles complex analysis, multi-factor synthesis, and edge cases
+# - Gemini handles infrastructure/devops when local fails
+# - Claude handles architectural changes only
+# =============================================================================
+
+routing:
+  default_engine: "local"
+  fallback_on_timeout: true
+  timeout_seconds: 15
+  
+  # Tiered Routing Rules (evaluated in order)
+  rules:
+    # HIGH-STAKES: Always use Kimi for these scenarios
+    - name: "high_stakes_integrity"
+      condition: "elite_eight_or_later OR recommended_units >= 1.5"
+      engine: "kimi"
+      reason: "High-stakes bets require deep analysis beyond pattern matching"
+      
+    - name: "volatile_verdict"
+      condition: "integrity_verdict contains VOLATILE"
+      engine: "kimi"
+      reason: "Complex risk scenarios need multi-factor assessment"
+      
+    - name: "conflicting_signals"
+      condition: "sources_disagree AND edge_conservative > 0.05"
+      engine: "kimi"
+      reason: "Contradictory data requires synthesis"
+    
+    # MEDIUM-STAKES: Use local with Kimi fallback
+    - name: "standard_integrity"
+      condition: "integrity_check AND bet_tier"
+      engine: "local"
+      fallback: "kimi"
+      reason: "Standard integrity checks are pattern-based"
+      
+    - name: "injury_analysis"
+      condition: "injury_impact AND star_player"
+      engine: "local"
+      fallback: "kimi"
+      reason: "Star player injuries need quick but accurate assessment"
+    
+    # LOW-STAKES: Always local
+    - name: "scouting_reports"
+      condition: "scouting_report"
+      engine: "local"
+      reason: "Narrative generation is pattern-based"
+      
+    - name: "health_narratives"
+      condition: "health_summary"
+      engine: "local"
+      reason: "System health summaries are templated"
+      
+    - name: "morning_briefing"
+      condition: "briefing_narrative"
+      engine: "local"
+      reason: "Daily briefings are low-stakes narrative"
+
+# =============================================================================
+# LOCAL LLM CONFIGURATION (Ollama)
+# =============================================================================
+local:
+  enabled: true
+  url: "http://localhost:11434/api/generate"
+  model: "qwen2.5:3b"
+  
+  # Generation parameters by task type
+  parameters:
+    default:
+      num_predict: 128
+      temperature: 0.3
+      top_p: 0.9
+      
+    integrity_check:
+      num_predict: 128
+      temperature: 0.2  # Lower temp for consistent verdicts
+      top_p: 0.85
+      
+    scouting_report:
+      num_predict: 64
+      temperature: 0.3
+      top_p: 0.9
+      
+    injury_analysis:
+      num_predict: 128
+      temperature: 0.2
+      top_p: 0.85
+      format: "json"
+      
+    health_narrative:
+      num_predict: 128
+      temperature: 0.3
+      top_p: 0.9
+  
+  # Resource limits
+  limits:
+    max_concurrent: 8
+    timeout_seconds: 10
+    retry_attempts: 2
+    retry_delay_seconds: 1
+    
+  # Circuit breaker settings
+  circuit_breaker:
+    failure_threshold: 5
+    recovery_timeout_seconds: 60
+    half_open_max_calls: 2
+
+# =============================================================================
+# REMOTE ENGINES (for fallback and high-stakes)
+# =============================================================================
+remote:
+  kimi:
+    enabled: true
+    role: "deep_intelligence"
+    use_for:
+      - high_stakes_integrity
+      - volatile_verdict
+      - conflicting_signals
+      - pattern_analysis
+      - research_synthesis
+    
+  claude:
+    enabled: false  # Only for architectural tasks
+    role: "architect"
+    trigger: "manual_only"
+
+# =============================================================================
+# COST TRACKING (for optimization)
+# =============================================================================
+tracking:
+  enabled: true
+  log_file: ".openclaw/token-usage.jsonl"
+  
+  # Track these metrics
+  metrics:
+    - task_type
+    - engine_used
+    - latency_ms
+    - input_tokens (remote only)
+    - output_tokens (remote only)
+    - estimated_cost_usd (remote only)
+    - success
+    
+  # Daily budgets (for remote engines)
+  budgets:
+    kimi_daily_usd: 5.00
+    alert_threshold: 0.80  # Alert at 80% of budget
+
+# =============================================================================
+# QUALITY GATES
+# =============================================================================
+quality:
+  # Local LLM output validation
+  validation:
+    integrity_verdict:
+      allowed_patterns:
+        - "CONFIRMED"
+        - "CAUTION"
+        - "VOLATILE"
+        - "ABORT"
+        - "RED FLAG"
+      fallback_on_invalid: true
+      
+    injury_tier:
+      allowed_values:
+        - "star"
+        - "starter"
+        - "role"
+        - "bench"
+      fallback_on_invalid: true
+  
+  # Confidence thresholds for escalation
+  escalation:
+    min_confidence_local: 0.75
+    min_tokens_local: 10
+    max_repetition_ratio: 0.5  # Escalate if >50% repetition
+
+# =============================================================================
+# NOTIFICATIONS (keep hive informed)
+# =============================================================================
+notifications:
+  discord_webhook: "${DISCORD_WEBHOOK_URL}"
+  
+  events:
+    - name: "high_stakes_escalation"
+      condition: "kimi_called_for_integrity"
+      message: "🧠 Kimi handling high-stakes integrity check for {game}"
+      
+    - name: "circuit_breaker_open"
+      condition: "local_llm_failing"
+      message: "⚠️ OpenClaw circuit breaker OPEN - falling back to remote"
+      
+    - name: "daily_budget_alert"
+      condition: "budget > 80%"
+      message: "💰 OpenClaw daily budget at {pct}% - consider reducing high-stakes routing"
+      
+    - name: "quality_degradation"
+      condition: "local_success_rate < 90%"
+      message: "📉 OpenClaw quality alert: local success rate at {rate}%"
+
+# =============================================================================
+# TASK-SPECIFIC PROMPTS (override defaults)
+# =============================================================================
+prompts:
+  integrity_check:
+    system: |
+      You are a College Basketball Betting Integrity Officer. 
+      Analyze search results and return EXACTLY ONE of: CONFIRMED, CAUTION, VOLATILE, ABORT, RED FLAG.
+      Be concise. No explanation needed, just the verdict.
+      
+  injury_refinement:
+    system: |
+      You are a College Basketball Injury Analyst.
+      Classify player as: star, starter, role, or bench.
+      Estimate point impact (0.0-7.0).
+      Return ONLY valid JSON.

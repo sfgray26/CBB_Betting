@@ -1139,11 +1139,31 @@ class CBBEdgeModel:
             adj_sd = min(adj_sd * _HEURISTIC_FF_SD_MULT, 15.5)
             notes.append(
                 f"Heuristic four-factor data: SD x{_HEURISTIC_FF_SD_MULT:.2f} "
-                f"→ adj_sd={adj_sd:.2f}"
+                f"-> adj_sd={adj_sd:.2f}"
             )
             logger.debug(
                 "Heuristic FF SD multiplier applied: mult=%.2f adj_sd=%.2f",
                 _HEURISTIC_FF_SD_MULT, adj_sd,
+            )
+
+        # Tournament Mode SD bump
+        # NCAA tournament games are played on neutral sites with zero HCA.
+        # Tournament variance is empirically 15-25% higher than regular-season
+        # neutral-site games due to: single-elimination pressure, opponent
+        # unfamiliarity, coaching adjustments, and compressed prep time.
+        # Apply a multiplicative bump when is_neutral=True.
+        # Controlled by TOURNAMENT_MODE_SD_BUMP env var (default 1.15).
+        _TOURNAMENT_SD_BUMP = float(os.getenv("TOURNAMENT_MODE_SD_BUMP", "1.15"))
+        if game_data.get("is_neutral", False) and _TOURNAMENT_SD_BUMP != 1.0:
+            pre_bump_sd = adj_sd
+            adj_sd = min(adj_sd * _TOURNAMENT_SD_BUMP, 15.5)
+            notes.append(
+                f"Tournament SD bump: x{_TOURNAMENT_SD_BUMP:.2f} "
+                f"({pre_bump_sd:.2f} -> {adj_sd:.2f}, neutral site)"
+            )
+            logger.debug(
+                "Tournament SD bump applied: mult=%.2f %.2f -> %.2f",
+                _TOURNAMENT_SD_BUMP, pre_bump_sd, adj_sd,
             )
 
         # If SD exceeds limit, PASS
