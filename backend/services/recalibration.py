@@ -33,6 +33,7 @@ from typing import Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session, joinedload
 
 from backend.models import BetLog, Game, Prediction, ModelParameter, PerformanceSnapshot
+from backend.utils.env_utils import get_float_env
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ _MAX_SD_MULT_ADJ_PER_RUN = 0.05     # ±5% on sd_multiplier (raised from 0.03)
 # Minimum delta required to write an sd_multiplier update.
 # Prevents flip-flopping on noisy small signals (e.g. 0.97 ↔ 1.0 oscillation).
 # Only applies to sd_multiplier; home_advantage uses a separate threshold check.
-_MIN_SD_MULT_DELTA = float(os.getenv("MIN_SD_MULT_DELTA", "0.03"))
+_MIN_SD_MULT_DELTA = get_float_env("MIN_SD_MULT_DELTA", "0.03")
 
 # Safety bounds for each parameter
 _HA_MIN, _HA_MAX = 1.5, 5.5
@@ -187,11 +188,11 @@ def load_current_params(db: Session) -> Dict[str, float]:
         weight_kenpom, weight_barttorvik, weight_evanmiya — dynamic weights
     """
     defaults: Dict[str, float] = {
-        "home_advantage":    float(os.getenv("HOME_ADVANTAGE",      "3.09")),
-        "sd_multiplier":     float(os.getenv("SD_MULTIPLIER",       "0.85")),
-        "weight_kenpom":     float(os.getenv("WEIGHT_KENPOM",       "0.342")),
-        "weight_barttorvik": float(os.getenv("WEIGHT_BARTTORVIK",   "0.333")),
-        "weight_evanmiya":   float(os.getenv("WEIGHT_EVANMIYA",     "0.325")),
+        "home_advantage":    get_float_env("HOME_ADVANTAGE",      "3.09"),
+        "sd_multiplier":     get_float_env("SD_MULTIPLIER",       "0.85"),
+        "weight_kenpom":     get_float_env("WEIGHT_KENPOM",       "0.342"),
+        "weight_barttorvik": get_float_env("WEIGHT_BARTTORVIK",   "0.333"),
+        "weight_evanmiya":   get_float_env("WEIGHT_EVANMIYA",     "0.325"),
     }
 
     result = dict(defaults)
@@ -387,11 +388,11 @@ def run_recalibration(
 # ---------------------------------------------------------------------------
 
 # Bounds on any individual source weight
-_WEIGHT_MIN = float(os.getenv("WEIGHT_MIN", "0.10"))
-_WEIGHT_MAX = float(os.getenv("WEIGHT_MAX", "0.60"))
+_WEIGHT_MIN = get_float_env("WEIGHT_MIN", "0.10")
+_WEIGHT_MAX = get_float_env("WEIGHT_MAX", "0.60")
 
 # How quickly we shift toward performance-based weights (0 = never, 1 = instant)
-_LEARNING_RATE = float(os.getenv("WEIGHT_LEARNING_RATE", "0.15"))
+_LEARNING_RATE = get_float_env("WEIGHT_LEARNING_RATE", "0.15")
 
 # Minimum lookback days with valid per-source MAE data required before adjusting
 _MIN_SNAPSHOT_DAYS = int(os.getenv("WEIGHT_MIN_SNAPSHOT_DAYS", "7"))

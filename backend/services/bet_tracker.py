@@ -18,6 +18,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from backend.models import BetLog, ClosingLine, DataFetch, Game, Prediction, SessionLocal
 from backend.services.clv import calculate_clv_full
+from backend.utils.env_utils import get_float_env
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +195,7 @@ def update_completed_games() -> Dict:
     bets_settled = 0
     pushes = 0
     errors: List[str] = []
-    starting_bankroll = float(os.getenv("STARTING_BANKROLL", "1000"))
+    starting_bankroll = get_float_env("STARTING_BANKROLL", "1000")
 
     try:
         try:
@@ -369,7 +370,7 @@ def capture_closing_lines() -> Dict:
         }
         raw_odds = _fetch_live_odds_for_closing(_odds_url, _odds_params)
 
-        base_sd = float(os.getenv("BASE_SD", "11.0"))
+        base_sd = get_float_env("BASE_SD", "11.0")
 
         for odds_data in raw_odds:
             ext_id = odds_data.get("id")

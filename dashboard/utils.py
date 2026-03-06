@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-_API_URL = os.getenv("API_URL", "http://localhost:8000")
+_API_URL = os.getenv("API_URL", "https://cbbbetting-production.up.railway.app")
 _API_KEY = os.getenv("API_KEY_USER1", "")
 
 
@@ -17,6 +17,17 @@ def _key() -> str:
 
 def _headers() -> dict:
     return {"X-API-Key": _key()}
+
+
+def get_float_env(key: str, default: str) -> float:
+    """Robustly parse float from environment variable, handling leading spaces or equals signs."""
+    val = os.getenv(key, default).strip()
+    if val.startswith("="):
+        val = val[1:].strip()
+    try:
+        return float(val)
+    except ValueError:
+        return float(default)
 
 
 def api_get(endpoint: str, params: dict = None):

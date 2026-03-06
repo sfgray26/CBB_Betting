@@ -28,6 +28,7 @@ The key mathematical fix vs naive fractional Kelly:
 import logging
 import os
 import math
+from backend.utils.env_utils import get_float_env
 from dataclasses import dataclass, field
 from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple
@@ -101,14 +102,14 @@ class PortfolioManager:
         max_drawdown_pct: Optional[float] = None,
         conference_correlation: float = 0.05,
     ):
-        self.starting_bankroll = starting_bankroll or float(
-            os.getenv("STARTING_BANKROLL", "1000")
+        self.starting_bankroll = starting_bankroll or get_float_env(
+            "STARTING_BANKROLL", "1000"
         )
         self.current_bankroll = self.starting_bankroll
         self.max_total_exposure_pct = max_total_exposure_pct
         self.max_single_bet_pct = max_single_bet_pct
-        self.max_drawdown_pct = max_drawdown_pct or float(
-            os.getenv("MAX_DRAWDOWN_PCT", "15.0")
+        self.max_drawdown_pct = max_drawdown_pct or get_float_env(
+            "MAX_DRAWDOWN_PCT", "15.0"
         )
         self.conference_correlation = conference_correlation
 

@@ -55,6 +55,7 @@ from backend.services.dk_import import (
 from backend.services.odds_monitor import get_odds_monitor
 from backend.services.portfolio import get_portfolio_manager
 from backend.services.ratings import get_ratings_service
+from backend.utils.env_utils import get_float_env
 from backend.schemas import (
     BetLogCreate,
     BetLogResponse,
@@ -71,6 +72,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
 
 # Scheduler instance — AsyncIOScheduler runs jobs inside FastAPI's event loop,
 # allowing async job handlers (nightly_job, _opener_attack_job) to await coroutines.
@@ -142,7 +144,7 @@ async def lifespan(app: FastAPI):
     )
 
     # Odds monitor — poll every 5 minutes for line movements
-    odds_monitor_interval = int(os.getenv("ODDS_MONITOR_INTERVAL_MIN", "5"))
+    odds_monitor_interval = _get_float_env("ODDS_MONITOR_INTERVAL_MIN", "5")
     scheduler.add_job(
         _odds_monitor_job,
         IntervalTrigger(minutes=odds_monitor_interval),
@@ -217,7 +219,7 @@ async def lifespan(app: FastAPI):
                 model = CBBEdgeModel(params)
                 
                 import math as _math
-                _sd_mult = float(os.getenv("SD_MULTIPLIER", "0.85"))
+                _sd_mult = _get_float_env("SD_MULTIPLIER", "0.85")
                 cache = {}
                 for p in preds:
                     if p.full_analysis:
@@ -235,7 +237,7 @@ async def lifespan(app: FastAPI):
                         # unchanged-spread invariant holds for pre-warmed engines.
                         _total = (inputs.get("odds", {}).get("total")
                                   or inputs.get("odds", {}).get("sharp_consensus_total"))
-                        _base_sd = _math.sqrt(float(_total)) * _sd_mult if _total else None
+                        _base_sd = _math.sqrt(float(_total) * _sd_mult) if _total else None
 
                         try:
                             engine = ReanalysisEngine.from_analysis_pass(
@@ -360,7 +362,7 @@ def _weekly_recalibration_job():
         try:
             result = run_recalibration(db, changed_by="scheduler", apply_changes=True)
             if result.get("skipped"):
-                logger.info("Weekly recalibration skipped: %s", result.get("reason"))
+                logger.info("Weekly recalibration skipped: %s", result.get("reason")
             else:
                 logger.info("Weekly recalibration complete: %s", result)
         finally:
@@ -387,7 +389,7 @@ def _daily_snapshot_job():
         # MAE data is available in PerformanceSnapshot for the rolling window.
         try:
             weight_result = compute_dynamic_weights(db, changed_by="auto_daily")
-            logger.info("Dynamic weight calibration: %s", weight_result.get("status"))
+            logger.info("Dynamic weight calibration: %s", weight_result.get("status")
         except Exception as w_exc:
             logger.warning("Dynamic weight calibration failed (non-fatal): %s", w_exc)
         run_alert_check()
@@ -404,10 +406,10 @@ def _odds_monitor_job():
     to avoid burning API quota when no games are scheduled.
     """
     _tz_name = os.getenv("NIGHTLY_CRON_TIMEZONE", "America/New_York")
-    _start_h = int(os.getenv("ODDS_MONITOR_START_HOUR", "12"))
-    _end_h   = int(os.getenv("ODDS_MONITOR_END_HOUR",   "23"))
+    _start_h = int(os.getenv("ODDS_MONITOR_START_HOUR", "12")
+    _end_h   = int(os.getenv("ODDS_MONITOR_END_HOUR",   "23")
     try:
-        _local_hour = datetime.now(ZoneInfo(_tz_name)).hour
+        _local_hour = datetime.now(ZoneInfo(_tz_name).hour
     except Exception:
         _local_hour = datetime.utcnow().hour  # fallback if tzdata missing
 
@@ -501,20 +503,20 @@ async def root():
     """Health check"""
     return {
         "app": "CBB Edge Analyzer",
-        "version": "8.0",
+        "version": "9.0",
         "status": "operational",
         "timestamp": datetime.utcnow().isoformat(),
     }
 
 
 @app.get("/health")
-async def health_check(db: Session = Depends(get_db)):
+async def health_check(db: Session = Depends(get_db):
     """Health check endpoint"""
     health = {"status": "healthy", "database": "connected", "scheduler": "running"}
     
     try:
         # CHANGE THIS LINE: Wrap the string in text()
-        db.execute(text("SELECT 1")) 
+        db.execute(text("SELECT 1") 
     except Exception as e:
         logger.error(f"Health check database error: {e}")
         health["status"] = "degraded"
@@ -548,8 +550,8 @@ async def get_todays_predictions(
         .join(Game)
         .filter(Prediction.prediction_date == today_utc)
         .filter(Game.game_date > now_utc)
-        .order_by(Game.game_date.asc())
-        .options(joinedload(Prediction.game))
+        .order_by(Game.game_date.asc()
+        .options(joinedload(Prediction.game)
         .all()
     )
 
@@ -595,7 +597,7 @@ async def get_recommended_bets(
             Prediction.created_at >= cutoff,
             Prediction.verdict.like("Bet%")
         )
-        .order_by(Prediction.created_at.desc())
+        .order_by(Prediction.created_at.desc()
         .all()
     )
 
@@ -630,7 +632,7 @@ async def get_game_prediction(
     prediction = (
         db.query(Prediction)
         .filter(Prediction.game_id == game_id)
-        .order_by(Prediction.created_at.desc())
+        .order_by(Prediction.created_at.desc()
         .first()
     )
 
@@ -712,15 +714,15 @@ async def get_optimal_parlays(
     # Parlay Kelly sizing must respect what straight bets have already consumed
     # from the daily exposure budget.  Query today's paper-trade BetLogs to
     # compute capital already allocated, then derive the true remaining dollars.
-    starting_bankroll = float(os.getenv("STARTING_BANKROLL", "1000"))
-    max_daily_pct     = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "5.0"))
+    starting_bankroll = _get_float_env("STARTING_BANKROLL", "1000")
+    max_daily_pct     = _get_float_env("MAX_DAILY_EXPOSURE_PCT", "5.0")
     max_daily_dollars = starting_bankroll * max_daily_pct / 100.0
 
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     already_allocated: float = (
-        db.query(func.sum(BetLog.bet_size_dollars))
+        db.query(func.sum(BetLog.bet_size_dollars)
         .filter(BetLog.timestamp >= today_start)   # BetLog uses 'timestamp', not 'created_at'
-        .filter(BetLog.is_paper_trade.is_(True))
+        .filter(BetLog.is_paper_trade.is_(True)
         .scalar()
         or 0.0
     )
@@ -742,8 +744,8 @@ async def get_optimal_parlays(
         db.query(Prediction)
         .join(Game)
         .filter(Prediction.prediction_date == today_utc)
-        .filter(Prediction.verdict.like("Bet%"))
-        .options(joinedload(Prediction.game))
+        .filter(Prediction.verdict.like("Bet%")
+        .options(joinedload(Prediction.game)
         .all()
     )
 
@@ -894,7 +896,7 @@ async def get_source_weights(
             ),
             ModelParameter.effective_date >= cutoff,
         )
-        .order_by(ModelParameter.effective_date.desc())
+        .order_by(ModelParameter.effective_date.desc()
         .limit(300)
         .all()
     )
@@ -921,7 +923,7 @@ async def get_performance_alerts(
     db: Session = Depends(get_db),
 ):
     """Return active system health alerts from the database."""
-    query = db.query(DBAlert).order_by(DBAlert.created_at.desc())
+    query = db.query(DBAlert).order_by(DBAlert.created_at.desc()
     if not include_acknowledged:
         query = query.filter(DBAlert.acknowledged == False)
 
@@ -1028,7 +1030,7 @@ async def update_bet_outcome(
         if bet.odds_taken > 0:
             profit = bet.bet_size_dollars * (bet.odds_taken / 100.0)
         else:
-            profit = bet.bet_size_dollars * (100.0 / abs(bet.odds_taken))
+            profit = bet.bet_size_dollars * (100.0 / abs(bet.odds_taken)
         bet.profit_loss_dollars = round(profit, 2)
     else:  # Loss
         bet.profit_loss_dollars = round(-bet.bet_size_dollars, 2)
@@ -1056,7 +1058,7 @@ async def update_bet_outcome(
                 if pred and pred.full_analysis:
                     opening_spread = pred.full_analysis.get("inputs", {}).get("odds", {}).get("spread")
 
-            base_sd = float(os.getenv("BASE_SD", "11.0"))
+            base_sd = _get_float_env("BASE_SD", "11.0")
 
             clv = calculate_clv_full(
                 opening_odds=bet.odds_taken,
@@ -1121,7 +1123,7 @@ async def get_recent_games(
     games = (
         db.query(Game)
         .filter(Game.game_date >= start, Game.game_date <= end)
-        .order_by(Game.game_date.desc())
+        .order_by(Game.game_date.desc()
         .all()
     )
 
@@ -1160,15 +1162,15 @@ async def get_bet_logs(
         db.query(BetLog)
         .join(Game)
         .filter(BetLog.timestamp >= cutoff)
-        .options(joinedload(BetLog.game))
+        .options(joinedload(BetLog.game)
     )
 
     if status == "pending":
-        query = query.filter(BetLog.outcome.is_(None))
+        query = query.filter(BetLog.outcome.is_(None)
     elif status == "settled":
-        query = query.filter(BetLog.outcome.isnot(None))
+        query = query.filter(BetLog.outcome.isnot(None)
 
-    bets = query.order_by(BetLog.timestamp.desc()).all()
+    bets = query.order_by(BetLog.timestamp.desc().all()
 
     return {
         "total": len(bets),
@@ -1208,7 +1210,7 @@ async def get_closing_lines(
     cl = (
         db.query(ClosingLine)
         .filter(ClosingLine.game_id == game_id)
-        .order_by(ClosingLine.captured_at.desc())
+        .order_by(ClosingLine.captured_at.desc()
         .first()
     )
     if not cl:
@@ -1241,8 +1243,8 @@ async def get_performance_history(
             BetLog.outcome.isnot(None),
             BetLog.timestamp >= cutoff,
         )
-        .options(joinedload(BetLog.game))
-        .order_by(Game.game_date.asc())
+        .options(joinedload(BetLog.game)
+        .order_by(Game.game_date.asc()
         .all()
     )
 
@@ -1317,11 +1319,11 @@ async def trigger_analysis_manually(
         )
     except Exception as exc:
         logger.error("Manual analysis failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)
 
 
 @app.post("/admin/discord/test")
-async def discord_test(user: str = Depends(verify_admin_api_key)):
+async def discord_test(user: str = Depends(verify_admin_api_key):
     """Send a test Discord message to verify bot token and channel ID (admin only)."""
     from backend.services.discord_notifier import _bot_token, _channel_id, _post
     token = _bot_token()
@@ -1365,7 +1367,7 @@ async def discord_send_todays_bets(
             Game.game_date > now_utc,          # upcoming games only
             Game.external_id.isnot(None),      # skip orphan records with no Odds API ID
         )
-        .options(joinedload(Prediction.game))
+        .options(joinedload(Prediction.game)
         .all()
     )
 
@@ -1461,29 +1463,29 @@ async def manual_recalibration(
         return result
     except Exception as exc:
         logger.error("Recalibration failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)
 
 
 @app.post("/admin/force-update-outcomes")
-async def force_update_outcomes(user: str = Depends(verify_admin_api_key)):
+async def force_update_outcomes(user: str = Depends(verify_admin_api_key):
     """Manually trigger the outcome-update job (admin only)."""
     logger.info("Manual outcome update triggered by %s", user)
     try:
         results = update_completed_games()
         return {"message": "Outcome update complete", **results}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)
 
 
 @app.post("/admin/force-capture-lines")
-async def force_capture_lines(user: str = Depends(verify_admin_api_key)):
+async def force_capture_lines(user: str = Depends(verify_admin_api_key):
     """Manually trigger the closing-line capture job (admin only)."""
     logger.info("Manual line capture triggered by %s", user)
     try:
         results = capture_closing_lines()
         return {"message": "Line capture complete", **results}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)
 
 
 @app.post("/admin/alerts/{alert_id}/acknowledge")
@@ -1503,7 +1505,7 @@ async def acknowledge_alert(
 
 
 @app.get("/admin/scheduler/status")
-async def get_scheduler_status(user: str = Depends(verify_admin_api_key)):
+async def get_scheduler_status(user: str = Depends(verify_admin_api_key):
     """Get scheduler job status"""
     jobs = []
     for job in scheduler.get_jobs():
@@ -1520,7 +1522,7 @@ async def get_scheduler_status(user: str = Depends(verify_admin_api_key)):
 
 
 @app.get("/admin/portfolio/status")
-async def get_portfolio_status(user: str = Depends(verify_admin_api_key)):
+async def get_portfolio_status(user: str = Depends(verify_admin_api_key):
     """Return current portfolio state: exposure, drawdown, pending positions."""
     pm = get_portfolio_manager()
     state = pm.get_state()
@@ -1536,7 +1538,7 @@ async def get_portfolio_status(user: str = Depends(verify_admin_api_key)):
 
 
 @app.get("/admin/odds-monitor/status")
-async def get_odds_monitor_status(user: str = Depends(verify_admin_api_key)):
+async def get_odds_monitor_status(user: str = Depends(verify_admin_api_key):
     """Return odds monitor status: tracked games, last poll time."""
     monitor = get_odds_monitor()
     return monitor.get_status()
@@ -1550,7 +1552,7 @@ def _get_model_param(db: Session, name: str) -> Optional[ModelParameter]:
     return (
         db.query(ModelParameter)
         .filter(ModelParameter.parameter_name == name)
-        .order_by(ModelParameter.effective_date.desc())
+        .order_by(ModelParameter.effective_date.desc()
         .first()
     )
 
@@ -1560,7 +1562,7 @@ def get_effective_bankroll(db: Session) -> float:
     row = _get_model_param(db, "current_bankroll")
     if row and row.parameter_value and row.parameter_value > 0:
         return row.parameter_value
-    return float(os.getenv("STARTING_BANKROLL", "1000"))
+    return _get_float_env("STARTING_BANKROLL", "1000")
 
 
 @app.get("/admin/bankroll")
@@ -1574,7 +1576,7 @@ async def get_bankroll(
     return {
         "effective_bankroll": effective,
         "source": "db_override" if (row and row.parameter_value) else "env_var",
-        "env_starting_bankroll": float(os.getenv("STARTING_BANKROLL", "1000")),
+        "env_starting_bankroll": _get_float_env("STARTING_BANKROLL", "1000"),
         "last_set": row.effective_date.isoformat() if row else None,
         "set_by": row.changed_by if row else None,
     }
@@ -1592,7 +1594,7 @@ async def set_bankroll(
         parameter_value=round(amount, 2),
         reason="manual_override",
         changed_by=user,
-    ))
+    )
     db.commit()
     logger.info("Bankroll overridden to $%.2f by %s", amount, user)
     return {"status": "ok", "bankroll_set": round(amount, 2)}
@@ -1629,7 +1631,7 @@ async def set_parlay_override(
         parameter_value=1.0 if active else 0.0,
         reason="manual_override",
         changed_by=user,
-    ))
+    )
     db.commit()
     logger.info("Force parlay sizing set to %s by %s", active, user)
     return {"status": "ok", "force_parlay_sizing": active}

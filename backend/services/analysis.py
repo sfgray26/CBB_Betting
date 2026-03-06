@@ -53,6 +53,7 @@ from backend.services.matchup_engine import get_profile_cache, get_matchup_engin
 from backend.services.parlay_engine import build_optimal_parlays, format_parlay_ticket
 from backend.services.team_mapping import normalize_team_name
 from backend.services.scout import perform_sanity_check
+from backend.utils.env_utils import get_float_env
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ def _effective_bankroll(db: "Session") -> float:
     )
     if row and row.parameter_value and row.parameter_value > 0:
         return row.parameter_value
-    return float(os.getenv("STARTING_BANKROLL", "1000"))
+    return get_float_env("STARTING_BANKROLL", "1000")
 
 
 def _force_parlay_active(db: "Session") -> bool:
@@ -244,7 +245,7 @@ def get_or_create_game(db: Session, game_data: Dict) -> Game:
 
     commence_time = game_data.get("commence_time")
     if isinstance(commence_time, str):
-        game_date = datetime.fromisoformat(commence_time.replace("Z", "+00:00"))
+        game_date = datetime.fromisoformat(commence_time.replace("Z", "+00:00")
     else:
         game_date = datetime.utcnow()
 
@@ -269,7 +270,7 @@ def _daily_exposure(db: Session) -> float:
     """
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     result = (
-        db.query(func.sum(BetLog.bet_size_dollars))
+        db.query(func.sum(BetLog.bet_size_dollars)
         .filter(
             BetLog.timestamp >= today_start,
             BetLog.outcome.is_(None),           # still pending
@@ -364,7 +365,7 @@ def _apply_simultaneous_kelly(
         bet["_reasons"] = reasons
 
     # Count total fade-favourite bets
-    n_fades = sum(1 for b in pending_bets if b.get("_is_fade_fav"))
+    n_fades = sum(1 for b in pending_bets if b.get("_is_fade_fav")
     if n_fades > 1:
         fade_seen = 0
         for bet in pending_bets:
@@ -405,11 +406,11 @@ def _apply_simultaneous_kelly(
                 )
                 bet["recommended_units"] = remaining
                 cumulative += remaining
-                allocated_indices.add(id(bet))
+                allocated_indices.add(id(bet)
             else:
                 # Full allocation
                 cumulative += units
-                allocated_indices.add(id(bet))
+                allocated_indices.add(id(bet)
 
         logger.info(
             "Greedy Kelly: %d/%d bets allocated (%.1f%% → %.1f%% cap)",
@@ -419,7 +420,7 @@ def _apply_simultaneous_kelly(
 
     # Finalise reasons and clean up temp keys
     for bet in pending_bets:
-        bet["slate_adjustment_reason"] = "; ".join(bet.pop("_reasons", []))
+        bet["slate_adjustment_reason"] = "; ".join(bet.pop("_reasons", [])
         bet.pop("_is_fade_fav", None)
 
     return pending_bets
@@ -469,7 +470,7 @@ def _create_paper_bet(
     # **EV Displacement**: If the daily cap is full but a new high-EV bet
     # arrives (e.g., late-breaking line movement), allow it to displace
     # an inferior pending bet instead of dropping it entirely.
-    max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0"))
+    max_daily_pct = get_float_env("MAX_DAILY_EXPOSURE_PCT", "20.0")
     max_daily_dollars = starting_bankroll * max_daily_pct / 100.0
     remaining_capacity = max(0.0, max_daily_dollars - daily_exposure)
 
@@ -489,7 +490,7 @@ def _create_paper_bet(
             BetLog.outcome.is_(None),
             BetLog.is_paper_trade.is_(True),
             BetLog.conservative_edge.isnot(None),
-        ).order_by(BetLog.conservative_edge.asc()).all()
+        ).order_by(BetLog.conservative_edge.asc().all()
 
         if pending_bets:
             lowest_ev_bet = pending_bets[0]
@@ -498,7 +499,7 @@ def _create_paper_bet(
             # Volatility-scaled displacement threshold
             game_sd = prediction.adjusted_sd or 11.0
             threshold_bump = 0.001 * game_sd
-            threshold_bump = max(0.005, min(threshold_bump, 0.025))
+            threshold_bump = max(0.005, min(threshold_bump, 0.025)
 
             # Displacement condition: new edge must exceed lowest edge + threshold
             if new_edge >= (lowest_edge + threshold_bump):
@@ -611,7 +612,7 @@ def _ddgs_and_check_sync(game: dict) -> str:
         today_str = datetime.utcnow().strftime("%Y-%m-%d")
         query = f"{away} {home} injury suspension lineup {today_str}"
         with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=5))
+            results = list(ddgs.text(query, max_results=5)
         context = " | ".join(r.get("body", "") for r in results)
         return perform_sanity_check(home, away, verdict, context)
     except Exception as e:
@@ -699,7 +700,7 @@ async def run_nightly_analysis(
                 success=False,
                 error_message=str(_odds_exc)[:500],
                 records_fetched=0,
-            ))
+            )
             db.commit()
             return _summary(start_time, 0, 0, 0, [f"Odds API failed: {_odds_exc}"])
 
@@ -707,26 +708,26 @@ async def run_nightly_analysis(
             data_source="the_odds_api",
             success=True,
             records_fetched=len(odds_games),
-        ))
-        logger.info("Fetched %d games from The Odds API", len(odds_games))
+        )
+        logger.info("Fetched %d games from The Odds API", len(odds_games)
 
         # Log DataFetch records for ratings
         ratings_service = get_ratings_service()
         for source in ("kenpom", "barttorvik", "evanmiya"):
-            count = len(all_ratings.get(source, {}))
+            count = len(all_ratings.get(source, {})
             db.add(DataFetch(
                 data_source=source,
                 success=count > 0,
                 records_fetched=count,
                 error_message=None if count > 0 else f"Zero records for {source}",
-            ))
+            )
         db.commit()
 
         logger.info(
             "Ratings loaded — KenPom: %d, BartTorvik: %d, EvanMiya: %d",
-            len(all_ratings.get("kenpom", {})),
-            len(all_ratings.get("barttorvik", {})),
-            len(all_ratings.get("evanmiya", {})),
+            len(all_ratings.get("kenpom", {}),
+            len(all_ratings.get("barttorvik", {}),
+            len(all_ratings.get("evanmiya", {}),
         )
 
         if not odds_games:
@@ -739,25 +740,25 @@ async def run_nightly_analysis(
         # ----------------------------------------------------------------
         calibrated = load_current_params(db)
         sd_multiplier = calibrated.get(
-            "sd_multiplier", float(os.getenv("SD_MULTIPLIER", "0.85"))
+            "sd_multiplier", get_float_env("SD_MULTIPLIER", "0.85")
         )
 
         model = CBBEdgeModel(
-            base_sd=float(os.getenv("BASE_SD", "11.0")),
+            base_sd=get_float_env("BASE_SD", "11.0"),
             weights={
                 "kenpom":     calibrated.get("weight_kenpom",
-                                             float(os.getenv("WEIGHT_KENPOM",    "0.342"))),
+                                             get_float_env("WEIGHT_KENPOM",    "0.342")),
                 "barttorvik": calibrated.get("weight_barttorvik",
-                                             float(os.getenv("WEIGHT_BARTTORVIK", "0.333"))),
+                                             get_float_env("WEIGHT_BARTTORVIK", "0.333")),
                 "evanmiya":   calibrated.get("weight_evanmiya",
-                                             float(os.getenv("WEIGHT_EVANMIYA",  "0.325"))),
+                                             get_float_env("WEIGHT_EVANMIYA",  "0.325")),
             },
             home_advantage=calibrated.get(
                 "home_advantage",
-                float(os.getenv("HOME_ADVANTAGE", "3.09")),
+                get_float_env("HOME_ADVANTAGE", "3.09"),
             ),
-            max_kelly=float(os.getenv("MAX_KELLY_FRACTION",             "0.20")),
-            fractional_kelly_divisor=float(os.getenv("FRACTIONAL_KELLY_DIVISOR", "2.0")),
+            max_kelly=get_float_env("MAX_KELLY_FRACTION",             "0.20"),
+            fractional_kelly_divisor=get_float_env("FRACTIONAL_KELLY_DIVISOR", "2.0"),
         )
         logger.info(
             "Model initialised — home_adv=%.3f, sd_multiplier=%.4f, "
@@ -794,7 +795,7 @@ async def run_nightly_analysis(
         # errors.  Bet candidates are collected first; simultaneous Kelly
         # adjustments are applied AFTER the full slate is known.
         # ----------------------------------------------------------------
-        logger.info("Analysing %d games...", len(odds_games))
+        logger.info("Analysing %d games...", len(odds_games)
 
         # Pre-compute valid team names from the profile cache once so that
         # normalize_team_name can fuzzy-match raw Odds API names against
@@ -836,7 +837,7 @@ async def run_nightly_analysis(
             _game_key = f"{_at}@{_ht}"
             try:
                 _gt = _gd.get("sharp_consensus_total") or _gd.get("best_total")
-                _dyn_sd = math.sqrt(float(_gt)) * sd_multiplier if _gt else None
+                _dyn_sd = math.sqrt(float(_gt) * sd_multiplier if _gt else None
                 _ri: Dict = {
                     "kenpom": {
                         "home": ratings_service.get_team_rating(
@@ -915,7 +916,7 @@ async def run_nightly_analysis(
         # ================================================================
         # TWO-PASS SLATE: PASS 2 — main loop (edge-sorted order)
         # ================================================================
-        _min_bet_edge = float(os.getenv("MIN_BET_EDGE", "2.5")) / 100.0
+        _min_bet_edge = get_float_env("MIN_BET_EDGE", "2.5") / 100.0
         
         # Build list of game dicts for sweep from Pass 1 candidates
         _sweep_inputs = []
@@ -1272,7 +1273,7 @@ async def run_nightly_analysis(
                         sharp_books_available=odds_input.get("sharp_books_available", 0),
                         # Soft-proxy flag — applies half SE penalty (0.15) instead of
                         # full NO_SHARP_BOOKS_SE_ADDEND (0.30).
-                        sharp_proxy_used=bool(game_data.get("sharp_proxy_used", False)),
+                        sharp_proxy_used=bool(game_data.get("sharp_proxy_used", False),
                         integrity_verdict=integrity_verdict,
                     )
 
@@ -1290,7 +1291,7 @@ async def run_nightly_analysis(
                             hours_to_tipoff=hours_to_tipoff,
                             concurrent_exposure=_pass2_concurrent_exposure,
                             sharp_books_available=odds_input.get("sharp_books_available", 0),
-                            sharp_proxy_used=bool(game_data.get("sharp_proxy_used", False)),
+                            sharp_proxy_used=bool(game_data.get("sharp_proxy_used", False),
                             integrity_verdict=integrity_verdict,
                             base_sd_override=dynamic_base_sd,  # preserve original SD for unchanged-spread invariant
                             original_verdict=analysis.verdict,  # enables true PASS->BET flip detection
@@ -1411,7 +1412,7 @@ async def run_nightly_analysis(
                         # = 2.5% of bankroll); concurrent_exposure uses 0-1 fractions.
                         if analysis.recommended_units > 0:
                             _max_exp_frac = (
-                                float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0")) / 100.0
+                                get_float_env("MAX_DAILY_EXPOSURE_PCT", "20.0") / 100.0
                             )
                             _pass2_concurrent_exposure = min(
                                 _pass2_concurrent_exposure
@@ -1453,7 +1454,7 @@ async def run_nightly_analysis(
         # ----------------------------------------------------------------
         if bet_candidates:
             starting_bankroll = _effective_bankroll(db)
-            max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0"))
+            max_daily_pct = get_float_env("MAX_DAILY_EXPOSURE_PCT", "20.0")
             max_daily_dollars = starting_bankroll * max_daily_pct / 100.0
 
             # 1. Apply simultaneous Kelly covariance penalty
@@ -1620,7 +1621,7 @@ async def run_nightly_analysis(
 
         if len(parlay_slate) >= 2:
             _starting_bankroll = _effective_bankroll(db)
-            _max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0"))
+            _max_daily_pct = get_float_env("MAX_DAILY_EXPOSURE_PCT", "20.0")
             _max_daily_dollars = _starting_bankroll * _max_daily_pct / 100.0
             _remaining_capacity = max(0.0, _max_daily_dollars - current_exposure)
             _force_parlay = _force_parlay_active(db)

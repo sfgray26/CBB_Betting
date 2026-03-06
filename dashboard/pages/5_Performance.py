@@ -8,7 +8,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
-from dashboard.utils import api_get, sidebar_api_key
+from dashboard.utils import api_get, sidebar_api_key, get_float_env
 from dashboard.shared import inject_custom_css
 
 st.set_page_config(page_title="Performance | CBB Edge", layout="wide")
@@ -74,7 +74,7 @@ if timeline_data and timeline_data.get("timeline"):
     # Daily Capital Deployed chart
     st.subheader("Daily Capital Deployed")
     if "capital_deployed_units" in df.columns:
-        max_daily_exposure_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "15.0"))
+        max_daily_exposure_pct = get_float_env("MAX_DAILY_EXPOSURE_PCT", "15.0")
 
         fig_capital = go.Figure()
         fig_capital.add_trace(go.Bar(

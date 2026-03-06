@@ -6,7 +6,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import streamlit as st
-from dashboard.utils import api_get, api_post, sidebar_api_key
+from dashboard.utils import api_get, api_post, sidebar_api_key, get_float_env
 from dashboard.shared import inject_custom_css
 
 st.set_page_config(page_title="Admin Panel | CBB Edge", layout="wide")
@@ -449,14 +449,14 @@ if portfolio:
 
     with g1:
         exposure = portfolio.get("current_exposure_pct", 0)
-        max_exposure = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "15.0"))
+        max_exposure = get_float_env("MAX_DAILY_EXPOSURE_PCT", "15.0")
         st.metric("Current Exposure", f"{exposure:.1f}%")
         st.progress(min(exposure / max_exposure, 1.0) if max_exposure > 0 else 0)
         st.caption(f"Cap: {max_exposure:.0f}%")
 
     with g2:
         drawdown = portfolio.get("current_drawdown_pct", 0)
-        max_dd = float(os.getenv("MAX_DRAWDOWN_PCT", "15.0"))
+        max_dd = get_float_env("MAX_DRAWDOWN_PCT", "15.0")
         st.metric("Current Drawdown", f"{drawdown:.1f}%")
         st.progress(min(drawdown / max_dd, 1.0) if max_dd > 0 else 0)
         st.caption(f"Circuit breaker: {max_dd:.0f}%")
