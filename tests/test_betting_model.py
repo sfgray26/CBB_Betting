@@ -5,9 +5,7 @@ Run with: pytest tests/test_betting_model.py -v
 
 import pytest
 import numpy as np
-import os
 from backend.betting_model import CBBEdgeModel
-from backend.utils.env_utils import get_float_env
 
 
 class TestMonteCarloCI:
@@ -821,8 +819,8 @@ class TestMarketAwareBlend:
             'sharp_consensus_spread': -5.0,  # market says home -5
         }
 
-        r_no = model1.analyze_game(self._make_game(), odds_no_sharp, self._make_ratings()
-        r_yes = model2.analyze_game(self._make_game(), odds_with_sharp, self._make_ratings()
+        r_no = model1.analyze_game(self._make_game(), odds_no_sharp, self._make_ratings())
+        r_yes = model2.analyze_game(self._make_game(), odds_with_sharp, self._make_ratings())
 
         # With sharp blend, margin should be pulled down toward 5
         assert r_yes.projected_margin < r_no.projected_margin
@@ -835,8 +833,8 @@ class TestMarketAwareBlend:
         odds_a = {'spread': -5.0, 'spread_odds': -110, 'spread_away_odds': -110}
         odds_b = {'spread': -5.0, 'spread_odds': -110, 'spread_away_odds': -110}
 
-        r1 = model1.analyze_game(self._make_game(), odds_a, self._make_ratings()
-        r2 = model2.analyze_game(self._make_game(), odds_b, self._make_ratings()
+        r1 = model1.analyze_game(self._make_game(), odds_a, self._make_ratings())
+        r2 = model2.analyze_game(self._make_game(), odds_b, self._make_ratings())
 
         assert abs(r1.projected_margin - r2.projected_margin) < 0.01
 
@@ -848,7 +846,7 @@ class TestMarketAwareBlend:
             'sharp_consensus_spread': -5.0,
         }
 
-        result = model.analyze_game(self._make_game(), odds, self._make_ratings()
+        result = model.analyze_game(self._make_game(), odds, self._make_ratings())
 
         assert any("Market blend" in n for n in result.notes)
 
@@ -1544,7 +1542,7 @@ class TestExposureAccounting:
             bet, net_change = result
 
             # net_change should equal bet_size_dollars when no displacement
-            assert abs(net_change - (bet.bet_size_dollars or 0.0) < 0.01
+            assert abs(net_change - (bet.bet_size_dollars or 0.0)) < 0.01
 
             db.rollback()
         finally:
@@ -1604,7 +1602,7 @@ class TestExposureAccounting:
 
         db = SessionLocal()
         try:
-            bankroll = get_float_env("STARTING_BANKROLL", "1000")
+            bankroll = float(os.getenv("STARTING_BANKROLL", "1000"))
 
             # Create TWO separate games (displacement happens across different games)
             old_game = Game(
@@ -1680,7 +1678,7 @@ class TestExposureAccounting:
             db.flush()
 
             # Call _create_paper_bet with high daily exposure to trigger displacement
-            max_daily_pct = get_float_env("MAX_DAILY_EXPOSURE_PCT", "20.0")
+            max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0"))
             max_daily = bankroll * max_daily_pct / 100.0
             # Set daily_exposure such that remaining capacity is tight
             # This should trigger the displacement logic
@@ -2405,7 +2403,7 @@ class TestD4MinBetEdge:
         """Default MIN_BET_EDGE=2.5% is encoded in the model (env var test)."""
         import os
         # If env var is not set, the default must be 2.5
-        env_val = get_float_env("MIN_BET_EDGE", "2.5")
+        env_val = float(os.getenv("MIN_BET_EDGE", "2.5"))
         assert env_val == pytest.approx(2.5)
 
 
@@ -2443,7 +2441,7 @@ class TestReanalysisEngine:
         import math, os
         m = model or self._model()
         odds = self._odds(spread=spread, total=total)
-        sd_mult = get_float_env("SD_MULTIPLIER", "0.85")
+        sd_mult = float(os.getenv("SD_MULTIPLIER", "0.85"))
         base_sd = math.sqrt(total) * sd_mult
         from backend.betting_model import ReanalysisEngine
         return ReanalysisEngine.from_analysis_pass(
@@ -2495,7 +2493,7 @@ class TestReanalysisEngine:
 
         model = CBBEdgeModel(seed=42)
         total = 145.0
-        sd_mult = get_float_env("SD_MULTIPLIER", "0.85")
+        sd_mult = float(os.getenv("SD_MULTIPLIER", "0.85"))
         base_sd = math.sqrt(total) * sd_mult
         odds_tight = self._odds(spread=-3.0, total=total)
 
@@ -2533,7 +2531,7 @@ class TestReanalysisEngine:
         engine, model, odds, _ = self._engine(total=130.0)
 
         new_total = 155.0
-        sd_mult = get_float_env("SD_MULTIPLIER", "0.85")
+        sd_mult = float(os.getenv("SD_MULTIPLIER", "0.85"))
         expected_base = math.sqrt(new_total) * sd_mult  # ~10.58
 
         original_base = math.sqrt(130.0) * sd_mult     # ~9.69
@@ -2562,7 +2560,7 @@ class TestReanalysisEngine:
         injuries = [{"team": "UNC", "player": "test_player", "impact": 1.2}]
         home_style = {"pace": 70.0, "efg_pct": 0.53}
         away_style = {"pace": 65.0, "efg_pct": 0.49}
-        sd_mult = get_float_env("SD_MULTIPLIER", "0.85")
+        sd_mult = float(os.getenv("SD_MULTIPLIER", "0.85"))
         base_sd = math.sqrt(odds["total"]) * sd_mult
 
         engine = ReanalysisEngine.from_analysis_pass(

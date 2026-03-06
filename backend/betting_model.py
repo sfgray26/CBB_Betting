@@ -7,7 +7,7 @@ Upgrades from V7:
 - Shin (1993) method for true probability extraction from odds
 - Portfolio-aware Kelly sizing support
 - Injury impact quantification
-- Spread-adjusted cover probability (P(cover) not P(win)
+- Spread-adjusted cover probability (P(cover) not P(win))
 - Deterministic RNG for reproducible Monte Carlo results
 - Both-side edge evaluation (home or away value detection)
 
@@ -33,7 +33,6 @@ from backend.core.odds_math import (
     dynamic_sd as _core_dynamic_sd,
 )
 from backend.core.sport_config import SportConfig
-from backend.utils.env_utils import get_float_env
 
 logger = logging.getLogger(__name__)
 
@@ -150,9 +149,9 @@ class CBBEdgeModel:
         # When spread=0 this reduces to P(home wins) = Phi(margin / sd).
         prob_samples = norm.cdf((margin_samples + spread) / adjusted_sd)
 
-        point_est = float(np.mean(prob_samples)
-        lower_ci = float(np.percentile(prob_samples, 2.5)
-        upper_ci = float(np.percentile(prob_samples, 97.5)
+        point_est = float(np.mean(prob_samples))
+        lower_ci = float(np.percentile(prob_samples, 2.5))
+        upper_ci = float(np.percentile(prob_samples, 97.5))
 
         return point_est, lower_ci, upper_ci
 
@@ -204,9 +203,9 @@ class CBBEdgeModel:
         missing, falls back to a game-total-based heuristic, then to base_sd.
         """
         if home_style and away_style:
-            avg_pace = (home_style.get('pace', self._cfg.d1_avg_pace) + away_style.get('pace', self._cfg.d1_avg_pace) / 2.0
-            avg_3par = (home_style.get('three_par', self._cfg.d1_avg_three_par) + away_style.get('three_par', self._cfg.d1_avg_three_par) / 2.0
-            avg_ftr = (home_style.get('ft_rate', self._cfg.d1_avg_ft_rate) + away_style.get('ft_rate', self._cfg.d1_avg_ft_rate) / 2.0
+            avg_pace = (home_style.get('pace', self._cfg.d1_avg_pace) + away_style.get('pace', self._cfg.d1_avg_pace)) / 2.0
+            avg_3par = (home_style.get('three_par', self._cfg.d1_avg_three_par) + away_style.get('three_par', self._cfg.d1_avg_three_par)) / 2.0
+            avg_ftr = (home_style.get('ft_rate', self._cfg.d1_avg_ft_rate) + away_style.get('ft_rate', self._cfg.d1_avg_ft_rate)) / 2.0
 
             # More possessions → more variance; more 3PA → fatter tails.
             pace_factor = avg_pace / self._cfg.d1_avg_pace  # Normalized to D1 average
@@ -214,11 +213,11 @@ class CBBEdgeModel:
             ftr_damper = 1.0 - 0.05 * (avg_ftr - self._cfg.d1_avg_ft_rate) / 0.10  # FTs slightly reduce variance
 
             sd = self.base_sd * np.sqrt(pace_factor) * volatility_factor * ftr_damper
-            return float(np.clip(sd, 8.0, 16.0)
+            return float(np.clip(sd, 8.0, 16.0))
 
         if game_total is not None and game_total > 0:
             sd = _core_dynamic_sd(game_total, self._cfg.base_sd_multiplier)
-            return float(np.clip(sd, 8.0, 16.0)
+            return float(np.clip(sd, 8.0, 16.0))
 
         return self.base_sd
 
@@ -248,7 +247,7 @@ class CBBEdgeModel:
 
         1. *Time decay* — logistic sigmoid centred at 10 hours:
 
-               w_time = 0.20 + 0.70 / (1 + exp(-0.5 * (hours - 10))
+               w_time = 0.20 + 0.70 / (1 + exp(-0.5 * (hours - 10)))
 
            - At 24 h: w ≈ 0.89  (model dominates — market is thin)
            - At 10 h: w ≈ 0.55  (equal blend)
@@ -265,7 +264,7 @@ class CBBEdgeModel:
            consensus is more informative.  Each additional sharp book beyond
            the first reduces model weight by 5% (multiplicative):
 
-               w_sharp = max(0.80, 1.0 - 0.05 * (n_sharp - 1)
+               w_sharp = max(0.80, 1.0 - 0.05 * (n_sharp - 1))
 
            With 1 sharp book: 1.00 (no discount).
            With 3 sharp books: 0.90.
@@ -291,14 +290,14 @@ class CBBEdgeModel:
         # --- Time decay (logistic sigmoid) ---
         h = hours_to_tipoff if hours_to_tipoff is not None else 12.0
         h = max(h, 0.0)
-        w_time = 0.20 + 0.70 / (1.0 + float(np.exp(-0.5 * (h - 10.0))
+        w_time = 0.20 + 0.70 / (1.0 + float(np.exp(-0.5 * (h - 10.0))))
 
         # --- Sharp book discount ---
         n = max(sharp_books_available, 0)
         if n <= 1:
             w_sharp = 1.0
         else:
-            w_sharp = max(0.80, 1.0 - 0.05 * (n - 1)
+            w_sharp = max(0.80, 1.0 - 0.05 * (n - 1))
 
         weight = float(w_time * w_sharp)
 
@@ -335,7 +334,7 @@ class CBBEdgeModel:
         f = (prob * decimal_odds - 1) / (decimal_odds - 1)
 
         # Cap at maximum (disaster prevention)
-        f = max(0.0, min(f, self.max_kelly)
+        f = max(0.0, min(f, self.max_kelly))
 
         return f
 
@@ -437,7 +436,7 @@ class CBBEdgeModel:
             return 0.3  # single source — agreement is undefined; apply partial penalty
         spread = max(values) - min(values)
         norm = 2.0 * self.base_sd        # normalization: full disagreement = 2 × base SD
-        return max(0.0, min(1.0, 1.0 - spread / norm)
+        return max(0.0, min(1.0, 1.0 - spread / norm))
 
     def _snr_kelly_scalar(self, snr: float) -> float:
         """
@@ -457,8 +456,8 @@ class CBBEdgeModel:
         Returns:
             Kelly multiplier ∈ [floor, 1.0].
         """
-        floor = get_float_env("SNR_KELLY_FLOOR", "0.5")
-        return floor + (1.0 - floor) * max(0.0, min(1.0, snr)
+        floor = float(os.getenv("SNR_KELLY_FLOOR", "0.5"))
+        return floor + (1.0 - floor) * max(0.0, min(1.0, snr))
 
     def _integrity_kelly_scalar(self, integrity_verdict: Optional[str]) -> float:
         """
@@ -491,9 +490,9 @@ class CBBEdgeModel:
             return 1.0
         v = integrity_verdict.upper()
         if "VOLATILE" in v:
-            return get_float_env("INTEGRITY_VOLATILE_SCALAR", "0.5")
+            return float(os.getenv("INTEGRITY_VOLATILE_SCALAR", "0.5"))
         if "CAUTION" in v:
-            return get_float_env("INTEGRITY_CAUTION_SCALAR", "0.75")
+            return float(os.getenv("INTEGRITY_CAUTION_SCALAR", "0.75"))
         return 1.0  # CONFIRMED or unrecognized → no penalty
 
     def _edge_breaker_threshold(self, hours_to_tipoff: Optional[float]) -> float:
@@ -511,7 +510,7 @@ class CBBEdgeModel:
         ----------------------------------
             h >= 24 h  : threshold = 15%  (thin market; model legitimately leads)
             4 <= h < 24: threshold = 12%  (plateau; market still forming)
-            h < 4 h    : threshold = 6% + 6% * exp(-1.5 * (4 - h)
+            h < 4 h    : threshold = 6% + 6% * exp(-1.5 * (4 - h))
 
         Spot checks:
             T-4h  -> 6% + 6%*exp(0)    = 12.0%  (continuous join)
@@ -536,8 +535,8 @@ class CBBEdgeModel:
             # Plateau raised 12% → 13% to account for active matchup engine
             # contributing ~1-2pp of legitimate edge (post-P1 fix).
             # Env-var override allows operator rollback to 0.12 if needed.
-            return get_float_env("CB_PLATEAU_PCT", "13") / 100.0
-        return 0.06 + 0.06 * math.exp(-1.5 * (4.0 - h)
+            return float(os.getenv("CB_PLATEAU_PCT", "13")) / 100.0
+        return 0.06 + 0.06 * math.exp(-1.5 * (4.0 - h))
 
     def kelly_fraction_with_push(
         self,
@@ -576,7 +575,7 @@ class CBBEdgeModel:
         f = (p_win * b - p_loss) / b
 
         # Cap at maximum (disaster prevention)
-        f = max(0.0, min(f, self.max_kelly)
+        f = max(0.0, min(f, self.max_kelly))
 
         return f
     
@@ -591,7 +590,7 @@ class CBBEdgeModel:
         Calculate adjusted SD with dynamic penalty budget and ceiling.
 
         **Formula:**
-            SD_adj = effective_base * volatility_scalar * (1 + min(sqrt(sum(penalty²), 6) / 15)
+            SD_adj = effective_base * volatility_scalar * (1 + min(sqrt(sum(penalty²)), 6) / 15)
 
         **Dynamic scaling (two new dimensions):**
 
@@ -632,7 +631,7 @@ class CBBEdgeModel:
         # Market volatility scaling: line movement implies information the
         # model hasn't captured.  Scale base SD upward proportionally.
         if market_volatility is not None and market_volatility > 0:
-            vol_scalar = 1.0 + 0.15 * float(np.tanh(market_volatility)
+            vol_scalar = 1.0 + 0.15 * float(np.tanh(market_volatility))
             effective_base *= vol_scalar
 
         if penalties_dict is None:
@@ -641,13 +640,13 @@ class CBBEdgeModel:
         # Time-decay for injury-class penalties — uncertainty about lineup
         # resolves as tipoff approaches.
         if hours_to_tipoff is not None:
-            time_decay = 1.0 - 0.6 * float(np.exp(-hours_to_tipoff / 6.0)
+            time_decay = 1.0 - 0.6 * float(np.exp(-hours_to_tipoff / 6.0))
             injury_keys = [k for k in penalties_dict if 'injury' in k]
             for k in injury_keys:
                 penalties_dict[k] *= time_decay
 
         # Sqrt-sum (diminishing returns on penalty stacking)
-        total_penalty = float(np.sqrt(sum(v**2 for v in penalties_dict.values())
+        total_penalty = float(np.sqrt(sum(v**2 for v in penalties_dict.values())))
 
         # Cap penalty at 6 (prevents runaway)
         total_penalty = min(total_penalty, 6.0)
@@ -689,17 +688,17 @@ class CBBEdgeModel:
                             Applies a half-penalty (0.15) instead of the full
                             NO_SHARP_BOOKS_SE_ADDEND (0.30).
         """
-        se = get_float_env("BASE_MARGIN_SE", "1.50")
+        se = float(os.getenv("BASE_MARGIN_SE", "1.50"))
         if evanmiya_down:
-            se += get_float_env("EVANMIYA_DOWN_SE_ADDEND", "0.30")
+            se += float(os.getenv("EVANMIYA_DOWN_SE_ADDEND", "0.30"))
         if sharp_books < 1:
             if sharp_proxy_used:
                 # Proxy present: half-penalty (less reliable than true sharp)
-                se += get_float_env("SOFT_PROXY_SE_ADDEND", "0.15")
+                se += float(os.getenv("SOFT_PROXY_SE_ADDEND", "0.15"))
             else:
-                se += get_float_env("NO_SHARP_BOOKS_SE_ADDEND", "0.30")
-        se += get_float_env("MISSING_SOURCE_SE_PTS", "0.15") * n_missing
-        return min(se, get_float_env("MAX_MARGIN_SE", "2.50"))
+                se += float(os.getenv("NO_SHARP_BOOKS_SE_ADDEND", "0.30"))
+        se += float(os.getenv("MISSING_SOURCE_SE_PTS", "0.15")) * n_missing
+        return min(se, float(os.getenv("MAX_MARGIN_SE", "2.50")))
 
     def analyze_game(
         self,
@@ -840,16 +839,16 @@ class CBBEdgeModel:
         available_sources: list = []
 
         # KenPom is required (already checked above)
-        available_sources.append(('kenpom', kp_home - kp_away)
+        available_sources.append(('kenpom', kp_home - kp_away))
 
         if bt_home is not None and bt_away is not None:
-            available_sources.append(('barttorvik', bt_home - bt_away)
+            available_sources.append(('barttorvik', bt_home - bt_away))
         else:
             penalties['missing_barttorvik'] = 1.0
             notes.append("BartTorvik unavailable — weights renormalized to remaining sources")
 
         if em_home is not None and em_away is not None:
-            available_sources.append(('evanmiya', em_home - em_away)
+            available_sources.append(('evanmiya', em_home - em_away))
         else:
             # EvanMiya missing → weights re-normalised to remaining sources only.
             # No SD penalty is applied: EvanMiya is frequently unavailable due
@@ -914,7 +913,7 @@ class CBBEdgeModel:
         if not game_data.get('is_neutral', False):
             if home_style and away_style:
                 # Compute expected pace from team profiles
-                game_pace = (home_style.get('pace', 68.0) + away_style.get('pace', 68.0) / 2.0
+                game_pace = (home_style.get('pace', 68.0) + away_style.get('pace', 68.0)) / 2.0
                 pace_ratio = game_pace / 68.0
             else:
                 # Fallback: scale by game total (140.0 = D1 average total)
@@ -1111,7 +1110,7 @@ class CBBEdgeModel:
         # EvanMiya null-only case: _em_null is True → n_total was already
         # decremented by 1 → n_missing == 0 → no addend.  BartTorvik
         # absence (more anomalous) still fires.
-        _MISSING_SOURCE_SD_PTS = get_float_env("MISSING_SOURCE_SD_PTS", "1.25")
+        _MISSING_SOURCE_SD_PTS = float(os.getenv("MISSING_SOURCE_SD_PTS", "1.25"))
         if n_missing > 0:
             _sd_addend = _MISSING_SOURCE_SD_PTS * n_missing
             adj_sd = min(adj_sd + _sd_addend, 15.5)
@@ -1132,11 +1131,11 @@ class CBBEdgeModel:
         # This is computed once here and reused later at the circuit-breaker
         # threshold block (which also widens its threshold for heuristic data).
         _using_heuristic_ff: bool = bool(
-            (home_style and home_style.get("four_factors_heuristic")
-            or (away_style and away_style.get("four_factors_heuristic")
+            (home_style and home_style.get("four_factors_heuristic"))
+            or (away_style and away_style.get("four_factors_heuristic"))
         )
         if _using_heuristic_ff:
-            _HEURISTIC_FF_SD_MULT = get_float_env("HEURISTIC_FF_SD_MULT", "1.15")
+            _HEURISTIC_FF_SD_MULT = float(os.getenv("HEURISTIC_FF_SD_MULT", "1.15"))
             adj_sd = min(adj_sd * _HEURISTIC_FF_SD_MULT, 15.5)
             notes.append(
                 f"Heuristic four-factor data: SD x{_HEURISTIC_FF_SD_MULT:.2f} "
@@ -1154,7 +1153,7 @@ class CBBEdgeModel:
         # unfamiliarity, coaching adjustments, and compressed prep time.
         # Apply a multiplicative bump when is_neutral=True.
         # Controlled by TOURNAMENT_MODE_SD_BUMP env var (default 1.15).
-        _TOURNAMENT_SD_BUMP = get_float_env("TOURNAMENT_MODE_SD_BUMP", "1.15")
+        _TOURNAMENT_SD_BUMP = float(os.getenv("TOURNAMENT_MODE_SD_BUMP", "1.15"))
         if game_data.get("is_neutral", False) and _TOURNAMENT_SD_BUMP != 1.0:
             pre_bump_sd = adj_sd
             adj_sd = min(adj_sd * _TOURNAMENT_SD_BUMP, 15.5)
@@ -1564,7 +1563,7 @@ class CBBEdgeModel:
         # _using_heuristic_ff was computed and used in the SD-penalty block above;
         # reference it here to also widen the edge-breaker threshold.
         if _using_heuristic_ff:
-            _lift = get_float_env("HEURISTIC_CB_LIFT_PCT", "2") / 100.0
+            _lift = float(os.getenv("HEURISTIC_CB_LIFT_PCT", "2")) / 100.0
             _EDGE_BREAKER_THRESHOLD += _lift
             notes.append(
                 f"Heuristic four-factor data: circuit-breaker threshold widened "
@@ -1575,8 +1574,8 @@ class CBBEdgeModel:
             # contributed substantive signal (abs(adj) > threshold).
             # The +1pp lift directly accommodates the ~1-2pp edge shift that a
             # real matchup adjustment adds (e.g. +0.517pt → ~+1.9pp cover_prob).
-            _MATCHUP_CB_MIN_ADJ = get_float_env("MATCHUP_CB_MIN_ADJ_PT", "0.20")
-            _MATCHUP_CB_LIFT    = get_float_env("MATCHUP_CB_LIFT_PCT",    "1.0") / 100.0
+            _MATCHUP_CB_MIN_ADJ = float(os.getenv("MATCHUP_CB_MIN_ADJ_PT", "0.20"))
+            _MATCHUP_CB_LIFT    = float(os.getenv("MATCHUP_CB_LIFT_PCT",    "1.0")) / 100.0
             if abs(matchup_margin_adj) > _MATCHUP_CB_MIN_ADJ:
                 _EDGE_BREAKER_THRESHOLD += _MATCHUP_CB_LIFT
                 notes.append(
@@ -1680,8 +1679,8 @@ class CBBEdgeModel:
         # placed as paper trades, not counted in BET rate.
         # Tune upward toward 4-5% once market blend is confirmed live.
         # ================================================================
-        elif edge_conservative <= get_float_env("MIN_BET_EDGE", "2.5") / 100.0:
-            _min_bet_edge = get_float_env("MIN_BET_EDGE", "2.5") / 100.0
+        elif edge_conservative <= float(os.getenv("MIN_BET_EDGE", "2.5")) / 100.0:
+            _min_bet_edge = float(os.getenv("MIN_BET_EDGE", "2.5")) / 100.0
             _home_team = game_data.get('home_team', 'Home')
             _away_team = game_data.get('away_team', 'Away')
             _bet_team  = _home_team if bet_side == "home" else _away_team
@@ -1712,15 +1711,15 @@ class CBBEdgeModel:
             # T4  (8%+):  1.25u  — base ceiling (no premium without sharp data)
             # T4+ (8%+):  1.50u  — premium: sharp_books>=1 + real FF data
             # ============================================================
-            _T1_EDGE   = get_float_env("KELLY_TIER_1_EDGE",   "2.0") / 100.0
-            _T2_EDGE   = get_float_env("KELLY_TIER_2_EDGE",   "5.0") / 100.0
-            _T3_EDGE   = get_float_env("KELLY_TIER_3_EDGE",   "8.0") / 100.0
+            _T1_EDGE   = float(os.getenv("KELLY_TIER_1_EDGE",   "2.0")) / 100.0
+            _T2_EDGE   = float(os.getenv("KELLY_TIER_2_EDGE",   "5.0")) / 100.0
+            _T3_EDGE   = float(os.getenv("KELLY_TIER_3_EDGE",   "8.0")) / 100.0
 
-            _T1_UNITS  = get_float_env("KELLY_TIER_1_UNITS",  "0.50")
-            _T2_UNITS  = get_float_env("KELLY_TIER_2_UNITS",  "0.75")
-            _T3_UNITS  = get_float_env("KELLY_TIER_3_UNITS",  "1.00")
-            _T4_UNITS  = get_float_env("KELLY_TIER_4_UNITS",  "1.25")
-            _T4P_UNITS = get_float_env("KELLY_TIER_4P_UNITS", "1.50")
+            _T1_UNITS  = float(os.getenv("KELLY_TIER_1_UNITS",  "0.50"))
+            _T2_UNITS  = float(os.getenv("KELLY_TIER_2_UNITS",  "0.75"))
+            _T3_UNITS  = float(os.getenv("KELLY_TIER_3_UNITS",  "1.00"))
+            _T4_UNITS  = float(os.getenv("KELLY_TIER_4_UNITS",  "1.25"))
+            _T4P_UNITS = float(os.getenv("KELLY_TIER_4P_UNITS", "1.50"))
 
             # T4+ premium: Pinnacle/Circa consensus present AND real FF data
             _t4_premium = (
@@ -1745,7 +1744,7 @@ class CBBEdgeModel:
             # triggered (hours < 1.5), demote one tier step. The divisor
             # mechanism alone is bypassed by tier-based sizing.
             if adverse_selection_penalty > 1.0:
-                _as_step = get_float_env("ADVERSE_SEL_TIER_STEP", "0.25")
+                _as_step = float(os.getenv("ADVERSE_SEL_TIER_STEP", "0.25"))
                 recommended_units = max(recommended_units - _as_step, _T1_UNITS)
                 _tier_tag = _tier_tag + "-AS"
 
@@ -1912,7 +1911,7 @@ class ReanalysisEngine:
 
     Usage::
 
-        # During nightly pass (after model.analyze_game():
+        # During nightly pass (after model.analyze_game()):
         engine = ReanalysisEngine.from_analysis_pass(model, game_data, odds, ...)
         cache[game_key] = engine
 
@@ -1948,7 +1947,7 @@ class ReanalysisEngine:
 
         if new_total is not None:
             updated_odds["total"] = new_total
-            sd_multiplier = get_float_env("SD_MULTIPLIER", "0.85")
+            sd_multiplier = float(os.getenv("SD_MULTIPLIER", "0.85"))
             base_sd_override: Optional[float] = math.sqrt(new_total) * sd_multiplier
         else:
             # Use the dynamic SD that was computed during the original analysis pass.
