@@ -43,6 +43,10 @@ jobs:
       run: |
         python scripts/init_db.py
     
+    - name: Syntax check core files
+      run: |
+        python -m py_compile backend/main.py backend/betting_model.py backend/services/analysis.py backend/services/odds.py
+
     - name: Run tests
       env:
         DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_cbb_edge

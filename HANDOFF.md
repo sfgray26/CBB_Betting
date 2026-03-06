@@ -1,24 +1,24 @@
-# OPERATIONAL HANDOFF (EMAC-040)
+# OPERATIONAL HANDOFF (EMAC-042)
 
-> Ground truth as of EMAC-040. Operator: Claude Code (Master Architect).
+> Ground truth as of EMAC-042. Operator: Claude Code (Master Architect).
 > Read `IDENTITY.md` for risk policy. Read `AGENTS.md` for roles. Read `HEARTBEAT.md` for loops.
 
 ---
 
 ## 1. SYSTEM STATUS
 
-**Last completed:** EMAC-040 — Full infrastructure triage complete. All env var parsing fixed across 3 files (49 total calls). Railway is live. Model quality under review.
+**Last completed:** EMAC-042 — Env var fix deployed (betting_model.py + odds.py, commit 748462b). G-12 CI syntax guard installed.
 
 | Component | Status | Detail |
 |-----------|--------|--------|
 | V9 Model | OK | SNR + Integrity Kelly scalars. `model_version='v9.0'` |
 | Railway API | OK | Live and accepting requests. All syntax errors resolved (EMAC-039/040). |
-| Env Var Parsing | OK | `get_float_env` applied to **49 calls** across `betting_model.py` (28), `main.py` (7), `analysis.py` (14). Zero plain `float(os.getenv)` remaining. |
+| Env Var Parsing | OK | `get_float_env` applied to ALL float reads across `betting_model.py` (14), `main.py` (7), `analysis.py` (14), `odds.py` (2). Zero plain `float(os.getenv)` remaining. Committed 748462b. |
 | Dashboard API | OK | `API_URL` = Railway production. Data Cleanup endpoint added (`DELETE /admin/games/{id}`). |
-| Analysis Pipeline | OK | `bets_recommended=0` on first clean run (12 games). Reason under investigation (K-3). |
+| Analysis Pipeline | OK | `bets_recommended=0` is correct conservatism per K-3 audit. V9-specific recalibration needed at 50 bets. |
 | Tournament SD Bump (A-26 T1) | OK | `TOURNAMENT_MODE_SD_BUMP` (1.15x) when `is_neutral=True`. 4 tests. (EMAC-036) |
 | Neutral-Site Fix (A-25) | OK | `parse_odds_for_game` extracts `neutral_site` -> `is_neutral`. (EMAC-034) |
-| Recalibration | OK | ha=2.419, sd_mult=1.0. Calibrated on 663 settled bets. Oscillation guard active. |
+| Recalibration | OK | ha=2.419, sd_mult=1.0. V8-calibrated; V9-specific recalibration triggered at 50 bets (K-3 finding). |
 | Railway DB | OK | PostgreSQL connected. 9 tables initialized. Nightly running. |
 | Kimi CLI | OK | K-1 complete (tournament intelligence). K-2 complete (seed data research). |
 | OpenClaw v2.0 | OK | O-7 coordinator validation: 4/4 tests. Integrity sweep active in analysis pipeline. |
@@ -30,16 +30,18 @@
 
 ## 2. ARCHITECT REVIEW: MODEL QUALITY & TEAM STATE
 
-### Model Quality — Current Concern
+### Model Quality — K-3 Audit Complete
 
-The first clean Railway analysis returned `games_analyzed=12, bets_recommended=0`. This may be:
+**K-3 VERDICT:** The `0 bets on 12 games` result is **correct conservatism (Option A)**, not a bug.
 
-- **A)** Correct conservatism — no genuine edge in today's slate
-- **B)** Ratings data absent or degraded in Railway (KenPom/BartTorvik API keys not set, or returning empty)
-- **C)** Post-calibration threshold mismatch — `sd_mult=1.0` (up from 0.85 default) widens the distribution, compressing edges below `MIN_BET_EDGE=2.5%`
-- **D)** Home advantage `ha=2.419` (vs default 3.09) slightly deflating projected margins
+**Root causes identified:**
+1. **Wider distribution** (`sd_mult=1.0` vs default `0.85`) = +17.6% SD → ~2.8pp edge compression
+2. **Lower home advantage** (`ha=2.419` vs default `3.09`) = -21.7% HCA → compressed margins
+3. **V9 structural mismatch** — 663 V8-era calibration bets had NO SNR/integrity scalars
 
-**Kimi K-3 is the right tool** to audit this — she can read all recent predictions + the full analysis pipeline in one pass and pinpoint the root cause.
+**V9 Kelly effect:** `effective_kelly = v8_kelly × [0.25-1.0]` due to combined scalars
+
+**Action required:** V9-specific recalibration after **50 settled V9-era bets** (not 20).
 
 ### Team Assessment
 
@@ -53,7 +55,7 @@ The first clean Railway analysis returned `games_analyzed=12, bets_recommended=0
 
 **Gemini is now SCOPE-LIMITED**: No multi-file refactors without explicit Claude approval + mandatory syntax verification before any commit. Gemini's strength is surgical single-file edits and env var management.
 
-**Kimi CLI (Deep Intelligence)** — Performing well within role. K-1 and K-2 both delivered high-quality structured research. K-3 (model quality audit) is the right next use. Context window advantage is being underutilized.
+**Kimi CLI (Deep Intelligence)** — K-1, K-2, and K-3 all delivered high-quality structured research. K-3 audit resolved the 0-bets mystery (correct conservatism, not a bug). Context window advantage proven for multi-file analysis tasks.
 
 **OpenClaw (Integrity)** — Working correctly in analysis pipeline. O-6 spot-check still pending. This is blocking verification that integrity verdicts are working in production.
 
@@ -76,27 +78,24 @@ Full report: `reports/2026-03-06-seed-data-research.md`
 
 ---
 
-### KIMI CLI — K-3: Model Quality Audit [PRIORITY]
+### KIMI CLI — K-3: Model Quality Audit [COMPLETE]
 
-**Priority:** HIGH — blocking model quality understanding before tournament.
+**Status:** COMPLETE — Report saved to `reports/2026-03-07-model-quality-audit.md`
 
-**Context:**
-- First clean Railway analysis: 12 games analyzed, 0 bets recommended, 0 errors
-- Known calibration state: `ha=2.419`, `sd_mult=1.0` (wider distribution than default 0.85)
-- Odds API returned ~66 games; 12 survived the per-game filter (others likely tipped off already)
-- Ratings situation unknown in Railway: KenPom/BartTorvik API key status unclear
+**K-3 FINDINGS:**
 
-**Your task — answer these 4 questions in `reports/2026-03-07-model-quality-audit.md`:**
+1. **Ratings data health**: KenPom is REQUIRED. Empty ratings return PASS immediately. The 12 games analyzed proves KenPom API is working in Railway.
 
-1. **Ratings data health**: Read `backend/services/ratings.py`. Under what conditions do `kenpom`, `barttorvik`, `evanmiya` return empty dicts vs. real data? What happens to the model when all ratings are null?
+2. **Edge compression root cause**: 
+   - `sd_mult=1.0` vs default `0.85` = +17.6% wider SD → compresses edges by ~2.8pp for typical margins
+   - `ha=2.419` vs default `3.09` = -21.7% less HCA → compressed home-team edges
+   - Combined effect: model margin needs ~6+ points differential to produce `edge_conservative > 0`
 
-2. **Edge inflation / compression pipeline**: Read `backend/betting_model.py` (full). Trace the path from `ratings_input` through `projected_margin` -> `edge_point` -> `edge_conservative`. Given `sd_mult=1.0` (widened distribution) + `ha=2.419`, what is the approximate minimum ratings-quality needed to produce `edge_conservative > 0`?
+3. **Filters audit**: No overly aggressive filters identified. MIN_BET_EDGE=2.5% is working as designed. Z-score guard and circuit breakers are appropriately calibrated.
 
-3. **Conservative threshold audit**: Read `backend/services/analysis.py` (full). List every filter that can cause a game to PASS before `edge_conservative` is even computed. Are any of these overly aggressive for regular-season games?
+4. **Calibration mismatch (CRITICAL)**: The 663 V8-era calibration bets had NO SNR/integrity scalars. V9 applies 0.25-1.0× combined scalar. This is a **structural mismatch** — V9-specific recalibration needed after 50 settled bets.
 
-4. **Calibration sanity check**: `sd_mult=1.0` was calibrated on 663 bets from the V8 era. The V9 model has different SNR + integrity scalars that weren't present in those bets. Is `sd_mult=1.0` still appropriate for V9, or should we decouple the calibration dataset?
-
-**Output:** Save to `reports/2026-03-07-model-quality-audit.md`. Add K-3 FINDINGS section to HANDOFF.md. Update title to EMAC-041.
+**Verdict on 0 bets:** Correct conservatism, not a bug. The model is functioning correctly with current calibration.
 
 ---
 
@@ -198,7 +197,7 @@ Bracket (Mar 16) + K-2 DONE --> A-26 T2 (seed scalars) --> Tournament Start (Mar
 
 O-6 (integrity spot-check) --> UNBLOCKED — run now
 
-G-12 (CI syntax guard) --> UNBLOCKED — prevents future dropped-paren incidents
+G-12 (CI syntax guard) | COMPLETE — py_compile step added to deploy.yml |
 ```
 
 ---
@@ -242,7 +241,7 @@ G-12 (CI syntax guard) --> UNBLOCKED — prevents future dropped-paren incidents
 
 ### PROMPT FOR CLAUDE CODE
 ```
-MISSION: EMAC-040 — Standby / A-26 T2 post-March 16
+MISSION: EMAC-042 — Standby / A-26 T2 post-March 16
 You are Claude Code, Master Architect for CBB Edge Analyzer.
 
 CONTEXT:
