@@ -39,6 +39,7 @@ from tenacity import (
 )
 
 from backend.core.circuit_breaker import CircuitBreaker
+from backend.utils.env_utils import get_float_env
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +63,8 @@ SHARP_BOOKS: frozenset = frozenset({"pinnacle", "circasports"})
 # proxy to activate.  Never added to SHARP_BOOKS — proxy consensus carries
 # higher uncertainty (SE inflation via SOFT_PROXY_SE_ADDEND in betting_model).
 SOFT_SHARP_BOOKS: frozenset = frozenset({"draftkings", "fanduel"})
-PROXY_SPREAD_AGREEMENT_PT: float = float(
-    os.getenv("PROXY_AGREEMENT_PT", "0.5")
+PROXY_SPREAD_AGREEMENT_PT: float = get_float_env(
+    "PROXY_AGREEMENT_PT", "0.5"
 )
 
 
@@ -82,7 +83,7 @@ class OddsAPIClient:
     @classmethod
     def quota_is_low(cls) -> bool:
         """Return True when the shared quota is below the configured reserve."""
-        reserve = int(os.getenv("ODDS_API_QUOTA_RESERVE", "10"))
+        reserve = int(get_float_env("ODDS_API_QUOTA_RESERVE", "10"))
         if cls._shared_quota is None:
             return False
         return cls._shared_quota < reserve
@@ -111,7 +112,7 @@ class OddsAPIClient:
     def get_cbb_odds(
         self,
         markets: str = "h2h,spreads,totals",
-        regions: str = os.getenv("ODDS_API_REGIONS", "us,eu"),
+        regions: str = os.getenv("ODDS_API_REGIONS", "us,eu").strip().replace("=", ""),
         odds_format: str = "american",
     ) -> List[Dict]:
         """
@@ -214,7 +215,7 @@ class OddsAPIClient:
     async def async_get_cbb_odds(
         self,
         markets: str = "h2h,spreads,totals",
-        regions: str = os.getenv("ODDS_API_REGIONS", "us,eu"),
+        regions: str = os.getenv("ODDS_API_REGIONS", "us,eu").strip().replace("=", ""),
         odds_format: str = "american",
     ) -> List[Dict]:
         """Async version of get_cbb_odds using httpx."""
