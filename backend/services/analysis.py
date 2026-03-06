@@ -53,6 +53,7 @@ from backend.services.matchup_engine import get_profile_cache, get_matchup_engin
 from backend.services.parlay_engine import build_optimal_parlays, format_parlay_ticket
 from backend.services.team_mapping import normalize_team_name
 from backend.services.scout import perform_sanity_check
+from backend.utils.env_utils import get_float_env
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ def _effective_bankroll(db: "Session") -> float:
     )
     if row and row.parameter_value and row.parameter_value > 0:
         return row.parameter_value
-    return float(os.getenv("STARTING_BANKROLL", "1000"))
+    return get_float_env("STARTING_BANKROLL", "1000")
 
 
 def _force_parlay_active(db: "Session") -> bool:
@@ -469,7 +470,7 @@ def _create_paper_bet(
     # **EV Displacement**: If the daily cap is full but a new high-EV bet
     # arrives (e.g., late-breaking line movement), allow it to displace
     # an inferior pending bet instead of dropping it entirely.
-    max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0"))
+    max_daily_pct = get_float_env("MAX_DAILY_EXPOSURE_PCT", "20.0")
     max_daily_dollars = starting_bankroll * max_daily_pct / 100.0
     remaining_capacity = max(0.0, max_daily_dollars - daily_exposure)
 
@@ -739,25 +740,25 @@ async def run_nightly_analysis(
         # ----------------------------------------------------------------
         calibrated = load_current_params(db)
         sd_multiplier = calibrated.get(
-            "sd_multiplier", float(os.getenv("SD_MULTIPLIER", "0.85"))
+            "sd_multiplier", get_float_env("SD_MULTIPLIER", "0.85")
         )
 
         model = CBBEdgeModel(
-            base_sd=float(os.getenv("BASE_SD", "11.0")),
+            base_sd=get_float_env("BASE_SD", "11.0"),
             weights={
                 "kenpom":     calibrated.get("weight_kenpom",
-                                             float(os.getenv("WEIGHT_KENPOM",    "0.342"))),
+                                             get_float_env("WEIGHT_KENPOM", "0.342")),
                 "barttorvik": calibrated.get("weight_barttorvik",
-                                             float(os.getenv("WEIGHT_BARTTORVIK", "0.333"))),
+                                             get_float_env("WEIGHT_BARTTORVIK", "0.333")),
                 "evanmiya":   calibrated.get("weight_evanmiya",
-                                             float(os.getenv("WEIGHT_EVANMIYA",  "0.325"))),
+                                             get_float_env("WEIGHT_EVANMIYA", "0.325")),
             },
             home_advantage=calibrated.get(
                 "home_advantage",
-                float(os.getenv("HOME_ADVANTAGE", "3.09")),
+                get_float_env("HOME_ADVANTAGE", "3.09"),
             ),
-            max_kelly=float(os.getenv("MAX_KELLY_FRACTION",             "0.20")),
-            fractional_kelly_divisor=float(os.getenv("FRACTIONAL_KELLY_DIVISOR", "2.0")),
+            max_kelly=get_float_env("MAX_KELLY_FRACTION", "0.20"),
+            fractional_kelly_divisor=get_float_env("FRACTIONAL_KELLY_DIVISOR", "2.0"),
         )
         logger.info(
             "Model initialised — home_adv=%.3f, sd_multiplier=%.4f, "
@@ -915,7 +916,7 @@ async def run_nightly_analysis(
         # ================================================================
         # TWO-PASS SLATE: PASS 2 — main loop (edge-sorted order)
         # ================================================================
-        _min_bet_edge = float(os.getenv("MIN_BET_EDGE", "2.5")) / 100.0
+        _min_bet_edge = get_float_env("MIN_BET_EDGE", "2.5") / 100.0
         
         # Build list of game dicts for sweep from Pass 1 candidates
         _sweep_inputs = []
@@ -1411,7 +1412,7 @@ async def run_nightly_analysis(
                         # = 2.5% of bankroll); concurrent_exposure uses 0-1 fractions.
                         if analysis.recommended_units > 0:
                             _max_exp_frac = (
-                                float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0")) / 100.0
+                                get_float_env("MAX_DAILY_EXPOSURE_PCT", "20.0") / 100.0
                             )
                             _pass2_concurrent_exposure = min(
                                 _pass2_concurrent_exposure
@@ -1453,7 +1454,7 @@ async def run_nightly_analysis(
         # ----------------------------------------------------------------
         if bet_candidates:
             starting_bankroll = _effective_bankroll(db)
-            max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0"))
+            max_daily_pct = get_float_env("MAX_DAILY_EXPOSURE_PCT", "20.0")
             max_daily_dollars = starting_bankroll * max_daily_pct / 100.0
 
             # 1. Apply simultaneous Kelly covariance penalty
@@ -1620,7 +1621,7 @@ async def run_nightly_analysis(
 
         if len(parlay_slate) >= 2:
             _starting_bankroll = _effective_bankroll(db)
-            _max_daily_pct = float(os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0"))
+            _max_daily_pct = get_float_env("MAX_DAILY_EXPOSURE_PCT", "20.0")
             _max_daily_dollars = _starting_bankroll * _max_daily_pct / 100.0
             _remaining_capacity = max(0.0, _max_daily_dollars - current_exposure)
             _force_parlay = _force_parlay_active(db)
