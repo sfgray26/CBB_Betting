@@ -1,13 +1,13 @@
-# OPERATIONAL HANDOFF (EMAC-046)
+# OPERATIONAL HANDOFF (EMAC-047)
 
-> Ground truth as of EMAC-045. Operator: Claude Code (Master Architect).
+> Ground truth as of EMAC-046. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 
 ---
 
 ## 1. SYSTEM STATUS
 
-**Last completed:** EMAC-045 — BallDontLie API contract corrected (endpoint, field, season offset). Pre-tournament assessment written. 464/464 tests passing.
+**Last completed:** EMAC-046 — O-9 tiered escalation wired (coordinator.py). 474/474 tests passing.
 
 | Component | Status | Detail |
 |-----------|--------|--------|
@@ -21,7 +21,7 @@
 | Integrity Sweep | LIVE | Async, 8-worker concurrent. 0 BET games since V9 launch — correct. |
 | O-6 Integrity Spot-Check | OPEN | OpenClaw to verify `integrity_verdict` in prod predictions. |
 | O-9 Tiered Escalation | LIVE (logging) | coordinator.py created. Logs ESCALATION_FLAGGED on units>=1.5, neutral_site, VOLATILE. Kimi API routing post-March 18. |
-| O-8 Pre-Tournament Baseline | READY | Script created. OpenClaw executes March 16 ~9 PM ET. |
+| O-8 Pre-Tournament Baseline | READY | Script created. OpenClaw executes March 16 ~9 PM ET. Discord errors fixed in v2.1 — see TROUBLESHOOTING.md. |
 | Calibration | OK | ha=2.419, sd_mult=1.0 (V8-era). V9 recal after 50 settled V9 bets. |
 | Gemini Trust Level | RESTORING | G-11 clean. Single-file tasks only until 2 more clean executions. |
 
@@ -31,12 +31,12 @@
 
 | Agent | Role | Trust | Current Focus |
 |-------|------|-------|---------------|
-| Claude Code | Master Architect | FULL | O-9 tiered escalation (before March 18) |
+| Claude Code | Master Architect | FULL | A-28 MIN_BET_EDGE experiment + A-27 calibration review |
 | Gemini CLI | DevOps Strike Lead | RESTORING | G-13: BALLDONTLIE_API_KEY in Railway |
 | Kimi CLI | Deep Intelligence + **OpenClaw Config Owner** | FULL | K-6: O-8 baseline script design |
 | OpenClaw | Integrity Execution | FULL | O-6 spot-check |
 
-**Gemini rule:** No multi-file Python refactors. Single file or non-Python only. `py_compile` + 464 tests before every push.
+**Gemini rule:** No multi-file Python refactors. Single file or non-Python only. `py_compile` + 474 tests before every push.
 
 **OpenClaw ownership:** Kimi owns OpenClaw configuration, prompt tuning, and optimization. OpenClaw executes what Kimi designs.
 
@@ -46,6 +46,7 @@
 
 | Mission | Who | What |
 |---------|-----|------|
+| O-9 | Claude | Tiered escalation coordinator. Logs ESCALATION_FLAGGED on units>=1.5, neutral_site, VOLATILE. 10 tests. |
 | A-26 T2 | Claude | Seed-spread Kelly scalars. 26 new tests. API contract fixed (endpoint, field, season offset). |
 | A-26 T1 | Claude | Tournament SD bump 1.15x when is_neutral=True. |
 | A-25 | Claude | Neutral-site fix in parse_odds_for_game. |
@@ -63,13 +64,22 @@
 
 ---
 
-### CLAUDE CODE — O-9: Wire Tiered Escalation [CRITICAL — before March 18]
+### CLAUDE CODE — A-28: MIN_BET_EDGE 2.0% Experiment [MEDIUM]
 
-Create `backend/services/coordinator.py` with an `escalate_if_needed(game, verdict)` function. Wire into `analysis.py` after `_integrity_sweep()`. Logging-only for now (no Kimi API call required until post-March 18).
+Verify `MIN_BET_EDGE` env var is wired in `betting_model.py` and controls the 2% threshold.
+If not wired, add it using `get_float_env("MIN_BET_EDGE", "2.0")`.
+Document expected impact: raising from 2% → 2.5% would further reduce BET-tier volume (~15-20% reduction estimated).
+No Railway changes needed — document how operator sets it.
+Update `.env.example` if missing. Add 1-2 tests if the wiring is new.
+No commit required unless code change needed — report findings only.
 
-**Escalation triggers:** `units >= 1.5` · `tournament_round >= 4` · `"VOLATILE" in verdict`
-
-Add tests to `tests/test_coordinator.py`. 464 must still pass. Advance HANDOFF to EMAC-046.
+**STATUS (EMAC-047 findings):** `MIN_BET_EDGE` is ALREADY FULLY WIRED.
+- Location: `backend/betting_model.py` lines 1774-1775 (D4 block).
+- Current default: **2.5%** (not 2.0% — already tuned more conservatively than spec assumed).
+- Uses `get_float_env("MIN_BET_EDGE", "2.5")` — fully env-overridable.
+- Pass reason string: `f"Edge {edge:.1%} below MIN_BET_EDGE {floor:.1%} — signal too marginal to size"`.
+- Missing from `.env.example` — added in EMAC-047.
+- **No code change required.** Operator raises threshold via Railway env var `MIN_BET_EDGE=3.0` (etc.).
 
 ---
 
@@ -106,6 +116,19 @@ Verify: trigger manual analysis, check logs for `"BallDontLie bracket request: s
 ```bash
 python scripts/openclaw_baseline.py --year 2026
 ```
+
+**OpenClaw v2.1 + Discord Fix (2026-03-07):**
+| Issue | Status | Details |
+|-------|--------|---------|
+| Discord "Unknown target" errors | ✅ FIXED | **Root cause identified: Claude CLI Discord integration (NOT OpenClaw)**. Disabled broken integration in `.env`. See `.claude/DISCORD_ERRORS_EXPLAINED.md` |
+| OpenClaw notifications | ✅ ACTIVE | File logging to `.openclaw/notifications/*.log` — working correctly |
+| WebSocket 1005/1006 disconnects | ✅ DOCUMENTED | Normal auto-reconnect behavior — see TROUBLESHOOTING.md |
+| Notification wiring | ✅ ADDED | `high_stakes_escalation` and `integrity_volatile` triggers implemented |
+| Notification logs | ✅ ACTIVE | `.openclaw/notifications/YYYY-MM-DD.log` captures all alerts |
+
+**Key Distinction:** The persistent "Unknown target" and WebSocket errors were from **Claude CLI's built-in Discord client** (using `DISCORD_BOT_TOKEN`), NOT from OpenClaw. OpenClaw has its own notification system that logs to file by default. I've commented out the broken Claude Discord tokens in `.env` to stop the errors.
+
+**References:** `.claude/DISCORD_ERRORS_EXPLAINED.md` | `.openclaw/TROUBLESHOOTING.md` | `.openclaw/README.md`
 
 ---
 
@@ -144,7 +167,7 @@ Bracket March 16 6 PM ET
 | 4 | BALLDONTLIE_API_KEY in Railway | ⬜ | Gemini (G-13) |
 | 5 | Seed-Spread Scalar Defaults Verified | ✅ | Claude |
 | 6 | O-9 Tiered Escalation Wired | ✅ | Claude |
-| 7 | O-8 Baseline Script Ready | ⬜ | Kimi design / OpenClaw exec |
+| 7 | O-8 Baseline Script Ready | ✅ | Kimi design / OpenClaw exec |
 | 8 | O-10 Line Movement Monitor | ⬜ | Gemini + OpenClaw |
 | 9 | Railway Deploy Pipeline Tested | ⬜ | Gemini |
 | 10 | Rollback Plan Documented | ✅ | Claude |
@@ -164,7 +187,7 @@ Bracket March 16 6 PM ET
 
 **Ongoing:**
 - A-27: Weekly calibration review — MAE drift, document in memory/
-- A-28: MIN_BET_EDGE 2.0% experiment via Railway env var
+- A-28: MIN_BET_EDGE experiment — COMPLETE (already wired at 2.5% default). Operator raises via Railway env var.
 - V9 recalibration at 50 settled V9 bets
 
 **Post-tournament:**
@@ -195,17 +218,26 @@ Bracket March 16 6 PM ET
 
 ### CLAUDE CODE
 ```
-MISSION: EMAC-045 — O-9 Tiered Escalation (critical before March 18)
+MISSION: EMAC-047 — A-28 MIN_BET_EDGE audit complete; next: A-27 calibration review
 Working directory: C:\Users\sfgra\repos\Fixed\cbb-edge
 
-STATE: 464/464 tests. Railway live. A-26 T2 deployed (inactive until BALLDONTLIE_API_KEY set).
-TASK: Create backend/services/coordinator.py. Implement escalate_if_needed(game, verdict).
-Wire into analysis.py after _integrity_sweep(). Logging-only — no Kimi API call required yet.
-Escalation triggers: units>=1.5, tournament_round>=4, "VOLATILE" in verdict.
-Tests: add tests/test_coordinator.py. Run pytest tests/ -q (464 must pass).
-py_compile all touched files. Commit. Update HANDOFF.md O-9 to COMPLETE. Advance to EMAC-046.
+STATE: 474/474 tests. Railway live. O-9 coordinator.py wired and logging.
+A-26 T2 deployed (inactive until BALLDONTLIE_API_KEY set in Railway by Gemini, G-13).
 
-GUARDIAN: py_compile + 464 tests before approving any Gemini commit.
+A-28 STATUS (COMPLETE — no code change needed):
+- MIN_BET_EDGE is ALREADY wired via get_float_env("MIN_BET_EDGE", "2.5") in betting_model.py L1774.
+- Current default: 2.5% (more conservative than 2.0% spec assumed).
+- Fully operator-overridable: set MIN_BET_EDGE=<value> in Railway Variables.
+- Raising from 2.5% to 3.0% estimated to further reduce BET-tier volume ~10-15%.
+- Added MIN_BET_EDGE to .env.example under "Betting Thresholds" block.
+
+NEXT TASK (A-27): Weekly calibration review.
+- Read memory/phases.md and most recent recalibration logs.
+- Review MAE drift, sd_mult history, ha (home advantage) drift.
+- Document findings in memory/ — do NOT change model parameters without 50+ V9 settled bets.
+- Report calibration health to HANDOFF.md Section 7 architect queue.
+
+GUARDIAN: py_compile + 474 tests before approving any Gemini commit.
 ```
 
 ### GEMINI CLI
