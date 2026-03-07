@@ -1,4 +1,4 @@
-# OPERATIONAL HANDOFF (EMAC-044)
+# OPERATIONAL HANDOFF (EMAC-045)
 
 > Ground truth as of EMAC-044. Operator: Claude Code (Master Architect).
 > Read `IDENTITY.md` for risk policy. Read `AGENTS.md` for roles. Read `HEARTBEAT.md` for loops.
@@ -7,7 +7,7 @@
 
 ## 1. SYSTEM STATUS
 
-**Last completed:** EMAC-044 — A-26 T2 (Seed-Spread Kelly Scalars) implemented ahead of schedule. 464/464 tests passing. Deployed to Railway (commit 7ee0207). Active for tournament — no-op during regular season (returns 1.0 when seeds unavailable).
+**Last completed:** EMAC-045 — BallDontLie API bug fixed (endpoint `/bracket`, field `name`, `season=year-1`). Pre-tournament assessment report created. Rollback plan documented. HANDOFF.md updated. 464/464 tests passing.
 
 | Component | Status | Detail |
 |-----------|--------|--------|
@@ -26,8 +26,32 @@
 | Integrity Spot-Check (O-6) | OPEN | Verify integrity_verdict fields in production predictions. Assigned to OpenClaw. |
 | Seed-Spread Scalars (A-26 T2) | COMPLETE | Implemented ahead of schedule. 464 tests passing. No-op until bracket loaded (BALLDONTLIE_API_KEY needed in Railway). |
 | A-26 T2 Architecture Spec (K-4) | COMPLETE | Spec at `reports/2026-03-16-a26t2-implementation-spec.md`. Implemented EMAC-044. |
+| BallDontLie API Bug (7.5) | FIXED | Endpoint `/bracket`, field `name`, season-1 offset. Fixed EMAC-045. |
 | SNR Re-Audit (A-19) | DEFERRED | Needs 20+ settled V9-era bets. |
 | Gemini Trust Level | RESTORING | G-11 (env audit) complete. G-12 in CI. Trust restoring after clean execution. |
+
+---
+
+## 1.5. OPENCLAW STATUS (Auto-Updated)
+
+**Last Updated:** 2026-03-06 by Kimi CLI (diagnostic audit)
+
+| Component | Status | Detail |
+|-----------|--------|--------|
+| Coordinator | ✅ HEALTHY | v2.0, circuit breaker CLOSED, O-7 4/4 tests passed |
+| Integrity Sweep | ✅ ACTIVE | Wired in `analysis.py`, runs on BET-tier games |
+| Memory System | ✅ CREATED | `memory/` dir + `.openclaw/operational-state.json` initialized |
+| Telemetry | ⚠️ PARTIAL | Sweep runs but no structured logging yet (see Issue Analysis) |
+| Scheduler | ❌ NOT ACTIVE | Health checks defined in HEARTBEAT.md but not triggered |
+| Tiered Escalation (O-9) | ❌ NOT WIRED | Coordinator exists but `analysis.py` bypasses it |
+| HANDOFF Updates | ❌ MANUAL | No auto-update mechanism from OpenClaw |
+
+**Active Alerts:**
+- OpenClaw telemetry gap — sweep results not persisted (Issue #4 in analysis)
+- Tiered escalation to Kimi not yet wired (O-9 incomplete)
+- Nightly health check never runs (no scheduler)
+
+**Reference:** Full issue analysis at `reports/openclaw-issue-analysis.md`
 
 ---
 
@@ -350,6 +374,57 @@ Bracket reveals March 16 @ 6 PM ET
 
 ---
 
+## 7.5. BALLDONTLIE API RESEARCH (Kimi CLI)
+
+**Status:** COMPLETE — Research documented at `reports/balldontlie-api-research.md`
+
+### Key Findings
+
+| Item | Detail |
+|------|--------|
+| **Endpoint** | `GET https://api.balldontlie.io/ncaab/v1/bracket` |
+| **Auth** | Header: `Authorization: YOUR_API_KEY` |
+| **Tier Required** | GOAT (highest tier) |
+| **Seed Location** | `response.data[].home_team.seed` / `away_team.seed` |
+| **Season Param** | Offset by -1 (use `season=2025` for 2026 tournament) |
+
+### Round ID Mapping
+```
+1 = First Four / Play-in
+2 = Round of 64
+3 = Round of 32
+4 = Sweet 16
+5 = Elite 8
+6 = Final Four
+7 = Championship
+```
+
+### Sample Response (seed extraction)
+```json
+{
+  "home_team": {
+    "name": "Duke",
+    "seed": "1",
+    ...
+  },
+  "away_team": {
+    "name": "Mount St. Mary's",
+    "seed": "16",
+    ...
+  }
+}
+```
+
+### Implementation Ready
+- ✅ API contract confirmed
+- ✅ Authentication mechanism documented
+- ✅ Seed field location verified
+- ⚠️ Requires GOAT tier API key (not yet in Railway)
+
+**Action Required:** Add `BALLDONTLIE_API_KEY` to Railway env vars before March 16.
+
+---
+
 ## 8. ARCHITECT REVIEW QUEUE
 
 ### Regular Season (Now — March 15)
@@ -393,19 +468,20 @@ Bracket reveals March 16 @ 6 PM ET
 | When Gemini breaks a file: restore from pre-Gemini commit (`git checkout HASH -- file.py`), apply legitimate changes via Python regex. Fastest path. | EMAC-039 |
 | `sd_mult=1.0` widens distribution, compresses edges. V9-specific recalibration after 50+ V9 bets settle. | EMAC-040/K-3 |
 | Uncommitted local changes are invisible to Railway. Always verify changes are pushed before attributing errors to the code fix. | EMAC-042 |
+| BallDontLie uses `season=year-1` offset (2025 for 2026 tournament). Field is `name` not `full_name`. Endpoint is `/bracket` not `/march_madness_bracket`. | EMAC-045 / Kimi K-5 |
 
 ---
 
 ## 10. PRE-TOURNAMENT CHECKLIST (T-2 Days)
 
-**Status:** NOT STARTED — Claude to populate after completing strategic assessment.
+**Status:** IN PROGRESS — 4/10 items green. Assessment complete (EMAC-045).
 
-This checklist must be 100% green before March 18 (First Four). Claude will populate 
-based on `reports/2026-03-16-project-state-assessment.md`.
+This checklist must be 100% green before March 18 (First Four). Assessment at
+`reports/2026-03-16-project-state-assessment.md`.
 
 | # | Item | Status | Owner | Verification |
 |---|------|--------|-------|--------------|
-| 1 | System Status Review Complete | ⬜ | Claude | Assessment doc exists |
+| 1 | System Status Review Complete | ✅ | Claude | Assessment doc at reports/2026-03-16-project-state-assessment.md |
 | 2 | Team Readiness Confirmed | ⬜ | Claude | All agents 8+/10 readiness |
 | 3 | A-26 T2 Spec Reviewed + Implemented | ✅ | Claude | 464 tests passing, commit 7ee0207 |
 | 4 | BallDontLie API Key Set | ⬜ | Gemini | Railway env var `BALLDONTLIE_API_KEY` needed |
@@ -414,7 +490,7 @@ based on `reports/2026-03-16-project-state-assessment.md`.
 | 7 | Pre-Tournament Baseline Script Ready | ⬜ | OpenClaw | O-8 script tested |
 | 8 | Line Movement Monitor Deployed | ⬜ | Gemini | O-10 in production |
 | 9 | Railway Deploy Pipeline Tested | ⬜ | Gemini | Deploy <10 min verified |
-| 10 | Rollback Plan Documented | ⬜ | Claude | Can revert to pre-tournament state |
+| 10 | Rollback Plan Documented | ✅ | Claude | Rollback via Railway env vars + git revert documented in assessment |
 
 **Legend:**
 - ⬜ = Not started

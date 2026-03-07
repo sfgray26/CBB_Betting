@@ -28,12 +28,12 @@ class TestTournamentDataClient:
         mock_resp.json.return_value = {
             "data": [
                 {
-                    "home_team": {"full_name": "Duke Blue Devils", "seed": "1"},
-                    "away_team": {"full_name": "Vermont Catamounts", "seed": "16"},
+                    "home_team": {"name": "Duke", "seed": "1"},
+                    "away_team": {"name": "Vermont", "seed": "16"},
                 },
                 {
-                    "home_team": {"full_name": "Kentucky Wildcats", "seed": "3"},
-                    "away_team": {"full_name": "Oakland Golden Grizzlies", "seed": "14"},
+                    "home_team": {"name": "Kentucky", "seed": "3"},
+                    "away_team": {"name": "Oakland", "seed": "14"},
                 }
             ]
         }
@@ -42,10 +42,10 @@ class TestTournamentDataClient:
 
         result = self.client.fetch_bracket_data(season_year=2026)
 
-        assert result["Duke Blue Devils"] == 1
-        assert result["Vermont Catamounts"] == 16
-        assert result["Kentucky Wildcats"] == 3
-        assert result["Oakland Golden Grizzlies"] == 14
+        assert result["Duke"] == 1
+        assert result["Vermont"] == 16
+        assert result["Kentucky"] == 3
+        assert result["Oakland"] == 14
         assert len(result) == 4
 
     @patch.dict('os.environ', {}, clear=True)
@@ -68,12 +68,12 @@ class TestTournamentDataClient:
 
     def test_caching(self):
         """Bracket data is cached for 6 hours."""
-        self.client._bracket_cache = {"Duke Blue Devils": 1}
+        self.client._bracket_cache = {"Duke": 1}
         self.client._cache_timestamp = datetime.utcnow()
 
         # Should return cached data without API call
         result = self.client.fetch_bracket_data()
-        assert result == {"Duke Blue Devils": 1}
+        assert result == {"Duke": 1}
 
     def test_cache_expired(self):
         """Cache older than 6 hours triggers refetch."""
@@ -87,8 +87,8 @@ class TestTournamentDataClient:
 
     def test_get_team_seed_exact_match(self):
         """Exact team name match returns seed."""
-        bracket = {"Duke Blue Devils": 1, "Vermont Catamounts": 16}
-        result = self.client.get_team_seed("Duke Blue Devils", bracket)
+        bracket = {"Duke": 1, "Vermont": 16}
+        result = self.client.get_team_seed("Duke", bracket)
         assert result == 1
 
     def test_get_team_seed_substring_match(self):
@@ -99,15 +99,15 @@ class TestTournamentDataClient:
 
     def test_get_team_seed_not_found(self):
         """Unknown team returns None."""
-        bracket = {"Duke Blue Devils": 1}
+        bracket = {"Duke": 1}
         result = self.client.get_team_seed("Unknown Team", bracket)
         assert result is None
 
     def test_get_game_seeds(self):
         """Get seeds for both teams."""
-        bracket = {"Duke Blue Devils": 1, "Vermont Catamounts": 16}
+        bracket = {"Duke": 1, "Vermont": 16}
         home, away = self.client.get_game_seeds(
-            "Duke Blue Devils", "Vermont Catamounts", bracket
+            "Duke", "Vermont", bracket
         )
         assert home == 1
         assert away == 16

@@ -71,9 +71,14 @@ class TournamentDataClient:
         year = season_year or int(os.getenv("SEASON_YEAR", datetime.utcnow().year))
 
         try:
-            url = f"{_BALLDONTLIE_BASE_URL}/march_madness_bracket"
+            url = f"{_BALLDONTLIE_BASE_URL}/bracket"
             headers = {"Authorization": api_key}
-            params = {"season": year}
+            params = {"season": year - 1}
+            logger.debug(
+                "BallDontLie bracket request: season=%d (tournament year %d)",
+                year - 1,
+                year,
+            )
 
             resp = requests.get(url, headers=headers, params=params, timeout=15)
             resp.raise_for_status()
@@ -85,8 +90,8 @@ class TournamentDataClient:
                 home = game.get("home_team", {})
                 away = game.get("away_team", {})
 
-                home_name = home.get("full_name", "").strip()
-                away_name = away.get("full_name", "").strip()
+                home_name = home.get("name", "").strip()
+                away_name = away.get("name", "").strip()
 
                 if home_name and home.get("seed"):
                     try:
