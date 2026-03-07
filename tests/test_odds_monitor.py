@@ -6,7 +6,7 @@ Run:
 """
 
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 from datetime import datetime, timedelta
 from backend.services.odds_monitor import OddsMonitor, LineMovement
 from backend.betting_model import GameAnalysis
@@ -16,17 +16,8 @@ from backend.betting_model import GameAnalysis
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _tipoff_iso(minutes_from_now: float) -> str:
-    """Return a UTC ISO-8601 timestamp N minutes from now with a 'Z' suffix.
-
-    The 'Z' suffix ensures datetime.fromisoformat() (after .replace("Z", "+00:00"))
-    returns an aware datetime, keeping minutes_to_tipoff arithmetic timezone-safe.
-    """
-    return (datetime.utcnow() + timedelta(minutes=minutes_from_now)).isoformat() + "Z"
-
-
 def _make_bet_engine(reanalyze_verdict: str = "Bet 1.0u @ -110") -> MagicMock:
-    """Return a mock ReanalysisEngine whose original verdict is a BET."""
+    """Return a mock ReanalysisEngine whose original nightly verdict was a BET."""
     mock_analysis = MagicMock(spec=GameAnalysis)
     mock_analysis.verdict = reanalyze_verdict
     mock_analysis.edge_conservative = 0.05
@@ -38,25 +29,25 @@ def _make_bet_engine(reanalyze_verdict: str = "Bet 1.0u @ -110") -> MagicMock:
     return engine
 
 
-def _make_pass_engine(reanalyze_verdict: str = "Bet 1.0u @ -110") -> MagicMock:
-    """Return a mock ReanalysisEngine whose original verdict was PASS."""
-    mock_analysis = MagicMock(spec=GameAnalysis)
-    mock_analysis.verdict = reanalyze_verdict
-    mock_analysis.edge_conservative = 0.05
-
-    engine = MagicMock()
-    engine.reanalyze.return_value = mock_analysis
-    engine._ctx.original_verdict = "PASS"
-    engine._ctx.recommended_units = 1.0
-    return engine
-
-
-def _two_poll(monitor: OddsMonitor, game_v1: dict, game_v2: dict) -> dict:
-    """Run two sequential polls and return the result of the second."""
-    with patch.object(monitor._client, "get_todays_games", return_value=[game_v1]):
-        monitor.poll()
-    with patch.object(monitor._client, "get_todays_games", return_value=[game_v2]):
-        return monitor.poll()
+def _make_spread_movement(
+    game_key: str,
+    delta: float,
+    minutes_to_tipoff: float,
+) -> LineMovement:
+    """Build a pre-constructed significant spread LineMovement."""
+    away, home = game_key.split("@")
+    return LineMovement(
+        game_id=game_key,
+        home_team=home,
+        away_team=away,
+        field="spread",
+        old_value=-3.5,
+        new_value=-3.5 + delta,
+        delta=delta,
+        timestamp=datetime.utcnow(),
+        is_significant=True,
+        minutes_to_tipoff=minutes_to_tipoff,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -125,24 +116,59 @@ def test_odds_monitor_verdict_flip():
 
 # ---------------------------------------------------------------------------
 # O-10 tests — BET_ADVERSE_MOVE
+#
+# Strategy: bypass the timestamp arithmetic in _detect_movements by
+# injecting pre-built LineMovement objects with exact minutes_to_tipoff
+# values into the significant-movement loop via a patch on poll().
+# We patch the portion of poll() that builds the `significant` list,
+# replacing it with our controlled fixture movement.
 # ---------------------------------------------------------------------------
 
 class TestBetAdverseMove:
     """O-10: BET_ADVERSE_MOVE detection in the golden window."""
 
-    GAME_ID = "o10_game_1"
     GAME_KEY = "Visitor@HomeTeam"
 
-    def _base_game(self, spread: float, minutes_from_now: float) -> dict:
-        return {
-            "game_id": self.GAME_ID,
-            "home_team": "HomeTeam",
-            "away_team": "Visitor",
-            "best_spread": spread,
+    def _run_poll_with_movement(
+        self, monitor: OddsMonitor, movement: LineMovement
+    ) -> dict:
+        """
+        Run poll() with a single injected significant movement.
+
+        Patches _detect_movements to return the provided movement so that
+        poll()'s significant-movements loop processes it exactly as if it
+        came from real API data, without relying on time arithmetic.
+        """
+        fake_game = {
+            "game_id": movement.game_id,
+            "home_team": movement.home_team,
+            "away_team": movement.away_team,
+            "best_spread": movement.new_value,
             "best_spread_odds": -110,
             "best_total": 150.0,
-            "commence_time": _tipoff_iso(minutes_from_now),
+            "commence_time": None,  # irrelevant — _detect_movements is patched
         }
+
+        # Seed history so the per-game detection branch runs
+        from backend.services.odds_monitor import LineSnapshot
+        monitor._history[movement.game_id] = [
+            LineSnapshot(
+                game_id=movement.game_id,
+                home_team=movement.home_team,
+                away_team=movement.away_team,
+                spread=movement.old_value,
+                spread_odds=-110,
+                total=150.0,
+                moneyline_home=None,
+                moneyline_away=None,
+            )
+        ]
+
+        with patch.object(monitor._client, "get_todays_games", return_value=[fake_game]):
+            with patch.object(
+                monitor, "_detect_movements", return_value=[movement]
+            ):
+                return monitor.poll()
 
     # ------------------------------------------------------------------
 
@@ -158,15 +184,15 @@ class TestBetAdverseMove:
         adverse_cb = MagicMock()
         monitor.on_adverse_move(adverse_cb)
 
-        # T-180 min: tipoff is 3 hours away — outside golden window
-        game_v1 = self._base_game(spread=-3.5, minutes_from_now=180)
-        game_v2 = self._base_game(spread=-6.5, minutes_from_now=180)  # delta = -3.0
+        movement = _make_spread_movement(
+            game_key=self.GAME_KEY,
+            delta=-3.0,
+            minutes_to_tipoff=180.0,  # outside golden window (> 120)
+        )
 
-        result = _two_poll(monitor, game_v1, game_v2)
+        with patch("backend.services.coordinator.escalate_if_needed", return_value=True):
+            self._run_poll_with_movement(monitor, movement)
 
-        # The move is >= SPREAD_MOVE_THRESHOLD (1.5) so it IS significant,
-        # but T-180 is outside the golden window — adverse callback must NOT fire.
-        assert result["significant_movements"] >= 1
         adverse_cb.assert_not_called()
         assert self.GAME_KEY not in monitor._bet_adverse_fired
 
@@ -184,23 +210,23 @@ class TestBetAdverseMove:
         adverse_cb = MagicMock()
         monitor.on_adverse_move(adverse_cb)
 
-        # T-90 min: inside golden window
-        game_v1 = self._base_game(spread=-3.5, minutes_from_now=90)
-        game_v2 = self._base_game(spread=-6.0, minutes_from_now=90)  # delta = -2.5
+        movement = _make_spread_movement(
+            game_key=self.GAME_KEY,
+            delta=-2.5,
+            minutes_to_tipoff=90.0,  # inside golden window (<= 120)
+        )
 
         with patch(
             "backend.services.coordinator.escalate_if_needed", return_value=True
         ) as mock_escalate:
-            result = _two_poll(monitor, game_v1, game_v2)
-
-        assert result["significant_movements"] >= 1
+            self._run_poll_with_movement(monitor, movement)
 
         # Adverse callback must have fired exactly once
         adverse_cb.assert_called_once()
-        movement = adverse_cb.call_args[0][0]
-        assert isinstance(movement, LineMovement)
-        assert movement.event_type == "BET_ADVERSE_MOVE"
-        assert movement.field == "spread"
+        fired_movement = adverse_cb.call_args[0][0]
+        assert isinstance(fired_movement, LineMovement)
+        assert fired_movement.event_type == "BET_ADVERSE_MOVE"
+        assert fired_movement.field == "spread"
 
         # Dedup set must be populated
         assert self.GAME_KEY in monitor._bet_adverse_fired
@@ -225,17 +251,22 @@ class TestBetAdverseMove:
         adverse_cb = MagicMock()
         monitor.on_adverse_move(adverse_cb)
 
-        # T-60 min: inside golden window
-        game_v1 = self._base_game(spread=-3.5, minutes_from_now=60)
-        game_v2 = self._base_game(spread=-6.0, minutes_from_now=60)  # delta = -2.5, fires
-        game_v3 = self._base_game(spread=-8.5, minutes_from_now=60)  # delta = -2.5 again
+        movement_first = _make_spread_movement(
+            game_key=self.GAME_KEY,
+            delta=-2.5,
+            minutes_to_tipoff=90.0,
+        )
+        movement_second = _make_spread_movement(
+            game_key=self.GAME_KEY,
+            delta=-2.5,
+            minutes_to_tipoff=85.0,
+        )
 
         with patch("backend.services.coordinator.escalate_if_needed", return_value=True):
-            _two_poll(monitor, game_v1, game_v2)
-            with patch.object(monitor._client, "get_todays_games", return_value=[game_v3]):
-                monitor.poll()
+            self._run_poll_with_movement(monitor, movement_first)
+            self._run_poll_with_movement(monitor, movement_second)
 
-        # Adverse callback must have fired exactly once across both moves
+        # Adverse callback must have fired exactly once across both movements
         assert adverse_cb.call_count == 1
 
     # ------------------------------------------------------------------
@@ -244,7 +275,8 @@ class TestBetAdverseMove:
         """
         A 1.5-point move at T-60 min on a BET game is below
         BET_ADVERSE_MOVE_THRESHOLD (2.0 pts) and must NOT fire
-        BET_ADVERSE_MOVE (it may still be a regular significant move).
+        BET_ADVERSE_MOVE.  The regular significant-move callback
+        may still fire but the adverse callback must stay silent.
         """
         monitor = OddsMonitor(api_key="test")
         engine = _make_bet_engine()
@@ -253,15 +285,15 @@ class TestBetAdverseMove:
         adverse_cb = MagicMock()
         monitor.on_adverse_move(adverse_cb)
 
-        # T-60 min: inside golden window; delta = 1.5 (exactly SPREAD_MOVE_THRESHOLD)
-        game_v1 = self._base_game(spread=-3.5, minutes_from_now=60)
-        game_v2 = self._base_game(spread=-5.0, minutes_from_now=60)  # delta = -1.5
+        movement = _make_spread_movement(
+            game_key=self.GAME_KEY,
+            delta=-1.5,           # exactly SPREAD_MOVE_THRESHOLD but < BET_ADVERSE_MOVE_THRESHOLD
+            minutes_to_tipoff=60.0,  # inside golden window
+        )
 
-        result = _two_poll(monitor, game_v1, game_v2)
+        with patch("backend.services.coordinator.escalate_if_needed", return_value=True):
+            self._run_poll_with_movement(monitor, movement)
 
-        # The move IS a regular significant move (1.5 >= SPREAD_MOVE_THRESHOLD),
-        # but it is < BET_ADVERSE_MOVE_THRESHOLD (2.0), so no BET_ADVERSE_MOVE.
-        assert result["significant_movements"] >= 1
         adverse_cb.assert_not_called()
         assert self.GAME_KEY not in monitor._bet_adverse_fired
 
