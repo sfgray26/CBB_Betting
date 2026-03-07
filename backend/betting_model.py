@@ -494,7 +494,76 @@ class CBBEdgeModel:
             return get_float_env("INTEGRITY_VOLATILE_SCALAR", "0.5")
         if "CAUTION" in v:
             return get_float_env("INTEGRITY_CAUTION_SCALAR", "0.75")
-        return 1.0  # CONFIRMED or unrecognized → no penalty
+        return 1.0  # CONFIRMED or unrecognized -> no penalty
+
+    def _seed_spread_kelly_scalar(
+        self,
+        home_seed: Optional[int],
+        away_seed: Optional[int],
+        spread: Optional[float],
+    ) -> float:
+        """
+        Calculate Kelly multiplier based on seed-spread combinations.
+
+        K-1 research identified three seed-spread market inefficiencies:
+
+        Rule 1: #5 seed favored by 6+ points -> 0.75x
+            - Historical: 33% ATS (significantly underperforms market expectation)
+            - Psychology: Public overvalues "proven" mid-major favorites
+
+        Rule 2: #2 seed favored by 17+ points -> 0.75x
+            - Historical: 37% ATS (market overvalues elite vs 15-seed mismatch)
+            - Context: Large spreads assume blowout; tournament variance is higher
+
+        Rule 3: #8 seed favored by <=3 points -> 0.80x
+            - Historical: Underdog value trap (8-seeds often overvalued vs 9-seeds)
+            - Context: 8/9 games are effectively coin flips; small favorite = warning
+
+        Scalars are overridable via environment variables:
+            SEED5_FAV6PLUS_SCALAR (default 0.75)
+            SEED2_FAV17PLUS_SCALAR (default 0.75)
+            SEED8_FAV3MINUS_SCALAR (default 0.80)
+
+        Args:
+            home_seed: Home team tournament seed (1-16) or None
+            away_seed: Away team tournament seed (1-16) or None
+            spread: Home team spread (negative = home favored)
+
+        Returns:
+            Kelly multiplier in (0, 1.0]. Returns 1.0 if:
+                - Either seed is None (not tournament or data unavailable)
+                - No seed-spread rule applies
+        """
+        # Skip if seed data unavailable
+        if home_seed is None or away_seed is None:
+            return 1.0
+
+        # Skip if spread unavailable
+        if spread is None:
+            return 1.0
+
+        # Determine which team is favored
+        if spread < 0:
+            favored_seed = home_seed
+            spread_abs = abs(spread)
+        elif spread > 0:
+            favored_seed = away_seed
+            spread_abs = abs(spread)
+        else:
+            # Pick'em -- no favorite
+            return 1.0
+
+        # Apply seed-spread rules
+        if favored_seed == 5 and spread_abs >= 6.0:
+            return get_float_env("SEED5_FAV6PLUS_SCALAR", "0.75")
+
+        if favored_seed == 2 and spread_abs >= 17.0:
+            return get_float_env("SEED2_FAV17PLUS_SCALAR", "0.75")
+
+        if favored_seed == 8 and spread_abs <= 3.0:
+            return get_float_env("SEED8_FAV3MINUS_SCALAR", "0.80")
+
+        return 1.0
 
     def _edge_breaker_threshold(self, hours_to_tipoff: Optional[float]) -> float:
         """
@@ -1510,6 +1579,28 @@ class CBBEdgeModel:
         kelly_frac *= v9_scalar
 
         # ================================================================
+        # A-26: Seed-Spread Kelly Scalar (Tournament Only)
+        # ================================================================
+        home_seed = game_data.get("home_seed")
+        away_seed = game_data.get("away_seed")
+        spread = odds.get("spread")
+
+        seed_spread_scalar = self._seed_spread_kelly_scalar(
+            home_seed, away_seed, spread
+        )
+        if seed_spread_scalar < 1.0:
+            kelly_frac *= seed_spread_scalar
+            notes.append(
+                f"Seed-Spread scalar: {seed_spread_scalar:.2f}x "
+                f"(favored_seed={home_seed if spread < 0 else away_seed}, "
+                f"spread={spread:+.1f})"
+            )
+            logger.debug(
+                "Seed-Spread scalar applied: %.2fx (home_seed=%s, away_seed=%s, spread=%.1f)",
+                seed_spread_scalar, home_seed, away_seed, spread
+            )
+
+        # ================================================================
         # V9 INTEGRITY ABORT GATE
         # ================================================================
         # A hard PASS for any integrity_verdict containing "ABORT" or
@@ -1830,6 +1921,9 @@ class CBBEdgeModel:
                 'snr_kelly_scalar': snr_scalar,
                 'integrity_verdict': integrity_verdict,
                 'integrity_kelly_scalar': integrity_scalar,
+                'seed_spread_scalar': seed_spread_scalar,
+                'home_seed': home_seed,
+                'away_seed': away_seed,
                 'markov_cover_prob': markov_cover_prob,
                 'pricing_engine': pricing_engine,
                 'vig_removal_method': 'shin_1993',

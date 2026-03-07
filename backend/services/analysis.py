@@ -1020,6 +1020,29 @@ async def run_nightly_analysis(
                         "is_neutral": game_data.get("is_neutral", False),
                     }
 
+                    # ---- Seed data enrichment (A-26 Task 2) ----------------
+                    # Only fetch bracket once per analysis run
+                    if 'tournament_bracket' not in locals():
+                        from backend.services.tournament_data import fetch_tournament_bracket
+                        tournament_bracket = fetch_tournament_bracket()
+
+                    home_seed = None
+                    away_seed = None
+                    if tournament_bracket:
+                        from backend.services.tournament_data import get_tournament_client
+                        home_seed, away_seed = get_tournament_client().get_game_seeds(
+                            home_team, away_team, tournament_bracket
+                        )
+                        if home_seed or away_seed:
+                            logger.debug(
+                                "Seeds for %s @ %s: home=%s, away=%s",
+                                away_team, home_team, home_seed, away_seed
+                            )
+
+                    # Attach seeds to game_input for betting model
+                    game_input["home_seed"] = home_seed
+                    game_input["away_seed"] = away_seed
+
                     # ---- Injuries + team profiles --------------------------
                     # Normalize raw Odds API names to the profile-cache vocabulary
                     # (BartTorvik names) before querying.  Without this step,
