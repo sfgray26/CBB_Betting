@@ -35,6 +35,7 @@ from backend.betting_model import CBBEdgeModel
 from backend.services.analysis import run_nightly_analysis
 from backend.services.clv import calculate_clv_full
 from backend.services.bet_tracker import update_completed_games, capture_closing_lines
+from backend.services.line_monitor import check_line_movements
 from backend.services.performance import (
     calculate_summary_stats,
     calculate_clv_analysis,
@@ -111,6 +112,15 @@ async def lifespan(app: FastAPI):
         IntervalTrigger(minutes=30),
         id="capture_closing_lines",
         name="Capture Closing Lines",
+        replace_existing=True,
+    )
+
+    # O-10: Line movement monitor — runs every 30 minutes
+    scheduler.add_job(
+        _line_monitor_job,
+        IntervalTrigger(minutes=30),
+        id="line_monitor",
+        name="Line Movement Monitor",
         replace_existing=True,
     )
 
@@ -430,6 +440,15 @@ def _odds_monitor_job():
             )
     except Exception as exc:
         logger.error("Odds monitor job failed: %s", exc, exc_info=True)
+
+
+def _line_monitor_job():
+    """Check for significant line movements vs. active bets — runs every 30 min."""
+    try:
+        results = check_line_movements()
+        logger.info("Line monitor check: %s", results)
+    except Exception as exc:
+        logger.error("Line monitor job failed: %s", exc, exc_info=True)
 
 
 async def _fetch_ratings_job():

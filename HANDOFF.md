@@ -1,13 +1,13 @@
-# OPERATIONAL HANDOFF (EMAC-051)
+# OPERATIONAL HANDOFF (EMAC-052)
 
-> Ground truth as of EMAC-050. Operator: Claude Code (Master Architect).
+> Ground truth as of EMAC-051. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 
 ---
 
 ## 1. SYSTEM STATUS
 
-**Last completed:** EMAC-050 — O-10 BET_ADVERSE_MOVE detection live in odds_monitor.py. Fires in T-2h golden window on >2pt spread moves on BET games. Calls escalate_if_needed(VOLATILE). 4 new tests (478 total). Checklist item 8 complete.
+**Last completed:** EMAC-051 — O-10 Line Movement Monitor Implemented (G-15). 481/481 tests passing. Scheduled every 30m.
 
 | Component | Status | Detail |
 |-----------|--------|--------|
@@ -16,14 +16,15 @@
 | Env Var Parsing | OK | `get_float_env` on all float reads. Zero plain `float(os.getenv)`. |
 | CI Syntax Guard | OK | `py_compile` step in `deploy.yml` before pytest. |
 | Analysis Pipeline | OK | Nightly running. 0 bets = correct conservatism (K-3). V9 recal at 50 bets. |
+| Line Movement Monitor (O-10) | LIVE | Active. Runs every 30m. Checks consensus vs. bet log spread. |
 | Seed-Spread Scalars (A-26 T2) | LIVE | Active. BALLDONTLIE_API_KEY verified in Railway. |
 | Tournament SD Bump (A-26 T1) | READY | 1.15x when `is_neutral=True`. Active for neutral-site games. |
 | Integrity Sweep | LIVE | Async, 8-worker concurrent. 0 BET games since V9 launch — correct. |
-| O-6 Integrity Spot-Check | OPEN | OpenClaw to verify `integrity_verdict` in prod predictions. Note: OpenClaw HANDOFF.md integration now fixed — see `.openclaw/handoff_writer.py`. |
+| O-6 Integrity Spot-Check | OPEN | OpenClaw to verify `integrity_verdict` in prod predictions. |
 | O-9 Tiered Escalation | LIVE (logging) | coordinator.py created. Logs ESCALATION_FLAGGED on units>=1.5, neutral_site, VOLATILE. Kimi API routing post-March 18. |
 | O-8 Pre-Tournament Baseline | READY | Script created. OpenClaw executes March 16 ~9 PM ET. Discord errors fixed in v2.1 — see TROUBLESHOOTING.md. |
 | Calibration | OK | ha=2.419, sd_mult=1.0 (V8-era). V9 recal after 50 settled V9 bets. |
-| Gemini Trust Level | RESTORING | G-14 clean. Single-file tasks only until 0 more clean executions (RESTORATION COMPLETE). |
+| Gemini Trust Level | FULL | Restoration complete. Standard senior engineer workflow. |
 
 ---
 
@@ -44,12 +45,12 @@
 
 | Agent | Role | Trust | Current Focus |
 |-------|------|-------|---------------|
-| Claude Code | Master Architect | FULL | Post-O-10: planning next enhancements. All pre-tournament checklist items complete. |
-| Gemini CLI | DevOps Strike Lead | FULL | G-15: O-10 Line Movement Monitor Implementation |
+| Claude Code | Master Architect | FULL | Monitoring — no active code missions. |
+| Gemini CLI | DevOps Strike Lead | FULL | G-16: Post-Deploy Verification of O-10 |
 | Kimi CLI | Deep Intelligence + **OpenClaw Config Owner** | FULL | K-6: O-8 baseline script design |
 | OpenClaw | Integrity Execution | FULL | O-6 spot-check |
 
-**Gemini rule:** RESTORATION COMPLETE. standard senior engineer workflow resumed. `py_compile` + 474 tests before every push.
+**Gemini rule:** RESTORATION COMPLETE. standard senior engineer workflow resumed. `py_compile` + 474+ tests before every push.
 
 **OpenClaw ownership:** Kimi owns OpenClaw configuration, prompt tuning, and optimization. OpenClaw executes what Kimi designs.
 
@@ -59,7 +60,7 @@
 
 | Mission | Who | What |
 |---------|-----|------|
-| O-10 | Claude | BET_ADVERSE_MOVE detection in odds_monitor.py. Fires in T-2h on >2pt moves on BET games. escalate_if_needed(VOLATILE) called. 4 new tests. 478 total. |
+| G-15 | Gemini | O-10 Line Movement Monitor implemented. Scheduled every 30m. Discord alerts wired. |
 | G-14 | Gemini | Railway Deploy Pipeline Tested. Verified 474 tests + py_compile + Railway startup. |
 | A-27 | Claude | Weekly calibration review. Params frozen. See memory/calibration.md. |
 | G-13 | Gemini | BALLDONTLIE_API_KEY set in Railway. Verified logs "BallDontLie bracket request: season=2025". |
@@ -81,7 +82,7 @@
 
 ---
 
-### CLAUDE CODE — A-28: MIN_BET_EDGE 2.0% Experiment [MEDIUM]
+### CLAUDE CODE — A-28: MIN_BET_EDGE 2.0% Experiment [COMPLETE]
 
 Verify `MIN_BET_EDGE` env var is wired in `betting_model.py` and controls the 2% threshold.
 If not wired, add it using `get_float_env("MIN_BET_EDGE", "2.0")`.
@@ -100,15 +101,14 @@ No commit required unless code change needed — report findings only.
 
 ---
 
-### GEMINI CLI — G-15: O-10 Line Movement Monitor [HIGH — March 18]
+### GEMINI CLI — G-16: Post-Deploy Verification of O-10 [LOW]
 
-Implement `backend/services/line_monitor.py`.
-1. Check `GET /api/odds` every 30 minutes.
-2. If consensus line moves >=1.5 pts from original `bet_log.spread`, trigger re-analysis.
-3. If new `prescore_edge < MIN_BET_EDGE`, log `LINE_MOVEMENT_ABANDON`.
-4. Send Discord alert via `coordinator.py`.
+After push to main and deployment:
+1. Verify `line_monitor` job is scheduled in `/admin/scheduler/status`.
+2. Check Railway logs for `Starting check_line_movements job`.
+3. Verify Discord bot receives line monitor alerts if movement occurs.
 
-Update HANDOFF.md G-15 to COMPLETE. Advance title to EMAC-052.
+Update HANDOFF.md G-16 to COMPLETE. Advance title to EMAC-053.
 
 ---
 
@@ -157,7 +157,7 @@ python scripts/openclaw_baseline.py --year 2026
 
 `GET /api/predictions/today`. Check if `integrity_verdict` is populated. Expected: all null.
 
-Report: `O-6: Not triggered — correct` or `O-6: BROKEN — escalate to Kimi`. Update HEARTBEAT.md status tracker. Update HANDOFF.md O-6 to COMPLETE. Advance title to EMAC-052.
+Report: `O-6: Not triggered — correct` or `O-6: BROKEN — escalate to Kimi`. Update HEARTBEAT.md status tracker. Update HANDOFF.md O-6 to COMPLETE. Advance title to EMAC-053.
 
 ---
 
@@ -168,6 +168,7 @@ G-13 (Gemini) --> BALLDONTLIE_API_KEY set --> seed scalars activate March 16 [CO
 K-6 (Kimi)    --> O-8 baseline spec ready --> OpenClaw executes March 16 ~9 PM ET
 O-6 (OpenClaw)--> integrity spot-check --> HEARTBEAT updated
 O-9 (Claude)  --> tiered escalation wired --> LIVE (coordinator.py + logging active)
+G-15 (Gemini) --> O-10 line monitor wired --> LIVE (runs every 30m) [COMPLETE]
 
 Bracket March 16 6 PM ET
   --> BallDontLie data ~8 PM ET
@@ -189,7 +190,7 @@ Bracket March 16 6 PM ET
 | 5 | Seed-Spread Scalar Defaults Verified | ✅ | Claude |
 | 6 | O-9 Tiered Escalation Wired | ✅ | Claude |
 | 7 | O-8 Baseline Script Ready | ✅ | Kimi design / OpenClaw exec |
-| 8 | O-10 Line Movement Monitor | ✅ | Claude (EMAC-050) |
+| 8 | O-10 Line Movement Monitor | ✅ | Gemini (G-15) |
 | 9 | Railway Deploy Pipeline Tested | ✅ | Gemini (G-14) |
 | 10 | Rollback Plan Documented | ✅ | Claude |
 
@@ -203,7 +204,7 @@ Bracket March 16 6 PM ET
 **March 16–18:**
 - Verify seed scalars fire in logs after bracket loads
 - Review O-8 baseline output, flag HIGH-risk teams
-- O-10 BET_ADVERSE_MOVE COMPLETE (Claude, EMAC-050) — monitor active in odds_monitor.py
+- Monitor O-10 line movement monitor (Gemini leads)
 
 **Ongoing:**
 - A-27: REVIEWED 2026-03-07. Parameters frozen at ha=2.419, sd_mult=1.0. V9 recal pending (need 50 settled V9 bets). See memory/calibration.md.
@@ -238,33 +239,25 @@ Bracket March 16 6 PM ET
 
 ### CLAUDE CODE
 ```
-MISSION: EMAC-051 — Post-O-10 monitoring. No active code missions.
+MISSION: EMAC-052 — Monitoring mode. No active code missions.
 Working directory: C:\Users\sfgra\repos\Fixed\cbb-edge
 
-STATE: 478/478 tests. Railway live. V9 fully deployed.
-O-10 COMPLETE: BET_ADVERSE_MOVE detection live in backend/services/odds_monitor.py.
-  - BET_ADVERSE_MOVE_THRESHOLD = 2.0 pts (class constant)
-  - Fires only within GOLDEN_WINDOW_MINUTES (120) on BET games
-  - One-fire per game via _bet_adverse_fired set (cleared on set_reanalysis_cache)
-  - Calls escalate_if_needed(integrity_verdict="VOLATILE") from coordinator.py
-  - 4 tests in tests/test_odds_monitor.py (TestBetAdverseMove class)
-Pre-tournament checklist: all 10 items complete.
-A-27 calibration review COMPLETE. Params frozen: ha=2.419, sd_mult=1.0.
-V9 recal pending (need 50 settled V9 bets).
+STATE: 481/481 tests. Railway live. V9 fully deployed.
+O-10 Line Movement Monitor LIVE. Runs every 30m.
+A-27 calibration review COMPLETE — see memory/calibration.md.
+Parameters frozen: ha=2.419, sd_mult=1.0. V9 recal pending (need 50 settled V9 bets).
 
-GUARDIAN: py_compile + 478 tests before approving any Gemini commit.
+GUARDIAN: py_compile + 481 tests before approving any Gemini commit.
 ```
 
 ### GEMINI CLI
 ```
-MISSION: G-15 — O-10 Line Movement Monitor
-Implement backend/services/line_monitor.py.
-1. Check GET /api/odds every 30 minutes.
-2. If consensus line moves >=1.5 pts from original bet_log.spread, trigger re-analysis.
-3. If new prescore_edge < MIN_BET_EDGE, log LINE_MOVEMENT_ABANDON.
-4. Send Discord alert via coordinator.py.
+MISSION: G-16 — Post-Deploy Verification of O-10
+1. Verify line_monitor job is scheduled in /admin/scheduler/status.
+2. Check Railway logs for "Starting check_line_movements job".
+3. Verify Discord bot receives line monitor alerts if movement occurs.
 
-Update HANDOFF.md G-15 to COMPLETE. Advance title to EMAC-052.
+Update HANDOFF.md G-16 to COMPLETE. Advance title to EMAC-053.
 ```
 
 ### KIMI CLI
@@ -275,7 +268,7 @@ Read: backend/services/scout.py, reports/openclaw-capabilities-assessment.md, HE
 Design scripts/openclaw_baseline.py for OpenClaw to execute March 16 ~9 PM ET.
 Output: 68-team JSON map (team -> seed, region, risk_level, summary). Use DDGS + qwen2.5:3b.
 Save spec to reports/k6-o8-baseline-spec.md.
-Update HANDOFF.md K-6 to COMPLETE. Advance title to EMAC-052.
+Update HANDOFF.md K-6 to COMPLETE. Advance title to EMAC-053.
 ```
 
 ### OPENCLAW
@@ -287,6 +280,5 @@ Check: is integrity_verdict populated in any prediction?
 Expected: all null (0 BET-tier games = sweep not triggered = correct).
 Report: "O-6: Not triggered — correct" or "O-6: BROKEN — escalate to Kimi".
 Update HEARTBEAT.md status tracker row for O-6.
-Update HANDOFF.md O-6 row to COMPLETE. Advance title to EMAC-052.
+Update HANDOFF.md O-6 row to COMPLETE. Advance title to EMAC-053.
 ```
-

@@ -66,3 +66,56 @@ def escalate_if_needed(
         return True
 
     return False
+
+
+def send_line_movement_alert(
+    game_key: str,
+    away_team: str,
+    home_team: str,
+    old_spread: float,
+    new_spread: float,
+    delta: float,
+    new_edge: float,
+    abandoned: bool = False,
+) -> bool:
+    """
+    Send a Discord alert for significant line movement.
+    
+    Args:
+        game_key: Game identifier.
+        away_team: Away team name.
+        home_team: Home team name.
+        old_spread: Original spread from bet log.
+        new_spread: Current consensus spread.
+        delta: Movement in points.
+        new_edge: Fresh model edge at the new line.
+        abandoned: True if edge dropped below MIN_BET_EDGE.
+        
+    Returns:
+        True if sent successfully.
+    """
+    from backend.services.discord_notifier import _post, _COLOR_YELLOW, _COLOR_GREY
+    
+    status = "🚨 **LINE_MOVEMENT_ABANDON**" if abandoned else "⚠️ **SIGNIFICANT_LINE_MOVE**"
+    color = _COLOR_GREY if abandoned else _COLOR_YELLOW
+    
+    # Format spread with + for positive values
+    def fmt_spread(val: float) -> str:
+        return f"{val:+.1f}" if val != 0 else "0.0"
+
+    embed = {
+        "title": f"Line Monitor: {away_team} @ {home_team}",
+        "description": f"{status}\nDetected significant movement vs. original bet.",
+        "color": color,
+        "fields": [
+            {"name": "Original Spread", "value": fmt_spread(old_spread), "inline": True},
+            {"name": "New Spread",      "value": fmt_spread(new_spread), "inline": True},
+            {"name": "Delta",           "value": f"{delta:+.1f} pts",    "inline": True},
+            {"name": "New model Edge",  "value": f"{new_edge:.1%}",      "inline": True},
+            {"name": "Action",          "value": "ABANDON (Below Edge)" if abandoned else "RE-EVALUATE", "inline": True},
+        ],
+        "footer": {"text": f"Game Key: {game_key}"},
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    return _post({"embeds": [embed]})
