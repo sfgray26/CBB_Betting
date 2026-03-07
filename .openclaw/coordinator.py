@@ -372,6 +372,66 @@ class OpenClawCoordinator:
         if len(self.usage_log) >= 10:
             self._flush_usage_log()
     
+    def _send_notification(self, event_name: str, context: Dict):
+        """
+        Send Discord notification for configured events.
+        Uses discord_notifier.py if available, otherwise logs only.
+        """
+        notifications = self.config.get("notifications", {})
+        events = notifications.get("events", [])
+        
+        # Find matching event config
+        event_config = None
+        for e in events:
+            if e.get("name") == event_name:
+                event_config = e
+                break
+        
+        if not event_config:
+            return
+        
+        # Build message
+        message_template = event_config.get("message", "")
+        try:
+            message = message_template.format(**context)
+        except KeyError:
+            message = message_template
+        
+        # Try to send via discord_notifier
+        try:
+            # Import here to avoid circular dependency
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).parent.parent))
+            from backend.services.discord_notifier import _post
+            
+            payload = {
+                "content": message,
+                "flags": 0  # No special flags
+            }
+            
+            success = _post(payload)
+            if success:
+                logger.info(f"Notification sent: {event_name}")
+            else:
+                # Discord not configured, log to file instead
+                self._log_notification_fallback(event_name, message)
+                
+        except Exception as e:
+            logger.debug(f"Discord notification failed (expected if not configured): {e}")
+            self._log_notification_fallback(event_name, message)
+    
+    def _log_notification_fallback(self, event_name: str, message: str):
+        """Log notification to file when Discord unavailable."""
+        log_dir = Path(".openclaw/notifications")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        log_file = log_dir / f"{datetime.now().strftime('%Y-%m-%d')}.log"
+        timestamp = datetime.utcnow().isoformat()
+        
+        with open(log_file, "a") as f:
+            f.write(f"[{timestamp}] {event_name}: {message}\n")
+    
     def _flush_usage_log(self):
         """Write usage log to disk."""
         log_file = self.config.get("tracking", {}).get("log_file", ".openclaw/token-usage.jsonl")
@@ -449,7 +509,22 @@ Verdict:"""
     
     if result.output == "ESCALATE_TO_KIMI":
         # Signal to caller that Kimi should handle this
+        coordinator._send_notification("high_stakes_escalation", {
+            "home_team": home_team,
+            "away_team": away_team,
+            "recommended_units": getattr(ctx, 'recommended_units', 0) if ctx else 0,
+            "game": f"{away_team} @ {home_team}"
+        })
         return "KIMI_ESCALATION"
+    
+    # Check for VOLATILE verdict
+    if result.success and result.output and "VOLATILE" in result.output:
+        coordinator._send_notification("integrity_volatile", {
+            "home_team": home_team,
+            "away_team": away_team,
+            "integrity_verdict": result.output[:100],
+            "game": f"{away_team} @ {home_team}"
+        })
     
     return result.output if result.success else "Sanity check unavailable"
 

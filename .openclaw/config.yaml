@@ -194,25 +194,35 @@ quality:
 # =============================================================================
 # NOTIFICATIONS (keep hive informed)
 # =============================================================================
+# NOTE: Discord notifications require DISCORD_BOT_TOKEN env var.
+# If not set, notifications are logged to .openclaw/notifications/YYYY-MM-DD.log
+# WebSocket disconnects (codes 1005, 1006) are normal and auto-reconnect.
+#
+# Discord WebSocket Error Codes:
+#   1005 = Normal closure (no status code)
+#   1006 = Abnormal closure (network issue)
+# These are handled automatically with exponential backoff.
+# =============================================================================
 notifications:
-  discord_webhook: "${DISCORD_WEBHOOK_URL}"
+  discord_enabled: false  # Set to true when DISCORD_BOT_TOKEN is configured
+  log_fallback: true      # Always log to file if Discord unavailable
   
   events:
     - name: "high_stakes_escalation"
-      condition: "kimi_called_for_integrity"
-      message: "🧠 Kimi handling high-stakes integrity check for {game}"
+      condition: "recommended_units >= 1.5"
+      message: "🧠 High-stakes game flagged: {away_team} @ {home_team} ({recommended_units}u)"
       
     - name: "circuit_breaker_open"
-      condition: "local_llm_failing"
-      message: "⚠️ OpenClaw circuit breaker OPEN - falling back to remote"
+      condition: "circuit_breaker.state == OPEN"
+      message: "⚠️ OpenClaw circuit breaker OPEN - local LLM failing, using fallback"
       
     - name: "daily_budget_alert"
-      condition: "budget > 80%"
+      condition: "budget_usage > 80%"
       message: "💰 OpenClaw daily budget at {pct}% - consider reducing high-stakes routing"
       
-    - name: "quality_degradation"
-      condition: "local_success_rate < 90%"
-      message: "📉 OpenClaw quality alert: local success rate at {rate}%"
+    - name: "integrity_volatile"
+      condition: "integrity_verdict contains VOLATILE"
+      message: "🔴 VOLATILE verdict: {away_team} @ {home_team} - requires manual review"
 
 # =============================================================================
 # TASK-SPECIFIC PROMPTS (override defaults)

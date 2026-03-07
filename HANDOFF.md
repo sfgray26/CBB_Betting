@@ -1,13 +1,14 @@
-# OPERATIONAL HANDOFF (EMAC-049)
+# OPERATIONAL HANDOFF (EMAC-050)
 
-> Ground truth as of EMAC-048. Operator: Claude Code (Master Architect).
+> Ground truth as of EMAC-049. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 
 ---
 
 ## 1. SYSTEM STATUS
 
-**Last completed:** EMAC-048 — A-27 calibration review complete. Parameters frozen at ha=2.419, sd_mult=1.0. V9 recal pending (need 50 settled V9 bets). See memory/calibration.md.
+**Last completed:** EMAC-049 — BALLDONTLIE_API_KEY verified in Railway (G-13). A-27 calibration review complete. Parameters frozen.  
+**OpenClaw Fix:** HANDOFF.md auto-update now working via `.openclaw/handoff_writer.py` — integrity sweep results and baseline completion will auto-update this file.
 
 | Component | Status | Detail |
 |-----------|--------|--------|
@@ -19,11 +20,31 @@
 | Seed-Spread Scalars (A-26 T2) | LIVE | Active. BALLDONTLIE_API_KEY verified in Railway. |
 | Tournament SD Bump (A-26 T1) | READY | 1.15x when `is_neutral=True`. Active for neutral-site games. |
 | Integrity Sweep | LIVE | Async, 8-worker concurrent. 0 BET games since V9 launch — correct. |
-| O-6 Integrity Spot-Check | OPEN | OpenClaw to verify `integrity_verdict` in prod predictions. |
+| O-6 Integrity Spot-Check | OPEN | OpenClaw to verify `integrity_verdict` in prod predictions. Note: OpenClaw HANDOFF.md integration now fixed — see `.openclaw/handoff_writer.py`. |
 | O-9 Tiered Escalation | LIVE (logging) | coordinator.py created. Logs ESCALATION_FLAGGED on units>=1.5, neutral_site, VOLATILE. Kimi API routing post-March 18. |
 | O-8 Pre-Tournament Baseline | READY | Script created. OpenClaw executes March 16 ~9 PM ET. Discord errors fixed in v2.1 — see TROUBLESHOOTING.md. |
 | Calibration | OK | ha=2.419, sd_mult=1.0 (V8-era). V9 recal after 50 settled V9 bets. |
 | Gemini Trust Level | RESTORING | G-13 clean. Single-file tasks only until 1 more clean execution. |
+
+---
+
+## 1.5. OPENCLAW HANDOFF.md INTEGRATION (NEW)
+
+**Status:** ✅ FIXED — OpenClaw can now update HANDOFF.md autonomously
+
+**How it works:**
+- `.openclaw/handoff_writer.py` provides `update_openclaw_status()` function
+- Called by `analysis.py` after each integrity sweep (line ~953)
+- Called by `scripts/openclaw_baseline.py` after O-8 baseline completion
+- Updates Section 1.5 (this section) with current status
+
+**What gets updated:**
+- Last integrity sweep timestamp and game count
+- Circuit breaker state
+- O-8 baseline completion status (when run)
+- Active alerts (VOLATILE >20%, ABORT/RED FLAG, etc.)
+
+**Next Task Note:** OpenClaw will auto-update this section. Do not manually edit Section 1.5 — let OpenClaw manage it.
 
 ---
 
@@ -32,7 +53,7 @@
 | Agent | Role | Trust | Current Focus |
 |-------|------|-------|---------------|
 | Claude Code | Master Architect | FULL | Monitoring — no active code missions. Unblock: O-10 architecture when Gemini ready. |
-| Gemini CLI | DevOps Strike Lead | RESTORING | G-13: BALLDONTLIE_API_KEY in Railway |
+| Gemini CLI | DevOps Strike Lead | RESTORING | G-14: Railway Deploy Pipeline Tested |
 | Kimi CLI | Deep Intelligence + **OpenClaw Config Owner** | FULL | K-6: O-8 baseline script design |
 | OpenClaw | Integrity Execution | FULL | O-6 spot-check |
 
@@ -46,6 +67,7 @@
 
 | Mission | Who | What |
 |---------|-----|------|
+| A-27 | Claude | Weekly calibration review. Params frozen. See memory/calibration.md. |
 | G-13 | Gemini | BALLDONTLIE_API_KEY set in Railway. Verified logs "BallDontLie bracket request: season=2025". |
 | O-9 | Claude | Tiered escalation coordinator. Logs ESCALATION_FLAGGED on units>=1.5, neutral_site, VOLATILE. 10 tests. |
 | A-26 T2 | Claude | Seed-spread Kelly scalars. 26 new tests. API contract fixed (endpoint, field, season offset). |
@@ -84,13 +106,14 @@ No commit required unless code change needed — report findings only.
 
 ---
 
-### GEMINI CLI — G-13: Add BALLDONTLIE_API_KEY to Railway [COMPLETE]
+### GEMINI CLI — G-14: Railway Deploy Pipeline Tested [LOW]
 
-Railway Variables tab → add `BALLDONTLIE_API_KEY` with the GOAT-tier key. No Python changes.
+Trigger a push to `main` and verify `.github/workflows/deploy.yml` successfully:
+1. Passes `py_compile` on all modified files.
+2. Passes 474/474 tests.
+3. Successfully deploys to Railway without 502/503 errors.
 
-Verify: trigger manual analysis, check logs for `"BallDontLie bracket request: season=2025"`. Update HANDOFF.md G-13 to COMPLETE. Advance title to EMAC-046.
-
-**STATUS (EMAC-048):** Complete. BALLDONTLIE_API_KEY added to Railway service `CBB_Betting`. Manual analysis triggered; logs verified via `railway run` (season=2025 request confirmed).
+Update HANDOFF.md G-14 to COMPLETE. Advance title to EMAC-051.
 
 ---
 
@@ -107,7 +130,7 @@ Verify: trigger manual analysis, check logs for `"BallDontLie bracket request: s
 - **Who:** OpenClaw (autonomous execution)
 - **Prerequisites:**
   1. ✅ Script created and tested
-  2. ⏳ `BALLDONTLIE_API_KEY` in Railway (G-13 — assigned to Gemini)
+  2. ✅ `BALLDONTLIE_API_KEY` in Railway (G-13)
   3. ⏳ Ollama running with qwen2.5:3b on execution host
 
 **Output:**
@@ -132,14 +155,6 @@ python scripts/openclaw_baseline.py --year 2026
 **Key Distinction:** The persistent "Unknown target" and WebSocket errors were from **Claude CLI's built-in Discord client** (using `DISCORD_BOT_TOKEN`), NOT from OpenClaw. OpenClaw has its own notification system that logs to file by default. I've commented out the broken Claude Discord tokens in `.env` to stop the errors.
 
 **References:** `.claude/DISCORD_ERRORS_EXPLAINED.md` | `.openclaw/TROUBLESHOOTING.md` | `.openclaw/README.md`
-
----
-
-### OPENCLAW — O-6: Integrity Spot-Check [MEDIUM — run now]
-
-`GET /api/predictions/today`. Check if `integrity_verdict` is populated. Expected: all null.
-
-Report: `O-6: Not triggered — correct` or `O-6: BROKEN — escalate to Kimi`. Update HEARTBEAT.md status tracker. Update HANDOFF.md O-6 to COMPLETE. Advance title to EMAC-046.
 
 ---
 
@@ -220,7 +235,7 @@ Bracket March 16 6 PM ET
 
 ### CLAUDE CODE
 ```
-MISSION: EMAC-049 — Monitoring mode. No active code missions.
+MISSION: EMAC-050 — Monitoring mode. No active code missions.
 Working directory: C:\Users\sfgra\repos\Fixed\cbb-edge
 
 STATE: 474/474 tests. Railway live. V9 fully deployed.
@@ -234,11 +249,13 @@ GUARDIAN: py_compile + 474 tests before approving any Gemini commit.
 
 ### GEMINI CLI
 ```
-MISSION: G-13 — Add BALLDONTLIE_API_KEY to Railway Variables
-Read HANDOFF.md Section 4 G-13 for exact steps. Railway UI only — no Python changes.
-After setting: trigger manual analysis, verify logs show "BallDontLie bracket request: season=2025".
-Update HANDOFF.md G-13 row to COMPLETE. Advance title to EMAC-046.
-SCOPE RULE: one Railway env var add. Do not expand scope.
+MISSION: G-14 — Railway Deploy Pipeline Tested
+Trigger a push to main and verify .github/workflows/deploy.yml successfully:
+1. Passes py_compile on all modified files.
+2. Passes 474/474 tests.
+3. Successfully deploys to Railway without 502/503 errors.
+
+Update HANDOFF.md G-14 to COMPLETE. Advance title to EMAC-051.
 ```
 
 ### KIMI CLI
@@ -249,7 +266,7 @@ Read: backend/services/scout.py, reports/openclaw-capabilities-assessment.md, HE
 Design scripts/openclaw_baseline.py for OpenClaw to execute March 16 ~9 PM ET.
 Output: 68-team JSON map (team -> seed, region, risk_level, summary). Use DDGS + qwen2.5:3b.
 Save spec to reports/k6-o8-baseline-spec.md.
-Update HANDOFF.md K-6 to COMPLETE. Advance title to EMAC-046.
+Update HANDOFF.md K-6 to COMPLETE. Advance title to EMAC-051.
 ```
 
 ### OPENCLAW
@@ -261,5 +278,5 @@ Check: is integrity_verdict populated in any prediction?
 Expected: all null (0 BET-tier games = sweep not triggered = correct).
 Report: "O-6: Not triggered — correct" or "O-6: BROKEN — escalate to Kimi".
 Update HEARTBEAT.md status tracker row for O-6.
-Update HANDOFF.md O-6 row to COMPLETE. Advance title to EMAC-046.
+Update HANDOFF.md O-6 row to COMPLETE. Advance title to EMAC-051.
 ```

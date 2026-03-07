@@ -134,10 +134,21 @@ Monitor state: `get_coordinator().circuit_breaker.state`
 | Circuit breaker open | Wait 60s, or restart Ollama service |
 | Budget exceeded | Adjust `kimi_daily_usd` or routing rules |
 | Invalid verdicts | Check prompt templates in config.yaml |
+| Discord WebSocket errors | See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — codes 1005/1006 are normal |
+| "Unknown target" errors | Fixed in v2.1 — notifications now log to file if Discord unavailable |
+
+**Full guide:** [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
 
 ---
 
 ## Changelog
+
+### v2.1 (2026-03-07)
+- Fixed Discord notification "Unknown target" errors
+- Added `_send_notification()` with file fallback logging
+- Added notification triggers for high-stakes escalation and VOLATILE verdicts
+- Added WebSocket error documentation (codes 1005, 1006)
+- Created TROUBLESHOOTING.md guide
 
 ### v2.0 (2026-03-06)
 - Added intelligent routing (Kimi CLI as coordinator)
