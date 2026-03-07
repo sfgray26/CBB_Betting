@@ -1,33 +1,33 @@
-# OPERATIONAL HANDOFF (EMAC-042)
+# OPERATIONAL HANDOFF (EMAC-044)
 
-> Ground truth as of EMAC-042. Operator: Claude Code (Master Architect).
+> Ground truth as of EMAC-044. Operator: Claude Code (Master Architect).
 > Read `IDENTITY.md` for risk policy. Read `AGENTS.md` for roles. Read `HEARTBEAT.md` for loops.
 
 ---
 
 ## 1. SYSTEM STATUS
 
-**Last completed:** EMAC-042 — All `float(os.getenv)` calls replaced with `get_float_env` across every backend file (commits 80bc0eb, 748462b). G-12 CI syntax guard live in deploy.yml (commit 3281b51). Railway redeploying — analysis errors should be fully resolved.
+**Last completed:** EMAC-044 — A-26 T2 (Seed-Spread Kelly Scalars) implemented ahead of schedule. 464/464 tests passing. Deployed to Railway (commit 7ee0207). Active for tournament — no-op during regular season (returns 1.0 when seeds unavailable).
 
 | Component | Status | Detail |
 |-----------|--------|--------|
 | V9 Model | OK | SNR + Integrity Kelly scalars. `model_version='v9.0'` |
 | Railway API | OK | Live. All syntax errors resolved (EMAC-039/040/042). |
-| Env Var Parsing | OK | `get_float_env` applied to ALL float reads: `betting_model.py` (14), `main.py` (7), `analysis.py` (14), `odds.py` (2). Zero plain `float(os.getenv)` remaining. |
-| CI Syntax Guard (G-12) | COMPLETE | `py_compile` step added to `deploy.yml` before pytest. Catches dropped-paren errors without DB. |
-| Railway Env Var Audit (G-11) | OPEN | Root-cause fix: correct ` =VALUE` vars in Railway UI. Assigned to Gemini. |
+| Env Var Parsing | OK | `get_float_env` applied to ALL float reads. Zero plain `float(os.getenv)` remaining. |
+| CI Syntax Guard (G-12) | COMPLETE | `py_compile` step added to `deploy.yml`. |
+| Railway Env Var Audit (G-11) | COMPLETE | Root-cause fix: variables cleaned in Railway UI. Verified healthy. |
 | Dashboard API | OK | `API_URL` = Railway production. Data Cleanup endpoint added (`DELETE /admin/games/{id}`). |
-| Analysis Pipeline | OK | `bets_recommended=0` is correct conservatism per K-3 audit. V9-specific recalibration needed at 50 bets. |
-| Tournament SD Bump (A-26 T1) | OK | `TOURNAMENT_MODE_SD_BUMP` (1.15x) when `is_neutral=True`. 4 tests. |
+| Analysis Pipeline | OK | Daily runs continue through March 15. `bets_recommended=0` is correct conservatism per K-3. V9 recal at 50 bets. |
+| Tournament SD Bump (A-26 T1) | OK | `TOURNAMENT_MODE_SD_BUMP` (1.15x) ready for tournament. Not active in regular season. |
 | Neutral-Site Fix (A-25) | OK | `parse_odds_for_game` extracts `neutral_site` -> `is_neutral`. |
 | Recalibration | OK | ha=2.419, sd_mult=1.0. V8-calibrated; V9-specific recalibration after 50 settled V9 bets. |
 | Railway DB | OK | PostgreSQL connected. 9 tables initialized. Nightly running. |
 | OpenClaw v2.0 | OK | O-7 coordinator validation: 4/4 tests. Integrity sweep wired in analysis pipeline. |
 | Integrity Spot-Check (O-6) | OPEN | Verify integrity_verdict fields in production predictions. Assigned to OpenClaw. |
-| Seed-Spread Scalars (A-26 T2) | DEFERRED | Blocked on March 16 bracket. K-4 (Kimi) will produce implementation spec. |
-| A-26 T2 Architecture Spec (K-4) | OPEN | Kimi to produce exact implementation blueprint for A-26 T2. See Section 4. |
+| Seed-Spread Scalars (A-26 T2) | COMPLETE | Implemented ahead of schedule. 464 tests passing. No-op until bracket loaded (BALLDONTLIE_API_KEY needed in Railway). |
+| A-26 T2 Architecture Spec (K-4) | COMPLETE | Spec at `reports/2026-03-16-a26t2-implementation-spec.md`. Implemented EMAC-044. |
 | SNR Re-Audit (A-19) | DEFERRED | Needs 20+ settled V9-era bets. |
-| Gemini Trust Level | DEGRADED → RESTORING | G-12 now in CI. G-11 (single-file env audit) is the trust-rebuild task. No multi-file Python work until 2 clean G-11-style tasks complete. |
+| Gemini Trust Level | RESTORING | G-11 (env audit) complete. G-12 in CI. Trust restoring after clean execution. |
 
 ---
 
@@ -49,8 +49,8 @@ Root causes:
 | Agent | Role | Trust | Notes |
 |-------|------|-------|-------|
 | Claude Code | Master Architect | FULL | Standby until March 16. Guardian of all commits. |
-| Gemini CLI | DevOps Strike Lead | DEGRADED → RESTORING | Single-file tasks only. `py_compile` before every commit. |
-| Kimi CLI | Deep Intelligence | FULL | K-1/K-2/K-3 all high-quality. K-4 queued. |
+| Gemini CLI | DevOps Strike Lead | RESTORING | G-11 complete. Single-file tasks only. |
+| Kimi CLI | Deep Intelligence | FULL | K-4 complete. |
 | OpenClaw | Integrity Execution | FULL | O-6 queued. Integrity sweep live in pipeline. |
 
 **Gemini scope rule:** No multi-file Python refactors. Each task must be a single file or a non-Python file. Before committing any `.py` file: `python -m py_compile <file>.py`. Before any push: `pytest tests/ -q --tb=no` (438 must pass).
@@ -61,6 +61,9 @@ Root causes:
 
 | Mission | Who | What |
 |---------|-----|------|
+| A-26 T2 | Claude | Seed-spread Kelly scalars: tournament_data.py + analysis.py enrichment + betting_model.py scalars. 464 tests. |
+| G-11 | Gemini | Railway env var audit: Cleaned ` =VALUE` vars in UI. Verified healthy. |
+| K-4 | Kimi | A-26 T2 Architecture Spec: `reports/2026-03-16-a26t2-implementation-spec.md` |
 | K-1 | Kimi | Tournament intelligence: SD bump 1.15x validated |
 | K-2 | Kimi | Seed data research: BallDontLie API recommended, ESPN free fallback |
 | K-3 | Kimi | Model quality audit: 0 bets = correct conservatism confirmed |
@@ -71,37 +74,77 @@ Root causes:
 
 ---
 
-## 4. ACTIVE MISSIONS
+## 4. REGULAR SEASON OPERATIONS (Through March 15)
+
+**Status:** Daily analysis continues. Tournament prep is PARALLEL, not a replacement.
+
+### Daily Operations Checklist
+- [ ] Nightly analysis runs successfully (12 AM ET)
+- [ ] Odds API fetching without errors
+- [ ] Ratings data fresh (KenPom, BartTorvik, EvanMiya)
+- [ ] Integrity sweep completing for BET-tier games
+- [ ] Predictions persisted to Railway DB
+- [ ] Paper trades created for BET verdicts
+- [ ] Performance tracking accumulating
+
+### Regular Season Model Optimization (Parallel Track)
+
+**A-27: V9 Calibration Monitoring [NEW — ONGOING]**
+**Owner:** Claude (weekly review)
+
+**Context:** 
+- K-3 identified V9 structural mismatch with V8 calibration
+- Need 50 settled V9-era bets for recalibration
+- Current: ~12 games analyzed, 0 bets (edge compression working as designed)
+
+**Weekly Tasks:**
+1. Review `GET /api/performance/model-accuracy` — track MAE vs V8 baseline
+2. Check edge distribution: what % of games have `edge_conservative > 0`? > 2.5%?
+3. Document any systematic biases (home/away, favorites/dogs)
+4. If MAE drifts > 3 pts from 30-day baseline → escalate
+
+**Output:** Weekly calibration brief added to `memory/` (e.g., `memory/2026-03-10-calibration.md`)
 
 ---
 
-### GEMINI CLI — G-11: Railway Env Var Audit [OPEN — HIGH PRIORITY]
+**A-28: Edge Detection Optimization [NEW — ONGOING]**
+**Owner:** Claude (as time permits)
 
-**What:** Railway stores some env vars as ` =VALUE` (leading space + equals sign). The code now tolerates this via `get_float_env`, but the correct fix is to clean the vars at source in Railway.
+**Hypothesis:** Current `MIN_BET_EDGE=2.5%` may be too conservative for regular season,
+given `sd_mult=1.0` widening and V9 scalars compressing effective Kelly.
 
-**Why it matters:** The ` =1.15` bug caused 54 game analysis failures across 3 production sessions. Even with `get_float_env` as a safety net, malformed vars add risk and confusion.
+**Experiment:** 
+- Reduce `MIN_BET_EDGE` to 2.0% for 1 week (March 10-17)
+- Monitor: bet rate, win rate, CLV (closing line value)
+- Compare to prior week
 
-**Your tasks (Railway UI only — no Python file changes):**
+**Decision Rule:**
+- If win rate >= 52% and positive CLV → keep 2.0% for tournament
+- If win rate < 50% → revert to 2.5%
 
-1. Open Railway dashboard → CBB Edge service → Variables tab.
-2. List every variable. For any stored as ` =VALUE` or `=VALUE`: correct it to `VALUE`.
-3. Specifically verify these 6 variables are clean (no leading space, no `=` prefix):
-   - `TOURNAMENT_MODE_SD_BUMP` → should be `1.15`
-   - `MIN_SD_MULT_DELTA` → should be `0.03`
-   - `SD_MULTIPLIER` → should be `0.85` (if set; default is fine)
-   - `BASE_SD` → should be `11.0` (if set; default is fine)
-   - `MIN_BET_EDGE` → should be `2.5`
-   - `HOME_ADVANTAGE` → should not be set (DB calibration value `2.419` is authoritative)
-4. After saving: hit Railway's "Redeploy" button to pick up changes.
-5. Verify: `GET https://cbbbetting-production.up.railway.app/health` returns `{"status": "healthy"}`.
-6. Trigger a manual analysis from Admin Panel and confirm zero `' =VALUE'` errors in response.
+**Implementation:** Via Railway env var `MIN_BET_EDGE=2.0` (no code change)
 
-**Output:** Update HANDOFF.md Section 1 `| Railway Env Var Audit (G-11) |` row to `COMPLETE`. Update title to EMAC-043.
+---
 
-**SCOPE RULES:**
-- No Python file changes whatsoever.
-- No `git` commands.
-- If anything is unclear, stop and report back — do not improvise.
+**A-29: OpenClaw Integration Hardening [NEW — ONGOING]**
+**Owner:** OpenClaw + Gemini
+
+**Current:** Integrity sweep runs on BET-tier games only.
+**Enhancement:** Run on CONSIDER-tier games too (lower stakes, more samples).
+
+**Rationale:**
+- More data for OpenClaw calibration
+- Practice for tournament load
+- Catch false negatives (good edges marked CONSIDER due to integrity flags)
+
+**Implementation:**
+1. Modify `analysis.py` line ~919: include CONSIDER games in sweep inputs
+2. Log CONSIDER-tier verdicts separately (don't block, just observe)
+3. After 50 games, compare: CONSIDER tier outcomes vs verdicts
+
+---
+
+## 5. ACTIVE MISSIONS
 
 ---
 
@@ -129,46 +172,7 @@ Root causes:
 **Output:**
 - Update `HEARTBEAT.md` with O-6 status and timestamp.
 - Update HANDOFF.md Section 1 `| Integrity Spot-Check (O-6) |` row to COMPLETE with verdict.
-- Update title to EMAC-043 (or increment from whatever Gemini left it at).
-
----
-
-### KIMI CLI — K-4: A-26 T2 Architecture Spec [OPEN — MEDIUM PRIORITY]
-
-**What:** Produce a precise implementation blueprint for A-26 T2 (Seed-Spread Kelly Scalars) so Claude can implement it in under 2 hours on March 16.
-
-**Context:**
-- K-2 research found: Odds API has no seed data. BallDontLie API ($39.99/mo GOAT tier) provides seeds. ESPN scraper is free fallback.
-- Bracket drops ~6 PM ET March 16. BallDontLie has data ~8 PM ET. Tournament games start March 18.
-- Claude needs to implement A-26 T2 during the March 16–18 window (< 48 hours).
-
-**Files to read (read all simultaneously):**
-- `backend/betting_model.py` — full file, understand the Kelly chain: `kelly_frac` → SNR scalar → integrity scalar. Your scalars go AFTER integrity scalar.
-- `backend/services/analysis.py` — find `_analyze_games_pass2()`, understand `game_data` dict structure passed to `analyze_game()`.
-- `backend/services/ratings.py` — understand how external API calls are structured (pattern to follow for BallDontLie).
-- `reports/2026-03-06-seed-data-research.md` — your K-2 findings.
-
-**Produce a spec covering exactly:**
-
-1. **BallDontLie API contract**: Exact endpoint URL, request params, response shape, auth header. What field contains seed number? What field contains team name (and how does it map to KenPom team name)?
-
-2. **`backend/services/tournament_data.py` blueprint**: Full class/function signatures with docstrings. Should include: `get_team_seed(team_name: str, year: int) -> Optional[int]`, caching strategy (TTL, key), fallback if API unavailable.
-
-3. **`analysis.py` enrichment point**: Exact line/function where `seed_home` and `seed_away` are added to `game_data`. Show the exact `game_data["seed_home"] = ...` lines.
-
-4. **`betting_model.py` scalar logic**: The exact `_seed_spread_kelly_scalar(seed_fav, seed_dog, spread)` function code, handling all edge cases (both seeds None → 1.0x, only one seed → 1.0x, etc.).
-
-5. **Scalar table** (finalize from K-2 findings — these are the current estimates, verify or adjust):
-   - `#5 seed favored 6+ pts over #12` → 0.75x Kelly (upset risk)
-   - `#2 seed favored 17+ pts over #15` → 0.75x Kelly (inflated spread, public money)
-   - `#8 or #9 seed favored <= 3 pts` → 0.80x Kelly (nearly even matchup)
-   - All other seeded matchups → 1.0x (no adjustment)
-
-6. **Env vars needed**: List with defaults.
-
-7. **Test cases for `TestSeedSpreadScalars`**: Write out 5+ test method signatures with inputs/expected outputs.
-
-**Output:** Save full spec to `reports/2026-03-16-a26t2-implementation-spec.md`. Update HANDOFF.md Section 1 `| A-26 T2 Architecture Spec (K-4) |` to COMPLETE. Update title to EMAC-043.
+- Update title to EMAC-044.
 
 ---
 
@@ -191,19 +195,152 @@ Root causes:
 
 ---
 
-## 5. DEPENDENCY CHAIN
+## 6. OPENCLAW STRATEGIC LEVERAGE - NEW MISSIONS
+
+Based on `reports/openclaw-capabilities-assessment.md`, OpenClaw is significantly 
+underutilized. The following missions leverage its unique real-time intelligence
+capabilities:
+
+### OPENCLAW — O-8: Pre-Tournament Intelligence Baseline [NEW — HIGH PRIORITY]
+
+**What:** Batch process all 68 tournament teams March 16-17 to establish injury/availability baseline.
+
+**Why:** Enter tournament with known risk factors for every team, not just BET-tier games.
+
+**Implementation:**
+```bash
+# Run March 16 ~9 PM ET (after BallDontLie bracket available)
+python scripts/openclaw_baseline.py --output data/pre_tournament_intel.json
+```
+
+**Tasks:**
+1. Create `scripts/openclaw_baseline.py`:
+   - Fetch tournament bracket from BallDontLie
+   - For each of 68 teams: DDGS search `{team} injury news March 2026`
+   - qwen2.5:3b summarizes health status per team
+   - Output: JSON with team → risk_level (low/medium/high) + summary
+
+2. Output format:
+```json
+{
+  "Duke Blue Devils": {
+    "seed": 1,
+    "region": "South",
+    "risk_level": "low",
+    "summary": "No significant injuries reported",
+    "last_updated": "2026-03-16T21:00:00Z"
+  },
+  ...
+}
+```
+
+3. Generate heatmap report (markdown) for operator review.
+
+**Timeline:** Execute March 16 9 PM ET — 2 hours before First Four.
+**Cost:** ~$0.50 (68 teams × 2 searches × $0.001)
+**Owner:** OpenClaw (with Claude review of script)
+
+---
+
+### OPENCLAW — O-9: Wire Tiered Escalation to Kimi [NEW — CRITICAL]
+
+**What:** Connect existing `coordinator.py` escalation rules to live analysis pipeline.
+
+**Current State:** Rules exist but are NOT wired to `analysis.py`.
+
+**Escalation Triggers (from coordinator.py):**
+- `recommended_units >= 1.5`
+- `tournament_round >= 4` (Sweet 16+)
+- `integrity_verdict contains "VOLATILE"`
+
+**Implementation in `analysis.py`:**
+```python
+# After _integrity_sweep() completes:
+for game in bet_tier_games:
+    context = TaskContext(
+        recommended_units=game['edge'],
+        tournament_round=game.get('round', 1),
+        integrity_verdict=_integrity_results.get(game_key)
+    )
+    
+    if (context.recommended_units >= 1.5 or 
+        context.tournament_round >= 4 or 
+        "VOLATILE" in context.integrity_verdict):
+        # Escalate to Kimi
+        verdict = await coordinator.route_to_kimi(
+            task_type=TaskType.INTEGRITY_CHECK,
+            context=context,
+            prompt=build_kimi_prompt(game)
+        )
+    else:
+        # Use local OpenClaw result
+        verdict = _integrity_results[game_key]
+```
+
+**Timeline:** Must be complete before March 18 (First Four).
+**Owner:** Claude (with OpenClaw testing)
+**Complexity:** Medium — requires coordinator integration testing.
+
+---
+
+### OPENCLAW — O-10: Line Movement Monitoring [NEW — TOURNAMENT PHASE]
+
+**What:** Real-time monitoring for sharp line moves within 2 hours of tipoff.
+
+**Why:** Sharp money often knows something the model doesn't. Exit if line moves against us.
+
+**Implementation:**
+1. New APScheduler job: `scripts/line_movement_monitor.py`
+2. Poll Odds API every 15 minutes for games with `hours_to_tipoff < 2`
+3. If spread moves >2 points against our recommended side:
+   - Trigger OpenClaw re-check
+   - If new red flags → auto-downgrade or ABORT
+   - Alert operator
+
+**Timeline:** Deploy March 18, run continuously through tournament.
+**Owner:** Gemini (infrastructure) + OpenClaw (execution)
+**Complexity:** Medium — requires new endpoint + alerting.
+
+---
+
+### OPENCLAW — O-11: Cross-Game Correlation Detection [NEW — TOURNAMENT PHASE]
+
+**What:** Detect slate-wide risks (e.g., 3+ games in same conference all flagged VOLATILE).
+
+**Why:** Portfolio-level risk management. If systemic risk detected, reduce overall exposure.
+
+**Implementation:**
+```python
+# After integrity sweep:
+volatile_by_conference = defaultdict(int)
+for game in slate:
+    if "VOLATILE" in game['verdict']:
+        volatile_by_conference[game['conference']] += 1
+
+for conf, count in volatile_by_conference.items():
+    if count >= 3:
+        logger.warning(f"SYSTEMIC_RISK: {conf} has {count} VOLATILE games")
+        # Trigger exposure reduction
+```
+
+**Timeline:** Tournament phase.
+**Owner:** OpenClaw
+**Complexity:** Low — 20-line addition to existing sweep.
+
+---
+
+## 7. DEPENDENCY CHAIN
 
 ```
 G-11 (Gemini — Railway env var cleanup)
-  --> Confirms root cause fixed at source, not just in code
+  --> COMPLETE
 
 O-6 (OpenClaw — integrity spot-check)
   --> UNBLOCKED — run now
   --> Output feeds HEARTBEAT.md
 
 K-4 (Kimi — A-26 T2 spec)
-  --> UNBLOCKED — run now
-  --> Output feeds A-26 T2 implementation
+  --> COMPLETE
 
 Bracket reveals March 16 @ 6 PM ET
   + K-4 spec complete
@@ -213,18 +350,28 @@ Bracket reveals March 16 @ 6 PM ET
 
 ---
 
-## 6. ARCHITECT REVIEW QUEUE
+## 8. ARCHITECT REVIEW QUEUE
 
-- **March 16 window**: A-26 T2 must be implemented and deployed in < 48h after bracket. Prep Railway deploy pipeline.
-- **Gemini trust restoration**: G-11 is the first trust-rebuild task. If G-11 completes cleanly (no Python touches, no scope creep), consider unlocking single-.py-file tasks. Still no multi-file work.
-- **V9 recalibration trigger**: At 50 settled V9-era bets, run recalibration. Current bet rate suggests this is weeks away — set a HEARTBEAT.md monitor.
-- **Tiered integrity (Elite 8+)**: After March 22, wire OpenClaw → Kimi escalation for high-stakes games.
-- **SNR re-audit (A-19)**: After 20+ settled V9-era bets.
-- **Season-end recalibration**: Full V9-era dataset (target N > 500). Off-season task.
+### Regular Season (Now — March 15)
+- **A-27 V9 Calibration Monitoring:** Weekly review of model accuracy. Trigger recalibration if MAE drifts > 3 pts or at 50 settled V9 bets (whichever first).
+- **A-28 Edge Detection Optimization:** Test `MIN_BET_EDGE=2.0%` vs 2.5% for 1 week. Measure bet rate, win rate, CLV. Decision by March 17.
+- **A-29 OpenClaw Hardening:** Include CONSIDER-tier games in integrity sweep for more training data. Evaluate false negative rate after 50 games.
+- **Daily Ops Guardian:** Monitor nightly runs for errors. Any failure → immediate triage.
+
+### Tournament Phase (March 16 — April 7)
+- **March 16 window:** A-26 T2 must be implemented and deployed in < 48h after bracket. Prep Railway deploy pipeline.
+- **March 18 readiness:** O-8 (pre-tournament baseline) complete, O-9 (tiered escalation) wired, O-10 (line monitor) deployed.
+- **Sweet 16+ (March 22+):** Activate tiered integrity escalation (Elite 8+ → Kimi automatic).
+- **V9 recalibration trigger:** At 50 settled V9-era bets, run recalibration. May hit during tournament — monitor daily.
+
+### Post-Season (April+)
+- **SNR re-audit (A-19):** After 20+ settled V9-era bets.
+- **Season-end recalibration:** Full V9-era dataset (target N > 500). Off-season task.
+- **OpenClaw model training:** Custom classifier for integrity checks (summer project).
 
 ---
 
-## 7. HIVE WISDOM
+## 9. HIVE WISDOM
 
 | Lesson | Source |
 |--------|--------|
@@ -249,138 +396,213 @@ Bracket reveals March 16 @ 6 PM ET
 
 ---
 
-## 8. HANDOFF PROMPTS
+## 10. PRE-TOURNAMENT CHECKLIST (T-2 Days)
 
-### PROMPT FOR CLAUDE CODE
+**Status:** NOT STARTED — Claude to populate after completing strategic assessment.
+
+This checklist must be 100% green before March 18 (First Four). Claude will populate 
+based on `reports/2026-03-16-project-state-assessment.md`.
+
+| # | Item | Status | Owner | Verification |
+|---|------|--------|-------|--------------|
+| 1 | System Status Review Complete | ⬜ | Claude | Assessment doc exists |
+| 2 | Team Readiness Confirmed | ⬜ | Claude | All agents 8+/10 readiness |
+| 3 | A-26 T2 Spec Reviewed + Implemented | ✅ | Claude | 464 tests passing, commit 7ee0207 |
+| 4 | BallDontLie API Key Set | ⬜ | Gemini | Railway env var `BALLDONTLIE_API_KEY` needed |
+| 5 | Seed-Spread Scalar Defaults Verified | ✅ | Claude | 0.75/0.75/0.80 confirmed + env var overridable |
+| 6 | OpenClaw Tiered Escalation Wired | ⬜ | Claude | O-9 complete |
+| 7 | Pre-Tournament Baseline Script Ready | ⬜ | OpenClaw | O-8 script tested |
+| 8 | Line Movement Monitor Deployed | ⬜ | Gemini | O-10 in production |
+| 9 | Railway Deploy Pipeline Tested | ⬜ | Gemini | Deploy <10 min verified |
+| 10 | Rollback Plan Documented | ⬜ | Claude | Can revert to pre-tournament state |
+
+**Legend:**
+- ⬜ = Not started
+- 🟡 = In progress
+- ✅ = Complete
+- 🔴 = Blocked/Risk
+
+---
+
+## 11. HANDOFF PROMPTS
+
+### PROMPT FOR CLAUDE CODE — COMPREHENSIVE ARCHITECT ASSESSMENT & PLANNING
 ```
-MISSION: EMAC-042 — Standby / Guardian until March 16
+MISSION: EMAC-043 — Master Architect Strategic Review & Dual-Track Operations
+You are Claude Code, Master Architect for CBB Edge Analyzer.
+Working directory: C:\Users\sfgra\repos\Fixed\cbb-edge
+
+CONTEXT:
+We are operating on TWO PARALLEL TRACKS:
+
+TRACK 1: REGULAR SEASON (Business as Usual)
+- Daily analysis runs continue through March 15 (Selection Sunday)
+- Model optimization continues (V9 calibration, edge detection improvements)
+- Regular betting operations and performance tracking
+- 438 tests must continue passing
+
+TRACK 2: TOURNAMENT PREPARATION (March 16-18 readiness)
+- A-26 T2 implementation (seed-spread scalars)
+- OpenClaw enhancements (tiered escalation, baseline monitoring)
+- Infrastructure hardening for high-stakes games
+
+DO NOT pause Track 1 for Track 2. Both proceed in parallel.
+
+YOUR TASKS — READ AND EXECUTE IN ORDER:
+
+TASK 1: PROJECT STATE ASSESSMENT (30 min)
+────────────────────────────────────────────
+Read and assess the following:
+1. AGENTS.md — Verify all agent roles are current and accurate
+2. IDENTITY.md — Confirm risk posture is appropriate for tournament variance
+3. HEARTBEAT.md — Check if monitoring loops are comprehensive
+4. All files in reports/ — Understand open questions and technical debt
+
+OUTPUT: Create reports/2026-03-16-project-state-assessment.md with:
+- GREEN (healthy) / YELLOW (monitor) / RED (fix before tournament) status for each component
+- List of 3 highest-risk items that could fail during tournament
+- Recommended mitigations for each risk
+
+TASK 2: TEAM ROLES & CAPABILITIES REVIEW (20 min)
+────────────────────────────────────────────────────
+Assess team readiness for tournament operations:
+
+| Agent | Current Role | Tournament Readiness | Gaps |
+|-------|-------------|---------------------|------|
+| Claude (you) | Architect, A-26 T2 implementer | ? | ? |
+| Gemini | DevOps, env management | ? | ? |
+| Kimi | Deep Intelligence, escalation | ? | ? |
+| OpenClaw | Integrity, real-time checks | ? | ? |
+
+OUTPUT: Add "Team Readiness Matrix" section to your assessment doc with:
+- Readiness score 1-10 for each agent
+- Specific gaps that must be closed before March 18
+- Resource reallocation recommendations
+
+TASK 3: IMPROVEMENT OPPORTUNITIES IDENTIFICATION (20 min)
+──────────────────────────────────────────────────────────
+Based on your assessment and the OpenClaw capabilities assessment 
+(reports/openclaw-capabilities-assessment.md), identify:
+
+1. QUICK WINS (can implement before March 18):
+   - Items requiring <4h effort with measurable impact
+
+2. TOURNAMENT-CRITICAL (must have for March 18-April 7):
+   - Items that directly impact betting decisions or risk management
+
+3. POST-TOURNAMENT (nice to have, April+):
+   - Technical debt and capability improvements
+
+OUTPUT: Add "Improvement Roadmap" section with prioritized list.
+
+TASK 4: HANDOFF.md UPDATE (15 min)
+──────────────────────────────────
+Update HANDOFF.md based on your assessment:
+- Update Section 1 (System Status) with any new risks identified
+- Add Section 9: "PRE-TOURNAMENT CHECKLIST" with 10 items that must be green before March 18
+- Update your prompt in Section 8 with any new standing instructions
+
+TASK 5: CRITICAL PATH IDENTIFICATION (15 min)
+─────────────────────────────────────────────
+Define the critical path from NOW → March 18 tournament start:
+
+NOW → [Task A] → [Task B] → ... → Tournament Ready
+
+Identify:
+- Single point of failure tasks (if X fails, we're not ready)
+- Parallelizable work (what can agents do simultaneously)
+- Contingency plans (if something fails at T-24h)
+
+OUTPUT: Add "Critical Path" diagram to assessment doc.
+
+DELIVERABLES:
+1. reports/2026-03-16-project-state-assessment.md (comprehensive)
+2. Updated HANDOFF.md with new Section 9
+3. Brief summary of top 3 risks and mitigations (add to HANDOFF.md Section 1)
+
+TIMELINE: Complete within 2 hours. This is blocking tournament preparation planning.
+```
+
+---
+
+### PROMPT FOR CLAUDE CODE — DUAL-TRACK OPERATIONS MODE
+```
+MISSION: EMAC-043 — Master Architect: Regular Season + Tournament Prep
 You are Claude Code, Master Architect for CBB Edge Analyzer.
 Working directory: C:\Users\sfgra\repos\Fixed\cbb-edge
 
 SYSTEM STATE (all confirmed):
-- 438/438 tests passing. Railway live and healthy.
-- get_float_env applied to all 37 float env var reads (no plain float(os.getenv) remaining).
-- CI syntax guard (py_compile) installed in .github/workflows/deploy.yml.
-- G-12 COMPLETE. G-11 assigned to Gemini. O-6 assigned to OpenClaw. K-4 assigned to Kimi.
-- 0 bets on 12 games = correct conservatism (K-3 verdict). No code changes needed.
+- 464/464 tests passing. Railway live and healthy.
+- A-26 T2 COMPLETE. Seed-spread Kelly scalars live (no-op until BALLDONTLIE_API_KEY set in Railway).
+- G-11 COMPLETE. Railway env vars cleaned at source.
+- G-12 COMPLETE. CI syntax guard (py_compile) installed.
+- K-4 COMPLETE. Spec implemented ahead of schedule.
 
-YOUR IMMEDIATE TASKS:
-None — standby mode until March 16.
+DUAL-TRACK OPERATIONS:
 
-IF GEMINI SUBMITS A COMMIT: Review it. Run:
-  python -m py_compile <every .py file changed>
-  pytest tests/ -q --tb=no
-If either fails, do NOT merge. Restore file from git history and re-apply only the legitimate delta.
+TRACK 1 — REGULAR SEASON (Daily through March 15):
+- [ ] Monitor nightly analysis runs for errors
+- [ ] Weekly A-27 calibration review (Fridays)
+- [ ] A-28 edge detection experiment (MIN_BET_EDGE=2.0% trial)
+- [ ] Continue model optimization as opportunities arise
 
-IF K-4 SPEC IS COMPLETE (Kimi): Read reports/2026-03-16-a26t2-implementation-spec.md.
-Confirm spec is implementable. Reply with any gaps to fill before March 16.
+TRACK 2 — TOURNAMENT PREPARATION (Parallel):
+- [ ] Review A-26 T2 spec (reports/2026-03-16-a26t2-implementation-spec.md)
+- [ ] Prep implementation branch for March 16
+- [ ] O-9: Wire tiered escalation (coordinate with OpenClaw)
+- [ ] O-8: Review pre-tournament baseline script
 
-ON MARCH 16 AFTER 8 PM ET: Implement A-26 T2 per Section 4 of HANDOFF.md.
-Input: K-4 spec. Output: tournament_data.py + analysis.py enrichment + betting_model.py scalars.
+GUARDIAN DUTIES (Always Active):
+- Review all commits before merge (run `py_compile` on .py files)
+- If Gemini breaks a file: restore from git, apply surgical fixes
+- Verify 438 tests pass before any push
+- Monitor Railway deploys for health
+
+EMERGENCY PROTOCOL:
+If nightly analysis fails → Triage within 1 hour
+  1. Check Railway logs for error location
+  2. If env var issue → assign Gemini
+  3. If model logic issue → fix or revert
+  4. If data source down → monitor, don't panic (use cached data)
 ```
 
 ---
 
-### PROMPT FOR GEMINI CLI
+### PROMPT FOR OPENCLAW — DUAL-TRACK OPERATIONS
 ```
-MISSION: EMAC-042 / G-11 — Railway Env Var Audit
-You are the DevOps Strike Lead (Gemini CLI) for CBB Edge Analyzer.
-
-YOUR SINGLE TASK: Audit and fix Railway environment variables.
-Read HANDOFF.md Section 4 (G-11) for exact steps.
-
-CRITICAL RULES — NON-NEGOTIABLE:
-1. NO Python file changes. This task is Railway UI only.
-2. NO git commands. Railway UI changes only.
-3. Do not expand scope. G-11 is the entire mission.
-4. If you are unsure about any step, stop and report back.
-
-CONTEXT:
-- Railway stores some env vars as ' =VALUE' (leading space + equals sign).
-- TOURNAMENT_MODE_SD_BUMP was stored as ' =1.15' — caused 54 game analysis failures.
-- The code now tolerates this via get_float_env, but fix the root cause in Railway UI.
-
-VARIABLES TO CHECK (in Railway CBB Edge service → Variables):
-  TOURNAMENT_MODE_SD_BUMP → must be: 1.15
-  MIN_SD_MULT_DELTA       → must be: 0.03
-  MIN_BET_EDGE            → must be: 2.5
-  SD_MULTIPLIER           → must be: 0.85 (if set; OK to delete and use default)
-  BASE_SD                 → must be: 11.0 (if set; OK to delete and use default)
-  HOME_ADVANTAGE          → must NOT be set (DB calibration value 2.419 is authoritative)
-
-VERIFICATION:
-After saving vars and redeploying: GET https://cbbbetting-production.up.railway.app/health
-Expected: {"status": "healthy"}
-Then trigger manual analysis from Admin Panel and confirm no ' =VALUE' errors.
-
-OUTPUT: Update HANDOFF.md Section 1 G-11 row to COMPLETE. Update title to EMAC-043.
-```
-
----
-
-### PROMPT FOR KIMI CLI
-```
-MISSION: EMAC-042 / K-4 — A-26 T2 Architecture Spec
-You are the Deep Intelligence Unit (Kimi CLI) for CBB Edge Analyzer.
-You have a 1M token context window — use it.
-
-YOUR TASK: Produce a precise implementation blueprint for Seed-Spread Kelly Scalars.
-Claude will use this spec to implement A-26 T2 in < 2 hours on March 16.
-The spec must be complete enough that Claude needs zero research — just code.
-
-READ THESE FILES SIMULTANEOUSLY:
-1. backend/betting_model.py (full file — understand analyze_game() Kelly chain)
-2. backend/services/analysis.py (find _analyze_games_pass2(), understand game_data dict)
-3. backend/services/ratings.py (understand external API call pattern to replicate for BallDontLie)
-4. reports/2026-03-06-seed-data-research.md (your K-2 findings on seed data sources)
-
-PRODUCE A SPEC covering:
-1. BallDontLie API contract: endpoint, auth, response shape, which field = seed, team name format
-2. tournament_data.py blueprint: full function signatures with types and docstrings
-3. analysis.py enrichment: exact lines where seed_home/seed_away added to game_data
-4. betting_model.py scalar: exact _seed_spread_kelly_scalar() function code with edge cases
-5. Final scalar table (validate or adjust from K-2 estimates)
-6. Env vars with defaults
-7. 5+ test case specs for TestSeedSpreadScalars
-
-SAVE TO: reports/2026-03-16-a26t2-implementation-spec.md
-
-UPDATE HANDOFF.md:
-- Section 1: change K-4 row to COMPLETE
-- Title: EMAC-043
-```
-
----
-
-### PROMPT FOR OPENCLAW
-```
-MISSION: EMAC-042 / O-6 — V9 Integrity Spot-Check
+MISSION: EMAC-043 — Integrity Execution Unit: Daily Ops + Tournament Prep
 You are the Integrity Execution Unit (OpenClaw) for CBB Edge Analyzer.
 
-YOUR TASK: Verify V9 integrity verdicts in production.
-Read HANDOFF.md Section 4 (O-6) for exact steps.
+DUAL-TRACK RESPONSIBILITIES:
 
-CONTEXT:
-- Railway analysis returned 0 BET-tier games. Integrity sweep only runs on BET-tier games.
-- Expected result: integrity_verdict is null/absent for all predictions (sweep was not triggered).
-- This is correct behavior — the check is confirming the field exists and no silent errors occurred.
+TRACK 1 — REGULAR SEASON (Through March 15):
+1. Daily integrity sweeps for all BET-tier games
+2. O-6 spot-check: Verify integrity_verdict fields are populating correctly
+3. A-29 enhancement: Include CONSIDER-tier games in sweep (observation mode)
+4. Performance monitoring: Track latency, success rate, verdict distribution
 
-API CALL:
+TRACK 2 — TOURNAMENT PREPARATION:
+1. O-8: Pre-tournament baseline script (test with 2025 data if available)
+2. O-9: Support Claude with tiered escalation wiring (testing)
+3. Hardware check: Verify Ollama/qwen2.5:3b can handle tournament load
+
+DAILY HEARTBEAT CHECKS:
+- [ ] `ollama ps` shows qwen2.5:3b loaded
+- [ ] Last integrity sweep completed without errors
+- [ ] DDGS requests succeeding (not rate-limited)
+- [ ] Average latency < 30s per 8-game batch
+
+IMMEDIATE TASK (O-6):
+Verify V9 integrity verdicts in production:
 GET https://cbbbetting-production.up.railway.app/api/predictions/today
-Header: X-API-Key: <your key>
+Header: X-API-Key: j01F3n2sSzbhi-jNAEULNkgzFqRXgOl2FuIDgKRoyfg
 
-CHECK FOR:
-- Does integrity_verdict field appear anywhere in the response JSON?
-- Is any verdict equal to "Sanity check unavailable"? (This = Ollama failure — escalate to Claude)
-- Are all verdicts null? (This = correct, sweep not triggered)
-
-REPORT ONE OF:
-  O-6 STATUS: Not triggered — correct (0 BET-tier games, integrity_verdict=null for all)
-  O-6 STATUS: Active — [N] predictions have verdicts: [list]
-  O-6 STATUS: BROKEN — "Sanity check unavailable" on prediction [id] — escalate to Claude
+Check for:
+- integrity_verdict field exists in predictions
+- No "Sanity check unavailable" errors
+- VOLATILE rate reasonable (< 30% of slate)
 
 OUTPUT:
-- Update HEARTBEAT.md with O-6 status + timestamp.
-- Update HANDOFF.md Section 1 O-6 row to COMPLETE with status string.
-- Update title to EMAC-043 (or increment from whatever Gemini left it at).
+- Update HEARTBEAT.md with daily status
+- Report any anomalies immediately
 ```
