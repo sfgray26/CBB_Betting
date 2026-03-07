@@ -8,7 +8,7 @@ Uses OpenClaw stack (DDGS + qwen2.5:3b) for cost-effective batch intelligence.
 Output:
     - data/pre_tournament_baseline_2026.json (structured data)
     - reports/o8_baseline_summary_2026.md (human-readable summary)
-    - Updates HANDOFF.md Section 1.5 with baseline summary
+    - Updates HANDOFF.md Section 1.5 with baseline summary via handoff_writer
 
 Usage:
     python scripts/openclaw_baseline.py [--year 2026] [--output-dir data/]
@@ -31,6 +31,14 @@ import requests
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Import OpenClaw handoff writer
+try:
+    from .openclaw.handoff_writer import log_baseline_completion
+    HANDOFF_WRITER_AVAILABLE = True
+except ImportError:
+    HANDOFF_WRITER_AVAILABLE = False
+    logging.warning("handoff_writer not available, HANDOFF.md will not be updated")
 
 logger = logging.getLogger(__name__)
 
@@ -388,52 +396,15 @@ See JSON: `data/pre_tournament_baseline_{year}.json`
 
 def update_handoff_with_baseline(summary_stats: Dict):
     """
-    Update HANDOFF.md Section 1.5 with baseline summary.
+    Update HANDOFF.md with baseline summary using handoff_writer module.
     """
-    handoff_path = Path("HANDOFF.md")
-    if not handoff_path.exists():
-        logger.warning("HANDOFF.md not found, skipping update")
+    if not HANDOFF_WRITER_AVAILABLE:
+        logger.warning("handoff_writer not available, skipping HANDOFF.md update")
         return
     
     try:
-        content = handoff_path.read_text()
-        
-        # Build update block
-        update_block = f"""### O-8 Pre-Tournament Baseline (Auto-Updated {datetime.now().strftime('%Y-%m-%d %H:%M')})
-
-| Metric | Value |
-|--------|-------|
-| Teams Analyzed | {summary_stats.get('teams_analyzed', 0)} |
-| HIGH/CRITICAL Risk Teams | {summary_stats.get('high_risk_count', 0)} |
-| Riskiest Region | {summary_stats.get('riskiest_region', 'N/A')} |
-| Data File | `data/pre_tournament_baseline_2026.json` |
-
-**Key Alerts:**
-"""
-        
-        alerts = summary_stats.get("alerts", [])
-        if alerts:
-            for alert in alerts:
-                update_block += f"- 🚨 {alert}\n"
-        else:
-            update_block += "- No critical risk alerts\n"
-        
-        # Replace or insert O-8 section
-        import re
-        pattern = r'### O-8 Pre-Tournament Baseline \(Auto-Updated.*?(?=###|\Z)'
-        
-        if re.search(pattern, content, re.DOTALL):
-            content = re.sub(pattern, update_block.rstrip(), content, flags=re.DOTALL)
-        else:
-            # Insert after Section 1.5 header
-            content = content.replace(
-                "## 1.5. OPENCLAW STATUS",
-                f"{update_block}\n\n## 1.5. OPENCLAW STATUS"
-            )
-        
-        handoff_path.write_text(content)
+        log_baseline_completion(summary_stats)
         logger.info("HANDOFF.md updated with baseline summary")
-        
     except Exception as e:
         logger.error(f"Failed to update HANDOFF.md: {e}")
 
@@ -558,6 +529,7 @@ def main():
     logger.info(f"JSON: {json_path}")
     logger.info(f"Report: {md_path}")
     logger.info(f"High Risk Teams: {high_risk_count}")
+    logger.info(f"HANDOFF Updated: {HANDOFF_WRITER_AVAILABLE}")
     logger.info("=" * 60)
 
 

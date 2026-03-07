@@ -1,6 +1,20 @@
-# CBB Edge — Session History
+### 2026-03-06 (Friday)
 
-## 2026-02-28 (Saturday)
+### 18:30 — Robust Env Var Parsing & Production Connectivity (Gemini)
+- **Implemented Robust Env Var Parsing (G-10)**:
+  - Created `backend/utils/env_utils.py` with `get_float_env` to handle malformed environment variables (e.g., leading spaces or equals signs from Railway/env files).
+  - Propagated `get_float_env` across `betting_model.py`, `main.py`, `analysis.py`, `recalibration.py`, `portfolio.py`, and `bet_tracker.py`.
+  - Fixed various syntax errors (missing parentheses) introduced during the large-scale refactor.
+- **Updated Dashboard Production Connectivity**:
+  - Modified `dashboard/utils.py` to point `API_URL` to the Railway production backend (`https://cbbbetting-production.up.railway.app`).
+  - Added `get_float_env` to dashboard utils for consistent parsing in the UI.
+- **Railway & V9 Verification**:
+  - Verified Railway PostgreSQL connection and table initialization (9 tables confirmed).
+  - Triggered nightly analysis on production; confirmed `model_version='v9.0'` predictions are being generated and stored.
+  - Updated `backend/main.py` to report version `9.0` in the root endpoint.
+- **Verification**:
+  - All 438 tests passing locally (`pytest tests/ -v`).
+  - Pushed changes to GitHub to trigger Railway redeploy.
 
 ### 13:00 — Core Portfolio & Mapping Updates (P0)
 - **Implemented Global Proportional Scaler (P0)**:

@@ -87,6 +87,8 @@ class OddsMonitor:
     ML_MOVE_THRESHOLD = 25.0      # American odds units
     GOLDEN_WINDOW_MINUTES = 120   # 2 hours before tipoff
     MIN_API_QUOTA_RESERVE = 10    # Stop polling if quota drops below this
+    # O-10: adverse move threshold — only applied in golden window on BET games
+    BET_ADVERSE_MOVE_THRESHOLD = 2.0  # Points
 
     def __init__(self, api_key: Optional[str] = None):
         self._client = OddsAPIClient(api_key=api_key)
@@ -97,6 +99,10 @@ class OddsMonitor:
         # One-fire dedup: tracks game_keys that have already triggered a VERDICT_FLIP
         # this session so the same alert doesn't retrigger on every 5-minute poll.
         self._verdict_flip_fired: set = set()
+        # O-10: One-fire dedup for BET_ADVERSE_MOVE alerts.
+        self._bet_adverse_fired: set = set()
+        # O-10: Callbacks for adverse move events.
+        self._adverse_move_callbacks: List[Callable[[LineMovement], None]] = []
 
     # ------------------------------------------------------------------
     # Cache management
@@ -105,11 +111,13 @@ class OddsMonitor:
     def set_reanalysis_cache(self, cache: Dict[str, ReanalysisEngine]) -> None:
         """Update the in-memory cache of reanalysis engines.
 
-        Clears the one-fire set so games from a fresh nightly run can trigger
-        new VERDICT_FLIP alerts if the line moves after the new analysis runs.
+        Clears the one-fire sets so games from a fresh nightly run can trigger
+        new VERDICT_FLIP and BET_ADVERSE_MOVE alerts if the line moves after
+        the new analysis runs.
         """
         self._reanalysis_cache = cache
         self._verdict_flip_fired.clear()
+        self._bet_adverse_fired.clear()
         logger.info("OddsMonitor: Reanalysis cache updated (%d engines)", len(cache))
 
     # ------------------------------------------------------------------
@@ -119,6 +127,15 @@ class OddsMonitor:
     def on_significant_move(self, callback: Callable[[LineMovement], None]) -> None:
         """Register a callback fired when a significant line movement is detected."""
         self._callbacks.append(callback)
+
+    def on_adverse_move(self, callback: Callable[[LineMovement], None]) -> None:
+        """Register a callback fired when a BET_ADVERSE_MOVE event is detected.
+
+        An adverse move is a spread shift >= BET_ADVERSE_MOVE_THRESHOLD points
+        on a game that the nightly model already graded as a BET, occurring
+        within GOLDEN_WINDOW_MINUTES of tipoff.  One-fire per game per session.
+        """
+        self._adverse_move_callbacks.append(callback)
 
     # ------------------------------------------------------------------
     # Polling
@@ -202,6 +219,47 @@ class OddsMonitor:
                             "Real-Time Pulse: %s flipped PASS->BET at spread %.1f (edge=%.3f)",
                             game_key, movement.new_value, updated.edge_conservative,
                         )
+
+                    # O-10: BET adverse move re-check
+                    # When the nightly model graded this game as a BET and the spread
+                    # has moved >= BET_ADVERSE_MOVE_THRESHOLD within the golden window,
+                    # flag the position for escalation review.  One-fire per game.
+                    if (
+                        original_was_bet
+                        and movement.minutes_to_tipoff is not None
+                        and movement.minutes_to_tipoff <= self.GOLDEN_WINDOW_MINUTES
+                        and abs(movement.delta) >= self.BET_ADVERSE_MOVE_THRESHOLD
+                        and game_key not in self._bet_adverse_fired
+                    ):
+                        self._bet_adverse_fired.add(game_key)
+                        movement.event_type = "BET_ADVERSE_MOVE"
+                        logger.warning(
+                            "BET_ADVERSE_MOVE [%s] spread moved %.1f pts in T-%.0fmin window "
+                            "-- flagging for escalation review",
+                            game_key,
+                            movement.delta,
+                            movement.minutes_to_tipoff,
+                        )
+                        from backend.services.coordinator import escalate_if_needed
+                        recommended_units = (
+                            getattr(engine._ctx, "recommended_units", 1.0)
+                            if hasattr(engine, "_ctx")
+                            else 1.0
+                        )
+                        escalate_if_needed(
+                            game_key=game_key,
+                            home_team=movement.home_team,
+                            away_team=movement.away_team,
+                            recommended_units=recommended_units,
+                            integrity_verdict="VOLATILE",
+                            is_neutral=False,
+                        )
+                        for cb in self._adverse_move_callbacks:
+                            try:
+                                cb(movement)
+                            except Exception:
+                                pass
+
                 except Exception as re_exc:
                     logger.error("OddsMonitor: Reanalysis failed for %s: %s", game_key, re_exc)
 

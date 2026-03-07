@@ -951,6 +951,27 @@ async def run_nightly_analysis(
             if len(_integrity_results) > 0 and (_volatile_count / len(_integrity_results)) > 0.20:
                 logger.warning("SYSTEM_RISK_ELEVATED: %d/%d games flagged VOLATILE",
                                _volatile_count, len(_integrity_results))
+            
+            # EMAC-046: Update HANDOFF.md with sweep results
+            try:
+                from .openclaw.handoff_writer import log_integrity_sweep_results
+                from .openclaw.coordinator import get_coordinator
+                
+                # Count verdicts
+                _verdict_counts = {}
+                for v in _integrity_results.values():
+                    _key = str(v).split()[0] if v else "UNKNOWN"
+                    _verdict_counts[_key] = _verdict_counts.get(_key, 0) + 1
+                
+                log_integrity_sweep_results(
+                    slate_date=datetime.now().strftime("%Y-%m-%d"),
+                    games_checked=len(_integrity_results),
+                    verdict_counts=_verdict_counts,
+                    latency_ms=0.0,  # TODO: Track actual latency
+                    circuit_state=get_coordinator().circuit_breaker.state
+                )
+            except Exception as e:
+                logger.debug(f"HANDOFF.md update failed (non-critical): {e}")
         else:
             _integrity_results = {}
 

@@ -14,7 +14,8 @@
       "Bash(pip show:*)",
       "Bash(python3:*)",
       "Bash(echo:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(source:*)"
     ]
   }
 }
