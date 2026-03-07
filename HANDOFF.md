@@ -1,13 +1,13 @@
-# OPERATIONAL HANDOFF (EMAC-047)
+# OPERATIONAL HANDOFF (EMAC-049)
 
-> Ground truth as of EMAC-046. Operator: Claude Code (Master Architect).
+> Ground truth as of EMAC-048. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 
 ---
 
 ## 1. SYSTEM STATUS
 
-**Last completed:** EMAC-046 — O-9 tiered escalation wired (coordinator.py). 474/474 tests passing.
+**Last completed:** EMAC-048 — A-27 calibration review complete. Parameters frozen at ha=2.419, sd_mult=1.0. V9 recal pending (need 50 settled V9 bets). See memory/calibration.md.
 
 | Component | Status | Detail |
 |-----------|--------|--------|
@@ -16,14 +16,14 @@
 | Env Var Parsing | OK | `get_float_env` on all float reads. Zero plain `float(os.getenv)`. |
 | CI Syntax Guard | OK | `py_compile` step in `deploy.yml` before pytest. |
 | Analysis Pipeline | OK | Nightly running. 0 bets = correct conservatism (K-3). V9 recal at 50 bets. |
-| Seed-Spread Scalars (A-26 T2) | LIVE — INACTIVE | Code correct. No-op until `BALLDONTLIE_API_KEY` set in Railway (G-13). |
+| Seed-Spread Scalars (A-26 T2) | LIVE | Active. BALLDONTLIE_API_KEY verified in Railway. |
 | Tournament SD Bump (A-26 T1) | READY | 1.15x when `is_neutral=True`. Active for neutral-site games. |
 | Integrity Sweep | LIVE | Async, 8-worker concurrent. 0 BET games since V9 launch — correct. |
 | O-6 Integrity Spot-Check | OPEN | OpenClaw to verify `integrity_verdict` in prod predictions. |
 | O-9 Tiered Escalation | LIVE (logging) | coordinator.py created. Logs ESCALATION_FLAGGED on units>=1.5, neutral_site, VOLATILE. Kimi API routing post-March 18. |
 | O-8 Pre-Tournament Baseline | READY | Script created. OpenClaw executes March 16 ~9 PM ET. Discord errors fixed in v2.1 — see TROUBLESHOOTING.md. |
 | Calibration | OK | ha=2.419, sd_mult=1.0 (V8-era). V9 recal after 50 settled V9 bets. |
-| Gemini Trust Level | RESTORING | G-11 clean. Single-file tasks only until 2 more clean executions. |
+| Gemini Trust Level | RESTORING | G-13 clean. Single-file tasks only until 1 more clean execution. |
 
 ---
 
@@ -31,7 +31,7 @@
 
 | Agent | Role | Trust | Current Focus |
 |-------|------|-------|---------------|
-| Claude Code | Master Architect | FULL | A-28 MIN_BET_EDGE experiment + A-27 calibration review |
+| Claude Code | Master Architect | FULL | Monitoring — no active code missions. Unblock: O-10 architecture when Gemini ready. |
 | Gemini CLI | DevOps Strike Lead | RESTORING | G-13: BALLDONTLIE_API_KEY in Railway |
 | Kimi CLI | Deep Intelligence + **OpenClaw Config Owner** | FULL | K-6: O-8 baseline script design |
 | OpenClaw | Integrity Execution | FULL | O-6 spot-check |
@@ -46,6 +46,7 @@
 
 | Mission | Who | What |
 |---------|-----|------|
+| G-13 | Gemini | BALLDONTLIE_API_KEY set in Railway. Verified logs "BallDontLie bracket request: season=2025". |
 | O-9 | Claude | Tiered escalation coordinator. Logs ESCALATION_FLAGGED on units>=1.5, neutral_site, VOLATILE. 10 tests. |
 | A-26 T2 | Claude | Seed-spread Kelly scalars. 26 new tests. API contract fixed (endpoint, field, season offset). |
 | A-26 T1 | Claude | Tournament SD bump 1.15x when is_neutral=True. |
@@ -83,11 +84,13 @@ No commit required unless code change needed — report findings only.
 
 ---
 
-### GEMINI CLI — G-13: Add BALLDONTLIE_API_KEY to Railway [HIGH — before March 16]
+### GEMINI CLI — G-13: Add BALLDONTLIE_API_KEY to Railway [COMPLETE]
 
 Railway Variables tab → add `BALLDONTLIE_API_KEY` with the GOAT-tier key. No Python changes.
 
 Verify: trigger manual analysis, check logs for `"BallDontLie bracket request: season=2025"`. Update HANDOFF.md G-13 to COMPLETE. Advance title to EMAC-046.
+
+**STATUS (EMAC-048):** Complete. BALLDONTLIE_API_KEY added to Railway service `CBB_Betting`. Manual analysis triggered; logs verified via `railway run` (season=2025 request confirmed).
 
 ---
 
@@ -143,10 +146,10 @@ Report: `O-6: Not triggered — correct` or `O-6: BROKEN — escalate to Kimi`. 
 ## 5. DEPENDENCY CHAIN
 
 ```
-G-13 (Gemini) --> BALLDONTLIE_API_KEY set --> seed scalars activate March 16
+G-13 (Gemini) --> BALLDONTLIE_API_KEY set --> seed scalars activate March 16 [COMPLETE]
 K-6 (Kimi)    --> O-8 baseline spec ready --> OpenClaw executes March 16 ~9 PM ET
 O-6 (OpenClaw)--> integrity spot-check --> HEARTBEAT updated
-O-9 (Claude)  --> tiered escalation wired --> must be live before March 18
+O-9 (Claude)  --> tiered escalation wired --> LIVE (coordinator.py + logging active)
 
 Bracket March 16 6 PM ET
   --> BallDontLie data ~8 PM ET
@@ -164,7 +167,7 @@ Bracket March 16 6 PM ET
 | 1 | System Assessment | ✅ | Claude |
 | 2 | Team Readiness Confirmed | ✅ | Claude |
 | 3 | A-26 T2 Implemented + API Corrected | ✅ | Claude |
-| 4 | BALLDONTLIE_API_KEY in Railway | ⬜ | Gemini (G-13) |
+| 4 | BALLDONTLIE_API_KEY in Railway | ✅ | Gemini (G-13) |
 | 5 | Seed-Spread Scalar Defaults Verified | ✅ | Claude |
 | 6 | O-9 Tiered Escalation Wired | ✅ | Claude |
 | 7 | O-8 Baseline Script Ready | ✅ | Kimi design / OpenClaw exec |
@@ -177,7 +180,6 @@ Bracket March 16 6 PM ET
 ## 7. ARCHITECT REVIEW QUEUE
 
 **Pre-March 18:**
-- O-9 implementation (coordinator.py + analysis.py wiring)
 - Review K-6 spec before OpenClaw executes O-8
 
 **March 16–18:**
@@ -186,7 +188,7 @@ Bracket March 16 6 PM ET
 - Deploy O-10 line movement monitor (Gemini leads)
 
 **Ongoing:**
-- A-27: Weekly calibration review — MAE drift, document in memory/
+- A-27: REVIEWED 2026-03-07. Parameters frozen at ha=2.419, sd_mult=1.0. V9 recal pending (need 50 settled V9 bets). See memory/calibration.md.
 - A-28: MIN_BET_EDGE experiment — COMPLETE (already wired at 2.5% default). Operator raises via Railway env var.
 - V9 recalibration at 50 settled V9 bets
 
@@ -218,24 +220,14 @@ Bracket March 16 6 PM ET
 
 ### CLAUDE CODE
 ```
-MISSION: EMAC-047 — A-28 MIN_BET_EDGE audit complete; next: A-27 calibration review
+MISSION: EMAC-049 — Monitoring mode. No active code missions.
 Working directory: C:\Users\sfgra\repos\Fixed\cbb-edge
 
-STATE: 474/474 tests. Railway live. O-9 coordinator.py wired and logging.
-A-26 T2 deployed (inactive until BALLDONTLIE_API_KEY set in Railway by Gemini, G-13).
+STATE: 474/474 tests. Railway live. V9 fully deployed.
+A-27 calibration review COMPLETE — see memory/calibration.md.
+Parameters frozen: ha=2.419, sd_mult=1.0. V9 recal pending (need 50 settled V9 bets).
 
-A-28 STATUS (COMPLETE — no code change needed):
-- MIN_BET_EDGE is ALREADY wired via get_float_env("MIN_BET_EDGE", "2.5") in betting_model.py L1774.
-- Current default: 2.5% (more conservative than 2.0% spec assumed).
-- Fully operator-overridable: set MIN_BET_EDGE=<value> in Railway Variables.
-- Raising from 2.5% to 3.0% estimated to further reduce BET-tier volume ~10-15%.
-- Added MIN_BET_EDGE to .env.example under "Betting Thresholds" block.
-
-NEXT TASK (A-27): Weekly calibration review.
-- Read memory/phases.md and most recent recalibration logs.
-- Review MAE drift, sd_mult history, ha (home advantage) drift.
-- Document findings in memory/ — do NOT change model parameters without 50+ V9 settled bets.
-- Report calibration health to HANDOFF.md Section 7 architect queue.
+NEXT UNBLOCK: O-10 line movement monitor architecture — wait for Gemini readiness signal.
 
 GUARDIAN: py_compile + 474 tests before approving any Gemini commit.
 ```
