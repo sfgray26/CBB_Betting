@@ -80,7 +80,7 @@
 | Nightly Health Check | DEFINED | — | Not yet scheduled. Kimi to wire as APScheduler job. |
 | Weekly Calibration Review | DEFINED | — | Recalibration running (Sunday 5 AM). Review loop not yet active. |
 | O-6 Integrity Spot-Check | OPEN | — | Assigned to OpenClaw. Verify integrity_verdict in prod predictions. |
-| O-8 Pre-Tournament Baseline | PENDING | — | Kimi to design script. Run March 16 ~9 PM ET. |
+| O-8 Pre-Tournament Baseline | READY | — | Script created. Run March 16 ~9 PM ET. See `reports/k6-o8-baseline-spec.md`.
 | O-9 Tiered Escalation | UNWIRED | — | Assigned to Claude. Must be live before March 18. |
 | V9 Production Verification | OK | 2026-03-07 | 464/464 tests. Railway live. All env var parsing clean. |
 | Tournament Seed Data | READY | — | No-op until BALLDONTLIE_API_KEY set in Railway (Gemini). |

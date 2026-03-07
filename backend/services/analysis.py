@@ -1411,6 +1411,16 @@ async def run_nightly_analysis(
 
                     if analysis.verdict.startswith("Bet"):
                         bets_recommended += 1
+                        # O-9: Flag high-stakes games for Kimi escalation
+                        from backend.services.coordinator import escalate_if_needed
+                        escalate_if_needed(
+                            game_key=_game_key,
+                            home_team=home_team,
+                            away_team=away_team,
+                            recommended_units=analysis.recommended_units,
+                            integrity_verdict=integrity_verdict,
+                            is_neutral=game_input.get("is_neutral", False),
+                        )
                         # Collect for simultaneous Kelly — don't create paper trades yet
                         calcs = analysis.full_analysis.get("calculations", {})
                         bet_candidates.append({

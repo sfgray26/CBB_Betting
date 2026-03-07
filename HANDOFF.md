@@ -1,4 +1,4 @@
-# OPERATIONAL HANDOFF (EMAC-045)
+# OPERATIONAL HANDOFF (EMAC-046)
 
 > Ground truth as of EMAC-045. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
@@ -20,8 +20,8 @@
 | Tournament SD Bump (A-26 T1) | READY | 1.15x when `is_neutral=True`. Active for neutral-site games. |
 | Integrity Sweep | LIVE | Async, 8-worker concurrent. 0 BET games since V9 launch — correct. |
 | O-6 Integrity Spot-Check | OPEN | OpenClaw to verify `integrity_verdict` in prod predictions. |
-| O-9 Tiered Escalation | UNWIRED | Claude to implement before March 18. |
-| O-8 Pre-Tournament Baseline | PENDING | Kimi designs, OpenClaw executes March 16 ~9 PM ET. |
+| O-9 Tiered Escalation | LIVE (logging) | coordinator.py created. Logs ESCALATION_FLAGGED on units>=1.5, neutral_site, VOLATILE. Kimi API routing post-March 18. |
+| O-8 Pre-Tournament Baseline | READY | Script created. OpenClaw executes March 16 ~9 PM ET. |
 | Calibration | OK | ha=2.419, sd_mult=1.0 (V8-era). V9 recal after 50 settled V9 bets. |
 | Gemini Trust Level | RESTORING | G-11 clean. Single-file tasks only until 2 more clean executions. |
 
@@ -81,11 +81,31 @@ Verify: trigger manual analysis, check logs for `"BallDontLie bracket request: s
 
 ---
 
-### KIMI CLI — K-6: Design O-8 Pre-Tournament Baseline [HIGH — before March 16]
+### KIMI CLI — K-6: Design O-8 Pre-Tournament Baseline [COMPLETE]
 
-Design `scripts/openclaw_baseline.py` for OpenClaw execution March 16 ~9 PM ET. 68 teams, DDGS + qwen2.5:3b, JSON output (`team → {seed, region, risk_level, summary}`).
+**Status:** ✅ SPEC COMPLETE — Script ready for execution
 
-Read `backend/services/scout.py` and `reports/openclaw-capabilities-assessment.md` first. Save spec to `reports/k6-o8-baseline-spec.md`. Update HANDOFF.md K-6 to COMPLETE. Advance title to EMAC-046.
+**Deliverables:**
+- Spec: `reports/k6-o8-baseline-spec.md` — Full design document with architecture, schema, and integration plan
+- Script: `scripts/openclaw_baseline.py` — Production-ready Python implementation
+
+**Execution Plan:**
+- **When:** March 16, 2026 ~9:00 PM ET (after bracket reveal at 6 PM, after A-26 T2 implementation by Claude)
+- **Who:** OpenClaw (autonomous execution)
+- **Prerequisites:**
+  1. ✅ Script created and tested
+  2. ⏳ `BALLDONTLIE_API_KEY` in Railway (G-13 — assigned to Gemini)
+  3. ⏳ Ollama running with qwen2.5:3b on execution host
+
+**Output:**
+- `data/pre_tournament_baseline_2026.json` — 68-team risk map with seed, region, risk_level, summary
+- `reports/o8_baseline_summary_2026.md` — Human-readable summary
+- HANDOFF.md auto-updated with baseline results
+
+**Command:**
+```bash
+python scripts/openclaw_baseline.py --year 2026
+```
 
 ---
 
@@ -123,7 +143,7 @@ Bracket March 16 6 PM ET
 | 3 | A-26 T2 Implemented + API Corrected | ✅ | Claude |
 | 4 | BALLDONTLIE_API_KEY in Railway | ⬜ | Gemini (G-13) |
 | 5 | Seed-Spread Scalar Defaults Verified | ✅ | Claude |
-| 6 | O-9 Tiered Escalation Wired | ⬜ | Claude |
+| 6 | O-9 Tiered Escalation Wired | ✅ | Claude |
 | 7 | O-8 Baseline Script Ready | ⬜ | Kimi design / OpenClaw exec |
 | 8 | O-10 Line Movement Monitor | ⬜ | Gemini + OpenClaw |
 | 9 | Railway Deploy Pipeline Tested | ⬜ | Gemini |
