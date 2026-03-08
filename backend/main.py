@@ -193,6 +193,15 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Morning Briefing — summarize today's slate at 7 AM ET (after ratings are fresh)
+    scheduler.add_job(
+        _morning_briefing_job,
+        CronTrigger(hour=7, minute=0, timezone=timezone),
+        id="morning_briefing",
+        name="Morning Slate Briefing",
+        replace_existing=True,
+    )
+
     # Weekly model parameter recalibration — Sunday 5 AM ET
     # Note: recalibration and sentinel both run at 5:00 AM; they are independent.
     scheduler.add_job(
@@ -207,7 +216,7 @@ async def lifespan(app: FastAPI):
     logger.info(
         "Scheduler started: nightly@%02d:00, outcomes every 2h + daily@04:00, "
         "lines every 30min, odds monitor every %dmin, snapshot@04:30, "
-        "sentinel@05:00, ratings prewarm@%02d:00, recalibration@sun05:00 %s",
+        "sentinel@05:00, briefing@07:00, ratings prewarm@%02d:00, recalibration@sun05:00 %s",
         nightly_hour, odds_monitor_interval, ratings_prewarm_hour, timezone,
     )
     
@@ -387,6 +396,43 @@ def _nightly_health_check_job():
         logger.info("Sentinel health check complete: %s", result)
     except Exception:
         logger.exception("Sentinel health check job failed")
+
+
+def _morning_briefing_job():
+    """Morning slate briefing at 7 AM ET — logs today's prediction slate summary."""
+    db = SessionLocal()
+    try:
+        from datetime import date as _date
+        from backend.models import Prediction, Game
+        from backend.services.scout import generate_morning_briefing_narrative
+
+        today = _date.today()
+        preds = (
+            db.query(Prediction)
+            .join(Game)
+            .filter(func.date(Game.game_date) == today)
+            .all()
+        )
+        n_bets = sum(1 for p in preds if p.verdict == "BET")
+        n_considered = sum(1 for p in preds if p.verdict == "CONSIDER")
+
+        top_bet = None
+        bet_preds = [p for p in preds if p.verdict == "BET"]
+        if bet_preds:
+            top = max(bet_preds, key=lambda p: p.conservative_edge or 0.0)
+            top_bet = "%s @ %s (%.1f%% edge)" % (
+                top.game.away_team, top.game.home_team,
+                (top.conservative_edge or 0.0) * 100,
+            )
+
+        narrative = generate_morning_briefing_narrative(n_bets, n_considered, top_bet)
+        logger.info(
+            "Morning Briefing: %d BET, %d CONSIDER. %s", n_bets, n_considered, narrative
+        )
+    except Exception:
+        logger.exception("Morning briefing job failed")
+    finally:
+        db.close()
 
 
 def _daily_snapshot_job():

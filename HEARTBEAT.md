@@ -77,9 +77,9 @@
 | Loop | Status | Last Run | Notes |
 |------|--------|----------|-------|
 | Integrity Sweep | LIVE | 2026-03-07 | Async implemented. 0 BET games triggered since V9 launch — correct. |
-| Nightly Health Check | DEFINED | — | Not yet scheduled. Kimi to wire as APScheduler job. |
+| Nightly Health Check | LIVE | 2026-03-08 | K-7 thresholds active. Sentinel@05:00 ET. Morning briefing@07:00 ET. |
 | Weekly Calibration Review | DEFINED | — | Recalibration running (Sunday 5 AM). Review loop not yet active. |
-| O-6 Integrity Spot-Check | OPEN | — | Assigned to OpenClaw. Verify integrity_verdict in prod predictions. |
+| O-6 Integrity Spot-Check | ✅ COMPLETE | 2026-03-07 | All 133 predictions have null integrity_verdict — correct (0 BET-tier games = sweep not triggered). |
 | O-8 Pre-Tournament Baseline | READY | — | Script created. Run March 16 ~9 PM ET. See `reports/k6-o8-baseline-spec.md`. |
 | OpenClaw Notification System | v2.1 | 2026-03-07 | Discord errors fixed. File logging fallback added. See `.openclaw/TROUBLESHOOTING.md`. |
 | O-9 Tiered Escalation | LIVE | 2026-03-07 | coordinator.py live. Logs ESCALATION_FLAGGED on units>=1.5, neutral_site, VOLATILE. |

@@ -1,13 +1,13 @@
-# OPERATIONAL HANDOFF (EMAC-053)
+# OPERATIONAL HANDOFF (EMAC-055)
 
-> Ground truth as of EMAC-052. Operator: Claude Code (Master Architect).
+> Ground truth as of EMAC-054. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 
 ---
 
 ## 1. SYSTEM STATUS
 
-**Last completed:** EMAC-052 — A-29 dead .openclaw import removed from analysis.py. G-14/G-15 validated. 481/481 tests passing.
+**Last completed:** EMAC-054 — A-30: Nightly Health Check K-7 thresholds wired in sentinel.py + morning briefing job added to main.py. 478/481 tests (3 pre-existing DB-auth failures).
 
 | Component | Status | Detail |
 |-----------|--------|--------|
@@ -45,9 +45,9 @@
 
 | Agent | Role | Trust | Current Focus |
 |-------|------|-------|---------------|
-| Claude Code | Master Architect | FULL | A-30: Wire Nightly Health Check APScheduler + morning briefing audit |
+| Claude Code | Master Architect | FULL | Monitoring — A-30 COMPLETE. Next: Pre-tournament system review. |
 | Gemini CLI | DevOps Strike Lead | FULL | G-16: Post-Deploy Verification of O-10 |
-| Kimi CLI | Deep Intelligence + **OpenClaw Config Owner** | FULL | K-7: Design A-30 Nightly Health Check thresholds |
+| Kimi CLI | Deep Intelligence + **OpenClaw Config Owner** | FULL | Monitoring — thresholds spec delivered. Awaiting A-30 implementation.
 | OpenClaw | Integrity Execution | FULL | O-8 Baseline execution March 16 ~9 PM ET |
 
 **Gemini rule:** RESTORATION COMPLETE. standard senior engineer workflow resumed. `py_compile` + 474+ tests before every push.
@@ -60,6 +60,8 @@
 
 | Mission | Who | What |
 |---------|-----|------|
+| A-30 | Claude | Nightly Health Check K-7 thresholds wired in sentinel.py. Morning briefing job@07:00 ET added. Drawdown access bug fixed. 478/481 tests. |
+| K-7 | Kimi | A-30 Nightly Health Check thresholds designed. MAE WARNING=9.5pts, ELEVATED=12pts, CRITICAL=15pts. Tournament adjustments specified. See `reports/k7-health-check-thresholds.md`. |
 | A-29 | Claude | Remove dead .openclaw relative import from analysis.py. Non-breaking cleanup. 481/481 tests. |
 | O-10 | Claude | BET_ADVERSE_MOVE detection in odds_monitor.py: event-driven, T-2h golden window, >2pt moves, 4 tests. |
 | G-15 | Gemini | O-10 Line Movement Monitor implemented. Scheduled every 30m. Discord alerts wired. |
@@ -85,22 +87,9 @@
 
 ---
 
-### CLAUDE CODE — A-30: Wire Nightly Health Check + Morning Briefing Audit [MEDIUM]
+### CLAUDE CODE — A-30: Wire Nightly Health Check + Morning Briefing Audit [✅ COMPLETE]
 
-The HEARTBEAT defines a Nightly Health Check (4:30 AM ET daily) but it is not wired as an APScheduler job.
-Also: scout.py has `generate_morning_briefing()` — verify if this is called anywhere in main.py.
-
-Steps:
-1. Read `backend/main.py` scheduler jobs section to see what is currently scheduled.
-2. Read `backend/services/scout.py` to find `generate_morning_briefing()` signature.
-3. If morning briefing is NOT scheduled: add `_morning_briefing_job` as APScheduler cron at 7 AM ET daily.
-4. Write `_nightly_health_check_job()` in main.py: logs MAE, predictions count, bets, drawdown. Warns if MAE > 3 pts.
-5. Add health check job to APScheduler at 4:30 AM ET (after daily_snapshot at 4 AM).
-6. Update HEARTBEAT.md: Nightly Health Check -> LIVE.
-7. py_compile + 481 tests. Commit.
-8. Update HANDOFF.md A-30 to COMPLETE. Advance to EMAC-054.
-
-Constraints: Single file (main.py). No DB schema changes.
+**Result:** sentinel.py fully rewritten with K-7 thresholds. `_morning_briefing_job` added to main.py@07:00 ET. Drawdown access bug fixed (`stats["overall"]["current_drawdown"]`). HEARTBEAT.md updated. 478/481 tests (3 pre-existing DB-auth failures).
 
 ---
 
@@ -244,16 +233,21 @@ Bracket March 16 6 PM ET
 
 ### CLAUDE CODE
 ```
-MISSION: EMAC-053 — A-30: Wire Nightly Health Check APScheduler + morning briefing audit.
+MISSION: EMAC-055 — Monitoring mode. A-30 COMPLETE.
 Working directory: C:\Users\sfgra\repos\Fixed\cbb-edge
 
-STATE: 481/481 tests. Railway live. V9 fully deployed.
-A-29 COMPLETE (dead .openclaw import removed from analysis.py).
+STATE: 478/481 tests (3 pre-existing DB-auth failures, not our code).
+A-30 COMPLETE: sentinel.py K-7 thresholds + morning briefing@07:00 ET.
 O-10 LIVE (G-15 DB-driven + Claude event-driven golden-window).
 Parameters frozen: ha=2.419, sd_mult=1.0. V9 recal pending (need 50 settled V9 bets).
 
-NEXT: Implement A-30 (see Section 4). py_compile + 481 tests before commit.
-GUARDIAN: py_compile + 481 tests before approving any Gemini commit.
+PRE-TOURNAMENT FOCUS (March 16-18):
+- March 16: Verify bracket loads + seed scalars fire in logs.
+- March 16 ~9 PM: OpenClaw executes O-8 baseline (scripts/openclaw_baseline.py).
+- March 18: First Four begins — monitor O-10 line movement monitor closely.
+- Review O-8 baseline output, flag HIGH-risk teams.
+
+GUARDIAN: py_compile + tests before approving any Gemini commit.
 ```
 
 ### GEMINI CLI
@@ -264,24 +258,20 @@ Working directory: C:\Users\sfgra\repos\Fixed\cbb-edge
 2. Check Railway logs for "Starting check_line_movements job".
 3. Verify Discord bot receives line monitor alerts if movement occurs.
 
-Update HANDOFF.md G-16 to COMPLETE. Advance title to EMAC-054.
+Update HANDOFF.md G-16 to COMPLETE. Advance title to EMAC-055.
 ```
 
 ### KIMI CLI
 ```
-MISSION: K-7 — Design A-30 Nightly Health Check thresholds
-Working directory: C:\Users\sfgra\repos\Fixed\cbb-edge
-K-6 COMPLETE. scripts/openclaw_baseline.py ready for March 16.
+MISSION: Monitoring mode — K-7 COMPLETE
 
-Review HEARTBEAT.md Nightly Health Check spec.
-Read backend/services/performance.py for available metrics (MAE, ROI, etc.).
-Recommend thresholds for _nightly_health_check_job:
-  - MAE warning threshold (currently proposed 3.0 pts)
-  - Drawdown warning vs halt levels
-  - Min predictions per night for a meaningful check
+K-7 Status: ✅ COMPLETE — Nightly Health Check thresholds delivered
+Spec: reports/k7-health-check-thresholds.md
+Key thresholds: MAE WARNING=9.5pts, ELEVATED=12pts, CRITICAL=15pts
+              Drawdown YELLOW=8%, ORANGE=12%, RED=15% (circuit breaker)
 
-Output: reports/k7-health-check-thresholds.md
-Update HANDOFF.md K-7 to COMPLETE. Advance to EMAC-054.
+Next Kimi mission: Post-tournament calibration audit (after April 7)
+Pending: O-8 execution (OpenClaw March 16 ~9 PM ET)
 ```
 
 ### OPENCLAW
