@@ -1,13 +1,13 @@
-# OPERATIONAL HANDOFF (EMAC-052)
+# OPERATIONAL HANDOFF (EMAC-053)
 
-> Ground truth as of EMAC-051. Operator: Claude Code (Master Architect).
+> Ground truth as of EMAC-052. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 
 ---
 
 ## 1. SYSTEM STATUS
 
-**Last completed:** EMAC-051 — O-10 Line Movement Monitor Implemented (G-15). 481/481 tests passing. Scheduled every 30m.
+**Last completed:** EMAC-052 — A-29 dead .openclaw import removed from analysis.py. G-14/G-15 validated. 481/481 tests passing.
 
 | Component | Status | Detail |
 |-----------|--------|--------|
@@ -20,7 +20,7 @@
 | Seed-Spread Scalars (A-26 T2) | LIVE | Active. BALLDONTLIE_API_KEY verified in Railway. |
 | Tournament SD Bump (A-26 T1) | READY | 1.15x when `is_neutral=True`. Active for neutral-site games. |
 | Integrity Sweep | LIVE | Async, 8-worker concurrent. 0 BET games since V9 launch — correct. |
-| O-6 Integrity Spot-Check | OPEN | OpenClaw to verify `integrity_verdict` in prod predictions. |
+| O-6 Integrity Spot-Check | ✅ COMPLETE | 2026-03-07. Verified 133 predictions — all null verdicts (correct, no BET-tier games). |
 | O-9 Tiered Escalation | LIVE (logging) | coordinator.py created. Logs ESCALATION_FLAGGED on units>=1.5, neutral_site, VOLATILE. Kimi API routing post-March 18. |
 | O-8 Pre-Tournament Baseline | READY | Script created. OpenClaw executes March 16 ~9 PM ET. Discord errors fixed in v2.1 — see TROUBLESHOOTING.md. |
 | Calibration | OK | ha=2.419, sd_mult=1.0 (V8-era). V9 recal after 50 settled V9 bets. |
@@ -45,10 +45,10 @@
 
 | Agent | Role | Trust | Current Focus |
 |-------|------|-------|---------------|
-| Claude Code | Master Architect | FULL | Monitoring — no active code missions. |
+| Claude Code | Master Architect | FULL | A-30: Wire Nightly Health Check APScheduler + morning briefing audit |
 | Gemini CLI | DevOps Strike Lead | FULL | G-16: Post-Deploy Verification of O-10 |
-| Kimi CLI | Deep Intelligence + **OpenClaw Config Owner** | FULL | K-6: O-8 baseline script design |
-| OpenClaw | Integrity Execution | FULL | O-6 spot-check |
+| Kimi CLI | Deep Intelligence + **OpenClaw Config Owner** | FULL | K-7: Design A-30 Nightly Health Check thresholds |
+| OpenClaw | Integrity Execution | FULL | O-8 Baseline execution March 16 ~9 PM ET |
 
 **Gemini rule:** RESTORATION COMPLETE. standard senior engineer workflow resumed. `py_compile` + 474+ tests before every push.
 
@@ -60,7 +60,10 @@
 
 | Mission | Who | What |
 |---------|-----|------|
+| A-29 | Claude | Remove dead .openclaw relative import from analysis.py. Non-breaking cleanup. 481/481 tests. |
+| O-10 | Claude | BET_ADVERSE_MOVE detection in odds_monitor.py: event-driven, T-2h golden window, >2pt moves, 4 tests. |
 | G-15 | Gemini | O-10 Line Movement Monitor implemented. Scheduled every 30m. Discord alerts wired. |
+| O-6 | OpenClaw | V9 Integrity Spot-Check complete. Verified all 133 predictions have null integrity_verdict (0 BET-tier games = sweep not triggered = correct). |
 | G-14 | Gemini | Railway Deploy Pipeline Tested. Verified 474 tests + py_compile + Railway startup. |
 | A-27 | Claude | Weekly calibration review. Params frozen. See memory/calibration.md. |
 | G-13 | Gemini | BALLDONTLIE_API_KEY set in Railway. Verified logs "BallDontLie bracket request: season=2025". |
@@ -82,22 +85,22 @@
 
 ---
 
-### CLAUDE CODE — A-28: MIN_BET_EDGE 2.0% Experiment [COMPLETE]
+### CLAUDE CODE — A-30: Wire Nightly Health Check + Morning Briefing Audit [MEDIUM]
 
-Verify `MIN_BET_EDGE` env var is wired in `betting_model.py` and controls the 2% threshold.
-If not wired, add it using `get_float_env("MIN_BET_EDGE", "2.0")`.
-Document expected impact: raising from 2% → 2.5% would further reduce BET-tier volume (~15-20% reduction estimated).
-No Railway changes needed — document how operator sets it.
-Update `.env.example` if missing. Add 1-2 tests if the wiring is new.
-No commit required unless code change needed — report findings only.
+The HEARTBEAT defines a Nightly Health Check (4:30 AM ET daily) but it is not wired as an APScheduler job.
+Also: scout.py has `generate_morning_briefing()` — verify if this is called anywhere in main.py.
 
-**STATUS (EMAC-047 findings):** `MIN_BET_EDGE` is ALREADY FULLY WIRED.
-- Location: `backend/betting_model.py` lines 1774-1775 (D4 block).
-- Current default: **2.5%** (not 2.0% — already tuned more conservatively than spec assumed).
-- Uses `get_float_env("MIN_BET_EDGE", "2.5")` — fully env-overridable.
-- Pass reason string: `f"Edge {edge:.1%} below MIN_BET_EDGE {floor:.1%} — signal too marginal to size"`.
-- Missing from `.env.example` — added in EMAC-047.
-- **No code change required.** Operator raises threshold via Railway env var `MIN_BET_EDGE=3.0` (etc.).
+Steps:
+1. Read `backend/main.py` scheduler jobs section to see what is currently scheduled.
+2. Read `backend/services/scout.py` to find `generate_morning_briefing()` signature.
+3. If morning briefing is NOT scheduled: add `_morning_briefing_job` as APScheduler cron at 7 AM ET daily.
+4. Write `_nightly_health_check_job()` in main.py: logs MAE, predictions count, bets, drawdown. Warns if MAE > 3 pts.
+5. Add health check job to APScheduler at 4:30 AM ET (after daily_snapshot at 4 AM).
+6. Update HEARTBEAT.md: Nightly Health Check -> LIVE.
+7. py_compile + 481 tests. Commit.
+8. Update HANDOFF.md A-30 to COMPLETE. Advance to EMAC-054.
+
+Constraints: Single file (main.py). No DB schema changes.
 
 ---
 
@@ -153,11 +156,11 @@ python scripts/openclaw_baseline.py --year 2026
 
 ---
 
-### OPENCLAW — O-6: Integrity Spot-Check [MEDIUM — run now]
+### OPENCLAW — O-6: Integrity Spot-Check [✅ COMPLETE]
 
-`GET /api/predictions/today`. Check if `integrity_verdict` is populated. Expected: all null.
+**Result:** `O-6: Not triggered — correct`
 
-Report: `O-6: Not triggered — correct` or `O-6: BROKEN — escalate to Kimi`. Update HEARTBEAT.md status tracker. Update HANDOFF.md O-6 to COMPLETE. Advance title to EMAC-053.
+All 133 predictions verified — all have `null` integrity_verdict. This is expected because 0 BET-tier games means the Integrity Sweep was not triggered. HEARTBEAT.md updated.
 
 ---
 
@@ -232,6 +235,8 @@ Bracket March 16 6 PM ET
 | Uncommitted local changes are invisible to Railway. Verify push before blaming the fix. | EMAC-042 |
 | BallDontLie: endpoint `/bracket`, field `name` (not `full_name`), `season=year-1`. | EMAC-045 |
 | `sd_mult=1.0` widens distribution, compresses edges. V9 recal after 50+ V9 bets settle. | K-3 |
+| Gemini O-10 (G-15) and Claude O-10 are COMPLEMENTARY: G-15=DB-driven position monitor (30m), Claude=event-driven in-memory golden-window check. Both needed. | EMAC-052 |
+| Dead imports in try/except blocks are invisible failures. Remove them -- do not paper over with broader except. | EMAC-052 |
 
 ---
 
@@ -239,46 +244,54 @@ Bracket March 16 6 PM ET
 
 ### CLAUDE CODE
 ```
-MISSION: EMAC-052 — Monitoring mode. No active code missions.
+MISSION: EMAC-053 — A-30: Wire Nightly Health Check APScheduler + morning briefing audit.
 Working directory: C:\Users\sfgra\repos\Fixed\cbb-edge
 
 STATE: 481/481 tests. Railway live. V9 fully deployed.
-O-10 Line Movement Monitor LIVE. Runs every 30m.
-A-27 calibration review COMPLETE — see memory/calibration.md.
+A-29 COMPLETE (dead .openclaw import removed from analysis.py).
+O-10 LIVE (G-15 DB-driven + Claude event-driven golden-window).
 Parameters frozen: ha=2.419, sd_mult=1.0. V9 recal pending (need 50 settled V9 bets).
 
+NEXT: Implement A-30 (see Section 4). py_compile + 481 tests before commit.
 GUARDIAN: py_compile + 481 tests before approving any Gemini commit.
 ```
 
 ### GEMINI CLI
 ```
-MISSION: G-16 — Post-Deploy Verification of O-10
+MISSION: G-16 — Post-Deploy Verification of O-10 (still open)
+Working directory: C:\Users\sfgra\repos\Fixed\cbb-edge
 1. Verify line_monitor job is scheduled in /admin/scheduler/status.
 2. Check Railway logs for "Starting check_line_movements job".
 3. Verify Discord bot receives line monitor alerts if movement occurs.
 
-Update HANDOFF.md G-16 to COMPLETE. Advance title to EMAC-053.
+Update HANDOFF.md G-16 to COMPLETE. Advance title to EMAC-054.
 ```
 
 ### KIMI CLI
 ```
-MISSION: K-6 — Design O-8 Pre-Tournament Baseline Script
-You are Deep Intelligence Unit AND OpenClaw Config Owner for CBB Edge Analyzer.
-Read: backend/services/scout.py, reports/openclaw-capabilities-assessment.md, HEARTBEAT.md.
-Design scripts/openclaw_baseline.py for OpenClaw to execute March 16 ~9 PM ET.
-Output: 68-team JSON map (team -> seed, region, risk_level, summary). Use DDGS + qwen2.5:3b.
-Save spec to reports/k6-o8-baseline-spec.md.
-Update HANDOFF.md K-6 to COMPLETE. Advance title to EMAC-053.
+MISSION: K-7 — Design A-30 Nightly Health Check thresholds
+Working directory: C:\Users\sfgra\repos\Fixed\cbb-edge
+K-6 COMPLETE. scripts/openclaw_baseline.py ready for March 16.
+
+Review HEARTBEAT.md Nightly Health Check spec.
+Read backend/services/performance.py for available metrics (MAE, ROI, etc.).
+Recommend thresholds for _nightly_health_check_job:
+  - MAE warning threshold (currently proposed 3.0 pts)
+  - Drawdown warning vs halt levels
+  - Min predictions per night for a meaningful check
+
+Output: reports/k7-health-check-thresholds.md
+Update HANDOFF.md K-7 to COMPLETE. Advance to EMAC-054.
 ```
 
 ### OPENCLAW
 ```
-MISSION: O-6 — V9 Integrity Spot-Check
-GET https://cbbbetting-production.up.railway.app/api/predictions/today
-Header: X-API-Key: <your key>
-Check: is integrity_verdict populated in any prediction?
-Expected: all null (0 BET-tier games = sweep not triggered = correct).
-Report: "O-6: Not triggered — correct" or "O-6: BROKEN — escalate to Kimi".
-Update HEARTBEAT.md status tracker row for O-6.
-Update HANDOFF.md O-6 row to COMPLETE. Advance title to EMAC-053.
+MISSION: O-6 ✅ COMPLETE — O-8 PENDING EXECUTION March 16 ~9 PM ET
+
+O-6 RESULT: O-6: Not triggered — correct (all 133 predictions have null integrity_verdict).
+
+NEXT: O-8 Pre-Tournament Baseline — EXECUTE March 16, 2026 ~9:00 PM ET
+Command: python scripts/openclaw_baseline.py --year 2026
+Prerequisites: Ollama running with qwen2.5:3b, BALLDONTLIE_API_KEY set in Railway
+Output: data/pre_tournament_baseline_2026.json + reports/o8_baseline_summary_2026.md
 ```
