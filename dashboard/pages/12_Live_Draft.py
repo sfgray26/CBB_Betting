@@ -175,7 +175,7 @@ state: DraftState = st.session_state.draft_state
 avail = available_players(state.drafted_player_ids)
 recommender = DraftRecommender(state, avail)
 
-# ── Status bar ──────────────────────────────────────────────────────────────
+# -- Status bar --------------------------------------------------------------
 picks_away = state.picks_until_my_turn()
 col_pick, col_round, col_pos, col_turn = st.columns(4)
 col_pick.metric("Overall Pick", state.current_overall_pick)
@@ -191,10 +191,10 @@ else:
 
 st.divider()
 
-# ── Main layout: recommendations | my roster | pick entry ─────────────────
+# -- Main layout: recommendations | my roster | pick entry ------------------
 col_left, col_right = st.columns([3, 2])
 
-# ── LEFT: Recommendations ──────────────────────────────────────────────────
+# -- LEFT: Recommendations ---------------------------------------------------
 with col_left:
     rec_tab, board_tab = st.tabs(["🎯 Recommendations", "📋 Full Board"])
 
@@ -204,7 +204,7 @@ with col_left:
         else:
             st.subheader(f"Top Picks (ready when you're up in {picks_away} picks)")
 
-        # ── Look-ahead intelligence (when not my turn) ─────────────────────
+        # -- Look-ahead intelligence (when not my turn) ----------------------
         if not state.is_my_pick:
             la = recommender.look_ahead()
             if la.get("likely_gone"):
@@ -345,7 +345,7 @@ with col_left:
                 })
                 st.rerun()
 
-# ── RIGHT: Roster + Pick entry ─────────────────────────────────────────────
+# -- RIGHT: Roster + Pick entry ----------------------------------------------
 with col_right:
     roster_tab, manual_tab, log_tab = st.tabs(["👥 My Roster", "⌨️ Log a Pick", "📜 Pick Log"])
 

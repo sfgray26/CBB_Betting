@@ -130,15 +130,70 @@ class KeeperReport:
     recommendation: list[str] = field(default_factory=list)
 
 
+def _get_player_type(p) -> str:
+    """Return the player type string regardless of whether p is a dict or PlayerProjection."""
+    if isinstance(p, dict):
+        return p["type"]
+    return p.player_type
+
+
+def _get_z_score(p) -> float:
+    """Return the z_score regardless of whether p is a dict or PlayerProjection."""
+    if isinstance(p, dict):
+        return p["z_score"]
+    return p.z_score
+
+
+def _set_z_score(p, value: float) -> None:
+    """Set the z_score regardless of whether p is a dict or PlayerProjection."""
+    if isinstance(p, dict):
+        p["z_score"] = value
+    else:
+        p.z_score = value
+
+
+def _set_category_contributions(p, value: dict) -> None:
+    """Set category contributions regardless of whether p is a dict or PlayerProjection."""
+    if isinstance(p, dict):
+        p["cat_scores"] = value
+    else:
+        p.category_contributions = value
+
+
+def _get_batter_stats(p) -> tuple:
+    """Return (r, h, hr, rbi, k_bat, tb, avg, ops, nsb) for batter p."""
+    if isinstance(p, dict):
+        proj = p["proj"]
+        return (
+            proj["r"], proj["h"], proj["hr"], proj["rbi"],
+            proj["k_bat"], proj["tb"], proj["avg"], proj["ops"], proj["nsb"],
+        )
+    return (p.r, p.h, p.hr, p.rbi, p.k_bat, p.tb, p.avg, p.ops, p.nsb)
+
+
+def _get_pitcher_stats(p) -> tuple:
+    """Return (w, l, hr_pit, k_pit, era, whip, k9, qs, nsv) for pitcher p."""
+    if isinstance(p, dict):
+        proj = p["proj"]
+        return (
+            proj["w"], proj["l"], proj["hr_pit"], proj["k_pit"],
+            proj["era"], proj["whip"], proj["k9"], proj["qs"], proj["nsv"],
+        )
+    return (p.w, p.l, p.hr_pit, p.k_pit, p.era, p.whip, p.k9, p.qs, p.nsv)
+
+
 class CategoryValueEngine:
     """
     Computes z-scores for all 18 categories across a player pool.
     Handles batter K (negative) and pitcher L/HR/ERA/WHIP (negative) correctly.
+
+    Accepts either list[PlayerProjection] or list[dict] (from player_board.get_board()).
+    Dict players use key "type" for player type and nested "proj" dict for stats.
     """
 
-    def __init__(self, player_pool: list[PlayerProjection]):
-        self.batters = [p for p in player_pool if p.player_type == "batter"]
-        self.pitchers = [p for p in player_pool if p.player_type == "pitcher"]
+    def __init__(self, player_pool):
+        self.batters = [p for p in player_pool if _get_player_type(p) == "batter"]
+        self.pitchers = [p for p in player_pool if _get_player_type(p) == "pitcher"]
         self._bat_stats: dict[str, list[float]] = {}
         self._pit_stats: dict[str, list[float]] = {}
         self._compute_pool_stats()
@@ -146,28 +201,30 @@ class CategoryValueEngine:
     def _compute_pool_stats(self):
         """Pre-compute mean/std for each category across the player pool."""
         if self.batters:
+            bat_r, bat_h, bat_hr, bat_rbi, bat_k, bat_tb, bat_avg, bat_ops, bat_nsb = (
+                [], [], [], [], [], [], [], [], []
+            )
+            for p in self.batters:
+                r, h, hr, rbi, k_bat, tb, avg, ops, nsb = _get_batter_stats(p)
+                bat_r.append(r); bat_h.append(h); bat_hr.append(hr)
+                bat_rbi.append(rbi); bat_k.append(k_bat); bat_tb.append(tb)
+                bat_avg.append(avg); bat_ops.append(ops); bat_nsb.append(nsb)
             self._bat_stats = {
-                "R": [p.r for p in self.batters],
-                "H": [p.h for p in self.batters],
-                "HR": [p.hr for p in self.batters],
-                "RBI": [p.rbi for p in self.batters],
-                "K": [p.k_bat for p in self.batters],    # higher = worse
-                "TB": [p.tb for p in self.batters],
-                "AVG": [p.avg for p in self.batters],
-                "OPS": [p.ops for p in self.batters],
-                "NSB": [p.nsb for p in self.batters],
+                "R": bat_r, "H": bat_h, "HR": bat_hr, "RBI": bat_rbi,
+                "K": bat_k, "TB": bat_tb, "AVG": bat_avg, "OPS": bat_ops, "NSB": bat_nsb,
             }
         if self.pitchers:
+            pit_w, pit_l, pit_hr, pit_k, pit_era, pit_whip, pit_k9, pit_qs, pit_nsv = (
+                [], [], [], [], [], [], [], [], []
+            )
+            for p in self.pitchers:
+                w, l, hr_pit, k_pit, era, whip, k9, qs, nsv = _get_pitcher_stats(p)
+                pit_w.append(w); pit_l.append(l); pit_hr.append(hr_pit)
+                pit_k.append(k_pit); pit_era.append(era); pit_whip.append(whip)
+                pit_k9.append(k9); pit_qs.append(qs); pit_nsv.append(nsv)
             self._pit_stats = {
-                "W": [p.w for p in self.pitchers],
-                "L": [p.l for p in self.pitchers],        # higher = worse
-                "HR_P": [p.hr_pit for p in self.pitchers], # higher = worse
-                "K_P": [p.k_pit for p in self.pitchers],
-                "ERA": [p.era for p in self.pitchers],     # higher = worse
-                "WHIP": [p.whip for p in self.pitchers],   # higher = worse
-                "K9": [p.k9 for p in self.pitchers],
-                "QS": [p.qs for p in self.pitchers],
-                "NSV": [p.nsv for p in self.pitchers],
+                "W": pit_w, "L": pit_l, "HR_P": pit_hr, "K_P": pit_k,
+                "ERA": pit_era, "WHIP": pit_whip, "K9": pit_k9, "QS": pit_qs, "NSV": pit_nsv,
             }
 
     @staticmethod
@@ -183,23 +240,24 @@ class CategoryValueEngine:
         raw_z = (value - mean) / std
         return raw_z * direction
 
-    def score_batter(self, player: PlayerProjection) -> float:
+    def score_batter(self, player) -> float:
         """Return total z-score for a batter across all 9 batting categories."""
         if not self._bat_stats:
             return 0.0
         contributions = {}
         total = 0.0
+        r, h, hr, rbi, k_bat, tb, avg, ops, nsb = _get_batter_stats(player)
 
         category_map = [
-            ("R", player.r, 1),
-            ("H", player.h, 1),
-            ("HR", player.hr, 1),
-            ("RBI", player.rbi, 1),
-            ("K", player.k_bat, -1),   # negative direction
-            ("TB", player.tb, 1),
-            ("AVG", player.avg, 1),
-            ("OPS", player.ops, 1),
-            ("NSB", player.nsb, 1),
+            ("R", r, 1),
+            ("H", h, 1),
+            ("HR", hr, 1),
+            ("RBI", rbi, 1),
+            ("K", k_bat, -1),   # negative direction
+            ("TB", tb, 1),
+            ("AVG", avg, 1),
+            ("OPS", ops, 1),
+            ("NSB", nsb, 1),
         ]
         for cat, val, direction in category_map:
             z = self._z(val, self._bat_stats[cat], direction)
@@ -208,26 +266,27 @@ class CategoryValueEngine:
             contributions[cat] = round(weighted_z, 3)
             total += weighted_z
 
-        player.category_contributions = contributions
+        _set_category_contributions(player, contributions)
         return round(total, 3)
 
-    def score_pitcher(self, player: PlayerProjection) -> float:
+    def score_pitcher(self, player) -> float:
         """Return total z-score for a pitcher across all 9 pitching categories."""
         if not self._pit_stats:
             return 0.0
         contributions = {}
         total = 0.0
+        w, l, hr_pit, k_pit, era, whip, k9, qs, nsv = _get_pitcher_stats(player)
 
         category_map = [
-            ("W", player.w, 1, "W"),
-            ("L", player.l, -1, "L"),           # negative direction
-            ("HR_P", player.hr_pit, -1, "HR_P"), # negative direction
-            ("K_P", player.k_pit, 1, "K_P"),
-            ("ERA", player.era, -1, "ERA"),       # negative direction
-            ("WHIP", player.whip, -1, "WHIP"),    # negative direction
-            ("K9", player.k9, 1, "K9"),
-            ("QS", player.qs, 1, "QS"),
-            ("NSV", player.nsv, 1, "NSV"),
+            ("W", w, 1, "W"),
+            ("L", l, -1, "L"),           # negative direction
+            ("HR_P", hr_pit, -1, "HR_P"), # negative direction
+            ("K_P", k_pit, 1, "K_P"),
+            ("ERA", era, -1, "ERA"),       # negative direction
+            ("WHIP", whip, -1, "WHIP"),    # negative direction
+            ("K9", k9, 1, "K9"),
+            ("QS", qs, 1, "QS"),
+            ("NSV", nsv, 1, "NSV"),
         ]
         for pool_key, val, direction, cat_label in category_map:
             z = self._z(val, self._pit_stats[pool_key], direction)
@@ -236,15 +295,15 @@ class CategoryValueEngine:
             contributions[cat_label] = round(weighted_z, 3)
             total += weighted_z
 
-        player.category_contributions = contributions
+        _set_category_contributions(player, contributions)
         return round(total, 3)
 
-    def score_all(self) -> list[PlayerProjection]:
+    def score_all(self):
         """Score every player in the pool and set their z_score."""
         for p in self.batters:
-            p.z_score = self.score_batter(p)
+            _set_z_score(p, self.score_batter(p))
         for p in self.pitchers:
-            p.z_score = self.score_pitcher(p)
+            _set_z_score(p, self.score_pitcher(p))
         return self.batters + self.pitchers
 
 
@@ -255,16 +314,18 @@ class KeeperEngine:
 
     Key question: "Is this player worth more than the best available
     player I could draft at that round pick?"
+
+    Accepts player_pool as list[PlayerProjection] or list[dict] (from player_board.get_board()).
     """
 
-    def __init__(self, player_pool: Optional[list[PlayerProjection]] = None):
+    def __init__(self, player_pool=None):
         self.pool = player_pool or []
         self._value_engine: Optional[CategoryValueEngine] = None
         if self.pool:
             self._value_engine = CategoryValueEngine(self.pool)
             self._value_engine.score_all()
 
-    def set_pool(self, pool: list[PlayerProjection]) -> None:
+    def set_pool(self, pool) -> None:
         self.pool = pool
         self._value_engine = CategoryValueEngine(pool)
         self._value_engine.score_all()
@@ -274,8 +335,8 @@ class KeeperEngine:
         Estimate the average z-score of a player drafted at a given round.
         Based on the player pool ranked by z_score.
         """
-        relevant = [p for p in self.pool if p.player_type == player_type]
-        relevant_sorted = sorted(relevant, key=lambda p: p.z_score, reverse=True)
+        relevant = [p for p in self.pool if _get_player_type(p) == player_type]
+        relevant_sorted = sorted(relevant, key=lambda p: _get_z_score(p), reverse=True)
 
         # In a 12-team snake draft, round N = pick positions (N-1)*12 to N*12
         pick_start = (round_num - 1) * 12
@@ -285,22 +346,29 @@ class KeeperEngine:
         if not players_at_round:
             # Beyond end of draft — value approaches 0
             if relevant_sorted:
-                return relevant_sorted[-1].z_score
+                return _get_z_score(relevant_sorted[-1])
             return 0.0
 
-        return sum(p.z_score for p in players_at_round) / len(players_at_round)
+        return sum(_get_z_score(p) for p in players_at_round) / len(players_at_round)
 
-    def compute_surplus(self, player: PlayerProjection) -> float:
+    def compute_surplus(self, player) -> float:
         """
         Surplus value = player z_score minus the expected z_score of
         a player you'd draft at the same round (the opportunity cost).
+        Works with PlayerProjection or dict.
         """
         if self._value_engine is None:
             return 0.0
-        replacement = self._replacement_value_at_round(
-            player.keeper_round_cost, player.player_type
-        )
-        return round(player.z_score - replacement, 3)
+        if isinstance(player, dict):
+            round_cost = player.get("keeper_round_cost", 0)
+            ptype = player["type"]
+            z = player["z_score"]
+        else:
+            round_cost = player.keeper_round_cost
+            ptype = player.player_type
+            z = player.z_score
+        replacement = self._replacement_value_at_round(round_cost, ptype)
+        return round(z - replacement, 3)
 
     def evaluate_roster(self, keepers: list[PlayerProjection]) -> KeeperReport:
         """

@@ -1,0 +1,21 @@
+Name,Team,Status,Expected_PA_or_IP,Notes,Avoid_flag
+Spencer Strider,ATL,TJS_return,150,"TJS April 2024, expected mid-2025 return, should be full go 2026",no
+Kodai Senga,NYM,injury_risk,140,"Shoulder capsule 2024, risk of reinjury",no
+Shane Bieber,TOR,TJS_return,160,"UCL repair, expected full return 2026",no
+Eury Perez,MIA,TJS_return,120,"TJS 2024, timeline mid-2025, monitor 2026",no
+Carlos Rodon,NYY,injury_risk,140,"Flexor mass surgery history, chronic risk",no
+Brandon Woodruff,MIL,injury_risk,165,"Shoulder surgery, returning 2025, monitor for 2026",no
+Mike Trout,LAA,injury_risk,450,"Multiple knee surgeries, major decline risk",no
+Luis Castillo,SEA,active,195,No major concerns for 2026,no
+Shane McClanahan,TBR,TJS_return,140,"TJS recovery, should be full go 2026",no
+Grayson Rodriguez,LAA,injury_risk,140,Elbow inflammation history,no
+Walker Buehler,SDP,TJS_return,150,"Multiple TJS, high risk profile",yes
+Justin Verlander,FA,injury_risk,140,Age and shoulder issues,no
+Max Scherzer,TOR,injury_risk,130,Age and back issues,no
+Chris Sale,ATL,injury_risk,165,Tommy John history but was healthy 2024,no
+Jacob deGrom,TEX,injury_risk,170,"TJS recovery, monitor innings",no
+Tyler Mahle,SFG,TJS_return,150,"TJS recovery, expected full go 2026",no
+Corbin Burnes,ARI,injury_risk,175,"Elbow issue 2024, monitor",no
+Clayton Kershaw,FA,injury_risk,120,Age and multiple injuries,no
+Sandy Alcantara,MIA,TJS_return,180,"TJS 2024, should be full go 2026",no
+Spencer Schwellenbach,ATL,injury_risk,100,IL60 to start 2025,no
