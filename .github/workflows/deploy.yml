@@ -39,21 +39,21 @@ jobs:
     
     - name: Create test database
       run: |
-        PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE test_cbb_edge;"
+        PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -c "CREATE DATABASE test_cbb_edge;"
 
     - name: Set up test database
       env:
-        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_cbb_edge
+        DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/test_cbb_edge
       run: |
         python scripts/init_db.py
-    
+
     - name: Syntax check core files
       run: |
         python -m py_compile backend/main.py backend/betting_model.py backend/services/analysis.py backend/services/odds.py
 
     - name: Run tests
       env:
-        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_cbb_edge
+        DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/test_cbb_edge
         API_KEY_USER1: test_key_12345678901234567890
         ENVIRONMENT: development
       run: |
