@@ -56,3 +56,8 @@ mypy==1.8.0
 gunicorn==21.2.0
 duckduckgo-search>=5.0
 rapidfuzz==3.6.1
+
+# Fantasy Baseball — Yahoo API
+requests-oauthlib==2.0.0
+xmltodict==0.13.0
+python-dotenv>=1.0.0
