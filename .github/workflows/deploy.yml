@@ -37,6 +37,10 @@ jobs:
         pip install -r requirements.txt
         pip install pytest pytest-cov
     
+    - name: Create test database
+      run: |
+        PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE test_cbb_edge;"
+
     - name: Set up test database
       env:
         DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_cbb_edge
