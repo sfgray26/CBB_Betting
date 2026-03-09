@@ -38,7 +38,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(__file__).resolve().parents[3] / "data" / "projections"
+DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "projections"
 
 # ---------------------------------------------------------------------------
 # Yahoo position eligibility map — used when parsing position strings
@@ -342,6 +342,22 @@ def load_full_board(data_dir: Optional[Path] = None) -> Optional[list[dict]]:
     _compute_zscores(batters, pitchers)
 
     all_players = batters + pitchers
+
+    # Deduplicate by player ID — keeps first occurrence (batters take priority
+    # over pitchers, so two-way players like Ohtani are counted as batters).
+    seen_ids: set[str] = set()
+    deduped: list[dict] = []
+    for p in all_players:
+        if p["id"] not in seen_ids:
+            seen_ids.add(p["id"])
+            deduped.append(p)
+    if len(deduped) < len(all_players):
+        logger.info(
+            "Removed %d duplicate player entries (two-way players in both CSVs)",
+            len(all_players) - len(deduped),
+        )
+    all_players = deduped
+
     _apply_adp(all_players, adp_map)
     assign_tiers(all_players)
 
