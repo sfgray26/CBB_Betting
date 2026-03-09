@@ -15,7 +15,8 @@
       "Bash(python3:*)",
       "Bash(echo:*)",
       "Bash(python:*)",
-      "Bash(source:*)"
+      "Bash(source:*)",
+      "Bash(find:*)"
     ]
   }
 }
