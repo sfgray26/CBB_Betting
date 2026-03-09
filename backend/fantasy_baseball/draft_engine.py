@@ -352,13 +352,24 @@ class DraftRecommender:
         self.board = player_board  # list of player dicts from player_board module
 
     def recommend(self, top_n: int = 5) -> list[PickRecommendation]:
+        needs = self.state.roster_needs()
+        picks_left = self.state.picks_remaining()
+        current_round = self.state.current_round
+
+        # Determine the pick number we're actually targeting (my turn or current pick)
+        if self.state.is_my_pick:
+            target_pick = self.state.current_overall_pick
+        else:
+            nxt = self.state.next_my_pick()
+            target_pick = nxt[0] if nxt else self.state.current_overall_pick
+
+        # ── Bug fix 1: draft-slot pre-filtering ──────────────────────────────
+        # Players with ADP well below target_pick are almost certainly gone.
+        # Keep them if not yet picked (might be a steal) but apply likely-gone penalty.
         available = [
             p for p in self.board
             if p["id"] not in self.state.drafted_player_ids
         ]
-        needs = self.state.roster_needs()
-        picks_left = self.state.picks_remaining()
-        current_round = self.state.current_round
 
         scored = []
         for p in available:
@@ -370,15 +381,29 @@ class DraftRecommender:
             # Need-based boost
             need_boost = self._compute_need_boost(p, needs, picks_left, current_round)
 
-            # ADP value: being available later than expected = bonus
-            adp_diff = adp - self.state.current_overall_pick
-            adp_value_bonus = max(0, adp_diff) * 0.03  # small bonus for value picks
+            # ADP diff vs MY pick number (not overall clock pick)
+            # Positive = available later than expected = value
+            adp_diff = adp - target_pick
+            # Cap value bonus at 1.5 so a round-16 player can't jump to round 1
+            # purely because of ADP spread. Meaningful within ±20 picks only.
+            adp_value_bonus = min(max(0, adp_diff) * 0.04, 1.5)
 
-            # Reach penalty: if we're taking significantly earlier than ADP
+            # Reach penalty: taking significantly before ADP
             reach_penalty = max(0, -adp_diff - 5) * 0.05
-            reach_alert = adp_diff < -8  # 8+ picks earlier than ADP = reach
+            reach_alert = adp_diff < -8
 
-            composite = (z * need_boost) + adp_value_bonus - reach_penalty
+            # ── Bug fix 1b: "likely gone" heavy penalty ────────────────────
+            # If we haven't yet reached my turn and ADP is well before my pick,
+            # this player will almost certainly be gone — discount heavily.
+            if not self.state.is_my_pick and adp < target_pick - 2:
+                picks_not_logged = target_pick - self.state.current_overall_pick
+                # How far before my pick is this player expected to go?
+                already_gone_by = target_pick - adp
+                # Each additional pick before mine reduces survival probability
+                gone_penalty = min(already_gone_by * 0.4, z * 0.8)
+                composite = (z * need_boost) + adp_value_bonus - reach_penalty - gone_penalty
+            else:
+                composite = (z * need_boost) + adp_value_bonus - reach_penalty
 
             top_cats = sorted(
                 p.get("cat_scores", {}).items(),
@@ -407,6 +432,62 @@ class DraftRecommender:
 
         scored.sort(key=lambda r: r.composite_score, reverse=True)
         return scored[:top_n]
+
+    def look_ahead(self) -> dict:
+        """
+        Returns intelligence about the picks between now and my next turn.
+
+        Answers: "What will likely be gone before I pick? What should I
+        target if those are gone? Who is a must-draft vs can-wait?"
+        """
+        if self.state.is_my_pick:
+            return {"picks_away": 0, "likely_gone": [], "targets_if_gone": []}
+
+        nxt = self.state.next_my_pick()
+        if not nxt:
+            return {"picks_away": 0, "likely_gone": [], "targets_if_gone": []}
+
+        picks_away = self.state.picks_until_my_turn()
+        my_pick_num = nxt[0]
+        current_pick = self.state.current_overall_pick
+
+        available = [
+            p for p in self.board
+            if p["id"] not in self.state.drafted_player_ids
+        ]
+
+        # Likely gone: players whose ADP falls between now and my pick
+        likely_gone = [
+            p for p in available
+            if current_pick <= p["adp"] < my_pick_num
+        ]
+        likely_gone.sort(key=lambda p: p["adp"])
+
+        # Likely still available: players with ADP >= my_pick_num
+        likely_avail = [
+            p for p in available
+            if p["adp"] >= my_pick_num - 3
+        ]
+        likely_avail.sort(key=lambda p: p.get("z_score", 0), reverse=True)
+
+        # Best targets at my actual pick number
+        top_targets = likely_avail[:8]
+
+        # Tier breaks: are there players in a different tier who might slip?
+        sleepers = [
+            p for p in available
+            if p["adp"] > my_pick_num + 5  # ADP says they go later
+            and p.get("z_score", 0) > 3.0  # but have real value
+        ][:3]
+
+        return {
+            "picks_away": picks_away,
+            "my_next_pick": my_pick_num,
+            "my_next_round": nxt[1],
+            "likely_gone": likely_gone[:10],
+            "top_targets_at_my_pick": top_targets[:5],
+            "potential_sleepers": sleepers,
+        }
 
     def _compute_need_boost(self, player: dict, needs: dict[str, int],
                              picks_left: int, current_round: int) -> float:
@@ -442,11 +523,20 @@ class DraftRecommender:
         if nsb > 30 and picks_left < 12:
             boost = max(boost, 1.6)   # Running out of picks, SB scarce
 
-        # NSV boost if closer and we have none yet
+        # ── Bug fix 2: NSV/closer boost — round threshold ────────────────────
+        # Never boost closers in rounds 1-4. Closers at ADP 23 (Clase) should
+        # NOT outrank Freeman/Ramirez at pick 6. Start boosting round 5+;
+        # escalate urgency round 9+ when closer supply dries up.
         nsv = player.get("proj", {}).get("nsv", 0)
         closer_slots = needs.get("RP", 0)
         if nsv > 20 and closer_slots > 0:
-            boost = max(boost, 1.5)
+            if current_round >= 9:
+                boost = max(boost, 1.8)   # Late-draft closers are gold
+            elif current_round >= 6:
+                boost = max(boost, 1.4)
+            elif current_round >= 5:
+                boost = max(boost, 1.2)
+            # rounds 1-4: no boost — don't sacrifice elite bat for a closer
 
         return boost
 

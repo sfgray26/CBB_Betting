@@ -168,6 +168,154 @@ _BATTER_RAW = [
      520, 70, 132, 16, 65, 125, 218, 0.265, 0.810, 14, 0),
     ("Tyler Stephenson","CIN", ["C"],                       5, 142.0,
      480, 58, 122, 14, 62, 105, 210, 0.265, 0.808, 2, 0),
+
+    # ── MISSED TOP-TIER ADDITIONS ──────────────────────────────────────────
+    # Aaron Judge — massive oversight in original board
+    ("Aaron Judge",     "NYY", ["RF", "CF", "OF"],          1, 4.5,
+     540, 95, 145, 45, 108, 175, 340, 0.278, 0.978, 6, 0),
+    # Jarren Duran — breakout bat, speed elite
+    ("Jarren Duran",    "BOS", ["CF", "LF", "OF"],          3, 58.0,
+     580, 88, 165, 18, 72, 138, 258, 0.292, 0.848, 28, 0),
+    # Luis Arraez — AVG/OBP category specialist
+    ("Luis Arraez",     "SD",  ["1B", "2B"],                4, 112.0,
+     550, 68, 178, 5, 48, 48, 202, 0.332, 0.798, 6, 0),
+    # Daulton Varsho — multi-pos C/CF value
+    ("Daulton Varsho",  "TOR", ["C", "CF", "OF"],           4, 116.0,
+     500, 65, 122, 18, 62, 148, 218, 0.252, 0.782, 12, 0),
+
+    # Tier 5 cont — ADP 145-200
+    ("Cal Raleigh",     "SEA", ["C", "1B"],                 5, 148.0,
+     520, 68, 130, 25, 72, 148, 238, 0.262, 0.828, 3, 0),
+    ("Nathaniel Lowe",  "TEX", ["1B"],                      5, 152.0,
+     570, 72, 158, 18, 72, 122, 252, 0.282, 0.818, 4, 0),
+    ("Ha-Seong Kim",    "SD",  ["SS", "2B", "3B"],          5, 155.0,
+     540, 68, 138, 14, 58, 118, 215, 0.265, 0.782, 22, 0),
+    ("Corbin Carroll",  "ARI", ["CF", "LF", "OF"],          5, 158.0,
+     560, 78, 148, 18, 68, 148, 252, 0.275, 0.828, 28, 0),
+    ("Randy Arozarena", "SEA", ["LF", "RF", "OF"],          5, 162.0,
+     540, 72, 138, 20, 70, 148, 248, 0.265, 0.818, 20, 0),
+    ("Jackson Chourio", "MIL", ["CF", "LF", "OF"],          5, 165.0,
+     580, 80, 155, 18, 68, 145, 248, 0.275, 0.818, 22, 0),
+    ("Kyle Schwarber",  "PHI", ["LF", "1B", "OF"],          5, 168.0,
+     580, 82, 140, 38, 95, 198, 278, 0.252, 0.885, 4, 0),
+    ("Nolan Gorman",    "STL", ["2B", "3B"],                5, 172.0,
+     520, 70, 128, 28, 80, 185, 248, 0.252, 0.838, 8, 0),
+    ("Jorge Soler",     "MIA", ["LF", "DH", "OF"],          5, 175.0,
+     520, 68, 128, 30, 80, 168, 258, 0.252, 0.848, 4, 0),
+    ("Nico Hoerner",    "CHC", ["2B", "SS"],                5, 178.0,
+     570, 75, 162, 8, 60, 82, 218, 0.292, 0.782, 18, 0),
+    ("Christian Walker","HOU", ["1B"],                      5, 180.0,
+     560, 72, 138, 28, 82, 165, 255, 0.258, 0.842, 4, 0),
+    ("Tommy Edman",     "LAD", ["2B", "SS", "CF", "OF"],   5, 182.0,
+     540, 72, 142, 12, 55, 110, 212, 0.272, 0.772, 28, 0),
+    ("Max Muncy",       "LAD", ["1B", "2B", "3B"],          5, 185.0,
+     530, 72, 122, 28, 75, 165, 248, 0.248, 0.848, 5, 0),
+    ("Steven Kwan",     "CLE", ["LF", "CF", "OF"],          5, 188.0,
+     580, 80, 172, 8, 55, 88, 218, 0.305, 0.818, 18, 0),
+    ("Gleyber Torres",  "NYM", ["2B"],                      5, 190.0,
+     550, 72, 148, 18, 70, 118, 242, 0.275, 0.818, 12, 0),
+    ("Alejandro Kirk",  "TOR", ["C"],                       5, 193.0,
+     490, 55, 132, 12, 60, 95, 218, 0.278, 0.798, 2, 0),
+    ("Gabriel Moreno",  "ARI", ["C"],                       5, 195.0,
+     480, 55, 128, 14, 60, 98, 218, 0.278, 0.802, 5, 0),
+    ("MJ Melendez",     "KC",  ["C", "LF", "OF"],           5, 197.0,
+     490, 60, 118, 18, 62, 148, 228, 0.255, 0.808, 8, 0),
+    ("Logan O'Hoppe",   "LAA", ["C"],                       5, 199.0,
+     480, 55, 122, 16, 60, 115, 218, 0.262, 0.802, 3, 0),
+    ("Willson Contreras","STL",["C"],                       5, 202.0,
+     490, 60, 125, 16, 65, 108, 228, 0.262, 0.812, 4, 0),
+
+    # Tier 6 — ADP 200-260
+    ("Josh Naylor",     "ARI", ["1B", "DH"],                6, 205.0,
+     540, 65, 138, 22, 82, 128, 248, 0.268, 0.812, 3, 0),
+    ("Andres Gimenez",  "CLE", ["2B"],                      6, 208.0,
+     520, 68, 138, 12, 55, 108, 215, 0.272, 0.768, 16, 0),
+    ("Triston Casas",   "BOS", ["1B"],                      6, 210.0,
+     520, 65, 128, 22, 75, 148, 238, 0.258, 0.828, 3, 0),
+    ("Spencer Torkelson","DET",["1B"],                      6, 212.0,
+     530, 65, 128, 24, 78, 158, 245, 0.255, 0.828, 2, 0),
+    ("Yainer Diaz",     "HOU", ["C", "1B", "DH"],           6, 214.0,
+     490, 58, 128, 16, 65, 112, 222, 0.268, 0.802, 4, 0),
+    ("Jonah Heim",      "TEX", ["C"],                       6, 216.0,
+     460, 52, 112, 14, 55, 108, 202, 0.252, 0.778, 3, 0),
+    ("Josh Smith",      "TEX", ["3B", "SS"],                6, 218.0,
+     490, 62, 128, 12, 52, 112, 202, 0.272, 0.782, 10, 0),
+    ("Patrick Bailey",  "SF",  ["C"],                       6, 220.0,
+     440, 48, 108, 10, 48, 88, 188, 0.252, 0.752, 3, 0),
+    ("Brendan Donovan", "STL", ["1B","2B","3B","LF","OF"], 6, 222.0,
+     500, 62, 132, 10, 55, 98, 202, 0.272, 0.778, 8, 0),
+    ("Lane Thomas",     "CLE", ["CF", "RF", "OF"],          6, 225.0,
+     490, 65, 122, 16, 58, 135, 222, 0.255, 0.782, 20, 0),
+    ("Bo Naylor",       "CLE", ["C", "DH"],                 6, 228.0,
+     460, 55, 112, 18, 58, 148, 218, 0.252, 0.798, 4, 0),
+    ("Jon Berti",       "NYM", ["2B","3B","SS","OF"],       6, 230.0,
+     420, 58, 105, 6, 38, 95, 162, 0.258, 0.718, 28, 0),
+    ("Brice Turang",    "MIL", ["2B", "SS"],                6, 232.0,
+     490, 62, 125, 6, 42, 95, 172, 0.265, 0.728, 30, 0),
+    ("Victor Scott II", "STL", ["CF", "OF"],                6, 235.0,
+     440, 58, 108, 4, 32, 82, 148, 0.255, 0.698, 42, 0),
+    ("Mike Trout",      "LAA", ["CF", "OF", "DH"],          6, 238.0,
+     380, 52, 92, 20, 52, 118, 205, 0.272, 0.892, 4, 0),
+    ("Gavin Lux",       "LAD", ["2B", "SS"],                6, 240.0,
+     480, 58, 125, 10, 48, 108, 195, 0.268, 0.768, 10, 0),
+    ("Ryan McMahon",    "COL", ["2B", "3B"],                6, 242.0,
+     490, 58, 120, 16, 58, 115, 218, 0.252, 0.782, 10, 0),
+    ("Max Kepler",      "PHI", ["RF", "LF", "OF"],          6, 244.0,
+     470, 58, 120, 16, 58, 118, 215, 0.262, 0.782, 8, 0),
+    ("Andrew Vaughn",   "CWS", ["1B", "LF", "DH", "OF"],  6, 246.0,
+     490, 55, 128, 16, 68, 108, 218, 0.268, 0.792, 3, 0),
+    ("DJ LeMahieu",     "NYY", ["1B", "2B", "3B"],          6, 248.0,
+     470, 55, 125, 8, 52, 92, 190, 0.272, 0.762, 5, 0),
+
+    # Tier 7 — ADP 250-300 (late-round targets)
+    ("Masataka Yoshida","BOS", ["LF", "DH", "OF"],          7, 252.0,
+     480, 55, 130, 12, 60, 85, 195, 0.282, 0.808, 4, 0),
+    ("Evan Carter",     "TEX", ["CF", "LF", "OF"],          7, 255.0,
+     440, 58, 112, 12, 48, 112, 185, 0.268, 0.792, 18, 0),
+    ("Colt Keith",      "DET", ["2B", "3B"],                7, 258.0,
+     500, 62, 130, 14, 60, 128, 212, 0.268, 0.792, 12, 0),
+    ("Daulton Varsho",  "TOR", ["C", "CF", "OF"],           7, 260.0,
+     440, 55, 108, 16, 55, 135, 195, 0.252, 0.778, 12, 0),
+    ("Oscar Gonzalez",  "CLE", ["RF", "OF"],                7, 262.0,
+     450, 52, 115, 14, 58, 95, 195, 0.262, 0.772, 4, 0),
+    ("Enrique Hernandez","LAD",["2B","SS","CF","OF"],       7, 264.0,
+     410, 52, 102, 14, 50, 105, 188, 0.258, 0.768, 8, 0),
+    ("Gavin Sheets",    "CWS", ["1B", "LF", "DH", "OF"],  7, 266.0,
+     440, 48, 110, 18, 62, 108, 205, 0.258, 0.782, 3, 0),
+    ("CJ Cron",         "COL", ["1B", "DH"],                7, 268.0,
+     450, 52, 112, 20, 65, 115, 215, 0.258, 0.788, 2, 0),
+    ("Romy Gonzalez",   "CHW", ["SS", "2B", "3B"],          7, 270.0,
+     440, 52, 108, 14, 52, 128, 195, 0.255, 0.762, 10, 0),
+    ("DJ Stewart",      "FA",  ["LF", "RF", "DH", "OF"],  7, 272.0,
+     410, 48, 100, 16, 55, 135, 192, 0.252, 0.768, 6, 0),
+    ("Yolmer Sanchez",  "free",["2B", "3B"],                7, 274.0,
+     400, 45, 98, 8, 42, 92, 158, 0.258, 0.728, 14, 0),
+    ("Joey Loperfido",  "TOR", ["LF", "RF", "OF"],          7, 276.0,
+     430, 55, 108, 12, 48, 118, 185, 0.262, 0.758, 20, 0),
+    ("Tyrone Taylor",   "NYM", ["CF", "RF", "OF"],          7, 278.0,
+     410, 50, 102, 14, 50, 118, 185, 0.258, 0.758, 12, 0),
+    ("Greg Allen",      "FA",  ["CF", "LF", "OF"],          7, 280.0,
+     380, 52, 95, 4, 32, 82, 135, 0.262, 0.708, 28, 0),
+    ("Michael Busch",   "CHC", ["1B", "2B", "OF"],          7, 282.0,
+     480, 60, 118, 18, 62, 138, 218, 0.258, 0.802, 6, 0),
+    ("Nolan Jones",     "COL", ["LF", "RF", "3B", "OF"],   7, 284.0,
+     420, 55, 102, 16, 55, 138, 195, 0.255, 0.808, 10, 0),
+    ("Edouard Julien",  "MIN", ["2B", "DH"],                7, 286.0,
+     480, 62, 118, 14, 55, 148, 198, 0.258, 0.798, 10, 0),
+    ("Michael Siani",   "STL", ["CF", "OF"],                7, 288.0,
+     380, 52, 92, 4, 32, 78, 128, 0.258, 0.698, 28, 0),
+    ("Joc Pederson",    "SF",  ["LF", "DH", "OF"],          7, 290.0,
+     440, 55, 105, 20, 60, 125, 198, 0.255, 0.812, 4, 0),
+    ("David Fry",       "CLE", ["C", "1B", "3B", "OF"],   7, 292.0,
+     410, 48, 100, 14, 52, 118, 185, 0.255, 0.778, 5, 0),
+    ("Tyler O'Neill",   "BOS", ["LF", "RF", "CF", "OF"],  7, 294.0,
+     420, 52, 100, 18, 55, 148, 198, 0.252, 0.778, 10, 0),
+    ("Henry Davis",     "PIT", ["C"],                       7, 296.0,
+     420, 48, 100, 14, 52, 128, 185, 0.252, 0.762, 4, 0),
+    ("Avisail Garcia",  "free",["LF", "RF", "DH", "OF"],  7, 298.0,
+     380, 42, 95, 12, 48, 105, 172, 0.258, 0.762, 5, 0),
+    ("Nick Ahmed",      "ARI", ["SS"],                      8, 300.0,
+     360, 40, 88, 8, 38, 92, 145, 0.252, 0.718, 8, 0),
 ]
 
 _PITCHER_RAW = [
@@ -307,6 +455,120 @@ _PITCHER_RAW = [
      55, 3, 3, 20, 6, 0, 65, 2.98, 1.08, 10.6, 5, 14),
     ("Alex Vesia",       "LAD", ["RP"],     5, 185.0,
      55, 3, 3, 12, 5, 0, 68, 2.98, 1.10, 11.1, 5, 7),
+
+    # Tier 5 cont — SP streamers / handcuff closers (ADP 185-240)
+    ("Mason Miller",     "OAK", ["RP"],     5, 188.0,
+     60, 3, 3, 28, 5, 0, 80, 2.58, 0.95, 12.0, 4, 23),
+    ("Luis Castillo",    "SEA", ["SP"],     5, 190.0,
+     185, 11, 8, 0, 0, 19, 185, 3.52, 1.15, 9.0, 19, 0),
+    ("Brady Singer",     "KC",  ["SP"],     5, 193.0,
+     182, 10, 9, 0, 0, 18, 175, 3.68, 1.18, 8.7, 20, 0),
+    ("Mitch Keller",     "PIT", ["SP"],     5, 196.0,
+     185, 10, 9, 0, 0, 18, 178, 3.72, 1.19, 8.7, 20, 0),
+    ("Hunter Brown",     "HOU", ["SP"],     5, 198.0,
+     172, 10, 8, 0, 0, 17, 185, 3.58, 1.16, 9.7, 18, 0),
+    ("David Bednar",     "PIT", ["RP"],     5, 200.0,
+     58, 3, 4, 24, 7, 0, 68, 2.98, 1.06, 10.6, 5, 17),
+    ("Kyle Finnegan",    "WSH", ["RP"],     5, 203.0,
+     58, 3, 4, 26, 7, 0, 62, 3.08, 1.12, 9.6, 6, 19),
+    ("Paul Sewald",      "ARI", ["RP"],     5, 205.0,
+     55, 3, 3, 24, 6, 0, 68, 2.88, 1.04, 11.1, 4, 18),
+    ("Hunter Harvey",    "WSH", ["RP"],     5, 208.0,
+     55, 3, 4, 22, 6, 0, 62, 3.08, 1.08, 10.1, 5, 16),
+    ("Nestor Cortes",    "MIL", ["SP"],     5, 210.0,
+     168, 9, 8, 0, 0, 16, 165, 3.78, 1.18, 8.8, 17, 0),
+    ("Zach Eflin",       "TB",  ["SP"],     5, 212.0,
+     178, 10, 9, 0, 0, 18, 168, 3.82, 1.19, 8.5, 20, 0),
+    ("Bailey Ober",      "MIN", ["SP"],     5, 215.0,
+     175, 10, 9, 0, 0, 17, 172, 3.78, 1.17, 8.8, 19, 0),
+    ("Jose Alvarado",    "PHI", ["RP"],     5, 218.0,
+     55, 3, 3, 20, 6, 0, 68, 2.98, 1.10, 11.1, 5, 14),
+    ("Ryan Walker",      "SF",  ["RP"],     5, 220.0,
+     55, 3, 3, 18, 6, 0, 62, 3.18, 1.14, 10.1, 5, 12),
+    ("A.J. Minter",      "ATL", ["RP"],     5, 222.0,
+     58, 3, 3, 8, 4, 0, 68, 2.98, 1.08, 10.6, 5, 4),
+    ("Ranger Suarez",    "PHI", ["SP"],     5, 225.0,
+     172, 10, 8, 0, 0, 17, 162, 3.68, 1.20, 8.5, 16, 0),
+    ("Nathan Eovaldi",   "TEX", ["SP"],     5, 228.0,
+     158, 9, 8, 0, 0, 16, 155, 3.82, 1.18, 8.8, 18, 0),
+    ("Kyle Harrison",    "SF",  ["SP"],     5, 230.0,
+     162, 9, 8, 0, 0, 15, 172, 3.88, 1.20, 9.6, 17, 0),
+
+    # Tier 6 — Mid streamers / closer handcuffs (ADP 230-270)
+    ("Max Meyer",        "MIA", ["SP"],     6, 232.0,
+     155, 8, 8, 0, 0, 14, 168, 3.98, 1.24, 9.8, 17, 0),
+    ("Braxton Garrett",  "MIA", ["SP"],     6, 234.0,
+     158, 9, 9, 0, 0, 15, 155, 3.98, 1.24, 8.8, 18, 0),
+    ("Jose Leclerc",     "TEX", ["RP"],     6, 236.0,
+     52, 3, 3, 16, 6, 0, 58, 3.28, 1.15, 10.0, 6, 10),
+    ("Kevin Ginkel",     "ARI", ["RP"],     6, 238.0,
+     52, 3, 3, 16, 6, 0, 58, 3.18, 1.12, 10.0, 5, 10),
+    ("Evan Phillips",    "LAD", ["RP"],     6, 240.0,
+     55, 3, 3, 14, 5, 0, 65, 2.98, 1.06, 10.6, 4, 9),
+    ("Carlos Rodon",     "NYY", ["SP"],     6, 242.0,
+     155, 9, 8, 0, 0, 15, 178, 3.78, 1.20, 10.3, 17, 0),
+    ("Triston McKenzie", "CLE", ["SP"],     6, 244.0,
+     158, 9, 9, 0, 0, 14, 168, 3.98, 1.22, 9.6, 18, 0),
+    ("JP Sears",         "OAK", ["SP"],     6, 246.0,
+     165, 9, 10, 0, 0, 15, 152, 4.08, 1.24, 8.3, 20, 0),
+    ("Aaron Civale",     "TB",  ["SP"],     6, 248.0,
+     162, 9, 9, 0, 0, 15, 148, 4.02, 1.22, 8.2, 19, 0),
+    ("Seranthony Dominguez","PHI",["RP"],   6, 250.0,
+     52, 3, 3, 14, 5, 0, 58, 3.18, 1.14, 10.0, 5, 9),
+    ("Matt Strahm",      "PHI", ["SP","RP"],6, 252.0,
+     145, 8, 8, 0, 0, 12, 155, 3.98, 1.20, 9.6, 16, 0),
+    ("Aroldis Chapman",  "PIT", ["RP"],     6, 254.0,
+     50, 3, 4, 12, 5, 0, 65, 3.28, 1.18, 11.7, 6, 7),
+    ("Jake Irvin",       "WSH", ["SP"],     6, 256.0,
+     162, 9, 10, 0, 0, 15, 148, 4.18, 1.25, 8.2, 20, 0),
+    ("Jameson Taillon",  "CHC", ["SP"],     6, 258.0,
+     158, 9, 9, 0, 0, 14, 142, 4.08, 1.22, 8.1, 19, 0),
+    ("DL Hall",          "MIL", ["SP","RP"],6, 260.0,
+     148, 8, 7, 0, 0, 13, 162, 3.88, 1.20, 9.9, 16, 0),
+    # Josh Hader — NOT duplicated here; already in Tier 1 at ADP 29
+
+    # Tier 7 — Deep streamers / handcuffs / speculative (ADP 260-310)
+    ("Phil Maton",       "HOU", ["RP"],     7, 264.0,
+     50, 3, 3, 10, 5, 0, 55, 3.28, 1.16, 9.9, 5, 5),
+    ("Craig Kimbrel",    "PHI", ["RP"],     7, 266.0,
+     48, 3, 4, 14, 6, 0, 58, 3.48, 1.18, 10.9, 6, 8),
+    ("Andrew Heaney",    "TEX", ["SP"],     7, 268.0,
+     145, 8, 8, 0, 0, 12, 162, 3.98, 1.20, 10.1, 16, 0),
+    ("Spencer Turnbull", "PHI", ["SP"],     7, 270.0,
+     148, 8, 8, 0, 0, 12, 155, 3.92, 1.19, 9.5, 16, 0),
+    ("Ben Lively",       "CLE", ["SP"],     7, 272.0,
+     162, 9, 9, 0, 0, 14, 145, 4.12, 1.24, 8.1, 20, 0),
+    ("Giovanny Gallegos","STL", ["RP"],     7, 274.0,
+     50, 2, 3, 10, 5, 0, 58, 3.38, 1.16, 10.4, 5, 5),
+    ("Kyle Muller",      "OAK", ["SP"],     7, 276.0,
+     148, 8, 9, 0, 0, 13, 152, 4.18, 1.26, 9.2, 18, 0),
+    ("Mitchell Parker",  "WSH", ["SP"],     7, 278.0,
+     148, 8, 9, 0, 0, 12, 148, 4.08, 1.26, 9.0, 18, 0),
+    ("Reid Detmers",     "LAA", ["SP"],     7, 280.0,
+     148, 7, 9, 0, 0, 12, 152, 4.02, 1.22, 9.2, 17, 0),
+    ("Colin Rea",        "MIL", ["SP"],     7, 282.0,
+     155, 8, 9, 0, 0, 13, 138, 4.22, 1.26, 8.0, 20, 0),
+    ("Taj Bradley",      "TB",  ["SP"],     7, 284.0,
+     148, 8, 9, 0, 0, 13, 155, 4.08, 1.22, 9.4, 18, 0),
+    ("Joe Boyle",        "OAK", ["SP"],     7, 286.0,
+     140, 7, 9, 0, 0, 11, 145, 4.18, 1.28, 9.3, 17, 0),
+    ("Louie Varland",    "MIN", ["SP"],     7, 288.0,
+     145, 8, 9, 0, 0, 12, 148, 4.18, 1.28, 9.2, 18, 0),
+    ("Gavin Williams",   "CLE", ["SP"],     7, 290.0,
+     145, 8, 9, 0, 0, 12, 152, 3.98, 1.22, 9.4, 17, 0),
+    ("Reese Olson",      "DET", ["SP"],     7, 292.0,
+     148, 8, 9, 0, 0, 12, 148, 4.08, 1.24, 9.0, 18, 0),
+    ("Tommy Henry",      "ARI", ["SP"],     7, 294.0,
+     140, 7, 9, 0, 0, 11, 138, 4.22, 1.28, 8.9, 18, 0),
+    ("Ryan Pepiot",      "TB",  ["SP"],     7, 296.0,
+     145, 8, 8, 0, 0, 13, 148, 3.98, 1.22, 9.2, 17, 0),
+    ("Yerry De Los Santos","OAK",["RP"],    7, 298.0,
+     48, 2, 3, 10, 5, 0, 55, 3.38, 1.18, 10.3, 5, 5),
+    ("Cade Cavalli",     "WSH", ["SP"],     7, 300.0,
+     138, 7, 9, 0, 0, 11, 145, 4.18, 1.26, 9.5, 17, 0),
+    ("Tyler Wells",      "BAL", ["SP","RP"],7, 302.0,
+     145, 8, 9, 0, 0, 12, 148, 4.08, 1.24, 9.2, 18, 0),
+    # Grayson Rodriguez — NOT duplicated here; already in Tier 3 at ADP 84
 ]
 
 
@@ -438,20 +700,63 @@ def build_board() -> list[dict]:
     # Merge and sort by ADP for overall rank
     all_players = batters + pitchers
     all_players.sort(key=lambda p: p["adp"])
-    for i, p in enumerate(all_players, 1):
+
+    # Deduplicate by player ID — keep the first occurrence (lowest ADP)
+    seen_ids: set[str] = set()
+    deduped = []
+    for p in all_players:
+        if p["id"] not in seen_ids:
+            seen_ids.add(p["id"])
+            deduped.append(p)
+
+    for i, p in enumerate(deduped, 1):
         p["rank"] = i
 
-    return all_players
+    return deduped
 
 
-# Singleton — built once, reused
+# Singleton — built once, reused per process
 _BOARD: Optional[list[dict]] = None
 
 
-def get_board() -> list[dict]:
+def invalidate_board() -> None:
+    """Force board rebuild on next call (use after loading real CSVs)."""
+    global _BOARD
+    _BOARD = None
+
+
+def get_board(apply_park_factors: bool = True) -> list[dict]:
+    """
+    Return the full ranked player board.
+
+    Priority:
+    1. Real Steamer/ZiPS CSV data (if data/projections/ CSVs are present)
+    2. Hardcoded estimates (fallback — always available)
+
+    Park factors and risk adjustments are applied on top of either source.
+    """
     global _BOARD
     if _BOARD is None:
-        _BOARD = build_board()
+        # Try real projection data first
+        try:
+            from backend.fantasy_baseball.projections_loader import load_full_board
+            real_board = load_full_board()
+            if real_board:
+                _BOARD = real_board
+        except Exception:
+            pass
+
+        if _BOARD is None:
+            _BOARD = build_board()
+
+        # Apply park factors and risk flags to whichever board we have
+        if apply_park_factors:
+            try:
+                from backend.fantasy_baseball.ballpark_factors import annotate_board
+                annotate_board(_BOARD)
+            except Exception:
+                pass
+
     return _BOARD
 
 

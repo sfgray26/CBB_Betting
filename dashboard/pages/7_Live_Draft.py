@@ -204,6 +204,35 @@ with col_left:
         else:
             st.subheader(f"Top Picks (ready when you're up in {picks_away} picks)")
 
+        # ── Look-ahead intelligence (when not my turn) ─────────────────────
+        if not state.is_my_pick:
+            la = recommender.look_ahead()
+            if la.get("likely_gone"):
+                with st.expander(
+                    f"⚠️ {len(la['likely_gone'])} players likely gone before your pick {la.get('my_next_pick', '?')} (Round {la.get('my_next_round', '?')})",
+                    expanded=(picks_away <= 5)
+                ):
+                    gone_df = pd.DataFrame([{
+                        "Name": p["name"], "Pos": "/".join(p["positions"][:2]),
+                        "Team": p["team"], "ADP": f"{p['adp']:.0f}",
+                        "Tier": p["tier"], "Z": f"{p['z_score']:+.2f}",
+                    } for p in la["likely_gone"]])
+                    st.dataframe(gone_df, hide_index=True, use_container_width=True)
+
+                if la.get("top_targets_at_my_pick"):
+                    st.markdown("**Best available at your pick:**")
+                    for p in la["top_targets_at_my_pick"][:3]:
+                        pos = "/".join(p["positions"][:2])
+                        risk = p.get("injury_risk", "")
+                        risk_tag = " ⚠️" if risk in ("high", "extreme") else ""
+                        st.markdown(f"  → **{p['name']}** ({pos}, {p['team']}) T{p['tier']} Z={p.get('z_score', 0):+.2f}{risk_tag}")
+
+                if la.get("potential_sleepers"):
+                    st.markdown("**Potential sleepers (ADP late but good value):**")
+                    for p in la["potential_sleepers"]:
+                        pos = "/".join(p["positions"][:2])
+                        st.markdown(f"  → **{p['name']}** ({pos}) ADP {p['adp']:.0f} vs Z={p.get('z_score', 0):+.2f}")
+
         # Get recs
         recs = recommender.recommend(top_n=8)
         st.session_state.last_recs = recs
@@ -272,7 +301,10 @@ with col_left:
         board_df = pd.DataFrame([{
             "Rank": p["rank"], "T": p["tier"], "Name": p["name"],
             "Team": p["team"], "Pos": "/".join(p["positions"][:3]),
-            "ADP": f"{p['adp']:.0f}", "Z": f"{p['z_score']:+.2f}",
+            "ADP": f"{p['adp']:.0f}",
+            "Z": f"{p['z_score']:+.2f}",
+            "Z(park)": f"{p.get('z_park_adjusted', p.get('z_score', 0)):+.2f}",
+            "Risk": p.get("injury_risk", "").upper()[:3] if p.get("injury_risk", "") not in ("", "low") else "",
         } for p in filtered_avail[:120]])
 
         # Make it clickable — user selects a row to draft
