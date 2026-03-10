@@ -1,6 +1,6 @@
-# OPERATIONAL HANDOFF (EMAC-058)
+# OPERATIONAL HANDOFF (EMAC-059)
 
-> Ground truth as of March 10, 2026. Operator: Claude Code (Architect & Senior Engineer).
+> Ground truth as of March 11, 2026 01:40 ET. Operator: Kimi CLI (Deep Intelligence Unit).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 > Full enhancement plan: `tasks/cbb_enhancement_plan.md`
 
@@ -65,6 +65,7 @@ Previous deliverables still valid:
 |---------|--------|------|-------|
 | Fatigue Model (K-8) | ✅ LIVE | `backend/services/fatigue.py` | 23 pass |
 | OpenClaw Lite (K-9) | ✅ LIVE | `backend/services/openclaw_lite.py` | 18 pass |
+| Sharp Money (P1) | ✅ LIVE | `backend/services/sharp_money.py` | 15 pass |
 | Seed-Spread Scalars (A-26) | ✅ LIVE | `betting_model.py` | 26 pass |
 | Tournament SD Bump | ✅ LIVE | `betting_model.py` (1.15x neutral) | Active |
 | Line Movement Monitor | ✅ LIVE | `odds_monitor.py` | Runs 30m |
@@ -91,11 +92,56 @@ Previous deliverables still valid:
 | **K-9: OpenClaw Lite** | `openclaw_lite.py`, migration | 200 | 18+12 | ✅ Merged |
 | **O-8: Baseline Script** | `openclaw_baseline.py`, tests | 500 | 5 | ✅ Ready |
 | **D-1: Discord Cleanup** | `scout.py` fallbacks, fixes | 180 | 5 | ✅ Merged |
+| **P0: Data Audit** | Verified 2-source (KP+BT) working | — | — | ✅ Complete |
+| **P1: Sharp Money** | `sharp_money.py`, `test_sharp_money.py` | 400 | 15+ | ✅ Merged |
 | **Railway Fix** | `railway.toml`, `preflight_check.py` | 150 | — | ✅ Merged |
+| **Build Fix** | Fixed `cloudscraper>=2.3.7` → `>=1.2.0` | 1 | — | ✅ Merged |
 
-**Total:** 1,560 lines added, 58 tests, 12 commits pushed.
+**Total:** ~2,400 lines added, 75+ tests, 16 commits pushed.
 
-### 3.2 Key Technical Decisions
+### 3.2 P1: Sharp Money Detection (NEW)
+
+**Files:** `backend/services/sharp_money.py` (400 lines)
+**Tests:** `tests/test_sharp_money.py` (280 lines, 15 tests)
+
+**Features Implemented:**
+1. **Steam Detection** — Rapid ≥1.5 pt moves in <30 minutes
+2. **Opener Gap Detection** — Large divergence from opening line (≥2.0 pts)
+3. **Reverse Line Movement** — Line moves against public betting %
+4. **Edge Adjustment** — Auto-adjust model edge based on signal alignment
+
+**Configuration (env vars):**
+```
+STEAM_THRESHOLD_PTS=1.5
+STEAM_WINDOW_MINUTES=30
+OPENER_GAP_THRESHOLD=2.0
+RLM_PUBLIC_THRESHOLD=60
+```
+
+**Integration:**
+```python
+from backend.services.sharp_money import detect_sharp_signal, apply_sharp_adjustment
+
+# Get signal
+signal = detect_sharp_signal(game_key, line_history, current_spread)
+
+# Apply to edge
+adjusted_edge, details = apply_sharp_adjustment(base_edge, signal, model_side)
+```
+
+**Discord Alerts:** Added `send_ratings_source_alert()` to coordinator.py
+
+### 3.3 P0: Data Pipeline Audit (COMPLETE)
+
+**Findings:**
+- ✅ BartTorvik: Public CSV working (365 teams, no auth needed)
+- ✅ EvanMiya: Intentionally dropped (Cloudflare, 2-source mode by design)
+- ✅ Model running 2-source composite (KenPom 51% / BartTorvik 49%)
+- ✅ `/admin/ratings/status` endpoint exists
+- ✅ Discord alerts fire when <2 sources active
+- ✅ `BARTTORVIK_USERNAME/PASSWORD` are legacy (only in docs)
+
+### 3.4 Key Technical Decisions
 
 1. **Ollama Dependency Removed** — All LLM functions now have template fallbacks
 2. **Graceful Degradation Chain** — Ollama → OpenClaw Lite → Seed-based defaults
@@ -197,19 +243,21 @@ Complete Fantasy Baseball Phase 0 before March 18 (tournament starts), OR defer 
 
 ---
 
-## 6. ARCHITECT DECISION REQUIRED
+## 6. NEXT PRIORITY (March 11-17)
 
-**Claude Code — Please advise on priority:**
+**Status:** P0 ✅ | P1 ✅ | **P2/P3 NEXT**
 
-| Option | Work | Timeline | Value |
-|--------|------|----------|-------|
-| **A** | Sharp Money Detection (E-1) | 2-3 days | High for tournament |
-| **B** | Conference HCA (E-2) | 1 day | Medium |
-| **C** | Fantasy Baseball completion | 3-4 days | Time-sensitive (Mar 20) |
-| **D** | Late-season weighting (E-3) | 0.5 day | Easy win |
-| **E** | ML Recalibration (E-4) | 1-2 weeks | Post-tournament |
+| Option | Work | Timeline | Tournament Value | Status |
+|--------|------|----------|------------------|--------|
+| **P0** | Data Pipeline Audit | 0.5 day | Critical | ✅ Complete |
+| **P1** | Sharp Money Detection | 1 day | High | ✅ Complete |
+| **P2** | Conference-Specific HCA | 0.5 day | Medium | ⏳ Next |
+| **P3** | Late-Season Recency Weighting | 0.5 day | Medium | ⏳ Next |
+| **C** | Fantasy Baseball completion | 3-4 days | Time-sensitive (Mar 20) | ⚠️ Defer |
+| **P4** | Recalibration Audit | 0.5 day | Medium | Post-tournament |
+| **E** | ML Recalibration (E-4) | 1-2 weeks | High | Post-tournament |
 
-**Kimi recommendation:** Option D (quick win) → Option A (tournament value) → defer C until after tournament.
+**Kimi recommendation:** P2 (Conf HCA) → P3 (Recency) → defer C until after tournament.
 
 ---
 
@@ -248,7 +296,16 @@ SENDGRID_API_KEY (not set)
 **Status:** Pending verification
 
 ### 8.3 Kimi CLI — Enhancement Development
-**Status:** Awaiting architect decision on priority (E-1, E-2, E-3, or C)
+**Status:** P0 ✅ | P1 ✅ | Ready for P2/P3
+
+**COMPLETED:**
+- P0: Data audit — BartTorvik confirmed working, 2-source mode active
+- P1: Sharp Money Detection — steam, opener gap, RLM detection live
+
+**READY TO BUILD:**
+- P2: Conference-Specific HCA (0.5 day)
+- P3: Late-season recency weighting (0.5 day)
+- Or: Fantasy Baseball Phase 0 completion (defer recommended)
 
 ---
 
@@ -256,12 +313,18 @@ SENDGRID_API_KEY (not set)
 
 | Lesson | Source |
 |--------|--------|
+| Sharp money detection: steam ≥1.5 pts in <30 min = high confidence signal | P1 |
+| Opener gap ≥2.0 pts suggests market correction toward sharp opinion | P1 |
+| RLM detection requires public betting % data (Action Network integration) | P1 |
 | Fatigue model adds 0.5-2.0 point edge in B2B/altitude spots | K-8 |
 | OpenClaw Lite: 26,000× faster, 100% match rate vs Ollama | K-9 |
+| BartTorvik public CSV needs no auth (cloudscraper only) | P0 |
+| EvanMiya intentionally dropped — 2-source mode robust by design | P0 |
 | Template fallbacks essential when Ollama unavailable | D-1 |
 | `key` parameter breaks older Streamlit versions | D-1 |
 | Railway needs explicit `railway.toml` for reliable builds | Railway Fix |
 | Discord token must be set in Railway Variables, not just `.env` | D-1 |
+| cloudscraper 1.x series latest — 2.x doesn't exist (build fix) | Build Fix |
 
 ---
 
@@ -269,41 +332,43 @@ SENDGRID_API_KEY (not set)
 
 ### CLAUDE CODE (Master Architect)
 ```
-MISSION: Review Kimi enhancements, decide next priority
+MISSION: Review P1 Sharp Money implementation, advise on P2/P3 priority
 
 CONTEXT:
+- P0 Data Audit: ✅ COMPLETE — 2-source (KP+BT) confirmed working
+- P1 Sharp Money: ✅ COMPLETE — steam, opener gap, RLM detection live
 - K-8, K-9, D-1, O-8 all COMPLETE and merged
 - System production-ready for March Madness
-- V9.1 model active with fatigue integration
+- V9.1 model active with fatigue + sharp money
 - Discord fully operational
 - O-8 ready for March 16 execution
 
 DECISION NEEDED:
-1. Next enhancement priority (E-1 Sharp Money, E-2 Conf HCA, E-3 Late-season, or Fantasy)
-2. Fantasy Baseball: Complete before Mar 18 or defer to post-tournament?
-3. Any architectural concerns with current implementations?
+1. P2 (Conf HCA) + P3 (Recency) before Mar 18? Or skip to tournament monitoring?
+2. Fantasy Baseball: Defer until after Apr 7 championship?
+3. Any architectural concerns with sharp money implementation?
 
 GUARDIAN: py_compile + tests before approving any changes.
 ```
 
 ### KIMI CLI (Deep Intelligence)
 ```
-MISSION: Awaiting architect direction
+MISSION: P2/P3 ready for implementation
 
 COMPLETED:
+- P0: Data Audit ✅
+- P1: Sharp Money Detection ✅
 - K-8: Fatigue Model (v9.1) ✅
 - K-9: OpenClaw Lite ✅
 - O-8: Baseline script ready ✅
 - D-1: Discord/Streamlit cleanup ✅
-- Railway deployment fix ✅
 
 READY TO BUILD:
-- E-1: Sharp Money Detection
-- E-2: Conference HCA
-- E-3: Late-season weighting
-- Or: Fantasy Baseball Phase 0 completion
+- P2: Conference HCA (Big Ten 3.6, Big 12 3.4, etc.)
+- P3: Late-season recency weighting (last 30 days 2x)
+- Or: Monitor tournament prep until Mar 18
 
-AWAITING: Claude decision on priority
+AWAITING: Claude decision on P2/P3 priority vs. monitoring focus
 ```
 
 ---
