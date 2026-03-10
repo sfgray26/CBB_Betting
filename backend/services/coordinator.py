@@ -79,6 +79,7 @@ def send_line_movement_alert(
     new_edge: float,
     abandoned: bool = False,
     game_time: str = None,
+    min_bet_edge: float = 0.025,
 ) -> bool:
     """
     Send a Discord alert for significant line movement.
@@ -93,6 +94,7 @@ def send_line_movement_alert(
         new_edge: Fresh model edge at the new line.
         abandoned: True if edge dropped below MIN_BET_EDGE.
         game_time: Optional game start time string.
+        min_bet_edge: Minimum edge threshold (default 2.5%).
         
     Returns:
         True if sent successfully.
@@ -103,24 +105,29 @@ def send_line_movement_alert(
     if abandoned:
         status = "🚨 **ABANDON** — Edge Collapsed"
         color = _COLOR_RED
-        action = "❌ DO NOT ADD EXPOSURE"
-        recommendation = "Edge fell below minimum threshold. Consider hedging existing position if possible."
-    elif delta >= 1.5:  # Line moved in our favor
-        status = "✅ **LINE_MOVED_FAVORABLE**"
+        action = "❌ DO NOT ADD"
+        recommendation = f"Edge fell to {new_edge:.1%} (below {min_bet_edge:.1%} threshold). If you already bet, monitor for live exit. Do not add new exposure."
+    elif delta >= 1.5:  # Line moved in our favor (better price)
+        status = "✅ **LINE_MOVED_FAVORABLE** — Better Price"
         color = _COLOR_YELLOW
-        action = "✅ HOLD — Potential add if units allow"
-        recommendation = f"Line moved {delta:+.1f}pts toward us. Edge now {new_edge:.1%}. If you have room in your unit budget, this is a better price than entry."
-    elif delta <= -1.5:  # Line moved against us
-        if new_edge >= 0.03:  # Still playable edge
+        action = "🎯 BET NOW (if no position)"
+        recommendation = f"Line moved {delta:+.1f}pts toward us — you can get a better price than our entry. Edge: {new_edge:.1%}. If you haven't bet yet, ADD NOW. If you already bet, you got worse line but hold."
+    elif delta <= -1.5:  # Line moved against us (worse price)
+        if new_edge >= 0.04:  # Still strong edge
             status = "⚠️ **LINE_MOVED_AGAINST** — Still Playable"
             color = _COLOR_YELLOW
-            action = "📊 HOLD EXISTING — No new adds"
-            recommendation = f"Line moved {delta:+.1f}pts against us, but edge remains {new_edge:.1%}. Hold existing position, don't add."
-        else:
+            action = "📊 HOLD EXISTING ONLY"
+            recommendation = f"Line moved {delta:+.1f}pts against us, but edge remains {new_edge:.1%}. If you already bet: HOLD. If you haven't bet: AVOID — better prices are gone."
+        elif new_edge >= min_bet_edge:  # Edge thinning but playable
             status = "⚠️ **LINE_MOVED_AGAINST** — Edge Thinning"
             color = _COLOR_GREY
-            action = "🛑 NO NEW ADDS — Monitor for exit"
-            recommendation = f"Line moved {delta:+.1f}pts against us. Edge down to {new_edge:.1%}. Do not add exposure."
+            action = "🛑 NO NEW ADDS"
+            recommendation = f"Line moved {delta:+.1f}pts against us. Edge down to {new_edge:.1%}. If you already bet: HOLD. If you haven't bet: PASS — margin too thin."
+        else:
+            status = "🚨 **LINE_MOVED_AGAINST** — Edge Gone"
+            color = _COLOR_RED
+            action = "❌ ABANDON"
+            recommendation = f"Line moved {delta:+.1f}pts against us and edge collapsed to {new_edge:.1%}. Do not add. If you already bet, consider hedging."
     else:
         return False  # Shouldn't happen given threshold check
     

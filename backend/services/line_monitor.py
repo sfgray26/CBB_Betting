@@ -165,7 +165,8 @@ def check_line_movements() -> Dict:
                         delta=delta,
                         new_edge=updated.edge_conservative,
                         abandoned=abandoned,
-                        game_time=game_time_str
+                        game_time=game_time_str,
+                        min_bet_edge=min_bet_edge
                     )
                     
             except Exception as e:
