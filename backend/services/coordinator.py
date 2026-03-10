@@ -142,15 +142,15 @@ def send_line_movement_alert(
 
     embed = {
         "title": f"Line Monitor: {away_team} @ {home_team}",
-        "description": f"{status}{time_field}",
+        "description": f"{status}{time_field}\n\n📊 **Model re-analyzed with new line** — Edge below is fresh calculation.",
         "color": color,
         "fields": [
-            {"name": "📊 Line Movement", "value": f"{fmt_spread(old_spread)} → {fmt_spread(new_spread)} ({delta:+.1f} pts)", "inline": False},
-            {"name": "🎯 New Model Edge", "value": f"{new_edge:.2%}", "inline": True},
+            {"name": "📈 Line Movement", "value": f"{fmt_spread(old_spread)} → {fmt_spread(new_spread)} ({delta:+.1f} pts)", "inline": False},
+            {"name": "🎯 FRESH Model Edge", "value": f"{new_edge:.2%} (min: {min_bet_edge:.1%})", "inline": True},
             {"name": "✅ Action", "value": action, "inline": False},
-            {"name": "📝 Recommendation", "value": recommendation, "inline": False},
+            {"name": "📝 Guidance", "value": recommendation, "inline": False},
         ],
-        "footer": {"text": f"Game: {game_key} • Monitor time: {datetime.utcnow().strftime('%H:%M UTC')}"},
+        "footer": {"text": f"Game: {game_key} • Alert time: {datetime.utcnow().strftime('%H:%M UTC')}"},
         "timestamp": datetime.utcnow().isoformat()
     }
     
