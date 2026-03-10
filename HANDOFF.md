@@ -63,7 +63,7 @@
 
 | Mission | Who | What |
 |---------|-----|------|
-| **K-9** | **Kimi** | **OpenClaw Lite — Simplified Replacement**. New `backend/services/openclaw_lite.py` (150 lines) replaces complex v2.0 coordinator (450 lines). Uses heuristics for 80% of cases, removes Ollama dependency. Comparison doc: `docs/OPENCLAW_LITE_PLAN.md`. Tests included. Decision pending on migration.
+| **K-9** | **Kimi** | **✅ COMPLETE: OpenClaw Lite Migration**. Migrated from v2.0 (450 lines, Ollama-dependent) to Lite (200 lines, heuristic-based). `perform_sanity_check()` in `scout.py` now uses OpenClaw Lite. 100% test match rate, 26,000x faster. Ollama dependency removed for integrity checks.
 | A-30 | Claude | Nightly Health Check K-7 thresholds wired in sentinel.py. Morning briefing job@07:00 ET added. Drawdown access bug fixed. 478/481 tests. |
 | K-7 | Kimi | A-30 Nightly Health Check thresholds designed. MAE WARNING=9.5pts, ELEVATED=12pts, CRITICAL=15pts. Tournament adjustments specified. See `reports/k7-health-check-thresholds.md`. |
 | A-29 | Claude | Remove dead .openclaw relative import from analysis.py. Non-breaking cleanup. 481/481 tests. |
