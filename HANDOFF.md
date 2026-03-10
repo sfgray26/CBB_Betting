@@ -66,6 +66,8 @@ Previous deliverables still valid:
 | Fatigue Model (K-8) | ✅ LIVE | `backend/services/fatigue.py` | 23 pass |
 | OpenClaw Lite (K-9) | ✅ LIVE | `backend/services/openclaw_lite.py` | 18 pass |
 | Sharp Money (P1) | ✅ LIVE | `backend/services/sharp_money.py` | 15 pass |
+| Conference HCA (P2) | ✅ LIVE | `backend/services/conference_hca.py` | 18 pass |
+| Recency Weight (P3) | ✅ LIVE | `backend/services/recency_weight.py` | 20 pass |
 | Seed-Spread Scalars (A-26) | ✅ LIVE | `betting_model.py` | 26 pass |
 | Tournament SD Bump | ✅ LIVE | `betting_model.py` (1.15x neutral) | Active |
 | Line Movement Monitor | ✅ LIVE | `odds_monitor.py` | Runs 30m |
@@ -94,10 +96,12 @@ Previous deliverables still valid:
 | **D-1: Discord Cleanup** | `scout.py` fallbacks, fixes | 180 | 5 | ✅ Merged |
 | **P0: Data Audit** | Verified 2-source (KP+BT) working | — | — | ✅ Complete |
 | **P1: Sharp Money** | `sharp_money.py`, `test_sharp_money.py` | 400 | 15+ | ✅ Merged |
+| **P2: Conf HCA** | `conference_hca.py`, `test_conference_hca.py` | 280 | 18+ | ✅ Merged |
+| **P3: Recency** | `recency_weight.py`, `test_recency_weight.py` | 350 | 20+ | ✅ Merged |
 | **Railway Fix** | `railway.toml`, `preflight_check.py` | 150 | — | ✅ Merged |
 | **Build Fix** | Fixed `cloudscraper>=2.3.7` → `>=1.2.0` | 1 | — | ✅ Merged |
 
-**Total:** ~2,400 lines added, 75+ tests, 16 commits pushed.
+**Total:** ~3,200 lines added, 110+ tests, 18 commits pushed.
 
 ### 3.2 P1: Sharp Money Detection (NEW)
 
@@ -131,7 +135,81 @@ adjusted_edge, details = apply_sharp_adjustment(base_edge, signal, model_side)
 
 **Discord Alerts:** Added `send_ratings_source_alert()` to coordinator.py
 
-### 3.3 P0: Data Pipeline Audit (COMPLETE)
+### 3.3 P2: Conference-Specific HCA (NEW)
+
+**Files:** `backend/services/conference_hca.py` (220 lines)
+**Tests:** `tests/test_conference_hca.py` (200 lines, 18 tests)
+
+**Conference HCA Table:**
+| Conference | HCA | Difficulty |
+|------------|-----|------------|
+| Big Ten | 3.6 | EXTREME |
+| Big 12 | 3.4 | EXTREME |
+| SEC | 3.2 | HIGH |
+| ACC | 3.0 | HIGH |
+| Big East | 2.9 | MODERATE |
+| WCC | 2.7 | MODERATE |
+| AAC | 2.6 | MODERATE |
+| A-10 | 2.5 | MODERATE |
+| SWAC | 1.5 | LOW |
+| MEAC | 1.5 | LOW |
+| Neutral | 0.0 | N/A |
+
+**Usage:**
+```python
+from backend.services.conference_hca import get_conference_hca, apply_conference_hca
+
+# Get HCA for conference
+hca = get_conference_hca("Big Ten", is_neutral=False)  # Returns 3.6
+
+# Apply with pace adjustment
+adjusted_hca, meta = apply_conference_hca("SEC", pace_ratio=1.05)
+```
+
+**Features:**
+- Name normalization (handles "Big Ten", "B1G", "big ten", etc.)
+- Pace-adjusted HCA scaling
+- Neutral site override (0.0)
+- Difficulty ratings for road games
+
+### 3.4 P3: Late-Season Recency Weighting (NEW)
+
+**Files:** `backend/services/recency_weight.py` (280 lines)
+**Tests:** `tests/test_recency_weight.py` (220 lines, 20 tests)
+
+**Recency Weight Table (Late Season):**
+| Days Ago | Weight | Period |
+|----------|--------|--------|
+| 0-2 | 2.0x | Very Recent |
+| 3-7 | 1.6-1.9x | Last Week |
+| 8-14 | 1.2-1.5x | Two Weeks |
+| 15-21 | 1.0-1.1x | Three Weeks |
+| 22+ | 1.0x | Older |
+
+**Tournament Mode (March 15+):**
+- Neutral site override: HCA = 0.0
+- Margin SE inflation: +0.20 (higher upset variance)
+- Form window: Last 14 days only
+- Recency weights: Active
+
+**Usage:**
+```python
+from backend.services.recency_weight import (
+    is_late_season, 
+    get_recency_weight,
+    get_tournament_adjustments
+)
+
+# Check season phase
+if is_late_season():
+    weight = get_recency_weight(days_ago=5)  # Returns 1.7x
+
+# Get tournament adjustments
+adj = get_tournament_adjustments(is_neutral=True)
+# Returns: margin_se_inflation=0.20, form_window_days=14
+```
+
+### 3.5 P0: Data Pipeline Audit (COMPLETE)
 
 **Findings:**
 - ✅ BartTorvik: Public CSV working (365 teams, no auth needed)
@@ -141,19 +219,24 @@ adjusted_edge, details = apply_sharp_adjustment(base_edge, signal, model_side)
 - ✅ Discord alerts fire when <2 sources active
 - ✅ `BARTTORVIK_USERNAME/PASSWORD` are legacy (only in docs)
 
-### 3.4 Key Technical Decisions
+### 3.6 Key Technical Decisions
 
 1. **Ollama Dependency Removed** — All LLM functions now have template fallbacks
 2. **Graceful Degradation Chain** — Ollama → OpenClaw Lite → Seed-based defaults
 3. **Fatigue Model Integration** — Added `fatigue_margin_adj` param to `analyze_game()`
-4. **V9.1 Version Bump** — Model version tracks features (fatigue = v9.1)
+4. **Conference HCA** — Replaces flat 3.09 with conference-specific values
+5. **Recency Weighting** — 2x weight for recent games in March (late season)
+6. **V9.1 Version Bump** — Model version tracks features (fatigue = v9.1)
 
-### 3.3 Documentation Created
+### 3.7 Documentation Created
 
 - `docs/FATIGUE_MODEL.md` — Fatigue model specification
 - `docs/OPENCLAW_LITE_PLAN.md` — Migration analysis
 - `docs/UAT_MARCH_10_2026.md` — Test results (58 tests, 100%)
 - `docs/RAILWAY_DISCORD_FIX.md` — Troubleshooting guide
+- `docs/SHARP_MONEY.md` — Sharp money detection spec (NEW)
+- `docs/CONFERENCE_HCA.md` — Conference HCA guide (NEW)
+- `docs/RECENCY_WEIGHTING.md` — Late-season weighting guide (NEW)
 - `SYSTEM_STATUS.md` — Full system overview
 
 ---
@@ -251,8 +334,8 @@ Complete Fantasy Baseball Phase 0 before March 18 (tournament starts), OR defer 
 |--------|------|----------|------------------|--------|
 | **P0** | Data Pipeline Audit | 0.5 day | Critical | ✅ Complete |
 | **P1** | Sharp Money Detection | 1 day | High | ✅ Complete |
-| **P2** | Conference-Specific HCA | 0.5 day | Medium | ⏳ Next |
-| **P3** | Late-Season Recency Weighting | 0.5 day | Medium | ⏳ Next |
+| **P2** | Conference-Specific HCA | 0.5 day | Medium | ✅ Complete |
+| **P3** | Late-Season Recency Weighting | 0.5 day | Medium | ✅ Complete |
 | **C** | Fantasy Baseball completion | 3-4 days | Time-sensitive (Mar 20) | ⚠️ Defer |
 | **P4** | Recalibration Audit | 0.5 day | Medium | Post-tournament |
 | **E** | ML Recalibration (E-4) | 1-2 weeks | High | Post-tournament |
@@ -296,16 +379,18 @@ SENDGRID_API_KEY (not set)
 **Status:** Pending verification
 
 ### 8.3 Kimi CLI — Enhancement Development
-**Status:** P0 ✅ | P1 ✅ | Ready for P2/P3
+**Status:** ✅ P0-P3 COMPLETE | Ready for tournament monitoring
 
 **COMPLETED:**
 - P0: Data audit — BartTorvik confirmed working, 2-source mode active
 - P1: Sharp Money Detection — steam, opener gap, RLM detection live
+- P2: Conference HCA — Big Ten 3.6, Big 12 3.4, etc. with pace adjustment
+- P3: Late-season recency — 2x weight for last 3 days, tournament mode ready
 
-**READY TO BUILD:**
-- P2: Conference-Specific HCA (0.5 day)
-- P3: Late-season recency weighting (0.5 day)
-- Or: Fantasy Baseball Phase 0 completion (defer recommended)
+**READY:**
+- Tournament monitoring mode (Mar 18-Apr 7)
+- O-8 Baseline execution (Mar 16 ~9 PM ET)
+- Fantasy Baseball Phase 0 (deferred to post-tournament)
 
 ---
 
@@ -313,6 +398,9 @@ SENDGRID_API_KEY (not set)
 
 | Lesson | Source |
 |--------|--------|
+| Conference HCA: Big Ten 3.6 pts vs SWAC 1.5 pts = significant road differential | P2 |
+| Recency weighting: 2x for last 3 days, 1.6x for last week in March | P3 |
+| Tournament mode: neutral HCA=0, margin SE +0.20, 14-day form window | P3 |
 | Sharp money detection: steam ≥1.5 pts in <30 min = high confidence signal | P1 |
 | Opener gap ≥2.0 pts suggests market correction toward sharp opinion | P1 |
 | RLM detection requires public betting % data (Action Network integration) | P1 |

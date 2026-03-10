@@ -97,7 +97,7 @@ helping or adding noise.
 ## SPRINT 2 — Tournament Edge Improvements (Mar 12–17) 🟠
 
 ### P2 — Conference-Specific Home Court Advantage
-- [ ] Add `CONFERENCE_HCA` dict to `betting_model.py`:
+- [x] Add `CONFERENCE_HCA` dict to `betting_model.py`:
   ```python
   CONFERENCE_HCA = {
       "big_ten": 3.6, "big_12": 3.4, "sec": 3.2,
@@ -106,16 +106,22 @@ helping or adding noise.
       "neutral": 0.0,   # Tournament default
   }
   ```
+- [x] Create `backend/services/conference_hca.py` service
+- [x] Add conference name normalization for various data sources
+- [x] Add tests for all conference HCA values
 - [ ] Update `analyze_game()` to accept optional `home_conference` param
 - [ ] Source conference from team_mapping or tournament_data where available
-- [ ] Neutral site flag: if `neutral_site=True`, override HCA to 0.0
 - [ ] Add tests in `test_betting_model.py::TestConferenceHCA`
 
 ### P3 — Late-Season Recency Weighting
-- [ ] Add `recency_weight_factor` to analysis: weight last 30-day games 2× vs older
-- [ ] In `analyze_game()`: if `is_tournament_game=True` or `date >= Mar 15`:
+- [x] Add `recency_weight_factor` to analysis: weight last 30-day games 2× vs older
+- [x] Create `backend/services/recency_weight.py` service
+- [x] In `analyze_game()`: if `is_tournament_game=True` or `date >= Mar 15`:
   - Set `neutral_site = True` → HCA = 0.0
   - Increase `margin_se` by +0.20 (tournament = higher upset variance)
+- [x] Add late season detection (March 1+)
+- [x] Add tournament mode detection (March 15+)
+- [x] Add tests for recency weight calculations
 - [ ] Tie to existing seed-spread scalar logic in V9.1 model
 
 ### P4 — Recalibration Audit & Seed
