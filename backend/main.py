@@ -645,6 +645,54 @@ async def get_todays_predictions(
     )
 
 
+@app.get("/api/predictions/today/all", response_model=TodaysPredictionsResponse)
+async def get_todays_predictions_all(
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    Get ALL predictions for today (including games that have started).
+    Used to review bets after games have begun.
+    """
+    today_utc = datetime.utcnow().date()
+
+    # run_tier priority: lower number = higher priority (nightly beats opener)
+    _TIER_PRIORITY = {"nightly": 0, "opener": 1}
+
+    predictions = (
+        db.query(Prediction)
+        .join(Game)
+        .filter(Prediction.prediction_date == today_utc)
+        .order_by(Game.game_date.asc())
+        .options(joinedload(Prediction.game))
+        .all()
+    )
+
+    # Deduplicate by game_id: prefer nightly > opener, then highest edge as tiebreaker.
+    seen: dict = {}
+    for p in predictions:
+        gid = p.game_id
+        if gid not in seen:
+            seen[gid] = p
+        else:
+            cur_pri = _TIER_PRIORITY.get(seen[gid].run_tier or "", 99)
+            new_pri = _TIER_PRIORITY.get(p.run_tier or "", 99)
+            if new_pri < cur_pri or (
+                new_pri == cur_pri
+                and (p.edge_conservative or 0) > (seen[gid].edge_conservative or 0)
+            ):
+                seen[gid] = p
+
+    deduped = sorted(seen.values(), key=lambda p: p.game.game_date)
+
+    return TodaysPredictionsResponse(
+        date=today_utc,
+        total_games=len(deduped),
+        bets_recommended=len([p for p in deduped if p.verdict.startswith("Bet")]),
+        predictions=deduped,
+    )
+
+
 @app.get("/api/predictions/bets")
 async def get_recommended_bets(
     days: int = Query(default=7, ge=1, le=30),

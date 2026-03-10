@@ -5,7 +5,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, date
 from dashboard.utils import api_get, api_post, sidebar_api_key
 from dashboard.shared import inject_custom_css
 
@@ -14,7 +14,16 @@ sidebar_api_key()
 inject_custom_css()
 
 st.title("Today's Betting Opportunities")
-today_data = api_get("/api/predictions/today")
+
+# Add toggle to show all bets vs only upcoming
+col1, col2 = st.columns([3, 1])
+with col2:
+    show_all = st.toggle("Show all today's bets (including started)", value=False, 
+                         help="Enable to see bets from earlier today even if games have started")
+
+# Use appropriate endpoint based on toggle
+endpoint = "/api/predictions/today/all" if show_all else "/api/predictions/today"
+today_data = api_get(endpoint)
 
 if today_data:
     c1, c2 = st.columns(2)
@@ -87,8 +96,13 @@ if today_data:
             home = g.get("home_team") or odds_data.get("home_team") or "Home"
             away = g.get("away_team") or odds_data.get("away_team") or "Away"
             matchup = f"{away} @ {home}"
+            
+            # Check if game has already started
+            game_started = False
             try:
-                game_time = datetime.fromisoformat(g.get("game_date") or "").strftime("%b %d, %I:%M %p UTC")
+                game_dt = datetime.fromisoformat(g.get("game_date") or "")
+                game_started = game_dt < datetime.utcnow()
+                game_time = game_dt.strftime("%b %d, %I:%M %p UTC")
             except (ValueError, TypeError):
                 game_time = "TBD"
 
@@ -130,7 +144,9 @@ if today_data:
                 _int_icon, _int_color = "—", "grey"
 
             _expander_label = f"{matchup} — {game_time}"
-            if _int_color in ("red", "orange"):
+            if game_started:
+                _expander_label += "  ⏱️ STARTED"
+            elif _int_color in ("red", "orange"):
                 _expander_label += f"  {_int_icon}"
 
             with st.expander(_expander_label, expanded=True):
