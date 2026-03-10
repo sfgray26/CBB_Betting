@@ -250,7 +250,7 @@ if today_data:
             except (ValueError, TypeError):
                 game_time = "TBD"
 
-            with st.expander(f"{matchup} | Edge {edge:.1%} | {game_time}", key=f"exp_{pred_id}"):
+            with st.expander(f"{matchup} | Edge {edge:.1%} | {game_time}"):
                 col1, col2, col3 = st.columns(3)
                 col1.metric("Projected Margin", f"{margin:.1f} pts")
                 col2.metric("Conservative Edge", f"{edge:.2%}")
