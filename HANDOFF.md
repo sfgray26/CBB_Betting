@@ -63,6 +63,8 @@
 
 | Mission | Who | What |
 |---------|-----|------|
+| **O-8** | **Kimi** | **✅ COMPLETE: Pre-Tournament Baseline Script + UAT**. Script validated with 5 tests. Graceful degradation: Ollama → OpenClaw Lite → seed fallback. Ready for March 16 ~9 PM ET execution. **UAT: 58 total tests, 100% pass rate.** |
+| **K-8** | **Kimi** | **✅ COMPLETE: Fatigue/Rest Model (V9.1)**. New `backend/services/fatigue.py` with rest days, travel, altitude, cumulative load. 23 tests. Model version bumped to v9.1 with fatigue integration. Documentation: `docs/FATIGUE_MODEL.md`. |
 | **K-9** | **Kimi** | **✅ COMPLETE: OpenClaw Lite Migration**. Migrated from v2.0 (450 lines, Ollama-dependent) to Lite (200 lines, heuristic-based). `perform_sanity_check()` in `scout.py` now uses OpenClaw Lite. 100% test match rate, 26,000x faster. Ollama dependency removed for integrity checks.
 | A-30 | Claude | Nightly Health Check K-7 thresholds wired in sentinel.py. Morning briefing job@07:00 ET added. Drawdown access bug fixed. 478/481 tests. |
 | K-7 | Kimi | A-30 Nightly Health Check thresholds designed. MAE WARNING=9.5pts, ELEVATED=12pts, CRITICAL=15pts. Tournament adjustments specified. See `reports/k7-health-check-thresholds.md`. |
