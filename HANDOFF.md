@@ -1,21 +1,48 @@
-# OPERATIONAL HANDOFF (EMAC-057)
+# OPERATIONAL HANDOFF (EMAC-058)
 
-> Ground truth as of March 11, 2026 00:30 ET. Operator: Kimi CLI (Deep Intelligence Unit).
+> Ground truth as of March 10, 2026. Operator: Claude Code (Architect & Senior Engineer).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
+> Full enhancement plan: `tasks/cbb_enhancement_plan.md`
 
 ---
 
-## 1. EXECUTIVE SUMMARY
+## 0. ARCHITECT DECISION (March 10, 2026)
 
-**Status:** ✅ **SYSTEM PRODUCTION READY FOR MARCH MADNESS**
+**User concern:** Returns and model success have been limited lately.
 
-All critical systems operational. Major enhancements delivered:
+**Root cause finding:** The model is running in **KenPom-only mode**. Both
+`BARTTORVIK_USERNAME/PASSWORD` and `EVANMIYA_API_KEY` are unset in Railway.
+The 3-source composite is degraded to 1 source, causing:
+- Renormalized weight = 100% KenPom (accuracy loss)
+- `margin_se` widened from 1.50 → 1.80 (over-cautious CI)
+- Fewer BET verdicts, noisier edges when bets are placed
+
+**Priority order (March Madness window):**
+1. **P0 — Fix BartTorvik + EvanMiya data** (1 day) → immediate accuracy gain
+2. **P1 — Sharp Money Detection** (2–3 days) → before Mar 18 tournament tip
+3. **P2/P3 — Conference HCA + March recency weighting** (0.5 day each) → quick wins
+4. **DEFER — Fantasy Baseball** until after Apr 7 championship
+
+**See `tasks/cbb_enhancement_plan.md` for full diagnosis and sprint breakdown.**
+
+---
+
+## 1. EXECUTIVE SUMMARY (Updated)
+
+**Status:** ⚠️ **INFRASTRUCTURE HEALTHY BUT MODEL ACCURACY DEGRADED**
+
+Infrastructure is production-ready (Railway, Discord, scheduler all operational).
+However, the core predictive model is running on only 1 of 3 rating sources —
+this is the primary cause of limited returns. Enhancement plan written and ready
+for implementation.
+
+Previous deliverables still valid:
 - **V9.1 Fatigue Model** — Captures schedule/travel/altitude edges
 - **OpenClaw Lite** — 26,000× faster integrity checks, no Ollama dependency
 - **Discord System** — Fully operational with fallback narratives
 - **O-8 Baseline** — Ready for March 16 tournament prep
 
-**Next Priority:** Model enhancements (Sharp Money Detection, Conference HCA) OR Fantasy Baseball completion.
+**Next Action:** P0 data audit → P1 sharp money → P2/P3 quick wins. All before Mar 18.
 
 ---
 
