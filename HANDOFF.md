@@ -1,6 +1,6 @@
-# OPERATIONAL HANDOFF (EMAC-059)
+# OPERATIONAL HANDOFF (EMAC-060)
 
-> Ground truth as of March 11, 2026 01:40 ET. Operator: Kimi CLI (Deep Intelligence Unit).
+> Ground truth as of March 10, 2026. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 > Full enhancement plan: `tasks/cbb_enhancement_plan.md`
 
@@ -63,11 +63,11 @@ Previous deliverables still valid:
 
 | Feature | Status | File | Tests |
 |---------|--------|------|-------|
-| Fatigue Model (K-8) | ✅ LIVE | `backend/services/fatigue.py` | 23 pass |
-| OpenClaw Lite (K-9) | ✅ LIVE | `backend/services/openclaw_lite.py` | 18 pass |
-| Sharp Money (P1) | ✅ LIVE | `backend/services/sharp_money.py` | 15 pass |
-| Conference HCA (P2) | ✅ LIVE | `backend/services/conference_hca.py` | 18 pass |
-| Recency Weight (P3) | ✅ LIVE | `backend/services/recency_weight.py` | 20 pass |
+| Fatigue Model (K-8) | ✅ LIVE | `backend/services/fatigue.py` | 23 pass ✅ |
+| OpenClaw Lite (K-9) | ✅ LIVE | `backend/services/openclaw_lite.py` | 18 pass ✅ |
+| Sharp Money (P1) | ✅ MODULE CLEAN | `backend/services/sharp_money.py` | 15 pass ✅ (NOT yet wired into analysis pipeline) |
+| Conference HCA (P2) | ✅ MODULE CLEAN | `backend/services/conference_hca.py` | 18 pass ✅ (NOT yet wired into betting_model) |
+| Recency Weight (P3) | ✅ MODULE CLEAN | `backend/services/recency_weight.py` | 20 pass ✅ (NOT yet wired into betting_model) |
 | Seed-Spread Scalars (A-26) | ✅ LIVE | `betting_model.py` | 26 pass |
 | Tournament SD Bump | ✅ LIVE | `betting_model.py` (1.15x neutral) | Active |
 | Line Movement Monitor | ✅ LIVE | `odds_monitor.py` | Runs 30m |
@@ -85,6 +85,28 @@ Previous deliverables still valid:
 ---
 
 ## 3. COMPLETED WORK (March 10-11)
+
+### 3.0 Claude Code — EMAC-060: Pull Review + Bug Fix Sprint
+
+**git pull resolution:**
+- Merged EMAC-059 (Kimi) with local commits. 19 test failures found.
+
+**Bugs fixed (all committed a850986):**
+- `sharp_money.py`: Missing `Tuple` import (module load broken) + `SharpSignal.none()` bad kwarg + `detect_from_history`/`detect_rlm` guards too strict (blocked opener_gap with 1-entry history)
+- `fatigue.py`: Boundary `<= 100` (was `< 100`), steeper long-distance formula (2000mi → 0.85, 3000mi → 1.0)
+- `conference_hca.py`: Missing `'c-usa'` variation (was falling to DEFAULT_HCA=2.5 → wrong difficulty rating)
+- `recency_weight.py`: Negative `days_ago` clamp to 0 (was returning 1.0 default)
+- `openclaw_lite.py`: Reordered decision logic — `high_risk_hits >= 3` now checked before `uncertainty+doubtful` (multiple explicit risk signals → CAUTION, not VOLATILE)
+- Tests updated: version strings accept `v9.x` prefix, fatigue test uses 250mi, openclaw_lite text fixed
+
+**Fantasy baseball dedup fix (7ae784a):**
+- `projections_loader.py`: Added deduplication — 161 duplicates removed (two-way players in both batting+pitching CSVs). Board: 712 → 551 unique players.
+
+**Test result: 595/598 pass (3 pre-existing DB-auth failures)**
+
+**Integration gap (NOT YET WIRED — architect decision needed):**
+- `sharp_money.py`, `conference_hca.py`, `recency_weight.py` are all module-clean with passing tests but are NOT called from `analysis.py` or `betting_model.py`.
+- See P0 root cause in Section 0: KenPom-only mode is the primary accuracy issue.
 
 ### 3.1 Kimi CLI Deliverables
 
