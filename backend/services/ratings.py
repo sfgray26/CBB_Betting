@@ -349,6 +349,46 @@ class RatingsService:
     # BartTorvik
     # -----------------------------------------------------------------------
 
+    # Shared browser-like headers for all BartTorvik requests.
+    # barttorvik.com rate-limits bare requests with no User-Agent.
+    _BT_HEADERS: Dict[str, str] = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/131.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/csv,text/plain,application/json,*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://barttorvik.com/",
+    }
+
+    def _barttorvik_get(self, url: str, timeout: int = 10):
+        """
+        GET a BartTorvik URL with cloudscraper preferred, requests as fallback.
+
+        cloudscraper mimics a real browser's TLS fingerprint which avoids
+        the 403/empty responses barttorvik.com returns to raw requests.
+        """
+        _cs_session = None
+        try:
+            import cloudscraper
+            _cs_session = cloudscraper.create_scraper(
+                browser={"browser": "chrome", "platform": "windows", "mobile": False}
+            )
+        except ImportError:
+            pass
+
+        if _cs_session is not None:
+            try:
+                resp = _cs_session.get(url, headers=self._BT_HEADERS, timeout=timeout)
+                if resp.status_code == 200 and resp.text.strip():
+                    return resp
+            except Exception as exc:
+                logger.debug("BartTorvik cloudscraper attempt failed: %s", exc)
+
+        # Fallback to plain requests with browser headers
+        return _http_get_with_retry(url, headers=self._BT_HEADERS, timeout=timeout)
+
     def get_barttorvik_ratings(self) -> Dict[str, float]:
         """
         Fetch adjusted efficiency margin (AdjEM = AdjOE - AdjDE) from the
@@ -369,7 +409,7 @@ class RatingsService:
             return {}
 
         try:
-            response = _http_get_with_retry(url, timeout=10)
+            response = self._barttorvik_get(url, timeout=10)
             if response is None:
                 _barttorvik_cb.record_failure()
                 return {}
@@ -610,7 +650,12 @@ class RatingsService:
         try:
             if not _barttorvik_cb.should_allow_request():
                 raise RuntimeError("BartTorvik circuit breaker OPEN")
-            _resp = _http_get_with_retry(_json_url, headers=_json_headers, timeout=10)
+            # Merge JSON-specific Accept header with shared BT headers
+            _merged = {**self._BT_HEADERS, **_json_headers}
+            _resp = _http_get_with_retry(_json_url, headers=_merged, timeout=10)
+            if _resp is None:
+                # Try cloudscraper path before giving up on JSON endpoint
+                _resp = self._barttorvik_get(_json_url, timeout=12)
             if _resp is None:
                 raise RuntimeError("BartTorvik JSON: no response after retries")
             _barttorvik_cb.record_success()
@@ -648,7 +693,7 @@ class RatingsService:
             if not _barttorvik_cb.should_allow_request():
                 logger.warning("BartTorvik circuit breaker OPEN — skipping CSV fallback")
                 return {}
-            response = _http_get_with_retry(url, timeout=10)
+            response = self._barttorvik_get(url, timeout=12)
             if response is None:
                 _barttorvik_cb.record_failure()
                 logger.warning("BartTorvik full-stats CSV: no response after retries")
@@ -1274,6 +1319,21 @@ class RatingsService:
             self._evanmiya_fail_count = getattr(self, "_evanmiya_fail_count", 0) + 1
             ratings = {}
 
+        # Strategy D: Playwright browser automation (Cloudflare bypass)
+        # Only attempted when all HTTP strategies have returned zero teams.
+        if not ratings:
+            logger.info(
+                "EvanMiya: all HTTP strategies exhausted — trying Playwright browser fallback"
+            )
+            pw_ratings = self._fetch_evanmiya_via_playwright()
+            if pw_ratings:
+                self._evanmiya_fail_count = 0
+                _evanmiya_cb.record_success()
+                logger.info(
+                    "EvanMiya: %d teams via Playwright browser automation", len(pw_ratings)
+                )
+                return pw_ratings
+
         # --- Final guard: if ALL strategies returned empty, treat as failure ---
         # This catches the case where HTTP 200 succeeds but parsing yields
         # zero teams (e.g. fully JS-rendered SPA with no embedded JSON).
@@ -1300,6 +1360,194 @@ class RatingsService:
                 )
 
         return ratings
+
+    def _fetch_evanmiya_via_playwright(self) -> Dict[str, float]:
+        """
+        Browser-automation fallback for EvanMiya using Playwright.
+
+        EvanMiya.com is a Cloudflare-protected JavaScript SPA.  Standard HTTP
+        libraries (including cloudscraper) consistently fail because the site
+        uses JS challenges that require a real browser engine.  This method
+        launches a headless Chromium browser, intercepts the API network
+        responses in flight (before JS renders them into the DOM), and parses
+        the raw JSON directly — bypassing the need to scrape rendered HTML.
+
+        The interception approach is more robust than HTML parsing because:
+          - It captures the JSON payload before any client-side transformation.
+          - It works even if the DOM structure changes.
+          - It is unaffected by lazy rendering or pagination.
+
+        Requires: ``playwright install chromium`` (done in railway.toml build phase).
+        """
+        import json as _json
+
+        try:
+            from playwright.sync_api import sync_playwright, Response as PwResponse
+        except ImportError:
+            logger.debug(
+                "playwright not installed — EvanMiya browser fallback unavailable"
+            )
+            return {}
+
+        captured: List[Dict] = []  # intercepted API JSON payloads
+
+        def _on_response(response: "PwResponse") -> None:
+            """Capture JSON API responses that look like ratings data."""
+            url = response.url
+            if "evanmiya" not in url:
+                return
+            # Only intercept API-like endpoints (skip CSS, fonts, images)
+            content_type = response.headers.get("content-type", "")
+            if "json" not in content_type and "text/plain" not in content_type:
+                return
+            try:
+                body = response.body()
+                data = _json.loads(body)
+                # Quick sanity check: expect a list or dict with team data
+                if isinstance(data, (list, dict)) and data:
+                    captured.append(data)
+                    logger.debug(
+                        "EvanMiya Playwright: intercepted API response from %s (%d bytes)",
+                        url, len(body),
+                    )
+            except Exception:
+                pass
+
+        try:
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-setuid-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-blink-features=AutomationControlled",
+                    ],
+                )
+                context = browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/124.0.0.0 Safari/537.36"
+                    ),
+                    viewport={"width": 1280, "height": 900},
+                    locale="en-US",
+                )
+                page = context.new_page()
+                page.on("response", _on_response)
+
+                logger.debug("EvanMiya Playwright: navigating to evanmiya.com")
+                page.goto(_EVANMIYA_URL, timeout=30_000, wait_until="domcontentloaded")
+
+                # Wait for network to settle (catches lazy-loaded API calls)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=15_000)
+                except Exception:
+                    pass  # networkidle timeout is acceptable — captured[] may already have data
+
+                # If no API calls intercepted yet, try clicking/scrolling to trigger them
+                if not captured:
+                    try:
+                        page.mouse.wheel(0, 500)
+                        page.wait_for_timeout(2_000)
+                    except Exception:
+                        pass
+
+                # Final attempt: parse rendered HTML table if no API payloads captured
+                html = page.content()
+                browser.close()
+
+        except Exception as exc:
+            logger.warning("EvanMiya Playwright launch failed: %s", exc)
+            return {}
+
+        # First try: parse intercepted API JSON payloads (most reliable)
+        for payload in captured:
+            ratings = self._parse_evanmiya_json(payload)
+            if ratings:
+                logger.info(
+                    "EvanMiya Playwright: %d teams from intercepted API payload",
+                    len(ratings),
+                )
+                return ratings
+
+        # Second try: parse the fully-rendered HTML (JS has run, table should be visible)
+        import re as _re
+        for pat in [
+            r'window\.__INITIAL_STATE__\s*=\s*(\{.*?\});',
+            r'window\.__APP_DATA__\s*=\s*(\{.*?\});',
+            r'__NEXT_DATA__\s*=\s*(\{.*?\})',
+            r'(?:ratings|teams|data)\s*=\s*(\[.*?\])\s*[;,]',
+        ]:
+            for m in _re.finditer(pat, html, _re.DOTALL):
+                try:
+                    parsed = _json.loads(m.group(1))
+                    ratings = self._parse_evanmiya_json(parsed)
+                    if ratings:
+                        logger.info(
+                            "EvanMiya Playwright: %d teams from rendered script JSON",
+                            len(ratings),
+                        )
+                        return ratings
+                except Exception:
+                    continue
+
+        # Third try: HTML table in the rendered DOM
+        try:
+            soup = BeautifulSoup(html, "lxml")
+            tables = soup.find_all("table")
+            for table in tables:
+                header_row = table.find("tr")
+                if not header_row:
+                    continue
+                col_headers = [
+                    th.get_text(strip=True).lower()
+                    for th in header_row.find_all(["th", "td"])
+                ]
+                team_col = bpr_col = obpr_col = dbpr_col = None
+                for i, h in enumerate(col_headers):
+                    if h in ("team", "school", "teamname", "team name"):
+                        team_col = i
+                    if h in ("bpr", "net bpr", "net_bpr"):
+                        bpr_col = i
+                    if h in ("obpr", "off bpr", "off_bpr", "o bpr", "offensive bpr"):
+                        obpr_col = i
+                    if h in ("dbpr", "def bpr", "def_bpr", "d bpr", "defensive bpr"):
+                        dbpr_col = i
+                if team_col is None:
+                    continue
+                if bpr_col is None and (obpr_col is None or dbpr_col is None):
+                    continue
+                ratings: Dict[str, float] = {}
+                for row in table.find_all("tr")[1:]:
+                    cells = row.find_all(["td", "th"])
+                    if len(cells) <= team_col:
+                        continue
+                    team_name = cells[team_col].get_text(strip=True)
+                    if not team_name:
+                        continue
+                    try:
+                        if bpr_col is not None and bpr_col < len(cells):
+                            bpr = float(cells[bpr_col].get_text(strip=True))
+                        elif obpr_col is not None and dbpr_col is not None:
+                            bpr = float(cells[obpr_col].get_text(strip=True)) - \
+                                  float(cells[dbpr_col].get_text(strip=True))
+                        else:
+                            continue
+                        ratings[team_name] = bpr
+                    except (ValueError, TypeError, IndexError):
+                        continue
+                if ratings:
+                    logger.info(
+                        "EvanMiya Playwright: %d teams from rendered HTML table",
+                        len(ratings),
+                    )
+                    return ratings
+        except Exception as exc:
+            logger.debug("EvanMiya Playwright HTML parse error: %s", exc)
+
+        logger.warning("EvanMiya Playwright: browser launched but 0 teams extracted")
+        return {}
 
     def _parse_evanmiya_json(self, data: object) -> Dict[str, float]:
         """
@@ -1440,16 +1688,38 @@ class RatingsService:
             "evanmiya":  not evanmiya_dropped and bool(evanmiya_data),
         }
         _n_active = sum(_active.values())
-        if _n_active < 2:
-            logger.warning(
-                "SOURCE HEALTH CRITICAL: %d/3 rating sources active "
+        if _n_active < 3:
+            _em_status = (
+                "DROPPED" if evanmiya_dropped
+                else ("UP" if _active["evanmiya"] else "DOWN")
+            )
+            _log_fn = logger.warning if _n_active < 2 else logger.info
+            _log_fn(
+                "SOURCE HEALTH %s: %d/3 rating sources active "
                 "(KenPom=%s BartTorvik=%s EvanMiya=%s). "
-                "Model in severely degraded mode — review before trusting outputs.",
+                "%s",
+                "CRITICAL" if _n_active < 2 else "WARNING",
                 _n_active,
                 "UP" if _active["kenpom"] else "DOWN",
                 "UP" if _active["barttorvik"] else "DOWN",
-                "UP" if _active["evanmiya"] else "DROPPED",
+                _em_status,
+                "Model in severely degraded mode." if _n_active < 2 else "",
             )
+            # Fire Discord alert so operators know immediately.
+            # Import lazily to avoid circular dependency at module load time.
+            try:
+                from backend.services.discord_notifier import send_source_health_alert
+                send_source_health_alert(
+                    n_active=_n_active,
+                    kenpom_up=_active["kenpom"],
+                    barttorvik_up=_active["barttorvik"],
+                    evanmiya_status=_em_status,
+                    kenpom_teams=len(ratings["kenpom"]),
+                    barttorvik_teams=len(ratings["barttorvik"]),
+                    evanmiya_teams=len(evanmiya_data),
+                )
+            except Exception as _disc_exc:
+                logger.debug("Discord source alert failed: %s", _disc_exc)
 
         return ratings
 
