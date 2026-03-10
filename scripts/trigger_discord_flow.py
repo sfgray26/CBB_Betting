@@ -6,6 +6,7 @@ This ensures all 17 bets are sent with their respective AI Scouting Reports and 
 import os
 import sys
 import json
+from datetime import datetime, date
 from dotenv import load_dotenv
 
 # Load .env
@@ -21,18 +22,88 @@ def trigger_flow():
     print("🚀 TRIGGERING FULL DISCORD NOTIFICATION FLOW")
     print("="*60)
 
-    # Load the full data file we just created
-    try:
-        with open("full_today_data.json", "r") as f:
-            data = json.load(f)
-    except Exception as e:
-        print(f"❌ Error loading full_today_data.json: {e}")
+    # Try to load the full data file
+    data = None
+    source = None
+    
+    # Try multiple possible data sources
+    possible_files = [
+        "full_today_data.json",
+        "current_recommendations.json",
+        "tmp_predictions.json",
+    ]
+    
+    for filename in possible_files:
+        filepath = os.path.join(os.getcwd(), filename)
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, 'r') as f:
+                    data = json.load(f)
+                source = filename
+                print(f"✅ Loaded data from: {filename}")
+                break
+            except Exception as e:
+                print(f"⚠️  Error loading {filename}: {e}")
+                continue
+    
+    # If no JSON file works, try database
+    if data is None:
+        print("⚠️  No JSON data files found. Falling back to database...")
+        try:
+            from backend.models import SessionLocal, Prediction, Game
+            
+            db = SessionLocal()
+            try:
+                today_utc = date.today()
+                
+                predictions = (
+                    db.query(Prediction)
+                    .join(Game)
+                    .filter(Prediction.prediction_date == today_utc)
+                    .all()
+                )
+                
+                # Convert to dict format
+                data = {
+                    "predictions": [],
+                    "total_games": len(predictions),
+                    "bets_recommended": 0,
+                }
+                
+                for p in predictions:
+                    g = p.game
+                    fa = p.full_analysis or {}
+                    data["predictions"].append({
+                        "game": {
+                            "home_team": g.home_team,
+                            "away_team": g.away_team,
+                            "game_date": g.game_date.isoformat() if g.game_date else None,
+                        },
+                        "verdict": p.verdict,
+                        "edge_conservative": p.edge_conservative,
+                        "recommended_units": p.recommended_units,
+                        "full_analysis": fa,
+                    })
+                    if p.verdict.startswith("Bet"):
+                        data["bets_recommended"] += 1
+                
+                source = "database"
+                print(f"✅ Loaded {len(predictions)} predictions from database")
+                
+            finally:
+                db.close()
+        except Exception as e:
+            print(f"❌ Error loading from database: {e}")
+            return
+
+    if data is None:
+        print("❌ Could not load data from any source")
         return
 
     predictions = data.get("predictions", [])
     bets = [p for p in predictions if p.get("verdict", "").startswith("Bet")]
 
-    print(f"✅ Loaded {len(bets)} bets from full dataset.")
+    print(f"✅ Found {len(bets)} bets from {source}.")
 
     bet_details = []
     for p in bets:
@@ -58,7 +129,7 @@ def trigger_flow():
 
     summary = {
         "games_analyzed": data.get("total_games", 0),
-        "bets_recommended": data.get("bets_recommended", 0),
+        "bets_recommended": len(bets),
         "games_considered": 5,
         "duration_seconds": 0
     }
@@ -69,7 +140,7 @@ def trigger_flow():
     send_todays_bets(bet_details, summary)
     
     print("\n" + "="*60)
-    print("🏁 FULL FLOW COMPLETE. ALL 17 BETS SENT.")
+    print(f"🏁 FULL FLOW COMPLETE. ALL {len(bets)} BETS SENT.")
     print("="*60)
 
 if __name__ == "__main__":

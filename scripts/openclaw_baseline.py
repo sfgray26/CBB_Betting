@@ -40,6 +40,14 @@ except ImportError:
     HANDOFF_WRITER_AVAILABLE = False
     logging.warning("handoff_writer not available, HANDOFF.md will not be updated")
 
+# Import OpenClaw Lite for heuristic fallback
+try:
+    from backend.services.openclaw_lite import get_openclaw_lite
+    OPENCLAW_LITE_AVAILABLE = True
+except ImportError:
+    OPENCLAW_LITE_AVAILABLE = False
+    logging.warning("OpenClaw Lite not available, using fallback risk assessment")
+
 logger = logging.getLogger(__name__)
 
 # Constants
@@ -166,17 +174,42 @@ def analyze_team_risk(
     search_results: Dict[str, str]
 ) -> Dict:
     """
-    Use qwen2.5:3b to analyze team risk from search results.
-    Returns structured risk assessment.
+    Analyze team risk from search results.
+    
+    Tries Ollama first, falls back to OpenClaw Lite heuristics if unavailable.
     """
+    combined_text = " | ".join(search_results.values())
+    
+    # Try Ollama first
+    try:
+        return _analyze_with_ollama(team_name, seed, region, combined_text)
+    except Exception as e:
+        logger.warning(f"Ollama analysis failed for {team_name}: {e}")
+        
+    # Fallback to OpenClaw Lite
+    if OPENCLAW_LITE_AVAILABLE:
+        logger.info(f"Using OpenClaw Lite fallback for {team_name}")
+        return _analyze_with_lite(team_name, seed, region, combined_text)
+    
+    # Final fallback to seed-based default
+    logger.info(f"Using seed-based fallback for {team_name}")
+    return _fallback_risk_assessment(seed)
+
+
+def _analyze_with_ollama(
+    team_name: str,
+    seed: int,
+    region: str,
+    search_text: str
+) -> Dict:
+    """Use qwen2.5:3b for risk analysis."""
     prompt = f"""You are a College Basketball Tournament Risk Analyst. Analyze this team entering March Madness.
 
 Team: {team_name}
 Seed: #{seed} in {region} Region
 
 Intelligence Reports:
-[INJURIES/SUSPENSIONS]: {search_results.get('injury', 'No data')}
-[MOMENTUM/UPSET RISK]: {search_results.get('momentum', 'No data')}
+{search_text}
 
 Analyze the above and output ONLY valid JSON in this exact format:
 {{"risk_level": "LOW|MEDIUM|HIGH|CRITICAL", "risk_score": 0-100, "risk_factors": ["factor 1", "factor 2"], "summary": "2-sentence professional risk assessment"}}
@@ -188,6 +221,84 @@ Risk Level Definitions:
 - CRITICAL (76-100): Star injured, multiple issues, chaos situation
 
 JSON:"""
+
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "num_predict": 256,
+            "temperature": 0.2
+        },
+        "format": "json"
+    }
+    
+    resp = requests.post(OLLAMA_URL, json=payload, timeout=15)
+    resp.raise_for_status()
+    
+    result_text = resp.json().get("response", "{}").strip()
+    analysis = json.loads(result_text) if isinstance(result_text, str) else result_text
+    
+    risk_level = analysis.get("risk_level", "MEDIUM").upper()
+    if risk_level not in RISK_LEVELS:
+        risk_level = "MEDIUM"
+    
+    return {
+        "risk_level": risk_level,
+        "risk_score": min(100, max(0, int(analysis.get("risk_score", 50)))),
+        "risk_factors": analysis.get("risk_factors", [])[:5],
+        "summary": analysis.get("summary", "Risk assessment unavailable."),
+        "sources_checked": 5,
+        "method": "ollama"
+    }
+
+
+def _analyze_with_lite(
+    team_name: str,
+    seed: int,
+    region: str,
+    search_text: str
+) -> Dict:
+    """Use OpenClaw Lite heuristics for risk analysis."""
+    checker = get_openclaw_lite()
+    
+    # Get integrity verdict
+    result = checker.check_integrity_heuristic(
+        search_text=search_text,
+        home_team=team_name,
+        away_team="Tournament Opponent",
+        recommended_units=1.0
+    )
+    
+    # Map integrity verdict to risk level
+    risk_map = {
+        "CONFIRMED": ("LOW", 20),
+        "CAUTION": ("MEDIUM", 45),
+        "VOLATILE": ("HIGH", 65),
+        "ABORT": ("CRITICAL", 85),
+        "RED FLAG": ("CRITICAL", 90)
+    }
+    
+    base_level, base_score = risk_map.get(result.verdict, ("MEDIUM", 50))
+    
+    # Adjust by seed (higher seed number = higher risk)
+    seed_adjustment = (seed - 1) * 2
+    risk_score = min(100, base_score + seed_adjustment)
+    
+    # Generate risk factors from verdict reasoning
+    risk_factors = [result.reasoning]
+    if result.verdict == "CONFIRMED" and seed > 8:
+        risk_factors.append(f"Lower seed (#{seed}) in tournament")
+    
+    return {
+        "risk_level": base_level,
+        "risk_score": risk_score,
+        "risk_factors": risk_factors,
+        "summary": f"{team_name}: {result.reasoning} (Seed #{seed} in {region})",
+        "sources_checked": 5,
+        "method": "openclaw_lite",
+        "confidence": result.confidence
+    }
 
     try:
         payload = {

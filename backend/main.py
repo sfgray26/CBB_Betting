@@ -645,6 +645,54 @@ async def get_todays_predictions(
     )
 
 
+@app.get("/api/predictions/today/all", response_model=TodaysPredictionsResponse)
+async def get_todays_predictions_all(
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db)
+):
+    """
+    Get ALL predictions for today (including games that have started).
+    Used to review bets after games have begun.
+    """
+    today_utc = datetime.utcnow().date()
+
+    # run_tier priority: lower number = higher priority (nightly beats opener)
+    _TIER_PRIORITY = {"nightly": 0, "opener": 1}
+
+    predictions = (
+        db.query(Prediction)
+        .join(Game)
+        .filter(Prediction.prediction_date == today_utc)
+        .order_by(Game.game_date.asc())
+        .options(joinedload(Prediction.game))
+        .all()
+    )
+
+    # Deduplicate by game_id: prefer nightly > opener, then highest edge as tiebreaker.
+    seen: dict = {}
+    for p in predictions:
+        gid = p.game_id
+        if gid not in seen:
+            seen[gid] = p
+        else:
+            cur_pri = _TIER_PRIORITY.get(seen[gid].run_tier or "", 99)
+            new_pri = _TIER_PRIORITY.get(p.run_tier or "", 99)
+            if new_pri < cur_pri or (
+                new_pri == cur_pri
+                and (p.edge_conservative or 0) > (seen[gid].edge_conservative or 0)
+            ):
+                seen[gid] = p
+
+    deduped = sorted(seen.values(), key=lambda p: p.game.game_date)
+
+    return TodaysPredictionsResponse(
+        date=today_utc,
+        total_games=len(deduped),
+        bets_recommended=len([p for p in deduped if p.verdict.startswith("Bet")]),
+        predictions=deduped,
+    )
+
+
 @app.get("/api/predictions/bets")
 async def get_recommended_bets(
     days: int = Query(default=7, ge=1, le=30),
@@ -1530,6 +1578,119 @@ async def manual_recalibration(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/admin/recalibration/audit")
+async def recalibration_audit(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Get recalibration audit data (admin only).
+    
+    Returns:
+        - Settled bets count with prediction links
+        - Current home_advantage and sd_multiplier values
+        - Drift from baseline parameters
+        - Recommendations for tournament prep
+    """
+    from sqlalchemy import func
+    
+    # Count settled bets with prediction links
+    settled_with_pred = (
+        db.query(BetLog)
+        .filter(BetLog.outcome.isnot(None))
+        .filter(BetLog.prediction_id.isnot(None))
+        .count()
+    )
+    
+    # Get current parameters
+    current_ha = (
+        db.query(ModelParameter)
+        .filter(ModelParameter.parameter_name == 'home_advantage')
+        .order_by(ModelParameter.effective_date.desc())
+        .first()
+    )
+    
+    current_sd = (
+        db.query(ModelParameter)
+        .filter(ModelParameter.parameter_name == 'sd_multiplier')
+        .order_by(ModelParameter.effective_date.desc())
+        .first()
+    )
+    
+    ha_value = current_ha.parameter_value if current_ha else 3.09
+    sd_value = current_sd.parameter_value if current_sd else 0.85
+    
+    # Calculate drift from baselines
+    baseline_ha = 3.09
+    baseline_sd = 0.85
+    
+    ha_drift = abs(ha_value - baseline_ha) / baseline_ha * 100
+    sd_drift = abs(sd_value - baseline_sd) / baseline_sd * 100
+    
+    # Check last recalibration date
+    last_recal = current_ha.effective_date if current_ha else None
+    days_since = (datetime.utcnow() - last_recal).days if last_recal else None
+    
+    return {
+        "settled_bets": settled_with_pred,
+        "sufficient_data": settled_with_pred >= 30,
+        "home_advantage": round(ha_value, 4),
+        "sd_multiplier": round(sd_value, 4),
+        "ha_drift_pct": round(ha_drift, 1),
+        "sd_drift_pct": round(sd_drift, 1),
+        "drift_alert": ha_drift > 15 or sd_drift > 15,
+        "last_recalibration": last_recal.isoformat() if last_recal else None,
+        "days_since_recalibration": days_since,
+        "recommendations": {
+            "needs_more_data": settled_with_pred < 30,
+            "stale_recalibration": days_since > 7 if days_since else True,
+            "parameter_drift": ha_drift > 15 or sd_drift > 15,
+        }
+    }
+
+
+@app.get("/admin/debug/bets-last-24h")
+async def debug_bets_last_24h(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Debug endpoint: Get all bets from last 24 hours.
+    
+    Returns simple list for debugging UI issues.
+    """
+    from datetime import timedelta
+    
+    since = datetime.utcnow() - timedelta(hours=24)
+    
+    predictions = (
+        db.query(Prediction, Game)
+        .join(Game, Prediction.game_id == Game.id)
+        .filter(Game.game_date >= since)
+        .all()
+    )
+    
+    bets = [(p, g) for p, g in predictions if p.verdict.startswith("Bet")]
+    
+    return {
+        "total_predictions": len(predictions),
+        "bet_count": len(bets),
+        "since": since.isoformat(),
+        "bets": [
+            {
+                "game_id": g.id,
+                "home_team": g.home_team,
+                "away_team": g.away_team,
+                "game_date": g.game_date.isoformat() if g.game_date else None,
+                "verdict": p.verdict,
+                "edge": p.edge_conservative,
+                "units": p.recommended_units,
+            }
+            for p, g in bets
+        ]
+    }
+
+
 @app.post("/admin/force-update-outcomes")
 async def force_update_outcomes(user: str = Depends(verify_admin_api_key)):
     """Manually trigger the outcome-update job (admin only)."""
@@ -1640,6 +1801,62 @@ async def get_odds_monitor_status(user: str = Depends(verify_admin_api_key)):
     """Return odds monitor status: tracked games, last poll time."""
     monitor = get_odds_monitor()
     return monitor.get_status()
+
+
+@app.get("/admin/ratings/status")
+async def get_ratings_status(user: str = Depends(verify_admin_api_key)):
+    """
+    Return live rating source coverage.
+
+    Fetches (or returns cached) ratings from all three sources and reports
+    how many teams each source is providing.  Use this to diagnose KenPom-only
+    degraded mode before running nightly analysis.
+    """
+    from backend.services.ratings import get_ratings_service
+    service = get_ratings_service()
+    # Use cached data if < 6 hours old to avoid unnecessary scrape on status checks
+    ratings = service.get_all_ratings(use_cache=True)
+
+    kenpom_teams      = len(ratings.get("kenpom", {}))
+    barttorvik_teams  = len(ratings.get("barttorvik", {}))
+    evanmiya_teams    = len(ratings.get("evanmiya", {}))
+    meta              = ratings.get("_meta", {})
+    evanmiya_dropped  = meta.get("evanmiya_dropped", False)
+    kenpom_ff_teams   = meta.get("kenpom_ff_teams", 0)
+
+    active_sources = [
+        s for s, n in [
+            ("kenpom", kenpom_teams),
+            ("barttorvik", barttorvik_teams),
+            ("evanmiya", evanmiya_teams if not evanmiya_dropped else 0),
+        ] if n > 0
+    ]
+
+    return {
+        "sources": {
+            "kenpom":     {"teams": kenpom_teams, "status": "UP" if kenpom_teams > 0 else "DOWN"},
+            "barttorvik": {"teams": barttorvik_teams, "status": "UP" if barttorvik_teams > 0 else "DOWN"},
+            "evanmiya":   {
+                "teams": evanmiya_teams,
+                "status": "DROPPED" if evanmiya_dropped else ("UP" if evanmiya_teams > 0 else "DOWN"),
+            },
+            "kenpom_four_factors": {"teams": kenpom_ff_teams},
+        },
+        "active_count": len(active_sources),
+        "active_sources": active_sources,
+        "model_health": (
+            "CRITICAL" if len(active_sources) < 2
+            else "DEGRADED" if len(active_sources) < 3
+            else "OK"
+        ),
+        "cache_age_hours": round(
+            (
+                (__import__("datetime").datetime.utcnow() - service.cache_timestamp).total_seconds() / 3600
+                if service.cache_timestamp else 0
+            ),
+            2,
+        ),
+    }
 
 
 # ============================================================================

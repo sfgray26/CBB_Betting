@@ -783,6 +783,8 @@ class CBBEdgeModel:
         market_volatility: Optional[float] = None,
         hours_to_tipoff: Optional[float] = None,
         matchup_margin_adj: float = 0.0,
+        fatigue_margin_adj: float = 0.0,
+        fatigue_metadata: Optional[Dict] = None,
         concurrent_exposure: float = 0.0,
         target_exposure: float = 0.15,
         sharp_books_available: int = 0,
@@ -810,6 +812,11 @@ class CBBEdgeModel:
                                reflecting second-order play-style interactions
                                (pace mismatch, 3PA vs drop, transition gap, etc.).
                                Applied BEFORE the market blend.
+            fatigue_margin_adj: Additive margin adjustment from FatigueService,
+                               accounting for rest days, travel, time zones,
+                               and altitude effects. Applied BEFORE market blend.
+            fatigue_metadata:    Dict with fatigue breakdown for logging/analysis
+                               (home_rest_days, away_rest_days, penalties, etc.).
             concurrent_exposure: Fraction of bankroll already deployed in
                                open bets whose windows overlap with this game
                                (e.g. 0.10 = 10%).  Used by
@@ -1050,6 +1057,16 @@ class CBBEdgeModel:
             notes.append(
                 f"Matchup adjustment: {matchup_margin_adj:+.2f}pts"
             )
+
+        # Fatigue adjustment — rest days, travel, time zones, altitude.
+        # Applied BEFORE market blend to preserve model's independent signal.
+        if fatigue_margin_adj != 0.0:
+            margin += fatigue_margin_adj
+            notes.append(
+                f"Fatigue adjustment: {fatigue_margin_adj:+.2f}pts"
+            )
+            if fatigue_metadata:
+                notes.extend(fatigue_metadata.get("notes", []))
 
         # Market-aware margin blend — shrink model margin toward sharp line.
         # Sharp books (Pinnacle/Circa) are extremely efficient; our ratings-only
@@ -1878,16 +1895,17 @@ class CBBEdgeModel:
         margin_components['home_adv'] = adjusted_hca
         margin_components['injury_adj'] = injury_adj
         margin_components['matchup_adj'] = matchup_margin_adj
+        margin_components['fatigue_adj'] = fatigue_margin_adj
 
         full_analysis_dict = {
-            'model_version': 'v9.0',
+            'model_version': 'v9.1',  # Updated for fatigue feature
             'timestamp': datetime.utcnow().isoformat(),
             'inputs': {
                 'ratings': ratings,
                 'margin_components': {
                     src: (self.weights.get(src, 0.0) / total_weight) * diff
                     for src, diff in available_sources
-                } | {'home_adv': adjusted_hca, 'injury_adj': injury_adj, 'matchup_adj': matchup_margin_adj},
+                } | {'home_adv': adjusted_hca, 'injury_adj': injury_adj, 'matchup_adj': matchup_margin_adj, 'fatigue_adj': fatigue_margin_adj},
                 'active_sources': [src for src, _ in available_sources],
                 'total_weight_used': total_weight,
                 'weight_renormalized': total_weight < 0.999,
@@ -1895,6 +1913,7 @@ class CBBEdgeModel:
                 'injuries': injuries,
                 'home_style': home_style,
                 'away_style': away_style,
+                'fatigue_metadata': fatigue_metadata,
             },
             'calculations': {
                 'projected_margin': margin,

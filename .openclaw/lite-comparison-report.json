@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-03-10T21:12:59.655844",
+  "test_cases": 12,
+  "matches": 12,
+  "match_rate": 1.0,
+  "avg_latency_ms": 0.0185910832897207,
+  "total_latency_ms": 0.2230929994766484,
+  "estimated_v2_latency_ms": 6000,
+  "speedup": 26894.613520259885,
+  "mismatches": [],
+  "recommendation": "MIGRATE"
+}

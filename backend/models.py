@@ -22,10 +22,13 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, date
 import os
-from dotenv import load_dotenv
 
-# 1. Force load the .env file BEFORE defining DATABASE_URL
-load_dotenv()
+# Try to load dotenv, but don't fail if not installed
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # Railway provides env vars directly
 
 # 2. Sync URL — used by background scripts, migrations, and legacy sync code.
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres@127.0.0.1:5432/cbb_edge")

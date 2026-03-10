@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-_API_URL = os.getenv("API_URL", "https://cbbbetting-production.up.railway.app")
+_API_URL = os.getenv("API_URL", "https://cbb-betting-production.up.railway.app")
 _API_KEY = os.getenv("API_KEY_USER1", "")
 
 

@@ -5,7 +5,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from dashboard.utils import api_get, api_post, sidebar_api_key
 from dashboard.shared import inject_custom_css
 
@@ -14,14 +14,28 @@ sidebar_api_key()
 inject_custom_css()
 
 st.title("Today's Betting Opportunities")
-today_data = api_get("/api/predictions/today")
+
+# Add toggle to show all recent bets vs only upcoming
+col1, col2 = st.columns([3, 1])
+with col2:
+    show_recent = st.toggle("Show last 24 hours (not just upcoming)", value=True, 
+                           help="Show all bets from last 24h including games that may have started")
+
+# Show current time for clarity
+st.caption(f"Current UTC: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} | Data updates every 30 min")
+
+# Use appropriate endpoint based on toggle
+if show_recent:
+    # Use the /all endpoint and filter client-side for last 24h
+    today_data = api_get("/api/predictions/today/all")
+else:
+    today_data = api_get("/api/predictions/today")
 
 if today_data:
-    c1, c2 = st.columns(2)
-    c1.metric("Games Analyzed", today_data.get("total_games", 0))
-    c2.metric("Bets Recommended", today_data.get("bets_recommended", 0))
-
     predictions = today_data.get("predictions", [])
+    
+    # Debug info
+    st.caption(f"Raw predictions from API: {len(predictions)} | Toggle 'show_recent': {show_recent}")
 
     # Last-resort UI dedup guard: API should already deduplicate, but protect
     # against stale cache or test data serving duplicate game_ids.
@@ -36,9 +50,36 @@ if today_data:
         ):
             _seen_gids[_gid] = _p
     predictions = list(_seen_gids.values())
+    
+    # Filter to last 24 hours if toggle is enabled
+    if show_recent:
+        twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
+        filtered_predictions = []
+        for p in predictions:
+            try:
+                game_date_str = p.get("game", {}).get("game_date")
+                if game_date_str:
+                    # Handle both ISO format with and without timezone
+                    game_date_str = game_date_str.replace('Z', '+00:00')
+                    game_dt = datetime.fromisoformat(game_date_str)
+                    # Convert to naive UTC for comparison
+                    if game_dt.tzinfo:
+                        game_dt = game_dt.replace(tzinfo=None)
+                    if game_dt >= twenty_four_hours_ago:
+                        filtered_predictions.append(p)
+            except Exception as e:
+                # If date parsing fails, include the prediction anyway
+                filtered_predictions.append(p)
+        predictions = filtered_predictions
+        st.caption(f"After 24h filter: {len(predictions)} games")
 
-    bets = [p for p in predictions if p["verdict"].startswith("Bet")]
+    bets = [p for p in predictions if p.get("verdict", "").startswith("Bet")]
     bets.sort(key=lambda b: b.get("edge_conservative") or 0.0, reverse=True)
+    
+    # Show metrics based on filtered data
+    c1, c2 = st.columns(2)
+    c1.metric("Games Analyzed", len(predictions))
+    c2.metric("Bets Recommended", len(bets))
 
     if bets:
         st.success(f"{len(bets)} betting opportunity(s) found!")
@@ -87,8 +128,13 @@ if today_data:
             home = g.get("home_team") or odds_data.get("home_team") or "Home"
             away = g.get("away_team") or odds_data.get("away_team") or "Away"
             matchup = f"{away} @ {home}"
+            
+            # Check if game has already started
+            game_started = False
             try:
-                game_time = datetime.fromisoformat(g.get("game_date") or "").strftime("%b %d, %I:%M %p UTC")
+                game_dt = datetime.fromisoformat(g.get("game_date") or "")
+                game_started = game_dt < datetime.utcnow()
+                game_time = game_dt.strftime("%b %d, %I:%M %p UTC")
             except (ValueError, TypeError):
                 game_time = "TBD"
 
@@ -130,7 +176,9 @@ if today_data:
                 _int_icon, _int_color = "—", "grey"
 
             _expander_label = f"{matchup} — {game_time}"
-            if _int_color in ("red", "orange"):
+            if game_started:
+                _expander_label += "  ⏱️ STARTED"
+            elif _int_color in ("red", "orange"):
                 _expander_label += f"  {_int_icon}"
 
             with st.expander(_expander_label, expanded=True):
@@ -250,7 +298,7 @@ if today_data:
             except (ValueError, TypeError):
                 game_time = "TBD"
 
-            with st.expander(f"{matchup} | Edge {edge:.1%} | {game_time}", key=f"exp_{pred_id}"):
+            with st.expander(f"{matchup} | Edge {edge:.1%} | {game_time}"):
                 col1, col2, col3 = st.columns(3)
                 col1.metric("Projected Margin", f"{margin:.1f} pts")
                 col2.metric("Conservative Edge", f"{edge:.2%}")
