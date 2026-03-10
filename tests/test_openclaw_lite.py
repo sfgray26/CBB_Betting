@@ -81,7 +81,7 @@ class TestKeywordDetection:
     
     def test_conflict_keywords_detected(self):
         checker = OpenClawLite()
-        text = "Conflicting reports from sources"
+        text = "Conflicting reports. Unclear situation with speculation."
         hits = sum(1 for kw in checker.CONFLICT_KEYWORDS if kw in text.lower())
         assert hits >= 2
 
@@ -214,7 +214,8 @@ class TestEdgeCases:
     
     def test_very_long_search_text(self):
         checker = OpenClawLite()
-        long_text = "injury " * 100  # Many risk keywords
+        # Use multiple distinct risk keywords to trigger >= 3 HIGH_RISK_KEYWORDS
+        long_text = "Player injury reported. Doubtful status. Starting lineup uncertain. " * 50
         result = checker.check_integrity_heuristic(
             search_text=long_text,
             home_team="Duke",

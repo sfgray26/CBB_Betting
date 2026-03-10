@@ -163,21 +163,22 @@ class OpenClawLite:
                 source="heuristic"
             )
         
-        # 3. Uncertain status alone can be volatile
-        if uncertainty and ("questionable" in text_lower or "doubtful" in text_lower):
-            return IntegrityResult(
-                verdict="VOLATILE",
-                confidence=0.65,
-                reasoning="Uncertain player status",
-                source="heuristic"
-            )
-        
-        # 4. Multiple high-risk signals
+        # 3. Multiple high-risk signals (check before uncertain status to avoid
+        #    over-escalation when there are many explicit risk keywords)
         if high_risk_hits >= 3:
             return IntegrityResult(
                 verdict="CAUTION",
                 confidence=0.75,
                 reasoning=f"Multiple risk indicators ({high_risk_hits} high-risk signals)",
+                source="heuristic"
+            )
+
+        # 4. Uncertain status alone can be volatile
+        if uncertainty and ("questionable" in text_lower or "doubtful" in text_lower):
+            return IntegrityResult(
+                verdict="VOLATILE",
+                confidence=0.65,
+                reasoning="Uncertain player status",
                 source="heuristic"
             )
         
