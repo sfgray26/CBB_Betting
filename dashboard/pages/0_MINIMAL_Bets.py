@@ -36,11 +36,11 @@ if st.button("Load Data", type="primary"):
         try:
             # Determine endpoint
             if endpoint_choice == "Last 24h (Debug)":
-                url = "https://cbb-betting-production.up.railway.app/admin/debug/bets-last-24h"
+                url = "https://cbbbetting-production.up.railway.app/admin/debug/bets-last-24h"
             elif endpoint_choice == "Today/All API":
-                url = "https://cbb-betting-production.up.railway.app/api/predictions/today/all"
+                url = "https://cbbbetting-production.up.railway.app/api/predictions/today/all"
             else:
-                url = "https://cbb-betting-production.up.railway.app/api/predictions/today"
+                url = "https://cbbbetting-production.up.railway.app/api/predictions/today"
             
             response = requests.get(
                 url,

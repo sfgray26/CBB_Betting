@@ -43,7 +43,7 @@ except Exception as e:
     _API_KEY = ""
 
 # Use the imported URL or fallback
-TEST_URL = api_url_from_env if api_url_from_env != "NOT SET" else (_API_URL if _API_URL else "https://cbb-betting-production.up.railway.app")
+TEST_URL = api_url_from_env if api_url_from_env != "NOT SET" else (_API_URL if _API_URL else "https://cbbbetting-production.up.railway.app")
 
 st.subheader("Testing URL")
 st.info(f"Will test: `{TEST_URL}`")
@@ -87,7 +87,7 @@ st.markdown("---")
 st.subheader("Manual Override")
 manual_url = st.text_input(
     "Test custom URL",
-    value="https://cbb-betting-production.up.railway.app"
+    value="https://cbbbetting-production.up.railway.app"
 )
 
 if st.button("Test custom URL"):

@@ -31,7 +31,7 @@ else:
             try:
                 # Use the debug endpoint
                 response = requests.get(
-                    "https://cbb-betting-production.up.railway.app/admin/debug/bets-last-24h",
+                    "https://cbbbetting-production.up.railway.app/admin/debug/bets-last-24h",
                     headers={"X-API-Key": api_key},
                     timeout=10
                 )
@@ -50,7 +50,7 @@ else:
         if st.button("🔄 Load from /today/all"):
             try:
                 response = requests.get(
-                    "https://cbb-betting-production.up.railway.app/api/predictions/today/all",
+                    "https://cbbbetting-production.up.railway.app/api/predictions/today/all",
                     headers={"X-API-Key": api_key},
                     timeout=10
                 )
