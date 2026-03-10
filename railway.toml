@@ -21,7 +21,7 @@ cmds = [
 ]
 
 [deploy]
-startCommand = "python scripts/preflight_check.py && uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
+startCommand = "uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 
