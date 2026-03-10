@@ -78,6 +78,7 @@ def send_line_movement_alert(
     delta: float,
     new_edge: float,
     abandoned: bool = False,
+    game_time: str = None,
 ) -> bool:
     """
     Send a Discord alert for significant line movement.
@@ -91,31 +92,58 @@ def send_line_movement_alert(
         delta: Movement in points.
         new_edge: Fresh model edge at the new line.
         abandoned: True if edge dropped below MIN_BET_EDGE.
+        game_time: Optional game start time string.
         
     Returns:
         True if sent successfully.
     """
-    from backend.services.discord_notifier import _post, _COLOR_YELLOW, _COLOR_GREY
+    from backend.services.discord_notifier import _post, _COLOR_YELLOW, _COLOR_GREY, _COLOR_RED
     
-    status = "🚨 **LINE_MOVEMENT_ABANDON**" if abandoned else "⚠️ **SIGNIFICANT_LINE_MOVE**"
-    color = _COLOR_GREY if abandoned else _COLOR_YELLOW
+    # Determine action and styling based on situation
+    if abandoned:
+        status = "🚨 **ABANDON** — Edge Collapsed"
+        color = _COLOR_RED
+        action = "❌ DO NOT ADD EXPOSURE"
+        recommendation = "Edge fell below minimum threshold. Consider hedging existing position if possible."
+    elif delta >= 1.5:  # Line moved in our favor
+        status = "✅ **LINE_MOVED_FAVORABLE**"
+        color = _COLOR_YELLOW
+        action = "✅ HOLD — Potential add if units allow"
+        recommendation = f"Line moved {delta:+.1f}pts toward us. Edge now {new_edge:.1%}. If you have room in your unit budget, this is a better price than entry."
+    elif delta <= -1.5:  # Line moved against us
+        if new_edge >= 0.03:  # Still playable edge
+            status = "⚠️ **LINE_MOVED_AGAINST** — Still Playable"
+            color = _COLOR_YELLOW
+            action = "📊 HOLD EXISTING — No new adds"
+            recommendation = f"Line moved {delta:+.1f}pts against us, but edge remains {new_edge:.1%}. Hold existing position, don't add."
+        else:
+            status = "⚠️ **LINE_MOVED_AGAINST** — Edge Thinning"
+            color = _COLOR_GREY
+            action = "🛑 NO NEW ADDS — Monitor for exit"
+            recommendation = f"Line moved {delta:+.1f}pts against us. Edge down to {new_edge:.1%}. Do not add exposure."
+    else:
+        return False  # Shouldn't happen given threshold check
     
     # Format spread with + for positive values
     def fmt_spread(val: float) -> str:
         return f"{val:+.1f}" if val != 0 else "0.0"
 
+    # Build time info
+    time_field = ""
+    if game_time:
+        time_field = f"\n🕐 **Tip-off:** {game_time}"
+
     embed = {
         "title": f"Line Monitor: {away_team} @ {home_team}",
-        "description": f"{status}\nDetected significant movement vs. original bet.",
+        "description": f"{status}{time_field}",
         "color": color,
         "fields": [
-            {"name": "Original Spread", "value": fmt_spread(old_spread), "inline": True},
-            {"name": "New Spread",      "value": fmt_spread(new_spread), "inline": True},
-            {"name": "Delta",           "value": f"{delta:+.1f} pts",    "inline": True},
-            {"name": "New model Edge",  "value": f"{new_edge:.1%}",      "inline": True},
-            {"name": "Action",          "value": "ABANDON (Below Edge)" if abandoned else "RE-EVALUATE", "inline": True},
+            {"name": "📊 Line Movement", "value": f"{fmt_spread(old_spread)} → {fmt_spread(new_spread)} ({delta:+.1f} pts)", "inline": False},
+            {"name": "🎯 New Model Edge", "value": f"{new_edge:.2%}", "inline": True},
+            {"name": "✅ Action", "value": action, "inline": False},
+            {"name": "📝 Recommendation", "value": recommendation, "inline": False},
         ],
-        "footer": {"text": f"Game Key: {game_key}"},
+        "footer": {"text": f"Game: {game_key} • Monitor time: {datetime.utcnow().strftime('%H:%M UTC')}"},
         "timestamp": datetime.utcnow().isoformat()
     }
     
