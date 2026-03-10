@@ -33,6 +33,9 @@ else:
 
 if today_data:
     predictions = today_data.get("predictions", [])
+    
+    # Debug info
+    st.caption(f"Raw predictions from API: {len(predictions)} | Toggle 'show_recent': {show_recent}")
 
     # Last-resort UI dedup guard: API should already deduplicate, but protect
     # against stale cache or test data serving duplicate game_ids.
@@ -51,12 +54,26 @@ if today_data:
     # Filter to last 24 hours if toggle is enabled
     if show_recent:
         twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
-        predictions = [
-            p for p in predictions 
-            if datetime.fromisoformat(p.get("game", {}).get("game_date", "2000-01-01")) >= twenty_four_hours_ago
-        ]
+        filtered_predictions = []
+        for p in predictions:
+            try:
+                game_date_str = p.get("game", {}).get("game_date")
+                if game_date_str:
+                    # Handle both ISO format with and without timezone
+                    game_date_str = game_date_str.replace('Z', '+00:00')
+                    game_dt = datetime.fromisoformat(game_date_str)
+                    # Convert to naive UTC for comparison
+                    if game_dt.tzinfo:
+                        game_dt = game_dt.replace(tzinfo=None)
+                    if game_dt >= twenty_four_hours_ago:
+                        filtered_predictions.append(p)
+            except Exception as e:
+                # If date parsing fails, include the prediction anyway
+                filtered_predictions.append(p)
+        predictions = filtered_predictions
+        st.caption(f"After 24h filter: {len(predictions)} games")
 
-    bets = [p for p in predictions if p["verdict"].startswith("Bet")]
+    bets = [p for p in predictions if p.get("verdict", "").startswith("Bet")]
     bets.sort(key=lambda b: b.get("edge_conservative") or 0.0, reverse=True)
     
     # Show metrics based on filtered data
