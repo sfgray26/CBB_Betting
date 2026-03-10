@@ -12,7 +12,7 @@
 | Component | Status | Detail |
 |-----------|--------|--------|
 | Railway API | OK | Live, healthy. All syntax errors resolved. |
-| V9 Model | OK | SNR + Integrity + Seed-Spread Kelly scalars. `model_version='v9.0'` |
+| V9.1 Model | OK | **Fatigue Model LIVE**. Rest/travel/altitude adjustments active. `model_version='v9.1'` |
 | Env Var Parsing | OK | `get_float_env` on all float reads. Zero plain `float(os.getenv)`. |
 | CI Syntax Guard | OK | `py_compile` step in `deploy.yml` before pytest. |
 | Analysis Pipeline | OK | Nightly running. 0 bets = correct conservatism (K-3). V9 recal at 50 bets. |
@@ -63,6 +63,7 @@
 
 | Mission | Who | What |
 |---------|-----|------|
+| **K-8** | **Kimi** | **Fatigue/Rest Model v9.1 — NEW FEATURE**. Complete fatigue service (`backend/services/fatigue.py`) with rest days, travel distance, time zones, altitude, cumulative load. Integrated into `betting_model.py` (`fatigue_margin_adj`, `fatigue_metadata` params). 23 tests. Documentation: `docs/FATIGUE_MODEL.md`. Model version bumped to v9.1. |
 | A-30 | Claude | Nightly Health Check K-7 thresholds wired in sentinel.py. Morning briefing job@07:00 ET added. Drawdown access bug fixed. 478/481 tests. |
 | K-7 | Kimi | A-30 Nightly Health Check thresholds designed. MAE WARNING=9.5pts, ELEVATED=12pts, CRITICAL=15pts. Tournament adjustments specified. See `reports/k7-health-check-thresholds.md`. |
 | A-29 | Claude | Remove dead .openclaw relative import from analysis.py. Non-breaking cleanup. 481/481 tests. |
