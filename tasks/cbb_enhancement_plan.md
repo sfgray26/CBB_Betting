@@ -73,21 +73,24 @@ helping or adding noise.
 ## SPRINT 1 — Critical Data Pipeline Fix (Mar 10–12) 🔴
 
 ### P0.1 — BartTorvik Scraper Audit
-- [ ] Verify `barttorvik.com/2026_team_results.csv` is publicly accessible (no auth required)
-- [ ] Check if BARTTORVIK_USERNAME/PASSWORD in ratings.py is actually needed or legacy code
-- [ ] Run scraper in isolation and confirm > 300 teams returned
-- [ ] If auth IS required: obtain credentials and set in Railway
+- [x] Verify `barttorvik.com/2026_team_results.csv` is publicly accessible (no auth required) — ✅ CONFIRMED
+- [x] Check if BARTTORVIK_USERNAME/PASSWORD in ratings.py is actually needed or legacy code — ✅ NOT USED (cloudscraper only)
+- [x] Run scraper in isolation and confirm > 300 teams returned — ✅ 366 lines (365 teams)
+- [x] If auth IS required: obtain credentials and set in Railway — ✅ NOT NEEDED
 
-### P0.2 — EvanMiya Scraper Audit
-- [ ] Verify `evanmiya.com/` HTML table is still accessible and scraper parses correctly
-- [ ] If scraper fails due to HTML structure changes: fix BeautifulSoup selectors
-- [ ] Fallback option: if EvanMiya is broken and hard to fix, run 2-source (KenPom + BartTorvik)
-  with appropriate weight renormalization. Do NOT keep running on 1 source.
+### P0.2 — EvanMiya Scraper Audit  
+- [x] Verify `evanmiya.com/` HTML table is still accessible and scraper parses correctly — ⚠️ BLOCKED by Cloudflare (by design)
+- [x] If scraper fails due to HTML structure changes: fix BeautifulSoup selectors — ⚠️ INTENTIONALLY DROPPED
+- [x] Fallback option: if EvanMiya is broken and hard to fix, run 2-source (KenPom + BartTorvik) — ✅ ACTIVE
+  with appropriate weight renormalization. Do NOT keep running on 1 source. — ✅ 2-SOURCE MODE WORKING
 
 ### P0.3 — Live Rating Coverage Endpoint
-- [ ] Add `GET /admin/ratings/status` endpoint showing team counts per source
-- [ ] Add logging to nightly analysis: how many teams were loaded per source
-- [ ] Alert Discord if any source returns 0 teams
+- [x] Add `GET /admin/ratings/status` endpoint showing team counts per source — ✅ EXISTS at line 1645
+- [x] Add logging to nightly analysis: how many teams were loaded per source — ✅ EXISTS in get_all_ratings()
+- [x] Alert Discord if any source returns 0 teams — ✅ send_source_health_alert() in discord_notifier.py
+
+### P0.4 — Clean Up Legacy References
+- [x] Remove BARTTORVIK_USERNAME/PASSWORD references from docs — ✅ Only in docs, not code
 
 ---
 
