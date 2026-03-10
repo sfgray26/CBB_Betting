@@ -1649,6 +1649,48 @@ async def recalibration_audit(
     }
 
 
+@app.get("/admin/debug/bets-last-24h")
+async def debug_bets_last_24h(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Debug endpoint: Get all bets from last 24 hours.
+    
+    Returns simple list for debugging UI issues.
+    """
+    from datetime import timedelta
+    
+    since = datetime.utcnow() - timedelta(hours=24)
+    
+    predictions = (
+        db.query(Prediction, Game)
+        .join(Game, Prediction.game_id == Game.id)
+        .filter(Game.game_date >= since)
+        .all()
+    )
+    
+    bets = [(p, g) for p, g in predictions if p.verdict.startswith("Bet")]
+    
+    return {
+        "total_predictions": len(predictions),
+        "bet_count": len(bets),
+        "since": since.isoformat(),
+        "bets": [
+            {
+                "game_id": g.id,
+                "home_team": g.home_team,
+                "away_team": g.away_team,
+                "game_date": g.game_date.isoformat() if g.game_date else None,
+                "verdict": p.verdict,
+                "edge": p.edge_conservative,
+                "units": p.recommended_units,
+            }
+            for p, g in bets
+        ]
+    }
+
+
 @app.post("/admin/force-update-outcomes")
 async def force_update_outcomes(user: str = Depends(verify_admin_api_key)):
     """Manually trigger the outcome-update job (admin only)."""
