@@ -335,3 +335,59 @@ def send_verdict_flip_alert(movement: "LineMovement") -> None:
     _post({"embeds": [embed]})
 
 
+def send_source_health_alert(
+    n_active: int,
+    kenpom_up: bool,
+    barttorvik_up: bool,
+    evanmiya_status: str,
+    kenpom_teams: int = 0,
+    barttorvik_teams: int = 0,
+    evanmiya_teams: int = 0,
+) -> None:
+    """
+    Fire a Discord alert when fewer than 2 of 3 rating sources are active.
+
+    KenPom-only mode degrades edge accuracy: 10% margin shrinkage penalty
+    fires and margin_se widens from 1.50 → 1.80, suppressing BET verdicts.
+    """
+    if not _bot_token():
+        return
+
+    _COLOR_RED = 0xE74C3C
+
+    em_icon = "✅" if evanmiya_status == "UP" else ("⚠️" if evanmiya_status == "DROPPED" else "❌")
+    status_line = (
+        f"KenPom: {'✅' if kenpom_up else '❌'} ({kenpom_teams} teams) | "
+        f"BartTorvik: {'✅' if barttorvik_up else '❌'} ({barttorvik_teams} teams) | "
+        f"EvanMiya: {em_icon} ({evanmiya_teams} teams)"
+    )
+
+    severity = "CRITICAL" if n_active < 2 else "WARNING"
+    impact = (
+        "Model on **1 source only** — margin shrinkage active, wider CI, fewer BET verdicts. "
+        "**Do not trust outputs until fixed.**"
+        if n_active < 2
+        else "Model on **2 of 3 sources** — slightly degraded accuracy."
+    )
+
+    embed = {
+        "title": f"⚠️ RATINGS SOURCE {severity}: {n_active}/3 Active",
+        "description": impact,
+        "color": _COLOR_RED,
+        "fields": [
+            {"name": "Source Status", "value": status_line, "inline": False},
+            {
+                "name": "Action Required",
+                "value": (
+                    "Check Railway logs. "
+                    "BartTorvik → `barttorvik.com/2026_super_standings.json` · "
+                    "EvanMiya → Cloudflare block, Playwright fallback active."
+                ),
+                "inline": False,
+            },
+        ],
+        "footer": {"text": "CBB Edge — Source Health Monitor"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    _post({"embeds": [embed]})
+

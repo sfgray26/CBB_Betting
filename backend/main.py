@@ -1642,6 +1642,62 @@ async def get_odds_monitor_status(user: str = Depends(verify_admin_api_key)):
     return monitor.get_status()
 
 
+@app.get("/admin/ratings/status")
+async def get_ratings_status(user: str = Depends(verify_admin_api_key)):
+    """
+    Return live rating source coverage.
+
+    Fetches (or returns cached) ratings from all three sources and reports
+    how many teams each source is providing.  Use this to diagnose KenPom-only
+    degraded mode before running nightly analysis.
+    """
+    from backend.services.ratings import get_ratings_service
+    service = get_ratings_service()
+    # Use cached data if < 6 hours old to avoid unnecessary scrape on status checks
+    ratings = service.get_all_ratings(use_cache=True)
+
+    kenpom_teams      = len(ratings.get("kenpom", {}))
+    barttorvik_teams  = len(ratings.get("barttorvik", {}))
+    evanmiya_teams    = len(ratings.get("evanmiya", {}))
+    meta              = ratings.get("_meta", {})
+    evanmiya_dropped  = meta.get("evanmiya_dropped", False)
+    kenpom_ff_teams   = meta.get("kenpom_ff_teams", 0)
+
+    active_sources = [
+        s for s, n in [
+            ("kenpom", kenpom_teams),
+            ("barttorvik", barttorvik_teams),
+            ("evanmiya", evanmiya_teams if not evanmiya_dropped else 0),
+        ] if n > 0
+    ]
+
+    return {
+        "sources": {
+            "kenpom":     {"teams": kenpom_teams, "status": "UP" if kenpom_teams > 0 else "DOWN"},
+            "barttorvik": {"teams": barttorvik_teams, "status": "UP" if barttorvik_teams > 0 else "DOWN"},
+            "evanmiya":   {
+                "teams": evanmiya_teams,
+                "status": "DROPPED" if evanmiya_dropped else ("UP" if evanmiya_teams > 0 else "DOWN"),
+            },
+            "kenpom_four_factors": {"teams": kenpom_ff_teams},
+        },
+        "active_count": len(active_sources),
+        "active_sources": active_sources,
+        "model_health": (
+            "CRITICAL" if len(active_sources) < 2
+            else "DEGRADED" if len(active_sources) < 3
+            else "OK"
+        ),
+        "cache_age_hours": round(
+            (
+                (__import__("datetime").datetime.utcnow() - service.cache_timestamp).total_seconds() / 3600
+                if service.cache_timestamp else 0
+            ),
+            2,
+        ),
+    }
+
+
 # ============================================================================
 # BANKROLL OVERRIDE
 # ============================================================================
