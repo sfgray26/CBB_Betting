@@ -1578,6 +1578,77 @@ async def manual_recalibration(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/admin/recalibration/audit")
+async def recalibration_audit(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Get recalibration audit data (admin only).
+    
+    Returns:
+        - Settled bets count with prediction links
+        - Current home_advantage and sd_multiplier values
+        - Drift from baseline parameters
+        - Recommendations for tournament prep
+    """
+    from sqlalchemy import func
+    
+    # Count settled bets with prediction links
+    settled_with_pred = (
+        db.query(BetLog)
+        .filter(BetLog.outcome.isnot(None))
+        .filter(BetLog.prediction_id.isnot(None))
+        .count()
+    )
+    
+    # Get current parameters
+    current_ha = (
+        db.query(ModelParameter)
+        .filter(ModelParameter.parameter_name == 'home_advantage')
+        .order_by(ModelParameter.effective_date.desc())
+        .first()
+    )
+    
+    current_sd = (
+        db.query(ModelParameter)
+        .filter(ModelParameter.parameter_name == 'sd_multiplier')
+        .order_by(ModelParameter.effective_date.desc())
+        .first()
+    )
+    
+    ha_value = current_ha.parameter_value if current_ha else 3.09
+    sd_value = current_sd.parameter_value if current_sd else 0.85
+    
+    # Calculate drift from baselines
+    baseline_ha = 3.09
+    baseline_sd = 0.85
+    
+    ha_drift = abs(ha_value - baseline_ha) / baseline_ha * 100
+    sd_drift = abs(sd_value - baseline_sd) / baseline_sd * 100
+    
+    # Check last recalibration date
+    last_recal = current_ha.effective_date if current_ha else None
+    days_since = (datetime.utcnow() - last_recal).days if last_recal else None
+    
+    return {
+        "settled_bets": settled_with_pred,
+        "sufficient_data": settled_with_pred >= 30,
+        "home_advantage": round(ha_value, 4),
+        "sd_multiplier": round(sd_value, 4),
+        "ha_drift_pct": round(ha_drift, 1),
+        "sd_drift_pct": round(sd_drift, 1),
+        "drift_alert": ha_drift > 15 or sd_drift > 15,
+        "last_recalibration": last_recal.isoformat() if last_recal else None,
+        "days_since_recalibration": days_since,
+        "recommendations": {
+            "needs_more_data": settled_with_pred < 30,
+            "stale_recalibration": days_since > 7 if days_since else True,
+            "parameter_drift": ha_drift > 15 or sd_drift > 15,
+        }
+    }
+
+
 @app.post("/admin/force-update-outcomes")
 async def force_update_outcomes(user: str = Depends(verify_admin_api_key)):
     """Manually trigger the outcome-update job (admin only)."""

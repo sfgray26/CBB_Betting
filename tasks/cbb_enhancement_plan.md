@@ -125,10 +125,12 @@ helping or adding noise.
 - [ ] Tie to existing seed-spread scalar logic in V9.1 model
 
 ### P4 — Recalibration Audit & Seed
-- [ ] Query: `SELECT COUNT(*) FROM bet_logs WHERE outcome IS NOT NULL AND prediction_id IS NOT NULL`
-- [ ] If < 30: paper-trade pipeline has a gap — fix BetLog auto-creation in analysis.py
-- [ ] If ≥ 30: run recalibration manually and review home_advantage output
-- [ ] Check model_parameters table for existing recalibration entries
+- [x] Query: `SELECT COUNT(*) FROM bet_logs WHERE outcome IS NOT NULL AND prediction_id IS NOT NULL`
+- [x] Create `scripts/recalibration_audit.py` diagnostic tool
+- [x] Add `/admin/recalibration/audit` endpoint for real-time status
+- [x] Check model_parameters table for existing recalibration entries
+- [x] Report drift from baseline (HA=3.09, SD=0.85)
+- [ ] Alert Discord if <30 bets or drift >15%
 
 ### P1 — Sharp Money / Steam Detection
 - [ ] Create `backend/services/sharp_money.py`

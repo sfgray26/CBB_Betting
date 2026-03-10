@@ -98,10 +98,11 @@ Previous deliverables still valid:
 | **P1: Sharp Money** | `sharp_money.py`, `test_sharp_money.py` | 400 | 15+ | ✅ Merged |
 | **P2: Conf HCA** | `conference_hca.py`, `test_conference_hca.py` | 280 | 18+ | ✅ Merged |
 | **P3: Recency** | `recency_weight.py`, `test_recency_weight.py` | 350 | 20+ | ✅ Merged |
+| **P4: Recal Audit** | `recalibration_audit.py`, endpoint | 200 | — | ✅ Merged |
 | **Railway Fix** | `railway.toml`, `preflight_check.py` | 150 | — | ✅ Merged |
 | **Build Fix** | Fixed `cloudscraper>=2.3.7` → `>=1.2.0` | 1 | — | ✅ Merged |
 
-**Total:** ~3,200 lines added, 110+ tests, 18 commits pushed.
+**Total:** ~3,400 lines added, 110+ tests, 19 commits pushed.
 
 ### 3.2 P1: Sharp Money Detection (NEW)
 
@@ -209,7 +210,51 @@ adj = get_tournament_adjustments(is_neutral=True)
 # Returns: margin_se_inflation=0.20, form_window_days=14
 ```
 
-### 3.5 P0: Data Pipeline Audit (COMPLETE)
+### 3.5 P4: Recalibration Audit (NEW)
+
+**Files:** `scripts/recalibration_audit.py` (200 lines)
+**Endpoint:** `GET /admin/recalibration/audit`
+
+**Purpose:** Validate recalibration pipeline before tournament
+
+**Checks:**
+1. **Data Sufficiency** — Count settled bets with prediction links (need ≥30)
+2. **Current Parameters** — home_advantage, sd_multiplier from model_parameters
+3. **Drift Detection** — Compare to baselines (HA=3.09, SD=0.85)
+4. **Recency** — Days since last recalibration
+
+**CLI Usage:**
+```bash
+# Run audit
+python scripts/recalibration_audit.py
+
+# Output includes:
+# - Settled bets count
+# - Current parameter values
+# - Drift percentages
+# - Recommendations
+```
+
+**API Response:**
+```json
+{
+  "settled_bets": 45,
+  "sufficient_data": true,
+  "home_advantage": 3.12,
+  "sd_multiplier": 0.82,
+  "ha_drift_pct": 1.0,
+  "sd_drift_pct": 3.5,
+  "drift_alert": false,
+  "days_since_recalibration": 2,
+  "recommendations": {
+    "needs_more_data": false,
+    "stale_recalibration": false,
+    "parameter_drift": false
+  }
+}
+```
+
+### 3.6 P0: Data Pipeline Audit (COMPLETE)
 
 **Findings:**
 - ✅ BartTorvik: Public CSV working (365 teams, no auth needed)
@@ -336,6 +381,7 @@ Complete Fantasy Baseball Phase 0 before March 18 (tournament starts), OR defer 
 | **P1** | Sharp Money Detection | 1 day | High | ✅ Complete |
 | **P2** | Conference-Specific HCA | 0.5 day | Medium | ✅ Complete |
 | **P3** | Late-Season Recency Weighting | 0.5 day | Medium | ✅ Complete |
+| **P4** | Recalibration Audit | 0.5 day | Medium | ✅ Complete |
 | **C** | Fantasy Baseball completion | 3-4 days | Time-sensitive (Mar 20) | ⚠️ Defer |
 | **P4** | Recalibration Audit | 0.5 day | Medium | Post-tournament |
 | **E** | ML Recalibration (E-4) | 1-2 weeks | High | Post-tournament |
