@@ -1690,7 +1690,7 @@ async def get_ratings_status(user: str = Depends(verify_admin_api_key)):
         ),
         "cache_age_hours": round(
             (
-                (__import__("datetime").datetime.utcnow() - service.cache_timestamp).total_seconds() / 3600
+                (datetime.utcnow() - service.cache_timestamp).total_seconds() / 3600
                 if service.cache_timestamp else 0
             ),
             2,
