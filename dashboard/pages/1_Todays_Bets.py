@@ -5,7 +5,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 import streamlit as st
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from dashboard.utils import api_get, api_post, sidebar_api_key
 from dashboard.shared import inject_custom_css
 
@@ -15,21 +15,23 @@ inject_custom_css()
 
 st.title("Today's Betting Opportunities")
 
-# Add toggle to show all bets vs only upcoming
+# Add toggle to show all recent bets vs only upcoming
 col1, col2 = st.columns([3, 1])
 with col2:
-    show_all = st.toggle("Show all today's bets (including started)", value=False, 
-                         help="Enable to see bets from earlier today even if games have started")
+    show_recent = st.toggle("Show last 24 hours (not just upcoming)", value=True, 
+                           help="Show all bets from last 24h including games that may have started")
+
+# Show current time for clarity
+st.caption(f"Current UTC: {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} | Data updates every 30 min")
 
 # Use appropriate endpoint based on toggle
-endpoint = "/api/predictions/today/all" if show_all else "/api/predictions/today"
-today_data = api_get(endpoint)
+if show_recent:
+    # Use the /all endpoint and filter client-side for last 24h
+    today_data = api_get("/api/predictions/today/all")
+else:
+    today_data = api_get("/api/predictions/today")
 
 if today_data:
-    c1, c2 = st.columns(2)
-    c1.metric("Games Analyzed", today_data.get("total_games", 0))
-    c2.metric("Bets Recommended", today_data.get("bets_recommended", 0))
-
     predictions = today_data.get("predictions", [])
 
     # Last-resort UI dedup guard: API should already deduplicate, but protect
@@ -45,9 +47,22 @@ if today_data:
         ):
             _seen_gids[_gid] = _p
     predictions = list(_seen_gids.values())
+    
+    # Filter to last 24 hours if toggle is enabled
+    if show_recent:
+        twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
+        predictions = [
+            p for p in predictions 
+            if datetime.fromisoformat(p.get("game", {}).get("game_date", "2000-01-01")) >= twenty_four_hours_ago
+        ]
 
     bets = [p for p in predictions if p["verdict"].startswith("Bet")]
     bets.sort(key=lambda b: b.get("edge_conservative") or 0.0, reverse=True)
+    
+    # Show metrics based on filtered data
+    c1, c2 = st.columns(2)
+    c1.metric("Games Analyzed", len(predictions))
+    c2.metric("Bets Recommended", len(bets))
 
     if bets:
         st.success(f"{len(bets)} betting opportunity(s) found!")
