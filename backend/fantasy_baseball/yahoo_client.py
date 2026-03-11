@@ -196,11 +196,26 @@ class YahooFantasyClient:
     def get_league(self) -> dict:
         """League metadata: name, scoring type, settings."""
         data = self._get(f"league/{self.league_key}")
-        return data["fantasy_content"]["league"][0]
+        league_0 = data["fantasy_content"]["league"][0]
+        # Yahoo returns league[0] as either a merged dict or a list of individual dicts
+        if isinstance(league_0, list):
+            meta = {}
+            for item in league_0:
+                if isinstance(item, dict):
+                    meta.update(item)
+            return meta
+        return league_0
 
     def get_league_settings(self) -> dict:
         data = self._get(f"league/{self.league_key}/settings")
-        return data["fantasy_content"]["league"]
+        league_0 = data["fantasy_content"]["league"][0]
+        if isinstance(league_0, list):
+            meta = {}
+            for item in league_0:
+                if isinstance(item, dict):
+                    meta.update(item)
+            return meta
+        return league_0
 
     def get_standings(self) -> list[dict]:
         data = self._get(f"league/{self.league_key}/standings")
