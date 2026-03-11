@@ -216,6 +216,12 @@ class YahooFantasyClient:
             data["fantasy_content"]["league"][index]
         )
 
+    def _team_section(self, data: dict, index: int) -> dict:
+        """Extract and flatten team[index] from a fantasy_content response."""
+        return self._flatten_league_section(
+            data["fantasy_content"]["team"][index]
+        )
+
     # ------------------------------------------------------------------
     # League endpoints
     # ------------------------------------------------------------------
@@ -277,7 +283,7 @@ class YahooFantasyClient:
             team_key = self.get_my_team_key()
         data = self._get(f"team/{team_key}/roster/players")
         players_raw = (
-            data["fantasy_content"]["team"][1]
+            self._team_section(data, 1)
             .get("roster", {})
             .get("0", {})
             .get("players", {})
@@ -385,7 +391,7 @@ class YahooFantasyClient:
             date = datetime.utcnow().strftime("%Y-%m-%d")
         data = self._get(f"team/{team_key}/roster/players", params={"date": date})
         players_raw = (
-            data["fantasy_content"]["team"][1]
+            self._team_section(data, 1)
             .get("roster", {})
             .get("0", {})
             .get("players", {})

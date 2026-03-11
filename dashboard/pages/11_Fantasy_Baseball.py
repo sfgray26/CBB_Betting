@@ -16,9 +16,11 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from dotenv import load_dotenv
 
 # Ensure backend imports work when running from dashboard/
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 from backend.fantasy_baseball.keeper_engine import (
     KeeperEngine,
@@ -366,7 +368,7 @@ with tab_draft:
             return f"background-color: {colors.get(val, '#1e1e1e')}; color: white"
 
         st.dataframe(
-            df.style.applymap(_tier_color, subset=["T"]),
+            df.style.map(_tier_color, subset=["T"]),
             use_container_width=True,
             hide_index=True,
             height=520,
