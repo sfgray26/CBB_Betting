@@ -2384,6 +2384,61 @@ async def dk_direct_import_confirm(
 
 
 # ============================================================================
+# YAHOO FANTASY BASEBALL — DEBUG ENDPOINTS
+# ============================================================================
+
+@app.get("/admin/yahoo/test")
+async def yahoo_test(user: str = Depends(verify_admin_api_key)):
+    """
+    Test Yahoo API connectivity.
+    Returns league name + authenticated team key.
+    Requires YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET, YAHOO_REFRESH_TOKEN in env.
+    """
+    try:
+        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        client = YahooFantasyClient()
+        league = client.get_league()
+        team_key = client.get_my_team_key()
+        return {
+            "status": "ok",
+            "league_name": league.get("name"),
+            "league_key": client.league_key,
+            "my_team_key": team_key,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/admin/yahoo/roster-raw")
+async def yahoo_roster_raw(user: str = Depends(verify_admin_api_key)):
+    """
+    Return the raw fantasy_content structure from Yahoo for your roster.
+    Use this to inspect the exact shape Yahoo returns so parsing can be debugged.
+    """
+    try:
+        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        client = YahooFantasyClient()
+        raw = client.get_roster_raw()
+        return {"fantasy_content": raw}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/admin/yahoo/roster")
+async def yahoo_roster(user: str = Depends(verify_admin_api_key)):
+    """
+    Return your parsed Yahoo Fantasy roster.
+    """
+    try:
+        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        client = YahooFantasyClient()
+        roster = client.get_roster()
+        return {"count": len(roster), "players": roster}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ============================================================================
 # ERROR HANDLERS
 # ============================================================================
 
