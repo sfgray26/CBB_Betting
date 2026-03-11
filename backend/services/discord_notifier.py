@@ -714,3 +714,130 @@ def send_routine_log(message: str) -> bool:
     Send routine operation log to #system-logs channel.
     """
     return send_to_channel("system-logs", message=message)
+
+
+# ---------------------------------------------------------------------------
+# Fantasy Baseball — Draft Notifications
+# ---------------------------------------------------------------------------
+
+
+def send_draft_pick(
+    pick_number: int,
+    round_number: int,
+    player_name: str,
+    positions: list,
+    team_key: str,
+    is_our_pick: bool = False,
+    top_recommendations: list = None,
+) -> bool:
+    """Send a draft pick notification to #fantasy-draft channel.
+
+    Args:
+        pick_number: Overall pick number (1-276).
+        round_number: Round number (1-23).
+        player_name: Player name string.
+        positions: List of position strings (e.g. ['SP', 'RP']).
+        team_key: Yahoo team_key of the team that made the pick.
+        is_our_pick: True when this pick belongs to us.
+        top_recommendations: Optional list of player dicts shown as
+                             on-the-clock recommendations when is_our_pick=True.
+
+    Returns:
+        True if the message was sent successfully.
+    """
+    if top_recommendations is None:
+        top_recommendations = []
+
+    pos_str = "/".join(positions) if positions else "?"
+
+    if is_our_pick:
+        color = _COLOR_GREEN
+        title = "YOUR PICK"
+        description = f"**Pick #{pick_number} (Round {round_number})** — You selected **{player_name}** ({pos_str})"
+    else:
+        color = _COLOR_BLUE
+        title = f"Pick #{pick_number} (Round {round_number})"
+        description = f"**{team_key}** selected **{player_name}** ({pos_str})"
+
+    fields = [
+        {"name": "Overall Pick", "value": str(pick_number), "inline": True},
+        {"name": "Round",        "value": str(round_number), "inline": True},
+        {"name": "Position(s)",  "value": pos_str,           "inline": True},
+        {"name": "Team",         "value": team_key,          "inline": True},
+    ]
+
+    if is_our_pick and top_recommendations:
+        rec_lines = []
+        for rec in top_recommendations[:3]:
+            name = rec.get("player_name") or rec.get("name", "?")
+            positions_rec = rec.get("positions", [])
+            pos_rec_str = "/".join(positions_rec[:2]) if positions_rec else "?"
+            z = rec.get("z_score", 0.0)
+            rec_lines.append(f"{name} ({pos_rec_str}) Z={z:+.2f}")
+        if rec_lines:
+            fields.append({
+                "name": "Top Recommendations",
+                "value": "\n".join(rec_lines),
+                "inline": False,
+            })
+
+    embed = {
+        "title": title,
+        "description": description,
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "Treemendous Draft Tracker"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return send_to_channel("fantasy-draft", embed=embed)
+
+
+def send_on_the_clock_alert(picks_away: int, top_recommendations: list) -> bool:
+    """Send an on-the-clock warning to #fantasy-draft channel.
+
+    Fires when our pick is picks_away picks from the current clock position.
+    Typically triggered at ON_THE_CLOCK_THRESHOLD (2 picks away).
+
+    Args:
+        picks_away: Number of picks until our turn (must be > 0).
+        top_recommendations: List of player dicts to show as prep targets.
+
+    Returns:
+        True if the message was sent successfully.
+    """
+    if top_recommendations is None:
+        top_recommendations = []
+
+    color = _COLOR_YELLOW
+    title = "ON THE CLOCK"
+    description = f"**{picks_away} pick{'s' if picks_away != 1 else ''} until your turn.** Get ready!"
+
+    fields: list = [
+        {"name": "Picks Away", "value": str(picks_away), "inline": True},
+    ]
+
+    if top_recommendations:
+        rec_lines = []
+        for rec in top_recommendations[:3]:
+            name = rec.get("player_name") or rec.get("name", "?")
+            positions_rec = rec.get("positions", [])
+            pos_rec_str = "/".join(positions_rec[:2]) if positions_rec else "?"
+            z = rec.get("z_score", 0.0)
+            rec_lines.append(f"{name} ({pos_rec_str}) Z={z:+.2f}")
+        fields.append({
+            "name": "Suggested Targets",
+            "value": "\n".join(rec_lines),
+            "inline": False,
+        })
+
+    embed = {
+        "title": title,
+        "description": description,
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "Treemendous Draft Tracker"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return send_to_channel("fantasy-draft", embed=embed)

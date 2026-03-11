@@ -265,132 +265,456 @@ with tab_keeper:
 
 
 # ===========================================================================
-# TAB: Draft Board
+# TAB: Draft Board — Interactive Draft Assistant
 # ===========================================================================
-with tab_draft:
-    st.header("Draft Board")
 
-    # --- Live draft callout ---
+# ---------------------------------------------------------------------------
+# Roster slot definition for Treemendous (23 total)
+# ---------------------------------------------------------------------------
+ROSTER_SLOTS = {
+    "C": 1, "1B": 1, "2B": 1, "3B": 1, "SS": 1,
+    "OF": 3, "Util": 1,
+    "SP": 5, "RP": 2, "P": 1,
+    "BN": 5,
+}
+TOTAL_PICKS = sum(ROSTER_SLOTS.values())  # 23
+
+# Positions that can fill each slot
+SLOT_ELIGIBLE = {
+    "C": ["C"],
+    "1B": ["1B"],
+    "2B": ["2B"],
+    "3B": ["3B"],
+    "SS": ["SS"],
+    "OF": ["OF", "LF", "CF", "RF"],
+    "Util": ["C", "1B", "2B", "3B", "SS", "OF", "LF", "CF", "RF", "DH"],
+    "SP": ["SP"],
+    "RP": ["RP"],
+    "P": ["SP", "RP"],
+    "BN": ["C", "1B", "2B", "3B", "SS", "OF", "LF", "CF", "RF", "DH", "SP", "RP"],
+}
+
+
+def _can_fill_slot(player_positions: list, slot: str) -> bool:
+    eligible = SLOT_ELIGIBLE.get(slot, [])
+    return any(pos in eligible for pos in player_positions)
+
+
+def _compute_remaining_slots(drafted_players: list) -> dict:
+    """Return remaining open slots given the drafted player list."""
+    remaining = dict(ROSTER_SLOTS)
+    for p in drafted_players:
+        pos_list = p.get("positions", [])
+        # Greedily fill the most specific slot first
+        slot_order = ["C", "1B", "2B", "3B", "SS", "OF", "SP", "RP", "P", "Util", "BN"]
+        for slot in slot_order:
+            if remaining.get(slot, 0) > 0 and _can_fill_slot(pos_list, slot):
+                remaining[slot] -= 1
+                break
+    return remaining
+
+
+def _position_needed(remaining_slots: dict) -> list:
+    """Return position groups that still have open roster slots (excluding BN)."""
+    needed = []
+    for slot, count in remaining_slots.items():
+        if slot == "BN":
+            continue
+        if count > 0:
+            needed.append(slot)
+    return needed
+
+
+def _player_fills_need(player: dict, needed_slots: list) -> bool:
+    pos_list = player.get("positions", [])
+    for slot in needed_slots:
+        if _can_fill_slot(pos_list, slot):
+            return True
+    return False
+
+
+def _get_proj_stat(player: dict, stat: str, default=0):
+    return player.get("proj", {}).get(stat, default)
+
+
+def _load_draft_board() -> list:
+    """Load board, preferring CSV projections over hardcoded fallback."""
+    try:
+        from backend.fantasy_baseball.projections_loader import load_full_board
+        csv_board = load_full_board()
+        if csv_board and len(csv_board) >= 100:
+            return csv_board
+    except Exception:
+        pass
+    try:
+        return get_board()
+    except Exception:
+        return []
+
+
+with tab_draft:
+    st.header("Draft Board Assistant")
+
     st.info(
-        "**Draft: Mon Mar 23 @ 7:30am EDT · 90-sec clock**  \n"
-        "Use **page 12 — Live Draft Assistant** during the actual draft for "
-        "real-time pick recommendations, pick counter, and roster tracking.  \n"
-        "This page is for pre-draft research and strategy prep."
+        "**Draft: Mon Mar 23 @ 7:30am EDT · 90-sec clock · 12-team Snake · 23 rounds**  \n"
+        "Enter your pick number below to get recommendations. "
+        "Use **Draft Player** to cross off players as the draft progresses."
     )
 
-    # --- Load board ---
-    try:
-        board = get_board()
-        board_loaded = True
-    except Exception as e:
-        st.error(f"Could not load player board: {e}")
-        board = []
-        board_loaded = False
+    # --- Session state init ---
+    if "drafted" not in st.session_state:
+        st.session_state["drafted"] = []  # list of player dicts
+    if "draft_pick_num" not in st.session_state:
+        st.session_state["draft_pick_num"] = 1
 
-    if board_loaded and board:
-        st.caption(f"{len(board)} players loaded from Steamer 2026 projections")
+    # --- Load board (cached via session state to avoid re-loading on every rerender) ---
+    if "draft_board_cache" not in st.session_state:
+        with st.spinner("Loading 2026 projection board..."):
+            st.session_state["draft_board_cache"] = _load_draft_board()
 
-        # --- Filters ---
-        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
-        with col_f1:
-            pos_opts = ["All", "SP", "RP", "C", "1B", "2B", "3B", "SS", "OF", "DH"]
-            pos_filter = st.selectbox("Position", pos_opts, key="db_pos_filter")
-        with col_f2:
-            type_opts = ["All", "Batter", "Pitcher"]
-            type_filter = st.selectbox("Type", type_opts, key="db_type_filter")
-        with col_f3:
-            tier_opts = ["All"] + [str(t) for t in sorted({p["tier"] for p in board if p["tier"] > 0})]
-            tier_filter = st.selectbox("Tier", tier_opts, key="db_tier_filter")
-        with col_f4:
-            show_n = st.number_input("Show top N", min_value=20, max_value=len(board), value=100, step=20, key="db_show_n")
+    full_board = st.session_state["draft_board_cache"]
 
-        # --- Search ---
-        search = st.text_input("Search player name", placeholder="e.g. Ohtani", key="db_search")
+    if not full_board:
+        st.error("Could not load player board. Verify data/projections/ CSV files exist.")
+        st.stop()
 
-        # --- Apply filters ---
-        filtered = board[:]
-        if pos_filter != "All":
-            filtered = [p for p in filtered if any(pos_filter in pos for pos in p["positions"])]
-        if type_filter != "All":
-            filtered = [p for p in filtered if p["type"] == type_filter.lower()]
-        if tier_filter != "All":
-            filtered = [p for p in filtered if p["tier"] == int(tier_filter)]
-        if search and len(search) >= 2:
-            filtered = [p for p in filtered if search.lower() in p["name"].lower()]
+    drafted_ids = {p["id"] for p in st.session_state["drafted"]}
+    available = [p for p in full_board if p["id"] not in drafted_ids]
 
-        filtered = filtered[:int(show_n)]
+    st.caption(
+        f"{len(full_board)} players loaded  |  "
+        f"{len(st.session_state['drafted'])} drafted  |  "
+        f"{len(available)} remaining"
+    )
 
-        # --- Build display dataframe ---
-        def _adp_str(adp):
-            return f"{adp:.0f}" if adp < 999 else "Undrafted"
+    # -----------------------------------------------------------------------
+    # Section 1: Pick Input + Recommendations
+    # -----------------------------------------------------------------------
+    st.subheader("My Pick")
+    rec_col1, rec_col2 = st.columns([1, 3])
+    with rec_col1:
+        my_pick = st.number_input(
+            "My pick number (overall)",
+            min_value=1, max_value=276, value=st.session_state["draft_pick_num"],
+            step=1, key="pick_num_input",
+            help="Enter your next overall pick number (e.g. pick 1, 25, 49, ...)"
+        )
+        st.session_state["draft_pick_num"] = int(my_pick)
 
-        rows = []
-        for p in filtered:
+    remaining_slots = _compute_remaining_slots(st.session_state["drafted"])
+    needed_slots = _position_needed(remaining_slots)
+    picks_made = len(st.session_state["drafted"])
+    picks_remaining = TOTAL_PICKS - picks_made
+
+    with rec_col2:
+        slot_cols = st.columns(len(remaining_slots))
+        for col, (slot, cnt) in zip(slot_cols, remaining_slots.items()):
+            color = "normal" if cnt > 0 else "off"
+            col.metric(slot, cnt, delta=None)
+
+    st.markdown("---")
+
+    # Top 3 recommendations
+    st.subheader("Recommended Picks")
+    st.caption(
+        f"Round ~{(my_pick - 1) // 12 + 1} · "
+        f"Best available by z-score, weighted toward position need"
+    )
+
+    # Sort available by z-score descending
+    available_sorted = sorted(available, key=lambda p: p.get("z_score", 0), reverse=True)
+
+    # Build recommendations: prioritize positional need, then pure best available
+    need_recs = [p for p in available_sorted if _player_fills_need(p, needed_slots)][:3]
+    bva_recs = [p for p in available_sorted if p not in need_recs][:3]
+
+    def _rec_card(player: dict, label: str):
+        proj = player.get("proj", {})
+        pos_str = "/".join(player.get("positions", [])[:3])
+        z = player.get("z_score", 0)
+        adp = player.get("adp", 999)
+        adp_str = f"ADP {adp:.0f}" if adp < 999 else "Undrafted"
+
+        if player["type"] == "batter":
+            stat_line = (
+                f"HR {proj.get('hr', 0):.0f} | "
+                f"R {proj.get('r', 0):.0f} | "
+                f"RBI {proj.get('rbi', 0):.0f} | "
+                f"SB {proj.get('nsb', proj.get('sb', 0)):.0f} | "
+                f"AVG {proj.get('avg', 0):.3f}"
+            )
+        else:
+            stat_line = (
+                f"W {proj.get('w', 0):.0f} | "
+                f"K {proj.get('k_pit', 0):.0f} | "
+                f"ERA {proj.get('era', 0):.2f} | "
+                f"WHIP {proj.get('whip', 0):.2f} | "
+                f"SV {proj.get('sv', proj.get('nsv', 0)):.0f}"
+            )
+
+        with st.container():
+            st.markdown(
+                f"**{player['name']}** ({player['team']}) — {pos_str}  \n"
+                f"Z: {z:+.2f} | {adp_str} | Tier {player.get('tier', '?')}  \n"
+                f"{stat_line}"
+            )
+            if st.button(f"Draft {player['name']}", key=f"draft_btn_{player['id']}_{label}"):
+                if player["id"] not in drafted_ids:
+                    st.session_state["drafted"].append(player)
+                    st.session_state["draft_pick_num"] = int(my_pick) + 1
+                    st.rerun()
+
+    if need_recs:
+        st.markdown("**Position Need Picks**")
+        need_cols = st.columns(min(3, len(need_recs)))
+        for col, p in zip(need_cols, need_recs):
+            with col:
+                _rec_card(p, "need")
+
+    st.markdown("**Best Available (by Z-Score)**")
+    bva_cols = st.columns(min(3, len(bva_recs)))
+    for col, p in zip(bva_cols, bva_recs):
+        with col:
+            _rec_card(p, "bva")
+
+    # -----------------------------------------------------------------------
+    # Section 2: Full Available Board with Filters
+    # -----------------------------------------------------------------------
+    st.markdown("---")
+    st.subheader("Available Player Board")
+
+    col_f1, col_f2, col_f3, col_f4, col_f5 = st.columns(5)
+    with col_f1:
+        pos_opts = ["All", "SP", "RP", "C", "1B", "2B", "3B", "SS", "OF", "DH"]
+        pos_filter = st.selectbox("Position", pos_opts, key="db2_pos_filter")
+    with col_f2:
+        type_opts = ["All", "Batter", "Pitcher"]
+        type_filter = st.selectbox("Type", type_opts, key="db2_type_filter")
+    with col_f3:
+        tier_opts_vals = sorted({p["tier"] for p in available if p.get("tier", 0) > 0})
+        tier_opts = ["All"] + [str(t) for t in tier_opts_vals]
+        tier_filter = st.selectbox("Tier", tier_opts, key="db2_tier_filter")
+    with col_f4:
+        show_n = st.number_input(
+            "Show top N", min_value=20, max_value=max(len(available), 20),
+            value=min(100, len(available)), step=20, key="db2_show_n"
+        )
+    with col_f5:
+        search = st.text_input("Search name", placeholder="e.g. Ohtani", key="db2_search")
+
+    filtered = available[:]
+    if pos_filter != "All":
+        filtered = [p for p in filtered if any(pos_filter in pos for pos in p["positions"])]
+    if type_filter != "All":
+        filtered = [p for p in filtered if p["type"] == type_filter.lower()]
+    if tier_filter != "All":
+        filtered = [p for p in filtered if p.get("tier") == int(tier_filter)]
+    if search and len(search) >= 2:
+        filtered = [p for p in filtered if search.lower() in p["name"].lower()]
+    filtered = sorted(filtered, key=lambda p: p.get("z_score", 0), reverse=True)
+    filtered = filtered[:int(show_n)]
+
+    def _adp_str(adp):
+        return f"{adp:.0f}" if adp < 999 else "UD"
+
+    board_rows = []
+    for p in filtered:
+        proj = p.get("proj", {})
+        board_rows.append({
+            "Player": p["name"],
+            "Pos": "/".join(p["positions"][:3]),
+            "ADP": _adp_str(p.get("adp", 999)),
+            "Z": round(p.get("z_score", 0), 2),
+            "Tier": p.get("tier", "-"),
+            "HR": int(proj.get("hr", 0)),
+            "RBI": int(proj.get("rbi", 0)),
+            "R": int(proj.get("r", 0)),
+            "SB": int(proj.get("nsb", proj.get("sb", 0))),
+            "AVG": round(proj.get("avg", 0), 3) if p["type"] == "batter" else "-",
+            "ERA": round(proj.get("era", 0), 2) if p["type"] == "pitcher" else "-",
+            "WHIP": round(proj.get("whip", 0), 2) if p["type"] == "pitcher" else "-",
+            "K": int(proj.get("k_pit", proj.get("k_bat", 0))),
+            "W": int(proj.get("w", 0)) if p["type"] == "pitcher" else "-",
+            "SV": int(proj.get("sv", proj.get("nsv", 0))) if p["type"] == "pitcher" else "-",
+        })
+
+    board_df = pd.DataFrame(board_rows)
+
+    def _tier_bg(val):
+        colors = {1: "#1a472a", 2: "#2e4057", 3: "#5e3a07", 4: "#4a1628", 5: "#2d3436"}
+        try:
+            return f"background-color: {colors.get(int(val), '#1e1e1e')}; color: white"
+        except (ValueError, TypeError):
+            return ""
+
+    st.dataframe(
+        board_df.style.map(_tier_bg, subset=["Tier"]),
+        use_container_width=True,
+        hide_index=True,
+        height=480,
+    )
+    st.caption(f"Showing {len(filtered)} available players (sorted by Z-Score)")
+
+    # -----------------------------------------------------------------------
+    # Section 3: Draft a Player by Name
+    # -----------------------------------------------------------------------
+    st.markdown("---")
+    st.subheader("Draft a Player")
+    st.caption("Type a name to cross them off the board (your pick or an opponent's).")
+
+    draft_col1, draft_col2 = st.columns([3, 1])
+    with draft_col1:
+        draft_name = st.text_input(
+            "Player name", placeholder="e.g. Aaron Judge", key="draft_name_input"
+        )
+    with draft_col2:
+        is_my_pick = st.checkbox("This is MY pick", value=True, key="is_my_pick")
+
+    if draft_name and len(draft_name) >= 3:
+        matches = [
+            p for p in available
+            if draft_name.lower() in p["name"].lower()
+        ]
+        if matches:
+            match_names = [p["name"] for p in matches[:10]]
+            selected_name = st.selectbox("Select player", match_names, key="draft_select")
+            selected_player = next(p for p in matches if p["name"] == selected_name)
+            if st.button("Confirm Draft", type="primary", key="confirm_draft_btn"):
+                if selected_player["id"] not in drafted_ids:
+                    entry = dict(selected_player)
+                    entry["_my_pick"] = is_my_pick
+                    st.session_state["drafted"].append(entry)
+                    if is_my_pick:
+                        st.session_state["draft_pick_num"] = int(my_pick) + 1
+                    st.success(f"Drafted: {selected_player['name']}")
+                    st.rerun()
+        else:
+            st.warning(f"No available player matching '{draft_name}'")
+
+    # -----------------------------------------------------------------------
+    # Section 4: My Drafted Team + Category Totals
+    # -----------------------------------------------------------------------
+    my_picks = [p for p in st.session_state["drafted"] if p.get("_my_pick", True)]
+
+    if my_picks:
+        st.markdown("---")
+        st.subheader(f"My Team ({len(my_picks)}/{TOTAL_PICKS} picks)")
+
+        # Category totals
+        totals = {
+            "HR": 0, "RBI": 0, "R": 0, "SB": 0,
+            "W": 0, "K": 0, "SV": 0,
+            "_avg_sum": 0.0, "_avg_pa": 0,
+            "_era_ip": 0.0, "_era_er": 0.0,
+            "_whip_ip": 0.0, "_whip_bw": 0.0,
+        }
+        team_rows = []
+        for p in my_picks:
             proj = p.get("proj", {})
             if p["type"] == "batter":
-                key_stats = (
-                    f"HR:{proj.get('hr', 0):.0f}  "
-                    f"R:{proj.get('r', 0):.0f}  "
-                    f"RBI:{proj.get('rbi', 0):.0f}  "
-                    f"NSB:{proj.get('nsb', 0):.0f}  "
-                    f"OPS:{proj.get('ops', 0):.3f}  "
-                    f"AVG:{proj.get('avg', 0):.3f}"
-                )
+                totals["HR"] += int(proj.get("hr", 0))
+                totals["RBI"] += int(proj.get("rbi", 0))
+                totals["R"] += int(proj.get("r", 0))
+                totals["SB"] += int(proj.get("nsb", proj.get("sb", 0)))
+                pa = proj.get("pa", 0)
+                avg = proj.get("avg", 0)
+                totals["_avg_sum"] += avg * pa
+                totals["_avg_pa"] += pa
             else:
-                key_stats = (
-                    f"W:{proj.get('w', 0):.0f}  "
-                    f"K:{proj.get('k_pit', 0):.0f}  "
-                    f"ERA:{proj.get('era', 0):.2f}  "
-                    f"WHIP:{proj.get('whip', 0):.2f}  "
-                    f"QS:{proj.get('qs', 0):.0f}  "
-                    f"NSV:{proj.get('nsv', 0):.0f}"
-                )
-            risk = p.get("injury_risk", "")
-            risk_tag = "" if risk in ("", "low") else risk.upper()[:3]
-            rows.append({
-                "Rank": p["rank"],
-                "T": p["tier"],
-                "Name": p["name"],
-                "Team": p["team"],
+                ip = proj.get("ip", 0)
+                totals["W"] += int(proj.get("w", 0))
+                totals["K"] += int(proj.get("k_pit", 0))
+                totals["SV"] += int(proj.get("sv", proj.get("nsv", 0)))
+                era = proj.get("era", 4.50)
+                whip = proj.get("whip", 1.30)
+                totals["_era_ip"] += ip
+                totals["_era_er"] += era * ip / 9.0
+                totals["_whip_ip"] += ip
+                totals["_whip_bw"] += whip * ip
+
+            team_rows.append({
+                "Player": p["name"],
                 "Pos": "/".join(p["positions"][:3]),
                 "Type": p["type"].title(),
-                "ADP": _adp_str(p["adp"]),
-                "Z-Score": f"{p['z_score']:+.2f}",
-                "Risk": risk_tag,
-                "Key Stats": key_stats,
+                "Z": round(p.get("z_score", 0), 2),
             })
 
-        df = pd.DataFrame(rows)
-
-        def _tier_color(val):
-            colors = {1: "#1a472a", 2: "#2e4057", 3: "#5e3a07",
-                      4: "#4a1628", 5: "#2d3436"}
-            return f"background-color: {colors.get(val, '#1e1e1e')}; color: white"
-
-        st.dataframe(
-            df.style.map(_tier_color, subset=["T"]),
-            use_container_width=True,
-            hide_index=True,
-            height=520,
+        team_avg = (
+            totals["_avg_sum"] / totals["_avg_pa"]
+            if totals["_avg_pa"] > 0 else 0.0
+        )
+        team_era = (
+            totals["_era_er"] / totals["_era_ip"] * 9
+            if totals["_era_ip"] > 0 else 0.0
+        )
+        team_whip = (
+            totals["_whip_bw"] / totals["_whip_ip"]
+            if totals["_whip_ip"] > 0 else 0.0
         )
 
-        st.caption(f"Showing {len(filtered)} of {len(board)} players")
+        # Display category summary
+        cat_cols = st.columns(10)
+        cat_cols[0].metric("HR", totals["HR"])
+        cat_cols[1].metric("RBI", totals["RBI"])
+        cat_cols[2].metric("R", totals["R"])
+        cat_cols[3].metric("SB", totals["SB"])
+        cat_cols[4].metric("AVG", f"{team_avg:.3f}")
+        cat_cols[5].metric("ERA", f"{team_era:.2f}")
+        cat_cols[6].metric("WHIP", f"{team_whip:.2f}")
+        cat_cols[7].metric("K", totals["K"])
+        cat_cols[8].metric("W", totals["W"])
+        cat_cols[9].metric("SV", totals["SV"])
 
-        # --- Position scarcity summary ---
-        st.markdown("---")
-        st.subheader("Position Scarcity Snapshot")
-        scarcity_cols = st.columns(5)
-        pos_groups = {
-            "C": ["C"], "SS": ["SS"], "2B": ["2B", "SS"],
-            "SP Top 10": ["SP"], "RP/Closer": ["RP"],
-        }
-        for col, (label, pos_list) in zip(scarcity_cols, pos_groups.items()):
-            t1_t2 = [p for p in board if p["tier"] <= 2 and any(pos in p["positions"] for pos in pos_list)]
-            col.metric(label, f"{len(t1_t2)} Tier 1-2")
+        st.dataframe(pd.DataFrame(team_rows), use_container_width=True, hide_index=True)
 
-        # --- Strategy reminder ---
-        with st.expander("Draft Strategy Framework (Treemendous)"):
-            st.markdown("""
+        if st.button("Undo Last Pick", key="undo_pick_btn"):
+            if st.session_state["drafted"]:
+                removed = st.session_state["drafted"].pop()
+                if removed.get("_my_pick", True):
+                    st.session_state["draft_pick_num"] = max(1, int(my_pick) - 1)
+                st.rerun()
+
+        if st.button("Reset Draft Board", key="reset_draft_btn"):
+            st.session_state["drafted"] = []
+            st.session_state["draft_pick_num"] = 1
+            st.rerun()
+
+    # -----------------------------------------------------------------------
+    # Section 5: Drafted Players Full Log
+    # -----------------------------------------------------------------------
+    all_drafted = st.session_state["drafted"]
+    if all_drafted:
+        with st.expander(f"All Drafted Players ({len(all_drafted)} total — including opponents)"):
+            drafted_rows = []
+            for i, p in enumerate(all_drafted, 1):
+                drafted_rows.append({
+                    "Pick": i,
+                    "Player": p["name"],
+                    "Pos": "/".join(p["positions"][:3]),
+                    "Type": p["type"].title(),
+                    "Mine": "YES" if p.get("_my_pick", True) else "opp",
+                })
+            st.dataframe(pd.DataFrame(drafted_rows), use_container_width=True, hide_index=True)
+
+    # -----------------------------------------------------------------------
+    # Section 6: Position Scarcity + Strategy
+    # -----------------------------------------------------------------------
+    st.markdown("---")
+    st.subheader("Position Scarcity Snapshot")
+    scarcity_cols = st.columns(5)
+    pos_groups_sc = {
+        "C": ["C"], "SS": ["SS"], "2B": ["2B"],
+        "SP Top 10": ["SP"], "RP/Closer": ["RP"],
+    }
+    for col, (label, pos_list) in zip(scarcity_cols, pos_groups_sc.items()):
+        t1_t2 = [
+            p for p in available
+            if p.get("tier", 99) <= 2 and any(pos in p["positions"] for pos in pos_list)
+        ]
+        col.metric(label, f"{len(t1_t2)} Tier 1-2 left")
+
+    with st.expander("Draft Strategy Framework (Treemendous)"):
+        st.markdown("""
 | Round | Target | Rationale |
 |-------|--------|-----------|
 | 1-3   | Elite multi-cat hitters | HR + R + RBI + TB + AVG/OPS |
@@ -402,20 +726,6 @@ with tab_draft:
 
 **Key rule:** High-K sluggers (30%+ K) are double-penalized — K hurts batting AND drags AVG/OPS.
 Target contact-power bats (Alvarez, Freeman, Goldschmidt types).
-""")
-
-    else:
-        st.warning("Player board unavailable. Check that data/projections/ CSVs are present.")
-        st.markdown("""
-### Draft Strategy Framework (Treemendous)
-| Round | Target | Rationale |
-|-------|--------|-----------|
-| 1-3   | Elite multi-cat hitters | HR + R + RBI + TB + AVG/OPS |
-| 4-6   | Ace SPs | W + K + K/9 + QS + ERA + WHIP |
-| 7-9   | SB assets | NSB is scarce — stock up mid-rounds |
-| 10-13 | Solid SP depth | Minimize L exposure |
-| 14-17 | Closer pipeline | NSV very scarce; target 2-3 |
-| 18-23 | Streaming SPs, bench | High K/9, low L risk |
 """)
 
 # ===========================================================================

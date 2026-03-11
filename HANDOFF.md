@@ -28,6 +28,7 @@ All P0–P4 + K-8/K-9/K-10 complete. 606/609 tests pass. Tournament-ready.
 - Draft: March 23 @ 7:30am — draft board assistant needed by March 22
 - Daily optimizer: Built (`daily_lineup_optimizer.py`) — wires sportsbook odds
 - Full roadmap: `docs/MLB_FANTASY_ROADMAP.md`
+- **Yahoo API Research: COMPLETE** — polling-based live draft tracker ready for implementation (see Section 5.4, Section 16)
 
 ---
 
@@ -454,6 +455,205 @@ Complete Fantasy Baseball Phase 0 before March 18 (tournament starts), OR defer 
 
 ---
 
+## 5.4 YAHOO FANTASY API RESEARCH (Kimi CLI — March 11, 2026)
+
+**Full Report:** `reports/YAHOO_FANTASY_API_RESEARCH.md`
+
+### Key Findings for Draft Day (March 23)
+
+#### 🟡 Live Draft Capabilities — LIMITED
+
+**What IS Possible:**
+- ✅ **Polling-based updates** — Call `draft_results()` every 5-10 seconds during live draft
+- ✅ Returns picks as they happen (pick number, round, team_key, player_id)
+- ✅ Filter available players with `status='A'` parameter
+- ✅ Updates during the draft with players drafted thus far
+
+**What's NOT Available:**
+- ❌ **No websockets or push notifications** — must poll
+- ❌ **No real-time "on the clock" notifications**
+- ❌ **No auction nomination tracking**
+- ❌ **No draft timer visibility**
+
+#### Core Endpoints
+
+```python
+from yahoo_fantasy_api import League
+
+# Get draft results (poll this every 5 seconds during draft)
+draft_results = league.draft_results()
+# Returns: [{'pick': 1, 'round': 1, 'team_key': '...', 'player_id': 9490}, ...]
+
+# Get available players
+available = league.players(status='A', count=1000)
+
+# Get player details
+player_details = league.player_details(player_id)
+```
+
+#### Recommended Implementation Pattern
+
+```python
+async def poll_draft_updates(league, last_pick_count=0):
+    """Poll draft_results() every 5-10 seconds during live draft"""
+    while True:
+        draft_results = league.draft_results()
+        current_picks = len(draft_results)
+        
+        if current_picks > last_pick_count:
+            new_picks = draft_results[last_pick_count:]
+            for pick in new_picks:
+                await notify_discord_new_pick(pick)
+            last_pick_count = current_picks
+            
+        await asyncio.sleep(5)  # 5-second polling interval
+```
+
+#### Alternative Data Sources
+
+| Source | Best For | Access |
+|--------|----------|--------|
+| **Fangraphs** | Projections (ATC, Steamer, ZiPS) | CSV Download |
+| **MLB Stats API** | Real stats, player info | Free, no key needed |
+| **FantasyPros** | ADP, rankings | Web scraping |
+| **Baseball-Reference** | Historical stats | Limited API |
+
+#### Integration Architecture
+
+**Pre-Draft Setup:**
+1. Load Fangraphs projections CSV (ATC recommended)
+2. Load FantasyPros ADP data
+3. Merge with Yahoo player pool via name normalization
+4. Build player ID mapping table
+
+**During Live Draft:**
+1. Poll `draft_results()` every 5 seconds
+2. Send Discord notification to `#fantasy-draft` channel
+3. Update available player pool locally
+4. Check if it's our pick (infer from pick number + draft order)
+5. Send "ON THE CLOCK" alert to Discord with recommendations
+
+#### Environment Variables Needed
+
+```bash
+# Already configured
+YAHOO_CLIENT_ID=...
+YAHOO_CLIENT_SECRET=...
+YAHOO_REFRESH_TOKEN=...
+YAHOO_LEAGUE_ID=...
+
+# Discord channel (already set up)
+DISCORD_CHANNEL_FANTASY_DRAFT=1481294129450319893
+```
+
+#### Implementation Checklist for Claude Code
+
+**Before March 22:**
+- [ ] Create `backend/fantasy_baseball/draft_tracker.py` with polling loop
+- [ ] Wire `draft_results()` polling to Discord `#fantasy-draft` channel
+- [ ] Add "ON THE CLOCK" detection (track pick number vs our draft slot)
+- [ ] Integrate with existing player board for recommendations
+- [ ] Test with mock draft data
+
+**Draft Day (March 23 @ 7:30am ET):**
+- [ ] Start polling loop 15 minutes before draft
+- [ ] Monitor rate limits (max 1 req/5 sec)
+- [ ] Have manual override ready if API fails
+
+---
+
+---
+
+## 5.5 ADVANCED ANALYTICS RESEARCH (Gemini CLI — March 11, 2026)
+
+**Full Report:** `reports/ADVANCED_ANALYTICS_INTEGRATION.md`
+
+### Summary of Findings
+
+Gemini researched cutting-edge 2026 baseball metrics for fantasy evaluation. Here's what's actionable:
+
+#### 🎯 The "Triple Crown" Hitting Metrics (Statcast Bat Tracking)
+
+| Metric | Elite Threshold | What It Means | Data Source |
+|--------|-----------------|---------------|-------------|
+| **Bat Speed** | 75+ mph | Power potential | Baseball Savant (statcast) |
+| **Squared-Up%** | 35%+ | Barrel control/accuracy | Baseball Savant |
+| **Blast%** | 15%+ | Fast + Squared Up = Elite power | Derived from Statcast |
+| **Swing Length** | < 7.2 ft | Contact ability/Low K% | Baseball Savant |
+
+#### ⚾ Next-Gen Pitching Metrics
+
+| Metric | Elite Threshold | What It Means | Data Source |
+|--------|-----------------|---------------|-------------|
+| **Stuff+** | 115+ | Physical pitch quality | FanGraphs ($) or Baseball Prospectus |
+| **PLV** | 5.5+ | Pitch-level value | PitcherList.com (scrapeable) |
+| **SSW** | High | Seam-Shifted Wake ("invisible" movement) | Baseball Savant R&D |
+
+### Feasibility Assessment
+
+| Metric | Accessible? | Method | Priority |
+|--------|-------------|--------|----------|
+| Bat Speed | ⚠️ Partial | pybaseball library, limited 2026 coverage | Medium |
+| Squared-Up% | ⚠️ Partial | Baseball Savant CSV search | Medium |
+| Blast% | ⚠️ Calculate | Derive from Statcast data | Medium |
+| Swing Length | ✅ Yes | pybaseball.statcast_batter() | High |
+| Stuff+ | ❌ No | Behind paywall (FanGraphs $) | Low |
+| PLV | ⚠️ Maybe | PitcherList.com charts | Low |
+
+### Immediate Actions for Claude Code
+
+**Phase 1: Statcast Integration (Post-Draft)**
+```python
+# Use pybaseball to fetch available metrics
+from pybaseball import statcast_batter, playerid_lookup
+
+# Get bat speed, swing length for player pool
+# Note: 2026 data may be limited until season starts
+```
+
+**Phase 2: Player Board Enhancement**
+- Add columns: `bat_speed`, `swing_length`, `blast_rate` (if available)
+- Use as tiebreaker when z-scores are close
+- Flag "hidden gems": Low ADP + elite swing metrics
+
+**Phase 3: Sleeper Identification Filter**
+```python
+# Example filter from Gemini research
+def identify_sleepers(players):
+    return [
+        p for p in players
+        if p['adp'] > 150  # Late round
+        and p.get('swing_length', 999) < 7.2  # Short swing = contact
+        and p.get('squared_up_pct', 0) > 30  # Good barrel control
+    ]
+```
+
+### Research Quality Assessment
+
+| Aspect | Rating | Notes |
+|--------|--------|-------|
+| **Metric Definitions** | ⭐⭐⭐⭐⭐ | Clear, accurate descriptions |
+| **Thresholds** | ⭐⭐⭐⭐⭐ | Specific, actionable numbers |
+| **Data Source Viability** | ⭐⭐⭐☆☆ | Some metrics paywalled or 2026-limited |
+| **Implementation Path** | ⭐⭐⭐☆☆ | Suggests file that doesn't exist yet |
+| **Overall** | ⭐⭐⭐⭐☆ | Good strategic guidance, execution TBD |
+
+### Recommendation
+
+**Before Draft (March 23):**
+- ❌ Do NOT attempt to integrate — too late, data may not be ready
+
+**After Draft (Season Start):**
+- ✅ Add pybaseball Statcast integration to daily optimizer
+- ✅ Pull 2026 bat tracking data as it becomes available
+- ✅ Use for waiver wire sleeper identification
+
+**For 2027 Draft:**
+- ✅ Build full Statcast pipeline in offseason
+- ✅ Create "Blast%" and "Swing Length" columns in projections
+
+---
+
 ## 6. NEXT PRIORITY (March 11-17)
 
 **Status:** P0 ✅ | P1 ✅ | **P2/P3 NEXT**
@@ -470,6 +670,103 @@ Complete Fantasy Baseball Phase 0 before March 18 (tournament starts), OR defer 
 | **E** | ML Recalibration (E-4) | 1-2 weeks | High | Post-tournament |
 
 **Kimi recommendation:** P2 (Conf HCA) → P3 (Recency) → defer C until after tournament.
+
+---
+
+## 6.5 OPENCLAW DISCORD ENHANCEMENT PLAN (OPCL-001)
+
+**Full Plan:** `reports/OPENCLAW_DISCORD_ENHANCEMENT_PLAN.md`  
+**Status:** Ready for implementation  
+**Priority:** HIGH — 10x impact multiplier for OpenClaw  
+**Assigned to:** Claude Code (implementation) + OpenClaw (execution)
+
+### Problem Statement
+
+Discord's 16-channel architecture is deployed, but OpenClaw is underutilized:
+- Current: Integrity checks during nightly analysis only (~1x/day)
+- Target: Continuous intelligence hub (15-20x/day)
+- **Impact gap:** 10-20x underperformance vs potential
+
+### The 5 Pillars
+
+| Pillar | Channel | Frequency | Impact |
+|--------|---------|-----------|--------|
+| **1. Morning Brief** | `#openclaw-briefs` | Daily 7 AM ET | Overnight summary + today's slate |
+| **2. Live Monitor** | `#openclaw-escalations` | Every 2h on game days | Game-time news alerts |
+| **3. Fantasy Intel** | `#fantasy-news` | Daily 7 AM + ad-hoc | Closer/lineup/waiver alerts |
+| **4. Telemetry** | `#openclaw-health` | Hourly | System health dashboard |
+| **5. Tournament Ops** | `#cbb-tournament` | Mar 18-Apr 7 | Elite Eight+ special monitoring |
+
+### Implementation Phases
+
+**Phase 1: Foundation (March 12-18)** — PRE-TOURNAMENT
+- [ ] `openclaw_briefs.py` — Daily 7 AM morning brief
+- [ ] `openclaw_telemetry.py` — System health dashboard
+- [ ] Discord webhook helpers
+- [ ] **Deliverable:** Daily briefs active by March 18
+
+**Phase 2: Live Operations (March 19-25)** — TOURNAMENT BEGINS
+- [ ] `openclaw_live_monitor.py` — Game-time monitoring
+- [ ] Tournament mode activation
+- [ ] Upset/cinderella tracking
+- [ ] **Deliverable:** Live monitoring for First Four & Round of 64
+
+**Phase 3: Fantasy Integration (March 26-April 7)** — TOURNAMENT + FANTASY
+- [ ] `openclaw_closer_monitor.py` — Fantasy closer tracking
+- [ ] Lineup confirmation alerts
+- [ ] Waiver wire sleeper detection
+- [ ] **Deliverable:** Fantasy alerts active by MLB Opening Day
+
+**Phase 4: Polish (Post-Tournament)**
+- [ ] Historical analysis
+- [ ] Self-tuning thresholds
+- [ ] Full documentation
+- [ ] **Deliverable:** OpenClaw v4.0 autonomous operations
+
+### Morning Brief Example
+
+```markdown
+🌅 OPENCLAW MORNING BRIEF — March 18, 2026
+
+📊 TODAY'S SLATE
+• 4 CBB games analyzed
+• 2 BET-tier recommendations  
+• 1 CONSIDER (monitor for line moves)
+
+🔍 INTEGRITY SUMMARY
+• All games: CONFIRMED ✓
+• No injuries or lineup concerns
+
+⚡ SHARP MONEY ALERTS
+• Gonzaga -3.5 → -4.5 (steam detected)
+• Recommendation: Wait for line to stabilize
+
+🏀 TOURNAMENT WATCH
+• First Four: 2 games tonight
+• Upset Probability: 28%
+
+📋 ESCALATION QUEUE
+• 0 high-stakes games pending review
+```
+
+### Success Metrics
+
+| Metric | Current | Target |
+|--------|---------|--------|
+| Intelligence messages/day | 0.1 | 15-20 |
+| Time to alert (late news) | Manual | <15 min |
+| Escalation resolution | 24h | <4h |
+| Tournament coverage | Basic | Full (67 games) |
+
+### Immediate Actions for Claude Code
+
+**This Week (Priority 1 after EMAC-064):**
+1. Implement `backend/services/openclaw_briefs.py`
+2. Add `send_morning_brief()` to `discord_notifier.py`
+3. Create cron trigger in scheduler
+4. Test end-to-end by March 18
+
+**Reference:** Full specification in `reports/OPENCLAW_DISCORD_ENHANCEMENT_PLAN.md`
 
 ---
 
@@ -503,7 +800,46 @@ SENDGRID_API_KEY (not set)
 **Output:** `data/pre_tournament_baseline_2026.json` + `reports/o8_baseline_summary_2026.md`
 **Status:** ⏳ Ready for autonomous execution
 
-### 8.2 Gemini CLI — G-16 Verification
+### 8.1a OpenClaw — OPCL-001 Discord Enhancement (NEW MISSION)
+**When:** Phase 1: March 12-18; Phase 2: March 19-25  
+**Owner:** Claude Code (implementation) → OpenClaw (execution)  
+**Full Plan:** `reports/OPENCLAW_DISCORD_ENHANCEMENT_PLAN.md`
+
+**Phase 1 Deliverables (by March 18):**
+- [ ] `openclaw_briefs.py` — Daily 7 AM morning brief to `#openclaw-briefs`
+- [ ] `openclaw_telemetry.py` — Hourly system health to `#openclaw-health`
+- [ ] Integration with `discord_notifier.py`
+
+**Phase 2 Deliverables (March 19-25):**
+- [ ] `openclaw_live_monitor.py` — Game-time monitoring every 2h
+- [ ] Tournament mode activation
+- [ ] Cinderella/upset tracking for March Madness
+
+**Phase 3 Deliverables (March 26-April 7):**
+- [ ] `openclaw_closer_monitor.py` — Fantasy baseball closer alerts
+- [ ] Lineup confirmation notifications
+- [ ] Waiver wire sleeper detection
+
+**Impact Target:** 10x increase in OpenClaw value delivery (0.1 → 15-20 msgs/day)
+
+### 8.2 Gemini CLI — Research Missions
+
+**COMPLETED RESEARCH:**
+
+#### G-R6: Advanced Baseball Analytics (COMPLETE ✅)
+**File:** `reports/ADVANCED_ANALYTICS_INTEGRATION.md`
+**Delivered:** March 11, 2026
+**Contents:**
+- Statcast Bat Tracking metrics (Bat Speed, Squared-Up%, Blast%, Swing Length)
+- Next-gen pitching metrics (Stuff+, PLV, Seam-Shifted Wake)
+- Plate discipline framework (Heart%, Shadow Zone, Waste%)
+- 2026 benchmark thresholds for fantasy evaluation
+
+**Assessment:** Research is sound but data sources are partially paywalled/limited for 2026 season. Recommend post-draft integration via pybaseball.
+
+**PENDING VERIFICATION:**
+
+#### G-16: O-10 Line Monitor Verification
 **Task:** Verify O-10 line monitor post-deploy
 **Status:** Pending verification
 
@@ -537,6 +873,14 @@ SENDGRID_API_KEY (not set)
 | OpenClaw Lite: 26,000× faster, 100% match rate vs Ollama | K-9 |
 | BartTorvik public CSV needs no auth (cloudscraper only) | P0 |
 | EvanMiya intentionally dropped — 2-source mode robust by design | P0 |
+| Bat Speed 75+ mph correlates more with HR potential than raw Exit Velocity | G-R6 |
+| Blast% (Fast + Squared-Up) is the single best predictor of elite power | G-R6 |
+| Swing Length < 7.2 ft identifies high-AVG, low-K% sleepers | G-R6 |
+| Stuff+ 115+ identifies high K/9 breakout candidates (paywalled) | G-R6 |
+| OpenClaw morning brief: 7 AM daily intelligence summary for operator | OPCL-001 |
+| OpenClaw telemetry: Hourly system health visibility prevents surprises | OPCL-001 |
+| OpenClaw live monitor: 2-hour checks catch late-breaking news | OPCL-001 |
+| Tournament mode: Elite Eight+ special monitoring with Kimi escalation | OPCL-001 |
 | Template fallbacks essential when Ollama unavailable | D-1 |
 | `key` parameter breaks older Streamlit versions | D-1 |
 | Railway needs explicit `railway.toml` for reliable builds | Railway Fix |
@@ -547,9 +891,9 @@ SENDGRID_API_KEY (not set)
 
 ## 10. HANDOFF PROMPTS
 
-### CLAUDE CODE (Master Architect) — EMAC-063: Fantasy Baseball Draft Board
+### CLAUDE CODE (Master Architect) — EMAC-063: Fantasy Baseball Draft Board + Live Tracker
 ```
-MISSION: Build Draft Board assistant by March 22 (draft is March 23 @ 7:30am)
+MISSION: Build Draft Board assistant + Live Draft Tracker by March 22 (draft is March 23 @ 7:30am)
 
 CONTEXT:
 - CBB V9.1 is complete, tournament-ready. All P0-P4 + K-10 wired. 606/609 pass.
@@ -557,26 +901,153 @@ CONTEXT:
 - Yahoo OAuth fix is deployed. User needs to complete one-time local auth (see Setup tab).
 - daily_lineup_optimizer.py is BUILT (sportsbook odds + implied runs + batter/pitcher rank)
 - Full roadmap: docs/MLB_FANTASY_ROADMAP.md
+- Yahoo API Research COMPLETE: reports/YAHOO_FANTASY_API_RESEARCH.md
 
-IMMEDIATE TASK — Draft Board (dashboard/pages/11_Fantasy_Baseball.py, tab_draft):
-1. Replace the "Draft Board" placeholder tab with a real draft assistant:
-   - Reads from projections_loader.load_full_board() for player rankings
-   - Shows: Player | Pos | ADP | z-score | Tier | Category contributions
-   - Input: "Pick number" — when user enters pick N, crosses off that player
-   - Track: Remaining roster slots by position (need: C×1, 1B×1, 2B×1, 3B×1, SS×1,
-     OF×3, Util×1, SP×5, RP×2, P×1, BN×5 = 23 total picks)
-   - Recommend: Top 3 picks at current pick number (by tier/need)
-   - Filter: Remove already-picked players
-   - Category summary: show current team's projected category totals as picks accumulate
+PART 1 — Draft Board (dashboard/pages/11_Fantasy_Baseball.py, tab_draft) — MOSTLY COMPLETE:
+✅ Filterable player board (551 Steamer players)
+✅ Position scarcity snapshot
+✅ Tier/strategy framework
+⚠️ Remaining: Injury flags column, closer NSV overrides display
 
-2. Fix projections data: current CSVs have only 50-80 players. Need 200+ for a real draft.
-   - Check data/projections/ — use Gemini research (G-R1) when available
-   - If Gemini hasn't delivered yet: expand player_board.py hardcoded list to ~150 players
+PART 2 — Live Draft Tracker (NEW — priority for March 22):
+File: dashboard/pages/12_Live_Draft.py (already scaffolded)
+
+REQUIREMENTS:
+1. Yahoo API Integration:
+   - Use yahoo_fantasy_api.League.draft_results() endpoint
+   - Poll every 5 seconds during active draft
+   - Detect new picks by comparing pick count between polls
+
+2. Discord Integration (#fantasy-draft channel):
+   - Send message on each new pick: "Pick #23: [Team] selects [Player] ([Position])"
+   - Send "🚨 YOU'RE ON THE CLOCK!" alert when it's our pick
+   - Include top 3 recommendations with each on-the-clock alert
+
+3. Draft State Tracking:
+   - Track: Current pick number, our next pick, picks until our turn
+   - Display: Draft board grid (1-23 rounds × teams)
+   - Mark drafted players as taken (strikethrough/highlight)
+
+4. Recommendations Engine:
+   - Query projections_loader.load_full_board()
+   - Filter: Remove already-drafted players
+   - Sort: By z-score (highest first)
+   - Consider: Position scarcity (flag if C/SS/2B getting thin)
+   - Display: Top 5 recommendations with reason ("Best available", "Position need", etc.)
+
+5. On-The-Clock Detection:
+   - Calculate from: draft_results length + league settings (teams, rounds)
+   - Know our draft slot (configurable: 1-12)
+   - Alert: 2 picks before our turn (gives time to decide)
+
+IMPLEMENTATION NOTES:
+- Yahoo API has NO websockets — must poll (see Section 5.4 for research)
+- Rate limit: Max 1 request per 5 seconds
+- Draft results return: pick, round, team_key, player_id
+- Need to map player_id to our player board via name matching
+- Graceful fallback: If API fails, allow manual pick entry
+
+DISCORD CHANNEL: DISCORD_CHANNEL_FANTASY_DRAFT=1481294129450319893
+
+TESTING:
+- Test polling loop with mock data before March 22
+- Verify Discord messages route correctly
+- Test on-the-clock detection logic
+
+FILES TO CREATE/MODIFY:
+- dashboard/pages/12_Live_Draft.py — Main draft tracker UI
+- backend/fantasy_baseball/draft_tracker.py — Polling logic (new)
+- backend/services/discord_notifier.py — Add send_draft_pick() function
+- tests/test_draft_tracker.py — Unit tests (new)
 
 GUARDIAN NOTES:
 - Do NOT touch betting_model.py, analysis.py, or CBB services during tournament window
 - Fantasy code is isolated — safe to iterate without affecting CBB
 - Run `python -m pytest tests/ -q` before any commit
+- Yahoo OAuth must be working before March 23 (test with yahoo_client.py)
+```
+
+---
+
+### CLAUDE CODE — OPCL-001: OpenClaw Discord Enhancement (Phase 1)
+```
+MISSION: Implement Phase 1 OpenClaw Discord enhancements by March 18
+
+CONTEXT:
+- Discord 16-channel architecture is LIVE and tested
+- OpenClaw currently underutilized: ~0.1 msgs/day vs potential 15-20 msgs/day
+- Full plan: reports/OPENCLAW_DISCORD_ENHANCEMENT_PLAN.md
+- This is PRIORITY 1 after EMAC-064 (bet settlement fix)
+
+PHASE 1 DELIVERABLES (Must complete by March 18):
+
+1. Morning Brief Module (backend/services/openclaw_briefs.py)
+   - Runs daily at 7:00 AM ET via cron
+   - Queries overnight data:
+     * Today's slate (game count, BET/CONSIDER/PASS distribution)
+     * Integrity cache (all CONFIRMED? any CAUTION/VOLATILE?)
+     * Sharp money moves (overnight line changes)
+     * Escalation queue status (pending count)
+   - Compiles Discord embed with emoji-rich formatting
+   - Posts to #openclaw-briefs (channel ID: 1481294197045858395)
+   - Include: Tournament countdown (days to First Four, etc.)
+
+2. Telemetry Dashboard (backend/services/openclaw_telemetry.py)
+   - Hourly system health summary
+   - Metrics to display:
+     * Integrity checks (24h count, latency, verdict distribution)
+     * Sharp money signals (detected, high confidence, edge adjustments)
+     * Predictions (today's count by tier)
+     * System health (data sources, odds monitor, Discord, DB)
+     * Escalation queue (pending, resolved today)
+   - Posts to #openclaw-health (channel ID: 1481294433063276654)
+   - Color-code: Green (healthy) / Yellow (warnings) / Red (critical)
+
+3. Discord Integration Updates (backend/services/discord_notifier.py)
+   - Add send_morning_brief(embed) function
+   - Add send_telemetry_update(embed) function
+   - Use existing send_to_channel() routing
+   - Include fallback to file logging if Discord fails
+
+4. Scheduler Integration (backend/scheduler.py or cron)
+   - 7:00 AM ET: Trigger morning brief generation
+   - Every hour: Trigger telemetry update
+   - Add to existing heartbeat system
+
+TESTING CHECKLIST:
+- [ ] Morning brief generates in <30 seconds
+- [ ] All sections populated with real data
+- [ ] Discord message posts successfully
+- [ ] Telemetry shows accurate metrics
+- [ ] Cron triggers fire on schedule
+- [ ] Graceful handling when data missing
+
+ACCEPTANCE CRITERIA:
+- [ ] Daily brief posted by 7:05 AM ET every day
+- [ ] Hourly telemetry visible in #openclaw-health
+- [ ] 0 errors in logs for 48-hour test period
+- [ ] Content is actually useful (operator reviews)
+
+PRIORITY ORDER:
+1. Telemetry dashboard (quickest win — system visibility)
+2. Morning brief (highest value — daily intelligence)
+3. Scheduler integration (automation)
+
+FILES TO CREATE:
+- backend/services/openclaw_briefs.py (NEW ~150 lines)
+- backend/services/openclaw_telemetry.py (NEW ~100 lines)
+
+FILES TO MODIFY:
+- backend/services/discord_notifier.py (add 2 functions)
+- backend/scheduler.py (add cron triggers)
+- tests/ (add test_openclaw_briefs.py, test_openclaw_telemetry.py)
+
+GUARDIAN NOTES:
+- These are NEW modules — safe to create, won't affect CBB
+- Use existing OpenClawLite.telemetry for metrics
+- Copy patterns from existing discord_notifier.py functions
+- Test with --dry-run flag before enabling live posts
+- Document any new environment variables needed
 ```
 
 ---
@@ -1693,7 +2164,196 @@ After completion:
 
 ---
 
-**Document Version:** EMAC-064
+**Document Version:** EMAC-065
 **Last Updated:** March 11, 2026  
 **Next Review:** Upon Claude completion
+
+**Summary of Today's Updates:**
+- ✅ Yahoo Fantasy API research complete (Section 5.4, Section 16) — polling-based draft tracker ready for Claude implementation
+- ✅ Advanced Analytics research reviewed (Section 5.5) — Gemini's Statcast metrics assessed for post-draft integration
+- ✅ OpenClaw Discord Enhancement Plan (Section 6.5, OPCL-001) — 5-pillar strategy for 10x impact increase
+- ⚠️ EMAC-064 (Bet Settlement Fix) — Critical, assigned to Claude, due March 18
+- 📋 OPCL-001 Phase 1 (OpenClaw Morning Brief + Telemetry) — Ready for Claude, target March 18
+
+---
+
+## 16. YAHOO FANTASY API RESEARCH — IMPLEMENTATION READY
+
+**Research Complete:** March 11, 2026  
+**Full Report:** `reports/YAHOO_FANTASY_API_RESEARCH.md`  
+**Assigned to:** Claude Code (Master Architect)  
+**Deadline:** March 22, 2026 (1 day before draft)
+
+### Summary for Claude Code
+
+The Yahoo Fantasy API **does NOT support real-time websockets** — you must implement a **polling-based approach** for live draft tracking.
+
+#### Core Implementation
+
+```python
+# Key endpoint: league.draft_results() — poll every 5 seconds
+from yahoo_fantasy_api import League
+
+league = League(oauth_session, league_id)
+
+# During draft, poll this:
+results = league.draft_results()  # Returns picks made so far
+available = league.players(status='A')  # Returns undrafted players
+```
+
+#### Key Limitations
+- ❌ No websockets/push notifications
+- ❌ No "on the clock" notifications  
+- ❌ No draft timer visibility
+- ✅ Can detect new picks by comparing results between polls
+
+#### Deliverables for March 22
+1. `backend/fantasy_baseball/draft_tracker.py` — Polling loop with new pick detection
+2. `dashboard/pages/12_Live_Draft.py` — Live draft UI with Discord integration
+3. Discord notifications to `#fantasy-draft` channel (ID: 1481294129450319893)
+4. "On the clock" detection from pick number + draft slot
+
+#### Acceptance Criteria
+- [ ] Polls draft_results() every 5 seconds without rate limiting errors
+- [ ] Sends Discord notification within 10 seconds of new pick
+- [ ] Detects our turn and sends "ON THE CLOCK" alert
+- [ ] Displays top 5 player recommendations at each pick
+- [ ] Graceful fallback to manual entry if API fails
+
+**Reference:** Section 5.4 and Section 10 (CLAUDE CODE handoff prompt)
+
+---
+
+## 17. ADVANCED ANALYTICS RESEARCH — POST-SEASON INTEGRATION
+
+**Research Complete:** March 11, 2026  
+**Full Report:** `reports/ADVANCED_ANALYTICS_INTEGRATION.md`  
+**Researcher:** Gemini CLI  
+**Assigned to:** Future iteration (2026 season or 2027 draft)  
+
+### Summary
+
+Gemini researched cutting-edge 2026 baseball metrics. Research is **strategically valuable but not immediately actionable** due to data availability constraints.
+
+### What's Ready to Use Now
+
+| Metric | Use Case | Implementation |
+|--------|----------|----------------|
+| **Swing Length** | Identify contact hitters | pybaseball library |
+| **Exit Velocity** | Power validation | Already in Statcast pipeline |
+| **Barrel%** | Power consistency | Calculate from Statcast |
+
+### What's Paywalled/Limited
+
+| Metric | Source | Cost | Recommendation |
+|--------|--------|------|----------------|
+| **Stuff+** | FanGraphs | $$$ | Defer to 2027 |
+| **PLV** | PitcherList | Free (scrape) | Post-season project |
+| **Bat Speed** | Baseball Savant | Limited 2026 data | Monitor availability |
+
+### Implementation Path
+
+**2026 Season (Post-Draft):**
+```python
+# Add to daily_lineup_optimizer.py
+from pybaseball import statcast_batter
+
+# Pull swing metrics for waiver wire sleepers
+# Flag: ADP > 150 + Swing Length < 7.2 ft = potential sleeper
+```
+
+**2027 Draft Prep:**
+- Build Statcast pipeline in Nov-Dec 2026
+- Create custom "Blast%" metric from bat speed + squared-up data
+- Integrate into projections_loader.py
+
+### Claude Code Note
+
+This research is **strategically sound** but **not a priority** for March 23 draft. The metrics require:
+1. 2026 season data (not available yet)
+2. pybaseball integration (moderate effort)
+3. Validation against actual results
+
+**Defer until after CBB tournament (post-April 7).**
+
+**Reference:** Section 5.5, `reports/ADVANCED_ANALYTICS_INTEGRATION.md`
+
+---
+
+## 18. OPENCLAW DISCORD ENHANCEMENT — IMPLEMENTATION ROADMAP
+
+**Plan:** `reports/OPENCLAW_DISCORD_ENHANCEMENT_PLAN.md`  
+**Assigned to:** Claude Code (implementation) → OpenClaw (execution)  
+**Timeline:** Phase 1 (March 12-18), Phase 2 (March 19-25), Phase 3 (March 26-Apr 7)
+
+### The 5 Pillars
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  OPENCLAW INTELLIGENCE HUB                 │
+├─────────────────────────────────────────────────────────────┤
+│  MORNING BRIEF    LIVE MONITOR     FANTASY INTEL           │
+│  Daily 7 AM ET    Every 2h         Daily 7 AM + ad-hoc     │
+│  → #briefs        → #escalations   → #fantasy-news         │
+│                                                            │
+│  TELEMETRY        TOURNAMENT OPS                             │
+│  Hourly           Mar 18-Apr 7                             │
+│  → #health        → #tournament                            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Phase 1: Foundation (March 12-18) — CURRENT PRIORITY
+
+**Goal:** Morning Brief + Telemetry Dashboard active by First Four
+
+| Component | Channel | Status |
+|-----------|---------|--------|
+| Morning Brief | `#openclaw-briefs` | 🔄 Ready for implementation |
+| Telemetry | `#openclaw-health` | 🔄 Ready for implementation |
+
+**Files to Create:**
+- `backend/services/openclaw_briefs.py` (~150 lines)
+- `backend/services/openclaw_telemetry.py` (~100 lines)
+
+**Files to Modify:**
+- `backend/services/discord_notifier.py` (add 2 functions)
+- `backend/scheduler.py` (add cron triggers)
+
+### Phase 2: Live Operations (March 19-25) — TOURNAMENT
+
+**Goal:** Game-time monitoring for First Four and Round of 64
+
+| Component | Channel | Trigger |
+|-----------|---------|---------|
+| Live Monitor | `#openclaw-escalations` | Every 2h on game days |
+| Tournament Alerts | `#cbb-tournament` | Upset/cinderella events |
+
+### Phase 3: Fantasy Integration (March 26-Apr 7) — MLB OPENING DAY
+
+**Goal:** Fantasy baseball intelligence by Opening Day
+
+| Component | Channel | Frequency |
+|-----------|---------|-----------|
+| Closer Monitor | `#fantasy-news` | Daily 7 AM ET |
+| Lineup Confirmations | `#fantasy-news` | As lineups post |
+| Waiver Sleepers | `#fantasy-waivers` | Weekly + hot pickups |
+
+### Success Metrics
+
+| Metric | Current | Target | Measurement |
+|--------|---------|--------|-------------|
+| Intelligence msgs/day | 0.1 | 15-20 | Discord count |
+| Time to alert | Manual | <15 min | Timestamp diff |
+| System visibility | Spotty | 99.9% | Telemetry coverage |
+
+### Claude Code Priority
+
+**Order of implementation:**
+1. **EMAC-064** (Bet Settlement Fix) — CRITICAL, due March 18
+2. **OPCL-001 Phase 1** (OpenClaw Morning Brief + Telemetry) — HIGH, due March 18
+3. **EMAC-063** (Fantasy Draft Tracker) — MEDIUM, due March 22
+4. **OPCL-001 Phase 2** (Live Monitor) — MEDIUM, March 19-25
+5. **OPCL-001 Phase 3** (Fantasy Intel) — LOW, March 26-Apr 7
+
+**Reference:** Section 6.5, Section 8.1a, and `reports/OPENCLAW_DISCORD_ENHANCEMENT_PLAN.md`
 
