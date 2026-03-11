@@ -216,10 +216,19 @@ class YahooFantasyClient:
             data["fantasy_content"]["league"][index]
         )
 
-    def _team_section(self, data: dict, index: int) -> dict:
-        """Extract and flatten team[index] from a fantasy_content response."""
+    def _team_section(self, data: dict) -> dict:
+        """
+        Flatten the entire team array from a fantasy_content response.
+
+        Yahoo returns team as either:
+          (a) [[meta_dict, ...], {"roster": {...}}]   — 2-element list
+          (b) [{"team_key": ...}, {"name": ...}, ..., {"roster": {...}}]  — flat list
+
+        We flatten ALL dict items across the outer list, skipping nested lists,
+        so the result always contains keys like "roster", "name", etc.
+        """
         return self._flatten_league_section(
-            data["fantasy_content"]["team"][index]
+            data["fantasy_content"]["team"]
         )
 
     # ------------------------------------------------------------------
@@ -283,7 +292,7 @@ class YahooFantasyClient:
             team_key = self.get_my_team_key()
         data = self._get(f"team/{team_key}/roster/players")
         players_raw = (
-            self._team_section(data, 1)
+            self._team_section(data)
             .get("roster", {})
             .get("0", {})
             .get("players", {})
@@ -391,7 +400,7 @@ class YahooFantasyClient:
             date = datetime.utcnow().strftime("%Y-%m-%d")
         data = self._get(f"team/{team_key}/roster/players", params={"date": date})
         players_raw = (
-            self._team_section(data, 1)
+            self._team_section(data)
             .get("roster", {})
             .get("0", {})
             .get("players", {})
