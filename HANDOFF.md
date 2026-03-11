@@ -1499,5 +1499,201 @@ send_to_channel("fantasy-lineups", embed=lineup_embed)
 
 ---
 
-**Next Step:** Add environment variables to Railway and run test script.
+**Status:** ✅ **COMPLETED** — All 16 channels tested and working
+
+**Completed:**
+- ✅ All environment variables added to Railway
+- ✅ Discord token refreshed and working
+- ✅ Test script passed — messages sent to all channels
+- ✅ Improved bet message format (clearer team/spread display)
+
+---
+
+## 15. TASK ASSIGNMENT: Bet Settlement Name-Matching Fix (EMAC-064)
+
+**Assigned to:** Claude Code (Master Architect)  
+**Priority:** CRITICAL — Must complete before March 18 (First Four)  
+**Estimated Effort:** 4-6 hours  
+**Dependencies:** None (isolated fix)
+
+---
+
+### 15.1 Problem Statement
+
+The `calculate_bet_outcome()` function in `backend/services/bet_tracker.py` contains a critical bug that causes **spread bet misgrading** when team names don't exactly match between the `pick` string and `Game` record.
+
+**Root Cause:**
+```python
+team_is_home = team.lower() == game.home_team.lower()
+```
+
+When `pick = "Samford Bulldogs -1.5"` but `game.home_team = "Samford"`, the comparison fails and the code defaults to away-team perspective, inverting the margin calculation.
+
+**Impact:**
+- Historical P&L data is unreliable
+- Current bets may be settled incorrectly
+- Model recalibration uses bad ground truth
+
+**Severity:** HIGH — Every spread bet with a name mismatch is at risk.
+
+---
+
+### 15.2 Required Deliverables
+
+#### Deliverable 1: Fixed Bet Settlement Logic
+
+**File:** `backend/services/bet_tracker.py`
+
+**Requirements:**
+1. Import and use `backend.services.team_mapping.normalize_team_name()` for fuzzy matching
+2. Before calculating margin, explicitly resolve which team was picked:
+   - Normalize pick team name
+   - Normalize both Game.home_team and Game.away_team
+   - Match pick to one of them
+   - If ambiguous/missing, log warning and return `None` (don't settle)
+3. Add unit tests in `tests/test_bet_tracker.py`
+
+**Implementation Pattern:**
+```python
+from backend.services.team_mapping import normalize_team_name
+
+def resolve_team_identity(pick_team: str, home_team: str, away_team: str) -> Tuple[bool, str]:
+    """
+    Resolve which team was picked.
+    
+    Returns:
+        (is_home: bool, matched_name: str)
+        Raises ValueError if cannot resolve unambiguously
+    """
+    pick_norm = normalize_team_name(pick_team) or pick_team
+    home_norm = normalize_team_name(home_team) or home_team
+    away_norm = normalize_team_name(away_team) or away_team
+    
+    # Fuzzy matching with rapidfuzz
+    from rapidfuzz import fuzz
+    
+    home_score = fuzz.token_sort_ratio(pick_norm.lower(), home_norm.lower())
+    away_score = fuzz.token_sort_ratio(pick_norm.lower(), away_norm.lower())
+    
+    if home_score > 80 and home_score > away_score:
+        return True, home_team
+    elif away_score > 80 and away_score > home_score:
+        return False, away_team
+    else:
+        raise ValueError(f"Cannot match '{pick_team}' to {home_team} or {away_team}")
+```
+
+#### Deliverable 2: Historical Re-Settlement Script
+
+**File:** `scripts/resettle_historical_bets.py`
+
+**Requirements:**
+1. Query all `BetLog` entries with `outcome IS NOT NULL` and `is_paper_trade = True`
+2. For each bet:
+   - Re-run `calculate_bet_outcome()` with fixed logic
+   - If outcome differs from stored value, record the correction
+   - Update the BetLog with corrected outcome and P&L
+3. Generate a correction report:
+   - Count of corrected bets
+   - Total P&L impact (before vs after)
+   - List of affected games
+4. Log-only mode (`--dry-run`) for safety
+
+**Usage:**
+```bash
+# Dry run first
+python scripts/resettle_historical_bets.py --dry-run
+
+# Actually apply corrections
+python scripts/resettle_historical_bets.py --apply
+```
+
+#### Deliverable 3: Validation Tests
+
+**File:** `tests/test_bet_settlement_fix.py`
+
+**Test Cases:**
+1. **Exact match** — "Duke" vs "Duke" → correct perspective
+2. **Mascot mismatch** — "Samford Bulldogs" vs "Samford" → correct perspective
+3. **Away team pick** — "UNC +3.5" on game where UNC is away → correct perspective
+4. **Ambiguous match** — "Miami" (could be Miami FL or Miami OH) → error/None
+5. **Edge cases** — abbreviations, punctuation differences
+
+**Integration Test:**
+- Create BetLog + Game in test DB
+- Run settlement
+- Verify correct outcome
+
+---
+
+### 15.3 Technical Constraints
+
+**Must Not Break:**
+- Existing moneyline settlement logic
+- Any downstream P&L calculations
+- Database schema (no migrations needed)
+
+**Must Use:**
+- Existing `team_mapping.py` normalization
+- Existing `rapidfuzz` dependency
+- Same database session patterns
+
+**Must Handle:**
+- Cases where team_mapping has no entry (graceful fallback)
+- Concurrent bet settlement (no race conditions)
+- Games where pick team no longer exists in mapping (log warning)
+
+---
+
+### 15.4 Acceptance Criteria
+
+- [ ] All new unit tests pass
+- [ ] Historical re-settlement script runs without errors
+- [ ] Dry-run shows expected corrections for known-misgraded bets
+- [ ] Actual re-settlement produces correct P&L reconciliation
+- [ ] No existing tests broken
+- [ ] Code review approved by Kimi CLI
+
+---
+
+### 15.5 Context for Claude
+
+**Why This Matters:**
+The CBB Edge model is tournament-ready (V9.1, fatigue, sharp money, conference HCA all wired). However, the betting history audit (Section 13) revealed this settlement bug invalidates our ground truth. Before March Madness begins, we need:
+1. Correct settlement going forward
+2. Corrected historical data for model recalibration
+
+**Files to Read First:**
+- `backend/services/bet_tracker.py` — Current (buggy) implementation
+- `backend/services/team_mapping.py` — Normalization functions
+- `reports/BETTING_HISTORY_AUDIT_MARCH_2026.md` — Audit findings
+- `reports/AUDIT_VERIFICATION_KIMI_MARCH_2026.md` — Technical verification
+
+**Design Philosophy:**
+- Fail safe: When in doubt, don't settle (return None)
+- Explicit over implicit: Clear logging of name matches
+- Backward compatible: Existing working code paths unchanged
+
+---
+
+### 15.6 Success Metrics
+
+After completion:
+- Zero misgraded spread bets due to name mismatch
+- Historical P&L reconciled to within 1% of actual
+- Settlement latency <10ms per bet (no regression)
+- 100% test coverage for new resolution logic
+
+---
+
+**Kimi CLI Review Required:** Before merging, Kimi will verify:
+1. Logic handles all edge cases in test suite
+2. Re-settlement script produces expected corrections
+3. No performance regression in settlement path
+
+---
+
+**Document Version:** EMAC-064
+**Last Updated:** March 11, 2026  
+**Next Review:** Upon Claude completion
 
