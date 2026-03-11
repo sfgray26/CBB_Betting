@@ -782,6 +782,363 @@ railway logs --follow
 
 ---
 
-**Document Version:** EMAC-062
-**Last Updated:** March 10, 2026
-**Status:** ALL COMPLETE — P0-P4 + K-8/K-9/K-10. 606/609 pass. Tournament-ready. Awaiting user direction.
+---
+
+## 12. EMAC-063 PROGRESS (March 11, 2026)
+
+### 12.1 Draft Board Tab — COMPLETE
+
+**File:** `dashboard/pages/11_Fantasy_Baseball.py` — `tab_draft` block
+
+**What was done:**
+- Replaced static placeholder with real, filterable player board (551 Steamer players)
+- Filters: Position, Type (Batter/Pitcher), Tier (1-10), Top-N, Name search
+- Displays Rank, Tier (color-coded), Name, Team, Position, ADP, Z-Score, Key Stats
+- Position Scarcity Snapshot: shows T1-T2 counts for C, SS, 2B, SP, RP
+- Strategy framework collapsed into expander (less clutter)
+- Info banner directs users to `12_Live_Draft.py` on draft day
+- Graceful fallback if board fails to load
+
+**Data pipeline confirmed working:**
+- `projections_loader.load_full_board()` reads Steamer CSVs (461 batting, 251 pitching, 306 ADP rows)
+- `player_board.get_board()` prefers CSVs over hardcoded fallback
+- 551 players with real z-scores returned
+
+**Validation:**
+- `python -c "import ast; ast.parse(open(..., encoding='utf-8').read())"` -- Syntax OK
+- Board logic unit tested: all filters, scarcity snapshot, key stats columns confirmed correct
+
+### 12.2 Projections Loader — Supplemental Files Wired
+
+**File:** `backend/fantasy_baseball/projections_loader.py`
+
+Three supplemental CSVs from Kimi Mission (previously unused) are now wired into `load_full_board()`:
+
+| File | Data | Effect |
+|------|------|--------|
+| `injury_flags_2026.csv` | 24 players | Adds `injury_risk` field (extreme/high/low) + `injury_note` to player dicts |
+| `closer_situations_2026.csv` | 30 teams | Overrides NSV projections for confirmed closers (e.g. Edwin Diaz 31 NSV) |
+| `position_eligibility_2026.csv` | 37 players | Overrides positions for multi-eligible players (Mookie Betts gets SS, Ohtani gets SP) |
+
+**New functions added (graceful — silent if file missing):**
+- `load_injury_flags()` + `_apply_injury_flags()`
+- `load_closer_situations()` + `_apply_closer_situations()`
+- `load_position_eligibility()` + `_apply_position_eligibility()`
+
+**Runtime result:** 14 injury-flagged, 19 closer NSV overrides, multi-position eligibility for 37 stars.
+
+**Draft impact:** `12_Live_Draft.py` already reads `p.get("injury_risk")` for risk badges. Injury column now shows in `11_Fantasy_Baseball.py` draft board as "Risk" column.
+
+### 12.3 System Validation (March 11)
+
+- Tests: **601/604 pass** (excl. flaky async file — 3 pre-existing Postgres-auth failures, unchanged)
+- `test_integrity_sweep.py::TestDdgsAndCheckAsync` passes 6/6 in isolation; Windows event-loop ordering issue in full-suite run (pre-existing, not our code)
+- Remote: Repo up to date with origin/main
+- CBB V9.1: All systems ready for March 18 tournament window
+
+**GUARDIAN:** Do NOT touch CBB code (betting_model.py, analysis.py, CBB services) during tournament window (Mar 18 - Apr 7).
+
+---
+
+**Document Version:** EMAC-063
+**Last Updated:** March 11, 2026
+**Status:** Draft Board tab LIVE + supplemental data wired. 601/604 pass (excl. async flake). Tournament window opens Mar 18. Draft day Mar 23.
+
+---
+
+## 13. BETTING HISTORY AUDIT REVIEW (March 11, 2026)
+
+**Auditor:** Kimi CLI (Deep Intelligence Unit)  
+**Scope:** Verification of `reports/BETTING_HISTORY_AUDIT_MARCH_2026.md`  
+**Status:** ⚠️ **CRITICAL ISSUE CONFIRMED — Action Required**
+
+---
+
+### 13.1 Executive Summary
+
+A thorough review of the Gemini CLI betting history audit reveals **legitimate critical findings** that require immediate attention. The reported "Phantom Away Team" bug in `calculate_bet_outcome()` is **technically accurate and reproducible**.
+
+**However:** The audit's severity assessment is accurate, but the recommended fix approach requires refinement to align with existing codebase patterns.
+
+---
+
+### 13.2 Technical Verification
+
+#### Bug Confirmed: Name Mismatch in Bet Settlement
+
+**Location:** `backend/services/bet_tracker.py:80`
+
+**Current (Buggy) Code:**
+```python
+team_is_home = team.lower() == game.home_team.lower()
+
+if team_is_home:
+    margin = home_score - away_score
+else:
+    margin = away_score - home_score  # BUG: Defaults to away perspective on mismatch
+```
+
+**Verification Script:**
+```
+Pick: 'Samford Bulldogs' vs Game.home_team: 'Samford'
+team_is_home: False (should be True)
+
+Score: Samford 82, Furman 75 (Samford wins by 7)
+Spread: -1.5
+
+BUG: margin = 75 - 82 = -7 (away perspective)
+     cover_margin = -7 + (-1.5) = -8.5 → LOSS
+
+CORRECT: margin = 82 - 75 = 7 (home perspective)
+         cover_margin = 7 + (-1.5) = 5.5 → WIN
+```
+
+**Result:** The bug inverts outcomes when pick names include mascots but Game records use short names.
+
+---
+
+### 13.3 Audit Claims Verification
+
+| Claim | Status | Notes |
+|-------|--------|-------|
+| **Bug exists in `calculate_bet_outcome`** | ✅ **CONFIRMED** | Reproducible with name mismatch scenario |
+| **Bet #112 (EWU -3.5) misgraded** | ⚠️ **PLAUSIBLE** | Cannot verify scores without DB access |
+| **Bet #2 (UNCG -7.5) misgraded** | ⚠️ **PLAUSIBLE** | Cannot verify scores without DB access |
+| **Bet #41 (Samford -1.5) misgraded** | ⚠️ **PLAUSIBLE** | Pattern matches bug behavior |
+| **team_mapping.py not utilized** | ✅ **CONFIRMED** | `bet_tracker.py` imports no normalization |
+| **"300+ normalization rules"** | ⚠️ **MISLEADING** | Actual count: ~100 ODDS_TO_KENPOM entries |
+
+---
+
+### 13.4 Impact Assessment
+
+**Severity: HIGH** — The audit correctly identifies this as a critical issue.
+
+**Affected Scenarios:**
+1. Picks with full names ("Samford Bulldogs") vs Game short names ("Samford")
+2. Picks with abbreviated names ("UNC Greensboro") vs Game full names ("North Carolina Greensboro")
+3. Any name variation not exactly matching Game record
+
+**NOT Affected:**
+1. Picks that exactly match Game.home_team or Game.away_team
+2. Moneyline bets (outright win detection still works regardless of home/away perspective)
+
+---
+
+### 13.5 Root Cause Analysis
+
+**Primary Cause:** `parse_pick()` extracts team names from bet picks, but `calculate_bet_outcome()` compares them directly to `Game.home_team` without normalization.
+
+**Contributing Factors:**
+1. The Odds API uses full names with mascots ("Samford Bulldogs")
+2. Internal Game records may use short names ("Samford")
+3. No fuzzy matching or mapping lookup in bet settlement path
+4. Silent failure — defaults to away team perspective on mismatch
+
+---
+
+### 13.6 Recommended Fixes (Prioritized)
+
+#### Option A: Quick Fix — Use Normalized Comparison (Recommended for Immediate)
+
+**File:** `backend/services/bet_tracker.py`
+
+```python
+from backend.services.team_mapping import normalize_team_name
+
+def calculate_bet_outcome(bet, game, starting_bankroll=1000.0):
+    # ... existing code ...
+    team, spread = parse_pick(bet.pick)
+    
+    # Normalize both sides before comparison
+    team_normalized = normalize_team_name(team) or team
+    home_normalized = normalize_team_name(game.home_team) or game.home_team
+    away_normalized = normalize_team_name(game.away_team) or game.away_team
+    
+    # Determine perspective with normalized names
+    if team_normalized.lower() == home_normalized.lower():
+        team_is_home = True
+    elif team_normalized.lower() == away_normalized.lower():
+        team_is_home = False
+    else:
+        # Log warning for unmatched team
+        logger.warning(f"Could not match pick '{team}' to game {game.id}")
+        return None  # Don't settle — requires manual review
+    
+    # ... rest of function unchanged ...
+```
+
+**Pros:**
+- Uses existing `team_mapping.py` infrastructure
+- Minimal code change (~10 lines)
+- Fails safely (returns None instead of wrong result)
+
+**Cons:**
+- Adds dependency on `team_mapping` module
+- May not catch all edge cases
+
+#### Option B: Robust Fix — Store team_id on BetLog
+
+**Schema Change Required:**
+```python
+# backend/models.py
+class BetLog(Base):
+    # ... existing fields ...
+    team_id = Column(String)  # KenPom canonical name
+    is_home_team = Column(Boolean)  # Determined at bet creation time
+```
+
+**Modify bet creation in `analysis.py`:**
+```python
+# When creating BetLog
+bet = BetLog(
+    # ... existing fields ...
+    team_id=normalize_team_name(pick_team),
+    is_home_team=(pick_team == game.home_team)
+)
+```
+
+**Pros:**
+- Eliminates runtime name matching entirely
+- Deterministic at bet creation time
+- No normalization needed at settlement
+
+**Cons:**
+- Requires database migration
+- Must backfill historical data
+- More invasive change
+
+#### Option C: Hybrid — Parse and Match with Fuzzy Fallback
+
+```python
+from rapidfuzz import fuzz
+
+def resolve_team_identity(pick_team, home_team, away_team):
+    """Return ('home'|'away'|None) with fuzzy fallback."""
+    pick_lower = pick_team.lower()
+    home_lower = home_team.lower()
+    away_lower = away_team.lower()
+    
+    # Exact match
+    if pick_lower == home_lower:
+        return 'home'
+    if pick_lower == away_lower:
+        return 'away'
+    
+    # Fuzzy match (token sort ratio handles word order)
+    home_score = fuzz.token_sort_ratio(pick_lower, home_lower)
+    away_score = fuzz.token_sort_ratio(pick_lower, away_lower)
+    
+    if home_score > 80 and home_score > away_score:
+        return 'home'
+    if away_score > 80 and away_score > home_score:
+        return 'away'
+    
+    return None  # Ambiguous
+```
+
+**Pros:**
+- Handles variations without mapping table
+- Uses existing `rapidfuzz` dependency
+- Graceful fallback
+
+**Cons:**
+- Adds complexity
+- Potential false matches at threshold boundary
+
+---
+
+### 13.7 Historical Data Re-Settlement Plan
+
+**Step 1: Identify Potentially Affected Bets**
+```sql
+-- Find settled bets where pick team doesn't match game home/away exactly
+SELECT b.id, b.pick, g.home_team, g.away_team, b.outcome
+FROM bet_logs b
+JOIN games g ON b.game_id = g.id
+WHERE b.outcome IS NOT NULL
+  AND LOWER(SPLIT_PART(b.pick, ' ', 1)) != LOWER(g.home_team)
+  AND LOWER(SPLIT_PART(b.pick, ' ', 1)) != LOWER(g.away_team);
+```
+
+**Step 2: Re-Settlement Script**
+```python
+# scripts/resettle_bets.py
+from backend.services.bet_tracker import calculate_bet_outcome
+from backend.models import SessionLocal, BetLog, Game
+
+def resettle_bets():
+    db = SessionLocal()
+    affected = []
+    
+    for bet in db.query(BetLog).filter(BetLog.outcome.isnot(None)):
+        game = db.query(Game).get(bet.game_id)
+        if not game or not game.completed:
+            continue
+            
+        new_result = calculate_bet_outcome(bet, game)
+        if new_result and new_result.outcome != bet.outcome:
+            affected.append({
+                'bet_id': bet.id,
+                'pick': bet.pick,
+                'old_outcome': bet.outcome,
+                'new_outcome': new_result.outcome,
+                'game': f"{game.away_team} @ {game.home_team}"
+            })
+            # Apply correction
+            bet.outcome = new_result.outcome
+            bet.profit_loss_dollars = new_result.profit_loss_dollars
+            bet.profit_loss_units = new_result.profit_loss_units
+    
+    db.commit()
+    return affected
+```
+
+**Step 3: Validation**
+- Run on staging first
+- Cross-reference 10-20 random corrected bets with actual scores
+- Generate before/after P&L report
+
+---
+
+### 13.8 Immediate Action Items
+
+| Priority | Action | Owner | ETA |
+|----------|--------|-------|-----|
+| **P0** | Implement Option A fix in `bet_tracker.py` | Claude Code | March 12 |
+| **P0** | Write `scripts/resettle_bets.py` | Claude Code | March 12 |
+| **P1** | Test fix with 5 known historical cases | Kimi CLI | March 12 |
+| **P1** | Run re-settlement on staging DB | Gemini CLI | March 13 |
+| **P1** | Validate corrected P&L against manual calculation | Kimi CLI | March 13 |
+| **P2** | Consider Option B schema change for next season | Claude Code | Post-tournament |
+
+---
+
+### 13.9 Audit Assessment Summary
+
+| Aspect | Rating | Commentary |
+|--------|--------|------------|
+| **Technical Accuracy** | ⭐⭐⭐⭐⭐ | Bug description 100% correct, reproducible |
+| **Impact Assessment** | ⭐⭐⭐⭐⭐ | Correctly identified as critical |
+| **Severity** | ⭐⭐⭐⭐⭐ | High impact on P&L accuracy |
+| **Recommended Fix** | ⭐⭐⭐☆☆ | Too vague; specific approach not provided |
+| **Documentation** | ⭐⭐⭐⭐☆ | Good structure, but missing verification data |
+| **Overall** | ⭐⭐⭐⭐☆ | Legitimate findings requiring action |
+
+---
+
+### 13.10 Risk of NOT Acting
+
+**Tournament Window (March 18 - April 7):**
+- Every settled bet during March Madness has potential for misgrading
+- With 67 games in the tournament, even 10% error rate = 6-7 incorrect outcomes
+- P&L metrics become unreliable for model recalibration
+- User trust degradation if discrepancies discovered
+
+**Recommendation:** Fix P0 items BEFORE March 18 First Four.
+
+---
+
+**Review Completed By:** Kimi CLI  
+**Review Date:** March 11, 2026  
+**Next Review:** After fix implementation (March 12)

@@ -1,53 +1,230 @@
 """
-Simplified OpenClaw Replacement — Lite Coordination Service
+OpenClaw Lite v3.0 — Simplified Integrity Coordination Service
 
-Replaces the complex v2.0 coordinator with a simpler approach:
-- Uses OpenClaw sessions_spawn for remote tasks (no Ollama required)
-- Falls back to local heuristics when spawn unavailable
-- No circuit breakers, no complex routing — just simple delegation
+A production-ready, lightweight integrity checking system that replaces
+the complex v2.0 coordinator with a focused, high-performance implementation.
 
-Benefits:
-- No local Ollama service needed
-- Uses existing OpenClaw infrastructure
-- Simpler code, easier to debug
-- Still uses qwen/kimi for appropriate task levels
+Key Features:
+- Fast heuristic-based integrity checks (<1ms)
+- Async-native design for concurrent processing
+- Built-in telemetry and metrics
+- High-stakes escalation queue
+- No external LLM dependencies
+
+Migration Notes:
+- v2.1: Initial heuristic-based implementation
+- v3.0: Added async support, telemetry, escalation queue
 """
 
-import logging
+import asyncio
 import json
-from dataclasses import dataclass
+import logging
+import re
+from dataclasses import dataclass, field, asdict
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
 from enum import Enum
+from pathlib import Path
+from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger("openclaw_lite")
 
 
-class TaskPriority(Enum):
-    LOW = "low"      # Local heuristics only
-    MEDIUM = "medium"  # Try spawn, fallback to local
-    HIGH = "high"    # Always use remote (Kimi)
+class IntegrityVerdict(Enum):
+    """Standard integrity verdicts."""
+    CONFIRMED = "CONFIRMED"
+    CAUTION = "CAUTION"
+    VOLATILE = "VOLATILE"
+    ABORT = "ABORT"
+    RED_FLAG = "RED FLAG"
 
 
 @dataclass
 class IntegrityResult:
+    """Result of an integrity check."""
     verdict: str  # CONFIRMED, CAUTION, VOLATILE, ABORT, RED FLAG
     confidence: float  # 0.0-1.0
     reasoning: str
-    source: str  # "heuristic", "qwen", "kimi"
+    source: str  # "heuristic", "kimi"
+    latency_ms: float = 0.0
+    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    
+    def to_dict(self) -> Dict:
+        return asdict(self)
+
+
+@dataclass
+class TelemetrySnapshot:
+    """Snapshot of OpenClaw performance metrics."""
+    total_checks: int = 0
+    heuristic_checks: int = 0
+    escalated_checks: int = 0
+    fallback_checks: int = 0
+    
+    # Verdict distribution
+    confirmed_count: int = 0
+    caution_count: int = 0
+    volatile_count: int = 0
+    abort_count: int = 0
+    red_flag_count: int = 0
+    
+    # Performance
+    total_latency_ms: float = 0.0
+    avg_latency_ms: float = 0.0
+    max_latency_ms: float = 0.0
+    
+    # Error tracking
+    errors: int = 0
+    last_error: Optional[str] = None
+    
+    def record_check(self, result: IntegrityResult):
+        """Record a check result."""
+        self.total_checks += 1
+        
+        if result.source == "heuristic":
+            self.heuristic_checks += 1
+        elif result.source == "kimi":
+            self.escalated_checks += 1
+        
+        # Count verdicts
+        verdict = result.verdict.upper()
+        if "CONFIRMED" in verdict:
+            self.confirmed_count += 1
+        elif "CAUTION" in verdict:
+            self.caution_count += 1
+        elif "VOLATILE" in verdict:
+            self.volatile_count += 1
+        elif "ABORT" in verdict:
+            self.abort_count += 1
+        elif "RED FLAG" in verdict:
+            self.red_flag_count += 1
+        
+        # Track latency
+        self.total_latency_ms += result.latency_ms
+        self.avg_latency_ms = self.total_latency_ms / self.total_checks
+        self.max_latency_ms = max(self.max_latency_ms, result.latency_ms)
+    
+    def record_error(self, error: str):
+        """Record an error."""
+        self.errors += 1
+        self.last_error = error
+    
+    def to_dict(self) -> Dict:
+        return {
+            "total_checks": self.total_checks,
+            "heuristic_checks": self.heuristic_checks,
+            "escalated_checks": self.escalated_checks,
+            "fallback_checks": self.fallback_checks,
+            "verdict_distribution": {
+                "confirmed": self.confirmed_count,
+                "caution": self.caution_count,
+                "volatile": self.volatile_count,
+                "abort": self.abort_count,
+                "red_flag": self.red_flag_count,
+            },
+            "performance": {
+                "avg_latency_ms": round(self.avg_latency_ms, 2),
+                "max_latency_ms": round(self.max_latency_ms, 2),
+            },
+            "errors": self.errors,
+            "last_error": self.last_error,
+        }
+
+
+class HighStakesEscalationQueue:
+    """
+    File-based queue for high-stakes games requiring manual review.
+    
+    Games are flagged when:
+    - recommended_units >= 1.5
+    - Tournament Elite Eight or later
+    - VOLATILE verdict received
+    """
+    
+    def __init__(self, queue_dir: str = ".openclaw/escalation_queue"):
+        self.queue_dir = Path(queue_dir)
+        self.queue_dir.mkdir(parents=True, exist_ok=True)
+    
+    def enqueue(self, game_key: str, home_team: str, away_team: str, 
+                recommended_units: float, integrity_verdict: Optional[str],
+                reason: str) -> str:
+        """
+        Add a game to the escalation queue.
+        
+        Returns:
+            queue_id: Unique identifier for this escalation
+        """
+        queue_id = f"{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{game_key.replace('@', '_')}"
+        
+        entry = {
+            "queue_id": queue_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "game_key": game_key,
+            "home_team": home_team,
+            "away_team": away_team,
+            "recommended_units": recommended_units,
+            "integrity_verdict": integrity_verdict,
+            "escalation_reason": reason,
+            "status": "pending_review",
+        }
+        
+        queue_file = self.queue_dir / f"{queue_id}.json"
+        with open(queue_file, 'w') as f:
+            json.dump(entry, f, indent=2)
+        
+        logger.warning(
+            "HIGH-STAKES ESCALATION: %s @ %s (%.2fu) - %s",
+            away_team, home_team, recommended_units, reason
+        )
+        
+        return queue_id
+    
+    def get_pending(self) -> List[Dict]:
+        """Get all pending escalations."""
+        pending = []
+        for f in self.queue_dir.glob("*.json"):
+            try:
+                with open(f) as fp:
+                    entry = json.load(fp)
+                    if entry.get("status") == "pending_review":
+                        pending.append(entry)
+            except Exception as e:
+                logger.warning(f"Failed to read escalation file {f}: {e}")
+        
+        return sorted(pending, key=lambda x: x.get("timestamp", ""))
+    
+    def resolve(self, queue_id: str, resolution: str, reviewer: str) -> bool:
+        """Mark an escalation as resolved."""
+        queue_file = self.queue_dir / f"{queue_id}.json"
+        if not queue_file.exists():
+            return False
+        
+        try:
+            with open(queue_file) as f:
+                entry = json.load(f)
+            
+            entry["status"] = "resolved"
+            entry["resolution"] = resolution
+            entry["reviewer"] = reviewer
+            entry["resolved_at"] = datetime.utcnow().isoformat()
+            
+            with open(queue_file, 'w') as f:
+                json.dump(entry, f, indent=2)
+            
+            return True
+        except Exception as e:
+            logger.error(f"Failed to resolve escalation {queue_id}: {e}")
+            return False
 
 
 class OpenClawLite:
     """
-    Lightweight replacement for OpenClaw v2.0 coordinator.
+    Lightweight, high-performance integrity checker.
     
-    No Ollama required. Uses:
-    1. Simple heuristics for low-stakes decisions
-    2. sessions_spawn for medium-stakes (qwen model)
-    3. Direct execution for high-stakes (already running as Kimi)
+    Uses tuned heuristics for fast decisions with optional escalation
+    for high-stakes scenarios.
     """
     
-    # Keywords that trigger escalation
+    # Risk keyword taxonomies
     HIGH_RISK_KEYWORDS = [
         "injury", "injured", "out", "doubtful", "questionable",
         "suspension", "suspended", "arrest", "investigation",
@@ -80,237 +257,16 @@ class OpenClawLite:
         "suspended indefinitely", "banned", "cheating"
     ]
     
-    def __init__(self):
-        self.spawn_available = True
-        self.stats = {
-            "heuristic_calls": 0,
-            "spawn_calls": 0,
-            "direct_calls": 0,
-            "fallbacks": 0
-        }
+    # High-stakes thresholds
+    HIGH_STAKES_UNITS = 1.5
+    ELITE_EIGHT_ROUND = 4
     
-    def check_integrity_heuristic(
-        self,
-        search_text: str,
-        home_team: str,
-        away_team: str,
-        recommended_units: float = 0.0
-    ) -> IntegrityResult:
-        """
-        Fast local heuristic check — no LLM needed.
-        
-        Uses keyword matching and simple rules to make a decision.
-        Good for 85%+ of cases with tuned rules.
-        """
-        self.stats["heuristic_calls"] += 1
-        
-        text_lower = search_text.lower()
-        
-        # Check for critical abort conditions first
-        for critical in self.CRITICAL_ABORT_KEYWORDS:
-            if critical in text_lower:
-                return IntegrityResult(
-                    verdict="ABORT",
-                    confidence=0.9,
-                    reasoning=f"Critical signal detected: {critical}",
-                    source="heuristic"
-                )
-        
-        # Check for serious abort conditions
-        abort_hits = sum(1 for kw in self.ABORT_KEYWORDS if kw in text_lower)
-        if abort_hits >= 1:
-            return IntegrityResult(
-                verdict="ABORT",
-                confidence=0.85,
-                reasoning=f"Serious issue detected",
-                source="heuristic"
-            )
-        
-        # Count keyword hits
-        high_risk_hits = sum(1 for kw in self.HIGH_RISK_KEYWORDS if kw in text_lower)
-        moderate_hits = sum(1 for kw in self.MODERATE_RISK_KEYWORDS if kw in text_lower)
-        conflict_hits = sum(1 for kw in self.CONFLICT_KEYWORDS if kw in text_lower)
-        
-        # Decision logic (tuned for sensitivity)
-        
-        # 1. Late breaking uncertainty (check early - high priority)
-        late_breaking = any(x in text_lower for x in ["late", "just", "breaking", "developing"])
-        uncertainty = any(x in text_lower for x in ["uncertain", "unclear", "unknown", "mystery", "monitor", "status"])
-        missed_status = "missed" in text_lower and any(x in text_lower for x in ["practice", "shootaround", "warmup"])
-        
-        if late_breaking and uncertainty:
-            return IntegrityResult(
-                verdict="VOLATILE",
-                confidence=0.70,
-                reasoning="Late-breaking uncertainty",
-                source="heuristic"
-            )
-        
-        if missed_status and uncertainty:
-            return IntegrityResult(
-                verdict="VOLATILE",
-                confidence=0.75,
-                reasoning="Key player missed activity with uncertain status",
-                source="heuristic"
-            )
-        
-        # 2. Critical: Conflicting information
-        if conflict_hits >= 2 or "conflicting" in text_lower:
-            return IntegrityResult(
-                verdict="VOLATILE",
-                confidence=0.70,
-                reasoning="Conflicting or uncertain information detected",
-                source="heuristic"
-            )
-        
-        # 3. Multiple high-risk signals (check before uncertain status to avoid
-        #    over-escalation when there are many explicit risk keywords)
-        if high_risk_hits >= 3:
-            return IntegrityResult(
-                verdict="CAUTION",
-                confidence=0.75,
-                reasoning=f"Multiple risk indicators ({high_risk_hits} high-risk signals)",
-                source="heuristic"
-            )
-
-        # 4. Uncertain status alone can be volatile
-        if uncertainty and ("questionable" in text_lower or "doubtful" in text_lower):
-            return IntegrityResult(
-                verdict="VOLATILE",
-                confidence=0.65,
-                reasoning="Uncertain player status",
-                source="heuristic"
-            )
-        
-        # 5. Star player issues
-        if ("star" in text_lower or "key" in text_lower) and \
-           ("out" in text_lower or "doubtful" in text_lower or "questionable" in text_lower):
-            return IntegrityResult(
-                verdict="CAUTION",
-                confidence=0.80,
-                reasoning="Key player status concerns",
-                source="heuristic"
-            )
-        
-        # 6. Suspension news
-        if "suspension" in text_lower or "suspended" in text_lower:
-            return IntegrityResult(
-                verdict="CAUTION",
-                confidence=0.75,
-                reasoning="Suspension affecting availability",
-                source="heuristic"
-            )
-        
-        # 7. Moderate risk accumulation
-        if high_risk_hits >= 2 or moderate_hits >= 3:
-            return IntegrityResult(
-                verdict="CAUTION",
-                confidence=0.70,
-                reasoning=f"Elevated risk profile ({high_risk_hits} risk, {moderate_hits} moderate signals)",
-                source="heuristic"
-            )
-        
-        # Fatigue/schedule concerns
-        if any(x in text_lower for x in ["back-to-back", "fatigue", "tired", "heavy minutes", "delay", "travel"]):
-            return IntegrityResult(
-                verdict="CAUTION",
-                confidence=0.65,
-                reasoning="Schedule or fatigue concerns",
-                source="heuristic"
-            )
-        
-        # Single moderate risk
-        if moderate_hits >= 1 and high_risk_hits >= 1:
-            return IntegrityResult(
-                verdict="CAUTION",
-                confidence=0.60,
-                reasoning="Risk factors present",
-                source="heuristic"
-            )
-        
-        # High stakes with any concern
-        if recommended_units >= 1.5 and (high_risk_hits >= 1 or moderate_hits >= 1):
-            return IntegrityResult(
-                verdict="CAUTION",
-                confidence=0.75,
-                reasoning=f"High-stakes bet with risk signals ({high_risk_hits} risk, {moderate_hits} moderate)",
-                source="heuristic"
-            )
-        
-        # High stakes clean
-        if recommended_units >= 1.5:
-            return IntegrityResult(
-                verdict="CONFIRMED",
-                confidence=0.80,
-                reasoning="High stakes but no concerning signals",
-                source="heuristic"
-            )
-        
-        # Clean search
-        return IntegrityResult(
-            verdict="CONFIRMED",
-            confidence=0.90,
-            reasoning="No concerning signals in search results",
-            source="heuristic"
-        )
+    def __init__(self, enable_telemetry: bool = True):
+        self.telemetry = TelemetrySnapshot() if enable_telemetry else None
+        self.escalation_queue = HighStakesEscalationQueue()
+        self._semaphore = asyncio.Semaphore(8)  # Max concurrent checks
     
-    async def check_integrity_with_spawn(
-        self,
-        search_text: str,
-        home_team: str,
-        away_team: str,
-        recommended_units: float = 0.0
-    ) -> IntegrityResult:
-        """
-        Use sessions_spawn to call qwen model for analysis.
-        
-        Falls back to heuristic if spawn fails.
-        """
-        if not self.spawn_available:
-            return self.check_integrity_heuristic(
-                search_text, home_team, away_team, recommended_units
-            )
-        
-        try:
-            # Build the prompt for the sub-agent
-            prompt = f"""You are a College Basketball Betting Integrity Officer.
-
-Game: {away_team} @ {home_team}
-Recommended bet size: {recommended_units} units
-
-News/Search Results:
-{search_text[:2000]}  # Truncate to keep prompt short
-
-Analyze the information and return a JSON object with exactly these fields:
-- verdict: One of ["CONFIRMED", "CAUTION", "VOLATILE", "ABORT"]
-- confidence: Number between 0.0 and 1.0
-- reasoning: One sentence explaining your decision
-
-Rules:
-- CONFIRMED: No concerning news, everything looks normal
-- CAUTION: Minor concern (questionable player, slight uncertainty)
-- VOLATILE: Conflicting reports or significant uncertainty
-- ABORT: Major issue confirmed (star out, scandal, etc.)
-
-Return ONLY valid JSON, no other text."""
-
-            # Call would go here if we had the sessions_spawn tool
-            # For now, fall back to heuristic
-            self.stats["spawn_calls"] += 1
-            
-            # Placeholder: In actual implementation, this would call:
-            # result = await sessions_spawn(task=prompt, agent_id="qwen", ...)
-            # For now, fall back to heuristic
-            raise NotImplementedError("sessions_spawn integration pending")
-            
-        except Exception as e:
-            logger.warning(f"Spawn failed, falling back to heuristic: {e}")
-            self.stats["fallbacks"] += 1
-            return self.check_integrity_heuristic(
-                search_text, home_team, away_team, recommended_units
-            )
-    
-    def check_integrity_direct(
+    def _check_integrity_heuristic_sync(
         self,
         search_text: str,
         home_team: str,
@@ -319,36 +275,164 @@ Return ONLY valid JSON, no other text."""
         is_elite_eight_or_later: bool = False
     ) -> IntegrityResult:
         """
-        Direct integrity check — used when already running as Kimi.
+        Synchronous heuristic check - core decision logic.
         
-        This is the 'high-stakes' path that uses the current model
-        (which is already Kimi in the main session).
+        This is the primary path for all integrity checks.
+        Returns in <1ms for typical inputs.
         """
-        self.stats["direct_calls"] += 1
-        
-        # Since we're already running as Kimi, we can just analyze directly
-        # But for efficiency, we still use heuristics for obvious cases
+        import time
+        start = time.time()
         
         text_lower = search_text.lower()
         
-        # Quick abort conditions
-        if any(x in text_lower for x in ["star player out", "key injury", "major scandal"]):
+        # 1. Critical abort conditions (check first for speed)
+        for critical in self.CRITICAL_ABORT_KEYWORDS:
+            if critical in text_lower:
+                return IntegrityResult(
+                    verdict=IntegrityVerdict.ABORT.value,
+                    confidence=0.9,
+                    reasoning=f"Critical signal detected: {critical}",
+                    source="heuristic",
+                    latency_ms=(time.time() - start) * 1000
+                )
+        
+        # 2. Serious abort conditions
+        abort_hits = sum(1 for kw in self.ABORT_KEYWORDS if kw in text_lower)
+        if abort_hits >= 1:
             return IntegrityResult(
-                verdict="ABORT",
-                confidence=0.9,
-                reasoning="Critical issue confirmed in search results",
-                source="kimi"
+                verdict=IntegrityVerdict.ABORT.value,
+                confidence=0.85,
+                reasoning="Serious issue detected",
+                source="heuristic",
+                latency_ms=(time.time() - start) * 1000
             )
         
-        # For complex cases or high stakes, do deeper analysis
-        if recommended_units >= 1.5 or is_elite_eight_or_later:
-            # In actual use, this function would be called from the main
-            # Kimi session, so the analysis is already happening
-            pass
+        # 3. Keyword counting
+        high_risk_hits = sum(1 for kw in self.HIGH_RISK_KEYWORDS if kw in text_lower)
+        moderate_hits = sum(1 for kw in self.MODERATE_RISK_KEYWORDS if kw in text_lower)
+        conflict_hits = sum(1 for kw in self.CONFLICT_KEYWORDS if kw in text_lower)
         
-        # Default to heuristic for simple cases
-        return self.check_integrity_heuristic(
-            search_text, home_team, away_team, recommended_units
+        # 4. Late-breaking uncertainty
+        late_breaking = any(x in text_lower for x in ["late", "just", "breaking", "developing"])
+        uncertainty = any(x in text_lower for x in ["uncertain", "unclear", "unknown", "mystery", "monitor", "status"])
+        missed_status = "missed" in text_lower and any(x in text_lower for x in ["practice", "shootaround", "warmup"])
+        
+        if late_breaking and uncertainty:
+            return IntegrityResult(
+                verdict=IntegrityVerdict.VOLATILE.value,
+                confidence=0.70,
+                reasoning="Late-breaking uncertainty",
+                source="heuristic",
+                latency_ms=(time.time() - start) * 1000
+            )
+        
+        if missed_status and uncertainty:
+            return IntegrityResult(
+                verdict=IntegrityVerdict.VOLATILE.value,
+                confidence=0.75,
+                reasoning="Key player missed activity with uncertain status",
+                source="heuristic",
+                latency_ms=(time.time() - start) * 1000
+            )
+        
+        # 5. Conflicting information
+        if conflict_hits >= 2 or "conflicting" in text_lower:
+            return IntegrityResult(
+                verdict=IntegrityVerdict.VOLATILE.value,
+                confidence=0.70,
+                reasoning="Conflicting or uncertain information detected",
+                source="heuristic",
+                latency_ms=(time.time() - start) * 1000
+            )
+        
+        # 6. Multiple high-risk signals
+        if high_risk_hits >= 3:
+            return IntegrityResult(
+                verdict=IntegrityVerdict.CAUTION.value,
+                confidence=0.75,
+                reasoning=f"Multiple risk indicators ({high_risk_hits} high-risk signals)",
+                source="heuristic",
+                latency_ms=(time.time() - start) * 1000
+            )
+        
+        # 7. Uncertain status
+        if uncertainty and ("questionable" in text_lower or "doubtful" in text_lower):
+            return IntegrityResult(
+                verdict=IntegrityVerdict.VOLATILE.value,
+                confidence=0.65,
+                reasoning="Uncertain player status",
+                source="heuristic",
+                latency_ms=(time.time() - start) * 1000
+            )
+        
+        # 8. Star player issues
+        if ("star" in text_lower or "key" in text_lower) and \
+           ("out" in text_lower or "doubtful" in text_lower or "questionable" in text_lower):
+            return IntegrityResult(
+                verdict=IntegrityVerdict.CAUTION.value,
+                confidence=0.80,
+                reasoning="Key player status concerns",
+                source="heuristic",
+                latency_ms=(time.time() - start) * 1000
+            )
+        
+        # 9. Suspension
+        if "suspension" in text_lower or "suspended" in text_lower:
+            return IntegrityResult(
+                verdict=IntegrityVerdict.CAUTION.value,
+                confidence=0.75,
+                reasoning="Suspension affecting availability",
+                source="heuristic",
+                latency_ms=(time.time() - start) * 1000
+            )
+        
+        # 10. Moderate risk accumulation
+        if high_risk_hits >= 2 or moderate_hits >= 3:
+            return IntegrityResult(
+                verdict=IntegrityVerdict.CAUTION.value,
+                confidence=0.70,
+                reasoning=f"Elevated risk profile ({high_risk_hits} risk, {moderate_hits} moderate signals)",
+                source="heuristic",
+                latency_ms=(time.time() - start) * 1000
+            )
+        
+        # 11. Fatigue/schedule concerns
+        if any(x in text_lower for x in ["back-to-back", "fatigue", "tired", "heavy minutes", "delay", "travel"]):
+            return IntegrityResult(
+                verdict=IntegrityVerdict.CAUTION.value,
+                confidence=0.65,
+                reasoning="Schedule or fatigue concerns",
+                source="heuristic",
+                latency_ms=(time.time() - start) * 1000
+            )
+        
+        # 12. Single moderate risk
+        if moderate_hits >= 1 and high_risk_hits >= 1:
+            return IntegrityResult(
+                verdict=IntegrityVerdict.CAUTION.value,
+                confidence=0.60,
+                reasoning="Risk factors present",
+                source="heuristic",
+                latency_ms=(time.time() - start) * 1000
+            )
+        
+        # 13. High stakes with any concern
+        if recommended_units >= self.HIGH_STAKES_UNITS and (high_risk_hits >= 1 or moderate_hits >= 1):
+            return IntegrityResult(
+                verdict=IntegrityVerdict.CAUTION.value,
+                confidence=0.75,
+                reasoning=f"High-stakes bet with risk signals",
+                source="heuristic",
+                latency_ms=(time.time() - start) * 1000
+            )
+        
+        # 14. Clean
+        return IntegrityResult(
+            verdict=IntegrityVerdict.CONFIRMED.value,
+            confidence=0.90,
+            reasoning="No concerning signals in search results",
+            source="heuristic",
+            latency_ms=(time.time() - start) * 1000
         )
     
     async def check_integrity(
@@ -358,87 +442,230 @@ Return ONLY valid JSON, no other text."""
         away_team: str,
         recommended_units: float = 0.0,
         is_elite_eight_or_later: bool = False,
-        force_heuristic: bool = False
+        game_key: Optional[str] = None
     ) -> IntegrityResult:
         """
-        Main entry point — routes to appropriate method.
+        Async integrity check with concurrency control and telemetry.
         
-        Args:
-            search_text: Search results/news to analyze
-            home_team: Home team name
-            away_team: Away team name
-            recommended_units: Bet size (affects routing)
-            is_elite_eight_or_later: Tournament round
-            force_heuristic: Skip LLM, use rules only
-        
-        Returns:
-            IntegrityResult with verdict and confidence
+        This is the primary entry point for production use.
         """
-        # Route based on stakes
-        if force_heuristic or recommended_units < 0.5:
-            # Low stakes — heuristic is fine
-            return self.check_integrity_heuristic(
-                search_text, home_team, away_team, recommended_units
-            )
-        
-        elif recommended_units >= 1.5 or is_elite_eight_or_later:
-            # High stakes — use direct (we're already Kimi)
-            return self.check_integrity_direct(
-                search_text, home_team, away_team, recommended_units, is_elite_eight_or_later
-            )
-        
-        else:
-            # Medium stakes — try spawn, fallback to heuristic
-            # For now, just use heuristic since spawn isn't configured
-            return self.check_integrity_heuristic(
-                search_text, home_team, away_team, recommended_units
-            )
+        async with self._semaphore:
+            try:
+                result = self._check_integrity_heuristic_sync(
+                    search_text, home_team, away_team,
+                    recommended_units, is_elite_eight_or_later
+                )
+                
+                # Check for high-stakes escalation
+                needs_escalation = (
+                    recommended_units >= self.HIGH_STAKES_UNITS or
+                    is_elite_eight_or_later or
+                    "VOLATILE" in result.verdict
+                )
+                
+                if needs_escalation and game_key:
+                    reason = []
+                    if recommended_units >= self.HIGH_STAKES_UNITS:
+                        reason.append(f"high stakes ({recommended_units}u)")
+                    if is_elite_eight_or_later:
+                        reason.append("tournament game")
+                    if "VOLATILE" in result.verdict:
+                        reason.append("volatile verdict")
+                    
+                    self.escalation_queue.enqueue(
+                        game_key=game_key,
+                        home_team=home_team,
+                        away_team=away_team,
+                        recommended_units=recommended_units,
+                        integrity_verdict=result.verdict,
+                        reason="; ".join(reason)
+                    )
+                
+                # Record telemetry
+                if self.telemetry:
+                    self.telemetry.record_check(result)
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"Integrity check failed for {game_key}: {e}")
+                if self.telemetry:
+                    self.telemetry.record_error(str(e))
+                
+                return IntegrityResult(
+                    verdict=IntegrityVerdict.CAUTION.value,
+                    confidence=0.5,
+                    reasoning=f"Check failed: {str(e)}",
+                    source="heuristic",
+                    latency_ms=0.0
+                )
     
-    def get_stats(self) -> Dict:
-        """Return usage statistics."""
-        return {
-            **self.stats,
-            "heuristic_pct": self.stats["heuristic_calls"] / max(1, sum(self.stats.values())),
-            "total_calls": sum(self.stats.values())
-        }
+    def get_telemetry(self) -> Optional[Dict]:
+        """Get current telemetry snapshot."""
+        return self.telemetry.to_dict() if self.telemetry else None
+    
+    def reset_telemetry(self):
+        """Reset telemetry counters."""
+        if self.telemetry:
+            self.telemetry = TelemetrySnapshot()
 
 
-# Backward-compatible wrapper
-async def perform_sanity_check(
+# Global instance
+_lite_instance: Optional[OpenClawLite] = None
+
+
+def get_openclaw_lite(enable_telemetry: bool = True) -> OpenClawLite:
+    """Get or create the singleton OpenClaw Lite instance."""
+    global _lite_instance
+    if _lite_instance is None:
+        _lite_instance = OpenClawLite(enable_telemetry=enable_telemetry)
+    return _lite_instance
+
+
+# ============================================================================
+# Backward-Compatible API
+# ============================================================================
+
+def perform_sanity_check(
     home_team: str,
     away_team: str,
     verdict: str,
-    search_results: str
+    search_results: str,
+    is_elite_eight_or_later: bool = False,
+    game_key: Optional[str] = None
 ) -> str:
     """
-    Backward-compatible wrapper for existing code.
+    Backward-compatible synchronous wrapper for integrity checks.
     
-    Returns verdict string directly (not IntegrityResult).
+    Used by:
+    - backend/services/scout.py
+    - backend/services/analysis.py
+    
+    Args:
+        home_team: Home team name
+        away_team: Away team name
+        verdict: Model verdict string (e.g., "Bet 1.0u Duke -4")
+        search_results: Search results text to analyze
+        is_elite_eight_or_later: Whether this is a tournament game
+        game_key: Unique game identifier for escalation
+    
+    Returns:
+        Verdict string: "CONFIRMED", "CAUTION", "VOLATILE", "ABORT", or "RED FLAG"
     """
-    # Extract recommended units from verdict string
-    import re
+    # Parse recommended units from verdict
     units_match = re.search(r'(\d+\.?\d*)u', verdict)
     recommended_units = float(units_match.group(1)) if units_match else 0.0
     
     # Run check
-    checker = OpenClawLite()
+    checker = get_openclaw_lite()
+    result = checker._check_integrity_heuristic_sync(
+        search_text=search_results,
+        home_team=home_team,
+        away_team=away_team,
+        recommended_units=recommended_units,
+        is_elite_eight_or_later=is_elite_eight_or_later
+    )
+    
+    # Handle high-stakes escalation (fire and forget)
+    needs_escalation = (
+        recommended_units >= OpenClawLite.HIGH_STAKES_UNITS or
+        is_elite_eight_or_later or
+        "VOLATILE" in result.verdict
+    )
+    
+    if needs_escalation:
+        reason = []
+        if recommended_units >= OpenClawLite.HIGH_STAKES_UNITS:
+            reason.append(f"high stakes ({recommended_units}u)")
+        if is_elite_eight_or_later:
+            reason.append("tournament game")
+        if "VOLATILE" in result.verdict:
+            reason.append("volatile verdict")
+        
+        game_key = game_key or f"{away_team}@{home_team}"
+        checker.escalation_queue.enqueue(
+            game_key=game_key,
+            home_team=home_team,
+            away_team=away_team,
+            recommended_units=recommended_units,
+            integrity_verdict=result.verdict,
+            reason="; ".join(reason)
+        )
+    
+    return result.verdict
+
+
+async def async_perform_sanity_check(
+    home_team: str,
+    away_team: str,
+    verdict: str,
+    search_results: str,
+    is_elite_eight_or_later: bool = False,
+    game_key: Optional[str] = None
+) -> str:
+    """
+    Async version of perform_sanity_check for concurrent processing.
+    
+    Use this in async contexts (like analysis.py integrity sweep).
+    """
+    units_match = re.search(r'(\d+\.?\d*)u', verdict)
+    recommended_units = float(units_match.group(1)) if units_match else 0.0
+    
+    checker = get_openclaw_lite()
     result = await checker.check_integrity(
         search_text=search_results,
         home_team=home_team,
         away_team=away_team,
-        recommended_units=recommended_units
+        recommended_units=recommended_units,
+        is_elite_eight_or_later=is_elite_eight_or_later,
+        game_key=game_key or f"{away_team}@{home_team}"
     )
     
     return result.verdict
 
 
-# Singleton instance
-_lite_instance: Optional[OpenClawLite] = None
+# ============================================================================
+# High-Stakes Escalation Helper
+# ============================================================================
+
+def get_escalation_queue() -> HighStakesEscalationQueue:
+    """Get the escalation queue instance."""
+    return HighStakesEscalationQueue()
 
 
-def get_openclaw_lite() -> OpenClawLite:
-    """Get singleton instance."""
-    global _lite_instance
-    if _lite_instance is None:
-        _lite_instance = OpenClawLite()
-    return _lite_instance
+def escalate_if_needed(
+    game_key: str,
+    home_team: str,
+    away_team: str,
+    recommended_units: float,
+    integrity_verdict: Optional[str],
+    is_neutral: bool = False
+) -> Optional[str]:
+    """
+    Manually trigger escalation for a game.
+    
+    Returns queue_id if escalated, None otherwise.
+    """
+    needs_escalation = (
+        recommended_units >= OpenClawLite.HIGH_STAKES_UNITS or
+        "VOLATILE" in (integrity_verdict or "")
+    )
+    
+    if not needs_escalation:
+        return None
+    
+    reason = []
+    if recommended_units >= OpenClawLite.HIGH_STAKES_UNITS:
+        reason.append(f"high stakes ({recommended_units}u)")
+    if "VOLATILE" in (integrity_verdict or ""):
+        reason.append("volatile verdict")
+    
+    queue = get_escalation_queue()
+    return queue.enqueue(
+        game_key=game_key,
+        home_team=home_team,
+        away_team=away_team,
+        recommended_units=recommended_units,
+        integrity_verdict=integrity_verdict,
+        reason="; ".join(reason)
+    )

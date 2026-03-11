@@ -53,6 +53,7 @@ from backend.services.matchup_engine import get_profile_cache, get_matchup_engin
 from backend.services.parlay_engine import build_optimal_parlays, format_parlay_ticket
 from backend.services.team_mapping import normalize_team_name
 from backend.services.scout import perform_sanity_check
+from backend.services.openclaw_lite import async_perform_sanity_check
 from backend.services.fatigue import calculate_game_fatigue, get_fatigue_margin_adjustment
 from backend.services.team_conference_lookup import get_conference_hca_delta
 from backend.services.recency_weight import is_late_season
@@ -601,36 +602,44 @@ def _create_paper_bet(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def _ddgs_and_check_sync(game: dict) -> str:
-    """Synchronous DDGS search + LLM sanity check for a single game.
-
-    Kept as a plain function so it can be safely offloaded to a thread pool
-    via asyncio.to_thread() without blocking the event loop.
+async def _ddgs_and_check(game: dict) -> str:
+    """
+    Async DDGS search + integrity check for a single game.
+    
+    Uses OpenClaw Lite's async API for efficient concurrent processing.
+    No thread pool overhead - pure async I/O concurrency.
     """
     try:
         from duckduckgo_search import DDGS
-        from backend.services.scout import perform_sanity_check
+        
         away = game.get("away_team", "")
         home = game.get("home_team", "")
-        verdict = f"Potential Bet (Edge {game.get('edge', 0):.1%})"
+        game_key = game.get("game_key", f"{away}@{home}")
+        edge = game.get("edge", 0)
+        verdict = f"Potential Bet (Edge {edge:.1%})"
 
+        # Run DDGS search in thread pool (it's blocking I/O)
         today_str = datetime.utcnow().strftime("%Y-%m-%d")
         query = f"{away} {home} injury suspension lineup {today_str}"
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=5))
+        
+        def _do_search():
+            with DDGS() as ddgs:
+                return list(ddgs.text(query, max_results=5))
+        
+        results = await asyncio.to_thread(_do_search)
         context = " | ".join(r.get("body", "") for r in results)
-        return perform_sanity_check(home, away, verdict, context)
+        
+        # Use async OpenClaw Lite check
+        return await async_perform_sanity_check(
+            home_team=home,
+            away_team=away,
+            verdict=verdict,
+            search_results=context,
+            game_key=game_key
+        )
     except Exception as e:
-        return f"Sanity check unavailable ({type(e).__name__})"
-
-
-async def _ddgs_and_check(game: dict) -> str:
-    """Async wrapper — runs _ddgs_and_check_sync in the default thread pool.
-
-    This allows asyncio.gather() in _integrity_sweep to achieve real I/O
-    concurrency (up to Semaphore limit) without blocking the event loop.
-    """
-    return await asyncio.to_thread(_ddgs_and_check_sync, game)
+        logger.warning("DDGS/check failed for %s: %s", game.get("game_key"), e)
+        return "Sanity check unavailable"
 
 
 async def _integrity_sweep(bet_tier_games: list) -> dict:

@@ -4,7 +4,7 @@ Fantasy Baseball Dashboard — Treemendous League (Yahoo ID 72586)
 
 Pages:
   - Keeper Evaluator  (active: deadline Mar 20)
-  - Draft Board       (active: Mar 22–23)
+  - Draft Board       (active: Mar 22-23)
   - My Roster         (season view)
   - Waiver Wire       (in-season)
   - Trade Analyzer    (in-season)
@@ -14,6 +14,7 @@ import os
 import sys
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 # Ensure backend imports work when running from dashboard/
@@ -25,6 +26,7 @@ from backend.fantasy_baseball.keeper_engine import (
     CategoryValueEngine,
     soto_2026_projection,
 )
+from backend.fantasy_baseball.player_board import get_board
 
 st.set_page_config(
     page_title="Fantasy Baseball — Treemendous",
@@ -261,37 +263,157 @@ with tab_keeper:
 
 
 # ===========================================================================
-# TAB: Draft Board (placeholder — Phase 2)
+# TAB: Draft Board
 # ===========================================================================
 with tab_draft:
     st.header("Draft Board")
-    st.warning(
-        "**Draft: Mon Mar 23 @ 7:30am EDT · 90-second pick clock**  \n"
-        "Draft board will be populated after keeper decisions are finalized. "
-        "Live draft assistant launches Mar 22."
-    )
-    st.markdown("""
-### What the Draft Assistant Will Do
-- Real-time pick recommendations (< 10 sec, powered by local Qwen model)
-- Tracks all picks as they happen — updates available pool instantly
-- Shows your current roster balance across all 18 categories
-- Flags reach alerts when others overdraft a player
-- Snake draft logic: knows your next pick position
 
+    # --- Live draft callout ---
+    st.info(
+        "**Draft: Mon Mar 23 @ 7:30am EDT · 90-sec clock**  \n"
+        "Use **page 12 — Live Draft Assistant** during the actual draft for "
+        "real-time pick recommendations, pick counter, and roster tracking.  \n"
+        "This page is for pre-draft research and strategy prep."
+    )
+
+    # --- Load board ---
+    try:
+        board = get_board()
+        board_loaded = True
+    except Exception as e:
+        st.error(f"Could not load player board: {e}")
+        board = []
+        board_loaded = False
+
+    if board_loaded and board:
+        st.caption(f"{len(board)} players loaded from Steamer 2026 projections")
+
+        # --- Filters ---
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+        with col_f1:
+            pos_opts = ["All", "SP", "RP", "C", "1B", "2B", "3B", "SS", "OF", "DH"]
+            pos_filter = st.selectbox("Position", pos_opts, key="db_pos_filter")
+        with col_f2:
+            type_opts = ["All", "Batter", "Pitcher"]
+            type_filter = st.selectbox("Type", type_opts, key="db_type_filter")
+        with col_f3:
+            tier_opts = ["All"] + [str(t) for t in sorted({p["tier"] for p in board if p["tier"] > 0})]
+            tier_filter = st.selectbox("Tier", tier_opts, key="db_tier_filter")
+        with col_f4:
+            show_n = st.number_input("Show top N", min_value=20, max_value=len(board), value=100, step=20, key="db_show_n")
+
+        # --- Search ---
+        search = st.text_input("Search player name", placeholder="e.g. Ohtani", key="db_search")
+
+        # --- Apply filters ---
+        filtered = board[:]
+        if pos_filter != "All":
+            filtered = [p for p in filtered if any(pos_filter in pos for pos in p["positions"])]
+        if type_filter != "All":
+            filtered = [p for p in filtered if p["type"] == type_filter.lower()]
+        if tier_filter != "All":
+            filtered = [p for p in filtered if p["tier"] == int(tier_filter)]
+        if search and len(search) >= 2:
+            filtered = [p for p in filtered if search.lower() in p["name"].lower()]
+
+        filtered = filtered[:int(show_n)]
+
+        # --- Build display dataframe ---
+        def _adp_str(adp):
+            return f"{adp:.0f}" if adp < 999 else "Undrafted"
+
+        rows = []
+        for p in filtered:
+            proj = p.get("proj", {})
+            if p["type"] == "batter":
+                key_stats = (
+                    f"HR:{proj.get('hr', 0):.0f}  "
+                    f"R:{proj.get('r', 0):.0f}  "
+                    f"RBI:{proj.get('rbi', 0):.0f}  "
+                    f"NSB:{proj.get('nsb', 0):.0f}  "
+                    f"OPS:{proj.get('ops', 0):.3f}  "
+                    f"AVG:{proj.get('avg', 0):.3f}"
+                )
+            else:
+                key_stats = (
+                    f"W:{proj.get('w', 0):.0f}  "
+                    f"K:{proj.get('k_pit', 0):.0f}  "
+                    f"ERA:{proj.get('era', 0):.2f}  "
+                    f"WHIP:{proj.get('whip', 0):.2f}  "
+                    f"QS:{proj.get('qs', 0):.0f}  "
+                    f"NSV:{proj.get('nsv', 0):.0f}"
+                )
+            risk = p.get("injury_risk", "")
+            risk_tag = "" if risk in ("", "low") else risk.upper()[:3]
+            rows.append({
+                "Rank": p["rank"],
+                "T": p["tier"],
+                "Name": p["name"],
+                "Team": p["team"],
+                "Pos": "/".join(p["positions"][:3]),
+                "Type": p["type"].title(),
+                "ADP": _adp_str(p["adp"]),
+                "Z-Score": f"{p['z_score']:+.2f}",
+                "Risk": risk_tag,
+                "Key Stats": key_stats,
+            })
+
+        df = pd.DataFrame(rows)
+
+        def _tier_color(val):
+            colors = {1: "#1a472a", 2: "#2e4057", 3: "#5e3a07",
+                      4: "#4a1628", 5: "#2d3436"}
+            return f"background-color: {colors.get(val, '#1e1e1e')}; color: white"
+
+        st.dataframe(
+            df.style.applymap(_tier_color, subset=["T"]),
+            use_container_width=True,
+            hide_index=True,
+            height=520,
+        )
+
+        st.caption(f"Showing {len(filtered)} of {len(board)} players")
+
+        # --- Position scarcity summary ---
+        st.markdown("---")
+        st.subheader("Position Scarcity Snapshot")
+        scarcity_cols = st.columns(5)
+        pos_groups = {
+            "C": ["C"], "SS": ["SS"], "2B": ["2B", "SS"],
+            "SP Top 10": ["SP"], "RP/Closer": ["RP"],
+        }
+        for col, (label, pos_list) in zip(scarcity_cols, pos_groups.items()):
+            t1_t2 = [p for p in board if p["tier"] <= 2 and any(pos in p["positions"] for pos in pos_list)]
+            col.metric(label, f"{len(t1_t2)} Tier 1-2")
+
+        # --- Strategy reminder ---
+        with st.expander("Draft Strategy Framework (Treemendous)"):
+            st.markdown("""
+| Round | Target | Rationale |
+|-------|--------|-----------|
+| 1-3   | Elite multi-cat hitters | HR + R + RBI + TB + AVG/OPS |
+| 4-6   | Ace SPs | W + K + K/9 + QS + ERA + WHIP |
+| 7-9   | SB assets | NSB is scarce — stock up mid-rounds |
+| 10-13 | Solid SP depth | Minimize L exposure |
+| 14-17 | Closer pipeline | NSV very scarce; target 2-3 |
+| 18-23 | Streaming SPs, bench | High K/9, low L risk |
+
+**Key rule:** High-K sluggers (30%+ K) are double-penalized — K hurts batting AND drags AVG/OPS.
+Target contact-power bats (Alvarez, Freeman, Goldschmidt types).
+""")
+
+    else:
+        st.warning("Player board unavailable. Check that data/projections/ CSVs are present.")
+        st.markdown("""
 ### Draft Strategy Framework (Treemendous)
 | Round | Target | Rationale |
 |-------|--------|-----------|
-| 1–3   | Elite multi-cat hitters | HR + R + RBI + TB + AVG/OPS — hits 5+ cats at once |
-| 4–6   | Ace SPs | W + K + K/9 + QS + ERA + WHIP — 6 pitching cats |
-| 7–9   | **SB assets** | NSB is scarce — stock up mid-rounds |
-| 10–13 | Solid SP depth | Minimize L category exposure |
-| 14–17 | Closer pipeline | NSV is very scarce; take 2–3 closers |
-| 18–23 | Streaming SPs, bench | High K/9, low L risk |
-
-### Contact + Power > Pure Power (K is negative)
-High-K sluggers (25+ HR, 30%+ K) are double-penalized: K count hurts + drags AVG/OPS.
-**Target**: Yordan Alvarez, Freddie Freeman, Paul Goldschmidt, Luis Arraez types —
-power WITH contact. Avoid Brandon Drury-types who only contribute HR/RBI.
+| 1-3   | Elite multi-cat hitters | HR + R + RBI + TB + AVG/OPS |
+| 4-6   | Ace SPs | W + K + K/9 + QS + ERA + WHIP |
+| 7-9   | SB assets | NSB is scarce — stock up mid-rounds |
+| 10-13 | Solid SP depth | Minimize L exposure |
+| 14-17 | Closer pipeline | NSV very scarce; target 2-3 |
+| 18-23 | Streaming SPs, bench | High K/9, low L risk |
 """)
 
 # ===========================================================================
@@ -370,12 +492,12 @@ with tab_setup:
         if yahoo_client_id:
             st.success(f"Client ID: {yahoo_client_id[:12]}...")
         else:
-            st.error("CLIENT_ID missing")
+            st.warning("CLIENT_ID not in local env")
     with col_s2:
         if yahoo_client_secret:
             st.success("Client Secret: set")
         else:
-            st.error("CLIENT_SECRET missing")
+            st.warning("CLIENT_SECRET not in local env")
     with col_s3:
         if yahoo_refresh:
             st.success("Refresh Token: ready")
@@ -384,9 +506,32 @@ with tab_setup:
 
     st.markdown("---")
 
+    # If env vars aren't available locally, allow manual entry so the OAuth
+    # flow can still run (Railway vars are only visible on deployed instances).
     if not yahoo_client_id or not yahoo_client_secret:
-        st.error("Add YAHOO_CLIENT_ID and YAHOO_CLIENT_SECRET to Railway environment variables first.")
-    else:
+        st.info(
+            "YAHOO_CLIENT_ID and YAHOO_CLIENT_SECRET are set in Railway but not visible "
+            "in this local environment. Enter them below to proceed with the OAuth flow — "
+            "they are never stored by this form."
+        )
+        manual_id = st.text_input(
+            "YAHOO_CLIENT_ID",
+            type="password",
+            placeholder="Paste your Yahoo App Client ID",
+            key="manual_yahoo_client_id",
+        )
+        manual_secret = st.text_input(
+            "YAHOO_CLIENT_SECRET",
+            type="password",
+            placeholder="Paste your Yahoo App Client Secret",
+            key="manual_yahoo_client_secret",
+        )
+        if manual_id:
+            yahoo_client_id = manual_id
+        if manual_secret:
+            yahoo_client_secret = manual_secret
+
+    if yahoo_client_id and yahoo_client_secret:
         # ---- Step 1: Generate auth URL ----
         st.subheader("Step 1 — Authorize Yahoo (one-time)")
         st.info(
@@ -396,6 +541,9 @@ with tab_setup:
 
         if st.button("Generate Yahoo Authorization URL"):
             try:
+                # Inject manually-entered creds into env for this call
+                os.environ["YAHOO_CLIENT_ID"] = yahoo_client_id
+                os.environ["YAHOO_CLIENT_SECRET"] = yahoo_client_secret
                 from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
                 client = YahooFantasyClient()
                 auth_url = client.get_authorization_url()
@@ -416,6 +564,8 @@ with tab_setup:
         )
         if st.button("Exchange Code for Tokens") and auth_code_input.strip():
             try:
+                os.environ["YAHOO_CLIENT_ID"] = yahoo_client_id
+                os.environ["YAHOO_CLIENT_SECRET"] = yahoo_client_secret
                 from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
                 client = YahooFantasyClient()
                 tokens = client.exchange_code_for_tokens(auth_code_input.strip())
@@ -442,6 +592,8 @@ with tab_setup:
         st.subheader("Test Connection")
         if st.button("Test Yahoo API Connection"):
             try:
+                os.environ["YAHOO_CLIENT_ID"] = yahoo_client_id
+                os.environ["YAHOO_CLIENT_SECRET"] = yahoo_client_secret
                 from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
                 client = YahooFantasyClient()
                 league = client.get_league()
