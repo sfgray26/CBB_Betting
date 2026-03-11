@@ -592,7 +592,8 @@ with tab_setup:
     # ---- Connection test ----
     if yahoo_refresh:
         st.subheader("Test Connection")
-        if st.button("Test Yahoo API Connection"):
+        col_t1, col_t2 = st.columns(2)
+        if col_t1.button("Test Yahoo API Connection"):
             try:
                 os.environ["YAHOO_CLIENT_ID"] = yahoo_client_id
                 os.environ["YAHOO_CLIENT_SECRET"] = yahoo_client_secret
@@ -604,6 +605,19 @@ with tab_setup:
                 st.info(f"Your team key: `{my_key}`")
             except Exception as e:
                 st.error(f"Connection test failed: {e}")
+
+        if col_t2.button("Debug: Show Raw Roster Response"):
+            try:
+                os.environ["YAHOO_CLIENT_ID"] = yahoo_client_id
+                os.environ["YAHOO_CLIENT_SECRET"] = yahoo_client_secret
+                from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+                client = YahooFantasyClient()
+                raw = client.get_roster_raw()
+                st.subheader("Raw `fantasy_content` from Yahoo")
+                st.caption("This shows the exact structure Yahoo returned — helps diagnose parsing issues.")
+                st.json(raw)
+            except Exception as e:
+                st.error(f"Debug failed: {e}")
 
     st.markdown("---")
     st.subheader("Troubleshooting")

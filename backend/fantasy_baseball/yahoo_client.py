@@ -216,6 +216,13 @@ class YahooFantasyClient:
             data["fantasy_content"]["league"][index]
         )
 
+    def _safe_get(self, obj: dict, key: str) -> dict:
+        """Get key from a dict, auto-flattening the value if Yahoo returned it as a list."""
+        val = obj.get(key, {}) if isinstance(obj, dict) else {}
+        if isinstance(val, list):
+            return self._flatten_league_section(val)
+        return val if isinstance(val, dict) else {}
+
     def _team_section(self, data: dict) -> dict:
         """
         Flatten the entire team array from a fantasy_content response.
@@ -286,21 +293,28 @@ class YahooFantasyClient:
     # Roster endpoints
     # ------------------------------------------------------------------
 
+    def get_roster_raw(self, team_key: Optional[str] = None) -> dict:
+        """Return the raw fantasy_content payload for debugging Yahoo response shapes."""
+        if team_key is None:
+            team_key = self.get_my_team_key()
+        data = self._get(f"team/{team_key}/roster/players")
+        return data.get("fantasy_content", {})
+
     def get_roster(self, team_key: Optional[str] = None) -> list[dict]:
         """Return full roster for team_key (defaults to authenticated user's team)."""
         if team_key is None:
             team_key = self.get_my_team_key()
         data = self._get(f"team/{team_key}/roster/players")
-        players_raw = (
-            self._team_section(data)
-            .get("roster", {})
-            .get("0", {})
-            .get("players", {})
-        )
+        team_data = self._team_section(data)
+        roster = self._safe_get(team_data, "roster")
+        slot_0 = self._safe_get(roster, "0")
+        players_raw = self._safe_get(slot_0, "players")
         players = []
         count = int(players_raw.get("count", 0))
         for i in range(count):
-            player_data = players_raw[str(i)]["player"]
+            entry = players_raw.get(str(i), {})
+            entry = self._flatten_league_section(entry) if isinstance(entry, list) else entry
+            player_data = entry.get("player", entry) if isinstance(entry, dict) else entry
             players.append(self._parse_player(player_data))
         return players
 
