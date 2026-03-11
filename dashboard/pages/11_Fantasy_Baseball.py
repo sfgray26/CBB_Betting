@@ -434,10 +434,15 @@ with tab_roster:
                 client = YahooFantasyClient()
                 with st.spinner("Fetching roster..."):
                     roster = client.get_roster()
-                st.success(f"Fetched {len(roster)} players")
-                import pandas as pd
-                df = pd.DataFrame(roster)
-                st.dataframe(df[["name", "team", "positions", "status"]], use_container_width=True)
+                if not roster:
+                    st.info(
+                        "No players on roster yet — this is expected before the draft. "
+                        "**Draft day: March 23 @ 7:30am EDT.** Come back after the draft to see your team."
+                    )
+                else:
+                    st.success(f"Fetched {len(roster)} players")
+                    cols_present = [c for c in ["name", "team", "positions", "status"] if c in pd.DataFrame(roster).columns]
+                    st.dataframe(pd.DataFrame(roster)[cols_present], use_container_width=True)
             except Exception as e:
                 st.error(f"Failed: {e}")
 
