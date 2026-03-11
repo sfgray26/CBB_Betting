@@ -985,6 +985,113 @@ async def get_financial_metrics(
     return calculate_financial_metrics(db, days=days)
 
 
+@app.get("/api/performance/by-team")
+async def get_performance_by_team(
+    days: int = Query(default=90, ge=7, le=365),
+    min_bets: int = Query(default=2, ge=1, le=20, description="Minimum bets to include a team"),
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Per-team win/loss breakdown for settled bets.
+
+    Helps identify teams with systematically outlier results that may indicate
+    a team mapping error (e.g. a weak team's KenPom ratings being used for a
+    strong team, or vice versa).
+
+    Teams with win rates far above or below 50% and ≥ 3 bets are flagged as
+    anomalies for manual review.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    bets = (
+        db.query(BetLog)
+        .join(Game)
+        .options(joinedload(BetLog.game))
+        .filter(
+            BetLog.outcome.isnot(None),
+            BetLog.outcome != -1,
+            BetLog.timestamp >= cutoff,
+        )
+        .all()
+    )
+
+    if not bets:
+        return {"teams": [], "total_bets": 0, "days": days}
+
+    team_stats: dict = {}
+    for b in bets:
+        # The "pick" field is e.g. "Duke -4.5" or "Kansas" — extract team name
+        pick_team = (b.pick or "").split()[0] if b.pick else "Unknown"
+        # Also track by actual game team names from the Game record
+        for team_role, team_name in [
+            ("home", b.game.home_team if b.game else None),
+            ("away", b.game.away_team if b.game else None),
+        ]:
+            if not team_name:
+                continue
+            # Determine if this bet was on this team
+            pick_text = (b.pick or "").lower()
+            team_lower = team_name.lower()
+            # Simple heuristic: pick contains the first word of the team name
+            first_word = team_lower.split()[0] if team_lower else ""
+            if first_word and first_word not in pick_text:
+                continue
+
+            if team_name not in team_stats:
+                team_stats[team_name] = {
+                    "team": team_name,
+                    "bets": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "total_pl_dollars": 0.0,
+                    "total_risked": 0.0,
+                    "mean_edge": [],
+                }
+            s = team_stats[team_name]
+            s["bets"] += 1
+            s["total_pl_dollars"] += b.profit_loss_dollars or 0.0
+            s["total_risked"] += b.bet_size_dollars or 0.0
+            if b.outcome == 1:
+                s["wins"] += 1
+            else:
+                s["losses"] += 1
+            if b.conservative_edge is not None:
+                s["mean_edge"].append(b.conservative_edge)
+
+    results = []
+    for team_name, s in team_stats.items():
+        if s["bets"] < min_bets:
+            continue
+        win_rate = s["wins"] / s["bets"] if s["bets"] > 0 else 0.0
+        roi = s["total_pl_dollars"] / s["total_risked"] if s["total_risked"] > 0 else 0.0
+        mean_edge = sum(s["mean_edge"]) / len(s["mean_edge"]) if s["mean_edge"] else None
+        # Flag as anomaly if win rate is suspiciously high (>80%) or low (<20%)
+        # with at least 3 bets — possible mapping issue signal
+        anomaly = s["bets"] >= 3 and (win_rate >= 0.80 or win_rate <= 0.20)
+        results.append({
+            "team": team_name,
+            "bets": s["bets"],
+            "wins": s["wins"],
+            "losses": s["losses"],
+            "win_rate": round(win_rate, 4),
+            "roi": round(roi, 4),
+            "total_pl_dollars": round(s["total_pl_dollars"], 2),
+            "mean_edge": round(mean_edge, 4) if mean_edge is not None else None,
+            "anomaly_flag": anomaly,
+        })
+
+    results.sort(key=lambda x: x["win_rate"], reverse=True)
+    anomalies = [r for r in results if r["anomaly_flag"]]
+
+    return {
+        "teams": results,
+        "anomalies": anomalies,
+        "total_bets": len(bets),
+        "total_teams": len(results),
+        "days": days,
+    }
+
+
 @app.get("/api/performance/source-weights")
 async def get_source_weights(
     history_days: int = Query(default=30, ge=1, le=365),
@@ -1646,6 +1753,75 @@ async def recalibration_audit(
             "stale_recalibration": days_since > 7 if days_since else True,
             "parameter_drift": ha_drift > 15 or sd_drift > 15,
         }
+    }
+
+
+@app.get("/admin/debug/duplicate-bets")
+async def debug_duplicate_bets(
+    days: int = Query(default=90, ge=1, le=365),
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Find BetLog entries where multiple paper trades exist for the same game on
+    the same calendar day.  These are duplicates that inflate bet counts and
+    distort ROI / win-rate statistics.
+
+    Returns each duplicate group with all matching bet IDs so they can be
+    reviewed and the extras deleted via the admin panel or directly in the DB.
+    """
+    from sqlalchemy import func, cast, Date as SADate
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    # Fetch all paper trade bet logs in the window
+    bets = (
+        db.query(BetLog)
+        .join(Game)
+        .options(joinedload(BetLog.game))
+        .filter(
+            BetLog.is_paper_trade.is_(True),
+            BetLog.timestamp >= cutoff,
+        )
+        .order_by(BetLog.game_id, BetLog.timestamp)
+        .all()
+    )
+
+    # Group by (game_id, calendar_date)
+    groups: dict = {}
+    for b in bets:
+        day_key = b.timestamp.date().isoformat() if b.timestamp else "unknown"
+        key = (b.game_id, day_key)
+        groups.setdefault(key, []).append(b)
+
+    duplicates = []
+    for (game_id, day), group in groups.items():
+        if len(group) < 2:
+            continue
+        game = group[0].game
+        duplicates.append({
+            "game_id": game_id,
+            "date": day,
+            "matchup": f"{game.away_team} @ {game.home_team}" if game else "Unknown",
+            "count": len(group),
+            "bet_ids": [b.id for b in group],
+            "picks": [b.pick for b in group],
+            "outcomes": [b.outcome for b in group],
+            "notes": [b.notes for b in group],
+        })
+
+    duplicates.sort(key=lambda x: x["date"], reverse=True)
+
+    return {
+        "duplicate_groups": duplicates,
+        "total_duplicate_groups": len(duplicates),
+        "total_extra_bets": sum(d["count"] - 1 for d in duplicates),
+        "days_searched": days,
+        "message": (
+            f"Found {len(duplicates)} games with duplicate paper trade entries. "
+            f"These inflate bet counts by {sum(d['count'] - 1 for d in duplicates)} extra rows."
+            if duplicates else "No duplicate paper trades found."
+        ),
     }
 
 

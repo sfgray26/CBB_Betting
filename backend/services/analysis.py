@@ -1554,13 +1554,28 @@ async def run_nightly_analysis(
                 ):
                     prediction.verdict = f"Bet {scaled_units:.2f}u @ {bet_odds:+.0f}"
 
-                # BetLog guard
-                prev_verdict = candidate.get("old_verdict")
-                if prev_verdict is not None and prev_verdict.startswith("Bet"):
+                # BetLog guard — query the DB directly so we block duplicates
+                # across all run_tiers (opener + nightly) and manual re-triggers.
+                # The old "old_verdict" check only worked within the same run_tier.
+                _today_start = datetime.utcnow().replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
+                _existing_bet = (
+                    db.query(BetLog)
+                    .filter(
+                        BetLog.game_id == game.id,
+                        BetLog.is_paper_trade.is_(True),
+                        BetLog.timestamp >= _today_start,
+                    )
+                    .first()
+                )
+                if _existing_bet is not None:
                     logger.debug(
                         "Skipping duplicate paper trade for %s @ %s "
-                        "(old verdict already Bet)",
-                        candidate["away_team"], candidate["home_team"],
+                        "(BetLog #%d already exists for today)",
+                        candidate["away_team"],
+                        candidate["home_team"],
+                        _existing_bet.id,
                     )
                     continue
 
