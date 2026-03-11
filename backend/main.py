@@ -1018,45 +1018,53 @@ async def get_performance_by_team(
     if not bets:
         return {"teams": [], "total_bets": 0, "days": days}
 
+    import re as _re
+
+    def _extract_pick_team(pick: str) -> str:
+        """
+        Extract the team name from a pick string such as:
+          "Northwestern -6.5"  → "Northwestern"
+          "Kansas St. +3"      → "Kansas St."
+          "Florida Int'l -1.5" → "Florida Int'l"
+          "Kansas"             → "Kansas"   (moneyline)
+        Strategy: strip a trailing spread/odds token that starts with + or -
+        and is followed by digits.  Everything before that is the team name.
+        """
+        if not pick:
+            return "Unknown"
+        stripped = pick.strip()
+        # Match a trailing numeric token like "-6.5", "+3", "-110", "+100"
+        m = _re.match(r"^(.+?)\s+[+-]?\d+\.?\d*\s*$", stripped)
+        if m:
+            return m.group(1).strip()
+        return stripped
+
     team_stats: dict = {}
     for b in bets:
-        # The "pick" field is e.g. "Duke -4.5" or "Kansas" — extract team name
-        pick_team = (b.pick or "").split()[0] if b.pick else "Unknown"
-        # Also track by actual game team names from the Game record
-        for team_role, team_name in [
-            ("home", b.game.home_team if b.game else None),
-            ("away", b.game.away_team if b.game else None),
-        ]:
-            if not team_name:
-                continue
-            # Determine if this bet was on this team
-            pick_text = (b.pick or "").lower()
-            team_lower = team_name.lower()
-            # Simple heuristic: pick contains the first word of the team name
-            first_word = team_lower.split()[0] if team_lower else ""
-            if first_word and first_word not in pick_text:
-                continue
+        team_name = _extract_pick_team(b.pick or "")
+        if not team_name:
+            continue
 
-            if team_name not in team_stats:
-                team_stats[team_name] = {
-                    "team": team_name,
-                    "bets": 0,
-                    "wins": 0,
-                    "losses": 0,
-                    "total_pl_dollars": 0.0,
-                    "total_risked": 0.0,
-                    "mean_edge": [],
-                }
-            s = team_stats[team_name]
-            s["bets"] += 1
-            s["total_pl_dollars"] += b.profit_loss_dollars or 0.0
-            s["total_risked"] += b.bet_size_dollars or 0.0
-            if b.outcome == 1:
-                s["wins"] += 1
-            else:
-                s["losses"] += 1
-            if b.conservative_edge is not None:
-                s["mean_edge"].append(b.conservative_edge)
+        if team_name not in team_stats:
+            team_stats[team_name] = {
+                "team": team_name,
+                "bets": 0,
+                "wins": 0,
+                "losses": 0,
+                "total_pl_dollars": 0.0,
+                "total_risked": 0.0,
+                "edges": [],
+            }
+        s = team_stats[team_name]
+        s["bets"] += 1
+        s["total_pl_dollars"] += b.profit_loss_dollars or 0.0
+        s["total_risked"] += b.bet_size_dollars or 0.0
+        if b.outcome == 1:
+            s["wins"] += 1
+        else:
+            s["losses"] += 1
+        if b.conservative_edge is not None:
+            s["edges"].append(b.conservative_edge)
 
     results = []
     for team_name, s in team_stats.items():
@@ -1064,7 +1072,7 @@ async def get_performance_by_team(
             continue
         win_rate = s["wins"] / s["bets"] if s["bets"] > 0 else 0.0
         roi = s["total_pl_dollars"] / s["total_risked"] if s["total_risked"] > 0 else 0.0
-        mean_edge = sum(s["mean_edge"]) / len(s["mean_edge"]) if s["mean_edge"] else None
+        mean_edge = sum(s["edges"]) / len(s["edges"]) if s["edges"] else None
         # Flag as anomaly if win rate is suspiciously high (>80%) or low (<20%)
         # with at least 3 bets — possible mapping issue signal
         anomaly = s["bets"] >= 3 and (win_rate >= 0.80 or win_rate <= 0.20)
@@ -1864,6 +1872,96 @@ async def debug_bets_last_24h(
             }
             for p, g in bets
         ]
+    }
+
+
+@app.post("/admin/cleanup/duplicate-bets")
+async def cleanup_duplicate_bets(
+    dry_run: bool = Query(default=True, description="If true, only report what would be deleted without deleting"),
+    days: int = Query(default=365, ge=1, le=730, description="How far back to look for duplicates"),
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Delete duplicate paper trade BetLog entries.
+
+    A duplicate is any paper trade BetLog where the same game_id has more than
+    one entry on the same calendar day.  The lowest id (first created) is kept;
+    all others are deleted.
+
+    By default dry_run=true — set dry_run=false to actually delete.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    bets = (
+        db.query(BetLog)
+        .join(Game)
+        .filter(
+            BetLog.is_paper_trade.is_(True),
+            BetLog.timestamp >= cutoff,
+        )
+        .order_by(BetLog.game_id, BetLog.timestamp)
+        .all()
+    )
+
+    # Group by (game_id, calendar_date) — keep lowest id (first-created)
+    groups: dict = {}
+    for b in bets:
+        day_key = b.timestamp.date().isoformat() if b.timestamp else "unknown"
+        key = (b.game_id, day_key)
+        groups.setdefault(key, []).append(b)
+
+    to_delete = []
+    kept = []
+    for key, group in groups.items():
+        if len(group) < 2:
+            continue
+        sorted_group = sorted(group, key=lambda x: x.id)
+        kept.append(sorted_group[0].id)
+        to_delete.extend(sorted_group[1:])
+
+    if not to_delete:
+        return {
+            "status": "ok",
+            "dry_run": dry_run,
+            "duplicates_found": 0,
+            "deleted": 0,
+            "message": "No duplicate paper trades found.",
+        }
+
+    deleted_info = [
+        {
+            "id": b.id,
+            "game_id": b.game_id,
+            "pick": b.pick,
+            "timestamp": b.timestamp.isoformat() if b.timestamp else None,
+            "outcome": b.outcome,
+        }
+        for b in to_delete
+    ]
+
+    deleted_count = 0
+    if not dry_run:
+        for b in to_delete:
+            db.delete(b)
+        db.commit()
+        deleted_count = len(to_delete)
+        logger.info(
+            "Duplicate bet cleanup: deleted %d paper trade BetLog entries (kept %d)",
+            deleted_count, len(kept),
+        )
+
+    return {
+        "status": "ok",
+        "dry_run": dry_run,
+        "duplicates_found": len(to_delete),
+        "deleted": deleted_count,
+        "kept_ids": kept,
+        "deleted_entries": deleted_info,
+        "message": (
+            f"{'Would delete' if dry_run else 'Deleted'} {len(to_delete)} duplicate paper trade "
+            f"entries across {len([g for g in groups.values() if len(g) >= 2])} games."
+        ),
     }
 
 
