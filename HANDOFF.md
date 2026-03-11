@@ -1,6 +1,6 @@
 # OPERATIONAL HANDOFF (EMAC-066)
 
-> Ground truth as of March 11, 2026. Operator: Claude Code (Master Architect).
+> Ground truth as of March 12, 2026. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 > Full roadmap: `docs/MLB_FANTASY_ROADMAP.md` · CBB plan: `tasks/cbb_enhancement_plan.md`
 
@@ -36,9 +36,9 @@
 | Yahoo OAuth | ✅ Fixed + deployed | `yahoo_client.py` |
 | Draft Board | ✅ Live (551 Steamer players) | `11_Fantasy_Baseball.py` |
 | Live Draft Tracker | ✅ Built (manual + Yahoo polling) | `12_Live_Draft.py` |
-| Draft Tracker backend | ✅ Built (26 tests pass) | `fantasy_baseball/draft_tracker.py` |
-| Discord draft alerts | ✅ Built (`send_draft_pick`, `send_on_the_clock_alert`) | `discord_notifier.py` |
-| Bet settlement fix | ✅ Complete (20 tests pass) | `bet_tracker.py` — `_resolve_home_away()` |
+| Draft Tracker backend | ✅ Built (26 tests) | `fantasy_baseball/draft_tracker.py` |
+| Discord draft alerts | ✅ `send_draft_pick` + `send_on_the_clock_alert` | `discord_notifier.py` |
+| Bet settlement fix | ✅ `_resolve_home_away()` fuzzy match (20 tests) | `bet_tracker.py` |
 | Historical re-settlement | ✅ No discrepancies found | `scripts/resettle_bets.py` |
 | Daily lineup optimizer | ✅ Built | `daily_lineup_optimizer.py` |
 
@@ -52,26 +52,30 @@
 | **Mar 17 ~7 PM ET** | O-9 Pre-tournament sweep | OpenClaw | See Section 4 |
 | **Mar 18** | First Four begins | All | CBB monitoring mode |
 | **Mar 20** | Fantasy Keeper Deadline | User | Set keepers in Yahoo UI |
-| **Mar 23 7:30am ET** | Fantasy Draft Day | User | Start `12_Live_Draft.py`, begin polling |
+| **Mar 23 7:30am ET** | Fantasy Draft Day | User | Run `12_Live_Draft.py`, begin polling |
 | **Apr 7** | Tournament window closes | All | CBB guardian lifts |
 
 ---
 
 ## 3. ACTIVE MISSIONS
 
-### Claude Code — No active tasks
+### Claude Code — One pending fix
 
 EMAC-063 (Draft Board + Live Tracker) ✅ COMPLETE
 EMAC-064 (Bet Settlement Fix) ✅ COMPLETE
 
-**Next Claude tasks (post-draft, after Mar 23):**
+**Pre-tournament fix (before Mar 18):**
+- **Deduplication bug** — same game creating multiple prediction records (up to 8x). Fix: add app-level dedup in `backend/services/analysis.py` before inserting a Prediction — check for existing `(game_id, prediction_date)` row and update in place instead of creating new. See Section 4 for details.
+
+**Next tasks (post-draft, after Mar 23):**
 - Wire `daily_lineup_optimizer.py` into `yahoo_client.set_lineup()` for auto-submit
-- Statcast integration via pybaseball for waiver wire rankings (see `reports/ADVANCED_ANALYTICS_INTEGRATION.md`)
-- Post-tournament CBB recalibration (after Apr 7)
+- Statcast integration via pybaseball for waiver wire rankings (`reports/ADVANCED_ANALYTICS_INTEGRATION.md`)
+
+**Post-tournament (after Apr 7):**
+- CBB recalibration with full tournament data
+- Model V9.2 planning (EvanMiya re-evaluation)
 
 ### Gemini CLI — Research Missions (Pending)
-
-All missions deliver to `docs/` as markdown. No code.
 
 | Mission | Task | Deliverable |
 |---------|------|-------------|
@@ -98,43 +102,71 @@ python scripts/test_discord.py
 # GET /admin/odds-monitor/status -- expect games_tracked > 0
 ```
 
-For each First Four matchup: search "NCAA First Four 2026 injury lineup [team]" and run `check_integrity_heuristic()`. Flag any ABORT or VOLATILE to this file under section 3.
+For each First Four matchup: search "NCAA First Four 2026 injury lineup [team]" and run `check_integrity_heuristic()`. Flag any ABORT or VOLATILE results here under section 3.
 
 ---
 
-## 4. HANDOFF PROMPT — NEXT CLAUDE SESSION
+## 4. KNOWN ISSUES
+
+### 4.1 Deduplication Bug — HIGH PRIORITY (fix before Mar 18)
+
+**Problem:** Same game creating multiple `Prediction` records per analysis run.
+
+**Evidence (from Kimi audit, March 12):**
+| Matchup | Duplicate Count |
+|---------|----------------|
+| Penn State @ Northwestern | 8 entries |
+| Kansas St @ BYU | 6 entries |
+| Missouri St @ FIU | 6 entries |
+| Syracuse @ SMU | 4 entries |
+
+**Root cause:** `get_or_create_game()` dedupes games by `external_id` correctly, but `Prediction` has no unique constraint on `(game_id, prediction_date)`. Each analysis run creates new rows.
+
+**Fix:** In `backend/services/analysis.py` before prediction insert:
+```python
+existing = db.query(Prediction).filter_by(game_id=game.id, prediction_date=today).first()
+if existing:
+    # update in place instead of creating new
+```
+
+### 4.2 Paper/Real Bet Gap — LOW (workflow issue, not model)
+
+167 paper trades vs 1 real bet. User confirmed betting outside the app. Options: manual entry via Bet Log page, DK direct import (already built), or accept paper tracking as system of record.
+
+---
+
+## 5. HANDOFF PROMPT — NEXT CLAUDE SESSION
 
 ```
-CONTEXT (March 11, 2026):
+CONTEXT (March 12, 2026):
 - CBB V9.1 tournament-ready. 647/650 tests pass. Guardian window: Mar 18 - Apr 7.
 - Fantasy draft is March 23 @ 7:30am. All draft tooling is COMPLETE.
 - EMAC-063 (draft board + live tracker) COMPLETE.
 - EMAC-064 (bet settlement fuzzy fix) COMPLETE.
 
-CURRENT STATUS:
-- No active Claude tasks.
-- Tournament window opens March 18 -- do NOT touch CBB model code.
+ACTIVE TASK:
+- Deduplication bug: fix prediction dedup in backend/services/analysis.py before Mar 18.
+  Check for existing Prediction row (game_id + prediction_date) before inserting new.
+  See HANDOFF Section 4.1 for full details.
 
 POST-DRAFT TASKS (after March 23):
-1. Wire daily_lineup_optimizer.py into yahoo_client.set_lineup() for auto-submit lineups
-2. Add pybaseball Statcast metrics to player board (bat_speed, swing_length)
-   Reference: reports/ADVANCED_ANALYTICS_INTEGRATION.md
-3. Waiver wire assistant (post-season start)
+1. Wire daily_lineup_optimizer.py into yahoo_client.set_lineup() for auto-submit
+2. Statcast integration via pybaseball (reports/ADVANCED_ANALYTICS_INTEGRATION.md)
 
 POST-TOURNAMENT TASKS (after April 7):
 1. CBB recalibration with full tournament data
-2. EvanMiya re-evaluation (intentionally dropped -- 2-source mode)
-3. Model V9.2 planning
+2. Model V9.2 planning
 
 GUARDIAN NOTES:
-- Do NOT touch betting_model.py, analysis.py, CBB services until Apr 7
+- Do NOT touch betting_model.py or CBB services during Mar 18-Apr 7
+  Exception: dedup fix in analysis.py is safe (pure DB query guard, no model logic)
 - Run `python -m pytest tests/ -q` before any commit
-- Fantasy code is isolated -- safe to iterate
+- Fantasy code is isolated -- safe to iterate anytime
 ```
 
 ---
 
-## 5. QUICK REFERENCE
+## 6. QUICK REFERENCE
 
 ```bash
 # Tests
@@ -154,7 +186,7 @@ streamlit run dashboard/app.py  # navigate to 12_Live_Draft
 
 ---
 
-## 6. HIVE WISDOM
+## 7. HIVE WISDOM
 
 | Lesson | Source |
 |--------|--------|
@@ -168,6 +200,7 @@ streamlit run dashboard/app.py  # navigate to 12_Live_Draft
 | EvanMiya intentionally dropped -- 2-source mode robust by design | P0 |
 | Bet settlement: use _resolve_home_away() -- never raw string compare | EMAC-064 |
 | Yahoo roster pre-draft returns players:[] (empty array) -- handle gracefully | EMAC-063 |
+| Prediction dedup: always check (game_id, prediction_date) before insert | EMAC-066 |
 | Discord token must be in Railway Variables, not just .env | D-1 |
 | Railway needs explicit railway.toml for reliable builds | Railway Fix |
 | Nested f-strings with escaped quotes fail in Python < 3.12 | Python |
@@ -176,5 +209,5 @@ streamlit run dashboard/app.py  # navigate to 12_Live_Draft
 ---
 
 **Document Version:** EMAC-066
-**Last Updated:** March 11, 2026
-**Status:** CBB tournament-ready. Fantasy draft-ready. No active Claude tasks. Guardian window opens Mar 18.
+**Last Updated:** March 12, 2026
+**Status:** CBB tournament-ready. Fantasy draft-ready. One pre-tournament fix pending (dedup bug). Guardian window opens Mar 18.
