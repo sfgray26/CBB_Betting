@@ -190,40 +190,49 @@ class YahooFantasyClient:
         raise YahooAPIError("Yahoo API failed after 3 attempts")
 
     # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _flatten_league_section(raw) -> dict:
+        """
+        Yahoo returns league[N] as either:
+          (a) a merged dict  {"name": "...", "teams": {...}, ...}
+          (b) a list of single-key dicts  [{"name": "..."}, {"teams": {...}}, ...]
+
+        This helper normalises both shapes to a plain dict.
+        """
+        if isinstance(raw, list):
+            out = {}
+            for item in raw:
+                if isinstance(item, dict):
+                    out.update(item)
+            return out
+        return raw if isinstance(raw, dict) else {}
+
+    def _league_section(self, data: dict, index: int) -> dict:
+        """Extract and flatten league[index] from a fantasy_content response."""
+        return self._flatten_league_section(
+            data["fantasy_content"]["league"][index]
+        )
+
+    # ------------------------------------------------------------------
     # League endpoints
     # ------------------------------------------------------------------
 
     def get_league(self) -> dict:
         """League metadata: name, scoring type, settings."""
         data = self._get(f"league/{self.league_key}")
-        league_0 = data["fantasy_content"]["league"][0]
-        # Yahoo returns league[0] as either a merged dict or a list of individual dicts
-        if isinstance(league_0, list):
-            meta = {}
-            for item in league_0:
-                if isinstance(item, dict):
-                    meta.update(item)
-            return meta
-        return league_0
+        return self._league_section(data, 0)
 
     def get_league_settings(self) -> dict:
         data = self._get(f"league/{self.league_key}/settings")
-        league_0 = data["fantasy_content"]["league"][0]
-        if isinstance(league_0, list):
-            meta = {}
-            for item in league_0:
-                if isinstance(item, dict):
-                    meta.update(item)
-            return meta
-        return league_0
+        return self._league_section(data, 0)
 
     def get_standings(self) -> list[dict]:
         data = self._get(f"league/{self.league_key}/standings")
-        teams_raw = (
-            data["fantasy_content"]["league"][1]
-            .get("standings", [{}])[0]
-            .get("teams", {})
-        )
+        sec = self._league_section(data, 1)
+        teams_raw = sec.get("standings", [{}])[0].get("teams", {})
         teams = []
         count = int(teams_raw.get("count", 0))
         for i in range(count):
@@ -233,7 +242,7 @@ class YahooFantasyClient:
 
     def get_all_teams(self) -> list[dict]:
         data = self._get(f"league/{self.league_key}/teams")
-        teams_raw = data["fantasy_content"]["league"][1].get("teams", {})
+        teams_raw = self._league_section(data, 1).get("teams", {})
         teams = []
         count = int(teams_raw.get("count", 0))
         for i in range(count):
@@ -244,7 +253,7 @@ class YahooFantasyClient:
     def get_my_team_key(self) -> str:
         """Return the team key for the authenticated user's team."""
         data = self._get(f"league/{self.league_key}/teams")
-        teams_raw = data["fantasy_content"]["league"][1].get("teams", {})
+        teams_raw = self._league_section(data, 1).get("teams", {})
         count = int(teams_raw.get("count", 0))
         for i in range(count):
             team_list = teams_raw[str(i)]["team"]
@@ -308,7 +317,7 @@ class YahooFantasyClient:
             f"league/{self.league_key}/players",
             params={"search": name, "status": status},
         )
-        players_raw = data["fantasy_content"]["league"][1].get("players", {})
+        players_raw = self._league_section(data, 1).get("players", {})
         return self._parse_players_block(players_raw)
 
     def get_free_agents(self, position: str = "", start: int = 0, count: int = 25) -> list[dict]:
@@ -317,7 +326,7 @@ class YahooFantasyClient:
         if position:
             params["position"] = position
         data = self._get(f"league/{self.league_key}/players", params=params)
-        players_raw = data["fantasy_content"]["league"][1].get("players", {})
+        players_raw = self._league_section(data, 1).get("players", {})
         return self._parse_players_block(players_raw)
 
     def get_player_stats(self, player_key: str, stat_type: str = "season") -> dict:
@@ -331,7 +340,7 @@ class YahooFantasyClient:
     def get_waiver_players(self, start: int = 0, count: int = 25) -> list[dict]:
         params = {"status": "W", "start": start, "count": count}
         data = self._get(f"league/{self.league_key}/players", params=params)
-        players_raw = data["fantasy_content"]["league"][1].get("players", {})
+        players_raw = self._league_section(data, 1).get("players", {})
         return self._parse_players_block(players_raw)
 
     # ------------------------------------------------------------------
@@ -342,7 +351,7 @@ class YahooFantasyClient:
         """Return completed draft picks (empty until draft runs)."""
         data = self._get(f"league/{self.league_key}/draftresults")
         picks_raw = (
-            data["fantasy_content"]["league"][1]
+            self._league_section(data, 1)
             .get("draft_results", {})
             .get("0", {})
             .get("draft_results", {})
@@ -451,7 +460,7 @@ class YahooFantasyClient:
             params["week"] = week
         data = self._get(path, params=params if params else None)
         matchups_raw = (
-            data["fantasy_content"]["league"][1]
+            self._league_section(data, 1)
             .get("scoreboard", {})
             .get("0", {})
             .get("matchups", {})
@@ -502,7 +511,7 @@ class YahooFantasyClient:
             f"league/{self.league_key}/transactions",
             params={"type": t_type},
         )
-        txns_raw = data["fantasy_content"]["league"][1].get("transactions", {})
+        txns_raw = self._league_section(data, 1).get("transactions", {})
         txns = []
         count = int(txns_raw.get("count", 0))
         for i in range(count):
