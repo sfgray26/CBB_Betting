@@ -1142,3 +1142,183 @@ def resettle_bets():
 **Review Completed By:** Kimi CLI  
 **Review Date:** March 11, 2026  
 **Next Review:** After fix implementation (March 12)
+
+
+---
+
+## 14. NEXT PRIORITY: Discord Channel Redesign
+
+**Status:** Design Complete → Ready for Channel Creation  
+**Owner:** User (Discord setup) → Claude Code (code implementation)  
+**Timeline:** Before March 18 (tournament start)
+
+---
+
+### 14.1 Overview
+
+The current single `bets` channel is insufficient for the expanded platform (CBB + Fantasy Baseball). A redesigned channel architecture will:
+
+- Separate CBB betting from Fantasy Baseball operations
+- Route high-priority alerts to dedicated channels
+- Provide clearer signal-to-noise ratio
+- Support tournament-specific communications
+
+---
+
+### 14.2 Proposed Structure
+
+**5 Categories, 16 Channels:**
+
+```
+🏀 CBB EDGE                    ⚾ FANTASY BASEBALL
+├── cbb-bets                   ├── fantasy-lineups
+├── cbb-morning-brief          ├── fantasy-waivers
+├── cbb-alerts                 ├── fantasy-news
+└── cbb-tournament             └── fantasy-draft
+
+🎯 OPENCLAW INTEL              ⚙️ SYSTEM OPS
+├── openclaw-briefs            ├── system-errors
+├── openclaw-escalations       ├── system-logs
+└── openclaw-health            └── data-alerts
+
+💬 GENERAL
+├── general-chat
+└── admin-commands
+```
+
+**Full design:** `docs/DISCORD_CHANNEL_DESIGN.md`  
+**Setup guide:** `docs/DISCORD_SETUP_QUICKSTART.md`
+
+---
+
+### 14.3 Key Channels Explained
+
+| Channel | Purpose | Why It Matters |
+|---------|---------|----------------|
+| **cbb-bets** | Official recommendations | Clean feed of actionable bets |
+| **cbb-morning-brief** | Daily 9 AM summary | Start-of-day context |
+| **openclaw-escalations** | High-stakes alerts (≥1.5u) | Manual review queue |
+| **fantasy-lineups** | Daily optimal lineups | 7 AM ET before games |
+| **system-errors** | Critical failures | Immediate attention needed |
+
+---
+
+### 14.4 Implementation Steps
+
+**Step 1: User Action (Discord Setup)**
+- [ ] Create 5 categories in Discord
+- [ ] Create 16 channels with descriptions
+- [ ] Configure permissions (especially admin-commands)
+- [ ] Copy channel IDs (enable Developer Mode)
+
+**Step 2: Claude Code Action (Code Update)**
+- [ ] Update `discord_notifier.py` with channel routing
+- [ ] Add environment variables for all channel IDs
+- [ ] Update `analysis.py` to route bets to cbb-bets
+- [ ] Update `sentinel.py` for health channel
+- [ ] Update `openclaw_lite.py` for escalations
+- [ ] Update fantasy modules for lineup/waiver channels
+
+**Step 3: Testing**
+- [ ] Send test message to each channel
+- [ ] Verify @admin mentions work
+- [ ] Confirm fallback behavior
+
+**Step 4: Go-Live**
+- [ ] Announce in general-chat
+- [ ] Monitor for 48 hours
+
+---
+
+### 14.5 Environment Variables Needed
+
+Add to Railway + `.env`:
+
+```bash
+# Existing
+DISCORD_CHANNEL_CBB_BETS=1477436117426110615
+
+# New (fill in after channel creation)
+DISCORD_CHANNEL_CBB_BRIEF=
+DISCORD_CHANNEL_CBB_ALERTS=
+DISCORD_CHANNEL_CBB_TOURNAMENT=
+
+DISCORD_CHANNEL_FANTASY_LINEUPS=
+DISCORD_CHANNEL_FANTASY_WAIVERS=
+DISCORD_CHANNEL_FANTASY_NEWS=
+DISCORD_CHANNEL_FANTASY_DRAFT=
+
+DISCORD_CHANNEL_OPENCLAW_BRIEFS=
+DISCORD_CHANNEL_OPENCLAW_ESCALATIONS=
+DISCORD_CHANNEL_OPENCLAW_HEALTH=
+
+DISCORD_CHANNEL_SYSTEM_ERRORS=
+DISCORD_CHANNEL_SYSTEM_LOGS=
+DISCORD_CHANNEL_DATA_ALERTS=
+```
+
+---
+
+### 14.6 Message Format Examples
+
+**cbb-bets:**
+```
+🏀 BET RECOMMENDATION
+
+**Gonzaga Bulldogs -3.5** @ -110
+Bet Size: 1.5 units ($37.50)
+Confidence: 72% | Edge: 4.2%
+Game: Gonzaga @ Saint Mary's — 9:00 PM ET
+```
+
+**openclaw-escalations:**
+```
+🚨 HIGH-STAKES ESCALATION
+
+Game: UNC @ Duke (Elite Eight)
+Recommended: 2.0 units
+Verdict: VOLATILE
+
+Action Required: Manual review before tipoff
+Queue ID: 20260318_190000_UNC_Duke
+```
+
+**fantasy-lineups:**
+```
+⚾ TODAY'S OPTIMAL LINEUP — March 18
+
+**Hitters:**
+C: Willson Contreras (STL) — 8.2 proj
+1B: Matt Olson (ATL) — 7.8 proj
+...
+
+**Pitchers:**
+SP: Spencer Strider (ATL) — 22.4 proj
+
+Total Projected: 142.3 points
+```
+
+---
+
+### 14.7 Timeline
+
+| Date | Milestone |
+|------|-----------|
+| March 12 | Channels created, IDs provided |
+| March 13 | Code updated, tested |
+| March 14 | New structure live |
+| March 18 | Tournament mode active (cbb-tournament channel) |
+| March 20 | Draft mode active (fantasy-draft channel) |
+| March 24 | Archive fantasy-draft channel |
+
+---
+
+### 14.8 Files for Reference
+
+- **Full Design:** `docs/DISCORD_CHANNEL_DESIGN.md`
+- **Setup Guide:** `docs/DISCORD_SETUP_QUICKSTART.md`
+- **Migration Plan:** Section 14.4 above
+
+---
+
+**Ready to proceed?** Follow the quickstart guide and send me the channel IDs when ready!
