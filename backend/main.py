@@ -1716,34 +1716,41 @@ async def force_capture_lines(user: str = Depends(verify_admin_api_key)):
 @app.delete("/admin/games/{game_id}")
 async def delete_game(
     game_id: int,
+    force: bool = Query(default=False, description="Delete even if BetLogs exist"),
     user: str = Depends(verify_admin_api_key),
     db: Session = Depends(get_db),
 ):
     """Delete a game and all its predictions/closing lines (admin only).
-    Blocked if real BetLogs exist for the game."""
+    Blocked if real BetLogs exist unless ?force=true is passed."""
     game = db.query(Game).filter(Game.id == game_id).first()
     if not game:
         raise HTTPException(status_code=404, detail=f"Game {game_id} not found")
 
     bet_logs = db.query(BetLog).filter(BetLog.game_id == game_id).all()
-    if bet_logs:
+    if bet_logs and not force:
         raise HTTPException(
             status_code=409,
-            detail=f"Game {game_id} has {len(bet_logs)} bet log(s) — delete those first"
+            detail=f"Game {game_id} has {len(bet_logs)} bet log(s) — use ?force=true to delete anyway"
         )
+
+    bet_logs_deleted = 0
+    if bet_logs and force:
+        bet_logs_deleted = db.query(BetLog).filter(BetLog.game_id == game_id).delete()
+        logger.warning("Admin %s force-deleting %d bet log(s) for game %d", user, bet_logs_deleted, game_id)
 
     predictions_deleted = db.query(Prediction).filter(Prediction.game_id == game_id).delete()
     closing_deleted = db.query(ClosingLine).filter(ClosingLine.game_id == game_id).delete()
     db.delete(game)
     db.commit()
-    logger.info("Admin %s deleted game %d (%s @ %s) — %d predictions, %d closing lines removed",
-                user, game_id, game.away_team, game.home_team, predictions_deleted, closing_deleted)
+    logger.info("Admin %s deleted game %d (%s @ %s) — %d predictions, %d closing lines, %d bet logs removed",
+                user, game_id, game.away_team, game.home_team, predictions_deleted, closing_deleted, bet_logs_deleted)
     return {
         "deleted": True,
         "game_id": game_id,
         "matchup": f"{game.away_team} @ {game.home_team}",
         "predictions_deleted": predictions_deleted,
         "closing_lines_deleted": closing_deleted,
+        "bet_logs_deleted": bet_logs_deleted,
     }
 
 

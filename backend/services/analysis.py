@@ -53,6 +53,11 @@ from backend.services.matchup_engine import get_profile_cache, get_matchup_engin
 from backend.services.parlay_engine import build_optimal_parlays, format_parlay_ticket
 from backend.services.team_mapping import normalize_team_name
 from backend.services.scout import perform_sanity_check
+from backend.services.fatigue import calculate_game_fatigue, get_fatigue_margin_adjustment
+from backend.services.team_conference_lookup import get_conference_hca_delta
+from backend.services.recency_weight import is_late_season
+from backend.services.sharp_money import detect_sharp_signal, apply_sharp_adjustment
+from backend.services.odds_monitor import get_odds_monitor
 from backend.utils.env_utils import get_float_env
 
 logger = logging.getLogger(__name__)
@@ -972,6 +977,13 @@ async def run_nightly_analysis(
                     else:
                         dynamic_base_sd = None
 
+                    # ---- Late-season recency SD bump (P3) ----------------
+                    # In March, outcomes are harder to predict (hot teams,
+                    # tournament pressure) — widen SD by 5% to widen CI
+                    # and reduce Kelly sizing slightly.
+                    if dynamic_base_sd and is_late_season():
+                        dynamic_base_sd *= 1.05
+
                     # ---- Build model inputs ------------------------------
                     _meta = all_ratings.get("_meta", {})
                     ratings_input = {
@@ -1238,6 +1250,93 @@ async def run_nightly_analysis(
                                 away_team, home_team, exc,
                             )
 
+                    # ---- Fatigue adjustment (rest days + travel + altitude) --
+                    fatigue_margin_adj: float = 0.0
+                    fatigue_metadata: Optional[Dict] = None
+                    try:
+                        _commence_dt = None
+                        _commence_str = game_data.get("commence_time")
+                        if _commence_str:
+                            try:
+                                _commence_dt = datetime.fromisoformat(
+                                    _commence_str.replace("Z", "+00:00")
+                                )
+                            except (ValueError, TypeError):
+                                pass
+
+                        _home_last = (
+                            db.query(Game.game_date)
+                            .filter(
+                                Game.home_team == home_team,
+                                Game.away_team != away_team,
+                                Game.completed == True,
+                            )
+                            .order_by(Game.game_date.desc())
+                            .scalar()
+                        ) or (
+                            db.query(Game.game_date)
+                            .filter(
+                                Game.away_team == home_team,
+                                Game.home_team != away_team,
+                                Game.completed == True,
+                            )
+                            .order_by(Game.game_date.desc())
+                            .scalar()
+                        )
+                        _away_last = (
+                            db.query(Game.game_date)
+                            .filter(
+                                Game.away_team == away_team,
+                                Game.home_team != home_team,
+                                Game.completed == True,
+                            )
+                            .order_by(Game.game_date.desc())
+                            .scalar()
+                        ) or (
+                            db.query(Game.game_date)
+                            .filter(
+                                Game.home_team == away_team,
+                                Game.away_team != home_team,
+                                Game.completed == True,
+                            )
+                            .order_by(Game.game_date.desc())
+                            .scalar()
+                        )
+
+                        _home_fat, _away_fat = calculate_game_fatigue(
+                            home_team=home_team,
+                            away_team=away_team,
+                            game_date=_commence_dt or datetime.utcnow(),
+                            home_last_game=_home_last,
+                            away_last_game=_away_last,
+                        )
+                        fatigue_margin_adj, fatigue_metadata = get_fatigue_margin_adjustment(
+                            _home_fat, _away_fat
+                        )
+                        if abs(fatigue_margin_adj) > 0.01:
+                            logger.debug(
+                                "Fatigue %s @ %s: adj=%.2f (home_rest=%dd, away_rest=%dd)",
+                                away_team, home_team, fatigue_margin_adj,
+                                _home_fat.rest_days, _away_fat.rest_days,
+                            )
+                    except Exception as exc:
+                        logger.warning("Fatigue calc failed for %s @ %s: %s", away_team, home_team, exc)
+
+                    # ---- Conference HCA adjustment (Mission K-10) -----------
+                    # Apply conference-specific HCA delta vs baseline 3.09
+                    try:
+                        conf_hca_delta = get_conference_hca_delta(
+                            home_team, is_neutral=game_data.get("is_neutral", False)
+                        )
+                        if abs(conf_hca_delta) > 0.01:
+                            matchup_margin_adj += conf_hca_delta
+                            logger.debug(
+                                "Conference HCA %s @ %s: delta=%+.2f (adj_margin now %.2f)",
+                                away_team, home_team, conf_hca_delta, matchup_margin_adj
+                            )
+                    except Exception as exc:
+                        logger.warning("Conference HCA lookup failed for %s: %s", home_team, exc)
+
                     # ---- Compute hours to tipoff (used for dynamic Kelly/SD) --
                     hours_to_tipoff: Optional[float] = None
                     _commence_raw = game_data.get("commence_time")
@@ -1299,7 +1398,44 @@ async def run_nightly_analysis(
                         # full NO_SHARP_BOOKS_SE_ADDEND (0.30).
                         sharp_proxy_used=bool(game_data.get("sharp_proxy_used", False)),
                         integrity_verdict=integrity_verdict,
+                        fatigue_margin_adj=fatigue_margin_adj,
+                        fatigue_metadata=fatigue_metadata,
                     )
+
+                    # ---- Sharp money post-processing ----------------------
+                    # Check odds monitor line history for steam/opener patterns.
+                    # Adjusts edge up to +0.5% when sharp confirms, -0.8% when opposing.
+                    try:
+                        _monitor = get_odds_monitor()
+                        _raw_history = _monitor.get_line_history(_game_key)
+                        if _raw_history:
+                            _line_history = [
+                                {"timestamp": s.timestamp, "home_spread": s.spread}
+                                for s in _raw_history
+                                if s.spread is not None
+                            ]
+                            _current_spread = odds_input.get("spread_home") or odds_input.get("consensus_spread")
+                            if _line_history and _current_spread is not None:
+                                _sharp_signal = detect_sharp_signal(
+                                    _game_key, _line_history, float(_current_spread)
+                                )
+                                if _sharp_signal.pattern.value != "none":
+                                    _model_side = "home" if analysis.projected_margin > 0 else "away"
+                                    _adj_edge, _sharp_details = apply_sharp_adjustment(
+                                        analysis.edge_conservative, _sharp_signal, _model_side
+                                    )
+                                    if _adj_edge != analysis.edge_conservative:
+                                        analysis.edge_conservative = _adj_edge
+                                        analysis.full_analysis.setdefault("sharp_money", _sharp_details)
+                                        logger.debug(
+                                            "Sharp money %s @ %s: pattern=%s, edge %.3f -> %.3f",
+                                            away_team, home_team,
+                                            _sharp_signal.pattern.value,
+                                            _sharp_details.get("base_edge", 0),
+                                            _adj_edge,
+                                        )
+                    except Exception as exc:
+                        logger.warning("Sharp money post-processing failed for %s @ %s: %s", away_team, home_team, exc)
 
                     # EMAC-021: Capture reanalysis engine for Level 5 real-time pulse
                     try:
@@ -1365,14 +1501,14 @@ async def run_nightly_analysis(
                             old_verdict[:20], new_verdict[:20], edge_diff,
                         )
                         prediction = existing_prediction
-                        prediction.model_version = "v9.0"
+                        prediction.model_version = "v9.1"
                     else:
                         # No existing prediction for this tier — create new
                         prediction = Prediction(
                             game_id=game.id,
                             prediction_date=today,
                             run_tier=run_tier,
-                            model_version="v9.0",
+                            model_version="v9.1",
                         )
                         db.add(prediction)
                         old_verdict = None
