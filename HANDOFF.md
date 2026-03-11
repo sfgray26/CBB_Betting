@@ -1322,3 +1322,182 @@ Total Projected: 142.3 points
 ---
 
 **Ready to proceed?** Follow the quickstart guide and send me the channel IDs when ready!
+
+
+---
+
+### 14.9 UPDATE: Discord Channels Configured ✅
+
+**Date:** March 11, 2026  
+**Status:** Channel IDs received, code updated, ready for testing
+
+---
+
+#### Channels Created
+
+All 16 channels have been configured with the following IDs:
+
+```
+🏀 CBB EDGE
+  cbb-bets              1477436117426110615 (existing)
+  cbb-morning-brief     1481293065405595701
+  cbb-alerts            1481293221316395088
+  cbb-tournament        1481293294263865455
+
+⚾ FANTASY BASEBALL
+  fantasy-lineups       1481293925506617396
+  fantasy-waivers       1481294029273698376
+  fantasy-news          1481294077755527209
+  fantasy-draft         1481294129450319893
+
+🎯 OPENCLAW INTEL
+  openclaw-briefs       1481294197045858395
+  openclaw-escalations  1481294383092338810
+  openclaw-health       1481294433063276654
+
+⚙️ SYSTEM OPS
+  system-errors         1481294516567932980
+  system-logs           1481294557936353521
+  data-alerts           1481294607726940292
+
+💬 GENERAL
+  general-chat          1481294687607455764
+  admin-commands        1481294886534647848
+```
+
+---
+
+#### Code Updates Complete
+
+**File:** `backend/services/discord_notifier.py` (v2.0)
+
+**Changes:**
+1. ✅ Added `CHANNEL_MAP` with all 16 channel environment variable mappings
+2. ✅ Added `_get_channel_id()` function for channel name → ID resolution
+3. ✅ Added `send_to_channel()` function for direct channel sending
+4. ✅ Added `route_notification()` function for message type-based routing
+5. ✅ Updated all legacy functions to use new channel routing:
+   - `send_todays_bets()` → #cbb-bets
+   - `send_health_briefing()` → #openclaw-health
+   - `send_verdict_flip_alert()` → #cbb-alerts
+   - `send_source_health_alert()` → #data-alerts
+6. ✅ Added new functions:
+   - `send_high_stakes_escalation()` → #openclaw-escalations
+   - `send_fantasy_lineup()` → #fantasy-lineups
+   - `send_system_error()` → #system-errors
+   - `send_routine_log()` → #system-logs
+
+**Environment Variables:**
+- Created `.env.discord.channels` with all channel IDs
+- All 16 `DISCORD_CHANNEL_*` variables ready for Railway deployment
+
+---
+
+#### Test Script Created
+
+**File:** `scripts/test_discord_channels.py`
+
+**Usage:**
+```bash
+# Check configuration (no messages sent)
+python scripts/test_discord_channels.py --config-only
+
+# Dry run (show what would be sent)
+python scripts/test_discord_channels.py --dry-run
+
+# Send actual test messages
+python scripts/test_discord_channels.py
+```
+
+---
+
+#### Deployment Checklist
+
+**Before Testing:**
+- [ ] Add all `DISCORD_CHANNEL_*` variables to Railway environment
+- [ ] Verify `DISCORD_BOT_TOKEN` is set
+- [ ] Run `python scripts/test_discord_channels.py --config-only`
+
+**Testing:**
+- [ ] Run `python scripts/test_discord_channels.py --dry-run`
+- [ ] Run `python scripts/test_discord_channels.py` (send real messages)
+- [ ] Verify all 16 channels receive test messages
+- [ ] Check formatting in each channel
+
+**Go-Live:**
+- [ ] Update `.env` file with new variables
+- [ ] Commit changes to git
+- [ ] Deploy to Railway
+- [ ] Monitor for 24 hours
+
+---
+
+#### Usage Examples
+
+**Send bet recommendation:**
+```python
+from backend.services.discord_notifier import send_todays_bets
+
+send_todays_bets(bet_details, summary)  # Goes to #cbb-bets
+```
+
+**Send high-stakes escalation:**
+```python
+from backend.services.discord_notifier import send_high_stakes_escalation
+
+send_high_stakes_escalation(
+    game_key="UNC@Duke",
+    home_team="Duke",
+    away_team="UNC",
+    recommended_units=2.0,
+    integrity_verdict="VOLATILE",
+    reason="Late injury news + Elite Eight",
+    queue_id="20260312_090000_UNC_Duke"
+)  # Goes to #openclaw-escalations with @admin mention
+```
+
+**Send fantasy lineup:**
+```python
+from backend.services.discord_notifier import send_fantasy_lineup
+
+send_fantasy_lineup(lineup_data)  # Goes to #fantasy-lineups
+```
+
+**Route by message type:**
+```python
+from backend.services.discord_notifier import route_notification
+
+route_notification(
+    message_type="system_health",
+    embed=health_embed,
+    severity="normal"
+)  # Routes to #openclaw-health
+```
+
+---
+
+#### Migration from Legacy
+
+**Before (single channel):**
+```python
+from backend.services.discord_notifier import send_todays_bets
+send_todays_bets(bets, summary)  # Always went to one channel
+```
+
+**After (multi-channel):**
+```python
+# Same function call — now routes to #cbb-bets automatically
+from backend.services.discord_notifier import send_todays_bets
+send_todays_bets(bets, summary)
+
+# New: Direct channel targeting
+from backend.services.discord_notifier import send_to_channel
+send_to_channel("fantasy-lineups", embed=lineup_embed)
+```
+
+**Backward Compatibility:** ✅ All existing code continues to work
+
+---
+
+**Next Step:** Add environment variables to Railway and run test script.
+

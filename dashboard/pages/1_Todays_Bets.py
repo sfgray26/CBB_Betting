@@ -290,8 +290,8 @@ if today_data:
             home = g.get("home_team") or odds_data.get("home_team") or "Home"
             away = g.get("away_team") or odds_data.get("away_team") or "Away"
             matchup = f"{away} @ {home}"
-            edge = c.get("edge_conservative", 0)
-            margin = c.get("projected_margin", 0)
+            edge = c.get("edge_conservative") or 0
+            margin = c.get("projected_margin") or 0
             pred_id = c.get("id")
             try:
                 game_time = datetime.fromisoformat(g.get("game_date") or "").strftime("%I:%M %p")
