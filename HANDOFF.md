@@ -1,6 +1,6 @@
-# OPERATIONAL HANDOFF (EMAC-066)
+# OPERATIONAL HANDOFF (EMAC-067)
 
-> Ground truth as of March 12, 2026. Operator: Claude Code (Master Architect).
+> Ground truth as of March 11, 2026. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 > Full roadmap: `docs/MLB_FANTASY_ROADMAP.md` · CBB plan: `tasks/cbb_enhancement_plan.md`
 
@@ -59,13 +59,14 @@
 
 ## 3. ACTIVE MISSIONS
 
-### Claude Code — One pending fix
+### Claude Code — No active bugs
 
 EMAC-063 (Draft Board + Live Tracker) ✅ COMPLETE
 EMAC-064 (Bet Settlement Fix) ✅ COMPLETE
+EMAC-067 (Prediction Deduplication Fix) ✅ COMPLETE
 
-**Pre-tournament fix (before Mar 18):**
-- **Deduplication bug** — same game creating multiple prediction records (up to 8x). Fix: add app-level dedup in `backend/services/analysis.py` before inserting a Prediction — check for existing `(game_id, prediction_date)` row and update in place instead of creating new. See Section 4 for details.
+**Pre-tournament fix DONE (before Mar 18):**
+- **Deduplication bug** — FIXED in `backend/services/analysis.py`. Root cause: legacy rows with `run_tier=NULL` were not matched by the existing upsert query, causing new rows to be inserted on every re-run. Fix expands the `existing_prediction` query to also match NULL/empty `run_tier` rows via `or_()`, prefers exact-tier match via `order_by`, and normalises `run_tier` on both the no-change path and the material-change path. No schema changes; pure application-layer fix.
 
 **Next tasks (post-draft, after Mar 23):**
 - Wire `daily_lineup_optimizer.py` into `yahoo_client.set_lineup()` for auto-submit
@@ -108,26 +109,19 @@ For each First Four matchup: search "NCAA First Four 2026 injury lineup [team]" 
 
 ## 4. KNOWN ISSUES
 
-### 4.1 Deduplication Bug — HIGH PRIORITY (fix before Mar 18)
+### 4.1 Deduplication Bug — RESOLVED (EMAC-067, March 11)
 
 **Problem:** Same game creating multiple `Prediction` records per analysis run.
 
-**Evidence (from Kimi audit, March 12):**
-| Matchup | Duplicate Count |
-|---------|----------------|
-| Penn State @ Northwestern | 8 entries |
-| Kansas St @ BYU | 6 entries |
-| Missouri St @ FIU | 6 entries |
-| Syracuse @ SMU | 4 entries |
+**Root cause (confirmed):** Legacy rows saved before `run_tier` was introduced stored `run_tier=NULL`. The existing upsert query filtered `Prediction.run_tier == run_tier` (strict equality), which does NOT match NULL rows in SQL. Every re-run saw no existing prediction and inserted a fresh row. The DB-level `UniqueConstraint` exists in the ORM model but was never applied to the live database via migration, so no constraint violation halted the duplicates.
 
-**Root cause:** `get_or_create_game()` dedupes games by `external_id` correctly, but `Prediction` has no unique constraint on `(game_id, prediction_date)`. Each analysis run creates new rows.
+**Fix applied in `backend/services/analysis.py`:**
+- `or_` imported at module level (was already used in-loop redundantly)
+- Query expanded: `or_(run_tier == run_tier, run_tier IS NULL, run_tier == '')`
+- `order_by((run_tier == run_tier).desc())` ensures exact-tier match preferred over legacy NULL
+- `run_tier` normalised to current value on both the no-change path and the material-change update path
 
-**Fix:** In `backend/services/analysis.py` before prediction insert:
-```python
-existing = db.query(Prediction).filter_by(game_id=game.id, prediction_date=today).first()
-if existing:
-    # update in place instead of creating new
-```
+**No schema changes. No model logic changes. Minimal impact.**
 
 ### 4.2 Paper/Real Bet Gap — LOW (workflow issue, not model)
 
@@ -144,10 +138,11 @@ CONTEXT (March 12, 2026):
 - EMAC-063 (draft board + live tracker) COMPLETE.
 - EMAC-064 (bet settlement fuzzy fix) COMPLETE.
 
-ACTIVE TASK:
-- Deduplication bug: fix prediction dedup in backend/services/analysis.py before Mar 18.
-  Check for existing Prediction row (game_id + prediction_date) before inserting new.
-  See HANDOFF Section 4.1 for full details.
+ACTIVE TASK: None (dedup bug fixed in EMAC-067).
+
+EMAC-067 COMPLETE: Deduplication fixed in backend/services/analysis.py.
+  Root cause: legacy run_tier=NULL rows not matched by strict equality filter.
+  Fix: or_() query + order_by exact-match preference + run_tier normalisation on update.
 
 POST-DRAFT TASKS (after March 23):
 1. Wire daily_lineup_optimizer.py into yahoo_client.set_lineup() for auto-submit
@@ -200,7 +195,7 @@ streamlit run dashboard/app.py  # navigate to 12_Live_Draft
 | EvanMiya intentionally dropped -- 2-source mode robust by design | P0 |
 | Bet settlement: use _resolve_home_away() -- never raw string compare | EMAC-064 |
 | Yahoo roster pre-draft returns players:[] (empty array) -- handle gracefully | EMAC-063 |
-| Prediction dedup: always check (game_id, prediction_date) before insert | EMAC-066 |
+| Prediction dedup: legacy run_tier=NULL rows break strict equality filter -- use or_() to match NULL + '' | EMAC-067 |
 | Discord token must be in Railway Variables, not just .env | D-1 |
 | Railway needs explicit railway.toml for reliable builds | Railway Fix |
 | Nested f-strings with escaped quotes fail in Python < 3.12 | Python |
@@ -208,6 +203,6 @@ streamlit run dashboard/app.py  # navigate to 12_Live_Draft
 
 ---
 
-**Document Version:** EMAC-066
-**Last Updated:** March 12, 2026
-**Status:** CBB tournament-ready. Fantasy draft-ready. One pre-tournament fix pending (dedup bug). Guardian window opens Mar 18.
+**Document Version:** EMAC-067
+**Last Updated:** March 11, 2026
+**Status:** CBB tournament-ready. Fantasy draft-ready. Dedup bug FIXED (EMAC-067). No open CBB bugs. Guardian window opens Mar 18.
