@@ -52,9 +52,86 @@ with col3:
 st.markdown("---")
 
 # ============================================================================
+# DUPLICATE BET CLEANUP
+# ============================================================================
+st.subheader("Duplicate Bet Cleanup")
+st.caption(
+    "Paper trades are sometimes logged multiple times for the same game "
+    "(e.g. when both opener and nightly analysis runs fire, or when analysis is manually re-triggered). "
+    "This inflates bet counts and distorts win rates / ROI. Use the tools below to find and remove duplicates."
+)
+
+dup_col1, dup_col2 = st.columns(2)
+
+with dup_col1:
+    dup_days = st.number_input("Scan back (days)", min_value=7, max_value=730, value=365, step=30, key="dup_days")
+
+with dup_col2:
+    st.write("")  # spacer
+    if st.button("Scan for Duplicates", use_container_width=True, key="dup_scan_btn"):
+        with st.spinner("Scanning for duplicate paper trades..."):
+            result = api_post(
+                f"/admin/cleanup/duplicate-bets?dry_run=true&days={int(dup_days)}", {}
+            )
+        if result:
+            st.session_state["dup_scan_result"] = result
+
+if "dup_scan_result" in st.session_state:
+    scan = st.session_state["dup_scan_result"]
+    found = scan.get("duplicates_found", 0)
+    if found == 0:
+        st.success("No duplicate paper trades found.")
+    else:
+        st.warning(
+            f"Found **{found} duplicate entries** across "
+            f"{len(scan.get('kept_ids', []))} games — "
+            f"keeping 1 per game per day, deleting the rest."
+        )
+
+        with st.expander("Preview: entries that would be deleted"):
+            deleted_entries = scan.get("deleted_entries", [])
+            if deleted_entries:
+                st.dataframe(
+                    deleted_entries,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+        st.error(
+            "This will permanently delete the duplicate entries. "
+            "The first-created bet per game per day is kept. "
+            "Real (non-paper) bets are never touched."
+        )
+        confirm_delete = st.checkbox(
+            f"I understand — permanently delete {found} duplicate paper trade entries",
+            key="dup_confirm_checkbox",
+        )
+        if confirm_delete:
+            if st.button(
+                f"Delete {found} Duplicates",
+                type="primary",
+                key="dup_delete_btn",
+            ):
+                with st.spinner("Deleting duplicates..."):
+                    del_result = api_post(
+                        f"/admin/cleanup/duplicate-bets?dry_run=false&days={int(dup_days)}", {}
+                    )
+                if del_result and del_result.get("deleted", 0) > 0:
+                    st.success(
+                        f"Deleted {del_result['deleted']} duplicate entries. "
+                        "Bet history is now deduplicated."
+                    )
+                    del st.session_state["dup_scan_result"]
+                    st.rerun()
+                else:
+                    st.error("Deletion failed — check API logs.")
+
+st.markdown("---")
+
+# ============================================================================
 # DATA CLEANUP — delete stale/test game records
 # ============================================================================
-st.subheader("Data Cleanup")
+st.subheader("Delete Game Record")
 st.caption("Delete a stale or test game and all its associated predictions. Blocked if real bet logs exist.")
 
 with st.form("delete_game_form"):

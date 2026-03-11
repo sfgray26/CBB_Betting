@@ -184,8 +184,8 @@ if today_data:
             with st.expander(_expander_label, expanded=True):
                 st.subheader(pick_str)
                 col1, col2, col3 = st.columns(3)
-                col1.metric("Projected Margin", f"{bet.get('projected_margin', 0):.1f} pts")
-                col2.metric("Conservative Edge", f"{bet.get('edge_conservative', 0):.2%}")
+                col1.metric("Projected Margin", f"{bet.get('projected_margin') or 0:.1f} pts")
+                col2.metric("Conservative Edge", f"{bet.get('edge_conservative') or 0:.2%}")
                 col3.metric("Recommended Stake", f"{rec_units:.2f} units")
                 st.info(f"**Verdict:** {bet['verdict']}")
 

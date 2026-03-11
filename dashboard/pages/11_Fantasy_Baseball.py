@@ -361,45 +361,107 @@ with tab_setup:
     st.header("Yahoo API Setup")
 
     yahoo_client_id = os.getenv("YAHOO_CLIENT_ID", "")
+    yahoo_client_secret = os.getenv("YAHOO_CLIENT_SECRET", "")
     yahoo_refresh = os.getenv("YAHOO_REFRESH_TOKEN", "")
 
-    if yahoo_client_id:
-        st.success(f"Client ID loaded: {yahoo_client_id[:20]}...")
-    else:
-        st.error("YAHOO_CLIENT_ID not found in .env")
+    # ---- Status indicators ----
+    col_s1, col_s2, col_s3 = st.columns(3)
+    with col_s1:
+        if yahoo_client_id:
+            st.success(f"Client ID: {yahoo_client_id[:12]}...")
+        else:
+            st.error("CLIENT_ID missing")
+    with col_s2:
+        if yahoo_client_secret:
+            st.success("Client Secret: set")
+        else:
+            st.error("CLIENT_SECRET missing")
+    with col_s3:
+        if yahoo_refresh:
+            st.success("Refresh Token: ready")
+        else:
+            st.warning("Refresh Token: MISSING")
 
+    st.markdown("---")
+
+    if not yahoo_client_id or not yahoo_client_secret:
+        st.error("Add YAHOO_CLIENT_ID and YAHOO_CLIENT_SECRET to Railway environment variables first.")
+    else:
+        # ---- Step 1: Generate auth URL ----
+        st.subheader("Step 1 — Authorize Yahoo (one-time)")
+        st.info(
+            "CLIENT_ID and SECRET are set. You just need to complete the one-time OAuth flow "
+            "to get a **Refresh Token**, then add it to Railway."
+        )
+
+        if st.button("Generate Yahoo Authorization URL"):
+            try:
+                from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+                client = YahooFantasyClient()
+                auth_url = client.get_authorization_url()
+                st.session_state["yahoo_auth_url"] = auth_url
+            except Exception as e:
+                st.error(f"Failed to generate URL: {e}")
+
+        if "yahoo_auth_url" in st.session_state:
+            st.markdown(f"**[Click here to authorize with Yahoo]({st.session_state['yahoo_auth_url']})**")
+            st.caption("Yahoo will show you a 6-digit code after you approve. Copy it below.")
+
+        # ---- Step 2: Exchange code for tokens ----
+        st.subheader("Step 2 — Enter Authorization Code")
+        auth_code_input = st.text_input(
+            "Paste the 6-digit Yahoo authorization code here:",
+            placeholder="e.g., abc123",
+            key="yahoo_auth_code",
+        )
+        if st.button("Exchange Code for Tokens") and auth_code_input.strip():
+            try:
+                from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+                client = YahooFantasyClient()
+                tokens = client.exchange_code_for_tokens(auth_code_input.strip())
+                st.session_state["yahoo_new_tokens"] = tokens
+                st.success("Authorization successful! Copy the tokens below to Railway.")
+            except Exception as e:
+                st.error(f"Token exchange failed: {e}")
+
+        if "yahoo_new_tokens" in st.session_state:
+            t = st.session_state["yahoo_new_tokens"]
+            st.subheader("Step 3 — Add These to Railway Environment Variables")
+            st.warning("Copy these values to Railway → Variables before the page refreshes.")
+            st.code(f"YAHOO_REFRESH_TOKEN={t.get('refresh_token', 'N/A')}")
+            st.code(f"YAHOO_ACCESS_TOKEN={t.get('access_token', 'N/A')[:40]}...")
+            st.markdown(
+                "**Railway Dashboard → Your Project → Variables → Add** each key above. "
+                "Then redeploy. The app will auto-refresh the access token on every restart."
+            )
+
+    st.markdown("---")
+
+    # ---- Connection test ----
     if yahoo_refresh:
-        st.success("Refresh token found — API is ready")
-    else:
-        st.warning("No refresh token yet — complete OAuth flow below")
+        st.subheader("Test Connection")
+        if st.button("Test Yahoo API Connection"):
+            try:
+                from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+                client = YahooFantasyClient()
+                league = client.get_league()
+                st.success(f"Connected! League: **{league.get('name', 'Unknown')}**")
+                my_key = client.get_my_team_key()
+                st.info(f"Your team key: `{my_key}`")
+            except Exception as e:
+                st.error(f"Connection test failed: {e}")
 
     st.markdown("---")
-    st.subheader("One-Time Authorization")
+    st.subheader("Troubleshooting")
     st.markdown("""
-Run this command in your terminal to complete OAuth setup:
-
-```bash
-cd /home/user/CBB_Betting
-python -m backend.fantasy_baseball.yahoo_client --auth
-```
-
-This will:
-1. Open a browser to Yahoo's authorization page
-2. You authorize the app
-3. Yahoo gives you a 6-digit code
-4. Paste it back in the terminal
-5. Refresh token is saved to `.env` automatically
-
-After auth, click **Sync Roster** in the My Roster tab to verify.
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| "No refresh token stored" | `YAHOO_REFRESH_TOKEN` not in Railway | Complete OAuth flow above, copy token to Railway |
+| "Token refresh failed: 400" | Refresh token expired or revoked | Re-do OAuth flow above |
+| "Token exchange failed: 401" | Wrong CLIENT_ID or CLIENT_SECRET | Check Railway vars match developer.yahoo.com/apps |
+| API returns empty data | Wrong league ID | Set `YAHOO_LEAGUE_ID=72586` in Railway |
+| Works locally, fails on Railway | `.env` not writable | Expected — add tokens to Railway Variables directly |
 """)
-
-    st.markdown("---")
-    st.subheader("Security Reminder")
-    st.error(
-        "⚠️ Your Yahoo API credentials were shared in a chat session. "
-        "Please rotate them at https://developer.yahoo.com/apps/ "
-        "and update your .env file with the new credentials."
-    )
 
 
 # ---------------------------------------------------------------------------

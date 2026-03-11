@@ -1,29 +1,33 @@
-# OPERATIONAL HANDOFF (EMAC-061)
+# OPERATIONAL HANDOFF (EMAC-063)
 
 > Ground truth as of March 10, 2026. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
-> Full enhancement plan: `tasks/cbb_enhancement_plan.md`
+> Full roadmap: `docs/MLB_FANTASY_ROADMAP.md` · CBB plan: `tasks/cbb_enhancement_plan.md`
 
 ---
 
-## 0. ARCHITECT DECISION (March 10, 2026)
+## 0. ARCHITECT DECISIONS (March 10, 2026)
 
-**User concern:** Returns and model success have been limited lately.
+### 0.1 Agent Role Change — Gemini CLI
+**Decision:** Gemini CLI is now **Research-Only**. No production code from Gemini.
+- **Was:** DevOps + code + research
+- **Now:** Research, data sourcing, documentation, API investigation
+- **Reason:** Code quality insufficient; Gemini PRs broke more than they fixed
+- **All production code:** Claude Code only
 
-**Root cause finding:** The model is running in **KenPom-only mode**. Both
-`BARTTORVIK_USERNAME/PASSWORD` and `EVANMIYA_API_KEY` are unset in Railway.
-The 3-source composite is degraded to 1 source, causing:
-- Renormalized weight = 100% KenPom (accuracy loss)
-- `margin_se` widened from 1.50 → 1.80 (over-cautious CI)
-- Fewer BET verdicts, noisier edges when bets are placed
+Gemini research deliverables go to: `docs/` as markdown reports
+Gemini research tasks: See Section 10 HANDOFF PROMPTS
 
-**Priority order (March Madness window):**
-1. **P0 — Fix BartTorvik + EvanMiya data** (1 day) → immediate accuracy gain
-2. **P1 — Sharp Money Detection** (2–3 days) → before Mar 18 tournament tip
-3. **P2/P3 — Conference HCA + March recency weighting** (0.5 day each) → quick wins
-4. **DEFER — Fantasy Baseball** until after Apr 7 championship
+### 0.2 CBB Model — Status
+All P0–P4 + K-8/K-9/K-10 complete. 606/609 tests pass. Tournament-ready.
+- Model V9.1 active with fatigue + sharp money + conference HCA + recency SD
+- March Madness monitoring window: Mar 18 – Apr 7
 
-**See `tasks/cbb_enhancement_plan.md` for full diagnosis and sprint breakdown.**
+### 0.3 Fantasy Baseball — Active Priority
+- Yahoo OAuth: Fix deployed. User must complete one-time auth locally.
+- Draft: March 23 @ 7:30am — draft board assistant needed by March 22
+- Daily optimizer: Built (`daily_lineup_optimizer.py`) — wires sportsbook odds
+- Full roadmap: `docs/MLB_FANTASY_ROADMAP.md`
 
 ---
 
@@ -66,7 +70,7 @@ Previous deliverables still valid:
 | Fatigue Model (K-8) | ✅ LIVE + WIRED | `backend/services/fatigue.py` | 23 pass ✅ |
 | OpenClaw Lite (K-9) | ✅ LIVE | `backend/services/openclaw_lite.py` | 18 pass ✅ |
 | Sharp Money (P1) | ✅ LIVE + WIRED | `backend/services/sharp_money.py` | 15 pass ✅ |
-| Conference HCA (P2) | ✅ MODULE CLEAN | `backend/services/conference_hca.py` | 18 pass ✅ (BLOCKED — needs team→conference map) |
+| Conference HCA (P2) | ✅ LIVE + WIRED | `conference_hca.py` + `team_conference_lookup.py` | 35 pass ✅ |
 | Recency Weight (P3) | ✅ LIVE + WIRED | `backend/services/recency_weight.py` | 20 pass ✅ (5% SD bump in March) |
 | Seed-Spread Scalars (A-26) | ✅ LIVE | `betting_model.py` | 26 pass |
 | Tournament SD Bump | ✅ LIVE | `betting_model.py` (1.15x neutral) | Active |
@@ -543,71 +547,166 @@ SENDGRID_API_KEY (not set)
 
 ## 10. HANDOFF PROMPTS
 
-### KIMI CLI (Deep Intelligence) — Mission K-10: Conference HCA Data Layer
+### CLAUDE CODE (Master Architect) — EMAC-063: Fantasy Baseball Draft Board
 ```
-MISSION K-10: Build team→conference mapping for Conference HCA wiring
+MISSION: Build Draft Board assistant by March 22 (draft is March 23 @ 7:30am)
 
 CONTEXT:
-- `backend/services/conference_hca.py` is complete and tested (18 tests pass)
-- `get_conference_hca(conference, is_neutral=False)` returns pts advantage (Big Ten=3.6, Big 12=3.4, etc.)
-- The analysis pipeline (`backend/services/analysis.py`) CANNOT call it because there is no
-  team-to-conference data available. `TeamPlayStyle` has no `conference` field.
-- We need a lightweight data lookup to go from team name → conference name.
+- CBB V9.1 is complete, tournament-ready. All P0-P4 + K-10 wired. 606/609 pass.
+- Fantasy Baseball is now active priority (draft in ~12 days)
+- Yahoo OAuth fix is deployed. User needs to complete one-time local auth (see Setup tab).
+- daily_lineup_optimizer.py is BUILT (sportsbook odds + implied runs + batter/pitcher rank)
+- Full roadmap: docs/MLB_FANTASY_ROADMAP.md
 
-YOUR TASK:
-1. Build `data/team_conference_map.csv` with columns: `team_name,conference`
-   - Must cover ALL D1 teams used in the system (~365 teams loaded in DB)
-   - Team names should match what BartTorvik uses (e.g., "Duke", "UNC", "Gonzaga", "St. Mary's")
-   - Conference names should match conference_hca.py keys (Big Ten, Big 12, SEC, ACC, Big East,
-     WCC, AAC, A-10, MAC, MWC, SBC, C-USA, CUSA, Summit, OVC, MAAC, Patriot, CAA,
-     ASUN, SoCon, MEAC, SWAC, Horizon, NEC, AE, MVFC, WAC, BWC)
-   - Include at minimum the 40+ major conference teams from odds API
+IMMEDIATE TASK — Draft Board (dashboard/pages/11_Fantasy_Baseball.py, tab_draft):
+1. Replace the "Draft Board" placeholder tab with a real draft assistant:
+   - Reads from projections_loader.load_full_board() for player rankings
+   - Shows: Player | Pos | ADP | z-score | Tier | Category contributions
+   - Input: "Pick number" — when user enters pick N, crosses off that player
+   - Track: Remaining roster slots by position (need: C×1, 1B×1, 2B×1, 3B×1, SS×1,
+     OF×3, Util×1, SP×5, RP×2, P×1, BN×5 = 23 total picks)
+   - Recommend: Top 3 picks at current pick number (by tier/need)
+   - Filter: Remove already-picked players
+   - Category summary: show current team's projected category totals as picks accumulate
 
-2. Build `backend/services/team_conference_lookup.py`:
-   ```python
-   # Simple CSV-backed lookup
-   def get_team_conference(team_name: str) -> Optional[str]:
-       """Return conference name for a team, or None if unknown."""
+2. Fix projections data: current CSVs have only 50-80 players. Need 200+ for a real draft.
+   - Check data/projections/ — use Gemini research (G-R1) when available
+   - If Gemini hasn't delivered yet: expand player_board.py hardcoded list to ~150 players
 
-   def get_conference_hca_for_team(team_name: str, is_neutral: bool = False) -> float:
-       """Return HCA points for a team's home conference, or DEFAULT_HCA=3.0 if unknown."""
-   ```
-
-3. Wire it into `backend/services/analysis.py` at the injection point:
-   - After the fatigue block (around line 1310 in current code)
-   - Before `analyze_game()` call
-   - Calls:
-     ```python
-     from backend.services.team_conference_lookup import get_conference_hca_for_team
-     # ...
-     conf_hca = get_conference_hca_for_team(home_team, is_neutral=game_data.get("is_neutral", False))
-     # Pass conf_hca to analyze_game() as matchup_margin_adj offset OR store in full_analysis
-     ```
-   - IMPORTANT: analyze_game() already receives `matchup_margin_adj`. Add conf HCA there IF
-     conference HCA differs from baseline 3.09 (i.e., delta = conf_hca - 3.09, not full conf_hca)
-
-4. Add 5 tests to `tests/test_conference_hca.py`:
-   - test_team_lookup_duke_acc
-   - test_team_lookup_gonzaga_wcc
-   - test_team_lookup_unknown_returns_default
-   - test_conference_hca_for_team_big_ten
-   - test_neutral_site_returns_zero
-
-FILES TO CREATE:
-- `data/team_conference_map.csv`
-- `backend/services/team_conference_lookup.py`
-
-FILES TO MODIFY:
-- `backend/services/analysis.py` (add import + 4-line block after fatigue section)
-- `tests/test_conference_hca.py` (add 5 tests)
-
-VERIFICATION:
-```bash
-python -m pytest tests/test_conference_hca.py -v
-python -m pytest tests/ -q  # Full suite must still show 595+ pass, 3 fail
+GUARDIAN NOTES:
+- Do NOT touch betting_model.py, analysis.py, or CBB services during tournament window
+- Fantasy code is isolated — safe to iterate without affecting CBB
+- Run `python -m pytest tests/ -q` before any commit
 ```
 
-REPORT TO: HANDOFF.md section 3 with "Mission K-10 Complete" + test results
+---
+
+### GEMINI CLI (Research Only) — New Role: Intelligence Gathering
+
+**IMPORTANT: Gemini is now RESEARCH ONLY. No production code. Deliver findings as markdown reports in docs/.**
+
+#### Mission G-R1: Steamer 2026 Projection Data
+```
+RESEARCH TASK G-R1: Find best method to download full 2026 Steamer projections
+
+CONTEXT:
+- We use Steamer projections for MLB fantasy baseball
+- Current data: hardcoded stubs (~80 players)
+- Need: Full 2026 Steamer (~750 batters, ~450 pitchers)
+- Existing format: data/projections/steamer_batting_2026.csv (columns: Name,Team,G,PA,AB,H,2B,3B,HR,R,RBI,BB,SO,HBP,SF,AVG,OBP,SLG,OPS,wOBA,wRC+,BsR,Off,Def,WAR)
+- Existing format: data/projections/steamer_pitching_2026.csv (columns: Name,Team,W,L,ERA,G,GS,IP,H,ER,HR,BB,SO,WHIP,K/9,BB/9,K/BB,H/9,HR/9,AVG,BABIP,LOB%,GB%,HR/FB,FIP,xFIP,WAR)
+
+RESEARCH QUESTIONS:
+1. What is the direct download URL for Steamer 2026 batting projections from FanGraphs?
+   (Look for CSV export buttons on fangraphs.com/projections.aspx)
+2. Is there a public API or bulk download that doesn't require FanGraphs account?
+3. What alternative projection systems are freely available (ZiPS, PECOTA, ATC)?
+4. Is FantasyPros projections API free? What's the endpoint?
+5. Can we scrape Baseball Reference's projections page?
+
+DELIVERABLE: docs/PROJECTION_DATA_SOURCES.md
+Format:
+- Source name
+- URL or API endpoint
+- Auth required? (Y/N)
+- Data fields available
+- Download method (curl command or Python snippet)
+- Recommended for our use case (Y/N + why)
+```
+
+#### Mission G-R2: MLB Starting Lineup Confirmations
+```
+RESEARCH TASK G-R2: Daily starting lineup confirmation sources for lineup optimizer
+
+CONTEXT:
+- We need to know each player's batting order position + if they're actually starting TODAY
+- Our daily_lineup_optimizer.py ranks players by implied runs, but needs confirmation
+  that a player is in the actual starting lineup (not resting or day-off)
+- We want this data by 7:00 AM ET daily (before setting lineups)
+
+RESEARCH QUESTIONS:
+1. Does MLB Stats API (statsapi.mlb.com) provide lineups before games?
+   - Check endpoint: https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=YYYY-MM-DD&hydrate=lineups
+2. Does ESPN provide lineup data via a public API?
+3. What time are lineups typically posted to these sources (1-2h before game? Morning?)
+4. Is there a free RotoWire or RotoBaller lineup API?
+5. Any baseball-reference.com endpoint for confirmed lineups?
+6. Check: https://www.mlb.com/starting-lineups (what format is this page?)
+
+DELIVERABLE: docs/LINEUP_CONFIRMATION_SOURCES.md
+Format:
+- Source
+- Endpoint/URL
+- Typical post time (ET)
+- Auth required?
+- Python snippet to fetch today's lineups
+- Fields returned (batter name, batting order, team, position)
+```
+
+#### Mission G-R3: Closer Situations Monitor
+```
+RESEARCH TASK G-R3: Best data sources for tracking MLB closer situations
+
+CONTEXT:
+- NSV (Net Saves = SV - BS) is a category in our league
+- We need to track: who is the primary closer for each team? Recent demotions?
+- This is critical for waiver wire decisions
+
+RESEARCH QUESTIONS:
+1. Is there a free Baseball Reference or FanGraphs API for saves/blown saves by team?
+2. CloserMonitor.com — is there a parseable format or API?
+3. Rotowire closer chart — is it scrapeable? URL?
+4. Does The Athletic or Baseball Prospectus have a free-tier API?
+5. Twitter/X — what are the best accounts to follow for real-time closer news?
+   (e.g., @RotoWire_MLB, @FantasyPros, beat reporters)
+6. Check MLB transaction log: https://www.mlb.com/transactions — can we scrape this?
+
+DELIVERABLE: docs/CLOSER_SITUATION_SOURCES.md
+Same format as G-R1.
+```
+
+#### Mission G-R4: Statcast Data Access
+```
+RESEARCH TASK G-R4: Statcast bulk data download for advanced metrics
+
+CONTEXT:
+- We want xBA, xwOBA, exit velocity, barrel%, sprint speed for player rankings
+- File: backend/fantasy_baseball/statcast_scraper.py already scaffolded
+- Need to populate with real API calls
+
+RESEARCH QUESTIONS:
+1. Baseball Savant CSV search URL — what query params produce full season player data?
+   (Check: https://baseballsavant.mlb.com/statcast_search/csv?...)
+2. pybaseball library — what functions give player-level statcast data?
+   (pip install pybaseball — check pybaseball.statcast_batter(start_dt, end_dt, player_id))
+3. What's the standard approach for bulk download (100+ players)?
+4. How to map player name to MLBAM ID (needed for most statcast APIs)?
+5. Is there a free endpoint for sprint speed leaderboard?
+
+DELIVERABLE: docs/STATCAST_API_GUIDE.md
+Include working Python snippet using pybaseball or direct CSV URL.
+```
+
+#### Mission G-R5: Yahoo Fantasy API — Lineup & Transaction Details
+```
+RESEARCH TASK G-R5: Yahoo Fantasy API technical details for lineup management
+
+CONTEXT:
+- We have a working Yahoo OAuth client (backend/fantasy_baseball/yahoo_client.py)
+- We added set_lineup() using PUT XML — need to verify the exact XML format
+- We added add_drop_player() using POST XML — need to verify format
+
+RESEARCH QUESTIONS:
+1. What is the exact XML format for Yahoo Fantasy PUT /team/{team_key}/roster?
+   - Does it need <coverage_type>date</coverage_type>?
+   - What are the valid position codes for MLB? (C, 1B, 2B, 3B, SS, OF, Util, SP, RP, P, BN, DL)
+2. What is the exact XML format for Yahoo Fantasy POST /league/{key}/transactions for add/drop?
+3. Is there official Yahoo Fantasy API documentation URL with examples?
+4. Any known limitations: rate limits, max roster changes per day?
+5. Does the Yahoo API support batch lineup changes (multiple players in one call)?
+
+DELIVERABLE: docs/YAHOO_API_REFERENCE.md
+Include verified XML examples and any gotchas/limitations.
 ```
 
 ---
@@ -620,60 +719,27 @@ CONTEXT:
 - March 18, 2026: NCAA First Four begins (4 play-in games)
 - March 20-21: Round of 64 begins (32 games per day)
 - OpenClaw Lite handles integrity checks (no Ollama needed — uses heuristics)
-- `backend/services/openclaw_lite.py` is active and wired into the analysis sweep
+- backend/services/openclaw_lite.py is active and wired into the analysis sweep
 - Discord alerts are operational (channel_id=1477436117426110615)
 
 YOUR TASKS (run on March 17, 2026 evening ~7 PM ET):
 
 1. Verify the pre-tournament baseline exists:
-   ```bash
    ls data/pre_tournament_baseline_2026.json
-   cat reports/o8_baseline_summary_2026.md | head -40
-   ```
-   If missing, run: `python scripts/openclaw_baseline.py --year 2026`
+   If missing, run: python scripts/openclaw_baseline.py --year 2026
 
 2. Run a manual integrity sweep on the First Four matchups:
    - Search for "NCAA First Four 2026 injury lineup" for each game
    - For each game: call check_integrity_heuristic() with the search text
-   - Expected: 4 results, each CONFIRMED or CAUTION
    - If any ABORT or VOLATILE: flag immediately in HANDOFF.md
 
-3. Verify the Discord bot can send alerts:
-   ```bash
-   python scripts/test_discord.py
-   ```
+3. Verify the Discord bot: python scripts/test_discord.py
    Expected: "Discord bot healthy" message
 
-4. Check the odds monitor is tracking First Four games:
-   ```bash
-   curl -H "X-API-Key: $API_KEY_USER1" https://<railway-url>/admin/odds-monitor/status
-   ```
-   Expected: `games_tracked > 0`, `last_poll` within last 10 minutes
+4. Check odds monitor: GET /admin/odds-monitor/status
+   Expected: games_tracked > 0, last_poll within 10 minutes
 
-5. Report back to HANDOFF.md:
-   - Section heading: "### OpenClaw O-9 Tournament Readiness Check"
-   - Include: baseline status, integrity sweep results, Discord status, odds monitor status
-   - Flag any ABORT verdicts with the game name and reason
-
-COMMAND TO START:
-```bash
-cd /path/to/cbb-edge
-python -c "
-from backend.services.openclaw_lite import OpenClawLite
-checker = OpenClawLite()
-# Test with First Four game: Texas Southern vs Alabama State (example)
-result = checker.check_integrity_heuristic(
-    search_text='No injury news. Teams healthy and ready.',
-    home_team='Texas Southern',
-    away_team='Alabama State',
-    recommended_units=1.0
-)
-print(f'Verdict: {result.verdict}, Confidence: {result.confidence:.2f}')
-print(f'Reasoning: {result.reasoning}')
-"
-```
-
-REPORT TO: HANDOFF.md section 3
+REPORT TO: HANDOFF.md section 3 with "### O-9 Tournament Readiness"
 ```
 
 ---
@@ -716,6 +782,6 @@ railway logs --follow
 
 ---
 
-**Document Version:** EMAC-061
+**Document Version:** EMAC-062
 **Last Updated:** March 10, 2026
-**Status:** Production Ready — Services Wired — Conference HCA Delegated to Kimi (K-10)
+**Status:** ALL COMPLETE — P0-P4 + K-8/K-9/K-10. 606/609 pass. Tournament-ready. Awaiting user direction.

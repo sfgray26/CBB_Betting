@@ -78,6 +78,8 @@ def send_line_movement_alert(
     delta: float,
     new_edge: float,
     abandoned: bool = False,
+    game_time: str = None,
+    min_bet_edge: float = 0.025,
 ) -> bool:
     """
     Send a Discord alert for significant line movement.
@@ -91,31 +93,64 @@ def send_line_movement_alert(
         delta: Movement in points.
         new_edge: Fresh model edge at the new line.
         abandoned: True if edge dropped below MIN_BET_EDGE.
+        game_time: Optional game start time string.
+        min_bet_edge: Minimum edge threshold (default 2.5%).
         
     Returns:
         True if sent successfully.
     """
-    from backend.services.discord_notifier import _post, _COLOR_YELLOW, _COLOR_GREY
+    from backend.services.discord_notifier import _post, _COLOR_YELLOW, _COLOR_GREY, _COLOR_RED
     
-    status = "🚨 **LINE_MOVEMENT_ABANDON**" if abandoned else "⚠️ **SIGNIFICANT_LINE_MOVE**"
-    color = _COLOR_GREY if abandoned else _COLOR_YELLOW
+    # Determine action and styling based on situation
+    if abandoned:
+        status = "🚨 **ABANDON** — Edge Collapsed"
+        color = _COLOR_RED
+        action = "❌ DO NOT ADD"
+        recommendation = f"Edge fell to {new_edge:.1%} (below {min_bet_edge:.1%} threshold). If you already bet, monitor for live exit. Do not add new exposure."
+    elif delta >= 1.5:  # Line moved in our favor (better price)
+        status = "✅ **LINE_MOVED_FAVORABLE** — Better Price"
+        color = _COLOR_YELLOW
+        action = "🎯 BET NOW (if no position)"
+        recommendation = f"Line moved {delta:+.1f}pts toward us — you can get a better price than our entry. Edge: {new_edge:.1%}. If you haven't bet yet, ADD NOW. If you already bet, you got worse line but hold."
+    elif delta <= -1.5:  # Line moved against us (worse price)
+        if new_edge >= 0.04:  # Still strong edge
+            status = "⚠️ **LINE_MOVED_AGAINST** — Still Playable"
+            color = _COLOR_YELLOW
+            action = "📊 HOLD EXISTING ONLY"
+            recommendation = f"Line moved {delta:+.1f}pts against us, but edge remains {new_edge:.1%}. If you already bet: HOLD. If you haven't bet: AVOID — better prices are gone."
+        elif new_edge >= min_bet_edge:  # Edge thinning but playable
+            status = "⚠️ **LINE_MOVED_AGAINST** — Edge Thinning"
+            color = _COLOR_GREY
+            action = "🛑 NO NEW ADDS"
+            recommendation = f"Line moved {delta:+.1f}pts against us. Edge down to {new_edge:.1%}. If you already bet: HOLD. If you haven't bet: PASS — margin too thin."
+        else:
+            status = "🚨 **LINE_MOVED_AGAINST** — Edge Gone"
+            color = _COLOR_RED
+            action = "❌ ABANDON"
+            recommendation = f"Line moved {delta:+.1f}pts against us and edge collapsed to {new_edge:.1%}. Do not add. If you already bet, consider hedging."
+    else:
+        return False  # Shouldn't happen given threshold check
     
     # Format spread with + for positive values
     def fmt_spread(val: float) -> str:
         return f"{val:+.1f}" if val != 0 else "0.0"
 
+    # Build time info
+    time_field = ""
+    if game_time:
+        time_field = f"\n🕐 **Tip-off:** {game_time}"
+
     embed = {
         "title": f"Line Monitor: {away_team} @ {home_team}",
-        "description": f"{status}\nDetected significant movement vs. original bet.",
+        "description": f"{status}{time_field}\n\n📊 **Model re-analyzed with new line** — Edge below is fresh calculation.",
         "color": color,
         "fields": [
-            {"name": "Original Spread", "value": fmt_spread(old_spread), "inline": True},
-            {"name": "New Spread",      "value": fmt_spread(new_spread), "inline": True},
-            {"name": "Delta",           "value": f"{delta:+.1f} pts",    "inline": True},
-            {"name": "New model Edge",  "value": f"{new_edge:.1%}",      "inline": True},
-            {"name": "Action",          "value": "ABANDON (Below Edge)" if abandoned else "RE-EVALUATE", "inline": True},
+            {"name": "📈 Line Movement", "value": f"{fmt_spread(old_spread)} → {fmt_spread(new_spread)} ({delta:+.1f} pts)", "inline": False},
+            {"name": "🎯 FRESH Model Edge", "value": f"{new_edge:.2%} (min: {min_bet_edge:.1%})", "inline": True},
+            {"name": "✅ Action", "value": action, "inline": False},
+            {"name": "📝 Guidance", "value": recommendation, "inline": False},
         ],
-        "footer": {"text": f"Game Key: {game_key}"},
+        "footer": {"text": f"Game: {game_key} • Alert time: {datetime.utcnow().strftime('%H:%M UTC')}"},
         "timestamp": datetime.utcnow().isoformat()
     }
     

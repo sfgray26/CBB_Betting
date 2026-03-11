@@ -75,6 +75,11 @@ def check_line_movements() -> Dict:
                 if not game or not game.external_id:
                     continue
                     
+                # NEW: Skip games that have already started
+                if game.game_date and game.game_date < datetime.utcnow():
+                    logger.debug(f"Skipping started game: {game.away_team} @ {game.home_team}")
+                    continue
+                    
                 curr_odds = current_odds_map.get(game.external_id)
                 if not curr_odds:
                     continue
@@ -150,6 +155,7 @@ def check_line_movements() -> Dict:
                         )
                         
                     # 7. Notify Discord
+                    game_time_str = game.game_date.strftime("%b %d, %I:%M %p UTC") if game.game_date else None
                     send_line_movement_alert(
                         game_key=game_key,
                         away_team=game.away_team,
@@ -158,7 +164,9 @@ def check_line_movements() -> Dict:
                         new_spread=curr_spread_team,
                         delta=delta,
                         new_edge=updated.edge_conservative,
-                        abandoned=abandoned
+                        abandoned=abandoned,
+                        game_time=game_time_str,
+                        min_bet_edge=min_bet_edge
                     )
                     
             except Exception as e:
