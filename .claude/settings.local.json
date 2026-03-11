@@ -17,7 +17,10 @@
       "Bash(python:*)",
       "Bash(source:*)",
       "Bash(find:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Read(//c/Users/sfgra/**)",
+      "Bash(sed -n '730,745p' backend/services/performance.py)"
     ]
   }
 }

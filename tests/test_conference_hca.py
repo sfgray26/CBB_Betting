@@ -12,6 +12,11 @@ from backend.services.conference_hca import (
     CONFERENCE_HCA,
     DEFAULT_HCA,
 )
+from backend.services.team_conference_lookup import (
+    get_team_conference,
+    get_conference_hca_for_team,
+    get_conference_hca_delta,
+)
 
 
 class TestConferenceNormalization:
@@ -170,3 +175,88 @@ class TestConferenceHCAIntegration:
         results = [get_conference_hca(v) for v in variations]
         
         assert all(r == 3.6 for r in results)
+
+
+# =============================================================================
+# Mission K-10: Team-to-Conference Lookup Tests
+# =============================================================================
+
+
+class TestTeamConferenceLookup:
+    """Test team-to-conference lookup service."""
+    
+    def test_team_lookup_duke_acc(self):
+        """Duke should map to ACC."""
+        conf = get_team_conference("Duke")
+        assert conf == "ACC"
+    
+    def test_team_lookup_gonzaga_wcc(self):
+        """Gonzaga should map to WCC."""
+        conf = get_team_conference("Gonzaga")
+        assert conf == "WCC"
+    
+    def test_team_lookup_unknown_returns_none(self):
+        """Unknown team should return None."""
+        conf = get_team_conference("Fake University")
+        assert conf is None
+    
+    def test_conference_hca_for_team_big_ten(self):
+        """Big Ten team should get correct HCA."""
+        hca = get_conference_hca_for_team("Michigan State", is_neutral=False)
+        assert hca == 3.6  # Big Ten HCA
+    
+    def test_conference_hca_for_team_default_on_unknown(self):
+        """Unknown team should get DEFAULT_HCA."""
+        hca = get_conference_hca_for_team("Unknown Team", is_neutral=False)
+        assert hca == DEFAULT_HCA
+    
+    def test_neutral_site_returns_zero(self):
+        """Neutral site should return 0 HCA regardless of conference."""
+        # Big Ten team at neutral site
+        hca = get_conference_hca_for_team("Michigan State", is_neutral=True)
+        assert hca == 0.0
+        
+        # ACC team at neutral site
+        hca = get_conference_hca_for_team("Duke", is_neutral=True)
+        assert hca == 0.0
+        
+        # Unknown team at neutral site
+        hca = get_conference_hca_for_team("Unknown", is_neutral=True)
+        assert hca == 0.0
+    
+    def test_hca_delta_calculation(self):
+        """HCA delta should be conference HCA minus baseline 3.09."""
+        # Big Ten: 3.6 - 3.09 = +0.51
+        delta = get_conference_hca_delta("Michigan State", is_neutral=False)
+        assert delta == pytest.approx(0.51, 0.01)
+        
+        # ACC: 3.0 - 3.09 = -0.09
+        delta = get_conference_hca_delta("Duke", is_neutral=False)
+        assert delta == pytest.approx(-0.09, 0.01)
+        
+        # SWAC: 1.5 - 3.09 = -1.59
+        delta = get_conference_hca_delta("Alabama State", is_neutral=False)
+        assert delta == pytest.approx(-1.59, 0.01)
+    
+    def test_hca_delta_neutral_returns_zero(self):
+        """HCA delta should be 0 for neutral sites."""
+        delta = get_conference_hca_delta("Michigan State", is_neutral=True)
+        assert delta == 0.0
+    
+    def test_hca_delta_unknown_returns_default_delta(self):
+        """HCA delta for unknown teams should be DEFAULT - baseline (2.5 - 3.09 = -0.59)."""
+        delta = get_conference_hca_delta("Unknown Team", is_neutral=False)
+        expected_delta = DEFAULT_HCA - 3.09  # 2.5 - 3.09 = -0.59
+        assert delta == pytest.approx(expected_delta, 0.01)
+    
+    def test_case_insensitive_team_lookup(self):
+        """Team lookup should be case insensitive."""
+        variations = ["DUKE", "duke", "Duke", "dUKe"]
+        for v in variations:
+            assert get_team_conference(v) == "ACC"
+    
+    def test_multiple_teams_per_conference(self):
+        """Should correctly map multiple teams to same conference."""
+        acc_teams = ["Duke", "North Carolina", "Virginia", "Louisville"]
+        for team in acc_teams:
+            assert get_team_conference(team) == "ACC"

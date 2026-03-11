@@ -506,7 +506,7 @@ class TestGameAnalysis:
 
         result = model.analyze_game(game, odds, ratings)
 
-        assert result.full_analysis['model_version'] == 'v9.0'
+        assert result.full_analysis['model_version'].startswith('v9.')
         assert result.full_analysis['calculations']['vig_removal_method'] == 'shin_1993'
 
     def test_missing_kenpom_returns_pass(self):

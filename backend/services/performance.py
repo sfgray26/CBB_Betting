@@ -734,7 +734,7 @@ def calculate_financial_metrics(
     for b in bets:
         p = b.model_prob
         odds = b.odds_taken
-        f = b.kelly_fraction
+        f = b.kelly_fractional
         if p is None or odds is None or f is None or f <= 0:
             continue
         try:

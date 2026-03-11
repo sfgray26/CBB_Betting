@@ -1,0 +1,360 @@
+team_name,conference
+Auburn,SEC
+Florida,SEC
+Alabama,SEC
+Tennessee,SEC
+Kentucky,SEC
+Arkansas,SEC
+Mississippi State,SEC
+Missouri,SEC
+Texas A&M,SEC
+Georgia,SEC
+South Carolina,SEC
+Ole Miss,SEC
+Vanderbilt,SEC
+LSU,SEC
+Oklahoma,SEC
+Texas,SEC
+Duke,ACC
+Louisville,ACC
+Clemson,ACC
+North Carolina,ACC
+Wake Forest,ACC
+Virginia,ACC
+NC State,ACC
+Stanford,ACC
+SMU,ACC
+Pittsburgh,ACC
+Syracuse,ACC
+Virginia Tech,ACC
+Boston College,ACC
+Georgia Tech,ACC
+Florida State,ACC
+Notre Dame,ACC
+California,ACC
+Miami,ACC
+Michigan State,Big Ten
+Purdue,Big Ten
+Illinois,Big Ten
+UCLA,Big Ten
+Maryland,Big Ten
+Michigan,Big Ten
+Wisconsin,Big Ten
+Northwestern,Big Ten
+Ohio State,Big Ten
+USC,Big Ten
+Iowa,Big Ten
+Oregon,Big Ten
+Washington,Big Ten
+Indiana,Big Ten
+Minnesota,Big Ten
+Nebraska,Big Ten
+Penn State,Big Ten
+Rutgers,Big Ten
+Iowa State,Big 12
+Houston,Big 12
+Kansas,Big 12
+Texas Tech,Big 12
+BYU,Big 12
+Arizona,Big 12
+Cincinnati,Big 12
+Baylor,Big 12
+Kansas State,Big 12
+TCU,Big 12
+West Virginia,Big 12
+UCF,Big 12
+Colorado,Big 12
+Arizona State,Big 12
+Utah,Big 12
+Oklahoma State,Big 12
+St. John's,Big East
+UConn,Big East
+Creighton,Big East
+Marquette,Big East
+Villanova,Big East
+Xavier,Big East
+Georgetown,Big East
+Providence,Big East
+Seton Hall,Big East
+Butler,Big East
+DePaul,Big East
+Gonzaga,WCC
+Saint Mary's,WCC
+San Francisco,WCC
+Santa Clara,WCC
+Oregon State,WCC
+Washington State,WCC
+San Diego,WCC
+Loyola Marymount,WCC
+Pacific,WCC
+Portland,WCC
+Pepperdine,WCC
+Memphis,AAC
+North Texas,AAC
+UAB,AAC
+Tulane,AAC
+Charlotte,AAC
+Florida Atlantic,AAC
+East Carolina,AAC
+South Florida,AAC
+Temple,AAC
+Wichita State,AAC
+Tulsa,AAC
+Rice,AAC
+UTSA,AAC
+Dayton,A-10
+VCU,A-10
+George Mason,A-10
+Saint Joseph's,A-10
+Duquesne,A-10
+Saint Bonaventure,A-10
+Davidson,A-10
+Richmond,A-10
+Loyola Chicago,A-10
+Rhode Island,A-10
+Massachusetts,A-10
+George Washington,A-10
+Fordham,A-10
+La Salle,A-10
+New Mexico,MWC
+San Diego State,MWC
+Utah State,MWC
+Nevada,MWC
+Colorado State,MWC
+Boise State,MWC
+UNLV,MWC
+Fresno State,MWC
+San Jose State,MWC
+Wyoming,MWC
+Air Force,MWC
+Drake,MVC
+Bradley,MVC
+Northern Iowa,MVC
+Belmont,MVC
+Indiana State,MVC
+Missouri State,MVC
+Valparaiso,MVC
+Southern Illinois,MVC
+Illinois State,MVC
+Evansville,MVC
+UIC,MVC
+Murray State,MVC
+Grand Canyon,WAC
+UT Arlington,WAC
+Seattle,WAC
+California Baptist,WAC
+Tarleton State,WAC
+Abilene Christian,WAC
+Utah Valley,WAC
+Southern Utah,WAC
+Utah Tech,WAC
+New Mexico State,WAC
+Liberty,C-USA
+Jacksonville State,C-USA
+Middle Tennessee,C-USA
+Western Kentucky,C-USA
+Louisiana Tech,C-USA
+FIU,C-USA
+Sam Houston,C-USA
+UTEP,C-USA
+New Mexico State,C-USA
+Toledo,MAC
+Akron,MAC
+Kent State,MAC
+Ohio,MAC
+Buffalo,MAC
+Miami (OH),MAC
+Bowling Green,MAC
+Ball State,MAC
+Northern Illinois,MAC
+Western Michigan,MAC
+Eastern Michigan,MAC
+Central Michigan,MAC
+Arkansas State,Sun Belt
+James Madison,Sun Belt
+Troy,Sun Belt
+Appalachian State,Sun Belt
+Texas State,Sun Belt
+Louisiana,Sun Belt
+Georgia State,Sun Belt
+Georgia Southern,Sun Belt
+Marshall,Sun Belt
+Southern Miss,Sun Belt
+Old Dominion,Sun Belt
+Coastal Carolina,Sun Belt
+Louisiana-Monroe,Sun Belt
+South Alabama,Sun Belt
+North Charleston,CAA
+Towson,CAA
+UNC Wilmington,CAA
+William & Mary,CAA
+Drexel,CAA
+Delaware,CAA
+Hofstra,CAA
+Northeastern,CAA
+Elon,CAA
+Campbell,CAA
+Stony Brook,CAA
+Hampton,CAA
+North Carolina A&T,SWAC
+Alabama State,SWAC
+Alabama A&M,SWAC
+Alcorn State,SWAC
+Arkansas-Pine Bluff,SWAC
+Bethune-Cookman,SWAC
+Florida A&M,SWAC
+Grambling,SWAC
+Jackson State,SWAC
+Mississippi Valley State,SWAC
+Prairie View A&M,SWAC
+Southern,SWAC
+Texas Southern,SWAC
+Norfolk State,MEAC
+Howard,MEAC
+North Carolina Central,MEAC
+South Carolina State,MEAC
+Morgan State,MEAC
+Coppin State,MEAC
+Maryland-Eastern Shore,MEAC
+Delaware State,MEAC
+Lamar,Southland
+SE Louisiana,Southland
+Nicholls,Southland
+McNeese,Southland
+Texas A&M-CC,Southland
+Northwestern State,Southland
+New Orleans,Southland
+Incarnate Word,Southland
+Houston Christian,Southland
+Southeastern Louisiana,Southland
+Montana State,Big Sky
+Weber State,Big Sky
+Idaho State,Big Sky
+Northern Colorado,Big Sky
+Montana,Big Sky
+Idaho,Big Sky
+Eastern Washington,Big Sky
+Portland State,Big Sky
+Sacramento State,Big Sky
+Northern Arizona,Big Sky
+Hawaii,Big West
+UC Irvine,Big West
+UC Santa Barbara,Big West
+Long Beach State,Big West
+UC Riverside,Big West
+UC Davis,Big West
+Cal State Fullerton,Big West
+Cal State Northridge,Big West
+Cal Poly,Big West
+UC San Diego,Big West
+Princeton,Ivy
+Yale,Ivy
+Cornell,Ivy
+Brown,Ivy
+Harvard,Ivy
+Columbia,Ivy
+Dartmouth,Ivy
+Penn,Ivy
+Colgate,Patriot
+Navy,Patriot
+American,Patriot
+Boston University,Patriot
+Army,Patriot
+Lehigh,Patriot
+Bucknell,Patriot
+Lafayette,Patriot
+Holy Cross,Patriot
+Loyola Maryland,Patriot
+Samford,Southern
+Chattanooga,Southern
+East Tennessee State,Southern
+Wofford,Southern
+UNC Greensboro,Southern
+Western Carolina,Southern
+Mercer,Southern
+VMI,Southern
+Citadel,Southern
+Furman,Southern
+The Citadel,Southern
+Oral Roberts,Summit
+South Dakota State,Summit
+North Dakota State,Summit
+St. Thomas,Summit
+South Dakota,Summit
+North Dakota,Summit
+Omaha,Summit
+Denver,Summit
+Kansas City,Summit
+Youngstown State,Horizon
+Milwaukee,Horizon
+Cleveland State,Horizon
+Oakland,Horizon
+Northern Kentucky,Horizon
+Wright State,Horizon
+Green Bay,Horizon
+Detroit Mercy,Horizon
+Robert Morris,Horizon
+Purdue Fort Wayne,Horizon
+IU Indy,Horizon
+Merrimack,NEC
+Sacred Heart,NEC
+Fairleigh Dickinson,NEC
+Saint Francis,NEC
+Central Connecticut,NEC
+Wagner,NEC
+Le Moyne,NEC
+Chicago State,NEC
+LIU,NEC
+Stonehill,NEC
+Vermont,America East
+Bryant,America East
+UAlbany,America East
+Maine,America East
+New Hampshire,America East
+UMBC,America East
+NJIT,America East
+Binghamton,America East
+UMass Lowell,America East
+High Point,Big South
+Radford,Big South
+UNC Asheville,Big South
+Winthrop,Big South
+Longwood,Big South
+Presbyterian,Big South
+Gardner-Webb,Big South
+Charleston Southern,Big South
+USC Upstate,Big South
+Florida Gulf Coast,ASUN
+Lipscomb,ASUN
+North Florida,ASUN
+Jacksonville,ASUN
+Bellarmine,ASUN
+Austin Peay,ASUN
+Eastern Kentucky,ASUN
+Central Arkansas,ASUN
+Queens,ASUN
+North Alabama,ASUN
+Stetson,ASUN
+Kennesaw State,ASUN
+Morehead State,OVC
+SIU-Edwardsville,OVC
+Little Rock,OVC
+Tennessee Tech,OVC
+UT Martin,OVC
+Tennessee State,OVC
+Southeast Missouri,OVC
+Lindenwood,OVC
+Western Illinois,OVC
+Southern Indiana,OVC
+Eastern Illinois,OVC
+Quinnipiac,Metro Atlantic
+Iona,Metro Atlantic
+Rider,Metro Atlantic
+Siena,Metro Atlantic
+Niagara,Metro Atlantic
+Canisius,Metro Atlantic
+Manhattan,Metro Atlantic
+Fairfield,Metro Atlantic
+St. Peter's,Metro Atlantic
+Mount St. Mary's,Metro Atlantic
+Marist,Metro Atlantic

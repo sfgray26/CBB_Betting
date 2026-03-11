@@ -131,14 +131,23 @@ class YahooFantasyClient:
         self._store_tokens(tokens)
 
     def _store_tokens(self, tokens: dict) -> None:
-        """Persist tokens to .env and update in-memory state."""
+        """Persist tokens to .env and update in-memory state.
+
+        On Railway (no writable .env), the write fails silently —
+        tokens are still live in-memory for the process lifetime.
+        Set YAHOO_REFRESH_TOKEN in Railway env vars directly after
+        completing the one-time auth flow locally.
+        """
         self._access_token = tokens["access_token"]
         self._refresh_token = tokens.get("refresh_token", self._refresh_token)
         self._token_expiry = time.time() + tokens.get("expires_in", 3600) - 60
-        # Write back to .env
-        set_key(str(ENV_PATH), "YAHOO_ACCESS_TOKEN", self._access_token)
-        set_key(str(ENV_PATH), "YAHOO_REFRESH_TOKEN", self._refresh_token)
-        logger.info("Yahoo tokens refreshed and persisted to .env")
+        # Write back to .env — best-effort; fails silently on Railway
+        try:
+            set_key(str(ENV_PATH), "YAHOO_ACCESS_TOKEN", self._access_token)
+            set_key(str(ENV_PATH), "YAHOO_REFRESH_TOKEN", self._refresh_token)
+            logger.info("Yahoo tokens refreshed and persisted to .env")
+        except Exception as exc:
+            logger.info("Yahoo tokens refreshed (in-memory only — .env not writable: %s)", exc)
 
     def _ensure_token(self) -> None:
         if time.time() >= self._token_expiry or not self._access_token:
@@ -181,25 +190,71 @@ class YahooFantasyClient:
         raise YahooAPIError("Yahoo API failed after 3 attempts")
 
     # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _flatten_league_section(raw) -> dict:
+        """
+        Yahoo returns league[N] as either:
+          (a) a merged dict  {"name": "...", "teams": {...}, ...}
+          (b) a list of single-key dicts  [{"name": "..."}, {"teams": {...}}, ...]
+
+        This helper normalises both shapes to a plain dict.
+        """
+        if isinstance(raw, list):
+            out = {}
+            for item in raw:
+                if isinstance(item, dict):
+                    out.update(item)
+            return out
+        return raw if isinstance(raw, dict) else {}
+
+    def _league_section(self, data: dict, index: int) -> dict:
+        """Extract and flatten league[index] from a fantasy_content response."""
+        return self._flatten_league_section(
+            data["fantasy_content"]["league"][index]
+        )
+
+    def _safe_get(self, obj: dict, key: str) -> dict:
+        """Get key from a dict, auto-flattening the value if Yahoo returned it as a list."""
+        val = obj.get(key, {}) if isinstance(obj, dict) else {}
+        if isinstance(val, list):
+            return self._flatten_league_section(val)
+        return val if isinstance(val, dict) else {}
+
+    def _team_section(self, data: dict) -> dict:
+        """
+        Flatten the entire team array from a fantasy_content response.
+
+        Yahoo returns team as either:
+          (a) [[meta_dict, ...], {"roster": {...}}]   — 2-element list
+          (b) [{"team_key": ...}, {"name": ...}, ..., {"roster": {...}}]  — flat list
+
+        We flatten ALL dict items across the outer list, skipping nested lists,
+        so the result always contains keys like "roster", "name", etc.
+        """
+        return self._flatten_league_section(
+            data["fantasy_content"]["team"]
+        )
+
+    # ------------------------------------------------------------------
     # League endpoints
     # ------------------------------------------------------------------
 
     def get_league(self) -> dict:
         """League metadata: name, scoring type, settings."""
         data = self._get(f"league/{self.league_key}")
-        return data["fantasy_content"]["league"][0]
+        return self._league_section(data, 0)
 
     def get_league_settings(self) -> dict:
         data = self._get(f"league/{self.league_key}/settings")
-        return data["fantasy_content"]["league"]
+        return self._league_section(data, 0)
 
     def get_standings(self) -> list[dict]:
         data = self._get(f"league/{self.league_key}/standings")
-        teams_raw = (
-            data["fantasy_content"]["league"][1]
-            .get("standings", [{}])[0]
-            .get("teams", {})
-        )
+        sec = self._league_section(data, 1)
+        teams_raw = sec.get("standings", [{}])[0].get("teams", {})
         teams = []
         count = int(teams_raw.get("count", 0))
         for i in range(count):
@@ -209,7 +264,7 @@ class YahooFantasyClient:
 
     def get_all_teams(self) -> list[dict]:
         data = self._get(f"league/{self.league_key}/teams")
-        teams_raw = data["fantasy_content"]["league"][1].get("teams", {})
+        teams_raw = self._league_section(data, 1).get("teams", {})
         teams = []
         count = int(teams_raw.get("count", 0))
         for i in range(count):
@@ -220,12 +275,16 @@ class YahooFantasyClient:
     def get_my_team_key(self) -> str:
         """Return the team key for the authenticated user's team."""
         data = self._get(f"league/{self.league_key}/teams")
-        teams_raw = data["fantasy_content"]["league"][1].get("teams", {})
+        teams_raw = self._league_section(data, 1).get("teams", {})
         count = int(teams_raw.get("count", 0))
         for i in range(count):
             team_list = teams_raw[str(i)]["team"]
-            # team_list[0] is the list of metadata dicts
-            meta = {k: v for d in team_list[0] for k, v in d.items()}
+            # team_list[0] is a mixed list of dicts and strings — guard with isinstance
+            meta = {}
+            if isinstance(team_list[0], list):
+                for d in team_list[0]:
+                    if isinstance(d, dict):
+                        meta.update(d)
             if meta.get("is_owned_by_current_login"):
                 return meta["team_key"]
         raise YahooAPIError("Could not find your team — are you authenticated?")
@@ -234,21 +293,28 @@ class YahooFantasyClient:
     # Roster endpoints
     # ------------------------------------------------------------------
 
+    def get_roster_raw(self, team_key: Optional[str] = None) -> dict:
+        """Return the raw fantasy_content payload for debugging Yahoo response shapes."""
+        if team_key is None:
+            team_key = self.get_my_team_key()
+        data = self._get(f"team/{team_key}/roster/players")
+        return data.get("fantasy_content", {})
+
     def get_roster(self, team_key: Optional[str] = None) -> list[dict]:
         """Return full roster for team_key (defaults to authenticated user's team)."""
         if team_key is None:
             team_key = self.get_my_team_key()
         data = self._get(f"team/{team_key}/roster/players")
-        players_raw = (
-            data["fantasy_content"]["team"][1]
-            .get("roster", {})
-            .get("0", {})
-            .get("players", {})
-        )
+        team_data = self._team_section(data)
+        roster = self._safe_get(team_data, "roster")
+        slot_0 = self._safe_get(roster, "0")
+        players_raw = self._safe_get(slot_0, "players")
         players = []
         count = int(players_raw.get("count", 0))
         for i in range(count):
-            player_data = players_raw[str(i)]["player"]
+            entry = players_raw.get(str(i), {})
+            entry = self._flatten_league_section(entry) if isinstance(entry, list) else entry
+            player_data = entry.get("player", entry) if isinstance(entry, dict) else entry
             players.append(self._parse_player(player_data))
         return players
 
@@ -280,7 +346,7 @@ class YahooFantasyClient:
             f"league/{self.league_key}/players",
             params={"search": name, "status": status},
         )
-        players_raw = data["fantasy_content"]["league"][1].get("players", {})
+        players_raw = self._league_section(data, 1).get("players", {})
         return self._parse_players_block(players_raw)
 
     def get_free_agents(self, position: str = "", start: int = 0, count: int = 25) -> list[dict]:
@@ -289,7 +355,7 @@ class YahooFantasyClient:
         if position:
             params["position"] = position
         data = self._get(f"league/{self.league_key}/players", params=params)
-        players_raw = data["fantasy_content"]["league"][1].get("players", {})
+        players_raw = self._league_section(data, 1).get("players", {})
         return self._parse_players_block(players_raw)
 
     def get_player_stats(self, player_key: str, stat_type: str = "season") -> dict:
@@ -303,7 +369,7 @@ class YahooFantasyClient:
     def get_waiver_players(self, start: int = 0, count: int = 25) -> list[dict]:
         params = {"status": "W", "start": start, "count": count}
         data = self._get(f"league/{self.league_key}/players", params=params)
-        players_raw = data["fantasy_content"]["league"][1].get("players", {})
+        players_raw = self._league_section(data, 1).get("players", {})
         return self._parse_players_block(players_raw)
 
     # ------------------------------------------------------------------
@@ -314,7 +380,7 @@ class YahooFantasyClient:
         """Return completed draft picks (empty until draft runs)."""
         data = self._get(f"league/{self.league_key}/draftresults")
         picks_raw = (
-            data["fantasy_content"]["league"][1]
+            self._league_section(data, 1)
             .get("draft_results", {})
             .get("0", {})
             .get("draft_results", {})
@@ -335,13 +401,146 @@ class YahooFantasyClient:
     # Transactions
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Lineup management
+    # ------------------------------------------------------------------
+
+    def get_lineup(self, team_key: Optional[str] = None, date: Optional[str] = None) -> list[dict]:
+        """Fetch current lineup for a date (YYYY-MM-DD). Defaults to today."""
+        if team_key is None:
+            team_key = self.get_my_team_key()
+        if date is None:
+            from datetime import datetime
+            date = datetime.utcnow().strftime("%Y-%m-%d")
+        data = self._get(f"team/{team_key}/roster/players", params={"date": date})
+        players_raw = (
+            self._team_section(data)
+            .get("roster", {})
+            .get("0", {})
+            .get("players", {})
+        )
+        players = []
+        count = int(players_raw.get("count", 0))
+        for i in range(count):
+            player_data = players_raw[str(i)]["player"]
+            p = self._parse_player(player_data)
+            # selected_position may be in the player data
+            if isinstance(player_data, list):
+                for item in player_data:
+                    if isinstance(item, list):
+                        for sub in item:
+                            if isinstance(sub, dict) and "selected_position" in sub:
+                                sp = sub["selected_position"]
+                                if isinstance(sp, list):
+                                    for spd in sp:
+                                        if isinstance(spd, dict) and "position" in spd:
+                                            p["selected_position"] = spd["position"]
+            players.append(p)
+        return players
+
+    def set_lineup(self, team_key: Optional[str] = None, date: Optional[str] = None,
+                   lineup: Optional[list[dict]] = None) -> bool:
+        """
+        Set lineup for a given date.
+
+        lineup: list of {player_key: str, position: str}
+            position: 'C','1B','2B','3B','SS','OF','Util','SP','RP','P','BN','DL'
+
+        Returns True on success.
+        """
+        if team_key is None:
+            team_key = self.get_my_team_key()
+        if date is None:
+            from datetime import datetime
+            date = datetime.utcnow().strftime("%Y-%m-%d")
+        if not lineup:
+            return False
+
+        self._ensure_token()
+        # Build XML payload (Yahoo lineup PUT requires XML)
+        player_xml = "\n".join(
+            f'<player><player_key>{p["player_key"]}</player_key>'
+            f'<position>{p["position"]}</position></player>'
+            for p in lineup
+        )
+        xml_body = (
+            f'<?xml version="1.0"?>'
+            f'<fantasy_content><roster><coverage_type>date</coverage_type>'
+            f'<date>{date}</date><players>{player_xml}</players></roster></fantasy_content>'
+        )
+        url = f"{YAHOO_API_BASE}/team/{team_key}/roster"
+        resp = self._session.put(
+            url,
+            data=xml_body.encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._access_token}",
+                "Content-Type": "application/xml",
+            },
+        )
+        if resp.status_code not in (200, 204):
+            raise YahooAPIError(f"set_lineup failed: {resp.status_code} — {resp.text[:300]}", resp.status_code)
+        return True
+
+    def get_scoreboard(self, week: Optional[int] = None) -> list[dict]:
+        """Fetch matchup scoreboard for a week (defaults to current)."""
+        path = f"league/{self.league_key}/scoreboard"
+        params = {}
+        if week:
+            params["week"] = week
+        data = self._get(path, params=params if params else None)
+        matchups_raw = (
+            self._league_section(data, 1)
+            .get("scoreboard", {})
+            .get("0", {})
+            .get("matchups", {})
+        )
+        matchups = []
+        count = int(matchups_raw.get("count", 0))
+        for i in range(count):
+            matchups.append(matchups_raw.get(str(i), {}).get("matchup", {}))
+        return matchups
+
+    def add_drop_player(self, add_player_key: str, drop_player_key: Optional[str] = None,
+                        team_key: Optional[str] = None) -> bool:
+        """Add a free agent (and optionally drop a player)."""
+        if team_key is None:
+            team_key = self.get_my_team_key()
+        self._ensure_token()
+        drop_xml = (
+            f'<player><player_key>{drop_player_key}</player_key>'
+            f'<transaction_data><type>drop</type>'
+            f'<destination_team_key>LW</destination_team_key></transaction_data></player>'
+        ) if drop_player_key else ""
+        xml_body = (
+            f'<?xml version="1.0"?><fantasy_content><transaction>'
+            f'<type>{"add/drop" if drop_player_key else "add"}</type>'
+            f'<trader_team_key>{team_key}</trader_team_key>'
+            f'<players>'
+            f'<player><player_key>{add_player_key}</player_key>'
+            f'<transaction_data><type>add</type>'
+            f'<destination_team_key>{team_key}</destination_team_key></transaction_data></player>'
+            f'{drop_xml}</players></transaction></fantasy_content>'
+        )
+        url = f"{YAHOO_API_BASE}/league/{self.league_key}/transactions"
+        resp = self._session.post(
+            url,
+            data=xml_body.encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._access_token}",
+                "Content-Type": "application/xml",
+            },
+        )
+        if resp.status_code not in (200, 201):
+            raise YahooAPIError(f"add/drop failed: {resp.status_code} — {resp.text[:300]}", resp.status_code)
+        return True
+
     def get_transactions(self, t_type: str = "add,drop,trade") -> list[dict]:
         """Recent transactions for the league."""
         data = self._get(
             f"league/{self.league_key}/transactions",
             params={"type": t_type},
         )
-        txns_raw = data["fantasy_content"]["league"][1].get("transactions", {})
+        txns_raw = self._league_section(data, 1).get("transactions", {})
         txns = []
         count = int(txns_raw.get("count", 0))
         for i in range(count):

@@ -303,6 +303,173 @@ def assign_tiers(players: list[dict]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Injury flags loader
+# ---------------------------------------------------------------------------
+
+def load_injury_flags(path: Path) -> dict[str, dict]:
+    """
+    Load injury_flags_2026.csv.
+    Returns dict mapping player_id -> {"injury_risk": str, "injury_note": str, "avoid": bool}
+
+    Columns: Name, Team, Status, Expected_PA_or_IP, Notes, Avoid_flag
+    Status values: TJS_return, injury_risk, active
+    """
+    flags = {}
+    if not path.exists():
+        return flags
+
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            name = row.get("Name", "").strip()
+            status = row.get("Status", "active").strip().lower()
+            notes = row.get("Notes", "").strip()
+            avoid = row.get("Avoid_flag", "no").strip().lower() == "yes"
+
+            if not name:
+                continue
+
+            if avoid:
+                risk = "extreme"
+            elif status in ("tjs_return", "injury_risk"):
+                risk = "high"
+            else:
+                risk = "low"
+
+            flags[_make_player_id(name)] = {
+                "injury_risk": risk,
+                "injury_note": notes,
+                "avoid": avoid,
+            }
+
+    logger.info(f"Loaded {len(flags)} injury flags from {path}")
+    return flags
+
+
+def _apply_injury_flags(players: list[dict], flags: dict[str, dict]) -> None:
+    """Annotate players with injury risk in-place."""
+    matched = 0
+    for p in players:
+        if p["id"] in flags:
+            flag = flags[p["id"]]
+            p["injury_risk"] = flag["injury_risk"]
+            p["injury_note"] = flag["injury_note"]
+            p["avoid"] = flag["avoid"]
+            matched += 1
+    logger.info(f"Injury flags applied to {matched}/{len(players)} players")
+
+
+# ---------------------------------------------------------------------------
+# Closer situations loader
+# ---------------------------------------------------------------------------
+
+def load_closer_situations(path: Path) -> dict[str, dict]:
+    """
+    Load closer_situations_2026.csv.
+    Returns dict mapping team -> {"closer_id": str, "nsv_projection": float, "role": str}
+
+    Columns: Team, Closer, Role, NSV_projection, Notes
+    """
+    closers = {}
+    if not path.exists():
+        return closers
+
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            team = row.get("Team", "").strip().upper()
+            closer_name = row.get("Closer", "").strip()
+            role = row.get("Role", "unknown").strip().lower()
+            try:
+                nsv = float(row.get("NSV_projection", 0) or 0)
+            except (ValueError, TypeError):
+                nsv = 0.0
+
+            if team and closer_name:
+                closers[team] = {
+                    "closer_id": _make_player_id(closer_name),
+                    "nsv_projection": nsv,
+                    "role": role,
+                }
+
+    logger.info(f"Loaded {len(closers)} closer situations from {path}")
+    return closers
+
+
+def _apply_closer_situations(players: list[dict], closers: dict[str, dict]) -> None:
+    """
+    Override nsv projections for confirmed closers in-place.
+    Only updates when the closer's nsv projection is higher than Steamer's estimate.
+    """
+    # Build closer_id -> nsv map
+    closer_nsv = {v["closer_id"]: (v["nsv_projection"], v["role"]) for v in closers.values()}
+
+    updated = 0
+    for p in players:
+        if p["type"] != "pitcher":
+            continue
+        pid = p["id"]
+        if pid in closer_nsv:
+            nsv_proj, role = closer_nsv[pid]
+            current_nsv = p["proj"].get("nsv", 0)
+            # Only override if our projection is higher or it's a locked role
+            if nsv_proj > current_nsv or role == "locked":
+                p["proj"]["nsv"] = nsv_proj
+                p["closer_role"] = role
+                updated += 1
+
+    logger.info(f"Closer NSV updated for {updated} pitchers")
+
+
+# ---------------------------------------------------------------------------
+# Position eligibility loader
+# ---------------------------------------------------------------------------
+
+def load_position_eligibility(path: Path) -> dict[str, list[str]]:
+    """
+    Load position_eligibility_2026.csv.
+    Returns dict mapping player_id -> list of Yahoo positions.
+
+    Columns: Name, Team, Yahoo_Positions_2026, Source_Note
+    """
+    eligibility = {}
+    if not path.exists():
+        return eligibility
+
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            name = row.get("Name", "").strip()
+            pos_str = row.get("Yahoo_Positions_2026", "").strip()
+            if not name or not pos_str:
+                continue
+            positions = [p.strip() for p in pos_str.split(",") if p.strip()]
+            # Expand OF shorthand
+            expanded = []
+            for pos in positions:
+                if pos == "OF":
+                    expanded.extend(["LF", "CF", "RF", "OF"])
+                else:
+                    expanded.append(pos)
+                    if pos in ("LF", "CF", "RF") and "OF" not in expanded:
+                        expanded.append("OF")
+            eligibility[_make_player_id(name)] = expanded
+
+    logger.info(f"Loaded {len(eligibility)} position eligibility overrides from {path}")
+    return eligibility
+
+
+def _apply_position_eligibility(players: list[dict], eligibility: dict[str, list[str]]) -> None:
+    """Override positions for players with verified multi-position eligibility in-place."""
+    updated = 0
+    for p in players:
+        if p["id"] in eligibility:
+            p["positions"] = eligibility[p["id"]]
+            updated += 1
+    logger.info(f"Position eligibility updated for {updated} players")
+
+
+# ---------------------------------------------------------------------------
 # Master loader — tries real CSVs, falls back to hardcoded board
 # ---------------------------------------------------------------------------
 
@@ -324,6 +491,9 @@ def load_full_board(data_dir: Optional[Path] = None) -> Optional[list[dict]]:
     bat_path = data_dir / "steamer_batting_2026.csv"
     pit_path = data_dir / "steamer_pitching_2026.csv"
     adp_path = data_dir / "adp_yahoo_2026.csv"
+    injury_path = data_dir / "injury_flags_2026.csv"
+    closer_path = data_dir / "closer_situations_2026.csv"
+    eligibility_path = data_dir / "position_eligibility_2026.csv"
 
     if not bat_path.exists() and not pit_path.exists():
         logger.info("No Steamer CSV files found — using hardcoded player board")
@@ -359,6 +529,20 @@ def load_full_board(data_dir: Optional[Path] = None) -> Optional[list[dict]]:
     all_players = deduped
 
     _apply_adp(all_players, adp_map)
+
+    # Apply supplemental overlays (graceful — missing files are silently skipped)
+    injury_flags = load_injury_flags(injury_path)
+    if injury_flags:
+        _apply_injury_flags(all_players, injury_flags)
+
+    closer_situations = load_closer_situations(closer_path)
+    if closer_situations:
+        _apply_closer_situations(all_players, closer_situations)
+
+    eligibility = load_position_eligibility(eligibility_path)
+    if eligibility:
+        _apply_position_eligibility(all_players, eligibility)
+
     assign_tiers(all_players)
 
     # Sort by ADP for final rank
