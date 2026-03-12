@@ -111,9 +111,40 @@ Three targeted changes made before the March 18 guardian window:
 
 ## 4. ACTIVE MISSIONS
 
-### Claude Code — EMAC-067 (post-tournament, Apr 7+)
+### OpenClaw — OPCL-001: Discord Enhancement (COMPLETE — March 12, 2026)
 
-Pre-tournament: only the dedup fix was safe (done). Full recalibration must wait until after Apr 7.
+Phase 1 delivered. Files are live in the repo.
+
+| File | Purpose |
+|------|---------|
+| `backend/services/openclaw_briefs.py` | Morning brief generation |
+| `backend/services/openclaw_telemetry.py` | Quiet system monitoring |
+| `scripts/openclaw_scheduler.py` | Cron integration |
+| `tests/test_openclaw_briefs.py` | Unit tests |
+| `tests/test_openclaw_telemetry.py` | Unit tests |
+
+**Discord channels wired:** `send_openclaw_morning_brief()` → #openclaw-briefs · `send_openclaw_telemetry()` → #openclaw-health · `send_openclaw_live_alert()` → #openclaw-escalations
+
+**Usage:**
+```bash
+python scripts/openclaw_scheduler.py --morning-brief          # Daily 7 AM ET
+python scripts/openclaw_scheduler.py --telemetry-check        # Every 30 min
+python scripts/openclaw_scheduler.py --telemetry-check --force-summary
+python -m backend.services.openclaw_briefs --test             # Test mode (no Discord)
+```
+
+**Before March 18 checklist:**
+- [ ] `python scripts/openclaw_scheduler.py --morning-brief --test` — verify embeds
+- [ ] `python scripts/openclaw_scheduler.py --telemetry-check --test`
+- [ ] Add to Railway scheduler or cron
+
+**Phase 2** (Live Monitor): March 19-25 tournament window.
+
+---
+
+### Claude Code — EMAC-068 (post-tournament, Apr 7+)
+
+Pre-tournament fixes are COMPLETE (EMAC-068). Full recalibration must wait until after Apr 7.
 
 **After Apr 7 — in order:**
 1. **V9.2 recalibration** — implement Kimi's K-11/K-12 recommendations (see below). Adjust `MIN_BET_EDGE`, `BASE_MARGIN_SE`, and reset `ha`/`sd_mult` to V9-appropriate values. Target: BET rate improves from ~2% to ~8–12%.
@@ -276,77 +307,4 @@ streamlit run dashboard/app.py
 
 **Document Version:** EMAC-068
 **Last Updated:** March 12, 2026
-**Status:** All pre-tournament fixes COMPLETE and test-validated (647/650). Fantasy draft-ready. Root cause of poor win record identified (V9.1 calibration mismatch). Kimi assigned K-11/K-12/K-13. Gemini assigned G-R7. Guardian window opens Mar 18. Next Claude session: post-Apr 7 V9.2 recalibration.
-
-
----
-
-## NEW: OPCL-001 OpenClaw Discord Enhancement � IMPLEMENTED
-
-**Status:** Phase 1 COMPLETE ?  
-**Date:** March 12, 2026  
-**Files Created:**
-
-### New Modules
-| File | Purpose | Lines |
-|------|---------|-------|
-| ackend/services/openclaw_briefs.py | Morning brief generation | ~400 |
-| ackend/services/openclaw_telemetry.py | Quiet system monitoring | ~450 |
-| scripts/openclaw_scheduler.py | Cron integration | ~150 |
-| 	ests/test_openclaw_briefs.py | Unit tests | ~200 |
-| 	ests/test_openclaw_telemetry.py | Unit tests | ~250 |
-
-### Discord Functions Added
-- send_openclaw_morning_brief(embed) ? #openclaw-briefs
-- send_openclaw_telemetry(embed) ? #openclaw-health  
-- send_openclaw_live_alert(...) ? #openclaw-escalations
-
-### Usage
-
-**Morning Brief (Daily 7 AM ET):**
-`ash
-python scripts/openclaw_scheduler.py --morning-brief
-`
-
-**Telemetry Check (Every 30 min, quiet mode):**
-`ash
-python scripts/openclaw_scheduler.py --telemetry-check
-`
-
-**Force daily summary:**
-`ash
-python scripts/openclaw_scheduler.py --telemetry-check --force-summary
-`
-
-**Test mode (no Discord send):**
-`ash
-python -m backend.services.openclaw_briefs --test
-python -m backend.services.openclaw_telemetry --test
-`
-
-### Design Philosophy: Clean & Quiet
-
-- **Morning Brief:** One comprehensive message per day at 7 AM
-- **Telemetry:** Only alerts when anomalies detected; daily summary optional
-- **No Noise:** Healthy systems don't generate messages
-- **Actionable:** Every message contains useful intelligence
-
-### Testing Checklist (Before March 18)
-
-- [ ] Run python scripts/openclaw_scheduler.py --morning-brief --test
-- [ ] Run python scripts/openclaw_scheduler.py --telemetry-check --test
-- [ ] Verify Discord embeds look correct
-- [ ] Add to Railway scheduler or cron
-- [ ] Monitor first few runs for errors
-
-### Impact Target
-
-| Metric | Before | After |
-|--------|--------|-------|
-| Daily intelligence | 0 | 1 morning brief |
-| System visibility | Manual | Automated telemetry |
-| Alert latency | Hours | <30 minutes |
-| Operator time saved | � | ~15 min/day |
-
-**Next:** Phase 2 (Live Monitor) for March 19-25 tournament
-
+**Status:** All pre-tournament fixes COMPLETE and test-validated (647/650). OPCL-001 Discord enhancement live. Fantasy draft-ready. Root cause of poor win record identified (V9.1 calibration mismatch). Kimi assigned K-11/K-12/K-13. Gemini assigned G-R7. Guardian window opens Mar 18. Next Claude session: post-Apr 7 V9.2 recalibration.
