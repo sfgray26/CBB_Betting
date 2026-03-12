@@ -379,44 +379,33 @@ def send_todays_bets(
     summary: Dict,
 ) -> None:
     """
-    Send today's betting slate to Discord #cbb-bets channel.
+    Send today's BET picks to Discord #cbb-bets channel.
+    
+    NOISE REDUCTION:
+    - Only sends if there are actual BETs (not CONSIDER or PASS)
+    - Clean, simple format showing just the bets
     """
     if not _bot_token():
         return
 
     n_bets = summary.get("bets_recommended", 0)
-    n_considered = summary.get("games_considered", 0)
-    n_analyzed = summary.get("games_analyzed", 0)
-    n_pass = max(0, n_analyzed - n_bets - n_considered)
     duration = summary.get("duration_seconds", 0)
     today = datetime.now(timezone.utc).strftime("%b %d, %Y")
 
-    if n_bets > 0:
-        color = _COLOR_GREEN
-        status_line = f"**{n_bets} BET{'s' if n_bets > 1 else ''}** found on today's slate!"
-    elif n_considered > 0:
-        color = _COLOR_YELLOW
-        status_line = (
-            f"No BETs today. "
-            f"{n_considered} CONSIDER game{'s' if n_considered > 1 else ''} — "
-            "watch for line movement toward the model's side."
-        )
-    else:
-        color = _COLOR_GREY
-        status_line = "PASS on all games today. No edges found."
+    # NO BETs = NO DISCORD MESSAGE (don't spam with "no bets today")
+    if n_bets == 0:
+        logger.info("No BETs today - skipping Discord notification (noise reduction)")
+        return
 
+    # Build clean summary for BET days only
     summary_embed = {
-        "title": f"CBB Edge — {today}",
-        "description": status_line,
-        "color": color,
+        "title": f"🎯 Today's Bets — {today}",
+        "description": f"**{n_bets} BET{'s' if n_bets > 1 else ''}** found on today's slate!",
+        "color": _COLOR_GREEN,
         "fields": [
-            {"name": "Games Analyzed", "value": str(n_analyzed),   "inline": True},
-            {"name": "BET",            "value": str(n_bets),        "inline": True},
-            {"name": "CONSIDER",       "value": str(n_considered),  "inline": True},
-            {"name": "PASS",           "value": str(n_pass),        "inline": True},
-            {"name": "Run Time",       "value": f"{duration:.0f}s", "inline": True},
+            {"name": "Run Time", "value": f"{duration:.0f}s", "inline": True},
         ],
-        "footer": {"text": "CBB Edge Analyzer v9"},
+        "footer": {"text": "CBB Edge v9 — Good luck!"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -428,13 +417,17 @@ def send_todays_bets(
     if not bet_details:
         return
 
-    # Sort highest-edge first
-    ordered = sorted(bet_details, key=lambda b: b.get("edge_conservative") or 0.0, reverse=True)
+    # Sort highest-edge first, only send actual BETs
+    ordered = sorted(
+        [b for b in bet_details if b.get("verdict", "").startswith("BET")],
+        key=lambda b: b.get("edge_conservative") or 0.0,
+        reverse=True
+    )
 
     # Send each bet as an individual message
     for bet in ordered:
         try:
-            logger.info("Sending Discord embed for %s @ %s", bet.get("away_team"), bet.get("home_team"))
+            logger.info("Sending Discord bet for %s @ %s", bet.get("away_team"), bet.get("home_team"))
             send_to_channel("cbb-bets", embed=_bet_embed(bet))
         except Exception as e:
             logger.error("Failed to send bet embed for %s: %s", bet.get("home_team"), e)
