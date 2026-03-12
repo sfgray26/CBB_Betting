@@ -793,6 +793,91 @@ def send_draft_pick(
     return send_to_channel("fantasy-draft", embed=embed)
 
 
+# ---------------------------------------------------------------------------
+# OpenClaw Intelligence — Morning Brief & Telemetry (OPCL-001)
+# ---------------------------------------------------------------------------
+
+
+def send_openclaw_morning_brief(embed: dict) -> bool:
+    """
+    Send OpenClaw morning brief to #openclaw-briefs channel.
+    
+    Args:
+        embed: Pre-built embed dict from openclaw_briefs.generate_brief()
+    
+    Returns:
+        True if sent successfully
+    """
+    return send_to_channel("openclaw-briefs", embed=embed)
+
+
+def send_openclaw_telemetry(embed: dict) -> bool:
+    """
+    Send OpenClaw telemetry update to #openclaw-health channel.
+    
+    Args:
+        embed: Pre-built embed dict (status summary or alert)
+    
+    Returns:
+        True if sent successfully
+    """
+    return send_to_channel("openclaw-health", embed=embed)
+
+
+def send_openclaw_live_alert(
+    game: str,
+    alert_type: str,
+    message: str,
+    severity: str = "info",
+    recommendation: str = None
+) -> bool:
+    """
+    Send live game-time alert to #openclaw-escalations channel.
+    
+    Args:
+        game: Game string (e.g., "Duke @ UNC")
+        alert_type: Type of alert (e.g., "injury", "lineup", "weather")
+        message: Alert message
+        severity: "info", "warning", or "critical"
+        recommendation: Optional action recommendation
+    
+    Returns:
+        True if sent successfully
+    """
+    color_map = {
+        "info": _COLOR_BLUE,
+        "warning": _COLOR_YELLOW,
+        "critical": _COLOR_RED,
+    }
+    
+    emoji_map = {
+        "info": "ℹ️",
+        "warning": "⚠️",
+        "critical": "🚨",
+    }
+    
+    fields = [
+        {"name": "Alert Type", "value": alert_type.title(), "inline": True},
+        {"name": "Severity", "value": severity.upper(), "inline": True},
+    ]
+    
+    if recommendation:
+        fields.append({"name": "Recommendation", "value": recommendation, "inline": False})
+    
+    embed = {
+        "title": f"{emoji_map.get(severity, 'ℹ️')} Live Alert: {game}",
+        "description": message,
+        "color": color_map.get(severity, _COLOR_BLUE),
+        "fields": fields,
+        "footer": {"text": "OpenClaw Live Monitor"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    
+    # Only mention admin for critical alerts
+    mention_admin = severity == "critical"
+    return send_to_channel("openclaw-escalations", embed=embed, mention_admin=mention_admin)
+
+
 def send_on_the_clock_alert(picks_away: int, top_recommendations: list) -> bool:
     """Send an on-the-clock warning to #fantasy-draft channel.
 

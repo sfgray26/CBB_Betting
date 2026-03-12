@@ -753,8 +753,19 @@ async def run_nightly_analysis(
         #         fall back to env vars
         # ----------------------------------------------------------------
         calibrated = load_current_params(db)
-        sd_multiplier = calibrated.get(
-            "sd_multiplier", get_float_env("SD_MULTIPLIER", "0.85")
+
+        # FORCE_ env vars override everything, including DB-calibrated values.
+        # Leave blank in Railway to use normal calibrated mode.
+        _sd_force = get_float_env("FORCE_SD_MULTIPLIER", "")
+        sd_multiplier = (
+            float(_sd_force) if _sd_force
+            else calibrated.get("sd_multiplier", get_float_env("SD_MULTIPLIER", "0.85"))
+        )
+
+        _ha_force = get_float_env("FORCE_HOME_ADVANTAGE", "")
+        _home_advantage = (
+            float(_ha_force) if _ha_force
+            else calibrated.get("home_advantage", get_float_env("HOME_ADVANTAGE", "3.09"))
         )
 
         model = CBBEdgeModel(
@@ -767,17 +778,17 @@ async def run_nightly_analysis(
                 "evanmiya":   calibrated.get("weight_evanmiya",
                                              get_float_env("WEIGHT_EVANMIYA", "0.325")),
             },
-            home_advantage=calibrated.get(
-                "home_advantage",
-                get_float_env("HOME_ADVANTAGE", "3.09"),
-            ),
+            home_advantage=_home_advantage,
             max_kelly=get_float_env("MAX_KELLY_FRACTION", "0.20"),
             fractional_kelly_divisor=get_float_env("FRACTIONAL_KELLY_DIVISOR", "2.0"),
         )
         logger.info(
-            "Model initialised — home_adv=%.3f, sd_multiplier=%.4f, "
+            "Model initialised — home_adv=%.3f%s, sd_multiplier=%.4f%s, "
             "weights=KP:%.3f BT:%.3f EM:%.3f",
-            model.home_advantage, sd_multiplier,
+            model.home_advantage,
+            " [FORCED]" if _ha_force else "",
+            sd_multiplier,
+            " [FORCED]" if _sd_force else "",
             model.weights["kenpom"], model.weights["barttorvik"], model.weights["evanmiya"],
         )
 
