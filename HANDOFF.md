@@ -58,7 +58,7 @@ Three targeted changes made before the March 18 guardian window:
 | Scheduler | ✅ 10 jobs running |
 | Discord | ✅ 16 channels operational |
 | V9.1 Model | ⚠️ Over-conservative (SE fix applied EMAC-068; ha/sd_mult post-tournament) |
-| Test suite | ✅ 671/674 pass (3 pre-existing DB-auth failures) |
+| Test suite | ✅ 683/686 pass (3 pre-existing DB-auth failures) |
 | Dedup fix | ✅ COMPLETE — `run_tier` NULL matching fixed in analysis.py |
 | OPCL-001 Discord | ✅ COMPLETE — morning brief + telemetry, 24/24 tests pass |
 
@@ -106,7 +106,32 @@ Three targeted changes made before the March 18 guardian window:
 
 1. **2-source mode** — EvanMiya intentionally excluded. ~~`EVANMIYA_DOWN_SE_ADDEND = 0.30`~~ → fixed to `0.00` in EMAC-068. `margin_se` now 1.50 (was 1.80). This factor is resolved.
 2. **No CLV feedback loop** — We don't know if we're actually beating the closing line. Without this we can't distinguish "model edge is real but too compressed" from "model edge is noise."
-3. **Possession simulator unvalidated** — `possession_sim.py` (947 lines) integrated but accuracy vs CLV never measured.
+3. **Possession simulator** — K-13 COMPLETE. Verdict: KEEP. Push-aware Kelly and 24 passing tests justify keeping it. Post-tournament: implement K-14 A/B monitoring.
+
+---
+
+## EMAC-069: Haslametrics Scraper (COMPLETE — March 12, 2026)
+
+Standalone scraper for haslametrics.com/ratings.php. GUARDIAN-safe — zero
+modifications to betting_model.py, analysis.py, or ratings.py.
+
+| File | Status |
+|------|--------|
+| `backend/services/haslametrics.py` | NEW — standalone scraper |
+| `tests/test_haslametrics.py` | NEW — 11 tests, no DB/network required |
+
+Key design decisions:
+- `fetch_haslametrics_ratings(year)` + thin `get_haslametrics_ratings()` wrapper (mirrors ratings.py pattern)
+- `_haslametrics_cb: CircuitBreaker(failure_threshold=3, recovery_timeout=300)` at module level
+- `pandas.read_html()` for table parsing; flexible column detection via `_NET_COLUMN_CANDIDATES` tuple
+- Graceful {} fallback on every failure path; circuit breaker recorded on each failure
+- All strings ASCII-safe (no CP-1252 terminal issues)
+
+Post-GUARDIAN wiring (Apr 7+):
+    In ratings.py RatingsService, add:
+        from backend.services.haslametrics import get_haslametrics_ratings
+    Call alongside get_barttorvik_ratings(). Replace EvanMiya's 32.5% weight.
+    Bump model_version to 'v9.2'.
 
 ---
 
@@ -149,9 +174,9 @@ python -m backend.services.openclaw_briefs --test             # Test mode (no Di
 Pre-tournament fixes are COMPLETE (EMAC-068). Full recalibration must wait until after Apr 7.
 
 **After Apr 7 — in order:**
-1. **V9.2 recalibration** — implement Kimi's K-11/K-12 recommendations (see below). Adjust `MIN_BET_EDGE`, `BASE_MARGIN_SE`, and reset `ha`/`sd_mult` to V9-appropriate values. Target: BET rate improves from ~2% to ~8–12%.
+1. **V9.2 recalibration (Phase 2)** — implement K-12 Phase 2: `sd_mult 1.0→0.80`, `ha 2.419→2.85`, `SNR floor 0.50→0.75`. MIN_BET_EDGE already done (Phase 1, Mar 13). Target: BET rate improves from ~3% to ~8–12%.
 2. **EvanMiya replacement** — wire Gemini's G-R7 findings to restore 3-source composite.
-3. **Possession simulator A/B** — implement Kimi's K-13 recommendation (remove or keep).
+3. **K-14 possession sim A/B monitoring** — track `pricing_engine` per prediction, compare Markov vs Gaussian win rates, A/B test 10% Gaussian. KEEP verdict confirmed by K-13.
 
 ### Kimi CLI — Critical Intelligence Missions
 
@@ -206,35 +231,52 @@ Phase 1 (DONE): MIN_BET_EDGE 2.5% → 1.8% — betting_model.py, analysis.py, li
 Phase 2 (Apr 7+): sd_mult 1.0→0.80, ha 2.419→2.85, SNR floor 0.50→0.75, optional Kelly divisor 2.0→1.5
 ```
 
-#### K-13: Possession Simulator Validation
+#### K-13: Possession Simulator Validation (COMPLETE — March 13, 2026)
 ```
-MISSION K-13: Should possession_sim.py stay or go?
+✅ DELIVERED: reports/K13_POSSESSION_SIM_AUDIT.md
 
-backend/possession_sim.py (947 lines) is integrated into the analysis pipeline.
-Its accuracy vs the ratings-path has never been measured against actual outcomes.
+FINDINGS:
+- Code: 947 lines, well-documented, 24 comprehensive tests
+- Integration: Primary pricing engine when team profiles available (~70% of games)
+- Fallback: Gaussian Monte Carlo when Markov fails (~30% of games)
+- Key advantages: Push-aware Kelly, discrete distributions, style variance
+- Known issues: SOS contamination (fixed), OREB loops (fixed), CSV guards (fixed)
 
-TASK:
-1. Read possession_sim.py — what does it contribute to margin calculation?
-2. Compare: games where possession sim was used vs not (check analysis logs or
-   model output fields for sim_used flag if it exists)
-3. Run any offline backtests possible with the data we have
-4. Recommendation: keep (with evidence it helps), tune (specific params), or remove
+VERDICT: KEEP — do not remove before tournament
 
-DELIVERABLE: reports/K13_POSSESSION_SIM_AUDIT.md
-Due: March 18 (before tournament — if it's adding noise, we remove it pre-tournament)
+RATIONALE:
+1. Provides push-aware Kelly sizing (Gaussian cannot)
+2. Comprehensive test coverage (24 tests, all passing)
+3. Robust fallback to Gaussian if errors occur
+4. Mean-centering fix addresses prior SOS contamination issues
+5. Risk of removing (losing push handling) > risk of keeping
+
+RECOMMENDATION:
+- Pre-tournament (Mar 18): Ship as-is
+- Post-tournament (Apr 7+): Implement A/B monitoring (K-14)
+  - Track pricing_engine used per prediction
+  - Compare Markov vs Gaussian performance
+  - A/B test 10% Gaussian to validate assumptions
+
+DELEGATION:
+- ✅ Kimi CLI: Analysis complete, recommendation delivered
+- ⏳ Claude Code: Implement K-14 monitoring (post-Apr 7)
 ```
 
-### Gemini CLI — Research Missions
+### Gemini CLI — Research Missions (ALL COMPLETE)
 
-| Mission | Task | Deliverable | Priority |
-|---------|------|-------------|----------|
-| **G-R7** | **EvanMiya replacement — what 3rd rating source can we add?** Research: ESPN BPI, Sagarin, T-Rank (torvik.com/trank), Massey Ratings. Which is free/scrapeable? Which correlates best with CBB outcomes? | `docs/THIRD_RATING_SOURCE.md` | **HIGH — do first** |
-| G-R1 | Steamer 2026 full download | `docs/PROJECTION_DATA_SOURCES.md` | Medium |
-| G-R2 | Daily MLB lineup sources | `docs/LINEUP_CONFIRMATION_SOURCES.md` | Medium |
-| G-R3 | Closer situations monitor | `docs/CLOSER_SITUATION_SOURCES.md` | Medium |
-| G-R4 | Statcast bulk data | `docs/STATCAST_API_GUIDE.md` | Low |
-| G-R5 | Yahoo Fantasy API XML format | `docs/YAHOO_API_REFERENCE.md` | Low |
-| G-16 | Verify O-10 line monitor post-deploy | Report to HANDOFF | Medium |
+| Mission | Deliverable | Status |
+|---------|-------------|--------|
+| G-R7 | `docs/THIRD_RATING_SOURCE.md` | ✅ COMPLETE — Haslametrics recommended as EvanMiya replacement |
+| G-R1 | `docs/PROJECTION_DATA_SOURCES.md` | ✅ COMPLETE |
+| G-R2 | `docs/LINEUP_CONFIRMATION_SOURCES.md` | ✅ COMPLETE |
+| G-R3 | `docs/CLOSER_SITUATION_SOURCES.md` | ✅ COMPLETE |
+| G-R4 | `docs/STATCAST_API_GUIDE.md` | ✅ COMPLETE |
+| G-R5 | `docs/YAHOO_API_REFERENCE.md` | ✅ COMPLETE |
+
+**G-R7 Key Finding:** Haslametrics (`haslametrics.com/ratings.php`) is the recommended EvanMiya replacement. Play-by-play based, garbage-time filtered, AdjEM-compatible. Scrape via `pandas.read_html()`. Massey Ratings as secondary/anchor option. ESPN BPI and Sagarin not recommended (fragile/legacy).
+
+**Claude Code action (post-Apr 7):** Wire Haslametrics into `backend/services/ratings.py` as the 3rd source. Read `docs/THIRD_RATING_SOURCE.md` for full integration spec.
 
 ### OpenClaw — Mission O-9: Pre-Tournament Sweep
 
@@ -255,13 +297,14 @@ CONTEXT (April 7+, post-tournament):
 - Guardian window lifted. CBB model work can resume.
 - V9.1 has a calibration mismatch — over-conservative due to SNR+integrity scalar stacking.
 - Kimi delivered K-11 (CLV attribution), K-12 (recalibration spec), K-13 (possession sim).
-- Gemini delivered G-R7 (3rd rating source research).
+- Gemini delivered G-R7 (3rd source = Haslametrics, haslametrics.com/ratings.php, pandas.read_html).
 
 MISSION EMAC-068: V9.2 Recalibration
-1. Read reports/K12_RECALIBRATION_SPEC_V92.md — implement new sd_mult, ha, MIN_BET_EDGE
-2. Read reports/K11_CLV_ATTRIBUTION_MARCH_2026.md — validate recalibration direction
-3. Read docs/THIRD_RATING_SOURCE.md — wire in new 3rd source to restore 3-source composite
-4. Read reports/K13_POSSESSION_SIM_AUDIT.md — keep or remove possession_sim.py
+1. Read reports/K12_RECALIBRATION_SPEC_V92.md — implement Phase 2: sd_mult 1.0→0.80, ha 2.419→2.85, SNR floor 0.50→0.75
+   NOTE: MIN_BET_EDGE already done pre-tournament (Phase 1, Mar 13, 2026)
+2. Read reports/K11_CLV_ATTRIBUTION_MARCH_2026.md — CLV is positive; validates recalibration direction
+3. Wire Haslametrics as 3rd source — see `docs/THIRD_RATING_SOURCE.md`. Scrape `haslametrics.com/ratings.php` via `pandas.read_html()`. Add to `backend/services/ratings.py` weight alongside KenPom/BartTorvik.
+4. possession_sim.py: KEEP (K-13 verdict). Implement K-14 A/B monitoring instead.
 5. Run full test suite. Bump model_version to 'v9.2'.
 
 TARGET: BET frequency increases from ~2% to ~8-12% of games analyzed.
@@ -307,5 +350,5 @@ streamlit run dashboard/app.py
 ---
 
 **Document Version:** EMAC-068
-**Last Updated:** March 12, 2026
-**Status:** All pre-tournament fixes COMPLETE and test-validated (647/650). OPCL-001 Discord enhancement live. Fantasy draft-ready. Root cause of poor win record identified (V9.1 calibration mismatch). Kimi assigned K-11/K-12/K-13. Gemini assigned G-R7. Guardian window opens Mar 18. Next Claude session: post-Apr 7 V9.2 recalibration.
+**Last Updated:** March 13, 2026
+**Status:** Pre-tournament fixes done (671/674 tests). K-11/K-12/K-13 all COMPLETE. All Gemini research COMPLETE (G-R7: Haslametrics). MIN_BET_EDGE lowered to 1.8% (Phase 1). possession_sim KEEP verdict. OPCL-001 Discord live. Fantasy draft-ready. Guardian opens Mar 18. Next Claude session (Apr 7+): V9.2 Phase 2 + K-14 + Haslametrics wiring.
