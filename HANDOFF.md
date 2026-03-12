@@ -43,7 +43,7 @@ Three targeted changes made before the March 18 guardian window:
   - `test_fully_degraded_raises_se`: updated expected value 2.10 -> 1.80
 - All other SE tests verified safe under new math (monotone ordering still holds, cap still holds)
 - Run: `python -m pytest tests/ -q --ignore=tests/test_integrity_sweep.py`
-  **Confirmed:** 647 pass, 3 pre-existing DB-auth failures (validated March 12, 2026)
+  **Confirmed:** 671 pass, 3 pre-existing DB-auth failures (validated March 13, 2026 post-Phase-1)
 
 ---
 
@@ -58,7 +58,7 @@ Three targeted changes made before the March 18 guardian window:
 | Scheduler | ✅ 10 jobs running |
 | Discord | ✅ 16 channels operational |
 | V9.1 Model | ⚠️ Over-conservative (SE fix applied EMAC-068; ha/sd_mult post-tournament) |
-| Test suite | ✅ 647/650 pass (3 pre-existing DB-auth failures) |
+| Test suite | ✅ 671/674 pass (3 pre-existing DB-auth failures) |
 | Dedup fix | ✅ COMPLETE — `run_tier` NULL matching fixed in analysis.py |
 | OPCL-001 Discord | ✅ COMPLETE — morning brief + telemetry, 24/24 tests pass |
 
@@ -198,11 +198,12 @@ EXPECTED OUTCOME:
 
 DELEGATION:
 - ✅ Kimi CLI: Mathematical derivation, parameter analysis, spec document
-- ⏳ Claude Code: Production code implementation (Phase 1: MIN_BET_EDGE now; Phase 2: rest post-Apr 7)
+- ✅ Claude Code: Phase 1 COMPLETE (MIN_BET_EDGE 2.5% → 1.8%, Mar 13, 2026 — 671/674 tests pass)
+- ⏳ Claude Code: Phase 2 post-Apr 7 (sd_mult, ha, SNR floor, optional Kelly divisor)
 
 IMPLEMENTATION PHASES:
-Phase 1 (Now): MIN_BET_EDGE 2.5% → 1.8% (safe, low risk)
-Phase 2 (Apr 7+): sd_mult, ha, SNR floor, optional Kelly divisor
+Phase 1 (DONE): MIN_BET_EDGE 2.5% → 1.8% — betting_model.py, analysis.py, line_monitor.py, .env.example
+Phase 2 (Apr 7+): sd_mult 1.0→0.80, ha 2.419→2.85, SNR floor 0.50→0.75, optional Kelly divisor 2.0→1.5
 ```
 
 #### K-13: Possession Simulator Validation

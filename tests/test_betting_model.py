@@ -2265,7 +2265,7 @@ class TestD3TierSizing:
     D3: Edge-proportional 4-tier Kelly sizing (replaces flat 1.5u cap).
 
     Tier boundaries (env-var overridable, defaults):
-      T1  edge <= 2%  : 0.50u  (in practice never reached — D4 floors BET at MIN_BET_EDGE=2.5%)
+      T1  edge <= 2%  : 0.50u  (in practice rarely reached — D4 floors BET at MIN_BET_EDGE=1.8%)
       T2  edge <= 5%  : 0.75u
       T3  edge <= 8%  : 1.00u
       T4  edge >  8%  : 1.25u  (or 1.50u when T4+ premium criteria met)
@@ -2399,12 +2399,12 @@ class TestD4MinBetEdge:
         if analysis.verdict.startswith("CONSIDER"):
             assert analysis.recommended_units == 0.0
 
-    def test_min_bet_edge_default_is_2_5_pct(self):
-        """Default MIN_BET_EDGE=2.5% is encoded in the model (env var test)."""
+    def test_min_bet_edge_default_is_1_8_pct(self):
+        """Default MIN_BET_EDGE=1.8% is encoded in the model (EMAC-068, pre-GUARDIAN)."""
         import os
-        # If env var is not set, the default must be 2.5
-        env_val = float(os.getenv("MIN_BET_EDGE", "2.5"))
-        assert env_val == pytest.approx(2.5)
+        # If env var is not set, the default must be 1.8
+        env_val = float(os.getenv("MIN_BET_EDGE", "1.8"))
+        assert env_val == pytest.approx(1.8)
 
 
 class TestReanalysisEngine:

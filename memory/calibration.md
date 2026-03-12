@@ -14,7 +14,7 @@
 | `home_advantage` | 3.09 pts | **2.419 pts** | V8-era recalibration, stored in model_parameters table |
 | `sd_multiplier` | 0.85 | **1.0** | V8-era recalibration, stored in model_parameters table |
 | `base_sd` | 11.0 pts | 11.0 pts (not recalibrated) | betting_model.py constructor default |
-| `MIN_BET_EDGE` | 2.5% | 2.5% (env default) | get_float_env("MIN_BET_EDGE", "2.5") |
+| `MIN_BET_EDGE` | 2.5% | 1.8% (EMAC-068 pre-GUARDIAN) | get_float_env("MIN_BET_EDGE", "1.8") |
 | `weight_kenpom` | 0.342 | 0.342 | No drift observed |
 | `weight_barttorvik` | 0.333 | 0.333 | No drift observed |
 | `weight_evanmiya` | 0.325 | 0.325 | No drift observed |
