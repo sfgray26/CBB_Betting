@@ -60,6 +60,7 @@ Three targeted changes made before the March 18 guardian window:
 | V9.1 Model | ⚠️ Over-conservative (SE fix applied EMAC-068; ha/sd_mult post-tournament) |
 | Test suite | ✅ 647/650 pass (3 pre-existing DB-auth failures) |
 | Dedup fix | ✅ COMPLETE — `run_tier` NULL matching fixed in analysis.py |
+| OPCL-001 Discord | ✅ COMPLETE — morning brief + telemetry, 24/24 tests pass |
 
 ### Fantasy Baseball — DRAFT-READY
 
@@ -134,7 +135,8 @@ python -m backend.services.openclaw_briefs --test             # Test mode (no Di
 ```
 
 **Before March 18 checklist:**
-- [ ] `python scripts/openclaw_scheduler.py --morning-brief --test` — verify embeds
+- [x] 24/24 unit tests pass (`test_openclaw_briefs.py`, `test_openclaw_telemetry.py`) — validated Mar 12
+- [ ] `python scripts/openclaw_scheduler.py --morning-brief --test` — verify Discord embeds live
 - [ ] `python scripts/openclaw_scheduler.py --telemetry-check --test`
 - [ ] Add to Railway scheduler or cron
 
