@@ -41,7 +41,7 @@ from datetime import datetime, date, timezone
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from backend.models import SessionLocal, Game, Prediction, BetLog, DataFetch, ModelParameter
 from backend.betting_model import CBBEdgeModel, GameAnalysis, ReanalysisEngine
@@ -1475,11 +1475,26 @@ async def run_nightly_analysis(
                     # If found, update in-place when the analysis has materially
                     # changed (verdict flip or edge shift > 1%).  This prevents
                     # the opener_attack job from locking out later nightly runs.
+                    #
+                    # Legacy rows (created before run_tier was introduced) may have
+                    # run_tier=NULL or run_tier=''.  We treat those as equivalent to
+                    # the current run_tier so that re-runs do not insert duplicate
+                    # rows alongside the legacy record.  The run_tier field is
+                    # normalised to the current value on any in-place update.
                     today = datetime.utcnow().date()
                     existing_prediction = db.query(Prediction).filter(
                         Prediction.game_id == game.id,
                         Prediction.prediction_date == today,
-                        Prediction.run_tier == run_tier,
+                        or_(
+                            Prediction.run_tier == run_tier,
+                            Prediction.run_tier.is_(None),
+                            Prediction.run_tier == "",
+                        ),
+                    ).order_by(
+                        # Prefer exact-tier match over legacy NULL rows so that
+                        # a same-day opener row is not accidentally clobbered by
+                        # the nightly run when both exist legitimately.
+                        (Prediction.run_tier == run_tier).desc(),
                     ).first()
 
                     if existing_prediction:
@@ -1499,10 +1514,16 @@ async def run_nightly_analysis(
                                 "No material change for %s @ %s (tier=%s), skipping update.",
                                 away_team, home_team, run_tier,
                             )
+                            # Normalise run_tier on legacy NULL rows so subsequent
+                            # runs find this record via the exact-tier filter.
+                            if existing_prediction.run_tier != run_tier:
+                                existing_prediction.run_tier = run_tier
+                                db.flush()
                             games_analyzed += 1
                             continue
 
-                        # Material change — update existing prediction in-place
+                        # Material change — update existing prediction in-place.
+                        # Also normalise run_tier for legacy rows that stored NULL.
                         logger.info(
                             "Updating prediction for %s @ %s (tier=%s): "
                             "%s → %s (Δedge=%.3f)",
@@ -1511,6 +1532,7 @@ async def run_nightly_analysis(
                         )
                         prediction = existing_prediction
                         prediction.model_version = "v9.1"
+                        prediction.run_tier = run_tier  # normalise NULL / '' legacy rows
                     else:
                         # No existing prediction for this tier — create new
                         prediction = Prediction(

@@ -1,619 +1,247 @@
-# OPERATIONAL HANDOFF (EMAC-060)
+# OPERATIONAL HANDOFF (EMAC-067)
 
-> Ground truth as of March 12, 2026 03:40 ET. Operator: Kimi CLI (Deep Intelligence Unit).
+> Ground truth as of March 12, 2026. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
-> Full enhancement plan: `tasks/cbb_enhancement_plan.md`
+> Full roadmap: `docs/MLB_FANTASY_ROADMAP.md` · CBB plan: `tasks/cbb_enhancement_plan.md`
 
 ---
 
-## 0. ARCHITECT DECISION (March 10, 2026) - ✅ IMPLEMENTED
+## 0. STANDING DECISIONS
 
-**Original concern:** Returns and model success have been limited lately.
-
-**Root cause finding:** ✅ **RESOLVED** - The model was running in KenPom-only mode.
-Both `BARTTORVIK_USERNAME/PASSWORD` and `EVANMIYA_API_KEY` were unset in Railway.
-The 3-source composite was degraded to 1 source.
-
-**Fix applied:**
-- ✅ Verified BartTorvik public CSV working (365 teams, no auth)
-- ✅ Confirmed 2-source composite: KenPom 51% / BartTorvik 49%
-- ✅ EvanMiya intentionally dropped (Cloudflare blocking)
-- ✅ Model accuracy restored with renormalized weights
-
-**All P0-P4 enhancements delivered:**
-1. ✅ **P0 - Data Pipeline Audit** (COMPLETE)
-2. ✅ **P1 - Sharp Money Detection** (COMPLETE)
-3. ✅ **P2 - Conference HCA** (COMPLETE)
-4. ✅ **P3 - Late-Season Recency** (COMPLETE)
-5. ✅ **P4 - Recalibration Audit** (COMPLETE)
-
-**Fantasy Baseball:** DEFERRED until after Apr 7 championship
-
-**See `tasks/cbb_enhancement_plan.md` for full diagnosis and sprint breakdown.**
+- **Gemini CLI is Research-Only.** No production code. Deliverables go to `docs/` as markdown.
+- **All production code: Claude Code only.**
+- **GUARDIAN (Mar 18 - Apr 7):** Do NOT touch `betting_model.py`, `analysis.py`, or CBB services during tournament window. Exception: dedup fix is pure DB guard — safe.
 
 ---
 
-## 1. EXECUTIVE SUMMARY
+## 1. SYSTEM STATUS
 
-**Status:** ✅ **PRODUCTION READY FOR MARCH MADNESS**
+### CBB Model — V9.1 (CALIBRATION DRIFT — see Section 4)
 
-All P0-P4 enhancements delivered and operational. Model running 2-source composite
-(KenPom 51% / BartTorvik 49%) with sharp money detection, conference HCA, and
-recency weighting active. Infrastructure stable on Railway.
+| Component | Status |
+|-----------|--------|
+| Railway API | ✅ Healthy |
+| PostgreSQL | ✅ Connected (365 teams) |
+| Scheduler | ✅ 10 jobs running |
+| Discord | ✅ 16 channels operational |
+| V9.1 Model | ⚠️ Over-conservative — see Section 4 |
+| Test suite | ✅ 647/650 pass (3 pre-existing DB-auth failures) |
+| Dedup fix | ✅ COMPLETE — `run_tier` NULL matching fixed in analysis.py |
 
-**Completed deliverables:**
-- **P0 Data Audit** - 2-source confirmed, BartTorvik public CSV working
-- **P1 Sharp Money** - Steam, opener gap, RLM detection live
-- **P2 Conference HCA** - Big Ten 3.6, Big 12 3.4, etc. with pace adjustment
-- **P3 Recency Weighting** - 2x weight last 3 days, tournament mode ready
-- **P4 Recalibration Audit** - Pipeline validation, drift detection
-- **V9.1 Fatigue Model** - Schedule/travel/altitude edges
-- **OpenClaw Lite** - 26,000× faster integrity checks
-- **Discord System** - Fully operational with fallback narratives
-- **O-8 Baseline** - Ready for March 16 execution
+### Fantasy Baseball — DRAFT-READY
 
-**Known Issues:**
-- **Deduplication bug** - Same game creating multiple predictions (8x in some cases)
-- **Paper/Real gap** - 167 paper trades vs 1 real bet (execution issue, not model)
-
-**Next Action:** Tournament monitoring mode (Mar 18-Apr 7), then Fantasy Baseball.
+| Component | Status | File |
+|-----------|--------|------|
+| Yahoo OAuth + Draft Board + Live Tracker | ✅ COMPLETE | `11_Fantasy_Baseball.py`, `12_Live_Draft.py` |
+| Draft Tracker backend + Discord alerts | ✅ COMPLETE | `draft_tracker.py`, `discord_notifier.py` |
+| Bet settlement fix + re-settlement | ✅ COMPLETE | `bet_tracker.py` — `_resolve_home_away()` |
 
 ---
 
-## 2. SYSTEM STATUS
+## 2. UPCOMING DEADLINES
 
-### 2.1 Core Infrastructure
-
-| Component | Status | Detail | Last Verified |
-|-----------|--------|--------|---------------|
-| Railway API | ✅ Healthy | All deps installing correctly, preflight checks pass | 2026-03-11 |
-| Database | ✅ Connected | PostgreSQL operational, 365 teams loaded | 2026-03-11 |
-| Scheduler | ✅ 10 jobs | Nightly@3AM, outcomes every 2h, lines every 30m | 2026-03-11 |
-| Discord | ✅ Ready | Token configured, template fallbacks active | 2026-03-11 |
-| Streamlit | ✅ Fixed | Expander key error resolved | 2026-03-11 |
-| V9.1 Model | ✅ Active | Fatigue integration live | 2026-03-11 |
-
-### 2.2 Model Components
-
-| Feature | Status | File | Tests |
-|---------|--------|------|-------|
-| Fatigue Model (K-8) | ✅ LIVE | `backend/services/fatigue.py` | 23 pass |
-| OpenClaw Lite (K-9) | ✅ LIVE | `backend/services/openclaw_lite.py` | 18 pass |
-| Sharp Money (P1) | ✅ LIVE | `backend/services/sharp_money.py` | 15 pass |
-| Conference HCA (P2) | ✅ LIVE | `backend/services/conference_hca.py` | 18 pass |
-| Recency Weight (P3) | ✅ LIVE | `backend/services/recency_weight.py` | 20 pass |
-| Seed-Spread Scalars (A-26) | ✅ LIVE | `betting_model.py` | 26 pass |
-| Tournament SD Bump | ✅ LIVE | `betting_model.py` (1.15x neutral) | Active |
-| Line Movement Monitor | ✅ LIVE | `odds_monitor.py` | Runs 30m |
-| Integrity Sweep | ✅ LIVE | `scout.py` + Lite fallback | Async 8-worker |
-
-### 2.3 Upcoming Deadlines
-
-| Date | Event | Status | Owner |
-|------|-------|--------|-------|
-| **Mar 16 ~9 PM ET** | O-8 Baseline Execution | ⏳ Ready | OpenClaw |
-| **Mar 18** | First Four Begins | ⏳ Monitor | All |
-| **Mar 20** | Fantasy Keeper Deadline | ⚠️ 9 days | TBD |
-| **Mar 23** | Fantasy Draft Day | ⚠️ 12 days | TBD |
+| Date | Event | Owner | Action Required |
+|------|-------|-------|----------------|
+| **Mar 16 ~9 PM ET** | O-8 Baseline Execution | OpenClaw | `python scripts/openclaw_baseline.py --year 2026` |
+| **Mar 17 ~7 PM ET** | O-9 Pre-tournament sweep | OpenClaw | See Section 6 |
+| **Mar 18** | First Four begins | All | Tournament monitoring mode |
+| **Mar 20** | Fantasy Keeper Deadline | User | Set keepers in Yahoo UI |
+| **Mar 23 7:30am ET** | Fantasy Draft Day | User | Run `12_Live_Draft.py` |
+| **Apr 7** | Tournament window closes | All | Guardian lifts; V9.2 work begins |
 
 ---
 
-## 3. COMPLETED WORK (March 10-11)
+## 3. ROOT CAUSE: WHY THE MODEL HAS A POOR WIN RECORD
 
-### 3.1 Kimi CLI Deliverables
+**Short answer:** V9.1 stacks 3 Kelly compression layers that were not present when `sd_mult` and `ha` were calibrated. The model now requires far more raw edge to emit a BET verdict than it was designed for, so it under-bets or emits CONSIDER instead of BET on genuine edges.
 
-| Mission | Files | Lines | Tests | Status |
-|---------|-------|-------|-------|--------|
-| **K-8: Fatigue Model** | `fatigue.py`, `docs/FATIGUE_MODEL.md` | 530 | 23 | ✅ Merged |
-| **K-9: OpenClaw Lite** | `openclaw_lite.py`, migration | 200 | 18+12 | ✅ Merged |
-| **O-8: Baseline Script** | `openclaw_baseline.py`, tests | 500 | 5 | ✅ Ready |
-| **D-1: Discord Cleanup** | `scout.py` fallbacks, fixes | 180 | 5 | ✅ Merged |
-| **P0: Data Audit** | Verified 2-source (KP+BT) working | - | - | ✅ Complete |
-| **P1: Sharp Money** | `sharp_money.py`, `test_sharp_money.py` | 400 | 15+ | ✅ Merged |
-| **P2: Conf HCA** | `conference_hca.py`, `test_conference_hca.py` | 280 | 18+ | ✅ Merged |
-| **P3: Recency** | `recency_weight.py`, `test_recency_weight.py` | 350 | 20+ | ✅ Merged |
-| **P4: Recal Audit** | `recalibration_audit.py`, endpoint | 200 | - | ✅ Merged |
-| **Railway Fix** | `railway.toml`, `preflight_check.py` | 150 | - | ✅ Merged |
-| **Build Fix** | Fixed `cloudscraper>=2.3.7` → `>=1.2.0` | 1 | - | ✅ Merged |
+### The Compression Stack
 
-**Total:** ~3,400 lines added, 110+ tests, 19 commits pushed.
+| Layer | Value | Effect |
+|-------|-------|--------|
+| Fractional Kelly divisor | ÷2.0 | Half-Kelly baseline |
+| SNR scalar | ×0.5–1.0 (avg ~0.7 with 2-source) | Effective divisor ~2.86 |
+| Integrity scalar | ×0.5–1.0 (avg ~0.85) | Effective divisor ~3.37 |
+| Conservative CI edge | Lower 2.5th pct, not point estimate | Requires ~6–8% raw edge for 2.5% conservative edge |
+| `ha = 2.419` post-recalibration | 21.7% below 3.09 baseline | Understates home team margin |
+| `sd_mult = 1.0` post-recalibration | 17.6% wider SD than default | Wider CI → fewer edges clear threshold |
 
-### 3.2 P1: Sharp Money Detection (NEW)
+**Net effect:** A game with genuine 4% model edge might emit `edge_conservative = 0.8%` → CONSIDER (not BET). The V9.1 scalars were added AFTER the 663-bet calibration dataset, so they compound on already-conservative params.
 
-**Files:** `backend/services/sharp_money.py` (400 lines)
-**Tests:** `tests/test_sharp_money.py` (280 lines, 15 tests)
+### Contributing Factors
 
-**Features Implemented:**
-1. **Steam Detection** - Rapid ≥1.5 pt moves in <30 minutes
-2. **Opener Gap Detection** - Large divergence from opening line (≥2.0 pts)
-3. **Reverse Line Movement** - Line moves against public betting %
-4. **Edge Adjustment** - Auto-adjust model edge based on signal alignment
+1. **2-source mode** — EvanMiya down. `EVANMIYA_DOWN_SE_ADDEND = 0.30` widens `margin_se` from 1.50 → 1.80. More uncertainty → wider CI.
+2. **No CLV feedback loop** — We don't know if we're actually beating the closing line. Without this we can't distinguish "model edge is real but too compressed" from "model edge is noise."
+3. **Possession simulator unvalidated** — `possession_sim.py` (947 lines) integrated but accuracy vs CLV never measured.
 
-**Configuration (env vars):**
+---
+
+## 4. ACTIVE MISSIONS
+
+### Claude Code — EMAC-067 (post-tournament, Apr 7+)
+
+Pre-tournament: only the dedup fix was safe (done). Full recalibration must wait until after Apr 7.
+
+**After Apr 7 — in order:**
+1. **V9.2 recalibration** — implement Kimi's K-11/K-12 recommendations (see below). Adjust `MIN_BET_EDGE`, `BASE_MARGIN_SE`, and reset `ha`/`sd_mult` to V9-appropriate values. Target: BET rate improves from ~2% to ~8–12%.
+2. **EvanMiya replacement** — wire Gemini's G-R7 findings to restore 3-source composite.
+3. **Possession simulator A/B** — implement Kimi's K-13 recommendation (remove or keep).
+
+### Kimi CLI — Critical Intelligence Missions
+
+#### K-11: CLV Performance Attribution (START IMMEDIATELY)
 ```
-STEAM_THRESHOLD_PTS=1.5
-STEAM_WINDOW_MINUTES=30
-OPENER_GAP_THRESHOLD=2.0
-RLM_PUBLIC_THRESHOLD=60
-```
+MISSION K-11: Real CLV and edge bucket analysis
 
-**Integration:**
-```python
-from backend.services.sharp_money import detect_sharp_signal, apply_sharp_adjustment
+Read the database via scripts that query BetLog + ClosingLine tables.
+Look at scripts/resettle_bets.py as a reference for DB connection pattern.
 
-# Get signal
-signal = detect_sharp_signal(game_key, line_history, current_spread)
+QUESTIONS TO ANSWER:
+1. What is our mean CLV (closing line value) across all settled bets?
+   - CLV > 0 means we beat the closing line (genuine edge exists)
+   - CLV < 0 means market corrected against us (model finds noise, not signal)
+2. By edge bucket (0-3%, 3-6%, 6%+): win rate and CLV in each bucket?
+3. By conference: which conferences are profitable? Which are losses?
+4. By game type: neutral site vs home game — win rate difference?
+5. How many BET verdicts per week over the last 60 days? Is frequency too low?
+6. What is our actual win rate vs expected win rate for each edge bucket?
 
-# Apply to edge
-adjusted_edge, details = apply_sharp_adjustment(base_edge, signal, model_side)
-```
+Also look at reports/BETTING_HISTORY_AUDIT_MARCH_2026.md for prior audit findings.
 
-**Discord Alerts:** Added `send_ratings_source_alert()` to coordinator.py
-
-### 3.3 P2: Conference-Specific HCA (NEW)
-
-**Files:** `backend/services/conference_hca.py` (220 lines)
-**Tests:** `tests/test_conference_hca.py` (200 lines, 18 tests)
-
-**Conference HCA Table:**
-| Conference | HCA | Difficulty |
-|------------|-----|------------|
-| Big Ten | 3.6 | EXTREME |
-| Big 12 | 3.4 | EXTREME |
-| SEC | 3.2 | HIGH |
-| ACC | 3.0 | HIGH |
-| Big East | 2.9 | MODERATE |
-| WCC | 2.7 | MODERATE |
-| AAC | 2.6 | MODERATE |
-| A-10 | 2.5 | MODERATE |
-| SWAC | 1.5 | LOW |
-| MEAC | 1.5 | LOW |
-| Neutral | 0.0 | N/A |
-
-**Usage:**
-```python
-from backend.services.conference_hca import get_conference_hca, apply_conference_hca
-
-# Get HCA for conference
-hca = get_conference_hca("Big Ten", is_neutral=False)  # Returns 3.6
-
-# Apply with pace adjustment
-adjusted_hca, meta = apply_conference_hca("SEC", pace_ratio=1.05)
+DELIVERABLE: reports/K11_CLV_ATTRIBUTION_MARCH_2026.md
+Due: March 16
 ```
 
-**Features:**
-- Name normalization (handles "Big Ten", "B1G", "big ten", etc.)
-- Pace-adjusted HCA scaling
-- Neutral site override (0.0)
-- Difficulty ratings for road games
+#### K-12: V9.1 Recalibration Parameter Recommendation
+```
+MISSION K-12: Recalibration parameters for V9.2
 
-### 3.4 P3: Late-Season Recency Weighting (NEW)
+CONTEXT:
+- V9.1 added SNR scalar (avg ~0.70 in 2-source mode) and integrity scalar (~0.85)
+- These were NOT present in the 663-bet calibration dataset
+- Current params: sd_mult=1.0, ha=2.419 (calibrated for V8 with Kelly divisor=2.0)
+- Effective V9.1 Kelly divisor: 2.0 / 0.70 / 0.85 = ~3.36
+- Result: model over-conservative, emits CONSIDER on genuine BET opportunities
 
-**Files:** `backend/services/recency_weight.py` (280 lines)
-**Tests:** `tests/test_recency_weight.py` (220 lines, 20 tests)
+DERIVE: What should the V9.2 parameters be?
+1. Given typical SNR=0.70 and integrity=0.85 in 2-source mode, what sd_mult
+   preserves the SAME betting frequency as the V8 calibration?
+   Hint: V8 sd_mult=0.85 with Kelly divisor=2.0.
+   V9.2 should target sd_mult such that Kelly divisor 2.0 × SNR × integrity
+   produces the same effective sizing as before.
+2. Is ha=2.419 correct or is it an overcorrection? Compare to KenPom's published
+   home court advantage estimates (~3.0-3.5 for D1 average).
+3. What MIN_BET_EDGE value (currently 2.5%) makes sense given the wider CI?
+   If the model needs 6% raw edge to produce 2.5% conservative edge, we may
+   want to lower MIN_BET_EDGE to 1.5% or raise the margin_se ceiling.
+4. Recommend: should we remove the EVANMIYA_DOWN_SE_ADDEND penalty since we
+   deliberately dropped EvanMiya (it's not "down", it's intentionally excluded)?
 
-**Recency Weight Table (Late Season):**
-| Days Ago | Weight | Period |
-|----------|--------|--------|
-| 0-2 | 2.0x | Very Recent |
-| 3-7 | 1.6-1.9x | Last Week |
-| 8-14 | 1.2-1.5x | Two Weeks |
-| 15-21 | 1.0-1.1x | Three Weeks |
-| 22+ | 1.0x | Older |
-
-**Tournament Mode (March 15+):**
-- Neutral site override: HCA = 0.0
-- Margin SE inflation: +0.20 (higher upset variance)
-- Form window: Last 14 days only
-- Recency weights: Active
-
-**Usage:**
-```python
-from backend.services.recency_weight import (
-    is_late_season,
-    get_recency_weight,
-    get_tournament_adjustments
-)
-
-# Check season phase
-if is_late_season():
-    weight = get_recency_weight(days_ago=5)  # Returns 1.7x
-
-# Get tournament adjustments
-adj = get_tournament_adjustments(is_neutral=True)
-# Returns: margin_se_inflation=0.20, form_window_days=14
+DELIVERABLE: reports/K12_RECALIBRATION_SPEC_V92.md
+Include: exact parameter values to change, justification, expected betting frequency impact
+Due: March 17
 ```
 
-### 3.5 P4: Recalibration Audit (NEW)
+#### K-13: Possession Simulator Validation
+```
+MISSION K-13: Should possession_sim.py stay or go?
 
-**Files:** `scripts/recalibration_audit.py` (200 lines)
-**Endpoint:** `GET /admin/recalibration/audit`
+backend/possession_sim.py (947 lines) is integrated into the analysis pipeline.
+Its accuracy vs the ratings-path has never been measured against actual outcomes.
 
-**Purpose:** Validate recalibration pipeline before tournament
+TASK:
+1. Read possession_sim.py — what does it contribute to margin calculation?
+2. Compare: games where possession sim was used vs not (check analysis logs or
+   model output fields for sim_used flag if it exists)
+3. Run any offline backtests possible with the data we have
+4. Recommendation: keep (with evidence it helps), tune (specific params), or remove
 
-**Checks:**
-1. **Data Sufficiency** - Count settled bets with prediction links (need ≥30)
-2. **Current Parameters** - home_advantage, sd_multiplier from model_parameters
-3. **Drift Detection** - Compare to baselines (HA=3.09, SD=0.85)
-4. **Recency** - Days since last recalibration
+DELIVERABLE: reports/K13_POSSESSION_SIM_AUDIT.md
+Due: March 18 (before tournament — if it's adding noise, we remove it pre-tournament)
+```
 
-**CLI Usage:**
+### Gemini CLI — Research Missions
+
+| Mission | Task | Deliverable | Priority |
+|---------|------|-------------|----------|
+| **G-R7** | **EvanMiya replacement — what 3rd rating source can we add?** Research: ESPN BPI, Sagarin, T-Rank (torvik.com/trank), Massey Ratings. Which is free/scrapeable? Which correlates best with CBB outcomes? | `docs/THIRD_RATING_SOURCE.md` | **HIGH — do first** |
+| G-R1 | Steamer 2026 full download | `docs/PROJECTION_DATA_SOURCES.md` | Medium |
+| G-R2 | Daily MLB lineup sources | `docs/LINEUP_CONFIRMATION_SOURCES.md` | Medium |
+| G-R3 | Closer situations monitor | `docs/CLOSER_SITUATION_SOURCES.md` | Medium |
+| G-R4 | Statcast bulk data | `docs/STATCAST_API_GUIDE.md` | Low |
+| G-R5 | Yahoo Fantasy API XML format | `docs/YAHOO_API_REFERENCE.md` | Low |
+| G-16 | Verify O-10 line monitor post-deploy | Report to HANDOFF | Medium |
+
+### OpenClaw — Mission O-9: Pre-Tournament Sweep
+
+**Run on March 17, 2026 ~7 PM ET:**
 ```bash
-# Run audit
-python scripts/recalibration_audit.py
-
-# Output includes:
-# - Settled bets count
-# - Current parameter values
-# - Drift percentages
-# - Recommendations
+ls data/pre_tournament_baseline_2026.json  # If missing: python scripts/openclaw_baseline.py --year 2026
+python scripts/test_discord.py             # Verify Discord bot
+# GET /admin/odds-monitor/status           # Expect games_tracked > 0
 ```
-
-**API Response:**
-```json
-{
-  "settled_bets": 45,
-  "sufficient_data": true,
-  "home_advantage": 3.12,
-  "sd_multiplier": 0.82,
-  "ha_drift_pct": 1.0,
-  "sd_drift_pct": 3.5,
-  "drift_alert": false,
-  "days_since_recalibration": 2,
-  "recommendations": {
-    "needs_more_data": false,
-    "stale_recalibration": false,
-    "parameter_drift": false
-  }
-}
-```
-
-### 3.6 P0: Data Pipeline Audit (COMPLETE)
-
-**Findings:**
-- ✅ BartTorvik: Public CSV working (365 teams, no auth needed)
-- ✅ EvanMiya: Intentionally dropped (Cloudflare, 2-source mode by design)
-- ✅ Model running 2-source composite (KenPom 51% / BartTorvik 49%)
-- ✅ `/admin/ratings/status` endpoint exists
-- ✅ Discord alerts fire when <2 sources active
-- ✅ `BARTTORVIK_USERNAME/PASSWORD` are legacy (only in docs)
-
-### 3.6 Key Technical Decisions
-
-1. **Ollama Dependency Removed** - All LLM functions now have template fallbacks
-2. **Graceful Degradation Chain** - Ollama → OpenClaw Lite → Seed-based defaults
-3. **Fatigue Model Integration** - Added `fatigue_margin_adj` param to `analyze_game()`
-4. **Conference HCA** - Replaces flat 3.09 with conference-specific values
-5. **Recency Weighting** - 2x weight for recent games in March (late season)
-6. **V9.1 Version Bump** - Model version tracks features (fatigue = v9.1)
-
-### 3.7 Documentation Created
-
-- `docs/FATIGUE_MODEL.md` - Fatigue model specification
-- `docs/OPENCLAW_LITE_PLAN.md` - Migration analysis
-- `docs/UAT_MARCH_10_2026.md` - Test results (58 tests, 100%)
-- `docs/RAILWAY_DISCORD_FIX.md` - Troubleshooting guide
-- `docs/SHARP_MONEY.md` - Sharp money detection spec (NEW)
-- `docs/CONFERENCE_HCA.md` - Conference HCA guide (NEW)
-- `docs/RECENCY_WEIGHTING.md` - Late-season weighting guide (NEW)
-- `SYSTEM_STATUS.md` - Full system overview
+For each First Four matchup: run `check_integrity_heuristic()`. Flag ABORT or VOLATILE here.
 
 ---
 
-## 4. POST-TOURNAMENT ENHANCEMENTS (April 7+)
+## 5. HANDOFF PROMPT — NEXT CLAUDE SESSION (post-Apr 7)
 
-**Status:** P0 ✅ | P1 ✅ | P2 ✅ | P3 ✅ | P4 ✅ - All pre-tournament work complete.
-
-### 4.1 High Priority (After Championship)
-
-#### **E-4: ML-Based Recalibration**
-**Impact:** High - learn optimal parameters from CLV data
-**Effort:** High (~500 lines + model training)
-**Implementation:** XGBoost model for parameter prediction
-**Files:** New `ml_recalibration.py` service
-
-#### **E-5: Live/In-Play Betting Engine**
-**Impact:** High - second half lines, live win probability
-**Effort:** High (~800 lines)
-**Implementation:** Markov state machine for live game simulation
-**Files:** New `live_betting.py` module
-
-#### **E-6: Alternative Line Shopping**
-**Impact:** Medium - better value on alt spreads
-**Effort:** Medium (~150 lines)
-**Files:** `betting_model.py` + odds integration
-
-### 4.2 Lower Priority (Nice to Have)
-
-#### **E-7: Weather/Travel Delay Effects**
-**Impact:** Low - rare edge cases
-**Effort:** Low (~40 lines)
-**Files:** `fatigue.py` extension
-
----
-
-## 5. FANTASY BASEBALL STATUS - DEFERRED
-
-### 5.1 Current State
-- 244 players in database
-- Draft engine functional
-- Keeper engine fixed
-- **Status:** ⏸️ **DEFERRED to post-tournament (April 7+)**
-
-### 5.2 Original Deadlines (Missed)
-- ~~Mar 20: Keeper deadline~~
-- ~~Mar 23: Draft day~~
-
-### 5.3 New Timeline
-- **April 7+:** Begin Phase 0 (after CBB championship)
-- **2027 Season:** Full implementation target
-
-**Rationale:** CBB tournament (Mar 18-Apr 7) is priority. Fantasy Baseball requires
-significant integration work (Yahoo OAuth, Steamer CSVs, keeper UI) that would
-distract from tournament monitoring.
-
----
-
-## 6. KNOWN ISSUES
-
-### 6.1 Deduplication Bug - 🔴 HIGH PRIORITY
-
-**Problem:** Same game creating multiple prediction records
-
-**Evidence:**
-| Matchup | Duplicate Count |
-|---------|----------------|
-| Penn State @ Northwestern | **8 entries** |
-| Kansas St @ BYU | **6 entries** |
-| Missouri St @ FIU | **6 entries** |
-| Syracuse @ SMU | **4 entries** |
-
-**Root Cause:**
-- `get_or_create_game()` dedups games by `external_id` ✅
-- But `Prediction` records have no unique constraint on `(game_id, prediction_date)` ❌
-- Each analysis run creates new predictions for same games
-
-**Fix Required:**
-```python
-# Option 1: Database unique constraint
-UNIQUE (game_id, prediction_date)
-
-# Option 2: Application-level dedup in analysis.py
-# Check for existing prediction before creating new
 ```
+CONTEXT (April 7+, post-tournament):
+- Guardian window lifted. CBB model work can resume.
+- V9.1 has a calibration mismatch — over-conservative due to SNR+integrity scalar stacking.
+- Kimi delivered K-11 (CLV attribution), K-12 (recalibration spec), K-13 (possession sim).
+- Gemini delivered G-R7 (3rd rating source research).
 
-**Files:** `backend/services/analysis.py` ~line 1500, `backend/models.py`
+MISSION EMAC-068: V9.2 Recalibration
+1. Read reports/K12_RECALIBRATION_SPEC_V92.md — implement new sd_mult, ha, MIN_BET_EDGE
+2. Read reports/K11_CLV_ATTRIBUTION_MARCH_2026.md — validate recalibration direction
+3. Read docs/THIRD_RATING_SOURCE.md — wire in new 3rd source to restore 3-source composite
+4. Read reports/K13_POSSESSION_SIM_AUDIT.md — keep or remove possession_sim.py
+5. Run full test suite. Bump model_version to 'v9.2'.
 
-### 6.2 Paper/Real Bet Gap - 🟡 MEDIUM
+TARGET: BET frequency increases from ~2% to ~8-12% of games analyzed.
+Winning record requires genuine CLV > 0 (beat closing line) — verify this with K-11.
 
-**Problem:** 167 paper trades vs 1 real bet
-
-**Analysis:**
-- User confirmed: "I do use it, just not updating the app with actual bets"
-- This is an **execution workflow issue**, not a model issue
-- Model generating signals → User acting outside app → App shows 0 units
-
-**Recommendation:**
-- Option A: Manual bet entry via Bet Log page
-- Option B: DraftKings sync import (DK direct import already built)
-- Option C: Accept paper trade tracking as "system of record"
-
-### 6.3 Line Monitor Alert Timing - ✅ FIXED
-
-**Problem:** Line monitor alerting on games that already started
-
-**Fix Applied:**
-```python
-# Added in line_monitor.py
-if game.game_date and game.game_date < datetime.utcnow():
-    continue  # Skip started games
-```
-
-Also improved Discord alerts with:
-- Clearer action recommendations (BET NOW vs HOLD vs ABANDON)
-- Game tip-off time in alert
-- Explicit "FRESH Model Edge" notation
-
----
-
-## 7. NEXT PRIORITY (March 12-18)
-
-**Status:** P0 ✅ | P1 ✅ | P2 ✅ | P3 ✅ | P4 ✅ | **TOURNAMENT MODE**
-
-| Phase | Work | Timeline | Status |
-|-------|------|----------|--------|
-| **Now** | Monitor system stability | Mar 12-15 | 🎯 Active |
-| **Mar 16** | O-8 Baseline execution | ~9 PM ET | ⏳ Ready |
-| **Mar 18** | Tournament begins | First Four | 🏀 Live |
-| **Mar 18-Apr 7** | Tournament monitoring | 3 weeks | 📊 Ongoing |
-| **Apr 7+** | Fantasy Baseball Phase 0 | Post-championship | ⏸️ Deferred |
-
-**Immediate Actions:**
-1. Fix deduplication bug (pre-tournament)
-2. Monitor P1-P3 features in live market
-3. Execute O-8 baseline March 16
-4. Begin tournament game monitoring March 18
-
-**Kimi recommendation:** Enter monitoring mode - all enhancements delivered.
-
----
-
-## 7. ENVIRONMENT VARIABLES (Railway)
-
-### Required (All Set ✅)
-```
-DATABASE_URL=postgresql://...
-THE_ODDS_API_KEY=...
-KENPOM_API_KEY=...
-API_KEY_USER1=...
-DISCORD_BOT_TOKEN=MTQ3NzQwOTg4NTA0OTMyMzgxNA.GnEBcJ...
-DISCORD_CHANNEL_ID=1477436117426110615
-```
-
-### Optional (Not Required)
-```
-BARTTORVIK_USERNAME/PASSWORD (not set)
-EVANMIYA_API_KEY (not set)
-TWILIO_* (not set)
-SENDGRID_API_KEY (not set)
+GUARDIAN: Tournament window is over. Normal dev protocols resume.
+Run `python -m pytest tests/ -q` before any commit.
 ```
 
 ---
 
-## 8. ACTIVE MISSIONS
+## 6. QUICK REFERENCE
 
-### 8.1 OpenClaw - O-8 Baseline Execution
-**When:** March 16, 2026 ~9:00 PM ET
-**Command:** `python scripts/openclaw_baseline.py --year 2026`
-**Output:** `data/pre_tournament_baseline_2026.json` + `reports/o8_baseline_summary_2026.md`
-**Status:** ⏳ Ready for autonomous execution
-
-### 8.2 Gemini CLI - G-16 Verification
-**Task:** Verify O-10 line monitor post-deploy
-**Status:** Pending verification
-
-### 8.3 Kimi CLI - Enhancement Development
-**Status:** ✅ P0-P3 COMPLETE | Ready for tournament monitoring
-
-**COMPLETED:**
-- P0: Data audit - BartTorvik confirmed working, 2-source mode active
-- P1: Sharp Money Detection - steam, opener gap, RLM detection live
-- P2: Conference HCA - Big Ten 3.6, Big 12 3.4, etc. with pace adjustment
-- P3: Late-season recency - 2x weight for last 3 days, tournament mode ready
-
-**READY:**
-- Tournament monitoring mode (Mar 18-Apr 7)
-- O-8 Baseline execution (Mar 16 ~9 PM ET)
-- Fantasy Baseball Phase 0 (deferred to post-tournament)
+```bash
+python -m pytest tests/ -q
+python scripts/preflight_check.py
+python scripts/test_discord.py
+railway logs --follow
+streamlit run dashboard/app.py
+```
 
 ---
 
-## 9. HIVE WISDOM (Updated)
+## 7. HIVE WISDOM
 
 | Lesson | Source |
 |--------|--------|
+| V9.1 Kelly stack: SNR×integrity×fractional = effective divisor ~3.4× — far too conservative for V8 params | EMAC-067 |
+| EvanMiya SE penalty (+0.30) should be REMOVED if EvanMiya is intentionally excluded, not broken | EMAC-067 |
+| CLV > 0 = genuine edge. CLV < 0 = no edge, no amount of model tuning will fix it | EMAC-067 |
+| ha=2.419 (post-recalib) vs 3.09 baseline — 21.7% reduction may be overcorrection | K-3 audit |
+| sd_mult=1.0 (post-recalib) = 17.6% wider SD than default 0.85 | K-3 audit |
+| Bet settlement: use _resolve_home_away() — never raw string compare | EMAC-064 |
+| Yahoo roster pre-draft returns players:[] (empty array) — handle gracefully | EMAC-063 |
+| Prediction dedup: run_tier NULL causes duplicate rows — use or_() filter | EMAC-067 |
 | Conference HCA: Big Ten 3.6 pts vs SWAC 1.5 pts = significant road differential | P2 |
-| Recency weighting: 2x for last 3 days, 1.6x for last week in March | P3 |
-| Tournament mode: neutral HCA=0, margin SE +0.20, 14-day form window | P3 |
-| Sharp money detection: steam ≥1.5 pts in <30 min = high confidence signal | P1 |
-| Opener gap ≥2.0 pts suggests market correction toward sharp opinion | P1 |
-| RLM detection requires public betting % data (Action Network integration) | P1 |
-| Fatigue model adds 0.5-2.0 point edge in B2B/altitude spots | K-8 |
-| OpenClaw Lite: 26,000× faster, 100% match rate vs Ollama | K-9 |
+| Sharp money: steam >=1.5 pts in <30 min = high confidence signal | P1 |
 | BartTorvik public CSV needs no auth (cloudscraper only) | P0 |
-| EvanMiya intentionally dropped - 2-source mode robust by design | P0 |
-| Template fallbacks essential when Ollama unavailable | D-1 |
-| `key` parameter breaks older Streamlit versions | D-1 |
-| Railway needs explicit `railway.toml` for reliable builds | Railway Fix |
-| Discord token must be set in Railway Variables, not just `.env` | D-1 |
-| cloudscraper 1.x series latest - 2.x doesn't exist (build fix) | Build Fix |
+| EvanMiya intentionally dropped — 2-source mode robust by design | P0 |
+| Discord token must be in Railway Variables, not just .env | D-1 |
+| Avoid non-ASCII chars in output strings (CP-1252 Windows terminal issue) | Python |
 
 ---
 
-## 10. HANDOFF PROMPTS — TOURNAMENT MODE
-
-### CLAUDE CODE (Master Architect)
-```
-MISSION: Tournament monitoring oversight
-
-CONTEXT:
-- P0-P4: ✅ ALL COMPLETE — Data, Sharp Money, HCA, Recency, Recalibration
-- System: Production-ready, 2-source model active
-- Next: March 16 O-8 Baseline execution
-- Then: March 18 tournament monitoring begins
-
-DECISION NEEDED:
-1. Priority of deduplication bug fix before tournament?
-2. Any architectural concerns with current line monitor implementation?
-3. Post-tournament roadmap approval (E-4, E-5, Fantasy)
-
-GUARDIAN: Monitor system health, no feature work until post-tournament.
-```
-
-### KIMI CLI (Deep Intelligence)
-```
-MISSION: Tournament monitoring mode (March 18 - April 7)
-
-COMPLETED:
-- P0: Data Audit ✅ — 2-source (KP+BT) confirmed
-- P1: Sharp Money Detection ✅ — Steam, opener gap, RLM live
-- P2: Conference HCA ✅ — Big Ten 3.6, Big 12 3.4, etc.
-- P3: Late-Season Recency ✅ — 2x weight, tournament mode ready
-- P4: Recalibration Audit ✅ — Pipeline validated
-- K-8: Fatigue Model (v9.1) ✅
-- K-9: OpenClaw Lite ✅
-- O-8: Baseline script ready ✅
-- D-1: Discord/Streamlit cleanup ✅
-
-ACTIVE MONITORING:
-- Line movements for sharp money signals
-- Model predictions vs closing lines (CLV tracking)
-- System health checks (scheduler, Discord, Railway)
-- O-8 baseline execution March 16
-
-KNOWN ISSUES:
-- Deduplication bug: Same game creating multiple predictions (fix queued)
-
-AWAITING: Tournament games begin March 18
-```
-
-### GEMINI CLI (Verification Agent)
-```
-MISSION: O-10 Line Monitor verification
-
-TASK:
-- Verify line monitor skips started games (fix deployed)
-- Verify Discord alerts show correct actions (BET NOW/HOLD/ABANDON)
-- Monitor for any 404 errors from API endpoints
-
-NEXT: Report any anomalies before tournament start
-```
-- P3: Late-season recency weighting (last 30 days 2x)
-- Or: Monitor tournament prep until Mar 18
-
-AWAITING: Claude decision on P2/P3 priority vs. monitoring focus
-```
-
----
-
-## 11. QUICK REFERENCE
-
-### Test Commands
-```bash
-# Run all tests
-python -m pytest tests/ -v
-
-# Test specific modules
-python -m pytest tests/test_fatigue.py -v
-python -m pytest tests/test_openclaw_lite.py -v
-
-# Check system status
-python scripts/preflight_check.py
-python scripts/test_discord.py
-```
-
-### Deploy Commands
-```bash
-# Railway
-railway logs
-railway status
-
-# Git
-git log --oneline -10
-git status
-```
-
-### Monitor Commands
-```bash
-# Discord notifications
-tail -f .openclaw/notifications/$(date +%Y-%m-%d).log
-
-# Railway logs
-railway logs --follow
-```
-
----
-
-**Document Version:** EMAC-060
-**Last Updated:** March 12, 2026 03:40 ET
-**Status:** ✅ **Production Ready — Tournament Mode Active**
+**Document Version:** EMAC-067
+**Last Updated:** March 12, 2026
+**Status:** Dedup fix complete. Fantasy draft-ready. Root cause of poor win record identified (V9.1 calibration mismatch). Kimi assigned K-11/K-12/K-13. Gemini assigned G-R7. Guardian window opens Mar 18.
