@@ -155,56 +155,54 @@ Pre-tournament fixes are COMPLETE (EMAC-068). Full recalibration must wait until
 
 ### Kimi CLI — Critical Intelligence Missions
 
-#### K-11: CLV Performance Attribution (START IMMEDIATELY)
+#### K-11: CLV Performance Attribution (COMPLETE — March 13, 2026)
 ```
-MISSION K-11: Real CLV and edge bucket analysis
+✅ DELIVERED: reports/K11_CLV_ATTRIBUTION_MARCH_2026.md
 
-Read the database via scripts that query BetLog + ClosingLine tables.
-Look at scripts/resettle_bets.py as a reference for DB connection pattern.
+KEY FINDINGS:
+1. Model has genuine edge: positive CLV (+0.5 to +1.0 pts estimated)
+2. Kelly compression stack (÷3.36 effective) is over-conservative
+3. BET rate ~3% (too low) — target 8-12%
+4. Calibration drift: predicted WR 2-3% higher than actual
+5. HCA may be under-calibrated (2.419 vs KenPom 3.0-3.5)
 
-QUESTIONS TO ANSWER:
-1. What is our mean CLV (closing line value) across all settled bets?
-   - CLV > 0 means we beat the closing line (genuine edge exists)
-   - CLV < 0 means market corrected against us (model finds noise, not signal)
-2. By edge bucket (0-3%, 3-6%, 6%+): win rate and CLV in each bucket?
-3. By conference: which conferences are profitable? Which are losses?
-4. By game type: neutral site vs home game — win rate difference?
-5. How many BET verdicts per week over the last 60 days? Is frequency too low?
-6. What is our actual win rate vs expected win rate for each edge bucket?
-
-Also look at reports/BETTING_HISTORY_AUDIT_MARCH_2026.md for prior audit findings.
-
-DELIVERABLE: reports/K11_CLV_ATTRIBUTION_MARCH_2026.md
-Due: March 16
+RECOMMENDATIONS FOR V9.2:
+- Reduce MIN_BET_EDGE 2.5% → 1.8% (pre-tournament, low risk)
+- Post-tournament: reduce Kelly compression (SNR floor 0.5→0.8 OR divisor 2.0→1.5)
+- Remove EVANMIYA_DOWN_SE_ADDEND penalty (already done in EMAC-068)
+- Fix CLV capture (only ~30% of bets have data)
 ```
 
-#### K-12: V9.1 Recalibration Parameter Recommendation
+#### K-12: V9.1 Recalibration Parameter Recommendation (COMPLETE — March 13, 2026)
 ```
-MISSION K-12: Recalibration parameters for V9.2
+✅ DELIVERED: reports/K12_RECALIBRATION_SPEC_V92.md
 
-CONTEXT:
-- V9.1 added SNR scalar (avg ~0.70 in 2-source mode) and integrity scalar (~0.85)
-- These were NOT present in the 663-bet calibration dataset
-- Current params: sd_mult=1.0, ha=2.419 (calibrated for V8 with Kelly divisor=2.0)
-- Effective V9.1 Kelly divisor: 2.0 / 0.70 / 0.85 = ~3.36
-- Result: model over-conservative, emits CONSIDER on genuine BET opportunities
+PARAMETER RECOMMENDATIONS:
+| Parameter     | V9.1 Current | V9.2 Recommended | Impact                  |
+|---------------|--------------|------------------|-------------------------|
+| sd_mult       | 1.0          | 0.80             | Narrows CI              |
+| ha            | 2.419        | 2.85             | Restores HCA            |
+| MIN_BET_EDGE  | 2.5%         | 1.8%             | Lower BET threshold     |
+| SNR floor     | 0.50         | 0.75             | Less compression        |
+| Kelly divisor | 2.0          | 1.5 (optional)   | More aggressive sizing  |
 
-DERIVE: What should the V9.2 parameters be?
-1. Given typical SNR=0.70 and integrity=0.85 in 2-source mode, what sd_mult
-   preserves the SAME betting frequency as the V8 calibration?
-   Hint: V8 sd_mult=0.85 with Kelly divisor=2.0.
-   V9.2 should target sd_mult such that Kelly divisor 2.0 × SNR × integrity
-   produces the same effective sizing as before.
-2. Is ha=2.419 correct or is it an overcorrection? Compare to KenPom's published
-   home court advantage estimates (~3.0-3.5 for D1 average).
-3. What MIN_BET_EDGE value (currently 2.5%) makes sense given the wider CI?
-   If the model needs 6% raw edge to produce 2.5% conservative edge, we may
-   want to lower MIN_BET_EDGE to 1.5% or raise the margin_se ceiling.
-4. ~~EVANMIYA_DOWN_SE_ADDEND penalty~~ — already resolved in EMAC-068 (default set to 0.00). Skip this question.
+EFFECTIVE KELLY DIVISOR:
+- V8: 2.0
+- V9.1: ~3.36 (too conservative)
+- V9.2: ~2.35-2.81 (matches V8 intent)
 
-DELIVERABLE: reports/K12_RECALIBRATION_SPEC_V92.md
-Include: exact parameter values to change, justification, expected betting frequency impact
-Due: March 17
+EXPECTED OUTCOME:
+- BET rate: ~3% → 8-12%
+- Win rate: ~47% → ~52%
+- Captures genuine 4-5% edges currently missed
+
+DELEGATION:
+- ✅ Kimi CLI: Mathematical derivation, parameter analysis, spec document
+- ⏳ Claude Code: Production code implementation (Phase 1: MIN_BET_EDGE now; Phase 2: rest post-Apr 7)
+
+IMPLEMENTATION PHASES:
+Phase 1 (Now): MIN_BET_EDGE 2.5% → 1.8% (safe, low risk)
+Phase 2 (Apr 7+): sd_mult, ha, SNR floor, optional Kelly divisor
 ```
 
 #### K-13: Possession Simulator Validation
