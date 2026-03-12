@@ -2041,10 +2041,10 @@ class TestDynamicMarginSE:
         assert m._compute_margin_se(n_missing=0, sharp_books=1, evanmiya_down=False) == pytest.approx(1.50)
 
     def test_evanmiya_down_raises_se(self):
-        """EvanMiya down adds 0.30 addend → 1.80."""
+        """EvanMiya down adds 0.00 addend by default (intentionally excluded, not broken) → 1.50."""
         m = CBBEdgeModel()
         se = m._compute_margin_se(n_missing=0, sharp_books=1, evanmiya_down=True)
-        assert se == pytest.approx(1.80)
+        assert se == pytest.approx(1.50)
 
     def test_no_sharp_books_raises_se(self):
         """No sharp books available adds 0.30 addend → 1.80."""
@@ -2053,10 +2053,10 @@ class TestDynamicMarginSE:
         assert se == pytest.approx(1.80)
 
     def test_fully_degraded_raises_se(self):
-        """Both EvanMiya down AND no sharp books = today's worst case."""
+        """No sharp books AND EvanMiya down = worst case without explicit EM penalty → 1.80."""
         m = CBBEdgeModel()
         se = m._compute_margin_se(n_missing=0, sharp_books=0, evanmiya_down=True)
-        assert se == pytest.approx(2.10)
+        assert se == pytest.approx(1.80)
 
     def test_fully_degraded_wider_ci(self):
         """Degraded mode produces materially wider CI than base mode."""

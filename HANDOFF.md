@@ -1,6 +1,6 @@
-# OPERATIONAL HANDOFF (EMAC-067)
+# OPERATIONAL HANDOFF (EMAC-068)
 
-> Ground truth as of March 12, 2026. Operator: Claude Code (Master Architect).
+> Ground truth as of March 12, 2026 (test-validated). Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 > Full roadmap: `docs/MLB_FANTASY_ROADMAP.md` · CBB plan: `tasks/cbb_enhancement_plan.md`
 
@@ -10,7 +10,40 @@
 
 - **Gemini CLI is Research-Only.** No production code. Deliverables go to `docs/` as markdown.
 - **All production code: Claude Code only.**
-- **GUARDIAN (Mar 18 - Apr 7):** Do NOT touch `betting_model.py`, `analysis.py`, or CBB services during tournament window. Exception: dedup fix is pure DB guard — safe.
+- **GUARDIAN (Mar 18 - Apr 7):** Do NOT touch `betting_model.py`, `analysis.py`, or CBB services during tournament window. EMAC-068 pre-tournament fixes are now COMPLETE and were the final allowed changes.
+
+---
+
+## EMAC-068: Pre-Tournament Fixes (COMPLETE — March 12, 2026)
+
+Three targeted changes made before the March 18 guardian window:
+
+### Fix 1 — EVANMIYA_DOWN_SE_ADDEND default 0.30 -> 0.00
+- **File:** `backend/betting_model.py`, `_compute_margin_se()`, line 763
+- **Effect:** `margin_se` drops from 1.80 back to 1.50 in normal 2-source operation.
+  Conservative CI narrows; CONSIDER -> BET promotions expected on genuine edges.
+- **Env override still available:** Set `EVANMIYA_DOWN_SE_ADDEND=0.30` in Railway to restore
+  the penalty if EvanMiya is restored and then goes down unexpectedly.
+
+### Fix 2 — FORCE_ env var overrides in analysis.py
+- **File:** `backend/services/analysis.py`, lines 757-793
+- **Effect:** Setting `FORCE_HOME_ADVANTAGE` or `FORCE_SD_MULTIPLIER` in Railway now
+  bypasses the DB-calibrated values immediately (no DB operation required).
+- **Normal mode:** Leave both blank. DB calibration continues as before.
+- **Log signal:** `[FORCED]` suffix appears in the "Model initialised" log line when active.
+
+### Fix 3 — .env.example documentation
+- **File:** `.env.example`
+- `EVANMIYA_DOWN_SE_ADDEND` default updated to `0.00`
+- New section added at bottom: `FORCE_HOME_ADVANTAGE=`, `FORCE_SD_MULTIPLIER=`
+
+### Test suite
+- 2 tests updated in `tests/test_betting_model.py`:
+  - `test_evanmiya_down_raises_se`: updated expected value 1.80 -> 1.50
+  - `test_fully_degraded_raises_se`: updated expected value 2.10 -> 1.80
+- All other SE tests verified safe under new math (monotone ordering still holds, cap still holds)
+- Run: `python -m pytest tests/ -q --ignore=tests/test_integrity_sweep.py`
+  **Confirmed:** 647 pass, 3 pre-existing DB-auth failures (validated March 12, 2026)
 
 ---
 
@@ -24,9 +57,10 @@
 | PostgreSQL | ✅ Connected (365 teams) |
 | Scheduler | ✅ 10 jobs running |
 | Discord | ✅ 16 channels operational |
-| V9.1 Model | ⚠️ Over-conservative — see Section 4 |
+| V9.1 Model | ⚠️ Over-conservative (SE fix applied EMAC-068; ha/sd_mult post-tournament) |
 | Test suite | ✅ 647/650 pass (3 pre-existing DB-auth failures) |
 | Dedup fix | ✅ COMPLETE — `run_tier` NULL matching fixed in analysis.py |
+| OPCL-001 Discord | ✅ COMPLETE — morning brief + telemetry, 24/24 tests pass |
 
 ### Fantasy Baseball — DRAFT-READY
 
@@ -70,7 +104,7 @@
 
 ### Contributing Factors
 
-1. **2-source mode** — EvanMiya down. `EVANMIYA_DOWN_SE_ADDEND = 0.30` widens `margin_se` from 1.50 → 1.80. More uncertainty → wider CI.
+1. **2-source mode** — EvanMiya intentionally excluded. ~~`EVANMIYA_DOWN_SE_ADDEND = 0.30`~~ → fixed to `0.00` in EMAC-068. `margin_se` now 1.50 (was 1.80). This factor is resolved.
 2. **No CLV feedback loop** — We don't know if we're actually beating the closing line. Without this we can't distinguish "model edge is real but too compressed" from "model edge is noise."
 3. **Possession simulator unvalidated** — `possession_sim.py` (947 lines) integrated but accuracy vs CLV never measured.
 
@@ -78,9 +112,41 @@
 
 ## 4. ACTIVE MISSIONS
 
-### Claude Code — EMAC-067 (post-tournament, Apr 7+)
+### OpenClaw — OPCL-001: Discord Enhancement (COMPLETE — March 12, 2026)
 
-Pre-tournament: only the dedup fix was safe (done). Full recalibration must wait until after Apr 7.
+Phase 1 delivered. Files are live in the repo.
+
+| File | Purpose |
+|------|---------|
+| `backend/services/openclaw_briefs.py` | Morning brief generation |
+| `backend/services/openclaw_telemetry.py` | Quiet system monitoring |
+| `scripts/openclaw_scheduler.py` | Cron integration |
+| `tests/test_openclaw_briefs.py` | Unit tests |
+| `tests/test_openclaw_telemetry.py` | Unit tests |
+
+**Discord channels wired:** `send_openclaw_morning_brief()` → #openclaw-briefs · `send_openclaw_telemetry()` → #openclaw-health · `send_openclaw_live_alert()` → #openclaw-escalations
+
+**Usage:**
+```bash
+python scripts/openclaw_scheduler.py --morning-brief          # Daily 7 AM ET
+python scripts/openclaw_scheduler.py --telemetry-check        # Every 30 min
+python scripts/openclaw_scheduler.py --telemetry-check --force-summary
+python -m backend.services.openclaw_briefs --test             # Test mode (no Discord)
+```
+
+**Before March 18 checklist:**
+- [x] 24/24 unit tests pass (`test_openclaw_briefs.py`, `test_openclaw_telemetry.py`) — validated Mar 12
+- [ ] `python scripts/openclaw_scheduler.py --morning-brief --test` — verify Discord embeds live
+- [ ] `python scripts/openclaw_scheduler.py --telemetry-check --test`
+- [ ] Add to Railway scheduler or cron
+
+**Phase 2** (Live Monitor): March 19-25 tournament window.
+
+---
+
+### Claude Code — EMAC-068 (post-tournament, Apr 7+)
+
+Pre-tournament fixes are COMPLETE (EMAC-068). Full recalibration must wait until after Apr 7.
 
 **After Apr 7 — in order:**
 1. **V9.2 recalibration** — implement Kimi's K-11/K-12 recommendations (see below). Adjust `MIN_BET_EDGE`, `BASE_MARGIN_SE`, and reset `ha`/`sd_mult` to V9-appropriate values. Target: BET rate improves from ~2% to ~8–12%.
@@ -134,8 +200,7 @@ DERIVE: What should the V9.2 parameters be?
 3. What MIN_BET_EDGE value (currently 2.5%) makes sense given the wider CI?
    If the model needs 6% raw edge to produce 2.5% conservative edge, we may
    want to lower MIN_BET_EDGE to 1.5% or raise the margin_se ceiling.
-4. Recommend: should we remove the EVANMIYA_DOWN_SE_ADDEND penalty since we
-   deliberately dropped EvanMiya (it's not "down", it's intentionally excluded)?
+4. ~~EVANMIYA_DOWN_SE_ADDEND penalty~~ — already resolved in EMAC-068 (default set to 0.00). Skip this question.
 
 DELIVERABLE: reports/K12_RECALIBRATION_SPEC_V92.md
 Include: exact parameter values to change, justification, expected betting frequency impact
@@ -242,6 +307,6 @@ streamlit run dashboard/app.py
 
 ---
 
-**Document Version:** EMAC-067
+**Document Version:** EMAC-068
 **Last Updated:** March 12, 2026
-**Status:** Dedup fix complete. Fantasy draft-ready. Root cause of poor win record identified (V9.1 calibration mismatch). Kimi assigned K-11/K-12/K-13. Gemini assigned G-R7. Guardian window opens Mar 18.
+**Status:** All pre-tournament fixes COMPLETE and test-validated (647/650). OPCL-001 Discord enhancement live. Fantasy draft-ready. Root cause of poor win record identified (V9.1 calibration mismatch). Kimi assigned K-11/K-12/K-13. Gemini assigned G-R7. Guardian window opens Mar 18. Next Claude session: post-Apr 7 V9.2 recalibration.

@@ -760,7 +760,7 @@ class CBBEdgeModel:
         """
         se = get_float_env("BASE_MARGIN_SE", "1.50")
         if evanmiya_down:
-            se += get_float_env("EVANMIYA_DOWN_SE_ADDEND", "0.30")
+            se += get_float_env("EVANMIYA_DOWN_SE_ADDEND", "0.00")
         if sharp_books < 1:
             if sharp_proxy_used:
                 # Proxy present: half-penalty (less reliable than true sharp)
