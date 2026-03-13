@@ -234,3 +234,93 @@ python scripts/openclaw_scheduler_improved.py --line-monitor
 **Document Version:** EMAC-069
 **Last Updated:** March 13, 2026
 **Status:** Discord improvements deployed. Pre-tournament fixes done (671/674 tests). K-11/K-12/K-13 all COMPLETE. All Gemini research COMPLETE (G-R7: Haslametrics). MIN_BET_EDGE lowered to 1.8% (Phase 1). possession_sim KEEP verdict. OPCL-001 Discord live. Fantasy draft-ready. Guardian opens Mar 18. Next Claude session (Apr 7+): V9.2 Phase 2 + K-14 + Haslametrics wiring.
+
+
+---
+
+## NEW: Tournament Bracket Projection System (BRACKET-001)
+
+**Document:** docs/BRACKET_PROJECTION_PLAN.md  
+**Type:** Strategic Implementation Plan  
+**Priority:** HIGH — Execute on Selection Sunday (March 16)  
+**Owner:** Claude Code (implementation) + Kimi CLI (model validation)
+
+### Objective
+
+Build a comprehensive Monte Carlo bracket simulation system that:
+- Simulates 50,000+ tournaments using CBB Edge V9.1
+- Generates win probabilities for every possible matchup
+- Identifies value bets vs. market futures
+- Produces Cinderella/upset probability rankings
+- Optimizes bracket pool strategy
+
+### Key Components
+
+| Component | Purpose | Status |
+|-----------|---------|--------|
+| **Game Predictor** | V9.1 + tournament adjustments | Existing |
+| **Monte Carlo Engine** | 50k simulation runs | To Build |
+| **Futures Analyzer** | Value bet identification | To Build |
+| **Cinderella Tracker** | Upset probability rankings | To Build |
+| **Pool Optimizer** | Bracket pool EV maximization | To Build |
+
+### Tournament Adjustments to V9.1
+
+1. **Round-specific variance** (R64: 1.12x, Champ: 1.0x)
+2. **Style matchup engine** (3pt shooting vs. closeout defense)
+3. **Seed-based priors** (blend model with historical upset rates)
+4. **Tournament experience factor** (returning player minutes)
+5. **Fatigue tracking** (K-8 already implemented)
+
+### Outputs
+
+- Championship probabilities (all 68 teams)
+- Final Four probabilities
+- Cinderella rankings (double-digit seeds)
+- Upset heat map (R64/R32)
+- Futures value plays
+- Optimal bracket pool entry
+
+### Timeline
+
+**Selection Sunday (March 16)**
+- 6:00 PM: Bracket revealed ? manual input
+- 8:00 PM: Initial 10k sims ? first-cut analysis
+- 10:00 PM: Full 50k sims ? Discord delivery
+
+**Monday (March 17)**
+- 9:00 AM: Morning update with injury info
+- 6:00 PM: First Four breakdown
+
+**Tuesday+ (March 18+)**
+- Live updates after each round
+
+### Files to Create
+
+`
+backend/tournament/
++-- bracket_simulator.py      # Monte Carlo engine (~300 lines)
++-- matchup_predictor.py      # Tournament-specific predictions (~200 lines)
++-- futures_analyzer.py       # Value identification (~150 lines)
++-- cinderella_tracker.py     # Upset detection (~150 lines)
++-- pool_optimizer.py         # Bracket strategy (~200 lines)
+
+scripts/
++-- run_bracket_sims.py       # CLI entry point
++-- generate_bracket_report.py # Report generation
+`
+
+### Success Metrics
+
+- Brier score on game predictions
+- ROI on futures value bets
+- Bracket pool top-10% finish rate
+- Upset prediction accuracy
+
+### Next Steps
+
+1. Implement core Monte Carlo engine
+2. Build tournament-specific adjustments
+3. Test on 2025 historical data
+4. Prepare Selection Sunday pipeline
+

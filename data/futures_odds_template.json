@@ -1,0 +1,15 @@
+{
+  "_instructions": "Fill in team names and American odds after Selection Sunday. Omit markets you don't have odds for. Add/remove teams as needed.",
+  "_format": "american_odds: positive = underdog (e.g. +500), negative = favorite (e.g. -150)",
+
+  "Auburn":     {"championship": 800,  "final_four": 280,  "elite_eight": 140},
+  "Duke":       {"championship": 1000, "final_four": 350,  "elite_eight": 170},
+  "Houston":    {"championship": 1200, "final_four": 400,  "elite_eight": 190},
+  "Tennessee":  {"championship": 1400, "final_four": 450,  "elite_eight": 200},
+  "Iowa State": {"championship": 1600, "final_four": 500,  "elite_eight": 220},
+  "Florida":    {"championship": 1800, "final_four": 550,  "elite_eight": 240},
+  "Michigan St":{"championship": 2000, "final_four": 650,  "elite_eight": 280},
+  "Texas Tech": {"championship": 2500, "final_four": 800,  "elite_eight": 350},
+  "St Johns":   {"championship": 3000, "final_four": 900,  "elite_eight": 380},
+  "Marquette":  {"championship": 3500, "final_four": 1000, "elite_eight": 420}
+}
