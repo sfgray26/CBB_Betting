@@ -576,7 +576,7 @@ config_vars = {
     "MAX_DRAWDOWN_PCT": os.getenv("MAX_DRAWDOWN_PCT", "15.0"),
     "MAX_KELLY_FRACTION": os.getenv("MAX_KELLY_FRACTION", "0.20"),
     "ODDS_API_REGIONS": os.getenv("ODDS_API_REGIONS", "us,eu"),
-    "MIN_BET_EDGE": os.getenv("MIN_BET_EDGE", "2.5"),
+    "MIN_BET_EDGE": os.getenv("MIN_BET_EDGE", "1.8"),
     "BASE_SD": os.getenv("BASE_SD", "11.0"),
     "HOME_ADVANTAGE": os.getenv("HOME_ADVANTAGE", "3.09"),
     "ENVIRONMENT": os.getenv("ENVIRONMENT", "production"),

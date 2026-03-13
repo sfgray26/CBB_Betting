@@ -941,7 +941,7 @@ async def run_nightly_analysis(
         # ================================================================
         # TWO-PASS SLATE: PASS 2 — main loop (edge-sorted order)
         # ================================================================
-        _min_bet_edge = get_float_env("MIN_BET_EDGE", "2.5") / 100.0
+        _min_bet_edge = get_float_env("MIN_BET_EDGE", "1.8") / 100.0
         
         # Build list of game dicts for sweep from Pass 1 candidates
         _sweep_inputs = []
