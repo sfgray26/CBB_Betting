@@ -826,7 +826,7 @@ async def get_optimal_parlays(
     # Parlay Kelly sizing must respect what straight bets have already consumed
     # from the daily exposure budget.  Query today's paper-trade BetLogs to
     # compute capital already allocated, then derive the true remaining dollars.
-    starting_bankroll = get_float_env("STARTING_BANKROLL", "1000")
+    starting_bankroll = get_effective_bankroll(db)
     max_daily_pct     = get_float_env("MAX_DAILY_EXPOSURE_PCT", "20.0")
     max_daily_dollars = starting_bankroll * max_daily_pct / 100.0
 
