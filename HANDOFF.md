@@ -319,6 +319,72 @@ streamlit run dashboard/app.py
 
 ---
 
-**Document Version:** EMAC-068
-**Last Updated:** March 12, 2026
-**Status:** All pre-tournament fixes COMPLETE and test-validated (647/650). OPCL-001 Discord enhancement live. Fantasy draft-ready. Root cause of poor win record identified (V9.1 calibration mismatch). Kimi assigned K-11/K-12/K-13. Gemini assigned G-R7. Guardian window opens Mar 18. Next Claude session: post-Apr 7 V9.2 recalibration.
+## 8. DISCORD IMPROVEMENTS (March 13, 2026)
+
+### Problem Report
+User reported:
+1. Notification ID `1481976070243876954` was useless — didn't show actual picks
+2. No morning briefing being sent
+
+### Root Causes
+1. **Bet notifications** showed summary only ("X bets found") without listing the actual picks
+2. **Morning brief** had TODOs for data collection — never wired to real database
+3. **Line monitor alerts** were too verbose with multiple scenarios
+
+### Improvements Delivered
+
+#### 8.1 New Discord Bet Embeds (`backend/services/discord_bet_embeds.py`)
+- **Summary embed**: Shows ALL bets in ONE message with:
+  - Numbered list: `1. Duke -4.5 (3.2% edge, 1.25u)`
+  - Total exposure
+  - Clear formatting
+- **Detailed embeds**: For high-stakes bets (≥1.0u) with full analysis
+- **BET NOW alerts**: For line movement opportunities
+- **Daily results**: End-of-day P&L summary
+
+#### 8.2 Improved Morning Brief (`backend/services/openclaw_briefs_improved.py`)
+- Actually queries the database for real data
+- Shows:
+  - Today's bet count with avg edge and total units
+  - Yesterday's results (wins/losses/P&L)
+  - Tournament countdown
+  - High-stakes highlight
+
+#### 8.3 Improved Scheduler (`scripts/openclaw_scheduler_improved.py`)
+New tasks:
+- `--morning-brief`: Daily 7 AM ET brief
+- `--daily-picks`: Send all picks after nightly analysis
+- `--end-of-day`: 11 PM ET results summary
+- `--line-monitor`: BET NOW alerts for line moves
+- `--test`: Verify all channels working
+
+### Deployment Instructions
+
+```bash
+# Test all channels
+python scripts/openclaw_scheduler_improved.py --test
+
+# Morning brief (cron: 0 7 * * *)
+python scripts/openclaw_scheduler_improved.py --morning-brief
+
+# Daily picks after analysis
+python scripts/openclaw_scheduler_improved.py --daily-picks
+
+# End of day results (cron: 0 23 * * *)
+python scripts/openclaw_scheduler_improved.py --end-of-day
+
+# Line monitor every 30 min during game days
+python scripts/openclaw_scheduler_improved.py --line-monitor
+```
+
+### Files Modified/Created
+- ✅ `backend/services/discord_bet_embeds.py` — NEW improved embed generators
+- ✅ `backend/services/openclaw_briefs_improved.py` — NEW working morning brief
+- ✅ `backend/services/discord_notifier.py` — Updated to use new embeds
+- ✅ `scripts/openclaw_scheduler_improved.py` — NEW functional scheduler
+
+---
+
+**Document Version:** EMAC-069
+**Last Updated:** March 13, 2026
+**Status:** Discord improvements deployed. All pre-tournament fixes COMPLETE. Guardian window opens Mar 18.

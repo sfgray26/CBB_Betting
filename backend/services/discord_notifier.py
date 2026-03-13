@@ -381,56 +381,55 @@ def send_todays_bets(
     """
     Send today's BET picks to Discord #cbb-bets channel.
     
-    NOISE REDUCTION:
-    - Only sends if there are actual BETs (not CONSIDER or PASS)
-    - Clean, simple format showing just the bets
+    IMPROVED: Shows ALL bets with key details in ONE message.
     """
     if not _bot_token():
         return
 
     n_bets = summary.get("bets_recommended", 0)
-    duration = summary.get("duration_seconds", 0)
     today = datetime.now(timezone.utc).strftime("%b %d, %Y")
 
-    # NO BETs = NO DISCORD MESSAGE (don't spam with "no bets today")
+    # NO BETs = NO DISCORD MESSAGE
     if n_bets == 0:
-        logger.info("No BETs today - skipping Discord notification (noise reduction)")
-        return
-
-    # Build clean summary for BET days only
-    summary_embed = {
-        "title": f"🎯 Today's Bets — {today}",
-        "description": f"**{n_bets} BET{'s' if n_bets > 1 else ''}** found on today's slate!",
-        "color": _COLOR_GREEN,
-        "fields": [
-            {"name": "Run Time", "value": f"{duration:.0f}s", "inline": True},
-        ],
-        "footer": {"text": "CBB Edge v9 — Good luck!"},
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-
-    # Send summary to cbb-bets channel
-    success = send_to_channel("cbb-bets", embed=summary_embed)
-    if not success:
+        logger.info("No BETs today - skipping Discord notification")
         return
 
     if not bet_details:
         return
 
-    # Sort highest-edge first, only send actual BETs
+    # Filter and sort actual BETs
     ordered = sorted(
         [b for b in bet_details if b.get("verdict", "").startswith("BET")],
         key=lambda b: b.get("edge_conservative") or 0.0,
         reverse=True
     )
 
-    # Send each bet as an individual message
-    for bet in ordered:
-        try:
-            logger.info("Sending Discord bet for %s @ %s", bet.get("away_team"), bet.get("home_team"))
-            send_to_channel("cbb-bets", embed=_bet_embed(bet))
-        except Exception as e:
-            logger.error("Failed to send bet embed for %s: %s", bet.get("home_team"), e)
+    if not ordered:
+        return
+
+    # Send ONE summary message with ALL bets
+    from backend.services.discord_bet_embeds import create_bet_summary_embed
+    summary_embed = create_bet_summary_embed(ordered, summary)
+    
+    if summary_embed:
+        success = send_to_channel("cbb-bets", embed=summary_embed)
+        if not success:
+            logger.error("Failed to send bet summary to Discord")
+            return
+        logger.info(f"Sent bet summary with {len(ordered)} bets to Discord")
+    
+    # Optionally send detailed embeds for high-stakes bets (>= 1.0u)
+    high_stakes = [b for b in ordered if (b.get("recommended_units") or 0) >= 1.0]
+    
+    if high_stakes:
+        from backend.services.discord_bet_embeds import create_detailed_bet_embed
+        for i, bet in enumerate(high_stakes, 1):
+            try:
+                detail_embed = create_detailed_bet_embed(bet, bet_number=i)
+                send_to_channel("cbb-bets", embed=detail_embed)
+                logger.info(f"Sent detailed embed for high-stakes bet: {bet.get('home_team')} vs {bet.get('away_team')}")
+            except Exception as e:
+                logger.error(f"Failed to send detailed bet embed: {e}")
 
 
 def send_morning_brief(summary_embed: dict) -> bool:
