@@ -20,7 +20,8 @@
       "Bash(ls:*)",
       "Bash(grep:*)",
       "Read(//c/Users/sfgra/**)",
-      "Bash(sed -n '730,745p' backend/services/performance.py)"
+      "Bash(sed -n '730,745p' backend/services/performance.py)",
+      "Bash(railway logs:*)"
     ]
   }
 }
