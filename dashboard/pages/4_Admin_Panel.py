@@ -546,7 +546,7 @@ if portfolio:
 
     with g1:
         exposure = portfolio.get("current_exposure_pct", 0)
-        max_exposure = get_float_env("MAX_DAILY_EXPOSURE_PCT", "15.0")
+        max_exposure = get_float_env("MAX_DAILY_EXPOSURE_PCT", "20.0")
         st.metric("Current Exposure", f"{exposure:.1f}%")
         st.progress(min(exposure / max_exposure, 1.0) if max_exposure > 0 else 0)
         st.caption(f"Cap: {max_exposure:.0f}%")
@@ -572,7 +572,7 @@ st.subheader("Environment Configuration")
 
 config_vars = {
     "STARTING_BANKROLL": os.getenv("STARTING_BANKROLL", "1000"),
-    "MAX_DAILY_EXPOSURE_PCT": os.getenv("MAX_DAILY_EXPOSURE_PCT", "15.0"),
+    "MAX_DAILY_EXPOSURE_PCT": os.getenv("MAX_DAILY_EXPOSURE_PCT", "20.0"),
     "MAX_DRAWDOWN_PCT": os.getenv("MAX_DRAWDOWN_PCT", "15.0"),
     "MAX_KELLY_FRACTION": os.getenv("MAX_KELLY_FRACTION", "0.20"),
     "ODDS_API_REGIONS": os.getenv("ODDS_API_REGIONS", "us,eu"),

@@ -827,7 +827,7 @@ async def get_optimal_parlays(
     # from the daily exposure budget.  Query today's paper-trade BetLogs to
     # compute capital already allocated, then derive the true remaining dollars.
     starting_bankroll = get_float_env("STARTING_BANKROLL", "1000")
-    max_daily_pct     = get_float_env("MAX_DAILY_EXPOSURE_PCT", "5.0")
+    max_daily_pct     = get_float_env("MAX_DAILY_EXPOSURE_PCT", "20.0")
     max_daily_dollars = starting_bankroll * max_daily_pct / 100.0
 
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
