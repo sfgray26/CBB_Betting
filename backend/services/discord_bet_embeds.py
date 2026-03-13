@@ -24,9 +24,7 @@ _COLOR_GOLD = 0xFFD700
 
 def create_bet_summary_embed(bets: List[Dict], summary: Dict) -> Optional[Dict]:
     """
-    Create a CLEAR bet summary that shows ALL picks immediately.
-    
-    This replaces the old summary that just said "X bets found".
+    Create a SUPER CLEAR bet summary that shows ALL picks immediately.
     """
     n_bets = len(bets)
     if n_bets == 0:
@@ -52,29 +50,25 @@ def create_bet_summary_embed(bets: List[Dict], summary: Dict) -> Optional[Dict]:
         
         total_units += units
         
-        # Format: 1. Duke -4.5 (3.2% edge, 1.25u)
+        # Format: BET #1: Duke -4.5 (3.2% edge, 1.25u)
         bet_lines.append(
-            f"**{i}. {team_to_bet} {spread_str}** — {edge:.1%} edge, {units:.2f}u"
+            f"**BET #{i}: {team_to_bet} {spread_str}**\n"
+            f"└ Edge: {edge:.1%} | Stake: {units:.2f}u"
         )
     
-    description = f"**{n_bets} BET{'S' if n_bets > 1 else ''} for {today}**\n\n"
-    description += "\n".join(bet_lines)
-    description += f"\n\n**Total Exposure: {total_units:.2f}u**"
+    # Simple, clear description
+    description = "\n\n".join(bet_lines)
+    description += f"\n\n💰 **Total: {total_units:.2f} units**"
     
-    # Determine color based on edge quality
-    max_edge = max(b.get('edge_conservative', 0) or 0 for b in bets)
-    if max_edge >= 0.05:
-        color = _COLOR_GOLD  # Strong edge
-    elif max_edge >= 0.035:
-        color = _COLOR_GREEN  # Good edge
-    else:
-        color = _COLOR_BLUE  # Standard
+    # Color: Gold for high stakes, Green for standard
+    max_units = max(b.get('recommended_units', 0) or 0 for b in bets)
+    color = _COLOR_GOLD if max_units >= 1.0 else _COLOR_GREEN
     
     return {
-        "title": f"🎯 TODAY'S BETS — {today}",
+        "title": f"🎯 {n_bets} BET{'S' if n_bets > 1 else ''} FOR {today.upper()}",
         "description": description,
         "color": color,
-        "footer": {"text": f"CBB Edge v9 | {summary.get('duration_seconds', 0):.0f}s analysis"},
+        "footer": {"text": "CBB Edge v9"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 

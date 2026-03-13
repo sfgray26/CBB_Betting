@@ -55,6 +55,7 @@ _COLOR_GREY = 0x95A5A6    # all pass
 _COLOR_RED = 0xE74C3C     # errors / alerts
 _COLOR_BLUE = 0x3498DB    # info / briefs
 _COLOR_ORANGE = 0xE67E22  # warnings
+_COLOR_GOLD = 0xFFD700    # high stakes
 
 # Channel configuration mapping
 CHANNEL_MAP = {
@@ -301,16 +302,9 @@ def _odds_str(bet_odds) -> str:
 
 
 def _bet_embed(bet: Dict) -> Dict:
-    """Build a clear, actionable bet embed for Discord."""
-    pick = _pick_str(bet)
+    """Build a SUPER CLEAR, actionable bet embed for Discord."""
     edge = bet.get("edge_conservative", 0.0) or 0.0
     units = bet.get("recommended_units", 0.0) or 0.0
-    margin = bet.get("projected_margin", 0.0) or 0.0
-    kelly = bet.get("kelly_fractional", 0.0) or 0.0
-    verdict = bet.get("verdict", "")
-    snr = bet.get("snr")
-    
-    # Extract team info for clarity
     home_team = bet.get("home_team", "Home")
     away_team = bet.get("away_team", "Away")
     bet_side = bet.get("bet_side", "home")
@@ -318,54 +312,37 @@ def _bet_embed(bet: Dict) -> Dict:
     
     # Determine which team we're betting on
     team_to_bet = home_team if bet_side == "home" else away_team
-    opponent = away_team if bet_side == "home" else home_team
-    home_away = "HOME" if bet_side == "home" else "AWAY"
     
-    # Format the spread for display from bettor's perspective
+    # Format the spread from bettor's perspective
     if spread is not None:
-        if bet_side == "home":
-            spread_val = spread
-        else:
-            spread_val = -spread
+        spread_val = spread if bet_side == "home" else -spread
         spread_str = f"{spread_val:+.1f}"
     else:
         spread_str = "ML"
-
-    # Generate LLM-based scouting insight
-    insight = generate_scouting_report(
-        home_team=home_team,
-        away_team=away_team,
-        matchup_notes=bet.get("matchup_notes", []),
-        verdict=verdict,
-        edge=edge
-    )
-
-    # Use the V9 integrity_verdict computed during analysis Pass 2.
-    integrity = bet.get("integrity_verdict") or "Not run"
-
-    snr_str = f"{snr:.0%}" if snr is not None else "N/A"
-
-    # Build clear action line
-    action_line = f"**Take {team_to_bet} {spread_str}**"
-
+    
+    # Build THE BET - front and center
+    the_bet = f"**{team_to_bet} {spread_str}**"
+    
+    # Color based on confidence
+    if units >= 1.5:
+        color = _COLOR_GOLD  # High stakes
+    elif edge >= 0.04:
+        color = _COLOR_GREEN  # Strong edge
+    else:
+        color = _COLOR_BLUE
+    
     return {
-        "title": f"BET: {team_to_bet}",
-        "description": f"{action_line}\n{away_team} @ {home_team}",
-        "color": _COLOR_GREEN,
+        "title": f"🎯 BET: {the_bet}",
+        "description": f"{away_team} @ {home_team}",
+        "color": color,
         "fields": [
-            {"name": "Betting",      "value": f"{team_to_bet} {spread_str}", "inline": True},
-            {"name": "Side",         "value": f"{home_away} ({bet_side.upper()})", "inline": True},
-            {"name": "Opponent",     "value": opponent,                       "inline": True},
-            {"name": "Edge",         "value": f"{edge:.1%}",                  "inline": True},
-            {"name": "Stake",        "value": f"{units:.2f}u",                "inline": True},
-            {"name": "Odds",         "value": _odds_str(bet.get("bet_odds")), "inline": True},
-            {"name": "Proj. Margin", "value": f"{margin:+.1f} pts",           "inline": True},
-            {"name": "Kelly",        "value": f"{kelly:.1%}",                 "inline": True},
-            {"name": "Tier",         "value": _tier(verdict),                 "inline": True},
-            {"name": "Source SNR",   "value": snr_str,                        "inline": True},
-            {"name": "Model Insight", "value": insight,                       "inline": False},
-            {"name": "V9 Integrity", "value": integrity,                      "inline": True},
+            {"name": "🎯 THE BET", "value": the_bet, "inline": False},
+            {"name": "💰 Stake", "value": f"{units:.2f}u", "inline": True},
+            {"name": "📊 Edge", "value": f"{edge:.1%}", "inline": True},
+            {"name": "📈 Projected", "value": f"{bet.get('projected_margin', 0):+.1f} pts", "inline": True},
         ],
+        "footer": {"text": "CBB Edge v9"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
