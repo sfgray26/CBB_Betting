@@ -1600,24 +1600,48 @@ async def run_nightly_analysis(
                             integrity_verdict=integrity_verdict,
                             is_neutral=game_input.get("is_neutral", False),
                         )
-                        # Collect for simultaneous Kelly — don't create paper trades yet
-                        calcs = analysis.full_analysis.get("calculations", {})
-                        bet_candidates.append({
-                            "index": len(bet_candidates),
-                            "game": game,
-                            "prediction": prediction,
-                            "analysis": analysis,
-                            "old_verdict": old_verdict,
-                            "conference": game_data.get("conference"),
-                            "spread": odds_input.get("spread", 0) or 0,
-                            "bet_side": calcs.get("bet_side", "home"),
-                            "bet_odds": calcs.get("bet_odds"),
-                            "recommended_units": analysis.recommended_units,
-                            "kelly_fractional": analysis.kelly_fractional,
-                            "edge_conservative": analysis.edge_conservative,
-                            "home_team": home_team,
-                            "away_team": away_team,
-                        })
+                        # Skip games already paper-traded today — preserve their Bet verdict
+                        # and don't count their sizing against remaining capacity.
+                        # This prevents a manual afternoon re-run from clobbering bets
+                        # that the morning nightly job correctly placed.
+                        _today_start_chk = datetime.utcnow().replace(
+                            hour=0, minute=0, second=0, microsecond=0
+                        )
+                        _already_traded = (
+                            db.query(BetLog)
+                            .filter(
+                                BetLog.game_id == game.id,
+                                BetLog.is_paper_trade.is_(True),
+                                BetLog.timestamp >= _today_start_chk,
+                            )
+                            .first()
+                        )
+                        if _already_traded:
+                            logger.info(
+                                "Preserving existing paper trade for %s @ %s "
+                                "(BetLog #%d) — skipping from global scaling.",
+                                away_team, home_team, _already_traded.id,
+                            )
+                            # Leave prediction verdict as-is (already "Bet"); no further action.
+                        else:
+                            # Collect for simultaneous Kelly — don't create paper trades yet
+                            calcs = analysis.full_analysis.get("calculations", {})
+                            bet_candidates.append({
+                                "index": len(bet_candidates),
+                                "game": game,
+                                "prediction": prediction,
+                                "analysis": analysis,
+                                "old_verdict": old_verdict,
+                                "conference": game_data.get("conference"),
+                                "spread": odds_input.get("spread", 0) or 0,
+                                "bet_side": calcs.get("bet_side", "home"),
+                                "bet_odds": calcs.get("bet_odds"),
+                                "recommended_units": analysis.recommended_units,
+                                "kelly_fractional": analysis.kelly_fractional,
+                                "edge_conservative": analysis.edge_conservative,
+                                "home_team": home_team,
+                                "away_team": away_team,
+                            })
                         # Advance the running exposure so games evaluated later
                         # in this edge-sorted slate see a realistic portfolio load.
                         # recommended_units is in percentage-point units (e.g. 2.5
