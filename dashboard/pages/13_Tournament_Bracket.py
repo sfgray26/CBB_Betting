@@ -188,6 +188,15 @@ def _pull_from_db():
         return 0, [str(exc)]
 
 
+def _load_2026_bracket_from_disk():
+    """Load the pre-built 2026 bracket JSON from data/bracket_2026.json."""
+    bracket_path = Path(__file__).resolve().parent.parent.parent / "data" / "bracket_2026.json"
+    if not bracket_path.exists():
+        raise FileNotFoundError(f"bracket_2026.json not found at {bracket_path}")
+    with open(bracket_path, encoding="utf-8") as f:
+        _load_bracket_json(f.read())
+
+
 def _load_bracket_json(json_str: str):
     """Load bracket from uploaded JSON string into session state."""
     data = json.loads(json_str)
@@ -245,6 +254,17 @@ with st.sidebar:
 
     st.divider()
     st.header("Import / Export")
+
+    if st.button("Load 2026 Bracket", use_container_width=True, type="primary",
+                 help="Load the official 2026 NCAA Tournament bracket with pre-built composite ratings"):
+        try:
+            _load_2026_bracket_from_disk()
+            st.success("2026 bracket loaded with ratings.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Could not load bracket: {exc}")
+
+    st.caption("Or upload a custom bracket JSON:")
     uploaded = st.file_uploader("Load bracket JSON", type="json", key="bracket_upload")
     if uploaded:
         try:
@@ -266,18 +286,30 @@ with st.sidebar:
 # Section 1: Bracket Input
 # ---------------------------------------------------------------------------
 st.subheader("1. Enter the Bracket")
-st.caption("Fill in team names after Selection Sunday. Ratings default to seed-based estimates — use 'Pull from DB' for real V9.1 ratings.")
+st.caption("Load the 2026 bracket from the sidebar, then optionally refresh ratings from the DB if it is reachable.")
 
-col_pull, col_reset, col_spacer = st.columns([2, 2, 6])
+col_load, col_pull, col_reset, col_spacer = st.columns([2, 2, 2, 4])
+with col_load:
+    if st.button("Load 2026 Bracket", use_container_width=True, type="primary"):
+        try:
+            _load_2026_bracket_from_disk()
+            st.success("Loaded.")
+            st.rerun()
+        except Exception as exc:
+            st.error(str(exc))
+
 with col_pull:
-    if st.button("Pull ratings from DB", use_container_width=True, type="secondary"):
+    if st.button("Refresh from DB", use_container_width=True, type="secondary",
+                 help="Overwrite ratings from team_profiles table. Requires local DB connection."):
         with st.spinner("Looking up team ratings..."):
             found, missing = _pull_from_db()
         if found > 0:
-            st.success(f"Ratings loaded for {found} teams.")
-        if missing:
-            st.warning(f"Not found in DB: {', '.join(missing[:10])}")
-        st.rerun()
+            st.success(f"Updated {found} teams.")
+            st.rerun()
+        elif missing and len(missing) == 1 and ("password" in missing[0].lower() or "connect" in missing[0].lower() or "refused" in missing[0].lower()):
+            st.warning("DB not reachable locally — bracket JSON ratings are already pre-built and ready to use.")
+        else:
+            st.warning(f"No ratings found. Teams missing: {', '.join(missing[:5])}")
 
 with col_reset:
     if st.button("Reset bracket", use_container_width=True):
