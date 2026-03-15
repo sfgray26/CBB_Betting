@@ -1,0 +1,12 @@
+team,market,american_odds,fair_american_odds,model_prob,market_implied_prob,edge_pct,ev_pct,recommendation
+Florida,final_four,240,148,0.4028,0.2941,10.9,37.0,BET
+Nebraska,final_four,1400,1055,0.0866,0.0667,2.0,29.9,BET
+Houston,final_four,450,334,0.2305,0.1818,4.9,26.8,BET
+Purdue,final_four,420,317,0.2397,0.1923,4.7,24.6,BET
+Arizona,final_four,180,138,0.4194,0.3571,6.2,17.4,BET
+Iowa State,final_four,380,318,0.2393,0.2083,3.1,14.9,CONSIDER
+Duke,final_four,150,119,0.4556,0.4,5.6,13.9,CONSIDER
+Illinois,final_four,750,652,0.133,0.1176,1.5,13.1,CONSIDER
+Vanderbilt,final_four,2000,1769,0.0535,0.0476,0.6,12.4,CONSIDER
+Gonzaga,final_four,700,617,0.1395,0.125,1.5,11.6,CONSIDER
+Michigan,final_four,145,122,0.4509,0.4082,4.3,10.5,CONSIDER
