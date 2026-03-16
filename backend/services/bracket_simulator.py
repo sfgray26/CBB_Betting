@@ -29,27 +29,27 @@ from typing import Dict, List, Optional, Tuple
 # ---------------------------------------------------------------------------
 
 # Historical R64 win rate for (better_seed, worse_seed) matchup — all-time data.
+# SLIGHTLY adjusted to favor more upsets (12, 11, 13 seeds)
 HISTORICAL_WIN_RATES: Dict[Tuple[int, int], float] = {
-    (1, 16): 0.987,
-    (2, 15): 0.940,
-    (3, 14): 0.848,
-    (4, 13): 0.793,
-    (5, 12): 0.647,
-    (6, 11): 0.631,
-    (7, 10): 0.603,
-    (8,  9): 0.509,
+    (1, 16): 0.987,  # 1-seeds almost never lose (1.3% upset)
+    (2, 15): 0.933,  # 2-seeds rarely lose (6.7% upset)
+    (3, 14): 0.847,  # 3-seeds usually win (15.3% upset)
+    (4, 13): 0.784,  # 4-seeds often win (21.6% upset)
+    (5, 12): 0.620,  # 5-seeds vs 12-seeds: 38% upset rate (was 35.3%)
+    (6, 11): 0.600,  # 6-seeds vs 11-seeds: 40% upset rate (was 36.9%)
+    (7, 10): 0.590,  # 7-seeds vs 10-seeds: 41% upset rate (was 39.7%)
+    (8,  9): 0.505,  # 8 vs 9: coin flip (49.5% upset)
 }
 
 # Weight given to the historical seed signal per round.
-# Fades quickly: by the Sweet 16 (round 3) the survivors bear little
-# resemblance to their original seeding distribution.
+# INCREASED for R64 to allow more Cinderella upsets
 ROUND_HIST_WEIGHT: Dict[int, float] = {
-    1: 0.40,
-    2: 0.25,
-    3: 0.15,
-    4: 0.08,
-    5: 0.00,
-    6: 0.00,
+    1: 0.55,  # R64: 55% history (was 40%) — MAJOR upset zone!
+    2: 0.35,  # R32: 35% history (was 25%)
+    3: 0.15,  # S16: 15% history
+    4: 0.08,  # E8: 8% history
+    5: 0.00,  # F4: pure model
+    6: 0.00,  # Champ: pure model
 }
 
 # Standard bracket R64 seed pairings within a region (by seed number).
@@ -59,10 +59,10 @@ _R64_PAIRS: List[Tuple[int, int]] = [
 ]
 
 # Upset alert threshold: underdog must have at least this probability.
-_UPSET_ALERT_THRESHOLD = 0.35
+_UPSET_ALERT_THRESHOLD = 0.30  # LOWERED from 0.35 to flag more potential upsets
 
 # Tournament SD inflation factor applied to the AdjEM logistic divisor.
-_TOURNAMENT_SD_FACTOR = 1.15
+_TOURNAMENT_SD_FACTOR = 1.25  # INCREASED from 1.15 for more March Madness chaos
 
 # AdjEM logistic base divisor: 10.0 pts gap => ~73% win prob in regular season.
 _ADJM_BASE_DIVISOR = 10.0
