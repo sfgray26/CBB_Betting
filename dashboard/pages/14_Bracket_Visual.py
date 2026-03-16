@@ -485,6 +485,10 @@ def render_full_bracket_html(region_rounds: dict, ff: list, champ: dict, chaos_m
 st.title("Predicted Tournament Bracket")
 st.caption("Model picks the higher-probability team in every matchup. Bracket uses V9.1 composite ratings + historical seed blending.")
 
+# Initialize session state
+if "chaos_mode" not in st.session_state:
+    st.session_state.chaos_mode = False
+
 # Load bracket — prefer session state from page 13, fall back to disk
 bracket = load_bracket_from_session()
 source = "Tournament Bracket page (page 13)"
@@ -507,21 +511,23 @@ st.subheader("Bracket Mode")
 col_chalk, col_chaos, _ = st.columns([2, 2, 6])
 
 with col_chalk:
-    if st.button("🏆 Chalk Bracket", type="secondary" if st.session_state.get("chaos_mode", False) else "primary",
+    is_chalk = not st.session_state.chaos_mode
+    if st.button("🏆 Chalk Bracket", type="primary" if is_chalk else "secondary",
                  help="Predict favorites win every game"):
         st.session_state.chaos_mode = False
         st.session_state.pop("predicted_bracket", None)
         st.rerun()
 
 with col_chaos:
-    if st.button("🔥 Chaos Bracket", type="primary" if st.session_state.get("chaos_mode", False) else "secondary",
+    is_chaos = st.session_state.chaos_mode
+    if st.button("🔥 Chaos Bracket", type="primary" if is_chaos else "secondary",
                  help="Predict upsets in high-risk matchups (5v12, 6v11, 7v10, 8v9)"):
         st.session_state.chaos_mode = True
         st.session_state.pop("predicted_bracket", None)
         st.rerun()
 
-chaos_mode = st.session_state.get("chaos_mode", False)
-mode_label = "🔥 CHAOS MODE (upsets predicted)" if chaos_mode else "🏆 CHALK MODE (favorites)"
+chaos_mode = st.session_state.chaos_mode
+mode_label = "🔥 CHAOS MODE — Upsets predicted in R64/R32!" if chaos_mode else "🏆 CHALK MODE — Favorites win every game"
 st.info(mode_label)
 
 # Re-generate button
