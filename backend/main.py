@@ -202,6 +202,24 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # End-of-day results — 11 PM ET
+    scheduler.add_job(
+        _end_of_day_results_job,
+        CronTrigger(hour=23, minute=0, timezone=timezone),
+        id="end_of_day_results",
+        name="End-of-Day Results Summary",
+        replace_existing=True,
+    )
+
+    # Tournament bracket release notifier — runs daily 6 PM ET, Mar 14–20
+    scheduler.add_job(
+        _tournament_bracket_job,
+        CronTrigger(hour=18, minute=0, timezone=timezone),
+        id="tournament_bracket_notifier",
+        name="Tournament Bracket Release Notifier",
+        replace_existing=True,
+    )
+
     # Weekly model parameter recalibration — Sunday 5 AM ET
     # Note: recalibration and sentinel both run at 5:00 AM; they are independent.
     scheduler.add_job(
@@ -216,7 +234,8 @@ async def lifespan(app: FastAPI):
     logger.info(
         "Scheduler started: nightly@%02d:00, outcomes every 2h + daily@04:00, "
         "lines every 30min, odds monitor every %dmin, snapshot@04:30, "
-        "sentinel@05:00, briefing@07:00, ratings prewarm@%02d:00, recalibration@sun05:00 %s",
+        "sentinel@05:00, briefing@07:00, ratings prewarm@%02d:00, recalibration@sun05:00, "
+        "end_of_day@23:00, tournament_bracket@18:00 %s",
         nightly_hour, odds_monitor_interval, ratings_prewarm_hour, timezone,
     )
     
@@ -399,7 +418,9 @@ def _nightly_health_check_job():
 
 
 def _morning_briefing_job():
-    """Morning slate briefing at 7 AM ET — logs today's prediction slate summary."""
+    """Morning slate briefing at 7 AM ET — logs today's prediction slate summary and sends to Discord."""
+    import time as _time
+    t0 = _time.monotonic()
     db = SessionLocal()
     try:
         from datetime import date as _date
@@ -429,10 +450,322 @@ def _morning_briefing_job():
         logger.info(
             "Morning Briefing: %d BET, %d CONSIDER. %s", n_bets, n_considered, narrative
         )
+
+        duration = _time.monotonic() - t0
+
+        bet_details = [
+            {
+                "home_team": p.game.home_team,
+                "away_team": p.game.away_team,
+                "spread": p.spread,
+                "bet_side": p.bet_side,
+                "edge_conservative": p.conservative_edge,
+                "recommended_units": p.kelly_fraction,
+                "bet_odds": p.odds,
+                "kelly_fractional": p.kelly_fraction,
+                "projected_margin": p.projected_margin,
+                "verdict": p.verdict,
+            }
+            for p in bet_preds
+        ]
+
+        summary = {
+            "bets_recommended": n_bets,
+            "games_considered": n_considered,
+            "games_analyzed": len(preds),
+            "duration_seconds": duration,
+        }
+
+        try:
+            send_todays_bets(bet_details or None, summary)
+        except Exception as discord_exc:
+            logger.warning("Discord morning briefing send failed (non-fatal): %s", discord_exc)
+
     except Exception:
         logger.exception("Morning briefing job failed")
     finally:
         db.close()
+
+
+def _end_of_day_results_job():
+    """End-of-day results summary at 11 PM ET — settles today's bets and sends Discord recap."""
+    from datetime import date, timezone as _timezone
+    from backend.services.discord_notifier import _post, _bot_token
+
+    try:
+        if not _bot_token():
+            logger.info("End-of-day results: DISCORD_BOT_TOKEN not set — skipping")
+            return
+
+        db = SessionLocal()
+        try:
+            today = date.today()
+            settled = (
+                db.query(BetLog)
+                .join(Game)
+                .filter(
+                    func.date(BetLog.timestamp) == today,
+                    BetLog.outcome.isnot(None),
+                    BetLog.outcome != -1,
+                )
+                .all()
+            )
+
+            wins = sum(1 for b in settled if b.outcome == 1)
+            losses = sum(1 for b in settled if b.outcome == 0)
+            pushes = sum(1 for b in settled if b.outcome == 2)
+            pl = sum((b.profit_loss_dollars or 0) for b in settled) / 100
+
+            embed = {
+                "title": "📊 CBB Edge — End of Day Results",
+                "description": (
+                    f"{wins}W-{losses}L"
+                    + (f"-{pushes}P" if pushes else "")
+                    + f" | {'+' if pl >= 0 else ''}{pl:.1f} units"
+                ),
+                "color": 0x2ECC71 if pl > 0 else (0xE74C3C if pl < 0 else 0x95A5A6),
+                "fields": [
+                    {"name": "Wins",   "value": str(wins),                              "inline": True},
+                    {"name": "Losses", "value": str(losses),                             "inline": True},
+                    {"name": "P&L",    "value": f"{'+'if pl>=0 else ''}{pl:.1f}u",       "inline": True},
+                ],
+                "footer": {"text": "CBB Edge Analyzer v9"},
+                "timestamp": datetime.now(_timezone.utc).isoformat(),
+            }
+            _post({"embeds": [embed]})
+            logger.info(
+                "End-of-day results sent: %dW-%dL-%dP | %.1f units", wins, losses, pushes, pl
+            )
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("End-of-day results job failed")
+
+
+def _tournament_bracket_job():
+    """
+    Tournament bracket release notifier.
+
+    Runs daily from March 15–17. On the day the bracket is released (Selection
+    Sunday), The Odds API will start returning NCAAB tournament games. When we
+    first detect ≥4 new NCAAB games with tips scheduled Mar 18–19 (First Four),
+    we send a Discord notification and mark the bracket as notified so we only
+    fire once.
+
+    Uses a sentinel file (.bracket_notified_{year}) to prevent duplicate sends.
+    """
+    import requests as _requests
+    from datetime import date, timezone as _timezone
+    from backend.services.discord_notifier import _post, _bot_token
+
+    try:
+        today = date.today()
+        year = today.year
+
+        # Only run between March 14 and March 20 inclusive
+        if not (today.month == 3 and 14 <= today.day <= 20):
+            return
+
+        sentinel = f".bracket_notified_{year}"
+        if os.path.exists(sentinel):
+            return
+
+        api_key = os.getenv("THE_ODDS_API_KEY")
+        if not api_key:
+            return
+
+        url = (
+            f"https://api.the-odds-api.com/v4/sports/basketball_ncaab/events"
+            f"?apiKey={api_key}&dateFormat=iso&regions=us"
+        )
+        resp = _requests.get(url, timeout=10)
+        if resp.status_code != 200:
+            logger.warning("Tournament bracket job: Odds API returned %d", resp.status_code)
+            return
+
+        events = resp.json()
+        window_start = datetime(year, 3, 18, 0, 0, 0, tzinfo=_timezone.utc)
+        window_end   = datetime(year, 3, 20, 23, 59, 59, tzinfo=_timezone.utc)
+
+        first_four_games = [
+            e for e in events
+            if window_start
+            <= datetime.fromisoformat(e["commence_time"].replace("Z", "+00:00"))
+            <= window_end
+        ]
+
+        if len(first_four_games) < 4:
+            return
+
+        embed = {
+            "title": "🏀 NCAA Tournament Bracket Released!",
+            "description": (
+                f"The {year} NCAA Tournament bracket is live. "
+                f"{len(first_four_games)} First Four matchups detected."
+            ),
+            "color": 0x1E90FF,
+            "fields": [
+                {
+                    "name": g["home_team"] + " vs " + g["away_team"],
+                    "value": g["commence_time"][:10],
+                    "inline": True,
+                }
+                for g in first_four_games[:8]
+            ],
+            "footer": {"text": "CBB Edge — Tournament Mode Active"},
+            "timestamp": datetime.now(_timezone.utc).isoformat(),
+        }
+
+        if _post({"embeds": [embed]}):
+            open(sentinel, "w").close()
+            logger.info("Tournament bracket notification sent for %d", year)
+
+        # --- Monte Carlo bracket simulation (non-fatal) ---
+        try:
+            from backend.services.bracket_simulator import BracketTeam, simulate_tournament
+            from backend.services.tournament_data import fetch_tournament_bracket
+            from backend.services.team_mapping import normalize_team_name
+
+            bracket_seeds = fetch_tournament_bracket()
+            kenpom_ratings = get_ratings_service().get_kenpom_ratings()
+
+            if bracket_seeds and kenpom_ratings:
+                teams = []
+                kenpom_keys = list(kenpom_ratings.keys())
+                for team_name, seed in bracket_seeds.items():
+                    norm = normalize_team_name(team_name, kenpom_keys)
+                    adj_em = kenpom_ratings.get(norm, 0.0) if norm else 0.0
+                    teams.append(
+                        BracketTeam(
+                            name=team_name,
+                            seed=seed,
+                            region="Unknown",
+                            adj_em=adj_em,
+                        )
+                    )
+
+                if len(teams) >= 32:
+                    result = simulate_tournament(teams, n_sims=5000)
+
+                    f4_lines = "\n".join(
+                        f"- {t} ({result.advancement_probs[t][4] * 100:.0f}% F4)"
+                        for t in result.projected_final_four[:4]
+                        if t in result.advancement_probs
+                    )
+                    champ_prob = result.advancement_probs.get(
+                        result.projected_champion, [0.0] * 7
+                    )[6]
+
+                    bracket_embed = {
+                        "title": "Bracket Projection — Monte Carlo",
+                        "description": (
+                            f"**Projected Champion:** {result.projected_champion}"
+                            f" ({champ_prob * 100:.0f}%)\n\n"
+                            f"**Final Four:**\n{f4_lines}"
+                        ),
+                        "color": 0x1E90FF,
+                        "fields": [
+                            {
+                                "name": f"Upset Alert #{i + 1}",
+                                "value": (
+                                    f"({a['dog_seed']}) {a['underdog']} vs "
+                                    f"({a['fav_seed']}) {a['favorite']}"
+                                    f" — {a['upset_prob'] * 100:.0f}% upset chance"
+                                ),
+                                "inline": False,
+                            }
+                            for i, a in enumerate(result.upset_alerts[:3])
+                        ],
+                        "footer": {
+                            "text": f"Based on {result.n_sims:,} simulated brackets"
+                        },
+                        "timestamp": datetime.now(_timezone.utc).isoformat(),
+                    }
+                    _post({"embeds": [bracket_embed]})
+        except Exception as sim_exc:
+            logger.warning("Bracket simulation failed (non-fatal): %s", sim_exc)
+
+    except Exception:
+        logger.exception("Tournament bracket job failed")
+
+
+@app.get("/api/tournament/bracket-projection")
+async def get_bracket_projection(
+    n_sims: int = Query(default=10000, ge=1000, le=50000),
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Monte Carlo NCAA Tournament bracket projection.
+
+    Blends KenPom AdjEM win probabilities with historically-calibrated
+    seed upset rates to produce a realistic bracket with upsets.
+
+    Query parameters:
+      n_sims: Number of Monte Carlo simulations (1,000 – 50,000; default 10,000).
+
+    Returns advancement probabilities for all teams, the projected champion,
+    projected Final Four, and upset alerts for R64 games where the underdog
+    has >= 35% win probability.
+    """
+    from backend.services.bracket_simulator import BracketTeam, simulate_tournament
+    from backend.services.tournament_data import fetch_tournament_bracket
+    from backend.services.team_mapping import normalize_team_name
+
+    # Fetch seed data from BallDontLie (cached 6 h).
+    bracket_seeds: dict = fetch_tournament_bracket()
+    if not bracket_seeds:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No tournament bracket data available. "
+                "Ensure BALLDONTLIE_API_KEY is set and the bracket has been released."
+            ),
+        )
+
+    # Fetch KenPom AdjEM ratings (cached internally by RatingsService).
+    kenpom_ratings: dict = get_ratings_service().get_kenpom_ratings()
+    kenpom_keys = list(kenpom_ratings.keys())
+
+    # Build BracketTeam list by joining bracket seeds with AdjEM ratings.
+    teams: list = []
+    unmatched: list = []
+    for team_name, seed in bracket_seeds.items():
+        norm = normalize_team_name(team_name, kenpom_keys) if kenpom_keys else None
+        adj_em = kenpom_ratings.get(norm, 0.0) if norm else 0.0
+        if not norm:
+            unmatched.append(team_name)
+        teams.append(
+            BracketTeam(
+                name=team_name,
+                seed=seed,
+                region="Unknown",
+                adj_em=adj_em,
+            )
+        )
+
+    if len(teams) < 32:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Only {len(teams)} teams resolved from bracket data "
+                "(need at least 32). Check BALLDONTLIE_API_KEY and KenPom ratings."
+            ),
+        )
+
+    result = simulate_tournament(teams, n_sims=n_sims)
+
+    return {
+        "n_sims": result.n_sims,
+        "projected_champion": result.projected_champion,
+        "projected_final_four": result.projected_final_four,
+        "projected_bracket": result.projected_bracket,
+        "upset_alerts": result.upset_alerts,
+        "advancement_probs": result.advancement_probs,
+        "teams_resolved": len(teams),
+        "teams_total": len(bracket_seeds),
+        "unmatched_teams": unmatched[:10],  # cap list for response readability
+    }
 
 
 def _daily_snapshot_job():
