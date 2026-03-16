@@ -251,7 +251,7 @@ class SmartBracketGenerator:
         Predict winner using all factors.
         
         Args:
-            deterministic: If True, always pick based on final_upset_prob threshold
+            deterministic: If True, use chaos-based threshold for upsets
                           If False, use probability-based random selection
         """
         # Identify favorite and underdog by seed
@@ -268,9 +268,15 @@ class SmartBracketGenerator:
         
         factors = self.calculate_upset_factors(favorite, underdog, round_num, region)
         
+        # Chaos-based threshold: higher chaos = lower threshold for upsets
+        # Chaos 0.0: threshold = 0.50 (favorites always win unless >50% upset prob)
+        # Chaos 0.5: threshold = 0.35 (upsets at 35% prob)
+        # Chaos 1.0: threshold = 0.20 (upsets at 20% prob)
+        chaos_threshold = 0.50 - (self.chaos_level * 0.30)
+        
         if deterministic:
-            # Predict upset if final prob > 50%
-            upset_happens = factors.final_upset_prob > 0.50
+            # Predict upset if final prob > chaos-adjusted threshold
+            upset_happens = factors.final_upset_prob > chaos_threshold
         else:
             # Probability-weighted random selection
             upset_happens = random.random() < factors.final_upset_prob
