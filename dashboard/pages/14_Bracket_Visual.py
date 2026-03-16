@@ -106,15 +106,41 @@ def load_bracket_from_session() -> dict | None:
 
 
 # ---------------------------------------------------------------------------
-# Predicted bracket generator
+# Upset probability lookup from historical data (same as matchup_predictor.py)
 # ---------------------------------------------------------------------------
-def generate_predicted_bracket(bracket: dict) -> tuple:
-    """
-    Pick the higher-probability team in every matchup to produce the 'chalk' bracket.
+SEED_UPSET_RATES = {
+    (1, 16): 0.013,
+    (2, 15): 0.067,
+    (3, 14): 0.153,
+    (4, 13): 0.216,
+    (5, 12): 0.352,
+    (6, 11): 0.389,
+    (7, 10): 0.394,
+    (8, 9):  0.487,
+}
 
+
+def get_upset_probability(seed_a: int, seed_b: int) -> float:
+    """Get historical upset probability for a seed matchup."""
+    higher = min(seed_a, seed_b)
+    lower = max(seed_a, seed_b)
+    return SEED_UPSET_RATES.get((higher, lower), 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Predicted bracket generators
+# ---------------------------------------------------------------------------
+def generate_predicted_bracket(bracket: dict, chaos_mode: bool = False) -> tuple:
+    """
+    Generate bracket predictions.
+    
+    Args:
+        bracket: {region: [TournamentTeam]}
+        chaos_mode: If True, show predicted upsets based on historical rates
+                   If False, pick the favorite every time (chalk bracket)
+    
     Returns:
         region_rounds: {region: {round_num: [matchup_dict, ...]}}
-            where matchup_dict = {ta, tb, winner, loser, prob, is_upset}
         ff: list of 2 F4 matchup dicts
         champ: championship matchup dict
     """
@@ -135,10 +161,30 @@ def generate_predicted_bracket(bracket: dict) -> tuple:
             for i in range(0, len(current), 2):
                 ta, tb = current[i], current[i + 1]
                 prob_a, _, _ = predict_game(ta, tb, round_num)
-                if prob_a >= 0.5:
-                    winner, loser, prob = ta, tb, prob_a
+                
+                # In chaos mode, predict upsets when underdog has >30% chance
+                if chaos_mode and round_num <= 2:  # R64 and R32 only
+                    upset_prob = get_upset_probability(ta.seed, tb.seed)
+                    # If upset prob > 30%, predict the upset happens
+                    if upset_prob > 0.30 and ta.seed > tb.seed:
+                        # ta is underdog, predict upset
+                        winner, loser, prob = ta, tb, upset_prob
+                    elif upset_prob > 0.30 and tb.seed > ta.seed:
+                        # tb is underdog, predict upset  
+                        winner, loser, prob = tb, ta, upset_prob
+                    else:
+                        # No predicted upset
+                        if prob_a >= 0.5:
+                            winner, loser, prob = ta, tb, prob_a
+                        else:
+                            winner, loser, prob = tb, ta, 1.0 - prob_a
                 else:
-                    winner, loser, prob = tb, ta, 1.0 - prob_a
+                    # Chalk mode: always pick favorite
+                    if prob_a >= 0.5:
+                        winner, loser, prob = ta, tb, prob_a
+                    else:
+                        winner, loser, prob = tb, ta, 1.0 - prob_a
+                        
                 is_upset = winner.seed > loser.seed
                 matchups.append({
                     "ta": ta, "tb": tb,
@@ -369,7 +415,7 @@ def _ff_center(ff: list, champ: dict) -> str:
     )
 
 
-def render_full_bracket_html(region_rounds: dict, ff: list, champ: dict) -> str:
+def render_full_bracket_html(region_rounds: dict, ff: list, champ: dict, chaos_mode: bool = False) -> str:
     """Render the full 4-region bracket as self-contained HTML."""
 
     east    = _region_bracket_ltr("east",    region_rounds, "EAST")
@@ -396,12 +442,15 @@ def render_full_bracket_html(region_rounds: dict, ff: list, champ: dict) -> str:
         f'</div>'
     )
 
+    mode_indicator = "🔥 CHAOS BRACKET — Upsets Predicted! 🔥" if chaos_mode else "CHALK BRACKET — Favorites Win"
+    mode_color = "#D32F2F" if chaos_mode else "#1565C0"
+    
     bracket_label = (
-        f'<div style="text-align:center;font-size:16px;font-weight:bold;color:#212121;'
+        f'<div style="text-align:center;font-size:16px;font-weight:bold;color:{mode_color};'
         f'margin-bottom:12px;font-family:Arial;letter-spacing:1px">'
-        f'2026 NCAA TOURNAMENT — MODEL PREDICTED BRACKET'
+        f'2026 NCAA TOURNAMENT — {mode_indicator}'
         f'<span style="font-size:11px;font-weight:normal;color:#666;margin-left:12px">'
-        f'(V9.1 model · chalk picks · win % shown on winner)'
+        f'(V9.1 model · win % shown on winner)'
         f'</span></div>'
     )
 
@@ -451,13 +500,37 @@ if bracket is None:
 named = sum(1 for ts in bracket.values() for t in ts if not t.name.startswith(f"{t.region.title()}-Seed"))
 st.caption(f"Bracket source: {source} | {named}/64 teams named")
 
+# ---------------------------------------------------------------------------
+# Bracket mode toggle
+# ---------------------------------------------------------------------------
+st.subheader("Bracket Mode")
+col_chalk, col_chaos, _ = st.columns([2, 2, 6])
+
+with col_chalk:
+    if st.button("🏆 Chalk Bracket", type="secondary" if st.session_state.get("chaos_mode", False) else "primary",
+                 help="Predict favorites win every game"):
+        st.session_state.chaos_mode = False
+        st.session_state.pop("predicted_bracket", None)
+        st.rerun()
+
+with col_chaos:
+    if st.button("🔥 Chaos Bracket", type="primary" if st.session_state.get("chaos_mode", False) else "secondary",
+                 help="Predict upsets in high-risk matchups (5v12, 6v11, 7v10, 8v9)"):
+        st.session_state.chaos_mode = True
+        st.session_state.pop("predicted_bracket", None)
+        st.rerun()
+
+chaos_mode = st.session_state.get("chaos_mode", False)
+mode_label = "🔥 CHAOS MODE (upsets predicted)" if chaos_mode else "🏆 CHALK MODE (favorites)"
+st.info(mode_label)
+
 # Re-generate button
 if st.button("Generate / Refresh Predicted Bracket", type="primary"):
     st.session_state.pop("predicted_bracket", None)
 
 if "predicted_bracket" not in st.session_state:
-    with st.spinner("Computing predicted bracket..."):
-        region_rounds, ff, champ = generate_predicted_bracket(bracket)
+    with st.spinner(f"Computing {'chaos' if chaos_mode else 'chalk'} bracket..."):
+        region_rounds, ff, champ = generate_predicted_bracket(bracket, chaos_mode=chaos_mode)
         st.session_state.predicted_bracket = (region_rounds, ff, champ)
 
 region_rounds, ff, champ = st.session_state.predicted_bracket
@@ -487,7 +560,7 @@ st.divider()
 # ---------------------------------------------------------------------------
 # Full bracket visual
 # ---------------------------------------------------------------------------
-html = render_full_bracket_html(region_rounds, ff, champ)
+html = render_full_bracket_html(region_rounds, ff, champ, chaos_mode=chaos_mode)
 # Height: 16 teams * 24px * 2 regions + padding
 components.html(html, height=1050, scrolling=True)
 
