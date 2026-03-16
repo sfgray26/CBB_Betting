@@ -1,0 +1,183 @@
+﻿ID,Date,Matchup,Pick,Type,Odds,Units,Risk ($),Result,P&L ($),P&L (u),CLV pts,CLV prob,Paper?
+385,2026-03-13,Kennesaw St Owls @ Western Kentucky Hilltoppers,Western Kentucky Hilltoppers -1.5,spread,-106,0,0,Loss,0,0,-0.5,-0.0181,true
+157,2026-03-13,Kennesaw St Owls @ Western Kentucky Hilltoppers,Western Kentucky Hilltoppers -1.0,spread,-106,0,0,Loss,0,0,0,0,true
+372,2026-03-13,Southern Utah Thunderbirds @ UT-Arlington Mavericks,UT-Arlington Mavericks -4.5,spread,-106,0,0,Win,0,0,1,0.0362,true
+146,2026-03-13,Southern Utah Thunderbirds @ UT-Arlington Mavericks,UT-Arlington Mavericks -4.5,spread,-106,0,0,Win,0,0,1,0.0362,true
+457,2026-03-13,Florida Atlantic Owls @ North Texas Mean Green,Florida Atlantic Owls +1.5,spread,-118,0,0,Loss,0,0,0,0,true
+456,2026-03-13,UC Davis Aggies @ CSU Fullerton Titans,UC Davis Aggies +2.5,spread,-115,0,0,Loss,0,0,-1,-0.0362,true
+453,2026-03-13,Clemson Tigers @ North Carolina Tar Heels,North Carolina Tar Heels -1.5,spread,100,0,0,Loss,0,0,-3,-0.1075,true
+452,2026-03-13,TCU Horned Frogs @ Kansas Jayhawks,Kansas Jayhawks -6.5,spread,-104,0,0,Loss,0,0,-2,-0.0721,true
+451,2026-03-13,Georgetown Hoyas @ Villanova Wildcats,Villanova Wildcats -7.5,spread,-106,0,0,Loss,0,0,-1,-0.0362,true
+445,2026-03-13,Rutgers Scarlet Knights @ UCLA Bruins,UCLA Bruins -11.5,spread,-106,1.5,15,Win,14.15,1.4151,-1,-0.0362,true
+446,2026-03-13,San José St Spartans @ New Mexico Lobos,New Mexico Lobos -15.5,spread,-102,1.5,15,Win,14.71,1.4706,0,0,true
+373,2026-03-12,Ohio Bobcats @ Kent State Golden Flashes,Kent State Golden Flashes -4.0,spread,-106,0,0,Win,0,0,-1,-0.0362,true
+374,2026-03-12,San José St Spartans @ Boise State Broncos,Boise State Broncos -16.5,spread,-102,1.5,15,Loss,-15,-1.5,,,true
+375,2026-03-12,Cal Poly Mustangs @ UC San Diego Tritons,UC San Diego Tritons -5.5,spread,-105,0,0,Loss,0,0,-1,-0.0362,true
+380,2026-03-12,Creighton Bluejays @ Seton Hall Pirates,Seton Hall Pirates -3.5,spread,100,0,0,Win,0,0,,,true
+377,2026-03-12,Alabama A&M Bulldogs @ Texas Southern Tigers,Texas Southern Tigers +1.5,spread,-108,0,0,Loss,0,0,0.5,0.0181,true
+378,2026-03-12,South Carolina St Bulldogs @ Norfolk St Spartans,Norfolk St Spartans -7.0,spread,-111,1.25,12.5,Loss,-12.5,-1.25,1,0.0362,true
+281,2026-03-12,Massachusetts Minutemen @ Miami (OH) RedHawks,Miami (OH) RedHawks -8.0,spread,-106,0,0,Loss,0,0,,,true
+381,2026-03-12,Fresno St Bulldogs @ Colorado St Rams,Colorado St Rams -7.5,spread,-102,1.5,15,Loss,-15,-1.5,-0.5,-0.0181,true
+382,2026-03-12,Temple Owls @ Florida Atlantic Owls,Florida Atlantic Owls -1.5,spread,-106,0,0,Win,0,0,-1.5,-0.0542,true
+383,2026-03-12,Bowling Green Falcons @ Toledo Rockets,Toledo Rockets -1.5,spread,100,0,0,Loss,0,0,0,0,true
+323,2026-03-12,Tarleton State Texans @ Abilene Christian Wildcats,Abilene Christian Wildcats +1.5,spread,-101,0,0,Win,0,0,1.5,0.0542,true
+461,2026-03-12,South Carolina St Bulldogs @ Norfolk St Spartans,Norfolk St Spartans -8.5,spread,-105,0,0,Loss,0,0,-0.5,-0.0181,true
+176,2026-03-12,Fresno St Bulldogs @ Colorado St Rams,Colorado St Rams -7.5,spread,-102,0,0,Loss,0,0,-0.5,-0.0181,true
+167,2026-03-12,GW Revolutionaries @ Fordham Rams,GW Revolutionaries -5.5,spread,-103,0,0,Loss,0,0,,,true
+162,2026-03-12,Alabama A&M Bulldogs @ Texas Southern Tigers,Texas Southern Tigers +0.0,spread,-106,0,0,Loss,0,0,-1,-0.0362,true
+161,2026-03-12,UC Santa Barbara Gauchos @ UC Davis Aggies,UC Santa Barbara Gauchos +3.0,spread,-111,0,0,Loss,0,0,,,true
+389,2026-03-12,Rhode Island Rams @ Duquesne Dukes,Duquesne Dukes -1.5,spread,-105,0,0,Win,0,0,0,0,true
+159,2026-03-12,Rhode Island Rams @ Duquesne Dukes,Duquesne Dukes -1.0,spread,-106,0,0,Win,0,0,0.5,0.0181,true
+156,2026-03-12,South Carolina Gamecocks @ Oklahoma Sooners,Oklahoma Sooners -8.0,spread,-103,0,0,Win,0,0,-0.5,-0.0181,true
+155,2026-03-12,Bowling Green Falcons @ Toledo Rockets,Toledo Rockets -1.0,spread,-106,0,0,Push,0,0,0.5,0.0181,true
+151,2026-03-12,South Carolina St Bulldogs @ Norfolk St Spartans,Norfolk St Spartans -6.5,spread,-106,0,0,Loss,0,0,1.5,0.0542,true
+150,2026-03-12,Temple Owls @ Florida Atlantic Owls,Florida Atlantic Owls -1.5,spread,101,0,0,Win,0,0,-1.5,-0.0542,true
+149,2026-03-12,Ohio Bobcats @ Kent State Golden Flashes,Kent State Golden Flashes -4.0,spread,-106,0,0,Win,0,0,-1,-0.0362,true
+144,2026-03-12,Cal Poly Mustangs @ UC San Diego Tritons,UC San Diego Tritons -6.0,spread,-106,0,0,Loss,0,0,-1.5,-0.0542,true
+160,2026-03-12,Creighton Bluejays @ Seton Hall Pirates,Seton Hall Pirates -3.0,spread,-106,0,0,Win,0,0,,,true
+379,2026-03-12,UC Santa Barbara Gauchos @ UC Davis Aggies,UC Davis Aggies +5.0,spread,-101,0,0,Win,0,0,,,true
+447,2026-03-12,Buffalo Bulls @ Akron Zips,Akron Zips -13.0,spread,-104,0,0,Loss,0,0,-1,-0.0362,true
+460,2026-03-12,Washington Huskies @ Wisconsin Badgers,Wisconsin Badgers -7.5,spread,102,0,0,Loss,0,0,,,true
+443,2026-03-12,Loyola (Chi) Ramblers @ Davidson Wildcats,Davidson Wildcats -7.5,spread,-105,1.5,15,Loss,-15,-1.5,-2,-0.0721,true
+449,2026-03-12,Ole Miss Rebels @ Georgia Bulldogs,Georgia Bulldogs -6.0,spread,-104,0,0,Loss,0,0,0,0,true
+424,2026-03-12,Massachusetts Minutemen @ Miami (OH) RedHawks,Miami (OH) RedHawks -8.0,spread,-106,0,0,Loss,0,0,,,true
+450,2026-03-12,Iowa State Cyclones @ Texas Tech Red Raiders,Texas Tech Red Raiders +6.5,spread,-103,0,0,Loss,0,0,0,0,true
+454,2026-03-12,Rhode Island Rams @ Duquesne Dukes,Duquesne Dukes -1.5,spread,100,0,0,Win,0,0,0,0,true
+455,2026-03-12,Creighton Bluejays @ Seton Hall Pirates,Creighton Bluejays +3.5,spread,-108,0,0,Loss,0,0,,,true
+458,2026-03-12,Xavier Musketeers @ UConn Huskies,UConn Huskies -16.5,spread,100,0,0,Win,0,0,0,0,true
+414,2026-03-12,Tarleton State Texans @ Abilene Christian Wildcats,Abilene Christian Wildcats +1.5,spread,-102,0,0,Win,0,0,1.5,0.0542,true
+413,2026-03-12,Oklahoma St Cowboys @ TCU Horned Frogs,Oklahoma St Cowboys +5.0,spread,-109,0,0,Loss,0,0,2.5,0.0899,true
+448,2026-03-12,Northwestern Wildcats @ Purdue Boilermakers,Purdue Boilermakers -12.5,spread,-103,0,0,Win,0,0,1,0.0362,true
+412,2026-03-12,Middle Tennessee Blue Raiders @ Louisiana Tech Bulldogs,Louisiana Tech Bulldogs +1.5,spread,-105,0,0,Win,0,0,-0.5,-0.0181,true
+407,2026-03-12,Wake Forest Demon Deacons @ Clemson Tigers,Clemson Tigers -5.5,spread,-106,0,0,Win,0,0,0,0,true
+403,2026-03-12,Idaho Vandals @ Montana Grizzlies,Montana Grizzlies +1.5,spread,-110,0,0,Loss,0,0,,,true
+392,2026-03-12,GW Revolutionaries @ Fordham Rams,GW Revolutionaries -5.5,spread,-103,0,0,Loss,0,0,,,true
+444,2026-03-12,Florida St Seminoles @ Duke Blue Devils,Florida St Seminoles +18.5,spread,-156,0.5,5,Win,3.21,0.3205,-2,-0.0721,true
+141,2026-03-11,Grambling St Tigers @ Jackson St Tigers,Jackson St Tigers +4.5,spread,100,0,0,Win,0,0,-3,-0.1075,true
+140,2026-03-11,Idaho Vandals @ Eastern Washington Eagles,Eastern Washington Eagles -1.5,spread,100,0,0,Loss,0,0,-3,-0.1075,true
+118,2026-03-11,Providence Friars @ Butler Bulldogs,Butler Bulldogs +1.5,spread,-110,0,0,Loss,0,0,0,0,true
+117,2026-03-11,LSU Tigers @ Kentucky Wildcats,Kentucky Wildcats -6.5,spread,-115,0,0,Loss,0,0,2,0.0721,true
+116,2026-03-11,Mississippi St Bulldogs @ Auburn Tigers,Auburn Tigers -7.5,spread,-105,1.25,12.5,Win,11.9,1.1905,0,0,true
+124,2026-03-11,Xavier Musketeers @ Marquette Golden Eagles,Marquette Golden Eagles -3.5,spread,-105,0,0,Loss,0,0,0,0,true
+147,2026-03-11,Tulane Green Wave @ Memphis Tigers,Memphis Tigers -4.0,spread,-106,0,0,Loss,0,0,0.5,0.0181,true
+125,2026-03-11,Oklahoma St Cowboys @ Colorado Buffaloes,Oklahoma St Cowboys +1.5,spread,-137,0,0,Win,0,0,0,0,true
+138,2026-03-11,Providence Friars @ Butler Bulldogs,Butler Bulldogs +0.5,spread,-107,0,0,Loss,0,0,-1,-0.0362,true
+137,2026-03-11,LSU Tigers @ Kentucky Wildcats,Kentucky Wildcats -7.5,spread,-106,0,0,Loss,0,0,1,0.0362,true
+131,2026-03-11,Mississippi St Bulldogs @ Auburn Tigers,Auburn Tigers -7.5,spread,-105,1.25,12.5,Win,11.9,1.1905,0,0,true
+132,2026-03-11,Santa Clara Broncos @ Gonzaga Bulldogs,Gonzaga Bulldogs -6.5,spread,-115,0,0,Win,0,0,2,0.0721,true
+390,2026-03-11,USC Trojans @ Washington Huskies,Washington Huskies -5.5,spread,-101,0,0,Loss,0,0,-1.5,-0.0542,true
+388,2026-03-11,Cincinnati Bearcats @ UCF Knights,UCF Knights +2.5,spread,-105,0,0,Win,0,0,-0.5,-0.0181,true
+416,2026-03-11,BYU Cougars @ West Virginia Mountaineers,BYU Cougars -4.5,spread,-114,0,0,Win,0,0,1,0.0362,true
+387,2026-03-11,LSU Tigers @ Kentucky Wildcats,Kentucky Wildcats -8.0,spread,-105,0,0,Loss,0,0,0.5,0.0181,true
+386,2026-03-11,Mississippi St Bulldogs @ Auburn Tigers,Auburn Tigers -8.0,spread,-101,0.75,7.5,Win,7.43,0.7426,-0.5,-0.0181,true
+391,2026-03-11,Wyoming Cowboys @ UNLV Rebels,Wyoming Cowboys +4.0,spread,-111,0,0,Win,0,0,-1,-0.0362,true
+384,2026-03-11,Providence Friars @ Butler Bulldogs,Butler Bulldogs +1.0,spread,-105,0,0,Loss,0,0,-0.5,-0.0181,true
+394,2026-03-11,Maryland Terrapins @ Iowa Hawkeyes,Iowa Hawkeyes -12.0,spread,-106,0,0,Loss,0,0,0.5,0.0181,true
+400,2026-03-11,SMU Mustangs @ Louisville Cardinals,Louisville Cardinals -7.5,spread,-105,0,0,Loss,0,0,-1,-0.0362,true
+134,2026-03-11,UT Rio Grande Valley Vaqueros @ McNeese Cowboys,McNeese Cowboys -6.5,spread,-104,0,0,Loss,0,0,1,0.0362,true
+410,2026-03-11,McNeese Cowboys @ Stephen F. Austin Lumberjacks,Stephen F. Austin Lumberjacks +1.5,spread,-110,0,0,Loss,0,0,-2,-0.0721,true
+430,2026-03-11,Northwestern Wildcats @ Indiana Hoosiers,Indiana Hoosiers -5.0,spread,-103,0,0,Loss,0,0,1.5,0.0542,true
+376,2026-03-11,Tulane Green Wave @ Memphis Tigers,Memphis Tigers -4.5,spread,-104,0,0,Loss,0,0,0,0,true
+344,2026-03-11,Cincinnati Bearcats @ UCF Knights,UCF Knights +2.5,spread,-106,0,0,Win,0,0,-0.5,-0.0181,true
+417,2026-03-11,Arizona St Sun Devils @ Iowa State Cyclones,Arizona St Sun Devils +11.5,spread,-118,0,0,Loss,0,0,1,0.0362,true
+418,2026-03-11,Loyola (Chi) Ramblers @ Richmond Spiders,Richmond Spiders -5.5,spread,-101,0,0,Loss,0,0,-1,-0.0362,true
+419,2026-03-11,Pittsburgh Panthers @ NC State Wolfpack,NC State Wolfpack -8.5,spread,-106,0,0,Win,0,0,1,0.0362,true
+423,2026-03-11,Prairie View Panthers @ Bethune-Cookman Wildcats,Bethune-Cookman Wildcats -5.5,spread,100,0,0,Loss,0,0,0,0,true
+166,2026-03-11,Wyoming Cowboys @ UNLV Rebels,Wyoming Cowboys +3.5,spread,-106,0,0,Win,0,0,-0.5,-0.0181,true
+164,2026-03-11,USC Trojans @ Washington Huskies,Washington Huskies -5.5,spread,-105,0,0,Loss,0,0,-1.5,-0.0542,true
+133,2026-03-11,Oklahoma St Cowboys @ Colorado Buffaloes,Oklahoma St Cowboys +2.5,spread,-108,1.5,15,Win,13.89,1.3889,-1,-0.0362,true
+145,2026-03-10,UMass Lowell River Hawks @ UMBC Retrievers,UMBC Retrievers -7.0,spread,-101,0,0,Win,0,0,0.5,0.0181,true
+143,2026-03-10,Kansas St Wildcats @ BYU Cougars,Kansas St Wildcats +10.5,spread,-106,0,0,Loss,0,0,0,0,true
+148,2026-03-10,Penn State Nittany Lions @ Northwestern Wildcats,Northwestern Wildcats -6.5,spread,-101,0,0,Win,0,0,-1,-0.0362,true
+139,2026-03-10,Wake Forest Demon Deacons @ Virginia Tech Hokies,Virginia Tech Hokies -2.5,spread,-109,0,0,Loss,0,0,-1,-0.0362,true
+136,2026-03-10,Pittsburgh Panthers @ Stanford Cardinal,Stanford Cardinal -5.5,spread,-106,0,0,Loss,0,0,-1,-0.0362,true
+135,2026-03-10,Maryland Terrapins @ Oregon Ducks,Oregon Ducks -4.5,spread,100,0,0,Loss,0,0,-1,-0.0362,true
+152,2026-03-10,Syracuse Orange @ SMU Mustangs,SMU Mustangs -5.5,spread,102,0,0,Win,0,0,-1,-0.0362,true
+154,2026-03-10,Detroit Mercy Titans @ Wright St Raiders,Wright St Raiders -5.0,spread,102,0,0,Loss,0,0,-0.5,-0.0181,true
+130,2026-03-10,Missouri St Bears @ Florida Int'l Golden Panthers,Florida Int'l Golden Panthers -1.0,spread,-102,1.5,15,Loss,-15,-1.5,-2.5,-0.0899,true
+114,2026-03-10,Pittsburgh Panthers @ Stanford Cardinal,Stanford Cardinal -5.5,spread,-105,1.25,12.5,Loss,-12.5,-1.25,-1,-0.0362,true
+112,2026-03-10,Penn State Nittany Lions @ Northwestern Wildcats,Northwestern Wildcats -7.5,spread,-102,1.25,12.5,Win,12.25,1.2255,-2,-0.0721,true
+128,2026-03-10,Utah Utes @ Cincinnati Bearcats,Cincinnati Bearcats -11.5,spread,-105,0,0,Loss,0,0,1,0.0362,true
+127,2026-03-10,NJIT Highlanders @ Vermont Catamounts,Vermont Catamounts -11.5,spread,-106,0,0,Loss,0,0,-1,-0.0362,true
+126,2026-03-10,Oregon St Beavers @ Gonzaga Bulldogs,Gonzaga Bulldogs -19.5,spread,-102,0,0,Loss,0,0,1,0.0362,true
+123,2026-03-10,Maryland Terrapins @ Oregon Ducks,Oregon Ducks -4.5,spread,-105,0,0,Loss,0,0,-1,-0.0362,true
+122,2026-03-10,Weber State Wildcats @ Eastern Washington Eagles,Eastern Washington Eagles -3.5,spread,-102,0,0,Win,0,0,0,0,true
+121,2026-03-10,Detroit Mercy Titans @ Robert Morris Colonials,Robert Morris Colonials -5.5,spread,-102,0,0,Loss,0,0,-0.5,-0.0181,true
+120,2026-03-10,Wake Forest Demon Deacons @ Virginia Tech Hokies,Virginia Tech Hokies -3.5,spread,-102,0,0,Loss,0,0,-2,-0.0721,true
+119,2026-03-10,Missouri St Bears @ Florida Int'l Golden Panthers,Florida Int'l Golden Panthers -1.5,spread,-105,0,0,Loss,0,0,-3,-0.1075,true
+129,2026-03-10,Alcorn St Braves @ Prairie View Panthers,Prairie View Panthers -6.5,spread,-104,0.75,7.5,Win,7.21,0.7212,0,0,true
+111,2026-03-10,Utah Utes @ Cincinnati Bearcats,Cincinnati Bearcats -10.5,spread,-110,1.25,12.5,Loss,-12.5,-1.25,2,0.0721,true
+103,2026-03-09,North Dakota Fighting Hawks @ North Dakota St Bison,North Dakota St Bison -9.5,spread,-106,1.5,15,Loss,-15,-1.5,2,0.0721,true
+113,2026-03-09,N Colorado Bears @ Montana Grizzlies,N Colorado Bears -3.0,spread,-115,0,0,Loss,0,0,-1,-0.0362,true
+115,2026-03-09,Northern Kentucky Norse @ Wright St Raiders,Wright St Raiders -1.5,spread,-106,0,0,Win,0,0,-0.5,-0.0181,true
+36,2026-03-08,Western Carolina Catamounts @ Mercer Bears,Mercer Bears -1.5,spread,-105,0,0,Loss,0,0,0,0,true
+51,2026-03-08,UC Davis Aggies @ UC Irvine Anteaters,UC Davis Aggies +9.5,spread,-115,0,0,Loss,0,0,-2,-0.0721,true
+48,2026-03-08,Long Beach St 49ers @ Hawai'i Rainbow Warriors,Hawai'i Rainbow Warriors -13.5,spread,-103,0,0,Loss,0,0,1,0.0362,true
+44,2026-03-08,Sacramento St Hornets @ Idaho Vandals,Idaho Vandals -6.5,spread,-110,0,0,Win,0,0,0,0,true
+43,2026-03-08,CSU Bakersfield Roadrunners @ Cal Poly Mustangs,Cal Poly Mustangs -9.5,spread,-109,0,0,Win,0,0,0,0,true
+42,2026-03-08,UT-Arlington Mavericks @ Abilene Christian Wildcats,UT-Arlington Mavericks +1.5,spread,-115,0,0,Win,0,0,-0.5,-0.0181,true
+40,2026-03-08,Washington Huskies @ Oregon Ducks,Washington Huskies +1.0,spread,-111,1.5,15,Loss,-15,-1.5,-2.5,-0.0899,true
+3,2026-03-08,Texas Tech Red Raiders @ BYU Cougars,Texas Tech Red Raiders +2.5,spread,-115,1,10,Loss,-10,-1,0,0,true
+19,2026-03-08,Auburn Tigers @ Alabama Crimson Tide,Alabama Crimson Tide -8.5,spread,-110,0,0,Win,0,0,-3,-0.1075,true
+35,2026-03-08,Texas Tech Red Raiders @ BYU Cougars,Texas Tech Red Raiders +2.5,spread,-106,0.5,5,Loss,-5,-0.5,0,0,true
+34,2026-03-08,Omaha Mavericks @ North Dakota St Bison,North Dakota St Bison -8.5,spread,-106,0,0,Win,0,0,0,0,true
+31,2026-03-08,Queens University Royals @ Austin Peay Governors,Austin Peay Governors -1.5,spread,105,0,0,Loss,0,0,1,0.0362,true
+30,2026-03-08,Air Force Falcons @ Nevada Wolf Pack,Nevada Wolf Pack -25.5,spread,-110,1.5,15,Loss,-15,-1.5,-0.5,-0.0181,true
+23,2026-03-08,UCLA Bruins @ USC Trojans,UCLA Bruins -3.5,spread,-110,0,0,Win,0,0,-2,-0.0721,true
+61,2026-03-08,Michigan St Spartans @ Michigan Wolverines,Michigan Wolverines -10.5,spread,-110,0,0,Loss,0,0,1,0.0362,true
+11,2026-03-08,Washington Huskies @ Oregon Ducks,Washington Huskies -1.5,spread,100,0,0,Loss,0,0,0,0,true
+54,2026-03-08,Arizona Wildcats @ Colorado Buffaloes,Arizona Wildcats -13.5,spread,-114,0,0,Loss,0,0,0,0,true
+45,2026-03-08,Auburn Tigers @ Alabama Crimson Tide,Alabama Crimson Tide -7.5,spread,-105,0,0,Win,0,0,-2,-0.0721,true
+72,2026-03-08,East Carolina Pirates @ UAB Blazers,UAB Blazers -11.0,spread,-106,0,0,Loss,0,0,-0.5,-0.0181,true
+105,2026-03-08,Temple Owls @ Tulsa Golden Hurricane,Tulsa Golden Hurricane -11.5,spread,-104,0,0,Loss,0,0,0,0,true
+102,2026-03-08,Illinois Fighting Illini @ Maryland Terrapins,Illinois Fighting Illini -15.5,spread,-110,1.5,15,Loss,-15,-1.5,1,0.0362,true
+108,2026-03-08,Michigan St Spartans @ Michigan Wolverines,Michigan Wolverines -10.5,spread,100,0,0,Loss,0,0,1,0.0362,true
+110,2026-03-08,Penn State Nittany Lions @ Rutgers Scarlet Knights,Penn State Nittany Lions +5.5,spread,-115,0,0,Loss,0,0,-1,-0.0362,true
+106,2026-03-08,UNC Greensboro Spartans @ Furman Paladins,Furman Paladins -6.5,spread,-106,1,10,Loss,-10,-1,-1,-0.0362,true
+80,2026-03-08,Penn State Nittany Lions @ Rutgers Scarlet Knights,Penn State Nittany Lions +4.5,spread,-106,0,0,Loss,0,0,0,0,true
+78,2026-03-08,Memphis Tigers @ Tulane Green Wave,Memphis Tigers -1.0,spread,-106,0,0,Push,0,0,-1.5,-0.0542,true
+77,2026-03-08,Charlotte 49ers @ South Florida Bulls,South Florida Bulls -16.0,spread,-111,0,0,Win,0,0,2,0.0721,true
+104,2026-03-08,Houston Christian Huskies @ New Orleans Privateers,New Orleans Privateers -5.0,spread,-106,1,10,Win,9.43,0.9434,-1,-0.0362,true
+107,2026-03-08,Boston Univ. Terriers @ Navy Midshipmen,Navy Midshipmen -7.5,spread,-105,0,0,Loss,0,0,-1,-0.0362,true
+67,2026-03-08,UTSA Roadrunners @ Rice Owls,Rice Owls -12.0,spread,-106,0,0,Loss,0,0,-0.5,-0.0181,true
+109,2026-03-08,Towson Tigers @ Charleston Cougars,Charleston Cougars -2.5,spread,-109,0,0,Loss,0,0,0.5,0.0181,true
+65,2026-03-08,Providence Friars @ Georgetown Hoyas,Providence Friars +1.5,spread,-139,0,0,Win,0,0,0,0,true
+17,2026-03-07,Notre Dame Fighting Irish @ Boston College Eagles,Notre Dame Fighting Irish -1.5,spread,-110,0,0,Loss,0,0,,,true
+18,2026-03-07,Georgia Bulldogs @ Mississippi St Bulldogs,Georgia Bulldogs -4.5,spread,-105,0,0,Win,0,0,-1,-0.0362,true
+20,2026-03-07,Utah Utes @ Baylor Bears,Baylor Bears -11.5,spread,-115,0,0,Win,0,0,1,0.0362,true
+16,2026-03-07,Louisville Cardinals @ Miami Hurricanes,Louisville Cardinals +0.5,spread,-112,0,0,Win,0,0,1,0.0362,true
+15,2026-03-07,Xavier Musketeers @ Villanova Wildcats,Villanova Wildcats -12.5,spread,-105,0,0,Win,0,0,,,true
+21,2026-03-07,VCU Rams @ Dayton Flyers,VCU Rams +1.5,spread,-110,0,0,Win,0,0,0,0,true
+63,2026-03-07,Furman Paladins @ Samford Bulldogs,Samford Bulldogs -1.5,spread,105,0,0,Loss,0,0,-1.5,-0.0542,true
+12,2026-03-07,Arkansas Razorbacks @ Missouri Tigers,Arkansas Razorbacks -2.5,spread,-115,1,10,Win,8.7,0.8696,,,true
+14,2026-03-07,Cincinnati Bearcats @ TCU Horned Frogs,Cincinnati Bearcats +2.5,spread,-104,0,0,Loss,0,0,-1,-0.0362,true
+13,2026-03-07,West Georgia Wolves @ Queens University Royals,Queens University Royals -8.5,spread,-105,0,0,Loss,0,0,0,0,true
+10,2026-03-07,Florida Gators @ Kentucky Wildcats,Florida Gators -6.5,spread,-117,0,0,Win,0,0,1,0.0362,true
+9,2026-03-07,Georgia Tech Yellow Jackets @ Clemson Tigers,Clemson Tigers -18.5,spread,-110,0,0,Loss,0,0,,,true
+8,2026-03-07,Wisconsin Badgers @ Purdue Boilermakers,Purdue Boilermakers -6.5,spread,-109,0,0,Loss,0,0,3,0.1075,true
+7,2026-03-07,North Carolina Tar Heels @ Duke Blue Devils,Duke Blue Devils -16.5,spread,-106,0,0,Loss,0,0,2,0.0721,true
+6,2026-03-07,Virginia Tech Hokies @ Virginia Cavaliers,Virginia Cavaliers -9.5,spread,-109,1,10,Loss,-10,-1,,,true
+5,2026-03-07,Stanford Cardinal @ NC State Wolfpack,NC State Wolfpack -6.5,spread,-115,0,0,Loss,0,0,3,0.1075,true
+4,2026-03-07,Saint Louis Billikens @ George Mason Patriots,Saint Louis Billikens -7.5,spread,-110,1,10,Loss,-10,-1,0,0,true
+22,2026-03-07,Texas A&M Aggies @ LSU Tigers,Texas A&M Aggies -2.5,spread,-110,0,0,Win,0,0,-1,-0.0362,true
+29,2026-03-07,New Hampshire Wildcats @ UMBC Retrievers,UMBC Retrievers -13.5,spread,-109,0,0,Win,0,0,-1,-0.0362,true
+24,2026-03-07,St. John's Red Storm @ Seton Hall Pirates,St. John's Red Storm -4.0,spread,-118,0,0,Win,0,0,-1.5,-0.0542,true
+25,2026-03-07,New Mexico Lobos @ Utah State Aggies,Utah State Aggies -6.5,spread,-115,0,0,Loss,0,0,1,0.0362,true
+64,2026-03-07,Northern Iowa Panthers @ Bradley Braves,Bradley Braves +4.5,spread,100,0,0,Win,0,0,1,0.0362,true
+52,2026-03-07,New Mexico Lobos @ Utah State Aggies,Utah State Aggies -7.5,spread,-106,0,0,Loss,0,0,0,0,true
+50,2026-03-07,Georgia Bulldogs @ Mississippi St Bulldogs,Georgia Bulldogs -5.5,spread,-103,0,0,Win,0,0,0,0,true
+49,2026-03-07,Louisiana Tech Bulldogs @ Delaware Blue Hens,Delaware Blue Hens +1.5,spread,100,0,0,Loss,0,0,,,true
+47,2026-03-07,Wyoming Cowboys @ San José St Spartans,Wyoming Cowboys -5.5,spread,-108,0,0,Win,0,0,0,0,true
+46,2026-03-07,North Carolina Tar Heels @ Duke Blue Devils,Duke Blue Devils -17.5,spread,-102,0,0,Loss,0,0,1,0.0362,true
+41,2026-03-07,UNC Asheville Bulldogs @ High Point Panthers,High Point Panthers -14.5,spread,-105,0,0,Loss,0,0,,,true
+95,2026-03-07,Texas A&M Aggies @ LSU Tigers,Texas A&M Aggies -2.5,spread,-115,0,0,Win,0,0,-1,-0.0362,true
+39,2026-03-07,Florida Gators @ Kentucky Wildcats,Florida Gators -5.5,spread,-111,0,0,Win,0,0,0,0,true
+38,2026-03-07,Princeton Tigers @ Yale Bulldogs,Yale Bulldogs -14.0,spread,-105,0,0,Win,0,0,0,0,true
+37,2026-03-07,Hampton Pirates @ Towson Tigers,Towson Tigers -6.5,spread,-102,0,0,Loss,0,0,0,0,true
+33,2026-03-07,Florida Gulf Coast Eagles @ Central Arkansas Bears,Central Arkansas Bears -5.5,spread,-104,0,0,Win,0,0,-1,-0.0362,true
+32,2026-03-07,Georgia Tech Yellow Jackets @ Clemson Tigers,Clemson Tigers -17.5,spread,101,0,0,Loss,0,0,,,true
+57,2026-03-07,Saint Louis Billikens @ George Mason Patriots,Saint Louis Billikens -5.5,spread,-118,0,0,Loss,0,0,-2,-0.0721,true
+28,2026-03-07,GW Revolutionaries @ Loyola (Chi) Ramblers,GW Revolutionaries -10.5,spread,-110,0,0,Loss,0,0,1.5,0.0542,true
+27,2026-03-07,Kennesaw St Owls @ New Mexico St Aggies,New Mexico St Aggies -2.5,spread,-105,1.5,15,Win,14.29,1.4286,-1,-0.0362,true
+26,2026-03-07,Vanderbilt Commodores @ Tennessee Volunteers,Vanderbilt Commodores +5.5,spread,-115,0,0,Win,0,0,-3,-0.1075,true
+2,2026-03-07,VMI Keydets @ UNC Greensboro Spartans,UNC Greensboro Spartans -7.5,spread,-106,0,0,Win,0,0,-1,-0.0362,true

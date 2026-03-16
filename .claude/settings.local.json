@@ -21,7 +21,13 @@
       "Bash(grep:*)",
       "Read(//c/Users/sfgra/**)",
       "Bash(sed -n '730,745p' backend/services/performance.py)",
-      "Bash(railway logs:*)"
+      "Bash(railway logs:*)",
+      "Bash(do:*)",
+      "WebSearch",
+      "WebFetch(domain:www.cbssports.com)",
+      "WebFetch(domain:www.on3.com)",
+      "WebFetch(domain:www.espn.com)",
+      "WebFetch(domain:dknetwork.draftkings.com)"
     ]
   }
 }

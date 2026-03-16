@@ -1,0 +1,80 @@
+{
+  "_instructions": "Fill this in after Selection Sunday (March 16, ~6 PM ET). Replace all FILL_IN values. composite_rating = weighted avg of kp_adj_em (51%) + bt_adj_em (49%). Run: python scripts/build_bracket_from_db.py to auto-populate ratings from DB.",
+  "_format": "composite_rating is on AdjEM scale (points better than avg D1 team). Range: ~-5 (bubble) to ~30 (top seed).",
+
+  "south": [
+    {"seed": 1, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 2, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 3, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 4, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 5, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 6, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 7, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 8, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 9, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 10, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 11, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 12, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 13, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 14, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 15, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 16, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70}
+  ],
+
+  "east": [
+    {"seed": 1, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 2, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 3, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 4, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 5, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 6, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 7, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 8, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 9, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 10, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 11, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 12, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 13, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 14, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 15, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 16, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70}
+  ],
+
+  "west": [
+    {"seed": 1, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 2, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 3, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 4, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 5, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 6, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 7, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 8, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 9, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 10, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 11, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 12, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 13, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 14, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 15, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 16, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70}
+  ],
+
+  "midwest": [
+    {"seed": 1, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 2, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 3, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 4, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 5, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 6, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 7, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 8, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 9, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 10, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 11, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 12, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 13, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 14, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 15, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70},
+    {"seed": 16, "name": "FILL_IN", "composite_rating": 0.0, "kp_adj_em": 0.0, "bt_adj_em": 0.0, "pace": 68.0, "three_pt_rate": 0.35, "def_efg_pct": 0.50, "conference": "FILL_IN", "tournament_exp": 0.70}
+  ]
+}

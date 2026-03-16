@@ -1,0 +1,33 @@
+region,favorite,favorite_seed,underdog,underdog_seed,upset_probability,margin_estimate,risk_level
+south,Clemson,8,Iowa,9,0.466,2.0,HIGH
+east,Ohio State,8,TCU,9,0.464,2.1,HIGH
+midwest,Georgia,8,St. Louis,9,0.464,2.1,HIGH
+west,Villanova,8,Utah State,9,0.461,2.2,HIGH
+south,St. Mary's,7,Texas A&M,10,0.381,6.2,HIGH
+west,Miami,7,Missouri,10,0.381,6.2,HIGH
+east,UCLA,7,UCF,10,0.38,6.2,HIGH
+midwest,Kentucky,7,Santa Clara,10,0.377,6.4,HIGH
+midwest,Tennessee,6,Miami OH/SMU,11,0.326,9.9,MED
+south,North Carolina,6,VCU,11,0.322,10.2,MED
+east,Louisville,6,South Florida,11,0.321,10.2,MED
+west,BYU,6,Texas/NC State,11,0.321,10.2,MED
+east,St. John's,5,Northern Iowa,12,0.264,14.1,MED
+south,Vanderbilt,5,McNeese,12,0.262,14.2,MED
+midwest,Texas Tech,5,Akron,12,0.26,14.4,MED
+west,Wisconsin,5,High Point,12,0.259,14.4,MED
+south,Nebraska,4,Troy,13,0.191,18.3,LOW
+west,Arkansas,4,Hawaii,13,0.18,19.4,LOW
+east,Kansas,4,Cal Baptist,13,0.179,19.5,LOW
+midwest,Alabama,4,Hofstra,13,0.171,20.4,LOW
+south,Illinois,3,Penn,14,0.141,22.8,LOW
+west,Gonzaga,3,Kennesaw State,14,0.133,24.1,LOW
+east,Michigan State,3,North Dakota State,14,0.13,24.5,LOW
+midwest,Virginia,3,Wright State,14,0.127,25.1,LOW
+south,Houston,2,Idaho,15,0.082,28.2,LOW
+west,Purdue,2,Queens,15,0.078,29.2,LOW
+east,UConn,2,Furman,15,0.077,29.5,LOW
+midwest,Iowa State,2,Tennessee State,15,0.073,30.7,LOW
+south,Florida,1,Prairie View/Lehigh,16,0.037,35.6,LOW
+west,Arizona,1,LIU,16,0.036,36.1,LOW
+midwest,Michigan,1,UMBC/Howard,16,0.032,37.6,LOW
+east,Duke,1,Siena,16,0.031,38.1,LOW

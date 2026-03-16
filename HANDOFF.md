@@ -302,6 +302,9 @@ python scripts/openclaw_scheduler_improved.py --line-monitor
 
 ---
 
+
+---
+
 **Document Version:** EMAC-070
 **Last Updated:** March 16, 2026
 **Status:** ⚠️ CRITICAL: Discord notifications NOT being sent (morning brief, tournament bracket, end-of-day). Fixes required pre-Mar 18 (see Section 8). Pre-tournament fixes done (683/686 tests). MIN_BET_EDGE=1.8% active. Guardian opens Mar 18. Next Claude session: Fix Discord jobs (Section 8), then Apr 7+ V9.2 Phase 2.

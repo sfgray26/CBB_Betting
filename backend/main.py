@@ -826,7 +826,7 @@ async def get_optimal_parlays(
     # Parlay Kelly sizing must respect what straight bets have already consumed
     # from the daily exposure budget.  Query today's paper-trade BetLogs to
     # compute capital already allocated, then derive the true remaining dollars.
-    starting_bankroll = get_float_env("STARTING_BANKROLL", "1000")
+    starting_bankroll = get_effective_bankroll(db)
     max_daily_pct     = get_float_env("MAX_DAILY_EXPOSURE_PCT", "20.0")
     max_daily_dollars = starting_bankroll * max_daily_pct / 100.0
 
@@ -1985,6 +1985,46 @@ async def force_capture_lines(user: str = Depends(verify_admin_api_key)):
         return {"message": "Line capture complete", **results}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.delete("/admin/bets/{bet_id}")
+async def delete_bet_log(
+    bet_id: int,
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """Delete a single BetLog entry by ID (admin only). Use to remove orphaned or bogus paper trades."""
+    bet = db.query(BetLog).filter(BetLog.id == bet_id).first()
+    if not bet:
+        raise HTTPException(status_code=404, detail=f"BetLog {bet_id} not found")
+    db.delete(bet)
+    db.commit()
+    logger.warning("Admin %s deleted BetLog #%d (%s, $%.2f)", user, bet_id, bet.pick or "?", bet.bet_size_dollars or 0)
+    return {"deleted": True, "bet_id": bet_id, "pick": bet.pick, "dollars": bet.bet_size_dollars}
+
+
+@app.delete("/admin/bets/orphaned/cleanup")
+async def cleanup_orphaned_bets(
+    dry_run: bool = Query(default=True),
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """Delete BetLog entries whose game_id no longer exists in the games table."""
+    from sqlalchemy import text
+    orphans = db.execute(text(
+        "SELECT b.id, b.pick, b.bet_size_dollars, b.game_id "
+        "FROM bet_logs b LEFT JOIN games g ON b.game_id = g.id "
+        "WHERE g.id IS NULL"
+    )).fetchall()
+    if dry_run:
+        return {"dry_run": True, "orphans_found": len(orphans),
+                "orphans": [{"id": r[0], "pick": r[1], "dollars": r[2], "game_id": r[3]} for r in orphans]}
+    ids = [r[0] for r in orphans]
+    if ids:
+        db.query(BetLog).filter(BetLog.id.in_(ids)).delete(synchronize_session=False)
+        db.commit()
+    logger.warning("Admin %s deleted %d orphaned BetLog entries", user, len(ids))
+    return {"dry_run": False, "deleted": len(ids), "ids": ids}
 
 
 @app.delete("/admin/games/{game_id}")
