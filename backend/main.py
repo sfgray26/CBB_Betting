@@ -648,8 +648,15 @@ def _tournament_bracket_job():
                 if len(teams) >= 32:
                     result = simulate_tournament(teams, n_sims=5000)
 
+                    # Build seed lookup so names are always shown as "#N Name"
+                    seed_lookup = {t.name: t.seed for t in teams}
+
+                    def _labeled(name: str) -> str:
+                        s = seed_lookup.get(name)
+                        return f"#{s} {name}" if s else name
+
                     f4_lines = "\n".join(
-                        f"- {t} ({result.advancement_probs[t][4] * 100:.0f}% F4)"
+                        f"- {_labeled(t)} ({result.advancement_probs[t][4] * 100:.0f}% F4)"
                         for t in result.projected_final_four[:4]
                         if t in result.advancement_probs
                     )
@@ -660,7 +667,7 @@ def _tournament_bracket_job():
                     bracket_embed = {
                         "title": "Bracket Projection — Monte Carlo",
                         "description": (
-                            f"**Projected Champion:** {result.projected_champion}"
+                            f"**Projected Champion:** {_labeled(result.projected_champion)}"
                             f" ({champ_prob * 100:.0f}%)\n\n"
                             f"**Final Four:**\n{f4_lines}"
                         ),
@@ -669,8 +676,8 @@ def _tournament_bracket_job():
                             {
                                 "name": f"Upset Alert #{i + 1}",
                                 "value": (
-                                    f"({a['dog_seed']}) {a['underdog']} vs "
-                                    f"({a['fav_seed']}) {a['favorite']}"
+                                    f"#{a['dog_seed']} {a['underdog']} vs "
+                                    f"#{a['fav_seed']} {a['favorite']}"
                                     f" — {a['upset_prob'] * 100:.0f}% upset chance"
                                 ),
                                 "inline": False,

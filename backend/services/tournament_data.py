@@ -99,8 +99,9 @@ class TournamentDataClient:
                 home = game.get("home_team", {})
                 away = game.get("away_team", {})
 
-                home_name = home.get("name", "").strip()
-                away_name = away.get("name", "").strip()
+                # Prefer full_name (e.g. "Siena Saints") over name (e.g. "Saints")
+                home_name = (home.get("full_name") or home.get("name", "")).strip()
+                away_name = (away.get("full_name") or away.get("name", "")).strip()
 
                 if home_name and home.get("seed"):
                     try:
