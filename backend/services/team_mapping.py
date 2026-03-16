@@ -54,6 +54,11 @@ _MANUAL_OVERRIDES: dict[str, str] = {
     "Georgia St Panthers":           "Georgia St.",
     "Georgia State Panthers":        "Georgia St.",
     "Georgia St. Panthers":          "Georgia St.",
+    # "Kansas St" (abbreviated, no period) — token_set_ratio can confuse
+    # "Kansas St." with "Kansas" (the flagship) at the 85-pt threshold.
+    # Explicit override guarantees the correct mapping before fuzzy runs.
+    "Kansas St Wildcats":            "Kansas St.",
+    "Kansas St":                     "Kansas St.",
 }
 
 # Primary, comprehensive mapping from Odds API names to KenPom names.
@@ -354,6 +359,59 @@ ODDS_TO_KENPOM: dict[str, str] = {
     "Cal Baptist": "California Baptist",
     "Tenn-Martin Skyhawks": "UT Martin",
     "Tenn-Martin": "UT Martin",
+
+    # ---------------------------------------------------------------------------
+    # Abbreviated "St" variants (no period, no "State") — Mar 2026
+    #
+    # The Odds API sometimes sends the abbreviated mascot-less or mascot-bearing
+    # form (e.g. "Kansas St Wildcats") instead of the full "Kansas State Wildcats".
+    # Every school whose KenPom name ends in "St." needs its "St " sibling here
+    # so we never rely solely on fuzzy matching to bridge the period gap.
+    # The full-"State" + mascot forms are already in ODDS_TO_KENPOM above; these
+    # entries add the abbreviated variants confirmed missing in production data.
+    # ---------------------------------------------------------------------------
+
+    # Power-conference "St" abbreviations
+    "Kansas St Wildcats":         "Kansas St.",
+    "Iowa St Cyclones":           "Iowa St.",
+    "Ohio St Buckeyes":           "Ohio St.",
+    "Penn St Nittany Lions":      "Penn St.",
+    "Florida St Seminoles":       "Florida St.",
+    "Arizona St Sun Devils":      "Arizona St.",
+    "Oklahoma St Cowboys":        "Oklahoma St.",
+    "Oregon St Beavers":          "Oregon St.",
+    "Washington St Cougars":      "Washington St.",
+    "Mississippi St Bulldogs":    "Mississippi St.",
+    "Michigan St Wolverines":     "Michigan St.",   # rare but seen in some feeds
+
+    # Mountain West / WAC / Sun Belt "St" abbreviations
+    "Utah St Aggies":             "Utah St.",
+    "Colorado St Rams":           "Colorado St.",
+    "Fresno St Bulldogs":         "Fresno St.",
+    "San Jose St Spartans":       "San Jose St.",
+    "Boise St Broncos":           "Boise St.",
+    "Wichita St Shockers":        "Wichita St.",
+
+    # Sun Belt / C-USA "St" abbreviations
+    "Appalachian St Mountaineers": "Appalachian St.",
+    "Arkansas St Red Wolves":     "Arkansas St.",
+    "Texas St Bobcats":           "Texas St.",
+
+    # MAC "St" abbreviations
+    "Ball St Cardinals":          "Ball St.",
+    "Kent St Golden Flashes":     "Kent St.",
+
+    # OVC / ASUN "St" abbreviations
+    "Jacksonville St Gamecocks":  "Jacksonville St.",
+    "Kennesaw St Owls":           "Kennesaw St.",
+    "East Tennessee St Buccaneers": "East Tennessee St.",
+    "Murray St Racers":           "Murray St.",
+
+    # Big South / CAA / Horizon "St" abbreviations
+    "Sacramento St Hornets":      "Sacramento St.",
+    "South Dakota St Jackrabbits": "South Dakota St.",
+    "Youngstown St Penguins":     "Youngstown St.",
+    "North Dakota St Bison":      "North Dakota St.",   # already has full-State; add abbrev
 }
 
 # A list of mascots, used as a fallback if the main dictionary misses.
