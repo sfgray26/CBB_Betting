@@ -31,15 +31,27 @@ ROUND_SD_MULTIPLIERS: Dict[int, float] = {
 }
 
 # Historical upset rates by (higher_seed, lower_seed) for R64 — 2000-2024
+# These are ACCURATE historical rates from NCAA tournament data
 SEED_UPSET_RATES: Dict[Tuple[int, int], float] = {
-    (1, 16): 0.013,   # 1.3% upset rate — 40% history weight
-    (2, 15): 0.067,   # 6.7% — 35% history weight
-    (3, 14): 0.153,   # 15.3% — 30% history weight
-    (4, 13): 0.216,   # 21.6% — 25% history weight
-    (5, 12): 0.352,   # 35.2% — 20% history weight
-    (6, 11): 0.389,   # 38.9% — 20% history weight
-    (7, 10): 0.394,   # 39.4% — 20% history weight
-    (8, 9):  0.487,   # 48.7% — 20% history weight (coin flip)
+    (1, 16): 0.013,   # 1.3% upset rate (1 loss ever)
+    (2, 15): 0.067,   # 6.7% upset rate
+    (3, 14): 0.153,   # 15.3% upset rate  
+    (4, 13): 0.216,   # 21.6% upset rate
+    (5, 12): 0.352,   # 35.2% upset rate — famous 12-5 upset zone
+    (6, 11): 0.389,   # 38.9% upset rate — nearly 40%!
+    (7, 10): 0.394,   # 39.4% upset rate
+    (8, 9):  0.487,   # 48.7% upset rate (coin flip)
+}
+
+# Upset boost — additional variance for Cinderella potential
+# Lower seeds get a small rating boost in simulations to allow for chaos
+CINDERELLA_BOOST: Dict[int, float] = {
+    12: 1.5,   # 12-seeds play like 10.5 seeds
+    11: 1.0,   # 11-seeds play like 10 seeds  
+    10: 0.5,   # 10-seeds play like 9.5 seeds
+    13: 2.0,   # 13-seeds play like 11 seeds
+    14: 2.5,   # 14-seeds play like 11.5 seeds
+    15: 3.0,   # 15-seeds play like 12 seeds
 }
 
 # Style-based variance multipliers
@@ -122,14 +134,22 @@ def predict_game(
     margin = team_a.composite_rating - team_b.composite_rating
     
     # ============================================================
-    # 2. RECENT FORM ADJUSTMENT (March performance, capped ±2 pts)
+    # 2. CINDERELLA BOOST — lower seeds get upset potential
+    # ============================================================
+    # This adds "March Magic" — lower seeds play above their rating
+    cinderella_a = CINDERELLA_BOOST.get(team_a.seed, 0.0)
+    cinderella_b = CINDERELLA_BOOST.get(team_b.seed, 0.0)
+    margin += (cinderella_a - cinderella_b)
+    
+    # ============================================================
+    # 3. RECENT FORM ADJUSTMENT (March performance, capped ±2 pts)
     # ============================================================
     form_adj = (team_a.recent_form - team_b.recent_form) * 0.6
     form_adj = max(-RECENT_FORM_CAP, min(RECENT_FORM_CAP, form_adj))
     margin += form_adj
     
     # ============================================================
-    # 3. TOURNAMENT EXPERIENCE ADJUSTMENT (capped ±1.5 pts)
+    # 4. TOURNAMENT EXPERIENCE ADJUSTMENT (capped ±1.5 pts)
     # ============================================================
     exp_adj = (team_a.tournament_exp - team_b.tournament_exp) * 1.5
     exp_adj = max(-1.5, min(1.5, exp_adj))
@@ -204,18 +224,21 @@ def _blend_with_seed_history_v2(
         hist_prob = hist_upset_rate  # team_a is underdog
     
     # Determine history weight based on matchup extremity
-    if seed_diff >= 15:      # 1v16
+    # INCREASED weights for upset-prone matchups to allow more Cinderella runs
+    if seed_diff >= 15:      # 1v16 - 40% history (almost never happens)
         history_weight = 0.40
-    elif seed_diff >= 13:    # 2v15, 3v14
-        history_weight = 0.30
-    elif seed_diff >= 9:     # 4v13, 5v12, 6v11, 7v10
-        history_weight = 0.20
-    else:                     # 8v9
-        history_weight = 0.20
+    elif seed_diff >= 13:    # 2v15, 3v14 - 35% history (rare but possible)
+        history_weight = 0.35
+    elif seed_diff >= 10:    # 4v13, 5v12, 6v11 - 40% history (UPSET ZONE!)
+        history_weight = 0.40  # INCREASED from 0.20 to allow more 12, 11, 13 seeds
+    elif seed_diff >= 3:     # 7v10 - 35% history (coin flip)
+        history_weight = 0.35  # INCREASED from 0.20
+    else:                     # 8v9 - 30% history (true coin flip)
+        history_weight = 0.30  # INCREASED from 0.20
     
-    # R32 uses less history (more current-form dependent)
+    # R32 uses slightly less history but still significant
     if round_num == 2:
-        history_weight *= 0.5
+        history_weight *= 0.7  # LESS reduction (was 0.5)
     
     weight_model = 1.0 - history_weight
     blended = weight_model * model_prob + history_weight * hist_prob
