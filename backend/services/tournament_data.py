@@ -21,6 +21,15 @@ from backend.services.team_mapping import normalize_team_name
 logger = logging.getLogger(__name__)
 
 _BALLDONTLIE_BASE_URL = "https://api.balldontlie.io/ncaab/v1"
+
+
+def _discord_alert(message: str) -> None:
+    """Fire a Discord warning for seed-fetch failures (non-fatal, best-effort)."""
+    try:
+        from backend.services.discord_notifier import send_system_error
+        send_system_error("Seed Fetch Failure", message)
+    except Exception as exc:
+        logger.debug("Discord alert skipped (non-fatal): %s", exc)
 _CACHE: Dict = {}
 _CACHE_TIMESTAMP: Optional[datetime] = None
 _CACHE_TTL_HOURS = 6
@@ -112,13 +121,18 @@ class TournamentDataClient:
             return seed_map
 
         except requests.HTTPError as e:
-            if e.response.status_code == 404:
-                logger.warning("BallDontLie bracket not available yet (404)")
+            status = e.response.status_code if e.response is not None else "?"
+            if status == 404:
+                msg = "BallDontLie bracket not available yet (404) — seed data unavailable"
             else:
-                logger.warning("BallDontLie API error: %s", e)
+                msg = f"BallDontLie API error {status}: {e}"
+            logger.warning(msg)
+            _discord_alert(msg)
             return {}
         except Exception as e:
-            logger.warning("Failed to fetch tournament bracket: %s", e)
+            msg = f"Failed to fetch tournament bracket: {e}"
+            logger.warning(msg)
+            _discord_alert(msg)
             return {}
 
     def get_team_seed(

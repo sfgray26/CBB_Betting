@@ -13,6 +13,7 @@ is out, based on their usage rate and team depth.
 """
 
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -322,7 +323,7 @@ class InjuryService:
         report.margin_impact = estimate_impact(report.impact_tier, report.usage_rate)
         self._manual_overrides.append(report)
 
-    def fetch_injuries(self, max_age_minutes: int = 30) -> List[InjuryReport]:
+    def fetch_injuries(self, max_age_minutes: int = int(os.getenv("INJURY_CACHE_MINUTES", "10"))) -> List[InjuryReport]:
         """Return current injury data, refreshing from scrapers if stale."""
         now = datetime.utcnow()
         if (
@@ -344,7 +345,7 @@ class InjuryService:
         self,
         home_team: str,
         away_team: str,
-        max_age_minutes: int = 30,
+        max_age_minutes: int = int(os.getenv("INJURY_CACHE_MINUTES", "10")),
     ) -> List[Dict]:
         """
         Get injury reports formatted for ``CBBEdgeModel.analyze_game()``.
