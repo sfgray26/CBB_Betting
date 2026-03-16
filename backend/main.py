@@ -202,6 +202,24 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # End-of-day results — 11 PM ET
+    scheduler.add_job(
+        _end_of_day_results_job,
+        CronTrigger(hour=23, minute=0, timezone=timezone),
+        id="end_of_day_results",
+        name="End-of-Day Results Summary",
+        replace_existing=True,
+    )
+
+    # Tournament bracket release notifier — runs daily 6 PM ET, Mar 14–20
+    scheduler.add_job(
+        _tournament_bracket_job,
+        CronTrigger(hour=18, minute=0, timezone=timezone),
+        id="tournament_bracket_notifier",
+        name="Tournament Bracket Release Notifier",
+        replace_existing=True,
+    )
+
     # Weekly model parameter recalibration — Sunday 5 AM ET
     # Note: recalibration and sentinel both run at 5:00 AM; they are independent.
     scheduler.add_job(
@@ -216,7 +234,8 @@ async def lifespan(app: FastAPI):
     logger.info(
         "Scheduler started: nightly@%02d:00, outcomes every 2h + daily@04:00, "
         "lines every 30min, odds monitor every %dmin, snapshot@04:30, "
-        "sentinel@05:00, briefing@07:00, ratings prewarm@%02d:00, recalibration@sun05:00 %s",
+        "sentinel@05:00, briefing@07:00, ratings prewarm@%02d:00, recalibration@sun05:00, "
+        "end_of_day@23:00, tournament_bracket@18:00 %s",
         nightly_hour, odds_monitor_interval, ratings_prewarm_hour, timezone,
     )
     
@@ -399,7 +418,9 @@ def _nightly_health_check_job():
 
 
 def _morning_briefing_job():
-    """Morning slate briefing at 7 AM ET — logs today's prediction slate summary."""
+    """Morning slate briefing at 7 AM ET — logs today's prediction slate summary and sends to Discord."""
+    import time as _time
+    t0 = _time.monotonic()
     db = SessionLocal()
     try:
         from datetime import date as _date
@@ -429,10 +450,177 @@ def _morning_briefing_job():
         logger.info(
             "Morning Briefing: %d BET, %d CONSIDER. %s", n_bets, n_considered, narrative
         )
+
+        duration = _time.monotonic() - t0
+
+        bet_details = [
+            {
+                "home_team": p.game.home_team,
+                "away_team": p.game.away_team,
+                "spread": p.spread,
+                "bet_side": p.bet_side,
+                "edge_conservative": p.conservative_edge,
+                "recommended_units": p.kelly_fraction,
+                "bet_odds": p.odds,
+                "kelly_fractional": p.kelly_fraction,
+                "projected_margin": p.projected_margin,
+                "verdict": p.verdict,
+            }
+            for p in bet_preds
+        ]
+
+        summary = {
+            "bets_recommended": n_bets,
+            "games_considered": n_considered,
+            "games_analyzed": len(preds),
+            "duration_seconds": duration,
+        }
+
+        try:
+            send_todays_bets(bet_details or None, summary)
+        except Exception as discord_exc:
+            logger.warning("Discord morning briefing send failed (non-fatal): %s", discord_exc)
+
     except Exception:
         logger.exception("Morning briefing job failed")
     finally:
         db.close()
+
+
+def _end_of_day_results_job():
+    """End-of-day results summary at 11 PM ET — settles today's bets and sends Discord recap."""
+    from datetime import date, timezone as _timezone
+    from backend.services.discord_notifier import _post, _bot_token
+
+    try:
+        if not _bot_token():
+            logger.info("End-of-day results: DISCORD_BOT_TOKEN not set — skipping")
+            return
+
+        db = SessionLocal()
+        try:
+            today = date.today()
+            settled = (
+                db.query(BetLog)
+                .join(Game)
+                .filter(
+                    func.date(BetLog.timestamp) == today,
+                    BetLog.outcome.isnot(None),
+                    BetLog.outcome != -1,
+                )
+                .all()
+            )
+
+            wins = sum(1 for b in settled if b.outcome == 1)
+            losses = sum(1 for b in settled if b.outcome == 0)
+            pushes = sum(1 for b in settled if b.outcome == 2)
+            pl = sum((b.profit_loss_dollars or 0) for b in settled) / 100
+
+            embed = {
+                "title": "📊 CBB Edge — End of Day Results",
+                "description": (
+                    f"{wins}W-{losses}L"
+                    + (f"-{pushes}P" if pushes else "")
+                    + f" | {'+' if pl >= 0 else ''}{pl:.1f} units"
+                ),
+                "color": 0x2ECC71 if pl > 0 else (0xE74C3C if pl < 0 else 0x95A5A6),
+                "fields": [
+                    {"name": "Wins",   "value": str(wins),                              "inline": True},
+                    {"name": "Losses", "value": str(losses),                             "inline": True},
+                    {"name": "P&L",    "value": f"{'+'if pl>=0 else ''}{pl:.1f}u",       "inline": True},
+                ],
+                "footer": {"text": "CBB Edge Analyzer v9"},
+                "timestamp": datetime.now(_timezone.utc).isoformat(),
+            }
+            _post({"embeds": [embed]})
+            logger.info(
+                "End-of-day results sent: %dW-%dL-%dP | %.1f units", wins, losses, pushes, pl
+            )
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("End-of-day results job failed")
+
+
+def _tournament_bracket_job():
+    """
+    Tournament bracket release notifier.
+
+    Runs daily from March 15–17. On the day the bracket is released (Selection
+    Sunday), The Odds API will start returning NCAAB tournament games. When we
+    first detect ≥4 new NCAAB games with tips scheduled Mar 18–19 (First Four),
+    we send a Discord notification and mark the bracket as notified so we only
+    fire once.
+
+    Uses a sentinel file (.bracket_notified_{year}) to prevent duplicate sends.
+    """
+    import requests as _requests
+    from datetime import date, timezone as _timezone
+    from backend.services.discord_notifier import _post, _bot_token
+
+    try:
+        today = date.today()
+        year = today.year
+
+        # Only run between March 14 and March 20 inclusive
+        if not (today.month == 3 and 14 <= today.day <= 20):
+            return
+
+        sentinel = f".bracket_notified_{year}"
+        if os.path.exists(sentinel):
+            return
+
+        api_key = os.getenv("THE_ODDS_API_KEY")
+        if not api_key:
+            return
+
+        url = (
+            f"https://api.the-odds-api.com/v4/sports/basketball_ncaab/events"
+            f"?apiKey={api_key}&dateFormat=iso&regions=us"
+        )
+        resp = _requests.get(url, timeout=10)
+        if resp.status_code != 200:
+            logger.warning("Tournament bracket job: Odds API returned %d", resp.status_code)
+            return
+
+        events = resp.json()
+        window_start = datetime(year, 3, 18, 0, 0, 0, tzinfo=_timezone.utc)
+        window_end   = datetime(year, 3, 20, 23, 59, 59, tzinfo=_timezone.utc)
+
+        first_four_games = [
+            e for e in events
+            if window_start
+            <= datetime.fromisoformat(e["commence_time"].replace("Z", "+00:00"))
+            <= window_end
+        ]
+
+        if len(first_four_games) < 4:
+            return
+
+        embed = {
+            "title": "🏀 NCAA Tournament Bracket Released!",
+            "description": (
+                f"The {year} NCAA Tournament bracket is live. "
+                f"{len(first_four_games)} First Four matchups detected."
+            ),
+            "color": 0x1E90FF,
+            "fields": [
+                {
+                    "name": g["home_team"] + " vs " + g["away_team"],
+                    "value": g["commence_time"][:10],
+                    "inline": True,
+                }
+                for g in first_four_games[:8]
+            ],
+            "footer": {"text": "CBB Edge — Tournament Mode Active"},
+            "timestamp": datetime.now(_timezone.utc).isoformat(),
+        }
+
+        if _post({"embeds": [embed]}):
+            open(sentinel, "w").close()
+            logger.info("Tournament bracket notification sent for %d", year)
+    except Exception:
+        logger.exception("Tournament bracket job failed")
 
 
 def _daily_snapshot_job():
