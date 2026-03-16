@@ -194,12 +194,10 @@ def generate_bracket(bracket: dict, chaos_level: float = 0.0,
         # Blend: at chaos=1.0 fully stochastic; at 0.5, 50% stochastic
         threshold = 0.5 + (0.5 - p) * (1.0 - chaos)
         if rng.random() > threshold:
-            winner, loser, prob = ta, tb, p
+            return ta, tb, p
         else:
-            winner, loser, prob = tb, ta, 1.0 - p
-        if prob < 0.5:
-            winner, loser, prob = loser, winner, 1.0 - prob
-        return winner, loser, prob
+            # Upset — return underdog as winner with their win probability
+            return tb, ta, 1.0 - p
 
     upsets_global = []
 
