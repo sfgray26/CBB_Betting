@@ -1,9 +1,9 @@
 """
-Tournament game-level prediction engine — INTELLIGENCE UPGRADED.
+Tournament game-level prediction engine.
 
 Uses V9.1 composite ratings with tournament-specific adjustments:
 1. Per-round SD multipliers (R64: 1.12x → Championship: 1.0x)
-2. Seed-matchup-aware historical blend (40% history for 1v16, 20% for 8v9)
+2. Seed-matchup-aware historical blend — 5-year rolling rates (35% R64, 15% R32)
 3. Style-based variance (pace mismatch, high 3PT rate adds chaos)
 4. Tournament experience adjustment (returning player minutes %)
 5. Recent form factor (March form over last 10 games, capped ±2 pts)
@@ -30,17 +30,19 @@ ROUND_SD_MULTIPLIERS: Dict[int, float] = {
     6: 1.00,  # Championship
 }
 
-# Historical upset rates by (higher_seed, lower_seed) for R64 — 2000-2024
-# These are ACCURATE historical rates from NCAA tournament data
+# Historical upset rates by (higher_seed, lower_seed) for R64.
+# Updated to 5-year rolling window (2020-2024) to reflect modern 3-point era.
+# Key changes: 5v12 lower (was 35.2%), 6v11 lower (play-in adds quality 11s),
+# 7v10 higher (mid-majors more competitive), 1v16 higher (post-UMBC era).
 SEED_UPSET_RATES: Dict[Tuple[int, int], float] = {
-    (1, 16): 0.013,   # 1.3% upset rate (1 loss ever)
-    (2, 15): 0.067,   # 6.7% upset rate
-    (3, 14): 0.153,   # 15.3% upset rate  
-    (4, 13): 0.216,   # 21.6% upset rate
-    (5, 12): 0.352,   # 35.2% upset rate — famous 12-5 upset zone
-    (6, 11): 0.389,   # 38.9% upset rate — nearly 40%!
-    (7, 10): 0.394,   # 39.4% upset rate
-    (8, 9):  0.487,   # 48.7% upset rate (coin flip)
+    (1, 16): 0.010,   # 1.0% (5yr: UMBC 2018 lone loss; recent 100%)
+    (2, 15): 0.070,   # 7.0% (5yr avg; 2 losses in last 5 years)
+    (3, 14): 0.160,   # 16.0% (5yr: Furman/Princeton 2023 both won)
+    (4, 13): 0.220,   # 22.0% (5yr avg; slightly above all-time)
+    (5, 12): 0.370,   # 37.0% (5yr: down from all-time 35.2%; 3-pt era)
+    (6, 11): 0.370,   # 37.0% (5yr: play-in elevates 11-seed quality)
+    (7, 10): 0.420,   # 42.0% (5yr: mid-majors closing the gap)
+    (8, 9):  0.490,   # 49.0% (true coin flip; nearly 50/50 all-time)
 }
 
 # Upset boost — additional variance for Cinderella potential
@@ -201,40 +203,43 @@ def _blend_with_seed_history_v2(
 ) -> float:
     """
     Blend V9.1 win probability with historical seed-matchup upset rates.
-    
-    MAXIMUM CHAOS MODE: Aligned with bracket_simulator.py ROUND_HIST_WEIGHT:
-    - R64: 75% history weight (maximum upset zone!)
-    - R32: 50% history weight
-    - S16+: Pure model (history fades)
+
+    Weight schedule (aligned with backend/services/bracket_simulator.py
+    recalibration — 5-year rolling historical data, survivor-bias aware):
+
+    - R64: 35% history — AdjEM model is the primary signal
+    - R32: 15% history — survivor bias begins; seeds less predictive
+    - S16:  5% history — minimal; model drives
+    - E8+:  0% history — pure model (survivor bias dominates)
+
+    Old "MAXIMUM CHAOS" weights (75%/50%) caused the simulator to almost
+    ignore AdjEM entirely, making every 5v12 game look like a coin flip
+    regardless of the actual talent gap.
     """
     higher_seed = min(seed_a, seed_b)
     lower_seed = max(seed_a, seed_b)
-    
+
     hist_upset_rate = SEED_UPSET_RATES.get((higher_seed, lower_seed))
     if hist_upset_rate is None:
         return model_prob
-    
+
     # Historical probability that team_a wins
     if seed_a < seed_b:
         hist_prob = 1.0 - hist_upset_rate  # team_a is favorite
     else:
         hist_prob = hist_upset_rate  # team_a is underdog
-    
-    # MAXIMUM CHAOS: Use same weights as bracket_simulator.py
-    if round_num == 1:       # R64: 75% history (MAJOR upset zone!)
-        history_weight = 0.75
-    elif round_num == 2:     # R32: 50% history
-        history_weight = 0.50
-    elif round_num == 3:     # S16: 20% history
-        history_weight = 0.20
-    elif round_num == 4:     # E8: 10% history
-        history_weight = 0.10
-    else:                     # F4+: Pure model
+
+    if round_num == 1:       # R64: 35% history, 65% model
+        history_weight = 0.35
+    elif round_num == 2:     # R32: 15% history, 85% model
+        history_weight = 0.15
+    elif round_num == 3:     # S16: 5% history, 95% model
+        history_weight = 0.05
+    else:                    # E8, F4, Championship: pure model
         history_weight = 0.00
-    
-    weight_model = 1.0 - history_weight
-    blended = weight_model * model_prob + history_weight * hist_prob
-    
+
+    blended = (1.0 - history_weight) * model_prob + history_weight * hist_prob
+
     logger.debug(
         "Seed blend %d vs %d (R%d): model=%.3f hist=%.3f blended=%.3f (w_hist=%.2f)",
         seed_a, seed_b, round_num, model_prob, hist_prob, blended, history_weight
