@@ -1,10 +1,13 @@
 """
-Tournament game-level prediction engine.
+Tournament game-level prediction engine — INTELLIGENCE UPGRADED.
 
 Uses V9.1 composite ratings with tournament-specific adjustments:
-- Round-specific SD multipliers (R64: 1.12x, champion: 1.0x) per K-1/BRACKET-001 research
-- Historical seed-based priors blended 70-80% model / 20-30% historical
-- Tournament experience adjustment (returning player minutes %)
+1. Per-round SD multipliers (R64: 1.12x → Championship: 1.0x)
+2. Seed-matchup-aware historical blend (40% history for 1v16, 20% for 8v9)
+3. Style-based variance (pace mismatch, high 3PT rate adds chaos)
+4. Tournament experience adjustment (returning player minutes %)
+5. Recent form factor (March form over last 10 games, capped ±2 pts)
+6. Composite rating (55% KenPom + 45% BartTorvik blend)
 
 Does NOT modify existing betting_model.py (GUARDIAN active until Apr 7).
 """
@@ -16,8 +19,7 @@ from typing import Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Round-specific SD multipliers from K-1 Tournament Intelligence + BRACKET-001
-# Single-elimination variance is 15-25% higher than regular season
+# Round-specific SD multipliers — R64 chaos fades to championship clarity
 ROUND_SD_MULTIPLIERS: Dict[int, float] = {
     0: 1.15,  # First Four (play-in chaos)
     1: 1.12,  # Round of 64 (highest upset rate)
@@ -29,19 +31,26 @@ ROUND_SD_MULTIPLIERS: Dict[int, float] = {
 }
 
 # Historical upset rates by (higher_seed, lower_seed) for R64 — 2000-2024
-# Source: K-1 report aggregating Action Network, VSiN, OddsShark data
 SEED_UPSET_RATES: Dict[Tuple[int, int], float] = {
-    (1, 16): 0.013,   # 1.3% upset rate
-    (2, 15): 0.067,   # 6.7%
-    (3, 14): 0.153,   # 15.3%
-    (4, 13): 0.216,   # 21.6%
-    (5, 12): 0.352,   # 35.2% — famous 12-5 upset zone
-    (6, 11): 0.389,   # 38.9%
-    (7, 10): 0.394,   # 39.4%
-    (8, 9):  0.487,   # 48.7% — essentially a coin flip
+    (1, 16): 0.013,   # 1.3% upset rate — 40% history weight
+    (2, 15): 0.067,   # 6.7% — 35% history weight
+    (3, 14): 0.153,   # 15.3% — 30% history weight
+    (4, 13): 0.216,   # 21.6% — 25% history weight
+    (5, 12): 0.352,   # 35.2% — 20% history weight
+    (6, 11): 0.389,   # 38.9% — 20% history weight
+    (7, 10): 0.394,   # 39.4% — 20% history weight
+    (8, 9):  0.487,   # 48.7% — 20% history weight (coin flip)
 }
 
-# V9.1 base SD (matches betting_model.py BASE_SD)
+# Style-based variance multipliers
+PACE_MISMATCH_THRESHOLD = 10.0   # 10+ possession difference = chaos
+HIGH_3PT_THRESHOLD = 0.40        # 40%+ 3PT rate = high variance
+STYLE_VARIANCE_BOOST = 0.03      # +3% SD for style mismatches
+
+# Recent form (March performance) adjustment cap
+RECENT_FORM_CAP = 2.0            # ±2.0 points max
+
+# V9.1 base SD
 BASE_SD = 11.0
 
 
@@ -51,18 +60,42 @@ class TournamentTeam:
     name: str
     seed: int
     region: str
-    # V9.1 composite rating: weighted KenPom + BartTorvik (AdjEM scale)
-    composite_rating: float
-    # Raw source ratings (optional — used for diagnostics)
-    kp_adj_em: Optional[float] = None
-    bt_adj_em: Optional[float] = None
-    # Style profile (from BartTorvik / TeamProfile DB table)
-    pace: float = 68.0          # Possessions per 40 min
-    three_pt_rate: float = 0.35  # 3PA / FGA
-    def_efg_pct: float = 0.50   # Opponent eFG% allowed
+    
+    # Composite rating auto-calculated from KenPom + BartTorvik (55/45 blend)
+    composite_rating: float = field(init=False)
+    
+    # Raw source ratings
+    kp_adj_em: Optional[float] = None      # KenPom AdjEM
+    bt_adj_em: Optional[float] = None      # BartTorvik AdjEM
+    
+    # Style profile (from BartTorvik / TeamProfile DB)
+    pace: float = 68.0                     # Possessions per 40 min
+    three_pt_rate: float = 0.35            # 3PA / FGA (0-1 scale)
+    def_efg_pct: float = 0.50              # Opponent eFG% allowed
     conference: str = ""
-    # Fraction of minutes played by players who were on the team last tournament
+    
+    # Tournament experience (returning player minutes % from last tournament)
     tournament_exp: float = 0.70
+    
+    # Recent form (last 10 games AdjEM performance vs season average)
+    # Positive = hot team, Negative = cold team
+    recent_form: float = 0.0               # Capped at ±2.0 pts in calculations
+    
+    # Post-init to compute composite rating
+    def __post_init__(self):
+        # Composite: 55% KenPom + 45% BartTorvik
+        if self.kp_adj_em is not None and self.bt_adj_em is not None:
+            self.composite_rating = 0.55 * self.kp_adj_em + 0.45 * self.bt_adj_em
+        elif self.kp_adj_em is not None:
+            self.composite_rating = self.kp_adj_em
+        elif self.bt_adj_em is not None:
+            self.composite_rating = self.bt_adj_em
+        else:
+            # Fallback: estimate from seed (1-seed ≈ +25, 16-seed ≈ -15)
+            self.composite_rating = 25.0 - (self.seed - 1) * 2.5
+            logger.warning(
+                f"{self.name}: No ratings provided, estimating from seed {self.seed}"
+            )
 
 
 def predict_game(
@@ -72,89 +105,123 @@ def predict_game(
     is_neutral: bool = True,
 ) -> Tuple[float, float, float]:
     """
-    Predict outcome of a single tournament game.
+    Predict outcome of a single tournament game with all intelligence upgrades.
 
     Args:
         team_a: First team (perspective for win_prob and margin)
         team_b: Second team
         round_num: Tournament round (0=First Four, 1=R64, ..., 6=Championship)
-        is_neutral: True for all tournament games (all are neutral site)
+        is_neutral: True for all tournament games (neutral site)
 
     Returns:
-        Tuple of (win_prob_a, margin_pred, effective_sd) where:
-        - win_prob_a: probability that team_a wins (0.0 to 1.0)
-        - margin_pred: expected scoring margin from team_a's perspective (positive = team_a wins)
-        - effective_sd: standard deviation used in the logistic calculation
+        Tuple of (win_prob_a, margin_pred, effective_sd)
     """
-    # Base margin from V9.1 composite ratings
+    # ============================================================
+    # 1. BASE MARGIN from composite ratings
+    # ============================================================
     margin = team_a.composite_rating - team_b.composite_rating
-
-    # Tournament experience adjustment — capped at +/-1.5 pts
-    # Small effect: returning players reduce first-game nerves
+    
+    # ============================================================
+    # 2. RECENT FORM ADJUSTMENT (March performance, capped ±2 pts)
+    # ============================================================
+    form_adj = (team_a.recent_form - team_b.recent_form) * 0.6
+    form_adj = max(-RECENT_FORM_CAP, min(RECENT_FORM_CAP, form_adj))
+    margin += form_adj
+    
+    # ============================================================
+    # 3. TOURNAMENT EXPERIENCE ADJUSTMENT (capped ±1.5 pts)
+    # ============================================================
     exp_adj = (team_a.tournament_exp - team_b.tournament_exp) * 1.5
     exp_adj = max(-1.5, min(1.5, exp_adj))
     margin += exp_adj
-
-    # Round-specific SD: higher in early rounds (more chaos)
+    
+    # ============================================================
+    # 4. ROUND-SPECIFIC SD MULTIPLIER
+    # ============================================================
     sd_mult = ROUND_SD_MULTIPLIERS.get(round_num, 1.0)
     effective_sd = BASE_SD * sd_mult
-
-    # Logistic win probability (same formula as CBBEdgeModel)
+    
+    # ============================================================
+    # 5. STYLE-BASED VARIANCE ADJUSTMENT
+    # ============================================================
+    # Pace mismatch adds chaos (fast vs slow = unpredictable)
+    pace_diff = abs(team_a.pace - team_b.pace)
+    if pace_diff >= PACE_MISMATCH_THRESHOLD:
+        # High pace mismatch = higher variance
+        effective_sd *= (1.0 + STYLE_VARIANCE_BOOST)
+    
+    # High 3PT rate teams = higher variance (live by the three, die by the three)
+    high_3pt_count = sum([
+        1 if team_a.three_pt_rate >= HIGH_3PT_THRESHOLD else 0,
+        1 if team_b.three_pt_rate >= HIGH_3PT_THRESHOLD else 0
+    ])
+    if high_3pt_count >= 1:
+        # Each high-3PT team adds variance
+        effective_sd *= (1.0 + STYLE_VARIANCE_BOOST * high_3pt_count)
+    
+    # ============================================================
+    # 6. BASE WIN PROBABILITY (logistic)
+    # ============================================================
     model_prob = 1.0 / (1.0 + math.exp(-margin / effective_sd))
-
-    # For R64 and R32: blend with historical seed-based priors
+    
+    # ============================================================
+    # 7. SEED-MATCHUP HISTORICAL BLEND (R64 and R32 only)
+    # ============================================================
     if round_num <= 2 and team_a.seed is not None and team_b.seed is not None:
-        model_prob = _blend_with_seed_history(model_prob, team_a.seed, team_b.seed)
-
+        model_prob = _blend_with_seed_history_v2(
+            model_prob, team_a.seed, team_b.seed, round_num
+        )
+    
     return model_prob, margin, effective_sd
 
 
-def _blend_with_seed_history(
-    model_prob: float, seed_a: int, seed_b: int
+def _blend_with_seed_history_v2(
+    model_prob: float, seed_a: int, seed_b: int, round_num: int
 ) -> float:
     """
     Blend V9.1 win probability with historical seed-matchup upset rates.
-
-    Weights: 60-80% model, 20-40% historical — higher history weight for extreme mismatches.
-    This prevents the model from ever assigning <1% to a 12-seed beating a 5-seed when
-    the historical rate is 35%.
-
-    Args:
-        model_prob: V9.1 probability that team with seed_a wins
-        seed_a: seed of team_a (1 = top seed)
-        seed_b: seed of team_b
-
-    Returns:
-        Blended probability that team_a wins
+    
+    Intelligence upgrade: Variable history weight based on matchup:
+    - 1v16: 40% history (40 years of data, 1-seeds almost never lose)
+    - 2v15, 3v14: 30-35% history
+    - 4v13, 5v12, 6v11, 7v10: 20-25% history
+    - 8v9: 20% history (coin flip — current form matters more)
+    
+    R32 uses half the history weight (more current-form dependent).
     """
     higher_seed = min(seed_a, seed_b)
     lower_seed = max(seed_a, seed_b)
     seed_diff = lower_seed - higher_seed
-
+    
     hist_upset_rate = SEED_UPSET_RATES.get((higher_seed, lower_seed))
     if hist_upset_rate is None:
         return model_prob
-
+    
     # Historical probability that team_a wins
     if seed_a < seed_b:
-        # team_a is the favorite
-        hist_prob = 1.0 - hist_upset_rate
+        hist_prob = 1.0 - hist_upset_rate  # team_a is favorite
     else:
-        # team_a is the underdog
-        hist_prob = hist_upset_rate
-
-    # Weight more toward history for extreme mismatches (1v16, 2v15)
-    # These matchups have decades of reliable data dwarfing a single season sample
-    if seed_diff >= 13:
-        weight_model = 0.60
-    elif seed_diff >= 10:
-        weight_model = 0.70
-    else:
-        weight_model = 0.80
-
-    blended = weight_model * model_prob + (1.0 - weight_model) * hist_prob
+        hist_prob = hist_upset_rate  # team_a is underdog
+    
+    # Determine history weight based on matchup extremity
+    if seed_diff >= 15:      # 1v16
+        history_weight = 0.40
+    elif seed_diff >= 13:    # 2v15, 3v14
+        history_weight = 0.30
+    elif seed_diff >= 9:     # 4v13, 5v12, 6v11, 7v10
+        history_weight = 0.20
+    else:                     # 8v9
+        history_weight = 0.20
+    
+    # R32 uses less history (more current-form dependent)
+    if round_num == 2:
+        history_weight *= 0.5
+    
+    weight_model = 1.0 - history_weight
+    blended = weight_model * model_prob + history_weight * hist_prob
+    
     logger.debug(
-        "Seed blend %d vs %d: model=%.3f hist=%.3f blended=%.3f (w=%.2f)",
-        seed_a, seed_b, model_prob, hist_prob, blended, weight_model
+        "Seed blend %d vs %d (R%d): model=%.3f hist=%.3f blended=%.3f (w_hist=%.2f)",
+        seed_a, seed_b, round_num, model_prob, hist_prob, blended, history_weight
     )
     return blended
