@@ -172,6 +172,21 @@ def generate_smart_bracket_streamlit(
 
 
 # ---------------------------------------------------------------------------
+# Helper function for legacy bracket generator
+# ---------------------------------------------------------------------------
+SEED_UPSET_RATES = {
+    (1, 16): 0.013, (2, 15): 0.067, (3, 14): 0.153, (4, 13): 0.216,
+    (5, 12): 0.352, (6, 11): 0.389, (7, 10): 0.394, (8, 9): 0.487,
+}
+
+def get_upset_probability(seed_a: int, seed_b: int) -> float:
+    """Get historical upset probability for a seed matchup."""
+    higher = min(seed_a, seed_b)
+    lower = max(seed_a, seed_b)
+    return SEED_UPSET_RATES.get((higher, lower), 0.25)
+
+
+# ---------------------------------------------------------------------------
 # Legacy bracket generator (kept for reference)
 # ---------------------------------------------------------------------------
 def generate_predicted_bracket(bracket: dict, chaos_mode: bool = False) -> tuple:

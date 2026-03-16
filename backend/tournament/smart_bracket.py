@@ -232,8 +232,8 @@ class SmartBracketGenerator:
         Seed momentum: lower seeds playing above their rating.
         """
         # If underdog has composite rating closer to favorite than expected
-        expected_diff = (favorite.seed - underdog.seed) * 2.5  # ~2.5 pts per seed
-        actual_diff = favorite.composite_rating - underdog.composite_rating
+        expected_diff = (fav.seed - dog.seed) * 2.5  # ~2.5 pts per seed
+        actual_diff = fav.composite_rating - dog.composite_rating
         
         if actual_diff < expected_diff * 0.7:  # Underdog is closer than expected
             return 0.06
