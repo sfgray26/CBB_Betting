@@ -643,7 +643,7 @@ with col_b:
             upset_p = 1.0 - p
             if upset_p >= 0.30:
                 upset_alerts.append((upset_p, fav, dog, region))
-    upset_alerts.sort(reverse=True)
+    upset_alerts.sort(key=lambda x: x[0], reverse=True)
     for upset_p, fav, dog, region in upset_alerts[:5]:
         st.markdown(f"#{dog.seed} **{dog.name}** over #{fav.seed} {fav.name} · {upset_p:.0%} · {region.title()}")
     if not upset_alerts:
