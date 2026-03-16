@@ -4,6 +4,7 @@ Tests for sharp_money.py — P1 Sharp Money Detection
 
 import pytest
 from datetime import datetime, timedelta
+from typing import Tuple
 
 from backend.services.sharp_money import (
     SharpMoneyDetector,
