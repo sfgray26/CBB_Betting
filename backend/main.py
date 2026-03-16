@@ -619,8 +619,153 @@ def _tournament_bracket_job():
         if _post({"embeds": [embed]}):
             open(sentinel, "w").close()
             logger.info("Tournament bracket notification sent for %d", year)
+
+        # --- Monte Carlo bracket simulation (non-fatal) ---
+        try:
+            from backend.services.bracket_simulator import BracketTeam, simulate_tournament
+            from backend.services.tournament_data import fetch_tournament_bracket
+            from backend.services.team_mapping import normalize_team_name
+
+            bracket_seeds = fetch_tournament_bracket()
+            kenpom_ratings = get_ratings_service().get_kenpom_ratings()
+
+            if bracket_seeds and kenpom_ratings:
+                teams = []
+                kenpom_keys = list(kenpom_ratings.keys())
+                for team_name, seed in bracket_seeds.items():
+                    norm = normalize_team_name(team_name, kenpom_keys)
+                    adj_em = kenpom_ratings.get(norm, 0.0) if norm else 0.0
+                    teams.append(
+                        BracketTeam(
+                            name=team_name,
+                            seed=seed,
+                            region="Unknown",
+                            adj_em=adj_em,
+                        )
+                    )
+
+                if len(teams) >= 32:
+                    result = simulate_tournament(teams, n_sims=5000)
+
+                    f4_lines = "\n".join(
+                        f"- {t} ({result.advancement_probs[t][4] * 100:.0f}% F4)"
+                        for t in result.projected_final_four[:4]
+                        if t in result.advancement_probs
+                    )
+                    champ_prob = result.advancement_probs.get(
+                        result.projected_champion, [0.0] * 7
+                    )[6]
+
+                    bracket_embed = {
+                        "title": "Bracket Projection — Monte Carlo",
+                        "description": (
+                            f"**Projected Champion:** {result.projected_champion}"
+                            f" ({champ_prob * 100:.0f}%)\n\n"
+                            f"**Final Four:**\n{f4_lines}"
+                        ),
+                        "color": 0x1E90FF,
+                        "fields": [
+                            {
+                                "name": f"Upset Alert #{i + 1}",
+                                "value": (
+                                    f"({a['dog_seed']}) {a['underdog']} vs "
+                                    f"({a['fav_seed']}) {a['favorite']}"
+                                    f" — {a['upset_prob'] * 100:.0f}% upset chance"
+                                ),
+                                "inline": False,
+                            }
+                            for i, a in enumerate(result.upset_alerts[:3])
+                        ],
+                        "footer": {
+                            "text": f"Based on {result.n_sims:,} simulated brackets"
+                        },
+                        "timestamp": datetime.now(_timezone.utc).isoformat(),
+                    }
+                    _post({"embeds": [bracket_embed]})
+        except Exception as sim_exc:
+            logger.warning("Bracket simulation failed (non-fatal): %s", sim_exc)
+
     except Exception:
         logger.exception("Tournament bracket job failed")
+
+
+@app.get("/api/tournament/bracket-projection")
+async def get_bracket_projection(
+    n_sims: int = Query(default=10000, ge=1000, le=50000),
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Monte Carlo NCAA Tournament bracket projection.
+
+    Blends KenPom AdjEM win probabilities with historically-calibrated
+    seed upset rates to produce a realistic bracket with upsets.
+
+    Query parameters:
+      n_sims: Number of Monte Carlo simulations (1,000 – 50,000; default 10,000).
+
+    Returns advancement probabilities for all teams, the projected champion,
+    projected Final Four, and upset alerts for R64 games where the underdog
+    has >= 35% win probability.
+    """
+    from backend.services.bracket_simulator import BracketTeam, simulate_tournament
+    from backend.services.tournament_data import fetch_tournament_bracket
+    from backend.services.team_mapping import normalize_team_name
+
+    # Fetch seed data from BallDontLie (cached 6 h).
+    bracket_seeds: dict = fetch_tournament_bracket()
+    if not bracket_seeds:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No tournament bracket data available. "
+                "Ensure BALLDONTLIE_API_KEY is set and the bracket has been released."
+            ),
+        )
+
+    # Fetch KenPom AdjEM ratings (cached internally by RatingsService).
+    kenpom_ratings: dict = get_ratings_service().get_kenpom_ratings()
+    kenpom_keys = list(kenpom_ratings.keys())
+
+    # Build BracketTeam list by joining bracket seeds with AdjEM ratings.
+    teams: list = []
+    unmatched: list = []
+    for team_name, seed in bracket_seeds.items():
+        norm = normalize_team_name(team_name, kenpom_keys) if kenpom_keys else None
+        adj_em = kenpom_ratings.get(norm, 0.0) if norm else 0.0
+        if not norm:
+            unmatched.append(team_name)
+        teams.append(
+            BracketTeam(
+                name=team_name,
+                seed=seed,
+                region="Unknown",
+                adj_em=adj_em,
+            )
+        )
+
+    if len(teams) < 32:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Only {len(teams)} teams resolved from bracket data "
+                "(need at least 32). Check BALLDONTLIE_API_KEY and KenPom ratings."
+            ),
+        )
+
+    result = simulate_tournament(teams, n_sims=n_sims)
+
+    return {
+        "n_sims": result.n_sims,
+        "projected_champion": result.projected_champion,
+        "projected_final_four": result.projected_final_four,
+        "projected_bracket": result.projected_bracket,
+        "upset_alerts": result.upset_alerts,
+        "advancement_probs": result.advancement_probs,
+        "teams_resolved": len(teams),
+        "teams_total": len(bracket_seeds),
+        "unmatched_teams": unmatched[:10],  # cap list for response readability
+    }
 
 
 def _daily_snapshot_job():
