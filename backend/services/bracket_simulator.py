@@ -29,25 +29,25 @@ from typing import Dict, List, Optional, Tuple
 # ---------------------------------------------------------------------------
 
 # Historical R64 win rate for (better_seed, worse_seed) matchup — all-time data.
-# SLIGHTLY adjusted to favor more upsets (12, 11, 13 seeds)
+# ADJUSTED for MAXIMUM Cinderella chaos
 HISTORICAL_WIN_RATES: Dict[Tuple[int, int], float] = {
-    (1, 16): 0.987,  # 1-seeds almost never lose (1.3% upset)
-    (2, 15): 0.933,  # 2-seeds rarely lose (6.7% upset)
-    (3, 14): 0.847,  # 3-seeds usually win (15.3% upset)
-    (4, 13): 0.784,  # 4-seeds often win (21.6% upset)
-    (5, 12): 0.620,  # 5-seeds vs 12-seeds: 38% upset rate (was 35.3%)
-    (6, 11): 0.600,  # 6-seeds vs 11-seeds: 40% upset rate (was 36.9%)
-    (7, 10): 0.590,  # 7-seeds vs 10-seeds: 41% upset rate (was 39.7%)
-    (8,  9): 0.505,  # 8 vs 9: coin flip (49.5% upset)
+    (1, 16): 0.987,  # 1-seeds almost never lose
+    (2, 15): 0.920,  # 2-seeds: 8% upset rate (slightly more chaos)
+    (3, 14): 0.820,  # 3-seeds: 18% upset rate
+    (4, 13): 0.750,  # 4-seeds: 25% upset rate
+    (5, 12): 0.580,  # 5-seeds: 42% UPSET RATE — 12-seeds dangerous!
+    (6, 11): 0.560,  # 6-seeds: 44% UPSET RATE — 11-seeds very dangerous!
+    (7, 10): 0.550,  # 7-seeds: 45% UPSET RATE — 10-seeds coin flips!
+    (8,  9): 0.500,  # 8 vs 9: TRUE COIN FLIP
 }
 
 # Weight given to the historical seed signal per round.
-# INCREASED for R64 to allow more Cinderella upsets
+# VERY HIGH for R64 to allow Cinderella upsets despite AdjEM gaps
 ROUND_HIST_WEIGHT: Dict[int, float] = {
-    1: 0.55,  # R64: 55% history (was 40%) — MAJOR upset zone!
-    2: 0.35,  # R32: 35% history (was 25%)
-    3: 0.15,  # S16: 15% history
-    4: 0.08,  # E8: 8% history
+    1: 0.75,  # R64: 75% history (was 55%) — MAJOR upset zone!
+    2: 0.50,  # R32: 50% history (was 35%)
+    3: 0.20,  # S16: 20% history
+    4: 0.10,  # E8: 10% history
     5: 0.00,  # F4: pure model
     6: 0.00,  # Champ: pure model
 }
@@ -62,10 +62,11 @@ _R64_PAIRS: List[Tuple[int, int]] = [
 _UPSET_ALERT_THRESHOLD = 0.30  # LOWERED from 0.35 to flag more potential upsets
 
 # Tournament SD inflation factor applied to the AdjEM logistic divisor.
-_TOURNAMENT_SD_FACTOR = 1.25  # INCREASED from 1.15 for more March Madness chaos
+_TOURNAMENT_SD_FACTOR = 1.40  # INCREASED from 1.25 for MAXIMUM March Madness chaos
 
 # AdjEM logistic base divisor: 10.0 pts gap => ~73% win prob in regular season.
-_ADJM_BASE_DIVISOR = 10.0
+# INCREASED to reduce AdjEM dominance and allow more upsets
+_ADJM_BASE_DIVISOR = 14.0  # INCREASED from 10.0 — less AdjEM impact
 
 # Region assignment order for redistribution.
 _REGION_NAMES = ["East", "West", "South", "Midwest"]
