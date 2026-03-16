@@ -202,17 +202,13 @@ def _blend_with_seed_history_v2(
     """
     Blend V9.1 win probability with historical seed-matchup upset rates.
     
-    Intelligence upgrade: Variable history weight based on matchup:
-    - 1v16: 40% history (40 years of data, 1-seeds almost never lose)
-    - 2v15, 3v14: 30-35% history
-    - 4v13, 5v12, 6v11, 7v10: 20-25% history
-    - 8v9: 20% history (coin flip — current form matters more)
-    
-    R32 uses half the history weight (more current-form dependent).
+    MAXIMUM CHAOS MODE: Aligned with bracket_simulator.py ROUND_HIST_WEIGHT:
+    - R64: 75% history weight (maximum upset zone!)
+    - R32: 50% history weight
+    - S16+: Pure model (history fades)
     """
     higher_seed = min(seed_a, seed_b)
     lower_seed = max(seed_a, seed_b)
-    seed_diff = lower_seed - higher_seed
     
     hist_upset_rate = SEED_UPSET_RATES.get((higher_seed, lower_seed))
     if hist_upset_rate is None:
@@ -224,22 +220,17 @@ def _blend_with_seed_history_v2(
     else:
         hist_prob = hist_upset_rate  # team_a is underdog
     
-    # Determine history weight based on matchup extremity
-    # INCREASED weights for upset-prone matchups to allow more Cinderella runs
-    if seed_diff >= 15:      # 1v16 - 40% history (almost never happens)
-        history_weight = 0.40
-    elif seed_diff >= 13:    # 2v15, 3v14 - 35% history (rare but possible)
-        history_weight = 0.35
-    elif seed_diff >= 10:    # 4v13, 5v12, 6v11 - 40% history (UPSET ZONE!)
-        history_weight = 0.40  # INCREASED from 0.20 to allow more 12, 11, 13 seeds
-    elif seed_diff >= 3:     # 7v10 - 35% history (coin flip)
-        history_weight = 0.35  # INCREASED from 0.20
-    else:                     # 8v9 - 30% history (true coin flip)
-        history_weight = 0.30  # INCREASED from 0.20
-    
-    # R32 uses slightly less history but still significant
-    if round_num == 2:
-        history_weight *= 0.7  # LESS reduction (was 0.5)
+    # MAXIMUM CHAOS: Use same weights as bracket_simulator.py
+    if round_num == 1:       # R64: 75% history (MAJOR upset zone!)
+        history_weight = 0.75
+    elif round_num == 2:     # R32: 50% history
+        history_weight = 0.50
+    elif round_num == 3:     # S16: 20% history
+        history_weight = 0.20
+    elif round_num == 4:     # E8: 10% history
+        history_weight = 0.10
+    else:                     # F4+: Pure model
+        history_weight = 0.00
     
     weight_model = 1.0 - history_weight
     blended = weight_model * model_prob + history_weight * hist_prob
