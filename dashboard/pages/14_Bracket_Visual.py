@@ -106,29 +106,73 @@ def load_bracket_from_session() -> dict | None:
 
 
 # ---------------------------------------------------------------------------
-# Upset probability lookup from historical data (same as matchup_predictor.py)
+# Smart Bracket Generator — uses all V9.1 data
 # ---------------------------------------------------------------------------
-SEED_UPSET_RATES = {
-    (1, 16): 0.013,
-    (2, 15): 0.067,
-    (3, 14): 0.153,
-    (4, 13): 0.216,
-    (5, 12): 0.352,
-    (6, 11): 0.389,
-    (7, 10): 0.394,
-    (8, 9):  0.487,
-}
-
-
-def get_upset_probability(seed_a: int, seed_b: int) -> float:
-    """Get historical upset probability for a seed matchup."""
-    higher = min(seed_a, seed_b)
-    lower = max(seed_a, seed_b)
-    return SEED_UPSET_RATES.get((higher, lower), 0.0)
+def generate_smart_bracket_streamlit(
+    bracket: dict,
+    chaos_level: float = 0.0,
+    sim_results_path: str = "outputs/tournament_2026/sim_results.json"
+) -> tuple:
+    """
+    Generate bracket using sophisticated upset prediction.
+    
+    Args:
+        bracket: {region: [TournamentTeam]}
+        chaos_level: 0.0 = chalk, 0.5 = balanced, 1.0 = max chaos
+        sim_results_path: Path to Monte Carlo results
+    
+    Returns:
+        (region_rounds, ff, champ, upset_explanations)
+    """
+    from backend.tournament.smart_bracket import SmartBracketGenerator
+    
+    generator = SmartBracketGenerator(sim_results_path, chaos_level)
+    results = generator.generate_bracket_with_explanations(bracket)
+    
+    # Convert to expected format for UI
+    region_rounds = {}
+    for region, data in results["regions"].items():
+        region_rounds[region] = data["rounds"]
+    
+    # Build Final Four
+    ff = []
+    for reg_a, reg_b in FF_PAIRINGS:
+        winner_a = results["regions"][reg_a]["winner"]
+        winner_b = results["regions"][reg_b]["winner"]
+        if winner_a and winner_b:
+            prob_a, _, _ = predict_game(winner_a, winner_b, 5)
+            if prob_a >= 0.5:
+                winner, loser, prob = winner_a, winner_b, prob_a
+            else:
+                winner, loser, prob = winner_b, winner_a, 1.0 - prob_a
+            ff.append({
+                "ta": winner_a, "tb": winner_b,
+                "winner": winner, "loser": loser,
+                "prob": prob, "is_upset": winner.seed > loser.seed,
+                "regions": (reg_a, reg_b),
+            })
+    
+    # Build Championship
+    if len(ff) == 2:
+        ta, tb = ff[0]["winner"], ff[1]["winner"]
+        prob_a, _, _ = predict_game(ta, tb, 6)
+        if prob_a >= 0.5:
+            winner, loser, prob = ta, tb, prob_a
+        else:
+            winner, loser, prob = tb, ta, 1.0 - prob_a
+        champ = {
+            "ta": ta, "tb": tb,
+            "winner": winner, "loser": loser,
+            "prob": prob, "is_upset": winner.seed > loser.seed,
+        }
+    else:
+        champ = {"ta": None, "tb": None, "winner": None, "loser": None, "prob": 0.5, "is_upset": False}
+    
+    return region_rounds, ff, champ, results.get("upsets", [])
 
 
 # ---------------------------------------------------------------------------
-# Predicted bracket generators
+# Legacy bracket generator (kept for reference)
 # ---------------------------------------------------------------------------
 def generate_predicted_bracket(bracket: dict, chaos_mode: bool = False) -> tuple:
     """
@@ -483,11 +527,13 @@ def render_full_bracket_html(region_rounds: dict, ff: list, champ: dict, chaos_m
 # Page
 # ---------------------------------------------------------------------------
 st.title("Predicted Tournament Bracket")
-st.caption("Model picks the higher-probability team in every matchup. Bracket uses V9.1 composite ratings + historical seed blending.")
+st.caption("Model picks winners using V9.1 composite ratings + Monte Carlo results + style matchups + Cinderella factors")
 
 # Initialize session state
-if "chaos_mode" not in st.session_state:
-    st.session_state.chaos_mode = False
+if "chaos_level" not in st.session_state:
+    st.session_state.chaos_level = 0.0
+if "use_smart_bracket" not in st.session_state:
+    st.session_state.use_smart_bracket = True
 
 # Load bracket — prefer session state from page 13, fall back to disk
 bracket = load_bracket_from_session()
@@ -505,68 +551,134 @@ named = sum(1 for ts in bracket.values() for t in ts if not t.name.startswith(f"
 st.caption(f"Bracket source: {source} | {named}/64 teams named")
 
 # ---------------------------------------------------------------------------
-# Bracket mode toggle
+# Smart Bracket Configuration
 # ---------------------------------------------------------------------------
-st.subheader("Bracket Mode")
-col_chalk, col_chaos, _ = st.columns([2, 2, 6])
+st.subheader("🧠 Smart Bracket Configuration")
+st.markdown("""
+The Smart Bracket Generator uses **all V9.1 data** to predict upsets:
+- 📊 **Monte Carlo simulation results** (10,000 tournament runs)
+- 📈 **Composite ratings** (51% KenPom + 49% BartTorvik)
+- ⚡ **Style matchups** (pace, 3PT rate, defensive efficiency)
+- 🏆 **Cinderella factors** (tourney experience, recent form, momentum)
+- 📚 **Historical seed upset rates** (as baseline)
+""")
 
-with col_chalk:
-    is_chalk = not st.session_state.chaos_mode
-    if st.button("🏆 Chalk Bracket", type="primary" if is_chalk else "secondary",
-                 help="Predict favorites win every game"):
-        st.session_state.chaos_mode = False
-        st.session_state.pop("predicted_bracket", None)
-        st.rerun()
+# Chaos level slider
+chaos_level = st.slider(
+    "🔥 Chaos Level",
+    min_value=0.0,
+    max_value=1.0,
+    value=st.session_state.chaos_level,
+    step=0.1,
+    help="0.0 = Chalk (favorites always win) | 0.5 = Balanced | 1.0 = Maximum Chaos (upsets everywhere)"
+)
 
-with col_chaos:
-    is_chaos = st.session_state.chaos_mode
-    if st.button("🔥 Chaos Bracket", type="primary" if is_chaos else "secondary",
-                 help="Predict upsets in high-risk matchups (5v12, 6v11, 7v10, 8v9)"):
-        st.session_state.chaos_mode = True
-        st.session_state.pop("predicted_bracket", None)
-        st.rerun()
+# Mode indicators
+if chaos_level == 0.0:
+    mode_emoji = "🏆"
+    mode_name = "CHALK BRACKET"
+    mode_desc = "Favorites win every game"
+    mode_color = "blue"
+elif chaos_level <= 0.3:
+    mode_emoji = "📊"
+    mode_name = "MODEL BRACKET"
+    mode_desc = "Based on V9.1 composite ratings"
+    mode_color = "green"
+elif chaos_level <= 0.6:
+    mode_emoji = "⚡"
+    mode_name = "STYLE-AWARE BRACKET"
+    mode_desc = "Includes pace/3PT/defensive mismatches"
+    mode_color = "orange"
+elif chaos_level <= 0.8:
+    mode_emoji = "🎭"
+    mode_name = "CINDERELLA BRACKET"
+    mode_desc = "Factors in tourney experience + recent form"
+    mode_color = "red"
+else:
+    mode_emoji = "🔥"
+    mode_name = "MAXIMUM CHAOS"
+    mode_desc = "March Madness madness!"
+    mode_color = "red"
 
-chaos_mode = st.session_state.chaos_mode
-mode_label = "🔥 CHAOS MODE — Upsets predicted in R64/R32!" if chaos_mode else "🏆 CHALK MODE — Favorites win every game"
-st.info(mode_label)
+st.info(f"**{mode_emoji} {mode_name}** — {mode_desc}")
+
+# Update session state if changed
+if chaos_level != st.session_state.chaos_level:
+    st.session_state.chaos_level = chaos_level
+    st.session_state.pop("predicted_bracket", None)
+    st.session_state.pop("upset_explanations", None)
+    st.rerun()
 
 # Re-generate button
-if st.button("Generate / Refresh Predicted Bracket", type="primary"):
-    st.session_state.pop("predicted_bracket", None)
+col_gen, col_help = st.columns([2, 6])
+with col_gen:
+    if st.button("🎲 Generate Smart Bracket", type="primary"):
+        st.session_state.pop("predicted_bracket", None)
+        st.session_state.pop("upset_explanations", None)
+        st.rerun()
 
+with col_help:
+    st.caption("Each click generates a new bracket based on probability-weighted outcomes")
+
+# Generate bracket using Smart Bracket Generator
 if "predicted_bracket" not in st.session_state:
-    with st.spinner(f"Computing {'chaos' if chaos_mode else 'chalk'} bracket..."):
-        region_rounds, ff, champ = generate_predicted_bracket(bracket, chaos_mode=chaos_mode)
-        st.session_state.predicted_bracket = (region_rounds, ff, champ)
+    with st.spinner(f"🧠 Computing Smart Bracket (chaos={chaos_level:.1f})..."):
+        try:
+            region_rounds, ff, champ, upset_explanations = generate_smart_bracket_streamlit(
+                bracket,
+                chaos_level=chaos_level,
+                sim_results_path="outputs/tournament_2026/sim_results.json"
+            )
+            st.session_state.predicted_bracket = (region_rounds, ff, champ)
+            st.session_state.upset_explanations = upset_explanations
+        except Exception as e:
+            st.error(f"Smart Bracket Generator failed: {e}")
+            st.info("Falling back to basic generator...")
+            region_rounds, ff, champ = generate_predicted_bracket(bracket, chaos_mode=chaos_level > 0.5)
+            st.session_state.predicted_bracket = (region_rounds, ff, champ)
+            st.session_state.upset_explanations = []
 
 region_rounds, ff, champ = st.session_state.predicted_bracket
+upset_explanations = st.session_state.get("upset_explanations", [])
 
 # ---------------------------------------------------------------------------
 # Key callouts
 # ---------------------------------------------------------------------------
+st.subheader("📊 Bracket Summary")
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Predicted Champion", f"#{champ['winner'].seed} {champ['winner'].name}",
-          f"{champ['prob']:.0%} in final")
-c2.metric("Final Four Game 1",
-          f"#{ff[0]['winner'].seed} {ff[0]['winner'].name}",
-          f"{ff[0]['prob']:.0%} | {ff[0]['regions'][0].title()} vs {ff[0]['regions'][1].title()}")
-c3.metric("Final Four Game 2",
-          f"#{ff[1]['winner'].seed} {ff[1]['winner'].name}",
-          f"{ff[1]['prob']:.0%} | {ff[1]['regions'][0].title()} vs {ff[1]['regions'][1].title()}")
+c1.metric("🏆 Predicted Champion", f"#{champ['winner'].seed} {champ['winner'].name}" if champ['winner'] else "TBD",
+          f"{champ['prob']:.0%} in final" if champ['winner'] else "")
+c2.metric("🎭 Final Four Game 1",
+          f"#{ff[0]['winner'].seed} {ff[0]['winner'].name}" if ff else "TBD",
+          f"{ff[0]['prob']:.0%}" if ff else "")
+c3.metric("🎭 Final Four Game 2",
+          f"#{ff[1]['winner'].seed} {ff[1]['winner'].name}" if len(ff) > 1 else "TBD",
+          f"{ff[1]['prob']:.0%}" if len(ff) > 1 else "")
 upsets = sum(
     1 for rr in region_rounds.values()
     for rnd in [1, 2, 3, 4]
     for m in rr[rnd]
-    if m["is_upset"]
+    if m.get("is_upset", False)
 )
-c4.metric("Predicted Upsets", upsets, "in rounds 1-4")
+c4.metric("⚡ Predicted Upsets", upsets, f"in rounds 1-4 (chaos={chaos_level:.1f})")
+
+# Show upset explanations
+if upset_explanations:
+    with st.expander(f"🔍 Upset Analysis ({len(upset_explanations)} upsets predicted)"):
+        for upset in upset_explanations:
+            st.markdown(f"""
+            **{upset['region'].upper()} Region — Round {upset['round']}**  
+            #{upset['winner_seed']} **{upset['winner']}** beats #{upset['loser_seed']} {upset['loser']}  
+            📈 Upset probability: {upset['upset_prob']:.1%}  
+            💡 Why: {upset['explanation']}
+            """)
 
 st.divider()
 
 # ---------------------------------------------------------------------------
 # Full bracket visual
 # ---------------------------------------------------------------------------
-html = render_full_bracket_html(region_rounds, ff, champ, chaos_mode=chaos_mode)
+html = render_full_bracket_html(region_rounds, ff, champ, chaos_mode=chaos_level > 0.3)
 # Height: 16 teams * 24px * 2 regions + padding
 components.html(html, height=1050, scrolling=True)
 
@@ -603,3 +715,4 @@ with st.expander("Round-by-round breakdown (text)"):
         f"#{champ['tb'].seed} {champ['tb'].name} "
         f"→ **#{champ['winner'].seed} {champ['winner'].name}** ({champ['prob']:.0%})"
     )
+
