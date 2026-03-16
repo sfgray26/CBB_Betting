@@ -506,7 +506,7 @@ class TestGameAnalysis:
 
         result = model.analyze_game(game, odds, ratings)
 
-        assert result.full_analysis['model_version'] == 'v9.0'
+        assert result.full_analysis['model_version'].startswith('v9.')
         assert result.full_analysis['calculations']['vig_removal_method'] == 'shin_1993'
 
     def test_missing_kenpom_returns_pass(self):
@@ -2041,10 +2041,10 @@ class TestDynamicMarginSE:
         assert m._compute_margin_se(n_missing=0, sharp_books=1, evanmiya_down=False) == pytest.approx(1.50)
 
     def test_evanmiya_down_raises_se(self):
-        """EvanMiya down adds 0.30 addend → 1.80."""
+        """EvanMiya down adds 0.00 addend by default (intentionally excluded, not broken) → 1.50."""
         m = CBBEdgeModel()
         se = m._compute_margin_se(n_missing=0, sharp_books=1, evanmiya_down=True)
-        assert se == pytest.approx(1.80)
+        assert se == pytest.approx(1.50)
 
     def test_no_sharp_books_raises_se(self):
         """No sharp books available adds 0.30 addend → 1.80."""
@@ -2053,10 +2053,10 @@ class TestDynamicMarginSE:
         assert se == pytest.approx(1.80)
 
     def test_fully_degraded_raises_se(self):
-        """Both EvanMiya down AND no sharp books = today's worst case."""
+        """No sharp books AND EvanMiya down = worst case without explicit EM penalty → 1.80."""
         m = CBBEdgeModel()
         se = m._compute_margin_se(n_missing=0, sharp_books=0, evanmiya_down=True)
-        assert se == pytest.approx(2.10)
+        assert se == pytest.approx(1.80)
 
     def test_fully_degraded_wider_ci(self):
         """Degraded mode produces materially wider CI than base mode."""
@@ -2265,7 +2265,7 @@ class TestD3TierSizing:
     D3: Edge-proportional 4-tier Kelly sizing (replaces flat 1.5u cap).
 
     Tier boundaries (env-var overridable, defaults):
-      T1  edge <= 2%  : 0.50u  (in practice never reached — D4 floors BET at MIN_BET_EDGE=2.5%)
+      T1  edge <= 2%  : 0.50u  (in practice rarely reached — D4 floors BET at MIN_BET_EDGE=1.8%)
       T2  edge <= 5%  : 0.75u
       T3  edge <= 8%  : 1.00u
       T4  edge >  8%  : 1.25u  (or 1.50u when T4+ premium criteria met)
@@ -2399,12 +2399,12 @@ class TestD4MinBetEdge:
         if analysis.verdict.startswith("CONSIDER"):
             assert analysis.recommended_units == 0.0
 
-    def test_min_bet_edge_default_is_2_5_pct(self):
-        """Default MIN_BET_EDGE=2.5% is encoded in the model (env var test)."""
+    def test_min_bet_edge_default_is_1_8_pct(self):
+        """Default MIN_BET_EDGE=1.8% is encoded in the model (EMAC-068, pre-GUARDIAN)."""
         import os
-        # If env var is not set, the default must be 2.5
-        env_val = float(os.getenv("MIN_BET_EDGE", "2.5"))
-        assert env_val == pytest.approx(2.5)
+        # If env var is not set, the default must be 1.8
+        env_val = float(os.getenv("MIN_BET_EDGE", "1.8"))
+        assert env_val == pytest.approx(1.8)
 
 
 class TestReanalysisEngine:

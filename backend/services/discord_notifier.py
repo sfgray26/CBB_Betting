@@ -1,14 +1,31 @@
 """
-Discord notification service for CBB Edge.
+Discord notification service for CBB Edge + Fantasy Baseball.
 
-Sends daily bet recommendations to a Discord channel using the Discord Bot API.
+Sends notifications to multiple Discord channels based on message type.
 
-Required env var:
-  DISCORD_BOT_TOKEN   — Discord bot token (bot must be a member of the server)
+Required env vars:
+  DISCORD_BOT_TOKEN — Discord bot token (bot must be a member of the server)
 
-Optional env var:
-  DISCORD_CHANNEL_ID  — Override the default channel ID
-                        (default: 1477436117426110615)
+Optional env vars (channel IDs):
+  DISCORD_CHANNEL_CBB_BETS
+  DISCORD_CHANNEL_CBB_BRIEF
+  DISCORD_CHANNEL_CBB_ALERTS
+  DISCORD_CHANNEL_CBB_TOURNAMENT
+  DISCORD_CHANNEL_FANTASY_LINEUPS
+  DISCORD_CHANNEL_FANTASY_WAIVERS
+  DISCORD_CHANNEL_FANTASY_NEWS
+  DISCORD_CHANNEL_FANTASY_DRAFT
+  DISCORD_CHANNEL_OPENCLAW_BRIEFS
+  DISCORD_CHANNEL_OPENCLAW_ESCALATIONS
+  DISCORD_CHANNEL_OPENCLAW_HEALTH
+  DISCORD_CHANNEL_SYSTEM_ERRORS
+  DISCORD_CHANNEL_SYSTEM_LOGS
+  DISCORD_CHANNEL_DATA_ALERTS
+  DISCORD_CHANNEL_GENERAL
+  DISCORD_CHANNEL_ADMIN_COMMANDS
+
+Legacy support:
+  DISCORD_CHANNEL_ID — Fallback for backward compatibility
 
 If DISCORD_BOT_TOKEN is not set all functions silently no-op.
 """
@@ -29,17 +46,52 @@ from backend.services.scout import (
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_CHANNEL_ID = "1477436117426110615"
 _DISCORD_API_BASE = "https://discord.com/api/v10"
 
 # Embed colours (decimal integers, not hex strings)
 _COLOR_GREEN = 0x2ECC71   # bets found
 _COLOR_YELLOW = 0xF1C40F  # considers only
 _COLOR_GREY = 0x95A5A6    # all pass
+_COLOR_RED = 0xE74C3C     # errors / alerts
+_COLOR_BLUE = 0x3498DB    # info / briefs
+_COLOR_ORANGE = 0xE67E22  # warnings
+_COLOR_GOLD = 0xFFD700    # high stakes
+
+# Channel configuration mapping
+CHANNEL_MAP = {
+    # 🏀 CBB EDGE
+    "cbb-bets": "DISCORD_CHANNEL_CBB_BETS",
+    "cbb-morning-brief": "DISCORD_CHANNEL_CBB_BRIEF",
+    "cbb-alerts": "DISCORD_CHANNEL_CBB_ALERTS",
+    "cbb-tournament": "DISCORD_CHANNEL_CBB_TOURNAMENT",
+    
+    # ⚾ FANTASY BASEBALL
+    "fantasy-lineups": "DISCORD_CHANNEL_FANTASY_LINEUPS",
+    "fantasy-waivers": "DISCORD_CHANNEL_FANTASY_WAIVERS",
+    "fantasy-news": "DISCORD_CHANNEL_FANTASY_NEWS",
+    "fantasy-draft": "DISCORD_CHANNEL_FANTASY_DRAFT",
+    
+    # 🎯 OPENCLAW INTEL
+    "openclaw-briefs": "DISCORD_CHANNEL_OPENCLAW_BRIEFS",
+    "openclaw-escalations": "DISCORD_CHANNEL_OPENCLAW_ESCALATIONS",
+    "openclaw-health": "DISCORD_CHANNEL_OPENCLAW_HEALTH",
+    
+    # ⚙️ SYSTEM OPS
+    "system-errors": "DISCORD_CHANNEL_SYSTEM_ERRORS",
+    "system-logs": "DISCORD_CHANNEL_SYSTEM_LOGS",
+    "data-alerts": "DISCORD_CHANNEL_DATA_ALERTS",
+    
+    # 💬 GENERAL
+    "general": "DISCORD_CHANNEL_GENERAL",
+    "admin-commands": "DISCORD_CHANNEL_ADMIN_COMMANDS",
+}
+
+# Legacy fallback channel (original bets channel)
+_LEGACY_CHANNEL_ID = "1477436117426110615"
 
 
 # ---------------------------------------------------------------------------
-# Internals
+# Core Functions
 # ---------------------------------------------------------------------------
 
 
@@ -47,22 +99,45 @@ def _bot_token() -> Optional[str]:
     return os.getenv("DISCORD_BOT_TOKEN")
 
 
-def _channel_id() -> str:
-    return os.getenv("DISCORD_CHANNEL_ID", _DEFAULT_CHANNEL_ID)
+def _get_channel_id(channel_name: str) -> Optional[str]:
+    """Get channel ID for a named channel from environment variables."""
+    env_var = CHANNEL_MAP.get(channel_name)
+    if env_var:
+        channel_id = os.getenv(env_var)
+        if channel_id:
+            return channel_id
+    
+    # Fallback to legacy channel ID for backward compatibility
+    if channel_name in ("cbb-bets", "general"):
+        legacy = os.getenv("DISCORD_CHANNEL_ID", _LEGACY_CHANNEL_ID)
+        if legacy:
+            return legacy
+    
+    return None
 
 
-def _post(payload: dict) -> bool:
-    """POST a message payload to the configured channel. Returns True on success."""
+def _post_to_channel(channel_id: str, payload: dict, mention_admin: bool = False) -> bool:
+    """POST a message payload to a specific channel. Returns True on success."""
     token = _bot_token()
     if not token:
         logger.debug("DISCORD_BOT_TOKEN not set — skipping Discord notification")
         return False
+    
+    if not channel_id:
+        logger.debug("No channel ID configured — skipping notification")
+        return False
 
-    url = f"{_DISCORD_API_BASE}/channels/{_channel_id()}/messages"
+    url = f"{_DISCORD_API_BASE}/channels/{channel_id}/messages"
     headers = {
         "Authorization": f"Bot {token}",
         "Content-Type": "application/json",
     }
+    
+    # Add admin mention if requested
+    if mention_admin:
+        content = payload.get("content", "")
+        payload["content"] = "@admin " + content
+    
     try:
         resp = requests.post(url, json=payload, headers=headers, timeout=10)
         if resp.status_code not in (200, 201):
@@ -74,6 +149,128 @@ def _post(payload: dict) -> bool:
     except requests.RequestException as exc:
         logger.warning("Discord POST failed: %s", exc)
         return False
+
+
+def send_to_channel(
+    channel_name: str, 
+    message: str = None, 
+    embed: dict = None, 
+    embeds: list = None,
+    mention_admin: bool = False
+) -> bool:
+    """
+    Send a message to a named channel.
+    
+    Args:
+        channel_name: One of the keys in CHANNEL_MAP (e.g., "cbb-bets", "fantasy-lineups")
+        message: Plain text content
+        embed: Single embed dict
+        embeds: List of embed dicts
+        mention_admin: Whether to mention @admin
+    
+    Returns:
+        True if sent successfully, False otherwise
+    """
+    channel_id = _get_channel_id(channel_name)
+    if not channel_id:
+        logger.warning(f"Channel '{channel_name}' not configured")
+        return False
+    
+    payload = {}
+    if message:
+        payload["content"] = message
+    if embed:
+        payload["embeds"] = [embed]
+    if embeds:
+        payload["embeds"] = embeds
+    
+    if not payload:
+        logger.warning("No content to send")
+        return False
+    
+    return _post_to_channel(channel_id, payload, mention_admin)
+
+
+def route_notification(
+    message_type: str,
+    content: str = None,
+    embed: dict = None,
+    embeds: list = None,
+    severity: str = "normal"
+) -> bool:
+    """
+    Route a notification to the appropriate channel based on message type.
+    
+    Args:
+        message_type: Type of message (determines channel routing)
+        content: Plain text message
+        embed: Single embed dict
+        embeds: List of embed dicts
+        severity: "normal", "warning", "critical" — affects @admin mention
+    
+    Returns:
+        True if sent successfully
+    """
+    # Routing map: message_type -> channel_name
+    routing = {
+        # CBB Betting
+        "bet_recommendation": "cbb-bets",
+        "morning_brief": "cbb-morning-brief",
+        "line_movement": "cbb-alerts",
+        "sharp_signal": "cbb-alerts",
+        "tournament_update": "cbb-tournament",
+        
+        # Fantasy Baseball
+        "lineup_recommendation": "fantasy-lineups",
+        "waiver_suggestion": "fantasy-waivers",
+        "injury_alert": "fantasy-news",
+        "draft_pick": "fantasy-draft",
+        
+        # OpenClaw
+        "research_brief": "openclaw-briefs",
+        "high_stakes_escalation": "openclaw-escalations",
+        "system_health": "openclaw-health",
+        
+        # System
+        "critical_error": "system-errors",
+        "routine_log": "system-logs",
+        "data_degradation": "data-alerts",
+        
+        # Fallback
+        "general": "general",
+    }
+    
+    channel_name = routing.get(message_type, "general")
+    mention_admin = severity in ("warning", "critical")
+    
+    return send_to_channel(
+        channel_name=channel_name,
+        message=content,
+        embed=embed,
+        embeds=embeds,
+        mention_admin=mention_admin
+    )
+
+
+# ---------------------------------------------------------------------------
+# Legacy Support (Backward Compatible)
+# ---------------------------------------------------------------------------
+
+
+def _legacy_channel_id() -> str:
+    """Get the legacy default channel ID for backward compatibility."""
+    return os.getenv("DISCORD_CHANNEL_ID", _LEGACY_CHANNEL_ID)
+
+
+def _post(payload: dict) -> bool:
+    """Legacy POST function — sends to original bets channel."""
+    channel_id = _legacy_channel_id()
+    return _post_to_channel(channel_id, payload)
+
+
+# ---------------------------------------------------------------------------
+# Helper Functions
+# ---------------------------------------------------------------------------
 
 
 def _pick_str(bet: Dict) -> str:
@@ -105,133 +302,133 @@ def _odds_str(bet_odds) -> str:
 
 
 def _bet_embed(bet: Dict) -> Dict:
-    pick = _pick_str(bet)
+    """Build a SUPER CLEAR, actionable bet embed for Discord."""
     edge = bet.get("edge_conservative", 0.0) or 0.0
     units = bet.get("recommended_units", 0.0) or 0.0
-    margin = bet.get("projected_margin", 0.0) or 0.0
-    kelly = bet.get("kelly_fractional", 0.0) or 0.0
-    verdict = bet.get("verdict", "")
-    snr = bet.get("snr")
-
-    # Generate LLM-based scouting insight
-    insight = generate_scouting_report(
-        home_team=bet.get("home_team", "Home"),
-        away_team=bet.get("away_team", "Away"),
-        matchup_notes=bet.get("matchup_notes", []),
-        verdict=verdict,
-        edge=edge
-    )
-
-    # Use the V9 integrity_verdict computed during analysis Pass 2.
-    # This is the exact verdict that was used for Kelly sizing — no second
-    # DDGS search needed, and Discord stays consistent with the model.
-    integrity = bet.get("integrity_verdict") or "Not run"
-
-    snr_str = f"{snr:.0%}" if snr is not None else "N/A"
-
+    home_team = bet.get("home_team", "Home")
+    away_team = bet.get("away_team", "Away")
+    bet_side = bet.get("bet_side", "home")
+    spread = bet.get("spread")
+    
+    # Determine which team we're betting on
+    team_to_bet = home_team if bet_side == "home" else away_team
+    
+    # Format the spread from bettor's perspective
+    if spread is not None:
+        spread_val = spread if bet_side == "home" else -spread
+        spread_str = f"{spread_val:+.1f}"
+    else:
+        spread_str = "ML"
+    
+    # Build THE BET - front and center
+    the_bet = f"**{team_to_bet} {spread_str}**"
+    
+    # Color based on confidence
+    if units >= 1.5:
+        color = _COLOR_GOLD  # High stakes
+    elif edge >= 0.04:
+        color = _COLOR_GREEN  # Strong edge
+    else:
+        color = _COLOR_BLUE
+    
     return {
-        "title": f"PICK: {pick}",
-        "description": f"{bet.get('away_team', 'Away')} @ {bet.get('home_team', 'Home')}",
-        "color": _COLOR_GREEN,
+        "title": f"🎯 BET: {the_bet}",
+        "description": f"{away_team} @ {home_team}",
+        "color": color,
         "fields": [
-            {"name": "Edge",         "value": f"{edge:.1%}",         "inline": True},
-            {"name": "Stake",        "value": f"{units:.2f}u",       "inline": True},
-            {"name": "Odds",         "value": _odds_str(bet.get("bet_odds")), "inline": True},
-            {"name": "Proj. Margin", "value": f"{margin:+.1f} pts",  "inline": True},
-            {"name": "Kelly",        "value": f"{kelly:.1%}",        "inline": True},
-            {"name": "Tier",         "value": _tier(verdict),        "inline": True},
-            {"name": "Source SNR",   "value": snr_str,               "inline": True},
-            {"name": "Model Insight", "value": f"*{insight}*",       "inline": False},
-            {"name": "V9 Integrity Verdict", "value": f"**{integrity}**", "inline": False},
+            {"name": "🎯 THE BET", "value": the_bet, "inline": False},
+            {"name": "💰 Stake", "value": f"{units:.2f}u", "inline": True},
+            {"name": "📊 Edge", "value": f"{edge:.1%}", "inline": True},
+            {"name": "📈 Projected", "value": f"{bet.get('projected_margin', 0):+.1f} pts", "inline": True},
         ],
+        "footer": {"text": "CBB Edge v9"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# Public API (Legacy Functions — Updated for Multi-Channel)
 # ---------------------------------------------------------------------------
+
 
 def send_todays_bets(
     bet_details: Optional[List[Dict]],
     summary: Dict,
 ) -> None:
     """
-    Send today's betting slate to Discord.
-
-    Args:
-        bet_details: List of bet dicts from the analysis summary. Each dict
-                     contains home_team, away_team, spread, bet_side,
-                     edge_conservative, recommended_units, bet_odds,
-                     kelly_fractional, projected_margin, verdict.
-                     May be None or [] when no bets were found.
-        summary:     The _summary() dict from run_nightly_analysis().
+    Send today's BET picks to Discord #cbb-bets channel.
+    
+    IMPROVED: Shows ALL bets with key details in ONE message.
     """
     if not _bot_token():
         return
 
     n_bets = summary.get("bets_recommended", 0)
-    n_considered = summary.get("games_considered", 0)
-    n_analyzed = summary.get("games_analyzed", 0)
-    n_pass = max(0, n_analyzed - n_bets - n_considered)
-    duration = summary.get("duration_seconds", 0)
     today = datetime.now(timezone.utc).strftime("%b %d, %Y")
 
-    if n_bets > 0:
-        color = _COLOR_GREEN
-        status_line = f"**{n_bets} BET{'s' if n_bets > 1 else ''}** found on today's slate!"
-    elif n_considered > 0:
-        color = _COLOR_YELLOW
-        status_line = (
-            f"No BETs today. "
-            f"{n_considered} CONSIDER game{'s' if n_considered > 1 else ''} — "
-            "watch for line movement toward the model's side."
-        )
-    else:
-        color = _COLOR_GREY
-        status_line = "PASS on all games today. No edges found."
-
-    summary_embed = {
-        "title": f"CBB Edge — {today}",
-        "description": status_line,
-        "color": color,
-        "fields": [
-            {"name": "Games Analyzed", "value": str(n_analyzed),   "inline": True},
-            {"name": "BET",            "value": str(n_bets),        "inline": True},
-            {"name": "CONSIDER",       "value": str(n_considered),  "inline": True},
-            {"name": "PASS",           "value": str(n_pass),        "inline": True},
-            {"name": "Run Time",       "value": f"{duration:.0f}s", "inline": True},
-        ],
-        "footer": {"text": "CBB Edge Analyzer v9"},
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-
-    success = _post({"embeds": [summary_embed]})
-    if not success:
-        return  # If summary failed, don't try individual bets
+    # NO BETs = NO DISCORD MESSAGE
+    if n_bets == 0:
+        logger.info("No BETs today - skipping Discord notification")
+        return
 
     if not bet_details:
         return
 
-    # Sort highest-edge first
-    ordered = sorted(bet_details, key=lambda b: b.get("edge_conservative") or 0.0, reverse=True)
+    # Filter and sort actual BETs
+    ordered = sorted(
+        [b for b in bet_details if b.get("verdict", "").startswith("BET")],
+        key=lambda b: b.get("edge_conservative") or 0.0,
+        reverse=True
+    )
 
-    # Send each bet as an individual message to ensure delivery and avoid char limits
-    for bet in ordered:
-        try:
-            logger.info("Sending Discord embed for %s @ %s", bet.get("away_team"), bet.get("home_team"))
-            _post({"embeds": [_bet_embed(bet)]})
-        except Exception as e:
-            logger.error("Failed to send bet embed for %s: %s", bet.get("home_team"), e)
+    if not ordered:
+        return
+
+    # Send ONE summary message with ALL bets
+    from backend.services.discord_bet_embeds import create_bet_summary_embed
+    summary_embed = create_bet_summary_embed(ordered, summary)
+    
+    if summary_embed:
+        success = send_to_channel("cbb-bets", embed=summary_embed)
+        if not success:
+            logger.error("Failed to send bet summary to Discord")
+            return
+        logger.info(f"Sent bet summary with {len(ordered)} bets to Discord")
+    
+    # Optionally send detailed embeds for high-stakes bets (>= 1.0u)
+    high_stakes = [b for b in ordered if (b.get("recommended_units") or 0) >= 1.0]
+    
+    if high_stakes:
+        from backend.services.discord_bet_embeds import create_detailed_bet_embed
+        for i, bet in enumerate(high_stakes, 1):
+            try:
+                detail_embed = create_detailed_bet_embed(bet, bet_number=i)
+                send_to_channel("cbb-bets", embed=detail_embed)
+                logger.info(f"Sent detailed embed for high-stakes bet: {bet.get('home_team')} vs {bet.get('away_team')}")
+            except Exception as e:
+                logger.error(f"Failed to send detailed bet embed: {e}")
+
+
+def send_morning_brief(summary_embed: dict) -> bool:
+    """
+    Send morning briefing to #cbb-morning-brief channel.
+    
+    Args:
+        summary_embed: Pre-built embed dict with slate summary
+    
+    Returns:
+        True if sent successfully
+    """
+    return send_to_channel("cbb-morning-brief", embed=summary_embed)
 
 
 def send_health_briefing(summary: Dict) -> None:
     """
-    Send a system health report to Discord.
+    Send a system health report to Discord #openclaw-health channel.
     """
     if not _bot_token():
         return
 
-    # Use LLM to write a professional narrative
     perf = summary.get("performance", {})
     port = summary.get("portfolio", {})
     sys_status = summary.get("system", {})
@@ -242,7 +439,6 @@ def send_health_briefing(summary: Dict) -> None:
         f"System: {sys_status.get('status')} (Tests: {sys_status.get('passed', False)})"
     )
     
-    # Use dedicated health narrative logic
     narrative = generate_health_narrative(summary)
 
     color_map = {"GREEN": 0x2ECC71, "YELLOW": 0xF1C40F, "RED": 0xE74C3C}
@@ -277,25 +473,24 @@ def send_health_briefing(summary: Dict) -> None:
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-    _post({"embeds": [embed]})
+    # Send to openclaw-health channel
+    send_to_channel("openclaw-health", embed=embed)
 
 
-def send_verdict_flip_alert(movement: "LineMovement") -> None:
+def send_verdict_flip_alert(movement) -> None:
     """
     Send a real-time alert when a line move flips a PASS to a BET.
+    Goes to #cbb-alerts channel.
     """
     if not _bot_token() or not movement.fresh_analysis:
         return
 
     analysis = movement.fresh_analysis
-    # Guard None fields — edge/units are always set for BET verdicts but
-    # defensive coding prevents TypeError crashes that would silently kill the alert.
-    edge  = analysis.edge_conservative  or 0.0
+    edge = analysis.edge_conservative or 0.0
     units = analysis.recommended_units or 0.0
 
-    # Resolve pick string from calculations dict, not fragile verdict string parsing.
-    calcs     = (analysis.full_analysis or {}).get("calculations", {})
-    bet_side  = calcs.get("bet_side", "home")
+    calcs = (analysis.full_analysis or {}).get("calculations", {})
+    bet_side = calcs.get("bet_side", "home")
     pick_team = movement.home_team if bet_side == "home" else movement.away_team
     if movement.new_value is not None:
         side_spread = movement.new_value if bet_side == "home" else -movement.new_value
@@ -304,11 +499,9 @@ def send_verdict_flip_alert(movement: "LineMovement") -> None:
     else:
         pick_str = pick_team
 
-    # Safe spread movement string — old_value may be None on first observed snap.
     old_str = f"{movement.old_value:+.1f}" if movement.old_value is not None else "N/A"
     new_str = f"{movement.new_value:+.1f}" if movement.new_value is not None else "N/A"
 
-    # Generate fresh scouting insight for the flip.
     insight = generate_scouting_report(
         home_team=movement.home_team,
         away_team=movement.away_team,
@@ -332,7 +525,8 @@ def send_verdict_flip_alert(movement: "LineMovement") -> None:
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-    _post({"embeds": [embed]})
+    # Send to cbb-alerts channel
+    send_to_channel("cbb-alerts", embed=embed)
 
 
 def send_source_health_alert(
@@ -346,14 +540,10 @@ def send_source_health_alert(
 ) -> None:
     """
     Fire a Discord alert when fewer than 2 of 3 rating sources are active.
-
-    KenPom-only mode degrades edge accuracy: 10% margin shrinkage penalty
-    fires and margin_se widens from 1.50 → 1.80, suppressing BET verdicts.
+    Goes to #data-alerts channel.
     """
     if not _bot_token():
         return
-
-    _COLOR_RED = 0xE74C3C
 
     em_icon = "✅" if evanmiya_status == "UP" else ("⚠️" if evanmiya_status == "DROPPED" else "❌")
     status_line = (
@@ -389,5 +579,319 @@ def send_source_health_alert(
         "footer": {"text": "CBB Edge — Source Health Monitor"},
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-    _post({"embeds": [embed]})
+    
+    # Send to data-alerts channel
+    send_to_channel("data-alerts", embed=embed)
 
+
+# ---------------------------------------------------------------------------
+# New Channel-Specific Functions
+# ---------------------------------------------------------------------------
+
+
+def send_high_stakes_escalation(
+    game_key: str,
+    home_team: str,
+    away_team: str,
+    recommended_units: float,
+    integrity_verdict: str,
+    reason: str,
+    queue_id: str
+) -> bool:
+    """
+    Send high-stakes escalation alert to #openclaw-escalations channel.
+    
+    Returns:
+        True if sent successfully
+    """
+    embed = {
+        "title": "🚨 HIGH-STAKES ESCALATION",
+        "description": f"Game: {away_team} @ {home_team}",
+        "color": _COLOR_RED,
+        "fields": [
+            {"name": "Recommended Size", "value": f"{recommended_units:.2f} units", "inline": True},
+            {"name": "Integrity Verdict", "value": integrity_verdict, "inline": True},
+            {"name": "Escalation Reason", "value": reason, "inline": False},
+            {"name": "Queue ID", "value": f"`{queue_id}`", "inline": False},
+            {"name": "Action Required", "value": "Manual review before tipoff", "inline": False},
+        ],
+        "footer": {"text": "OpenClaw Escalation Queue"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    
+    return send_to_channel("openclaw-escalations", embed=embed, mention_admin=True)
+
+
+def send_fantasy_lineup(lineup_data: dict) -> bool:
+    """
+    Send daily fantasy lineup to #fantasy-lineups channel.
+    
+    Args:
+        lineup_data: Dict with hitters, pitchers, projections
+    """
+    hitters = lineup_data.get("hitters", [])
+    pitchers = lineup_data.get("pitchers", [])
+    total_proj = lineup_data.get("total_projected", 0)
+    
+    hitter_text = "\n".join([
+        f"{h['position']}: {h['name']} ({h['team']}) — {h['projection']:.1f}"
+        for h in hitters[:10]  # Top 10 hitters
+    ])
+    
+    pitcher_text = "\n".join([
+        f"{p['position']}: {p['name']} ({p['team']}) — {p['projection']:.1f}"
+        for p in pitchers[:4]  # Top 4 pitchers
+    ])
+    
+    embed = {
+        "title": f"⚾ Today's Optimal Lineup — {datetime.now(timezone.utc).strftime('%B %d')}",
+        "description": f"Total Projected: **{total_proj:.1f} points**",
+        "color": _COLOR_BLUE,
+        "fields": [
+            {"name": "Hitters", "value": f"```{hitter_text}```", "inline": False},
+            {"name": "Pitchers", "value": f"```{pitcher_text}```", "inline": False},
+        ],
+        "footer": {"text": "Fantasy Baseball Optimizer"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    
+    return send_to_channel("fantasy-lineups", embed=embed)
+
+
+def send_system_error(error_message: str, details: str = None) -> bool:
+    """
+    Send critical system error to #system-errors channel with @admin mention.
+    """
+    embed = {
+        "title": "❌ SYSTEM ERROR",
+        "description": error_message,
+        "color": _COLOR_RED,
+        "fields": [
+            {"name": "Timestamp", "value": datetime.now(timezone.utc).isoformat(), "inline": True},
+        ],
+        "footer": {"text": "CBB Edge System Monitor"},
+    }
+    
+    if details:
+        embed["fields"].append({"name": "Details", "value": f"```{details[:1000]}```", "inline": False})
+    
+    return send_to_channel("system-errors", embed=embed, mention_admin=True)
+
+
+def send_routine_log(message: str) -> bool:
+    """
+    Send routine operation log to #system-logs channel.
+    """
+    return send_to_channel("system-logs", message=message)
+
+
+# ---------------------------------------------------------------------------
+# Fantasy Baseball — Draft Notifications
+# ---------------------------------------------------------------------------
+
+
+def send_draft_pick(
+    pick_number: int,
+    round_number: int,
+    player_name: str,
+    positions: list,
+    team_key: str,
+    is_our_pick: bool = False,
+    top_recommendations: list = None,
+) -> bool:
+    """Send a draft pick notification to #fantasy-draft channel.
+
+    Args:
+        pick_number: Overall pick number (1-276).
+        round_number: Round number (1-23).
+        player_name: Player name string.
+        positions: List of position strings (e.g. ['SP', 'RP']).
+        team_key: Yahoo team_key of the team that made the pick.
+        is_our_pick: True when this pick belongs to us.
+        top_recommendations: Optional list of player dicts shown as
+                             on-the-clock recommendations when is_our_pick=True.
+
+    Returns:
+        True if the message was sent successfully.
+    """
+    if top_recommendations is None:
+        top_recommendations = []
+
+    pos_str = "/".join(positions) if positions else "?"
+
+    if is_our_pick:
+        color = _COLOR_GREEN
+        title = "YOUR PICK"
+        description = f"**Pick #{pick_number} (Round {round_number})** — You selected **{player_name}** ({pos_str})"
+    else:
+        color = _COLOR_BLUE
+        title = f"Pick #{pick_number} (Round {round_number})"
+        description = f"**{team_key}** selected **{player_name}** ({pos_str})"
+
+    fields = [
+        {"name": "Overall Pick", "value": str(pick_number), "inline": True},
+        {"name": "Round",        "value": str(round_number), "inline": True},
+        {"name": "Position(s)",  "value": pos_str,           "inline": True},
+        {"name": "Team",         "value": team_key,          "inline": True},
+    ]
+
+    if is_our_pick and top_recommendations:
+        rec_lines = []
+        for rec in top_recommendations[:3]:
+            name = rec.get("player_name") or rec.get("name", "?")
+            positions_rec = rec.get("positions", [])
+            pos_rec_str = "/".join(positions_rec[:2]) if positions_rec else "?"
+            z = rec.get("z_score", 0.0)
+            rec_lines.append(f"{name} ({pos_rec_str}) Z={z:+.2f}")
+        if rec_lines:
+            fields.append({
+                "name": "Top Recommendations",
+                "value": "\n".join(rec_lines),
+                "inline": False,
+            })
+
+    embed = {
+        "title": title,
+        "description": description,
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "Treemendous Draft Tracker"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return send_to_channel("fantasy-draft", embed=embed)
+
+
+# ---------------------------------------------------------------------------
+# OpenClaw Intelligence — Morning Brief & Telemetry (OPCL-001)
+# ---------------------------------------------------------------------------
+
+
+def send_openclaw_morning_brief(embed: dict) -> bool:
+    """
+    Send OpenClaw morning brief to #openclaw-briefs channel.
+    
+    Args:
+        embed: Pre-built embed dict from openclaw_briefs.generate_brief()
+    
+    Returns:
+        True if sent successfully
+    """
+    return send_to_channel("openclaw-briefs", embed=embed)
+
+
+def send_openclaw_telemetry(embed: dict) -> bool:
+    """
+    Send OpenClaw telemetry update to #openclaw-health channel.
+    
+    Args:
+        embed: Pre-built embed dict (status summary or alert)
+    
+    Returns:
+        True if sent successfully
+    """
+    return send_to_channel("openclaw-health", embed=embed)
+
+
+def send_openclaw_live_alert(
+    game: str,
+    alert_type: str,
+    message: str,
+    severity: str = "info",
+    recommendation: str = None
+) -> bool:
+    """
+    Send live game-time alert to #openclaw-escalations channel.
+    
+    Args:
+        game: Game string (e.g., "Duke @ UNC")
+        alert_type: Type of alert (e.g., "injury", "lineup", "weather")
+        message: Alert message
+        severity: "info", "warning", or "critical"
+        recommendation: Optional action recommendation
+    
+    Returns:
+        True if sent successfully
+    """
+    color_map = {
+        "info": _COLOR_BLUE,
+        "warning": _COLOR_YELLOW,
+        "critical": _COLOR_RED,
+    }
+    
+    emoji_map = {
+        "info": "ℹ️",
+        "warning": "⚠️",
+        "critical": "🚨",
+    }
+    
+    fields = [
+        {"name": "Alert Type", "value": alert_type.title(), "inline": True},
+        {"name": "Severity", "value": severity.upper(), "inline": True},
+    ]
+    
+    if recommendation:
+        fields.append({"name": "Recommendation", "value": recommendation, "inline": False})
+    
+    embed = {
+        "title": f"{emoji_map.get(severity, 'ℹ️')} Live Alert: {game}",
+        "description": message,
+        "color": color_map.get(severity, _COLOR_BLUE),
+        "fields": fields,
+        "footer": {"text": "OpenClaw Live Monitor"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    
+    # Only mention admin for critical alerts
+    mention_admin = severity == "critical"
+    return send_to_channel("openclaw-escalations", embed=embed, mention_admin=mention_admin)
+
+
+def send_on_the_clock_alert(picks_away: int, top_recommendations: list) -> bool:
+    """Send an on-the-clock warning to #fantasy-draft channel.
+
+    Fires when our pick is picks_away picks from the current clock position.
+    Typically triggered at ON_THE_CLOCK_THRESHOLD (2 picks away).
+
+    Args:
+        picks_away: Number of picks until our turn (must be > 0).
+        top_recommendations: List of player dicts to show as prep targets.
+
+    Returns:
+        True if the message was sent successfully.
+    """
+    if top_recommendations is None:
+        top_recommendations = []
+
+    color = _COLOR_YELLOW
+    title = "ON THE CLOCK"
+    description = f"**{picks_away} pick{'s' if picks_away != 1 else ''} until your turn.** Get ready!"
+
+    fields: list = [
+        {"name": "Picks Away", "value": str(picks_away), "inline": True},
+    ]
+
+    if top_recommendations:
+        rec_lines = []
+        for rec in top_recommendations[:3]:
+            name = rec.get("player_name") or rec.get("name", "?")
+            positions_rec = rec.get("positions", [])
+            pos_rec_str = "/".join(positions_rec[:2]) if positions_rec else "?"
+            z = rec.get("z_score", 0.0)
+            rec_lines.append(f"{name} ({pos_rec_str}) Z={z:+.2f}")
+        fields.append({
+            "name": "Suggested Targets",
+            "value": "\n".join(rec_lines),
+            "inline": False,
+        })
+
+    embed = {
+        "title": title,
+        "description": description,
+        "color": color,
+        "fields": fields,
+        "footer": {"text": "Treemendous Draft Tracker"},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return send_to_channel("fantasy-draft", embed=embed)

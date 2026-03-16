@@ -161,7 +161,7 @@ if not st.session_state.draft_started:
         return f"background-color: {colors.get(val, '#1e1e1e')}; color: white"
 
     st.dataframe(
-        df_filtered.style.applymap(tier_color, subset=["Tier"]),
+        df_filtered.style.map(tier_color, subset=["Tier"]),
         use_container_width=True,
         hide_index=True,
         height=500,

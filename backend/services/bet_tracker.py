@@ -18,6 +18,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_ex
 
 from backend.models import BetLog, ClosingLine, DataFetch, Game, Prediction, SessionLocal
 from backend.services.clv import calculate_clv_full
+from backend.services.team_mapping import _strip_mascot, normalize_team_name
 from backend.utils.env_utils import get_float_env
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,57 @@ class OutcomeResult:
     profit_loss_units: float
 
 
+def _resolve_home_away(
+    pick_team: str,
+    home_team: str,
+    away_team: str,
+) -> Optional[str]:
+    """
+    Determine whether *pick_team* refers to the home or away side.
+
+    Resolution order:
+      1. Exact case-insensitive match against home_team / away_team.
+      2. Strip mascot from pick_team, then exact match.
+      3. normalize_team_name() fuzzy resolver against [home_team, away_team].
+
+    Returns 'home', 'away', or None (could not resolve — bet should stay
+    unsettled so it can be reviewed rather than inverted silently).
+    """
+    candidates = [home_team, away_team]
+
+    # Step 1: exact case-insensitive
+    pick_lower = pick_team.lower()
+    if pick_lower == home_team.lower():
+        return "home"
+    if pick_lower == away_team.lower():
+        return "away"
+
+    # Step 2: strip mascot, then exact match
+    stripped = _strip_mascot(pick_team)
+    if stripped.lower() != pick_lower:
+        if stripped.lower() == home_team.lower():
+            return "home"
+        if stripped.lower() == away_team.lower():
+            return "away"
+
+    # Step 3: fuzzy resolver (handles mascot variants, abbreviations, etc.)
+    resolved = normalize_team_name(pick_team, candidates)
+    if resolved is None and stripped != pick_team:
+        resolved = normalize_team_name(stripped, candidates)
+
+    if resolved is not None:
+        if resolved.lower() == home_team.lower():
+            return "home"
+        if resolved.lower() == away_team.lower():
+            return "away"
+
+    logger.warning(
+        "_resolve_home_away: could not resolve pick='%s' against home='%s' away='%s'",
+        pick_team, home_team, away_team,
+    )
+    return None
+
+
 def calculate_bet_outcome(
     bet: "BetLog",
     game: "Game",
@@ -76,8 +128,15 @@ def calculate_bet_outcome(
     away_score: int = game.away_score
     team, spread = parse_pick(bet.pick)
 
-    # Determine whether the picked team is home or away (case-insensitive)
-    team_is_home = team.lower() == game.home_team.lower()
+    # Determine whether the picked team is home or away with mascot-aware resolution.
+    side = _resolve_home_away(team, game.home_team, game.away_team)
+    if side is None:
+        logger.warning(
+            "calculate_bet_outcome: cannot resolve team '%s' for game %d (%s vs %s) — skipping",
+            team, game.id, game.home_team, game.away_team,
+        )
+        return None
+    team_is_home = side == "home"
 
     if spread is None:
         # Moneyline: picked team must win outright
@@ -434,7 +493,15 @@ def capture_closing_lines() -> Dict:
                         # Normalize opening spread to home perspective.
                         # Closing spread from the API is already home-side;
                         # opening spread from parse_pick is team-side.
-                        team_is_home = team_name.lower() == game.home_team.lower()
+                        _side = _resolve_home_away(team_name, game.home_team, game.away_team)
+                        if _side is None:
+                            logger.warning(
+                                "capture_closing_lines: cannot resolve team '%s' for game %d"
+                                " (%s vs %s) — skipping CLV update for bet %d",
+                                team_name, game.id, game.home_team, game.away_team, bet.id,
+                            )
+                            continue
+                        team_is_home = _side == "home"
                         if opening_spread_team is not None:
                             opening_spread_home = (
                                 opening_spread_team if team_is_home

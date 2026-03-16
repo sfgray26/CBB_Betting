@@ -1159,8 +1159,8 @@ async def get_optimal_parlays(
     # Parlay Kelly sizing must respect what straight bets have already consumed
     # from the daily exposure budget.  Query today's paper-trade BetLogs to
     # compute capital already allocated, then derive the true remaining dollars.
-    starting_bankroll = get_float_env("STARTING_BANKROLL", "1000")
-    max_daily_pct     = get_float_env("MAX_DAILY_EXPOSURE_PCT", "5.0")
+    starting_bankroll = get_effective_bankroll(db)
+    max_daily_pct     = get_float_env("MAX_DAILY_EXPOSURE_PCT", "20.0")
     max_daily_dollars = starting_bankroll * max_daily_pct / 100.0
 
     today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -2320,37 +2320,84 @@ async def force_capture_lines(user: str = Depends(verify_admin_api_key)):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.delete("/admin/bets/{bet_id}")
+async def delete_bet_log(
+    bet_id: int,
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """Delete a single BetLog entry by ID (admin only). Use to remove orphaned or bogus paper trades."""
+    bet = db.query(BetLog).filter(BetLog.id == bet_id).first()
+    if not bet:
+        raise HTTPException(status_code=404, detail=f"BetLog {bet_id} not found")
+    db.delete(bet)
+    db.commit()
+    logger.warning("Admin %s deleted BetLog #%d (%s, $%.2f)", user, bet_id, bet.pick or "?", bet.bet_size_dollars or 0)
+    return {"deleted": True, "bet_id": bet_id, "pick": bet.pick, "dollars": bet.bet_size_dollars}
+
+
+@app.delete("/admin/bets/orphaned/cleanup")
+async def cleanup_orphaned_bets(
+    dry_run: bool = Query(default=True),
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """Delete BetLog entries whose game_id no longer exists in the games table."""
+    from sqlalchemy import text
+    orphans = db.execute(text(
+        "SELECT b.id, b.pick, b.bet_size_dollars, b.game_id "
+        "FROM bet_logs b LEFT JOIN games g ON b.game_id = g.id "
+        "WHERE g.id IS NULL"
+    )).fetchall()
+    if dry_run:
+        return {"dry_run": True, "orphans_found": len(orphans),
+                "orphans": [{"id": r[0], "pick": r[1], "dollars": r[2], "game_id": r[3]} for r in orphans]}
+    ids = [r[0] for r in orphans]
+    if ids:
+        db.query(BetLog).filter(BetLog.id.in_(ids)).delete(synchronize_session=False)
+        db.commit()
+    logger.warning("Admin %s deleted %d orphaned BetLog entries", user, len(ids))
+    return {"dry_run": False, "deleted": len(ids), "ids": ids}
+
+
 @app.delete("/admin/games/{game_id}")
 async def delete_game(
     game_id: int,
+    force: bool = Query(default=False, description="Delete even if BetLogs exist"),
     user: str = Depends(verify_admin_api_key),
     db: Session = Depends(get_db),
 ):
     """Delete a game and all its predictions/closing lines (admin only).
-    Blocked if real BetLogs exist for the game."""
+    Blocked if real BetLogs exist unless ?force=true is passed."""
     game = db.query(Game).filter(Game.id == game_id).first()
     if not game:
         raise HTTPException(status_code=404, detail=f"Game {game_id} not found")
 
     bet_logs = db.query(BetLog).filter(BetLog.game_id == game_id).all()
-    if bet_logs:
+    if bet_logs and not force:
         raise HTTPException(
             status_code=409,
-            detail=f"Game {game_id} has {len(bet_logs)} bet log(s) — delete those first"
+            detail=f"Game {game_id} has {len(bet_logs)} bet log(s) — use ?force=true to delete anyway"
         )
+
+    bet_logs_deleted = 0
+    if bet_logs and force:
+        bet_logs_deleted = db.query(BetLog).filter(BetLog.game_id == game_id).delete()
+        logger.warning("Admin %s force-deleting %d bet log(s) for game %d", user, bet_logs_deleted, game_id)
 
     predictions_deleted = db.query(Prediction).filter(Prediction.game_id == game_id).delete()
     closing_deleted = db.query(ClosingLine).filter(ClosingLine.game_id == game_id).delete()
     db.delete(game)
     db.commit()
-    logger.info("Admin %s deleted game %d (%s @ %s) — %d predictions, %d closing lines removed",
-                user, game_id, game.away_team, game.home_team, predictions_deleted, closing_deleted)
+    logger.info("Admin %s deleted game %d (%s @ %s) — %d predictions, %d closing lines, %d bet logs removed",
+                user, game_id, game.away_team, game.home_team, predictions_deleted, closing_deleted, bet_logs_deleted)
     return {
         "deleted": True,
         "game_id": game_id,
         "matchup": f"{game.away_team} @ {game.home_team}",
         "predictions_deleted": predictions_deleted,
         "closing_lines_deleted": closing_deleted,
+        "bet_logs_deleted": bet_logs_deleted,
     }
 
 
@@ -2707,6 +2754,61 @@ async def dk_direct_import_confirm(
         "total_profit_dollars": round(summary.total_profit, 2),
         "errors": summary.errors,
     }
+
+
+# ============================================================================
+# YAHOO FANTASY BASEBALL — DEBUG ENDPOINTS
+# ============================================================================
+
+@app.get("/admin/yahoo/test")
+async def yahoo_test(user: str = Depends(verify_admin_api_key)):
+    """
+    Test Yahoo API connectivity.
+    Returns league name + authenticated team key.
+    Requires YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET, YAHOO_REFRESH_TOKEN in env.
+    """
+    try:
+        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        client = YahooFantasyClient()
+        league = client.get_league()
+        team_key = client.get_my_team_key()
+        return {
+            "status": "ok",
+            "league_name": league.get("name"),
+            "league_key": client.league_key,
+            "my_team_key": team_key,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/admin/yahoo/roster-raw")
+async def yahoo_roster_raw(user: str = Depends(verify_admin_api_key)):
+    """
+    Return the raw fantasy_content structure from Yahoo for your roster.
+    Use this to inspect the exact shape Yahoo returns so parsing can be debugged.
+    """
+    try:
+        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        client = YahooFantasyClient()
+        raw = client.get_roster_raw()
+        return {"fantasy_content": raw}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/admin/yahoo/roster")
+async def yahoo_roster(user: str = Depends(verify_admin_api_key)):
+    """
+    Return your parsed Yahoo Fantasy roster.
+    """
+    try:
+        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        client = YahooFantasyClient()
+        roster = client.get_roster()
+        return {"count": len(roster), "players": roster}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 # ============================================================================

@@ -144,6 +144,7 @@ def normalize_conference_name(name: Optional[str]) -> str:
         # C-USA
         "conference usa": "cusa",
         "cusa": "cusa",
+        "c-usa": "cusa",
         
         # MAC
         "mid-american": "mac",

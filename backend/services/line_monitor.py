@@ -40,7 +40,7 @@ def check_line_movements() -> Dict:
     model = CBBEdgeModel()
     
     # 1. Load threshold and constants
-    min_bet_edge = get_float_env("MIN_BET_EDGE", "2.5") / 100.0
+    min_bet_edge = get_float_env("MIN_BET_EDGE", "1.8") / 100.0
     move_threshold = 1.5
     
     summary = {

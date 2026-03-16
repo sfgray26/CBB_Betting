@@ -13,7 +13,7 @@ Usage: analysis.py checks signals and adjusts edge confidence
 import logging
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from enum import Enum
 
 from backend.utils.env_utils import get_float_env
@@ -61,14 +61,14 @@ class SharpSignal:
         }
     
     @classmethod
-    def none(cls, game_key: str, reason: str = "") -> "SharpSignal":
+    def none(cls, game_key: str, reason: str = "", details: Optional[Dict[str, Any]] = None) -> "SharpSignal":
         """Create a 'no signal' instance."""
         return cls(
             game_key=game_key,
             side=None,
             confidence=0.0,
             pattern=SharpPattern.NONE,
-            details={"reason": reason or "no_pattern_detected"},
+            details=details if details is not None else {"reason": reason or "no_pattern_detected"},
         )
 
 
@@ -105,7 +105,7 @@ class SharpMoneyDetector:
         Returns:
             SharpSignal with highest confidence pattern
         """
-        if not line_history or len(line_history) < 2:
+        if not line_history:
             return SharpSignal.none(game_key, "insufficient_history")
         
         # Sort by timestamp
@@ -274,7 +274,7 @@ class SharpMoneyDetector:
         Returns:
             SharpSignal (may be NONE if no RLM detected)
         """
-        if not line_history or len(line_history) < 2:
+        if not line_history:
             return SharpSignal.none(game_key, "insufficient_history")
         
         opener = line_history[0].get("home_spread")

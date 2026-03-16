@@ -760,7 +760,7 @@ class CBBEdgeModel:
         """
         se = get_float_env("BASE_MARGIN_SE", "1.50")
         if evanmiya_down:
-            se += get_float_env("EVANMIYA_DOWN_SE_ADDEND", "0.30")
+            se += get_float_env("EVANMIYA_DOWN_SE_ADDEND", "0.00")
         if sharp_books < 1:
             if sharp_proxy_used:
                 # Proxy present: half-penalty (less reliable than true sharp)
@@ -1788,8 +1788,8 @@ class CBBEdgeModel:
         # placed as paper trades, not counted in BET rate.
         # Tune upward toward 4-5% once market blend is confirmed live.
         # ================================================================
-        elif edge_conservative <= get_float_env("MIN_BET_EDGE", "2.5") / 100.0:
-            _min_bet_edge = get_float_env("MIN_BET_EDGE", "2.5") / 100.0
+        elif edge_conservative <= get_float_env("MIN_BET_EDGE", "1.8") / 100.0:
+            _min_bet_edge = get_float_env("MIN_BET_EDGE", "1.8") / 100.0
             _home_team = game_data.get('home_team', 'Home')
             _away_team = game_data.get('away_team', 'Away')
             _bet_team  = _home_team if bet_side == "home" else _away_team

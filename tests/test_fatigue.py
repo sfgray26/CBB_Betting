@@ -189,9 +189,9 @@ class TestGameFatigue:
             game_date=datetime.now(),
             home_last_game=datetime.now() - timedelta(days=3),
             away_last_game=datetime.now() - timedelta(hours=20),  # B2B
-            travel_distance_miles=8,  # Short trip for UNC
+            travel_distance_miles=250,  # Regional trip for UNC
         )
-        
+
         # Home team should be less fatigued
         assert home_adj.rest_penalty < away_adj.rest_penalty
         assert home_adj.travel_penalty == 0.0

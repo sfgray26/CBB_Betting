@@ -1,0 +1,11 @@
+Name,Team,Stuff_Plus,Location_Plus,FB_Velo,Spin_Rate_FB,Whiff_Pct,Chase_Pct,Barrel_Allowed_Pct,xERA,xERA_Diff,Injury_Risk_Score,Stuff_Score,Whiff_Score,Overall_Score,Regression_Flag,Breakout_Flag,Injury_Risk_Flag
+Tarik Skubal,DET,125,108,95.8,2450,32.5,30.2,5.8,2.65,-0.14,15,92,88,90,,,
+Paul Skenes,PIT,130,105,98.5,2550,34.2,28.5,5.2,2.75,-0.17,18,95,92,94,,BREAKOUT,
+Garrett Crochet,BOS,128,102,98.2,2480,33.8,29.2,5.5,2.85,-0.17,22,94,90,92,,BREAKOUT,
+Cristopher Sanchez,PHI,115,110,93.5,2250,28.5,32.5,6.2,3.05,-0.1,12,82,78,82,,,
+Chris Sale,ATL,118,112,92.8,2150,30.2,31.8,6.5,3.05,0.14,35,85,82,85,SELL_HIGH,,INJURY_RISK
+Logan Webb,SFG,108,118,92.5,2100,24.5,35.2,6.8,3.25,-0.06,10,75,68,75,,,
+Dylan Cease,TOR,122,98,96.2,2520,31.5,27.8,6.0,3.35,-0.19,20,88,85,88,,,
+Jacob deGrom,TEX,135,108,98.8,2650,36.5,30.5,4.8,2.95,-0.57,55,98,95,95,SELL_HIGH,,HIGH_INJURY_RISK
+Max Fried,NYY,110,115,93.2,2050,26.8,33.5,6.2,3.15,-0.13,28,80,72,78,,,INJURY_RISK
+Hunter Greene,CIN,128,95,99.2,2580,33.2,26.5,6.5,3.45,-0.47,25,92,88,90,,BREAKOUT,

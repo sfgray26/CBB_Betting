@@ -104,7 +104,7 @@ def _travel_penalty(distance_miles: float) -> float:
     - 500-1500 miles: moderate  
     - 1500+ miles (cross-country): significant
     """
-    if distance_miles < 100:
+    if distance_miles <= 100:
         return 0.0
     elif distance_miles < 500:
         return 0.15
@@ -114,7 +114,7 @@ def _travel_penalty(distance_miles: float) -> float:
         return 0.60
     else:
         # Long-haul flights have disproportionate impact
-        return min(1.0, 0.60 + (distance_miles - 1500) / 2000 * 0.40)
+        return min(1.0, 0.60 + (distance_miles - 1500) / 1000 * 0.50)
 
 
 # Time zone change (hours crossed → penalty, applies on Day 1 only)

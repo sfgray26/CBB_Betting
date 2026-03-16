@@ -41,7 +41,7 @@ from datetime import datetime, date, timezone
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from backend.models import SessionLocal, Game, Prediction, BetLog, DataFetch, ModelParameter
 from backend.betting_model import CBBEdgeModel, GameAnalysis, ReanalysisEngine
@@ -53,6 +53,12 @@ from backend.services.matchup_engine import get_profile_cache, get_matchup_engin
 from backend.services.parlay_engine import build_optimal_parlays, format_parlay_ticket
 from backend.services.team_mapping import normalize_team_name
 from backend.services.scout import perform_sanity_check
+from backend.services.openclaw_lite import async_perform_sanity_check
+from backend.services.fatigue import calculate_game_fatigue, get_fatigue_margin_adjustment
+from backend.services.team_conference_lookup import get_conference_hca_delta
+from backend.services.recency_weight import is_late_season
+from backend.services.sharp_money import detect_sharp_signal, apply_sharp_adjustment
+from backend.services.odds_monitor import get_odds_monitor
 from backend.utils.env_utils import get_float_env
 
 logger = logging.getLogger(__name__)
@@ -596,36 +602,44 @@ def _create_paper_bet(
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def _ddgs_and_check_sync(game: dict) -> str:
-    """Synchronous DDGS search + LLM sanity check for a single game.
-
-    Kept as a plain function so it can be safely offloaded to a thread pool
-    via asyncio.to_thread() without blocking the event loop.
+async def _ddgs_and_check(game: dict) -> str:
+    """
+    Async DDGS search + integrity check for a single game.
+    
+    Uses OpenClaw Lite's async API for efficient concurrent processing.
+    No thread pool overhead - pure async I/O concurrency.
     """
     try:
         from duckduckgo_search import DDGS
-        from backend.services.scout import perform_sanity_check
+        
         away = game.get("away_team", "")
         home = game.get("home_team", "")
-        verdict = f"Potential Bet (Edge {game.get('edge', 0):.1%})"
+        game_key = game.get("game_key", f"{away}@{home}")
+        edge = game.get("edge", 0)
+        verdict = f"Potential Bet (Edge {edge:.1%})"
 
+        # Run DDGS search in thread pool (it's blocking I/O)
         today_str = datetime.utcnow().strftime("%Y-%m-%d")
         query = f"{away} {home} injury suspension lineup {today_str}"
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=5))
+        
+        def _do_search():
+            with DDGS() as ddgs:
+                return list(ddgs.text(query, max_results=5))
+        
+        results = await asyncio.to_thread(_do_search)
         context = " | ".join(r.get("body", "") for r in results)
-        return perform_sanity_check(home, away, verdict, context)
+        
+        # Use async OpenClaw Lite check
+        return await async_perform_sanity_check(
+            home_team=home,
+            away_team=away,
+            verdict=verdict,
+            search_results=context,
+            game_key=game_key
+        )
     except Exception as e:
-        return f"Sanity check unavailable ({type(e).__name__})"
-
-
-async def _ddgs_and_check(game: dict) -> str:
-    """Async wrapper — runs _ddgs_and_check_sync in the default thread pool.
-
-    This allows asyncio.gather() in _integrity_sweep to achieve real I/O
-    concurrency (up to Semaphore limit) without blocking the event loop.
-    """
-    return await asyncio.to_thread(_ddgs_and_check_sync, game)
+        logger.warning("DDGS/check failed for %s: %s", game.get("game_key"), e)
+        return "Sanity check unavailable"
 
 
 async def _integrity_sweep(bet_tier_games: list) -> dict:
@@ -739,8 +753,19 @@ async def run_nightly_analysis(
         #         fall back to env vars
         # ----------------------------------------------------------------
         calibrated = load_current_params(db)
-        sd_multiplier = calibrated.get(
-            "sd_multiplier", get_float_env("SD_MULTIPLIER", "0.85")
+
+        # FORCE_ env vars override everything, including DB-calibrated values.
+        # Leave blank in Railway to use normal calibrated mode.
+        _sd_force = get_float_env("FORCE_SD_MULTIPLIER", "")
+        sd_multiplier = (
+            float(_sd_force) if _sd_force
+            else calibrated.get("sd_multiplier", get_float_env("SD_MULTIPLIER", "0.85"))
+        )
+
+        _ha_force = get_float_env("FORCE_HOME_ADVANTAGE", "")
+        _home_advantage = (
+            float(_ha_force) if _ha_force
+            else calibrated.get("home_advantage", get_float_env("HOME_ADVANTAGE", "3.09"))
         )
 
         model = CBBEdgeModel(
@@ -753,17 +778,17 @@ async def run_nightly_analysis(
                 "evanmiya":   calibrated.get("weight_evanmiya",
                                              get_float_env("WEIGHT_EVANMIYA", "0.325")),
             },
-            home_advantage=calibrated.get(
-                "home_advantage",
-                get_float_env("HOME_ADVANTAGE", "3.09"),
-            ),
+            home_advantage=_home_advantage,
             max_kelly=get_float_env("MAX_KELLY_FRACTION", "0.20"),
             fractional_kelly_divisor=get_float_env("FRACTIONAL_KELLY_DIVISOR", "2.0"),
         )
         logger.info(
-            "Model initialised — home_adv=%.3f, sd_multiplier=%.4f, "
+            "Model initialised — home_adv=%.3f%s, sd_multiplier=%.4f%s, "
             "weights=KP:%.3f BT:%.3f EM:%.3f",
-            model.home_advantage, sd_multiplier,
+            model.home_advantage,
+            " [FORCED]" if _ha_force else "",
+            sd_multiplier,
+            " [FORCED]" if _sd_force else "",
             model.weights["kenpom"], model.weights["barttorvik"], model.weights["evanmiya"],
         )
 
@@ -916,7 +941,7 @@ async def run_nightly_analysis(
         # ================================================================
         # TWO-PASS SLATE: PASS 2 — main loop (edge-sorted order)
         # ================================================================
-        _min_bet_edge = get_float_env("MIN_BET_EDGE", "2.5") / 100.0
+        _min_bet_edge = get_float_env("MIN_BET_EDGE", "1.8") / 100.0
         
         # Build list of game dicts for sweep from Pass 1 candidates
         _sweep_inputs = []
@@ -971,6 +996,13 @@ async def run_nightly_analysis(
                         dynamic_base_sd = math.sqrt(game_total) * sd_multiplier
                     else:
                         dynamic_base_sd = None
+
+                    # ---- Late-season recency SD bump (P3) ----------------
+                    # In March, outcomes are harder to predict (hot teams,
+                    # tournament pressure) — widen SD by 5% to widen CI
+                    # and reduce Kelly sizing slightly.
+                    if dynamic_base_sd and is_late_season():
+                        dynamic_base_sd *= 1.05
 
                     # ---- Build model inputs ------------------------------
                     _meta = all_ratings.get("_meta", {})
@@ -1238,6 +1270,93 @@ async def run_nightly_analysis(
                                 away_team, home_team, exc,
                             )
 
+                    # ---- Fatigue adjustment (rest days + travel + altitude) --
+                    fatigue_margin_adj: float = 0.0
+                    fatigue_metadata: Optional[Dict] = None
+                    try:
+                        _commence_dt = None
+                        _commence_str = game_data.get("commence_time")
+                        if _commence_str:
+                            try:
+                                _commence_dt = datetime.fromisoformat(
+                                    _commence_str.replace("Z", "+00:00")
+                                )
+                            except (ValueError, TypeError):
+                                pass
+
+                        _home_last = (
+                            db.query(Game.game_date)
+                            .filter(
+                                Game.home_team == home_team,
+                                Game.away_team != away_team,
+                                Game.completed == True,
+                            )
+                            .order_by(Game.game_date.desc())
+                            .scalar()
+                        ) or (
+                            db.query(Game.game_date)
+                            .filter(
+                                Game.away_team == home_team,
+                                Game.home_team != away_team,
+                                Game.completed == True,
+                            )
+                            .order_by(Game.game_date.desc())
+                            .scalar()
+                        )
+                        _away_last = (
+                            db.query(Game.game_date)
+                            .filter(
+                                Game.away_team == away_team,
+                                Game.home_team != home_team,
+                                Game.completed == True,
+                            )
+                            .order_by(Game.game_date.desc())
+                            .scalar()
+                        ) or (
+                            db.query(Game.game_date)
+                            .filter(
+                                Game.home_team == away_team,
+                                Game.away_team != home_team,
+                                Game.completed == True,
+                            )
+                            .order_by(Game.game_date.desc())
+                            .scalar()
+                        )
+
+                        _home_fat, _away_fat = calculate_game_fatigue(
+                            home_team=home_team,
+                            away_team=away_team,
+                            game_date=_commence_dt or datetime.utcnow(),
+                            home_last_game=_home_last,
+                            away_last_game=_away_last,
+                        )
+                        fatigue_margin_adj, fatigue_metadata = get_fatigue_margin_adjustment(
+                            _home_fat, _away_fat
+                        )
+                        if abs(fatigue_margin_adj) > 0.01:
+                            logger.debug(
+                                "Fatigue %s @ %s: adj=%.2f (home_rest=%dd, away_rest=%dd)",
+                                away_team, home_team, fatigue_margin_adj,
+                                _home_fat.rest_days, _away_fat.rest_days,
+                            )
+                    except Exception as exc:
+                        logger.warning("Fatigue calc failed for %s @ %s: %s", away_team, home_team, exc)
+
+                    # ---- Conference HCA adjustment (Mission K-10) -----------
+                    # Apply conference-specific HCA delta vs baseline 3.09
+                    try:
+                        conf_hca_delta = get_conference_hca_delta(
+                            home_team, is_neutral=game_data.get("is_neutral", False)
+                        )
+                        if abs(conf_hca_delta) > 0.01:
+                            matchup_margin_adj += conf_hca_delta
+                            logger.debug(
+                                "Conference HCA %s @ %s: delta=%+.2f (adj_margin now %.2f)",
+                                away_team, home_team, conf_hca_delta, matchup_margin_adj
+                            )
+                    except Exception as exc:
+                        logger.warning("Conference HCA lookup failed for %s: %s", home_team, exc)
+
                     # ---- Compute hours to tipoff (used for dynamic Kelly/SD) --
                     hours_to_tipoff: Optional[float] = None
                     _commence_raw = game_data.get("commence_time")
@@ -1299,7 +1418,44 @@ async def run_nightly_analysis(
                         # full NO_SHARP_BOOKS_SE_ADDEND (0.30).
                         sharp_proxy_used=bool(game_data.get("sharp_proxy_used", False)),
                         integrity_verdict=integrity_verdict,
+                        fatigue_margin_adj=fatigue_margin_adj,
+                        fatigue_metadata=fatigue_metadata,
                     )
+
+                    # ---- Sharp money post-processing ----------------------
+                    # Check odds monitor line history for steam/opener patterns.
+                    # Adjusts edge up to +0.5% when sharp confirms, -0.8% when opposing.
+                    try:
+                        _monitor = get_odds_monitor()
+                        _raw_history = _monitor.get_line_history(_game_key)
+                        if _raw_history:
+                            _line_history = [
+                                {"timestamp": s.timestamp, "home_spread": s.spread}
+                                for s in _raw_history
+                                if s.spread is not None
+                            ]
+                            _current_spread = odds_input.get("spread_home") or odds_input.get("consensus_spread")
+                            if _line_history and _current_spread is not None:
+                                _sharp_signal = detect_sharp_signal(
+                                    _game_key, _line_history, float(_current_spread)
+                                )
+                                if _sharp_signal.pattern.value != "none":
+                                    _model_side = "home" if analysis.projected_margin > 0 else "away"
+                                    _adj_edge, _sharp_details = apply_sharp_adjustment(
+                                        analysis.edge_conservative, _sharp_signal, _model_side
+                                    )
+                                    if _adj_edge != analysis.edge_conservative:
+                                        analysis.edge_conservative = _adj_edge
+                                        analysis.full_analysis.setdefault("sharp_money", _sharp_details)
+                                        logger.debug(
+                                            "Sharp money %s @ %s: pattern=%s, edge %.3f -> %.3f",
+                                            away_team, home_team,
+                                            _sharp_signal.pattern.value,
+                                            _sharp_details.get("base_edge", 0),
+                                            _adj_edge,
+                                        )
+                    except Exception as exc:
+                        logger.warning("Sharp money post-processing failed for %s @ %s: %s", away_team, home_team, exc)
 
                     # EMAC-021: Capture reanalysis engine for Level 5 real-time pulse
                     try:
@@ -1330,11 +1486,26 @@ async def run_nightly_analysis(
                     # If found, update in-place when the analysis has materially
                     # changed (verdict flip or edge shift > 1%).  This prevents
                     # the opener_attack job from locking out later nightly runs.
+                    #
+                    # Legacy rows (created before run_tier was introduced) may have
+                    # run_tier=NULL or run_tier=''.  We treat those as equivalent to
+                    # the current run_tier so that re-runs do not insert duplicate
+                    # rows alongside the legacy record.  The run_tier field is
+                    # normalised to the current value on any in-place update.
                     today = datetime.utcnow().date()
                     existing_prediction = db.query(Prediction).filter(
                         Prediction.game_id == game.id,
                         Prediction.prediction_date == today,
-                        Prediction.run_tier == run_tier,
+                        or_(
+                            Prediction.run_tier == run_tier,
+                            Prediction.run_tier.is_(None),
+                            Prediction.run_tier == "",
+                        ),
+                    ).order_by(
+                        # Prefer exact-tier match over legacy NULL rows so that
+                        # a same-day opener row is not accidentally clobbered by
+                        # the nightly run when both exist legitimately.
+                        (Prediction.run_tier == run_tier).desc(),
                     ).first()
 
                     if existing_prediction:
@@ -1354,10 +1525,16 @@ async def run_nightly_analysis(
                                 "No material change for %s @ %s (tier=%s), skipping update.",
                                 away_team, home_team, run_tier,
                             )
+                            # Normalise run_tier on legacy NULL rows so subsequent
+                            # runs find this record via the exact-tier filter.
+                            if existing_prediction.run_tier != run_tier:
+                                existing_prediction.run_tier = run_tier
+                                db.flush()
                             games_analyzed += 1
                             continue
 
-                        # Material change — update existing prediction in-place
+                        # Material change — update existing prediction in-place.
+                        # Also normalise run_tier for legacy rows that stored NULL.
                         logger.info(
                             "Updating prediction for %s @ %s (tier=%s): "
                             "%s → %s (Δedge=%.3f)",
@@ -1365,14 +1542,15 @@ async def run_nightly_analysis(
                             old_verdict[:20], new_verdict[:20], edge_diff,
                         )
                         prediction = existing_prediction
-                        prediction.model_version = "v9.0"
+                        prediction.model_version = "v9.1"
+                        prediction.run_tier = run_tier  # normalise NULL / '' legacy rows
                     else:
                         # No existing prediction for this tier — create new
                         prediction = Prediction(
                             game_id=game.id,
                             prediction_date=today,
                             run_tier=run_tier,
-                            model_version="v9.0",
+                            model_version="v9.1",
                         )
                         db.add(prediction)
                         old_verdict = None
@@ -1422,24 +1600,48 @@ async def run_nightly_analysis(
                             integrity_verdict=integrity_verdict,
                             is_neutral=game_input.get("is_neutral", False),
                         )
-                        # Collect for simultaneous Kelly — don't create paper trades yet
-                        calcs = analysis.full_analysis.get("calculations", {})
-                        bet_candidates.append({
-                            "index": len(bet_candidates),
-                            "game": game,
-                            "prediction": prediction,
-                            "analysis": analysis,
-                            "old_verdict": old_verdict,
-                            "conference": game_data.get("conference"),
-                            "spread": odds_input.get("spread", 0) or 0,
-                            "bet_side": calcs.get("bet_side", "home"),
-                            "bet_odds": calcs.get("bet_odds"),
-                            "recommended_units": analysis.recommended_units,
-                            "kelly_fractional": analysis.kelly_fractional,
-                            "edge_conservative": analysis.edge_conservative,
-                            "home_team": home_team,
-                            "away_team": away_team,
-                        })
+                        # Skip games already paper-traded today — preserve their Bet verdict
+                        # and don't count their sizing against remaining capacity.
+                        # This prevents a manual afternoon re-run from clobbering bets
+                        # that the morning nightly job correctly placed.
+                        _today_start_chk = datetime.utcnow().replace(
+                            hour=0, minute=0, second=0, microsecond=0
+                        )
+                        _already_traded = (
+                            db.query(BetLog)
+                            .filter(
+                                BetLog.game_id == game.id,
+                                BetLog.is_paper_trade.is_(True),
+                                BetLog.timestamp >= _today_start_chk,
+                            )
+                            .first()
+                        )
+                        if _already_traded:
+                            logger.info(
+                                "Preserving existing paper trade for %s @ %s "
+                                "(BetLog #%d) — skipping from global scaling.",
+                                away_team, home_team, _already_traded.id,
+                            )
+                            # Leave prediction verdict as-is (already "Bet"); no further action.
+                        else:
+                            # Collect for simultaneous Kelly — don't create paper trades yet
+                            calcs = analysis.full_analysis.get("calculations", {})
+                            bet_candidates.append({
+                                "index": len(bet_candidates),
+                                "game": game,
+                                "prediction": prediction,
+                                "analysis": analysis,
+                                "old_verdict": old_verdict,
+                                "conference": game_data.get("conference"),
+                                "spread": odds_input.get("spread", 0) or 0,
+                                "bet_side": calcs.get("bet_side", "home"),
+                                "bet_odds": calcs.get("bet_odds"),
+                                "recommended_units": analysis.recommended_units,
+                                "kelly_fractional": analysis.kelly_fractional,
+                                "edge_conservative": analysis.edge_conservative,
+                                "home_team": home_team,
+                                "away_team": away_team,
+                            })
                         # Advance the running exposure so games evaluated later
                         # in this edge-sorted slate see a realistic portfolio load.
                         # recommended_units is in percentage-point units (e.g. 2.5

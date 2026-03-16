@@ -135,7 +135,10 @@ def get_recency_weight(
     
     # Use custom weights if provided
     weights = custom_weights or DEFAULT_RECENCY_WEIGHTS
-    
+
+    # Clamp negative days (future-dated games) to day 0
+    days_ago = max(0, days_ago)
+
     # Get weight for this day (default to 1.0 for old games)
     weight = weights.get(days_ago, 1.0)
     

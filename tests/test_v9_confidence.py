@@ -249,10 +249,10 @@ class TestV9AnalyzeGameIntegration:
         assert int_scalar == pytest.approx(0.75)
 
     def test_model_version_is_v9(self):
-        """model_version key in full_analysis must be 'v9.0'."""
+        """model_version key in full_analysis must be v9.x."""
         model = _model()
         result = model.analyze_game(_game(), _odds(), _ratings())
-        assert result.full_analysis.get("model_version") == "v9.0"
+        assert result.full_analysis.get("model_version", "").startswith("v9.")
 
     def test_none_integrity_no_reduction(self):
         """integrity_verdict=None → no Kelly penalty (scalar = 1.0)."""

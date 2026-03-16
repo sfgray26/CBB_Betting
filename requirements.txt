@@ -41,7 +41,7 @@ twilio==8.13.0
 sendgrid==6.11.0
 
 # Optional: Dashboard (run separately)
-streamlit==1.30.0
+streamlit>=1.40.0
 plotly==5.18.0
 altair==5.2.0
 statsmodels==0.14.1
