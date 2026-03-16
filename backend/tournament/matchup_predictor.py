@@ -73,8 +73,8 @@ class TournamentTeam:
     seed: int
     region: str
     
-    # Composite rating auto-calculated from KenPom + BartTorvik (55/45 blend)
-    composite_rating: float = field(init=False)
+    # Composite rating: use provided value OR auto-calculate from KenPom + BartTorvik
+    composite_rating: Optional[float] = None  # If None, will auto-calculate
     
     # Raw source ratings
     kp_adj_em: Optional[float] = None      # KenPom AdjEM
@@ -93,21 +93,22 @@ class TournamentTeam:
     # Positive = hot team, Negative = cold team
     recent_form: float = 0.0               # Capped at ±2.0 pts in calculations
     
-    # Post-init to compute composite rating
+    # Post-init to compute composite rating if not provided
     def __post_init__(self):
-        # Composite: 55% KenPom + 45% BartTorvik
-        if self.kp_adj_em is not None and self.bt_adj_em is not None:
-            self.composite_rating = 0.55 * self.kp_adj_em + 0.45 * self.bt_adj_em
-        elif self.kp_adj_em is not None:
-            self.composite_rating = self.kp_adj_em
-        elif self.bt_adj_em is not None:
-            self.composite_rating = self.bt_adj_em
-        else:
-            # Fallback: estimate from seed (1-seed ≈ +25, 16-seed ≈ -15)
-            self.composite_rating = 25.0 - (self.seed - 1) * 2.5
-            logger.warning(
-                f"{self.name}: No ratings provided, estimating from seed {self.seed}"
-            )
+        # If composite_rating not provided, calculate from KP + BT
+        if self.composite_rating is None:
+            if self.kp_adj_em is not None and self.bt_adj_em is not None:
+                self.composite_rating = 0.55 * self.kp_adj_em + 0.45 * self.bt_adj_em
+            elif self.kp_adj_em is not None:
+                self.composite_rating = self.kp_adj_em
+            elif self.bt_adj_em is not None:
+                self.composite_rating = self.bt_adj_em
+            else:
+                # Fallback: estimate from seed (1-seed ≈ +25, 16-seed ≈ -15)
+                self.composite_rating = 25.0 - (self.seed - 1) * 2.5
+                logger.warning(
+                    f"{self.name}: No ratings provided, estimating from seed {self.seed}"
+                )
 
 
 def predict_game(
