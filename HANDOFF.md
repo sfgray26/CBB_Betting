@@ -23,11 +23,11 @@
 | Railway API | ✅ Healthy |
 | PostgreSQL | ✅ Connected (365 teams) |
 | Scheduler | ✅ 10 jobs running |
-| Discord | ✅ 16 channels operational |
+| Discord | ⚠️ Channels operational but key jobs NOT sending notifications (see Section 8) |
 | Test suite | ✅ 683/686 pass (3 pre-existing DB-auth failures) |
 | V9.1 Model | ⚠️ Over-conservative — MIN_BET_EDGE lowered to 1.8%; ha/sd_mult/SNR queued Apr 7 |
 | Haslametrics scraper | ✅ Built — `backend/services/haslametrics.py`, 12 tests. Wire in Apr 7. |
-| OPCL-001 Discord | ✅ Morning brief + telemetry live. Cron wiring pending (user action). |
+| Tournament bracket | ✅ Data available but NO Discord notification sent (Mar 16) |
 
 ### Fantasy Baseball — DRAFT-READY
 
@@ -165,7 +165,78 @@ streamlit run dashboard/app.py
 
 ---
 
-## 8. DISCORD IMPROVEMENTS (March 13, 2026)
+## 8. DISCORD ISSUES — IMMEDIATE FIX NEEDED (March 16, 2026)
+
+### 🔴 Critical Finding: Notifications NOT Being Sent
+
+**Full audit:** `reports/DISCORD_TOURNAMENT_AUDIT_MARCH_2026.md`
+
+| Feature | Expected | Actual | Fix Required |
+|---------|----------|--------|--------------|
+| Morning Brief | Daily 7 AM ET to #openclaw-briefs | Job runs but only logs — NO DISCORD SEND | Fix `_morning_briefing_job()` in main.py |
+| Tournament Bracket | Alert when released (Mar 16) | No notification sent | Create bracket notifier |
+| End-of-Day Results | Daily 11 PM ET | Not scheduled | Add `_end_of_day_results_job()` to scheduler |
+
+### Root Causes
+
+1. **Morning Brief Job Only Logs** — `backend/main.py` function `_morning_briefing_job()` queries DB and generates narrative but never calls `send_morning_brief()` or any Discord function.
+
+2. **Tournament Bracket Silent** — `backend/services/tournament_data.py` fetches bracket data but no Discord notification is triggered on release.
+
+3. **Scheduler Not Wired** — `scripts/openclaw_scheduler_improved.py` exists but is NOT scheduled in Railway cron. The improvements (bet embeds, morning brief, end-of-day) are not running.
+
+### Claude Fixes Required (Pre-Tournament, Mar 17)
+
+**File: `backend/main.py`**
+
+```python
+# Fix 1: Morning briefing must send Discord
+def _morning_briefing_job():
+    # ... existing code ...
+    from backend.services.openclaw_briefs_improved import generate_and_send_morning_brief_improved
+    generate_and_send_morning_brief_improved()  # ADD THIS LINE
+
+# Fix 2: Add end-of-day results job
+def _end_of_day_results_job():
+    """Send end-of-day results to Discord at 11 PM ET."""
+    from backend.services.discord_bet_embeds import create_daily_results_embed
+    from backend.services.discord_notifier import send_to_channel
+    # Query BetLog for today's results, send embed to #cbb-bets
+
+# Fix 3: Add tournament bracket notifier
+def _tournament_bracket_job():
+    """Send bracket release notification."""
+    # Check if bracket newly available, send First Four matchups to Discord
+```
+
+**Schedule the new jobs:**
+```python
+# In scheduler setup (around line 188 in main.py):
+scheduler.add_job(
+    _end_of_day_results_job,
+    CronTrigger(hour=23, minute=0, timezone=timezone),
+    id="end_of_day_results",
+    name="End of Day Results",
+    replace_existing=True,
+)
+```
+
+### Test Commands
+
+```bash
+# Test morning brief
+python scripts/openclaw_scheduler_improved.py --morning-brief
+
+# Test end of day
+python scripts/openclaw_scheduler_improved.py --end-of-day
+
+# Test all channels
+python scripts/openclaw_scheduler_improved.py --test
+```
+
+---
+
+## 9. ORIGINAL DISCORD IMPROVEMENTS (March 13, 2026)
 
 ### Problem Report
 User reported:
@@ -231,6 +302,6 @@ python scripts/openclaw_scheduler_improved.py --line-monitor
 
 ---
 
-**Document Version:** EMAC-069
-**Last Updated:** March 13, 2026
-**Status:** Discord improvements deployed. Pre-tournament fixes done (671/674 tests). K-11/K-12/K-13 all COMPLETE. All Gemini research COMPLETE (G-R7: Haslametrics). MIN_BET_EDGE lowered to 1.8% (Phase 1). possession_sim KEEP verdict. OPCL-001 Discord live. Fantasy draft-ready. Guardian opens Mar 18. Next Claude session (Apr 7+): V9.2 Phase 2 + K-14 + Haslametrics wiring.
+**Document Version:** EMAC-070
+**Last Updated:** March 16, 2026
+**Status:** ⚠️ CRITICAL: Discord notifications NOT being sent (morning brief, tournament bracket, end-of-day). Fixes required pre-Mar 18 (see Section 8). Pre-tournament fixes done (683/686 tests). MIN_BET_EDGE=1.8% active. Guardian opens Mar 18. Next Claude session: Fix Discord jobs (Section 8), then Apr 7+ V9.2 Phase 2.
