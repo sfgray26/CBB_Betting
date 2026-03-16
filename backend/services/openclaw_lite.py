@@ -224,7 +224,12 @@ class OpenClawLite:
     for high-stakes scenarios.
     """
     
-    # Risk keyword taxonomies
+    # Risk keyword taxonomies.
+    # WORD_BOUNDARY_KEYWORDS: single-word terms susceptible to substring false
+    # positives (e.g. "out" in "outstanding", "timeout", "shout").  These are
+    # matched with \b word-boundary regex instead of a plain substring check.
+    WORD_BOUNDARY_KEYWORDS = {"out", "miss", "star", "rest"}
+
     HIGH_RISK_KEYWORDS = [
         "injury", "injured", "out", "doubtful", "questionable",
         "suspension", "suspended", "arrest", "investigation",
@@ -266,6 +271,20 @@ class OpenClawLite:
         self.escalation_queue = HighStakesEscalationQueue()
         self._semaphore = asyncio.Semaphore(8)  # Max concurrent checks
     
+    def _kw_match(self, kw: str, text_lower: str) -> bool:
+        """
+        Return True when keyword ``kw`` matches in ``text_lower``.
+
+        Single-word terms listed in WORD_BOUNDARY_KEYWORDS are matched with
+        ``\\b`` word boundaries so that short words like "out" do not fire on
+        "outstanding", "timeout", or "shout".  All other keywords use a plain
+        substring check (which is fine for multi-word phrases or longer unique
+        terms like "concussion", "injury", etc.).
+        """
+        if kw in self.WORD_BOUNDARY_KEYWORDS:
+            return bool(re.search(r"\b" + re.escape(kw) + r"\b", text_lower))
+        return kw in text_lower
+
     def _check_integrity_heuristic_sync(
         self,
         search_text: str,
@@ -276,15 +295,15 @@ class OpenClawLite:
     ) -> IntegrityResult:
         """
         Synchronous heuristic check - core decision logic.
-        
+
         This is the primary path for all integrity checks.
         Returns in <1ms for typical inputs.
         """
         import time
         start = time.time()
-        
+
         text_lower = search_text.lower()
-        
+
         # 1. Critical abort conditions (check first for speed)
         for critical in self.CRITICAL_ABORT_KEYWORDS:
             if critical in text_lower:
@@ -307,10 +326,10 @@ class OpenClawLite:
                 latency_ms=(time.time() - start) * 1000
             )
         
-        # 3. Keyword counting
-        high_risk_hits = sum(1 for kw in self.HIGH_RISK_KEYWORDS if kw in text_lower)
-        moderate_hits = sum(1 for kw in self.MODERATE_RISK_KEYWORDS if kw in text_lower)
-        conflict_hits = sum(1 for kw in self.CONFLICT_KEYWORDS if kw in text_lower)
+        # 3. Keyword counting (uses word-boundary matching for ambiguous short words)
+        high_risk_hits = sum(1 for kw in self.HIGH_RISK_KEYWORDS if self._kw_match(kw, text_lower))
+        moderate_hits = sum(1 for kw in self.MODERATE_RISK_KEYWORDS if self._kw_match(kw, text_lower))
+        conflict_hits = sum(1 for kw in self.CONFLICT_KEYWORDS if self._kw_match(kw, text_lower))
         
         # 4. Late-breaking uncertainty
         late_breaking = any(x in text_lower for x in ["late", "just", "breaking", "developing"])

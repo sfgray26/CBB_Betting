@@ -165,7 +165,8 @@ async def lifespan(app: FastAPI):
     # Opening line attack — run when overnight lines are posted.
     # Books typically hang openers between 10 PM and midnight ET.
     # We run analysis at 10:30 PM and 12:30 AM to catch early value.
-    opener_enabled = os.getenv("OPENER_ATTACK_ENABLED", "false").lower() == "true"
+    # Enabled by default; set OPENER_ATTACK_ENABLED=false to disable.
+    opener_enabled = os.getenv("OPENER_ATTACK_ENABLED", "true").lower() == "true"
     if opener_enabled:
         scheduler.add_job(
             _opener_attack_job,
@@ -867,11 +868,15 @@ async def _opener_attack_job():
     Bookmakers hang openers with lower limits because their models are
     vulnerable — they rely on sharp action to shape the line.  Running
     analysis immediately catches early value before the line moves.
+
+    When BET verdicts are found, Discord alerts fire immediately so bets
+    can be placed at the opening price rather than waiting for the 3 AM
+    or 7 AM jobs (by which time sharp money may have moved the line).
     """
     logger.info("Opening line attack triggered — running analysis on fresh openers")
     try:
         results, cache = await run_nightly_analysis()
-        
+
         # EMAC-021: Update OddsMonitor cache for real-time pulse
         try:
             get_odds_monitor().set_reanalysis_cache(cache)
@@ -881,10 +886,16 @@ async def _opener_attack_job():
         bets = results.get("bets_recommended", 0)
         if bets > 0:
             logger.info(
-                "Opener attack: %d bets found in %d games (%.1fs)",
+                "Opener attack: %d bets found in %d games (%.1fs) — sending Discord alert",
                 bets, results.get("games_analyzed", 0),
                 results.get("duration_seconds", 0),
             )
+            # Send Discord notification immediately so bets can be placed at
+            # the opening price before sharp money moves the line.
+            try:
+                send_todays_bets(results.get("bet_details"), results)
+            except Exception as disc_exc:
+                logger.warning("Opener attack Discord notification failed: %s", disc_exc)
         else:
             logger.info("Opener attack: no value found in current openers")
     except Exception as exc:

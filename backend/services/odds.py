@@ -83,7 +83,7 @@ class OddsAPIClient:
     @classmethod
     def quota_is_low(cls) -> bool:
         """Return True when the shared quota is below the configured reserve."""
-        reserve = int(get_float_env("ODDS_API_QUOTA_RESERVE", "10"))
+        reserve = int(get_float_env("ODDS_API_QUOTA_RESERVE", "25"))
         if cls._shared_quota is None:
             return False
         return cls._shared_quota < reserve

@@ -233,11 +233,14 @@ class OddsMonitor:
                     ):
                         self._bet_adverse_fired.add(game_key)
                         movement.event_type = "BET_ADVERSE_MOVE"
+                        # Determine direction: negative delta = line moved toward home.
+                        direction = "toward home" if movement.delta < 0 else "toward away"
                         logger.warning(
-                            "BET_ADVERSE_MOVE [%s] spread moved %.1f pts in T-%.0fmin window "
-                            "-- flagging for escalation review",
+                            "BET_ADVERSE_MOVE [%s] spread moved %.1f pts (%s) in T-%.0fmin "
+                            "window -- flagging for escalation review",
                             game_key,
                             movement.delta,
+                            direction,
                             movement.minutes_to_tipoff,
                         )
                         from backend.services.coordinator import escalate_if_needed
@@ -259,6 +262,26 @@ class OddsMonitor:
                                 cb(movement)
                             except Exception:
                                 pass
+
+                    # Favorable move on an active BET: significant spread move
+                    # that is NOT the adverse direction — log for CLV tracking.
+                    if (
+                        original_was_bet
+                        and movement.field == "spread"
+                        and movement.minutes_to_tipoff is not None
+                        and movement.minutes_to_tipoff <= self.GOLDEN_WINDOW_MINUTES
+                        and abs(movement.delta) >= self.SPREAD_MOVE_THRESHOLD
+                        and movement.event_type != "BET_ADVERSE_MOVE"
+                    ):
+                        direction = "toward home" if movement.delta < 0 else "toward away"
+                        logger.info(
+                            "BET_FAVORABLE_MOVE [%s] spread moved %.1f pts (%s) in T-%.0fmin "
+                            "window — line moving in model's direction",
+                            game_key,
+                            movement.delta,
+                            direction,
+                            movement.minutes_to_tipoff,
+                        )
 
                 except Exception as re_exc:
                     logger.error("OddsMonitor: Reanalysis failed for %s: %s", game_key, re_exc)
