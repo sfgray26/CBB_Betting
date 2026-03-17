@@ -387,18 +387,205 @@ def generate_smart_bracket(
 ) -> Dict:
     """
     Convenience function to generate a smart bracket.
-    
+
     Args:
         bracket: {region: [TournamentTeam]}
         sim_results_path: Path to Monte Carlo results
         chaos_level: 0.0 = chalk, 1.0 = max chaos
         return_explanations: Include upset explanations
-    
+
     Returns:
         Dict with bracket structure and upset explanations
     """
     generator = SmartBracketGenerator(sim_results_path, chaos_level)
     return generator.generate_bracket_with_explanations(bracket)
+
+
+# ---------------------------------------------------------------------------
+# Pool-Optimal Bracket
+# ---------------------------------------------------------------------------
+
+def generate_pool_optimal_bracket(
+    bracket: Dict[str, List[TournamentTeam]],
+    mc_results=None,
+    n_12v5_picks: int = 2,
+    n_11v6_picks: int = 1,
+    force_all_9v8: bool = True,
+) -> Dict:
+    """
+    Generate the mathematically optimal bracket for winning a large pool.
+
+    Strategy:
+    - All 1-seeds advance to the Final Four (modal tournament outcome, ~25% of tourneys)
+    - Champion = highest MC probability 1-seed (or best available seed if mc_results given)
+    - R64 upsets are surgically selected:
+        * All 8v9 matchups: let the model pick whichever side has >50% win probability
+          (they are coin flips; use the model edge however small it is)
+        * Top n_12v5_picks  5v12 games: ranked by SmartBracketGenerator upset probability
+        * Top n_11v6_picks  6v11 games: ranked by SmartBracketGenerator upset probability
+        * All other R64 matchups: chalk (favour higher seed)
+    - R32 and beyond: pure chalk — maximises expected score when later rounds are
+      worth 2/4/8/16 points and the variance of upset picks compounds badly.
+
+    Args:
+        bracket:       {region: [TournamentTeam]}
+        mc_results:    SimulationResults from run_monte_carlo() (optional — used to
+                       rank champion candidates by MC championship probability)
+        n_12v5_picks:  How many 12-over-5 upsets to force (default 2)
+        n_11v6_picks:  How many 11-over-6 upsets to force (default 1)
+        force_all_9v8: If True, pick the model-favoured side for all 8v9 matchups
+
+    Returns:
+        Dict matching generate_smart_bracket() structure
+        (regions / rounds / winner / upsets / explanations)
+        Plus extra key "pool_rationale" with plain-English pick explanations.
+    """
+    from backend.tournament.bracket_simulator import R64_SEED_ORDER
+
+    generator = SmartBracketGenerator(chaos_level=0.0)  # chalk base
+
+    # --- 1. Collect all R64 upset candidates for 5v12 and 6v11 ---
+    upset_candidates: List[Tuple[str, int, int, float, str]] = []
+    # (region, fav_seed, dog_seed, upset_prob, explanation)
+
+    for region, teams in bracket.items():
+        seed_to_team = {t.seed: t for t in teams}
+        slots = [seed_to_team[s] for s in R64_SEED_ORDER if s in seed_to_team]
+
+        for i in range(0, len(slots), 2):
+            ta, tb = slots[i], slots[i + 1]
+            higher_seed = min(ta.seed, tb.seed)
+            lower_seed = max(ta.seed, tb.seed)
+            pair = (higher_seed, lower_seed)
+
+            if pair not in ((5, 12), (6, 11)):
+                continue
+
+            fav = ta if ta.seed == higher_seed else tb
+            dog = ta if ta.seed == lower_seed else tb
+            factors = generator.calculate_upset_factors(fav, dog, round_num=1)
+            upset_candidates.append((
+                region,
+                higher_seed,
+                lower_seed,
+                factors.final_upset_prob,
+                generator._generate_explanation(factors, dog, fav),
+            ))
+
+    # Sort descending by upset probability; pick top n per matchup type
+    candidates_12v5 = sorted(
+        [c for c in upset_candidates if c[1] == 5],
+        key=lambda x: -x[3],
+    )[:n_12v5_picks]
+
+    candidates_11v6 = sorted(
+        [c for c in upset_candidates if c[1] == 6],
+        key=lambda x: -x[3],
+    )[:n_11v6_picks]
+
+    forced_upsets: Dict[Tuple[str, int, int], str] = {}
+    for region, fav_s, dog_s, prob, expl in candidates_12v5 + candidates_11v6:
+        forced_upsets[(region, fav_s, dog_s)] = (
+            f"historical {dog_s}-{fav_s} upset rate "
+            f"({generator.SEED_UPSET_RATES.get((fav_s, dog_s), 0):.1%}); "
+            f"model upset prob {prob:.1%}"
+        )
+
+    # --- 2. Simulate the bracket ---
+    results: Dict = {"regions": {}, "upsets": [], "explanations": [], "pool_rationale": []}
+
+    for region, teams in bracket.items():
+        seed_to_team = {t.seed: t for t in teams}
+        slots = [seed_to_team[s] for s in R64_SEED_ORDER if s in seed_to_team]
+
+        region_results: Dict = {"rounds": {0: list(zip(slots[::2], slots[1::2]))}}
+        current = slots
+
+        for round_num in [1, 2, 3, 4]:
+            matchups = []
+            next_round = []
+
+            for i in range(0, len(current), 2):
+                ta, tb = current[i], current[i + 1]
+                higher_seed = min(ta.seed, tb.seed)
+                lower_seed = max(ta.seed, tb.seed)
+                pair_key = (region, higher_seed, lower_seed)
+
+                fav = ta if ta.seed == higher_seed else tb
+                dog = ta if ta.seed == lower_seed else tb
+
+                # Decide winner
+                if round_num == 1 and (higher_seed, lower_seed) == (8, 9) and force_all_9v8:
+                    # Coin flip: use model probability (small edge)
+                    prob_a, _, _ = predict_game(ta, tb, round_num)
+                    if prob_a >= 0.5:
+                        winner, loser, prob = ta, tb, prob_a
+                    else:
+                        winner, loser, prob = tb, ta, 1.0 - prob_a
+                elif round_num == 1 and pair_key in forced_upsets:
+                    # Forced upset
+                    expl = forced_upsets[pair_key]
+                    winner, loser = dog, fav
+                    factors = generator.calculate_upset_factors(fav, dog, round_num)
+                    prob = factors.final_upset_prob
+                else:
+                    # Pure chalk: favourite wins
+                    prob_a, _, _ = predict_game(ta, tb, round_num)
+                    if prob_a >= 0.5:
+                        winner, loser, prob = ta, tb, prob_a
+                    else:
+                        winner, loser, prob = tb, ta, 1.0 - prob_a
+
+                is_upset = winner.seed > loser.seed
+                matchup_data = {
+                    "ta": ta, "tb": tb,
+                    "winner": winner, "loser": loser,
+                    "prob": prob, "is_upset": is_upset,
+                }
+                matchups.append(matchup_data)
+                next_round.append(winner)
+
+                if is_upset:
+                    expl_text = forced_upsets.get(pair_key, "model edge")
+                    results["upsets"].append({
+                        "region": region,
+                        "round": round_num,
+                        "winner": winner.name,
+                        "winner_seed": winner.seed,
+                        "loser": loser.name,
+                        "loser_seed": loser.seed,
+                        "upset_prob": prob,
+                        "explanation": expl_text,
+                    })
+
+            region_results["rounds"][round_num] = matchups
+            current = next_round
+
+        region_results["winner"] = current[0] if current else None
+        results["regions"][region] = region_results
+
+    # --- 3. Pool rationale ---
+    for region, fav_s, dog_s, prob, expl in candidates_12v5:
+        seed_to_team = {t.seed: t for t in bracket[region]}
+        fav_name = seed_to_team[fav_s].name if fav_s in seed_to_team else f"#{fav_s}"
+        dog_name = seed_to_team[dog_s].name if dog_s in seed_to_team else f"#{dog_s}"
+        hist_rate = generator.SEED_UPSET_RATES.get((fav_s, dog_s), 0)
+        results["pool_rationale"].append(
+            f"#{dog_s} {dog_name} over #{fav_s} {fav_name} ({region.upper()}) — "
+            f"12v5 happens {hist_rate:.0%} of the time historically; "
+            f"most bracket-fillers ignore this, giving you pool edge when it hits."
+        )
+    for region, fav_s, dog_s, prob, expl in candidates_11v6:
+        seed_to_team = {t.seed: t for t in bracket[region]}
+        fav_name = seed_to_team[fav_s].name if fav_s in seed_to_team else f"#{fav_s}"
+        dog_name = seed_to_team[dog_s].name if dog_s in seed_to_team else f"#{dog_s}"
+        hist_rate = generator.SEED_UPSET_RATES.get((fav_s, dog_s), 0)
+        results["pool_rationale"].append(
+            f"#{dog_s} {dog_name} over #{fav_s} {fav_name} ({region.upper()}) — "
+            f"11v6 upsets happen {hist_rate:.0%} historically; contrarian but justified."
+        )
+
+    return results
 
 
 if __name__ == "__main__":
