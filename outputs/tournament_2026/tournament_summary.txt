@@ -1,0 +1,44 @@
+🏀 **NCAA TOURNAMENT 2026 — MODEL SUMMARY** 🏀
+Generated: 2026-03-17 18:54 ET
+
+**🏆 Championship Favorites:**
+  #1 Duke: 19.6%
+  #1 Michigan: 17.3%
+  #1 Arizona: 13.7%
+  #1 Florida: 11.6%
+  #2 UConn: 6.1%
+
+**🎭 Final Four Probabilities:**
+  #1 Duke: 46.5%
+  #1 Michigan: 45.6%
+  #1 Arizona: 42.9%
+  #1 Florida: 40.9%
+  #2 Iowa State: 23.6%
+  #2 Purdue: 23.1%
+  #2 Houston: 23.1%
+  #2 UConn: 22.4%
+
+**🧚 Cinderella Candidates (Seed 10+):**
+  #10 Texas A&M: 2.7% to reach Sweet 16
+  #10 Missouri: 2.5% to reach Sweet 16
+  #11 VCU: 2.4% to reach Sweet 16
+  #10 UCF: 2.3% to reach Sweet 16
+  #10 Santa Clara: 2.2% to reach Sweet 16
+  #11 Texas/NC State: 2.1% to reach Sweet 16
+
+**⚡ Upset Alerts (R64):**
+  All #8 vs #9 matchups: ~48% upset rate
+  All #7 vs #10 matchups: ~39% upset rate
+  All #5 vs #12 matchups: ~35% upset rate
+
+**📊 Model Stats:**
+  Simulations: 50,000
+  Avg upsets/tournament: 16.5
+  Avg championship margin: 5.6 pts
+
+**💡 Key Insight:**
+  Model expects 16 upsets per tournament.
+  Look for chaos in 8/9 and 7/10 matchups!
+
+🔗 Full analysis: [Dashboard URL]
+🍀 Good luck with your brackets!
