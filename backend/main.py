@@ -419,7 +419,7 @@ def _nightly_health_check_job():
 
 
 def _morning_briefing_job():
-    """Morning slate briefing at 7 AM ET — logs today's prediction slate summary and sends to Discord."""
+    """Morning slate briefing at 7 AM ET — sends Discord notification with today's bets."""
     import time as _time
     t0 = _time.monotonic()
     db = SessionLocal()
@@ -427,6 +427,7 @@ def _morning_briefing_job():
         from datetime import date as _date
         from backend.models import Prediction, Game
         from backend.services.scout import generate_morning_briefing_narrative
+        from backend.services.discord_simple import send_morning_brief
 
         today = _date.today()
         preds = (
@@ -454,31 +455,24 @@ def _morning_briefing_job():
 
         duration = _time.monotonic() - t0
 
+        # Convert to simplified format for Discord
         bet_details = [
             {
-                "home_team": p.game.home_team,
-                "away_team": p.game.away_team,
-                "spread": p.spread,
-                "bet_side": p.bet_side,
-                "edge_conservative": p.conservative_edge,
-                "recommended_units": p.kelly_fraction,
-                "bet_odds": p.odds,
-                "kelly_fractional": p.kelly_fraction,
-                "projected_margin": p.projected_margin,
-                "verdict": p.verdict,
+                "team": p.game.home_team if p.bet_side == "home" else p.game.away_team,
+                "spread": p.spread if p.bet_side == "home" else -p.spread,
+                "edge": p.conservative_edge or 0,
+                "units": p.kelly_fraction or 0,
             }
             for p in bet_preds
         ]
 
-        summary = {
-            "bets_recommended": n_bets,
-            "games_considered": n_considered,
-            "games_analyzed": len(preds),
-            "duration_seconds": duration,
+        slate_summary = {
+            "n_games": len(preds),
+            "avg_clv": sum(p.clv_percent or 0 for p in bet_preds) / len(bet_preds) if bet_preds else 0,
         }
 
         try:
-            send_todays_bets(bet_details or None, summary)
+            send_morning_brief(bet_details, slate_summary)
         except Exception as discord_exc:
             logger.warning("Discord morning briefing send failed (non-fatal): %s", discord_exc)
 
@@ -490,14 +484,10 @@ def _morning_briefing_job():
 
 def _end_of_day_results_job():
     """End-of-day results summary at 11 PM ET — settles today's bets and sends Discord recap."""
-    from datetime import date, timezone as _timezone
-    from backend.services.discord_notifier import _post, _bot_token
+    from datetime import date
+    from backend.services.discord_simple import send_eod_results
 
     try:
-        if not _bot_token():
-            logger.info("End-of-day results: DISCORD_BOT_TOKEN not set — skipping")
-            return
-
         db = SessionLocal()
         try:
             today = date.today()
@@ -512,30 +502,28 @@ def _end_of_day_results_job():
                 .all()
             )
 
-            wins = sum(1 for b in settled if b.outcome == 1)
-            losses = sum(1 for b in settled if b.outcome == 0)
-            pushes = sum(1 for b in settled if b.outcome == 2)
-            pl = sum((b.profit_loss_dollars or 0) for b in settled) / 100
+            if not settled:
+                logger.info("End-of-day: No settled bets today")
+                return
 
-            embed = {
-                "title": "📊 CBB Edge — End of Day Results",
-                "description": (
-                    f"{wins}W-{losses}L"
-                    + (f"-{pushes}P" if pushes else "")
-                    + f" | {'+' if pl >= 0 else ''}{pl:.1f} units"
-                ),
-                "color": 0x2ECC71 if pl > 0 else (0xE74C3C if pl < 0 else 0x95A5A6),
-                "fields": [
-                    {"name": "Wins",   "value": str(wins),                              "inline": True},
-                    {"name": "Losses", "value": str(losses),                             "inline": True},
-                    {"name": "P&L",    "value": f"{'+'if pl>=0 else ''}{pl:.1f}u",       "inline": True},
-                ],
-                "footer": {"text": "CBB Edge Analyzer v9"},
-                "timestamp": datetime.now(_timezone.utc).isoformat(),
-            }
-            _post({"embeds": [embed]})
+            results = []
+            daily_pl = 0
+            
+            for b in settled:
+                team = b.game.home_team if b.bet_side == "home" else b.game.away_team
+                outcome_map = {1: "win", 0: "loss", 2: "push"}
+                pl = (b.profit_loss_dollars or 0) / 100
+                daily_pl += pl
+                
+                results.append({
+                    "team": team,
+                    "outcome": outcome_map.get(b.outcome, "unknown"),
+                    "pl": pl,
+                })
+
+            send_eod_results(results, daily_pl)
             logger.info(
-                "End-of-day results sent: %dW-%dL-%dP | %.1f units", wins, losses, pushes, pl
+                "End-of-day results sent: %d bets, %.2f units P&L", len(results), daily_pl
             )
         finally:
             db.close()
@@ -1959,6 +1947,20 @@ async def discord_test(user: str = Depends(verify_admin_api_key)):
     if ok:
         return {"status": "ok", "channel_id": _channel_id()}
     raise HTTPException(status_code=502, detail="Discord API call failed — check logs")
+
+
+@app.post("/admin/discord/test-simple")
+async def discord_test_simple(user: str = Depends(verify_admin_api_key)):
+    """Test the simplified Discord notification system (admin only)."""
+    from backend.services.discord_simple import send_test_message
+    
+    success = send_test_message()
+    if success:
+        return {"status": "ok", "message": "Discord test messages sent to all configured channels"}
+    raise HTTPException(
+        status_code=502, 
+        detail="Discord test failed — check DISCORD_BOT_TOKEN and channel IDs"
+    )
 
 
 @app.post("/admin/discord/send-todays-bets")
