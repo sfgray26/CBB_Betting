@@ -519,6 +519,8 @@ with st.sidebar:
     n_sims = st.selectbox("MC Simulations", [1000, 3000, 5000, 10000],
                           index=2, help="More sims = smoother probability bars")
     show_mc = st.toggle("Show MC probability bars", value=True)
+    pool_optimal = st.toggle("Pool Optimal Mode", value=False,
+                             help="Surgically picks 2×12v5 + 1×11v6 upsets; all 1-seeds to Final Four")
     rng_seed = st.number_input("Random seed", value=42, min_value=0,
                                help="Change for a different stochastic bracket")
 
@@ -541,21 +543,72 @@ for (lo, hi), info in mode_labels.items():
         mode_info = info
         break
 em, mn, md, mc = mode_info
-st.info(f"**{em} {mn}** — {md}")
+if pool_optimal:
+    st.success("**Pool Optimal** — 2× 12v5 + 1× 11v6 upset picks; all 1-seeds to Final Four")
+else:
+    st.info(f"**{em} {mn}** — {md}")
 
 # ---------------------------------------------------------------------------
-# Generate bracket (cached in session state to avoid re-computation on slider)
+# Generate bracket (cached; pool_optimal included in cache key)
 # ---------------------------------------------------------------------------
-cache_key = f"bracket_{chaos_level}_{rng_seed}"
+cache_key = f"bracket_{chaos_level}_{rng_seed}_{pool_optimal}"
 if st.session_state.get("bracket_cache_key") != cache_key or "bracket_cache" not in st.session_state:
-    with st.spinner("Generating bracket predictions..."):
-        region_rounds, ff, champ, upsets_list = generate_bracket(
-            bracket, chaos_level=chaos_level, rng_seed=int(rng_seed)
-        )
-    st.session_state.bracket_cache = (region_rounds, ff, champ, upsets_list)
+    if pool_optimal:
+        with st.spinner("Building pool-optimal bracket..."):
+            try:
+                from backend.tournament.smart_bracket import generate_pool_optimal_bracket
+                _po = generate_pool_optimal_bracket(bracket)
+                region_rounds = {r: d["rounds"] for r, d in _po["regions"].items()}
+                # Build FF + championship from region winners
+                _ff = []
+                for reg_a, reg_b in FF_PAIRINGS:
+                    wa = _po["regions"][reg_a]["winner"]
+                    wb = _po["regions"][reg_b]["winner"]
+                    if wa and wb:
+                        pa, _, _ = predict_game(wa, wb, 5)
+                        if pa >= 0.5:
+                            _w, _l, _p = wa, wb, pa
+                        else:
+                            _w, _l, _p = wb, wa, 1.0 - pa
+                        _ff.append({"ta": wa, "tb": wb, "winner": _w, "loser": _l,
+                                    "prob": _p, "is_upset": _w.seed > _l.seed,
+                                    "regions": (reg_a, reg_b)})
+                if len(_ff) == 2:
+                    _ta, _tb = _ff[0]["winner"], _ff[1]["winner"]
+                    _pc, _, _ = predict_game(_ta, _tb, 6)
+                    if _pc >= 0.5:
+                        _cw, _cl, _cp = _ta, _tb, _pc
+                    else:
+                        _cw, _cl, _cp = _tb, _ta, 1.0 - _pc
+                    champ = {"ta": _ta, "tb": _tb, "winner": _cw, "loser": _cl,
+                             "prob": _cp, "is_upset": _cw.seed > _cl.seed}
+                else:
+                    champ = {"ta": None, "tb": None, "winner": None,
+                             "loser": None, "prob": 0.5, "is_upset": False}
+                ff = _ff
+                upsets_list = _po.get("upsets", [])
+                pool_rationale = _po.get("pool_rationale", [])
+            except Exception as e:
+                st.error(f"Pool-optimal generator failed: {e}")
+                st.stop()
+    else:
+        with st.spinner("Generating bracket predictions..."):
+            region_rounds, ff, champ, upsets_list = generate_bracket(
+                bracket, chaos_level=chaos_level, rng_seed=int(rng_seed)
+            )
+        pool_rationale = []
+    _rationale = pool_rationale if pool_optimal else []
+    st.session_state.bracket_cache = (region_rounds, ff, champ, upsets_list, _rationale)
     st.session_state.bracket_cache_key = cache_key
 
-region_rounds, ff, champ, upsets_list = st.session_state.bracket_cache
+region_rounds, ff, champ, upsets_list, pool_rationale = st.session_state.bracket_cache
+
+# Pool rationale callout (pool optimal mode only)
+if pool_rationale:
+    st.info(
+        "**Why these upsets win pools:**\n\n"
+        + "\n\n".join(f"• {r}" for r in pool_rationale)
+    )
 
 # ---------------------------------------------------------------------------
 # Monte Carlo simulation (cached separately — only reruns when n_sims changes)
@@ -573,23 +626,25 @@ if show_mc:
 # ---------------------------------------------------------------------------
 # Key metrics
 # ---------------------------------------------------------------------------
-st.subheader("📊 Bracket Summary")
+st.subheader("Bracket Summary")
+
 c1, c2, c3, c4 = st.columns(4)
-champ_mc = (mc_probs or {}).get(champ["winner"].name, {}).get("champ", 0) if mc_probs else None
+champ_mc = (mc_probs or {}).get(champ["winner"].name, {}).get("champ") if (mc_probs and champ.get("winner")) else None
 c1.metric(
     "🏆 Predicted Champion",
-    f"#{champ['winner'].seed} {champ['winner'].name}",
-    f"{champ_mc:.1%} MC odds" if champ_mc else f"{champ['prob']:.0%} in final"
+    f"#{champ['winner'].seed} {champ['winner'].name}" if champ.get("winner") else "TBD",
+    f"{champ_mc:.1%} MC odds" if champ_mc else (f"{champ['prob']:.0%} in final" if champ.get("winner") else ""),
 )
 if ff:
-    ff0_mc = (mc_probs or {}).get(ff[0]["winner"].name, {}).get("f4", 0) if mc_probs else None
+    ff0_mc = (mc_probs or {}).get(ff[0]["winner"].name, {}).get("f4") if mc_probs else None
     c2.metric("F4 · Game 1", f"#{ff[0]['winner'].seed} {ff[0]['winner'].name}",
-              f"{ff[0]['prob']:.0%} semi")
+              f"{ff0_mc:.1%} MC F4 · {ff[0]['prob']:.0%} semi" if ff0_mc else f"{ff[0]['prob']:.0%} semi")
 if len(ff) > 1:
-    ff1_mc = (mc_probs or {}).get(ff[1]["winner"].name, {}).get("f4", 0) if mc_probs else None
+    ff1_mc = (mc_probs or {}).get(ff[1]["winner"].name, {}).get("f4") if mc_probs else None
     c3.metric("F4 · Game 2", f"#{ff[1]['winner'].seed} {ff[1]['winner'].name}",
-              f"{ff[1]['prob']:.0%} semi")
-c4.metric("⚡ Predicted Upsets", len(upsets_list), f"chaos={chaos_level:.1f}")
+              f"{ff1_mc:.1%} MC F4 · {ff[1]['prob']:.0%} semi" if ff1_mc else f"{ff[1]['prob']:.0%} semi")
+mode_label = "pool-optimal" if pool_optimal else f"chaos={chaos_level:.1f}"
+c4.metric("⚡ Predicted Upsets", len(upsets_list), mode_label)
 
 # ---------------------------------------------------------------------------
 # Bracket HTML
