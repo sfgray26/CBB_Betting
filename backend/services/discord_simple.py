@@ -26,10 +26,10 @@ _COLOR_RED = 0xE74C3C     # losses, alerts
 _COLOR_BLUE = 0x3498DB    # info, briefs
 _COLOR_GOLD = 0xFFD700    # high stakes
 
-# Essential channels only
-CHANNEL_BETS = os.getenv("DISCORD_CHANNEL_CBB_BETS")
-CHANNEL_RESULTS = os.getenv("DISCORD_CHANNEL_CBB_RESULTS")  
-CHANNEL_ALERTS = os.getenv("DISCORD_CHANNEL_CBB_ALERTS")
+# Essential channels only — with backward compatibility
+CHANNEL_BETS = os.getenv("DISCORD_CHANNEL_CBB_BETS") or os.getenv("DISCORD_CHANNEL_CBB_BRIEF")
+CHANNEL_RESULTS = os.getenv("DISCORD_CHANNEL_CBB_RESULTS") or os.getenv("DISCORD_CHANNEL_CBB_BRIEF") or os.getenv("DISCORD_CHANNEL_ID")
+CHANNEL_ALERTS = os.getenv("DISCORD_CHANNEL_CBB_ALERTS") or os.getenv("DISCORD_CHANNEL_CBB_BRIEF")
 BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
 
