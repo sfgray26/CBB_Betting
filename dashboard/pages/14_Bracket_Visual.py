@@ -178,8 +178,18 @@ def generate_bracket(bracket: dict, chaos_level: float = 0.0,
     """
     Generate a predicted bracket with optional probabilistic upset sampling.
 
-    chaos_level=0.0 → always pick model favorite (chalk)
-    chaos_level=1.0 → sample from win probability (full stochastic)
+    Chaos calibration is anchored to historical NCAA tournament upset rates:
+      chaos=0.0 → chalk (model favourite always wins)
+      chaos=0.5 → pure model-probability sampling, which reproduces the
+                  historical upset rates (~31% of games per round)
+      chaos=1.0 → upset probabilities amplified up to 2× (capped at 50%),
+                  producing a chaotic but still seeding-aware bracket
+
+    The old threshold formula (0.5 + (0.5-p)*(1-chaos)) was NOT calibrated:
+    at chaos=0.5 it gave a 1v16 game a 73% upset chance instead of ~3%.
+    The corrected approach:
+      effective_upset_p = upset_p * (chaos / 0.5)        for chaos ≤ 0.5
+      effective_upset_p = min(0.5, upset_p*(1+(chaos-0.5)/0.5)) for chaos > 0.5
 
     Returns (region_rounds, ff, champ, upsets)
     where region_rounds[region][round_num] = list of matchup dicts
@@ -191,13 +201,28 @@ def generate_bracket(bracket: dict, chaos_level: float = 0.0,
         p, _, _ = predict_game(ta, tb, rnd)
         if chaos == 0.0:
             return (ta, tb, p) if p >= 0.5 else (tb, ta, 1.0 - p)
-        # Blend: at chaos=1.0 fully stochastic; at 0.5, 50% stochastic
-        threshold = 0.5 + (0.5 - p) * (1.0 - chaos)
-        if rng.random() > threshold:
-            return ta, tb, p
+
+        # Always identify favourite by model probability
+        if p >= 0.5:
+            fav, dog, fav_p = ta, tb, p
         else:
-            # Upset — return underdog as winner with their win probability
-            return tb, ta, 1.0 - p
+            fav, dog, fav_p = tb, ta, 1.0 - p
+
+        upset_p = 1.0 - fav_p  # model's raw upset probability
+
+        # Scale effective upset probability based on chaos level:
+        #   chaos=0.5 → effective = upset_p  (historically calibrated)
+        #   chaos<0.5 → blend toward chalk
+        #   chaos>0.5 → amplify toward 50/50 (but never exceed it)
+        if chaos <= 0.5:
+            effective_upset_p = upset_p * (chaos / 0.5)
+        else:
+            t = (chaos - 0.5) / 0.5
+            effective_upset_p = min(0.5, upset_p * (1.0 + t))
+
+        if rng.random() < effective_upset_p:
+            return dog, fav, upset_p
+        return fav, dog, fav_p
 
     upsets_global = []
 

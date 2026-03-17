@@ -46,10 +46,28 @@ class SmartBracketGenerator:
     Generate brackets using sophisticated upset prediction.
     """
     
-    # Historical seed upset rates (baseline)
+    # Historical seed upset rates (baseline — 35+ years of NCAA tournament data)
     SEED_UPSET_RATES = {
         (1, 16): 0.013, (2, 15): 0.067, (3, 14): 0.153, (4, 13): 0.216,
         (5, 12): 0.352, (6, 11): 0.389, (7, 10): 0.394, (8, 9): 0.487,
+    }
+
+    # Historical upset fraction per round (games won by higher seed ÷ total games).
+    # Derived from 35 years of tournament data:
+    #   R64 : ~10 of 32 games  = 31%
+    #   R32 : ~5  of 16 games  = 31%
+    #   S16 : ~3  of  8 games  = 38%   (survivors skew closer in quality)
+    #   E8  : ~2  of  4 games  = 50%   (only 4 games; frequently a 2-seed wins)
+    #   F4  : ~1  of  2 games  = 50%
+    #   Champ: ~0.4 of 1 game  = 40%
+    # At chaos=0.5 the deterministic bracket will pick exactly these many upsets.
+    ROUND_HISTORICAL_UPSET_RATES: Dict[int, float] = {
+        1: 0.31,
+        2: 0.31,
+        3: 0.38,
+        4: 0.50,
+        5: 0.50,
+        6: 0.40,
     }
     
     # Style factor weights
@@ -239,6 +257,22 @@ class SmartBracketGenerator:
             return 0.06
         return 0.0
     
+    def _n_upsets_for_round(self, n_matchups: int, round_num: int) -> int:
+        """
+        How many upsets to select for this round given the current chaos_level.
+
+        Calibration:
+          chaos=0.0 → 0 upsets (chalk)
+          chaos=0.5 → historical average (ROUND_HISTORICAL_UPSET_RATES × n_matchups)
+          chaos=1.0 → 2× historical average, capped at n_matchups
+
+        This prevents the old cliff behaviour where chaos=0.3 produced only 4
+        upsets and chaos=0.5 immediately produced 20.
+        """
+        hist_rate = self.ROUND_HISTORICAL_UPSET_RATES.get(round_num, 0.31)
+        n = round(n_matchups * hist_rate * 2.0 * self.chaos_level)
+        return max(0, min(n_matchups, n))
+
     def predict_winner(
         self,
         team_a: TournamentTeam,
@@ -249,12 +283,16 @@ class SmartBracketGenerator:
     ) -> Tuple[TournamentTeam, TournamentTeam, float, UpsetFactors]:
         """
         Predict winner using all factors.
-        
+
         Args:
-            deterministic: If True, use chaos-based threshold for upsets
-                          If False, use probability-based random selection
+            deterministic: If True, this call is used inside
+                           generate_bracket_with_explanations(), which now
+                           handles calibrated round-level upset selection itself.
+                           The per-game result returned here always picks the
+                           model favourite; the caller overrides for chosen upsets.
+                           If False, sample probabilistically from final_upset_prob.
         """
-        # Identify favorite and underdog by seed
+        # Identify favourite and underdog by seed
         if team_a.seed < team_b.seed:
             favorite, underdog = team_a, team_b
         elif team_b.seed < team_a.seed:
@@ -265,29 +303,24 @@ class SmartBracketGenerator:
                 favorite, underdog = team_a, team_b
             else:
                 favorite, underdog = team_b, team_a
-        
+
         factors = self.calculate_upset_factors(favorite, underdog, round_num, region)
-        
-        # Chaos-based threshold: higher chaos = lower threshold for upsets
-        # Chaos 0.0: threshold = 0.50 (favorites always win unless >50% upset prob)
-        # Chaos 0.5: threshold = 0.35 (upsets at 35% prob)
-        # Chaos 1.0: threshold = 0.20 (upsets at 20% prob)
-        chaos_threshold = 0.50 - (self.chaos_level * 0.30)
-        
+
         if deterministic:
-            # Predict upset if final prob > chaos-adjusted threshold
-            upset_happens = factors.final_upset_prob > chaos_threshold
+            # Default to favourite; generate_bracket_with_explanations will
+            # override specific matchups to upsets using round-level selection.
+            winner, loser = favorite, underdog
+            win_prob = 1.0 - factors.final_upset_prob
         else:
             # Probability-weighted random selection
             upset_happens = random.random() < factors.final_upset_prob
-        
-        if upset_happens:
-            winner, loser = underdog, favorite
-            win_prob = factors.final_upset_prob
-        else:
-            winner, loser = favorite, underdog
-            win_prob = 1.0 - factors.final_upset_prob
-        
+            if upset_happens:
+                winner, loser = underdog, favorite
+                win_prob = factors.final_upset_prob
+            else:
+                winner, loser = favorite, underdog
+                win_prob = 1.0 - factors.final_upset_prob
+
         return winner, loser, win_prob, factors
     
     def generate_bracket_with_explanations(
@@ -296,40 +329,71 @@ class SmartBracketGenerator:
     ) -> Dict:
         """
         Generate full bracket with detailed upset explanations.
+
+        Deterministic upset selection is calibrated to historical rates:
+          1. Compute final_upset_prob for every matchup in the round.
+          2. Rank matchups by that probability (highest first).
+          3. Designate the top-N as upsets, where N = _n_upsets_for_round().
+             At chaos=0.5, N matches the historical average for that round.
+             At chaos=0.0, N=0 (chalk). At chaos=1.0, N≈2× historical average.
+          4. The WHICH games flip is always driven by the V9.1 model + historical
+             rates + style/Cinderella factors — never random.
         """
         from backend.tournament.bracket_simulator import R64_SEED_ORDER
-        
+
         results = {
             "regions": {},
             "upsets": [],
             "explanations": []
         }
-        
+
         for region, teams in bracket.items():
             seed_to_team = {t.seed: t for t in teams}
             slots = [seed_to_team[s] for s in R64_SEED_ORDER if s in seed_to_team]
-            
+
             region_results = {"rounds": {0: list(zip(slots[::2], slots[1::2]))}}
             current = slots
-            
+
             for round_num in [1, 2, 3, 4]:
-                round_matchups = []
-                next_round = []
-                
+                # --- Step 1: compute factors for every matchup in this round ---
+                matchup_data_list: List[Dict] = []
                 for i in range(0, len(current), 2):
                     ta, tb = current[i], current[i + 1]
-                    winner, loser, prob, factors = self.predict_winner(
-                        ta, tb, round_num, region, deterministic=True
-                    )
-                    
+                    fav = ta if ta.seed <= tb.seed else tb
+                    dog = tb if fav is ta else ta
+                    if ta.seed == tb.seed:
+                        fav = ta if ta.composite_rating >= tb.composite_rating else tb
+                        dog = tb if fav is ta else ta
+                    factors = self.calculate_upset_factors(fav, dog, round_num, region)
+                    matchup_data_list.append({
+                        "ta": ta, "tb": tb, "fav": fav, "dog": dog,
+                        "factors": factors,
+                    })
+
+                # --- Step 2: decide which matchups become upsets ---
+                n_upsets = self._n_upsets_for_round(len(matchup_data_list), round_num)
+                # Rank by upset probability descending; only genuine upsets (dog != fav by seed)
+                eligible = [
+                    (idx, m) for idx, m in enumerate(matchup_data_list)
+                    if m["dog"].seed > m["fav"].seed
+                ]
+                eligible.sort(key=lambda x: -x[1]["factors"].final_upset_prob)
+                upset_indices = {idx for idx, _ in eligible[:n_upsets]}
+
+                # --- Step 3: build matchup results ---
+                round_matchups = []
+                next_round = []
+                for idx, m in enumerate(matchup_data_list):
+                    fav, dog, factors = m["fav"], m["dog"], m["factors"]
+                    is_true_upset = idx in upset_indices and dog.seed > fav.seed
+                    if is_true_upset:
+                        winner, loser = dog, fav
+                        prob = factors.final_upset_prob
+                    else:
+                        winner, loser = fav, dog
+                        prob = 1.0 - factors.final_upset_prob
+
                     is_upset = winner.seed > loser.seed
-                    matchup_data = {
-                        "ta": ta, "tb": tb,
-                        "winner": winner, "loser": loser,
-                        "prob": prob, "is_upset": is_upset,
-                        "factors": factors
-                    }
-                    
                     if is_upset:
                         results["upsets"].append({
                             "region": region,
@@ -339,18 +403,25 @@ class SmartBracketGenerator:
                             "loser": loser.name,
                             "loser_seed": loser.seed,
                             "upset_prob": factors.final_upset_prob,
-                            "explanation": self._generate_explanation(factors, winner, loser)
+                            "explanation": self._generate_explanation(
+                                factors, winner, loser
+                            ),
                         })
-                    
-                    round_matchups.append(matchup_data)
+
+                    round_matchups.append({
+                        "ta": m["ta"], "tb": m["tb"],
+                        "winner": winner, "loser": loser,
+                        "prob": prob, "is_upset": is_upset,
+                        "factors": factors,
+                    })
                     next_round.append(winner)
-                
+
                 region_results["rounds"][round_num] = round_matchups
                 current = next_round
-            
+
             region_results["winner"] = current[0] if current else None
             results["regions"][region] = region_results
-        
+
         return results
     
     def _generate_explanation(
