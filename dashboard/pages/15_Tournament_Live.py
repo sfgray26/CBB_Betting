@@ -46,11 +46,27 @@ ROUND_NAMES = {1: "Round of 64", 2: "Round of 32", 3: "Sweet 16",
 # ---------------------------------------------------------------------------
 def get_client():
     from backend.services.balldontlie import BallDontLieClient
+
+    # Load .env by absolute path so it works regardless of working directory
+    try:
+        from dotenv import load_dotenv
+        _dotenv_path = Path(__file__).resolve().parent.parent.parent / ".env"
+        load_dotenv(_dotenv_path, override=False, encoding="utf-8")
+    except Exception:
+        pass
+
     api_key = os.environ.get("BALLDONTLIE_API_KEY", "").strip()
     if not api_key:
+        _env_path = str(Path(__file__).resolve().parent.parent.parent / ".env")
+        _ball_keys = [k for k in os.environ if "BALL" in k.upper() or "BDL" in k.upper()]
         st.error("BALLDONTLIE_API_KEY not found in environment.")
-        st.code(f"Env vars with 'BALL': {[k for k in os.environ if 'BALL' in k.upper()]}")
-        st.info("Set BALLDONTLIE_API_KEY in Railway dashboard (or .env locally) and redeploy.")
+        st.code(
+            f"Expected .env path: {_env_path}\n"
+            f"Exists: {Path(_env_path).exists()}\n"
+            f"Keys containing BALL/BDL: {_ball_keys}\n"
+            f"Working dir: {os.getcwd()}"
+        )
+        st.info("Add `BALLDONTLIE_API_KEY=your_key` to your `.env` file (no quotes around the value).")
         st.stop()
     return BallDontLieClient(api_key=api_key)
 
