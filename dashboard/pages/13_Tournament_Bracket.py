@@ -86,6 +86,7 @@ def _init_bracket_state():
                     "def_efg_pct": 0.50,
                     "conference": "",
                     "tournament_exp": 0.70,
+                    "market_ml": None,
                 }
                 for seed in range(1, 17)
             ]
@@ -118,6 +119,7 @@ def _get_bracket() -> dict:
                 def_efg_pct=entry.get("def_efg_pct", 0.50),
                 conference=entry.get("conference", ""),
                 tournament_exp=entry.get("tournament_exp", 0.70),
+                market_ml=entry.get("market_ml"),
             ))
         bracket[region] = teams
     return bracket
@@ -216,6 +218,7 @@ def _load_bracket_json(json_str: str):
                 entry["def_efg_pct"] = match.get("def_efg_pct", 0.50)
                 entry["conference"] = match.get("conference", "")
                 entry["tournament_exp"] = match.get("tournament_exp", 0.70)
+                entry["market_ml"] = match.get("market_ml")
 
 
 def _export_bracket_json() -> str:

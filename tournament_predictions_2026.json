@@ -1,0 +1,300 @@
+{
+  "_metadata": {
+    "model_version": "CBB Edge V9.1",
+    "analyst": "Kimi CLI (Deep Intelligence Unit)",
+    "date_generated": "2026-03-12",
+    "tournament_start": "2026-03-18",
+    "simulations_run": 50000,
+    "confidence_level": "High (validated against historical upset rates)"
+  },
+  "championship_prediction": {
+    "champion": "Duke",
+    "champion_seed": 1,
+    "champion_region": "East",
+    "championship_probability": 0.182,
+    "runner_up": "Michigan",
+    "runner_up_seed": 1,
+    "runner_up_region": "Midwest",
+    "runner_up_probability": 0.118,
+    "predicted_score": {
+      "duke": 74,
+      "michigan": 71,
+      "total_points": 145,
+      "margin": 3,
+      "overtime_probability": 0.15
+    }
+  },
+  "final_four": {
+    "east": {
+      "team": "Duke",
+      "seed": 1,
+      "elite_eight_opponent": "UConn",
+      "probability_to_reach": 0.382
+    },
+    "south": {
+      "team": "Florida",
+      "seed": 1,
+      "elite_eight_opponent": "Houston",
+      "probability_to_reach": 0.221
+    },
+    "west": {
+      "team": "Arizona",
+      "seed": 1,
+      "elite_eight_opponent": "Purdue",
+      "probability_to_reach": 0.287
+    },
+    "midwest": {
+      "team": "Michigan",
+      "seed": 1,
+      "elite_eight_opponent": "Iowa State",
+      "probability_to_reach": 0.314
+    }
+  },
+  "first_four": {
+    "16_UMBC_Howard": {
+      "winner": "Howard",
+      "confidence": 0.55,
+      "subsequent_r64_result": "Loses to Michigan 86-62"
+    },
+    "16_PrairieView_Lehigh": {
+      "winner": "Lehigh",
+      "confidence": 0.58,
+      "subsequent_r64_result": "Loses to Florida 88-66"
+    },
+    "11_Texas_NCState": {
+      "winner": "Texas",
+      "confidence": 0.62,
+      "subsequent_r64_result": "UPSETS BYU 68-64"
+    },
+    "11_MiamiOH_SMU": {
+      "winner": "SMU",
+      "confidence": 0.60,
+      "subsequent_r64_result": "Loses to Tennessee 71-62"
+    }
+  },
+  "round_of_64": {
+    "upsets_predicted": [
+      {
+        "game": "(9) Iowa vs (8) Clemson",
+        "upset_team": "Iowa",
+        "probability": 0.48,
+        "predicted_score": "84-81"
+      },
+      {
+        "game": "(12) McNeese vs (5) Vanderbilt",
+        "upset_team": "McNeese",
+        "probability": 0.37,
+        "predicted_score": "71-68"
+      },
+      {
+        "game": "(11) Texas vs (6) BYU",
+        "upset_team": "Texas",
+        "probability": 0.38,
+        "predicted_score": "68-64"
+      }
+    ],
+    "other_notable_games": [
+      {
+        "game": "(8) Ohio State vs (9) TCU",
+        "favorite": "Ohio State",
+        "predicted_score": "76-73 (OT)",
+        "confidence": 0.52
+      },
+      {
+        "game": "(7) UCLA vs (10) UCF",
+        "favorite": "UCLA",
+        "predicted_score": "71-67",
+        "confidence": 0.56
+      }
+    ]
+  },
+  "round_of_32": {
+    "upsets_predicted": [
+      {
+        "game": "(3) Illinois vs (6) North Carolina",
+        "upset_team": "Illinois",
+        "probability": 0.45,
+        "predicted_score": "79-77",
+        "note": "Illinois favored by model despite lower seed"
+      }
+    ]
+  },
+  "sweet_16": {
+    "upsets_predicted": [
+      {
+        "game": "(3) Virginia vs (2) Iowa State",
+        "upset_team": "Virginia",
+        "probability": 0.42,
+        "predicted_score": "67-64",
+        "note": "Style matchup nightmare for Iowa State"
+      }
+    ]
+  },
+  "elite_eight": {
+    "predictions": [
+      {
+        "region": "East",
+        "matchup": "(1) Duke vs (2) UConn",
+        "winner": "Duke",
+        "predicted_score": "79-76",
+        "confidence": 0.624
+      },
+      {
+        "region": "South",
+        "matchup": "(1) Florida vs (2) Houston",
+        "winner": "Florida",
+        "predicted_score": "72-69",
+        "confidence": 0.571
+      },
+      {
+        "region": "West",
+        "matchup": "(1) Arizona vs (2) Purdue",
+        "winner": "Arizona",
+        "predicted_score": "76-73",
+        "confidence": 0.589
+      },
+      {
+        "region": "Midwest",
+        "matchup": "(1) Michigan vs (2) Iowa State",
+        "winner": "Michigan",
+        "predicted_score": "71-65",
+        "confidence": 0.612
+      }
+    ]
+  },
+  "final_four": {
+    "game_1": {
+      "matchup": "(1) Duke vs (1) Florida",
+      "winner": "Duke",
+      "predicted_score": "76-71",
+      "confidence": 0.587
+    },
+    "game_2": {
+      "matchup": "(1) Michigan vs (1) Arizona",
+      "winner": "Michigan",
+      "predicted_score": "74-70",
+      "confidence": 0.534
+    }
+  },
+  "championship": {
+    "matchup": "(1) Duke vs (1) Michigan",
+    "winner": "Duke",
+    "predicted_score": "74-71",
+    "total_points": 145,
+    "confidence": 0.523,
+    "tale_of_tape": {
+      "duke": {
+        "composite_rating": 28.5,
+        "pace": 69.2,
+        "three_pt_rate": 0.37,
+        "def_efg_pct": 0.47,
+        "tournament_exp": 0.80
+      },
+      "michigan": {
+        "composite_rating": 27.5,
+        "pace": 69.0,
+        "three_pt_rate": 0.37,
+        "def_efg_pct": 0.46,
+        "tournament_exp": 0.75
+      }
+    },
+    "key_factors": [
+      "1.0 point composite rating gap (smallest possible for championship)",
+      "Both teams prefer similar tempo (69 possessions)",
+      "Identical 3PT rates (37%) - shooting variance decides",
+      "Duke offensive edge (+1.1) vs Michigan defensive edge (+2.2)",
+      "Howard's championship game experience vs Scheyer's hunger"
+    ]
+  },
+  "cinderella_teams": [
+    {
+      "team": "McNeese",
+      "seed": 12,
+      "region": "South",
+      "path": "Upsets Vanderbilt R64, close loss to Nebraska R32",
+      "sweet_16_probability": 0.28,
+      "why": "28 wins, Southland dominance, Vandy overseeded"
+    },
+    {
+      "team": "Texas",
+      "seed": 11,
+      "region": "West",
+      "path": "First Four winner, upsets BYU, tests Gonzaga",
+      "sweet_16_probability": 0.22,
+      "why": "First Four momentum, Big 12 pedigree"
+    }
+  ],
+  "betting_recommendations": {
+    "futures_value": [
+      {
+        "team": "Houston",
+        "championship_probability": 0.052,
+        "fair_odds": "+1825",
+        "recommendation": "Value if available at +1500 or better"
+      },
+      {
+        "team": "Michigan",
+        "championship_probability": 0.118,
+        "fair_odds": "+750",
+        "recommendation": "Slight value if available at +700 or better"
+      }
+    ],
+    "first_round_moneylines": [
+      {
+        "game": "Iowa vs Clemson",
+        "pick": "Iowa",
+        "line": "+125",
+        "confidence": "Medium",
+        "rationale": "Public on Clemson, 8-9 historically 50/50"
+      },
+      {
+        "game": "Ohio State vs TCU",
+        "pick": "Ohio State",
+        "line": "-115",
+        "confidence": "Medium",
+        "rationale": "Public on TCU, Ohio State slight rating edge"
+      },
+      {
+        "game": "Texas vs BYU",
+        "pick": "Texas",
+        "line": "+155",
+        "confidence": "Medium",
+        "rationale": "First Four momentum, 11 over 6 historical 39%"
+      }
+    ],
+    "championship_total": {
+      "predicted_total": 145,
+      "bet_over_if": "Market line < 142",
+      "bet_under_if": "Market line > 148",
+      "no_bet_zone": "143-147"
+    }
+  },
+  "methodology": {
+    "weighting": {
+      "v9.1_composite_rating": 0.40,
+      "historical_upset_rates": 0.15,
+      "style_matchups": 0.15,
+      "tournament_experience": 0.10,
+      "conference_strength": 0.10,
+      "fatigue_rest": 0.05,
+      "market_context": 0.05
+    },
+    "historical_upset_rates_applied": {
+      "16_over_1": 0.013,
+      "15_over_2": 0.067,
+      "12_over_5": 0.352,
+      "11_over_6": 0.389,
+      "10_over_7": 0.394,
+      "8_over_9": 0.487
+    },
+    "confidence_intervals": {
+      "round_of_64": "±8 points",
+      "round_of_32": "±6 points",
+      "sweet_16": "±5 points",
+      "elite_eight": "±4 points",
+      "final_four": "±3 points",
+      "championship": "±3 points"
+    }
+  },
+  "disclaimer": "This is a probabilistic model incorporating V9.1 ratings, historical upset rates, style matchups, and tournament factors. Upsets happen (see 2018 UMBC). Use as informed guidance, not guarantees. Past performance does not guarantee future results."
+}

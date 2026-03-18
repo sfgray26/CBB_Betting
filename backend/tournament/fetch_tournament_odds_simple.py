@@ -65,6 +65,68 @@ def fetch_odds() -> List[Dict]:
         return []
 
 
+# Maps lowercase Odds API team names → lowercase bracket JSON names.
+# Handles: abbreviations, mascot suffixes, punctuation variants, First Four slash teams.
+_API_TO_BRACKET: Dict[str, str] = {
+    # Abbreviations
+    "connecticut": "uconn",
+    "connecticut huskies": "uconn",
+    "texas christian": "tcu",
+    "tcu horned frogs": "tcu",
+    "central florida": "ucf",
+    "ucf knights": "ucf",
+    "california baptist": "cal baptist",
+    "california baptist lancers": "cal baptist",
+    "virginia commonwealth": "vcu",
+    "virginia commonwealth rams": "vcu",
+    "brigham young": "byu",
+    "byu cougars": "byu",
+    "long island university": "liu",
+    "long island": "liu",
+    "liu sharks": "liu",
+    # McNeese
+    "mcneese state": "mcneese",
+    "mcneese state cowboys": "mcneese",
+    # Punctuation / location suffix variants
+    "st. john's (ny)": "st. john's",
+    "st john's": "st. john's",
+    "saint john's": "st. john's",
+    "saint john's red storm": "st. john's",
+    "st. mary's (ca)": "st. mary's",
+    "st mary's": "st. mary's",
+    "saint mary's": "st. mary's",
+    "saint mary's gaels": "st. mary's",
+    "saint louis": "st. louis",
+    "saint louis billikens": "st. louis",
+    # Miami disambiguation — (OH) must alias BEFORE generic "miami" substring matching
+    "miami (oh)": "miami oh/smu",
+    "miami oh": "miami oh/smu",
+    "miami ohio": "miami oh/smu",
+    "miami redhawks": "miami oh/smu",
+    "miami (fl)": "miami",
+    "miami hurricanes": "miami",
+    # SMU for First Four
+    "southern methodist": "miami oh/smu",
+    "smu": "miami oh/smu",
+    "smu mustangs": "miami oh/smu",
+    # First Four — maps either possible winner to the slash placeholder
+    "prairie view": "prairie view/lehigh",
+    "prairie view a&m": "prairie view/lehigh",
+    "prairie view a&m panthers": "prairie view/lehigh",
+    "lehigh": "prairie view/lehigh",
+    "lehigh mountain hawks": "prairie view/lehigh",
+    "texas": "texas/nc state",
+    "texas longhorns": "texas/nc state",
+    "nc state": "texas/nc state",
+    "north carolina state": "texas/nc state",
+    "north carolina state wolfpack": "texas/nc state",
+    "umbc": "umbc/howard",
+    "umbc retrievers": "umbc/howard",
+    "howard": "umbc/howard",
+    "howard bison": "umbc/howard",
+}
+
+
 def _build_seed_lookup(bracket: Dict) -> Dict[str, Dict]:
     """Return {team_name_lower: team_dict} for all 64 bracket teams."""
     lookup = {}
@@ -78,21 +140,39 @@ def _build_seed_lookup(bracket: Dict) -> Dict[str, Dict]:
 
 
 def _fuzzy_match(api_name: str, bracket_names: List[str]) -> Optional[str]:
-    """Simple fuzzy match for team names."""
+    """
+    Match an Odds API team name to a bracket JSON team name.
+
+    Priority order:
+    1. Exact match (lowercase)
+    2. Alias lookup (_API_TO_BRACKET dict)
+    3. Substring containment: bracket_name fully inside api_name — return longest hit
+       (e.g. "duke" inside "duke blue devils"; "iowa state" beats "iowa")
+    4. Word overlap: 2+ words in common
+    """
     api_lower = api_name.lower().strip()
-    
-    # Exact match
+
+    # 1. Exact
     if api_lower in bracket_names:
         return api_lower
-    
-    # Substring match
+
+    # 2. Alias
+    alias_target = _API_TO_BRACKET.get(api_lower)
+    if alias_target and alias_target in bracket_names:
+        return alias_target
+
+    # 3. Substring — find all bracket names contained in the API string,
+    #    return the longest (most specific) to avoid "iowa" beating "iowa state"
+    candidates = [bn for bn in bracket_names if bn and bn in api_lower]
+    if candidates:
+        return max(candidates, key=len)
+
+    # 4. Word overlap
+    api_words = set(api_lower.split())
     for bn in bracket_names:
-        bn_words = set(bn.split())
-        api_words = set(api_lower.split())
-        common = bn_words & api_words
-        if len(common) >= 2 or (len(bn_words) == 1 and bn_words == api_words):
+        if len(set(bn.split()) & api_words) >= 2:
             return bn
-    
+
     return None
 
 
@@ -120,7 +200,7 @@ def fetch_and_write_odds(bracket_path: str) -> int:
         away_key = _fuzzy_match(away, bracket_names)
         
         if home_key is None or away_key is None:
-            logger.debug(f"No bracket match: {home} vs {away}")
+            logger.info(f"No bracket match: '{home}' vs '{away}'")
             continue
         
         home_team = seed_lookup[home_key]
@@ -129,7 +209,7 @@ def fetch_and_write_odds(bracket_path: str) -> int:
         # Check if R64 matchup
         pair = tuple(sorted([home_team["seed"], away_team["seed"]]))
         if pair not in [tuple(sorted(p)) for p in R64_PAIRS]:
-            logger.debug(f"Skipping non-R64: {home_team['name']} vs {away_team['name']}")
+            logger.info(f"Skipping non-R64 pair {pair}: {home_team['name']} vs {away_team['name']}")
             continue
         
         # Extract moneylines
