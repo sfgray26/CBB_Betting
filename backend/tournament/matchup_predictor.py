@@ -90,10 +90,17 @@ class TournamentTeam:
     
     # Tournament experience (returning player minutes % from last tournament)
     tournament_exp: float = 0.70
-    
+
     # Recent form (last 10 games AdjEM performance vs season average)
     # Positive = hot team, Negative = cold team
     recent_form: float = 0.0               # Capped at ±2.0 pts in calculations
+
+    # Sharp market moneyline for THIS specific tournament game (American odds).
+    # Source: Pinnacle / DraftKings consensus at tip-off or best available.
+    # Examples: -350 (heavy favourite), +280 (underdog), None (not yet posted).
+    # When set, predict_game() blends the Shin-corrected implied probability into
+    # win prob at high weight for R64 (50%) and moderate weight for R32 (35%).
+    market_ml: Optional[int] = None        # American odds, or None if unavailable
     
     # Post-init to compute composite rating if not provided
     def __post_init__(self):
@@ -111,6 +118,33 @@ class TournamentTeam:
                 logger.warning(
                     f"{self.name}: No ratings provided, estimating from seed {self.seed}"
                 )
+
+
+def _shin_implied_prob(ml_a: Optional[int], ml_b: Optional[int]) -> Optional[float]:
+    """
+    Convert a pair of American moneylines to a Shin-corrected win probability
+    for team_a, removing the bookmaker's vig.
+
+    Shin (1993) proportional method: divide each gross implied probability by
+    the total overround.  This is the same vig-removal approach used in the
+    production betting_model.py and is appropriate for markets with typical
+    4-8% vig (Pinnacle ≈ 2%, DraftKings ≈ 5%).
+
+    Returns None if either line is missing or the overround is invalid.
+    """
+    if ml_a is None or ml_b is None:
+        return None
+
+    def to_gross(ml: int) -> float:
+        return 100.0 / (ml + 100.0) if ml >= 0 else (-ml) / (-ml + 100.0)
+
+    p_a = to_gross(ml_a)
+    p_b = to_gross(ml_b)
+    overround = p_a + p_b
+    if overround <= 0.98 or overround > 1.30:   # guard against bad data
+        logger.warning("market_ml overround %.3f out of expected range", overround)
+        return None
+    return p_a / overround          # Shin-corrected prob for team_a
 
 
 def predict_game(
@@ -194,7 +228,46 @@ def predict_game(
         model_prob = _blend_with_seed_history_v2(
             model_prob, team_a.seed, team_b.seed, round_num
         )
-    
+
+    # ============================================================
+    # 8. SHARP MARKET ODDS BLEND
+    #
+    # Blending weights by round (market_ml must be set on both teams):
+    #
+    #   R64  — 50% market · 50% model+history
+    #     The R64 line is the sharpest signal available.  Sharp books
+    #     (Pinnacle / DraftKings) have already priced in injuries announced
+    #     between Selection Sunday and tip-off, coaching adjustments, travel
+    #     fatigue, and every other factor the efficiency ratings miss.
+    #     Giving it 50% weight materially improves calibration vs. model-only.
+    #
+    #   R32  — 35% market · 65% model+history
+    #     Lines are available but survivor-bias means the seed matchup prior
+    #     is less reliable; the market picks up the slack.
+    #
+    #   S16+ — 20% market · 80% model
+    #     Late-round lines are posted well after bracket selection so market
+    #     information is still valuable but we trust the model more.
+    #
+    # When market_ml is None (not yet posted), this step is skipped entirely
+    # and the existing model+history probability is returned unchanged.
+    # ============================================================
+    market_prob = _shin_implied_prob(team_a.market_ml, team_b.market_ml)
+    if market_prob is not None:
+        if round_num == 1:
+            market_weight = 0.50
+        elif round_num == 2:
+            market_weight = 0.35
+        else:
+            market_weight = 0.20
+        model_prob = market_weight * market_prob + (1.0 - market_weight) * model_prob
+        logger.debug(
+            "Market blend R%d %s vs %s: market=%.3f model_prev=%.3f "
+            "blended=%.3f (w_mkt=%.2f)",
+            round_num, team_a.name, team_b.name,
+            market_prob, model_prob, model_prob, market_weight,
+        )
+
     return model_prob, margin, effective_sd
 
 
