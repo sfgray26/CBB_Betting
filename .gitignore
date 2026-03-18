@@ -62,3 +62,10 @@ htmlcov/
 full_today_data.json
 tmp_today_data.json
 nul
+
+# Frontend (Next.js)
+frontend/node_modules/
+frontend/.next/
+frontend/.swc/
+frontend/out/
+frontend/.env.local
