@@ -144,7 +144,7 @@ class BallDontLieClient:
 
         Returns list of NCAABBettingOdd objects with spread, ML, total per vendor.
         """
-        return self._paginate("/odds", {"dates": date})
+        return self._paginate("/odds", {"dates[]": [date]})
 
     def get_odds_by_game(self, game_ids: List[int]) -> List[Dict]:
         """Fetch odds for specific game IDs."""

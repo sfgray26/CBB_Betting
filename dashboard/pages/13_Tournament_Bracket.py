@@ -231,6 +231,21 @@ def _export_bracket_json() -> str:
 # ---------------------------------------------------------------------------
 _init_bracket_state()
 
+if not st.session_state.get("bracket_auto_loaded"):
+    all_empty = all(
+        not e["name"].strip()
+        for region in REGIONS
+        for e in st.session_state.bracket_teams[region]
+    )
+    if all_empty:
+        try:
+            _load_2026_bracket_from_disk()
+            st.session_state.bracket_auto_loaded = True
+        except Exception:
+            pass  # silent — user can still click the button manually
+    else:
+        st.session_state.bracket_auto_loaded = True
+
 st.title("March Madness Bracket Simulator")
 st.caption(f"Monte Carlo simulation engine | V9.1 ratings | Final Four: {FF_PAIRINGS_DISPLAY}")
 
