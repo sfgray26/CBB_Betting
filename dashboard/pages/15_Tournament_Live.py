@@ -42,21 +42,17 @@ ROUND_NAMES = {1: "Round of 64", 2: "Round of 32", 3: "Sweet 16",
                4: "Elite 8", 5: "Final Four", 6: "Championship", 7: "First Four"}
 
 # ---------------------------------------------------------------------------
-# BDL client init
+# BDL client init — no cache_resource; Railway injects env vars directly
 # ---------------------------------------------------------------------------
-@st.cache_resource(show_spinner=False)
-def _get_client():
-    from backend.services.balldontlie import BallDontLieClient
-    return BallDontLieClient()
-
-
 def get_client():
-    try:
-        return _get_client()
-    except ValueError as e:
-        st.error(f"BallDontLie API key not configured: {e}")
-        st.info("Add `BALLDONTLIE_API_KEY=your_key` to your `.env` file and restart.")
+    from backend.services.balldontlie import BallDontLieClient
+    api_key = os.environ.get("BALLDONTLIE_API_KEY", "").strip()
+    if not api_key:
+        st.error("BALLDONTLIE_API_KEY not found in environment.")
+        st.code(f"Env vars with 'BALL': {[k for k in os.environ if 'BALL' in k.upper()]}")
+        st.info("Set BALLDONTLIE_API_KEY in Railway dashboard (or .env locally) and redeploy.")
         st.stop()
+    return BallDontLieClient(api_key=api_key)
 
 
 # ---------------------------------------------------------------------------

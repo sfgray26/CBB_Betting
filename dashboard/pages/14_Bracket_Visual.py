@@ -568,8 +568,13 @@ with st.sidebar:
             from datetime import date as _date
             _target = bdl_date.isoformat() if bdl_date else _date.today().isoformat()
             try:
+                import os as _os
                 from backend.services.balldontlie import BallDontLieClient
-                _client = BallDontLieClient()
+                _api_key = _os.environ.get("BALLDONTLIE_API_KEY", "").strip()
+                if not _api_key:
+                    st.error("BALLDONTLIE_API_KEY not set in environment.")
+                    st.stop()
+                _client = BallDontLieClient(api_key=_api_key)
                 with open(BRACKET_PATH, encoding="utf-8") as _f:
                     _raw = _json.load(_f)
 
@@ -620,8 +625,13 @@ with st.sidebar:
                      help="Pull season pace/3PT stats from BDL"):
             import json as _json
             try:
+                import os as _os
                 from backend.services.balldontlie import BallDontLieClient
-                _client = BallDontLieClient()
+                _api_key = _os.environ.get("BALLDONTLIE_API_KEY", "").strip()
+                if not _api_key:
+                    st.error("BALLDONTLIE_API_KEY not set in environment.")
+                    st.stop()
+                _client = BallDontLieClient(api_key=_api_key)
                 with open(BRACKET_PATH, encoding="utf-8") as _f:
                     _raw = _json.load(_f)
 
