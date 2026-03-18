@@ -1805,6 +1805,43 @@ async def get_bet_logs(
     }
 
 
+@app.get("/api/closing-lines")
+async def get_closing_lines_batch(
+    game_ids: str = Query(description="Comma-separated game IDs"),
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """Return closing lines for multiple games in one query. Returns {game_id: data_or_null}."""
+    try:
+        ids = [int(x.strip()) for x in game_ids.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="game_ids must be comma-separated integers")
+
+    rows = (
+        db.query(ClosingLine)
+        .filter(ClosingLine.game_id.in_(ids))
+        .order_by(ClosingLine.captured_at.desc())
+        .all()
+    )
+    # Keep only the most recent capture per game
+    seen: dict = {}
+    for cl in rows:
+        if cl.game_id not in seen:
+            seen[cl.game_id] = {
+                "game_id": cl.game_id,
+                "captured_at": cl.captured_at.isoformat() if cl.captured_at else None,
+                "spread": cl.spread,
+                "spread_odds": cl.spread_odds,
+                "total": cl.total,
+                "total_odds": cl.total_odds,
+                "moneyline_home": cl.moneyline_home,
+                "moneyline_away": cl.moneyline_away,
+            }
+    # Fill nulls for requested IDs with no capture
+    result = {gid: seen.get(gid) for gid in ids}
+    return result
+
+
 @app.get("/api/closing-lines/{game_id}")
 async def get_closing_lines(
     game_id: int,

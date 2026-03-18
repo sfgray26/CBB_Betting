@@ -147,6 +147,14 @@ with tab_settle:
         pending_bets = pending_data["bets"]
         st.write(f"**{len(pending_bets)} pending bet(s)**")
 
+        # Fetch all closing lines in one batch call to avoid per-bet 404 spam
+        _game_ids = list({b["game_id"] for b in pending_bets if b.get("game_id")})
+        _closing_lines_map: dict = {}
+        if _game_ids:
+            _batch = api_get("/api/closing-lines", {"game_ids": ",".join(str(g) for g in _game_ids)})
+            if _batch:
+                _closing_lines_map = _batch
+
         for bet in pending_bets:
             try:
                 ts = datetime.fromisoformat(bet["timestamp"]).strftime("%b %d") if bet.get("timestamp") else "?"
@@ -161,8 +169,8 @@ with tab_settle:
                 col2.write(f"**Size:** {bet['bet_size_units']} u / ${bet['bet_size_dollars']:.2f}")
                 col3.write(f"**Model prob:** {model_prob_str}")
 
-                # Auto-fetch closing line for this game
-                cl_data = api_get(f"/api/closing-lines/{bet['game_id']}")
+                # Look up closing line from batch result (no per-bet API call)
+                cl_data = _closing_lines_map.get(str(bet["game_id"])) or _closing_lines_map.get(bet["game_id"])
                 cl_spread_default = 0.0
                 cl_odds_default = -110
                 cl_odds_other_default = -110

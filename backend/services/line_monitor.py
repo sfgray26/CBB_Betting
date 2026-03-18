@@ -33,8 +33,12 @@ def check_line_movements() -> Dict:
     """
     Main job function called by the scheduler every 30 minutes.
     """
+    if OddsAPIClient.quota_is_low():
+        logger.warning("Skipping line movement check -- quota low")
+        return {"bets_checked": 0, "significant_moves": 0, "abandonments": 0, "errors": ["quota_paused"]}
+
     logger.info("Starting check_line_movements job")
-    
+
     db = SessionLocal()
     client = OddsAPIClient()
     model = CBBEdgeModel()
