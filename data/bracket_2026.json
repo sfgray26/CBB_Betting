@@ -71,7 +71,7 @@
       "def_efg_pct": 0.5,
       "conference": "Big East",
       "tournament_exp": 0.6,
-      "market_ml": null
+      "market_ml": -600
     },
     {
       "seed": 6,
@@ -162,7 +162,7 @@
       "def_efg_pct": 0.51,
       "conference": "MVC",
       "tournament_exp": 0.55,
-      "market_ml": null
+      "market_ml": 440
     },
     {
       "seed": 13,

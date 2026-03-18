@@ -18,6 +18,13 @@ from typing import Dict, List, Optional, Tuple
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# Load .env file if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_ROOT / ".env")
+except ImportError:
+    pass  # dotenv not installed, assume env vars already set
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -44,6 +51,7 @@ def fetch_odds() -> List[Dict]:
         "apiKey": API_KEY,
         "markets": "h2h",
         "oddsFormat": "american",
+        "regions": "us",  # Required parameter
     }
     
     try:
