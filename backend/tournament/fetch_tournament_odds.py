@@ -32,8 +32,12 @@ from typing import Dict, List, Optional, Tuple
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from dotenv import load_dotenv
-load_dotenv(PROJECT_ROOT / ".env")
+# Try to load dotenv if available, but don't fail if not
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_ROOT / ".env")
+except ImportError:
+    pass  # dotenv not installed, rely on environment variables
 
 from backend.services.odds import OddsAPIClient
 from backend.services.team_mapping import TeamMapper
