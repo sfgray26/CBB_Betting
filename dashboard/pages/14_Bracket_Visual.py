@@ -554,6 +554,117 @@ with st.sidebar:
             st.session_state.pop(key, None)
         st.rerun()
 
+    st.divider()
+    st.subheader("Live Data (BallDontLie)")
+
+    bdl_date = st.date_input("Game date", value=None,
+                              help="Fetch odds for this date (default: today)")
+    col_odds, col_stats = st.columns(2)
+
+    with col_odds:
+        if st.button("Refresh Odds", use_container_width=True,
+                     help="Pull live moneylines from BDL and patch market_ml"):
+            import json as _json
+            from datetime import date as _date
+            _target = bdl_date.isoformat() if bdl_date else _date.today().isoformat()
+            try:
+                from backend.services.balldontlie import BallDontLieClient
+                _client = BallDontLieClient()
+                with open(BRACKET_PATH, encoding="utf-8") as _f:
+                    _raw = _json.load(_f)
+
+                _odds = _client.get_odds_by_date(_target)
+                _games = _client.get_live_tournament_games(_target)
+                _patched = 0
+                _game_odds: dict = {}
+                for _rec in _odds:
+                    _gid = _rec.get("game_id") or (_rec.get("game") or {}).get("id")
+                    if _gid:
+                        _game_odds.setdefault(_gid, []).append(_rec)
+
+                for _g in _games:
+                    _home = (_g.get("home_team") or {})
+                    _away = (_g.get("visitor_team") or _g.get("away_team") or {})
+                    _hn = _home.get("name", "")
+                    _an = _away.get("name", "")
+                    _gid = _g.get("id")
+                    _recs = _game_odds.get(_gid, [])
+                    if not _recs:
+                        continue
+                    _ml = _client.extract_market_ml(_recs, _hn, _an)
+                    for _nm, _ml_val in [(_hn, _ml.get("home_ml")), (_an, _ml.get("away_ml"))]:
+                        if not _nm or _ml_val is None:
+                            continue
+                        for _region in ["east", "west", "south", "midwest"]:
+                            for _t in _raw.get(_region, []):
+                                if _t.get("name", "").lower() == _nm.lower():
+                                    _t["market_ml"] = int(_ml_val)
+                                    _patched += 1
+
+                if _patched > 0:
+                    with open(BRACKET_PATH, "w", encoding="utf-8") as _f:
+                        _json.dump(_raw, _f, indent=2, ensure_ascii=False)
+                    for _key in ("bracket_cache", "mc_cache"):
+                        st.session_state.pop(_key, None)
+                    st.success(f"Patched {_patched} ML odds. Reloading...")
+                    st.rerun()
+                else:
+                    st.info(f"No odds found for {_target}")
+            except ValueError as _e:
+                st.error(f"API key missing: {_e}")
+            except Exception as _e:
+                st.error(f"BDL error: {_e}")
+
+    with col_stats:
+        if st.button("Refresh Stats", use_container_width=True,
+                     help="Pull season pace/3PT stats from BDL"):
+            import json as _json
+            try:
+                from backend.services.balldontlie import BallDontLieClient
+                _client = BallDontLieClient()
+                with open(BRACKET_PATH, encoding="utf-8") as _f:
+                    _raw = _json.load(_f)
+
+                _stats = _client.get_team_season_stats()
+                _by_name = {}
+                for _row in _stats:
+                    _t = _row.get("team", {})
+                    _n = (_t.get("name") or _t.get("abbreviation") or "").lower()
+                    if _n:
+                        _by_name[_n] = _row
+
+                _patched = 0
+                for _region in ["east", "west", "south", "midwest"]:
+                    for _team in _raw.get(_region, []):
+                        _row = _by_name.get((_team.get("name") or "").lower())
+                        if not _row:
+                            continue
+                        _pace = _row.get("pace") or _row.get("possessions")
+                        if _pace and 55 < float(_pace) < 85:
+                            _team["pace"] = round(float(_pace), 1)
+                            _patched += 1
+                        _fg3a = _row.get("fg3a")
+                        _fga = _row.get("fga")
+                        if _fg3a and _fga and float(_fga) > 0:
+                            _r = float(_fg3a) / float(_fga)
+                            if 0.15 < _r < 0.60:
+                                _team["three_pt_rate"] = round(_r, 3)
+                                _patched += 1
+
+                if _patched > 0:
+                    with open(BRACKET_PATH, "w", encoding="utf-8") as _f:
+                        _json.dump(_raw, _f, indent=2, ensure_ascii=False)
+                    for _key in ("bracket_cache", "mc_cache"):
+                        st.session_state.pop(_key, None)
+                    st.success(f"Patched {_patched} stat fields. Reloading...")
+                    st.rerun()
+                else:
+                    st.info("No stat updates found")
+            except ValueError as _e:
+                st.error(f"API key missing: {_e}")
+            except Exception as _e:
+                st.error(f"BDL error: {_e}")
+
 # Mode indicator
 mode_labels = {
     (0.0, 0.0): ("🏆", "CHALK", "Favorites win every game", "blue"),

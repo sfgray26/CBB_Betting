@@ -27,7 +27,8 @@
       "WebFetch(domain:www.cbssports.com)",
       "WebFetch(domain:www.on3.com)",
       "WebFetch(domain:www.espn.com)",
-      "WebFetch(domain:dknetwork.draftkings.com)"
+      "WebFetch(domain:dknetwork.draftkings.com)",
+      "WebFetch(domain:www.balldontlie.io)"
     ]
   }
 }
