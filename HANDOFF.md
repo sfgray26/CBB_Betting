@@ -1,12 +1,24 @@
-# OPERATIONAL HANDOFF (EMAC-070)
+# OPERATIONAL HANDOFF (EMAC-071)
 
-> Ground truth as of **March 16, 2026 ~15:00 ET**. Operator: Claude Code (Master Architect).
+> Ground truth as of **March 18, 2026 ~12:00 ET**. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 > Full enhancement plan: `tasks/cbb_enhancement_plan.md` · V9.2 spec: `reports/K12_RECALIBRATION_SPEC_V92.md`
 
 ---
 
-## 0. ARCHITECT DECISION (March 16, 2026)
+## 0. ARCHITECT DECISION (March 18, 2026)
+
+**Session focus:** First Four day — confirmed odds pipeline is ready, market_ml population delegated to OpenClaw.
+
+1. **Odds pipeline confirmed ready** — `backend/tournament/fetch_tournament_odds.py` exists and is wired to The Odds API + TeamMapper fuzzy match. Requires `THE_ODDS_API_KEY` (set in Railway, not local). All 64 teams currently have `market_ml: null`.
+2. **futures_odds_2026.json confirmed present** — championship/F4/E8 futures from BetMGM/DraftKings (Selection Sunday lines). These are NOT game-level moneylines; `market_ml` needs per-game R64 lines from the live API.
+3. **Delegation to OpenClaw** — task is to run `fetch_tournament_odds` on Railway and verify `market_ml` is populated before R64 (Thursday March 19 tip-offs begin).
+
+**GUARDIAN (Mar 18 – Apr 7):** Do NOT touch `betting_model.py`, `analysis.py`, or CBB services. All pre-tournament fixes are COMPLETE — no further changes before Apr 7.
+
+---
+
+## 0-PREV. ARCHITECT DECISION (March 16, 2026)
 
 **Session focus:** March Madness bracket release day — three parallel workstreams completed.
 
@@ -293,6 +305,50 @@ streamlit run dashboard/app.py
 
 ## 11. HANDOFF PROMPTS
 
+### OPENCLAW (Execution Agent) — ACTION REQUIRED BEFORE THURSDAY TIP-OFF
+```
+MISSION: Populate market_ml in bracket_2026.json with live R64 moneylines
+
+CONTEXT (March 18, 2026 — First Four Day):
+- The NCAA tournament bracket is live in data/bracket_2026.json
+- All 64 teams currently have market_ml: null — the model runs model-only (no market blend)
+- The fetch script is ready: backend/tournament/fetch_tournament_odds.py
+- THE_ODDS_API_KEY is set in Railway environment variables
+- futures_odds_2026.json has championship futures (NOT per-game lines — do not use for market_ml)
+
+TASK 1 — Run fetch script on Railway (before Thursday March 19 tip-offs):
+  railway run python -m backend.tournament.fetch_tournament_odds
+  Expected output: "Wrote N market_ml values to data/bracket_2026.json" where N > 0
+  If N = 0: check that THE_ODDS_API_KEY is valid and R64 lines have been posted
+
+TASK 2 — Verify result:
+  python3 -c "
+  import json
+  d = json.load(open('data/bracket_2026.json'))
+  teams = [t for region in ['east','south','west','midwest'] for t in d[region]]
+  populated = [t for t in teams if t.get('market_ml') is not None]
+  print(f'{len(populated)}/64 teams have market_ml populated')
+  for t in populated:
+      print(f'  {t[\"name\"]} (#{t[\"seed\"]}): {t[\"market_ml\"]:+d}')
+  "
+
+TASK 3 — If API has no lines yet (lines sometimes post <24h before games):
+  Re-run fetch script at 6 AM ET Thursday March 19 (before first tip-off ~12:15 PM)
+  Set a reminder or cron: railway run python -m backend.tournament.fetch_tournament_odds
+
+TASK 4 — Monitor First Four results (March 18-19):
+  Games: UMBC/Howard vs Michigan (Midwest 16), PrairieView/Lehigh vs Florida (South 16),
+         Texas/NC State vs BYU (West 11), Miami OH/SMU vs Tennessee (Midwest 11)
+  After each game: update bracket_2026.json winner fields if bracket_simulator uses them
+
+ESCALATE TO ARCHITECT if:
+- THE_ODDS_API_KEY returns 401/403 (key expired or quota exhausted)
+- No R64 lines appear by Wednesday night March 18 6 PM ET
+- market_ml values look wrong (e.g., 1-seeds listed as underdogs)
+
+REPORTING: Post completion to Discord #openclaw-briefs channel. Include count of teams updated.
+```
+
 ### CLAUDE CODE (Master Architect)
 ```
 MISSION: Tournament monitoring mode — March 18 First Four through April 7 Championship
@@ -333,6 +389,7 @@ REPORT: anomalies to Claude Code session; include file paths and exact data
 
 ---
 
-**Document Version:** EMAC-070
-**Last Updated:** March 16, 2026 ~15:00 ET
-**Status:** Tournament-Ready — All Systems Green | GUARDIAN active (no model changes until Apr 7)
+**Document Version:** EMAC-071
+**Last Updated:** March 18, 2026 ~12:00 ET
+**Status:** First Four Day — All Systems Green | GUARDIAN active (no model changes until Apr 7)
+**Pending:** OpenClaw to populate market_ml before Thursday R64 tip-offs
