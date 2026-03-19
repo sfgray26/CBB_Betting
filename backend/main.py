@@ -339,11 +339,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS (adjust origins for production)
+# CORS — reads ALLOWED_ORIGINS env var (comma-separated) or falls back to wildcard.
+# API key auth means wildcard origins are safe; credentials are never cookie-based.
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "")
+_allowed_origins: list[str] = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:8501"],  # Streamlit
-    allow_credentials=True,
+    allow_origins=_allowed_origins or ["*"],
+    allow_origin_regex=None,
+    allow_credentials=False,  # must be False when allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )
