@@ -18,6 +18,7 @@ import type {
   OddsMonitorStatus,
   PortfolioStatusFull,
   BracketProjection,
+  FantasyDraftBoardResponse,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -200,4 +201,15 @@ export const endpoints = {
   // Phase 3 — Tournament
   bracketProjection: (nSims = 10000) =>
     apiFetch<BracketProjection>(`/api/tournament/bracket-projection?n_sims=${nSims}`),
+
+  // Fantasy Baseball
+  fantasyDraftBoard: (params?: { position?: string; player_type?: string; tier_max?: number; limit?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.position) qs.set('position', params.position)
+    if (params?.player_type) qs.set('player_type', params.player_type)
+    if (params?.tier_max !== undefined) qs.set('tier_max', String(params.tier_max))
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit))
+    const query = qs.toString()
+    return apiFetch<FantasyDraftBoardResponse>(`/api/fantasy/draft-board${query ? `?${query}` : ''}`)
+  },
 }

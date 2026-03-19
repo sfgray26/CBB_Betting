@@ -12,6 +12,7 @@ import {
   Activity,
   Radio,
   Trophy,
+  Dumbbell,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
@@ -42,6 +43,13 @@ const navSections = [
     label: 'Tournament',
     items: [
       { href: '/bracket', label: 'Bracket Simulator', icon: Trophy },
+    ],
+    soon: false,
+  },
+  {
+    label: 'Fantasy Baseball',
+    items: [
+      { href: '/fantasy', label: 'Draft Board', icon: Dumbbell },
     ],
     soon: false,
   },

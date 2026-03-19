@@ -2858,6 +2858,284 @@ async def dk_direct_import_confirm(
 
 
 # ============================================================================
+# FANTASY BASEBALL — PUBLIC API ENDPOINTS
+# ============================================================================
+
+@app.get("/api/fantasy/draft-board")
+async def fantasy_draft_board(
+    position: Optional[str] = Query(None, description="Filter by position (C, 1B, SP, RP, OF, ...)"),
+    player_type: Optional[str] = Query(None, description="Filter by type: batter or pitcher"),
+    tier_max: Optional[int] = Query(None, description="Only show players at or below this tier"),
+    limit: int = Query(200, ge=1, le=500),
+    user: str = Depends(verify_api_key),
+):
+    """
+    Return the full ranked fantasy draft board (Steamer/ZiPS projections).
+    Players are sorted by rank (ascending). Optionally filter by position/type/tier.
+    """
+    try:
+        from backend.fantasy_baseball.player_board import get_board
+        board = get_board()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Player board unavailable: {exc}")
+
+    if position:
+        pos_upper = position.upper()
+        board = [p for p in board if pos_upper in p.get("positions", [])]
+    if player_type:
+        board = [p for p in board if p.get("type", "").lower() == player_type.lower()]
+    if tier_max is not None:
+        board = [p for p in board if p.get("tier", 99) <= tier_max]
+
+    board = board[:limit]
+    return {"count": len(board), "players": board}
+
+
+@app.get("/api/fantasy/player/{player_id}")
+async def fantasy_player_detail(
+    player_id: str,
+    user: str = Depends(verify_api_key),
+):
+    """Return a single player's full detail from the draft board."""
+    try:
+        from backend.fantasy_baseball.player_board import get_board
+        board = get_board()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Player board unavailable: {exc}")
+
+    player = next((p for p in board if p["id"] == player_id), None)
+    if player is None:
+        raise HTTPException(status_code=404, detail=f"Player '{player_id}' not found")
+    return player
+
+
+@app.post("/api/fantasy/draft-session")
+async def create_draft_session(
+    my_draft_position: int = Query(..., ge=1, le=20),
+    num_teams: int = Query(12, ge=4, le=20),
+    num_rounds: int = Query(23, ge=10, le=30),
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """Create a new live-draft tracking session."""
+    import secrets
+    from backend.models import FantasyDraftSession
+
+    session_key = secrets.token_hex(8)
+    session = FantasyDraftSession(
+        session_key=session_key,
+        my_draft_position=my_draft_position,
+        num_teams=num_teams,
+        num_rounds=num_rounds,
+        current_pick=1,
+        is_active=True,
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return {
+        "session_key": session_key,
+        "my_draft_position": my_draft_position,
+        "num_teams": num_teams,
+        "num_rounds": num_rounds,
+        "message": "Draft session created. Use session_key with /api/fantasy/draft-session/{key}/pick",
+    }
+
+
+@app.post("/api/fantasy/draft-session/{session_key}/pick")
+async def record_draft_pick(
+    session_key: str,
+    player_id: str = Query(...),
+    drafter_position: int = Query(..., ge=1, le=20),
+    is_my_pick: bool = Query(False),
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """
+    Record a pick in a live draft session and return recommendations for the next pick.
+    """
+    from backend.models import FantasyDraftSession, FantasyDraftPick
+    from backend.fantasy_baseball.player_board import get_board
+    from backend.fantasy_baseball.draft_engine import DraftState, DraftRecommender
+
+    session = db.query(FantasyDraftSession).filter_by(
+        session_key=session_key, is_active=True
+    ).first()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Draft session not found or inactive")
+
+    board = get_board()
+    player = next((p for p in board if p["id"] == player_id), None)
+    if player is None:
+        raise HTTPException(status_code=404, detail=f"Player '{player_id}' not found in board")
+
+    pick_number = session.current_pick
+    round_number = ((pick_number - 1) // session.num_teams) + 1
+
+    pick = FantasyDraftPick(
+        session_id=session.id,
+        pick_number=pick_number,
+        round_number=round_number,
+        drafter_position=drafter_position,
+        is_my_pick=is_my_pick,
+        player_id=player["id"],
+        player_name=player["name"],
+        player_team=player.get("team"),
+        player_positions=player.get("positions"),
+        player_tier=player.get("tier"),
+        player_adp=player.get("adp"),
+        player_z_score=player.get("z_score"),
+    )
+    db.add(pick)
+    session.current_pick = pick_number + 1
+    db.commit()
+
+    # Build recommendations for the next pick
+    drafted_ids = {p.player_id for p in session.picks}
+    try:
+        state = DraftState(
+            my_draft_position=session.my_draft_position,
+            num_teams=session.num_teams,
+            num_rounds=session.num_rounds,
+        )
+        state.pick_number = session.current_pick
+        state.my_picks = [p.player_id for p in session.picks if p.is_my_pick]
+        recs = DraftRecommender(state, board).recommend(top_n=5, drafted_ids=drafted_ids)
+    except Exception:
+        recs = [p for p in board if p["id"] not in drafted_ids][:5]
+
+    return {
+        "message": "Pick recorded",
+        "pick_number": pick_number,
+        "player_name": player["name"],
+        "is_my_pick": is_my_pick,
+        "next_recommendations": recs,
+    }
+
+
+@app.get("/api/fantasy/draft-session/{session_key}")
+async def get_draft_session(
+    session_key: str,
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """Return the current state and all picks for a draft session."""
+    from backend.models import FantasyDraftSession
+
+    session = db.query(FantasyDraftSession).filter_by(session_key=session_key).first()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Draft session not found")
+
+    picks = [
+        {
+            "pick_number": p.pick_number,
+            "round": p.round_number,
+            "drafter_position": p.drafter_position,
+            "is_my_pick": p.is_my_pick,
+            "player_id": p.player_id,
+            "player_name": p.player_name,
+            "player_team": p.player_team,
+            "player_positions": p.player_positions,
+            "player_tier": p.player_tier,
+            "player_adp": p.player_adp,
+        }
+        for p in sorted(session.picks, key=lambda x: x.pick_number)
+    ]
+    my_picks = [p for p in picks if p["is_my_pick"]]
+
+    return {
+        "session_key": session_key,
+        "my_draft_position": session.my_draft_position,
+        "num_teams": session.num_teams,
+        "num_rounds": session.num_rounds,
+        "current_pick": session.current_pick,
+        "total_picks": len(picks),
+        "my_picks_count": len(my_picks),
+        "is_active": session.is_active,
+        "picks": picks,
+        "my_picks": my_picks,
+    }
+
+
+@app.post("/api/fantasy/lineup")
+async def save_fantasy_lineup(
+    payload: dict,
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """
+    Save a daily lineup. Body: {lineup_date, platform, positions, projected_points, notes}
+    """
+    from backend.models import FantasyLineup
+    from datetime import date as date_type
+
+    lineup_date_raw = payload.get("lineup_date")
+    if not lineup_date_raw:
+        raise HTTPException(status_code=422, detail="lineup_date is required")
+    try:
+        lineup_date = date_type.fromisoformat(str(lineup_date_raw))
+    except ValueError:
+        raise HTTPException(status_code=422, detail="lineup_date must be YYYY-MM-DD")
+
+    platform = payload.get("platform", "yahoo")
+    positions = payload.get("positions", {})
+    if not positions:
+        raise HTTPException(status_code=422, detail="positions dict is required")
+
+    existing = db.query(FantasyLineup).filter_by(
+        lineup_date=lineup_date, platform=platform
+    ).first()
+    if existing:
+        existing.positions = positions
+        existing.projected_points = payload.get("projected_points")
+        existing.notes = payload.get("notes")
+        db.commit()
+        return {"message": "Lineup updated", "id": existing.id}
+
+    lineup = FantasyLineup(
+        lineup_date=lineup_date,
+        platform=platform,
+        positions=positions,
+        projected_points=payload.get("projected_points"),
+        notes=payload.get("notes"),
+    )
+    db.add(lineup)
+    db.commit()
+    db.refresh(lineup)
+    return {"message": "Lineup saved", "id": lineup.id}
+
+
+@app.get("/api/fantasy/lineup/{lineup_date}")
+async def get_fantasy_lineup(
+    lineup_date: str,
+    platform: str = Query("yahoo"),
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """Retrieve saved lineup for a given date."""
+    from backend.models import FantasyLineup
+    from datetime import date as date_type
+
+    try:
+        ld = date_type.fromisoformat(lineup_date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="lineup_date must be YYYY-MM-DD")
+
+    lineup = db.query(FantasyLineup).filter_by(lineup_date=ld, platform=platform).first()
+    if lineup is None:
+        raise HTTPException(status_code=404, detail="No lineup saved for this date")
+
+    return {
+        "lineup_date": lineup_date,
+        "platform": lineup.platform,
+        "positions": lineup.positions,
+        "projected_points": lineup.projected_points,
+        "actual_points": lineup.actual_points,
+        "notes": lineup.notes,
+    }
+
+
+# ============================================================================
 # YAHOO FANTASY BASEBALL — DEBUG ENDPOINTS
 # ============================================================================
 
