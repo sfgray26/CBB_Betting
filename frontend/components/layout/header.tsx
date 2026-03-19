@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
-import { RefreshCw, LogOut } from 'lucide-react'
+import { RefreshCw, LogOut, Menu } from 'lucide-react'
 import { clearApiKey } from '@/lib/api'
 import { queryClient } from '@/lib/query-client'
 import { Button } from '@/components/ui/button'
@@ -19,7 +19,11 @@ const PAGE_TITLES: Record<string, string> = {
   '/bracket': 'Bracket Simulator',
 }
 
-export default function Header() {
+interface HeaderProps {
+  onMenuClick?: () => void
+}
+
+export default function Header({ onMenuClick }: HeaderProps) {
   const pathname = usePathname()
   const router = useRouter()
   const [secondsAgo, setSecondsAgo] = useState(0)
@@ -56,8 +60,19 @@ export default function Header() {
   }
 
   return (
-    <header className="h-14 bg-zinc-900 border-b border-zinc-800 flex items-center px-6 gap-4 flex-shrink-0">
-      <h1 className="text-base font-semibold text-zinc-100 flex-1">{title}</h1>
+    <header className="h-14 bg-zinc-900 border-b border-zinc-800 flex items-center px-4 gap-3 flex-shrink-0">
+      {/* Hamburger — mobile only */}
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={onMenuClick}
+        className="md:hidden text-zinc-400 hover:text-zinc-50 flex-shrink-0"
+        aria-label="Open navigation"
+      >
+        <Menu className="h-5 w-5" />
+      </Button>
+
+      <h1 className="text-base font-semibold text-zinc-100 flex-1 truncate">{title}</h1>
 
       <div className="flex items-center gap-3">
         <span className="text-xs text-zinc-500">
