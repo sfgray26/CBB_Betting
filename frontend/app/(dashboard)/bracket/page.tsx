@@ -255,7 +255,7 @@ export default function BracketPage() {
   })
 
   const champion = data?.projected_champion ?? null
-  const champProb = champion && data?.advancement_probs[champion]?.champion_pct ?? 0
+  const champProb = (champion ? data?.advancement_probs[champion]?.champion_pct : undefined) ?? 0
   const finalFour = data?.projected_final_four ?? []
   const upsets = data?.upset_alerts ?? []
   const advProbs = data?.advancement_probs ?? {}
