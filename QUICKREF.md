@@ -40,11 +40,18 @@ uvicorn backend.main:app --reload
 # API: http://localhost:8000
 ```
 
-### Start Dashboard
+### Start Dashboard (Streamlit — legacy)
 ```bash
 source venv/bin/activate
 streamlit run dashboard/app.py
 # UI: http://localhost:8501
+```
+
+### Start Frontend (Next.js — new)
+```bash
+cd frontend && npm run dev
+# UI: http://localhost:3000
+# Requires: frontend/.env.local with NEXT_PUBLIC_API_URL set
 ```
 
 ### Start Database (Docker)

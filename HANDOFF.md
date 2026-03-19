@@ -1,8 +1,31 @@
 # OPERATIONAL HANDOFF (EMAC-071)
 
-> Ground truth as of **March 18, 2026 ~12:00 ET**. Operator: Claude Code (Master Architect).
+> Ground truth as of **March 18, 2026 ~18:00 ET**. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 > Full enhancement plan: `tasks/cbb_enhancement_plan.md` · V9.2 spec: `reports/K12_RECALIBRATION_SPEC_V92.md`
+> **Frontend Migration:** `FRONTEND_MIGRATION.md` · Task tracker: `tasks/todo.md`
+
+---
+
+## 0-A. FRONTEND MIGRATION STATUS (March 18, 2026 ~18:00 ET)
+
+**Phase 1 — Core Analytics Pages: ✅ ALL 5 PAGES COMPLETE AND FIXED**
+
+All pages now have correct API field mappings verified against `reports/api_ground_truth.md` (Kimi spec).
+
+| Page | Key Fixes |
+|------|-----------|
+| `/performance` | `summary.overall.roi`, decimal×100, rolling_windows shape |
+| `/clv` | `mean_clv` (was `avg_clv_points`), `distribution{}` object→chart, `top_10_clv` array |
+| `/bet-history` | `timestamp` (was `placed_at`), removed `clv_grade` (not in API) |
+| `/calibration` | `calibration_buckets` (was `bins`), `bin` field (was `label`), nullable brier_score |
+| `/alerts` | Uppercase severity `WARNING/CRITICAL`, added `live_alerts` section |
+
+**lib/types.ts** — all 5 interfaces rewritten from ground truth.
+**Sidebar** — `drawdown_pct` fixed (was `current_drawdown_pct`).
+
+**Next step:** OpenClaw validates all 5 pages (7-point checklist). See `FRONTEND_MIGRATION.md`.
+**Phase 2 scope:** `/predictions` page, odds ticker, admin panel. Blocked on OpenClaw PASS.
 
 ---
 
