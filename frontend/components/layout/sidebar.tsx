@@ -36,7 +36,7 @@ const navSections = [
       { href: '/live-slate', label: 'Live Slate', icon: Activity },
       { href: '/odds-monitor', label: 'Odds Monitor', icon: Radio },
     ],
-    soon: true,
+    soon: false,
   },
   {
     label: 'Tournament',
