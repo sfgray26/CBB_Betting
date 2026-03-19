@@ -9,6 +9,14 @@ const jetbrains = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono' }
 export const metadata: Metadata = {
   title: 'CBB Edge',
   description: 'College basketball betting analytics',
+  viewport: 'width=device-width, initial-scale=1',
+  themeColor: '#09090b',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'CBB Edge',
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
