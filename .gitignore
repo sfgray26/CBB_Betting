@@ -69,5 +69,6 @@ frontend/.next/
 frontend/.swc/
 frontend/out/
 frontend/.env.local
+frontend/tsconfig.tsbuildinfo
 # Negate the Python lib/ rule for the frontend source directory
 !frontend/lib/
