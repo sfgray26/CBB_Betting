@@ -13,8 +13,9 @@ def mock_db():
 
 @pytest.fixture
 def mock_odds_client():
-    with patch("backend.services.line_monitor.OddsAPIClient") as mock:
-        yield mock()
+    with patch("backend.services.line_monitor.OddsAPIClient") as mock_cls:
+        mock_cls.quota_is_low.return_value = False  # don't skip due to quota
+        yield mock_cls()
 
 @pytest.fixture
 def mock_model():
