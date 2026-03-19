@@ -17,6 +17,7 @@ import type {
   TodaysPredictionsResponse,
   OddsMonitorStatus,
   PortfolioStatusFull,
+  BracketProjection,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -187,4 +188,8 @@ export const endpoints = {
 
   portfolioStatusFull: () =>
     apiFetch<PortfolioStatusFull>('/admin/portfolio/status'),
+
+  // Phase 3 — Tournament
+  bracketProjection: (nSims = 10000) =>
+    apiFetch<BracketProjection>(`/api/tournament/bracket-projection?n_sims=${nSims}`),
 }
