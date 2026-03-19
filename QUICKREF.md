@@ -376,3 +376,260 @@ railway variables set DATABASE_URL=new_url
 ---
 
 **More help?** See full documentation in `INSTALL.md`
+
+ • OpenClaw Mission Briefing
+
+   Welcome to the CBB Edge Frontend Migration workstream. Here's everything you need to start validating components.
+                                                                                                                                  
+                                                                                                                                  
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+   Your Role (Validation Agent)
+                                                                                                                                  
+   You are the safety net. You review React/TypeScript components AFTER Claude Code writes them, BEFORE they merge. You do NOT    
+ writ
+   e code — you catch bugs.
+                                                                                                                                  
+   Your Output: A validation report — either PASS or a bullet list of issues with file path + line number.
+                                                                                                                                  
+                                                                                                                                  
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+   Context: The Project
+                                                                                                                                  
+   • CBB Edge V9.1 — College basketball betting analytics platform
+   • Frontend Migration: Streamlit → Next.js 15 (port 3000)
+   • Current Phase: Phase 1 — Core Analytics Pages (5 pages)
+   • Backend: FastAPI on Railway (production API)
+   • Your Source of Truth: reports/api_ground_truth.md (22KB spec produced by Kimi)
+                                                                                                                                  
+                                                                                                                                  
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+   Validation Checklist (Run This Every Time)
+                                                                                                                                  
+   Review the component Claude Code just wrote. Check ONLY these 7 issues:
+                                                                                                                                  
+ Check              What to Look For                                     Example Bug
+                                                                                                                                  
+                                                                                                                                  
+ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    1   NULL SAFETY        Any .field access on potentially null/undefined wi   data.overall.mean_clv crashes when overall is     
+ null
+                           thout ?. guard
+    2   EMPTY ARRAY        Any .map() without ?? [] fallback                    timeline.map() crashes when timeline is undefined 
+    3   DECIMAL DISPLAY    API fields roi, win_rate, prob, clv shown without    Showing 0.0432 instead of 4.32%
+                           ×100 conversion
+    4   LOADING STATE      Every async section has a skeleton/spinner           Blank white screen while data loads
+    5   CRASH RISK         toFixed()/toString() on potentially undefined        (undefined).toFixed(2) → runtime error
+    6   Object.entries()   Called without ?? {} guard                           Object.entries(data.by_type) crashes when null    
+    7   Empty State UX     When data is empty/null, is there a user-visible m   Blank page when no bets yet
+                           essage?
+                                                                                                                                  
+                                                                                                                                  
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+   How to Validate
+                                                                                                                                  
+   Step 1: Read the API Spec
+                                                                                                                                  
+   cat reports/api_ground_truth.md
+                                                                                                                                  
+   Focus on:
+                                                                                                                                  
+   • Empty state shapes (what does API return when no data?)
+   • Nullable fields (marked with "Yes" in Nullable column)
+   • Decimal vs Percentage table (CRITICAL — many bugs here)
+                                                                                                                                  
+   Step 2: Read the Component File
+                                                                                                                                  
+   Check the file Claude Code just modified. Look for:
+                                                                                                                                  
+   • Data fetching with useQuery
+   • TypeScript interfaces (do they match the spec?)
+   • .map() calls
+   • Percentage displays
+   • Loading conditions
+                                                                                                                                  
+   Step 3: Report Findings
+                                                                                                                                  
+   Format:
+                                                                                                                                  
+   Component: frontend/app/performance/page.tsx
+                                                                                                                                  
+   ISSUES FOUND:
+ 1. Line 87: data.overall.mean_clv — overall can be null when no bets. Use data.overall?.mean_clv
+ 2. Line 112: win_rate.toFixed(2) — win_rate can be undefined. Use (win_rate ?? 0).toFixed(2)
+ 3. Line 145: Missing ×100 conversion for roi. Shows 0.0432 instead of 4.32%
+ 4. Line 203: timeline.map() — no fallback. Use (timeline ?? []).map()
+ 5. Line 234: No loading state for the CLV chart section
+                                                                                                                                  
+   PASS/FAIL: FAIL (5 issues)
+                                                                                                                                  
+   Or simply:
+                                                                                                                                  
+   Component: frontend/app/clv/page.tsx
+                                                                                                                                  
+   PASS — all 7 checks verified, no issues found.
+                                                                                                                                  
+                                                                                                                                  
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+   Critical Gotchas (Read These!)
+                                                                                                                                  
+ 1. Decimal vs Percentage — The #1 Bug Source
+                                                                                                                                  
+   API returns decimals (0-1). UI must display percentages (0-100).
+                                                                                                                                  
+    API Field           API Value   Display Should Be
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    win_rate            0.5467      54.67%
+    roi                 0.0432      4.32%
+    mean_clv            0.0123      1.23%
+    edge_conservative   0.035       3.5%
+                                                                                                                                  
+   Exception: /admin/portfolio/status fields drawdown_pct and total_exposure_pct are ALREADY percentages (0-100 range)!
+                                                                                                                                  
+ 2. Empty State Handling
+                                                                                                                                  
+   When no bets exist, /api/performance/summary returns:
+                                                                                                                                  
+   { "message": "No settled bets yet", "total_bets": 0 }
+                                                                                                                                  
+   NO overall KEY! Code that assumes data.overall.win_rate will crash.
+                                                                                                                                  
+ 3. Nullable Fields to Watch
+                                                                                                                                  
+   These are often null — verify optional chaining:
+                                                                                                                                  
+   • mean_clv, median_clv (when no closing lines)
+   • outcome, profit_loss_dollars (when bet pending)
+   • projected_margin, edge_conservative (when calculation fails)
+   • std_clv (when < 2 bets)
+                                                                                                                                  
+ 4. TypeScript Interface Mismatches
+                                                                                                                                  
+   Claude Code may write:
+                                                                                                                                  
+   interface Summary {
+     roi: number;  // Wrong! roi is nested under overall
+   }
+                                                                                                                                  
+   Should be:
+                                                                                                                                  
+   interface Summary {
+     overall?: {
+       roi: number;
+     };
+   }
+                                                                                                                                  
+   Verify against reports/api_ground_truth.md exact field names.
+                                                                                                                                  
+                                                                                                                                  
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+   Phase 1 Pages to Validate
+                                                                                                                                  
+   Claude Code is currently working on these. Validate each when they mark it complete in tasks/todo.md:
+                                                                                                                                  
+    Page           File Path                           Priority
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    Performance    frontend/app/performance/page.tsx   ✅ Fixed, validate again
+    CLV Analysis   frontend/app/clv/page.tsx           🔄 Ready for validation
+    Bet History    frontend/app/bet-history/page.tsx   🔄 Ready for validation
+    Calibration    frontend/app/calibration/page.tsx   🔄 Ready for validation
+    Alerts         frontend/app/alerts/page.tsx        🔄 Ready for validation
+                                                                                                                                  
+                                                                                                                                  
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+   Examples: Good vs Bad Code
+                                                                                                                                  
+   Example 1: Null Safety
+                                                                                                                                  
+   // BAD — crashes when overall is null
+   const roi = data.overall.roi;
+                                                                                                                                  
+   // GOOD — optional chaining
+   const roi = data.overall?.roi;
+                                                                                                                                  
+   // BAD — crashes when data is empty object
+   const winRate = data.overall.win_rate;
+                                                                                                                                  
+   // GOOD — nullish coalescing
+   const winRate = data?.overall?.win_rate ?? 0;
+                                                                                                                                  
+   Example 2: Decimal Display
+                                                                                                                                  
+   // BAD — shows "0.0432"
+   <span>ROI: {data.roi}</span>
+                                                                                                                                  
+   // GOOD — shows "4.32%"
+   <span>ROI: {((data.overall?.roi ?? 0) * 100).toFixed(2)}%</span>
+                                                                                                                                  
+   Example 3: Empty Array
+                                                                                                                                  
+   // BAD — crashes when timeline is undefined
+   {data.timeline.map(day => <Row key={day.date} {...day} />)}
+                                                                                                                                  
+   // GOOD — fallback to empty array
+   {(data.timeline ?? []).map(day => <Row key={day.date} {...day} />)}
+                                                                                                                                  
+   Example 4: Loading State
+                                                                                                                                  
+   // BAD — blank screen
+   if (isLoading) return null;
+                                                                                                                                  
+   // GOOD — skeleton UI
+   if (isLoading) return <Skeleton className="h-96" />;
+                                                                                                                                  
+   // GOOD — explicit spinner
+   if (isLoading) return <div className="p-8 text-center"><Spinner /> Loading...</div>;
+                                                                                                                                  
+   Example 5: Object.entries()
+                                                                                                                                  
+   // BAD — crashes when by_type is null
+   {Object.entries(data.by_type).map(([type, stats]) => ...)}
+                                                                                                                                  
+   // GOOD — nullish coalescing
+   {Object.entries(data.by_type ?? {}).map(([type, stats]) => ...)}
+                                                                                                                                  
+                                                                                                                                  
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+   Your First Task
+                                                                                                                                  
+   Validate the CLV Analysis page (frontend/app/clv/page.tsx):
+                                                                                                                                  
+ 1. Read reports/api_ground_truth.md — search for "GET /api/performance/clv-analysis"
+ 2. Read frontend/app/clv/page.tsx
+ 3. Check against the 7-point checklist
+ 4. Report findings as a numbered list with line numbers
+                                                                                                                                  
+   Expected issues to catch:
+                                                                                                                                  
+   • mean_clv displayed without ×100
+   • Missing ?. on nested fields
+   • .map() without fallback
+   • Empty state not handled
+                                                                                                                                  
+                                                                                                                                  
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+   Files You Need to Know
+                                                                                                                                  
+    File                          Purpose
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    reports/api_ground_truth.md   API shapes — your bible
+    FRONTEND_MIGRATION.md         Workstream status and context
+    frontend/lib/types.ts         TypeScript interfaces (should match ground truth)
+    tasks/todo.md                 Phase checklist — see what's in progress
+                                                                                                                                  
+                                                                                                                                  
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+   Questions?
+                                                                                                                                  
+   If something is unclear:
+                                                                                                                                  
+ 1. Check FRONTEND_MIGRATION.md — it has design system colors and architectural decisions
+ 2. Check reports/api_ground_truth.md — it has exact API shapes
+ 3. Ask Claude Code (they own the architecture)
+ 4. Do NOT guess — ask for clarification
+                                                                                                                                  
+                                                                                                                                  
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
+   Start your validation now. Report your findings on the CLV Analysis page.
+                                                                                                                                  
+
+ A scheduled reminder has been triggered. The reminder content is:

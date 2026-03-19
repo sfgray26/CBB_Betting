@@ -9,7 +9,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DataTable, type Column } from '@/components/ui/data-table'
-import type { BetLog, BetOutcome } from '@/lib/types'
+import type { BetLog } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 function ErrorCard({ message }: { message: string }) {
@@ -68,10 +68,10 @@ export default function BetHistoryPage() {
       header: 'Date',
       accessor: (r) => (
         <span className="font-mono tabular-nums text-zinc-400 text-xs whitespace-nowrap">
-          {format(parseISO(r.placed_at), 'MMM d, yyyy')}
+          {r.timestamp ? format(parseISO(r.timestamp), 'MMM d, yyyy') : '—'}
         </span>
       ),
-      sortValue: (r) => r.placed_at,
+      sortValue: (r) => r.timestamp ?? '',
     },
     {
       key: 'pick',
@@ -176,17 +176,6 @@ export default function BetHistoryPage() {
         )
       },
       sortValue: (r) => r.clv_points ?? 0,
-      className: 'text-right',
-      headerClassName: 'text-right',
-    },
-    {
-      key: 'grade',
-      header: 'Grade',
-      accessor: (r) => (
-        <span className="font-mono tabular-nums text-zinc-400 text-xs">
-          {r.clv_grade ?? '-'}
-        </span>
-      ),
       className: 'text-right',
       headerClassName: 'text-right',
     },

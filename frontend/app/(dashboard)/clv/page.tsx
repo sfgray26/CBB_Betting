@@ -15,7 +15,7 @@ import { endpoints } from '@/lib/api'
 import { KpiCard } from '@/components/ui/kpi-card'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { DataTable, type Column } from '@/components/ui/data-table'
-import type { BetLog, CLVAnalysis } from '@/lib/types'
+import type { ClvBetEntry } from '@/lib/types'
 
 function ErrorCard({ message }: { message: string }) {
   return (
@@ -33,11 +33,14 @@ const darkTooltipStyle = {
   fontSize: '12px',
 }
 
+// mean_clv / clv_prob come back as decimals (0.012) — multiply by 100 for display
+const pct = (v: number, decimals = 2) => (v * 100).toFixed(decimals)
+const signed = (v: number, decimals = 2) => `${v >= 0 ? '+' : ''}${v.toFixed(decimals)}`
+
 interface ConfidenceRow {
-  confidence: string
+  tier: string
   count: number
-  avg_clv: number
-  win_rate: number
+  mean_clv: number | null
 }
 
 export default function ClvPage() {
@@ -46,20 +49,30 @@ export default function ClvPage() {
     queryFn: endpoints.clvAnalysis,
   })
 
-  const distData =
-    data?.clv_distribution.map((d) => ({
-      bucket: d.bucket,
-      count: d.count,
-      avg_clv: d.avg_clv,
-      isPositive: d.avg_clv >= 0,
-    })) ?? []
+  const hasData = data && data.bets_with_clv > 0
+
+  // distribution object → sorted array for chart
+  const distData = data?.distribution
+    ? [
+        { bucket: 'Strong −', count: data.distribution.strong_negative, isPositive: false },
+        { bucket: 'Negative', count: data.distribution.negative, isPositive: false },
+        { bucket: 'Neutral', count: data.distribution.neutral, isPositive: true },
+        { bucket: 'Positive', count: data.distribution.positive, isPositive: true },
+        { bucket: 'Strong +', count: data.distribution.strong_positive, isPositive: true },
+      ]
+    : []
+
+  // clv_by_confidence object → array for table
+  const confRows: ConfidenceRow[] = Object.entries(data?.clv_by_confidence ?? {}).map(
+    ([tier, v]) => ({ tier, count: v.count, mean_clv: v.mean_clv }),
+  )
 
   const confColumns: Column<ConfidenceRow>[] = [
     {
-      key: 'confidence',
-      header: 'Confidence',
-      accessor: (r) => <span className="capitalize">{r.confidence}</span>,
-      sortValue: (r) => r.confidence,
+      key: 'tier',
+      header: 'Confidence Tier',
+      accessor: (r) => <span className="capitalize">{r.tier.replace('_', ' ')}</span>,
+      sortValue: (r) => r.tier,
     },
     {
       key: 'count',
@@ -70,59 +83,57 @@ export default function ClvPage() {
       headerClassName: 'text-right',
     },
     {
-      key: 'avg_clv',
+      key: 'mean_clv',
       header: 'Avg CLV',
-      accessor: (r) => (
-        <span
-          className={`font-mono tabular-nums ${r.avg_clv >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}
-        >
-          {r.avg_clv >= 0 ? '+' : ''}
-          {r.avg_clv.toFixed(2)} pts
-        </span>
-      ),
-      sortValue: (r) => r.avg_clv,
-      className: 'text-right',
-      headerClassName: 'text-right',
-    },
-    {
-      key: 'win_rate',
-      header: 'Win Rate',
-      accessor: (r) => (
-        <span className="font-mono tabular-nums">{(r.win_rate * 100).toFixed(1)}%</span>
-      ),
-      sortValue: (r) => r.win_rate,
+      accessor: (r) => {
+        if (r.mean_clv == null) return <span className="text-zinc-500">—</span>
+        return (
+          <span
+            className={`font-mono tabular-nums ${r.mean_clv >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}
+          >
+            {signed(r.mean_clv * 100)}%
+          </span>
+        )
+      },
+      sortValue: (r) => r.mean_clv ?? 0,
       className: 'text-right',
       headerClassName: 'text-right',
     },
   ]
 
-  const clvBetColumns: Column<BetLog>[] = [
+  const clvBetColumns: Column<ClvBetEntry>[] = [
     {
       key: 'pick',
       header: 'Pick',
       accessor: (r) => <span className="text-zinc-200">{r.pick}</span>,
     },
     {
-      key: 'clv_points',
-      header: 'CLV',
+      key: 'clv_prob',
+      header: 'CLV %',
       accessor: (r) => (
         <span
-          className={`font-mono tabular-nums ${(r.clv_points ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}
+          className={`font-mono tabular-nums ${r.clv_prob >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}
         >
-          {(r.clv_points ?? 0) >= 0 ? '+' : ''}
-          {(r.clv_points ?? 0).toFixed(2)}
+          {signed(r.clv_prob * 100)}%
         </span>
       ),
-      sortValue: (r) => r.clv_points ?? 0,
+      sortValue: (r) => r.clv_prob,
       className: 'text-right',
       headerClassName: 'text-right',
     },
     {
-      key: 'clv_grade',
-      header: 'Grade',
-      accessor: (r) => (
-        <span className="font-mono tabular-nums text-zinc-300">{r.clv_grade ?? '-'}</span>
-      ),
+      key: 'clv_points',
+      header: 'CLV pts',
+      accessor: (r) => {
+        const pts = r.clv_points
+        if (pts == null) return <span className="text-zinc-500">—</span>
+        return (
+          <span className={`font-mono tabular-nums ${pts >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+            {signed(pts)}
+          </span>
+        )
+      },
+      sortValue: (r) => r.clv_points ?? 0,
       className: 'text-right',
       headerClassName: 'text-right',
     },
@@ -130,18 +141,12 @@ export default function ClvPage() {
       key: 'outcome',
       header: 'Result',
       accessor: (r) => {
-        const pl = r.profit_loss_units
-        if (pl === undefined || pl === null) return <span className="text-zinc-500">-</span>
-        return (
-          <span
-            className={`font-mono tabular-nums ${pl > 0 ? 'text-emerald-400' : pl < 0 ? 'text-rose-400' : 'text-zinc-400'}`}
-          >
-            {pl > 0 ? '+' : ''}
-            {pl.toFixed(2)}u
-          </span>
-        )
+        if (r.outcome === 1) return <span className="text-emerald-400 font-mono text-xs">W</span>
+        if (r.outcome === 0) return <span className="text-rose-400 font-mono text-xs">L</span>
+        if (r.outcome === -1) return <span className="text-zinc-400 font-mono text-xs">P</span>
+        return <span className="text-zinc-500 font-mono text-xs">—</span>
       },
-      sortValue: (r) => r.profit_loss_units ?? 0,
+      sortValue: (r) => r.outcome,
       className: 'text-right',
       headerClassName: 'text-right',
     },
@@ -153,25 +158,44 @@ export default function ClvPage() {
 
   return (
     <div className="space-y-6 max-w-7xl">
+      {/* Empty state */}
+      {!isLoading && data && !hasData && (
+        <div className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-6 text-zinc-400 text-sm text-center">
+          {data.message ?? 'No CLV data yet. Requires closing lines to be captured.'}
+        </div>
+      )}
+
       {/* KPI Row */}
       <div className="grid grid-cols-2 gap-4">
         <KpiCard
           title="Avg CLV"
-          value={
-            data
-              ? `${data.avg_clv_points >= 0 ? '+' : ''}${data.avg_clv_points.toFixed(2)}`
-              : '--'
-          }
-          unit="pts"
-          loading={isLoading}
-          trend={data ? (data.avg_clv_points > 0 ? 'up' : data.avg_clv_points < 0 ? 'down' : 'neutral') : 'neutral'}
-        />
-        <KpiCard
-          title="Positive CLV %"
-          value={data ? `${data.pct_positive_clv.toFixed(1)}` : '--'}
+          value={hasData ? `${signed(data!.mean_clv * 100)}` : '--'}
           unit="%"
           loading={isLoading}
-          trend={data ? (data.pct_positive_clv >= 55 ? 'up' : data.pct_positive_clv < 45 ? 'down' : 'neutral') : 'neutral'}
+          trend={
+            hasData
+              ? data!.mean_clv > 0
+                ? 'up'
+                : data!.mean_clv < 0
+                  ? 'down'
+                  : 'neutral'
+              : 'neutral'
+          }
+        />
+        <KpiCard
+          title="Positive CLV"
+          value={hasData ? pct(data!.positive_clv_rate, 1) : '--'}
+          unit="%"
+          loading={isLoading}
+          trend={
+            hasData
+              ? data!.positive_clv_rate >= 0.55
+                ? 'up'
+                : data!.positive_clv_rate < 0.45
+                  ? 'down'
+                  : 'neutral'
+              : 'neutral'
+          }
         />
       </div>
 
@@ -184,9 +208,9 @@ export default function ClvPage() {
           <div className="px-6 pb-6">
             <div className="h-56 bg-zinc-800 rounded animate-pulse" />
           </div>
-        ) : distData.length === 0 ? (
+        ) : distData.length === 0 || !hasData ? (
           <div className="px-6 pb-6 py-12 text-center text-zinc-500 text-sm">
-            No CLV data available yet.
+            No CLV distribution data available yet.
           </div>
         ) : (
           <div className="px-2 pb-6">
@@ -206,7 +230,7 @@ export default function ClvPage() {
                 />
                 <Tooltip
                   contentStyle={darkTooltipStyle}
-                  formatter={(value: number) => [value, 'Count']}
+                  formatter={(value: number) => [value, 'Bets']}
                 />
                 <Bar dataKey="count" radius={[3, 3, 0, 0]}>
                   {distData.map((entry, index) => (
@@ -237,8 +261,8 @@ export default function ClvPage() {
         ) : (
           <DataTable
             columns={confColumns}
-            data={data?.by_confidence ?? []}
-            keyExtractor={(r) => r.confidence}
+            data={confRows}
+            keyExtractor={(r) => r.tier}
             emptyMessage="No confidence tier data available."
           />
         )}
@@ -259,8 +283,8 @@ export default function ClvPage() {
           ) : (
             <DataTable
               columns={clvBetColumns}
-              data={data?.top_clv ?? []}
-              keyExtractor={(r) => r.id}
+              data={data?.top_10_clv ?? []}
+              keyExtractor={(r) => r.bet_id}
               emptyMessage="No top CLV bets yet."
             />
           )}
@@ -279,8 +303,8 @@ export default function ClvPage() {
           ) : (
             <DataTable
               columns={clvBetColumns}
-              data={data?.bottom_clv ?? []}
-              keyExtractor={(r) => r.id}
+              data={data?.bottom_10_clv ?? []}
+              keyExtractor={(r) => r.bet_id}
               emptyMessage="No bottom CLV bets yet."
             />
           )}

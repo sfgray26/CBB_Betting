@@ -56,7 +56,7 @@ export default function Sidebar() {
     refetchInterval: 60_000,
   })
 
-  const drawdown = portfolio?.current_drawdown_pct ?? 0
+  const drawdown = portfolio?.drawdown_pct ?? 0
   const dotColor =
     drawdown < 5
       ? 'bg-emerald-400'

@@ -10,11 +10,12 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Zap,
 } from 'lucide-react'
 import { endpoints } from '@/lib/api'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import type { Alert } from '@/lib/types'
+import type { Alert, LiveAlert } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 function ErrorCard({ message }: { message: string }) {
@@ -25,9 +26,10 @@ function ErrorCard({ message }: { message: string }) {
   )
 }
 
-function severityConfig(severity: Alert['severity']) {
+// API returns uppercase severity: INFO, WARNING, CRITICAL
+function severityConfig(severity: string) {
   switch (severity) {
-    case 'critical':
+    case 'CRITICAL':
       return {
         Icon: AlertOctagon,
         color: 'text-rose-500',
@@ -35,7 +37,7 @@ function severityConfig(severity: Alert['severity']) {
         bgColor: 'bg-rose-500/5',
         label: 'Critical',
       }
-    case 'warning':
+    case 'WARNING':
       return {
         Icon: AlertTriangle,
         color: 'text-amber-400',
@@ -103,6 +105,32 @@ function AlertCard({ alert, onAck }: { alert: Alert; onAck: (id: number) => void
   )
 }
 
+function LiveAlertCard({ alert }: { alert: LiveAlert }) {
+  const cfg = severityConfig(alert.severity)
+  const Icon = cfg.Icon
+
+  return (
+    <div
+      className={cn(
+        'rounded-lg border p-4 flex items-start gap-3',
+        cfg.bgColor,
+        cfg.borderColor,
+      )}
+    >
+      <Icon className={cn('h-5 w-5 flex-shrink-0 mt-0.5', cfg.color)} />
+      <div className="flex-1 min-w-0">
+        <span className={cn('text-xs font-semibold uppercase tracking-wider', cfg.color)}>
+          {alert.alert_type}
+        </span>
+        <p className="text-sm text-zinc-200 mt-0.5">{alert.message}</p>
+        {alert.recommendation && (
+          <p className="text-xs text-zinc-400 mt-1 italic">{alert.recommendation}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function AlertsPage() {
   const queryClient = useQueryClient()
   const [showAcknowledged, setShowAcknowledged] = useState(false)
@@ -116,6 +144,7 @@ export default function AlertsPage() {
 
   const active = (data?.alerts ?? []).filter((a) => !a.acknowledged)
   const acknowledged = (data?.alerts ?? []).filter((a) => a.acknowledged)
+  const liveAlerts = data?.live_alerts ?? []
 
   async function handleAck(id: number) {
     setAckingId(id)
@@ -135,6 +164,21 @@ export default function AlertsPage() {
 
   return (
     <div className="space-y-6 max-w-3xl">
+      {/* Live Alerts */}
+      {liveAlerts.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Zap className="h-3.5 w-3.5 text-amber-400" />
+            <h2 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">
+              Live Alerts
+            </h2>
+          </div>
+          {liveAlerts.map((alert, i) => (
+            <LiveAlertCard key={i} alert={alert} />
+          ))}
+        </div>
+      )}
+
       {/* Active Alerts */}
       <div className="space-y-3">
         <div className="flex items-center gap-3">

@@ -9,16 +9,13 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  ReferenceLine,
-  Scatter,
-  ScatterChart,
-  ZAxis,
   Legend,
 } from 'recharts'
 import { endpoints } from '@/lib/api'
 import { KpiCard } from '@/components/ui/kpi-card'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { DataTable, type Column } from '@/components/ui/data-table'
+import type { CalibrationBucket } from '@/lib/types'
 
 function ErrorCard({ message }: { message: string }) {
   return (
@@ -36,13 +33,6 @@ const darkTooltipStyle = {
   fontSize: '12px',
 }
 
-interface CalibBin {
-  predicted_prob: number
-  actual_win_rate: number
-  count: number
-  label: string
-}
-
 export default function CalibrationPage() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['calibration'],
@@ -50,19 +40,19 @@ export default function CalibrationPage() {
   })
 
   // Build calibration curve data: diagonal reference + actual points
-  const curveData = data?.bins.map((b) => ({
+  const curveData = (data?.calibration_buckets ?? []).map((b) => ({
     predicted: Math.round(b.predicted_prob * 100),
     actual: Math.round(b.actual_win_rate * 100),
     perfect: Math.round(b.predicted_prob * 100),
     count: b.count,
-    label: b.label,
-  })) ?? []
+    label: b.bin,
+  }))
 
-  const binColumns: Column<CalibBin>[] = [
+  const binColumns: Column<CalibrationBucket>[] = [
     {
-      key: 'label',
+      key: 'bin',
       header: 'Predicted %',
-      accessor: (r) => <span>{r.label}</span>,
+      accessor: (r) => <span>{r.bin}</span>,
       sortValue: (r) => r.predicted_prob,
     },
     {
@@ -120,10 +110,10 @@ export default function CalibrationPage() {
       <div className="grid grid-cols-2 gap-4">
         <KpiCard
           title="Brier Score"
-          value={data ? data.brier_score.toFixed(4) : '--'}
+          value={data?.brier_score != null ? data.brier_score.toFixed(4) : '--'}
           loading={isLoading}
           trend={
-            data
+            data?.brier_score != null
               ? data.brier_score < 0.22
                 ? 'up'
                 : data.brier_score > 0.28
@@ -135,7 +125,7 @@ export default function CalibrationPage() {
         />
         <KpiCard
           title="Calibrated Bets"
-          value={data ? data.total_bets.toString() : '--'}
+          value={data ? (data.calibration_buckets.reduce((s, b) => s + b.count, 0)).toString() : '--'}
           loading={isLoading}
           trend="neutral"
         />
@@ -240,8 +230,8 @@ export default function CalibrationPage() {
         ) : (
           <DataTable
             columns={binColumns}
-            data={data?.bins ?? []}
-            keyExtractor={(r) => r.label}
+            data={data?.calibration_buckets ?? []}
+            keyExtractor={(r) => r.bin}
             emptyMessage="No calibration bins available."
           />
         )}
