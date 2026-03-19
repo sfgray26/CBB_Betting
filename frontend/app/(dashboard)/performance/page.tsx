@@ -66,23 +66,19 @@ export default function PerformancePage() {
     queryFn: () => endpoints.performanceTimeline(30),
   })
 
-  const byTypeRows: ByTypeRow[] = summary
-    ? Object.entries(summary.by_type).map(([type, v]) => ({
-        type,
-        bets: v.bets,
-        wins: v.wins,
-        roi: v.roi,
-      }))
-    : []
+  const byTypeRows: ByTypeRow[] = Object.entries(summary?.by_type ?? {}).map(([type, v]) => ({
+    type,
+    bets: v.bets,
+    wins: v.wins,
+    roi: v.roi,
+  }))
 
-  const byEdgeRows: ByEdgeRow[] = summary
-    ? Object.entries(summary.by_edge_bucket).map(([bucket, v]) => ({
-        bucket,
-        bets: v.bets,
-        wins: v.wins,
-        roi: v.roi,
-      }))
-    : []
+  const byEdgeRows: ByEdgeRow[] = Object.entries(summary?.by_edge_bucket ?? {}).map(([bucket, v]) => ({
+    bucket,
+    bets: v.bets,
+    wins: v.wins,
+    roi: v.roi,
+  }))
 
   const typeColumns: Column<ByTypeRow>[] = [
     {
