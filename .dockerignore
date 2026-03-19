@@ -1,0 +1,42 @@
+# Version control
+.git/
+.gitignore
+
+# Frontend — built separately as its own Railway service
+frontend/
+
+# Tests & dev tooling
+tests/
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Python byte-cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Local environment
+.env
+.env.local
+.env.production
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Docs & task files
+*.md
+.agent_tasks/
+tasks/
+.claude/
+scripts/validate_frontend.sh
+CURRENT_STATUS.md
+HANDOFF.md
+
+# Logs
+*.log
+logs/
