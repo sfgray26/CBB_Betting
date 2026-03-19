@@ -47,7 +47,12 @@ const navSections = [
   },
 ]
 
-export default function Sidebar() {
+interface SidebarProps {
+  isOpen?: boolean
+  onClose?: () => void
+}
+
+export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
   const pathname = usePathname()
 
   const { data: portfolio } = useQuery({
@@ -65,7 +70,17 @@ export default function Sidebar() {
         : 'bg-rose-500'
 
   return (
-    <aside className="fixed left-0 top-0 h-full w-60 bg-zinc-900 border-r border-zinc-800 flex flex-col z-30">
+    <aside
+      className={cn(
+        // Base: fixed sidebar, transitions for mobile drawer
+        'fixed left-0 top-0 h-full w-60 bg-zinc-900 border-r border-zinc-800 flex flex-col z-30',
+        'transition-transform duration-200 ease-in-out',
+        // Desktop: always visible
+        'md:translate-x-0',
+        // Mobile: slide in when open, slide out when closed
+        isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
+      )}
+    >
       {/* Logo */}
       <div className="px-5 py-5 border-b border-zinc-800">
         <div className="font-bold text-lg text-amber-400 tracking-tight">CBB EDGE</div>
@@ -87,7 +102,7 @@ export default function Sidebar() {
                 if (section.soon) {
                   return (
                     <li key={item.href}>
-                      <span className="flex items-center gap-3 px-3 py-2 rounded-md text-zinc-600 cursor-not-allowed">
+                      <span className="flex items-center gap-3 px-3 py-2.5 rounded-md text-zinc-600 cursor-not-allowed min-h-[44px]">
                         <Icon className="h-4 w-4 flex-shrink-0" />
                         <span className="flex-1 text-sm">{item.label}</span>
                         <span className="text-xs bg-zinc-700/50 text-zinc-500 px-1.5 py-0.5 rounded-full border border-zinc-700">
@@ -102,8 +117,9 @@ export default function Sidebar() {
                   <li key={item.href}>
                     <Link
                       href={item.href}
+                      onClick={onClose}
                       className={cn(
-                        'flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors',
+                        'flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors min-h-[44px]',
                         isActive
                           ? 'text-amber-400 bg-amber-400/10 border-l-2 border-amber-400 -ml-px pl-[11px]'
                           : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800',
