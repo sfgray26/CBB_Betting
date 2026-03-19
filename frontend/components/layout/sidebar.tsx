@@ -43,7 +43,7 @@ const navSections = [
     items: [
       { href: '/bracket', label: 'Bracket Simulator', icon: Trophy },
     ],
-    soon: true,
+    soon: false,
   },
 ]
 

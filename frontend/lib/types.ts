@@ -128,3 +128,36 @@ export interface PortfolioStatusFull {
   halt_reason: string | null
   pending_positions: number
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Tournament
+// ---------------------------------------------------------------------------
+
+export interface UpsetAlert {
+  team: string
+  seed: number
+  region: string
+  r64_win_prob: number
+}
+
+export interface TeamAdvancement {
+  seed: number
+  region: string
+  r32_pct: number
+  s16_pct: number
+  e8_pct: number
+  f4_pct: number
+  runner_up_pct: number
+  champion_pct: number
+}
+
+export interface BracketProjection {
+  n_sims: number
+  data_source: string
+  projected_champion: string | null
+  projected_final_four: string[]
+  upset_alerts: UpsetAlert[]
+  advancement_probs: Record<string, TeamAdvancement>
+  avg_upsets_per_tournament: number
+  avg_championship_margin: number
+}

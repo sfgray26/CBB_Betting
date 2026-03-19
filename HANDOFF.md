@@ -1,12 +1,52 @@
-# OPERATIONAL HANDOFF (EMAC-071)
+# OPERATIONAL HANDOFF (EMAC-072)
 
-> Ground truth as of **March 18, 2026 ~12:00 ET**. Operator: Claude Code (Master Architect).
+> Ground truth as of **March 19, 2026 ~R64 Day 1**. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 > Full enhancement plan: `tasks/cbb_enhancement_plan.md` · V9.2 spec: `reports/K12_RECALIBRATION_SPEC_V92.md`
 
 ---
 
-## 0. ARCHITECT DECISION (March 18, 2026)
+## 0. ARCHITECT DECISION (March 19, 2026 — EMAC-072)
+
+**Session focus:** Next.js frontend Phase 2 + Phase 3 complete. Tournament fully live on new dashboard.
+
+### What was delivered this session
+
+1. **Phase 2 — Trading pages** (3 new pages, claw-validated, pushed to `claude/fix-clv-null-safety-fPcKB`):
+   - `/today` — Today's Bets: BET/CONSIDER/PASS cards, KPI row, 5-min auto-refresh
+   - `/live-slate` — All predictions incl. started games, filter tabs, sortable table
+   - `/odds-monitor` — Odds monitor health + portfolio status + drawdown gauge
+   - New API client methods: `todaysPredictions`, `todaysPredictionsAll`, `oddsMonitorStatus`, `portfolioStatusFull`
+
+2. **Phase 3 — Tournament Bracket** (1 new page, pushed same branch):
+   - `/bracket` — Monte Carlo bracket simulator UI (10k sims default, 1k/5k/10k/25k selector)
+   - Champion hero card, Final Four grid, upset alerts (seed ≥10 with ≥35% win prob)
+   - Advancement probability table with inline progress bars, region filter tabs
+   - Wired to `GET /api/tournament/bracket-projection?n_sims=N`
+
+3. **Sidebar activated** — Trading and Tournament sections now live (removed "soon" badge)
+
+4. **Types + API** (`lib/types.ts`, `lib/api.ts`):
+   - `GameData`, `PredictionEntry`, `TodaysPredictionsResponse`
+   - `OddsMonitorStatus`, `PortfolioStatusFull`
+   - `UpsetAlert`, `TeamAdvancement`, `BracketProjection`
+
+### Phase Status (Frontend Migration)
+
+| Phase | Status | Pages |
+|-------|--------|-------|
+| Phase 0 — Foundation | ✅ DONE | scaffold, auth, layout, design system |
+| Phase 1 — Core Analytics | ✅ DONE + claw-validated | /performance, /clv, /bet-history, /calibration, /alerts |
+| Phase 2 — Trading | ✅ DONE (this session) | /today, /live-slate, /odds-monitor |
+| Phase 3 — Tournament | ✅ DONE (this session) | /bracket |
+| Phase 4 — Mobile & PWA | ⏳ Next | viewport meta, touch targets, install prompt |
+| Phase 5 — Polish & Decommission | ⏳ Future | error boundaries, loading states, retire Streamlit |
+
+**GUARDIAN (Mar 18 – Apr 7):** Do NOT touch `betting_model.py`, `analysis.py`, or CBB services.
+
+---
+
+## 0-PREV. ARCHITECT DECISION (March 18, 2026)
 
 **Session focus:** First Four day — confirmed odds pipeline is ready, market_ml population delegated to OpenClaw.
 
@@ -349,47 +389,126 @@ ESCALATE TO ARCHITECT if:
 REPORTING: Post completion to Discord #openclaw-briefs channel. Include count of teams updated.
 ```
 
-### CLAUDE CODE (Master Architect)
+### CLAUDE CODE (Master Architect) — Updated March 19
 ```
-MISSION: Tournament monitoring mode — March 18 First Four through April 7 Championship
+MISSION: Next.js frontend Phase 4 (Mobile & PWA) + ongoing tournament monitoring
 
-SYSTEM STATE AS OF MARCH 16:
+SYSTEM STATE AS OF MARCH 19 (R64 Day 1):
+
+FRONTEND (Next.js on branch claude/fix-clv-null-safety-fPcKB):
+- Phase 0 ✅ Foundation (scaffold, auth, layout, design system)
+- Phase 1 ✅ Core Analytics — /performance, /clv, /bet-history, /calibration, /alerts
+- Phase 2 ✅ Trading — /today, /live-slate, /odds-monitor
+- Phase 3 ✅ Tournament — /bracket (10k MC sims, champion hero, upset alerts, advancement table)
+- Phase 4 ⏳ Mobile & PWA — viewport meta, touch targets ≥44px, install prompt
+- Phase 5 ⏳ Polish — error boundaries, suspense fallbacks, retire Streamlit
+
+BACKEND (GUARDIAN active — no model changes until Apr 7):
 - All Discord jobs working: morning brief (7 AM), EOD results (11 PM), bracket notifier (6 PM)
-- Monte Carlo bracket simulator live: GET /api/tournament/bracket-projection
-- Dashboard page 13: Tournament Bracket (champion %, upset alerts, by-region view, Cinderella rankings)
-- Team mapping hardened: 29 new St-abbreviation entries, 78 tests
-- Duplicate bet cleanup available in Admin Panel
-- GUARDIAN active: do NOT touch betting_model.py, analysis.py until Apr 7
+- V9.1 model live with tournament SD bump (1.15x neutral site)
+- Test suite: 683/686 pass (3 pre-existing DB-auth failures, non-blocking)
 
-POSSIBLE NEXT ACTIONS:
-1. Monitor tournament performance via CLV + by-team breakdown
-2. Post-tournament: run duplicate bet cleanup in Admin Panel
-3. Post-tournament: fix test_sharp_money.py NameError (Tuple import)
-4. Apr 7+: V9.2 Phase 2 (sd_mult->0.80, ha->2.85, wire Haslametrics)
-5. Fantasy Baseball Phase 0 after April 7
+POSSIBLE NEXT ACTIONS (priority order):
+1. Phase 4 — Mobile viewport + PWA manifest (see frontend/PHASE4_SPEC.md when written)
+2. Phase 5 — Error boundaries on every page, loading suspense
+3. Apr 7+: V9.2 Phase 2 (sd_mult→0.80, ha→2.85, SNR_KELLY_FLOOR→0.75, Haslametrics)
 
 GUARDIAN: pytest tests/test_team_mapping.py before any team mapping changes.
+GUARDIAN: no changes to betting_model.py, analysis.py, or backend/services/* until Apr 7.
 ```
 
-### KIMI CLI (Deep Intelligence)
+### OPENCLAW (Execution Agent) — Phase 2 + Phase 3 Validation
 ```
-MISSION: Tournament monitoring — report anomalies in model outputs
+MISSION: Validate Phase 2 (Trading) and Phase 3 (Tournament) frontend pages
 
-CONTEXT: All P0-P4 features are live. March Madness is underway (First Four Mar 18).
-GUARDIAN active: no changes to betting_model.py, analysis.py until Apr 7.
+CONTEXT (March 19, 2026 — R64 Day 1):
+- Next.js frontend on branch: claude/fix-clv-null-safety-fPcKB
+- Phase 2 pages just built: /today, /live-slate, /odds-monitor
+- Phase 3 page just built: /bracket
+- All pages are live in the sidebar (Trading section + Tournament section, "soon" removed)
 
-MONITOR FOR:
-- KenPom rating fetch failures (bracket_simulator uses ratings from RatingsService)
-- Unusual CLV patterns during tournament
-- Discord notification gaps (morning brief + EOD results)
-- Any games where model verdict is BET but CLV is strongly negative post-game
+VALIDATION CHECKLIST (run on each component file listed below):
+Apply this checklist to each file — output PASS or list of issues with line numbers:
 
-REPORT: anomalies to Claude Code session; include file paths and exact data
+1. NULL SAFETY — any .field access on potentially undefined/null without ?. guard
+2. EMPTY ARRAY — any .map() without a ?? [] fallback on the source
+3. DECIMAL DISPLAY — any API field named roi/win_rate/edge/clv/prob displayed without ×100
+4. LOADING STATE — every async section has a loading skeleton or spinner
+5. CRASH RISK — toFixed/toString/toLocaleString called on a value that could be undefined
+6. Object.entries() called without ?? {} guard on the argument
+7. EMPTY STATE — if data is empty array or null, is there a user-visible message?
+
+FILES TO VALIDATE:
+- frontend/app/(dashboard)/today/page.tsx
+- frontend/app/(dashboard)/live-slate/page.tsx
+- frontend/app/(dashboard)/odds-monitor/page.tsx
+- frontend/app/(dashboard)/bracket/page.tsx
+
+ALSO CHECK:
+- frontend/lib/types.ts — verify PredictionEntry, BracketProjection, OddsMonitorStatus match backend
+  Compare against:
+    backend/main.py lines 693-808 (bracket endpoint)
+    backend/main.py lines 2538-2558 (portfolio + odds monitor endpoints)
+    backend/main.py lines 983-1028 (predictions/today endpoint)
+    backend/schemas.py (TodaysPredictionsResponse)
+
+REPORTING: List each file, PASS or issues. If issues found, include exact line numbers and
+the fix needed. Do not make code changes — report only. Claude Code will apply fixes.
+```
+
+### KIMI CLI (Deep Intelligence) — Phase 4 Spec Production
+```
+MISSION: Produce Phase 4 (Mobile & PWA) implementation spec for Next.js frontend
+
+CONTEXT (March 19, 2026):
+- Next.js 15 frontend in frontend/ directory
+- Design system: zinc-950 background, JetBrains Mono numbers, amber/sky/emerald/rose signals
+- Current layout: sidebar (w-60, fixed left) + header + main content area
+- All pages use max-w-7xl or max-w-4xl containers
+- TanStack Query v5 for data fetching
+- Auth: API key in cookie, direct browser→Railway calls
+
+TASK 1 — Audit current mobile gaps:
+Read these files completely:
+  frontend/app/(dashboard)/layout.tsx
+  frontend/components/layout/sidebar.tsx
+  frontend/components/layout/header.tsx
+  frontend/app/layout.tsx (root layout — check viewport meta)
+  frontend/package.json (check if next-pwa or any PWA dep is present)
+
+TASK 2 — For each gap, produce the exact fix:
+Mobile concerns to check:
+  a. Viewport meta tag — is <meta name="viewport" content="width=device-width, initial-scale=1"> present?
+  b. Sidebar on mobile — fixed w-60 sidebar blocks content on narrow screens. Does layout need a drawer/hamburger?
+  c. Touch targets — are all buttons/links at least 44×44px (Tailwind: min-h-[44px] min-w-[44px])?
+  d. DataTable horizontal scroll — do tables have overflow-x-auto wrappers on mobile?
+  e. KpiCard grid — does grid-cols-4 collapse to grid-cols-2 on sm and grid-cols-1 on xs?
+
+TASK 3 — PWA manifest:
+  Determine if frontend/public/manifest.json exists. If not, write the complete content for one.
+  App name: "CBB Edge", short_name: "CBBEdge", theme_color: "#09090b", background_color: "#09090b"
+  Icons: list the icon sizes needed (192×192, 512×512, maskable 512×512)
+
+TASK 4 — Output spec:
+Save to: frontend/PHASE4_SPEC.md
+Format: for each issue, provide:
+  - Issue description
+  - File to modify (exact path)
+  - Exact code change (old → new)
+  - Tailwind classes or JSX diff
+
+Be exhaustive. Every mobile issue Claude Code needs to fix should have a complete, unambiguous fix spec.
+Do not write production code — write the spec only.
 ```
 
 ---
 
-**Document Version:** EMAC-071
-**Last Updated:** March 18, 2026 ~12:00 ET
-**Status:** First Four Day — All Systems Green | GUARDIAN active (no model changes until Apr 7)
-**Pending:** OpenClaw to populate market_ml before Thursday R64 tip-offs
+**Document Version:** EMAC-072
+**Last Updated:** March 19, 2026 — R64 Day 1
+**Status:** All Systems Green | Phase 2+3 Frontend Complete | GUARDIAN active (no model changes until Apr 7)
+**Branch:** `claude/fix-clv-null-safety-fPcKB`
+**Pending:**
+- OpenClaw: validate Phase 2+3 pages against null-safety checklist
+- Kimi CLI: produce Phase 4 (Mobile & PWA) spec → `frontend/PHASE4_SPEC.md`
+- Claude Code: execute Phase 4 after Kimi spec is ready
+- Apr 7: V9.2 recalibration (read Section 5 of this doc)
