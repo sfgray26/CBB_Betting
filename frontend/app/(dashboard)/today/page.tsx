@@ -59,7 +59,7 @@ function BetCard({ p }: { p: PredictionEntry }) {
             </span>
             {p.recommended_units != null && (
               <span className="text-xs text-zinc-400 font-mono tabular-nums">
-                {p.recommended_units.toFixed(1)}u
+                {p.recommended_units?.toFixed(1)}u
               </span>
             )}
           </div>
