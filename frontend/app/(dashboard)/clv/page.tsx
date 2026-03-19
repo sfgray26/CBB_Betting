@@ -35,7 +35,10 @@ const darkTooltipStyle = {
 
 // mean_clv / clv_prob come back as decimals (0.012) — multiply by 100 for display
 const pct = (v: number, decimals = 2) => (v * 100).toFixed(decimals)
-const signed = (v: number, decimals = 2) => `${v >= 0 ? '+' : ''}${v.toFixed(decimals)}`
+const signed = (v: number | null | undefined, decimals = 2) => {
+  if (v == null) return '—'
+  return `${v >= 0 ? '+' : ''}${v.toFixed(decimals)}`
+}
 
 interface ConfidenceRow {
   tier: string
@@ -110,14 +113,17 @@ export default function ClvPage() {
     {
       key: 'clv_prob',
       header: 'CLV %',
-      accessor: (r) => (
-        <span
-          className={`font-mono tabular-nums ${r.clv_prob >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}
-        >
-          {signed(r.clv_prob * 100)}%
-        </span>
-      ),
-      sortValue: (r) => r.clv_prob,
+      accessor: (r) => {
+        if (r.clv_prob == null) return <span className="text-zinc-500">—</span>
+        return (
+          <span
+            className={`font-mono tabular-nums ${r.clv_prob >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}
+          >
+            {signed(r.clv_prob * 100)}%
+          </span>
+        )
+      },
+      sortValue: (r) => r.clv_prob ?? 0,
       className: 'text-right',
       headerClassName: 'text-right',
     },
@@ -146,7 +152,7 @@ export default function ClvPage() {
         if (r.outcome === -1) return <span className="text-zinc-400 font-mono text-xs">P</span>
         return <span className="text-zinc-500 font-mono text-xs">—</span>
       },
-      sortValue: (r) => r.outcome,
+      sortValue: (r) => r.outcome ?? -2,
       className: 'text-right',
       headerClassName: 'text-right',
     },
@@ -169,14 +175,14 @@ export default function ClvPage() {
       <div className="grid grid-cols-2 gap-4">
         <KpiCard
           title="Avg CLV"
-          value={hasData ? `${signed(data!.mean_clv * 100)}` : '--'}
+          value={hasData && data?.mean_clv != null ? `${signed(data.mean_clv * 100)}` : '--'}
           unit="%"
           loading={isLoading}
           trend={
-            hasData
-              ? data!.mean_clv > 0
+            hasData && data?.mean_clv != null
+              ? data.mean_clv > 0
                 ? 'up'
-                : data!.mean_clv < 0
+                : data.mean_clv < 0
                   ? 'down'
                   : 'neutral'
               : 'neutral'
@@ -184,14 +190,14 @@ export default function ClvPage() {
         />
         <KpiCard
           title="Positive CLV"
-          value={hasData ? pct(data!.positive_clv_rate, 1) : '--'}
+          value={hasData && data?.positive_clv_rate != null ? pct(data.positive_clv_rate, 1) : '--'}
           unit="%"
           loading={isLoading}
           trend={
-            hasData
-              ? data!.positive_clv_rate >= 0.55
+            hasData && data?.positive_clv_rate != null
+              ? data.positive_clv_rate >= 0.55
                 ? 'up'
-                : data!.positive_clv_rate < 0.45
+                : data.positive_clv_rate < 0.45
                   ? 'down'
                   : 'neutral'
               : 'neutral'
