@@ -20,15 +20,15 @@ function ErrorCard({ message }: { message: string }) {
   )
 }
 
-function outcomeVariant(pl?: number): 'win' | 'loss' | 'push' | 'pending' {
-  if (pl === undefined || pl === null) return 'pending'
+function outcomeVariant(pl?: number | null): 'win' | 'loss' | 'push' | 'pending' {
+  if (pl == null) return 'pending'
   if (pl > 0) return 'win'
   if (pl < 0) return 'loss'
   return 'push'
 }
 
-function outcomeLabel(pl?: number): string {
-  if (pl === undefined || pl === null) return 'Pending'
+function outcomeLabel(pl?: number | null): string {
+  if (pl == null) return 'Pending'
   if (pl > 0) return 'Win'
   if (pl < 0) return 'Loss'
   return 'Push'

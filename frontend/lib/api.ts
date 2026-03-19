@@ -22,8 +22,16 @@ import type {
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
-function getApiKey(): string {
+export function getApiKey(): string {
   return Cookies.get('cbb_api_key') ?? ''
+}
+
+export function setApiKey(key: string): void {
+  Cookies.set('cbb_api_key', key, { expires: 7, sameSite: 'strict' })
+}
+
+export function clearApiKey(): void {
+  Cookies.remove('cbb_api_key')
 }
 
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {

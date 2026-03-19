@@ -125,7 +125,7 @@ export default function CalibrationPage() {
         />
         <KpiCard
           title="Calibrated Bets"
-          value={data ? (data.calibration_buckets.reduce((s, b) => s + b.count, 0)).toString() : '--'}
+          value={data ? (data.calibration_buckets?.reduce((s, b) => s + b.count, 0) ?? 0).toString() : '--'}
           loading={isLoading}
           trend="neutral"
         />

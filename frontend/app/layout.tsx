@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Inter, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import Providers from '@/components/providers'
@@ -6,11 +6,15 @@ import Providers from '@/components/providers'
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 const jetbrains = JetBrains_Mono({ subsets: ['latin'], variable: '--font-mono' })
 
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  themeColor: '#09090b',
+}
+
 export const metadata: Metadata = {
   title: 'CBB Edge',
   description: 'College basketball betting analytics',
-  viewport: 'width=device-width, initial-scale=1',
-  themeColor: '#09090b',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
