@@ -76,3 +76,55 @@ export interface LiveAlert {
   message: string
   recommendation?: string | null
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2 — Trading
+// ---------------------------------------------------------------------------
+
+export interface GameData {
+  id: number
+  game_date: string
+  home_team: string
+  away_team: string
+  is_neutral: boolean
+}
+
+export interface PredictionEntry {
+  id: number
+  game_id: number
+  model_version: string
+  prediction_date: string
+  projected_margin: number | null
+  edge_conservative: number | null
+  recommended_units: number | null
+  verdict: string
+  pass_reason: string | null
+  full_analysis: Record<string, unknown> | null
+  game: GameData
+}
+
+export interface TodaysPredictionsResponse {
+  date: string
+  total_games: number
+  bets_recommended: number
+  predictions: PredictionEntry[]
+}
+
+export interface OddsMonitorStatus {
+  active: boolean
+  games_tracked: number
+  last_poll: string | null
+  quota_remaining: number | null
+  quota_updated_at: string | null
+  quota_is_low: boolean
+}
+
+export interface PortfolioStatusFull {
+  current_bankroll: number
+  starting_bankroll: number
+  drawdown_pct: number
+  total_exposure_pct: number
+  is_halted: boolean
+  halt_reason: string | null
+  pending_positions: number
+}

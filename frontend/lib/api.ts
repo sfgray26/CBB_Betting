@@ -14,6 +14,9 @@ import type {
   CalibrationBucket,
   Alert,
   LiveAlert,
+  TodaysPredictionsResponse,
+  OddsMonitorStatus,
+  PortfolioStatusFull,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -171,4 +174,17 @@ export const endpoints = {
 
   portfolioStatus: () =>
     apiFetch<PortfolioStatus>('/admin/portfolio/status'),
+
+  // Phase 2 — Trading
+  todaysPredictions: () =>
+    apiFetch<TodaysPredictionsResponse>('/api/predictions/today'),
+
+  todaysPredictionsAll: () =>
+    apiFetch<TodaysPredictionsResponse>('/api/predictions/today/all'),
+
+  oddsMonitorStatus: () =>
+    apiFetch<OddsMonitorStatus>('/admin/odds-monitor/status'),
+
+  portfolioStatusFull: () =>
+    apiFetch<PortfolioStatusFull>('/admin/portfolio/status'),
 }
