@@ -80,7 +80,9 @@ function AlertCard({ alert, onAck }: { alert: Alert; onAck: (id: number) => void
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <span className="text-xs text-zinc-500 whitespace-nowrap">
-              {formatDistanceToNow(parseISO(alert.created_at), { addSuffix: true })}
+              {alert.created_at
+                ? formatDistanceToNow(parseISO(alert.created_at), { addSuffix: true })
+                : 'Unknown time'}
             </span>
             {!alert.acknowledged && (
               <Button
