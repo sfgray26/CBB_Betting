@@ -51,7 +51,7 @@ export default function BetHistoryPage() {
     const bets = data?.bets ?? []
     if (!search.trim()) return bets
     const q = search.toLowerCase()
-    return bets.filter((b) => b.pick.toLowerCase().includes(q))
+    return bets.filter((b) => (b.pick ?? '').toLowerCase().includes(q))
   }, [data, search])
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
@@ -78,7 +78,7 @@ export default function BetHistoryPage() {
       header: 'Pick',
       accessor: (r) => (
         <div>
-          <span className="text-zinc-100 text-sm">{r.pick}</span>
+          <span className="text-zinc-100 text-sm">{r.pick ?? '—'}</span>
           {r.is_paper_trade && (
             <span className="ml-2 text-xs bg-zinc-800 text-zinc-500 border border-zinc-700 rounded px-1 py-0.5">
               Paper
@@ -99,13 +99,15 @@ export default function BetHistoryPage() {
     {
       key: 'odds',
       header: 'Odds',
-      accessor: (r) => (
-        <span className="font-mono tabular-nums text-zinc-300">
-          {r.odds_taken > 0 ? '+' : ''}
-          {r.odds_taken}
-        </span>
-      ),
-      sortValue: (r) => r.odds_taken,
+      accessor: (r) => {
+        const odds = r.odds_taken ?? 0
+        return (
+          <span className="font-mono tabular-nums text-zinc-300">
+            {odds > 0 ? '+' : ''}{odds}
+          </span>
+        )
+      },
+      sortValue: (r) => r.odds_taken ?? 0,
       className: 'text-right',
       headerClassName: 'text-right',
     },
@@ -114,10 +116,10 @@ export default function BetHistoryPage() {
       header: 'Units',
       accessor: (r) => (
         <span className="font-mono tabular-nums text-zinc-300">
-          {r.bet_size_units.toFixed(2)}u
+          {(r.bet_size_units ?? 0).toFixed(2)}u
         </span>
       ),
-      sortValue: (r) => r.bet_size_units,
+      sortValue: (r) => r.bet_size_units ?? 0,
       className: 'text-right',
       headerClassName: 'text-right',
     },
