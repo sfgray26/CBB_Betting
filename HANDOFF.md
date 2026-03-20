@@ -29,7 +29,55 @@ All pages now have correct API field mappings verified against `reports/api_grou
 
 ---
 
-## 0. ARCHITECT DECISION (March 19, 2026 — EMAC-072)
+## 0. ARCHITECT DECISION (March 20, 2026 — EMAC-073)
+
+**Session focus:** Phase 4 completed, Phase 0 foundation hardening, Phase 5 architecture decision.
+
+### What was delivered this session
+
+1. **Phase 4 — Mobile & PWA: COMPLETE**
+   - Fixed 6 pages with bare `grid-cols-2` → `grid-cols-1 sm:grid-cols-2` (mobile-first)
+   - Confirmed: sidebar drawer, manifest, icons, DataTable overflow-x-auto all already live
+   - Tagged release `v0.8.0-cbb-stable`
+
+2. **Phase 0 — Foundation Hardening (partial)**
+   - `v0.8.0-cbb-stable` git tag created locally ✅
+   - `FANTASY_BASEBALL_API_KEY` not needed — `YAHOO_CLIENT_ID`/`YAHOO_CLIENT_SECRET` already in `.env.example` ✅
+   - `RAILWAY_TOKEN` in GitHub Secrets — **requires manual action** (no `gh` CLI available)
+   - `NEXT_PUBLIC_API_URL` in Railway frontend env — **requires Railway dashboard** (already in `.env.local.example`)
+
+3. **Phase 5 architecture decision**
+
+   **Decision: Selective Phase 5, do NOT block platform expansion.**
+
+   Rationale:
+   - Tournament is live, `/bracket` and `/today` are the highest-traffic pages. A white screen during tournament play = bad UX.
+   - Full Streamlit retirement has no urgency (no active users on port 8501 in production).
+   - Error boundaries are 30 min of work per page; Streamlit retirement is days.
+
+   **Phase 5 scope reduced to:**
+   - [ ] Error boundary wrapper on `/bracket/page.tsx` (tournament — highest crash risk)
+   - [ ] Error boundary wrapper on `/today/page.tsx` (daily trading view)
+   - [ ] Suspense fallback skeletons on the two pages above
+   - Skip: full Streamlit decommission (defer indefinitely)
+
+   After these two boundaries are added: proceed directly to Platform Expansion Phase 1 (Fantasy Baseball).
+
+### Phase Status (updated)
+
+| Phase | Status | Pages |
+|-------|--------|-------|
+| Phase 0 — Foundation | ✅ DONE (partial) | tag created; Railway secrets need manual set |
+| Phase 1 — Core Analytics | ✅ DONE | /performance, /clv, /bet-history, /calibration, /alerts |
+| Phase 2 — Trading | ✅ DONE | /today, /live-slate, /odds-monitor |
+| Phase 3 — Tournament | ✅ DONE | /bracket |
+| Phase 4 — Mobile & PWA | ✅ DONE (Mar 20) | viewport, manifest, drawer, responsive grids |
+| Phase 5 — Polish (selective) | ⏳ Next 30 min | error boundaries on /bracket + /today only |
+| Platform Expansion Phase 1 | ⏳ After Phase 5 | Fantasy Baseball (DB schema → service → API → frontend) |
+
+---
+
+## 0-A-PREV. ARCHITECT DECISION (March 19, 2026 — EMAC-072)
 
 **Session focus:** Next.js frontend Phase 2 + Phase 3 complete. Tournament fully live on new dashboard.
 
@@ -62,8 +110,8 @@ All pages now have correct API field mappings verified against `reports/api_grou
 | Phase 1 — Core Analytics | ✅ DONE + claw-validated | /performance, /clv, /bet-history, /calibration, /alerts |
 | Phase 2 — Trading | ✅ DONE (this session) | /today, /live-slate, /odds-monitor |
 | Phase 3 — Tournament | ✅ DONE (this session) | /bracket |
-| Phase 4 — Mobile & PWA | ⏳ Next | viewport meta, touch targets, install prompt |
-| Phase 5 — Polish & Decommission | ⏳ Future | error boundaries, loading states, retire Streamlit |
+| Phase 4 — Mobile & PWA | ✅ DONE (Mar 20) | viewport meta, manifest, drawer, responsive grids |
+| Phase 5 — Polish & Decommission | ⏳ Selective | error boundaries on /bracket + /today ONLY; skip Streamlit retire |
 
 **GUARDIAN (Mar 18 – Apr 7):** Do NOT touch `betting_model.py`, `analysis.py`, or CBB services.
 
@@ -530,8 +578,9 @@ Do not write production code — write the spec only.
 **Last Updated:** March 19, 2026 — R64 Day 1
 **Status:** All Systems Green | Phase 2+3 Frontend Complete | GUARDIAN active (no model changes until Apr 7)
 **Branch:** `claude/fix-clv-null-safety-fPcKB`
-**Pending:**
-- OpenClaw: validate Phase 2+3 pages against null-safety checklist
-- Kimi CLI: produce Phase 4 (Mobile & PWA) spec → `frontend/PHASE4_SPEC.md`
-- Claude Code: execute Phase 4 after Kimi spec is ready
+**Pending (as of Mar 20):**
+- **Claude Code (now):** Add error boundaries to `/bracket` and `/today` (30 min). Then start Platform Expansion Phase 1.
+- **Manual (user):** Push `v0.8.0-cbb-stable` tag to remote: `git push origin v0.8.0-cbb-stable`
+- **Manual (user):** Set `RAILWAY_TOKEN` in GitHub repo secrets → Settings → Secrets → Actions
+- **Manual (user):** Confirm `NEXT_PUBLIC_API_URL` is set in Railway frontend service environment variables
 - Apr 7: V9.2 recalibration (read Section 5 of this doc)
