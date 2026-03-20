@@ -315,7 +315,7 @@ function OddsMonitorPanel() {
               <div className="flex items-center justify-between py-2 px-3 rounded-md bg-zinc-800/50 border border-zinc-700/50">
                 <span className="text-sm text-zinc-400">API quota</span>
                 <span className={cn('font-mono text-sm', data.quota_is_low ? 'text-amber-400' : 'text-zinc-200')}>
-                  {data.quota_remaining.toLocaleString()}
+                  {data.quota_remaining?.toLocaleString()}
                   {data.quota_is_low && <span className="ml-1.5 text-xs text-amber-500">LOW</span>}
                 </span>
               </div>
