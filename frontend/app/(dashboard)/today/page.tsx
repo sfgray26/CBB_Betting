@@ -310,7 +310,7 @@ export default function TodayPage() {
       </div>
 
       {/* KPI row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {isError ? (
           <div className="col-span-4 rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-rose-400 text-sm">
             Failed to load today&apos;s predictions.

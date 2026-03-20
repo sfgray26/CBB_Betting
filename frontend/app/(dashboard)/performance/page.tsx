@@ -85,7 +85,7 @@ export default function PerformancePage() {
     <div className="space-y-6 max-w-7xl">
 
       {/* KPI Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {summaryError ? (
           <div className="col-span-4"><ErrorCard message="Failed to load performance data." /></div>
         ) : (

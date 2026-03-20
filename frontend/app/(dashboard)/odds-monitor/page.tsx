@@ -116,7 +116,7 @@ export default function OddsMonitorPage() {
       </div>
 
       {/* Monitor KPI row */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
         {monitorError ? (
           <div className="col-span-3 rounded-lg border border-rose-500/30 bg-rose-500/10 p-4 text-rose-400 text-sm">
             Failed to load odds monitor status. Admin key required.

@@ -172,7 +172,7 @@ export default function ClvPage() {
       )}
 
       {/* KPI Row */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <KpiCard
           title="Avg CLV"
           value={hasData && data?.mean_clv != null ? `${signed(data.mean_clv * 100)}` : '--'}

@@ -107,7 +107,7 @@ export default function CalibrationPage() {
   return (
     <div className="space-y-6 max-w-7xl">
       {/* KPI Row */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <KpiCard
           title="Brier Score"
           value={data?.brier_score != null ? data.brier_score.toFixed(4) : '--'}

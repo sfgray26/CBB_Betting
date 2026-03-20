@@ -118,7 +118,7 @@ function FinalFourCard({
       <CardHeader>
         <CardTitle>Projected Final Four</CardTitle>
       </CardHeader>
-      <div className="grid grid-cols-2 gap-3 pt-1">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
         {teams.map((team, i) => {
           const a = advancement[team]
           return (
