@@ -167,8 +167,8 @@ export default function RosterPage() {
     retry: 1,
   })
 
-  const isYahooNotConfigured =
-    isError && error instanceof Error && error.message.includes('503')
+  const errorMsg = error instanceof Error ? error.message : ''
+  const isYahooNotConfigured = isError && errorMsg.startsWith('503')
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -205,7 +205,7 @@ export default function RosterPage() {
           <div>
             <p className="text-amber-300 font-medium text-sm">Yahoo not configured</p>
             <p className="text-amber-300/60 text-xs mt-0.5">
-              Set YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET, and YAHOO_REFRESH_TOKEN in your .env file.
+              {errorMsg || 'Set YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET, and YAHOO_REFRESH_TOKEN in Railway.'}
             </p>
           </div>
         </div>
