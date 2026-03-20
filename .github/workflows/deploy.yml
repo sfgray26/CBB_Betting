@@ -107,14 +107,14 @@ jobs:
     - uses: actions/checkout@v3
     
     - name: Install Railway CLI
-      run: npm install -g @railway/cli@3.22.0
+      run: npm install -g @railway/cli
 
     - name: Deploy backend to Railway
       env:
         RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-      run: railway up --no-interactive
+      run: railway up --service CBB_Betting --no-interactive
 
     - name: Deploy frontend to Railway
       env:
         RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-      run: cd frontend && railway up --no-interactive
+      run: railway up --service observant-benevolence --no-interactive
