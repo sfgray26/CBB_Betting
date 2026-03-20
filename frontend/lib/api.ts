@@ -22,6 +22,8 @@ import type {
   DraftSession,
   CreateDraftSessionResponse,
   RecordPickResponse,
+  SchedulerStatus,
+  RatingsStatus,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -235,4 +237,11 @@ export const endpoints = {
 
   fantasyGetSession: (sessionKey: string) =>
     apiFetch<DraftSession>(`/api/fantasy/draft-session/${sessionKey}`),
+
+  // Admin
+  schedulerStatus: () =>
+    apiFetch<SchedulerStatus>('/admin/scheduler/status'),
+
+  ratingsStatus: () =>
+    apiFetch<RatingsStatus>('/admin/ratings/status'),
 }

@@ -129,6 +129,35 @@ export interface PortfolioStatusFull {
   pending_positions: number
 }
 
+export interface SchedulerJob {
+  id: string
+  name: string
+  next_run: string | null
+}
+
+export interface SchedulerStatus {
+  running: boolean
+  jobs: SchedulerJob[]
+}
+
+export interface RatingSourceStatus {
+  teams: number
+  status: 'UP' | 'DOWN' | 'DROPPED'
+}
+
+export interface RatingsStatus {
+  sources: {
+    kenpom: RatingSourceStatus
+    barttorvik: RatingSourceStatus
+    evanmiya: RatingSourceStatus & { status: 'UP' | 'DOWN' | 'DROPPED' }
+    kenpom_four_factors: { teams: number }
+  }
+  active_count: number
+  active_sources: string[]
+  model_health: 'OK' | 'DEGRADED' | 'CRITICAL'
+  cache_age_hours: number
+}
+
 // ---------------------------------------------------------------------------
 // Phase 3 — Tournament
 // ---------------------------------------------------------------------------

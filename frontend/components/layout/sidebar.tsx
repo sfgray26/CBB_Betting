@@ -13,6 +13,7 @@ import {
   Radio,
   Trophy,
   Dumbbell,
+  ShieldAlert,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
@@ -50,6 +51,13 @@ const navSections = [
     label: 'Fantasy Baseball',
     items: [
       { href: '/fantasy', label: 'Draft Board', icon: Dumbbell },
+    ],
+    soon: false,
+  },
+  {
+    label: 'Admin',
+    items: [
+      { href: '/admin', label: 'Risk Dashboard', icon: ShieldAlert },
     ],
     soon: false,
   },

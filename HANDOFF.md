@@ -29,6 +29,41 @@ All pages now have correct API field mappings verified against `reports/api_grou
 
 ---
 
+## 0. ARCHITECT DECISION (March 20, 2026 — EMAC-073 Update 3)
+
+**Session focus:** Admin Risk Dashboard + task cleanup.
+
+### What was delivered (Update 3)
+
+1. **Admin Risk Dashboard (`/admin`) — COMPLETE**
+   - `lib/types.ts`: `SchedulerStatus`, `SchedulerJob`, `RatingsStatus` added
+   - `lib/api.ts`: `schedulerStatus()`, `ratingsStatus()` added
+   - Sidebar: "Admin" section with Risk Dashboard link (ShieldAlert icon)
+   - `frontend/app/(dashboard)/admin/page.tsx`: 4-panel 2x2 grid:
+     - Portfolio: drawdown gauge (color-coded GREEN/YELLOW/RED), bankroll, exposure, halted banner
+     - Rating Sources: KenPom/BartTorvik/EvanMiya status + model_health badge
+     - Scheduler: all jobs with next-run countdowns
+     - Odds Monitor: active status, games tracked, quota with LOW warning
+   - `admin/error.tsx` + `admin/loading.tsx`
+   - TypeScript: clean (0 errors)
+
+2. **tasks/todo.md** — fully cleaned and restructured with EMAC-074 and EMAC-075 plans
+
+### Phase Status (updated)
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| All Frontend Phases 0-5 | ✅ DONE | See done archive |
+| Fantasy Phase 1 — Draft Assistant | ✅ DONE (Mar 20) | Live Draft tab, snake order, recommendations |
+| Admin Risk Dashboard | ✅ DONE (Mar 20) | /admin — portfolio, ratings, scheduler, odds monitor |
+| Fantasy Phase 2 — Season Ops | ⏳ EMAC-075 | Due Mar 27 (season opener) |
+| Apr 7+ — V9.2 Recalibration | ⏳ Locked | Guardian lifts Apr 7 |
+
+### Next immediate action
+**EMAC-075**: Fantasy Season Ops pages (`/fantasy/lineup`, `/fantasy/waiver`) — needed by March 27.
+
+---
+
 ## 0. ARCHITECT DECISION (March 20, 2026 — EMAC-073 Update 2)
 
 **Session focus:** Phase 5 complete + Platform Expansion Phase 1 (Fantasy Baseball) complete.
@@ -67,7 +102,7 @@ All pages now have correct API field mappings verified against `reports/api_grou
 | Platform Expansion Phase 1 | ✅ DONE (Mar 20) | Fantasy Baseball Live Draft Assistant |
 
 ### Pending (manual actions)
-- **Gemini:** Run `scripts/migrate_v7.py` on Railway to create fantasy tables
+- **Gemini:** Run `scripts/migrate_v7.py` on Railway to create fantasy tables ✅ (Completed Mar 20)
 - **User:** Push `v0.8.0-cbb-stable` tag to remote: `git push origin v0.8.0-cbb-stable`
 - **User:** Set `RAILWAY_TOKEN` in GitHub repo secrets
 - **User:** Confirm `NEXT_PUBLIC_API_URL` in Railway frontend environment
