@@ -19,6 +19,9 @@ import type {
   PortfolioStatusFull,
   BracketProjection,
   FantasyDraftBoardResponse,
+  DraftSession,
+  CreateDraftSessionResponse,
+  RecordPickResponse,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -202,7 +205,7 @@ export const endpoints = {
   bracketProjection: (nSims = 10000) =>
     apiFetch<BracketProjection>(`/api/tournament/bracket-projection?n_sims=${nSims}`),
 
-  // Fantasy Baseball
+  // Fantasy Baseball — Draft Board
   fantasyDraftBoard: (params?: { position?: string; player_type?: string; tier_max?: number; limit?: number }) => {
     const qs = new URLSearchParams()
     if (params?.position) qs.set('position', params.position)
@@ -212,4 +215,24 @@ export const endpoints = {
     const query = qs.toString()
     return apiFetch<FantasyDraftBoardResponse>(`/api/fantasy/draft-board${query ? `?${query}` : ''}`)
   },
+
+  // Fantasy Baseball — Draft Session
+  fantasyCreateSession: (params: { my_draft_position: number; num_teams?: number; num_rounds?: number }) => {
+    const qs = new URLSearchParams()
+    qs.set('my_draft_position', String(params.my_draft_position))
+    if (params.num_teams !== undefined) qs.set('num_teams', String(params.num_teams))
+    if (params.num_rounds !== undefined) qs.set('num_rounds', String(params.num_rounds))
+    return apiFetch<CreateDraftSessionResponse>(`/api/fantasy/draft-session?${qs.toString()}`, { method: 'POST' })
+  },
+
+  fantasyRecordPick: (sessionKey: string, params: { player_id: string; drafter_position: number; is_my_pick?: boolean }) => {
+    const qs = new URLSearchParams()
+    qs.set('player_id', params.player_id)
+    qs.set('drafter_position', String(params.drafter_position))
+    if (params.is_my_pick !== undefined) qs.set('is_my_pick', String(params.is_my_pick))
+    return apiFetch<RecordPickResponse>(`/api/fantasy/draft-session/${sessionKey}/pick?${qs.toString()}`, { method: 'POST' })
+  },
+
+  fantasyGetSession: (sessionKey: string) =>
+    apiFetch<DraftSession>(`/api/fantasy/draft-session/${sessionKey}`),
 }

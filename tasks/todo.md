@@ -12,7 +12,7 @@
 | Phase 2 — Trading | ✅ DONE | /today, /live-slate, /odds-monitor |
 | Phase 3 — Tournament | ✅ DONE | /bracket |
 | Phase 4 — Mobile & PWA | ✅ DONE | viewport meta, manifest, mobile drawer, responsive grids |
-| Phase 5 — Polish & Decommission | ⏳ Future | error boundaries, loading states, retire Streamlit |
+| Phase 5 — Polish (selective) | ✅ DONE (Mar 20) | error.tsx + loading.tsx on /bracket + /today |
 
 ### Phase 4 Completed (Mar 20)
 - [x] Viewport meta + `appleWebApp` in `app/layout.tsx`
@@ -94,13 +94,28 @@ CREATE TABLE fantasy_lineups (
 );
 ```
 
-### 1.2 Tasks
-- [ ] DB Schema: Add `FantasyPlayer`, `FantasyProjection`, `FantasyLineup` models to `backend/models.py`
-- [ ] Update `scripts/init_db.py` for new tables
-- [ ] Add Pydantic schemas to `backend/schemas.py`
-- [ ] Service: Create `backend/services/fantasy.py`
-- [ ] API Routes: Add 6 fantasy endpoints to `backend/main.py`
-- [ ] Frontend: Create `/fantasy/draft`, `/fantasy/lineup`, `/fantasy/standings` pages
+### 1.2 Tasks — EMAC-073 (Mar 20, this session)
+
+**Already built (pre-existing):**
+- [x] backend/fantasy_baseball/ — player_board, draft_engine, yahoo_client, projections_loader, etc.
+- [x] API endpoints in main.py — /api/fantasy/draft-board, /api/fantasy/draft-session, etc.
+- [x] frontend/app/(dashboard)/fantasy/page.tsx — basic read-only draft board
+- [x] lib/types.ts — FantasyPlayer, FantasyDraftBoardResponse
+- [x] lib/api.ts — fantasyDraftBoard() method
+- [x] Sidebar — Fantasy Baseball section wired
+
+**This session (draft deadline: March 23) — EMAC-073:**
+- [x] DB Schema: `FantasyDraftSession`, `FantasyDraftPick`, `FantasyLineup` already in `backend/models.py` (pre-existing)
+- [x] Migration: Created `scripts/migrate_v7.py` (idempotent, uses SQLAlchemy metadata)
+- [x] Types: Added `DraftSession`, `DraftPick`, `CreateDraftSessionResponse`, `RecordPickResponse` to `lib/types.ts`
+- [x] API client: Added `fantasyCreateSession()`, `fantasyRecordPick()`, `fantasyGetSession()` to `lib/api.ts`
+- [x] Frontend: Rewrote `/fantasy` page with two tabs — Draft Board + Live Draft Session:
+    - Draft Board tab: read-only board (preserved)
+    - Live Draft tab: Start Draft setup, pick counter, snake order, "Mine"/"Taken" buttons, My Roster panel, recommendations panel, localStorage session persistence
+- [x] Error boundary: `frontend/app/(dashboard)/fantasy/error.tsx`
+- [x] Loading skeleton: `frontend/app/(dashboard)/fantasy/loading.tsx`
+- [x] Update HANDOFF.md — Gemini delegation bundle in Section 11
+- [x] Verify TypeScript compiles clean — 0 errors
 
 ---
 
@@ -148,6 +163,7 @@ CREATE TABLE fantasy_lineups (
 
 ## Done Archive
 
+- Phase 5 Polish (selective, error boundaries + loading.tsx on /bracket + /today) — Mar 20
 - Phase 4 Mobile & PWA — Mar 20
 - Phase 2+3 Frontend (trading + bracket pages) — Mar 19
 - Phase 1 all 5 analytics pages fixed — Mar 18

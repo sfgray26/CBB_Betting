@@ -29,6 +29,51 @@ All pages now have correct API field mappings verified against `reports/api_grou
 
 ---
 
+## 0. ARCHITECT DECISION (March 20, 2026 — EMAC-073 Update 2)
+
+**Session focus:** Phase 5 complete + Platform Expansion Phase 1 (Fantasy Baseball) complete.
+
+### What was delivered this session (Update 2)
+
+1. **Phase 5 — Selective Polish: COMPLETE**
+   - `bracket/error.tsx` + `today/error.tsx` (Next.js App Router error boundaries) — pre-existing
+   - `bracket/loading.tsx` + `today/loading.tsx` (Suspense fallbacks) — added and committed
+
+2. **Platform Expansion Phase 1 — Fantasy Baseball: COMPLETE**
+   - `scripts/migrate_v7.py` — idempotent migration for `fantasy_draft_sessions`, `fantasy_draft_picks`, `fantasy_lineups` tables
+   - `lib/types.ts` — added `DraftSession`, `DraftPick`, `CreateDraftSessionResponse`, `RecordPickResponse`
+   - `lib/api.ts` — added `fantasyCreateSession()`, `fantasyRecordPick()`, `fantasyGetSession()`
+   - `frontend/app/(dashboard)/fantasy/page.tsx` — full rewrite with two tabs:
+     - **Draft Board** tab: read-only player table (preserved)
+     - **Live Draft** tab: interactive draft assistant
+       - Setup form: draft position, teams, rounds
+       - Treemendous snake pick order algorithm (R1-R2 linear, R3+ alternating)
+       - Status bar: pick counter, round, current drafter, "my turn in N picks"
+       - Available players table with "Mine" (my pick) + "Taken" (opponent pick) buttons
+       - My Roster panel: shows all my picks in order
+       - Recommendations panel: top 5 recommendations from backend after each pick
+       - Session persisted to localStorage (survives page refresh)
+   - `fantasy/error.tsx` + `fantasy/loading.tsx` — error boundary and Suspense skeleton
+
+3. **TypeScript: clean** (`tsc --noEmit` — 0 errors)
+
+### Phase Status (updated)
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase 0 — Foundation | Partial | Railway secrets need manual set |
+| Phase 1-4 — Frontend | ✅ DONE | All analytics, trading, tournament, mobile/PWA |
+| Phase 5 — Polish (selective) | ✅ DONE (Mar 20) | error.tsx + loading.tsx on /bracket + /today + /fantasy |
+| Platform Expansion Phase 1 | ✅ DONE (Mar 20) | Fantasy Baseball Live Draft Assistant |
+
+### Pending (manual actions)
+- **Gemini:** Run `scripts/migrate_v7.py` on Railway to create fantasy tables
+- **User:** Push `v0.8.0-cbb-stable` tag to remote: `git push origin v0.8.0-cbb-stable`
+- **User:** Set `RAILWAY_TOKEN` in GitHub repo secrets
+- **User:** Confirm `NEXT_PUBLIC_API_URL` in Railway frontend environment
+
+---
+
 ## 0. ARCHITECT DECISION (March 20, 2026 — EMAC-073)
 
 **Session focus:** Phase 4 completed, Phase 0 foundation hardening, Phase 5 architecture decision.
@@ -416,6 +461,48 @@ streamlit run dashboard/app.py
 
 ## 11. HANDOFF PROMPTS
 
+### GEMINI CLI (DevOps Strike Lead) — Run Fantasy DB Migration
+```
+MISSION: Run migrate_v7.py on Railway to create fantasy baseball tables.
+
+CONTEXT (March 20, 2026 — EMAC-073):
+- Platform Expansion Phase 1 (Fantasy Baseball) is complete on the codebase side.
+- DB models are defined in backend/models.py: FantasyDraftSession, FantasyDraftPick, FantasyLineup.
+- Migration script is ready: scripts/migrate_v7.py
+- This is idempotent — safe to run even if tables already exist.
+
+TASK 1 — Run migration on Railway:
+  railway run python scripts/migrate_v7.py
+
+Expected output (success):
+  [ OK ] Created table fantasy_draft_sessions
+  [ OK ] Created table fantasy_draft_picks
+  [ OK ] Created table fantasy_lineups
+  Verification:
+    fantasy_draft_sessions: EXISTS
+    fantasy_draft_picks: EXISTS
+    fantasy_lineups: EXISTS
+
+If tables already exist: [SKIP] messages are fine — still a SUCCESS.
+
+TASK 2 — Verify draft board API is working:
+  curl -s "https://{railway-url}/api/fantasy/draft-board?limit=5" \
+       -H "X-API-Key: $API_KEY_USER1" | python3 -m json.tool | head -30
+  Expected: JSON with "count" > 0 and "players" array.
+
+TASK 3 — Test draft session creation:
+  curl -s -X POST "https://{railway-url}/api/fantasy/draft-session?my_draft_position=7&num_teams=12&num_rounds=23" \
+       -H "X-API-Key: $API_KEY_USER1"
+  Expected: {"session_key": "...", "message": "Draft session created..."}
+
+ESCALATE TO ARCHITECT if:
+- Migration fails with a column conflict or constraint error
+- Draft board API returns 500 or empty players list
+- Railway deployment health check fails after migration
+
+REPORTING: Confirm table creation in Discord #gemini-ops. Include row counts if any data already exists.
+```
+
 ### OPENCLAW (Execution Agent) — ACTION REQUIRED BEFORE THURSDAY TIP-OFF
 ```
 MISSION: Populate market_ml in bracket_2026.json with live R64 moneylines
@@ -574,13 +661,14 @@ Do not write production code — write the spec only.
 
 ---
 
-**Document Version:** EMAC-072
-**Last Updated:** March 19, 2026 — R64 Day 1
-**Status:** All Systems Green | Phase 2+3 Frontend Complete | GUARDIAN active (no model changes until Apr 7)
+**Document Version:** EMAC-073
+**Last Updated:** March 20, 2026
+**Status:** All Systems Green | Fantasy Draft Assistant LIVE | GUARDIAN active (no model changes until Apr 7)
 **Branch:** `claude/fix-clv-null-safety-fPcKB`
-**Pending (as of Mar 20):**
-- **Claude Code (now):** Add error boundaries to `/bracket` and `/today` (30 min). Then start Platform Expansion Phase 1.
-- **Manual (user):** Push `v0.8.0-cbb-stable` tag to remote: `git push origin v0.8.0-cbb-stable`
-- **Manual (user):** Set `RAILWAY_TOKEN` in GitHub repo secrets → Settings → Secrets → Actions
-- **Manual (user):** Confirm `NEXT_PUBLIC_API_URL` is set in Railway frontend service environment variables
-- Apr 7: V9.2 recalibration (read Section 5 of this doc)
+**Pending:**
+- **Gemini:** Run `scripts/migrate_v7.py` on Railway (see Section 11 prompt above)
+- **Manual (user):** Push `v0.8.0-cbb-stable` tag: `git push origin v0.8.0-cbb-stable`
+- **Manual (user):** Set `RAILWAY_TOKEN` in GitHub repo secrets
+- **Manual (user):** Confirm `NEXT_PUBLIC_API_URL` in Railway frontend environment
+- **Draft day (Mar 23):** Switch to Live Draft tab in `/fantasy`, enter position 7, click "Start Draft"
+- **Apr 7:** V9.2 recalibration (read Section 5 of this doc)

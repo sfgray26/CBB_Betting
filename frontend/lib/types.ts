@@ -184,3 +184,45 @@ export interface FantasyDraftBoardResponse {
   count: number
   players: FantasyPlayer[]
 }
+
+export interface DraftPick {
+  pick_number: number
+  round: number
+  drafter_position: number
+  is_my_pick: boolean
+  player_id: string
+  player_name: string
+  player_team: string | null
+  player_positions: string[] | null
+  player_tier: number | null
+  player_adp: number | null
+}
+
+export interface DraftSession {
+  session_key: string
+  my_draft_position: number
+  num_teams: number
+  num_rounds: number
+  current_pick: number
+  total_picks: number
+  my_picks_count: number
+  is_active: boolean
+  picks: DraftPick[]
+  my_picks: DraftPick[]
+}
+
+export interface CreateDraftSessionResponse {
+  session_key: string
+  my_draft_position: number
+  num_teams: number
+  num_rounds: number
+  message: string
+}
+
+export interface RecordPickResponse {
+  message: string
+  pick_number: number
+  player_name: string
+  is_my_pick: boolean
+  next_recommendations: FantasyPlayer[]
+}
