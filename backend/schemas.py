@@ -275,3 +275,71 @@ class LineupSaveRequest(BaseModel):
     projected_points: Optional[float] = None
     notes: Optional[str] = None
 
+
+# ---------------------------------------------------------------------------
+# EMAC-075: Fantasy Season Ops
+# ---------------------------------------------------------------------------
+
+class LineupPlayerOut(BaseModel):
+    """Daily batter recommendation."""
+    player_id: str
+    name: str
+    team: str
+    position: str
+    implied_runs: float
+    park_factor: float
+    lineup_score: float
+    start_time: Optional[datetime] = None
+    opponent: Optional[str] = None
+    status: str = "UNKNOWN"   # "START" | "BENCH" | "UNKNOWN"
+
+
+class StartingPitcherOut(BaseModel):
+    """Daily SP recommendation."""
+    player_id: str
+    name: str
+    team: str
+    opponent_implied_runs: float
+    park_factor: float
+    sp_score: float
+    start_time: Optional[datetime] = None
+    status: str = "UNKNOWN"
+
+
+class DailyLineupResponse(BaseModel):
+    """Response for GET /api/fantasy/lineup/{date}."""
+    date: date
+    batters: List[LineupPlayerOut]
+    pitchers: List[StartingPitcherOut]
+    games_count: int
+
+
+class CategoryDeficitOut(BaseModel):
+    """Matchup category status."""
+    category: str
+    my_total: float
+    opponent_total: float
+    deficit: float
+    winning: bool
+
+
+class WaiverPlayerOut(BaseModel):
+    """Waiver wire recommendation."""
+    player_id: str
+    name: str
+    team: str
+    position: str
+    need_score: float
+    category_contributions: dict
+    owned_pct: float
+    starts_this_week: int
+
+
+class WaiverWireResponse(BaseModel):
+    """Response for GET /api/fantasy/waiver."""
+    week_end: date
+    matchup_opponent: str
+    category_deficits: List[CategoryDeficitOut]
+    top_available: List[WaiverPlayerOut]
+    two_start_pitchers: List[WaiverPlayerOut]
+

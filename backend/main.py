@@ -65,7 +65,12 @@ from backend.schemas import (
     AnalysisTriggerResponse,
     TodaysPredictionsResponse,
     PredictionResponse,
+    DailyLineupResponse,
+    WaiverWireResponse,
+    LineupPlayerOut,
+    StartingPitcherOut,
 )
+from backend.fantasy_baseball.daily_lineup_optimizer import get_lineup_optimizer
 
 # Logging setup
 logging.basicConfig(
@@ -3057,6 +3062,87 @@ async def get_draft_session(
     }
 
 
+@app.get("/api/fantasy/lineup/{lineup_date}", response_model=DailyLineupResponse)
+async def get_fantasy_lineup_recommendations(
+    lineup_date: str,
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """
+    Return daily lineup recommendations for a given date.
+    Wired to DailyLineupOptimizer for implied runs and park factors.
+    """
+    from datetime import date as date_type
+    try:
+        ld = date_type.fromisoformat(lineup_date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="lineup_date must be YYYY-MM-DD")
+
+    optimizer = get_lineup_optimizer()
+    report = optimizer.build_daily_report(game_date=lineup_date)
+
+    batters = [
+        LineupPlayerOut(
+            player_id=str(b.get("player_id", b.get("name", ""))),
+            name=b.get("name", ""),
+            team=b.get("team", ""),
+            position=b.get("position", "OF"),
+            implied_runs=float(b.get("team_implied_runs", 0)),
+            park_factor=float(b.get("park_factor", 1.0)),
+            lineup_score=float(b.get("score", b.get("team_implied_runs", 0))),
+            start_time=b.get("game_time"),
+            opponent=b.get("opponent"),
+            status="START" if i < 9 else "BENCH",
+        )
+        for i, b in enumerate(report.get("batter_rankings", []))
+    ]
+
+    pitchers = [
+        StartingPitcherOut(
+            player_id=str(p.get("player_id", p.get("name", ""))),
+            name=p.get("name", ""),
+            team=p.get("team", ""),
+            opponent_implied_runs=float(p.get("opponent_implied_runs", 0)),
+            park_factor=float(p.get("park_factor", 1.0)),
+            sp_score=float(p.get("score", 0)),
+            start_time=p.get("game_time"),
+            status="START" if i < 2 else "BENCH",
+        )
+        for i, p in enumerate(report.get("pitcher_rankings", []))
+    ]
+
+    return DailyLineupResponse(
+        date=ld,
+        batters=batters,
+        pitchers=pitchers,
+        games_count=len(report.get("games", [])),
+    )
+
+
+@app.get("/api/fantasy/waiver", response_model=WaiverWireResponse)
+async def get_fantasy_waiver_recommendations(
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Return waiver wire recommendations based on matchup category deficits.
+    MVP returns stub data to satisfy frontend.
+    """
+    from datetime import date as date_type, timedelta
+    
+    # Placeholder: end of current week (Sunday)
+    today = date_type.today()
+    week_end = today + timedelta(days=(6 - today.weekday()))
+    
+    return WaiverWireResponse(
+        week_end=week_end,
+        matchup_opponent="TBD",
+        category_deficits=[],
+        top_available=[],
+        two_start_pitchers=[]
+    )
+
+
 @app.post("/api/fantasy/lineup")
 async def save_fantasy_lineup(
     payload: dict,
@@ -3105,14 +3191,14 @@ async def save_fantasy_lineup(
     return {"message": "Lineup saved", "id": lineup.id}
 
 
-@app.get("/api/fantasy/lineup/{lineup_date}")
+@app.get("/api/fantasy/saved-lineup/{lineup_date}")
 async def get_fantasy_lineup(
     lineup_date: str,
     platform: str = Query("yahoo"),
     db: Session = Depends(get_db),
     user: str = Depends(verify_api_key),
 ):
-    """Retrieve saved lineup for a given date."""
+    """Retrieve a previously saved DK/Yahoo lineup for a given date."""
     from backend.models import FantasyLineup
     from datetime import date as date_type
 
