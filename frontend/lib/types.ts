@@ -317,3 +317,42 @@ export interface WaiverWireResponse {
   top_available: WaiverPlayer[]
   two_start_pitchers: WaiverPlayer[]
 }
+
+// ---------------------------------------------------------------------------
+// Fantasy Baseball — Yahoo Roster / Matchup / Lineup Apply (EMAC-076)
+// ---------------------------------------------------------------------------
+
+export interface RosterPlayer {
+  player_key: string
+  name: string
+  team: string | null
+  positions: string[]
+  status: string | null
+  injury_note: string | null
+  z_score: number | null
+  is_undroppable: boolean
+}
+
+export interface RosterResponse {
+  team_key: string
+  players: RosterPlayer[]
+  count: number
+}
+
+export interface MatchupTeam {
+  team_key: string
+  team_name: string
+  stats: Record<string, string | number>
+}
+
+export interface MatchupResponse {
+  week: number | null
+  my_team: MatchupTeam
+  opponent: MatchupTeam
+  is_playoffs: boolean
+}
+
+export interface LineupApplyPlayer {
+  player_key: string
+  position: string
+}

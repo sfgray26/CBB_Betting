@@ -1,8 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { ListChecks, RefreshCw } from 'lucide-react'
+import { useQuery, useMutation } from '@tanstack/react-query'
+import { ListChecks, RefreshCw, Send } from 'lucide-react'
 import { endpoints } from '@/lib/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
@@ -197,12 +197,40 @@ function PitchersTable({ pitchers }: { pitchers: StartingPitcher[] }) {
 
 export default function DailyLineupPage() {
   const [date, setDate] = useState<string>(todayStr())
+  const [applyStatus, setApplyStatus] = useState<'idle' | 'success' | 'error'>('idle')
+  const [applyMessage, setApplyMessage] = useState<string>('')
 
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['fantasy-lineup', date],
     queryFn: () => endpoints.dailyLineup(date),
     refetchInterval: 5 * 60_000,
   })
+
+  const { mutate: applyLineup, isPending: isApplying } = useMutation({
+    mutationFn: () => {
+      const starters = [
+        ...(data?.batters ?? [])
+          .filter((b) => b.status === 'START')
+          .map((b) => ({ player_key: b.player_id, position: b.position })),
+        ...(data?.pitchers ?? [])
+          .filter((p) => p.status === 'START')
+          .map((p) => ({ player_key: p.player_id, position: 'SP' })),
+      ]
+      return endpoints.fantasyApplyLineup(date, starters)
+    },
+    onSuccess: (result) => {
+      setApplyStatus('success')
+      setApplyMessage(`Applied ${result.applied} players for ${result.date}`)
+    },
+    onError: (err: Error) => {
+      setApplyStatus('error')
+      setApplyMessage(err.message)
+    },
+  })
+
+  const starterCount =
+    (data?.batters?.filter((b) => b.status === 'START').length ?? 0) +
+    (data?.pitchers?.filter((p) => p.status === 'START').length ?? 0)
 
   return (
     <div className="space-y-6 max-w-6xl">
@@ -284,6 +312,35 @@ export default function DailyLineupPage() {
           ) : null}
         </div>
       </Card>
+
+      {/* Apply to Yahoo section */}
+      {data && (
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+          <button
+            onClick={() => {
+              setApplyStatus('idle')
+              applyLineup()
+            }}
+            disabled={isApplying || starterCount === 0}
+            title={starterCount === 0 ? 'No starters to apply' : undefined}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm rounded-md font-medium min-h-[44px] transition-colors disabled:cursor-not-allowed"
+          >
+            {isApplying ? (
+              <RefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <Send className="h-4 w-4" />
+            )}
+            {isApplying ? 'Applying...' : `Apply to Yahoo (${starterCount} starters)`}
+          </button>
+
+          {applyStatus === 'success' && (
+            <p className="text-emerald-400 text-sm">{applyMessage}</p>
+          )}
+          {applyStatus === 'error' && (
+            <p className="text-rose-400 text-sm">{applyMessage}</p>
+          )}
+        </div>
+      )}
     </div>
   )
 }

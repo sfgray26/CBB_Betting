@@ -26,6 +26,9 @@ import type {
   RatingsStatus,
   DailyLineupResponse,
   WaiverWireResponse,
+  RosterResponse,
+  MatchupResponse,
+  LineupApplyPlayer,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -246,6 +249,19 @@ export const endpoints = {
 
   waiverWire: () =>
     apiFetch<WaiverWireResponse>('/api/fantasy/waiver'),
+
+  // Fantasy Baseball — Yahoo roster / matchup / lineup apply
+  fantasyRoster: (): Promise<RosterResponse> =>
+    apiFetch<RosterResponse>('/api/fantasy/roster'),
+
+  fantasyMatchup: (): Promise<MatchupResponse> =>
+    apiFetch<MatchupResponse>('/api/fantasy/matchup'),
+
+  fantasyApplyLineup: (date: string, players: LineupApplyPlayer[]): Promise<{ success: boolean; applied: number; date: string }> =>
+    apiFetch('/api/fantasy/lineup/apply', {
+      method: 'PUT',
+      body: JSON.stringify({ date, players }),
+    }),
 
   // Admin
   schedulerStatus: () =>

@@ -343,3 +343,47 @@ class WaiverWireResponse(BaseModel):
     top_available: List[WaiverPlayerOut]
     two_start_pitchers: List[WaiverPlayerOut]
 
+
+# ---------------------------------------------------------------------------
+# EMAC-076: Yahoo Roster, Matchup, Lineup Apply
+# ---------------------------------------------------------------------------
+
+class RosterPlayerOut(BaseModel):
+    player_key: str
+    name: str
+    team: Optional[str] = None
+    positions: List[str] = []
+    status: Optional[str] = None
+    injury_note: Optional[str] = None
+    z_score: Optional[float] = None
+    is_undroppable: bool = False
+
+
+class RosterResponse(BaseModel):
+    team_key: str
+    players: List[RosterPlayerOut]
+    count: int
+
+
+class MatchupTeamOut(BaseModel):
+    team_key: str
+    team_name: str
+    stats: dict
+
+
+class MatchupResponse(BaseModel):
+    week: Optional[int] = None
+    my_team: MatchupTeamOut
+    opponent: MatchupTeamOut
+    is_playoffs: bool = False
+
+
+class LineupApplyPlayer(BaseModel):
+    player_key: str
+    position: str
+
+
+class LineupApplyRequest(BaseModel):
+    date: Optional[str] = None
+    players: List[LineupApplyPlayer]
+

@@ -69,6 +69,17 @@ from backend.schemas import (
     WaiverWireResponse,
     LineupPlayerOut,
     StartingPitcherOut,
+    RosterPlayerOut,
+    RosterResponse,
+    MatchupTeamOut,
+    MatchupResponse,
+    LineupApplyPlayer,
+    LineupApplyRequest,
+)
+from backend.fantasy_baseball.yahoo_client import (
+    YahooFantasyClient,
+    YahooAuthError,
+    YahooAPIError,
 )
 from backend.fantasy_baseball.daily_lineup_optimizer import get_lineup_optimizer
 
@@ -3125,21 +3136,89 @@ async def get_fantasy_waiver_recommendations(
     db: Session = Depends(get_db),
 ):
     """
-    Return waiver wire recommendations based on matchup category deficits.
-    MVP returns stub data to satisfy frontend.
+    Return waiver wire recommendations.
+    Pulls real free agents and waiver players from Yahoo API.
     """
     from datetime import date as date_type, timedelta
-    
-    # Placeholder: end of current week (Sunday)
+    from backend.schemas import WaiverPlayerOut
+
     today = date_type.today()
     week_end = today + timedelta(days=(6 - today.weekday()))
-    
+
+    matchup_opponent = "TBD"
+    top_available: list = []
+    two_start_pitchers: list = []
+
+    try:
+        client = YahooFantasyClient()
+        my_team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+
+        # Get free agents and waiver players
+        free_agents = client.get_free_agents(count=25)
+        waiver_players = client.get_waiver_players(count=20)
+
+        # Try to get matchup opponent
+        try:
+            matchups = client.get_scoreboard()
+            for m in matchups:
+                if isinstance(m, dict):
+                    teams = m.get("teams", {})
+                    team_keys_in_matchup = []
+                    team_names = {}
+                    if isinstance(teams, dict):
+                        count_t = int(teams.get("count", 0))
+                        for ti in range(count_t):
+                            t_entry = teams.get(str(ti), {}).get("team", [])
+                            t_meta = {}
+                            if isinstance(t_entry, list):
+                                for sub in t_entry:
+                                    if isinstance(sub, list):
+                                        for item in sub:
+                                            if isinstance(item, dict):
+                                                t_meta.update(item)
+                                    elif isinstance(sub, dict):
+                                        t_meta.update(sub)
+                            tk = t_meta.get("team_key", "")
+                            tn = t_meta.get("name", "")
+                            team_keys_in_matchup.append(tk)
+                            team_names[tk] = tn
+                    if my_team_key in team_keys_in_matchup:
+                        for tk in team_keys_in_matchup:
+                            if tk != my_team_key:
+                                matchup_opponent = team_names.get(tk, "TBD")
+                        break
+        except Exception:
+            pass
+
+        def _to_waiver_player(p: dict) -> WaiverPlayerOut:
+            positions = p.get("positions") or []
+            return WaiverPlayerOut(
+                player_id=p.get("player_key") or "",
+                name=p.get("name") or "",
+                team=p.get("team") or "",
+                position=positions[0] if positions else "?",
+                need_score=0.0,
+                category_contributions={},
+                owned_pct=0.0,
+                starts_this_week=0,
+            )
+
+        top_available = [_to_waiver_player(p) for p in free_agents]
+        two_start_pitchers = [_to_waiver_player(p) for p in waiver_players]
+
+    except YahooAuthError:
+        pass
+    except YahooAPIError:
+        pass
+    except Exception:
+        pass
+
     return WaiverWireResponse(
         week_end=week_end,
-        matchup_opponent="TBD",
+        matchup_opponent=matchup_opponent,
         category_deficits=[],
-        top_available=[],
-        two_start_pitchers=[]
+        top_available=top_available,
+        two_start_pitchers=two_start_pitchers,
     )
 
 
@@ -3219,6 +3298,202 @@ async def get_fantasy_lineup(
         "actual_points": lineup.actual_points,
         "notes": lineup.notes,
     }
+
+
+# ============================================================================
+# YAHOO FANTASY BASEBALL — ROSTER / MATCHUP / LINEUP APPLY
+# ============================================================================
+
+@app.get("/api/fantasy/roster", response_model=RosterResponse)
+async def get_fantasy_roster(user: str = Depends(verify_api_key)):
+    """
+    Return the authenticated user's current Yahoo roster enriched with z-scores.
+    Returns 503 if Yahoo credentials are not configured.
+    """
+    from backend.fantasy_baseball.player_board import get_player_by_name
+
+    try:
+        client = YahooFantasyClient()
+    except YahooAuthError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Yahoo not configured -- set YAHOO_REFRESH_TOKEN",
+        ) from exc
+
+    team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+
+    try:
+        raw_players = client.get_roster(team_key=team_key)
+    except YahooAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    players_out: list[RosterPlayerOut] = []
+    for p in raw_players:
+        name = p.get("name") or ""
+        z_score: float | None = None
+        board_entry = get_player_by_name(name) if name else None
+        if board_entry:
+            z_score = board_entry.get("z_score")
+
+        players_out.append(
+            RosterPlayerOut(
+                player_key=p.get("player_key") or "",
+                name=name,
+                team=p.get("team"),
+                positions=p.get("positions") or [],
+                status=p.get("status"),
+                injury_note=p.get("injury_note"),
+                z_score=z_score,
+                is_undroppable=bool(p.get("is_undroppable", 0)),
+            )
+        )
+
+    return RosterResponse(
+        team_key=team_key,
+        players=players_out,
+        count=len(players_out),
+    )
+
+
+@app.get("/api/fantasy/matchup", response_model=MatchupResponse)
+async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
+    """
+    Return current week's matchup: opponent name + category-by-category breakdown.
+    Returns stub with empty stats if scoreboard is unavailable (pre-season).
+    """
+    try:
+        client = YahooFantasyClient()
+    except YahooAuthError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Yahoo not configured -- set YAHOO_REFRESH_TOKEN",
+        ) from exc
+
+    my_team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+
+    _stub_my = MatchupTeamOut(team_key=my_team_key, team_name="My Team", stats={})
+    _stub_opp = MatchupTeamOut(team_key="", team_name="TBD", stats={})
+
+    try:
+        matchups = client.get_scoreboard()
+    except (YahooAuthError, YahooAPIError):
+        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp)
+
+    if not matchups:
+        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp)
+
+    # Determine current week from first matchup
+    week: int | None = None
+    is_playoffs = False
+
+    def _extract_team_stats(team_entry) -> tuple[str, str, dict]:
+        """Return (team_key, team_name, stats_dict) from Yahoo team entry."""
+        t_meta: dict = {}
+        stats_raw: list = []
+        entries = team_entry if isinstance(team_entry, list) else [team_entry]
+        for sub in entries:
+            if isinstance(sub, list):
+                for item in sub:
+                    if isinstance(item, dict):
+                        t_meta.update(item)
+            elif isinstance(sub, dict):
+                if "team_stats" in sub:
+                    inner = sub["team_stats"].get("stats", [])
+                    if isinstance(inner, list):
+                        stats_raw = inner
+                else:
+                    t_meta.update(sub)
+        stats_dict: dict = {}
+        for s in stats_raw:
+            if isinstance(s, dict):
+                stat = s.get("stat", {})
+                if isinstance(stat, dict):
+                    stats_dict[stat.get("stat_id", "")] = stat.get("value", "")
+        return (
+            t_meta.get("team_key", ""),
+            t_meta.get("name", ""),
+            stats_dict,
+        )
+
+    for m in matchups:
+        if not isinstance(m, dict):
+            continue
+        w = m.get("week")
+        if w:
+            try:
+                week = int(w)
+            except (TypeError, ValueError):
+                pass
+        is_playoffs = bool(m.get("is_playoffs", 0))
+
+        teams = m.get("teams", {})
+        if not isinstance(teams, dict):
+            continue
+        count_t = int(teams.get("count", 0))
+        team_data: list[tuple[str, str, dict]] = []
+        for ti in range(count_t):
+            entry = teams.get(str(ti), {}).get("team", [])
+            team_data.append(_extract_team_stats(entry))
+
+        # Check if our team is in this matchup
+        my_entry = next((t for t in team_data if t[0] == my_team_key), None)
+        if my_entry is None:
+            continue
+
+        opp_entry = next((t for t in team_data if t[0] != my_team_key), None)
+        if opp_entry is None:
+            opp_entry = ("", "Unknown", {})
+
+        return MatchupResponse(
+            week=week,
+            my_team=MatchupTeamOut(
+                team_key=my_entry[0],
+                team_name=my_entry[1],
+                stats=my_entry[2],
+            ),
+            opponent=MatchupTeamOut(
+                team_key=opp_entry[0],
+                team_name=opp_entry[1],
+                stats=opp_entry[2],
+            ),
+            is_playoffs=is_playoffs,
+        )
+
+    # Our team not found in any matchup (pre-season / bye week)
+    return MatchupResponse(week=week, my_team=_stub_my, opponent=_stub_opp)
+
+
+@app.put("/api/fantasy/lineup/apply")
+async def apply_fantasy_lineup(
+    payload: LineupApplyRequest,
+    user: str = Depends(verify_api_key),
+):
+    """
+    Push a lineup to Yahoo Fantasy.
+    Body: {date?: YYYY-MM-DD, players: [{player_key, position}]}
+    """
+    from datetime import datetime as _dt
+
+    try:
+        client = YahooFantasyClient()
+    except YahooAuthError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Yahoo not configured -- set YAHOO_REFRESH_TOKEN",
+        ) from exc
+
+    apply_date = payload.date or _dt.utcnow().strftime("%Y-%m-%d")
+    team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+    lineup_dicts = [{"player_key": p.player_key, "position": p.position} for p in payload.players]
+
+    try:
+        client.set_lineup(team_key=team_key, date=apply_date, lineup=lineup_dicts)
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return {"success": True, "applied": len(payload.players), "date": apply_date}
 
 
 # ============================================================================
