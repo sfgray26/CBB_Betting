@@ -3213,10 +3213,108 @@ async def get_fantasy_waiver_recommendations(
     except Exception:
         pass
 
+    # Build real category deficits from scoreboard stats
+    category_deficits: list = []
+    try:
+        from backend.schemas import CategoryDeficitOut
+        if matchup_opponent != "TBD":
+            # Re-fetch scoreboard to get stats (already fetched above for opponent name,
+            # but we need the stats dict — refetch is acceptable here, results are small)
+            matchups2 = client.get_scoreboard()
+            # Build stat_id map for readable labels
+            sid_map: dict[str, str] = {}
+            try:
+                settings2 = client.get_league_settings()
+                stat_cats2 = (
+                    settings2
+                    .get("settings", [{}])[0]
+                    .get("stat_categories", {})
+                    .get("stats", [])
+                )
+                for entry in stat_cats2:
+                    if isinstance(entry, dict):
+                        s2 = entry.get("stat", {})
+                        sid2 = str(s2.get("stat_id", ""))
+                        abbr2 = s2.get("display_name") or s2.get("abbreviation") or s2.get("name") or sid2
+                        if sid2:
+                            sid_map[sid2] = abbr2
+            except Exception:
+                pass
+            # Lower-is-better categories for correct deficit direction
+            lower_better = {"ERA", "WHIP"}
+            for m2 in matchups2:
+                if not isinstance(m2, dict):
+                    continue
+                teams2 = m2.get("teams", {})
+                if not isinstance(teams2, dict):
+                    continue
+                count2 = int(teams2.get("count", 0))
+                team_stats_map: dict[str, dict] = {}
+                team_names_map: dict[str, str] = {}
+                for ti2 in range(count2):
+                    entry2 = teams2.get(str(ti2), {}).get("team", [])
+                    t_meta2: dict = {}
+                    stats_raw2: list = []
+                    items2 = entry2 if isinstance(entry2, list) else [entry2]
+                    for sub2 in items2:
+                        if isinstance(sub2, list):
+                            for it2 in sub2:
+                                if isinstance(it2, dict):
+                                    t_meta2.update(it2)
+                        elif isinstance(sub2, dict):
+                            if "team_stats" in sub2:
+                                inner2 = sub2["team_stats"].get("stats", [])
+                                if isinstance(inner2, list):
+                                    stats_raw2 = inner2
+                            else:
+                                t_meta2.update(sub2)
+                    tk2 = t_meta2.get("team_key", "")
+                    tn2 = t_meta2.get("name", "")
+                    sd2: dict = {}
+                    for st2 in stats_raw2:
+                        if isinstance(st2, dict):
+                            stobj = st2.get("stat", {})
+                            if isinstance(stobj, dict):
+                                sid_k = str(stobj.get("stat_id", ""))
+                                key2 = sid_map.get(sid_k, sid_k)
+                                try:
+                                    sd2[key2] = float(stobj.get("value", 0) or 0)
+                                except (TypeError, ValueError):
+                                    sd2[key2] = 0.0
+                    team_stats_map[tk2] = sd2
+                    team_names_map[tk2] = tn2
+                if my_team_key not in team_stats_map:
+                    continue
+                my_stats = team_stats_map[my_team_key]
+                opp_key = next((k for k in team_stats_map if k != my_team_key), None)
+                if not opp_key:
+                    continue
+                opp_stats = team_stats_map[opp_key]
+                for cat, my_val in my_stats.items():
+                    opp_val = opp_stats.get(cat, 0.0)
+                    if lower_better.issuperset({cat}):
+                        deficit = my_val - opp_val  # positive = we are worse (higher ERA/WHIP)
+                        winning = my_val < opp_val
+                    else:
+                        deficit = opp_val - my_val  # positive = we are behind
+                        winning = my_val > opp_val
+                    category_deficits.append(
+                        CategoryDeficitOut(
+                            category=cat,
+                            my_total=my_val,
+                            opponent_total=opp_val,
+                            deficit=deficit,
+                            winning=winning,
+                        )
+                    )
+                break  # found our matchup
+    except Exception:
+        category_deficits = []
+
     return WaiverWireResponse(
         week_end=week_end,
         matchup_opponent=matchup_opponent,
-        category_deficits=[],
+        category_deficits=category_deficits,
         top_available=top_available,
         two_start_pitchers=two_start_pitchers,
     )
@@ -3376,6 +3474,26 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
     _stub_my = MatchupTeamOut(team_key=my_team_key, team_name="My Team", stats={})
     _stub_opp = MatchupTeamOut(team_key="", team_name="TBD", stats={})
 
+    # Build stat_id → abbreviation map from league settings (best-effort)
+    stat_id_map: dict[str, str] = {}
+    try:
+        settings = client.get_league_settings()
+        stat_cats = (
+            settings
+            .get("settings", [{}])[0]
+            .get("stat_categories", {})
+            .get("stats", [])
+        )
+        for entry in stat_cats:
+            if isinstance(entry, dict):
+                s = entry.get("stat", {})
+                sid = str(s.get("stat_id", ""))
+                abbr = s.get("display_name") or s.get("abbreviation") or s.get("name") or sid
+                if sid:
+                    stat_id_map[sid] = abbr
+    except Exception:
+        pass  # fall back to raw stat_ids
+
     try:
         matchups = client.get_scoreboard()
     except (YahooAuthError, YahooAPIError):
@@ -3389,7 +3507,9 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
     is_playoffs = False
 
     def _extract_team_stats(team_entry) -> tuple[str, str, dict]:
-        """Return (team_key, team_name, stats_dict) from Yahoo team entry."""
+        """Return (team_key, team_name, stats_dict) from Yahoo team entry.
+        Stats are keyed by abbreviation (e.g. 'R', 'HR') when stat_id_map is populated,
+        otherwise by raw stat_id string."""
         t_meta: dict = {}
         stats_raw: list = []
         entries = team_entry if isinstance(team_entry, list) else [team_entry]
@@ -3410,7 +3530,11 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
             if isinstance(s, dict):
                 stat = s.get("stat", {})
                 if isinstance(stat, dict):
-                    stats_dict[stat.get("stat_id", "")] = stat.get("value", "")
+                    sid = str(stat.get("stat_id", ""))
+                    key = stat_id_map.get(sid, sid)  # resolve to abbrev or fall back to id
+                    val = stat.get("value", "")
+                    if key:
+                        stats_dict[key] = val
         return (
             t_meta.get("team_key", ""),
             t_meta.get("name", ""),
