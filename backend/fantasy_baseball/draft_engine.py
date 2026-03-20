@@ -396,7 +396,7 @@ class DraftRecommender:
             # If we haven't yet reached my turn and ADP is well before my pick,
             # this player will almost certainly be gone — discount heavily.
             if not self.state.is_my_pick and adp < target_pick - 2:
-                picks_not_logged = target_pick - self.state.current_overall_pick
+                picks_not_logged = target_pick - self.state.current_overall_pick  # noqa: F841
                 # How far before my pick is this player expected to go?
                 already_gone_by = target_pick - adp
                 # Each additional pick before mine reduces survival probability

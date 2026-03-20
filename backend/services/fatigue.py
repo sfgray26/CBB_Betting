@@ -559,7 +559,7 @@ class FatigueService:
         """
         # Get arena data
         home_arena = get_arena_data(home_team)
-        away_arena = get_arena_data(away_team)
+        away_arena = get_arena_data(away_team)  # noqa: F841
         
         # Fetch recent games if DB available
         home_recent = None

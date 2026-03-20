@@ -396,7 +396,7 @@ class TelemetryDashboard:
             lines.append(f"{emoji} **{anomaly.component}**: {anomaly.message}")
         
         # Add quick metrics
-        lines.append(f"\n📊 Quick status:")
+        lines.append("\n📊 Quick status:")
         lines.append(f"• Data sources: {metrics.active_data_sources}/2")
         lines.append(f"• Predictions today: {metrics.predictions_today}")
         lines.append(f"• Pending escalations: {metrics.pending_escalations}")

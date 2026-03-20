@@ -181,7 +181,7 @@ def load_steamer_pitching(path: Path) -> list[dict]:
                 era = float(row.get("ERA", 4.5) or 4.5)
                 whip = float(row.get("WHIP", 1.3) or 1.3)
                 hr_pit = float(row.get("HR", 0) or 0)
-                bb = float(row.get("BB", 0) or 0)
+                bb = float(row.get("BB", 0) or 0)  # noqa: F841
 
                 k9 = (k / ip * 9) if ip > 0 else 0.0
                 qs = round(gs * 0.55) if gs >= 10 else 0

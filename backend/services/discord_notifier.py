@@ -364,7 +364,7 @@ def send_todays_bets(
         return
 
     n_bets = summary.get("bets_recommended", 0)
-    today = datetime.now(timezone.utc).strftime("%b %d, %Y")
+    today = datetime.now(timezone.utc).strftime("%b %d, %Y")  # noqa: F841
 
     # NO BETs = NO DISCORD MESSAGE
     if n_bets == 0:
@@ -433,7 +433,7 @@ def send_health_briefing(summary: Dict) -> None:
     port = summary.get("portfolio", {})
     sys_status = summary.get("system", {})
     
-    status_str = (
+    status_str = (  # noqa: F841
         f"Performance: {perf.get('status')} (MAE: {perf.get('mean_mae', 'N/A')}), "
         f"Portfolio: {port.get('status')} (Drawdown: {port.get('current_drawdown_pct', 0.0):.1%}), "
         f"System: {sys_status.get('status')} (Tests: {sys_status.get('passed', False)})"

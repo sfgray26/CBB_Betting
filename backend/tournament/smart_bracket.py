@@ -436,7 +436,7 @@ class SmartBracketGenerator:
         if factors.pace_mismatch_boost > 0.05:
             reasons.append(f"pace mismatch favors {winner.name}")
         if factors.three_pt_boost > 0.08:
-            reasons.append(f"high-variance 3PT game")
+            reasons.append("high-variance 3PT game")
         if factors.tourney_exp_boost > 0.03:
             reasons.append(f"{winner.name} has more tournament experience")
         if factors.recent_form_boost > 0.05:
@@ -680,7 +680,7 @@ if __name__ == "__main__":
     generator = SmartBracketGenerator(chaos_level=0.7)
     factors = generator.calculate_upset_factors(vanderbilt, mcneese, round_num=1)
     
-    print(f"Vanderbilt vs McNeese Upset Analysis:")
+    print("Vanderbilt vs McNeese Upset Analysis:")
     print(f"  Base upset rate: {factors.base_upset_prob:.1%}")
     print(f"  Model upset prob: {factors.model_upset_prob:.1%}")
     print(f"  Pace boost: +{factors.pace_mismatch_boost:.1%}")

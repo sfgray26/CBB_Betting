@@ -351,21 +351,21 @@ def send_weekly_summary(
         return False
     
     lines = [
-        f"📊 **WEEKLY RECAP**",
-        f"",
+        "📊 **WEEKLY RECAP**",
+        "",
         f"**Record:** {week_record}",
         f"**P&L:** {week_pl:+.2f}u",
-        f"",
+        "",
     ]
-    
+
     if best_bet:
         lines.append(f"🌟 **Best Bet:** {best_bet.get('team')} ({best_bet.get('pl', 0):+.2f}u)")
-    
+
     if worst_bet:
         lines.append(f"💩 **Worst Bet:** {worst_bet.get('team')} ({worst_bet.get('pl', 0):+.2f}u)")
-    
+
     if trends:
-        lines.append(f"\n📈 **Trends:**")
+        lines.append("\n📈 **Trends:**")
         for trend in trends[:3]:
             lines.append(f"  • {trend}")
     

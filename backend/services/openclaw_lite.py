@@ -440,7 +440,7 @@ class OpenClawLite:
             return IntegrityResult(
                 verdict=IntegrityVerdict.CAUTION.value,
                 confidence=0.75,
-                reasoning=f"High-stakes bet with risk signals",
+                reasoning="High-stakes bet with risk signals",
                 source="heuristic",
                 latency_ms=(time.time() - start) * 1000
             )

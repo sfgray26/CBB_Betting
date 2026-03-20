@@ -252,7 +252,7 @@ async def lifespan(app: FastAPI):
             preds = db.query(Prediction).filter(Prediction.prediction_date == today_utc).all()
             
             if preds:
-                from backend.betting_model import ReanalysisEngine, CBBEdgeModel
+                from backend.betting_model import ReanalysisEngine
                 params = load_current_params(db)
                 model = CBBEdgeModel(params)
                 
@@ -458,7 +458,7 @@ def _morning_briefing_job():
             "Morning Briefing: %d BET, %d CONSIDER. %s", n_bets, n_considered, narrative
         )
 
-        duration = _time.monotonic() - t0
+        duration = _time.monotonic() - t0  # noqa: F841
 
         # Convert to simplified format for Discord
         bet_details = [

@@ -75,7 +75,7 @@ def check_performance_alerts(db: Session) -> List[Alert]:
     if not bets:
         return alerts
 
-    total = len(bets)
+    total = len(bets)  # noqa: F841
     pl_list = [b.profit_loss_dollars or 0.0 for b in bets]
 
     # 1-2. CLV alerts — last 50 bets with CLV data

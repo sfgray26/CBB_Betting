@@ -75,17 +75,28 @@ jobs:
         psql -h localhost -U postgres -c "CREATE DATABASE test_cbb_edge;"
         python scripts/init_db.py
     
+    - name: Lint — bug gate (flake8 F-errors only)
+      run: |
+        flake8 backend/ --select=F --extend-ignore=F401 --count
+      # Hard gate: catches real bugs (undefined names, broken f-strings, redefined-but-unused)
+      # F401 (unused imports) excluded — harmless, 100+ pre-existing violations
+
+    - name: Lint — style advisory (flake8 full, non-blocking)
+      run: |
+        flake8 backend/ --max-line-length=120 --extend-ignore=E501,W503,E203 --statistics --count || true
+      # Informational only — shows style debt without blocking deployment
+
     - name: Syntax check core files
       run: |
         python -m py_compile backend/main.py backend/betting_model.py backend/services/analysis.py backend/services/odds.py
 
-    - name: Run tests
+    - name: Run tests with coverage floor
       env:
         DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_cbb_edge
         API_KEY_USER1: test_key_12345678901234567890
         ENVIRONMENT: development
       run: |
-        pytest tests/ -v --tb=short --cov=backend
+        pytest tests/ -v --tb=short --cov=backend --cov-fail-under=75
 
   deploy:
     runs-on: ubuntu-latest

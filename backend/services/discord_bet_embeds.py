@@ -90,7 +90,7 @@ def create_detailed_bet_embed(bet: Dict, bet_number: int = 1) -> Dict:
     verdict = bet.get('verdict', '')
     
     team_to_bet = home if bet_side == 'home' else away
-    opponent = away if bet_side == 'home' else home
+    opponent = away if bet_side == 'home' else home  # noqa: F841
     spread_val = spread if bet_side == 'home' else -spread
     spread_str = f"{spread_val:+.1f}"
     
