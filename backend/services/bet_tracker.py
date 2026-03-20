@@ -320,14 +320,20 @@ def update_completed_games() -> Dict:
                         actual_margin, len(unresolved_preds), game.id,
                     )
 
-            # Settle pending bets
+            # Settle pending bets — with_for_update(skip_locked=True) prevents
+            # double-settlement if two cron runs overlap on the same game.
             pending = (
                 db.query(BetLog)
                 .filter(BetLog.game_id == game.id, BetLog.outcome.is_(None))
+                .with_for_update(skip_locked=True)
                 .all()
             )
             for bet in pending:
                 try:
+                    # Re-check outcome inside lock in case another session just settled it
+                    if bet.outcome is not None:
+                        continue
+
                     result = calculate_bet_outcome(bet, game, starting_bankroll)
                     if result is None:
                         errors.append(f"Bet {bet.id} ({bet.pick}): could not determine outcome")

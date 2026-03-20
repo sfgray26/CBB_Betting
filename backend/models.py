@@ -42,7 +42,14 @@ _ASYNC_DATABASE_URL = DATABASE_URL.replace(
 )
 
 # ── Sync engine (keep for all existing sync paths) ──────────────────────────
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=20,
+    max_overflow=40,
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    echo=False,
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # ── Async engine (used by nightly analysis hot path and APScheduler coroutines)
