@@ -1,4 +1,4 @@
-# OPERATIONAL HANDOFF (EMAC-075)
+# OPERATIONAL HANDOFF (EMAC-076)
 
 > Ground truth as of **March 20, 2026**. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
@@ -12,21 +12,20 @@
 
 ## 0. CURRENT STATE
 
-**Status: GUARDIAN ACTIVE — All systems green. Fantasy backend pending.**
+**Status: GUARDIAN ACTIVE — All systems green. Fantasy fully wired.**
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| Frontend Phases 0-5 | DONE | All 9+ pages live, validated, pushed to main |
+| Frontend Phases 0-5 | DONE | All pages live, validated, pushed to main |
 | Fantasy Phase 1 — Draft Assistant | DONE (Mar 20) | Live Draft tab, snake order, roster panel |
-| Fantasy DB Migration v7 | DONE (Mar 20) | Railway — Gemini confirmed |
-| Admin Risk Dashboard (EMAC-074) | DONE (Mar 20) | /admin — portfolio, ratings, scheduler, odds monitor |
-| EMAC-075 Frontend | DONE (Mar 20) | /fantasy/lineup + /fantasy/waiver pages built, pushed |
-| EMAC-075 Backend | DONE (Mar 20) | Both endpoints built by Claude. GET /api/fantasy/lineup/{date} + GET /api/fantasy/waiver live. |
+| Fantasy DB Migration v7 | DONE (Mar 20) | Railway confirmed |
+| Admin Risk Dashboard (EMAC-074) | DONE (Mar 20) | /admin — 4-panel ops view |
+| EMAC-075 Full Stack | DONE (Mar 20) | /fantasy/lineup + /fantasy/waiver + backend endpoints |
+| EMAC-076 Yahoo Integration | DONE (Mar 20) | /fantasy/roster, /fantasy/matchup, /fantasy/waiver wired to Yahoo OAuth |
+| Kimi Audit Fixes | DONE (Mar 20) | Connection pool tuned, bet settlement race condition fixed |
 | V9.2 Recalibration | LOCKED until Apr 7 | Guardian active — no model changes |
 
-**Pending manual actions (user):**
-- Push `v0.8.0-cbb-stable` tag: `git push origin v0.8.0-cbb-stable`
-- Confirm `NEXT_PUBLIC_API_URL` in Railway frontend environment
+**No pending user actions.**
 
 ---
 
