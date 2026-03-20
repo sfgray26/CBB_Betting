@@ -255,3 +255,65 @@ export interface RecordPickResponse {
   is_my_pick: boolean
   next_recommendations: FantasyPlayer[]
 }
+
+// ---------------------------------------------------------------------------
+// Fantasy Baseball — Season Ops
+// ---------------------------------------------------------------------------
+
+export interface LineupPlayer {
+  player_id: string
+  name: string
+  team: string
+  position: string
+  implied_runs: number
+  park_factor: number
+  lineup_score: number
+  start_time: string
+  opponent: string
+  status: 'START' | 'BENCH' | 'UNKNOWN'
+}
+
+export interface StartingPitcher {
+  player_id: string
+  name: string
+  team: string
+  opponent_implied_runs: number
+  park_factor: number
+  sp_score: number
+  start_time: string
+  status: 'START' | 'BENCH' | 'UNKNOWN'
+}
+
+export interface DailyLineupResponse {
+  date: string
+  batters: LineupPlayer[]
+  pitchers: StartingPitcher[]
+  games_count: number
+}
+
+export interface WaiverPlayer {
+  player_id: string
+  name: string
+  team: string
+  position: string
+  need_score: number
+  category_contributions: Record<string, number>
+  owned_pct: number
+  starts_this_week: number
+}
+
+export interface CategoryDeficit {
+  category: string
+  my_total: number
+  opponent_total: number
+  deficit: number
+  winning: boolean
+}
+
+export interface WaiverWireResponse {
+  week_end: string
+  matchup_opponent: string
+  category_deficits: CategoryDeficit[]
+  top_available: WaiverPlayer[]
+  two_start_pitchers: WaiverPlayer[]
+}

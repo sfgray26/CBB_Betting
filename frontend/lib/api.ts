@@ -24,6 +24,8 @@ import type {
   RecordPickResponse,
   SchedulerStatus,
   RatingsStatus,
+  DailyLineupResponse,
+  WaiverWireResponse,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -237,6 +239,13 @@ export const endpoints = {
 
   fantasyGetSession: (sessionKey: string) =>
     apiFetch<DraftSession>(`/api/fantasy/draft-session/${sessionKey}`),
+
+  // Fantasy Baseball — Season Ops
+  dailyLineup: (date?: string) =>
+    apiFetch<DailyLineupResponse>(`/api/fantasy/lineup/${date ?? new Date().toISOString().slice(0, 10)}`),
+
+  waiverWire: () =>
+    apiFetch<WaiverWireResponse>('/api/fantasy/waiver'),
 
   // Admin
   schedulerStatus: () =>
