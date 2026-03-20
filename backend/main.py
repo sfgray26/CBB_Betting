@@ -3402,6 +3402,60 @@ async def get_fantasy_lineup(
 # YAHOO FANTASY BASEBALL — ROSTER / MATCHUP / LINEUP APPLY
 # ============================================================================
 
+@app.get("/api/fantasy/yahoo-diag")
+async def yahoo_diag(user: str = Depends(verify_api_key)):
+    """
+    Diagnostic endpoint — returns Yahoo config status without making API calls.
+    Safe to call: reveals which env vars are present (values redacted).
+    Remove after debugging is complete.
+    """
+    client_id = os.getenv("YAHOO_CLIENT_ID", "")
+    client_secret = os.getenv("YAHOO_CLIENT_SECRET", "")
+    refresh_token = os.getenv("YAHOO_REFRESH_TOKEN", "")
+    access_token = os.getenv("YAHOO_ACCESS_TOKEN", "")
+    league_id = os.getenv("YAHOO_LEAGUE_ID", "72586")
+
+    # Try constructor
+    constructor_ok = False
+    constructor_error = None
+    try:
+        _c = YahooFantasyClient()
+        constructor_ok = True
+    except YahooAuthError as e:
+        constructor_error = str(e)
+    except Exception as e:
+        constructor_error = f"Unexpected: {e}"
+
+    # Try token refresh (only if constructor passed)
+    token_ok = False
+    token_error = None
+    if constructor_ok:
+        try:
+            _c._ensure_token()
+            token_ok = True
+        except YahooAuthError as e:
+            token_error = str(e)
+        except Exception as e:
+            token_error = f"Unexpected: {e}"
+
+    return {
+        "env_vars_present": {
+            "YAHOO_CLIENT_ID": bool(client_id),
+            "YAHOO_CLIENT_SECRET": bool(client_secret),
+            "YAHOO_REFRESH_TOKEN": bool(refresh_token),
+            "YAHOO_ACCESS_TOKEN": bool(access_token),
+            "YAHOO_LEAGUE_ID": league_id,
+        },
+        "client_id_length": len(client_id),
+        "client_secret_length": len(client_secret),
+        "refresh_token_length": len(refresh_token),
+        "constructor_ok": constructor_ok,
+        "constructor_error": constructor_error,
+        "token_refresh_ok": token_ok,
+        "token_refresh_error": token_error,
+    }
+
+
 @app.get("/api/fantasy/roster", response_model=RosterResponse)
 async def get_fantasy_roster(user: str = Depends(verify_api_key)):
     """
