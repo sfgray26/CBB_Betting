@@ -1,10 +1,6 @@
 # OPERATIONAL HANDOFF (EMAC-072)
 
-<<<<<<< HEAD
-> Ground truth as of **March 18, 2026 ~18:00 ET**. Operator: Claude Code (Master Architect).
-=======
-> Ground truth as of **March 19, 2026 ~R64 Day 1**. Operator: Claude Code (Master Architect).
->>>>>>> 8f695a2dbf5d58a307467d55dc96736a66ea38f6
+> Ground truth as of **March 20, 2026**. Operator: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 > Full enhancement plan: `tasks/cbb_enhancement_plan.md` · V9.2 spec: `reports/K12_RECALIBRATION_SPEC_V92.md`
 > **Frontend Migration:** `FRONTEND_MIGRATION.md` · Task tracker: `tasks/todo.md`

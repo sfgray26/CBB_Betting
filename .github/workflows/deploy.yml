@@ -109,7 +109,12 @@ jobs:
     - name: Install Railway CLI
       run: npm install -g @railway/cli
     
-    - name: Deploy to Railway
+    - name: Deploy backend to Railway
       env:
         RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       run: railway up
+
+    - name: Deploy frontend to Railway
+      env:
+        RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      run: cd frontend && railway up
