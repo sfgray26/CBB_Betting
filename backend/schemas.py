@@ -7,7 +7,7 @@ vulnerabilities on ORM models and generates accurate OpenAPI docs.
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 from datetime import date, datetime
 
 from pydantic import BaseModel, Field, field_validator
