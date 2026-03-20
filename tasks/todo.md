@@ -12,7 +12,7 @@
 | Fantasy DB Migration v7 | DONE (Mar 20) | Railway — Gemini confirmed |
 | Admin Risk Dashboard (EMAC-074) | DONE (Mar 20) | /admin — 4-panel 2x2 ops view |
 | EMAC-075 Frontend | DONE (Mar 20) | /fantasy/lineup + /fantasy/waiver pages live |
-| EMAC-075 Backend | PENDING — Gemini | API endpoints not built. Due Mar 27. |
+| EMAC-075 Backend | DONE (Mar 20) | Built by Claude. GET /lineup + GET /waiver live. |
 | V9.2 Recalibration | LOCKED — Apr 7 | Guardian freeze active |
 
 ---
@@ -32,23 +32,21 @@
 
 ---
 
-## EMAC-075 — Fantasy Season Ops (ACTIVE — due Mar 27)
+## EMAC-075 — Fantasy Season Ops (COMPLETE)
 
-**Frontend: DONE.** Pages `/fantasy/lineup` and `/fantasy/waiver` are built and pushed.
-**Backend: PENDING (Gemini swimlane).** Endpoints return 404 until Gemini builds them.
+**Frontend:** DONE — `/fantasy/lineup` + `/fantasy/waiver` pages built and pushed (Mar 20)
+**Backend:** DONE — built by Claude after Gemini introduced errors (see lessons below)
 
-### Backend Tasks (Gemini)
-- [ ] `GET /api/fantasy/lineup/{date}` — DailyLineupResponse (batters + pitchers + games_count)
-  - Wire to `backend/fantasy_baseball/daily_lineup_optimizer.py` if output matches
-  - MVP: return empty lists with games_count=0 rather than 500
-- [ ] `GET /api/fantasy/waiver` — WaiverWireResponse (category deficits + top available)
-  - MVP: stub with empty lists and placeholder matchup_opponent
-- [ ] Add `LineupPlayerOut`, `StartingPitcherOut`, `DailyLineupResponse`, `WaiverPlayerOut`,
-      `CategoryDeficitOut`, `WaiverWireResponse` schemas to `backend/schemas.py`
-- [ ] Both endpoints: `verify_api_key` dependency (not admin)
-- [ ] Confirm both return 200 via curl before marking done
+- [x] `GET /api/fantasy/lineup/{date}` — wired to `DailyLineupOptimizer.build_daily_report()`, maps batter/pitcher rankings to response schema, top 9 batters = START, top 2 SPs = START
+- [x] `GET /api/fantasy/waiver` — MVP stub returning valid `WaiverWireResponse` (empty lists)
+- [x] Schemas: `LineupPlayerOut`, `StartingPitcherOut`, `DailyLineupResponse`, `WaiverPlayerOut`, `CategoryDeficitOut`, `WaiverWireResponse` in `backend/schemas.py`
+- [x] Route conflict resolved: old saved-lineup endpoint renamed to `/api/fantasy/saved-lineup/{date}`
+- [x] Both endpoints return 200 and pass `py_compile`
 
-### Full spec in HANDOFF.md Section 10 (Gemini delegation bundle)
+**Lessons (added to HANDOFF.md hive wisdom):**
+- Gemini created a duplicate `GET /api/fantasy/lineup/{date}` route — check for existing routes before adding any
+- Gemini used nonexistent dict key `report.get("games_found")` — always read the function return type first
+- Gemini tested against production without committing — meaningless results
 
 ---
 
@@ -77,7 +75,7 @@
 
 | Description | Date |
 |-------------|------|
-| Fantasy Season Ops frontend (/fantasy/lineup, /fantasy/waiver) | Mar 20 |
+| Fantasy Season Ops — full stack (/fantasy/lineup, /fantasy/waiver + backend endpoints) | Mar 20 |
 | Admin Risk Dashboard (/admin — 4-panel) | Mar 20 |
 | Fantasy Draft Assistant (Live Draft tab, snake order, roster panel) | Mar 20 |
 | Fantasy DB Migration v7 on Railway | Mar 20 |

@@ -13,12 +13,12 @@ This document establishes the "Hive Mentality" for the CBB Edge development team
 *   **Ethos:** "Build for 10 years, not 10 minutes."
 *   **Elite Mandate:** Must review Gemini's code for architectural consistency and Pythonic elegance.
 
-### 2. Gemini CLI — "The DevOps Strike Lead"
-*   **Domain:** Operational execution, environment stability, rapid prototyping.
-*   **Strengths:** Surgical codebase edits, real-time research, DevOps automation, CLI mastery.
-*   **Weakness:** Multi-file structural refactoring, abstract mathematical proofs.
-*   **Ethos:** "Zero friction, maximum velocity, surgical precision."
-*   **Elite Mandate:** Must review Claude's logic for "real-world" execute-ability and environment compatibility.
+### 2. Gemini CLI — "Ops & Research" (RESTRICTED — Mar 20, 2026)
+*   **Domain:** Railway ops, env vars, web research, documentation only.
+*   **Restriction:** No code write access. Created duplicate FastAPI routes and invalid dict key references in EMAC-075 — demoted from code dev.
+*   **Permitted:** `railway logs`, env var changes, single-doc web research, `.md` documentation edits.
+*   **NOT permitted:** Any edits to `backend/`, `frontend/`, `tests/`, `scripts/`.
+*   **Ethos:** "Support the team without breaking what works."
 
 ### 3. Kimi CLI — "The Deep Intelligence Unit"
 *   **Domain:** Whole-corpus analysis, long-context synthesis, performance attribution, tournament intelligence.
@@ -45,9 +45,10 @@ This document establishes the "Hive Mentality" for the CBB Edge development team
 ## 🤝 The Hive Protocol
 
 ### 1. The "Trust but Verify" Startup
-Every session starts with a **Peer Review**. 
-*   **Claude:** Review the "Surgical Edits" Gemini made. Did they break a pattern? Fix it.
-*   **Gemini:** Review the "Architectural Logic" Claude wrote. Is it too heavy? Can a script simplify it?
+Every session starts with a **Peer Review**.
+*   **Claude:** Review Kimi's proposed changes from reports/. Approve and implement what's correct.
+*   **OpenClaw:** Validate all BET-tier integrity on the current slate before sizing is finalized.
+*   **Gemini:** Monitor Railway health, confirm env vars are set, tail logs if needed.
 
 ### 2. The "Mission Handoff" (HANDOFF.md)
 We no longer "list tasks." We provide **Operational Briefings**.
@@ -65,10 +66,11 @@ After every successful "Mission," the operator must update `tasks/lessons.md` wi
 | Task Type | Owner | Notes |
 |-----------|-------|-------|
 | Risk math, Kelly sizing, Monte Carlo changes | Claude | Architecture domain |
-| New API endpoint, schema change | Claude | Review by Gemini for env compat |
-| Railway deploy, env vars, migrations | Gemini | Claude does not touch infra |
-| Quick web research, API doc lookup | Gemini | Fast, good enough for single-doc tasks |
-| Multi-doc research synthesis (3+ long docs) | Kimi | Gemini hits context limits |
+| New API endpoint, schema change | Claude | Always grep for existing routes first |
+| Railway deploy, env vars | Gemini (ops only) | Gemini does NOT write code |
+| DB migrations (write) | Claude | Gemini may run `railway run python scripts/...` |
+| Quick web research, API doc lookup | Gemini | Single-doc only, no code output |
+| Multi-doc research synthesis (3+ long docs) | Kimi | 1M context window |
 | Full season performance attribution | Kimi | >500 records — must be whole-corpus |
 | Tournament intelligence packages | Kimi | Full bracket + all team profiles in one shot |
 | Codebase-wide anti-pattern audit | Kimi | Read all files simultaneously |

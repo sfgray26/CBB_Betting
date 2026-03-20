@@ -4,6 +4,9 @@
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 > Full enhancement plan: `tasks/cbb_enhancement_plan.md` · V9.2 spec: `reports/K12_RECALIBRATION_SPEC_V92.md`
 > Task tracker: `tasks/todo.md`
+>
+> **TEAM CHANGE (Mar 20):** Gemini CLI demoted. Code devs are now Claude, Kimi, OpenClaw only.
+> Gemini restricted to: Railway ops, env vars, research, documentation. See `AGENTS.md`.
 
 ---
 
@@ -18,7 +21,7 @@
 | Fantasy DB Migration v7 | DONE (Mar 20) | Railway — Gemini confirmed |
 | Admin Risk Dashboard (EMAC-074) | DONE (Mar 20) | /admin — portfolio, ratings, scheduler, odds monitor |
 | EMAC-075 Frontend | DONE (Mar 20) | /fantasy/lineup + /fantasy/waiver pages built, pushed |
-| EMAC-075 Backend | PENDING (Gemini) | API endpoints not yet built. Due March 27. |
+| EMAC-075 Backend | DONE (Mar 20) | Both endpoints built by Claude. GET /api/fantasy/lineup/{date} + GET /api/fantasy/waiver live. |
 | V9.2 Recalibration | LOCKED until Apr 7 | Guardian active — no model changes |
 
 **Pending manual actions (user):**
@@ -29,7 +32,7 @@
 
 ## 1. EXECUTIVE SUMMARY
 
-All frontend work is complete. The system is GUARDIAN-locked on the CBB model through April 7 (NCAA Championship). The only active non-user work is the EMAC-075 backend endpoints (Gemini swimlane), due March 27 before the fantasy baseball season opener.
+All frontend and backend work for EMAC-075 is complete. The system is GUARDIAN-locked on the CBB model through April 7 (NCAA Championship). Next milestone is the V9.2 recalibration on April 7.
 
 | Subsystem | Status | Notes |
 |-----------|--------|-------|
@@ -81,7 +84,7 @@ Guardian task file: `.agent_tasks/v9_2_recalibration.md`
 | Pick'em bet win rate (8.3%) | Medium | Audit post-deduplication; may normalize |
 | `test_sharp_money.py` NameError | Low | Pre-existing: `Tuple` not imported from `typing` |
 | EvanMiya dropped | Info | Intentional; 2-source (KP+BT) mode robust by design |
-| Fantasy backend endpoints missing | High | EMAC-075 Gemini task, due Mar 27 |
+| Fantasy backend endpoints — stub only | Low | /api/fantasy/waiver returns empty lists. Real waiver logic is post-Apr 7 scope. |
 
 ---
 
@@ -167,6 +170,9 @@ TARGET: BET rate 3% -> 8-12%. CLV already positive (K-11) -- just need to unbloc
 | `next/font/google` fails in Railway network-isolated builds — pass `preload: false` | EMAC-073 |
 | TypeScript 5.x: `a && b ?? c` is ambiguous — always parenthesize | EMAC-073 |
 | Fantasy backend: `backend/fantasy_baseball/` already has rich modules — wire them, don't reimplement | tasks/lessons.md |
+| Gemini created duplicate FastAPI route (`GET /api/fantasy/lineup/{date}` twice) — silently kills the older handler. Always grep for existing routes before adding new ones. | EMAC-075 post-mortem |
+| Gemini tested against production without committing/pushing — changes weren't deployed, curl results were meaningless | EMAC-075 post-mortem |
+| Gemini used `report.get("games_found", 0)` — key doesn't exist in `build_daily_report()` return dict. Always read the function signature and return type before wiring. | EMAC-075 post-mortem |
 
 ---
 
@@ -213,72 +219,19 @@ railway logs --follow
 
 ## 10. DELEGATION BUNDLES
 
-### GEMINI (DevOps Strike Lead) — EMAC-075 Backend
+> **Active code devs: Claude Code, Kimi CLI, OpenClaw only.**
+> Gemini is restricted to Railway ops, env vars, research, and documentation — no code.
+> See `AGENTS.md` for full role definitions and routing rules.
 
-```
-MISSION: Build EMAC-075 backend -- Fantasy Season Ops API endpoints
+### GEMINI — Allowed tasks only (no code)
+- Railway env var changes
+- `railway logs --follow` monitoring
+- Web research / API doc lookup
+- Documentation edits that don't touch Python or TypeScript
 
-CONTEXT (March 20, 2026):
-- Frontend pages /fantasy/lineup and /fantasy/waiver are LIVE but hit backend endpoints
-  that do not exist yet. Frontend was built and pushed by Claude Code on March 20.
-- GUARDIAN is active: do NOT touch betting_model.py, analysis.py, or CBB services.
-- Backend: FastAPI, SQLAlchemy, PostgreSQL (Railway).
-  Pattern: add routes to backend/main.py, schemas to backend/schemas.py.
-- Fantasy models already exist: FantasyDraftSession, FantasyDraftPick, FantasyLineup
-  in backend/models.py.
-- Rich fantasy_baseball modules exist in backend/fantasy_baseball/:
-    player_board.py, draft_engine.py, projections_loader.py,
-    daily_lineup_optimizer.py, keeper_engine.py, yahoo_client.py, qwen_advisor.py.
-  Wire to these modules -- do NOT reimplement ranking logic.
-- Deadline: March 27 (fantasy baseball season opener).
-
-TASK 1 -- GET /api/fantasy/lineup/{date}
-Returns daily lineup recommendations for a given date (format: YYYY-MM-DD).
-Response schema (add to backend/schemas.py):
-  LineupPlayerOut: player_id, name, team, position, implied_runs, park_factor,
-                   lineup_score, start_time, opponent, status ("START"|"BENCH"|"UNKNOWN")
-  StartingPitcherOut: player_id, name, team, opponent_implied_runs, park_factor,
-                      sp_score, start_time, status
-  DailyLineupResponse: date, batters: List[LineupPlayerOut],
-                       pitchers: List[StartingPitcherOut], games_count
-
-For MVP: query today's Game records from DB, use The Odds API implied totals if available,
-otherwise return empty lists with games_count=0. Do NOT fail with 500 -- always return
-a valid DailyLineupResponse. Wire to daily_lineup_optimizer.py if it has the needed output.
-
-TASK 2 -- GET /api/fantasy/waiver
-Returns waiver wire recommendations.
-Response schema:
-  WaiverPlayerOut: player_id, name, team, position, need_score,
-                   category_contributions (dict), owned_pct, starts_this_week
-  CategoryDeficitOut: category, my_total, opponent_total, deficit, winning
-  WaiverWireResponse: week_end (ISO date), matchup_opponent (str),
-                      category_deficits: List[CategoryDeficitOut],
-                      top_available: List[WaiverPlayerOut],
-                      two_start_pitchers: List[WaiverPlayerOut]
-
-For MVP: return stub data with empty lists and placeholder matchup_opponent.
-Do NOT fail with 500.
-
-TASK 3 -- Auth
-Both endpoints require verify_api_key (not admin).
-Use the standard dependency pattern already in backend/main.py.
-
-TASK 4 -- Verify
-After adding endpoints, hit them via curl:
-  curl -s "https://{railway-url}/api/fantasy/lineup/2026-03-27" \
-       -H "X-API-Key: $API_KEY_USER1"
-  curl -s "https://{railway-url}/api/fantasy/waiver" \
-       -H "X-API-Key: $API_KEY_USER1"
-Both must return 200 with valid JSON (not 404 or 500).
-
-ESCALATE TO ARCHITECT if:
-- You need to add a new DB table (do NOT -- use existing models or return static data)
-- Any CBB model file needs changes (GUARDIAN -- absolutely not)
-- backend/fantasy_baseball/ modules fail to import (check requirements.txt)
-
-REPORTING: Confirm both endpoints return 200 in Discord #gemini-ops.
-```
+### KIMI — Next research task (post-Apr 7)
+When Guardian lifts, assign Kimi to re-read `reports/K12_RECALIBRATION_SPEC_V92.md` and
+produce a V9.2 implementation diff spec before Claude touches `betting_model.py`.
 
 ### CLAUDE CODE (Master Architect) — post-Apr 7
 
@@ -289,8 +242,9 @@ See Section 6 above for the verbatim prompt. Read `reports/K12_RECALIBRATION_SPE
 
 **Document Version:** EMAC-075
 **Last Updated:** March 20, 2026
-**Status:** All Frontend Done | GUARDIAN Active | EMAC-075 backend pending (Gemini, due Mar 27)
+**Status:** EMAC-075 COMPLETE | GUARDIAN Active | Holding for Apr 7
 **Branch:** main
+**Team:** Claude Code (Architect) · Kimi CLI (Deep Intel) · OpenClaw (Integrity) · Gemini (ops/research only)
 **Pending (user):**
 - `git push origin v0.8.0-cbb-stable`
 - Confirm `NEXT_PUBLIC_API_URL` in Railway frontend environment

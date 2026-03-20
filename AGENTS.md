@@ -242,27 +242,28 @@ This is a starting point. Add your own conventions, style, and rules as you figu
 
 ---
 
-## Agent: Gemini CLI (DevOps Strike Lead)
+## Agent: Gemini CLI (Ops & Research — NON-CODE)
 
 **Owner:** Gemini CLI
-**Swimlane:** Deployment, infrastructure, dependency management, DB migrations
+**Swimlane:** Railway ops, env vars, web research, documentation only
 
-**Owns:**
-- Railway deployment + environment configuration
-- `requirements.txt` dependency management
-- PostgreSQL migrations (`scripts/migrate_v*.py`)
-- CI/CD pipeline (`.github/workflows/deploy.yml`)
-- Env var provisioning (Railway secrets)
+> **RESTRICTION (Mar 20, 2026):** Gemini is no longer permitted to write or modify Python or
+> TypeScript code. Root cause: EMAC-075 post-mortem revealed duplicate route creation,
+> incorrect dict key usage, and testing against production without deploying.
+> Code devs are Claude Code, Kimi CLI, and OpenClaw only.
 
-**Current Assigned Tasks (EMAC-004):**
-- Add `duckduckgo-search>=5.0` to `requirements.txt`
-- Confirm V9 DB columns (`snr`, `snr_kelly_scalar`, `integrity_verdict`) exist in Railway PostgreSQL
-- Set env vars: `SNR_KELLY_FLOOR=0.5`, `INTEGRITY_CAUTION_SCALAR=0.75`, `INTEGRITY_VOLATILE_SCALAR=0.5`
+**Permitted:**
+- `railway logs --follow` monitoring
+- Env var changes in Railway dashboard
+- Web research / API doc lookup (single-doc, no code output)
+- Documentation-only edits (`.md` files that don't affect runtime)
 
-**Escalates When:**
-- DB migration fails or column conflicts detected
-- Railway deployment health check fails
-- Dependency conflict prevents `pip install`
+**NOT permitted:**
+- Editing `backend/`, `frontend/`, `tests/`, `scripts/` — any code file
+- DB migrations (Claude writes the script; Gemini may run `railway run python scripts/...`)
+- CI/CD pipeline changes
+
+**Escalates all code tasks to:** Claude Code
 
 ---
 
