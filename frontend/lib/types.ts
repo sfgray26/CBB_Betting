@@ -161,3 +161,26 @@ export interface BracketProjection {
   avg_upsets_per_tournament: number
   avg_championship_margin: number
 }
+
+// ---------------------------------------------------------------------------
+// Fantasy Baseball
+// ---------------------------------------------------------------------------
+
+export interface FantasyPlayer {
+  id: string
+  name: string
+  team: string
+  positions: string[]
+  type: 'batter' | 'pitcher'
+  tier: number
+  rank: number
+  adp: number
+  z_score: number
+  proj: Record<string, number>
+  cat_scores?: Record<string, number> | null
+}
+
+export interface FantasyDraftBoardResponse {
+  count: number
+  players: FantasyPlayer[]
+}

@@ -33,7 +33,7 @@ export default function LoginPage() {
         setError(`Server returned an error (${res.status}). Please try again.`)
       }
     } catch {
-      setError('Could not reach the backend. Make sure the server is running on localhost:8000.')
+      setError(`Could not reach the backend at ${BASE_URL}. Check that NEXT_PUBLIC_API_URL is set correctly and the server is running.`)
     } finally {
       setLoading(false)
     }
@@ -57,8 +57,11 @@ export default function LoginPage() {
 
         {/* Card */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8 shadow-2xl">
-          <p className="text-zinc-300 text-sm text-center mb-6">
+          <p className="text-zinc-300 text-sm text-center mb-4">
             Enter your API key to continue
+          </p>
+          <p className="text-zinc-600 text-xs text-center mb-6 font-mono truncate" title={BASE_URL}>
+            ↗ {BASE_URL}
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">

@@ -225,3 +225,53 @@ class TodaysPredictionsResponse(BaseModel):
     bets_recommended: int
     predictions: list[PredictionResponse]
 
+
+# ---------------------------------------------------------------------------
+# Fantasy Baseball
+# ---------------------------------------------------------------------------
+
+class FantasyPlayerResponse(BaseModel):
+    """A single player from the draft board."""
+    id: str
+    name: str
+    team: str
+    positions: list[str]
+    type: str            # "batter" | "pitcher"
+    tier: int
+    rank: int
+    adp: float
+    z_score: float
+    proj: dict
+    cat_scores: Optional[dict] = None
+
+
+class FantasyDraftBoardResponse(BaseModel):
+    """Response for GET /api/fantasy/draft-board."""
+    count: int
+    players: list[FantasyPlayerResponse]
+
+
+class DraftPickCreate(BaseModel):
+    """Body for POST /api/fantasy/draft-session/{key}/pick."""
+    player_id: str
+    drafter_position: int = Field(..., ge=1, le=20)
+    is_my_pick: bool = False
+
+
+class DraftPickResponse(BaseModel):
+    """Confirmation after recording a pick."""
+    message: str
+    pick_number: int
+    player_name: str
+    is_my_pick: bool
+    next_recommendations: list[FantasyPlayerResponse]
+
+
+class LineupSaveRequest(BaseModel):
+    """Body for POST /api/fantasy/lineup."""
+    lineup_date: date
+    platform: str = "yahoo"
+    positions: dict   # {"C": "player_id", ...}
+    projected_points: Optional[float] = None
+    notes: Optional[str] = None
+

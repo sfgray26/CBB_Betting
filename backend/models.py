@@ -387,6 +387,73 @@ class DBAlert(Base):
     acknowledged_at = Column(DateTime)
 
 
+class FantasyDraftSession(Base):
+    """Tracks a single fantasy draft session state."""
+
+    __tablename__ = "fantasy_draft_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_key = Column(String(50), unique=True, nullable=False, index=True)
+    my_draft_position = Column(Integer, nullable=False)
+    num_teams = Column(Integer, nullable=False, default=12)
+    num_rounds = Column(Integer, nullable=False, default=23)
+    current_pick = Column(Integer, nullable=False, default=1)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    picks = relationship("FantasyDraftPick", back_populates="session",
+                         cascade="all, delete-orphan")
+
+
+class FantasyDraftPick(Base):
+    """Records each pick made during a fantasy draft."""
+
+    __tablename__ = "fantasy_draft_picks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("fantasy_draft_sessions.id"),
+                        nullable=False, index=True)
+    pick_number = Column(Integer, nullable=False)
+    round_number = Column(Integer, nullable=False)
+    drafter_position = Column(Integer, nullable=False)  # 1-12
+    is_my_pick = Column(Boolean, nullable=False, default=False)
+    player_id = Column(String(100), nullable=False)
+    player_name = Column(String(100), nullable=False)
+    player_team = Column(String(10))
+    player_positions = Column(JSON)  # list of position strings
+    player_tier = Column(Integer)
+    player_adp = Column(Float)
+    player_z_score = Column(Float)
+    picked_at = Column(DateTime, default=datetime.utcnow)
+
+    session = relationship("FantasyDraftSession", back_populates="picks")
+
+    __table_args__ = (
+        UniqueConstraint("session_id", "player_id", name="_session_player_uc"),
+    )
+
+
+class FantasyLineup(Base):
+    """Saved daily lineup for fantasy baseball."""
+
+    __tablename__ = "fantasy_lineups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    lineup_date = Column(Date, nullable=False, index=True)
+    platform = Column(String(30), nullable=False, default="yahoo")
+    positions = Column(JSON, nullable=False)   # {"C": "player_id", "1B": "player_id", ...}
+    projected_points = Column(Float)
+    actual_points = Column(Float)
+    notes = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("lineup_date", "platform", name="_lineup_date_platform_uc"),
+    )
+
+
 # Create all tables
 def init_db():
     """Initialize database tables"""
