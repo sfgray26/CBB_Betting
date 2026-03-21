@@ -48,8 +48,10 @@ interface ParsedVerdict {
 }
 
 function parseVerdict(verdict: string): ParsedVerdict | null {
+  // Full format: "Bet 1.00u [T3] Ohio State (home -2.5) @ -106"
+  // Also handles T1 suffix: "... @ -106 (consider)"
   const m = verdict.match(
-    /^Bet [\d.]+u (?:\[([^\]]+)\] )?(.+?) \((home|away)(?: ([+-][\d.]+))?\) @ ([+-]?\d+)$/
+    /^Bet [\d.]+u (?:\[([^\]]+)\] )?(.+?) \((home|away)(?: ([+-][\d.]+))?\) @ ([+-]?\d+)/
   )
   if (!m) return null
   const [, tier, team, side, spread, odds] = m
@@ -60,6 +62,35 @@ function parseVerdict(verdict: string): ParsedVerdict | null {
     odds,
     tier: tier ?? null,
     betType: spread ? 'spread' : 'moneyline',
+  }
+}
+
+// Fallback: reconstruct pick from full_analysis when the portfolio scaler
+// overwrites the verdict to the stripped "Bet 0.50u @ -101" format.
+function parsedFromFullAnalysis(
+  p: PredictionEntry
+): ParsedVerdict | null {
+  const calcs = (p.full_analysis as Record<string, unknown> | null)?.calculations as Record<string, unknown> | undefined
+  if (!calcs) return null
+  const betSide = calcs.bet_side as string | undefined
+  const betOdds = calcs.bet_odds as number | undefined
+  if (!betSide || betOdds == null) return null
+  const team = betSide === 'home' ? p.game.home_team : p.game.away_team
+  // Derive market spread from projected_margin (home perspective)
+  // spread for our side = projected_margin if home, -projected_margin if away
+  const spread =
+    p.projected_margin != null
+      ? betSide === 'home'
+        ? p.projected_margin
+        : -p.projected_margin
+      : null
+  return {
+    team,
+    side: betSide as 'home' | 'away',
+    spread: spread != null ? (spread >= 0 ? `+${spread.toFixed(1)}` : spread.toFixed(1)) : null,
+    odds: betOdds >= 0 ? `+${betOdds}` : String(betOdds),
+    tier: null,
+    betType: spread != null ? 'spread' : 'moneyline',
   }
 }
 
@@ -77,7 +108,7 @@ function marketSpreadHome(parsed: ParsedVerdict | null): number | null {
 function BetCard({ p }: { p: PredictionEntry }) {
   const homeTeam = p.game.home_team
   const awayTeam = p.game.away_team
-  const parsed = parseVerdict(p.verdict)
+  const parsed = parseVerdict(p.verdict) ?? parsedFromFullAnalysis(p)
   const marketHome = marketSpreadHome(parsed)
 
   // Line delta: how many points the model sees vs the market (home perspective)
@@ -188,7 +219,7 @@ function BetCard({ p }: { p: PredictionEntry }) {
 function ConsiderCard({ p }: { p: PredictionEntry }) {
   const homeTeam = p.game.home_team
   const awayTeam = p.game.away_team
-  const parsed = parseVerdict(p.verdict)
+  const parsed = parseVerdict(p.verdict) ?? parsedFromFullAnalysis(p)
 
   return (
     <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-4 space-y-3">
