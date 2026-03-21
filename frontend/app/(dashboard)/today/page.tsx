@@ -121,10 +121,10 @@ function BetCard({ p }: { p: PredictionEntry }) {
       ? p.projected_margin + marketHome
       : null
 
-  // Model projection phrased as "Team -X.X" or "Team +X.X"
+  // Plain-English model projection: "Arkansas wins by 16.5"
   const modelProjection =
     p.projected_margin != null
-      ? `${p.projected_margin >= 0 ? homeTeam : awayTeam} ${p.projected_margin >= 0 ? '-' : '+'}${Math.abs(p.projected_margin).toFixed(1)}`
+      ? `${p.projected_margin >= 0 ? homeTeam : awayTeam} wins by ${Math.abs(p.projected_margin).toFixed(1)}`
       : null
 
   return (
@@ -196,19 +196,8 @@ function BetCard({ p }: { p: PredictionEntry }) {
         </div>
         {modelProjection && (
           <div>
-            <span className="text-zinc-600">Model projects: </span>
-            <span className="font-mono text-zinc-300">{modelProjection}</span>
-          </div>
-        )}
-        {lineDelta != null && Math.abs(lineDelta) > 0.05 && (
-          <div>
-            <span className="text-zinc-600">Line value: </span>
-            <span className={cn(
-              'font-mono font-semibold',
-              lineDelta > 0 ? 'text-emerald-400' : 'text-rose-400'
-            )}>
-              {lineDelta > 0 ? '+' : ''}{lineDelta.toFixed(1)} pts
-            </span>
+            <span className="text-zinc-600">Model: </span>
+            <span className="text-zinc-300">{modelProjection}</span>
           </div>
         )}
       </div>
@@ -227,7 +216,7 @@ function ConsiderCard({ p }: { p: PredictionEntry }) {
 
   const modelProjection =
     p.projected_margin != null
-      ? `${p.projected_margin >= 0 ? homeTeam : awayTeam} ${p.projected_margin >= 0 ? '-' : '+'}${Math.abs(p.projected_margin).toFixed(1)}`
+      ? `${p.projected_margin >= 0 ? homeTeam : awayTeam} wins by ${Math.abs(p.projected_margin).toFixed(1)}`
       : null
 
   return (
@@ -276,7 +265,7 @@ function ConsiderCard({ p }: { p: PredictionEntry }) {
         </span>
         {modelProjection && (
           <span className="text-zinc-500">
-            Model projects: <span className="font-mono text-zinc-300">{modelProjection}</span>
+            Model: <span className="text-zinc-300">{modelProjection}</span>
           </span>
         )}
       </div>
