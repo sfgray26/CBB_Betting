@@ -117,9 +117,15 @@ function BetCard({ p }: { p: PredictionEntry }) {
       ? p.projected_margin - marketHome
       : null
 
+  // Model projection phrased as "Team -X.X" or "Team +X.X"
+  const modelProjection =
+    p.projected_margin != null
+      ? `${p.projected_margin >= 0 ? homeTeam : awayTeam} ${p.projected_margin >= 0 ? '-' : '+'}${Math.abs(p.projected_margin).toFixed(1)}`
+      : null
+
   return (
     <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-5 space-y-4">
-      {/* Row 1: badge + units + time */}
+      {/* Row 1: badge + units + tier + time */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold uppercase tracking-wider text-amber-400 bg-amber-400/15 px-2 py-0.5 rounded-full">
@@ -127,7 +133,7 @@ function BetCard({ p }: { p: PredictionEntry }) {
           </span>
           {p.recommended_units != null && (
             <span className="text-sm font-semibold text-zinc-100">
-              {(p.recommended_units ?? 0).toFixed(1)}u
+              {p.recommended_units.toFixed(1)}u
             </span>
           )}
           {parsed?.tier && (
@@ -149,56 +155,50 @@ function BetCard({ p }: { p: PredictionEntry }) {
         )}
       </div>
 
-      {/* Row 3: ACTION — what to bet */}
+      {/* Row 3: THE BET — clear, unambiguous action */}
       {parsed ? (
-        <div className="rounded-md bg-zinc-800/80 border border-zinc-700 px-4 py-3 flex items-center gap-3">
-          {/* Bet type badge */}
-          <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-zinc-400 bg-zinc-700 px-1.5 py-1 rounded">
-            {parsed.betType === 'spread' ? 'SPREAD' : 'MONEYLINE'}
-          </span>
-          {/* Team + line */}
-          <span className="flex-1 font-semibold text-zinc-50 leading-snug">
-            {parsed.team}
-            {parsed.spread && (
+        <div className="rounded-md bg-zinc-800/60 border border-amber-500/25 px-4 py-3 space-y-2">
+          {/* Label */}
+          <div className="text-[10px] font-semibold uppercase tracking-widest text-amber-500/70">
+            {parsed.betType === 'spread' ? 'Spread Bet' : 'Moneyline Bet'}
+          </div>
+          {/* Team + spread + odds on one clear line */}
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="font-bold text-zinc-50 text-base leading-snug">{parsed.team}</span>
+            <div className="flex items-baseline gap-2 shrink-0">
+              {parsed.spread && (
+                <span className="font-mono font-bold text-xl text-amber-300">
+                  {parsed.spread}
+                </span>
+              )}
               <span className={cn(
-                'ml-2 font-mono text-base',
-                parsed.spread.startsWith('-') ? 'text-amber-400' : 'text-sky-400'
+                'font-mono text-sm font-semibold tabular-nums',
+                parsed.odds.startsWith('+') ? 'text-emerald-400' : 'text-zinc-400'
               )}>
-                {parsed.spread}
+                ({parsed.odds})
               </span>
-            )}
-          </span>
-          {/* Odds */}
-          <span className={cn(
-            'shrink-0 text-sm font-mono font-semibold tabular-nums',
-            parsed.odds.startsWith('+') ? 'text-emerald-400' : 'text-zinc-300'
-          )}>
-            {parsed.odds}
-          </span>
+            </div>
+          </div>
         </div>
       ) : (
-        // Fallback if verdict doesn't parse
         <div className="text-xs text-zinc-500 font-mono leading-relaxed">{p.verdict}</div>
       )}
 
-      {/* Row 4: supporting stats */}
-      <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs pt-1 border-t border-zinc-800">
-        <div className="flex items-center gap-1.5">
-          <span className="text-zinc-600">Edge</span>
+      {/* Row 4: why this bet — supporting stats */}
+      <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs pt-1 border-t border-zinc-800">
+        <div>
+          <span className="text-zinc-600">Edge: </span>
           <span className="font-mono font-semibold text-emerald-400">{pct(p.edge_conservative)}</span>
         </div>
-        {p.projected_margin != null && (
-          <div className="flex items-center gap-1.5">
-            <span className="text-zinc-600">Model line</span>
-            <span className="font-mono text-zinc-300">
-              {p.projected_margin >= 0 ? homeTeam : awayTeam}{' '}
-              {p.projected_margin >= 0 ? '-' : '+'}{Math.abs(p.projected_margin).toFixed(1)}
-            </span>
+        {modelProjection && (
+          <div>
+            <span className="text-zinc-600">Model projects: </span>
+            <span className="font-mono text-zinc-300">{modelProjection}</span>
           </div>
         )}
         {lineDelta != null && Math.abs(lineDelta) > 0.05 && (
-          <div className="flex items-center gap-1.5">
-            <span className="text-zinc-600">vs market</span>
+          <div>
+            <span className="text-zinc-600">Line value: </span>
             <span className={cn(
               'font-mono font-semibold',
               lineDelta > 0 ? 'text-emerald-400' : 'text-rose-400'
@@ -221,6 +221,11 @@ function ConsiderCard({ p }: { p: PredictionEntry }) {
   const awayTeam = p.game.away_team
   const parsed = parseVerdict(p.verdict) ?? parsedFromFullAnalysis(p)
 
+  const modelProjection =
+    p.projected_margin != null
+      ? `${p.projected_margin >= 0 ? homeTeam : awayTeam} ${p.projected_margin >= 0 ? '-' : '+'}${Math.abs(p.projected_margin).toFixed(1)}`
+      : null
+
   return (
     <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-4 space-y-3">
       {/* Header */}
@@ -232,44 +237,42 @@ function ConsiderCard({ p }: { p: PredictionEntry }) {
       </div>
 
       {/* Matchup */}
-      <div className="text-sm font-medium text-zinc-300">
-        {awayTeam} <span className="text-zinc-600 font-normal">@</span> {homeTeam}
+      <div className="text-sm text-zinc-400">
+        {awayTeam} <span className="text-zinc-600">@</span> {homeTeam}
         {p.game.is_neutral && <span className="ml-1.5 text-xs text-zinc-500">(neutral)</span>}
       </div>
 
-      {/* Action row (compact) */}
+      {/* The pick — compact but clear */}
       {parsed ? (
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 bg-zinc-700 px-1.5 py-0.5 rounded">
-            {parsed.betType === 'spread' ? 'SPR' : 'ML'}
-          </span>
-          <span className="text-zinc-200 font-medium">
-            {parsed.team}
-            {parsed.spread && (
-              <span className="ml-1.5 font-mono text-sky-400">{parsed.spread}</span>
-            )}
-          </span>
-          <span className={cn(
-            'ml-auto font-mono text-xs tabular-nums',
-            parsed.odds.startsWith('+') ? 'text-emerald-400' : 'text-zinc-400'
-          )}>
-            {parsed.odds}
-          </span>
+        <div className="rounded bg-zinc-800/50 border border-sky-500/20 px-3 py-2 space-y-1">
+          <div className="text-[10px] font-semibold uppercase tracking-widest text-sky-500/60">
+            {parsed.betType === 'spread' ? 'Spread Bet' : 'Moneyline Bet'}
+          </div>
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="font-semibold text-zinc-100 text-sm">{parsed.team}</span>
+            <div className="flex items-baseline gap-1.5 shrink-0">
+              {parsed.spread && (
+                <span className="font-mono font-bold text-base text-sky-300">{parsed.spread}</span>
+              )}
+              <span className={cn(
+                'font-mono text-xs tabular-nums',
+                parsed.odds.startsWith('+') ? 'text-emerald-400' : 'text-zinc-400'
+              )}>
+                ({parsed.odds})
+              </span>
+            </div>
+          </div>
         </div>
       ) : null}
 
       {/* Stats */}
-      <div className="flex gap-4 text-xs font-mono tabular-nums">
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
         <span className="text-zinc-500">
-          Edge <span className="text-sky-400">{pct(p.edge_conservative)}</span>
+          Edge: <span className="font-mono font-semibold text-sky-400">{pct(p.edge_conservative)}</span>
         </span>
-        {p.projected_margin != null && (
+        {modelProjection && (
           <span className="text-zinc-500">
-            Model{' '}
-            <span className="text-zinc-300">
-              {p.projected_margin >= 0 ? homeTeam : awayTeam}{' '}
-              {p.projected_margin >= 0 ? '-' : '+'}{Math.abs(p.projected_margin).toFixed(1)}
-            </span>
+            Model projects: <span className="font-mono text-zinc-300">{modelProjection}</span>
           </span>
         )}
       </div>
