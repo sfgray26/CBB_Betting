@@ -111,10 +111,14 @@ function BetCard({ p }: { p: PredictionEntry }) {
   const parsed = parseVerdict(p.verdict) ?? parsedFromFullAnalysis(p)
   const marketHome = marketSpreadHome(parsed)
 
-  // Line delta: how many points the model sees vs the market (home perspective)
+  // Line delta: model's projected winning margin vs market's implied winning margin.
+  // projected_margin uses winning-margin convention (positive = home wins).
+  // marketHome uses spread convention (positive = home gets pts = home underdog).
+  // Market's implied home winning margin = -marketHome, so:
+  //   lineDelta = projected_margin - (-marketHome) = projected_margin + marketHome
   const lineDelta =
     p.projected_margin != null && marketHome != null
-      ? p.projected_margin - marketHome
+      ? p.projected_margin + marketHome
       : null
 
   // Model projection phrased as "Team -X.X" or "Team +X.X"
