@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import text, func
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -340,6 +341,44 @@ async def lifespan(app: FastAPI):
         logger.info("Lifespan: Registered VERDICT_FLIP Discord handler")
     except Exception as reg_exc:
         logger.warning("Lifespan: Failed to register movement handler: %s", reg_exc)
+
+    # ── Startup catch-up: if nightly analysis was missed (service restarted after
+    # 3 AM ET with no predictions for today), run it automatically as a background task.
+    # APScheduler is in-memory — Railway deploys after 3 AM reset the next-run time to
+    # tomorrow, so without this check today's games would never get analysed.
+    async def _startup_catchup():
+        from pytz import timezone as _tz
+        from datetime import datetime as _dt
+        et = _tz("America/New_York")
+        now_et = _dt.now(et)
+        nightly_cutoff = int(os.getenv("NIGHTLY_CRON_HOUR", "3"))
+        if now_et.hour < nightly_cutoff:
+            # Before 3 AM ET — nightly job hasn't run yet today, nothing to catch up
+            return
+        # Check if today already has predictions
+        db = SessionLocal()
+        try:
+            today_utc = _dt.utcnow().date()
+            count = db.query(Prediction).filter(
+                Prediction.prediction_date == today_utc
+            ).count()
+        finally:
+            db.close()
+        if count > 0:
+            logger.info("Lifespan: Today has %d predictions — no catch-up needed", count)
+            return
+        logger.warning(
+            "Lifespan: No predictions found for %s (now_et=%s). "
+            "Nightly job was likely missed due to a post-3AM deploy. Running catch-up analysis.",
+            today_utc, now_et.strftime("%H:%M ET"),
+        )
+        try:
+            await nightly_job()
+            logger.info("Lifespan: Catch-up analysis complete")
+        except Exception as catchup_exc:
+            logger.error("Lifespan: Catch-up analysis failed: %s", catchup_exc, exc_info=True)
+
+    asyncio.create_task(_startup_catchup())
 
     yield
     
