@@ -111,16 +111,20 @@ function BetCard({ p }: { p: PredictionEntry }) {
   const parsed = parseVerdict(p.verdict) ?? parsedFromFullAnalysis(p)
   const marketHome = marketSpreadHome(parsed)
 
-  // Line delta: how many points the model sees vs the market (home perspective)
+  // Line delta: model's projected winning margin vs market's implied winning margin.
+  // projected_margin uses winning-margin convention (positive = home wins).
+  // marketHome uses spread convention (positive = home gets pts = home underdog).
+  // Market's implied home winning margin = -marketHome, so:
+  //   lineDelta = projected_margin - (-marketHome) = projected_margin + marketHome
   const lineDelta =
     p.projected_margin != null && marketHome != null
-      ? p.projected_margin - marketHome
+      ? p.projected_margin + marketHome
       : null
 
-  // Model projection phrased as "Team -X.X" or "Team +X.X"
+  // Plain-English model projection: "Arkansas wins by 16.5"
   const modelProjection =
     p.projected_margin != null
-      ? `${p.projected_margin >= 0 ? homeTeam : awayTeam} ${p.projected_margin >= 0 ? '-' : '+'}${Math.abs(p.projected_margin).toFixed(1)}`
+      ? `${p.projected_margin >= 0 ? homeTeam : awayTeam} wins by ${Math.abs(p.projected_margin).toFixed(1)}`
       : null
 
   return (
@@ -192,19 +196,8 @@ function BetCard({ p }: { p: PredictionEntry }) {
         </div>
         {modelProjection && (
           <div>
-            <span className="text-zinc-600">Model projects: </span>
-            <span className="font-mono text-zinc-300">{modelProjection}</span>
-          </div>
-        )}
-        {lineDelta != null && Math.abs(lineDelta) > 0.05 && (
-          <div>
-            <span className="text-zinc-600">Line value: </span>
-            <span className={cn(
-              'font-mono font-semibold',
-              lineDelta > 0 ? 'text-emerald-400' : 'text-rose-400'
-            )}>
-              {lineDelta > 0 ? '+' : ''}{lineDelta.toFixed(1)} pts
-            </span>
+            <span className="text-zinc-600">Model: </span>
+            <span className="text-zinc-300">{modelProjection}</span>
           </div>
         )}
       </div>
@@ -223,7 +216,7 @@ function ConsiderCard({ p }: { p: PredictionEntry }) {
 
   const modelProjection =
     p.projected_margin != null
-      ? `${p.projected_margin >= 0 ? homeTeam : awayTeam} ${p.projected_margin >= 0 ? '-' : '+'}${Math.abs(p.projected_margin).toFixed(1)}`
+      ? `${p.projected_margin >= 0 ? homeTeam : awayTeam} wins by ${Math.abs(p.projected_margin).toFixed(1)}`
       : null
 
   return (
@@ -272,7 +265,7 @@ function ConsiderCard({ p }: { p: PredictionEntry }) {
         </span>
         {modelProjection && (
           <span className="text-zinc-500">
-            Model projects: <span className="font-mono text-zinc-300">{modelProjection}</span>
+            Model: <span className="text-zinc-300">{modelProjection}</span>
           </span>
         )}
       </div>
