@@ -133,7 +133,7 @@ function BetCard({ p }: { p: PredictionEntry }) {
           </span>
           {p.recommended_units != null && (
             <span className="text-sm font-semibold text-zinc-100">
-              {p.recommended_units.toFixed(1)}u
+              {p.recommended_units?.toFixed(1)}u
             </span>
           )}
           {parsed?.tier && (
