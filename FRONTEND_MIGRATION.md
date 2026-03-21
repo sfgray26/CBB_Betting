@@ -50,10 +50,28 @@
 
 **Source of truth:** `reports/api_ground_truth.md` (produced by Kimi CLI, 2026-03-12)
 
-### Phase 2 — Live Slate & Odds Monitor ⏳ Planned
-### Phase 3 — Tournament Experience ⏳ Planned
-### Phase 4 — Mobile & PWA ⏳ Planned
-### Phase 5 — Polish & Decommission ⏳ Planned
+### Phase 2 — Live Slate & Odds Monitor ✅ DONE
+- [x] Today page (`/today`)
+- [x] Live Slate page (`/live-slate`)
+- [x] Odds Monitor page (`/odds-monitor`)
+
+### Phase 3 — Tournament Experience ✅ DONE
+- [x] Bracket page (`/bracket`) with Monte Carlo simulator (10k sims)
+- [x] Tournament game tracking
+- [x] First Four monitoring
+
+### Phase 4 — Mobile & PWA ✅ DONE
+- [x] Viewport meta tag configuration
+- [x] Mobile sidebar drawer
+- [x] Touch targets (44px minimum)
+- [x] Responsive grid patterns
+- [x] PWA manifest.json
+
+### Phase 5 — Polish & Decommission ✅ DONE
+- [x] Error boundaries (`error.tsx`)
+- [x] Loading states (`loading.tsx`)
+- [x] Fantasy Baseball integration (`/fantasy/*`)
+- [x] Admin Risk Dashboard (`/admin`)
 
 ---
 

@@ -1,3 +1,11 @@
+# 🗃️ ARCHIVED — Windows Setup Guide (Git Bash / MINGW64)
+
+> **Status:** Archived (Feb 2026)  
+> **Reason:** Superseded by `QUICKREF.md` and `INSTALL.md`  
+> **Note:** Uses legacy Version 7 configuration values
+
+---
+
 # Windows Setup Guide (Git Bash / MINGW64)
 
 ## Quick Fix for Your Current Issue
