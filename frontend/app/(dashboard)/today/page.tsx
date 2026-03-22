@@ -1,9 +1,10 @@
 'use client'
 
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { format, parseISO, formatDistanceToNow } from 'date-fns'
-import { Zap, Clock, TrendingUp, BarChart2, RefreshCw } from 'lucide-react'
-import { endpoints } from '@/lib/api'
+import { Zap, Clock, TrendingUp, BarChart2, RefreshCw, CheckCircle2 } from 'lucide-react'
+import { endpoints, getApiKey } from '@/lib/api'
 import { KpiCard } from '@/components/ui/kpi-card'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
@@ -109,11 +110,44 @@ function marketSpreadHome(parsed: ParsedVerdict | null): number | null {
 // BET card — prominent amber
 // ---------------------------------------------------------------------------
 
+async function logPlacedBet(p: PredictionEntry, parsed: ParsedVerdict | null): Promise<void> {
+  const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+  const calcs = (p.full_analysis as Record<string, unknown> | null)?.calculations as Record<string, unknown> | undefined
+  const pick = parsed
+    ? `${parsed.team} ${parsed.spread ?? parsed.odds}`
+    : p.verdict.substring(0, 60)
+  const payload = {
+    game_id: p.game_id,
+    prediction_id: p.id,
+    pick,
+    bet_type: parsed?.betType ?? 'spread',
+    odds_taken: parsed?.odds ? parseInt(parsed.odds) : null,
+    bet_size_units: p.recommended_units ?? 1,
+    model_prob: p.edge_conservative,
+    conservative_edge: p.edge_conservative,
+    is_paper_trade: false,
+    executed: true,
+    notes: `Logged via UI — ${new Date().toISOString()}`,
+    ...(calcs?.kelly_fractional != null && { kelly_fractional: calcs.kelly_fractional as number }),
+    ...(calcs?.kelly_full != null && { kelly_full: calcs.kelly_full as number }),
+  }
+  const res = await fetch(`${BASE_URL}/api/bets/log`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': getApiKey() },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body?.detail ?? `${res.status}`)
+  }
+}
+
 function BetCard({ p }: { p: PredictionEntry }) {
   const homeTeam = p.game.home_team
   const awayTeam = p.game.away_team
   const parsed = parseVerdict(p.verdict) ?? parsedFromFullAnalysis(p)
   const marketHome = marketSpreadHome(parsed)
+  const [placedState, setPlacedState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
 
   // Line delta: model's projected winning margin vs market's implied winning margin.
   // projected_margin uses winning-margin convention (positive = home wins).
@@ -205,17 +239,51 @@ function BetCard({ p }: { p: PredictionEntry }) {
         <div className="text-xs text-zinc-500 font-mono leading-relaxed">{p.verdict}</div>
       )}
 
-      {/* Row 4: why this bet — supporting stats */}
-      <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs pt-1 border-t border-zinc-800">
-        <div>
-          <span className="text-zinc-600">Edge: </span>
-          <span className="font-mono font-semibold text-emerald-400">{pct(p.edge_conservative)}</span>
-        </div>
-        {modelProjection && (
+      {/* Row 4: stats + place button */}
+      <div className="flex items-center justify-between gap-3 pt-1 border-t border-zinc-800">
+        <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs">
           <div>
-            <span className="text-zinc-600">Model: </span>
-            <span className="text-zinc-300">{modelProjection}</span>
+            <span className="text-zinc-600">Edge: </span>
+            <span className="font-mono font-semibold text-emerald-400">{pct(p.edge_conservative)}</span>
           </div>
+          {modelProjection && (
+            <div>
+              <span className="text-zinc-600">Model: </span>
+              <span className="text-zinc-300">{modelProjection}</span>
+            </div>
+          )}
+        </div>
+
+        {/* I placed this */}
+        {placedState === 'done' ? (
+          <span className="flex items-center gap-1 text-xs text-emerald-400 font-semibold shrink-0">
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            Logged
+          </span>
+        ) : (
+          <button
+            onClick={async () => {
+              setPlacedState('loading')
+              try {
+                await logPlacedBet(p, parsed)
+                setPlacedState('done')
+              } catch {
+                setPlacedState('error')
+                setTimeout(() => setPlacedState('idle'), 3000)
+              }
+            }}
+            disabled={placedState === 'loading'}
+            className={cn(
+              'shrink-0 text-xs px-3 py-1.5 rounded font-semibold transition-colors',
+              placedState === 'error'
+                ? 'bg-rose-500/20 border border-rose-500/40 text-rose-400'
+                : placedState === 'loading'
+                  ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                  : 'bg-zinc-800 border border-zinc-700 text-zinc-400 hover:border-amber-500/50 hover:text-amber-300',
+            )}
+          >
+            {placedState === 'loading' ? '...' : placedState === 'error' ? 'Failed' : 'I placed this'}
+          </button>
         )}
       </div>
     </div>

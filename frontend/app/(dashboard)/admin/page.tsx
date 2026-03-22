@@ -1,9 +1,11 @@
 'use client'
 
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { formatDistanceToNow, parseISO } from 'date-fns'
-import { ShieldAlert, RefreshCw, CheckCircle2, AlertTriangle, XCircle, Clock, Database, Cpu, Radio } from 'lucide-react'
+import { ShieldAlert, RefreshCw, CheckCircle2, AlertTriangle, XCircle, Clock, Database, Cpu, Radio, DollarSign, Play } from 'lucide-react'
 import { endpoints } from '@/lib/api'
+import { getApiKey } from '@/lib/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 
@@ -333,6 +335,168 @@ function OddsMonitorPanel() {
 }
 
 // ---------------------------------------------------------------------------
+// Settlement trigger panel
+// ---------------------------------------------------------------------------
+
+function SettlementPanel() {
+  const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
+  const [result, setResult] = useState<string | null>(null)
+
+  async function triggerSettlement() {
+    setStatus('loading')
+    setResult(null)
+    try {
+      const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+      const res = await fetch(`${BASE_URL}/admin/force-update-outcomes`, {
+        method: 'POST',
+        headers: { 'X-API-Key': getApiKey(), 'Content-Type': 'application/json' },
+      })
+      if (!res.ok) throw new Error(`${res.status}`)
+      const data = await res.json()
+      const updated = data.outcomes_updated ?? data.bets_updated ?? 0
+      const games = data.games_checked ?? data.games_completed ?? 0
+      setResult(`Updated ${updated} bet(s) across ${games} game(s)`)
+      setStatus('done')
+    } catch (e) {
+      setResult(String(e))
+      setStatus('error')
+    }
+  }
+
+  return (
+    <Card className="p-0">
+      <CardHeader className="px-5 pt-5 pb-0 mb-4">
+        <CardTitle className="flex items-center gap-2">
+          <Play className="h-4 w-4 text-zinc-500" />
+          Settlement
+        </CardTitle>
+      </CardHeader>
+      <div className="px-5 pb-5 space-y-3">
+        <p className="text-xs text-zinc-500">
+          Manually trigger outcome settlement for completed games. Runs automatically every 2 hours.
+        </p>
+        <button
+          onClick={triggerSettlement}
+          disabled={status === 'loading'}
+          className={cn(
+            'w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-md text-sm font-semibold transition-colors',
+            status === 'loading'
+              ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+              : 'bg-amber-500/20 border border-amber-500/40 text-amber-300 hover:bg-amber-500/30',
+          )}
+        >
+          <RefreshCw className={cn('h-4 w-4', status === 'loading' && 'animate-spin')} />
+          {status === 'loading' ? 'Running...' : 'Trigger Settlement Now'}
+        </button>
+        {result && (
+          <p className={cn('text-xs font-mono', status === 'error' ? 'text-rose-400' : 'text-emerald-400')}>
+            {status === 'error' ? '✗ ' : '✓ '}{result}
+          </p>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Bankroll update panel
+// ---------------------------------------------------------------------------
+
+function BankrollPanel() {
+  const [amount, setAmount] = useState('')
+  const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const { data: current, refetch } = useQuery({
+    queryKey: ['bankroll-current'],
+    queryFn: async () => {
+      const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+      const res = await fetch(`${BASE_URL}/admin/bankroll`, {
+        headers: { 'X-API-Key': getApiKey() },
+      })
+      if (!res.ok) throw new Error('Failed')
+      return res.json() as Promise<{ effective_bankroll: number; source: string; last_set: string | null }>
+    },
+  })
+
+  async function save() {
+    const val = parseFloat(amount)
+    if (isNaN(val) || val <= 0) { setMsg('Enter a valid dollar amount'); setStatus('error'); return }
+    setStatus('loading')
+    setMsg(null)
+    try {
+      const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+      const res = await fetch(`${BASE_URL}/admin/bankroll?amount=${val}`, {
+        method: 'POST',
+        headers: { 'X-API-Key': getApiKey(), 'Content-Type': 'application/json' },
+      })
+      if (!res.ok) throw new Error(`${res.status}`)
+      setMsg(`Bankroll set to $${val.toFixed(2)}`)
+      setStatus('done')
+      setAmount('')
+      refetch()
+    } catch (e) {
+      setMsg(String(e))
+      setStatus('error')
+    }
+  }
+
+  return (
+    <Card className="p-0">
+      <CardHeader className="px-5 pt-5 pb-0 mb-4">
+        <CardTitle className="flex items-center gap-2">
+          <DollarSign className="h-4 w-4 text-zinc-500" />
+          Bankroll
+        </CardTitle>
+      </CardHeader>
+      <div className="px-5 pb-5 space-y-3">
+        {current && (
+          <div className="rounded-md bg-zinc-800/50 border border-zinc-700/50 px-3 py-2 flex justify-between items-center">
+            <span className="text-xs text-zinc-500">Current</span>
+            <div className="text-right">
+              <span className="font-mono font-semibold text-zinc-100">${current.effective_bankroll.toFixed(2)}</span>
+              <span className="text-xs text-zinc-600 ml-2">({current.source === 'db_override' ? 'manual' : 'default'})</span>
+            </div>
+          </div>
+        )}
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 text-sm">$</span>
+            <input
+              type="number"
+              min="1"
+              step="0.01"
+              placeholder="New amount"
+              value={amount}
+              onChange={e => { setAmount(e.target.value); setStatus('idle'); setMsg(null) }}
+              onKeyDown={e => e.key === 'Enter' && save()}
+              className="w-full pl-7 pr-3 py-2 rounded-md bg-zinc-800 border border-zinc-700 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none focus:border-amber-500/60"
+            />
+          </div>
+          <button
+            onClick={save}
+            disabled={status === 'loading' || !amount}
+            className={cn(
+              'px-4 py-2 rounded-md text-sm font-semibold transition-colors shrink-0',
+              status === 'loading' || !amount
+                ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                : 'bg-amber-500/20 border border-amber-500/40 text-amber-300 hover:bg-amber-500/30',
+            )}
+          >
+            Save
+          </button>
+        </div>
+        {msg && (
+          <p className={cn('text-xs font-mono', status === 'error' ? 'text-rose-400' : 'text-emerald-400')}>
+            {status === 'error' ? '✗ ' : '✓ '}{msg}
+          </p>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -350,7 +514,13 @@ export default function AdminPage() {
         </p>
       </div>
 
-      {/* 2×2 grid */}
+      {/* Actions row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <SettlementPanel />
+        <BankrollPanel />
+      </div>
+
+      {/* Status grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <PortfolioPanel />
         <RatingsPanel />
