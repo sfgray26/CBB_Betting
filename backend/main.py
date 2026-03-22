@@ -3182,6 +3182,137 @@ async def fantasy_value_board(
     }
 
 
+@app.post("/api/fantasy/draft-session/{session_key}/sync-yahoo")
+async def sync_draft_from_yahoo(
+    session_key: str,
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """
+    Poll Yahoo's draftresults endpoint and sync any new picks into the session.
+
+    Call this every 15-30 seconds during the live draft to keep drafted_ids
+    current without manual entry.  Safe to call repeatedly — only new picks
+    are recorded.
+
+    Returns: picks_synced count, total picks in Yahoo, your current roster.
+    """
+    from backend.models import FantasyDraftSession, FantasyDraftPick
+    from backend.fantasy_baseball.player_board import get_board
+    from backend.fantasy_baseball.yahoo_client import YahooFantasyClient, YahooAuthError, YahooAPIError
+
+    session = db.query(FantasyDraftSession).filter_by(session_key=session_key).first()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Draft session not found")
+
+    try:
+        client = YahooFantasyClient()
+    except YahooAuthError as exc:
+        raise HTTPException(status_code=401, detail=f"Yahoo auth not configured: {exc}")
+
+    try:
+        yahoo_picks = client.get_draft_results()
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=502, detail=f"Yahoo API error: {exc}")
+
+    if not yahoo_picks:
+        return {"picks_synced": 0, "total_yahoo_picks": 0, "message": "Draft not started or no picks yet"}
+
+    # Build a lookup of player_key -> board player for name/position resolution
+    board = get_board()
+    # Yahoo player_key is like "mlb.p.12345" — we match against board by name
+    # since we don't store Yahoo player keys in our board.
+    # Build a name-normalised lookup from the board.
+    def _norm(s: str) -> str:
+        return s.lower().replace(" ", "_").replace(".", "").replace("'", "").replace("-", "_")
+
+    board_by_id = {p["id"]: p for p in board}
+    board_by_name = {_norm(p["name"]): p for p in board}
+
+    # Already-recorded pick numbers in this session
+    existing_pick_numbers = {
+        pk.pick_number for pk in db.query(FantasyDraftPick).filter_by(session_id=session.id).all()
+    }
+
+    picks_synced = 0
+    for raw in yahoo_picks:
+        pick_num = int(raw.get("pick", 0))
+        if pick_num == 0 or pick_num in existing_pick_numbers:
+            continue
+
+        round_num = int(raw.get("round", ((pick_num - 1) // session.num_teams) + 1))
+        team_key = raw.get("team_key", "")
+        player_key = raw.get("player_key", "")
+
+        # Determine if this is our pick based on pick number and draft position
+        # Pick order: round 1 & 2 linear, round 3+ snake (see draft_engine.py)
+        from backend.fantasy_baseball.draft_engine import build_full_pick_order
+        full_order = build_full_pick_order(session.num_teams, session.num_rounds)
+        pick_pos = 0
+        if pick_num <= len(full_order):
+            _, _, pick_pos = full_order[pick_num - 1]
+        is_my_pick = (pick_pos == session.my_draft_position)
+
+        # Resolve player name — try to fetch from Yahoo, fall back to player_key as ID
+        player_name = player_key
+        player_id = _norm(player_key)
+        positions: list = []
+        player_type = "batter"
+        tier = 0
+        adp = 999.0
+
+        try:
+            yahoo_player = client.get_player(player_key)
+            player_name = yahoo_player.get("name") or player_key
+            positions = yahoo_player.get("positions") or []
+            player_id = _norm(player_name)
+        except Exception:
+            pass  # Use player_key as fallback name — pick still recorded
+
+        # Try to enrich from our board
+        board_match = board_by_id.get(player_id) or board_by_name.get(player_id)
+        if board_match:
+            player_type = board_match.get("type", "batter")
+            tier = board_match.get("tier", 0)
+            adp = board_match.get("adp", 999.0)
+            if not positions:
+                positions = board_match.get("positions", [])
+
+        pick_record = FantasyDraftPick(
+            session_id=session.id,
+            pick_number=pick_num,
+            round_number=round_num,
+            player_id=player_id,
+            player_name=player_name,
+            player_team=yahoo_player.get("team", "") if "yahoo_player" in dir() else "",
+            player_positions=",".join(positions),
+            player_type=player_type,
+            player_tier=tier,
+            player_adp=adp,
+            is_my_pick=is_my_pick,
+        )
+        db.add(pick_record)
+        picks_synced += 1
+
+    if picks_synced:
+        # Advance session pick counter
+        session.current_pick = max(session.current_pick, len(yahoo_picks) + 1)
+        db.commit()
+
+    my_picks = [
+        pk.player_name for pk in
+        db.query(FantasyDraftPick).filter_by(session_id=session.id, is_my_pick=True)
+        .order_by(FantasyDraftPick.pick_number).all()
+    ]
+
+    return {
+        "picks_synced": picks_synced,
+        "total_yahoo_picks": len(yahoo_picks),
+        "session_current_pick": session.current_pick,
+        "my_roster_so_far": my_picks,
+    }
+
+
 @app.get("/api/fantasy/lineup/{lineup_date}", response_model=DailyLineupResponse)
 async def get_fantasy_lineup_recommendations(
     lineup_date: str,
