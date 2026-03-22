@@ -280,9 +280,44 @@ def update_completed_games(days_from: int = 2) -> Dict:
             if not external_id:
                 continue
 
+            # Primary match: external_id
             game = db.query(Game).filter(Game.external_id == external_id).first()
+
+            # Fallback: match by home/away team name + game date when external_id is missing or stale
             if not game:
-                continue  # Not a game we track
+                api_home = score_data.get("home_team", "")
+                api_away = score_data.get("away_team", "")
+                raw_time = score_data.get("commence_time")
+                if api_home and api_away and raw_time:
+                    try:
+                        api_date = datetime.fromisoformat(raw_time.replace("Z", "+00:00")).date()
+                        candidates = (
+                            db.query(Game)
+                            .filter(
+                                Game.home_team.ilike(f"%{api_home.split()[0]}%"),
+                                Game.game_date >= datetime(api_date.year, api_date.month, api_date.day),
+                                Game.game_date < datetime(api_date.year, api_date.month, api_date.day) + timedelta(days=1),
+                            )
+                            .all()
+                        )
+                        for c in candidates:
+                            if _strip_mascot(c.home_team).lower() == _strip_mascot(api_home).lower() and \
+                               _strip_mascot(c.away_team).lower() == _strip_mascot(api_away).lower():
+                                game = c
+                                # Backfill the external_id so future runs match directly
+                                game.external_id = external_id
+                                db.flush()
+                                logger.info(
+                                    "Fallback match: %s @ %s on %s → game.id=%d (external_id backfilled)",
+                                    api_away, api_home, api_date, game.id,
+                                )
+                                break
+                    except Exception as fb_exc:
+                        logger.debug("Fallback match error for %s: %s", external_id, fb_exc)
+
+            if not game:
+                logger.debug("No game matched external_id=%s", external_id)
+                continue
 
             home_s, away_s = _parse_scores(score_data)
             if home_s is None or away_s is None:

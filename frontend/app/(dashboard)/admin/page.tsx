@@ -354,8 +354,8 @@ function SettlementPanel() {
       })
       if (!res.ok) throw new Error(`${res.status}`)
       const data = await res.json()
-      const updated = data.outcomes_updated ?? data.bets_updated ?? 0
-      const games = data.games_checked ?? data.games_completed ?? 0
+      const updated = data.bets_settled ?? data.outcomes_updated ?? data.bets_updated ?? 0
+      const games = data.games_updated ?? data.games_checked ?? data.games_completed ?? 0
       setResult(`Updated ${updated} bet(s) across ${games} game(s)`)
       setStatus('done')
     } catch (e) {
