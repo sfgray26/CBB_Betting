@@ -76,13 +76,17 @@ function parsedFromFullAnalysis(
   const betOdds = calcs.bet_odds as number | undefined
   if (!betSide || betOdds == null) return null
   const team = betSide === 'home' ? p.game.home_team : p.game.away_team
-  // Derive market spread from projected_margin (home perspective)
-  // spread for our side = projected_margin if home, -projected_margin if away
+  // Derive the model's projected spread for our side.
+  // projected_margin = home winning margin (positive = home wins).
+  // Home spread convention: negative = home gives points (favorite).
+  //   → home spread = -projected_margin
+  // Away spread convention: positive = away gets points (underdog).
+  //   → away spread = +projected_margin
   const spread =
     p.projected_margin != null
       ? betSide === 'home'
-        ? p.projected_margin
-        : -p.projected_margin
+        ? -p.projected_margin
+        : p.projected_margin
       : null
   return {
     team,
@@ -159,19 +163,19 @@ function BetCard({ p }: { p: PredictionEntry }) {
         )}
       </div>
 
-      {/* Row 3: THE BET — clear, unambiguous action */}
+      {/* Row 3: THE BET — sportsbook-style two-row layout */}
       {parsed ? (
-        <div className="rounded-md bg-zinc-800/60 border border-amber-500/25 px-4 py-3 space-y-2">
-          {/* Label */}
-          <div className="text-[10px] font-semibold uppercase tracking-widest text-amber-500/70">
+        <div className="rounded-md bg-zinc-800/60 border border-amber-500/25 overflow-hidden">
+          {/* Header label */}
+          <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-amber-500/70">
             {parsed.betType === 'spread' ? 'Spread Bet' : 'Moneyline Bet'}
           </div>
-          {/* Team + spread + odds on one clear line */}
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="font-bold text-zinc-50 text-base leading-snug">{parsed.team}</span>
+          {/* BET row — highlighted */}
+          <div className="flex items-center justify-between gap-2 px-3 py-2 bg-amber-500/10 border-t border-amber-500/20">
+            <span className="font-bold text-zinc-50 text-sm leading-snug">{parsed.team}</span>
             <div className="flex items-baseline gap-2 shrink-0">
               {parsed.spread && (
-                <span className="font-mono font-bold text-xl text-amber-300">
+                <span className="font-mono font-bold text-lg text-amber-300">
                   {parsed.spread}
                 </span>
               )}
@@ -183,6 +187,19 @@ function BetCard({ p }: { p: PredictionEntry }) {
               </span>
             </div>
           </div>
+          {/* Opponent row — dimmed context */}
+          {parsed.spread && (
+            <div className="flex items-center justify-between gap-2 px-3 py-2 border-t border-zinc-700/50">
+              <span className="text-zinc-500 text-sm">
+                {parsed.side === 'home' ? awayTeam : homeTeam}
+              </span>
+              <span className="font-mono text-sm text-zinc-600">
+                {parsed.spread.startsWith('+')
+                  ? parsed.spread.replace('+', '-')
+                  : '+' + parsed.spread.replace('-', '')}
+              </span>
+            </div>
+          )}
         </div>
       ) : (
         <div className="text-xs text-zinc-500 font-mono leading-relaxed">{p.verdict}</div>
