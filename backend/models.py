@@ -22,6 +22,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, date
 import os
+import time
 
 # Try to load dotenv, but don't fail if not installed
 try:
@@ -84,10 +85,25 @@ Base = declarative_base()
 # ── Session dependencies ─────────────────────────────────────────────────────
 
 def get_db():
-    """Sync session dependency for FastAPI routes that are not yet async."""
-    db = SessionLocal()
+    """Sync session dependency with retry on transient connection failures."""
+    db = None
+    for attempt in range(3):
+        try:
+            db = SessionLocal()
+            break
+        except Exception as e:
+            if attempt == 2:
+                raise
+            error_str = str(e).lower()
+            if any(k in error_str for k in ("connection", "timeout", "ssl")):
+                time.sleep(0.1 * (2 ** attempt))
+            else:
+                raise
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

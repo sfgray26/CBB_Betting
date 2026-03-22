@@ -383,5 +383,110 @@ def generate_draft_cheat_sheet() -> str:
     return "\n".join(lines)
 
 
+def inject_advanced_analytics(board: list) -> None:
+    """
+    Merge Statcast advanced metrics from advanced_*_2026.csv into board dicts in-place.
+
+    Adds to each player dict:
+      statcast      — raw Statcast numbers (barrel_pct, xwoba, stuff_plus, etc.)
+      rec_type      — BUY_LOW / BREAKOUT / TARGET / SELL_HIGH / AVOID / NEUTRAL
+      rec_reasons   — list of plain-text reasons
+      rec_confidence — 0.0-1.0
+      adp_gap       — adp minus rank (positive = model ranks player higher = value)
+
+    Completely decoupled: any exception leaves the board unchanged.
+    """
+    try:
+        engine = DraftAnalyticsEngine()
+        engine.load_advanced_metrics()
+        engine.generate_recommendations()
+
+        rec_map = {r.player_id: r for r in engine.recommendations}
+
+        for p in board:
+            pid = p["id"]
+
+            statcast: dict = {}
+            if pid in engine.batters:
+                m = engine.batters[pid]
+                statcast = {
+                    "barrel_pct": round(m.barrel_pct, 1),
+                    "exit_velo": round(m.exit_velo_avg, 1),
+                    "hard_hit_pct": round(m.hard_hit_pct, 1),
+                    "xwoba": round(m.xwoba, 3),
+                    "xwoba_diff": round(m.xwoba_diff, 3),
+                    "sprint_speed": round(m.sprint_speed, 1),
+                    "power_score": round(m.power_score),
+                    "contact_score": round(m.contact_score),
+                    "speed_score": round(m.speed_score),
+                    "overall_score": round(m.overall_score),
+                }
+            elif pid in engine.pitchers:
+                m = engine.pitchers[pid]
+                statcast = {
+                    "stuff_plus": round(m.stuff_plus),
+                    "fb_velo": round(m.fb_velo_avg, 1),
+                    "whiff_pct": round(m.whiff_pct, 1),
+                    "xera": round(m.xera, 2),
+                    "xera_diff": round(m.xera_diff, 2),
+                    "stuff_score": round(m.stuff_score),
+                    "whiff_score": round(m.whiff_score),
+                    "overall_score": round(m.overall_score),
+                }
+            p["statcast"] = statcast
+
+            if pid in rec_map:
+                rec = rec_map[pid]
+                p["rec_type"] = rec.recommendation_type
+                p["rec_reasons"] = rec.reasons
+                p["rec_confidence"] = rec.confidence
+            else:
+                p.setdefault("rec_type", "NEUTRAL")
+                p.setdefault("rec_reasons", [])
+                p.setdefault("rec_confidence", 0.0)
+
+            p["adp_gap"] = round(p.get("adp", 999) - p.get("rank", p.get("adp", 999)), 1)
+
+    except Exception:
+        logger.exception("inject_advanced_analytics failed — board returned unmodified")
+
+
+def compute_value_score(p: dict) -> float:
+    """
+    Combined value score used by the value-board endpoint.
+
+    Components (all additive so failures degrade gracefully):
+      z_score          — primary projection quality (already league-normalised)
+      adp_gap / 30     — rewards players whose model rank beats their ADP
+      statcast bonus   — normalised overall_score above 50 baseline
+      rec bonus        — BUY_LOW / BREAKOUT lift; SELL_HIGH / AVOID penalty
+      avoid penalty    — hard penalty for CSV-flagged injury avoids
+    """
+    z = p.get("z_score", 0.0)
+    # Only apply ADP gap when we have real ADP data (adp < 500 = meaningfully ranked)
+    # Clamp to [-2, +2] so extreme late-round discrepancies don't dominate the score
+    raw_gap = p.get("adp_gap", 0.0)
+    if p.get("adp", 999) < 500:
+        adp_gap_bonus = max(-2.0, min(2.0, raw_gap / 30.0))
+    else:
+        adp_gap_bonus = 0.0
+
+    statcast = p.get("statcast") or {}
+    statcast_bonus = (statcast.get("overall_score", 50) - 50) / 100.0
+
+    rec_bonuses = {
+        "BUY_LOW":  0.30,
+        "BREAKOUT": 0.40,
+        "TARGET":   0.20,
+        "NEUTRAL":  0.00,
+        "SELL_HIGH": -0.30,
+        "AVOID":    -0.40,
+    }
+    rec_bonus = rec_bonuses.get(p.get("rec_type", "NEUTRAL"), 0.0)
+    avoid_penalty = -1.0 if p.get("avoid") else 0.0
+
+    return z + adp_gap_bonus + statcast_bonus + rec_bonus + avoid_penalty
+
+
 if __name__ == "__main__":
     print(generate_draft_cheat_sheet())

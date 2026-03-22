@@ -3021,7 +3021,7 @@ async def record_draft_pick(
 
     session = db.query(FantasyDraftSession).filter_by(
         session_key=session_key, is_active=True
-    ).first()
+    ).with_for_update().first()
     if session is None:
         raise HTTPException(status_code=404, detail="Draft session not found or inactive")
 
@@ -3115,6 +3115,70 @@ async def get_draft_session(
         "is_active": session.is_active,
         "picks": picks,
         "my_picks": my_picks,
+    }
+
+
+@app.get("/api/fantasy/draft-session/value-board")
+async def fantasy_value_board(
+    drafted_ids: str = Query("", description="Comma-separated player IDs already drafted"),
+    position: Optional[str] = Query(None, description="Filter by position (C, 1B, SP, RP, OF, ...)"),
+    player_type: Optional[str] = Query(None, description="batter or pitcher"),
+    tier_max: Optional[int] = Query(None, description="Exclude players below this tier"),
+    limit: int = Query(100, ge=1, le=300),
+    user: str = Depends(verify_api_key),
+):
+    """
+    Advanced-metrics value board — ranks AVAILABLE players by a composite
+    value_score that combines projection z-scores, ADP gaps, Statcast quality,
+    and regression signals (BUY_LOW / BREAKOUT / AVOID).
+
+    Pass drafted_ids as a comma-separated list of player IDs to filter out
+    already-drafted players.  Falls back to standard z-score ranking if the
+    Statcast overlay fails.
+    """
+    import copy
+    from backend.fantasy_baseball.player_board import get_board
+    from backend.fantasy_baseball.draft_analytics import (
+        inject_advanced_analytics,
+        compute_value_score,
+    )
+
+    try:
+        raw_board = get_board()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Player board unavailable: {exc}")
+
+    # Shallow-copy so we don't mutate the singleton cache
+    board = [dict(p) for p in raw_board]
+
+    # Attempt analytics overlay — silently degrades if CSVs missing
+    inject_advanced_analytics(board)
+
+    # Filter out drafted players
+    exclude = {pid.strip() for pid in drafted_ids.split(",") if pid.strip()}
+    board = [p for p in board if p["id"] not in exclude]
+
+    # Optional filters
+    if position:
+        pos_upper = position.upper()
+        board = [p for p in board if pos_upper in p.get("positions", [])]
+    if player_type:
+        board = [p for p in board if p.get("type", "").lower() == player_type.lower()]
+    if tier_max is not None:
+        board = [p for p in board if 0 < p.get("tier", 99) <= tier_max]
+
+    # Sort by value_score descending
+    board.sort(key=compute_value_score, reverse=True)
+
+    # Attach computed value_score to each result for transparency
+    for p in board:
+        p["value_score"] = round(compute_value_score(p), 3)
+
+    board = board[:limit]
+    return {
+        "count": len(board),
+        "analytics_overlay": any(bool(p.get("statcast")) for p in board),
+        "players": board,
     }
 
 
