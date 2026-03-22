@@ -1818,12 +1818,18 @@ async def get_recent_games(
 
 @app.get("/api/bets")
 async def get_bet_logs(
-    status: str = Query(default="all", description="all | pending | settled"),
+    status: str = Query(default="all", description="all | pending | settled | cancelled"),
     days: int = Query(default=60, ge=1, le=365),
+    dedup: bool = Query(default=True, description="Keep only the first BetLog per game per day"),
     user: str = Depends(verify_api_key),
     db: Session = Depends(get_db),
 ):
-    """Return bet logs with optional status filter and date window."""
+    """Return bet logs with optional status filter and date window.
+
+    By default deduplicates by (game_id, bet_date) so that multiple paper trade
+    rows for the same game on the same day are collapsed to the first-created
+    entry.  Pass dedup=false to see all raw rows.
+    """
     cutoff = datetime.utcnow() - timedelta(days=days)
 
     query = (
@@ -1836,9 +1842,30 @@ async def get_bet_logs(
     if status == "pending":
         query = query.filter(BetLog.outcome.is_(None))
     elif status == "settled":
-        query = query.filter(BetLog.outcome.isnot(None))
+        # Exclude cancelled/displaced bets (outcome=-1) from settled view
+        query = query.filter(BetLog.outcome.isnot(None), BetLog.outcome != -1)
+    elif status == "cancelled":
+        query = query.filter(BetLog.outcome == -1)
+    else:
+        # "all" — exclude internal cancelled/displaced bookkeeping rows
+        query = query.filter(BetLog.outcome != -1)
 
-    bets = query.order_by(BetLog.timestamp.desc()).all()
+    bets = query.order_by(BetLog.id.asc()).all()
+
+    # Deduplicate: keep first-created BetLog per (game_id, bet_date)
+    if dedup:
+        seen: set = set()
+        deduped: list = []
+        for b in bets:
+            bet_date = b.timestamp.date() if b.timestamp else None
+            key = (b.game_id, bet_date)
+            if key not in seen:
+                seen.add(key)
+                deduped.append(b)
+        bets = deduped
+
+    # Sort by timestamp descending for display
+    bets = sorted(bets, key=lambda b: b.timestamp or datetime.min, reverse=True)
 
     return {
         "total": len(bets),

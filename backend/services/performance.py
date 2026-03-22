@@ -62,7 +62,14 @@ def _clv_status(mean_clv: Optional[float]) -> str:
 
 
 def _settled_bets(db: Session, cutoff: Optional[datetime] = None) -> List[BetLog]:
-    """Return settled (non-push) bets, optionally filtered by timestamp."""
+    """Return settled (non-push) bets, optionally filtered by timestamp.
+
+    Deduplicates by (game_id, bet_date): when multiple BetLog rows exist for
+    the same game on the same calendar day (e.g. from opener + nightly runs
+    before the per-day guard was added), only the first-created row is kept.
+    This ensures performance metrics are always accurate regardless of whether
+    the DB cleanup job has been run.
+    """
     q = (
         db.query(BetLog)
         .join(Game)
@@ -71,7 +78,28 @@ def _settled_bets(db: Session, cutoff: Optional[datetime] = None) -> List[BetLog
     )
     if cutoff:
         q = q.filter(BetLog.timestamp >= cutoff)
-    return q.order_by(Game.game_date.asc()).all()
+    all_bets = q.order_by(BetLog.id.asc()).all()
+
+    # Deduplicate: keep earliest row per (game_id, bet_date)
+    seen: set = set()
+    result: List[BetLog] = []
+    for b in all_bets:
+        bet_date = b.timestamp.date() if b.timestamp else None
+        key = (b.game_id, bet_date)
+        if key not in seen:
+            seen.add(key)
+            result.append(b)
+
+    # Re-sort by game_date ascending (original order) for downstream calcs
+    from datetime import date as _date
+    _fallback = _date(1, 1, 1)
+    def _sort_key(b: BetLog):
+        gd = b.game.game_date if b.game else None
+        if gd is None:
+            return _fallback
+        return gd.date() if isinstance(gd, datetime) else gd
+    result.sort(key=_sort_key)
+    return result
 
 
 # ---------------------------------------------------------------------------

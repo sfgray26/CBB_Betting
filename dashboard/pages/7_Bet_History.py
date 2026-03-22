@@ -24,7 +24,13 @@ with col_f2:
 with col_f3:
     paper_filter = st.selectbox("Trade type", ["all", "paper only", "real only"])
 
-data = api_get("/api/bets", {"days": days, "status": status_filter})
+show_raw = st.checkbox(
+    "Show raw rows (include duplicates)",
+    value=False,
+    help="By default, only the first BetLog per game per day is shown. Enable to see all raw DB rows.",
+)
+
+data = api_get("/api/bets", {"days": days, "status": status_filter, "dedup": "false" if show_raw else "true"})
 
 if not data or not data.get("bets"):
     st.info("No bets found for this filter.")
@@ -47,40 +53,18 @@ df["result"] = df["outcome"].map({1: "Win", 0: "Loss", -1: "Push", None: "Pendin
 df["game_date"] = pd.to_datetime(df["game_date"], format="mixed", errors="coerce").dt.strftime("%Y-%m-%d")
 df["bet_date"] = pd.to_datetime(df["timestamp"], errors="coerce").dt.strftime("%Y-%m-%d")
 
-# ---------------------------------------------------------------------------
-# Duplicate detection
-# ---------------------------------------------------------------------------
-# Flag rows where the same game_id appears more than once on the same bet_date
-if "game_id" in df.columns and "bet_date" in df.columns:
-    dup_key = df.groupby(["game_id", "bet_date"]).size().reset_index(name="_dup_count")
-    df = df.merge(dup_key, on=["game_id", "bet_date"], how="left")
-    has_duplicates = (df["_dup_count"] > 1).any()
-else:
-    has_duplicates = False
-    df["_dup_count"] = 1
-
-if has_duplicates:
-    dup_count = (df["_dup_count"] > 1).sum()
-    st.warning(
-        f"**Duplicate entries detected:** {dup_count} bets share a game_id + date with another entry. "
-        "These inflate bet counts and distort ROI. Use the deduplicate toggle below to hide extras, "
-        "or run `/admin/debug/duplicate-bets` to see the full list."
-    )
-
-dedup_toggle = st.checkbox(
-    "Deduplicate (keep only the first bet per game per day)",
-    value=has_duplicates,
-    help=(
-        "When checked, only the earliest BetLog entry per game per day is shown. "
-        "This gives the true unique-game view for accurate ROI calculation."
-    ),
-)
-
-if dedup_toggle and has_duplicates:
-    # Sort by id ascending so we keep the first-created entry per game/day
-    df = df.sort_values("id", ascending=True)
-    df = df.drop_duplicates(subset=["game_id", "bet_date"], keep="first")
-    st.caption(f"After deduplication: **{len(df)} unique bets**")
+if show_raw:
+    # Detect and flag duplicates in raw view
+    if "game_id" in df.columns and "bet_date" in df.columns:
+        dup_key = df.groupby(["game_id", "bet_date"]).size().reset_index(name="_dup_count")
+        df = df.merge(dup_key, on=["game_id", "bet_date"], how="left")
+        dup_count = (df["_dup_count"] > 1).sum()
+        if dup_count:
+            st.warning(
+                f"**{dup_count} duplicate rows visible** (raw mode). Run "
+                "`POST /admin/cleanup/duplicate-bets?dry_run=false` to permanently remove extras."
+            )
+    df["_dup_count"] = df.get("_dup_count", 1)
 
 # Drop helper columns before display
 df = df.drop(columns=["_dup_count", "bet_date"], errors="ignore")
