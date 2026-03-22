@@ -341,13 +341,14 @@ function OddsMonitorPanel() {
 function SettlementPanel() {
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
   const [result, setResult] = useState<string | null>(null)
+  const [daysFrom, setDaysFrom] = useState<number>(2)
 
   async function triggerSettlement() {
     setStatus('loading')
     setResult(null)
     try {
       const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
-      const res = await fetch(`${BASE_URL}/admin/force-update-outcomes`, {
+      const res = await fetch(`${BASE_URL}/admin/force-update-outcomes?days_from=${daysFrom}`, {
         method: 'POST',
         headers: { 'X-API-Key': getApiKey(), 'Content-Type': 'application/json' },
       })
@@ -373,8 +374,20 @@ function SettlementPanel() {
       </CardHeader>
       <div className="px-5 pb-5 space-y-3">
         <p className="text-xs text-zinc-500">
-          Manually trigger outcome settlement for completed games. Runs automatically every 2 hours.
+          Manually trigger outcome settlement. Increase lookback to settle historical bets.
         </p>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-zinc-500 shrink-0">Look back</label>
+          <input
+            type="number"
+            min={1}
+            max={30}
+            value={daysFrom}
+            onChange={e => setDaysFrom(Math.max(1, Math.min(30, parseInt(e.target.value) || 2)))}
+            className="w-16 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm text-zinc-200 text-center"
+          />
+          <label className="text-xs text-zinc-500 shrink-0">days</label>
+        </div>
         <button
           onClick={triggerSettlement}
           disabled={status === 'loading'}
