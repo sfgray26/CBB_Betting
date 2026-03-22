@@ -240,14 +240,14 @@ def _parse_scores(score_data: Dict) -> Tuple[Optional[int], Optional[int]]:
 # Job 1: update_completed_games
 # ---------------------------------------------------------------------------
 
-def update_completed_games() -> Dict:
+def update_completed_games(days_from: int = 2) -> Dict:
     """
     Fetch completed game scores from The Odds API and settle all
     pending BetLog entries whose game is now complete.
 
-    Called by scheduler every 2 hours.
+    Called by scheduler every 2 hours. Pass days_from>2 to settle historical bets.
     """
-    logger.info("Starting update_completed_games")
+    logger.info("Starting update_completed_games (days_from=%d)", days_from)
     db = SessionLocal()
 
     games_updated = 0
@@ -258,7 +258,7 @@ def update_completed_games() -> Dict:
 
     try:
         try:
-            completed = _fetch_scores(days_from=2)
+            completed = _fetch_scores(days_from=days_from)
             db.add(DataFetch(
                 data_source="odds_api_scores",
                 success=True,

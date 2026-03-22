@@ -112,7 +112,29 @@ function marketSpreadHome(parsed: ParsedVerdict | null): number | null {
 
 async function logPlacedBet(p: PredictionEntry, parsed: ParsedVerdict | null): Promise<void> {
   const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+  const apiKey = getApiKey()
   const calcs = (p.full_analysis as Record<string, unknown> | null)?.calculations as Record<string, unknown> | undefined
+
+  // Fetch current bankroll to compute dollar size (1 unit = 1% of bankroll)
+  let bankroll = 1000
+  try {
+    const brRes = await fetch(`${BASE_URL}/admin/bankroll`, {
+      headers: { 'X-API-Key': apiKey },
+    })
+    if (brRes.ok) {
+      const brData = await brRes.json()
+      bankroll = brData.bankroll ?? 1000
+    }
+  } catch { /* use default */ }
+
+  const units = p.recommended_units ?? 1
+  const betSizeDollars = parseFloat((units * (bankroll / 100)).toFixed(2))
+
+  // Parse odds — must be valid American odds (≥100 or ≤-100), default -110
+  const rawOdds = parsed?.odds ? parseInt(parsed.odds) : null
+  const oddsValid = rawOdds != null && (rawOdds >= 100 || rawOdds <= -100)
+  const oddsTaken = oddsValid ? rawOdds : -110
+
   const pick = parsed
     ? `${parsed.team} ${parsed.spread ?? parsed.odds}`
     : p.verdict.substring(0, 60)
@@ -121,8 +143,9 @@ async function logPlacedBet(p: PredictionEntry, parsed: ParsedVerdict | null): P
     prediction_id: p.id,
     pick,
     bet_type: parsed?.betType ?? 'spread',
-    odds_taken: parsed?.odds ? parseInt(parsed.odds) : null,
-    bet_size_units: p.recommended_units ?? 1,
+    odds_taken: oddsTaken,
+    bet_size_units: units,
+    bet_size_dollars: betSizeDollars,
     model_prob: p.edge_conservative,
     conservative_edge: p.edge_conservative,
     is_paper_trade: false,
@@ -133,7 +156,7 @@ async function logPlacedBet(p: PredictionEntry, parsed: ParsedVerdict | null): P
   }
   const res = await fetch(`${BASE_URL}/api/bets/log`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-API-Key': getApiKey() },
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
     body: JSON.stringify(payload),
   })
   if (!res.ok) {

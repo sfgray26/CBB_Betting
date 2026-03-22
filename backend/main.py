@@ -2458,11 +2458,14 @@ async def cleanup_duplicate_bets(
 
 
 @app.post("/admin/force-update-outcomes")
-async def force_update_outcomes(user: str = Depends(verify_admin_api_key)):
-    """Manually trigger the outcome-update job (admin only)."""
-    logger.info("Manual outcome update triggered by %s", user)
+async def force_update_outcomes(
+    days_from: int = Query(default=2, ge=1, le=30, description="How many days back to fetch scores (max 30)"),
+    user: str = Depends(verify_admin_api_key),
+):
+    """Manually trigger the outcome-update job (admin only). Use days_from>2 to settle historical bets."""
+    logger.info("Manual outcome update triggered by %s (days_from=%d)", user, days_from)
     try:
-        results = update_completed_games()
+        results = update_completed_games(days_from=days_from)
         return {"message": "Outcome update complete", **results}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
