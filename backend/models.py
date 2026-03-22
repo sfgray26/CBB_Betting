@@ -17,6 +17,7 @@ from sqlalchemy import (
     Date,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
@@ -200,7 +201,10 @@ class Prediction(Base):
     # Data quality
     data_freshness_tier = Column(String)  # Tier 1/2/3
     penalties_applied = Column(JSON)  # Dict of penalty types & values
-    
+
+    # K-14: which simulation engine produced this prediction
+    pricing_engine = Column(String(20))  # 'markov' | 'gaussian' | None
+
     # Relationship
     game = relationship("Game", back_populates="predictions")
 
@@ -475,6 +479,66 @@ class FantasyLineup(Base):
     __table_args__ = (
         UniqueConstraint("lineup_date", "platform", name="_lineup_date_platform_uc"),
     )
+
+
+class PlayerDailyMetric(Base):
+    """
+    Sparse time-series of per-player analytics (EMAC-077 EPIC-1).
+    One row per (player_id, metric_date, sport). NULL fields are not computed yet.
+    """
+
+    __tablename__ = "player_daily_metrics"
+
+    id = Column(Integer, primary_key=True)
+    player_id = Column(String(50), nullable=False, index=True)
+    player_name = Column(String(100), nullable=False)
+    metric_date = Column(Date, nullable=False)
+    sport = Column(String(10), nullable=False)  # 'mlb' | 'cbb'
+
+    # Core value metrics
+    vorp_7d = Column(Float)
+    vorp_30d = Column(Float)
+    z_score_total = Column(Float)
+    z_score_recent = Column(Float)
+
+    # Statcast 2.0 (MLB only — always NULL for CBB rows)
+    blast_pct = Column(Float)
+    bat_speed = Column(Float)
+    squared_up_pct = Column(Float)
+    swing_length = Column(Float)
+    stuff_plus = Column(Float)
+    plv = Column(Float)
+
+    # Flexible rolling windows: {"7d": {"avg": 0.310, ...}, "30d": {...}}
+    rolling_window = Column(JSONB, nullable=False, default=dict)
+
+    data_source = Column(String(50))
+    fetched_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("player_id", "metric_date", "sport",
+                         name="_pdm_player_date_sport_uc"),
+    )
+
+
+class ProjectionSnapshot(Base):
+    """
+    Delta-compressed audit trail of projection changes (EMAC-077 EPIC-1).
+    One row per (snapshot_date, sport). Only stores changed projections.
+    """
+
+    __tablename__ = "projection_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    snapshot_date = Column(Date, nullable=False)
+    sport = Column(String(10), nullable=False)  # 'mlb' | 'cbb'
+
+    # {player_id: {"old": {...}, "new": {...}, "delta_reason": "..."}}
+    player_changes = Column(JSONB, nullable=False, default=dict)
+
+    total_players = Column(Integer)
+    significant_changes = Column(Integer)   # rows where |delta| > threshold
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 # Create all tables
