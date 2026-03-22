@@ -355,12 +355,15 @@ async def lifespan(app: FastAPI):
         if now_et.hour < nightly_cutoff:
             # Before 3 AM ET — nightly job hasn't run yet today, nothing to catch up
             return
-        # Check if today already has predictions
+        # Check if today already has predictions.
+        # Use ET date (not UTC) — the nightly job can run before midnight UTC
+        # (e.g. 22:00 UTC = 6 PM ET), storing predictions with the ET date.
+        # Querying UTC date after midnight UTC would miss those rows.
+        today_et = now_et.date()
         db = SessionLocal()
         try:
-            today_utc = _dt.utcnow().date()
             count = db.query(Prediction).filter(
-                Prediction.prediction_date == today_utc
+                Prediction.prediction_date == today_et
             ).count()
         finally:
             db.close()
@@ -370,7 +373,7 @@ async def lifespan(app: FastAPI):
         logger.warning(
             "Lifespan: No predictions found for %s (now_et=%s). "
             "Nightly job was likely missed due to a post-3AM deploy. Running catch-up analysis.",
-            today_utc, now_et.strftime("%H:%M ET"),
+            today_et, now_et.strftime("%H:%M ET"),
         )
         try:
             await nightly_job()
