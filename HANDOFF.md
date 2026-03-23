@@ -915,7 +915,282 @@ If both pass, EPIC-1 is complete. Proceed to EPIC-2.
 
 ---
 
-**Document Version:** EMAC-077
+---
+
+## 12. PHASE 2 TRANSITION ROADMAP — EPICS 4-6
+
+> **Authored:** EMAC-078 · March 23, 2026 · Claude Code (Master Architect)
+> **Trigger condition:** These epics activate AFTER the CBB season concludes and ADR-004 freeze lifts (April 7, 2026).
+> EPIC-4 → EPIC-5 → EPIC-6 must run sequentially. Do not start EPIC-5 until EPIC-4 is merged and verified.
+
+### ADR-006: MLB Model Analysis Out of Scope Until Explicit Scoping
+
+MLB polling (EPIC-5) activates the data layer only. No model output will be produced for MLB games
+until a `SportConfig.mlb()` constructor and a parallel nightly analysis pipeline are explicitly
+scoped and approved. The sport polling switch controls what odds data is fetched — it does NOT
+imply model predictions or bet recommendations for MLB. Any agent that attempts to wire MLB odds
+into the existing `nightly_analysis` job without explicit approval is in violation of this ADR.
+
+---
+
+### EPIC-4: Bracket Sunset (UI Deprecation)
+
+**Owner:** Claude Code
+**Trigger:** April 7, 2026 (post-championship)
+**Prerequisite:** EPIC-1, EPIC-2, EPIC-3 complete
+**Touches:** Frontend only + one scheduler job removal
+
+#### Sub-tasks
+
+| # | Task | File | Done? |
+|---|------|------|-------|
+| 4.1 | Safety grep: `grep -r "bracket\|BracketProjection\|tournament_data"` — confirm no imports outside target files | Various | [ ] |
+| 4.2 | Delete bracket route files | `frontend/app/(dashboard)/bracket/page.tsx`, `error.tsx`, `loading.tsx` | [ ] |
+| 4.3 | Remove "Tournament" nav section (Trophy icon block) | `frontend/components/layout/sidebar.tsx` | [ ] |
+| 4.4 | Remove `bracketProjection()` function | `frontend/lib/api.ts` | [ ] |
+| 4.5 | Remove `BracketProjection`, `TeamAdvancement`, `UpsetAlert` interfaces | `frontend/lib/types.ts` | [ ] |
+| 4.6 | Remove `tournament_bracket_notifier` APScheduler job | `backend/main.py` (lines ~235-238) | [ ] |
+| 4.7 | Archive tournament service (do NOT delete — preserve for potential future use) | `backend/services/tournament_data.py` → `backend/archive/tournament_data.py` | [ ] |
+| 4.8 | Verify: `npm run build` passes with zero TS errors | `frontend/` | [ ] |
+| 4.9 | Verify: `/bracket` returns 404, all other routes healthy | Live app | [ ] |
+
+#### EPIC-4 Handoff Prompt (copy-paste ready for coding agent)
+
+```
+EPIC-4: Bracket Sunset
+
+Context: NCAA tournament is over. We are removing all bracket/tournament UI from the frontend.
+The CBB model files remain FROZEN (ADR-004) — do not touch betting_model.py or analysis.py.
+
+Step 1 — Safety check (READ-ONLY first):
+  grep -r "bracket\|BracketProjection\|tournament_data\|Trophy" /home/user/CBB_Betting/frontend/
+  grep -r "tournament_bracket" /home/user/CBB_Betting/backend/main.py
+  Report every file that contains these strings before making any edits.
+
+Step 2 — Delete these files (only after step 1 confirms no surprise imports):
+  frontend/app/(dashboard)/bracket/page.tsx
+  frontend/app/(dashboard)/bracket/error.tsx
+  frontend/app/(dashboard)/bracket/loading.tsx
+
+Step 3 — Edit these files:
+  a. frontend/components/layout/sidebar.tsx — remove the "Tournament" nav section
+     (the block containing the Trophy icon and the /bracket href)
+  b. frontend/lib/api.ts — remove the bracketProjection() function
+  c. frontend/lib/types.ts — remove BracketProjection, TeamAdvancement, UpsetAlert interfaces
+
+Step 4 — Backend cleanup:
+  a. backend/main.py — remove the tournament_bracket_notifier scheduler job
+  b. Move (do NOT delete): backend/services/tournament_data.py → backend/archive/tournament_data.py
+     (create backend/archive/ directory if it doesn't exist)
+
+Step 5 — Verify:
+  cd /home/user/CBB_Betting/frontend && npm run build
+  npx tsc --noEmit
+  Both must pass with zero errors. Report the output.
+
+Step 6 — Commit and push to branch claude/clarify-bet-recommendations-ui-WC8Do:
+  git add -A && git commit -m "EPIC-4: Remove bracket/tournament UI post-season"
+  git push -u origin claude/clarify-bet-recommendations-ui-WC8Do
+```
+
+---
+
+### EPIC-5: Sport Polling Switch (API Quota Management)
+
+**Owner:** Claude Code (backend) · Gemini CLI (Railway env vars only)
+**Trigger:** April 8, 2026
+**Prerequisite:** EPIC-4 complete
+**Touches:** `backend/core/sport_polling_switch.py` (new), `backend/services/odds.py`, `backend/models.py`, `backend/main.py`
+
+#### Quota Budget (do not exceed)
+
+| Phase | Sport | Calls/Month | Budget |
+|---|---|---|---|
+| Now (CBB active) | basketball_ncaab | ~11,610 | OK |
+| Transition (Apr 7-8) | Both winding down | ~3,000 | OK |
+| MLB season | baseball_mlb | ~1,800 | Well under |
+| **Hard cap** | | **20,000** | 2,000 reserve |
+
+MLB polling schedule: Morning check 9 AM (1 call), pre-game 11 AM-4 PM every 10 min (30 calls), game-time 5 PM-midnight every 15 min (28 calls), nightly settle 1 AM (1 call). Total: ~60/day → 1,800/month.
+
+#### Sub-tasks
+
+| # | Task | File | Done? |
+|---|------|------|-------|
+| 5.1 | Add `sport_poll_config` table to models | `backend/models.py` | [ ] |
+| 5.2 | Write migration script | `scripts/migrate_sport_poll_config.py` | [ ] |
+| 5.3 | Create `SportPollingSwitch` class with `wind_down_cbb()`, `activate_mlb()`, `get_quota_status()` | `backend/core/sport_polling_switch.py` (NEW) | [ ] |
+| 5.4 | Add generic `get_odds(sport_key: str)` to OddsAPIClient; keep `get_cbb_odds()` as wrapper | `backend/services/odds.py` | [ ] |
+| 5.5 | Add `get_mlb_odds()` wrapper | `backend/services/odds.py` | [ ] |
+| 5.6 | Register MLB scheduler jobs with PG advisory locks (ADR-001) | `backend/main.py` | [ ] |
+| 5.7 | Auto-pause CBB jobs on April 7 (CronTrigger 11:59 PM ET) | `backend/main.py` | [ ] |
+| 5.8 | Add admin endpoints: `GET/POST /admin/sport-switch`, `GET /admin/quota/history` | `backend/main.py` | [ ] |
+| 5.9 | Write `tests/test_sport_polling_switch.py` (mock OddsAPI, test lock behavior) | `tests/` | [ ] |
+| 5.10 | Gemini CLI: set `MLB_ACTIVE=false` in Railway env (starting value) | Railway dashboard | [ ] |
+
+#### EPIC-5 Handoff Prompt
+
+```
+EPIC-5: Sport Polling Switch
+
+Context: CBB season is over. We need to pivot API polling from basketball_ncaab to baseball_mlb.
+Hard quota cap: 20,000 requests/month to The Odds API. Target MLB spend: ~1,800/month.
+ADR-001 is non-negotiable: ALL new scheduler jobs must use pg_try_advisory_lock.
+ADR-006: Do NOT wire MLB odds into nightly_analysis or produce model predictions for MLB.
+
+Files to read first:
+  backend/services/odds.py           — OddsAPIClient, get_cbb_odds(), quota tracking
+  backend/core/sport_config.py       — SportConfig class (already has mlb sport key stub)
+  backend/models.py                  — existing table patterns to follow
+  backend/main.py lines 94-258       — existing scheduler jobs (pattern to replicate)
+
+Tasks:
+1. Add to backend/models.py:
+   - Table `sport_poll_config`: id, cbb_active (bool, default True), mlb_active (bool, default False),
+     transition_date (Date), updated_at (Timestamptz)
+   - ORM class SportPollConfig
+
+2. Create backend/core/sport_polling_switch.py:
+   - Class SportPollingSwitch(db: Session)
+   - Methods: active_sports(), wind_down_cbb(), activate_mlb(), get_quota_status()
+   - wind_down_cbb() sets cbb_active=False; activate_mlb() sets mlb_active=True
+
+3. Modify backend/services/odds.py:
+   - Add get_odds(sport_key: str) — generic method (move URL construction there)
+   - Refactor get_cbb_odds() to call get_odds("basketball_ncaab")
+   - Add get_mlb_odds() calling get_odds("baseball_mlb")
+
+4. Modify backend/main.py:
+   - Add CronTrigger job `cbb_wind_down` firing April 7 at 11:59 PM ET
+     → calls SportPollingSwitch.wind_down_cbb() and pauses CBB jobs
+   - Add 4 MLB jobs (all with pg_try_advisory_lock):
+     * mlb_morning_lines: CronTrigger 9 AM ET
+     * mlb_pregame_monitor: IntervalTrigger 10 min (only run between 11 AM-4 PM via time check)
+     * mlb_game_monitor: IntervalTrigger 15 min (only run between 5 PM-midnight)
+     * mlb_nightly_settle: CronTrigger 1 AM ET
+   - Add endpoints: GET /admin/sport-switch/status, POST /admin/sport-switch,
+     GET /admin/quota/history
+
+5. Write tests/test_sport_polling_switch.py covering:
+   - wind_down_cbb() sets correct DB state
+   - activate_mlb() sets correct DB state
+   - get_mlb_odds() calls correct URL ("baseball_mlb")
+   - Advisory lock prevents double-execution
+
+6. Create migration script: scripts/migrate_sport_poll_config.py
+   Run it and report output.
+
+Report: file diffs, test results, quota projection calculation.
+Push to branch claude/clarify-bet-recommendations-ui-WC8Do.
+```
+
+---
+
+### EPIC-6: Admin Suite & Access Control
+
+**Owner:** Claude Code
+**Trigger:** April 15, 2026 (after EPIC-5 is stable for 1 week)
+**Prerequisite:** EPIC-5 complete and verified on Railway
+**Touches:** `backend/auth.py` (rewrite), `backend/models.py`, `frontend/app/(dashboard)/admin/page.tsx`
+
+#### Role Matrix
+
+| Action | owner | risk_manager | viewer |
+|---|---|---|---|
+| Read any data | ✓ | ✓ | ✓ |
+| Acknowledge alerts / override bankroll | ✓ | ✓ | ✗ |
+| Pause betting markets / adjust line projections | ✓ | ✓ | ✗ |
+| Run analysis / recalibrate / delete bets | ✓ | ✗ | ✗ |
+| Manage users / sport switch | ✓ | ✗ | ✗ |
+
+#### Sub-tasks
+
+| # | Task | File | Done? |
+|---|------|------|-------|
+| 6.1 | Add `user_role` enum, `users` table, `audit_log` table | `backend/models.py` | [ ] |
+| 6.2 | Write migration: `scripts/migrate_users_rbac.py` (seeds owner from API_KEY_USER1 env var) | `scripts/` | [ ] |
+| 6.3 | Rewrite `verify_api_key()` → DB lookup + bcrypt verify → returns `User` ORM object | `backend/auth.py` | [ ] |
+| 6.4 | Add `require_role(*roles)` dependency factory | `backend/auth.py` | [ ] |
+| 6.5 | Apply role guards to all admin routes (owner-only: delete/recalibrate/sport-switch/user-mgmt; risk_manager: bankroll/pause/alerts) | `backend/main.py` | [ ] |
+| 6.6 | Add audit_log write middleware for all /admin/* endpoints | `backend/main.py` | [ ] |
+| 6.7 | Add endpoints: `GET /admin/users`, `POST /admin/users`, `DELETE /admin/users/{id}` | `backend/main.py` | [ ] |
+| 6.8 | Add endpoints: `POST /admin/markets/{id}/pause`, `DELETE /admin/markets/{id}/pause` | `backend/main.py` | [ ] |
+| 6.9 | Add endpoint: `GET /admin/audit-log` (last 100 actions) | `backend/main.py` | [ ] |
+| 6.10 | Extend admin page with 4 tabs: Risk Controls, User Management, Audit Log, Quota Monitor | `frontend/app/(dashboard)/admin/page.tsx` | [ ] |
+| 6.11 | Write `tests/test_auth_rbac.py` — verify 403 on role violations, audit log writes | `tests/` | [ ] |
+
+#### EPIC-6 Handoff Prompt
+
+```
+EPIC-6: Admin Suite & Access Control
+
+Context: Replace hardcoded user1=admin with proper RBAC. 3 roles: owner, risk_manager, viewer.
+This is a solo-to-small-team system (max 5 users). No SAML/SSO in scope — SSO is a future
+migration path via AuthProvider interface but NOT implemented now.
+
+Files to read first:
+  backend/auth.py              — current simple API key auth (to be rewritten)
+  backend/models.py            — existing table patterns
+  backend/main.py              — existing /admin/* routes and their auth dependencies
+  frontend/app/(dashboard)/admin/page.tsx  — existing 6-panel admin UI
+
+Phase A — DB Layer:
+1. Add to backend/models.py:
+   - Enum UserRole = Literal['owner', 'risk_manager', 'viewer']
+   - Table `users`: id, username (unique), api_key_hash (bcrypt), role (UserRole), is_active (bool), created_at, last_seen
+   - Table `audit_log`: id, user_id (FK users.id), action, endpoint, payload (JSON), ip_address, ts
+
+2. Create scripts/migrate_users_rbac.py:
+   - Creates both tables
+   - Seeds one owner user from API_KEY_USER1 env var (bcrypt hash it, don't store plaintext)
+   - Run and report output
+
+Phase B — Auth Rewrite (backend/auth.py):
+3. Rewrite verify_api_key(db, api_key) → User:
+   - Query users table by doing bcrypt.checkpw against each active user's api_key_hash
+   - Update last_seen on successful auth
+   - Raise 401 if no match
+4. Add require_role(*allowed_roles) → Depends():
+   - Factory that returns a FastAPI dependency
+   - Raises 403 if user.role not in allowed_roles
+5. Keep verify_admin_api_key as compatibility shim calling require_role('owner')
+
+Phase C — Route Guards (backend/main.py):
+6. Apply require_role('owner') to: /admin/run-analysis, /admin/recalibrate, delete endpoints, /admin/sport-switch, user management endpoints
+7. Apply require_role('owner', 'risk_manager') to: /admin/bankroll POST, /admin/alerts/*/acknowledge, /admin/markets/*/pause
+8. Add audit_log write on every /admin/* endpoint (log action + user_id + endpoint + payload)
+
+Phase D — New Endpoints:
+9. GET /admin/users — list all users (owner only)
+10. POST /admin/users — create user, generate API key, return key ONCE (owner only)
+11. DELETE /admin/users/{id} — deactivate user (owner only)
+12. POST /admin/markets/{id}/pause — pause a betting market (risk_manager+)
+13. DELETE /admin/markets/{id}/pause — resume market (risk_manager+)
+14. GET /admin/audit-log — last 100 entries (owner only)
+
+Phase E — Frontend:
+15. Extend frontend/app/(dashboard)/admin/page.tsx with a tabbed layout:
+    - Tab 0: System Status (existing panels, unchanged)
+    - Tab 1: Risk Controls (market pause toggles, line override inputs) — visible to risk_manager+
+    - Tab 2: User Management (user list, add/revoke) — visible to owner only
+    - Tab 3: Audit Log table (who/what/when) — visible to owner only
+    - Tab 4: Quota Monitor (calls used, burn rate chart, 30-day trend) — visible to risk_manager+
+    Role visibility: read current user's role from GET /api/me (new endpoint returning {username, role})
+
+Phase F — Tests:
+16. tests/test_auth_rbac.py:
+    - risk_manager key → 403 on DELETE /admin/bets/1
+    - risk_manager key → 200 on POST /admin/markets/1/pause
+    - owner key → 200 on DELETE /admin/bets/1
+    - Every admin action creates audit_log entry
+
+Report: all test results, role matrix verification table.
+Push to branch claude/clarify-bet-recommendations-ui-WC8Do.
+```
+
+---
+
+**Document Version:** EMAC-078
 **Last Updated:** March 23, 2026
 **Status:** PLAN LOCKED — Awaiting EPIC-1 ignition Monday March 24
 **Branch:** main
