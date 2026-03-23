@@ -77,17 +77,17 @@ function parsedFromFullAnalysis(
   const betOdds = calcs.bet_odds as number | undefined
   if (!betSide || betOdds == null) return null
   const team = betSide === 'home' ? p.game.home_team : p.game.away_team
-  // Derive the model's projected spread for our side.
-  // projected_margin = home winning margin (positive = home wins).
-  // Home spread convention: negative = home gives points (favorite).
-  //   → home spread = -projected_margin
-  // Away spread convention: positive = away gets points (underdog).
-  //   → away spread = +projected_margin
+
+  // Use the actual market spread from odds inputs, not the model projection.
+  // full_analysis.inputs.odds.spread is home-team convention (negative = home favored).
+  const inputs = (p.full_analysis as Record<string, unknown> | null)?.inputs as Record<string, unknown> | undefined
+  const oddsInputs = inputs?.odds as Record<string, unknown> | undefined
+  const marketSpreadRaw = (calcs.spread ?? oddsInputs?.spread) as number | undefined | null
   const spread =
-    p.projected_margin != null
+    marketSpreadRaw != null
       ? betSide === 'home'
-        ? -p.projected_margin
-        : p.projected_margin
+        ? marketSpreadRaw          // home spread is already home-convention
+        : -marketSpreadRaw         // away spread = flip sign
       : null
   return {
     team,
