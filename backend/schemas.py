@@ -387,3 +387,33 @@ class LineupApplyRequest(BaseModel):
     date: Optional[str] = None
     players: List[LineupApplyPlayer]
 
+
+# ---------------------------------------------------------------------------
+# K-15: Oracle Validation
+# ---------------------------------------------------------------------------
+
+class OraclePredictionDetail(BaseModel):
+    """One flagged prediction returned by GET /admin/oracle/flagged."""
+    prediction_id: int
+    game_date: datetime
+    home_team: str
+    away_team: str
+    verdict: str
+    projected_margin: Optional[float] = None
+    oracle_spread: Optional[float] = None
+    divergence_points: Optional[float] = None
+    divergence_z: Optional[float] = None
+    threshold_z: Optional[float] = None
+    sources: List[str] = []
+    run_tier: Optional[str] = None
+    prediction_date: Optional[date] = None
+
+    class Config:
+        from_attributes = True
+
+
+class OracleFlaggedResponse(BaseModel):
+    """Response from GET /admin/oracle/flagged."""
+    flagged_count: int
+    predictions: List[OraclePredictionDetail]
+

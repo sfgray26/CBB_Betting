@@ -1441,6 +1441,41 @@ async def run_nightly_analysis(
                         fatigue_metadata=fatigue_metadata,
                     )
 
+                    # ---- K-15: Oracle Validation --------------------------
+                    # Compare model's projected_margin against KenPom +
+                    # BartTorvik consensus.  Flags irreconcilable divergences
+                    # so analysts can inspect before a bet is placed.
+                    _oracle_result = None
+                    _oracle_flagged = False
+                    try:
+                        from backend.services.oracle_validator import (
+                            calculate_oracle_divergence,
+                        )
+                        _oracle_result = calculate_oracle_divergence(
+                            model_spread=analysis.projected_margin,
+                            kenpom_home=ratings_input.get("kenpom", {}).get("home"),
+                            kenpom_away=ratings_input.get("kenpom", {}).get("away"),
+                            barttorvik_home=ratings_input.get("barttorvik", {}).get("home"),
+                            barttorvik_away=ratings_input.get("barttorvik", {}).get("away"),
+                            hours_to_tipoff=hours_to_tipoff,
+                        )
+                        if _oracle_result is not None:
+                            _oracle_flagged = _oracle_result.flagged
+                            if _oracle_flagged:
+                                logger.warning(
+                                    "Oracle flag: %s @ %s — model=%.1f, consensus=%.1f, z=%.2f (threshold=%.1f)",
+                                    away_team, home_team,
+                                    _oracle_result.model_spread,
+                                    _oracle_result.oracle_spread,
+                                    _oracle_result.divergence_z,
+                                    _oracle_result.threshold_z,
+                                )
+                    except Exception as _oracle_exc:
+                        logger.warning(
+                            "Oracle validation failed for %s @ %s: %s",
+                            away_team, home_team, _oracle_exc,
+                        )
+
                     # ---- Sharp money post-processing ----------------------
                     # Check odds monitor line history for steam/opener patterns.
                     # Adjusts edge up to +0.5% when sharp confirms, -0.8% when opposing.
@@ -1602,7 +1637,11 @@ async def run_nightly_analysis(
                     prediction.snr = calcs.get("snr")
                     prediction.snr_kelly_scalar = calcs.get("snr_kelly_scalar")
                     prediction.integrity_verdict = integrity_verdict
-                    
+
+                    # K-15: Oracle Validation fields
+                    prediction.oracle_flag = _oracle_flagged if _oracle_result is not None else None
+                    prediction.oracle_result = _oracle_result.to_dict() if _oracle_result is not None else None
+
                     db.flush()
 
                     games_analyzed += 1

@@ -76,6 +76,8 @@ from backend.schemas import (
     MatchupResponse,
     LineupApplyPlayer,
     LineupApplyRequest,
+    OracleFlaggedResponse,
+    OraclePredictionDetail,
 )
 from backend.fantasy_baseball.yahoo_client import (
     YahooFantasyClient,
@@ -2646,6 +2648,59 @@ async def get_odds_monitor_status(user: str = Depends(verify_admin_api_key)):
     return monitor.get_status()
 
 
+@app.get("/admin/oracle/flagged", response_model=OracleFlaggedResponse)
+async def get_oracle_flagged(
+    days_back: int = Query(7, ge=1, le=90, description="Look-back window in days"),
+    run_tier: Optional[str] = Query(None, description="Filter by run tier: opener|nightly|closing"),
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_admin_api_key),
+):
+    """
+    Return all predictions where the model diverged significantly from the
+    KenPom + BartTorvik consensus (oracle_flag = TRUE).
+
+    Useful for post-game review: were oracle-flagged predictions less accurate?
+    """
+    from datetime import date, timedelta
+
+    cutoff = date.today() - timedelta(days=days_back)
+    query = (
+        db.query(Prediction, Game)
+        .join(Game, Prediction.game_id == Game.id)
+        .filter(
+            Prediction.oracle_flag.is_(True),
+            Prediction.prediction_date >= cutoff,
+        )
+    )
+    if run_tier:
+        query = query.filter(Prediction.run_tier == run_tier)
+
+    rows = query.order_by(Prediction.prediction_date.desc()).all()
+
+    details = []
+    for pred, game in rows:
+        oracle = pred.oracle_result or {}
+        details.append(
+            OraclePredictionDetail(
+                prediction_id=pred.id,
+                game_date=game.game_date,
+                home_team=game.home_team,
+                away_team=game.away_team,
+                verdict=pred.verdict,
+                projected_margin=pred.projected_margin,
+                oracle_spread=oracle.get("oracle_spread"),
+                divergence_points=oracle.get("divergence_points"),
+                divergence_z=oracle.get("divergence_z"),
+                threshold_z=oracle.get("threshold_z"),
+                sources=oracle.get("sources", []),
+                run_tier=pred.run_tier,
+                prediction_date=pred.prediction_date,
+            )
+        )
+
+    return OracleFlaggedResponse(flagged_count=len(details), predictions=details)
+
+
 @app.get("/admin/ratings/status")
 async def get_ratings_status(user: str = Depends(verify_admin_api_key)):
     """
@@ -3188,6 +3243,71 @@ async def delete_draft_session(
     db.delete(session)
     db.commit()
     return {"message": "Draft session deleted", "session_key": session_key}
+
+
+@app.get("/api/fantasy/draft-sessions")
+async def list_draft_sessions(
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """List all draft sessions (active and inactive) so you can find a session key to reset or delete."""
+    from backend.models import FantasyDraftSession, FantasyDraftPick
+
+    sessions = db.query(FantasyDraftSession).order_by(FantasyDraftSession.created_at.desc()).all()
+    result = []
+    for s in sessions:
+        pick_count = db.query(FantasyDraftPick).filter_by(session_id=s.id).count()
+        my_pick_count = db.query(FantasyDraftPick).filter_by(session_id=s.id, is_my_pick=True).count()
+        result.append({
+            "session_key": s.session_key,
+            "my_draft_position": s.my_draft_position,
+            "num_teams": s.num_teams,
+            "num_rounds": s.num_rounds,
+            "current_pick": s.current_pick,
+            "total_picks_recorded": pick_count,
+            "my_picks_recorded": my_pick_count,
+            "is_active": s.is_active,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+        })
+    return {"sessions": result, "count": len(result)}
+
+
+@app.post("/api/fantasy/draft-session/{session_key}/reset")
+async def reset_draft_session(
+    session_key: str,
+    my_draft_position: Optional[int] = Query(None, ge=1, le=20,
+        description="Update draft position (e.g. 6). Omit to keep existing."),
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """
+    Reset a draft session: clears all picks and resets current_pick to 1.
+    Optionally updates my_draft_position (use this to correct a test session
+    before the real draft begins).
+
+    The session itself is preserved — use DELETE to fully remove it.
+    """
+    from backend.models import FantasyDraftSession, FantasyDraftPick
+
+    session = db.query(FantasyDraftSession).filter_by(session_key=session_key).first()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Draft session not found")
+
+    picks_deleted = db.query(FantasyDraftPick).filter_by(session_id=session.id).delete()
+    session.current_pick = 1
+    session.is_active = True
+    if my_draft_position is not None:
+        session.my_draft_position = my_draft_position
+    db.commit()
+
+    return {
+        "message": "Draft session reset",
+        "session_key": session_key,
+        "picks_cleared": picks_deleted,
+        "my_draft_position": session.my_draft_position,
+        "ready_for_draft": True,
+    }
 
 
 @app.get("/api/fantasy/draft-session/value-board")
