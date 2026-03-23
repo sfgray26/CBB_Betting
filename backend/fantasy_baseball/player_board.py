@@ -780,6 +780,26 @@ MY_KEEPERS: dict[str, int] = {
     "juan_soto": 1,   # Keep Juan Soto, costs Round 1
 }
 
+# All 14 league-wide keepers (all teams). Used to pre-filter the value board
+# before the Yahoo roster API sweep fires at 19:00. Verified from Yahoo lock
+# screen 2026-03-23.
+ALL_LEAGUE_KEEPERS: frozenset[str] = frozenset({
+    "aaron_judge",        # ChippaJone
+    "shohei_ohtani",      # Marte Partay
+    "bobby_witt_jr",      # Bartolo's Colon
+    "juan_soto",          # Lindor Truffles (us)
+    "elly_de_la_cruz",    # Mendoza Line
+    "kyle_tucker",        # Juiced Balls
+    "jose_ramirez",       # Game Blausers
+    "ronald_acuna_jr",    # Juiced Balls
+    "julio_rodriguez",    # Damn the Torpedoes
+    "corbin_carroll",     # Slap Dick Prospects
+    "fernando_tatis_jr",  # Mendoza Line
+    "francisco_lindor",   # ChippaJone
+    "nick_kurtz",         # High&TightyWhitey's
+    "jackson_merrill",    # High&TightyWhitey's
+})
+
 
 def annotate_keepers(board: list[dict]) -> None:
     """Stamp is_keeper / keeper_round onto keeper players (in-place)."""
@@ -787,13 +807,18 @@ def annotate_keepers(board: list[dict]) -> None:
         if p["id"] in MY_KEEPERS:
             p["is_keeper"] = True
             p["keeper_round"] = MY_KEEPERS[p["id"]]
+        elif p["id"] in ALL_LEAGUE_KEEPERS:
+            p["is_keeper"] = True
+            p["keeper_round"] = None  # other team's keeper — round unknown
         else:
             p.setdefault("is_keeper", False)
             p.setdefault("keeper_round", None)
 
 
 def available_players(drafted_ids: set[str]) -> list[dict]:
-    return [p for p in get_board() if p["id"] not in drafted_ids]
+    """Return players not yet drafted and not a league keeper."""
+    excluded = ALL_LEAGUE_KEEPERS | drafted_ids
+    return [p for p in get_board() if p["id"] not in excluded]
 
 
 # ---------------------------------------------------------------------------

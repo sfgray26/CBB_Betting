@@ -3346,8 +3346,9 @@ async def fantasy_value_board(
     # Attempt analytics overlay — silently degrades if CSVs missing
     inject_advanced_analytics(board)
 
-    # Filter out drafted players
-    exclude = {pid.strip() for pid in drafted_ids.split(",") if pid.strip()}
+    # Filter out drafted players + all league keepers (hardcoded fallback)
+    from backend.fantasy_baseball.player_board import ALL_LEAGUE_KEEPERS
+    exclude = ALL_LEAGUE_KEEPERS | {pid.strip() for pid in drafted_ids.split(",") if pid.strip()}
     board = [p for p in board if p["id"] not in exclude]
 
     # Optional filters
