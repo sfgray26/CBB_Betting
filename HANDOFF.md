@@ -14,9 +14,11 @@
 | Subsystem | Status | Notes |
 |-----------|--------|-------|
 | V9.1 CBB Model | FROZEN until Apr 7 | Guardian active. See EMAC-076 §3 |
+| K-15 Oracle Validation | **LIVE** (Mar 23) | `oracle_validator.py`, DB columns, `GET /admin/oracle/flagged`, 19 tests. Spec: `reports/K15_ORACLE_VALIDATION_SPEC.md` |
 | Fantasy Draft | COMPLETE | Juan Soto kept. Draft session endpoints live. |
 | Value-Board Endpoint | LIVE | `GET /api/fantasy/draft-session/value-board` w/ Statcast overlay |
 | Yahoo OAuth Sync | LIVE | `POST /api/fantasy/draft-session/{key}/sync-yahoo` polls draftresults |
+| Pre-Draft Keeper Sweep | **LIVE** (Mar 23) | `POST /api/fantasy/draft-session/{key}/sync-keepers` — fetches all 12 rosters from Yahoo at room open, marks all keepers, cleans pool before first pick |
 | Time-Series Schema | NOT EXISTS | Tables `player_daily_metrics`, `projection_snapshots` do not exist |
 | Ingestion Orchestrator | NOT EXISTS | `backend/services/daily_ingestion.py` does not exist |
 | OpenClaw Autonomous Loop | NOT EXISTS | `backend/services/openclaw_autonomous.py` does not exist |

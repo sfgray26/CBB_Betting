@@ -1,5 +1,5 @@
 # CBB Edge — Task Tracker
-*Updated: 2026-03-23 | Architect: Claude Sonnet 4.6 | Mission: EMAC-077 "DATA SUPERIORITY"*
+*Updated: 2026-03-23 (end of session) | Architect: Claude Sonnet 4.6 | Mission: EMAC-077 "DATA SUPERIORITY"*
 
 > **Canonical source:** `HANDOFF.md` — full specs, ADRs, exit criteria for each EPIC.
 > This file is the status board. HANDOFF.md has the implementation detail.
@@ -78,8 +78,9 @@ Key deliverables:
 | V9.2 params (sd_mult 1.0→0.80, ha 2.419→2.85, SNR_KELLY_FLOOR 0.50→0.75) | `reports/K12_RECALIBRATION_SPEC_V92.md` | HIGH |
 | Wire Haslametrics as 3rd rating source | `docs/THIRD_RATING_SOURCE.md` | HIGH |
 | `pricing_engine` field on Prediction (K-14) — done in EPIC-1 | — | COMPLETE |
-| Oracle validation (spread vs consensus ±5pt flag) | `reports/K15_ORACLE_VALIDATION_SPEC.md` (TBD) | MEDIUM |
+| Oracle validation (K-15) | `reports/K15_ORACLE_VALIDATION_SPEC.md` | **COMPLETE** (Mar 23) |
 | Fantasy Baseball Yahoo OAuth wiring | `docs/MLB_FANTASY_ROADMAP.md` | LOW |
+| Pre-draft keeper sweep endpoint | `backend/main.py` `POST /sync-keepers` | **COMPLETE** (Mar 23) |
 
 ---
 
@@ -112,6 +113,8 @@ No implementation tickets open until EMAC-077 EPIC-1 is complete and tournament 
 | Description | Date |
 |-------------|------|
 | MLB+PGA Expansion Blueprint reviewed, critical bugs documented | Mar 23 |
+| K-15 Oracle Validation System (oracle_validator.py, DB columns, admin endpoint, 19 tests) | Mar 23 |
+| Pre-draft keeper sweep: POST /api/fantasy/draft-session/{key}/sync-keepers | Mar 23 |
 | Fantasy Season Ops — full stack (/fantasy/lineup, /fantasy/waiver + backend endpoints) | Mar 20 |
 | Admin Risk Dashboard (/admin — 4-panel) | Mar 20 |
 | Fantasy Draft Assistant (Live Draft tab, snake order, roster panel) | Mar 20 |

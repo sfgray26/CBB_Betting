@@ -3504,6 +3504,120 @@ async def sync_draft_from_yahoo(
     }
 
 
+@app.post("/api/fantasy/draft-session/{session_key}/sync-keepers")
+async def sync_keepers_pre_draft(
+    session_key: str,
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """
+    Pre-draft keeper sweep. Call once when the Yahoo draft room opens (~30 min
+    before picks start). Fetches all 12 teams' current rosters — any player
+    already on a roster is a keeper — and inserts them as pick_number=0
+    sentinel rows so the value-board and available-player pool are clean before
+    the first pick.
+
+    Safe to call repeatedly: existing keeper rows are not duplicated.
+
+    Returns: keepers_found (total), keepers_inserted (new), keepers_skipped
+             (already present), my_keepers (our own).
+    """
+    from backend.models import FantasyDraftSession, FantasyDraftPick
+    from backend.fantasy_baseball.player_board import get_board
+    from backend.fantasy_baseball.yahoo_client import YahooFantasyClient, YahooAuthError, YahooAPIError
+
+    session = db.query(FantasyDraftSession).filter_by(session_key=session_key).first()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Draft session not found")
+
+    try:
+        client = YahooFantasyClient()
+    except YahooAuthError as exc:
+        raise HTTPException(status_code=401, detail=f"Yahoo auth not configured: {exc}")
+
+    try:
+        my_team_key = client.get_my_team_key()
+        all_teams = client.get_all_teams()
+        all_rosters = client.get_all_rosters()
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=502, detail=f"Yahoo API error: {exc}")
+
+    board = get_board()
+
+    def _norm(s: str) -> str:
+        return s.lower().replace(" ", "_").replace(".", "").replace("'", "").replace("-", "_")
+
+    board_by_name = {_norm(p["name"]): p for p in board}
+
+    # Players already in this session as keepers (pick_number=0)
+    existing = {
+        row.player_id
+        for row in db.query(FantasyDraftPick.player_id)
+        .filter_by(session_id=session.id, pick_number=0)
+        .all()
+    }
+
+    # Map team_key -> draft position (1-indexed by league order)
+    team_pos = {t["team_key"]: (i + 1) for i, t in enumerate(all_teams)}
+
+    keepers_found = 0
+    keepers_inserted = 0
+    keepers_skipped = 0
+    my_keepers: list[str] = []
+
+    for team_key, roster in all_rosters.items():
+        is_my_team = (team_key == my_team_key)
+        drafter_pos = team_pos.get(team_key, 0)
+
+        for player in roster:
+            keepers_found += 1
+            raw_name = player.get("name") or ""
+            player_id = _norm(raw_name) if raw_name else player.get("player_key", "unknown")
+
+            if player_id in existing:
+                keepers_skipped += 1
+                if is_my_team:
+                    my_keepers.append(raw_name)
+                continue
+
+            board_match = board_by_name.get(player_id)
+            positions = player.get("positions") or (board_match.get("positions") if board_match else []) or []
+
+            db.add(FantasyDraftPick(
+                session_id=session.id,
+                pick_number=0,
+                round_number=None,
+                drafter_position=drafter_pos,
+                is_my_pick=is_my_team,
+                player_id=player_id,
+                player_name=raw_name,
+                player_team=player.get("team"),
+                player_positions=",".join(positions) if isinstance(positions, list) else positions,
+                player_tier=board_match.get("tier") if board_match else None,
+                player_adp=board_match.get("adp") if board_match else None,
+                player_z_score=board_match.get("z_score") if board_match else None,
+            ))
+            existing.add(player_id)
+            keepers_inserted += 1
+            if is_my_team:
+                my_keepers.append(raw_name)
+
+    db.commit()
+
+    return {
+        "status": "ok",
+        "keepers_found": keepers_found,
+        "keepers_inserted": keepers_inserted,
+        "keepers_skipped": keepers_skipped,
+        "my_keepers": my_keepers,
+        "player_pool_ready": True,
+        "message": (
+            f"Keeper sweep complete. {keepers_inserted} new keepers loaded "
+            f"across {len(all_rosters)} teams. Player pool clean for draft."
+        ),
+    }
+
+
 @app.get("/api/fantasy/lineup/{lineup_date}", response_model=DailyLineupResponse)
 async def get_fantasy_lineup_recommendations(
     lineup_date: str,

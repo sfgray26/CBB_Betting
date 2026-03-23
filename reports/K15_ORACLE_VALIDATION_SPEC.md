@@ -1,761 +1,528 @@
-# K15: Oracle Validation Spec — Consensus Spread Divergence Detection
-**Date:** March 22, 2026  
-**Status:** Production-Ready Specification  
-**Target Implementation:** Post-April 7, 2026  
+# K-15 Oracle Validation System — Production Spec
+
+**Status:** IMPLEMENTED (as of 2026-03-23)  
+**Location:** `backend/services/oracle_validator.py`, `backend/models.py`, `backend/services/analysis.py`  
+**Ticket:** K-15  
 
 ---
 
-## 1. Executive Summary
+## 1. Consensus Spread Formula
 
-The Oracle Validation System detects when our model's projected margin diverges significantly from the market consensus spread. This serves as a data-quality sentinel — flagging potential team-mapping errors, unreported injuries, stale ratings, or line-moving sharp action that our model hasn't captured.
+### 1.1 Rating Differentials
+
+For each rating source, compute the raw margin differential (home - away):
+
+```python
+kenpom_margin = kenpom_home - kenpom_away
+barttorvik_margin = barttorvik_home - barttorvik_away
+```
+
+### 1.2 Consensus Calculation
+
+The **oracle_spread** is the arithmetic mean of all available rating differentials:
+
+```python
+margins: list[float] = []
+sources: list[str] = []
+
+if kenpom_home is not None and kenpom_away is not None:
+    margins.append(kenpom_home - kenpom_away)
+    sources.append("kenpom")
+
+if barttorvik_home is not None and barttorvik_away is not None:
+    margins.append(barttorvik_home - barttorvik_away)
+    sources.append("barttorvik")
+
+oracle_spread = sum(margins) / len(margins)  # simple average
+```
+
+**Key characteristics:**
+- Uses only KenPom and BartTorvik (EvanMiya excluded from consensus by design)
+- Requires at least one complete rating pair to compute
+- No renormalization or weighting — pure arithmetic mean
+- Sign convention: positive = home team favored
 
 ---
 
-## 2. Consensus Spread Formula
+## 2. Oracle Comparison Logic
 
-### 2.1 Our Model's Projected Margin
+### 2.1 Divergence Calculation
 
 ```python
-# From betting_model.py — analyze_game() method
-
-# Step 1: Collect available rating sources
-available_sources = []
-
-# KenPom (required — already checked above)
-kenpom_diff = kp_home - kp_away  # AdjEM difference
-available_sources.append(('kenpom', kenpom_diff))
-
-# BartTorvik (if available)
-if bt_home is not None and bt_away is not None:
-    barttorvik_diff = bt_home - bt_away  # AdjEM = AdjOE - AdjDE
-    available_sources.append(('barttorvik', barttorvik_diff))
-
-# EvanMiya (if available)
-if em_home is not None and em_away is not None:
-    evanmiya_diff = em_home - em_away  # BPR difference
-    available_sources.append(('evanmiya', evanmiya_diff))
-
-# Step 2: Renormalize weights to available sources
-total_weight = sum(weights[src] for src, _ in available_sources)  # weights sum to ~1.0
-
-# Step 3: Compute weighted margin
-margin = sum(
-    (weights[src] / total_weight) * diff
-    for src, diff in available_sources
-)
-
-# Step 4: Apply confidence shrinkage for missing sources
-n_available = len(available_sources)
-n_total = 3  # Expected sources
-n_missing = max(0, n_total - n_available)
-if n_missing > 0:
-    shrinkage = max(0.70, 1.0 - 0.10 * n_missing)
-    margin *= shrinkage
-
-# Step 5: Apply adjustments (IN ORDER)
-margin += adjusted_hca                    # Pace-adjusted home court advantage
-margin += injury_adj                      # Net injury impact (signed)
-margin += matchup_margin_adj              # MatchupEngine geometry adjustment
-margin += fatigue_margin_adj              # Rest/travel/altitude adjustment
-
-# Step 6: Market blend (if sharp spread available)
-if sharp_consensus_spread is not None:
-    market_margin = -sharp_consensus_spread  # Convert spread to margin
-    model_weight = dynamic_model_weight(hours_to_tipoff, sharp_books_available, injury_adj)
-    margin = model_weight * margin + (1 - model_weight) * market_margin
-
-# FINAL: our_projected_margin = margin
+divergence_points = abs(model_spread - oracle_spread)
+divergence_z = divergence_points / ORACLE_SD
 ```
 
-### 2.2 Market Consensus Spread
+Where:
+- `model_spread`: `analysis.projected_margin` from the betting model
+- `ORACLE_SD`: Calibrated standard deviation for rating-system disagreement (default: 4.0)
+
+### 2.2 Time-Weighted Threshold
+
+The flagging threshold tightens as game time approaches:
 
 ```python
-# From odds.py — parse_odds_for_game() method
-
-# Sharp consensus (primary)
-sharp_consensus_spread = average(spread_home across Pinnacle + Circa)
-
-# Soft-proxy fallback (if no sharp books)
-if sharp_books_available == 0:
-    if DraftKings and FanDuel agree within 0.5 points:
-        sharp_proxy_used = True
-        sharp_consensus_spread = (DK_spread + FD_spread) / 2
-
-# Convert to market margin
-market_consensus_margin = -sharp_consensus_spread
+def _select_threshold(hours_to_tipoff: Optional[float]) -> float:
+    if hours_to_tipoff is None or hours_to_tipoff >= 24:
+        return ORACLE_THRESHOLD_Z_EARLY  # 2.0
+    if hours_to_tipoff >= 4:
+        return ORACLE_THRESHOLD_Z_MID    # 2.5
+    return ORACLE_THRESHOLD_Z_LATE       # 3.0
 ```
 
-### 2.3 Consensus Spread Definition
+### 2.3 Flag Condition
 
 ```python
-# The "Consensus Spread" is the sharp market line BEFORE our model blend
-# If no sharp line exists, use best available spread
-
-consensus_spread = (
-    odds.get('sharp_consensus_spread') or      # Pinnacle/Circa average
-    odds.get('best_spread') or                  # Best available retail
-    None
-)
-
-consensus_margin = -consensus_spread if consensus_spread else None
+flagged = divergence_z >= threshold_z
 ```
 
 ---
 
-## 3. Oracle Comparison Logic
+## 3. Recommended Threshold Values
 
-### 3.1 Core Comparison Formula
+| Parameter | Default | Env Override | Justification |
+|-----------|---------|--------------|---------------|
+| `ORACLE_SD` | 4.0 | `ORACLE_SD` | In CBB, raw AdjEM margins from independent systems typically agree within ±3-5 points per team. A 4-point SD covers ~68% of normal spreads (1 SD). |
+| `ORACLE_THRESHOLD_Z_EARLY` | 2.0 | `ORACLE_THRESHOLD_Z_EARLY` | ≥24h before tip: Allow 2σ divergence (~95% confidence interval). Early-day uncertainty is expected; thin markets and lineup uncertainty justify wider tolerance. |
+| `ORACLE_THRESHOLD_Z_MID` | 2.5 | `ORACLE_THRESHOLD_Z_MID` | 4-24h: Tighten to 2.5σ. Market forming, sharp lines emerging. Model should converge toward consensus. |
+| `ORACLE_THRESHOLD_Z_LATE` | 3.0 | `ORACLE_THRESHOLD_Z_LATE` | <4h: Strict 3σ gate. Near tipoff, any remaining divergence likely indicates missing injury/news or data error, not genuine edge. |
+
+**Rationale for time-weighting:**
+- Early: Model has information advantage over stale lines
+- Late: Sharp books have captured all public information; divergence is a red flag
+- Prevents false flags from legitimate early-day information asymmetry
+
+---
+
+## 4. OracleResult Schema
+
+### 4.1 Dataclass Definition
 
 ```python
-def calculate_oracle_divergence(
-    our_projected_margin: float,
-    consensus_margin: float,
-    adjusted_sd: float,
-) -> OracleResult:
-    """
-    Calculate divergence between model and market consensus.
-    
-    Returns OracleResult with divergence metrics and flag status.
-    """
-    
-    # Absolute divergence in points
-    divergence_points = abs(our_projected_margin - consensus_margin)
-    
-    # Z-score divergence (normalized by game uncertainty)
-    # Uses adjusted_sd (already includes penalties, heuristic multipliers, etc.)
-    divergence_z = divergence_points / max(adjusted_sd, 1.0)
-    
-    # Threshold determination (see Section 4)
-    threshold_z = get_oracle_threshold(hours_to_tipoff)
-    
-    # Oracle flag logic
-    oracle_flag = divergence_z > threshold_z
-    
-    return OracleResult(
-        divergence_points=divergence_points,
-        divergence_z=divergence_z,
-        threshold_z=threshold_z,
-        oracle_flag=oracle_flag,
-        our_margin=our_projected_margin,
-        consensus_margin=consensus_margin,
+@dataclass
+class OracleResult:
+    oracle_spread: float       # Consensus spread (avg of rating differentials)
+    model_spread: float        # Our model's projected_margin
+    divergence_points: float   # |model_spread - oracle_spread| in raw points
+    divergence_z: float        # divergence_points / ORACLE_SD
+    threshold_z: float         # Z threshold in effect at this hours_to_tipoff
+    flagged: bool              # True when divergence_z >= threshold_z
+    sources: list[str]         # Rating systems that contributed (e.g., ["kenpom", "barttorvik"])
+```
+
+### 4.2 Serialization
+
+```python
+def to_dict(self) -> dict:
+    return {
+        "oracle_spread": round(self.oracle_spread, 3),
+        "model_spread": round(self.model_spread, 3),
+        "divergence_points": round(self.divergence_points, 3),
+        "divergence_z": round(self.divergence_z, 3),
+        "threshold_z": self.threshold_z,
+        "flagged": self.flagged,
+        "sources": self.sources,
+    }
+```
+
+### 4.3 Field Types
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `oracle_spread` | `float` | Mean of KenPom and BartTorvik home-away differentials |
+| `model_spread` | `float` | The model's final projected_margin after all adjustments |
+| `divergence_points` | `float` | Absolute point difference between model and oracle |
+| `divergence_z` | `float` | Normalized divergence (σ units) |
+| `threshold_z` | `float` | Time-dependent threshold that was applied |
+| `flagged` | `bool` | Whether this prediction exceeded the threshold |
+| `sources` | `list[str]` | Which rating systems contributed to consensus |
+
+---
+
+## 5. Insertion Point in analysis.py
+
+### 5.1 Location
+
+**File:** `backend/services/analysis.py`  
+**Function:** `run_nightly_analysis()`  
+**Call Site:** Lines 1444-1477 (within Pass 2 main loop, after model analysis)
+
+### 5.2 Exact Code Block
+
+```python
+# ---- K-15: Oracle Validation --------------------------
+# Compare model's projected_margin against KenPom +
+# BartTorvik consensus.  Flags irreconcilable divergences
+# so analysts can inspect before a bet is placed.
+_oracle_result = None
+_oracle_flagged = False
+try:
+    from backend.services.oracle_validator import (
+        calculate_oracle_divergence,
+    )
+    _oracle_result = calculate_oracle_divergence(
+        model_spread=analysis.projected_margin,
+        kenpom_home=ratings_input.get("kenpom", {}).get("home"),
+        kenpom_away=ratings_input.get("kenpom", {}).get("away"),
+        barttorvik_home=ratings_input.get("barttorvik", {}).get("home"),
+        barttorvik_away=ratings_input.get("barttorvik", {}).get("away"),
+        hours_to_tipoff=hours_to_tipoff,
+    )
+    if _oracle_result is not None:
+        _oracle_flagged = _oracle_result.flagged
+        if _oracle_flagged:
+            logger.warning(
+                "Oracle flag: %s @ %s — model=%.1f, consensus=%.1f, z=%.2f (threshold=%.1f)",
+                away_team, home_team,
+                _oracle_result.model_spread,
+                _oracle_result.oracle_spread,
+                _oracle_result.divergence_z,
+                _oracle_result.threshold_z,
+            )
+except Exception as _oracle_exc:
+    logger.warning(
+        "Oracle validation failed for %s @ %s: %s",
+        away_team, home_team, _oracle_exc,
     )
 ```
 
-### 3.2 Comparison Implementation
+### 5.3 Context Within Analysis Flow
+
+The oracle check is inserted **after** model analysis completes but **before** sharp money post-processing:
+
+1. Pass 1: Pre-score games by raw edge (lines 873-959)
+2. Pass 2: Main loop begins (line 1002)
+3. Model inputs built (lines 1026-1096)
+4. **Model analysis called** → `model.analyze_game()` (line 1419)
+5. **ORACLE VALIDATION** ← **INSERTED HERE** (lines 1444-1477)
+6. Sharp money post-processing (lines 1479-1512)
+7. Reanalysis engine capture (lines 1514-1534)
+8. Prediction persistence (lines 1536-1644)
+
+### 5.4 Persistence
 
 ```python
-# Exact code to insert in analysis.py
-
-# After: analysis = model.analyze_game(...)
-# Before: prediction populated and persisted
-
-# --- ORACLE VALIDATION CHECK ---
-oracle_result = None
-if odds_input.get('sharp_consensus_spread') is not None:
-    consensus_margin = -odds_input['sharp_consensus_spread']
-    our_margin = analysis.projected_margin
-    
-    # Use the pre-penalty base SD for cleaner divergence measurement
-    # (post-penalty SD can inflate artificially from missing sources)
-    base_sd_for_oracle = dynamic_base_sd or model.base_sd
-    
-    divergence_points = abs(our_margin - consensus_margin)
-    divergence_z = divergence_points / max(base_sd_for_oracle, 1.0)
-    
-    # Dynamic threshold (see Section 4)
-    hours_to_tip = hours_to_tipoff or 12.0
-    if hours_to_tip >= 24:
-        threshold_z = 2.0  # 2.0 sigma = ~95% confidence
-    elif hours_to_tip >= 4:
-        threshold_z = 2.5  # 2.5 sigma = ~99% confidence
-    else:
-        threshold_z = 3.0  # 3.0 sigma = ~99.7% confidence (sharp line settling)
-    
-    oracle_flag = divergence_z > threshold_z
-    
-    oracle_result = {
-        'our_margin': our_margin,
-        'consensus_margin': consensus_margin,
-        'divergence_points': divergence_points,
-        'divergence_z': divergence_z,
-        'threshold_z': threshold_z,
-        'oracle_flag': oracle_flag,
-        'hours_to_tipoff': hours_to_tip,
-    }
-    
-    if oracle_flag:
-        logger.warning(
-            "ORACLE FLAG [%s @ %s]: divergence=%.2fpts (z=%.2f > threshold=%.2f). "
-            "Our margin: %+.1f, Market: %+.1f",
-            away_team, home_team,
-            divergence_points, divergence_z, threshold_z,
-            our_margin, consensus_margin,
-        )
-        notes.append(
-            f"ORACLE FLAG: Model diverges {divergence_points:.1f}pts from market "
-            f"({divergence_z:.2f}σ > {threshold_z:.2f}σ threshold)"
-        )
+# K-15: Oracle Validation fields (lines 1641-1643)
+prediction.oracle_flag = _oracle_flagged if _oracle_result is not None else None
+prediction.oracle_result = _oracle_result.to_dict() if _oracle_result is not None else None
 ```
 
 ---
 
-## 4. Recommended Threshold Value & Justification
+## 6. Prediction Table Column Definition
 
-### 4.1 Threshold Schedule
+### 6.1 SQLAlchemy Model
 
-| Hours to Tipoff | Threshold (z) | Probability | Rationale |
-|-----------------|---------------|-------------|-----------|
-| ≥ 24 hours | 2.0σ | ~95% | Thin market; model legitimately leads |
-| 4–24 hours | 2.5σ | ~99% | Market forming; tighter gate |
-| < 4 hours | 3.0σ | ~99.7% | Sharp books settling; extreme divergence = data error |
-
-### 4.2 Justification from Existing Code
-
-The thresholds are derived from existing system patterns:
-
-1. **Z-Divergence Guard** (betting_model.py, line ~715):
-   ```python
-   _Z_DIVERGENCE_THRESHOLD = 2.5  # Hard PASS at 2.5 sigma
-   ```
-   This guards against model vs. market margin divergence > 2.5 SD.
-
-2. **Edge Breaker Threshold** (betting_model.py, line ~925):
-   ```python
-   # >= 24 h: 15% edge threshold
-   # 4 <= h < 24: 12% edge threshold  
-   # h < 4: exponential decay to 6%
-   ```
-   The Oracle uses probability (z-score) rather than edge percentage for cleaner statistical interpretation.
-
-3. **Confidence Shrinkage** (betting_model.py, line ~475):
-   ```python
-   shrinkage = max(0.70, 1.0 - 0.10 * n_missing)
-   ```
-   Sources missing → higher uncertainty → wider tolerance early.
-
-### 4.3 Threshold Rationale
-
-| Scenario | Expected Behavior |
-|----------|-------------------|
-| **T-24h, divergence = 2.1σ** | Flagged — early divergence may indicate our injury info isn't priced in yet |
-| **T-6h, divergence = 2.6σ** | Flagged — market should be converging; divergence suggests data error |
-| **T-1h, divergence = 3.1σ** | Flagged — sharp books are efficient; this is almost certainly a bug |
-| **T-1h, divergence = 2.0σ** | NOT flagged — within 3.0σ threshold for near-tipoff |
-
-### 4.4 Environment Variable Override
+**File:** `backend/models.py` (lines 208-210)
 
 ```python
-# Allow operators to adjust without code deploy
-ORACLE_THRESHOLD_Z_EARLY = float(os.getenv("ORACLE_THRESHOLD_Z_EARLY", "2.0"))   # >= 24h
-ORACLE_THRESHOLD_Z_MID = float(os.getenv("ORACLE_THRESHOLD_Z_MID", "2.5"))       # 4-24h
-ORACLE_THRESHOLD_Z_LATE = float(os.getenv("ORACLE_THRESHOLD_Z_LATE", "3.0"))     # < 4h
+# K-15: Oracle Validation — divergence from rating-system consensus
+oracle_flag = Column(Boolean)         # True when z-score ≥ time-weighted threshold
+oracle_result = Column(JSON)          # OracleResult.to_dict() snapshot
 ```
+
+### 6.2 Alembic Migration (if needed)
+
+```python
+# Revision for K-15 Oracle Validation
+from alembic import op
+import sqlalchemy as sa
+
+def upgrade():
+    op.add_column('predictions', sa.Column('oracle_flag', sa.Boolean(), nullable=True))
+    op.add_column('predictions', sa.Column('oracle_result', sa.JSON(), nullable=True))
+    
+    # Index for fast filtering of flagged predictions
+    op.create_index(
+        'ix_predictions_oracle_flag',
+        'predictions',
+        ['oracle_flag'],
+        postgresql_where=sa.text('oracle_flag IS TRUE')
+    )
+
+def downgrade():
+    op.drop_index('ix_predictions_oracle_flag', table_name='predictions')
+    op.drop_column('predictions', 'oracle_result')
+    op.drop_column('predictions', 'oracle_flag')
+```
+
+### 6.3 Column Details
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|-------------|
+| `oracle_flag` | `BOOLEAN` | Yes | True if flagged, False if checked but not flagged, NULL if check failed/not run |
+| `oracle_result` | `JSONB` | Yes | Full `OracleResult.to_dict()` snapshot for debugging |
 
 ---
 
-## 5. OracleResult Schema
+## 7. Admin Endpoint Specification
 
-### 5.1 Dataclass Definition
+### 7.1 GET /admin/oracle/flagged
 
-```python
-from dataclasses import dataclass
-from typing import Optional
-from datetime import datetime
+**Purpose:** Retrieve all predictions flagged by the Oracle validation system for analyst review.
 
-@dataclass
-class OracleResult:
-    """
-    Complete record of Oracle divergence analysis for a game.
-    Persisted to prediction.oracle_result (JSONB) and used for alerting.
-    """
-    
-    # Core identifiers
-    game_key: str                              # "AwayTeam@HomeTeam"
-    analysis_timestamp: datetime               # When Oracle check ran
-    
-    # Margin comparison
-    our_projected_margin: float                # Our model's final margin
-    consensus_margin: float                    # Market consensus margin
-    divergence_points: float                   # Absolute difference (pts)
-    
-    # Statistical divergence
-    base_sd_used: float                        # SD used for z-calculation
-    divergence_z: float                        # Normalized divergence (sigma)
-    threshold_z: float                         # Applied threshold
-    
-    # Flag and verdict
-    oracle_flag: bool                          # True if divergence > threshold
-    flag_reason: Optional[str]                 # Human-readable explanation
-    
-    # Context for debugging
-    hours_to_tipoff: Optional[float]           # Time context
-    sharp_books_available: int                 # Market data quality
-    sources_used: list[str]                    # ["kenpom", "barttorvik", ...]
-    
-    # Optional: component breakdown
-    our_margin_components: Optional[dict]      # {kenpom: X, barttorvik: Y, ...}
-    
-    def to_dict(self) -> dict:
-        """Serialize for JSON storage."""
-        return {
-            'game_key': self.game_key,
-            'analysis_timestamp': self.analysis_timestamp.isoformat(),
-            'our_projected_margin': self.our_projected_margin,
-            'consensus_margin': self.consensus_margin,
-            'divergence_points': self.divergence_points,
-            'base_sd_used': self.base_sd_used,
-            'divergence_z': self.divergence_z,
-            'threshold_z': self.threshold_z,
-            'oracle_flag': self.oracle_flag,
-            'flag_reason': self.flag_reason,
-            'hours_to_tipoff': self.hours_to_tipoff,
-            'sharp_books_available': self.sharp_books_available,
-            'sources_used': self.sources_used,
-            'our_margin_components': self.our_margin_components,
-        }
+#### Request
+
+```http
+GET /admin/oracle/flagged?date=2026-03-23&min_z=2.0&verdict_type=bet
 ```
 
-### 5.2 JSON Schema (for API/documentation)
+**Query Parameters:**
+
+| Param | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `date` | string (ISO date) | No | Today | Filter by prediction date |
+| `min_z` | float | No | 2.0 | Minimum divergence_z to include |
+| `verdict_type` | string | No | null | Filter by verdict: "bet", "consider", "pass", or "all" |
+| `limit` | int | No | 50 | Max results to return |
+
+#### Response Shape
 
 ```json
 {
-  "game_key": "Duke@UNC",
-  "analysis_timestamp": "2026-03-22T14:30:00Z",
-  "our_projected_margin": 8.5,
-  "consensus_margin": 3.2,
-  "divergence_points": 5.3,
-  "base_sd_used": 11.2,
-  "divergence_z": 2.38,
-  "threshold_z": 2.5,
-  "oracle_flag": false,
-  "flag_reason": null,
-  "hours_to_tipoff": 18.5,
-  "sharp_books_available": 2,
-  "sources_used": ["kenpom", "barttorvik", "evanmiya"],
-  "our_margin_components": {
-    "kenpom_contrib": 3.2,
-    "barttorvik_contrib": 2.8,
-    "evanmiya_contrib": 1.5,
-    "home_advantage": 2.1,
-    "injury_adj": -0.8,
-    "matchup_adj": 0.4,
-    "fatigue_adj": -0.1
+  "status": "ok",
+  "date": "2026-03-23",
+  "count": 3,
+  "thresholds": {
+    "oracle_sd": 4.0,
+    "early": 2.0,
+    "mid": 2.5,
+    "late": 3.0
+  },
+  "flagged_predictions": [
+    {
+      "prediction_id": 12345,
+      "game_id": 67890,
+      "game_key": "Duke@North Carolina",
+      "game_time": "2026-03-23T19:00:00Z",
+      "hours_to_tipoff": 2.5,
+      "verdict": "Bet 1.00u [T3] Duke (home -4.5) @ -110",
+      "oracle": {
+        "oracle_spread": -1.2,
+        "model_spread": -4.5,
+        "divergence_points": 3.3,
+        "divergence_z": 0.825,
+        "threshold_z": 3.0,
+        "flagged": false,
+        "sources": ["kenpom", "barttorvik"]
+      },
+      "model_outputs": {
+        "projected_margin": -4.5,
+        "edge_conservative": 0.045,
+        "recommended_units": 1.0,
+        "pricing_engine": "markov"
+      },
+      "ratings": {
+        "kenpom": { "home": 25.3, "away": 22.1 },
+        "barttorvik": { "home": 24.8, "away": 21.5 },
+        "evanmiya": { "home": null, "away": null }
+      },
+      "run_tier": "nightly",
+      "created_at": "2026-03-23T06:15:32Z"
+    }
+  ],
+  "summary": {
+    "total_analyzed": 45,
+    "total_flagged": 3,
+    "flag_rate": 0.067,
+    "by_tier": {
+      "early": 1,
+      "mid": 1,
+      "late": 1
+    }
   }
 }
 ```
 
----
+#### Response Fields
 
-## 6. Insertion Point in analysis.py
+| Field | Type | Description |
+|-------|------|-------------|
+| `status` | string | "ok" or "error" |
+| `date` | string | Date queried (ISO 8601) |
+| `count` | int | Number of flagged predictions returned |
+| `thresholds` | object | Current threshold configuration |
+| `flagged_predictions` | array | Detailed prediction records |
+| `flagged_predictions[].oracle` | object | Full OracleResult snapshot |
+| `flagged_predictions[].model_outputs` | object | Key model outputs for context |
+| `summary` | object | Aggregate statistics |
 
-### 6.1 Exact Location
-
-**File:** `backend/services/analysis.py`  
-**Function:** `run_nightly_analysis()`  
-**Line:** After line ~1100 (after `analysis = model.analyze_game(...)`), before prediction persistence.
-
-### 6.2 Exact Call Site
-
-```python
-# ================================================================
-# EXISTING CODE (around line 1100-1120)
-# ================================================================
-
-analysis = model.analyze_game(
-    game_data=game_input,
-    odds=odds_input,
-    ratings=ratings_input,
-    injuries=game_injuries,
-    data_freshness=odds_freshness,
-    base_sd_override=dynamic_base_sd,
-    home_style=home_style,
-    away_style=away_style,
-    matchup_margin_adj=matchup_margin_adj,
-    hours_to_tipoff=hours_to_tipoff,
-    concurrent_exposure=_pass2_concurrent_exposure,
-    target_exposure=target_exposure,
-    sharp_books_available=odds_input.get("sharp_books_available", 0),
-    sharp_proxy_used=bool(game_data.get("sharp_proxy_used", False)),
-    integrity_verdict=integrity_verdict,
-    fatigue_margin_adj=fatigue_margin_adj,
-    fatigue_metadata=fatigue_metadata,
-)
-
-# ================================================================
-# ORACLE VALIDATION INSERTION (NEW CODE)
-# ================================================================
-
-oracle_result = None
-oracle_flag = False
-if odds_input.get('sharp_consensus_spread') is not None:
-    from backend.services.oracle_validator import calculate_oracle_divergence
-    
-    oracle_result = calculate_oracle_divergence(
-        our_margin=analysis.projected_margin,
-        consensus_spread=odds_input['sharp_consensus_spread'],
-        base_sd=dynamic_base_sd or model.base_sd,
-        hours_to_tipoff=hours_to_tipoff,
-        game_key=_game_key,
-        sharp_books_available=odds_input.get('sharp_books_available', 0),
-        sources_used=[src for src, _ in available_sources],  # from betting_model
-    )
-    oracle_flag = oracle_result.oracle_flag
-    
-    if oracle_flag:
-        logger.warning(
-            "ORACLE FLAG [%s]: divergence=%.2fpts (z=%.2f > %.2f)",
-            _game_key, oracle_result.divergence_points,
-            oracle_result.divergence_z, oracle_result.threshold_z,
-        )
-
-# ================================================================
-# EXISTING CODE CONTINUES (ReanalysisEngine capture, ~line 1120)
-# ================================================================
-
-try:
-    _reanalysis_cache[_game_key] = ReanalysisEngine.from_analysis_pass(...)
-except Exception as re_exc:
-    ...
-```
-
-### 6.3 Required Imports
-
-```python
-# Add to top of analysis.py
-from backend.services.oracle_validator import calculate_oracle_divergence, OracleResult
-```
-
----
-
-## 7. Database Schema Changes
-
-### 7.1 Prediction Table Migration
-
-```sql
--- Migration: Add Oracle flag to predictions table
--- File: migrations/0015_add_oracle_flag.sql
-
--- Add oracle_flag boolean (nullable, default NULL for historical rows)
-ALTER TABLE predictions 
-ADD COLUMN oracle_flag BOOLEAN DEFAULT NULL;
-
--- Add oracle_result JSONB for full context
-ALTER TABLE predictions 
-ADD COLUMN oracle_result JSONB DEFAULT NULL;
-
--- Index for efficient querying of flagged predictions
-CREATE INDEX idx_predictions_oracle_flag 
-ON predictions(oracle_flag) 
-WHERE oracle_flag IS NOT NULL;
-
--- Composite index for admin queries
-CREATE INDEX idx_predictions_oracle_date 
-ON predictions(prediction_date, oracle_flag) 
-WHERE oracle_flag = TRUE;
-```
-
-### 7.2 SQLAlchemy Model Update
-
-```python
-# backend/models.py — Prediction class
-
-class Prediction(Base):
-    # ... existing columns ...
-    
-    # Oracle validation fields
-    oracle_flag = Column(Boolean, nullable=True, default=None, index=True)
-    oracle_result = Column(JSONB, nullable=True, default=None)
-    
-    # ... rest of model ...
-```
-
-### 7.3 Migration Script
-
-```python
-# scripts/migrate_oracle_fields.py
-"""One-time migration to add Oracle fields to predictions table."""
-
-from backend.models import engine, Prediction
-from sqlalchemy import Column, Boolean, JSON
-
-def upgrade():
-    """Add oracle_flag and oracle_result columns."""
-    from sqlalchemy import MetaData, Table
-    
-    metadata = MetaData()
-    metadata.reflect(bind=engine)
-    
-    predictions_table = Table('predictions', metadata, autoload_with=engine)
-    
-    # Check if columns exist
-    existing_cols = {c.name for c in predictions_table.columns}
-    
-    with engine.connect() as conn:
-        if 'oracle_flag' not in existing_cols:
-            conn.execute("""
-                ALTER TABLE predictions 
-                ADD COLUMN oracle_flag BOOLEAN DEFAULT NULL
-            """)
-            conn.execute("""
-                CREATE INDEX idx_predictions_oracle_flag 
-                ON predictions(oracle_flag) 
-                WHERE oracle_flag IS NOT NULL
-            """)
-            print("Added oracle_flag column")
-        
-        if 'oracle_result' not in existing_cols:
-            conn.execute("""
-                ALTER TABLE predictions 
-                ADD COLUMN oracle_result JSONB DEFAULT NULL
-            """)
-            print("Added oracle_result column")
-        
-        conn.commit()
-    
-    print("Migration complete")
-
-if __name__ == "__main__":
-    upgrade()
-```
-
----
-
-## 8. Admin Endpoint Specification
-
-### 8.1 Endpoint Definition
-
-```python
-# backend/main.py — Admin routes
-
-@app.get("/admin/oracle/flagged", response_model=OracleFlaggedResponse)
-async def get_oracle_flagged_predictions(
-    date: Optional[date] = Query(None, description="Filter by date (default: today)"),
-    min_divergence_z: Optional[float] = Query(None, description="Minimum divergence z-score"),
-    include_passed: bool = Query(False, description="Include PASS verdicts or only BET/CONSIDER"),
-    db: Session = Depends(get_db),
-):
-    """
-    Retrieve all Oracle-flagged predictions for review.
-    
-    Returns predictions where model diverged significantly from market consensus.
-    Useful for identifying data quality issues or unreported injuries.
-    """
-    target_date = date or datetime.utcnow().date()
-    
-    query = db.query(Prediction).join(Game).filter(
-        Prediction.prediction_date == target_date,
-        Prediction.oracle_flag == True,
-    )
-    
-    if min_divergence_z:
-        # Filter by divergence_z in oracle_result JSONB
-        query = query.filter(
-            Prediction.oracle_result['divergence_z'].astext.cast(float) >= min_divergence_z
-        )
-    
-    if not include_passed:
-        query = query.filter(
-            ~Prediction.verdict.startswith("PASS")
-        )
-    
-    predictions = query.order_by(
-        Prediction.oracle_result['divergence_z'].astext.cast(float).desc()
-    ).all()
-    
-    return OracleFlaggedResponse(
-        date=target_date,
-        total_flagged=len(predictions),
-        predictions=[_format_oracle_prediction(p) for p in predictions],
-    )
-```
-
-### 8.2 Response Schema
-
-```python
-# backend/schemas.py
-
-from pydantic import BaseModel
-from typing import List, Optional
-from datetime import date
-
-class OraclePredictionDetail(BaseModel):
-    """Single Oracle-flagged prediction for admin review."""
-    
-    prediction_id: int
-    game_key: str
-    
-    # Teams and matchup
-    home_team: str
-    away_team: str
-    
-    # Model vs Market
-    our_projected_margin: float
-    consensus_margin: float
-    divergence_points: float
-    divergence_z: float
-    threshold_z: float
-    
-    # Verdict info
-    model_verdict: str
-    model_edge: Optional[float]
-    
-    # Context
-    hours_to_tipoff: Optional[float]
-    sharp_books_available: int
-    sources_used: List[str]
-    
-    # Timestamp
-    analysis_timestamp: str
-    
-    # Full breakdown (optional, for deep dives)
-    margin_components: Optional[dict] = None
-
-class OracleFlaggedResponse(BaseModel):
-    """Response from GET /admin/oracle/flagged."""
-    
-    date: date
-    total_flagged: int
-    predictions: List[OraclePredictionDetail]
-    
-    # Summary statistics
-    avg_divergence_z: Optional[float] = None
-    max_divergence_z: Optional[float] = None
-    
-    class Config:
-        from_attributes = True
-```
-
-### 8.3 Sample Response
+#### Error Responses
 
 ```json
+// 400 Bad Request
 {
-  "date": "2026-03-22",
-  "total_flagged": 3,
-  "predictions": [
-    {
-      "prediction_id": 15432,
-      "game_key": "Gonzaga@SaintMarys",
-      "home_team": "Saint Mary's",
-      "away_team": "Gonzaga",
-      "our_projected_margin": -2.5,
-      "consensus_margin": 4.8,
-      "divergence_points": 7.3,
-      "divergence_z": 3.42,
-      "threshold_z": 2.5,
-      "model_verdict": "Bet 1.00u [T3] Gonzaga (away +2.5) @ -110",
-      "model_edge": 0.052,
-      "hours_to_tipoff": 6.5,
-      "sharp_books_available": 2,
-      "sources_used": ["kenpom", "barttorvik"],
-      "analysis_timestamp": "2026-03-22T14:30:00Z",
-      "margin_components": {
-        "kenpom_contrib": 1.2,
-        "barttorvik_contrib": 0.8,
-        "home_advantage": 2.1,
-        "injury_adj": -6.5
-      }
-    }
-  ],
-  "avg_divergence_z": 3.15,
-  "max_divergence_z": 3.42
+  "status": "error",
+  "message": "Invalid date format. Expected: YYYY-MM-DD"
+}
+
+// 500 Internal Server Error
+{
+  "status": "error",
+  "message": "Database connection failed"
 }
 ```
 
-### 8.4 Helper Function
+### 7.2 Implementation Template
 
 ```python
-def _format_oracle_prediction(p: Prediction) -> OraclePredictionDetail:
-    """Format a Prediction ORM object for the Oracle response."""
+@admin_router.get("/oracle/flagged")
+async def get_flagged_predictions(
+    date: Optional[str] = Query(None, description="ISO date (YYYY-MM-DD)"),
+    min_z: float = Query(2.0, ge=0.0, description="Minimum divergence z-score"),
+    verdict_type: Optional[str] = Query(None, regex="^(bet|consider|pass|all)$"),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    """
+    Retrieve Oracle-flagged predictions for analyst review.
     
-    oracle_result = p.oracle_result or {}
-    game = p.game
+    Flags indicate model divergences from rating-system consensus
+    that exceed time-weighted thresholds.
+    """
+    from datetime import date as date_type
+    from sqlalchemy import func
     
-    return OraclePredictionDetail(
-        prediction_id=p.id,
-        game_key=f"{game.away_team}@{game.home_team}",
-        home_team=game.home_team,
-        away_team=game.away_team,
-        our_projected_margin=oracle_result.get('our_projected_margin'),
-        consensus_margin=oracle_result.get('consensus_margin'),
-        divergence_points=oracle_result.get('divergence_points'),
-        divergence_z=oracle_result.get('divergence_z'),
-        threshold_z=oracle_result.get('threshold_z'),
-        model_verdict=p.verdict,
-        model_edge=p.edge_conservative,
-        hours_to_tipoff=oracle_result.get('hours_to_tipoff'),
-        sharp_books_available=oracle_result.get('sharp_books_available', 0),
-        sources_used=oracle_result.get('sources_used', []),
-        analysis_timestamp=oracle_result.get('analysis_timestamp'),
-        margin_components=oracle_result.get('our_margin_components'),
+    # Parse date
+    if date:
+        try:
+            filter_date = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(400, "Invalid date format. Expected: YYYY-MM-DD")
+    else:
+        filter_date = datetime.utcnow().date()
+    
+    # Build query
+    query = db.query(Prediction).filter(
+        Prediction.prediction_date == filter_date,
+        Prediction.oracle_flag == True,
     )
+    
+    # Apply verdict filter
+    if verdict_type and verdict_type != "all":
+        if verdict_type == "bet":
+            query = query.filter(Prediction.verdict.ilike("Bet%"))
+        elif verdict_type == "consider":
+            query = query.filter(Prediction.verdict.ilike("CONSIDER%"))
+        elif verdict_type == "pass":
+            query = query.filter(Prediction.verdict.ilike("PASS%"))
+    
+    # Apply min_z filter (JSON extraction is DB-specific; PostgreSQL example)
+    query = query.filter(
+        func.coalesce(
+            Prediction.oracle_result["divergence_z"].astext.cast(Float),
+            0.0
+        ) >= min_z
+    )
+    
+    # Get total counts for summary
+    total_analyzed = db.query(Prediction).filter(
+        Prediction.prediction_date == filter_date,
+        Prediction.oracle_result.isnot(None)
+    ).count()
+    
+    total_flagged = query.count()
+    
+    # Fetch results with game data joined
+    predictions = query.join(Game).order_by(
+        Prediction.oracle_result["divergence_z"].desc()
+    ).limit(limit).all()
+    
+    # Build response
+    flagged_items = []
+    for p in predictions:
+        oracle_data = p.oracle_result or {}
+        game = p.game
+        
+        flagged_items.append({
+            "prediction_id": p.id,
+            "game_id": game.id,
+            "game_key": f"{game.away_team}@{game.home_team}",
+            "game_time": game.game_date.isoformat() if game.game_date else None,
+            "hours_to_tipoff": oracle_data.get("hours_to_tipoff"),
+            "verdict": p.verdict,
+            "oracle": oracle_data,
+            "model_outputs": {
+                "projected_margin": p.projected_margin,
+                "edge_conservative": p.edge_conservative,
+                "recommended_units": p.recommended_units,
+                "pricing_engine": p.full_analysis.get("calculations", {}).get("pricing_engine") if p.full_analysis else None,
+            },
+            "ratings": {
+                "kenpom": {"home": p.kenpom_home, "away": p.kenpom_away},
+                "barttorvik": {"home": p.barttorvik_home, "away": p.barttorvik_away},
+                "evanmiya": {"home": p.evanmiya_home, "away": p.evanmiya_away},
+            },
+            "run_tier": p.run_tier,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        })
+    
+    return {
+        "status": "ok",
+        "date": filter_date.isoformat(),
+        "count": len(flagged_items),
+        "thresholds": {
+            "oracle_sd": float(os.getenv("ORACLE_SD", "4.0")),
+            "early": float(os.getenv("ORACLE_THRESHOLD_Z_EARLY", "2.0")),
+            "mid": float(os.getenv("ORACLE_THRESHOLD_Z_MID", "2.5")),
+            "late": float(os.getenv("ORACLE_THRESHOLD_Z_LATE", "3.0")),
+        },
+        "flagged_predictions": flagged_items,
+        "summary": {
+            "total_analyzed": total_analyzed,
+            "total_flagged": total_flagged,
+            "flag_rate": total_flagged / max(total_analyzed, 1),
+        },
+    }
 ```
 
 ---
 
-## 9. Implementation Checklist
+## 8. Environment Configuration Summary
 
-### Phase 1: Core Implementation
-- [ ] Create `backend/services/oracle_validator.py` with `calculate_oracle_divergence()`
-- [ ] Create `OracleResult` dataclass
-- [ ] Run database migration (add `oracle_flag` and `oracle_result` columns)
-- [ ] Update `backend/models.py` Prediction class
-
-### Phase 2: Integration
-- [ ] Insert Oracle check in `analysis.py` after `model.analyze_game()` call
-- [ ] Persist `oracle_flag` and `oracle_result` to Prediction record
-- [ ] Add logging for flagged predictions
-
-### Phase 3: Admin API
-- [ ] Add Pydantic schemas to `backend/schemas.py`
-- [ ] Implement `GET /admin/oracle/flagged` endpoint in `backend/main.py`
-- [ ] Add `_format_oracle_prediction()` helper
-
-### Phase 4: Testing & Validation
-- [ ] Unit tests for `calculate_oracle_divergence()`
-- [ ] Integration test for admin endpoint
-- [ ] Backtest on historical predictions to tune thresholds
-
-### Phase 5: Documentation
-- [ ] Update API documentation
-- [ ] Add Oracle section to operator runbook
-- [ ] Document threshold override env vars
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ORACLE_SD` | 4.0 | Calibrated SD for rating-system disagreement |
+| `ORACLE_THRESHOLD_Z_EARLY` | 2.0 | Z threshold ≥24h before tipoff |
+| `ORACLE_THRESHOLD_Z_MID` | 2.5 | Z threshold 4-24h before tipoff |
+| `ORACLE_THRESHOLD_Z_LATE` | 3.0 | Z threshold <4h before tipoff |
 
 ---
 
-## 10. Files to Create/Modify
+## 9. Operational Notes
 
-### New Files
-```
-backend/services/oracle_validator.py      # Core Oracle logic
-scripts/migrate_oracle_fields.py          # DB migration
-```
+### 9.1 When Flags Fire
 
-### Modified Files
-```
-backend/models.py                         # Add oracle_flag, oracle_result columns
-backend/services/analysis.py              # Insert Oracle check (line ~1100)
-backend/schemas.py                        # Add Oracle response schemas
-backend/main.py                           # Add admin endpoint
-```
+Oracle flags indicate the model's projected margin diverges significantly from the rating-system consensus. This may indicate:
 
----
+- **Missing injury/suspension** in our data (most common)
+- **Team mapping error** (wrong team being analyzed)
+- **Stale rating data** (one source has updated, other hasn't)
+- **Legitimate model insight** (matchup engine found something ratings miss)
 
-## 11. Environment Variables
+### 9.2 Recommended Response
 
-```bash
-# Oracle Threshold Configuration (optional overrides)
-ORACLE_THRESHOLD_Z_EARLY=2.0     # >= 24 hours to tipoff
-ORACLE_THRESHOLD_Z_MID=2.5       # 4-24 hours to tipoff
-ORACLE_THRESHOLD_Z_LATE=3.0      # < 4 hours to tipoff
+| Divergence | Action |
+|------------|--------|
+| z < 2.0 | No action required |
+| 2.0 ≤ z < 2.5 | Logged for review; likely acceptable early in day |
+| 2.5 ≤ z < 3.0 | Manual inspection recommended; verify injury data |
+| z ≥ 3.0 | **Halt bet placement** until root cause identified |
 
-# Enable/disable Oracle (for emergency disable)
-ORACLE_ENABLED=true
+### 9.3 Integration with Existing Circuit Breakers
 
-# Logging verbosity
-ORACLE_LOG_LEVEL=WARNING
-```
+The Oracle validation operates **independently** of existing safety mechanisms:
+
+1. **Z-score divergence guard** (betting_model.py lines 1081-1126): PASS if model vs market diverges >2.5σ
+2. **Edge circuit breaker** (betting_model.py lines 1651-1776): PASS if edge exceeds dynamic threshold
+3. **Oracle validation** (analysis.py lines 1444-1477): FLAG for analyst review (does not auto-PASS)
+
+The Oracle system is purely **observational** — it never blocks a bet automatically, only surfaces warnings for human review.
 
 ---
 
-**Specification Complete**  
-**Ready for Claude Code implementation post-April 7, 2026**
+**Document Version:** 1.0  
+**Last Updated:** 2026-03-23  
+**Author:** Kimi CLI (Deep Intelligence Unit)  
+**Reviewed By:** Claude Code (Master Architect)
