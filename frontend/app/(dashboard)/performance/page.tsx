@@ -76,7 +76,7 @@ export default function PerformancePage() {
 
   const chartData = timeline?.timeline.map((p) => ({
     date: format(parseISO(p.date), 'MMM d'),
-    units: p.cumulative_units,
+    units: p.cumulative_units ?? 0,
   })) ?? []
 
   const rw = summary?.rolling_windows
