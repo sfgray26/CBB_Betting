@@ -205,6 +205,10 @@ class Prediction(Base):
     # K-14: which simulation engine produced this prediction
     pricing_engine = Column(String(20))  # 'markov' | 'gaussian' | None
 
+    # K-15: Oracle Validation — divergence from rating-system consensus
+    oracle_flag = Column(Boolean)         # True when z-score ≥ time-weighted threshold
+    oracle_result = Column(JSON)          # OracleResult.to_dict() snapshot
+
     # Relationship
     game = relationship("Game", back_populates="predictions")
 
