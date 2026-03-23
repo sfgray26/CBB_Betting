@@ -62,19 +62,21 @@ def _clv_status(mean_clv: Optional[float]) -> str:
 
 
 def _settled_bets(db: Session, cutoff: Optional[datetime] = None) -> List[BetLog]:
-    """Return settled (non-push) bets, optionally filtered by timestamp.
+    """Return settled real (non-paper) bets, optionally filtered by timestamp.
 
-    Deduplicates by (game_id, bet_date): when multiple BetLog rows exist for
-    the same game on the same calendar day (e.g. from opener + nightly runs
-    before the per-day guard was added), only the first-created row is kept.
-    This ensures performance metrics are always accurate regardless of whether
-    the DB cleanup job has been run.
+    Only includes bets the user actually placed (is_paper_trade=False, is_backfill=False).
+    Deduplicates by (game_id, bet_date) to prevent double-counting.
     """
     q = (
         db.query(BetLog)
         .join(Game)
         .options(joinedload(BetLog.game))
-        .filter(BetLog.outcome.isnot(None), BetLog.outcome != -1)
+        .filter(
+            BetLog.outcome.isnot(None),
+            BetLog.outcome != -1,
+            BetLog.is_paper_trade == False,  # noqa: E712 — SQLAlchemy requires ==
+            BetLog.is_backfill == False,       # noqa: E712
+        )
     )
     if cutoff:
         q = q.filter(BetLog.timestamp >= cutoff)
@@ -402,16 +404,19 @@ def calculate_timeline(db: Session, days: int = 30) -> Dict:
     cumulative_roi = []
     cum_pl = 0.0
     cum_risked = 0.0
+    cum_units_pl = 0.0
 
     for date_str in sorted(by_date):
         day = by_date[date_str]
         day_wins = sum(1 for b in day if b.outcome == 1)
         day_pl = sum(b.profit_loss_dollars or 0.0 for b in day)
+        day_pl_units = sum(b.profit_loss_units or 0.0 for b in day)
         day_risked = sum(b.bet_size_dollars or 0.0 for b in day)
         day_units = sum(b.bet_size_units or 0.0 for b in day)
         day_clv = [b.clv_prob for b in day if b.clv_prob is not None]
 
         cum_pl += day_pl
+        cum_units_pl += day_pl_units
         cum_risked += day_risked
         cumulative_profit.append(round(cum_pl, 2))
         cumulative_roi.append(_safe_roi(cum_pl, cum_risked))
@@ -423,6 +428,7 @@ def calculate_timeline(db: Session, days: int = 30) -> Dict:
             "roi": _safe_roi(day_pl, day_risked),
             "clv": round(_mean(day_clv), 5) if day_clv else None,
             "profit": round(day_pl, 2),
+            "cumulative_units": round(cum_units_pl, 3),
             "capital_deployed_dollars": round(day_risked, 2),
             "capital_deployed_units": round(day_units, 2),
         })
