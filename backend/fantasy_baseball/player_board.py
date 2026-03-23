@@ -34,7 +34,7 @@ _BATTER_RAW = [
     # Tier 1 — Elite multi-cat (pick 1-12)
     ("Ronald Acuna Jr.", "ATL", ["LF", "CF", "RF", "OF"], 1, 1.0,
      680, 115, 190, 37, 95, 145, 345, 0.306, 0.995, 58, 0),
-    ("Juan Soto",        "NYY", ["LF", "RF", "OF"],        1, 2.0,
+    ("Juan Soto",        "NYM", ["LF", "RF", "OF"],        1, 2.0,
      680, 105, 172, 38, 100, 128, 330, 0.288, 0.977, 7, 0),
     ("Shohei Ohtani",   "LAD", ["DH", "OF"],               1, 3.0,
      650, 100, 165, 45, 115, 150, 365, 0.282, 0.988, 15, 0),
@@ -757,6 +757,9 @@ def get_board(apply_park_factors: bool = True) -> list[dict]:
             except Exception:
                 pass
 
+        # Stamp keeper flags
+        annotate_keepers(_BOARD)
+
     return _BOARD
 
 
@@ -767,6 +770,26 @@ def get_player_by_name(name: str) -> Optional[dict]:
         if name_lower in p["name"].lower():
             return p
     return None
+
+
+# ---------------------------------------------------------------------------
+# Keeper configuration — my keepers for this season
+# ---------------------------------------------------------------------------
+
+MY_KEEPERS: dict[str, int] = {
+    "juan_soto": 1,   # Keep Juan Soto, costs Round 1
+}
+
+
+def annotate_keepers(board: list[dict]) -> None:
+    """Stamp is_keeper / keeper_round onto keeper players (in-place)."""
+    for p in board:
+        if p["id"] in MY_KEEPERS:
+            p["is_keeper"] = True
+            p["keeper_round"] = MY_KEEPERS[p["id"]]
+        else:
+            p.setdefault("is_keeper", False)
+            p.setdefault("keeper_round", None)
 
 
 def available_players(drafted_ids: set[str]) -> list[dict]:

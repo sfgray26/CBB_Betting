@@ -211,11 +211,27 @@ function DraftBoardTab({ players, isLoading, isError }: { players: FantasyPlayer
         </thead>
         <tbody className="divide-y divide-zinc-800/60">
           {players.map((player) => (
-            <tr key={player.id} className="hover:bg-zinc-800/40 transition-colors">
+            <tr key={player.id} className={cn(
+              'transition-colors',
+              player.avoid ? 'bg-rose-950/20 hover:bg-rose-950/30' : 'hover:bg-zinc-800/40',
+            )}>
               <td className="px-3 py-2.5 text-zinc-500 font-mono text-xs">{player.rank}</td>
               <td className="px-3 py-2.5">{tierBadge(player.tier)}</td>
               <td className="px-3 py-2.5">
-                <div className="font-medium text-zinc-100">{player.name}</div>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className={cn('font-medium', player.avoid ? 'text-rose-300' : 'text-zinc-100')}>{player.name}</span>
+                  {player.is_keeper && (
+                    <span className="px-1 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 border border-emerald-500/40 text-emerald-400">K·R{player.keeper_round}</span>
+                  )}
+                  {player.avoid && (
+                    <span className="px-1 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 border border-rose-500/40 text-rose-400">AVOID</span>
+                  )}
+                  {!player.avoid && player.injury_risk && player.injury_risk !== 'low' && (
+                    <span className={cn('px-1 py-0.5 rounded text-[10px] font-bold border', player.injury_risk === 'high' ? 'bg-orange-500/20 border-orange-500/40 text-orange-400' : 'bg-yellow-500/20 border-yellow-500/40 text-yellow-400')} title={player.injury_note ?? ''}>
+                      {player.injury_risk === 'high' ? '⚠ HIGH RISK' : '⚠ MED RISK'}
+                    </span>
+                  )}
+                </div>
                 <div className="text-xs text-zinc-500 capitalize">{player.type}</div>
               </td>
               <td className="px-3 py-2.5 text-zinc-400 font-mono text-xs">{player.team}</td>
@@ -268,7 +284,11 @@ function MyRosterPanel({ myPicks }: { myPicks: DraftPick[] }) {
           className="flex items-center justify-between px-3 py-2 rounded-md bg-zinc-800/50 border border-zinc-700/50 text-sm"
         >
           <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-600 font-mono w-6">{pick.round}.{pick.pick_number}</span>
+            {pick.pick_number === 0 ? (
+              <span className="px-1 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 border border-emerald-500/40 text-emerald-400">K·R{pick.round}</span>
+            ) : (
+              <span className="text-xs text-zinc-600 font-mono w-6">{pick.round}.{pick.pick_number}</span>
+            )}
             <span className="font-medium text-zinc-200">{pick.player_name}</span>
           </div>
           <div className="flex items-center gap-2">
@@ -536,7 +556,12 @@ function DraftSessionTab({
                       <div className="flex items-center gap-2">
                         {tierBadge(player.tier)}
                         <div>
-                          <div className="font-medium text-zinc-100 text-xs">{player.name}</div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-medium text-zinc-100 text-xs">{player.name}</span>
+                            {player.is_keeper && (
+                              <span className="px-1 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 border border-emerald-500/40 text-emerald-400">K</span>
+                            )}
+                          </div>
                           <div className="text-xs text-zinc-600">{player.team}</div>
                         </div>
                       </div>
@@ -702,7 +727,10 @@ export default function FantasyPage() {
     pickMutation.mutate({ playerId, drafterPosition: drafter, isMyPick: false })
   }
 
-  function handleClearSession() {
+  async function handleClearSession() {
+    if (sessionKey) {
+      endpoints.fantasyDeleteSession(sessionKey).catch(() => {})
+    }
     setSessionKey(null)
     setRecommendations([])
     localStorage.removeItem(SESSION_STORAGE_KEY)

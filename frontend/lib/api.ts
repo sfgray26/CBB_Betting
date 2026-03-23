@@ -250,6 +250,9 @@ export const endpoints = {
   fantasyGetSession: (sessionKey: string) =>
     apiFetch<DraftSession>(`/api/fantasy/draft-session/${sessionKey}`),
 
+  fantasyDeleteSession: (sessionKey: string) =>
+    apiFetch<{ message: string }>(`/api/fantasy/draft-session/${sessionKey}`, { method: 'DELETE' }),
+
   // Fantasy Baseball — Season Ops
   dailyLineup: (date?: string) =>
     apiFetch<DailyLineupResponse>(`/api/fantasy/lineup/${date ?? new Date().toISOString().slice(0, 10)}`),
