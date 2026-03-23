@@ -3313,7 +3313,6 @@ async def sync_draft_from_yahoo(
             continue
 
         round_num = int(raw.get("round", ((pick_num - 1) // session.num_teams) + 1))
-        team_key = raw.get("team_key", "")
         player_key = raw.get("player_key", "")
 
         # Determine if this is our pick based on pick number and draft position
