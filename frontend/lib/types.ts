@@ -207,6 +207,11 @@ export interface FantasyPlayer {
   z_score: number
   proj: Record<string, number>
   cat_scores?: Record<string, number> | null
+  is_keeper?: boolean
+  keeper_round?: number | null
+  injury_risk?: string | null
+  injury_note?: string | null
+  avoid?: boolean
 }
 
 export interface FantasyDraftBoardResponse {
@@ -219,6 +224,7 @@ export interface DraftPick {
   round: number
   drafter_position: number
   is_my_pick: boolean
+  is_keeper?: boolean
   player_id: string
   player_name: string
   player_team: string | null

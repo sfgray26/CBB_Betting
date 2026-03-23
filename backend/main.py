@@ -3005,9 +3005,10 @@ async def create_draft_session(
     db: Session = Depends(get_db),
     user: str = Depends(verify_api_key),
 ):
-    """Create a new live-draft tracking session."""
+    """Create a new live-draft tracking session. Keepers are pre-inserted."""
     import secrets
-    from backend.models import FantasyDraftSession
+    from backend.models import FantasyDraftSession, FantasyDraftPick
+    from backend.fantasy_baseball.player_board import get_board, MY_KEEPERS
 
     session_key = secrets.token_hex(8)
     session = FantasyDraftSession(
@@ -3019,6 +3020,29 @@ async def create_draft_session(
         is_active=True,
     )
     db.add(session)
+    db.flush()  # get session.id
+
+    # Pre-insert keeper picks (pick_number=0 sentinel = pre-draft keeper)
+    board_by_id = {p["id"]: p for p in get_board()}
+    for player_id, keeper_round in MY_KEEPERS.items():
+        player = board_by_id.get(player_id)
+        if not player:
+            continue
+        db.add(FantasyDraftPick(
+            session_id=session.id,
+            pick_number=0,
+            round_number=keeper_round,
+            drafter_position=my_draft_position,
+            is_my_pick=True,
+            player_id=player_id,
+            player_name=player["name"],
+            player_team=player.get("team"),
+            player_positions=player.get("positions"),
+            player_tier=player.get("tier"),
+            player_adp=player.get("adp"),
+            player_z_score=player.get("z_score"),
+        ))
+
     db.commit()
     db.refresh(session)
     return {
@@ -3026,7 +3050,8 @@ async def create_draft_session(
         "my_draft_position": my_draft_position,
         "num_teams": num_teams,
         "num_rounds": num_rounds,
-        "message": "Draft session created. Use session_key with /api/fantasy/draft-session/{key}/pick",
+        "keepers_preloaded": list(MY_KEEPERS.keys()),
+        "message": "Draft session created with keepers pre-loaded.",
     }
 
 
@@ -3120,6 +3145,7 @@ async def get_draft_session(
             "round": p.round_number,
             "drafter_position": p.drafter_position,
             "is_my_pick": p.is_my_pick,
+            "is_keeper": p.pick_number == 0,
             "player_id": p.player_id,
             "player_name": p.player_name,
             "player_team": p.player_team,
@@ -3143,6 +3169,25 @@ async def get_draft_session(
         "picks": picks,
         "my_picks": my_picks,
     }
+
+
+@app.delete("/api/fantasy/draft-session/{session_key}")
+async def delete_draft_session(
+    session_key: str,
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """Delete a draft session and all its picks (for resetting a test session)."""
+    from backend.models import FantasyDraftSession, FantasyDraftPick
+
+    session = db.query(FantasyDraftSession).filter_by(session_key=session_key).first()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Draft session not found")
+
+    db.query(FantasyDraftPick).filter_by(session_id=session.id).delete()
+    db.delete(session)
+    db.commit()
+    return {"message": "Draft session deleted", "session_key": session_key}
 
 
 @app.get("/api/fantasy/draft-session/value-board")
