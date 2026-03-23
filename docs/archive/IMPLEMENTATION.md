@@ -1,3 +1,11 @@
+# 🗃️ ARCHIVED — Implementation Checklist & Next Steps
+
+> **Status:** Archived (Feb 2026)  
+> **Reason:** Superseded by V9.1 model and Next.js frontend (see `tasks/todo.md` for current status)  
+> **Original:** Version 7 era documentation — kept for historical reference
+
+---
+
 # Implementation Checklist & Next Steps
 
 ## ✅ What's Included (Ready to Deploy)

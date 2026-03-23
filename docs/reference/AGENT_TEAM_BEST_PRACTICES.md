@@ -1,3 +1,12 @@
+# 📚 REFERENCE — Agent Team Best Practices (C Compiler Patterns)
+
+> **Status:** Reference Document (Mar 2026)  
+> **Purpose:** Research notes from Anthropic's C Compiler project  
+> **Note:** Proposed patterns (`.agent_tasks/` structure, validation scripts) not yet fully implemented  
+> **Current Task System:** See `.agent_tasks/README.md` for working implementation
+
+---
+
 # AGENT TEAM BEST PRACTICES — Applied to CBB Edge
 
 **Source:** Anthropic's "Building a C Compiler with 16 Agents" by Nicholas Carlini  

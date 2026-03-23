@@ -1,3 +1,11 @@
+# 🗃️ ARCHIVED — CBB Edge Analyzer - Fresh Setup Guide for Windows
+
+> **Status:** Archived (Feb 2026)  
+> **Reason:** Refers to Version 7 model and Streamlit dashboard — superseded by Next.js frontend  
+> **Current Setup:** See `QUICKREF.md` and `INSTALL.md` for up-to-date instructions
+
+---
+
 # CBB Edge Analyzer - Fresh Setup Guide for Windows
 # Version 1.0 - Simplified, No Enhancements
 

@@ -13,6 +13,11 @@ import {
   Radio,
   Trophy,
   Dumbbell,
+  ShieldAlert,
+  ListChecks,
+  ArrowLeftRight,
+  Users,
+  Swords,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
@@ -50,6 +55,17 @@ const navSections = [
     label: 'Fantasy Baseball',
     items: [
       { href: '/fantasy', label: 'Draft Board', icon: Dumbbell },
+      { href: '/fantasy/lineup', label: 'Daily Lineup', icon: ListChecks },
+      { href: '/fantasy/waiver', label: 'Waiver Wire', icon: ArrowLeftRight },
+      { href: '/fantasy/roster', label: 'My Roster', icon: Users },
+      { href: '/fantasy/matchup', label: 'Matchup', icon: Swords },
+    ],
+    soon: false,
+  },
+  {
+    label: 'Admin',
+    items: [
+      { href: '/admin', label: 'Risk Dashboard', icon: ShieldAlert },
     ],
     soon: false,
   },

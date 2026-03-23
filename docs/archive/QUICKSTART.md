@@ -1,3 +1,11 @@
+# 🗃️ ARCHIVED — Quick Start Guide
+
+> **Status:** Archived (Feb 2026)  
+> **Reason:** Superseded by `QUICKREF.md`  
+> **Current Quick Start:** See `QUICKREF.md` for up-to-date commands
+
+---
+
 # Quick Start Guide
 
 ## Local Development (5 minutes)

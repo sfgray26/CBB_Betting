@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import webbrowser
 from pathlib import Path
@@ -25,9 +26,12 @@ from urllib.parse import urlencode, urlparse, parse_qs
 
 import requests
 from dotenv import load_dotenv, set_key
+from backend.core.circuit_breaker import CircuitBreaker
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+_token_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -69,6 +73,7 @@ class YahooFantasyClient:
         self._access_token = os.getenv("YAHOO_ACCESS_TOKEN", "")
         self._token_expiry: float = 0.0
         self._session = requests.Session()
+        self._cb = CircuitBreaker(failure_threshold=3, recovery_timeout=60, window_seconds=300)
 
         if not self.client_id or not self.client_secret:
             raise YahooAuthError(
@@ -150,7 +155,14 @@ class YahooFantasyClient:
             logger.info("Yahoo tokens refreshed (in-memory only — .env not writable: %s)", exc)
 
     def _ensure_token(self) -> None:
-        if time.time() >= self._token_expiry or not self._access_token:
+        """Thread-safe token refresh with double-check locking."""
+        # Fast path — no lock needed
+        if time.time() < self._token_expiry and self._access_token:
+            return
+        # Slow path — acquire lock, then re-check before refreshing
+        with _token_lock:
+            if time.time() < self._token_expiry and self._access_token:
+                return
             self._refresh_access_token()
 
     # ------------------------------------------------------------------
@@ -158,7 +170,10 @@ class YahooFantasyClient:
     # ------------------------------------------------------------------
 
     def _get(self, path: str, params: Optional[dict] = None) -> dict:
-        """GET from Yahoo API, returning parsed JSON."""
+        """GET from Yahoo API with circuit breaker and timeout."""
+        if not self._cb.should_allow_request():
+            raise YahooAPIError("Yahoo API circuit breaker is OPEN — service temporarily unavailable", 503)
+
         self._ensure_token()
         url = f"{YAHOO_API_BASE}/{path.lstrip('/')}"
         default_params = {"format": "json"}
@@ -166,26 +181,35 @@ class YahooFantasyClient:
             default_params.update(params)
 
         for attempt in range(3):
-            resp = self._session.get(
-                url,
-                params=default_params,
-                headers={"Authorization": f"Bearer {self._access_token}"},
-            )
-            if resp.status_code == 401:
-                # Token may have just expired mid-request
-                self._refresh_access_token()
-                continue
-            if resp.status_code == 999:
-                wait = 2 ** attempt
-                logger.warning(f"Yahoo rate limit hit, waiting {wait}s")
-                time.sleep(wait)
-                continue
-            if resp.status_code != 200:
-                raise YahooAPIError(
-                    f"Yahoo API error {resp.status_code}: {resp.text[:300]}",
-                    resp.status_code,
+            try:
+                resp = self._session.get(
+                    url,
+                    params=default_params,
+                    headers={"Authorization": f"Bearer {self._access_token}"},
+                    timeout=10,
                 )
-            return resp.json()
+                if resp.status_code == 401:
+                    # Token may have just expired mid-request
+                    self._refresh_access_token()
+                    continue
+                if resp.status_code == 999:
+                    wait = 2 ** attempt
+                    logger.warning(f"Yahoo rate limit hit, waiting {wait}s")
+                    time.sleep(wait)
+                    continue
+                if resp.status_code != 200:
+                    raise YahooAPIError(
+                        f"Yahoo API error {resp.status_code}: {resp.text[:300]}",
+                        resp.status_code,
+                    )
+                self._cb.record_success()
+                return resp.json()
+            except YahooAPIError:
+                raise
+            except Exception:
+                if attempt == 2:
+                    self._cb.record_failure()
+                raise
 
         raise YahooAPIError("Yahoo API failed after 3 attempts")
 

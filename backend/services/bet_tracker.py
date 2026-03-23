@@ -240,14 +240,14 @@ def _parse_scores(score_data: Dict) -> Tuple[Optional[int], Optional[int]]:
 # Job 1: update_completed_games
 # ---------------------------------------------------------------------------
 
-def update_completed_games() -> Dict:
+def update_completed_games(days_from: int = 2) -> Dict:
     """
     Fetch completed game scores from The Odds API and settle all
     pending BetLog entries whose game is now complete.
 
-    Called by scheduler every 2 hours.
+    Called by scheduler every 2 hours. Pass days_from>2 to settle historical bets.
     """
-    logger.info("Starting update_completed_games")
+    logger.info("Starting update_completed_games (days_from=%d)", days_from)
     db = SessionLocal()
 
     games_updated = 0
@@ -258,7 +258,7 @@ def update_completed_games() -> Dict:
 
     try:
         try:
-            completed = _fetch_scores(days_from=2)
+            completed = _fetch_scores(days_from=days_from)
             db.add(DataFetch(
                 data_source="odds_api_scores",
                 success=True,
@@ -280,9 +280,44 @@ def update_completed_games() -> Dict:
             if not external_id:
                 continue
 
+            # Primary match: external_id
             game = db.query(Game).filter(Game.external_id == external_id).first()
+
+            # Fallback: match by home/away team name + game date when external_id is missing or stale
             if not game:
-                continue  # Not a game we track
+                api_home = score_data.get("home_team", "")
+                api_away = score_data.get("away_team", "")
+                raw_time = score_data.get("commence_time")
+                if api_home and api_away and raw_time:
+                    try:
+                        api_date = datetime.fromisoformat(raw_time.replace("Z", "+00:00")).date()
+                        candidates = (
+                            db.query(Game)
+                            .filter(
+                                Game.home_team.ilike(f"%{api_home.split()[0]}%"),
+                                Game.game_date >= datetime(api_date.year, api_date.month, api_date.day),
+                                Game.game_date < datetime(api_date.year, api_date.month, api_date.day) + timedelta(days=1),
+                            )
+                            .all()
+                        )
+                        for c in candidates:
+                            if _strip_mascot(c.home_team).lower() == _strip_mascot(api_home).lower() and \
+                               _strip_mascot(c.away_team).lower() == _strip_mascot(api_away).lower():
+                                game = c
+                                # Backfill the external_id so future runs match directly
+                                game.external_id = external_id
+                                db.flush()
+                                logger.info(
+                                    "Fallback match: %s @ %s on %s → game.id=%d (external_id backfilled)",
+                                    api_away, api_home, api_date, game.id,
+                                )
+                                break
+                    except Exception as fb_exc:
+                        logger.debug("Fallback match error for %s: %s", external_id, fb_exc)
+
+            if not game:
+                logger.debug("No game matched external_id=%s", external_id)
+                continue
 
             home_s, away_s = _parse_scores(score_data)
             if home_s is None or away_s is None:
@@ -320,14 +355,20 @@ def update_completed_games() -> Dict:
                         actual_margin, len(unresolved_preds), game.id,
                     )
 
-            # Settle pending bets
+            # Settle pending bets — with_for_update(skip_locked=True) prevents
+            # double-settlement if two cron runs overlap on the same game.
             pending = (
                 db.query(BetLog)
                 .filter(BetLog.game_id == game.id, BetLog.outcome.is_(None))
+                .with_for_update(skip_locked=True)
                 .all()
             )
             for bet in pending:
                 try:
+                    # Re-check outcome inside lock in case another session just settled it
+                    if bet.outcome is not None:
+                        continue
+
                     result = calculate_bet_outcome(bet, game, starting_bankroll)
                     if result is None:
                         errors.append(f"Bet {bet.id} ({bet.pick}): could not determine outcome")

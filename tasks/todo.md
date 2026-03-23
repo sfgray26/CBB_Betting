@@ -1,161 +1,96 @@
-# CBB Edge — Platform Expansion Roadmap
+# CBB Edge — Task Tracker
 *Updated: 2026-03-20 | Architect: Claude Sonnet 4.6*
 
 ---
 
-## Frontend Migration Status
+## System Status
 
-| Phase | Status | Pages |
+| Phase | Status | Notes |
 |-------|--------|-------|
-| Phase 0 — Foundation | ✅ DONE | scaffold, auth, layout, design system |
-| Phase 1 — Core Analytics | ✅ DONE | /performance, /clv, /bet-history, /calibration, /alerts |
-| Phase 2 — Trading | ✅ DONE | /today, /live-slate, /odds-monitor |
-| Phase 3 — Tournament | ✅ DONE | /bracket |
-| Phase 4 — Mobile & PWA | ✅ DONE | viewport meta, manifest, mobile drawer, responsive grids |
-| Phase 5 — Polish & Decommission | ⏳ Future | error boundaries, loading states, retire Streamlit |
-
-### Phase 4 Completed (Mar 20)
-- [x] Viewport meta + `appleWebApp` in `app/layout.tsx`
-- [x] PWA manifest at `frontend/public/manifest.json`
-- [x] PWA icons (192, 512, 512-maskable) in `frontend/public/icons/`
-- [x] Mobile sidebar drawer in `sidebar.tsx` (slide-in with `isOpen`/`onClose`)
-- [x] Mobile overlay in `(dashboard)/layout.tsx`
-- [x] Hamburger menu in `header.tsx` (`md:hidden`)
-- [x] Touch targets `min-h-[44px]` on sidebar nav links
-- [x] DataTable with `overflow-x-auto` wrapper
-- [x] Responsive grids: `grid-cols-1 sm:grid-cols-2` fallbacks on all KPI rows
-  - calibration/page.tsx, clv/page.tsx, bracket/page.tsx
-  - performance/page.tsx, today/page.tsx, odds-monitor/page.tsx
+| Frontend Phases 0-5 | DONE | All pages validated and live on main |
+| Fantasy Phase 1 — Draft Assistant | DONE (Mar 20) | Live Draft tab, snake order, roster panel |
+| Fantasy DB Migration v7 | DONE (Mar 20) | Railway — Gemini confirmed |
+| Admin Risk Dashboard (EMAC-074) | DONE (Mar 20) | /admin — 4-panel 2x2 ops view |
+| EMAC-075 Frontend | DONE (Mar 20) | /fantasy/lineup + /fantasy/waiver pages live |
+| EMAC-075 Backend | DONE (Mar 20) | Built by Claude. GET /lineup + GET /waiver live. |
+| V9.2 Recalibration | LOCKED — Apr 7 | Guardian freeze active |
 
 ---
 
-## Betting Model — GUARDIAN FREEZE 🔒
+## GUARDIAN FREEZE (until Apr 7)
 
-**DO NOT TOUCH until Apr 7, 2026:**
+**DO NOT TOUCH:**
 - `backend/betting_model.py`
 - `backend/services/analysis.py`
 - Any CBB model services
 
-Post-Apr 7 planned (see HANDOFF.md Section 5):
-- [ ] V9.2 recalibration (spec: `reports/K12_RECALIBRATION_SPEC_V92.md`)
-  - `sd_mult` 1.0 → 0.80, `ha` 2.419 → 2.85, `SNR_KELLY_FLOOR` 0.50 → 0.75
-- [ ] Wire Haslametrics as 3rd rating source (`backend/services/haslametrics.py` already built)
-- [ ] Add `pricing_engine` field to Prediction model (K-14)
-- [ ] Bump `model_version` to 'v9.2', confirm BET rate 3% → 8-12%
+**Post-Apr 7 backlog (see HANDOFF.md Section 5 + 6):**
+- [ ] V9.2: `sd_mult` 1.0 to 0.80, `ha` 2.419 to 2.85, `SNR_KELLY_FLOOR` 0.50 to 0.75
+- [ ] Wire Haslametrics as 3rd rating source (scraper built at `backend/services/haslametrics.py`, 12 tests pass)
+- [ ] Add `pricing_engine` field to Prediction table (K-14)
+- [ ] Bump `model_version` to 'v9.2', confirm BET rate 3% to 8-12%
 
 ---
 
-## Phase 0 — Foundation Hardening (Sprint 1)
+## EMAC-075 — Fantasy Season Ops (COMPLETE)
 
-- [ ] Set `RAILWAY_TOKEN` and `NEXT_PUBLIC_API_URL` in GitHub Secrets
-- [ ] Confirm Railway DB connection string in production env
-- [ ] Add `FANTASY_BASEBALL_API_KEY` to `.env.example`
-- [ ] Tag current release as `v0.8.0-cbb-stable`
+**Frontend:** DONE — `/fantasy/lineup` + `/fantasy/waiver` pages built and pushed (Mar 20)
+**Backend:** DONE — built by Claude after Gemini introduced errors (see lessons below)
 
----
+- [x] `GET /api/fantasy/lineup/{date}` — wired to `DailyLineupOptimizer.build_daily_report()`, maps batter/pitcher rankings to response schema, top 9 batters = START, top 2 SPs = START
+- [x] `GET /api/fantasy/waiver` — MVP stub returning valid `WaiverWireResponse` (empty lists)
+- [x] Schemas: `LineupPlayerOut`, `StartingPitcherOut`, `DailyLineupResponse`, `WaiverPlayerOut`, `CategoryDeficitOut`, `WaiverWireResponse` in `backend/schemas.py`
+- [x] Route conflict resolved: old saved-lineup endpoint renamed to `/api/fantasy/saved-lineup/{date}`
+- [x] Both endpoints return 200 and pass `py_compile`
 
-## Phase 1 — Fantasy Baseball Integration (Sprint 2–3)
-
-### 1.1 Database Schema
-```sql
--- New tables (add to backend/models.py)
-CREATE TABLE fantasy_players (
-    id SERIAL PRIMARY KEY,
-    player_id VARCHAR(50) UNIQUE NOT NULL,
-    name VARCHAR(100) NOT NULL,
-    team VARCHAR(50),
-    position VARCHAR(20),
-    injury_status VARCHAR(20) DEFAULT 'active',
-    adp FLOAT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE TABLE fantasy_projections (
-    id SERIAL PRIMARY KEY,
-    player_id VARCHAR(50) REFERENCES fantasy_players(player_id),
-    projection_date DATE NOT NULL,
-    source VARCHAR(30) NOT NULL,
-    projected_hr FLOAT, projected_avg FLOAT, projected_ops FLOAT,
-    projected_sb FLOAT, projected_era FLOAT, projected_whip FLOAT,
-    projected_k9 FLOAT, projected_sv FLOAT, fantasy_points_est FLOAT,
-    UNIQUE(player_id, projection_date, source)
-);
-
-CREATE TABLE fantasy_lineups (
-    id SERIAL PRIMARY KEY,
-    user_id VARCHAR(50),
-    lineup_date DATE NOT NULL,
-    platform VARCHAR(30),
-    positions JSONB,
-    projected_points FLOAT,
-    actual_points FLOAT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
-### 1.2 Tasks
-- [ ] DB Schema: Add `FantasyPlayer`, `FantasyProjection`, `FantasyLineup` models to `backend/models.py`
-- [ ] Update `scripts/init_db.py` for new tables
-- [ ] Add Pydantic schemas to `backend/schemas.py`
-- [ ] Service: Create `backend/services/fantasy.py`
-- [ ] API Routes: Add 6 fantasy endpoints to `backend/main.py`
-- [ ] Frontend: Create `/fantasy/draft`, `/fantasy/lineup`, `/fantasy/standings` pages
+**Lessons (added to HANDOFF.md hive wisdom):**
+- Gemini created a duplicate `GET /api/fantasy/lineup/{date}` route — check for existing routes before adding any
+- Gemini used nonexistent dict key `report.get("games_found")` — always read the function return type first
+- Gemini tested against production without committing — meaningless results
 
 ---
 
-## Phase 2 — Advanced Betting Markets (Sprint 4–5)
+## Pending Manual Actions
 
-- [ ] Moneyline model: Create `backend/services/moneyline.py`
-- [ ] Player props: Create `backend/services/props.py` with Odds API integration
-- [ ] Frontend: Create `/props` page
-
----
-
-## Phase 3 — Discord Bot (Sprint 6)
-
-- [ ] Create `backend/services/discord_bot.py` with `/picks`, `/bankroll`, `/performance`
-- [ ] Create `backend/discord_bot_runner.py` entry point
-- [ ] Add `discord.py` and `httpx` to `requirements.txt`
+| Item | Owner | Action |
+|------|-------|--------|
+| Push `v0.8.0-cbb-stable` tag | User | `git push origin v0.8.0-cbb-stable` |
+| Confirm `NEXT_PUBLIC_API_URL` in Railway frontend | User | Railway dashboard |
 
 ---
 
-## Phase 4 — Admin Risk Dashboard (Sprint 7)
+## Apr 7+ Backlog
 
-- [ ] Create `/admin/risk` page (portfolio exposure, drawdown gauge)
-- [ ] Create `/admin/odds-monitor` page (line movements, quota status)
-- [ ] Create `/admin/model` page (read-only V9.1 parameters)
-
----
-
-## Phase 5 — OpenClaw Autonomous Ops (Sprint 8+)
-
-- [ ] Create `backend/services/openclaw.py` orchestrator
-- [ ] Implement multi-agent pipeline with `asyncio.gather`
-- [ ] Add integration test `tests/test_openclaw.py`
-
----
-
-## Known Issues / Blockers
-
-| Issue | Owner | Status |
-|-------|-------|--------|
-| V9.1 calibration mismatch (SNR stacking) | Claude Code + Kimi | Deferred to Apr 7 |
-| EvanMiya down → 2-source mode | Gemini (G-R7) | In progress |
-| RAILWAY_TOKEN / NEXT_PUBLIC_API_URL not in GH Secrets | DevOps | Phase 0 |
+| Item | Spec | Priority |
+|------|------|----------|
+| V9.2 params (sd_mult, ha, SNR_KELLY_FLOOR) | `reports/K12_RECALIBRATION_SPEC_V92.md` | High |
+| Wire Haslametrics 3rd source | `docs/THIRD_RATING_SOURCE.md` | High |
+| pricing_engine field (K-14) | `reports/K13_POSSESSION_SIM_AUDIT.md` | Medium |
+| Fantasy Baseball Yahoo OAuth wiring | `docs/MLB_FANTASY_ROADMAP.md` | Low |
+| Oracle validation (spread vs consensus) | K-15 spec TBD | Low |
 
 ---
 
 ## Done Archive
 
-- Phase 4 Mobile & PWA — Mar 20
-- Phase 2+3 Frontend (trading + bracket pages) — Mar 19
-- Phase 1 all 5 analytics pages fixed — Mar 18
-- Frontend scaffold (Phase 0) — Mar 18
-- Railway CORS fix — Mar 18
-- BDL odds 400 fix — Mar 18
-- Monte Carlo bracket simulator — Mar 16
-- Discord morning brief + EOD results — Mar 16
-- Team mapping hardening (29 St variants, 78 tests) — Mar 16
-- Duplicate bet cleanup endpoint — Mar 16
-- V9.1 model (fatigue, sharp money, conf HCA, recency) — Mar 11–12
+| Description | Date |
+|-------------|------|
+| Fantasy Season Ops — full stack (/fantasy/lineup, /fantasy/waiver + backend endpoints) | Mar 20 |
+| Admin Risk Dashboard (/admin — 4-panel) | Mar 20 |
+| Fantasy Draft Assistant (Live Draft tab, snake order, roster panel) | Mar 20 |
+| Fantasy DB Migration v7 on Railway | Mar 20 |
+| Frontend Phase 5 (error.tsx + loading.tsx on /bracket, /today, /fantasy) | Mar 20 |
+| Frontend Phase 4 Mobile and PWA (viewport, manifest, drawer, responsive grids) | Mar 20 |
+| Frontend Phase 3 Tournament (/bracket 10k MC sims) | Mar 19 |
+| Frontend Phase 2 Trading (/today, /live-slate, /odds-monitor) | Mar 19 |
+| Frontend Phase 1 Core Analytics (5 pages, OpenClaw validated) | Mar 18 |
+| Frontend Phase 0 scaffold + auth + layout | Mar 18 |
+| Railway CORS fix | Mar 18 |
+| Monte Carlo bracket simulator (521 lines, 13_Tournament_Bracket.py) | Mar 16 |
+| Discord morning brief + EOD results jobs fixed | Mar 16 |
+| Team mapping hardening (29 St variants, 78 tests) | Mar 16 |
+| Duplicate bet cleanup endpoint | Mar 16 |
+| V9.1 confidence engine (SNR + integrity scalars) | Mar 12 |
+| New services: fatigue, sharp_money, conference_hca, recency_weight, openclaw_lite | Mar 11-12 |
+| BartTorvik 2-source mode confirmed (365 teams, no auth needed) | Mar 10 |
+| Prediction dedup fix (run_tier NULL filter) | Mar 12 |

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import text, func
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -65,7 +66,23 @@ from backend.schemas import (
     AnalysisTriggerResponse,
     TodaysPredictionsResponse,
     PredictionResponse,
+    DailyLineupResponse,
+    WaiverWireResponse,
+    LineupPlayerOut,
+    StartingPitcherOut,
+    RosterPlayerOut,
+    RosterResponse,
+    MatchupTeamOut,
+    MatchupResponse,
+    LineupApplyPlayer,
+    LineupApplyRequest,
 )
+from backend.fantasy_baseball.yahoo_client import (
+    YahooFantasyClient,
+    YahooAuthError,
+    YahooAPIError,
+)
+from backend.fantasy_baseball.daily_lineup_optimizer import get_lineup_optimizer
 
 # Logging setup
 logging.basicConfig(
@@ -324,6 +341,47 @@ async def lifespan(app: FastAPI):
         logger.info("Lifespan: Registered VERDICT_FLIP Discord handler")
     except Exception as reg_exc:
         logger.warning("Lifespan: Failed to register movement handler: %s", reg_exc)
+
+    # ── Startup catch-up: if nightly analysis was missed (service restarted after
+    # 3 AM ET with no predictions for today), run it automatically as a background task.
+    # APScheduler is in-memory — Railway deploys after 3 AM reset the next-run time to
+    # tomorrow, so without this check today's games would never get analysed.
+    async def _startup_catchup():
+        from pytz import timezone as _tz
+        from datetime import datetime as _dt
+        et = _tz("America/New_York")
+        now_et = _dt.now(et)
+        nightly_cutoff = int(os.getenv("NIGHTLY_CRON_HOUR", "3"))
+        if now_et.hour < nightly_cutoff:
+            # Before 3 AM ET — nightly job hasn't run yet today, nothing to catch up
+            return
+        # Check if today already has predictions.
+        # Use ET date (not UTC) — the nightly job can run before midnight UTC
+        # (e.g. 22:00 UTC = 6 PM ET), storing predictions with the ET date.
+        # Querying UTC date after midnight UTC would miss those rows.
+        today_et = now_et.date()
+        db = SessionLocal()
+        try:
+            count = db.query(Prediction).filter(
+                Prediction.prediction_date == today_et
+            ).count()
+        finally:
+            db.close()
+        if count > 0:
+            logger.info("Lifespan: Today has %d predictions — no catch-up needed", count)
+            return
+        logger.warning(
+            "Lifespan: No predictions found for %s (now_et=%s). "
+            "Nightly job was likely missed due to a post-3AM deploy. Running catch-up analysis.",
+            today_et, now_et.strftime("%H:%M ET"),
+        )
+        try:
+            await nightly_job()
+            logger.info("Lifespan: Catch-up analysis complete")
+        except Exception as catchup_exc:
+            logger.error("Lifespan: Catch-up analysis failed: %s", catchup_exc, exc_info=True)
+
+    asyncio.create_task(_startup_catchup())
 
     yield
     
@@ -1760,12 +1818,18 @@ async def get_recent_games(
 
 @app.get("/api/bets")
 async def get_bet_logs(
-    status: str = Query(default="all", description="all | pending | settled"),
+    status: str = Query(default="all", description="all | pending | settled | cancelled"),
     days: int = Query(default=60, ge=1, le=365),
+    dedup: bool = Query(default=True, description="Keep only the first BetLog per game per day"),
     user: str = Depends(verify_api_key),
     db: Session = Depends(get_db),
 ):
-    """Return bet logs with optional status filter and date window."""
+    """Return bet logs with optional status filter and date window.
+
+    By default deduplicates by (game_id, bet_date) so that multiple paper trade
+    rows for the same game on the same day are collapsed to the first-created
+    entry.  Pass dedup=false to see all raw rows.
+    """
     cutoff = datetime.utcnow() - timedelta(days=days)
 
     query = (
@@ -1778,9 +1842,30 @@ async def get_bet_logs(
     if status == "pending":
         query = query.filter(BetLog.outcome.is_(None))
     elif status == "settled":
-        query = query.filter(BetLog.outcome.isnot(None))
+        # Exclude cancelled/displaced bets (outcome=-1) from settled view
+        query = query.filter(BetLog.outcome.isnot(None), BetLog.outcome != -1)
+    elif status == "cancelled":
+        query = query.filter(BetLog.outcome == -1)
+    else:
+        # "all" — exclude internal cancelled/displaced bookkeeping rows
+        query = query.filter(BetLog.outcome != -1)
 
-    bets = query.order_by(BetLog.timestamp.desc()).all()
+    bets = query.order_by(BetLog.id.asc()).all()
+
+    # Deduplicate: keep first-created BetLog per (game_id, bet_date)
+    if dedup:
+        seen: set = set()
+        deduped: list = []
+        for b in bets:
+            bet_date = b.timestamp.date() if b.timestamp else None
+            key = (b.game_id, bet_date)
+            if key not in seen:
+                seen.add(key)
+                deduped.append(b)
+        bets = deduped
+
+    # Sort by timestamp descending for display
+    bets = sorted(bets, key=lambda b: b.timestamp or datetime.min, reverse=True)
 
     return {
         "total": len(bets),
@@ -2400,11 +2485,14 @@ async def cleanup_duplicate_bets(
 
 
 @app.post("/admin/force-update-outcomes")
-async def force_update_outcomes(user: str = Depends(verify_admin_api_key)):
-    """Manually trigger the outcome-update job (admin only)."""
-    logger.info("Manual outcome update triggered by %s", user)
+async def force_update_outcomes(
+    days_from: int = Query(default=2, ge=1, le=30, description="How many days back to fetch scores (max 30)"),
+    user: str = Depends(verify_admin_api_key),
+):
+    """Manually trigger the outcome-update job (admin only). Use days_from>2 to settle historical bets."""
+    logger.info("Manual outcome update triggered by %s (days_from=%d)", user, days_from)
     try:
-        results = update_completed_games()
+        results = update_completed_games(days_from=days_from)
         return {"message": "Outcome update complete", **results}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
@@ -2917,9 +3005,10 @@ async def create_draft_session(
     db: Session = Depends(get_db),
     user: str = Depends(verify_api_key),
 ):
-    """Create a new live-draft tracking session."""
+    """Create a new live-draft tracking session. Keepers are pre-inserted."""
     import secrets
-    from backend.models import FantasyDraftSession
+    from backend.models import FantasyDraftSession, FantasyDraftPick
+    from backend.fantasy_baseball.player_board import get_board, MY_KEEPERS
 
     session_key = secrets.token_hex(8)
     session = FantasyDraftSession(
@@ -2931,6 +3020,29 @@ async def create_draft_session(
         is_active=True,
     )
     db.add(session)
+    db.flush()  # get session.id
+
+    # Pre-insert keeper picks (pick_number=0 sentinel = pre-draft keeper)
+    board_by_id = {p["id"]: p for p in get_board()}
+    for player_id, keeper_round in MY_KEEPERS.items():
+        player = board_by_id.get(player_id)
+        if not player:
+            continue
+        db.add(FantasyDraftPick(
+            session_id=session.id,
+            pick_number=0,
+            round_number=keeper_round,
+            drafter_position=my_draft_position,
+            is_my_pick=True,
+            player_id=player_id,
+            player_name=player["name"],
+            player_team=player.get("team"),
+            player_positions=player.get("positions"),
+            player_tier=player.get("tier"),
+            player_adp=player.get("adp"),
+            player_z_score=player.get("z_score"),
+        ))
+
     db.commit()
     db.refresh(session)
     return {
@@ -2938,7 +3050,8 @@ async def create_draft_session(
         "my_draft_position": my_draft_position,
         "num_teams": num_teams,
         "num_rounds": num_rounds,
-        "message": "Draft session created. Use session_key with /api/fantasy/draft-session/{key}/pick",
+        "keepers_preloaded": list(MY_KEEPERS.keys()),
+        "message": "Draft session created with keepers pre-loaded.",
     }
 
 
@@ -2960,7 +3073,7 @@ async def record_draft_pick(
 
     session = db.query(FantasyDraftSession).filter_by(
         session_key=session_key, is_active=True
-    ).first()
+    ).with_for_update().first()
     if session is None:
         raise HTTPException(status_code=404, detail="Draft session not found or inactive")
 
@@ -3032,6 +3145,7 @@ async def get_draft_session(
             "round": p.round_number,
             "drafter_position": p.drafter_position,
             "is_my_pick": p.is_my_pick,
+            "is_keeper": p.pick_number == 0,
             "player_id": p.player_id,
             "player_name": p.player_name,
             "player_team": p.player_team,
@@ -3055,6 +3169,466 @@ async def get_draft_session(
         "picks": picks,
         "my_picks": my_picks,
     }
+
+
+@app.delete("/api/fantasy/draft-session/{session_key}")
+async def delete_draft_session(
+    session_key: str,
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """Delete a draft session and all its picks (for resetting a test session)."""
+    from backend.models import FantasyDraftSession, FantasyDraftPick
+
+    session = db.query(FantasyDraftSession).filter_by(session_key=session_key).first()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Draft session not found")
+
+    db.query(FantasyDraftPick).filter_by(session_id=session.id).delete()
+    db.delete(session)
+    db.commit()
+    return {"message": "Draft session deleted", "session_key": session_key}
+
+
+@app.get("/api/fantasy/draft-session/value-board")
+async def fantasy_value_board(
+    drafted_ids: str = Query("", description="Comma-separated player IDs already drafted"),
+    position: Optional[str] = Query(None, description="Filter by position (C, 1B, SP, RP, OF, ...)"),
+    player_type: Optional[str] = Query(None, description="batter or pitcher"),
+    tier_max: Optional[int] = Query(None, description="Exclude players below this tier"),
+    limit: int = Query(100, ge=1, le=300),
+    user: str = Depends(verify_api_key),
+):
+    """
+    Advanced-metrics value board — ranks AVAILABLE players by a composite
+    value_score that combines projection z-scores, ADP gaps, Statcast quality,
+    and regression signals (BUY_LOW / BREAKOUT / AVOID).
+
+    Pass drafted_ids as a comma-separated list of player IDs to filter out
+    already-drafted players.  Falls back to standard z-score ranking if the
+    Statcast overlay fails.
+    """
+    import copy
+    from backend.fantasy_baseball.player_board import get_board
+    from backend.fantasy_baseball.draft_analytics import (
+        inject_advanced_analytics,
+        compute_value_score,
+    )
+
+    try:
+        raw_board = get_board()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Player board unavailable: {exc}")
+
+    # Shallow-copy so we don't mutate the singleton cache
+    board = [dict(p) for p in raw_board]
+
+    # Attempt analytics overlay — silently degrades if CSVs missing
+    inject_advanced_analytics(board)
+
+    # Filter out drafted players
+    exclude = {pid.strip() for pid in drafted_ids.split(",") if pid.strip()}
+    board = [p for p in board if p["id"] not in exclude]
+
+    # Optional filters
+    if position:
+        pos_upper = position.upper()
+        board = [p for p in board if pos_upper in p.get("positions", [])]
+    if player_type:
+        board = [p for p in board if p.get("type", "").lower() == player_type.lower()]
+    if tier_max is not None:
+        board = [p for p in board if 0 < p.get("tier", 99) <= tier_max]
+
+    # Sort by value_score descending
+    board.sort(key=compute_value_score, reverse=True)
+
+    # Attach computed value_score to each result for transparency
+    for p in board:
+        p["value_score"] = round(compute_value_score(p), 3)
+
+    board = board[:limit]
+    return {
+        "count": len(board),
+        "analytics_overlay": any(bool(p.get("statcast")) for p in board),
+        "players": board,
+    }
+
+
+@app.post("/api/fantasy/draft-session/{session_key}/sync-yahoo")
+async def sync_draft_from_yahoo(
+    session_key: str,
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """
+    Poll Yahoo's draftresults endpoint and sync any new picks into the session.
+
+    Call this every 15-30 seconds during the live draft to keep drafted_ids
+    current without manual entry.  Safe to call repeatedly — only new picks
+    are recorded.
+
+    Returns: picks_synced count, total picks in Yahoo, your current roster.
+    """
+    from backend.models import FantasyDraftSession, FantasyDraftPick
+    from backend.fantasy_baseball.player_board import get_board
+    from backend.fantasy_baseball.yahoo_client import YahooFantasyClient, YahooAuthError, YahooAPIError
+
+    session = db.query(FantasyDraftSession).filter_by(session_key=session_key).first()
+    if session is None:
+        raise HTTPException(status_code=404, detail="Draft session not found")
+
+    try:
+        client = YahooFantasyClient()
+    except YahooAuthError as exc:
+        raise HTTPException(status_code=401, detail=f"Yahoo auth not configured: {exc}")
+
+    try:
+        yahoo_picks = client.get_draft_results()
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=502, detail=f"Yahoo API error: {exc}")
+
+    if not yahoo_picks:
+        return {"picks_synced": 0, "total_yahoo_picks": 0, "message": "Draft not started or no picks yet"}
+
+    # Build a lookup of player_key -> board player for name/position resolution
+    board = get_board()
+    # Yahoo player_key is like "mlb.p.12345" — we match against board by name
+    # since we don't store Yahoo player keys in our board.
+    # Build a name-normalised lookup from the board.
+    def _norm(s: str) -> str:
+        return s.lower().replace(" ", "_").replace(".", "").replace("'", "").replace("-", "_")
+
+    board_by_id = {p["id"]: p for p in board}
+    board_by_name = {_norm(p["name"]): p for p in board}
+
+    # Already-recorded pick numbers in this session
+    existing_pick_numbers = {
+        pk.pick_number for pk in db.query(FantasyDraftPick).filter_by(session_id=session.id).all()
+    }
+
+    picks_synced = 0
+    for raw in yahoo_picks:
+        pick_num = int(raw.get("pick", 0))
+        if pick_num == 0 or pick_num in existing_pick_numbers:
+            continue
+
+        round_num = int(raw.get("round", ((pick_num - 1) // session.num_teams) + 1))
+        player_key = raw.get("player_key", "")
+
+        # Determine if this is our pick based on pick number and draft position
+        # Pick order: round 1 & 2 linear, round 3+ snake (see draft_engine.py)
+        from backend.fantasy_baseball.draft_engine import build_full_pick_order
+        full_order = build_full_pick_order(session.num_teams, session.num_rounds)
+        pick_pos = 0
+        if pick_num <= len(full_order):
+            _, _, pick_pos = full_order[pick_num - 1]
+        is_my_pick = (pick_pos == session.my_draft_position)
+
+        # Resolve player name — try to fetch from Yahoo, fall back to player_key as ID
+        player_name = player_key
+        player_id = _norm(player_key)
+        positions: list = []
+        player_type = "batter"
+        tier = 0
+        adp = 999.0
+
+        try:
+            yahoo_player = client.get_player(player_key)
+            player_name = yahoo_player.get("name") or player_key
+            positions = yahoo_player.get("positions") or []
+            player_id = _norm(player_name)
+        except Exception:
+            pass  # Use player_key as fallback name — pick still recorded
+
+        # Try to enrich from our board
+        board_match = board_by_id.get(player_id) or board_by_name.get(player_id)
+        if board_match:
+            player_type = board_match.get("type", "batter")
+            tier = board_match.get("tier", 0)
+            adp = board_match.get("adp", 999.0)
+            if not positions:
+                positions = board_match.get("positions", [])
+
+        pick_record = FantasyDraftPick(
+            session_id=session.id,
+            pick_number=pick_num,
+            round_number=round_num,
+            player_id=player_id,
+            player_name=player_name,
+            player_team=yahoo_player.get("team", "") if "yahoo_player" in dir() else "",
+            player_positions=",".join(positions),
+            player_type=player_type,
+            player_tier=tier,
+            player_adp=adp,
+            is_my_pick=is_my_pick,
+        )
+        db.add(pick_record)
+        picks_synced += 1
+
+    if picks_synced:
+        # Advance session pick counter
+        session.current_pick = max(session.current_pick, len(yahoo_picks) + 1)
+        db.commit()
+
+    my_picks = [
+        pk.player_name for pk in
+        db.query(FantasyDraftPick).filter_by(session_id=session.id, is_my_pick=True)
+        .order_by(FantasyDraftPick.pick_number).all()
+    ]
+
+    return {
+        "picks_synced": picks_synced,
+        "total_yahoo_picks": len(yahoo_picks),
+        "session_current_pick": session.current_pick,
+        "my_roster_so_far": my_picks,
+    }
+
+
+@app.get("/api/fantasy/lineup/{lineup_date}", response_model=DailyLineupResponse)
+async def get_fantasy_lineup_recommendations(
+    lineup_date: str,
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """
+    Return daily lineup recommendations for a given date.
+    Wired to DailyLineupOptimizer for implied runs and park factors.
+    """
+    from datetime import date as date_type
+    try:
+        ld = date_type.fromisoformat(lineup_date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="lineup_date must be YYYY-MM-DD")
+
+    optimizer = get_lineup_optimizer()
+    report = optimizer.build_daily_report(game_date=lineup_date)
+
+    batters = [
+        LineupPlayerOut(
+            player_id=str(b.get("player_id", b.get("name", ""))),
+            name=b.get("name", ""),
+            team=b.get("team", ""),
+            position=b.get("position", "OF"),
+            implied_runs=float(b.get("team_implied_runs", 0)),
+            park_factor=float(b.get("park_factor", 1.0)),
+            lineup_score=float(b.get("score", b.get("team_implied_runs", 0))),
+            start_time=b.get("game_time"),
+            opponent=b.get("opponent"),
+            status="START" if i < 9 else "BENCH",
+        )
+        for i, b in enumerate(report.get("batter_rankings", []))
+    ]
+
+    pitchers = [
+        StartingPitcherOut(
+            player_id=str(p.get("player_id", p.get("name", ""))),
+            name=p.get("name", ""),
+            team=p.get("team", ""),
+            opponent_implied_runs=float(p.get("opponent_implied_runs", 0)),
+            park_factor=float(p.get("park_factor", 1.0)),
+            sp_score=float(p.get("score", 0)),
+            start_time=p.get("game_time"),
+            status="START" if i < 2 else "BENCH",
+        )
+        for i, p in enumerate(report.get("pitcher_rankings", []))
+    ]
+
+    return DailyLineupResponse(
+        date=ld,
+        batters=batters,
+        pitchers=pitchers,
+        games_count=len(report.get("games", [])),
+    )
+
+
+@app.get("/api/fantasy/waiver", response_model=WaiverWireResponse)
+async def get_fantasy_waiver_recommendations(
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Return waiver wire recommendations.
+    Pulls real free agents and waiver players from Yahoo API.
+    """
+    from datetime import date as date_type, timedelta
+    from backend.schemas import WaiverPlayerOut
+
+    today = date_type.today()
+    week_end = today + timedelta(days=(6 - today.weekday()))
+
+    matchup_opponent = "TBD"
+    top_available: list = []
+    two_start_pitchers: list = []
+
+    try:
+        client = YahooFantasyClient()
+        my_team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+
+        # Get free agents and waiver players
+        free_agents = client.get_free_agents(count=25)
+        waiver_players = client.get_waiver_players(count=20)
+
+        # Try to get matchup opponent
+        try:
+            matchups = client.get_scoreboard()
+            for m in matchups:
+                if isinstance(m, dict):
+                    teams = m.get("teams", {})
+                    team_keys_in_matchup = []
+                    team_names = {}
+                    if isinstance(teams, dict):
+                        count_t = int(teams.get("count", 0))
+                        for ti in range(count_t):
+                            t_entry = teams.get(str(ti), {}).get("team", [])
+                            t_meta = {}
+                            if isinstance(t_entry, list):
+                                for sub in t_entry:
+                                    if isinstance(sub, list):
+                                        for item in sub:
+                                            if isinstance(item, dict):
+                                                t_meta.update(item)
+                                    elif isinstance(sub, dict):
+                                        t_meta.update(sub)
+                            tk = t_meta.get("team_key", "")
+                            tn = t_meta.get("name", "")
+                            team_keys_in_matchup.append(tk)
+                            team_names[tk] = tn
+                    if my_team_key in team_keys_in_matchup:
+                        for tk in team_keys_in_matchup:
+                            if tk != my_team_key:
+                                matchup_opponent = team_names.get(tk, "TBD")
+                        break
+        except Exception:
+            pass
+
+        def _to_waiver_player(p: dict) -> WaiverPlayerOut:
+            positions = p.get("positions") or []
+            return WaiverPlayerOut(
+                player_id=p.get("player_key") or "",
+                name=p.get("name") or "",
+                team=p.get("team") or "",
+                position=positions[0] if positions else "?",
+                need_score=0.0,
+                category_contributions={},
+                owned_pct=0.0,
+                starts_this_week=0,
+            )
+
+        top_available = [_to_waiver_player(p) for p in free_agents]
+        two_start_pitchers = [_to_waiver_player(p) for p in waiver_players]
+
+    except YahooAuthError:
+        pass
+    except YahooAPIError:
+        pass
+    except Exception:
+        pass
+
+    # Build real category deficits from scoreboard stats
+    category_deficits: list = []
+    try:
+        from backend.schemas import CategoryDeficitOut
+        if matchup_opponent != "TBD":
+            # Re-fetch scoreboard to get stats (already fetched above for opponent name,
+            # but we need the stats dict — refetch is acceptable here, results are small)
+            matchups2 = client.get_scoreboard()
+            # Build stat_id map for readable labels
+            sid_map: dict[str, str] = {}
+            try:
+                settings2 = client.get_league_settings()
+                stat_cats2 = (
+                    settings2
+                    .get("settings", [{}])[0]
+                    .get("stat_categories", {})
+                    .get("stats", [])
+                )
+                for entry in stat_cats2:
+                    if isinstance(entry, dict):
+                        s2 = entry.get("stat", {})
+                        sid2 = str(s2.get("stat_id", ""))
+                        abbr2 = s2.get("display_name") or s2.get("abbreviation") or s2.get("name") or sid2
+                        if sid2:
+                            sid_map[sid2] = abbr2
+            except Exception:
+                pass
+            # Lower-is-better categories for correct deficit direction
+            lower_better = {"ERA", "WHIP"}
+            for m2 in matchups2:
+                if not isinstance(m2, dict):
+                    continue
+                teams2 = m2.get("teams", {})
+                if not isinstance(teams2, dict):
+                    continue
+                count2 = int(teams2.get("count", 0))
+                team_stats_map: dict[str, dict] = {}
+                team_names_map: dict[str, str] = {}
+                for ti2 in range(count2):
+                    entry2 = teams2.get(str(ti2), {}).get("team", [])
+                    t_meta2: dict = {}
+                    stats_raw2: list = []
+                    items2 = entry2 if isinstance(entry2, list) else [entry2]
+                    for sub2 in items2:
+                        if isinstance(sub2, list):
+                            for it2 in sub2:
+                                if isinstance(it2, dict):
+                                    t_meta2.update(it2)
+                        elif isinstance(sub2, dict):
+                            if "team_stats" in sub2:
+                                inner2 = sub2["team_stats"].get("stats", [])
+                                if isinstance(inner2, list):
+                                    stats_raw2 = inner2
+                            else:
+                                t_meta2.update(sub2)
+                    tk2 = t_meta2.get("team_key", "")
+                    tn2 = t_meta2.get("name", "")
+                    sd2: dict = {}
+                    for st2 in stats_raw2:
+                        if isinstance(st2, dict):
+                            stobj = st2.get("stat", {})
+                            if isinstance(stobj, dict):
+                                sid_k = str(stobj.get("stat_id", ""))
+                                key2 = sid_map.get(sid_k, sid_k)
+                                try:
+                                    sd2[key2] = float(stobj.get("value", 0) or 0)
+                                except (TypeError, ValueError):
+                                    sd2[key2] = 0.0
+                    team_stats_map[tk2] = sd2
+                    team_names_map[tk2] = tn2
+                if my_team_key not in team_stats_map:
+                    continue
+                my_stats = team_stats_map[my_team_key]
+                opp_key = next((k for k in team_stats_map if k != my_team_key), None)
+                if not opp_key:
+                    continue
+                opp_stats = team_stats_map[opp_key]
+                for cat, my_val in my_stats.items():
+                    opp_val = opp_stats.get(cat, 0.0)
+                    if lower_better.issuperset({cat}):
+                        deficit = my_val - opp_val  # positive = we are worse (higher ERA/WHIP)
+                        winning = my_val < opp_val
+                    else:
+                        deficit = opp_val - my_val  # positive = we are behind
+                        winning = my_val > opp_val
+                    category_deficits.append(
+                        CategoryDeficitOut(
+                            category=cat,
+                            my_total=my_val,
+                            opponent_total=opp_val,
+                            deficit=deficit,
+                            winning=winning,
+                        )
+                    )
+                break  # found our matchup
+    except Exception:
+        category_deficits = []
+
+    return WaiverWireResponse(
+        week_end=week_end,
+        matchup_opponent=matchup_opponent,
+        category_deficits=category_deficits,
+        top_available=top_available,
+        two_start_pitchers=two_start_pitchers,
+    )
 
 
 @app.post("/api/fantasy/lineup")
@@ -3105,14 +3679,14 @@ async def save_fantasy_lineup(
     return {"message": "Lineup saved", "id": lineup.id}
 
 
-@app.get("/api/fantasy/lineup/{lineup_date}")
+@app.get("/api/fantasy/saved-lineup/{lineup_date}")
 async def get_fantasy_lineup(
     lineup_date: str,
     platform: str = Query("yahoo"),
     db: Session = Depends(get_db),
     user: str = Depends(verify_api_key),
 ):
-    """Retrieve saved lineup for a given date."""
+    """Retrieve a previously saved DK/Yahoo lineup for a given date."""
     from backend.models import FantasyLineup
     from datetime import date as date_type
 
@@ -3133,6 +3707,282 @@ async def get_fantasy_lineup(
         "actual_points": lineup.actual_points,
         "notes": lineup.notes,
     }
+
+
+# ============================================================================
+# YAHOO FANTASY BASEBALL — ROSTER / MATCHUP / LINEUP APPLY
+# ============================================================================
+
+@app.get("/api/fantasy/yahoo-diag")
+async def yahoo_diag(user: str = Depends(verify_api_key)):
+    """
+    Diagnostic endpoint — returns Yahoo config status without making API calls.
+    Safe to call: reveals which env vars are present (values redacted).
+    Remove after debugging is complete.
+    """
+    client_id = os.getenv("YAHOO_CLIENT_ID", "")
+    client_secret = os.getenv("YAHOO_CLIENT_SECRET", "")
+    refresh_token = os.getenv("YAHOO_REFRESH_TOKEN", "")
+    access_token = os.getenv("YAHOO_ACCESS_TOKEN", "")
+    league_id = os.getenv("YAHOO_LEAGUE_ID", "72586")
+
+    # Try constructor
+    constructor_ok = False
+    constructor_error = None
+    try:
+        _c = YahooFantasyClient()
+        constructor_ok = True
+    except YahooAuthError as e:
+        constructor_error = str(e)
+    except Exception as e:
+        constructor_error = f"Unexpected: {e}"
+
+    # Try token refresh (only if constructor passed)
+    token_ok = False
+    token_error = None
+    if constructor_ok:
+        try:
+            _c._ensure_token()
+            token_ok = True
+        except YahooAuthError as e:
+            token_error = str(e)
+        except Exception as e:
+            token_error = f"Unexpected: {e}"
+
+    return {
+        "env_vars_present": {
+            "YAHOO_CLIENT_ID": bool(client_id),
+            "YAHOO_CLIENT_SECRET": bool(client_secret),
+            "YAHOO_REFRESH_TOKEN": bool(refresh_token),
+            "YAHOO_ACCESS_TOKEN": bool(access_token),
+            "YAHOO_LEAGUE_ID": league_id,
+        },
+        "client_id_length": len(client_id),
+        "client_secret_length": len(client_secret),
+        "refresh_token_length": len(refresh_token),
+        "constructor_ok": constructor_ok,
+        "constructor_error": constructor_error,
+        "token_refresh_ok": token_ok,
+        "token_refresh_error": token_error,
+    }
+
+
+@app.get("/api/fantasy/roster", response_model=RosterResponse)
+async def get_fantasy_roster(user: str = Depends(verify_api_key)):
+    """
+    Return the authenticated user's current Yahoo roster enriched with z-scores.
+    Returns 503 if Yahoo credentials are not configured.
+    """
+    from backend.fantasy_baseball.player_board import get_player_by_name
+
+    try:
+        client = YahooFantasyClient()
+    except YahooAuthError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Yahoo not configured -- set YAHOO_REFRESH_TOKEN",
+        ) from exc
+
+    team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+
+    try:
+        raw_players = client.get_roster(team_key=team_key)
+    except YahooAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    players_out: list[RosterPlayerOut] = []
+    for p in raw_players:
+        name = p.get("name") or ""
+        z_score: float | None = None
+        board_entry = get_player_by_name(name) if name else None
+        if board_entry:
+            z_score = board_entry.get("z_score")
+
+        players_out.append(
+            RosterPlayerOut(
+                player_key=p.get("player_key") or "",
+                name=name,
+                team=p.get("team"),
+                positions=p.get("positions") or [],
+                status=p.get("status"),
+                injury_note=p.get("injury_note"),
+                z_score=z_score,
+                is_undroppable=bool(p.get("is_undroppable", 0)),
+            )
+        )
+
+    return RosterResponse(
+        team_key=team_key,
+        players=players_out,
+        count=len(players_out),
+    )
+
+
+@app.get("/api/fantasy/matchup", response_model=MatchupResponse)
+async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
+    """
+    Return current week's matchup: opponent name + category-by-category breakdown.
+    Returns stub with empty stats if scoreboard is unavailable (pre-season).
+    """
+    try:
+        client = YahooFantasyClient()
+    except YahooAuthError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Yahoo not configured -- set YAHOO_REFRESH_TOKEN",
+        ) from exc
+
+    my_team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+
+    _stub_my = MatchupTeamOut(team_key=my_team_key, team_name="My Team", stats={})
+    _stub_opp = MatchupTeamOut(team_key="", team_name="TBD", stats={})
+
+    # Build stat_id → abbreviation map from league settings (best-effort)
+    stat_id_map: dict[str, str] = {}
+    try:
+        settings = client.get_league_settings()
+        stat_cats = (
+            settings
+            .get("settings", [{}])[0]
+            .get("stat_categories", {})
+            .get("stats", [])
+        )
+        for entry in stat_cats:
+            if isinstance(entry, dict):
+                s = entry.get("stat", {})
+                sid = str(s.get("stat_id", ""))
+                abbr = s.get("display_name") or s.get("abbreviation") or s.get("name") or sid
+                if sid:
+                    stat_id_map[sid] = abbr
+    except Exception:
+        pass  # fall back to raw stat_ids
+
+    try:
+        matchups = client.get_scoreboard()
+    except (YahooAuthError, YahooAPIError):
+        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp)
+
+    if not matchups:
+        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp)
+
+    # Determine current week from first matchup
+    week: int | None = None
+    is_playoffs = False
+
+    def _extract_team_stats(team_entry) -> tuple[str, str, dict]:
+        """Return (team_key, team_name, stats_dict) from Yahoo team entry.
+        Stats are keyed by abbreviation (e.g. 'R', 'HR') when stat_id_map is populated,
+        otherwise by raw stat_id string."""
+        t_meta: dict = {}
+        stats_raw: list = []
+        entries = team_entry if isinstance(team_entry, list) else [team_entry]
+        for sub in entries:
+            if isinstance(sub, list):
+                for item in sub:
+                    if isinstance(item, dict):
+                        t_meta.update(item)
+            elif isinstance(sub, dict):
+                if "team_stats" in sub:
+                    inner = sub["team_stats"].get("stats", [])
+                    if isinstance(inner, list):
+                        stats_raw = inner
+                else:
+                    t_meta.update(sub)
+        stats_dict: dict = {}
+        for s in stats_raw:
+            if isinstance(s, dict):
+                stat = s.get("stat", {})
+                if isinstance(stat, dict):
+                    sid = str(stat.get("stat_id", ""))
+                    key = stat_id_map.get(sid, sid)  # resolve to abbrev or fall back to id
+                    val = stat.get("value", "")
+                    if key:
+                        stats_dict[key] = val
+        return (
+            t_meta.get("team_key", ""),
+            t_meta.get("name", ""),
+            stats_dict,
+        )
+
+    for m in matchups:
+        if not isinstance(m, dict):
+            continue
+        w = m.get("week")
+        if w:
+            try:
+                week = int(w)
+            except (TypeError, ValueError):
+                pass
+        is_playoffs = bool(m.get("is_playoffs", 0))
+
+        teams = m.get("teams", {})
+        if not isinstance(teams, dict):
+            continue
+        count_t = int(teams.get("count", 0))
+        team_data: list[tuple[str, str, dict]] = []
+        for ti in range(count_t):
+            entry = teams.get(str(ti), {}).get("team", [])
+            team_data.append(_extract_team_stats(entry))
+
+        # Check if our team is in this matchup
+        my_entry = next((t for t in team_data if t[0] == my_team_key), None)
+        if my_entry is None:
+            continue
+
+        opp_entry = next((t for t in team_data if t[0] != my_team_key), None)
+        if opp_entry is None:
+            opp_entry = ("", "Unknown", {})
+
+        return MatchupResponse(
+            week=week,
+            my_team=MatchupTeamOut(
+                team_key=my_entry[0],
+                team_name=my_entry[1],
+                stats=my_entry[2],
+            ),
+            opponent=MatchupTeamOut(
+                team_key=opp_entry[0],
+                team_name=opp_entry[1],
+                stats=opp_entry[2],
+            ),
+            is_playoffs=is_playoffs,
+        )
+
+    # Our team not found in any matchup (pre-season / bye week)
+    return MatchupResponse(week=week, my_team=_stub_my, opponent=_stub_opp)
+
+
+@app.put("/api/fantasy/lineup/apply")
+async def apply_fantasy_lineup(
+    payload: LineupApplyRequest,
+    user: str = Depends(verify_api_key),
+):
+    """
+    Push a lineup to Yahoo Fantasy.
+    Body: {date?: YYYY-MM-DD, players: [{player_key, position}]}
+    """
+    from datetime import datetime as _dt
+
+    try:
+        client = YahooFantasyClient()
+    except YahooAuthError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Yahoo not configured -- set YAHOO_REFRESH_TOKEN",
+        ) from exc
+
+    apply_date = payload.date or _dt.utcnow().strftime("%Y-%m-%d")
+    team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+    lineup_dicts = [{"player_key": p.player_key, "position": p.position} for p in payload.players]
+
+    try:
+        client.set_lineup(team_key=team_key, date=apply_date, lineup=lineup_dicts)
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return {"success": True, "applied": len(payload.players), "date": apply_date}
 
 
 # ============================================================================

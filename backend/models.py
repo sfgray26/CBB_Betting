@@ -17,11 +17,13 @@ from sqlalchemy import (
     Date,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, date
 import os
+import time
 
 # Try to load dotenv, but don't fail if not installed
 try:
@@ -42,7 +44,14 @@ _ASYNC_DATABASE_URL = DATABASE_URL.replace(
 )
 
 # ── Sync engine (keep for all existing sync paths) ──────────────────────────
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, echo=False)
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=20,
+    max_overflow=40,
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    echo=False,
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # ── Async engine (used by nightly analysis hot path and APScheduler coroutines)
@@ -77,10 +86,25 @@ Base = declarative_base()
 # ── Session dependencies ─────────────────────────────────────────────────────
 
 def get_db():
-    """Sync session dependency for FastAPI routes that are not yet async."""
-    db = SessionLocal()
+    """Sync session dependency with retry on transient connection failures."""
+    db = None
+    for attempt in range(3):
+        try:
+            db = SessionLocal()
+            break
+        except Exception as e:
+            if attempt == 2:
+                raise
+            error_str = str(e).lower()
+            if any(k in error_str for k in ("connection", "timeout", "ssl")):
+                time.sleep(0.1 * (2 ** attempt))
+            else:
+                raise
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -177,7 +201,10 @@ class Prediction(Base):
     # Data quality
     data_freshness_tier = Column(String)  # Tier 1/2/3
     penalties_applied = Column(JSON)  # Dict of penalty types & values
-    
+
+    # K-14: which simulation engine produced this prediction
+    pricing_engine = Column(String(20))  # 'markov' | 'gaussian' | None
+
     # Relationship
     game = relationship("Game", back_populates="predictions")
 
@@ -452,6 +479,66 @@ class FantasyLineup(Base):
     __table_args__ = (
         UniqueConstraint("lineup_date", "platform", name="_lineup_date_platform_uc"),
     )
+
+
+class PlayerDailyMetric(Base):
+    """
+    Sparse time-series of per-player analytics (EMAC-077 EPIC-1).
+    One row per (player_id, metric_date, sport). NULL fields are not computed yet.
+    """
+
+    __tablename__ = "player_daily_metrics"
+
+    id = Column(Integer, primary_key=True)
+    player_id = Column(String(50), nullable=False, index=True)
+    player_name = Column(String(100), nullable=False)
+    metric_date = Column(Date, nullable=False)
+    sport = Column(String(10), nullable=False)  # 'mlb' | 'cbb'
+
+    # Core value metrics
+    vorp_7d = Column(Float)
+    vorp_30d = Column(Float)
+    z_score_total = Column(Float)
+    z_score_recent = Column(Float)
+
+    # Statcast 2.0 (MLB only — always NULL for CBB rows)
+    blast_pct = Column(Float)
+    bat_speed = Column(Float)
+    squared_up_pct = Column(Float)
+    swing_length = Column(Float)
+    stuff_plus = Column(Float)
+    plv = Column(Float)
+
+    # Flexible rolling windows: {"7d": {"avg": 0.310, ...}, "30d": {...}}
+    rolling_window = Column(JSONB, nullable=False, default=dict)
+
+    data_source = Column(String(50))
+    fetched_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("player_id", "metric_date", "sport",
+                         name="_pdm_player_date_sport_uc"),
+    )
+
+
+class ProjectionSnapshot(Base):
+    """
+    Delta-compressed audit trail of projection changes (EMAC-077 EPIC-1).
+    One row per (snapshot_date, sport). Only stores changed projections.
+    """
+
+    __tablename__ = "projection_snapshots"
+
+    id = Column(Integer, primary_key=True)
+    snapshot_date = Column(Date, nullable=False)
+    sport = Column(String(10), nullable=False)  # 'mlb' | 'cbb'
+
+    # {player_id: {"old": {...}, "new": {...}, "delta_reason": "..."}}
+    player_changes = Column(JSONB, nullable=False, default=dict)
+
+    total_players = Column(Integer)
+    significant_changes = Column(Integer)   # rows where |delta| > threshold
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
 # Create all tables

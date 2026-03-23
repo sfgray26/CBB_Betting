@@ -625,17 +625,24 @@ async def _ddgs_and_check(game: dict) -> str:
         def _do_search():
             with DDGS() as ddgs:
                 return list(ddgs.text(query, max_results=5))
-        
-        results = await asyncio.to_thread(_do_search)
+
+        try:
+            results = await asyncio.wait_for(asyncio.to_thread(_do_search), timeout=45.0)
+        except asyncio.TimeoutError:
+            logger.warning("DDGS search timed out for %s — skipping integrity check", game_key)
+            return "Sanity check unavailable (search timeout)"
         context = " | ".join(r.get("body", "") for r in results)
-        
+
         # Use async OpenClaw Lite check
-        return await async_perform_sanity_check(
-            home_team=home,
-            away_team=away,
-            verdict=verdict,
-            search_results=context,
-            game_key=game_key
+        return await asyncio.wait_for(
+            async_perform_sanity_check(
+                home_team=home,
+                away_team=away,
+                verdict=verdict,
+                search_results=context,
+                game_key=game_key,
+            ),
+            timeout=30.0,
         )
     except Exception as e:
         logger.warning("DDGS/check failed for %s: %s", game.get("game_key"), e)
@@ -643,7 +650,11 @@ async def _ddgs_and_check(game: dict) -> str:
 
 
 async def _integrity_sweep(bet_tier_games: list) -> dict:
-    """Run integrity checks on all BET-tier games concurrently (max 8 workers)."""
+    """Run integrity checks on all BET-tier games concurrently (max 8 workers).
+
+    Hard cap: 90 seconds total. Any games still pending after that get
+    'Sanity check unavailable (sweep timeout)' so the analysis can continue.
+    """
     if not bet_tier_games:
         return {}
     semaphore = asyncio.Semaphore(8)
@@ -652,9 +663,17 @@ async def _integrity_sweep(bet_tier_games: list) -> dict:
         async with semaphore:
             return await _ddgs_and_check(game)
 
-    results = await asyncio.gather(
-        *[_one(g) for g in bet_tier_games], return_exceptions=True
-    )
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*[_one(g) for g in bet_tier_games], return_exceptions=True),
+            timeout=90.0,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Integrity sweep hit 90s hard cap for %d games — marking all unavailable",
+            len(bet_tier_games),
+        )
+        results = ["Sanity check unavailable (sweep timeout)"] * len(bet_tier_games)
     return {
         g.get("game_key"): (r if not isinstance(r, Exception) else "Sanity check unavailable")
         for g, r in zip(bet_tier_games, results)

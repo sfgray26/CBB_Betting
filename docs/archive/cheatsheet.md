@@ -1,3 +1,11 @@
+# 🗃️ ARCHIVED — OpenClaw & CBB Edge Cheatsheet
+
+> **Status:** Archived (Mar 2026)  
+> **Reason:** Consolidated into `QUICKREF.md`  
+> **Note:** OpenClaw CLI commands have been deprecated in favor of direct integration
+
+---
+
 # 🦞 OpenClaw & CBB Edge Cheatsheet
 
 Quick reference for OpenClaw CLI and common project operations.
