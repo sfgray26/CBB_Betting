@@ -354,6 +354,8 @@ class RosterMoveRecommendation(BaseModel):
     category_targets: List[str]              # Which cats this move helps
     need_score: float                        # Composite value of this move
     confidence: float                        # 0.0-1.0 based on data completeness
+    statcast_signals: List[str] = []         # ["BUY_LOW", "BREAKOUT", "SELL_HIGH", "HIGH_INJURY_RISK"]
+    regression_delta: float = 0.0           # xwOBA-wOBA (batters) or xERA-ERA (pitchers)
 
 
 class WaiverRecommendationsResponse(BaseModel):

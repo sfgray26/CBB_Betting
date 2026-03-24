@@ -127,6 +127,7 @@ class StatcastBatter:
     sprint_speed: float = 0.0  # ft/sec
     bolts: int = 0  # # of runs where sprint speed > 30 ft/sec
     hp_to_1b: float = 0.0  # Time from home to first base
+    sb_attempts: int = 0  # Stolen base attempts (for speed/SB projection)
     
     # Batted ball profile
     gb_pct: float = 0.0  # Ground ball %

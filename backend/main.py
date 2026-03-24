@@ -3992,6 +3992,9 @@ async def get_waiver_recommendations(
         WaiverPlayerOut, CategoryDeficitOut,
     )
     from backend.fantasy_baseball.player_board import get_or_create_projection as _get_proj
+    from backend.fantasy_baseball.statcast_loader import (
+        build_statcast_signals, statcast_need_score_boost,
+    )
 
     today = date_type.today()
     week_end = today + timedelta(days=(6 - today.weekday()))
@@ -4120,6 +4123,30 @@ async def get_waiver_recommendations(
                 return None
             return min(candidates, key=lambda x: x["z_score"])
 
+        def _fmt_signals(signals: list[str], reg_delta: float, is_pitcher: bool) -> str:
+            """Format FA Statcast signals as a rationale suffix."""
+            parts = []
+            if "BUY_LOW" in signals:
+                metric = "xERA" if is_pitcher else "xwOBA"
+                parts.append(f"BUY_LOW ({metric} delta={reg_delta:+.3f})")
+            if "BREAKOUT" in signals:
+                parts.append("BREAKOUT candidate")
+            if not parts:
+                return ""
+            return " [" + "; ".join(parts) + "]"
+
+        def _fmt_drop_signals(signals: list[str], reg_delta: float, is_pitcher: bool) -> str:
+            """Format drop candidate Statcast signals as a rationale suffix."""
+            parts = []
+            if "SELL_HIGH" in signals:
+                metric = "xERA" if is_pitcher else "xwOBA"
+                parts.append(f"drop is SELL_HIGH ({metric} delta={reg_delta:+.3f})")
+            if "HIGH_INJURY_RISK" in signals:
+                parts.append("drop has HIGH_INJURY_RISK")
+            if not parts:
+                return ""
+            return " [" + "; ".join(parts) + "]"
+
         # Generate recommendations for top FAs
         seen_drops: set[str] = set()
         for fa in scored_fas[:15]:
@@ -4153,10 +4180,19 @@ async def get_waiver_recommendations(
                 pos_group = fa_positions
                 pos_label = fa.position
 
+            # Statcast enrichment for FA (non-blocking)
+            fa_is_pitcher = fa.position in ("SP", "RP", "P")
+            fa_signals, fa_reg_delta = build_statcast_signals(
+                fa.name, fa_is_pitcher, fa.owned_pct
+            )
+            statcast_boost = statcast_need_score_boost(fa_signals)
+            adjusted_need = fa.need_score + statcast_boost
+
             drop_candidate = _weakest_at_positions(pos_group)
             if not drop_candidate:
                 # No roster player at same position — still recommend add if FA is strong
-                if fa.need_score >= 2.0:
+                if adjusted_need >= 2.0:
+                    signal_text = _fmt_signals(fa_signals, fa_reg_delta, fa_is_pitcher)
                     recommendations.append(RosterMoveRecommendation(
                         action="ADD",
                         add_player=fa,
@@ -4164,24 +4200,33 @@ async def get_waiver_recommendations(
                         drop_player_position=None,
                         rationale=(
                             f"Add {fa.name} ({fa.position}, {fa.team}) — "
-                            f"strong projected value (z={fa.need_score:+.1f}). "
+                            f"projected z={fa.need_score:+.1f}{signal_text}. "
                             f"No {pos_label} to drop suggested; check bench."
                         ),
                         category_targets=[],
-                        need_score=fa.need_score,
+                        need_score=round(adjusted_need, 3),
                         confidence=0.5 if not _get_proj({"player_key": fa.player_id, "name": fa.name}).get("is_proxy") else 0.3,
+                        statcast_signals=fa_signals,
+                        regression_delta=fa_reg_delta,
                     ))
                 continue
 
-            # Skip if drop candidate is better than FA
-            if drop_candidate["z_score"] >= fa.need_score:
+            # Statcast injury risk on drop candidate (pitcher only — higher risk = easier drop)
+            drop_is_pitcher = drop_candidate["positions"][0] in ("SP", "RP", "P") if drop_candidate["positions"] else False
+            drop_signals, drop_reg_delta = build_statcast_signals(
+                drop_candidate["name"], drop_is_pitcher
+            )
+            drop_score_adj = drop_candidate["z_score"] + statcast_need_score_boost(drop_signals)
+
+            # Skip if drop candidate is still better than FA after Statcast adjustment
+            if drop_score_adj >= adjusted_need:
                 continue
 
             # Skip if we already suggested dropping this player
             if drop_candidate["name"] in seen_drops:
                 continue
 
-            gain = fa.need_score - drop_candidate["z_score"]
+            gain = adjusted_need - drop_candidate["z_score"]
             if gain < 0.5:
                 continue  # Not worth the move
 
@@ -4190,13 +4235,16 @@ async def get_waiver_recommendations(
             is_proxy = fa_proj.get("is_proxy", False)
             confidence = 0.75 if not is_proxy else 0.45
 
+            signal_text = _fmt_signals(fa_signals, fa_reg_delta, fa_is_pitcher)
+            drop_signal_text = _fmt_drop_signals(drop_signals, drop_reg_delta, drop_is_pitcher)
+
             rationale = (
                 f"Add {fa.name} ({fa.position}, {fa.team}, {fa.owned_pct:.0f}% owned), "
                 f"drop {drop_candidate['name']} ({drop_candidate['positions'][0] if drop_candidate['positions'] else '?'}). "
-                f"Net z-score gain: {gain:+.1f} ({drop_candidate['z_score']:+.1f} -> {fa.need_score:+.1f})."
+                f"Net gain: {gain:+.1f} ({drop_candidate['z_score']:+.1f} -> {adjusted_need:+.1f}){signal_text}{drop_signal_text}."
             )
             if is_proxy:
-                rationale += " [Call-up / prospect — projections estimated.]"
+                rationale += " [Call-up — projections estimated.]"
 
             recommendations.append(RosterMoveRecommendation(
                 action="ADD_DROP",
@@ -4207,6 +4255,8 @@ async def get_waiver_recommendations(
                 category_targets=[],
                 need_score=round(gain, 3),
                 confidence=confidence,
+                statcast_signals=fa_signals,
+                regression_delta=fa_reg_delta,
             ))
 
     except YahooAuthError as exc:
