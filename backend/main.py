@@ -2851,6 +2851,49 @@ async def set_parlay_override(
 
 
 # ============================================================================
+# FEATURE FLAGS
+# ============================================================================
+
+_ALLOWED_FLAGS = {"draft_board_enabled"}
+
+
+@app.get("/api/feature-flags")
+async def get_feature_flags(
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """Return feature flag values. Unset flags return their default."""
+    defaults = {"draft_board_enabled": True}
+    result = dict(defaults)
+    for flag in _ALLOWED_FLAGS:
+        row = _get_model_param(db, flag)
+        if row is not None and row.parameter_value_json is not None:
+            result[flag] = bool(row.parameter_value_json)
+    return result
+
+
+@app.post("/admin/feature-flags/{flag_name}")
+async def set_feature_flag(
+    flag_name: str,
+    enabled: bool,
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """Toggle a feature flag (admin only)."""
+    if flag_name not in _ALLOWED_FLAGS:
+        raise HTTPException(status_code=400, detail=f"Unknown flag: {flag_name}. Allowed: {sorted(_ALLOWED_FLAGS)}")
+    db.add(ModelParameter(
+        parameter_name=flag_name,
+        parameter_value_json=enabled,
+        reason="admin_toggle",
+        changed_by=user,
+    ))
+    db.commit()
+    logger.info("Feature flag %s set to %s by %s", flag_name, enabled, user)
+    return {"flag": flag_name, "enabled": enabled}
+
+
+# ============================================================================
 # DRAFTKINGS CSV IMPORT
 # ============================================================================
 
@@ -3697,7 +3740,12 @@ async def get_fantasy_waiver_recommendations(
 
     try:
         client = YahooFantasyClient()
-        my_team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+        my_team_key = os.getenv("YAHOO_TEAM_KEY", "")
+        if not my_team_key:
+            try:
+                my_team_key = client.get_my_team_key()
+            except Exception:
+                my_team_key = ""
 
         # Get free agents and waiver players
         free_agents = client.get_free_agents(count=25)
@@ -4069,7 +4117,14 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
             detail="Yahoo not configured -- set YAHOO_REFRESH_TOKEN",
         ) from exc
 
-    my_team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+    # Dynamically resolve team key so the game-year prefix is always current.
+    # Fall back to env var if the API call fails.
+    my_team_key = os.getenv("YAHOO_TEAM_KEY", "")
+    if not my_team_key:
+        try:
+            my_team_key = client.get_my_team_key()
+        except Exception:
+            my_team_key = ""
 
     _stub_my = MatchupTeamOut(team_key=my_team_key, team_name="My Team", stats={})
     _stub_opp = MatchupTeamOut(team_key="", team_name="TBD", stats={})

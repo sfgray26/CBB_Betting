@@ -629,6 +629,13 @@ function DraftSessionTab({
 // ---------------------------------------------------------------------------
 
 export default function FantasyPage() {
+  const { data: featureFlags } = useQuery({
+    queryKey: ['feature-flags'],
+    queryFn: endpoints.featureFlags,
+    staleTime: 5 * 60_000,
+  })
+  const draftBoardEnabled = featureFlags?.draft_board_enabled ?? true
+
   const [activeTab, setActiveTab] = useState<'board' | 'session'>('board')
 
   // Shared filter state
@@ -752,36 +759,38 @@ export default function FantasyPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Tab switcher */}
-          <div className="flex rounded-md overflow-hidden border border-zinc-700">
-            <button
-              onClick={() => setActiveTab('board')}
-              className={cn(
-                'px-4 py-2 text-xs font-medium transition-colors flex items-center gap-1.5',
-                activeTab === 'board'
-                  ? 'bg-zinc-700 text-zinc-100'
-                  : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200',
-              )}
-            >
-              <Filter className="h-3.5 w-3.5" />
-              Draft Board
-            </button>
-            <button
-              onClick={() => setActiveTab('session')}
-              className={cn(
-                'px-4 py-2 text-xs font-medium transition-colors flex items-center gap-1.5',
-                activeTab === 'session'
-                  ? 'bg-amber-500/20 text-amber-400'
-                  : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200',
-              )}
-            >
-              <Clock className="h-3.5 w-3.5" />
-              Live Draft
-              {sessionKey && (
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 ml-0.5" />
-              )}
-            </button>
-          </div>
+          {/* Tab switcher — only shown during draft season */}
+          {draftBoardEnabled && (
+            <div className="flex rounded-md overflow-hidden border border-zinc-700">
+              <button
+                onClick={() => setActiveTab('board')}
+                className={cn(
+                  'px-4 py-2 text-xs font-medium transition-colors flex items-center gap-1.5',
+                  activeTab === 'board'
+                    ? 'bg-zinc-700 text-zinc-100'
+                    : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200',
+                )}
+              >
+                <Filter className="h-3.5 w-3.5" />
+                Draft Board
+              </button>
+              <button
+                onClick={() => setActiveTab('session')}
+                className={cn(
+                  'px-4 py-2 text-xs font-medium transition-colors flex items-center gap-1.5',
+                  activeTab === 'session'
+                    ? 'bg-amber-500/20 text-amber-400'
+                    : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200',
+                )}
+              >
+                <Clock className="h-3.5 w-3.5" />
+                Live Draft
+                {sessionKey && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 ml-0.5" />
+                )}
+              </button>
+            </div>
+          )}
           <button
             onClick={() => refetch()}
             disabled={isFetching}
@@ -792,27 +801,28 @@ export default function FantasyPage() {
         </div>
       </div>
 
-      {/* Filters (both tabs) */}
-      <FilterBar
-        posFilter={posFilter}
-        setPosFilter={setPosFilter}
-        typeFilter={typeFilter}
-        setTypeFilter={setTypeFilter}
-        tierMax={tierMax}
-        setTierMax={setTierMax}
-        search={search}
-        setSearch={setSearch}
-      />
+      {/* Draft board UI — hidden when draft season is off */}
+      {draftBoardEnabled && (
+        <>
+          <FilterBar
+            posFilter={posFilter}
+            setPosFilter={setPosFilter}
+            typeFilter={typeFilter}
+            setTypeFilter={setTypeFilter}
+            tierMax={tierMax}
+            setTierMax={setTierMax}
+            search={search}
+            setSearch={setSearch}
+          />
 
-      {/* Tab content */}
-      {activeTab === 'board' ? (
-        <DraftBoardTab
-          players={allPlayers}
-          isLoading={boardLoading}
-          isError={boardError}
-        />
-      ) : (
-        <DraftSessionTab
+          {activeTab === 'board' ? (
+            <DraftBoardTab
+              players={allPlayers}
+              isLoading={boardLoading}
+              isError={boardError}
+            />
+          ) : (
+            <DraftSessionTab
           session={session}
           sessionLoading={sessionLoading}
           availablePlayers={availablePlayers}
@@ -832,10 +842,12 @@ export default function FantasyPage() {
           onCreateSession={() => createMutation.mutate()}
           onDraftMe={handleDraftMe}
           onMarkDrafted={handleMarkDrafted}
-          sessionKey={sessionKey}
-          onClearSession={handleClearSession}
-          sessionError={sessionError}
-        />
+              sessionKey={sessionKey}
+              onClearSession={handleClearSession}
+              sessionError={sessionError}
+            />
+          )}
+        </>
       )}
     </div>
   )

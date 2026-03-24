@@ -279,4 +279,13 @@ export const endpoints = {
 
   ratingsStatus: () =>
     apiFetch<RatingsStatus>('/admin/ratings/status'),
+
+  featureFlags: () =>
+    apiFetch<Record<string, boolean>>('/api/feature-flags'),
+
+  setFeatureFlag: (flag: string, enabled: boolean) =>
+    apiFetch<{ flag: string; enabled: boolean }>(
+      `/admin/feature-flags/${flag}?enabled=${enabled}`,
+      { method: 'POST' },
+    ),
 }

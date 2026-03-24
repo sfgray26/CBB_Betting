@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { formatDistanceToNow, parseISO } from 'date-fns'
-import { ShieldAlert, RefreshCw, CheckCircle2, AlertTriangle, XCircle, Clock, Database, Cpu, Radio, DollarSign, Play } from 'lucide-react'
+import { ShieldAlert, RefreshCw, CheckCircle2, AlertTriangle, XCircle, Clock, Database, Cpu, Radio, DollarSign, Play, ToggleLeft, ToggleRight } from 'lucide-react'
 import { endpoints } from '@/lib/api'
 import { getApiKey } from '@/lib/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
@@ -510,6 +510,77 @@ function BankrollPanel() {
 }
 
 // ---------------------------------------------------------------------------
+// Feature flags panel
+// ---------------------------------------------------------------------------
+
+function FeatureFlagsPanel() {
+  const { data: flags, isLoading, refetch } = useQuery({
+    queryKey: ['feature-flags'],
+    queryFn: endpoints.featureFlags,
+  })
+  const [saving, setSaving] = useState<string | null>(null)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const FLAG_LABELS: Record<string, { label: string; description: string }> = {
+    draft_board_enabled: {
+      label: 'Draft Board',
+      description: 'Show Draft Board & Live Draft tabs on the Fantasy page',
+    },
+  }
+
+  async function toggle(flag: string, currentValue: boolean) {
+    setSaving(flag)
+    setMsg(null)
+    try {
+      await endpoints.setFeatureFlag(flag, !currentValue)
+      setMsg(`${FLAG_LABELS[flag]?.label ?? flag} ${!currentValue ? 'enabled' : 'disabled'}`)
+      refetch()
+    } catch (e) {
+      setMsg(String(e))
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  return (
+    <Card className="p-0">
+      <CardHeader className="px-5 pt-5 pb-0 mb-4">
+        <CardTitle className="flex items-center gap-2">
+          <ToggleRight className="h-4 w-4 text-zinc-500" />
+          Feature Flags
+        </CardTitle>
+      </CardHeader>
+      <div className="px-5 pb-5 space-y-3">
+        {isLoading && <p className="text-xs text-zinc-600 animate-pulse">Loading...</p>}
+        {flags && Object.entries(FLAG_LABELS).map(([flag, meta]) => {
+          const enabled = flags[flag] ?? true
+          return (
+            <div key={flag} className="flex items-center justify-between rounded-md bg-zinc-800/50 border border-zinc-700/50 px-3 py-2.5">
+              <div>
+                <p className="text-sm text-zinc-200 font-medium">{meta.label}</p>
+                <p className="text-xs text-zinc-500 mt-0.5">{meta.description}</p>
+              </div>
+              <button
+                onClick={() => toggle(flag, enabled)}
+                disabled={saving === flag}
+                className="ml-4 flex-shrink-0 disabled:opacity-50"
+                title={enabled ? 'Click to disable' : 'Click to enable'}
+              >
+                {enabled
+                  ? <ToggleRight className="h-7 w-7 text-emerald-400" />
+                  : <ToggleLeft className="h-7 w-7 text-zinc-500" />
+                }
+              </button>
+            </div>
+          )
+        })}
+        {msg && <p className="text-xs font-mono text-emerald-400">{msg}</p>}
+      </div>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -540,6 +611,9 @@ export default function AdminPage() {
         <SchedulerPanel />
         <OddsMonitorPanel />
       </div>
+
+      {/* Feature flags */}
+      <FeatureFlagsPanel />
     </div>
   )
 }
