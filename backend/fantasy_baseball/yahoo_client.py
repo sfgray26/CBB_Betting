@@ -275,6 +275,24 @@ class YahooFantasyClient:
         data = self._get(f"league/{self.league_key}/settings")
         return self._league_section(data, 0)
 
+    @staticmethod
+    def _iter_block(block, item_key: str):
+        """Yield item_key values from either an indexed dict or a list block.
+
+        Yahoo 2025 format: {"count": N, "0": {item_key: ...}, "1": {item_key: ...}}
+        Yahoo 2026 format: [{item_key: ...}, {item_key: ...}]
+        """
+        if isinstance(block, list):
+            for item in block:
+                if isinstance(item, dict) and item_key in item:
+                    yield item[item_key]
+        elif isinstance(block, dict):
+            count = int(block.get("count", 0))
+            for i in range(count):
+                entry = block.get(str(i), {})
+                if isinstance(entry, dict) and item_key in entry:
+                    yield entry[item_key]
+
     def get_standings(self) -> list[dict]:
         data = self._get(f"league/{self.league_key}/standings")
         sec = self._league_section(data, 1)
@@ -289,26 +307,22 @@ class YahooFantasyClient:
     def get_all_teams(self) -> list[dict]:
         data = self._get(f"league/{self.league_key}/teams")
         teams_raw = self._league_section(data, 1).get("teams", {})
-        teams = []
-        count = int(teams_raw.get("count", 0))
-        for i in range(count):
-            team_data = teams_raw[str(i)]["team"]
-            teams.append(self._parse_team(team_data))
-        return teams
+        return [self._parse_team(team_data) for team_data in self._iter_block(teams_raw, "team")]
 
     def get_my_team_key(self) -> str:
         """Return the team key for the authenticated user's team."""
         data = self._get(f"league/{self.league_key}/teams")
         teams_raw = self._league_section(data, 1).get("teams", {})
-        count = int(teams_raw.get("count", 0))
-        for i in range(count):
-            team_list = teams_raw[str(i)]["team"]
-            # team_list[0] is a mixed list of dicts and strings — guard with isinstance
+        for team_list in self._iter_block(teams_raw, "team"):
             meta = {}
-            if isinstance(team_list[0], list):
-                for d in team_list[0]:
-                    if isinstance(d, dict):
-                        meta.update(d)
+            entries = team_list if isinstance(team_list, list) else [team_list]
+            for d in entries:
+                if isinstance(d, list):
+                    for item in d:
+                        if isinstance(item, dict):
+                            meta.update(item)
+                elif isinstance(d, dict):
+                    meta.update(d)
             if meta.get("is_owned_by_current_login"):
                 return meta["team_key"]
         raise YahooAPIError("Could not find your team — are you authenticated?")
@@ -374,8 +388,8 @@ class YahooFantasyClient:
         return self._parse_players_block(players_raw)
 
     def get_free_agents(self, position: str = "", start: int = 0, count: int = 25) -> list[dict]:
-        """Paginated free agent list, optionally filtered by position."""
-        params = {"status": "FA", "start": start, "count": count}
+        """Paginated available players (free agents + waivers)."""
+        params = {"status": "FW", "start": start, "count": count}
         if position:
             params["position"] = position
         data = self._get(f"league/{self.league_key}/players", params=params)
@@ -637,18 +651,7 @@ class YahooFantasyClient:
         return parsed
 
     def _parse_players_block(self, players_raw) -> list[dict]:
-        players = []
-        if isinstance(players_raw, list):
-            # Yahoo 2026+: players returned as a list of {"player": [...]} dicts
-            for item in players_raw:
-                if isinstance(item, dict) and "player" in item:
-                    players.append(self._parse_player(item["player"]))
-        elif isinstance(players_raw, dict):
-            count = int(players_raw.get("count", 0))
-            for i in range(count):
-                player_data = players_raw[str(i)]["player"]
-                players.append(self._parse_player(player_data))
-        return players
+        return [self._parse_player(p) for p in self._iter_block(players_raw, "player")]
 
 
 # ---------------------------------------------------------------------------
