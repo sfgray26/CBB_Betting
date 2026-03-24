@@ -388,8 +388,8 @@ class YahooFantasyClient:
         return self._parse_players_block(players_raw)
 
     def get_free_agents(self, position: str = "", start: int = 0, count: int = 25) -> list[dict]:
-        """Paginated available players (free agents + waivers)."""
-        params = {"status": "FW", "start": start, "count": count}
+        """Paginated available players (free agents + waivers, status=A)."""
+        params = {"status": "A", "start": start, "count": count}
         if position:
             params["position"] = position
         data = self._get(f"league/{self.league_key}/players", params=params)
