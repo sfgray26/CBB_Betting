@@ -388,8 +388,12 @@ class YahooFantasyClient:
         return self._parse_players_block(players_raw)
 
     def get_free_agents(self, position: str = "", start: int = 0, count: int = 25) -> list[dict]:
-        """Paginated available players (free agents + waivers, status=A)."""
-        params = {"status": "A", "start": start, "count": count}
+        """Paginated available players (free agents + waivers, status=A).
+
+        sort=AR ranks by percent rostered — the only sort that reflects real
+        pickup value. Yahoo's default sort order is opaque and unreliable.
+        """
+        params = {"status": "A", "start": start, "count": count, "sort": "AR"}
         if position:
             params["position"] = position
         data = self._get(f"league/{self.league_key}/players", params=params)
