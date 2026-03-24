@@ -78,6 +78,7 @@ from backend.schemas import (
     LineupApplyRequest,
     OracleFlaggedResponse,
     OraclePredictionDetail,
+    MatchupSimulateRequest,
 )
 from backend.fantasy_baseball.yahoo_client import (
     YahooFantasyClient,
@@ -4140,6 +4141,8 @@ async def get_waiver_recommendations(
                 "positions": rp.get("positions") or [],
                 "z_score": bp.get("z_score", 0.0),
                 "is_proxy": bp.get("is_proxy", False),
+                "cat_scores": bp.get("cat_scores") or {},
+                "starts_this_week": int(rp.get("starts_this_week", 1)),
             })
 
         # Helper: find weakest roster player at given position(s)
@@ -4275,6 +4278,34 @@ async def get_waiver_recommendations(
             if is_proxy:
                 rationale += " [Call-up — projections estimated.]"
 
+            # MCMC win-probability simulation (non-blocking, graceful fallback)
+            _mcmc = {}
+            try:
+                from backend.fantasy_baseball.mcmc_simulator import simulate_roster_move as _sim_move
+                _add_for_mcmc = {
+                    "name": fa.name,
+                    "positions": [fa.position],
+                    "cat_scores": dict(fa.category_contributions),
+                    "starts_this_week": fa.starts_this_week,
+                }
+                _mcmc = _sim_move(
+                    my_roster=my_roster_scored,
+                    opponent_roster=[],  # league-average opponent
+                    add_player=_add_for_mcmc,
+                    drop_player_name=drop_candidate["name"],
+                    n_sims=1000,
+                )
+                if _mcmc.get("mcmc_enabled") and abs(_mcmc["win_prob_gain"]) >= 0.005:
+                    wp_before_pct = round(_mcmc["win_prob_before"] * 100)
+                    wp_after_pct = round(_mcmc["win_prob_after"] * 100)
+                    wp_gain_pct = round(_mcmc["win_prob_gain"] * 100)
+                    rationale += (
+                        f" Win prob: {wp_before_pct}% -> {wp_after_pct}%"
+                        f" ({wp_gain_pct:+d}%)."
+                    )
+            except Exception:
+                pass
+
             recommendations.append(RosterMoveRecommendation(
                 action="ADD_DROP",
                 add_player=fa,
@@ -4286,6 +4317,11 @@ async def get_waiver_recommendations(
                 confidence=confidence,
                 statcast_signals=fa_signals,
                 regression_delta=fa_reg_delta,
+                win_prob_before=_mcmc.get("win_prob_before", 0.0),
+                win_prob_after=_mcmc.get("win_prob_after", 0.0),
+                win_prob_gain=_mcmc.get("win_prob_gain", 0.0),
+                category_win_probs=_mcmc.get("category_win_probs_after", {}),
+                mcmc_enabled=_mcmc.get("mcmc_enabled", False),
             ))
 
     except YahooAuthError as exc:
@@ -4730,6 +4766,33 @@ async def yahoo_roster(user: str = Depends(verify_admin_api_key)):
         return {"count": len(roster), "players": roster}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/fantasy/matchup/simulate")
+async def simulate_matchup(
+    payload: MatchupSimulateRequest,
+    user: str = Depends(verify_api_key),
+):
+    """
+    Monte Carlo simulation of a weekly H2H matchup.
+
+    Pass my_roster and opponent_roster as lists of player dicts with:
+      cat_scores: {hr: float, r: float, ...}  -- z-scores per category
+      positions: [str]                          -- position eligibility
+      starts_this_week: int                     -- pitcher starts (default 1)
+      name: str
+
+    Returns win probability and per-category breakdown.
+    n_sims is capped at 5000 for latency safety.
+    """
+    from backend.fantasy_baseball.mcmc_simulator import simulate_weekly_matchup
+    n = min(max(100, payload.n_sims), 5000)
+    result = simulate_weekly_matchup(
+        my_roster=payload.my_roster,
+        opponent_roster=payload.opponent_roster,
+        n_sims=n,
+    )
+    return result
 
 
 @app.post("/admin/pybaseball/refresh")

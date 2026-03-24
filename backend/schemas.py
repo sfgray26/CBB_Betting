@@ -356,6 +356,12 @@ class RosterMoveRecommendation(BaseModel):
     confidence: float                        # 0.0-1.0 based on data completeness
     statcast_signals: List[str] = []         # ["BUY_LOW", "BREAKOUT", "SELL_HIGH", "HIGH_INJURY_RISK"]
     regression_delta: float = 0.0           # xwOBA-wOBA (batters) or xERA-ERA (pitchers)
+    # MCMC win probability fields
+    win_prob_before: float = 0.0            # Win prob before the move (0-1)
+    win_prob_after: float = 0.0             # Win prob after the move (0-1)
+    win_prob_gain: float = 0.0              # Absolute gain (after - before)
+    category_win_probs: dict = {}           # Per-category win probability after move
+    mcmc_enabled: bool = False              # True if MCMC simulation ran successfully
 
 
 class WaiverRecommendationsResponse(BaseModel):
@@ -364,6 +370,18 @@ class WaiverRecommendationsResponse(BaseModel):
     matchup_opponent: str
     recommendations: List[RosterMoveRecommendation]
     category_deficits: List[CategoryDeficitOut]
+
+
+# ---------------------------------------------------------------------------
+# MCMC Matchup Simulation
+# ---------------------------------------------------------------------------
+
+class MatchupSimulateRequest(BaseModel):
+    """Request body for POST /api/fantasy/matchup/simulate."""
+    my_roster: List[dict]
+    opponent_roster: List[dict]
+    n_sims: int = 1000
+    week: Optional[str] = None  # ISO week label (informational only)
 
 
 # ---------------------------------------------------------------------------

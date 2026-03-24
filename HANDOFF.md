@@ -1,6 +1,6 @@
 # OPERATIONAL HANDOFF — EMAC-077 "DATA SUPERIORITY"
 
-> **Ground truth as of March 23, 2026.** Author: Claude Code (Master Architect).
+> **Ground truth as of March 24, 2026.** Author: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 > Prior state: `EMAC-076` — Fantasy draft complete, Yahoo OAuth live, value-board endpoint deployed.
 >
@@ -25,7 +25,7 @@
 | Value-Board Endpoint | LIVE | `GET /api/fantasy/draft-session/value-board` w/ Statcast overlay |
 | Yahoo OAuth Sync | LIVE | `POST /api/fantasy/draft-session/{key}/sync-yahoo` polls draftresults |
 | Pre-Draft Keeper Sweep | **LIVE** (Mar 23) | `POST /api/fantasy/draft-session/{key}/sync-keepers` — fetches all 12 rosters from Yahoo at room open, marks all keepers, cleans pool before first pick |
-| Time-Series Schema | NOT EXISTS | Tables `player_daily_metrics`, `projection_snapshots` do not exist |
+| Time-Series Schema | **SCHEMA LIVE** (Mar 24) | ORM models + migration script exist. `tests/test_schema_v8.py` created (7 tests). Run `pytest tests/test_schema_v8.py -v` to confirm. DB tables require `migrate_v8_post_draft.py` to be run on Railway. |
 | Ingestion Orchestrator | NOT EXISTS | `backend/services/daily_ingestion.py` does not exist |
 | OpenClaw Autonomous Loop | NOT EXISTS | `backend/services/openclaw_autonomous.py` does not exist |
 | DiscordRouter | NOT EXISTS | `backend/services/discord_router.py` does not exist |
