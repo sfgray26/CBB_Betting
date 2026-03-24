@@ -3759,23 +3759,28 @@ async def get_fantasy_waiver_recommendations(
                     teams = m.get("teams", {})
                     team_keys_in_matchup = []
                     team_names = {}
-                    if isinstance(teams, dict):
+                    # Handle both Yahoo response shapes
+                    if isinstance(teams, list):
+                        raw_entries = [item.get("team", []) for item in teams if isinstance(item, dict)]
+                    elif isinstance(teams, dict):
                         count_t = int(teams.get("count", 0))
-                        for ti in range(count_t):
-                            t_entry = teams.get(str(ti), {}).get("team", [])
-                            t_meta = {}
-                            if isinstance(t_entry, list):
-                                for sub in t_entry:
-                                    if isinstance(sub, list):
-                                        for item in sub:
-                                            if isinstance(item, dict):
-                                                t_meta.update(item)
-                                    elif isinstance(sub, dict):
-                                        t_meta.update(sub)
-                            tk = t_meta.get("team_key", "")
-                            tn = t_meta.get("name", "")
-                            team_keys_in_matchup.append(tk)
-                            team_names[tk] = tn
+                        raw_entries = [teams.get(str(ti), {}).get("team", []) for ti in range(count_t)]
+                    else:
+                        raw_entries = []
+                    for t_entry in raw_entries:
+                        t_meta = {}
+                        if isinstance(t_entry, list):
+                            for sub in t_entry:
+                                if isinstance(sub, list):
+                                    for item in sub:
+                                        if isinstance(item, dict):
+                                            t_meta.update(item)
+                                elif isinstance(sub, dict):
+                                    t_meta.update(sub)
+                        tk = t_meta.get("team_key", "")
+                        tn = t_meta.get("name", "")
+                        team_keys_in_matchup.append(tk)
+                        team_names[tk] = tn
                     if my_team_key in team_keys_in_matchup:
                         for tk in team_keys_in_matchup:
                             if tk != my_team_key:
@@ -3849,13 +3854,17 @@ async def get_fantasy_waiver_recommendations(
                 if not isinstance(m2, dict):
                     continue
                 teams2 = m2.get("teams", {})
-                if not isinstance(teams2, dict):
-                    continue
-                count2 = int(teams2.get("count", 0))
                 team_stats_map: dict[str, dict] = {}
                 team_names_map: dict[str, str] = {}
-                for ti2 in range(count2):
-                    entry2 = teams2.get(str(ti2), {}).get("team", [])
+                # Handle both Yahoo response shapes
+                if isinstance(teams2, list):
+                    team_entries2 = [item["team"] for item in teams2 if isinstance(item, dict) and "team" in item]
+                elif isinstance(teams2, dict):
+                    count2 = int(teams2.get("count", 0))
+                    team_entries2 = [teams2.get(str(ti2), {}).get("team", []) for ti2 in range(count2)]
+                else:
+                    continue
+                for entry2 in team_entries2:
                     t_meta2: dict = {}
                     stats_raw2: list = []
                     items2 = entry2 if isinstance(entry2, list) else [entry2]
@@ -4217,13 +4226,17 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         is_playoffs = bool(m.get("is_playoffs", 0))
 
         teams = m.get("teams", {})
-        if not isinstance(teams, dict):
-            continue
-        count_t = int(teams.get("count", 0))
         team_data: list[tuple[str, str, dict]] = []
-        for ti in range(count_t):
-            entry = teams.get(str(ti), {}).get("team", [])
-            team_data.append(_extract_team_stats(entry))
+        # Handle both Yahoo response shapes: indexed dict or list
+        if isinstance(teams, list):
+            for item in teams:
+                if isinstance(item, dict) and "team" in item:
+                    team_data.append(_extract_team_stats(item["team"]))
+        elif isinstance(teams, dict):
+            count_t = int(teams.get("count", 0))
+            for ti in range(count_t):
+                entry = teams.get(str(ti), {}).get("team", [])
+                team_data.append(_extract_team_stats(entry))
 
         # Check if our team is in this matchup
         my_entry = next((t for t in team_data if t[0] == my_team_key), None)
