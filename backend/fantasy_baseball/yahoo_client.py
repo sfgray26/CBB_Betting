@@ -630,6 +630,19 @@ class YahooFantasyClient:
             pos = positions_raw.get("position")
             positions = [pos] if pos else []
 
+        # Extract percent_owned — Yahoo returns this as a nested dict or plain value
+        owned_raw = meta.get("percent_owned", 0)
+        if isinstance(owned_raw, dict):
+            try:
+                owned_pct = float(owned_raw.get("value", 0) or 0)
+            except (ValueError, TypeError):
+                owned_pct = 0.0
+        else:
+            try:
+                owned_pct = float(owned_raw or 0)
+            except (ValueError, TypeError):
+                owned_pct = 0.0
+
         return {
             "player_key": meta.get("player_key"),
             "player_id": meta.get("player_id"),
@@ -639,6 +652,7 @@ class YahooFantasyClient:
             "status": meta.get("status"),
             "injury_note": meta.get("injury_note"),
             "is_undroppable": meta.get("is_undroppable", 0),
+            "percent_owned": owned_pct,
         }
 
     def _parse_player_with_stats(self, player: list) -> dict:

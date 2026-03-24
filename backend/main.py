@@ -3897,22 +3897,20 @@ async def get_fantasy_waiver_recommendations(
         except Exception:
             category_deficits = []
 
-        # Build player name → board dict for projection lookup.
-        # get_board() is a singleton — this is cheap after first call.
-        from backend.fantasy_baseball.player_board import get_board as _get_board
-        _board_by_name = {p["name"].lower(): p for p in _get_board()}
+        # Universal projection lookup — board players get rich projections,
+        # call-ups / undrafted players get a conservative position-baseline proxy.
+        from backend.fantasy_baseball.player_board import get_or_create_projection as _get_proj
 
         def _to_waiver_player(p: dict) -> WaiverPlayerOut:
             positions = p.get("positions") or []
             name = (p.get("name") or "").strip()
-            board_player = _board_by_name.get(name.lower())
+            board_player = _get_proj(p)  # always returns something
 
             need_score = 0.0
             contributions: dict = {}
 
-            if board_player and category_deficits:
+            if category_deficits:
                 # In-season: weight player's per-category z-scores by our matchup deficits.
-                # Only count categories we're losing and where the player helps.
                 cat_scores = board_player.get("cat_scores", {})
                 for cd in category_deficits:
                     if cd.winning or cd.deficit <= 0:
@@ -3922,17 +3920,14 @@ async def get_fantasy_waiver_recommendations(
                         continue
                     player_z = cat_scores[board_key]
                     if player_z <= 0:
-                        continue  # player is below average in this category — no help
-                    # Normalize deficit as a fraction of opponent's total to keep
-                    # scores comparable across categories with different scales
+                        continue
                     opp_total = abs(cd.opponent_total) or 1.0
                     deficit_weight = cd.deficit / opp_total
                     contribution = deficit_weight * player_z
                     contributions[cd.category] = round(contribution, 3)
                     need_score += contribution
-            elif board_player:
-                # Pre-season or no active matchup: fall back to overall board z_score.
-                # Still differentiates players by projected value even without matchup data.
+            else:
+                # Pre-season or no active matchup: use overall board z_score.
                 need_score = board_player.get("z_score", 0.0)
 
             return WaiverPlayerOut(
@@ -3942,7 +3937,7 @@ async def get_fantasy_waiver_recommendations(
                 position=positions[0] if positions else "?",
                 need_score=round(need_score, 3),
                 category_contributions=contributions,
-                owned_pct=0.0,
+                owned_pct=p.get("percent_owned", 0.0),
                 starts_this_week=0,
             )
 
@@ -3971,6 +3966,270 @@ async def get_fantasy_waiver_recommendations(
         category_deficits=category_deficits,
         top_available=top_available,
         two_start_pitchers=two_start_pitchers,
+    )
+
+
+@app.get("/api/fantasy/waiver/recommendations")
+async def get_waiver_recommendations(
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Actionable ADD/DROP/ADD_DROP recommendations.
+
+    Algorithm:
+    1. Fetch my roster + category deficits (matchup-aware if in-season)
+    2. Fetch top free agents
+    3. For each deficit category, find best available FA who helps
+    4. Pair each ADD with the weakest same-position player on my roster
+    5. Return ranked list of RosterMoveRecommendation
+
+    Returns at most 5 recommendations ranked by need_score.
+    """
+    from datetime import date as date_type, timedelta
+    from backend.schemas import (
+        RosterMoveRecommendation, WaiverRecommendationsResponse,
+        WaiverPlayerOut, CategoryDeficitOut,
+    )
+    from backend.fantasy_baseball.player_board import get_or_create_projection as _get_proj
+
+    today = date_type.today()
+    week_end = today + timedelta(days=(6 - today.weekday()))
+
+    matchup_opponent = "TBD"
+    category_deficits: list = []
+    recommendations: list[RosterMoveRecommendation] = []
+
+    _YAHOO_CAT_TO_BOARD = {
+        "R": "r", "H": "h", "HR": "hr", "RBI": "rbi", "TB": "tb",
+        "SB": "nsb", "AVG": "avg", "OPS": "ops",
+        "W": "w", "L": "l", "K": "k_pit", "SO": "k_pit",
+        "SV": "nsv", "ERA": "era", "WHIP": "whip",
+        "QS": "qs", "K9": "k9", "K/9": "k9",
+    }
+
+    try:
+        client = YahooFantasyClient()
+        my_team_key = os.getenv("YAHOO_TEAM_KEY", "")
+        if not my_team_key:
+            try:
+                my_team_key = client.get_my_team_key()
+            except Exception:
+                my_team_key = ""
+
+        # Fetch my current roster
+        my_roster: list[dict] = []
+        if my_team_key:
+            try:
+                my_roster = client.get_my_roster()
+            except Exception:
+                pass
+
+        # Fetch category deficits via scoreboard
+        try:
+            from backend.schemas import CategoryDeficitOut as _CDOut
+            matchups = client.get_scoreboard()
+            for m in matchups:
+                if not isinstance(m, dict):
+                    continue
+                teams = m.get("teams", {})
+                raw_entries = []
+                if isinstance(teams, list):
+                    raw_entries = [item.get("team", []) for item in teams if isinstance(item, dict)]
+                elif isinstance(teams, dict):
+                    count_t = int(teams.get("count", 0))
+                    raw_entries = [teams.get(str(ti), {}).get("team", []) for ti in range(count_t)]
+                team_keys_in_matchup = []
+                team_stats: dict = {}
+                team_names: dict = {}
+                for t_entry in raw_entries:
+                    t_meta: dict = {}
+                    t_stat_cats: dict = {}
+                    if isinstance(t_entry, list):
+                        for sub in t_entry:
+                            if isinstance(sub, list):
+                                for item in sub:
+                                    if isinstance(item, dict):
+                                        t_meta.update(item)
+                            elif isinstance(sub, dict):
+                                t_meta.update(sub)
+                                if "team_stats" in sub:
+                                    stats_block = sub["team_stats"].get("stats", [])
+                                    for s_entry in stats_block:
+                                        if isinstance(s_entry, dict):
+                                            s = s_entry.get("stat", {})
+                                            t_stat_cats[s.get("stat_id")] = s.get("value")
+                    tk = t_meta.get("team_key", "")
+                    tn = t_meta.get("name", "")
+                    team_keys_in_matchup.append(tk)
+                    team_stats[tk] = t_stat_cats
+                    team_names[tk] = tn
+                if my_team_key in team_keys_in_matchup:
+                    for tk in team_keys_in_matchup:
+                        if tk != my_team_key:
+                            matchup_opponent = team_names.get(tk, "TBD")
+                    break
+        except Exception:
+            pass
+
+        # Get free agents (larger pool for better recommendations)
+        free_agents = client.get_free_agents(count=40)
+
+        # Build scored FA list with universal projections
+        def _score_fa(p: dict) -> WaiverPlayerOut:
+            positions = p.get("positions") or []
+            name = (p.get("name") or "").strip()
+            bp = _get_proj(p)
+            need_score = bp.get("z_score", 0.0)
+            return WaiverPlayerOut(
+                player_id=p.get("player_key") or "",
+                name=name,
+                team=p.get("team") or "",
+                position=positions[0] if positions else "?",
+                need_score=round(need_score, 3),
+                category_contributions={},
+                owned_pct=p.get("percent_owned", 0.0),
+                starts_this_week=0,
+            )
+
+        scored_fas = sorted(
+            [_score_fa(p) for p in free_agents],
+            key=lambda x: x.need_score,
+            reverse=True,
+        )
+
+        # Build my roster with projections for drop candidate evaluation
+        my_roster_scored: list[dict] = []
+        for rp in my_roster:
+            bp = _get_proj(rp)
+            my_roster_scored.append({
+                "name": (rp.get("name") or "").strip(),
+                "player_key": rp.get("player_key") or "",
+                "positions": rp.get("positions") or [],
+                "z_score": bp.get("z_score", 0.0),
+                "is_proxy": bp.get("is_proxy", False),
+            })
+
+        # Helper: find weakest roster player at given position(s)
+        def _weakest_at_positions(target_positions: list[str]) -> dict | None:
+            candidates = [
+                rp for rp in my_roster_scored
+                if any(pos in rp["positions"] for pos in target_positions)
+            ]
+            if not candidates:
+                return None
+            return min(candidates, key=lambda x: x["z_score"])
+
+        # Generate recommendations for top FAs
+        seen_drops: set[str] = set()
+        for fa in scored_fas[:15]:
+            if len(recommendations) >= 5:
+                break
+
+            fa_positions = [fa.position] if fa.position != "?" else []
+            # What generic position group does this player fill?
+            if fa.position in ("SP", "RP", "P"):
+                pos_group = ["SP", "RP", "P"]
+                pos_label = "pitching"
+            elif fa.position in ("C",):
+                pos_group = ["C"]
+                pos_label = "catcher"
+            elif fa.position in ("SS",):
+                pos_group = ["SS"]
+                pos_label = "shortstop"
+            elif fa.position in ("2B",):
+                pos_group = ["2B"]
+                pos_label = "second base"
+            elif fa.position in ("3B",):
+                pos_group = ["3B"]
+                pos_label = "third base"
+            elif fa.position in ("1B",):
+                pos_group = ["1B"]
+                pos_label = "first base"
+            elif fa.position in ("OF", "LF", "CF", "RF"):
+                pos_group = ["OF", "LF", "CF", "RF"]
+                pos_label = "outfield"
+            else:
+                pos_group = fa_positions
+                pos_label = fa.position
+
+            drop_candidate = _weakest_at_positions(pos_group)
+            if not drop_candidate:
+                # No roster player at same position — still recommend add if FA is strong
+                if fa.need_score >= 2.0:
+                    recommendations.append(RosterMoveRecommendation(
+                        action="ADD",
+                        add_player=fa,
+                        drop_player_name=None,
+                        drop_player_position=None,
+                        rationale=(
+                            f"Add {fa.name} ({fa.position}, {fa.team}) — "
+                            f"strong projected value (z={fa.need_score:+.1f}). "
+                            f"No {pos_label} to drop suggested; check bench."
+                        ),
+                        category_targets=[],
+                        need_score=fa.need_score,
+                        confidence=0.5 if not _get_proj({"player_key": fa.player_id, "name": fa.name}).get("is_proxy") else 0.3,
+                    ))
+                continue
+
+            # Skip if drop candidate is better than FA
+            if drop_candidate["z_score"] >= fa.need_score:
+                continue
+
+            # Skip if we already suggested dropping this player
+            if drop_candidate["name"] in seen_drops:
+                continue
+
+            gain = fa.need_score - drop_candidate["z_score"]
+            if gain < 0.5:
+                continue  # Not worth the move
+
+            seen_drops.add(drop_candidate["name"])
+            fa_proj = _get_proj({"player_key": fa.player_id, "name": fa.name, "positions": [fa.position]})
+            is_proxy = fa_proj.get("is_proxy", False)
+            confidence = 0.75 if not is_proxy else 0.45
+
+            rationale = (
+                f"Add {fa.name} ({fa.position}, {fa.team}, {fa.owned_pct:.0f}% owned), "
+                f"drop {drop_candidate['name']} ({drop_candidate['positions'][0] if drop_candidate['positions'] else '?'}). "
+                f"Net z-score gain: {gain:+.1f} ({drop_candidate['z_score']:+.1f} -> {fa.need_score:+.1f})."
+            )
+            if is_proxy:
+                rationale += " [Call-up / prospect — projections estimated.]"
+
+            recommendations.append(RosterMoveRecommendation(
+                action="ADD_DROP",
+                add_player=fa,
+                drop_player_name=drop_candidate["name"],
+                drop_player_position=drop_candidate["positions"][0] if drop_candidate["positions"] else "?",
+                rationale=rationale,
+                category_targets=[],
+                need_score=round(gain, 3),
+                confidence=confidence,
+            ))
+
+    except YahooAuthError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Yahoo auth failed — refresh token may be expired. ({exc})",
+        ) from exc
+    except YahooAPIError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Yahoo API error: {exc}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Unexpected error: {exc}",
+        ) from exc
+
+    return WaiverRecommendationsResponse(
+        week_end=week_end,
+        matchup_opponent=matchup_opponent,
+        recommendations=sorted(recommendations, key=lambda r: r.need_score, reverse=True),
+        category_deficits=category_deficits,
     )
 
 

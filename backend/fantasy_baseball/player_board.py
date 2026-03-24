@@ -822,6 +822,111 @@ def available_players(drafted_ids: set[str]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Position baseline z-scores (conservative — median of bottom half of board)
+# Used as proxy for call-ups / undrafted players not in PLAYER_BOARD.
+# Derived from get_board() distribution; update each spring.
+# ---------------------------------------------------------------------------
+
+_POSITION_BASELINE_Z: dict[str, float] = {
+    "SP": -0.5,
+    "RP": -0.3,
+    "C":  -1.5,   # Catchers are scarce — even fringe C has roster value
+    "1B": -0.8,
+    "2B": -0.8,
+    "3B": -0.8,
+    "SS": -0.8,
+    "OF": -0.8,
+    "LF": -0.8,
+    "CF": -0.8,
+    "RF": -0.8,
+    "DH": -1.0,
+    "P":  -0.5,   # Generic pitcher
+}
+_DEFAULT_BASELINE_Z = -1.0  # Unknown position
+
+# Runtime cache for on-the-fly projections (cleared on process restart)
+_projection_cache: dict[str, dict] = {}
+
+
+def get_or_create_projection(yahoo_player: dict) -> dict:
+    """
+    Return a board-compatible dict for any Yahoo player, whether they are
+    on the draft board or not.
+
+    For board players: returns the existing entry (rich projections).
+    For unknown players (call-ups, recent adds): creates a minimal entry
+    using position-average z-score as proxy.  The proxy is intentionally
+    conservative — these players are unproven at MLB level.
+
+    Args:
+        yahoo_player: dict from YahooFantasyClient (has name, player_key,
+                      positions, team, percent_owned, etc.)
+
+    Returns:
+        board-compatible dict with at minimum: name, z_score, positions,
+        cat_scores (empty for proxy), type.
+    """
+    name = (yahoo_player.get("name") or "").strip()
+    player_key = yahoo_player.get("player_key") or ""
+
+    # 1. Check runtime cache first (avoids repeated lookups)
+    if player_key and player_key in _projection_cache:
+        return _projection_cache[player_key]
+
+    # 2. Check board by exact name match
+    board = get_board()
+    board_by_name = {p["name"].lower(): p for p in board}
+    entry = board_by_name.get(name.lower())
+
+    if entry:
+        if player_key:
+            _projection_cache[player_key] = entry
+        return entry
+
+    # 3. Fuzzy name match — handles "José" vs "Jose", suffixes, etc.
+    name_lower = name.lower()
+    for board_name, board_entry in board_by_name.items():
+        # Strip accents / punctuation for comparison
+        clean_board = "".join(c for c in board_name if c.isalnum() or c == " ")
+        clean_name = "".join(c for c in name_lower if c.isalnum() or c == " ")
+        if clean_board == clean_name:
+            if player_key:
+                _projection_cache[player_key] = board_entry
+            return board_entry
+
+    # 4. Not on board — build proxy entry
+    positions = yahoo_player.get("positions") or []
+    primary_pos = positions[0] if positions else ""
+
+    # Infer type from position
+    player_type = "pitcher" if primary_pos in ("SP", "RP", "P") else "batter"
+
+    # Use position baseline z_score
+    proxy_z = _POSITION_BASELINE_Z.get(primary_pos, _DEFAULT_BASELINE_Z)
+
+    proxy = {
+        "id": player_key or name.lower().replace(" ", "_"),
+        "name": name,
+        "team": yahoo_player.get("team") or "",
+        "positions": positions,
+        "type": player_type,
+        "tier": 10,
+        "rank": 9999,
+        "adp": 9999.0,
+        "z_score": proxy_z,
+        "cat_scores": {},  # No per-category data for unknown players
+        "proj": {},
+        "is_keeper": False,
+        "keeper_round": None,
+        "is_proxy": True,  # Flag so callers know this is estimated
+    }
+
+    if player_key:
+        _projection_cache[player_key] = proxy
+    return proxy
+
+
+# ---------------------------------------------------------------------------
 # CLI — print top 50
 # ---------------------------------------------------------------------------
 

@@ -344,6 +344,26 @@ class WaiverWireResponse(BaseModel):
     two_start_pitchers: List[WaiverPlayerOut]
 
 
+class RosterMoveRecommendation(BaseModel):
+    """A specific ADD, DROP, or ADD/DROP recommendation."""
+    action: str                              # "ADD", "DROP", "ADD_DROP", "HOLD"
+    add_player: Optional[WaiverPlayerOut]    # Player to add (null for DROP-only)
+    drop_player_name: Optional[str]          # Name of player to drop (null for ADD-only)
+    drop_player_position: Optional[str]      # Position of drop candidate
+    rationale: str                           # Human-readable explanation
+    category_targets: List[str]              # Which cats this move helps
+    need_score: float                        # Composite value of this move
+    confidence: float                        # 0.0-1.0 based on data completeness
+
+
+class WaiverRecommendationsResponse(BaseModel):
+    """Response for GET /api/fantasy/waiver/recommendations."""
+    week_end: date
+    matchup_opponent: str
+    recommendations: List[RosterMoveRecommendation]
+    category_deficits: List[CategoryDeficitOut]
+
+
 # ---------------------------------------------------------------------------
 # EMAC-076: Yahoo Roster, Matchup, Lineup Apply
 # ---------------------------------------------------------------------------

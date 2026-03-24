@@ -4,6 +4,12 @@
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 > Prior state: `EMAC-076` — Fantasy draft complete, Yahoo OAuth live, value-board endpoint deployed.
 >
+> **NEW RESEARCH:** Kimi CLI compiled AI/ML research — `reports/AI_ML_RESEARCH_MCP_OPEN_SOURCE.md` covers:
+> - MCP (Model Context Protocol) for multi-agent orchestration
+> - 8+ relevant open-source sports betting/fantasy GitHub projects
+> - NumPyro/PyMC Bayesian implementations for baseball projections
+> - Specific algorithms to port (Bayesian MARCEL, MCMC simulator, XGBoost ranker)
+>
 > **GUARDIAN FREEZE still active on CBB model files through April 7.**
 > DO NOT touch `backend/betting_model.py`, `backend/services/analysis.py`, or any CBB model service.
 
@@ -919,7 +925,140 @@ If both pass, EPIC-1 is complete. Proceed to EPIC-2.
 
 ---
 
-## 12. PHASE 2 TRANSITION ROADMAP — EPICS 4-6
+## 12. FANTASY BASEBALL ELITE ROADMAP — ALGORITHMIC EXPANSION
+
+> **Authored:** Kimi CLI · March 23, 2026  
+> **Spec:** `reports/FANTASY_BASEBALL_ELITE_ROADMAP_v2.md`  
+> **Status:** DRAFT — Awaits EPIC-1 through EPIC-3 completion  
+> **Priority:** P0 (Post-CBB/March Madness pivot)
+
+### Context: From Draft Helper to Quantitative Asset Management
+
+The Fantasy Baseball module is evolving from a **draft-day assistant** into an **institutional-grade roster management system**. This requires treating fantasy baseball as a multi-agent, multi-timeframe portfolio optimization problem.
+
+### Algorithmic Innovations (Phase 2)
+
+| Innovation | Algorithm | Purpose | Owner |
+|------------|-----------|---------|-------|
+| **Bayesian Projection Updating** | Conjugate normal priors + shrinkage | Adapt projections as season unfolds | Claude Code |
+| **Ensemble Projections** | Inverse-MAE weighted ensemble | Combine Steamer/ZiPS/Yahoo ROS optimally | Claude Code |
+| **MCMC Weekly Simulator** | Gibbs sampling (10k sims) | Full outcome distributions, not point estimates | Claude Code |
+| **Contextual Bandits** | LinUCB | Real-time add/drop decisions | Claude Code |
+| **Portfolio Optimization** | Mean-variance quadratic programming | Risk-adjusted roster construction | Claude Code |
+| **Reinforcement Learning** | Deep Q-Network (DQN) | Learn optimal roster moves over season | Claude Code + Kimi (validation) |
+| **Graph Neural Networks** | GAT (Graph Attention Networks) | Optimal daily lineup selection | Claude Code |
+
+### Multi-Agent Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│              FANTASY BASEBALL ORCHESTRATION                     │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
+│  │ Yahoo Agent │  │Statcast     │  │FanGraphs    │  Data Layer │
+│  │ (OpenClaw)  │  │Agent (Kimi) │  │Agent (Claude│             │
+│  └─────────────┘  └─────────────┘  └─────────────┘             │
+│         │                │                │                     │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │           ENSEMBLE PROJECTION AGENT (Claude)           │   │
+│  │    Bayesian Update → Ensemble → Confidence Intervals   │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│         │                │                │                     │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐             │
+│  │ Weekly      │  │ Roster      │  │ Streamer    │  Decision   │
+│  │ Strategy    │  │ Construction│  │ Optimization│  Layer      │
+│  │ Agent       │  │ Agent (GNN) │  │ Agent       │             │
+│  └─────────────┘  └─────────────┘  └─────────────┘             │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Integration with EMAC-077/078 EPICs
+
+**Fantasy Baseball work is SEPARATE from CBB EPICs 1-6.**
+
+| Timeline | CBB Activity | Fantasy Activity |
+|----------|-------------|------------------|
+| Now (Mar 23) | EPIC-1 (Schema) + EPIC-2 (Orchestrator) | Foundation planning |
+| Apr 7 | EPIC-4 (Bracket sunset), EPIC-5 (MLB polling) | Begin Phase 1 implementation |
+| Apr 15 | EPIC-6 (Admin suite) | Universal projections + MCMC |
+| May | V9.2 CBB recalibration (off-season) | Bayesian updater + RL training |
+| June | CBB model maintenance | Full multi-agent deployment |
+
+### Key Technical Decisions
+
+**ADR-007: Fantasy Baseball is Additive, Not Substitution**
+- All Fantasy Baseball code lives in `backend/fantasy_baseball/` and `backend/services/daily_ingestion.py`
+- No modification to CBB model files (frozen per ADR-004)
+- Fantasy orchestrator is a separate APScheduler instance within `DailyIngestionOrchestrator`
+
+**ADR-008: Projection Layer Stratification**
+```python
+# Tier 1: Pre-computed (Draft Board) — static, high confidence
+# Tier 2: Yahoo API (Real-time ROS) — refreshed every 6 hours
+# Tier 3: Derived/Heuristic (MLE for call-ups) — computed on-demand
+# Tier 4: Bayesian Posterior (Season-long learning) — updated after each game
+```
+
+**ADR-009: Multi-Timeframe Value Functions**
+```python
+class PlayerValue:
+    ros_value: float          # Trade decisions (full season)
+    four_week_value: float    # Waiver add decisions
+    weekly_value: float       # Streamer decisions
+    daily_value: float        # Lineup optimization
+```
+
+### Implementation Phases
+
+**Phase 1: Foundation (Weeks 1-2, starting Apr 7)**
+- Universal projection system (`get_or_create_projection()`)
+- Yahoo ROS integration
+- Basic roster recommendations
+- MCMC weekly simulator
+
+**Phase 2: Intelligence (Weeks 3-4)**
+- Bayesian updater
+- Ensemble projector
+- Statcast trend detection (Kimi)
+- Contextual bandit
+
+**Phase 3: Optimization (Weeks 5-6)**
+- Portfolio optimizer
+- Weekly strategy engine
+- GNN lineup setter
+- Multi-agent orchestration
+
+**Phase 4: Automation (Weeks 7-8)**
+- RL agent (DQN) training
+- Auto-execution for low-risk moves
+- Real-time opportunity alerts
+
+### Claude Code Responsibilities
+
+1. **Architect all algorithms** — Bayesian, MCMC, RL, GNN implementations
+2. **Design orchestration layer** — Agent message bus, coordination protocol
+3. **Implement Phase 1** — Universal projections, MCMC simulator
+4. **Coordinate with Kimi** — Validation of RL training, trend detection logic
+5. **Coordinate with OpenClaw** — Real-time execution, Yahoo API integration
+
+### Success Metrics
+
+| Metric | Target | Current |
+|--------|--------|---------|
+| Projection coverage | 99%+ of Yahoo universe | ~30% (draft board) |
+| Recommendation accuracy | 70%+ of adds outperform drops | N/A |
+| Weekly matchup win rate | 60%+ H2H | Baseline 50% |
+| Time to actionable insight | <5 seconds | Manual browsing |
+| Human intervention required | <20% of moves | 100% manual |
+
+### Document References
+
+- Full spec: `reports/FANTASY_BASEBALL_ELITE_ROADMAP_v2.md`
+- Algorithm cheat sheet in spec appendix
+- Multi-agent orchestration YAML in spec §2.3
+
+---
+
+## 13. PHASE 2 TRANSITION ROADMAP — EPICS 4-6
 
 > **Authored:** EMAC-078 · March 23, 2026 · Claude Code (Master Architect)
 > **Trigger condition:** These epics activate AFTER the CBB season concludes and ADR-004 freeze lifts (April 7, 2026).
