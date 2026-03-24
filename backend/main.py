@@ -3833,7 +3833,6 @@ async def get_fantasy_waiver_recommendations(
                         continue
                     teams2 = m2.get("teams", {})
                     team_stats_map: dict[str, dict] = {}
-                    team_names_map: dict[str, str] = {}
                     if isinstance(teams2, list):
                         team_entries2 = [item["team"] for item in teams2 if isinstance(item, dict) and "team" in item]
                     elif isinstance(teams2, dict):
