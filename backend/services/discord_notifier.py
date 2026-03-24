@@ -191,6 +191,19 @@ def send_to_channel(
     return _post_to_channel(channel_id, payload, mention_admin)
 
 
+def send_batch_digest(channel_name: str, items: list, header: str = "Waiver Wire Digest") -> bool:
+    """Send a batch digest of waiver items to a Discord channel."""
+    if not items:
+        return False
+    body = "\n".join(f"- {item}" for item in items)
+    try:
+        send_to_channel(channel_name, f"**{header}**\n{body}")
+        return True
+    except Exception as e:
+        logger.warning("send_batch_digest failed: %s", e)
+        return False
+
+
 def route_notification(
     message_type: str,
     content: str = None,

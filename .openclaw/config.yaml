@@ -204,7 +204,7 @@ quality:
 # These are handled automatically with exponential backoff.
 # =============================================================================
 notifications:
-  discord_enabled: false  # Set to true when DISCORD_BOT_TOKEN is configured
+  discord_enabled: true  # Set to true when DISCORD_BOT_TOKEN is configured
   log_fallback: true      # Always log to file if Discord unavailable
   
   events:

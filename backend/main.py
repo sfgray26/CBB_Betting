@@ -181,6 +181,15 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # OpenClaw autonomous waiver intelligence at 8:30 AM daily
+    scheduler.add_job(
+        _openclaw_morning_job,
+        CronTrigger(hour=8, minute=30, timezone=timezone),
+        id="openclaw_morning",
+        name="OpenClaw Autonomous Morning Workflow",
+        replace_existing=True,
+    )
+
     # Odds monitor — poll every 5 minutes for line movements
     odds_monitor_interval = get_float_env("ODDS_MONITOR_INTERVAL_MIN", "5")
     scheduler.add_job(
@@ -982,6 +991,20 @@ def _pybaseball_fetch_job():
         logger.info("pybaseball daily refresh complete")
     except Exception as e:
         logger.error("pybaseball fetch job failed: %s", e)
+
+
+def _openclaw_morning_job():
+    """Daily 8:30 AM OpenClaw autonomous waiver intelligence workflow."""
+    try:
+        from backend.services.mcmc_simulator import MCMCWeeklySimulator
+        from backend.services.waiver_edge_detector import WaiverEdgeDetector
+        from backend.services.discord_router import DiscordRouter
+        from backend.services.openclaw_autonomous import OpenClawAutonomousLoop
+        sim = MCMCWeeklySimulator(n_sims=1000)
+        loop = OpenClawAutonomousLoop(WaiverEdgeDetector(mcmc_simulator=sim), DiscordRouter())
+        loop.run_morning_workflow()
+    except Exception as e:
+        logger.error("OpenClaw morning job failed: %s", e)
 
 
 async def _opener_attack_job():
@@ -4106,7 +4129,7 @@ async def get_waiver_recommendations(
                 team=p.get("team") or "",
                 position=positions[0] if positions else "?",
                 need_score=round(need_score, 3),
-                category_contributions={},
+                category_contributions=bp.get("cat_scores", {}) if bp else {},
                 owned_pct=p.get("percent_owned", 0.0),
                 starts_this_week=0,
             )
