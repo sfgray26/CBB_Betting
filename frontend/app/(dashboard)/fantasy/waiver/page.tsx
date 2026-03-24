@@ -230,7 +230,7 @@ function TableSkeleton({ rows = 6 }: { rows?: number }) {
 // ---------------------------------------------------------------------------
 
 export default function WaiverWirePage() {
-  const { data, isLoading, isError, refetch, isFetching } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['fantasy-waiver'],
     queryFn: endpoints.waiverWire,
     refetchInterval: 10 * 60_000,
@@ -275,7 +275,7 @@ export default function WaiverWirePage() {
           <div>
             <p className="text-rose-400 font-medium text-sm">Failed to load waiver data</p>
             <p className="text-rose-400/60 text-xs mt-0.5">
-              The backend endpoint may not be available yet.
+              {error instanceof Error ? error.message : 'Yahoo API error — check credentials in Railway.'}
             </p>
           </div>
           <button
