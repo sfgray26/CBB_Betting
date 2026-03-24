@@ -3911,6 +3911,8 @@ async def get_fantasy_waiver_recommendations(
             contributions: dict = {}
 
             if board_player and category_deficits:
+                # In-season: weight player's per-category z-scores by our matchup deficits.
+                # Only count categories we're losing and where the player helps.
                 cat_scores = board_player.get("cat_scores", {})
                 for cd in category_deficits:
                     if cd.winning or cd.deficit <= 0:
@@ -3928,6 +3930,10 @@ async def get_fantasy_waiver_recommendations(
                     contribution = deficit_weight * player_z
                     contributions[cd.category] = round(contribution, 3)
                     need_score += contribution
+            elif board_player:
+                # Pre-season or no active matchup: fall back to overall board z_score.
+                # Still differentiates players by projected value even without matchup data.
+                need_score = board_player.get("z_score", 0.0)
 
             return WaiverPlayerOut(
                 player_id=p.get("player_key") or "",
