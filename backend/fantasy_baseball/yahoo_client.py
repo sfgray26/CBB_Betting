@@ -636,12 +636,18 @@ class YahooFantasyClient:
         parsed["stats"] = stats_raw
         return parsed
 
-    def _parse_players_block(self, players_raw: dict) -> list[dict]:
+    def _parse_players_block(self, players_raw) -> list[dict]:
         players = []
-        count = int(players_raw.get("count", 0))
-        for i in range(count):
-            player_data = players_raw[str(i)]["player"]
-            players.append(self._parse_player(player_data))
+        if isinstance(players_raw, list):
+            # Yahoo 2026+: players returned as a list of {"player": [...]} dicts
+            for item in players_raw:
+                if isinstance(item, dict) and "player" in item:
+                    players.append(self._parse_player(item["player"]))
+        elif isinstance(players_raw, dict):
+            count = int(players_raw.get("count", 0))
+            for i in range(count):
+                player_data = players_raw[str(i)]["player"]
+                players.append(self._parse_player(player_data))
         return players
 
 
