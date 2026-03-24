@@ -31,7 +31,8 @@
       "WebFetch(domain:www.balldontlie.io)",
       "Bash(flake8:*)",
       "Bash(rm:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(py:*)"
     ]
   }
 }

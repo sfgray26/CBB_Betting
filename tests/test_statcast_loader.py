@@ -215,6 +215,25 @@ def test_neutral_player_no_boost():
 # Schema integration test
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Fuzzy name normalization tests (accent + suffix stripping via pybaseball_loader)
+# ---------------------------------------------------------------------------
+
+def test_get_statcast_batter_strips_accent():
+    _batter_cache["jose ramirez"] = StatcastBatter(name="Jose Ramirez", xwoba_diff=0.01)
+    assert get_statcast_batter("Jos\u00e9 Ram\u00edrez") is not None
+
+
+def test_get_statcast_batter_strips_suffix():
+    _batter_cache["willi castro"] = StatcastBatter(name="Willi Castro", xwoba_diff=-0.02)
+    assert get_statcast_batter("Willi Castro Jr.") is not None
+
+
+def test_get_statcast_pitcher_strips_accent():
+    _pitcher_cache["jose quintana"] = StatcastPitcher(name="Jose Quintana")
+    assert get_statcast_pitcher("Jos\u00e9 Quintana") is not None
+
+
 def test_roster_move_recommendation_accepts_statcast_fields():
     from backend.schemas import RosterMoveRecommendation, WaiverPlayerOut
     from datetime import date

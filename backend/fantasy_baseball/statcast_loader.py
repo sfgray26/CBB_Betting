@@ -210,6 +210,20 @@ def _ensure_loaded() -> None:
     year = 2026
     batters: dict[str, StatcastBatter] = {}
 
+    # --- Tier 0: pybaseball JSON cache (24h, 400+ players) ---
+    try:
+        from backend.fantasy_baseball.pybaseball_loader import (
+            fetch_all_statcast_leaderboards,
+            load_pybaseball_batters,
+        )
+        fetch_all_statcast_leaderboards(year=2025)
+        pb = load_pybaseball_batters(year=2025)
+        if pb:
+            batters.update(pb)
+            logger.info(f"Tier 0: {len(pb)} pybaseball batters loaded")
+    except Exception as e:
+        logger.warning(f"pybaseball batter tier skipped: {e}")
+
     # Real Savant CSVs (user-downloaded)
     for fname in [
         f"statcast_batting_expected_{year}.csv",
@@ -239,6 +253,16 @@ def _ensure_loaded() -> None:
 
     # --- Pitchers ---
     pitchers: dict[str, StatcastPitcher] = {}
+
+    # --- Tier 0: pybaseball JSON cache (batters already triggered the fetch above) ---
+    try:
+        from backend.fantasy_baseball.pybaseball_loader import load_pybaseball_pitchers
+        pb_p = load_pybaseball_pitchers(year=2025)
+        if pb_p:
+            pitchers.update(pb_p)
+            logger.info(f"Tier 0: {len(pb_p)} pybaseball pitchers loaded")
+    except Exception as e:
+        logger.warning(f"pybaseball pitcher tier skipped: {e}")
 
     for fname in [
         f"statcast_pitching_expected_{year}.csv",
@@ -279,7 +303,16 @@ def get_statcast_batter(name: str) -> Optional[StatcastBatter]:
     except Exception:
         return None
     key = name.strip().lower()
-    return _batter_cache.get(key)
+    result = _batter_cache.get(key)
+    if result is None:
+        try:
+            from backend.fantasy_baseball.pybaseball_loader import match_yahoo_to_statcast
+            matched = match_yahoo_to_statcast(name, _batter_cache)
+            if matched:
+                result = _batter_cache.get(matched)
+        except Exception:
+            pass
+    return result
 
 
 def get_statcast_pitcher(name: str) -> Optional[StatcastPitcher]:
@@ -289,7 +322,16 @@ def get_statcast_pitcher(name: str) -> Optional[StatcastPitcher]:
     except Exception:
         return None
     key = name.strip().lower()
-    return _pitcher_cache.get(key)
+    result = _pitcher_cache.get(key)
+    if result is None:
+        try:
+            from backend.fantasy_baseball.pybaseball_loader import match_yahoo_to_statcast
+            matched = match_yahoo_to_statcast(name, _pitcher_cache)
+            if matched:
+                result = _pitcher_cache.get(matched)
+        except Exception:
+            pass
+    return result
 
 
 def cache_age_seconds() -> float:

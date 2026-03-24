@@ -171,6 +171,15 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Refresh pybaseball FanGraphs leaderboard caches at 7:30 AM daily
+    scheduler.add_job(
+        _pybaseball_fetch_job,
+        CronTrigger(hour=7, minute=30, timezone=timezone),
+        id="fetch_pybaseball",
+        name="Refresh pybaseball Statcast Leaderboards",
+        replace_existing=True,
+    )
+
     # Odds monitor — poll every 5 minutes for line movements
     odds_monitor_interval = get_float_env("ODDS_MONITOR_INTERVAL_MIN", "5")
     scheduler.add_job(
@@ -958,6 +967,20 @@ async def _fetch_ratings_job():
 
     except Exception as exc:
         logger.warning("Ratings pre-warm job failed (non-fatal): %s", exc)
+
+
+def _pybaseball_fetch_job():
+    """Daily 7:30 AM refresh of pybaseball FanGraphs leaderboard caches."""
+    try:
+        from backend.fantasy_baseball.pybaseball_loader import fetch_all_statcast_leaderboards
+        import backend.fantasy_baseball.statcast_loader as _sc
+        fetch_all_statcast_leaderboards(year=2025)
+        _sc._batter_cache.clear()
+        _sc._pitcher_cache.clear()
+        _sc._loaded_at = 0.0
+        logger.info("pybaseball daily refresh complete")
+    except Exception as e:
+        logger.error("pybaseball fetch job failed: %s", e)
 
 
 async def _opener_attack_job():
@@ -4003,14 +4026,6 @@ async def get_waiver_recommendations(
     category_deficits: list = []
     recommendations: list[RosterMoveRecommendation] = []
 
-    _YAHOO_CAT_TO_BOARD = {
-        "R": "r", "H": "h", "HR": "hr", "RBI": "rbi", "TB": "tb",
-        "SB": "nsb", "AVG": "avg", "OPS": "ops",
-        "W": "w", "L": "l", "K": "k_pit", "SO": "k_pit",
-        "SV": "nsv", "ERA": "era", "WHIP": "whip",
-        "QS": "qs", "K9": "k9", "K/9": "k9",
-    }
-
     try:
         client = YahooFantasyClient()
         my_team_key = os.getenv("YAHOO_TEAM_KEY", "")
@@ -4100,6 +4115,20 @@ async def get_waiver_recommendations(
             key=lambda x: x.need_score,
             reverse=True,
         )
+
+        # Non-blocking Statcast coverage log
+        try:
+            from backend.fantasy_baseball.pybaseball_loader import (
+                log_statcast_coverage,
+                load_pybaseball_batters,
+                load_pybaseball_pitchers,
+            )
+            fa_names = [p.get("name", "") for p in free_agents]
+            _sc = {**load_pybaseball_batters(2025), **load_pybaseball_pitchers(2025)}
+            if _sc:
+                log_statcast_coverage(fa_names, _sc, "waiver FAs")
+        except Exception:
+            pass
 
         # Build my roster with projections for drop candidate evaluation
         my_roster_scored: list[dict] = []
@@ -4701,6 +4730,18 @@ async def yahoo_roster(user: str = Depends(verify_admin_api_key)):
         return {"count": len(roster), "players": roster}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/admin/pybaseball/refresh")
+async def admin_refresh_pybaseball(year: int = 2025, user: str = Depends(verify_admin_api_key)):
+    """Force-refresh pybaseball Statcast cache and invalidate in-memory statcast_loader cache."""
+    from backend.fantasy_baseball.pybaseball_loader import fetch_all_statcast_leaderboards
+    import backend.fantasy_baseball.statcast_loader as _sc
+    fetch_all_statcast_leaderboards(year=year, force_refresh=True)
+    _sc._batter_cache.clear()
+    _sc._pitcher_cache.clear()
+    _sc._loaded_at = 0.0
+    return {"status": "ok", "year": year}
 
 
 # ============================================================================
