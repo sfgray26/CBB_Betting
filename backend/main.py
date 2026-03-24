@@ -3737,6 +3737,17 @@ async def get_fantasy_waiver_recommendations(
     matchup_opponent = "TBD"
     top_available: list = []
     two_start_pitchers: list = []
+    category_deficits: list = []
+
+    # Maps Yahoo category display names to player board cat_scores keys.
+    # cat_scores are already z-normalized with direction baked in (ERA/WHIP negative = good).
+    _YAHOO_CAT_TO_BOARD = {
+        "R": "r", "H": "h", "HR": "hr", "RBI": "rbi", "TB": "tb",
+        "SB": "nsb", "AVG": "avg", "OPS": "ops",
+        "W": "w", "L": "l", "K": "k_pit", "SO": "k_pit",
+        "SV": "nsv", "ERA": "era", "WHIP": "whip",
+        "QS": "qs", "K9": "k9", "K/9": "k9",
+    }
 
     try:
         client = YahooFantasyClient()
@@ -3747,7 +3758,7 @@ async def get_fantasy_waiver_recommendations(
             except Exception:
                 my_team_key = ""
 
-        # Get free agents and waiver players
+        # Get free agents and waiver players (sort=AR = ranked by % rostered)
         free_agents = client.get_free_agents(count=25)
         waiver_players = client.get_waiver_players(count=20)
 
@@ -3759,23 +3770,28 @@ async def get_fantasy_waiver_recommendations(
                     teams = m.get("teams", {})
                     team_keys_in_matchup = []
                     team_names = {}
-                    if isinstance(teams, dict):
+                    # Handle both Yahoo response shapes
+                    if isinstance(teams, list):
+                        raw_entries = [item.get("team", []) for item in teams if isinstance(item, dict)]
+                    elif isinstance(teams, dict):
                         count_t = int(teams.get("count", 0))
-                        for ti in range(count_t):
-                            t_entry = teams.get(str(ti), {}).get("team", [])
-                            t_meta = {}
-                            if isinstance(t_entry, list):
-                                for sub in t_entry:
-                                    if isinstance(sub, list):
-                                        for item in sub:
-                                            if isinstance(item, dict):
-                                                t_meta.update(item)
-                                    elif isinstance(sub, dict):
-                                        t_meta.update(sub)
-                            tk = t_meta.get("team_key", "")
-                            tn = t_meta.get("name", "")
-                            team_keys_in_matchup.append(tk)
-                            team_names[tk] = tn
+                        raw_entries = [teams.get(str(ti), {}).get("team", []) for ti in range(count_t)]
+                    else:
+                        raw_entries = []
+                    for t_entry in raw_entries:
+                        t_meta = {}
+                        if isinstance(t_entry, list):
+                            for sub in t_entry:
+                                if isinstance(sub, list):
+                                    for item in sub:
+                                        if isinstance(item, dict):
+                                            t_meta.update(item)
+                                elif isinstance(sub, dict):
+                                    t_meta.update(sub)
+                        tk = t_meta.get("team_key", "")
+                        tn = t_meta.get("name", "")
+                        team_keys_in_matchup.append(tk)
+                        team_names[tk] = tn
                     if my_team_key in team_keys_in_matchup:
                         for tk in team_keys_in_matchup:
                             if tk != my_team_key:
@@ -3784,15 +3800,143 @@ async def get_fantasy_waiver_recommendations(
         except Exception:
             pass
 
+        # Build category deficits from scoreboard stats.
+        # This must run before _to_waiver_player so need_score can be computed per player.
+        # Failures here are swallowed — waiver list still returns, just without need scoring.
+        try:
+            from backend.schemas import CategoryDeficitOut
+            if matchup_opponent != "TBD":
+                # Re-fetch scoreboard to get per-category stats
+                matchups2 = client.get_scoreboard()
+                # Build stat_id → display name map for readable labels
+                sid_map: dict[str, str] = {}
+                try:
+                    settings2 = client.get_league_settings()
+                    stat_cats2 = (
+                        settings2
+                        .get("settings", [{}])[0]
+                        .get("stat_categories", {})
+                        .get("stats", [])
+                    )
+                    for entry in stat_cats2:
+                        if isinstance(entry, dict):
+                            s2 = entry.get("stat", {})
+                            sid2 = str(s2.get("stat_id", ""))
+                            abbr2 = s2.get("display_name") or s2.get("abbreviation") or s2.get("name") or sid2
+                            if sid2:
+                                sid_map[sid2] = abbr2
+                except Exception:
+                    pass
+                lower_better = {"ERA", "WHIP"}
+                for m2 in matchups2:
+                    if not isinstance(m2, dict):
+                        continue
+                    teams2 = m2.get("teams", {})
+                    team_stats_map: dict[str, dict] = {}
+                    team_names_map: dict[str, str] = {}
+                    if isinstance(teams2, list):
+                        team_entries2 = [item["team"] for item in teams2 if isinstance(item, dict) and "team" in item]
+                    elif isinstance(teams2, dict):
+                        count2 = int(teams2.get("count", 0))
+                        team_entries2 = [teams2.get(str(ti2), {}).get("team", []) for ti2 in range(count2)]
+                    else:
+                        continue
+                    for entry2 in team_entries2:
+                        t_meta2: dict = {}
+                        stats_raw2: list = []
+                        items2 = entry2 if isinstance(entry2, list) else [entry2]
+                        for sub2 in items2:
+                            if isinstance(sub2, list):
+                                for it2 in sub2:
+                                    if isinstance(it2, dict):
+                                        t_meta2.update(it2)
+                            elif isinstance(sub2, dict):
+                                if "team_stats" in sub2:
+                                    inner2 = sub2["team_stats"].get("stats", [])
+                                    if isinstance(inner2, list):
+                                        stats_raw2 = inner2
+                                else:
+                                    t_meta2.update(sub2)
+                        tk2 = t_meta2.get("team_key", "")
+                        sd2: dict = {}
+                        for st2 in stats_raw2:
+                            if isinstance(st2, dict):
+                                stobj = st2.get("stat", {})
+                                if isinstance(stobj, dict):
+                                    sid_k = str(stobj.get("stat_id", ""))
+                                    key2 = sid_map.get(sid_k, sid_k)
+                                    try:
+                                        sd2[key2] = float(stobj.get("value", 0) or 0)
+                                    except (TypeError, ValueError):
+                                        sd2[key2] = 0.0
+                        team_stats_map[tk2] = sd2
+                    if my_team_key not in team_stats_map:
+                        continue
+                    my_stats = team_stats_map[my_team_key]
+                    opp_key = next((k for k in team_stats_map if k != my_team_key), None)
+                    if not opp_key:
+                        continue
+                    opp_stats = team_stats_map[opp_key]
+                    for cat, my_val in my_stats.items():
+                        opp_val = opp_stats.get(cat, 0.0)
+                        if lower_better.issuperset({cat}):
+                            deficit = my_val - opp_val  # positive = we are worse (higher ERA/WHIP)
+                            winning = my_val < opp_val
+                        else:
+                            deficit = opp_val - my_val  # positive = we are behind
+                            winning = my_val > opp_val
+                        category_deficits.append(
+                            CategoryDeficitOut(
+                                category=cat,
+                                my_total=my_val,
+                                opponent_total=opp_val,
+                                deficit=deficit,
+                                winning=winning,
+                            )
+                        )
+                    break  # found our matchup
+        except Exception:
+            category_deficits = []
+
+        # Build player name → board dict for projection lookup.
+        # get_board() is a singleton — this is cheap after first call.
+        from backend.fantasy_baseball.player_board import get_board as _get_board
+        _board_by_name = {p["name"].lower(): p for p in _get_board()}
+
         def _to_waiver_player(p: dict) -> WaiverPlayerOut:
             positions = p.get("positions") or []
+            name = (p.get("name") or "").strip()
+            board_player = _board_by_name.get(name.lower())
+
+            need_score = 0.0
+            contributions: dict = {}
+
+            if board_player and category_deficits:
+                cat_scores = board_player.get("cat_scores", {})
+                for cd in category_deficits:
+                    if cd.winning or cd.deficit <= 0:
+                        continue
+                    board_key = _YAHOO_CAT_TO_BOARD.get(cd.category)
+                    if not board_key or board_key not in cat_scores:
+                        continue
+                    player_z = cat_scores[board_key]
+                    if player_z <= 0:
+                        continue  # player is below average in this category — no help
+                    # Normalize deficit as a fraction of opponent's total to keep
+                    # scores comparable across categories with different scales
+                    opp_total = abs(cd.opponent_total) or 1.0
+                    deficit_weight = cd.deficit / opp_total
+                    contribution = deficit_weight * player_z
+                    contributions[cd.category] = round(contribution, 3)
+                    need_score += contribution
+
             return WaiverPlayerOut(
                 player_id=p.get("player_key") or "",
-                name=p.get("name") or "",
+                name=name,
                 team=p.get("team") or "",
                 position=positions[0] if positions else "?",
-                need_score=0.0,
-                category_contributions={},
+                need_score=round(need_score, 3),
+                category_contributions=contributions,
                 owned_pct=0.0,
                 starts_this_week=0,
             )
@@ -3815,104 +3959,6 @@ async def get_fantasy_waiver_recommendations(
             status_code=503,
             detail=f"Unexpected error fetching waiver data: {exc}",
         ) from exc
-
-    # Build real category deficits from scoreboard stats
-    category_deficits: list = []
-    try:
-        from backend.schemas import CategoryDeficitOut
-        if matchup_opponent != "TBD":
-            # Re-fetch scoreboard to get stats (already fetched above for opponent name,
-            # but we need the stats dict — refetch is acceptable here, results are small)
-            matchups2 = client.get_scoreboard()
-            # Build stat_id map for readable labels
-            sid_map: dict[str, str] = {}
-            try:
-                settings2 = client.get_league_settings()
-                stat_cats2 = (
-                    settings2
-                    .get("settings", [{}])[0]
-                    .get("stat_categories", {})
-                    .get("stats", [])
-                )
-                for entry in stat_cats2:
-                    if isinstance(entry, dict):
-                        s2 = entry.get("stat", {})
-                        sid2 = str(s2.get("stat_id", ""))
-                        abbr2 = s2.get("display_name") or s2.get("abbreviation") or s2.get("name") or sid2
-                        if sid2:
-                            sid_map[sid2] = abbr2
-            except Exception:
-                pass
-            # Lower-is-better categories for correct deficit direction
-            lower_better = {"ERA", "WHIP"}
-            for m2 in matchups2:
-                if not isinstance(m2, dict):
-                    continue
-                teams2 = m2.get("teams", {})
-                if not isinstance(teams2, dict):
-                    continue
-                count2 = int(teams2.get("count", 0))
-                team_stats_map: dict[str, dict] = {}
-                team_names_map: dict[str, str] = {}
-                for ti2 in range(count2):
-                    entry2 = teams2.get(str(ti2), {}).get("team", [])
-                    t_meta2: dict = {}
-                    stats_raw2: list = []
-                    items2 = entry2 if isinstance(entry2, list) else [entry2]
-                    for sub2 in items2:
-                        if isinstance(sub2, list):
-                            for it2 in sub2:
-                                if isinstance(it2, dict):
-                                    t_meta2.update(it2)
-                        elif isinstance(sub2, dict):
-                            if "team_stats" in sub2:
-                                inner2 = sub2["team_stats"].get("stats", [])
-                                if isinstance(inner2, list):
-                                    stats_raw2 = inner2
-                            else:
-                                t_meta2.update(sub2)
-                    tk2 = t_meta2.get("team_key", "")
-                    tn2 = t_meta2.get("name", "")
-                    sd2: dict = {}
-                    for st2 in stats_raw2:
-                        if isinstance(st2, dict):
-                            stobj = st2.get("stat", {})
-                            if isinstance(stobj, dict):
-                                sid_k = str(stobj.get("stat_id", ""))
-                                key2 = sid_map.get(sid_k, sid_k)
-                                try:
-                                    sd2[key2] = float(stobj.get("value", 0) or 0)
-                                except (TypeError, ValueError):
-                                    sd2[key2] = 0.0
-                    team_stats_map[tk2] = sd2
-                    team_names_map[tk2] = tn2
-                if my_team_key not in team_stats_map:
-                    continue
-                my_stats = team_stats_map[my_team_key]
-                opp_key = next((k for k in team_stats_map if k != my_team_key), None)
-                if not opp_key:
-                    continue
-                opp_stats = team_stats_map[opp_key]
-                for cat, my_val in my_stats.items():
-                    opp_val = opp_stats.get(cat, 0.0)
-                    if lower_better.issuperset({cat}):
-                        deficit = my_val - opp_val  # positive = we are worse (higher ERA/WHIP)
-                        winning = my_val < opp_val
-                    else:
-                        deficit = opp_val - my_val  # positive = we are behind
-                        winning = my_val > opp_val
-                    category_deficits.append(
-                        CategoryDeficitOut(
-                            category=cat,
-                            my_total=my_val,
-                            opponent_total=opp_val,
-                            deficit=deficit,
-                            winning=winning,
-                        )
-                    )
-                break  # found our matchup
-    except Exception:
-        category_deficits = []
 
     return WaiverWireResponse(
         week_end=week_end,
@@ -4217,13 +4263,17 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         is_playoffs = bool(m.get("is_playoffs", 0))
 
         teams = m.get("teams", {})
-        if not isinstance(teams, dict):
-            continue
-        count_t = int(teams.get("count", 0))
         team_data: list[tuple[str, str, dict]] = []
-        for ti in range(count_t):
-            entry = teams.get(str(ti), {}).get("team", [])
-            team_data.append(_extract_team_stats(entry))
+        # Handle both Yahoo response shapes: indexed dict or list
+        if isinstance(teams, list):
+            for item in teams:
+                if isinstance(item, dict) and "team" in item:
+                    team_data.append(_extract_team_stats(item["team"]))
+        elif isinstance(teams, dict):
+            count_t = int(teams.get("count", 0))
+            for ti in range(count_t):
+                entry = teams.get(str(ti), {}).get("team", [])
+                team_data.append(_extract_team_stats(entry))
 
         # Check if our team is in this matchup
         my_entry = next((t for t in team_data if t[0] == my_team_key), None)
