@@ -3800,12 +3800,21 @@ async def get_fantasy_waiver_recommendations(
         top_available = [_to_waiver_player(p) for p in free_agents]
         two_start_pitchers = [_to_waiver_player(p) for p in waiver_players]
 
-    except YahooAuthError:
-        pass
-    except YahooAPIError:
-        pass
-    except Exception:
-        pass
+    except YahooAuthError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Yahoo auth failed — refresh token may be expired. ({exc})",
+        ) from exc
+    except YahooAPIError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Yahoo API error: {exc}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Unexpected error fetching waiver data: {exc}",
+        ) from exc
 
     # Build real category deficits from scoreboard stats
     category_deficits: list = []
