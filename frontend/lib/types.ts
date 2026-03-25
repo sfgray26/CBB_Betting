@@ -277,6 +277,7 @@ export interface LineupPlayer {
   start_time: string
   opponent: string
   status: 'START' | 'BENCH' | 'UNKNOWN'
+  assigned_slot?: string | null
 }
 
 export interface StartingPitcher {
@@ -295,6 +296,8 @@ export interface DailyLineupResponse {
   batters: LineupPlayer[]
   pitchers: StartingPitcher[]
   games_count: number
+  no_games_today?: boolean
+  lineup_warnings?: string[]
 }
 
 export interface WaiverPlayer {
@@ -381,6 +384,7 @@ export interface MatchupResponse {
   my_team: MatchupTeam
   opponent: MatchupTeam
   is_playoffs: boolean
+  message?: string | null
 }
 
 export interface LineupApplyPlayer {

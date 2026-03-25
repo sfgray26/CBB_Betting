@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { ListChecks, RefreshCw, Send } from 'lucide-react'
+import { ListChecks, RefreshCw, Send, Wand2, AlertTriangle } from 'lucide-react'
 import { endpoints } from '@/lib/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
@@ -33,6 +33,21 @@ function scoreColor(score: number, scores: number[]): string {
   if (score >= p75) return 'text-emerald-400'
   if (score <= p25) return 'text-zinc-500'
   return 'text-zinc-300'
+}
+
+function slotBadge(slot: string | null | undefined) {
+  if (!slot) return null
+  const isBench = slot === 'BN'
+  return (
+    <span className={cn(
+      'px-1.5 py-0.5 rounded text-xs font-mono',
+      isBench
+        ? 'bg-zinc-700/60 text-zinc-500 border border-zinc-600/40'
+        : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+    )}>
+      {slot}
+    </span>
+  )
 }
 
 function statusBadge(status: LineupPlayer['status'] | StartingPitcher['status']) {
@@ -115,6 +130,7 @@ function BattersTable({ batters }: { batters: LineupPlayer[] }) {
             <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-28">Implied Runs</th>
             <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Park Factor</th>
             <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-20">Score</th>
+            <th className="px-3 py-3 text-center text-xs font-semibold text-zinc-500 uppercase tracking-wider w-16">Slot</th>
             <th className="px-3 py-3 text-center text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Action</th>
           </tr>
         </thead>
@@ -133,6 +149,7 @@ function BattersTable({ batters }: { batters: LineupPlayer[] }) {
               <td className={cn('px-3 py-2.5 text-right font-mono text-xs font-semibold tabular-nums', scoreColor(b.lineup_score, scores))}>
                 {b.lineup_score.toFixed(3)}
               </td>
+              <td className="px-3 py-2.5 text-center">{slotBadge(b.assigned_slot)}</td>
               <td className="px-3 py-2.5 text-center">{statusBadge(b.status)}</td>
             </tr>
           ))}
@@ -256,6 +273,14 @@ export default function DailyLineupPage() {
           <button
             onClick={() => refetch()}
             disabled={isFetching}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-md transition-colors disabled:opacity-50"
+          >
+            <Wand2 className={cn('h-4 w-4', isFetching && 'animate-spin')} />
+            {isFetching ? 'Optimizing...' : 'Optimize Lineup'}
+          </button>
+          <button
+            onClick={() => refetch()}
+            disabled={isFetching}
             className="flex items-center gap-1.5 px-3 py-2 text-sm text-zinc-400 hover:text-zinc-200 bg-zinc-800 hover:bg-zinc-700 rounded-md transition-colors disabled:opacity-50"
           >
             <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />
@@ -278,6 +303,18 @@ export default function DailyLineupPage() {
           >
             Retry
           </button>
+        </div>
+      )}
+
+      {/* Preseason / fallback warnings */}
+      {data?.lineup_warnings && data.lineup_warnings.length > 0 && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 flex items-start gap-3">
+          <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            {data.lineup_warnings.map((w, i) => (
+              <p key={i} className="text-amber-300 text-sm">{w}</p>
+            ))}
+          </div>
         </div>
       )}
 

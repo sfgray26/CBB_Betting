@@ -3894,6 +3894,11 @@ async def get_fantasy_lineup_recommendations(
         logger.warning("flag_pitcher_starts failed: %s", _exc)
 
     games_list = report.get("games", [])
+    if len(games_list) == 0:
+        lineup_warnings.insert(0,
+            "Odds API unavailable or no games today -- using projection-only scoring "
+            "(all teams at league-average 4.5 runs). Lineup ranked by projected stats only."
+        )
     return DailyLineupResponse(
         date=ld,
         batters=batters,
@@ -4241,6 +4246,7 @@ async def get_fantasy_waiver_recommendations(
             detail=f"Yahoo API error: {exc}",
         ) from exc
     except Exception as exc:
+        logger.exception("Waiver endpoint failed unexpectedly: %s", exc)
         raise HTTPException(
             status_code=503,
             detail=f"Unexpected error fetching waiver data: {exc}",
@@ -4629,6 +4635,7 @@ async def get_waiver_recommendations(
             detail=f"Yahoo API error: {exc}",
         ) from exc
     except Exception as exc:
+        logger.exception("Waiver recommendations endpoint failed unexpectedly: %s", exc)
         raise HTTPException(
             status_code=503,
             detail=f"Unexpected error: {exc}",
@@ -4879,10 +4886,10 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
     try:
         matchups = client.get_scoreboard()
     except (YahooAuthError, YahooAPIError):
-        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp)
+        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp, message="No active matchup. Season starts March 28, 2026.")
 
     if not matchups:
-        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp)
+        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp, message="No active matchup. Season starts March 28, 2026.")
 
     # Determine current week from first matchup
     week: int | None = None
@@ -4972,7 +4979,7 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         )
 
     # Our team not found in any matchup (pre-season / bye week)
-    return MatchupResponse(week=week, my_team=_stub_my, opponent=_stub_opp)
+    return MatchupResponse(week=week, my_team=_stub_my, opponent=_stub_opp, message="No active matchup. Season starts March 28, 2026.")
 
 
 @app.put("/api/fantasy/lineup/apply")
@@ -4997,19 +5004,14 @@ async def apply_fantasy_lineup(
     apply_date = payload.date or _dt.utcnow().strftime("%Y-%m-%d")
     team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
 
-    # Pre-check: abort with 400 if no MLB games exist for this date
+    # Pre-check: warn (but don't block) if no MLB games exist for this date
+    apply_warnings: list[str] = []
     try:
         mlb_games = get_lineup_optimizer().fetch_mlb_odds(apply_date)
         if not mlb_games:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"No MLB games scheduled for {apply_date}. "
-                    "Lineup lock not available until the season starts (first game: March 28, 2026)."
-                ),
+            apply_warnings.append(
+                f"No MLB games scheduled for {apply_date} -- applying lineup in preseason mode."
             )
-    except HTTPException:
-        raise
     except Exception as _exc:
         logger.warning("Could not pre-check MLB schedule for %s: %s", apply_date, _exc)
 
@@ -5025,7 +5027,7 @@ async def apply_fantasy_lineup(
         "applied": len(result.get("applied", [])),
         "skipped": len(result.get("skipped", [])),
         "date": apply_date,
-        "warnings": result.get("warnings", []),
+        "warnings": apply_warnings + result.get("warnings", []),
     }
 
 

@@ -68,6 +68,249 @@
 
 ---
 
+## 🔴 CRITICAL BUGS — EMAC-082 "FANTASY BASEBALL PRESEASON FIXES"
+
+> **Discovered:** March 25, 2026 — User testing reveals multiple critical UX issues blocking fantasy baseball functionality.
+> **Severity:** P0 — Fantasy Baseball Opening Day is March 28 (3 days)
+> **Assignee:** Claude Code (Master Architect)
+> **Status:** ⏳ IN PROGRESS
+
+### Bug 1: Roster Shows All Players as "Undroppable = Yes"
+
+**Symptom:** Every player in My Roster shows "Undroppable: Yes" even though they should be droppable.
+
+**Root Cause Analysis:**
+- `yahoo_client.py:760` returns `meta.get("is_undroppable", 0)` 
+- `main.py:4819` converts to `bool(p.get("is_undroppable", 0))`
+- Yahoo API may return `'0'` (string) or `0` (int), and `bool('0')` is `True` in Python!
+
+**Fix Required:**
+```python
+# In yahoo_client.py _parse_player():
+raw = meta.get("is_undroppable", 0)
+is_undroppable = raw in (1, '1', True, 'true')
+
+# Same fix needed in main.py where it's propagated
+```
+
+**Files to modify:**
+- `backend/fantasy_baseball/yahoo_client.py` — line ~760
+- `backend/main.py` — lines ~4419, ~4819
+
+---
+
+### Bug 2: Daily Lineup Shows Identical Scores for All Players
+
+**Symptom:** Every batter shows Implied Runs: 4.50, Park Factor: 1.000, Score: 4.625
+
+**ROOT CAUSE IDENTIFIED:** ⚠️ **Odds API quota exhausted** (20,000 / 20,000 calls used — 100.0%)
+
+**STATUS: RESOLVED** — User upgraded to 100k calls/month plan. API calls will now succeed.
+
+**However:** Consider adding **resilient fallback mode** for future API failures (network issues, rate limits):
+```python
+# In rank_batters(), when team_odds is empty:
+if not team_odds:
+    # Fallback mode: use projections + neutral environment
+    implied_runs = 4.5
+    park_factor = 1.0
+    # Weight projection stats more heavily for differentiation
+    stat_bonus = (proj.get("hr", 0) * 2.0 + proj.get("r", 0) * 0.3 + ...)
+    lineup_score = implied_runs * park_factor + stat_bonus * 0.5
+    reason_parts.append("using projections (odds unavailable)")
+```
+
+**Files to modify (optional but recommended):**
+- `backend/fantasy_baseball/daily_lineup_optimizer.py` — Add resilient fallback mode
+- `frontend/app/(dashboard)/fantasy/lineup/page.tsx` — Add "Using projections" warning banner when odds unavailable
+
+---
+
+### Bug 3: Lineup Apply Returns 400 "No MLB games scheduled"
+
+**Symptom:** Clicking "Apply to Yahoo" returns error: "No MLB games scheduled for 2026-03-25. Lineup lock not available until the season starts (first game: March 28, 2026)."
+
+**Root Cause Analysis:**
+- `main.py:5003-5009` has hardcoded check that blocks ALL lineup changes before March 28:
+  ```python
+  if not mlb_games:
+      raise HTTPException(
+          status_code=400,
+          detail="No MLB games scheduled for {apply_date}..."
+      )
+  ```
+- This is blocking users from setting up their lineups before Opening Day
+- Combined with Bug #2 (odds quota exhausted), this makes the app unusable
+
+**Fix Required:**
+1. **Remove the hard block** — allow lineup changes during preseason
+2. **Change from error to warning** — apply the lineup but return a warning:
+   ```python
+   warnings = []
+   if not mlb_games:
+       warnings.append("Preseason mode: No MLB games scheduled for this date yet.")
+   # Continue with lineup application regardless...
+   result = client.set_lineup(team_key=team_key, date=apply_date, lineup=lineup_dicts)
+   return {
+       "success": True,
+       "applied": len(result.get("applied", [])),
+       "warnings": warnings + result.get("warnings", []),
+   }
+   ```
+
+**Files to modify:**
+- `backend/main.py` — `POST /api/fantasy/lineup/apply` endpoint (~lines 5000-5030)
+
+---
+
+### Bug 4: No "Optimize Lineup" Button in Daily Lineup UI
+
+**Symptom:** Daily Lineup page shows players but there's no "Optimize" button to run the constraint solver.
+
+**Root Cause Analysis:**
+- The backend has `solve_lineup()` implemented in `daily_lineup_optimizer.py`
+- The frontend only shows current Yahoo lineup, doesn't call optimizer
+- User expects: "Optimize" button → runs constraint solver → shows recommended slots
+
+**CRITICAL INSIGHT FROM USER:**
+The current `rank_batters()` scoring is **too simplistic** (implied runs only). A truly elite optimizer needs:
+1. **Opposing pitcher quality** (matchup difficulty)
+2. **Platoon splits** (LHP/RHP wOBA differences)
+3. **Recent form** (7/14 day rolling performance)
+4. **Statcast regression indicators** (xwOBA vs wOBA)
+5. **Lineup spot** (leadoff vs cleanup matters for PAs/RBIs)
+
+See `reports/daily_lineup_optimization_research.md` for comprehensive analysis.
+
+**Fix Required:**
+
+**Phase 1 (Immediate):** Add Optimize button with current scoring
+1. **Add Optimize button** to `frontend/app/(dashboard)/fantasy/lineup/page.tsx`
+2. **Add new endpoint** `POST /api/fantasy/lineup/optimize` that:
+   - Calls `solve_lineup()` with current roster
+   - Returns optimized slot assignments
+
+**Phase 2 (Next):** Enhance scoring model
+1. **Add matchup quality** — fetch probable pitcher, adjust score by xERA
+2. **Add platoon splits** — adjust wOBA by LHP/RHP split
+3. **Add recent form** — 7-day rolling performance weighting
+4. **Add xwOBA regression** — boost unlucky players, penalize lucky ones
+
+**Files to modify:**
+- `backend/main.py` — add `POST /api/fantasy/lineup/optimize` endpoint
+- `backend/schemas.py` — add `LineupOptimizeRequest`/`LineupOptimizeResponse`
+- `backend/fantasy_baseball/daily_lineup_optimizer.py` — enhance `rank_batters()` with matchup/splits
+- `backend/fantasy_baseball/` — add platoon splits data source
+- `frontend/app/(dashboard)/fantasy/lineup/page.tsx` — add Optimize button + display
+
+---
+
+### Bug 5: Matchup Page is Blank
+
+**Symptom:** Matchup page shows no data — no opponent, no categories, blank.
+
+**Root Cause Analysis:**
+- Matchup data comes from Yahoo scoreboard API
+- Before season starts, there's no active matchup → API returns empty/invalid data
+- Frontend doesn't handle "no matchup" state gracefully
+
+**Fix Required:**
+1. **Handle no-matchup state** in backend:
+   ```python
+   if not matchup_data:
+       return {
+           "my_team": {"team_name": "Your Team", "stats": {}},
+           "opponent": {"team_name": "TBD", "stats": {}},
+           "week": None,
+           "is_playoffs": False,
+           "message": "No active matchup. Season starts March 28, 2026."
+       }
+   ```
+2. **Show message in frontend** when no matchup exists
+
+**Files to modify:**
+- `backend/main.py` — `GET /api/fantasy/matchup` endpoint
+- `frontend/app/(dashboard)/fantasy/matchup/page.tsx` — handle no-matchup message
+
+---
+
+### Bug 6: Waiver Wire 503 Errors
+
+**Symptom:** Waiver wire endpoints return 503 Service Unavailable intermittently
+
+**Root Cause Analysis:**
+- Logs show Yahoo auth working (tokens refreshed successfully)
+- But waiver endpoint returns 503
+- Code catches ALL exceptions and returns 503, masking the real error
+- Possible causes:
+  - `get_board()` failing (player board unavailable)
+  - `get_or_create_projection()` failing
+  - `_to_waiver_player()` raising KeyError or AttributeError
+
+**Fix Required:**
+1. **Add detailed error logging** before the 503 catch-all:
+   ```python
+   except Exception as exc:
+       logger.exception("Waiver endpoint failed: %s", exc)  # Add this
+       raise HTTPException(status_code=503, detail=f"...")
+   ```
+2. **Check specific error** in Railway logs after fix deployed
+
+**Files to modify:**
+- `backend/main.py` — waiver endpoint exception handlers (~lines 4233-4247)
+
+---
+
+## SUMMARY: Files to Modify for EMAC-082
+
+### Priority Order (By User Impact)
+
+| Priority | Bug/Feature | Fix | Status |
+|----------|-------------|-----|--------|
+| ✅ **RESOLVED** | #2 (Identical scores) | Upgraded Odds API to 100k calls/month | API quota no longer blocking |
+| 🚨 **P0** | #3 (Apply lineup blocked) | Remove hard block in `main.py:~5003` | Users can't set lineups before Opening Day |
+| 🚨 **P0** | #6 (Waiver 503) | Add error logging to diagnose root cause | Blocking waiver wire access |
+| **P1** | #1 (Undroppable = Yes) | Fix `bool('0')` parsing in `yahoo_client.py:~760` | UX confusion |
+| **P1** | #4 (Optimize button) | Add basic endpoint + UI | Missing feature |
+| **P2** | #5 (Matchup blank) | Add no-matchup message | Expected pre-season |
+| **P2** | #4-Enhanced | **Matchup quality + platoon splits** — see research doc | Needs opposing pitcher data |
+
+### Research Deliverable: Daily Lineup Optimization
+
+**See:** `reports/daily_lineup_optimization_research.md`
+
+**Key Finding:** Current scoring (implied runs only) captures ~40% of variance. Adding these factors could reach **70-75%**:
+
+| Factor | Impact | Data Source | Status |
+|--------|--------|-------------|--------|
+| **Opposing pitcher quality** | VERY HIGH | MLB Stats API + Statcast | ❌ Not implemented |
+| **Platoon splits (LHP/RHP)** | HIGH | FanGraphs API | ❌ Not implemented |
+| **Recent form (7/14 day)** | MEDIUM | Statcast rolling | ❌ Not implemented |
+| **xwOBA regression** | MEDIUM | Statcast | ✅ Available, not used |
+| **Lineup spot** | MEDIUM | MLB Lineup API | ❌ Not implemented |
+| **Implied runs** | HIGH | Odds API | ✅ Implemented |
+| **Park factors** | MEDIUM | Hardcoded | ✅ Implemented |
+
+**Recommendation:** After fixing P0 bugs, prioritize adding **opposing pitcher quality** and **platoon splits** to the daily lineup optimizer.
+
+### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `backend/fantasy_baseball/yahoo_client.py` | Fix `is_undroppable` string/int parsing (~line 760) |
+| `backend/main.py` | Fix `is_undroppable` bool conversion (~lines 4419, 4819) |
+| `backend/main.py` | Remove lineup apply hard block, add warning instead (~5003-5009) |
+| `backend/main.py` | Add detailed error logging to waiver endpoint |
+| `backend/main.py` | Add `POST /api/fantasy/lineup/optimize` endpoint |
+| `backend/main.py` | Handle no-matchup state gracefully |
+| `backend/fantasy_baseball/daily_lineup_optimizer.py` | Add preseason mode when odds API fails |
+| `backend/schemas.py` | Add `LineupOptimizeRequest`/`LineupOptimizeResponse` |
+| `frontend/app/(dashboard)/fantasy/lineup/page.tsx` | Add Optimize button + warning banner |
+| `frontend/app/(dashboard)/fantasy/matchup/page.tsx` | Add no-matchup message display |
+| Railway env vars | Verify `THE_ODDS_API_KEY` is set correctly |
+
+---
+
 ## REMAINING P0 GAPS — Kimi Delegation
 
 ### K-FB-01: Closer/Z-Score Data Bug Diagnosis

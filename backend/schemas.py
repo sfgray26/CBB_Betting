@@ -437,6 +437,7 @@ class MatchupResponse(BaseModel):
     my_team: MatchupTeamOut
     opponent: MatchupTeamOut
     is_playoffs: bool = False
+    message: Optional[str] = None
 
 
 class LineupApplyPlayer(BaseModel):

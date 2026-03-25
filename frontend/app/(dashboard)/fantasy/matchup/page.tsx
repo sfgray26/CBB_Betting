@@ -246,6 +246,13 @@ export default function MatchupPage() {
         </div>
       )}
 
+      {/* Pre-season / no matchup message */}
+      {data?.message && (
+        <div className="bg-blue-50 border border-blue-200 rounded p-3 text-blue-800 text-sm">
+          {data.message}
+        </div>
+      )}
+
       {/* Content */}
       {data && (
         <>

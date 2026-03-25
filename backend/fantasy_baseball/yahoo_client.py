@@ -757,7 +757,7 @@ class YahooFantasyClient:
             "positions": [p for p in positions if p],
             "status": meta.get("status"),
             "injury_note": meta.get("injury_note"),
-            "is_undroppable": meta.get("is_undroppable", 0),
+            "is_undroppable": meta.get("is_undroppable", 0) in (1, '1', True, 'true'),
             "percent_owned": owned_pct,
         }
 
