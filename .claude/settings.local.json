@@ -33,7 +33,9 @@
       "Bash(rm:*)",
       "Bash(npx tsc:*)",
       "Bash(py:*)",
-      "WebFetch(domain:geminicli.com)"
+      "WebFetch(domain:geminicli.com)",
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(venv/Scripts/pytest.exe:*)"
     ]
   }
 }
