@@ -1479,11 +1479,12 @@ async def get_clv_analysis(
 
 @app.get("/api/performance/calibration")
 async def get_calibration_data(
+    days: int = Query(default=90, ge=1, le=365),
     user: str = Depends(verify_api_key),
     db: Session = Depends(get_db),
 ):
     """Model calibration: predicted probability vs actual win rate + Brier score."""
-    return calculate_calibration(db)
+    return calculate_calibration(db, days=days)
 
 
 @app.get("/api/performance/model-accuracy")

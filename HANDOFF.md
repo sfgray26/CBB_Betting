@@ -68,6 +68,24 @@
 
 ---
 
+## ✅ COMPLETE — EMAC-084 "CALIBRATION BRIER + TODAY FILTER"
+
+> **Assignee:** Claude Code (Master Architect)
+> **Status:** ✅ COMPLETE — March 25, 2026
+> **Tests:** 5 new (test_calibration_brier.py), 1155 total pass
+
+### Summary of Fixes
+
+| Item | Fix | File(s) |
+|------|-----|---------|
+| **9** Brier score (calibration) | `calculate_calibration(days=90)` — added `days` param + date filter; Brier now uses individual `model_prob` per bet instead of bin midpoints | `services/performance.py`, `main.py:1481` |
+| **11** Today's bets | Added `<option value={1}>Today</option>` to days dropdown | `bet-history/page.tsx` |
+| **14** Settlement min bug | Already correct (`min={1}`) — no change needed | N/A |
+| **13** Matchup zeros | Pre-season correct state — no change needed | N/A |
+| **12** Bracket removal | Deferred to EPIC-4, April 7 | N/A |
+
+---
+
 ## ✅ COMPLETE — EMAC-083 "ADMIN PANEL + BET HISTORY + EPIC-1 GATES"
 
 > **Assignee:** Claude Code (Master Architect)
@@ -2973,10 +2991,10 @@ grep -A5 "Next operator (Gemini" HANDOFF.md
 7. ✅ `percent_owned` subresource probe — `out=metadata,percent_owned` in `get_free_agents()` / `get_waiver_players()`.
 8. ✅ Suite: 1105/1109 (4 pre-existing failures only)
 
-**Phase 3: High Priority (Next)**
-9. Implement brier score calculation (calibration empty)
-10. Fix Odds Monitor portfolio fetch
-11. Bet history filter (shows all, not just placed)
+**Phase 3: High Priority — COMPLETE (Mar 25, 2026)**
+9. ✅ Brier score + `days` filter wired into calibration endpoint (EMAC-084)
+10. ✅ Odds Monitor portfolio fetch — `verify_api_key` on status endpoints (EMAC-083)
+11. ✅ Bet history filter — `placed` filter + "Today" option in days select (EMAC-083/084)
 
 **Phase 4: Medium Priority (Following Week)**
 12. My roster data mapping (remaining undroppable display issues)

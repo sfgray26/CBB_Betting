@@ -317,12 +317,16 @@ def calculate_clv_analysis(db: Session) -> Dict:
 # calculate_calibration
 # ---------------------------------------------------------------------------
 
-def calculate_calibration(db: Session) -> Dict:
+def calculate_calibration(db: Session, days: int = 90) -> Dict:
     """
     Calibration: predicted win probability vs actual win rate per bucket.
     Also computes mean calibration error and Brier score.
+
+    Uses the exact Brier score formula: mean((model_prob - outcome)^2)
+    computed per individual bet, not using bin midpoints.
     """
-    bets = _settled_bets(db)
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    bets = _settled_bets(db, cutoff=cutoff)
 
     bins_config = [
         (0.50, 0.55, "50-55%"),
@@ -333,46 +337,52 @@ def calculate_calibration(db: Session) -> Dict:
         (0.75, 1.00, "75%+"),
     ]
 
-    buckets: Dict[str, List[int]] = {label: [] for _, _, label in bins_config}
+    # Buckets hold full BetLog objects (need model_prob for precise Brier)
+    buckets: Dict[str, list] = {label: [] for _, _, label in bins_config}
+    bets_with_prob = []
 
     for b in bets:
         if b.model_prob is None:
             continue
+        bets_with_prob.append(b)
         p = b.model_prob
         for lo, hi, label in bins_config:
             if lo <= p < hi:
-                buckets[label].append(b.outcome)
+                buckets[label].append(b)
                 break
 
     calib_buckets = []
     errors = []
-    brier_components = []
 
     for lo, hi, label in bins_config:
-        outcomes = buckets[label]
-        if not outcomes:
+        bucket_bets = buckets[label]
+        if not bucket_bets:
             continue
         mid = (lo + hi) / 2.0
-        actual = sum(outcomes) / len(outcomes)
+        actual = sum(b.outcome for b in bucket_bets) / len(bucket_bets)
         err = abs(mid - actual)
         errors.append(err)
-        brier_components.extend((mid - o) ** 2 for o in outcomes)
         calib_buckets.append({
             "bin": label,
             "predicted_prob": round(mid, 3),
             "actual_win_rate": round(actual, 4),
-            "count": len(outcomes),
+            "count": len(bucket_bets),
             "error": round(err, 4),
         })
 
     mean_error = _mean(errors)
-    brier = _mean(brier_components)
+
+    # Precise Brier score: mean((model_prob - outcome)^2) per individual bet
+    brier_parts = [(b.model_prob - b.outcome) ** 2 for b in bets_with_prob]
+    brier = _mean(brier_parts)
 
     return {
         "calibration_buckets": calib_buckets,
         "mean_calibration_error": round(mean_error, 4) if mean_error is not None else None,
         "is_well_calibrated": (mean_error < 0.07) if mean_error is not None else None,
         "brier_score": round(brier, 4) if brier is not None else None,
+        "bets_with_prob": len(bets_with_prob),
+        "days": days,
     }
 
 

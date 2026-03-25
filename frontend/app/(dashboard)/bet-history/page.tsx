@@ -209,6 +209,7 @@ export default function BetHistoryPage() {
           }}
           className="bg-zinc-800 border border-zinc-700 text-zinc-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-400/40"
         >
+          <option value={1}>Today</option>
           <option value={7}>7 Days</option>
           <option value={30}>30 Days</option>
           <option value={60}>60 Days</option>
