@@ -1,11 +1,34 @@
-# OPERATIONAL HANDOFF — EMAC-080 "MLB BETTING MODEL P0"
+# OPERATIONAL HANDOFF — EMAC-081 "FANTASY BASEBALL QUALITY P2"
 
-> **Ground truth as of March 24, 2026.** Author: Claude Code (Master Architect).
+> **Ground truth as of March 25, 2026.** Author: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
-> Prior state: `EMAC-077` — Data superiority sprint; OpenClaw autonomous loop, ingestion orchestrator.
+> Prior state: `EMAC-080` — MLB Betting Model P0.
 >
 > **GUARDIAN FREEZE still active on CBB model files through April 7.**
 > DO NOT touch `backend/betting_model.py`, `backend/services/analysis.py`, or any CBB model service.
+
+---
+
+## MISSION ACCOMPLISHED — Mar 25, 2026 (EMAC-081)
+
+### Fantasy Baseball Phase 2 Quality Fixes + Lineup Optimizer Constraint Solver
+
+| Item | Status |
+|------|--------|
+| Fix A: Fuzzy name matching (`player_board.py` step 3b) | COMPLETE |
+| Fix B1: Propagate status/injury_note/is_undroppable in `my_roster_scored` | COMPLETE |
+| Fix B2: Coverage-aware `_weakest_safe_to_drop()` replaces `_weakest_at_positions()` | COMPLETE |
+| Fix B3: IL opportunity hint in recommendation rationale | COMPLETE |
+| Fix C: Two-start pitchers via MLB Stats API (no statsapi dep) + 6h TTL cache | COMPLETE |
+| Lineup optimizer: `solve_lineup()` greedy constraint solver | COMPLETE |
+| Lineup optimizer: `flag_pitcher_starts()` off-day detection | COMPLETE |
+| `schemas.py`: `assigned_slot`, `has_game` on `LineupPlayerOut`; `lineup_warnings` on response | COMPLETE |
+| `tests/test_player_board_fuzzy.py` | COMPLETE — 5 tests |
+| `tests/test_waiver_integration.py` — `TestCoverageProtection` + `TestTwoStartPitchers` | COMPLETE — 9 new tests |
+| `tests/test_lineup_optimizer.py` | COMPLETE — 6 tests |
+
+**Total new tests this session:** 20
+**Full suite:** 1124/1128 (4 pre-existing DB-auth/cache failures only)
 
 ---
 
@@ -27,11 +50,83 @@
 
 ---
 
-## 🔴 CRITICAL P0 — IL ROSTER SUPPORT (NEW)
+## REMAINING P0 GAPS — Kimi Delegation
 
-> **Discovered:** March 25, 2026 — Yahoo updated to show IL status. Players on IL do NOT count against roster spots, but application does not account for this.
-> **Impact:** Waiver recommendations, roster spot calculations, and drop suggestions are incorrect.
-> **Season Start:** IMMINENT — this blocks proper fantasy baseball operations.
+### K-FB-01: Closer/Z-Score Data Bug Diagnosis
+
+**Assigned to:** Kimi CLI
+**Output:** `reports/closer_data_bug.md`
+
+```
+MISSION K-FB-01: Closer Data Bug Diagnosis
+
+Read these files IN FULL (do not summarise or truncate):
+  backend/fantasy_baseball/player_board.py
+  backend/fantasy_baseball/projections_loader.py  (if it exists; else note absence)
+
+DIAGNOSTIC QUESTIONS:
+1. Edwin Diaz entry (~line 346 in player_board.py) has 32 saves in PLAYER_BOARD tuple.
+   But the live waiver endpoint shows 0 projected saves. Trace the full path:
+   PLAYER_BOARD tuple → _compute_z_scores() (or equivalent) → get_or_create_projection()
+   return value. At what point does the save count get lost or zeroed?
+
+2. Emmanuel Clase (~line 332) — does his board entry produce a valid z_score?
+   If z_score is near the _POSITION_BASELINE_Z floor (-1.0 for RP), why?
+
+3. Are there any RP players in PLAYER_BOARD whose save projections are non-zero
+   but whose computed z_score would be near or below -1.0? List all such players.
+
+4. Does projections_loader.py override PLAYER_BOARD values in a way that zeros
+   out saves for relievers?
+
+OUTPUT — save to reports/closer_data_bug.md:
+  - Root cause with file:line references
+  - Complete list of affected closers/relievers
+  - Proposed fix (what Claude should change)
+  Do NOT write production code — propose; Claude implements.
+```
+
+### K-FB-02: No-Closers-On-Waivers Alert Spec
+
+**Assigned to:** Kimi CLI
+**Output:** `reports/closer_alert_spec.md`
+
+```
+MISSION K-FB-02: No-Closers-On-Waivers Alert Architecture
+
+Read these sections of backend/main.py:
+  - GET /api/fantasy/waiver endpoint (~lines 3848-4140)
+  - Two-start pitchers block (~lines 4084-4117)
+
+Read backend/schemas.py:
+  - WaiverWireResponse definition
+
+DESIGN:
+1. Where in WaiverWireResponse should a "closer_situation" alert field live?
+2. Detection logic: when scored_fas has 0 RP with projected saves > threshold,
+   what should fire?
+3. Alert messages for: (a) zero closers, (b) one closer, (c) normal.
+4. Strategic advice copy for each scenario:
+   e.g. "No closers on waivers. Options: trade a surplus 1B, monitor for
+   closer emergence, consider punting saves category."
+
+OUTPUT — save to reports/closer_alert_spec.md:
+  - Schema delta (field to add to WaiverWireResponse)
+  - Detection logic pseudocode
+  - Alert message strings for each scenario
+  - Strategic advice copy
+  Do NOT write production code — Claude implements from spec.
+```
+
+---
+
+## ✅ COMPLETE — IL ROSTER SUPPORT
+
+> **Discovered:** March 25, 2026 — Yahoo updated to show IL status. Players on IL do NOT count against roster spots.
+> **Status:** ✅ IMPLEMENTED March 25, 2026
+> **Implemented by:** Kimi CLI (per Claude's assignment)
+> **Tests:** 9/10 passing (1 integration test needs fixture)
+> **Impact:** IL players now excluded from waiver drop suggestions; selected_position exposed in API
 
 ### Problem Statement
 
@@ -45,19 +140,19 @@ The current `YahooFantasyClient.get_roster()` returns ALL players (21+) without 
 2. Potentially suggesting drops of active players when IL slots are available
 3. Not factoring IL status into waiver decisions
 
-### Files Requiring Changes
+### Files Changed
 
-| File | Change Required |
-|------|-----------------|
-| `backend/fantasy_baseball/yahoo_client.py` | `_parse_player()`: extract `selected_position` from roster response; add `selected_position` to returned dict |
-| `backend/fantasy_baseball/yahoo_client.py` | `get_roster()`: capture `selected_position` for each player (where "IL" = Injured List) |
-| `backend/schemas.py` | `RosterPlayerOut`: add `selected_position: Optional[str]` field |
-| `backend/main.py` | `/api/fantasy/roster`: populate `selected_position` in response |
-| `backend/services/waiver_edge_detector.py` | `_weakest_droppable_at()`: exclude players with `selected_position == "IL"` from drop candidates |
-| `backend/services/waiver_edge_detector.py` | Add IL slot awareness (how many IL slots, how many used) |
-| `backend/main.py` | `/api/fantasy/waiver/recommendations`: factor IL status into move recommendations |
-| `frontend/lib/types.ts` | `RosterPlayer`: add `selected_position?: string` field |
-| `frontend/app/(dashboard)/fantasy/waiver/page.tsx` | Display IL status, filter IL players from drop suggestions |
+| File | Change | Status |
+|------|--------|--------|
+| `backend/fantasy_baseball/yahoo_client.py` | Added `_extract_selected_position()` method; `get_roster()` now captures selected_position | ✅ COMPLETE |
+| `backend/schemas.py` | Added `selected_position: Optional[str]` to `RosterPlayerOut` | ✅ COMPLETE |
+| `backend/main.py` | `/api/fantasy/roster` populates selected_position | ✅ COMPLETE |
+| `backend/services/waiver_edge_detector.py` | `_weakest_droppable_at()` excludes IL players; added `_INACTIVE_STATUSES` constant | ✅ COMPLETE |
+| `tests/test_il_roster_support.py` | New test file with 9 passing tests | ✅ COMPLETE |
+| `backend/services/waiver_edge_detector.py` | Add IL slot awareness (how many IL slots, how many used) | ⏳ PENDING |
+| `backend/main.py` | `/api/fantasy/waiver/recommendations`: factor IL status into move recommendations | ⏳ PENDING |
+| `frontend/lib/types.ts` | `RosterPlayer`: add `selected_position?: string` field | ⏳ FRONTEND |
+| `frontend/app/(dashboard)/fantasy/waiver/page.tsx` | Display IL status, filter IL players from drop suggestions | ⏳ FRONTEND |
 
 ### Implementation Notes
 

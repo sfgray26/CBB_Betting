@@ -1,0 +1,57 @@
+Hey Claude — token constraints require spreading fantasy baseball work 
+across the team. Need your guidance on parallelization and architecture.
+
+
+EXECUTIVE SUMMARY FOR CLAUDE
+============================
+
+TOKEN CONSTRAINTS: We need to spread work across the team (Kimi, Gemini, OpenClaw) 
+to reduce Claude's coding load. Need your architectural guidance on parallelization.
+
+5 P0 CRITICAL GAPS IDENTIFIED TODAY:
+------------------------------------
+
+1. IL ROSTER SUPPORT
+   - Yahoo updated: Players on IL don't count against roster spots
+   - App doesn't understand this; wrong drop suggestions
+   - Needs: selected_position extraction from Yahoo API
+   
+2. CLOSER DATA BUG  
+   - Edwin Diaz showing 0 projected saves (should be 32+)
+   - Missing z-scores for some players (Emmanuel Clase)
+   - Waiver wire has ZERO actual closers available
+   
+3. NO CLOSERS DETECTION
+   - System should alert "No closers on waivers" + suggest trade/punt/monitor
+   - Currently silent — user wasted time searching
+   
+4. MISSING Z-SCORES
+   - Breaks waiver calculations for affected players
+   - Need fallback/placeholder projections
+   
+5. DAILY LINEUP OPTIMIZER (MOST CRITICAL)
+   - Currently: Just ranks by score, takes top 9
+   - Ignores: Position requirements (C/1B/2B/3B/SS/OF/Util), off-days, matchups
+   - BENCHED WILLI CASTRO (your most flexible player) while starting spare 1B!
+   - Needs: Constraint satisfaction, position eligibility, off-day detection
+
+USER'S ROSTER (for context):
+- C: Diaz (only)
+- 1B: Alonso, Pasquantino, Torkelson (3! too many)
+- 2B: Semien (new), Castro (flex), Westburg (IL)
+- 3B: Chapman, Castro (flex)
+- SS: Perdomo (only)
+- OF: Soto, Nimmo, Buxton, Crow-Armstrong, Frelick, Suzuki (IL)
+- SP: 6 healthy + Snell (IL)
+- RP: Diaz (active), Adam (DTD), Romero (new)
+
+IMMEDIATE USER NEEDS:
+1. Working lineup optimizer before Opening Day (in 1 week)
+2. IL support (affects roster math daily)
+3. Closer strategy (currently has 1 healthy closer, none on waivers)
+
+QUESTION FOR YOU:
+How do we parallelize this work across Kimi/Gemini/OpenClaw to minimize 
+Claude's token spend while maximizing speed-to-value?
+
+

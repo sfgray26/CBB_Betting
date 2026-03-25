@@ -1,0 +1,82 @@
+COORDINATION PROMPT SUMMARY
+===========================
+
+Created: CLAUDE_COORDINATION_PROMPT.md
+
+WHAT THIS IS:
+A strategic coordination prompt to give Claude Code that will help him make 
+architectural decisions on how to distribute the 5 P0 fantasy baseball gaps 
+across the team (Claude/Kimi/Gemini/OpenClaw) given token constraints.
+
+THE 5 P0 GAPS (from HANDOFF.md):
+--------------------------------
+
+1. DAILY LINEUP OPTIMIZER (User's #1 complaint)
+   - Currently just ranks by score, takes top 9
+   - IGNORES position requirements (C/1B/2B/3B/SS/OF/Util)
+   - Benched Willi Castro (most flexible) while starting spare 1B
+   - Needs: Constraint satisfaction with multi-position eligibility
+   
+2. IL ROSTER SUPPORT (Critical for season)
+   - Yahoo updated: IL players don't count against roster spots
+   - App doesn't understand this
+   - Needs: selected_position extraction from Yahoo API
+   
+3. CLOSER DATA BUG
+   - Edwin Diaz showing 0 saves (should be 32+)
+   - Needs: Fix projections in player_board.py
+   
+4. NO CLOSERS AVAILABLE DETECTION
+   - Waiver wire has zero closers, system is silent
+   - Should suggest: trade/punt/monitor alternatives
+   - Needs: Detection logic + strategy recommendations
+   
+5. MISSING Z-SCORES
+   - Some players (Clase) have no z-score
+   - Breaks waiver calculations
+   - Needs: Fallback/placeholder logic
+
+KEY QUESTIONS FOR CLAUDE:
+--------------------------
+
+1. WORK DISTRIBUTION STRATEGY
+   Option A: Kimi specs, Claude implements
+   Option B: Parallel tracks with interfaces  
+   Option C: MVP-first prioritization
+   → Which does Claude recommend?
+
+2. DEPENDENCY MANAGEMENT
+   - #4 depends on #2 for accurate roster counting
+   - #1 is self-contained
+   - #3, #5 are data-only
+   → Sequence or parallel?
+
+3. LINEUP OPTIMIZER ARCHITECTURE
+   Approach A: Constraint satisfaction (OR-Tools/pulp)
+   Approach B: Greedy algorithm with backtracking
+   → Which approach?
+
+4. API CONTRACT DECISIONS
+   - How to expose selected_position?
+   - How to return optimized lineup (slots vs player list)?
+   → Claude needs to decide
+
+5. TOKEN OPTIMIZATION
+   → Which gaps should Claude personally implement?
+   → Which should Kimi spec out?
+
+IMMEDIATE USER NEEDS (Next 7 Days):
+------------------------------------
+1. Working lineup optimizer for Opening Day (March 28)
+2. IL support (daily roster management)
+3. Closer strategy guidance
+
+HOW TO USE THIS:
+----------------
+Give CLAUDE_COORDINATION_PROMPT.md to Claude and ask him to:
+1. Answer the 5 questions
+2. Provide API contracts
+3. State recommended work distribution
+4. Identify first implementation task
+
+This will create a clear roadmap for parallel execution across the team.

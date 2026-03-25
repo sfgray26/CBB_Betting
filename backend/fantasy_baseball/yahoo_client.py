@@ -345,7 +345,14 @@ class YahooFantasyClient:
         return data.get("fantasy_content", {})
 
     def get_roster(self, team_key: Optional[str] = None) -> list[dict]:
-        """Return full roster for team_key (defaults to authenticated user's team)."""
+        """Return full roster for team_key (defaults to authenticated user's team).
+        
+        Includes selected_position field indicating Yahoo lineup slot:
+        - "IL", "IL10", "IL60" = Injured List (don't count against active roster)
+        - "BN" = Bench
+        - "C", "1B", "2B", "3B", "SS", "OF", "Util" = Active lineup slots
+        - "SP", "RP", "P" = Pitcher slots
+        """
         if team_key is None:
             team_key = self.get_my_team_key()
         data = self._get(f"team/{team_key}/roster/players")
@@ -359,8 +366,36 @@ class YahooFantasyClient:
             entry = players_raw.get(str(i), {})
             entry = self._flatten_league_section(entry) if isinstance(entry, list) else entry
             player_data = entry.get("player", entry) if isinstance(entry, dict) else entry
-            players.append(self._parse_player(player_data))
+            p = self._parse_player(player_data)
+            
+            # Extract selected_position from roster data (indicates IL, BN, or active slot)
+            selected_pos = self._extract_selected_position(player_data)
+            if selected_pos:
+                p["selected_position"] = selected_pos
+            
+            players.append(p)
         return players
+    
+    @staticmethod
+    def _extract_selected_position(player_data) -> Optional[str]:
+        """Extract selected_position (IL, BN, C, 1B, etc.) from Yahoo player data.
+        
+        Yahoo returns this as a sibling to player metadata:
+        [{player_key...}, {name...}, {selected_position: {position: "IL"}}]
+        """
+        if not isinstance(player_data, list):
+            return None
+        
+        for item in player_data:
+            if isinstance(item, dict) and "selected_position" in item:
+                sp = item["selected_position"]
+                if isinstance(sp, dict):
+                    return sp.get("position")
+                elif isinstance(sp, list):
+                    for spd in sp:
+                        if isinstance(spd, dict) and "position" in spd:
+                            return spd["position"]
+        return None
 
     def get_all_rosters(self) -> dict[str, list[dict]]:
         """All rosters keyed by team_key."""

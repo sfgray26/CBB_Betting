@@ -291,7 +291,9 @@ class LineupPlayerOut(BaseModel):
     lineup_score: float
     start_time: Optional[datetime] = None
     opponent: Optional[str] = None
-    status: str = "UNKNOWN"   # "START" | "BENCH" | "UNKNOWN"
+    status: str = "UNKNOWN"       # "START" | "BENCH" | "UNKNOWN"
+    assigned_slot: Optional[str] = None  # "C", "1B", "2B", "3B", "SS", "OF", "Util", "BN"
+    has_game: bool = True
 
 
 class StartingPitcherOut(BaseModel):
@@ -313,6 +315,7 @@ class DailyLineupResponse(BaseModel):
     pitchers: List[StartingPitcherOut]
     games_count: int
     no_games_today: bool = False
+    lineup_warnings: List[str] = []
 
 
 class CategoryDeficitOut(BaseModel):
@@ -410,6 +413,7 @@ class RosterPlayerOut(BaseModel):
     is_undroppable: bool = False
     is_proxy: bool = False
     cat_scores: dict = {}
+    selected_position: Optional[str] = None  # Yahoo lineup slot: IL, BN, C, 1B, OF, etc.
 
 
 class RosterResponse(BaseModel):

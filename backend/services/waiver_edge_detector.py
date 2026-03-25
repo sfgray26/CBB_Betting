@@ -13,6 +13,9 @@ _FA_CACHE: dict = {}
 _FA_CACHE_TTL = 600
 _INJURED_2B_Z_THRESHOLD = -1.0
 
+# Statuses that indicate player is on IL (doesn't count against active roster)
+_INACTIVE_STATUSES = frozenset({"IL", "IL10", "IL60", "NA", "OUT"})
+
 # Maps FA position → roster position group eligible for drop pairing.
 # OF/LF/CF/RF all compete for the same outfield slots.
 _POS_GROUP: dict[str, list[str]] = {
@@ -118,10 +121,16 @@ class WaiverEdgeDetector:
         return fa_positions  # Unknown position — exact match only
 
     def _count_position_coverage(self, roster: list[dict], pos_group: list[str]) -> int:
-        """Count non-undroppable roster players that cover any position in pos_group."""
+        """Count non-undroppable, non-IL roster players that cover any position in pos_group.
+        
+        Players on IL (IL, IL10, IL60, NA, OUT) don't count against active roster spots
+        and should not be considered as coverage for a position.
+        """
         return sum(
             1 for p in roster
             if not p.get("is_undroppable", False)
+            and p.get("selected_position") not in _INACTIVE_STATUSES
+            and p.get("status") not in _INACTIVE_STATUSES
             and any(pos in (p.get("positions") or []) for pos in pos_group)
         )
 
@@ -132,6 +141,9 @@ class WaiverEdgeDetector:
         - 0 roster players at position: fall back to weakest overall
         - 1 roster player at position: protected (return None)
         - 2+ roster players at position: return weakest of those
+        
+        Note: IL players are excluded from consideration (they don't count against
+        active roster spots and should not be suggested as drops).
         """
         pos_group = self._fa_position_group(fa_positions)
         coverage = self._count_position_coverage(roster, pos_group)
@@ -147,14 +159,24 @@ class WaiverEdgeDetector:
             candidates = [
                 p for p in roster
                 if not p.get("is_undroppable", False)
+                and p.get("selected_position") not in _INACTIVE_STATUSES
+                and p.get("status") not in _INACTIVE_STATUSES
                 and any(pos in (p.get("positions") or []) for pos in pos_group)
             ]
+            if not candidates:
+                return None
             return min(candidates, key=lambda p: sum((p.get("cat_scores") or {}).values()))
 
     def _weakest_droppable(self, roster):
-        droppable = [p for p in roster if not p.get("is_undroppable", False)]
+        """Return weakest droppable player, excluding IL players."""
+        droppable = [
+            p for p in roster 
+            if not p.get("is_undroppable", False)
+            and p.get("selected_position") not in _INACTIVE_STATUSES
+            and p.get("status") not in _INACTIVE_STATUSES
+        ]
         if not droppable:
-            return {}
+            return None
         return min(droppable, key=lambda p: sum((p.get("cat_scores") or {}).values()))
 
     def _score_fa_against_deficits(self, fa, deficits):

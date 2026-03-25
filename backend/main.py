@@ -3799,41 +3799,99 @@ async def get_fantasy_lineup_recommendations(
             logger.warning("Could not load player board projections for lineup: %s", _exc)
 
     optimizer = get_lineup_optimizer()
-    report = optimizer.build_daily_report(
-        game_date=lineup_date,
-        roster=_lineup_roster or None,
-        projections=_lineup_projections or None,
-    )
 
-    batters = [
-        LineupPlayerOut(
-            player_id=str(b.get("player_id", b.get("name", ""))),
-            name=b.get("name", ""),
-            team=b.get("team", ""),
-            position=(b.get("positions") or ["OF"])[0],
-            implied_runs=float(b.get("implied_runs", 0)),
-            park_factor=float(b.get("park_factor", 1.0)),
-            lineup_score=float(b.get("score", 0)),
-            start_time=b.get("game_time"),
-            opponent=b.get("opponent"),
-            status="START" if i < 9 else "BENCH",
-        )
-        for i, b in enumerate(report.get("batter_rankings", []))
-    ]
+    # --- Constraint-aware batter lineup ---
+    lineup_warnings: list[str] = []
+    batters: list[LineupPlayerOut] = []
+    if _lineup_roster and _lineup_projections:
+        try:
+            solved_slots, lineup_warnings = optimizer.solve_lineup(
+                roster=_lineup_roster,
+                projections=_lineup_projections,
+                game_date=lineup_date,
+            )
+            batters = [
+                LineupPlayerOut(
+                    player_id=s.player_name,
+                    name=s.player_name,
+                    team=s.player_team,
+                    position=s.positions[0] if s.positions else "?",
+                    implied_runs=round(s.implied_runs, 2),
+                    park_factor=round(s.park_factor, 3),
+                    lineup_score=round(s.lineup_score, 3),
+                    status="START" if s.slot != "BN" else "BENCH",
+                    assigned_slot=s.slot,
+                    has_game=s.has_game,
+                )
+                for s in solved_slots
+            ]
+        except Exception as _exc:
+            logger.warning("solve_lineup failed, falling back to score-rank: %s", _exc)
+            lineup_warnings.append(f"Constraint solver unavailable: {_exc}")
 
-    pitchers = [
-        StartingPitcherOut(
-            player_id=str(p.get("player_id", p.get("name", ""))),
-            name=p.get("name", ""),
-            team=p.get("team", ""),
-            opponent_implied_runs=float(p.get("opponent_implied_runs", 0)),
-            park_factor=float(p.get("park_factor", 1.0)),
-            sp_score=float(p.get("score", 0)),
-            start_time=p.get("game_time"),
-            status="START" if i < 2 else "BENCH",
+    # Fallback: if solver produced nothing, use raw score ranking
+    if not batters:
+        report = optimizer.build_daily_report(
+            game_date=lineup_date,
+            roster=_lineup_roster or None,
+            projections=_lineup_projections or None,
         )
-        for i, p in enumerate(report.get("pitcher_rankings", []))
-    ]
+        batters = [
+            LineupPlayerOut(
+                player_id=str(b.get("player_id", b.get("name", ""))),
+                name=b.get("name", ""),
+                team=b.get("team", ""),
+                position=(b.get("positions") or ["OF"])[0],
+                implied_runs=float(b.get("implied_runs", 0)),
+                park_factor=float(b.get("park_factor", 1.0)),
+                lineup_score=float(b.get("score", 0)),
+                status="START" if i < 9 else "BENCH",
+                assigned_slot=None,
+            )
+            for i, b in enumerate(report.get("batter_rankings", []))
+        ]
+    else:
+        report = optimizer.build_daily_report(game_date=lineup_date)
+
+    # --- Pitcher start detection ---
+    pitchers: list[StartingPitcherOut] = []
+    try:
+        flagged_pitchers = optimizer.flag_pitcher_starts(
+            roster=_lineup_roster,
+            game_date=lineup_date,
+        )
+        # SP with a game today start; SP without sit; RP always listed
+        sp_with_start = [p for p in flagged_pitchers if p["pitcher_slot"] == "SP" and p["has_start"]]
+        sp_no_start = [p for p in flagged_pitchers if p["pitcher_slot"] == "SP" and not p["has_start"]]
+        rps = [p for p in flagged_pitchers if p["pitcher_slot"] == "RP"]
+
+        for p in sp_with_start + rps:
+            pitchers.append(StartingPitcherOut(
+                player_id=p.get("player_key") or p.get("name", ""),
+                name=p.get("name", ""),
+                team=p.get("team", ""),
+                opponent_implied_runs=0.0,
+                park_factor=1.0,
+                sp_score=0.0,
+                status="START",
+            ))
+        for p in sp_no_start:
+            pitchers.append(StartingPitcherOut(
+                player_id=p.get("player_key") or p.get("name", ""),
+                name=p.get("name", ""),
+                team=p.get("team", ""),
+                opponent_implied_runs=0.0,
+                park_factor=1.0,
+                sp_score=0.0,
+                status="NO_START",
+            ))
+        if sp_no_start:
+            lineup_warnings.append(
+                f"{len(sp_no_start)} SP(s) have no start today: "
+                + ", ".join(p.get('name', '') for p in sp_no_start)
+            )
+    except Exception as _exc:
+        logger.warning("flag_pitcher_starts failed: %s", _exc)
 
     games_list = report.get("games", [])
     return DailyLineupResponse(
@@ -3842,6 +3900,7 @@ async def get_fantasy_lineup_recommendations(
         pitchers=pitchers,
         games_count=len(games_list),
         no_games_today=len(games_list) == 0,
+        lineup_warnings=lineup_warnings,
     )
 
 
@@ -4727,6 +4786,7 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
                 is_undroppable=bool(p.get("is_undroppable", 0)),
                 is_proxy=bool(proj.get("is_proxy", False)),
                 cat_scores=proj.get("cat_scores") or {},
+                selected_position=p.get("selected_position"),
             )
         )
 

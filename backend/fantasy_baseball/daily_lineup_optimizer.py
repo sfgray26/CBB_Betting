@@ -119,6 +119,41 @@ class PitcherRanking:
     reason: str = ""
 
 
+@dataclass
+class LineupSlotResult:
+    """One filled lineup slot from the constraint solver."""
+    slot: str               # "C", "1B", "2B", "3B", "SS", "OF", "Util", "SP", "RP", "BN"
+    player_name: str
+    player_team: str
+    positions: List[str]
+    lineup_score: float
+    implied_runs: float
+    park_factor: float
+    has_game: bool          # True if team plays today
+    status: Optional[str]  # injury status from Yahoo
+    reason: str             # human-readable explanation
+
+
+# ---------------------------------------------------------------------------
+# Yahoo H2H standard slot config: fill scarcest positions first so that
+# multi-eligible players (e.g. Castro 2B/3B) cover whatever gap remains.
+# ---------------------------------------------------------------------------
+_DEFAULT_BATTER_SLOTS: List[Tuple[str, List[str]]] = [
+    ("C",    ["C"]),
+    ("SS",   ["SS"]),
+    ("2B",   ["2B"]),
+    ("3B",   ["3B"]),
+    ("1B",   ["1B"]),
+    ("OF",   ["OF", "LF", "CF", "RF"]),
+    ("OF",   ["OF", "LF", "CF", "RF"]),
+    ("OF",   ["OF", "LF", "CF", "RF"]),
+    ("Util", ["C", "1B", "2B", "3B", "SS", "OF", "LF", "CF", "RF", "DH"]),
+]
+
+# Statuses that mean "occupying an IL slot, not an active roster spot"
+_INACTIVE_STATUSES = frozenset({"IL", "IL10", "IL60", "NA", "OUT"})
+
+
 class DailyLineupOptimizer:
     """
     Combines sportsbook odds with projection data to rank
@@ -422,6 +457,166 @@ class DailyLineupOptimizer:
 
         rankings.sort(key=lambda x: x.stream_score, reverse=True)
         return rankings
+
+    # ------------------------------------------------------------------
+    # Constraint-aware lineup solver
+    # ------------------------------------------------------------------
+
+    def solve_lineup(
+        self,
+        roster: List[dict],
+        projections: List[dict],
+        game_date: Optional[str] = None,
+        slot_config: Optional[List[Tuple[str, List[str]]]] = None,
+    ) -> Tuple[List[LineupSlotResult], List[str]]:
+        """
+        Fill Yahoo lineup slots using greedy scarcity-first constraint solving.
+
+        Slots are filled in order of scarcity (C → SS → 2B → 3B → 1B → OF×3 → Util)
+        so that multi-eligible flex players (e.g. Castro 2B/3B) naturally cover
+        whichever scarce position is left uncovered, rather than being wasted on OF.
+
+        Off-day detection: when the Odds API returns data for 10+ teams (≥5 games),
+        players whose team has no game are deprioritised — they fill slots only if
+        no in-game player is available.
+
+        Returns:
+            (slot_results, warnings)
+            slot_results — one LineupSlotResult per slot + BN entries for bench
+            warnings     — human-readable alerts (empty slot, off-day start, etc.)
+        """
+        if game_date is None:
+            game_date = datetime.utcnow().strftime("%Y-%m-%d")
+
+        games = self.fetch_mlb_odds(game_date)
+        team_odds = self._build_team_odds_map(games)
+
+        # Only apply off-day filtering when we have a credible slate (≥5 games worth
+        # of teams).  Sparse/missing odds data must not bench healthy players.
+        apply_offday_filter = len(team_odds) >= 10
+
+        slots = slot_config if slot_config is not None else _DEFAULT_BATTER_SLOTS
+
+        # Ranked by lineup_score descending; IL/pitcher rows already excluded by rank_batters
+        ranked: List[BatterRanking] = self.rank_batters(roster, projections, game_date)
+
+        # Belt-and-suspenders: also exclude any IL10/OUT rows rank_batters may have kept
+        ranked = [b for b in ranked if b.status not in _INACTIVE_STATUSES]
+
+        def _has_game(team: str) -> bool:
+            return team in team_odds
+
+        assigned: set = set()
+        slot_results: List[LineupSlotResult] = []
+        warnings: List[str] = []
+
+        for slot_label, eligible_positions in slots:
+            best: Optional[BatterRanking] = None
+
+            # Pass 1: find best eligible player WITH a game today
+            for b in ranked:
+                if b.name in assigned:
+                    continue
+                if not any(pos in b.positions for pos in eligible_positions):
+                    continue
+                if apply_offday_filter and not _has_game(b.team):
+                    continue
+                best = b
+                break
+
+            # Pass 2: no in-game player found — fall back to any eligible player
+            if best is None:
+                for b in ranked:
+                    if b.name in assigned:
+                        continue
+                    if not any(pos in b.positions for pos in eligible_positions):
+                        continue
+                    best = b
+                    if apply_offday_filter:
+                        warnings.append(
+                            f"{slot_label}: {b.name} ({b.team}) has no game today — verify schedule"
+                        )
+                    break
+
+            if best is None:
+                warnings.append(f"No eligible active player found for {slot_label} slot")
+                slot_results.append(LineupSlotResult(
+                    slot=slot_label, player_name="EMPTY", player_team="",
+                    positions=[], lineup_score=0.0, implied_runs=0.0,
+                    park_factor=1.0, has_game=False, status=None,
+                    reason=f"No eligible player for {slot_label}",
+                ))
+            else:
+                assigned.add(best.name)
+                slot_results.append(LineupSlotResult(
+                    slot=slot_label,
+                    player_name=best.name,
+                    player_team=best.team,
+                    positions=best.positions,
+                    lineup_score=best.lineup_score,
+                    implied_runs=best.implied_team_runs,
+                    park_factor=best.park_factor,
+                    has_game=_has_game(best.team),
+                    status=best.status,
+                    reason=best.reason,
+                ))
+
+        # All remaining eligible players → bench
+        for b in ranked:
+            if b.name not in assigned:
+                slot_results.append(LineupSlotResult(
+                    slot="BN",
+                    player_name=b.name,
+                    player_team=b.team,
+                    positions=b.positions,
+                    lineup_score=b.lineup_score,
+                    implied_runs=b.implied_team_runs,
+                    park_factor=b.park_factor,
+                    has_game=_has_game(b.team),
+                    status=b.status,
+                    reason=b.reason,
+                ))
+
+        return slot_results, warnings
+
+    # ------------------------------------------------------------------
+    # SP off-day detection
+    # ------------------------------------------------------------------
+
+    def flag_pitcher_starts(
+        self,
+        roster: List[dict],
+        game_date: Optional[str] = None,
+    ) -> List[dict]:
+        """
+        Return each pitcher from roster annotated with has_start: bool.
+
+        SP with has_start=False should sit (no start today).
+        RP always has_start=True (they can pitch any day).
+        """
+        if game_date is None:
+            game_date = datetime.utcnow().strftime("%Y-%m-%d")
+
+        team_odds = self._build_team_odds_map(self.fetch_mlb_odds(game_date))
+        has_slate = len(team_odds) >= 10
+
+        result = []
+        for p in roster:
+            positions = p.get("positions", [])
+            status = p.get("status")
+            if not any(pos in ("SP", "RP", "P") for pos in positions):
+                continue
+            if status in _INACTIVE_STATUSES:
+                continue
+            is_sp = "SP" in positions
+            team = p.get("team", "")
+            has_game = team in team_odds if has_slate else True
+            result.append({
+                **p,
+                "has_start": has_game if is_sp else True,
+                "pitcher_slot": "SP" if is_sp else "RP",
+            })
+        return result
 
     # ------------------------------------------------------------------
     # Full daily report
