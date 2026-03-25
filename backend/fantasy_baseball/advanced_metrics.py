@@ -102,7 +102,8 @@ PITCHING_THRESHOLDS = {
 class StatcastBatter:
     name: str
     player_id: int = 0
-    
+    team: str = ""  # FanGraphs team abbreviation (e.g. "NYY")
+
     # Batted ball quality
     barrel_pct: float = 0.0  # % of batted balls that are barrels
     exit_velo_avg: float = 0.0  # Average exit velocity

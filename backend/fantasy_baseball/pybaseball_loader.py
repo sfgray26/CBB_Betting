@@ -99,12 +99,21 @@ def _df_to_batter_dict(df) -> dict:
         if not name:
             continue
 
+        team_abb = str(row.get("Team") or row.get("team") or "").strip()
+
         xwoba = _float(row.get("xwOBA"))
         woba = _float(row.get("wOBA"))
         xwoba_diff = xwoba - woba
 
+        # wRC+ column name varies across pybaseball versions
+        wrc_plus_raw = (
+            row.get("wRC+") or row.get("wRCplus") or row.get("wRC_plus") or 100
+        )
+        wrc_plus_val = _float(wrc_plus_raw) if wrc_plus_raw else 100.0
+
         b = StatcastBatter(
             name=name,
+            team=team_abb,
             xwoba=xwoba,
             xwoba_diff=xwoba_diff,
             barrel_pct=_float(row.get("Barrel%")),
@@ -118,6 +127,7 @@ def _df_to_batter_dict(df) -> dict:
             fb_pct=_float(row.get("FB%")),
             ld_pct=_float(row.get("LD%")),
             pull_pct=_float(row.get("Pull%")),
+            wrc_plus=wrc_plus_val if wrc_plus_val > 0 else 100.0,
             regression_up=xwoba_diff < -0.020,
             regression_down=xwoba_diff > 0.030,
         )

@@ -139,6 +139,27 @@ class TestProjectGame:
         # -> home team scores fewer runs than league avg
         assert proj.projected_home_runs < 4.25
 
+    def test_project_game_uses_team_wrc_plus(self):
+        """Team with above-average offense (wRC+=130) should project more runs than league avg."""
+        game = _make_game(home_name="New York Yankees", away_name="Boston Red Sox", venue="Unknown")
+        team_stats = {
+            "New York Yankees": {"wrc_plus": 130},
+            "Boston Red Sox": {"wrc_plus": 100},
+        }
+        proj = self.svc._project_game(game, {}, team_stats, self.target_date)
+        # Home team has 130 wRC+ — should score more than league avg + home advantage
+        assert proj.projected_home_runs > 4.25 + 0.25
+
+    def test_load_team_stats_returns_dict(self):
+        """_load_team_stats should return a dict (may be empty if pybaseball not available)."""
+        svc = MLBAnalysisService()
+        result = svc._load_team_stats()
+        assert isinstance(result, dict)
+        # Each value must be a dict with 'wrc_plus' key if non-empty
+        for team, stats in result.items():
+            assert "wrc_plus" in stats
+            assert isinstance(stats["wrc_plus"], (int, float))
+
 
 # ---------------------------------------------------------------------------
 # MLBAnalysisService.run_analysis() tests

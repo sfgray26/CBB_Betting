@@ -28,6 +28,36 @@ logger = logging.getLogger(__name__)
 # Park factors — 2024 Statcast park-factor data (runs-based, 1.0 = neutral)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Team abbreviation -> full statsapi name mapping
+# ---------------------------------------------------------------------------
+
+_TEAM_ABB_TO_FULL: dict[str, str] = {
+    "ARI": "Arizona Diamondbacks", "ATL": "Atlanta Braves",
+    "BAL": "Baltimore Orioles", "BOS": "Boston Red Sox",
+    "CHC": "Chicago Cubs", "CHW": "Chicago White Sox",
+    "CIN": "Cincinnati Reds", "CLE": "Cleveland Guardians",
+    "COL": "Colorado Rockies", "DET": "Detroit Tigers",
+    "HOU": "Houston Astros", "KCR": "Kansas City Royals",
+    "LAA": "Los Angeles Angels", "LAD": "Los Angeles Dodgers",
+    "MIA": "Miami Marlins", "MIL": "Milwaukee Brewers",
+    "MIN": "Minnesota Twins", "NYM": "New York Mets",
+    "NYY": "New York Yankees", "OAK": "Oakland Athletics",
+    "PHI": "Philadelphia Phillies", "PIT": "Pittsburgh Pirates",
+    "SDP": "San Diego Padres", "SEA": "Seattle Mariners",
+    "SFG": "San Francisco Giants", "STL": "St. Louis Cardinals",
+    "TBR": "Tampa Bay Rays", "TEX": "Texas Rangers",
+    "TOR": "Toronto Blue Jays", "WSN": "Washington Nationals",
+    # Common FanGraphs variant abbreviations
+    "CWS": "Chicago White Sox",
+    "KC": "Kansas City Royals",
+    "SD": "San Diego Padres",
+    "SF": "San Francisco Giants",
+    "TB": "Tampa Bay Rays",
+    "WSH": "Washington Nationals",
+}
+
+
 PARK_FACTORS: dict[str, float] = {
     "Coors Field": 1.22,
     "Oracle Park": 0.92,
@@ -266,17 +296,58 @@ class MLBAnalysisService:
 
     def _load_team_stats(self) -> dict[str, dict]:
         """
-        Load team-level offensive stats.
+        Load team-level offensive stats aggregated from the per-batter pybaseball cache.
 
-        wRC+ is not stored per-team in the current FanGraphs cache (only per-player).
-        This method returns an empty dict for now — the projection formula
-        defaults to wrc_plus=100 (league average offense) for all teams.
+        Aggregation:
+          - Loads all batters from the FanGraphs 2025 cache via load_pybaseball_batters().
+          - Filters out batters whose cached wrc_plus == 100.0 exactly and team == "" (no data).
+          - Groups remaining batters by team abbreviation and computes a plain mean wRC+.
+            (PA-weighted average would be more accurate but PA is not stored in the cache.)
+          - Maps team abbreviations to full statsapi names via _TEAM_ABB_TO_FULL.
+          - Teams with fewer than 3 qualifying batters are excluded (too small a sample).
 
-        ADR note: wRC+ team aggregation is a planned enhancement (EMAC-081).
-        A future version will aggregate per-batter wRC+ into a team lineup score
-        using the FanGraphs team batting leaderboard via pybaseball.team_batting().
+        Returns dict[full_team_name, {"wrc_plus": float}].
+        Falls back to empty dict on any failure (caller defaults to wRC+=100).
         """
-        return {}
+        try:
+            from backend.fantasy_baseball.pybaseball_loader import load_pybaseball_batters
+
+            cache = load_pybaseball_batters(year=2025)
+            if not cache:
+                return {}
+
+            # Group wrc_plus values by team abbreviation
+            team_wrc: dict[str, list[float]] = {}
+            for batter in cache.values():
+                abb = getattr(batter, "team", "").strip().upper()
+                wrc = getattr(batter, "wrc_plus", 100.0)
+                # Skip batters with no team tag or suspiciously default values
+                if not abb:
+                    continue
+                # wrc_plus defaults to 100.0 in the dataclass; only include if
+                # the value was explicitly set (non-default) OR the team is tagged.
+                # We include all tagged batters since even 100 is a valid score.
+                team_wrc.setdefault(abb, []).append(float(wrc))
+
+            result: dict[str, dict] = {}
+            for abb, values in team_wrc.items():
+                if len(values) < 3:
+                    # Too few batters — skip, let caller default to league avg
+                    continue
+                avg_wrc = sum(values) / len(values)
+                full_name = _TEAM_ABB_TO_FULL.get(abb)
+                if not full_name:
+                    logger.debug("mlb_analysis: no full-name mapping for team abbr '%s'", abb)
+                    continue
+                result[full_name] = {"wrc_plus": round(avg_wrc, 1)}
+
+            logger.debug(
+                "mlb_analysis: _load_team_stats aggregated wRC+ for %d teams", len(result)
+            )
+            return result
+        except Exception as exc:
+            logger.warning("mlb_analysis: team stats load failed: %s", exc)
+            return {}
 
     # ------------------------------------------------------------------ #
     # Odds fetch                                                           #

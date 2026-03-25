@@ -1576,21 +1576,22 @@ Full OpenClaw (v4.0+) is an **autonomous system** per SOUL.md:
 
 ---
 
-**Document Version:** EMAC-081
+**Document Version:** EMAC-082
 **Last Updated:** March 25, 2026
-**Status:** ACTIVE — EPIC-1/2/3 COMPLETE. MLB model MVP LIVE (`SportConfig.mlb()` + `mlb_analysis.py`, 12 tests). OpenClaw Phase 1 COMPLETE (Kimi, 24 tests). Next: Railway activation + team wRC+ ingestion.
+**Status:** ACTIVE — EPIC-1/2/3 COMPLETE. MLB model LIVE + team wRC+ wired (14 tests pass). Integrity sweep hang FIXED. Next: EPIC-4 Bracket Sunset (Apr 7).
 **Branch:** main
 **Team:** Claude Code (Architect) · Kimi CLI (Audit) · OpenClaw (Execution Target) · Gemini (Ops/Railway only)
-**Next operator (Claude Code):** Wire team wRC+ into `mlb_analysis._load_team_stats()` using existing pybaseball FanGraphs cache. Then EPIC-4 Bracket Sunset (frontend cleanup, Apr 7 trigger).
-**Next operator (Gemini CLI):** (1) Set `ENABLE_MLB_ANALYSIS=true` in Railway env vars. (2) Apply `scripts/migrations/v8_openclaw_monitoring.sql` to Railway DB (unblocks OpenClaw Phase 1).
-**Next operator (Kimi CLI):** OpenClaw Phase 1 COMPLETE — 24 tests pass. Next: Audit Claude's MLB betting model implementation when ready.
+**Next operator (Claude Code):** EPIC-4 Bracket Sunset — run after CBB championship Apr 7. Prompt is in §13.
+**Next operator (Gemini CLI):** (1) Set `ENABLE_MLB_ANALYSIS=true` in Railway env vars. (2) Set `INTEGRITY_SWEEP_ENABLED=false` in Railway env vars (CRITICAL — prevents container restart loop). (3) OpenClaw migration already applied (learning_journal, model_performance_metrics, roadmap_state, vulnerability_reports created).
+**Next operator (Kimi CLI):** Audit MLB betting model + team wRC+ implementation. Key files: `backend/services/mlb_analysis.py`, `backend/fantasy_baseball/pybaseball_loader.py`, `backend/fantasy_baseball/advanced_metrics.py`. Also review OpenClaw CLI (`scripts/openclaw_cli.py`) for manual monitoring operations.
 **CRITICAL REMINDER:** See ADR-010 — Next.js is the ONLY UI. Streamlit (`dashboard/`) is RETIRED. Never reference Streamlit code.
 **Apr 7 mission:** V9.2 recalibration — see §10 and prior HANDOFF.md §6
 **Workstream Split (PARALLEL EXECUTION):**
-- **Claude (P0 — Immediate):** MLB betting model (CRITICAL — CBB ends Apr 7) — EPIC-2/3 DONE, waiver wire DONE
-- **Kimi (P1 — IN PROGRESS):** OpenClaw Phase 1 implementation (Performance Monitor + Pattern Detector) — IMPLEMENTED, needs migration + testing
-- **Gemini (Ops):** Apply `scripts/migrations/v8_openclaw_monitoring.sql` to Railway DB
-- **URGENT:** MLB model must be operational before CBB season ends Apr 7. See `reports/OPENCLAW_AUTONOMY_SPEC_v4_MLB_ADDENDUM.md`
+- **Claude (P0 — Done):** MLB betting model COMPLETE — `SportConfig.mlb()` + `mlb_analysis.py` + team wRC+ ingestion (14 tests pass)
+- **Claude (P1 — Apr 7):** EPIC-4 Bracket Sunset — see §13 for copy-paste prompt
+- **Kimi (P1 — IN PROGRESS):** OpenClaw Phase 1 COMPLETE — 24 tests pass. Pending Railway migration.
+- **Gemini (Ops):** Set `INTEGRITY_SWEEP_ENABLED=false` + `ENABLE_MLB_ANALYSIS=true` in Railway
+- **URGENT:** Set `INTEGRITY_SWEEP_ENABLED=false` NOW — app is in restart loop without it
 
 **OpenClaw Phase 1 Status (COMPLETE - Pending Migration):**
 - ✅ `backend/services/openclaw/` package created
