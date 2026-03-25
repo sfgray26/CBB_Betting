@@ -654,7 +654,13 @@ async def _integrity_sweep(bet_tier_games: list) -> dict:
 
     Hard cap: 90 seconds total. Any games still pending after that get
     'Sanity check unavailable (sweep timeout)' so the analysis can continue.
+
+    Set INTEGRITY_SWEEP_ENABLED=false to skip entirely (useful on Railway where
+    Ollama/DDGS may not be available or causes container hangs).
     """
+    if os.getenv("INTEGRITY_SWEEP_ENABLED", "true").lower() == "false":
+        logger.info("Integrity sweep disabled via INTEGRITY_SWEEP_ENABLED=false — skipping.")
+        return {g.get("game_key", ""): "Sanity check skipped (disabled)" for g in bet_tier_games}
     if not bet_tier_games:
         return {}
     semaphore = asyncio.Semaphore(8)
