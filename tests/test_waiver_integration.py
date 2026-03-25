@@ -48,7 +48,11 @@ class TestYahooClientOutParam:
         client.get_free_agents(count=10)
 
         assert "out" in captured_params, "get_free_agents() must include 'out' param"
-        assert "ownership" in captured_params["out"], "'ownership' is the correct Yahoo subresource (not 'percent_owned')"
+        # Yahoo MLB rejects 'ownership' as a subresource on the /players collection endpoint
+        # (400: Invalid subresource ownership requested). Use metadata,stats only.
+        assert "ownership" not in captured_params["out"], "ownership subresource breaks MLB API (use metadata,stats)"
+        assert "metadata" in captured_params["out"]
+        assert "stats" in captured_params["out"]
 
     def test_get_waiver_players_includes_out_param(self):
         from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
@@ -69,7 +73,9 @@ class TestYahooClientOutParam:
         client.get_waiver_players(count=10)
 
         assert "out" in captured_params, "get_waiver_players() must include 'out' param"
-        assert "ownership" in captured_params["out"], "'ownership' is the correct Yahoo subresource (not 'percent_owned')"
+        assert "ownership" not in captured_params["out"], "ownership subresource breaks MLB API (use metadata,stats)"
+        assert "metadata" in captured_params["out"]
+        assert "stats" in captured_params["out"]
 
 
 # ---------------------------------------------------------------------------

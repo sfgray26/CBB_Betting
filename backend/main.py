@@ -3778,18 +3778,39 @@ async def get_fantasy_lineup_recommendations(
     except ValueError:
         raise HTTPException(status_code=422, detail="lineup_date must be YYYY-MM-DD")
 
+    # Fetch Yahoo roster for player-specific rankings (best-effort)
+    _lineup_roster: list = []
+    try:
+        _lineup_client = YahooFantasyClient()
+        _lineup_roster = _lineup_client.get_roster()
+    except Exception as _exc:
+        logger.warning("Could not fetch Yahoo roster for lineup optimizer: %s", _exc)
+
+    # Build projections from player board (best-effort)
+    _lineup_projections: list = []
+    if _lineup_roster:
+        try:
+            from backend.fantasy_baseball.player_board import get_or_create_projection as _get_lineup_proj
+            _lineup_projections = [_get_lineup_proj(p) for p in _lineup_roster]
+        except Exception as _exc:
+            logger.warning("Could not load player board projections for lineup: %s", _exc)
+
     optimizer = get_lineup_optimizer()
-    report = optimizer.build_daily_report(game_date=lineup_date)
+    report = optimizer.build_daily_report(
+        game_date=lineup_date,
+        roster=_lineup_roster or None,
+        projections=_lineup_projections or None,
+    )
 
     batters = [
         LineupPlayerOut(
             player_id=str(b.get("player_id", b.get("name", ""))),
             name=b.get("name", ""),
             team=b.get("team", ""),
-            position=b.get("position", "OF"),
-            implied_runs=float(b.get("team_implied_runs", 0)),
+            position=(b.get("positions") or ["OF"])[0],
+            implied_runs=float(b.get("implied_runs", 0)),
             park_factor=float(b.get("park_factor", 1.0)),
-            lineup_score=float(b.get("score", b.get("team_implied_runs", 0))),
+            lineup_score=float(b.get("score", 0)),
             start_time=b.get("game_time"),
             opponent=b.get("opponent"),
             status="START" if i < 9 else "BENCH",
