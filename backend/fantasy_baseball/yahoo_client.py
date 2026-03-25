@@ -532,22 +532,42 @@ class YahooFantasyClient:
         return True
 
     def get_scoreboard(self, week: Optional[int] = None) -> list[dict]:
-        """Fetch matchup scoreboard for a week (defaults to current)."""
+        """Fetch matchup scoreboard for a week (defaults to current).
+
+        Yahoo's scoreboard nesting changed between API versions:
+          v1: league[1].scoreboard.0.matchups   (older format)
+          v2: league[1].scoreboard.matchups      (2025+ format)
+        Both paths are tried so this survives Yahoo response shape changes.
+        """
         path = f"league/{self.league_key}/scoreboard"
         params = {}
         if week:
             params["week"] = week
         data = self._get(path, params=params if params else None)
-        matchups_raw = (
-            self._league_section(data, 1)
-            .get("scoreboard", {})
-            .get("0", {})
-            .get("matchups", {})
-        )
+        sec = self._league_section(data, 1)
+        scoreboard = sec.get("scoreboard", {})
+
+        # Try v2 path first (scoreboard.matchups)
+        matchups_raw = scoreboard.get("matchups", {})
+
+        # Fall back to v1 path (scoreboard.0.matchups)
+        if not matchups_raw:
+            matchups_raw = scoreboard.get("0", {}).get("matchups", {})
+
+        # If scoreboard itself is a list, flatten it
+        if isinstance(scoreboard, list):
+            flat = {}
+            for item in scoreboard:
+                if isinstance(item, dict):
+                    flat.update(item)
+            matchups_raw = flat.get("matchups", {})
+
         matchups = []
-        count = int(matchups_raw.get("count", 0))
+        count = int(matchups_raw.get("count", 0)) if isinstance(matchups_raw, dict) else 0
         for i in range(count):
-            matchups.append(matchups_raw.get(str(i), {}).get("matchup", {}))
+            entry = matchups_raw.get(str(i), {})
+            if isinstance(entry, dict) and "matchup" in entry:
+                matchups.append(entry["matchup"])
         return matchups
 
     def add_drop_player(self, add_player_key: str, drop_player_key: Optional[str] = None,
