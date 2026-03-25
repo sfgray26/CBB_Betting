@@ -43,9 +43,9 @@ CREATE INDEX IF NOT EXISTS idx_perf_metrics_composite
     ON model_performance_metrics(sport, metric_type, calculated_at DESC);
 
 -- Partial index for recent data (most queries use last 30 days)
-CREATE INDEX IF NOT EXISTS idx_perf_metrics_recent 
-    ON model_performance_metrics(sport, metric_type, calculated_at DESC)
-    WHERE calculated_at > NOW() - INTERVAL '30 days';
+-- CREATE INDEX IF NOT EXISTS idx_perf_metrics_recent 
+--    ON model_performance_metrics(sport, metric_type, calculated_at DESC)
+--    WHERE calculated_at > NOW() - INTERVAL '30 days';
 
 COMMENT ON TABLE model_performance_metrics IS 
     'Time-series performance metrics for model monitoring and decay detection';
