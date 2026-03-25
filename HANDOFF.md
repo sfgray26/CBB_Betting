@@ -1583,7 +1583,7 @@ Full OpenClaw (v4.0+) is an **autonomous system** per SOUL.md:
 **Team:** Claude Code (Architect) · Kimi CLI (Audit) · OpenClaw (Execution Target) · Gemini (Ops/Railway only)
 **Next operator (Claude Code):** EPIC-4 Bracket Sunset — run after CBB championship Apr 7. Prompt is in §13.
 **Next operator (Gemini CLI):** (1) Set `ENABLE_MLB_ANALYSIS=true` in Railway env vars. (2) Set `INTEGRITY_SWEEP_ENABLED=false` in Railway env vars (CRITICAL — prevents container restart loop). (3) OpenClaw migration already applied (learning_journal, model_performance_metrics, roadmap_state, vulnerability_reports created).
-**Next operator (Kimi CLI):** Audit MLB betting model + team wRC+ implementation. Key files: `backend/services/mlb_analysis.py`, `backend/fantasy_baseball/pybaseball_loader.py`, `backend/fantasy_baseball/advanced_metrics.py`. Also review OpenClaw CLI (`scripts/openclaw_cli.py`) for manual monitoring operations.
+**Next operator (Kimi CLI):** MLB model audit COMPLETE — see §15 for findings. OpenClaw CLI verified.
 **CRITICAL REMINDER:** See ADR-010 — Next.js is the ONLY UI. Streamlit (`dashboard/`) is RETIRED. Never reference Streamlit code.
 **Apr 7 mission:** V9.2 recalibration — see §10 and prior HANDOFF.md §6
 **Workstream Split (PARALLEL EXECUTION):**
@@ -1593,7 +1593,7 @@ Full OpenClaw (v4.0+) is an **autonomous system** per SOUL.md:
 - **Gemini (Ops):** Set `INTEGRITY_SWEEP_ENABLED=false` + `ENABLE_MLB_ANALYSIS=true` in Railway
 - **URGENT:** Set `INTEGRITY_SWEEP_ENABLED=false` NOW — app is in restart loop without it
 
-**OpenClaw Phase 1 Status (COMPLETE - Pending Migration):**
+**OpenClaw Phase 1 Status (COMPLETE):**
 - ✅ `backend/services/openclaw/` package created
 - ✅ `performance_monitor.py` — CLV decay detection (15% CRITICAL, 8% WARNING), win rate tracking
 - ✅ `pattern_detector.py` — CBB patterns (conference, seed, HCA, month, day-of-week), MLB patterns framework
@@ -1603,8 +1603,9 @@ Full OpenClaw (v4.0+) is an **autonomous system** per SOUL.md:
 - ✅ `apply_openclaw_migration.py` — Migration script
 - ✅ `daily_ingestion.py` updated to auto-start OpenClaw monitoring
 - ✅ `tests/openclaw/` — 24 tests covering PerformanceMonitor and PatternDetector
-- ⏳ PENDING: Run migration on Railway (`python scripts/migrations/apply_openclaw_migration.py`)
-- ⏳ PENDING: Verify Discord alerting integration (requires webhook URL)
+- ✅ `scripts/openclaw_cli.py` — CLI for manual checks (`status`, `check-performance`, `run-sweep`, `health-summary`)
+- ✅ Railway migration applied (per Gemini)
+- ⏳ PENDING: Verify Discord alerting integration (requires `DISCORD_ALERTS_ENABLED=true` + webhook URL)
 
 **OpenClaw Implementation Notes:**
 - Read-only monitoring during Guardian freeze — write operations blocked until Apr 7

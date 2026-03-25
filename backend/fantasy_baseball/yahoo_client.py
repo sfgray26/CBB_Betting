@@ -400,7 +400,7 @@ class YahooFantasyClient:
         pickup value. Yahoo's default sort order is opaque and unreliable.
         """
         params = {"status": "A", "start": start, "count": count, "sort": "AR",
-                  "out": "metadata,percent_owned,stats"}
+                  "out": "metadata,ownership,stats"}
         if position:
             params["position"] = position
         data = self._get(f"league/{self.league_key}/players", params=params)
@@ -417,7 +417,7 @@ class YahooFantasyClient:
 
     def get_waiver_players(self, start: int = 0, count: int = 25) -> list[dict]:
         params = {"status": "W", "start": start, "count": count,
-                  "out": "metadata,percent_owned,stats"}
+                  "out": "metadata,ownership,stats"}
         data = self._get(f"league/{self.league_key}/players", params=params)
         players_raw = self._league_section(data, 1).get("players", {})
         return self._parse_players_block(players_raw)
@@ -638,18 +638,35 @@ class YahooFantasyClient:
             pos = positions_raw.get("position")
             positions = [pos] if pos else []
 
-        # Extract percent_owned — Yahoo returns this as a nested dict or plain value
-        owned_raw = meta.get("percent_owned", 0)
-        if isinstance(owned_raw, dict):
-            try:
-                owned_pct = float(owned_raw.get("value", 0) or 0)
-            except (ValueError, TypeError):
-                owned_pct = 0.0
-        else:
-            try:
-                owned_pct = float(owned_raw or 0)
-            except (ValueError, TypeError):
-                owned_pct = 0.0
+        # Extract percent_owned — Yahoo returns this inside an "ownership" sub-block
+        # at the outer player list level (not inside metadata).
+        owned_pct = 0.0
+        if isinstance(player_list, list):
+            for outer_item in player_list:
+                if isinstance(outer_item, dict) and "ownership" in outer_item:
+                    pct_block = outer_item["ownership"].get("percent_owned", {})
+                    if isinstance(pct_block, dict):
+                        raw = pct_block.get("value", 0)
+                    else:
+                        raw = pct_block
+                    try:
+                        owned_pct = float(raw or 0)
+                    except (ValueError, TypeError):
+                        owned_pct = 0.0
+                    break
+        # Fallback: old "percent_owned" key directly in metadata (pre-2025 format)
+        if owned_pct == 0.0:
+            owned_raw = meta.get("percent_owned", 0)
+            if isinstance(owned_raw, dict):
+                try:
+                    owned_pct = float(owned_raw.get("value", 0) or 0)
+                except (ValueError, TypeError):
+                    owned_pct = 0.0
+            elif owned_raw:
+                try:
+                    owned_pct = float(owned_raw)
+                except (ValueError, TypeError):
+                    owned_pct = 0.0
 
         return {
             "player_key": meta.get("player_key"),
