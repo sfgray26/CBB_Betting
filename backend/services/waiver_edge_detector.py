@@ -13,6 +13,24 @@ _FA_CACHE: dict = {}
 _FA_CACHE_TTL = 600
 _INJURED_2B_Z_THRESHOLD = -1.0
 
+# Maps FA position → roster position group eligible for drop pairing.
+# OF/LF/CF/RF all compete for the same outfield slots.
+_POS_GROUP: dict[str, list[str]] = {
+    "SP": ["SP", "RP", "P"],
+    "RP": ["SP", "RP", "P"],
+    "P":  ["SP", "RP", "P"],
+    "C":  ["C"],
+    "1B": ["1B"],
+    "2B": ["2B"],
+    "3B": ["3B"],
+    "SS": ["SS"],
+    "OF": ["OF", "LF", "CF", "RF"],
+    "LF": ["OF", "LF", "CF", "RF"],
+    "CF": ["OF", "LF", "CF", "RF"],
+    "RF": ["OF", "LF", "CF", "RF"],
+    "DH": ["DH", "1B", "OF"],
+}
+
 
 class WaiverEdgeDetector:
     def __init__(self, mcmc_simulator=None, fa_cache_ttl=_FA_CACHE_TTL):
@@ -24,13 +42,14 @@ class WaiverEdgeDetector:
         if not free_agents:
             return []
         deficits = self._compute_deficits(my_roster, opponent_roster)
-        drop_candidate = self._weakest_droppable(my_roster)
         moves = []
         for fa in free_agents[:40]:
             score = self._score_fa_against_deficits(fa, deficits)
+            fa_positions = fa.get("positions") or []
+            drop_candidate = self._weakest_droppable_at(my_roster, fa_positions)
             move = {
                 "add_player": fa,
-                "drop_player_name": drop_candidate.get("name", ""),
+                "drop_player_name": drop_candidate.get("name", "") if drop_candidate else "",
                 "need_score": score,
                 "win_prob_before": 0.5,
                 "win_prob_after": 0.5,
@@ -38,9 +57,9 @@ class WaiverEdgeDetector:
                 "mcmc_enabled": False,
                 "category_win_probs": {},
             }
-            if self._has_dead_2b(my_roster) and "2B" in (fa.get("positions") or []):
+            if self._has_dead_2b(my_roster) and "2B" in fa_positions:
                 move["need_score"] *= 1.25
-            if self.mcmc and fa.get("cat_scores"):
+            if self.mcmc and fa.get("cat_scores") and drop_candidate:
                 try:
                     r = self.mcmc.simulate_roster_move(
                         my_roster, opponent_roster,
@@ -89,6 +108,48 @@ class WaiverEdgeDetector:
             )
             for cat in all_cats
         }
+
+    def _fa_position_group(self, fa_positions: list[str]) -> list[str]:
+        """Return the roster position group that matches the FA's primary position."""
+        for pos in fa_positions:
+            group = _POS_GROUP.get(pos)
+            if group:
+                return group
+        return fa_positions  # Unknown position — exact match only
+
+    def _count_position_coverage(self, roster: list[dict], pos_group: list[str]) -> int:
+        """Count non-undroppable roster players that cover any position in pos_group."""
+        return sum(
+            1 for p in roster
+            if not p.get("is_undroppable", False)
+            and any(pos in (p.get("positions") or []) for pos in pos_group)
+        )
+
+    def _weakest_droppable_at(self, roster: list[dict], fa_positions: list[str]) -> Optional[dict]:
+        """
+        Return the weakest droppable roster player at the FA's position group.
+
+        - 0 roster players at position: fall back to weakest overall
+        - 1 roster player at position: protected (return None)
+        - 2+ roster players at position: return weakest of those
+        """
+        pos_group = self._fa_position_group(fa_positions)
+        coverage = self._count_position_coverage(roster, pos_group)
+
+        if coverage == 0:
+            # No coverage at this position — safe to drop anyone
+            return self._weakest_droppable(roster)
+        elif coverage == 1:
+            # Only one cover at this position — protect them
+            return None
+        else:
+            # 2+ players at position — drop weakest among them
+            candidates = [
+                p for p in roster
+                if not p.get("is_undroppable", False)
+                and any(pos in (p.get("positions") or []) for pos in pos_group)
+            ]
+            return min(candidates, key=lambda p: sum((p.get("cat_scores") or {}).values()))
 
     def _weakest_droppable(self, roster):
         droppable = [p for p in roster if not p.get("is_undroppable", False)]

@@ -3832,11 +3832,13 @@ async def get_fantasy_lineup_recommendations(
         for i, p in enumerate(report.get("pitcher_rankings", []))
     ]
 
+    games_list = report.get("games", [])
     return DailyLineupResponse(
         date=ld,
         batters=batters,
         pitchers=pitchers,
-        games_count=len(report.get("games", [])),
+        games_count=len(games_list),
+        no_games_today=len(games_list) == 0,
     )
 
 
@@ -4642,7 +4644,7 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
     Return the authenticated user's current Yahoo roster enriched with z-scores.
     Returns 503 if Yahoo credentials are not configured.
     """
-    from backend.fantasy_baseball.player_board import get_player_by_name
+    from backend.fantasy_baseball.player_board import get_or_create_projection
 
     try:
         client = YahooFantasyClient()
@@ -4664,11 +4666,7 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
     players_out: list[RosterPlayerOut] = []
     for p in raw_players:
         name = p.get("name") or ""
-        z_score: float | None = None
-        board_entry = get_player_by_name(name) if name else None
-        if board_entry:
-            z_score = board_entry.get("z_score")
-
+        proj = get_or_create_projection(p) if name else {}
         players_out.append(
             RosterPlayerOut(
                 player_key=p.get("player_key") or "",
@@ -4677,8 +4675,10 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
                 positions=p.get("positions") or [],
                 status=p.get("status"),
                 injury_note=p.get("injury_note"),
-                z_score=z_score,
+                z_score=proj.get("z_score"),
                 is_undroppable=bool(p.get("is_undroppable", 0)),
+                is_proxy=bool(proj.get("is_proxy", False)),
+                cat_scores=proj.get("cat_scores") or {},
             )
         )
 
@@ -4855,6 +4855,23 @@ async def apply_fantasy_lineup(
 
     apply_date = payload.date or _dt.utcnow().strftime("%Y-%m-%d")
     team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+
+    # Pre-check: abort with 400 if no MLB games exist for this date
+    try:
+        mlb_games = get_lineup_optimizer().fetch_mlb_odds(apply_date)
+        if not mlb_games:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"No MLB games scheduled for {apply_date}. "
+                    "Lineup lock not available until the season starts (first game: March 28, 2026)."
+                ),
+            )
+    except HTTPException:
+        raise
+    except Exception as _exc:
+        logger.warning("Could not pre-check MLB schedule for %s: %s", apply_date, _exc)
+
     lineup_dicts = [{"player_key": p.player_key, "position": p.position} for p in payload.players]
 
     try:

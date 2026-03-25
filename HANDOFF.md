@@ -1865,10 +1865,10 @@ railway variables | grep -E "(INTEGRITY_SWEEP|ENABLE_MLB|ENABLE_INGESTION)"
 
 | Priority | Operation | Command | Status |
 |----------|-----------|---------|--------|
-| CRITICAL | Disable integrity sweep | `railway variables set INTEGRITY_SWEEP_ENABLED=false` | ⏳ PENDING |
-| HIGH | Enable MLB analysis | `railway variables set ENABLE_MLB_ANALYSIS=true` | ⏳ PENDING |
-| MEDIUM | Enable ingestion | `railway variables set ENABLE_INGESTION_ORCHESTRATOR=true` | ⏳ PENDING |
-| LOW | Verify Discord webhook | Check `DISCORD_ALERTS_WEBHOOK` exists | ⏳ PENDING |
+| CRITICAL | Disable integrity sweep | `railway variables set INTEGRITY_SWEEP_ENABLED=false` | ✅ COMPLETE (Mar 25) |
+| HIGH | Enable MLB analysis | `railway variables set ENABLE_MLB_ANALYSIS=true` | ✅ COMPLETE (Mar 25) |
+| MEDIUM | Enable ingestion | `railway variables set ENABLE_INGESTION_ORCHESTRATOR=true` | ✅ COMPLETE (Mar 25) |
+| LOW | Verify Discord webhook | Check `DISCORD_ALERTS_WEBHOOK` exists | ❌ FAILED (Mar 25) - Variable missing |
 
 ### §16.5 Gemini Agent Skills — IMPLEMENTED (Mar 25, 2026)
 

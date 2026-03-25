@@ -312,6 +312,7 @@ class DailyLineupResponse(BaseModel):
     batters: List[LineupPlayerOut]
     pitchers: List[StartingPitcherOut]
     games_count: int
+    no_games_today: bool = False
 
 
 class CategoryDeficitOut(BaseModel):
@@ -407,6 +408,8 @@ class RosterPlayerOut(BaseModel):
     injury_note: Optional[str] = None
     z_score: Optional[float] = None
     is_undroppable: bool = False
+    is_proxy: bool = False
+    cat_scores: dict = {}
 
 
 class RosterResponse(BaseModel):
