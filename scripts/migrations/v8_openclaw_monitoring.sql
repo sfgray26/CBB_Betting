@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS model_performance_metrics (
     
     -- Composite indexes for common queries
     CONSTRAINT chk_metric_type CHECK (metric_type IN (
-        'accuracy', 'clv', 'win_rate', 'mae', 'roi', 'sharpe', 'calibration'
+        'accuracy', 'clv', 'win_rate', 'mae', 'roi', 'sharpe', 'calibration', 'guardian_status'
     ))
 );
 
