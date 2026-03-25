@@ -107,6 +107,9 @@ _ingestion_orchestrator = None
 # ENABLE_MLB_ANALYSIS=true. Kept at module level for future status endpoints.
 _mlb_analysis_service = None
 
+# MLB probable-starts cache: {"data": {...}, "fetched_at": datetime}
+_STARTS_CACHE: dict = {}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -4082,33 +4085,61 @@ async def get_fantasy_waiver_recommendations(
             top_available.sort(key=lambda x: x.need_score, reverse=True)
 
         # Two-start pitchers: SPs from free agents with 2+ probable starts this week
+        import difflib as _difflib_starts
         from datetime import date as _dt, timedelta as _td
         _today = date_type.today()
         _week_end_ts = _today + _td(days=6)
 
-        def _count_probable_starts(player_name: str) -> int:
+        def _fetch_mlb_probable_starts(start_date: str, end_date: str) -> dict:
+            """Return {pitcher_full_name_lower: starts_count} via public MLB Stats API (6h cached)."""
+            import httpx as _httpx
+            _now = datetime.utcnow()
+            if _STARTS_CACHE.get("data") and _STARTS_CACHE.get("fetched_at"):
+                age_h = (_now - _STARTS_CACHE["fetched_at"]).total_seconds() / 3600
+                if age_h < 6:
+                    return _STARTS_CACHE["data"]
+            url = (
+                "https://statsapi.mlb.com/api/v1/schedule"
+                f"?sportId=1&startDate={start_date}&endDate={end_date}"
+                "&gameType=R&hydrate=probablePitcher"
+            )
             try:
-                import statsapi
-                schedule = statsapi.schedule(
-                    start_date=_today.strftime("%m/%d/%Y"),
-                    end_date=_week_end_ts.strftime("%m/%d/%Y"),
-                )
-                last = player_name.split()[-1].lower()
-                return sum(
-                    1 for g in schedule
-                    if last in (
-                        g.get("home_probable_pitcher", "") +
-                        g.get("away_probable_pitcher", "")
-                    ).lower()
-                )
-            except Exception:
-                return 0
+                resp = _httpx.get(url, timeout=8.0)
+                resp.raise_for_status()
+            except Exception as _e:
+                logger.warning("MLB Stats API schedule fetch failed: %s", _e)
+                return _STARTS_CACHE.get("data") or {}
+            starts: dict = {}
+            for date_entry in resp.json().get("dates", []):
+                for game in date_entry.get("games", []):
+                    for side in ("home", "away"):
+                        pitcher = (game.get("teams", {})
+                                   .get(side, {})
+                                   .get("probablePitcher", {}))
+                        pname = (pitcher.get("fullName") or "").strip().lower()
+                        if pname:
+                            starts[pname] = starts.get(pname, 0) + 1
+            _STARTS_CACHE["data"] = starts
+            _STARTS_CACHE["fetched_at"] = _now
+            return starts
+
+        starts_map = _fetch_mlb_probable_starts(
+            _today.strftime("%Y-%m-%d"), _week_end_ts.strftime("%Y-%m-%d")
+        )
 
         sp_fas = [p for p in free_agents if "SP" in (p.get("positions") or [])]
         two_start_pitchers_raw = []
-        for _sp in sp_fas[:20]:
-            _sp_name = (_sp.get("name") or "").strip()
-            _starts = _count_probable_starts(_sp_name)
+        for _sp in sp_fas[:50]:
+            _sp_name = (_sp.get("name") or "").strip().lower()
+            _starts = starts_map.get(_sp_name, 0)
+            if _starts == 0 and starts_map:
+                _best = max(
+                    starts_map.keys(),
+                    key=lambda k: _difflib_starts.SequenceMatcher(None, _sp_name, k).ratio(),
+                    default=None,
+                )
+                if _best and _difflib_starts.SequenceMatcher(None, _sp_name, _best).ratio() >= 0.90:
+                    _starts = starts_map[_best]
             if _starts >= 2:
                 _sp["starts_this_week"] = _starts
                 two_start_pitchers_raw.append(_to_waiver_player(_sp))
@@ -4297,17 +4328,32 @@ async def get_waiver_recommendations(
                 "is_proxy": bp.get("is_proxy", False),
                 "cat_scores": bp.get("cat_scores") or {},
                 "starts_this_week": int(rp.get("starts_this_week", 1)),
+                "status": rp.get("status"),
+                "injury_note": rp.get("injury_note"),
+                "is_undroppable": bool(rp.get("is_undroppable", 0)),
             })
 
-        # Helper: find weakest roster player at given position(s)
-        def _weakest_at_positions(target_positions: list[str]) -> dict | None:
+        # Statuses that mean a player is occupying an IL/NA slot, not an active slot.
+        # DTD players are borderline but still fill their active slot, so they remain droppable.
+        _IL_STATUSES = {"IL", "IL10", "IL60", "NA", "OUT"}
+
+        def _weakest_safe_to_drop(target_positions: list[str]) -> dict | None:
+            """Return the weakest droppable player at the given positions, with 1-active-cover protection."""
             candidates = [
                 rp for rp in my_roster_scored
-                if any(pos in rp["positions"] for pos in target_positions)
+                if not rp.get("is_undroppable", False)
+                and any(pos in rp["positions"] for pos in target_positions)
             ]
             if not candidates:
                 return None
-            return min(candidates, key=lambda x: x["z_score"])
+            active = [p for p in candidates if p.get("status") not in _IL_STATUSES]
+            if len(active) == 1:
+                # Only one active at this position — protected, do not drop
+                return None
+            if len(active) == 0:
+                # All injured — position already uncovered, anyone is droppable
+                return min(candidates, key=lambda x: x.get("z_score") or 0.0)
+            return min(active, key=lambda x: x.get("z_score") or 0.0)
 
         def _fmt_signals(signals: list[str], reg_delta: float, is_pitcher: bool) -> str:
             """Format FA Statcast signals as a rationale suffix."""
@@ -4374,7 +4420,7 @@ async def get_waiver_recommendations(
             statcast_boost = statcast_need_score_boost(fa_signals)
             adjusted_need = fa.need_score + statcast_boost
 
-            drop_candidate = _weakest_at_positions(pos_group)
+            drop_candidate = _weakest_safe_to_drop(pos_group)
             if not drop_candidate:
                 # No roster player at same position — still recommend add if FA is strong
                 if adjusted_need >= 2.0:
@@ -4431,6 +4477,8 @@ async def get_waiver_recommendations(
             )
             if is_proxy:
                 rationale += " [Call-up — projections estimated.]"
+            if drop_candidate.get("status") in _IL_STATUSES:
+                rationale += f" [Note: {drop_candidate['name']} is {drop_candidate['status']} — consider IL slot if available]"
 
             # MCMC win-probability simulation (non-blocking, graceful fallback)
             _mcmc = {}

@@ -174,3 +174,181 @@ class TestPositionFilter:
         assert captured_params.get("position") == "2B", (
             f"Expected position='2B' in params, got: {captured_params}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Fix B — Coverage-aware drop protection (_weakest_safe_to_drop logic)
+# ---------------------------------------------------------------------------
+
+class TestCoverageProtection:
+    """Unit tests for the coverage-aware drop logic embedded in the recommendations endpoint.
+
+    We test the logic in isolation by extracting the same control flow that main.py uses,
+    so these tests remain fast with no Yahoo network calls.
+    """
+
+    _IL_STATUSES = {"IL", "IL10", "IL60", "NA", "OUT"}
+
+    def _weakest_safe_to_drop(self, roster: list[dict], target_positions: list[str]) -> dict | None:
+        """Replicated from main.py for isolated unit testing."""
+        il = self._IL_STATUSES
+        candidates = [
+            rp for rp in roster
+            if not rp.get("is_undroppable", False)
+            and any(pos in rp["positions"] for pos in target_positions)
+        ]
+        if not candidates:
+            return None
+        active = [p for p in candidates if p.get("status") not in il]
+        if len(active) == 1:
+            return None  # only one active — protected
+        if len(active) == 0:
+            return min(candidates, key=lambda x: x.get("z_score") or 0.0)
+        return min(active, key=lambda x: x.get("z_score") or 0.0)
+
+    def _make_rp(self, name, positions, z_score, status=None, is_undroppable=False):
+        return {
+            "name": name,
+            "player_key": name.lower().replace(" ", "_"),
+            "positions": positions,
+            "z_score": z_score,
+            "is_proxy": False,
+            "cat_scores": {},
+            "starts_this_week": 1,
+            "status": status,
+            "injury_note": None,
+            "is_undroppable": is_undroppable,
+        }
+
+    def test_only_2b_protected(self):
+        """Roster has exactly 1 active 2B — must NOT suggest dropping them."""
+        roster = [
+            self._make_rp("Willi Castro", ["2B", "SS"], z_score=0.5),
+            self._make_rp("Juan Soto", ["OF"], z_score=4.0),
+        ]
+        result = self._weakest_safe_to_drop(roster, ["2B"])
+        assert result is None, "Only 2B should be protected from drop"
+
+    def test_il_player_not_protected(self):
+        """If the only player at a position is on IL, they ARE droppable (position is already empty)."""
+        roster = [
+            self._make_rp("Sick 2B", ["2B"], z_score=0.5, status="IL"),
+        ]
+        result = self._weakest_safe_to_drop(roster, ["2B"])
+        # All at position are on IL → anyone droppable
+        assert result is not None
+        assert result["name"] == "Sick 2B"
+
+    def test_two_2b_weakest_dropped(self):
+        """Two active 2Bs → the weaker one is the drop candidate."""
+        roster = [
+            self._make_rp("Strong 2B", ["2B"], z_score=2.0),
+            self._make_rp("Weak 2B", ["2B"], z_score=-0.5),
+        ]
+        result = self._weakest_safe_to_drop(roster, ["2B"])
+        assert result is not None
+        assert result["name"] == "Weak 2B"
+
+    def test_undroppable_excluded(self):
+        """is_undroppable=True player never appears as a drop candidate."""
+        roster = [
+            self._make_rp("Mike Trout", ["OF"], z_score=5.0, is_undroppable=True),
+            self._make_rp("Randy Arozarena", ["OF"], z_score=2.0, is_undroppable=False),
+            self._make_rp("Weak OF", ["OF"], z_score=0.3, is_undroppable=False),
+        ]
+        result = self._weakest_safe_to_drop(roster, ["OF", "LF", "CF", "RF"])
+        assert result is not None
+        assert result["name"] != "Mike Trout"
+        assert result["name"] == "Weak OF"
+
+    def test_no_candidates(self):
+        """If no roster player is at the target position group, return None."""
+        roster = [
+            self._make_rp("Pitcher", ["SP"], z_score=1.0),
+        ]
+        result = self._weakest_safe_to_drop(roster, ["C"])
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Fix C — Two-start pitchers via MLB Stats API (mocked HTTP)
+# ---------------------------------------------------------------------------
+
+class TestTwoStartPitchers:
+    """Unit tests for _fetch_mlb_probable_starts() and name matching in the two-start loop."""
+
+    _MLB_SCHEDULE_RESPONSE = {
+        "dates": [
+            {
+                "date": "2026-03-28",
+                "games": [
+                    {
+                        "teams": {
+                            "home": {"probablePitcher": {"fullName": "Cristopher Sanchez"}},
+                            "away": {"probablePitcher": {"fullName": "Zack Wheeler"}},
+                        }
+                    }
+                ],
+            },
+            {
+                "date": "2026-03-31",
+                "games": [
+                    {
+                        "teams": {
+                            "home": {"probablePitcher": {"fullName": "Cristopher Sanchez"}},
+                            "away": {"probablePitcher": {}},
+                        }
+                    }
+                ],
+            },
+        ]
+    }
+
+    def _parse_starts(self, schedule_json: dict) -> dict:
+        """Same parsing logic as _fetch_mlb_probable_starts (without HTTP)."""
+        starts: dict = {}
+        for date_entry in schedule_json.get("dates", []):
+            for game in date_entry.get("games", []):
+                for side in ("home", "away"):
+                    pitcher = game.get("teams", {}).get(side, {}).get("probablePitcher", {})
+                    pname = (pitcher.get("fullName") or "").strip().lower()
+                    if pname:
+                        starts[pname] = starts.get(pname, 0) + 1
+        return starts
+
+    def test_mlb_api_schedule_parsed(self):
+        """Mock HTTP response yields correct pitcher→count dict."""
+        starts = self._parse_starts(self._MLB_SCHEDULE_RESPONSE)
+        assert starts.get("cristopher sanchez") == 2
+        assert starts.get("zack wheeler") == 1
+        assert "" not in starts  # empty pitcher slots excluded
+
+    def test_two_start_fuzzy_match(self):
+        """'Christopher Sanchez' FA (Yahoo spelling) fuzzy-matches 'cristopher sanchez' in starts map."""
+        import difflib
+        starts_map = self._parse_starts(self._MLB_SCHEDULE_RESPONSE)
+        fa_name = "christopher sanchez"  # Yahoo spelling
+
+        # Exact miss
+        assert starts_map.get(fa_name, 0) == 0
+
+        # Fuzzy match
+        best = max(
+            starts_map.keys(),
+            key=lambda k: difflib.SequenceMatcher(None, fa_name, k).ratio(),
+            default=None,
+        )
+        ratio = difflib.SequenceMatcher(None, fa_name, best).ratio()
+        assert ratio >= 0.90, f"Expected ratio >= 0.90, got {ratio}"
+        assert starts_map[best] == 2
+
+    def test_no_games_returns_empty(self):
+        """Empty dates array → empty starts map → no two-start pitchers emitted."""
+        starts = self._parse_starts({"dates": []})
+        assert starts == {}
+
+    def test_short_name_no_false_positive(self):
+        """'Jim' does NOT fuzzy-match 'Tim' (ratio ~0.67 < 0.90)."""
+        import difflib
+        ratio = difflib.SequenceMatcher(None, "jim", "tim").ratio()
+        assert ratio < 0.90

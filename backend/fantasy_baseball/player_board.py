@@ -884,15 +884,30 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
         return entry
 
     # 3. Fuzzy name match — handles "José" vs "Jose", suffixes, etc.
+    import difflib as _difflib
     name_lower = name.lower()
+    clean_name = "".join(c for c in name_lower if c.isalnum() or c == " ")
     for board_name, board_entry in board_by_name.items():
         # Strip accents / punctuation for comparison
         clean_board = "".join(c for c in board_name if c.isalnum() or c == " ")
-        clean_name = "".join(c for c in name_lower if c.isalnum() or c == " ")
         if clean_board == clean_name:
             if player_key:
                 _projection_cache[player_key] = board_entry
             return board_entry
+
+    # 3b. Similarity match — handles "Christopher" vs "Cristopher", etc.
+    best_ratio = 0.0
+    best_entry = None
+    for board_name, board_entry in board_by_name.items():
+        clean_board = "".join(c for c in board_name if c.isalnum() or c == " ")
+        ratio = _difflib.SequenceMatcher(None, clean_name, clean_board).ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_entry = board_entry
+    if best_ratio >= 0.90 and best_entry is not None:
+        if player_key:
+            _projection_cache[player_key] = best_entry
+        return best_entry
 
     # 4. Not on board — build proxy entry
     positions = yahoo_player.get("positions") or []

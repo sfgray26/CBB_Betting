@@ -27,6 +27,398 @@
 
 ---
 
+## 🔴 CRITICAL P0 — IL ROSTER SUPPORT (NEW)
+
+> **Discovered:** March 25, 2026 — Yahoo updated to show IL status. Players on IL do NOT count against roster spots, but application does not account for this.
+> **Impact:** Waiver recommendations, roster spot calculations, and drop suggestions are incorrect.
+> **Season Start:** IMMINENT — this blocks proper fantasy baseball operations.
+
+### Problem Statement
+
+Yahoo Fantasy Baseball now properly marks players as "IL" (Injured List). These players:
+- Don't count against active roster spots (typically 23 active + 2 IL = 25 total)
+- Cannot be dropped (they're on IL, not bench)
+- Should not factor into "weakest droppable" calculations
+
+The current `YahooFantasyClient.get_roster()` returns ALL players (21+) without distinguishing IL status. The waiver edge detector and lineup optimizer treat IL players as bench players, leading to:
+1. Incorrect roster spot availability calculations
+2. Potentially suggesting drops of active players when IL slots are available
+3. Not factoring IL status into waiver decisions
+
+### Files Requiring Changes
+
+| File | Change Required |
+|------|-----------------|
+| `backend/fantasy_baseball/yahoo_client.py` | `_parse_player()`: extract `selected_position` from roster response; add `selected_position` to returned dict |
+| `backend/fantasy_baseball/yahoo_client.py` | `get_roster()`: capture `selected_position` for each player (where "IL" = Injured List) |
+| `backend/schemas.py` | `RosterPlayerOut`: add `selected_position: Optional[str]` field |
+| `backend/main.py` | `/api/fantasy/roster`: populate `selected_position` in response |
+| `backend/services/waiver_edge_detector.py` | `_weakest_droppable_at()`: exclude players with `selected_position == "IL"` from drop candidates |
+| `backend/services/waiver_edge_detector.py` | Add IL slot awareness (how many IL slots, how many used) |
+| `backend/main.py` | `/api/fantasy/waiver/recommendations`: factor IL status into move recommendations |
+| `frontend/lib/types.ts` | `RosterPlayer`: add `selected_position?: string` field |
+| `frontend/app/(dashboard)/fantasy/waiver/page.tsx` | Display IL status, filter IL players from drop suggestions |
+
+### Implementation Notes
+
+**Yahoo API Response Structure:**
+```json
+{
+  "player": [
+    [{"player_key": "469.p.12345"}, {"name": {...}}],
+    {"selected_position": {"position": "IL"}}  // This is where IL status lives
+  ]
+}
+```
+
+The `selected_position` is a sibling to the player metadata array, not inside it. The `get_lineup()` method already extracts this correctly — use it as reference.
+
+**Key Logic Changes:**
+1. `get_roster()` must capture `selected_position` alongside player data
+2. Waiver recommendations should:
+   - Never suggest dropping an IL player
+   - Count IL slots separately from active roster spots
+   - Consider moving injured players to IL before suggesting drops
+3. UI should clearly mark IL players (e.g., red badge: "IL")
+
+### Testing Requirements
+
+- Unit test: `get_roster()` returns `selected_position` = "IL" for IL players
+- Unit test: `waiver_edge_detector` excludes IL players from drop candidates
+- Integration test: `/api/fantasy/roster` includes `selected_position` field
+- UI test: IL players visually distinguished in roster view
+
+---
+
+## 🔴 CRITICAL P0 — CLOSER/ SAVES DETECTION GAP (NEW)
+
+> **Discovered:** March 25, 2026 — User has 1 healthy closer (Diaz), 1 injured (Adam). System showing Diaz with 0 projected saves. Waiver system not prioritizing closers despite need.
+> **Impact:** User cannot find available closers on waiver wire; roster construction broken for saves category.
+> **Season Start:** IMMINENT — saves are a critical binary category in H2H leagues.
+
+### Problem Statement
+
+1. **Edwin Diaz showing 0 projected saves** — He's one of the best closers in baseball (should be 30+ saves projected). The player board data is wrong.
+
+2. **Waiver system doesn't prioritize closers** — When a user has fewer than 2 healthy RPs, the system should surface available closers as high-priority adds. Currently:
+   - RP is grouped with SP/P positionally (they compete for drop slots)
+   - No special handling for "0 healthy closers" emergency
+   - Saves (nsv) are binary — you either compete in the category or punt it
+
+3. **Available closers not shown** — The `/api/fantasy/waiver` endpoint returns general free agents, but closers with saves potential should be surfaced prominently when needed.
+
+### Current State (User's Team)
+
+| RP | Status | Projected Saves (Current) | Should Be |
+|----|--------|---------------------------|-----------|
+| Edwin Diaz | Active | **0.0** (BUG!) | ~32 |
+| Jason Adam | DTD (hurt) | 3.2 | ~15 |
+
+**Result:** User effectively has 0 reliable closers but the waiver system isn't flagging this as urgent.
+
+### Files Requiring Changes
+
+| File | Change Required |
+|------|-----------------|
+| `backend/fantasy_baseball/player_board.py` | Fix projected saves for top closers (Diaz, Iglesias, Doval, etc.) |
+| `backend/fantasy_baseball/closer_situations.py` (NEW) | Load closer situations CSV and apply save projections |
+| `backend/services/waiver_edge_detector.py` | Add `healthy_closer_count` check; if < 2, boost all FA RPs with nsv > 5 |
+| `backend/services/waiver_edge_detector.py` | Separate RP from SP/P position group for roster construction logic |
+| `backend/main.py` | `/api/fantasy/waiver`: Add `closer_alert` field when healthy_RP_count < 2 |
+| `backend/main.py` | `/api/fantasy/waiver/recommendations`: Prioritize closers when needed |
+| `frontend/app/(dashboard)/fantasy/waiver/page.tsx` | Display "CLOSER NEEDED" alert; highlight available closers |
+
+### Data Fix Requirements
+
+**Closers with wrong/missing save projections:**
+- Edwin Diaz: Currently 0 → Should be 32+
+- Raisel Iglesias: Check
+- Camilo Doval: Check
+- Emmanuel Clase: Check
+- Ryan Pressly: Check
+- Andres Munoz: Check
+
+Source: `data/projections/closer_situations_2026.csv` should have accurate closer roles and projected saves.
+
+### Logic Changes
+
+**Waiver Priority Algorithm:**
+```python
+# In WaiverEdgeDetector.get_top_moves()
+healthy_closers = count_healthy_rps_with_saves(my_roster, min_saves=5)
+
+if healthy_closers < 2:
+    # Emergency closer needed
+    available_closers = [fa for fa in free_agents if is_closer(fa)]
+    for closer in available_closers:
+        # Boost score regardless of category deficits
+        closer['need_score'] += CLOSER_EMERGENCY_BOOST  # +10.0 or similar
+```
+
+### Testing Requirements
+
+- Data test: Diaz, Iglesias, Doval have nsv >= 25 in player_board
+- Unit test: `waiver_edge_detector` boosts closers when healthy_count < 2
+- Integration test: `/api/fantasy/waiver` returns closers first when needed
+- UI test: "NEED CLOSER" banner appears when appropriate
+
+---
+
+## 🔴 CRITICAL P0 — NO CLOSERS AVAILABLE & MISSING Z-SCORES (NEW)
+
+> **Discovered:** March 25, 2026 — User checked waiver wire: **ZERO actual closers available**. Only setup men (Vodnik, Henry, Ginkel, Rogers) with 0-3 projected saves. Also: some players have **no z-score** in the system.
+> **Impact:** User cannot solve saves problem via waivers; trading is only option. Missing z-scores break waiver recommendations entirely.
+> **Season Start:** IMMINENT — must pivot strategy from "add closer" to "trade for closer" or "punt saves".
+
+### Discovery: Waiver Wire Reality
+
+**Available RPs (actual Yahoo free agents):**
+| Player | Team | Proj Saves | Notes |
+|--------|------|------------|-------|
+| Victor Vodnik | COL | 0 | Setup/middle relief |
+| Cole Henry | WSH | 0 | Setup/middle relief |
+| Kevin Ginkel | AZ | 0 | Setup (Doval is closer) |
+| Taylor Rogers | MIN | 0 | Setup (possibly shares saves) |
+| Riley O'Brien | STL | 0 | Middle relief |
+| Edwin Uceta | TB | 0 | Middle relief |
+| **Paul Sewald** | **AZ** | **~5** | **Closest to closer, but uncertain role** |
+| Kirby Yates | LAA | 0 | **IL15** — hurt |
+| A.J. Puk | AZ | 0 | **IL60** — out for months |
+| Robert Stephenson | LAA | 0 | **IL60** — out for months |
+
+**Key Finding:** There are **no closers with 10+ projected saves** available on the waiver wire. This is normal in competitive leagues — closers get drafted or picked up immediately.
+
+### The "No Z-Score" Bug
+
+Some players on user's roster have **no z-score** in the system:
+- Emmanuel Clase (mentioned by user — legal issues, not playing but rostered)
+- Potentially others
+
+**Impact:** When `get_or_create_projection()` returns `None` or empty `cat_scores`, the waiver system cannot:
+- Calculate category deficits
+- Score free agents against needs
+- Make recommendations
+
+### What the System Should Do
+
+When `healthy_closer_count < 2` AND `available_closers_count == 0`:
+
+1. **Alert the user** — "No closers available on waivers"
+2. **Provide alternative strategies:**
+   - Trade targets: Closers on other teams to trade for
+   - Speculative adds: Setup men who might become closers
+   - Punt saves: Consider punting the category, focus on other 17
+3. **Monitor for closer changes:** New closer announcements happen frequently
+4. **Don't waste waiver priority** on middle relievers
+
+### Files Requiring Changes
+
+| File | Change Required |
+|------|-----------------|
+| `backend/services/waiver_edge_detector.py` | Detect when `available_closers_count == 0`; surface alternative strategies |
+| `backend/main.py` | `/api/fantasy/waiver`: Add `no_closers_available` flag + `alternative_strategy` field |
+| `backend/fantasy_baseball/player_board.py` | Fix missing z-scores for rostered players (even if not playing) |
+| `frontend/app/(dashboard)/fantasy/waiver/page.tsx` | Display "No Closers Available" message; show speculative setup men; suggest trading |
+
+### Alternative Strategy Recommendations
+
+When no closers are available, the system should suggest:
+
+**Option 1: Trade for a Closer**
+- Target teams with 3+ closers
+- Offer excess 1B (you have 3: Alonso, Pasquantino, Torkelson)
+- Offer SP depth (you have 6 healthy SPs)
+
+**Option 2: Speculative Setup Men**
+These RPs could become closers if the current closer struggles/gets hurt:
+- Kevin Ginkel (AZ) — if Doval struggles
+- Taylor Rogers (MIN) — Jhoan Duran is closer but Rogers is experienced
+- Cole Henry (WSH) — Kyle Finnegan is closer but shaky
+- Victor Vodnik (COL) — unclear situation in Colorado
+
+**Option 3: Punt Saves**
+- Accept you'll lose saves category most weeks
+- Focus on dominating other 17 categories
+- Don't waste roster spots on middle relievers
+
+### Testing Requirements
+
+- Unit test: Waiver detector returns `no_closers_available=true` when appropriate
+- Data test: All rostered players have z-scores (even if placeholder/zero)
+- Integration test: `/api/fantasy/waiver` returns alternative strategies when no closers found
+- UI test: "Trade for Closer" suggestion appears when waivers are dry
+
+---
+
+## 🔴 CRITICAL P0 — DAILY LINEUP OPTIMIZER NOT OPTIMIZING (NEW)
+
+> **Discovered:** March 25, 2026 — User reports daily lineup is "completely broken" and "not optimizing for anything."
+> **Impact:** User must manually set lineups daily without data-driven optimization; massive competitive disadvantage in H2H league.
+> **Season Start:** IMMINENT — Opening Day lineups need to be optimized.
+
+### The Problem
+
+The current `DailyLineupOptimizer` and `/api/fantasy/lineup/{date}` endpoint are **fundamentally broken**:
+
+**Current "Optimization" Logic (line 3816):**
+```python
+status="START" if i < 9 else "BENCH"  # Just takes top 9 by score!
+```
+
+This is **not optimization** — it's just ranking players by a composite score and taking the top 9. It completely ignores:
+
+1. **Position Requirements** — You can't just start any 9 batters; you need:
+   - 1 Catcher
+   - 1 First Baseman
+   - 1 Second Baseman  
+   - 1 Third Baseman
+   - 1 Shortstop
+   - 3 Outfielders
+   - 1 Utility (any position)
+
+2. **Pitcher Slots** — The system doesn't distinguish between:
+   - SP slots (typically 2)
+   - RP slots (typically 2)
+   - P slots (either SP or RP, typically 2)
+
+3. **Players Not Playing** — If a player has an off-day, starting them gives zero stats
+
+4. **Injured Players** — DTD/IL players should never be suggested as START
+
+5. **Multi-Position Eligibility** — Willi Castro can play 2B/3B/LF/RF; the optimizer should use him to fill the weakest position
+
+6. **Matchup Optimization** — The system should:
+   - Stack batters from teams with high implied runs (>5.0)
+   - Bench batters facing elite pitchers
+   - Start pitchers in pitcher-friendly parks
+   - Bench pitchers against stacked lineups (e.g., avoid starting SP vs Dodgers in Coors)
+
+### What's Actually Happening
+
+When you call `GET /api/fantasy/lineup/2026-03-28`:
+
+1. Fetches MLB odds from The Odds API ✓
+2. Computes implied runs per team ✓
+3. Ranks your batters by `lineup_score` (implied runs × park factor + stats) ✓
+4. **WRONG:** Just says "start the top 9, bench the rest"
+
+This is like saying "start your 9 best players" without considering that you need specific positions filled!
+
+### Real Example: User's Roster Problem
+
+| Position | Players | Issue |
+|----------|---------|-------|
+| C | Yainer Diaz | Only 1 catcher - must start |
+| 1B | Alonso, Pasquantino, Torkelson | 3 players, 1 slot - pick best matchup |
+| 2B | Willi Castro, Marcus Semien (new), Jordan Westburg (IL) | Semien should start; Castro flexes to OF/3B |
+| 3B | Matt Chapman, Willi Castro | Chapman starts; Castro flexes |
+| SS | Geraldo Perdomo | Only 1 SS - must start |
+| OF | Soto, Nimmo, Buxton, Crow-Armstrong, Frelick, Suzuki (IL) | Need 3 OFs + maybe 1 at Utility |
+
+**Current system would:** Just pick top 9 by score, potentially benching your only catcher or shortstop!
+
+**Proper optimizer should:**
+1. Identify must-starts (only C, only SS)
+2. Fill mandatory positions with best available
+3. Use multi-position players (Castro, Semien) to cover gaps
+4. Fill Utility with best remaining batter
+5. Ensure all 9 slots are filled with players actually playing that day
+
+### Files Requiring Changes
+
+| File | Change Required |
+|------|-----------------|
+| `backend/fantasy_baseball/daily_lineup_optimizer.py` | **Complete rewrite of `rank_batters()`** — implement positional constraint satisfaction |
+| `backend/fantasy_baseball/daily_lineup_optimizer.py` | Add `optimize_lineup()` method that fills specific slots: C, 1B, 2B, 3B, SS, OF×3, Util |
+| `backend/fantasy_baseball/daily_lineup_optimizer.py` | Add pitcher slot logic: SP×2, RP×2, P×2 (or league-specific) |
+| `backend/fantasy_baseball/daily_lineup_optimizer.py` | Check if player is actually playing that day (not off-day) |
+| `backend/fantasy_baseball/daily_lineup_optimizer.py` | Factor opponent pitcher quality into batter rankings |
+| `backend/fantasy_baseball/daily_lineup_optimizer.py` | Factor batter vs pitcher handedness splits |
+| `backend/main.py` | `/api/fantasy/lineup/{date}`: Call new `optimize_lineup()` instead of simple rank |
+| `backend/schemas.py` | `DailyLineupResponse`: Add `slots` field showing which player goes in which slot |
+| `frontend/app/(dashboard)/fantasy/lineup/page.tsx` | Display lineup as position slots, not just ranked list |
+
+### Algorithm: Proper Lineup Optimization
+
+```python
+def optimize_lineup(roster, games_today, projections):
+    """
+    Fill 9 batter slots optimally:
+    - C (1)
+    - 1B (1)  
+    - 2B (1)
+    - 3B (1)
+    - SS (1)
+    - OF (3)
+    - Util (1 - any batter)
+    
+    Constraints:
+    - Player must be active (not IL/DTD)
+    - Player's team must have a game today
+    - Player must be eligible for the slot position
+    """
+    slots = {
+        'C': None, '1B': None, '2B': None, '3B': None, 'SS': None,
+        'OF1': None, 'OF2': None, 'OF3': None, 'Util': None
+    }
+    
+    # Get all active players whose teams play today
+    available = [
+        p for p in roster 
+        if p['status'] not in ('IL', 'IL60', 'NA', 'DTD')
+        and p['team'] in games_today
+    ]
+    
+    # Sort by daily lineup score (implied runs, park factor, projections)
+    available.sort(key=lambda p: p['lineup_score'], reverse=True)
+    
+    # Fill mandatory single positions first (C, SS) - often only one option
+    for pos in ['C', 'SS']:
+        candidates = [p for p in available if pos in p['positions'] and p not in slots.values()]
+        if candidates:
+            slots[pos] = candidates[0]
+    
+    # Fill multi-candidate positions with best available
+    for pos in ['1B', '2B', '3B']:
+        candidates = [p for p in available if pos in p['positions'] and p not in slots.values()]
+        if candidates:
+            slots[pos] = candidates[0]
+    
+    # Fill OF slots (need 3)
+    of_candidates = [p for p in available if any(pos in p['positions'] for pos in ['OF','LF','CF','RF']) and p not in slots.values()]
+    for i in range(3):
+        if of_candidates:
+            slots[f'OF{i+1}'] = of_candidates.pop(0)
+    
+    # Fill Util with best remaining batter
+    remaining = [p for p in available if p not in slots.values()]
+    if remaining:
+        slots['Util'] = remaining[0]
+    
+    return slots
+```
+
+### Key Features Missing
+
+1. **Off-day detection** — Skip players whose teams don't play
+2. **Pitcher opponent quality** — Don't start batters vs Scherzer/deGrom types
+3. **Handedness splits** — Start lefty batters vs RHP, vice versa
+4. **Recent performance** — Hot hitters get boost
+5. **Weather factors** — Wind blowing out at Wrigley = stack hitters
+6. **Rest days** — Veterans often rest day games after night games
+
+### Testing Requirements
+
+- Unit test: Optimizer fills all 9 slots with valid position eligibility
+- Unit test: Off-day players are excluded from consideration
+- Unit test: IL/DTD players are excluded
+- Unit test: Multi-position players (Castro) can fill any eligible slot
+- Integration test: `/api/fantasy/lineup/{date}` returns filled lineup slots
+- Integration test: Lineup respects Yahoo position eligibility
+- UI test: Lineup displayed as position slots with START/BENCH decisions
+
+---
+
 ## 0. CURRENT STATE — WHAT IS TRUE RIGHT NOW
 
 | Subsystem | Status | Notes |
@@ -44,6 +436,11 @@
 | WaiverEdgeDetector | **LIVE** (Mar 24) | `backend/services/waiver_edge_detector.py`. FA cache 10 min. MCMC-enriched. |
 | MCMCWeeklySimulator (OOP) | **LIVE** (Mar 24) | `backend/services/mcmc_simulator.py`. Wrapper around fantasy_baseball/mcmc_simulator.py. |
 | Waiver Wire (Next.js) | **LIVE** (Mar 24) | Filter/sort/pagination/recommendations UI. Backend bugs fixed (owned_pct, two_start SPs, get_roster). |
+| **IL Roster Support** | **⚠️ CRITICAL GAP** | Yahoo updated to show IL status. Players on IL don't count against roster spots. App does NOT handle this — waiver/drop logic is incorrect. See §IL ROSTER SUPPORT above. |
+| **Closer/Saves Detection** | **⚠️ CRITICAL GAP** | Edwin Diaz showing 0 projected saves (bug). System doesn't prioritize closers when < 2 healthy RPs. User can't find saves on waiver wire. See §CLOSER/SAVES DETECTION GAP above. |
+| **No Closers Available** | **⚠️ STRATEGIC GAP** | Waiver wire has ZERO closers (only setup men). System doesn't alert user or suggest alternatives (trade/punt/monitor). See §NO CLOSERS AVAILABLE above. |
+| **Missing Z-Scores** | **⚠️ DATA GAP** | Some rostered players (Emmanuel Clase) have no z-score. Breaks waiver calculations. See §NO CLOSERS AVAILABLE above. |
+| **Daily Lineup Optimizer** | **⚠️ CRITICAL GAP** | Not actually optimizing! Just ranks players by score and takes top 9. Ignores position requirements (C/1B/2B/3B/SS/OF/Util), off-days, matchups. See §DAILY LINEUP OPTIMIZER above. |
 | EdgeGenerationEngine | NOT EXISTS | `backend/services/edge_engine.py` does not exist |
 | Migration scripts dir | ABSENT | No `backend/migrations/` directory. Precedent: `scripts/migrate_v*.py` |
 | Test suite | **~665/668** | 35 new tests added this session. 3 pre-existing DB-auth failures only. |
@@ -1576,14 +1973,14 @@ Full OpenClaw (v4.0+) is an **autonomous system** per SOUL.md:
 
 ---
 
-**Document Version:** EMAC-084
+**Document Version:** EMAC-085
 **Last Updated:** March 25, 2026
-**Status:** ACTIVE — EPIC-1/2/3 COMPLETE. MLB model LIVE. UAT Phase 1 COMPLETE (waiver+lineup fixed). Suite 1104/1109. Next: EPIC-4 Bracket Sunset (Apr 7) + UAT Phase 2.
+**Status:** ACTIVE — EPIC-1/2/3 COMPLETE. MLB model LIVE. UAT Phase 1+2 COMPLETE (fantasy baseball critical bugs fixed). Suite 1105/1109. Next: EPIC-4 Bracket Sunset (Apr 7) + UAT Phase 3 (brier score, Odds Monitor).
 **Branch:** main
 **Team:** Claude Code (Architect) · Kimi CLI (Audit) · OpenClaw (Execution Target) · Gemini (Ops/Railway only)
-**Next operator (Claude Code):** EPIC-4 Bracket Sunset (Apr 7) OR UAT Phase 2 (brier score, MLB projection defaults, Odds Monitor). See §18.4.
+**Next operator (Claude Code):** EPIC-4 Bracket Sunset (Apr 7) OR UAT Phase 3 (brier score calc, Odds Monitor portfolio fetch, Bet History filter). See §18.4.
 **Next operator (Gemini CLI):** Railway env vars PENDING — see §16. Context retention config available in `.gemini/config.yaml`. DO NOT write code — ops/env vars only.
-**Next operator (Kimi CLI):** MLB model audit COMPLETE — see §15 for findings. OpenClaw CLI verified.
+**Next operator (Kimi CLI):** Fantasy Baseball elite platform gap analysis COMPLETE — see `reports/FANTASY_BASEBALL_GAP_ANALYSIS.md`. Architecture roadmap created. Ready to audit Claude's implementation.
 **CRITICAL REMINDER:** See ADR-010 — Next.js is the ONLY UI. Streamlit (`dashboard/`) is RETIRED. Never reference Streamlit code.
 **Apr 7 mission:** V9.2 recalibration — see §10 and prior HANDOFF.md §6
 **Workstream Split (PARALLEL EXECUTION):**
@@ -2140,10 +2537,10 @@ grep -A5 "Next operator (Gemini" HANDOFF.md
 | 🔴 **CRITICAL** | Waiver Wire API 503 | ✅ FIXED (Mar 25) | Done |
 | 🔴 **CRITICAL** | Daily Lineup Yahoo 422 | ✅ FIXED (Mar 25) | Done |
 | 🟠 **HIGH** | Calibration empty | Missing brier calculation | 2-3 days |
-| 🟠 **HIGH** | Daily Lineup defaults | All players 4.50/1.000/4.625 | 2-3 days |
+| 🟠 **HIGH** | Daily Lineup defaults | Pre-season 400 + no_games_today flag FIXED; real odds await Mar 28 | ✅ FIXED (Mar 25) |
 | 🟠 **HIGH** | Odds Monitor broken | Portfolio fetch failing | 2-3 days |
 | 🟡 **MEDIUM** | Bet History filter | Shows all not placed | 1 day |
-| 🟡 **MEDIUM** | My Roster data | Z-score/undroppable issues | 1-2 days |
+| 🟡 **MEDIUM** | My Roster data | Z-score FIXED (get_or_create_projection + is_proxy + cat_scores) | ✅ FIXED (Mar 25) |
 | 🟡 **MEDIUM** | Current Matchup | Category stats/opponent | 1-2 days |
 | 🟡 **MEDIUM** | Risk Dashboard | Settlement validation | 1 day |
 | 🟢 **LOW** | Today's Bets checkbox | UI enhancement | 0.5 day |
@@ -2185,16 +2582,22 @@ grep -A5 "Next operator (Gemini" HANDOFF.md
 2. ✅ Fix Daily Lineup Yahoo 422 error — per-player fallback retry
 3. ✅ Tests: 19/19 lineup+yahoo+waiver pass
 
-**Phase 2: High Priority (Next Week)**
-4. Implement brier score calculation
-5. Debug MLB projection defaults
-6. Fix Odds Monitor portfolio fetch
+**Phase 2: Fantasy Baseball Critical Bugs — COMPLETE (Mar 25, 2026)**
+4. ✅ Roster z-score nulls — `get_or_create_projection()` (accent normalization + proxy fallback). `RosterPlayerOut` gains `is_proxy` + `cat_scores` fields.
+5. ✅ Position-aware waiver drop pairing — `_weakest_droppable_at()` + `_POS_GROUP` map in `waiver_edge_detector.py`. OF FA no longer targets 2B as drop.
+6. ✅ Lineup pre-season 400 — `fetch_mlb_odds` pre-check in PUT endpoint; `no_games_today` flag in GET response + `DailyLineupResponse` schema.
+7. ✅ `percent_owned` subresource probe — `out=metadata,percent_owned` in `get_free_agents()` / `get_waiver_players()`.
+8. ✅ Suite: 1105/1109 (4 pre-existing failures only)
 
-**Phase 3: Medium Priority (Following Week)**
-7. Bet history filter
-8. My roster data mapping
-9. Current matchup display
-10. Risk dashboard fixes
+**Phase 3: High Priority (Next)**
+9. Implement brier score calculation (calibration empty)
+10. Fix Odds Monitor portfolio fetch
+11. Bet history filter (shows all, not just placed)
+
+**Phase 4: Medium Priority (Following Week)**
+12. My roster data mapping (remaining undroppable display issues)
+13. Current matchup display
+14. Risk dashboard settlement validation fixes
 
 **Phase 4: Cleanup (Final)**
 11. Today's bets checkbox
@@ -2222,4 +2625,75 @@ claude "Read CLAUDE_UAT_FIXES_PROMPT.md and start with Priority 1
 ---
 
 **Document Version:** EMAC-082-UAT
+**Last Updated:** March 25, 2026
+
+
+---
+
+## §19. Elite Fantasy Baseball Platform — Architecture & Roadmap
+
+**Status:** Analysis COMPLETE — Roadmap created, awaiting implementation  
+**Gap Analysis:** `reports/FANTASY_BASEBALL_GAP_ANALYSIS.md`  
+**Implementation Prompt:** `CLAUDE_FANTASY_ROADMAP_PROMPT.md`  
+
+### §19.1 Current State vs. Elite Spec
+
+| Phase | Spec Features | Current Coverage | Status |
+|-------|--------------|------------------|--------|
+| 1: Foundation | 2 | ~40% | Partial (API bugs being fixed) |
+| 2: Analytics | 2 | ~30% | Basic projections only |
+| 3: Optimizers | 3 | ~25% | MCMC exists, needs polish |
+| 4: Intelligence | 2 | ~15% | Discord alerts only |
+| 5: Elite Tools | 3 | 0% | Not started |
+| **Total** | **12** | **~25%** | **Solid foundation, needs depth** |
+
+### §19.2 Critical Insight
+
+**You're NOT building from scratch.** You have:
+- ✅ Yahoo OAuth & API (with bugs being fixed)
+- ✅ Statcast/pybaseball pipeline
+- ✅ MCMC simulation engine
+- ✅ OpenClaw 24/7 monitoring
+- ✅ Next.js 15 frontend
+
+**The gap is FEATURE DEPTH and UX POLISH, not infrastructure.**
+
+### §19.3 Implementation Roadmap
+
+| Phase | Timeline | Focus | Deliverables |
+|-------|----------|-------|--------------|
+| **A** | Week 1-2 | Critical Fixes | Yahoo API reliability, UAT completion |
+| **B** | Week 3-4 | Foundation | Enhanced dashboard, user preferences |
+| **C** | Week 5-8 | Analytics | Trade analyzer, advanced scout, waiver optimizer |
+| **D** | Week 9-12 | Intelligence | Standings projection, injury alerts, mobile push |
+| **E** | Months 4-6 | Elite | Backtesting, strategy AI, community |
+
+### §19.4 Top 5 Gaps to Address
+
+| Priority | Gap | Current Pain | Solution |
+|----------|-----|--------------|----------|
+| 1 | Yahoo API reliability | 422/503 errors | Retry logic + validation |
+| 2 | Multi-source projections | Only 1-2 sources | Aggregator service |
+| 3 | Trade analyzer | Not implemented | Full trade analysis engine |
+| 4 | Lineup optimizer | Manual only | Auto-optimize + push |
+| 5 | Mobile/Push | Discord only | PWA + native push |
+
+### §19.5 Files Created
+
+| File | Purpose |
+|------|---------|
+| `reports/FANTASY_BASEBALL_GAP_ANALYSIS.md` | 17-page detailed gap analysis |
+| `CLAUDE_FANTASY_ROADMAP_PROMPT.md` | Implementation prompt for Claude Code |
+
+### §19.6 Next Steps
+
+**Claude Code:** Review `CLAUDE_FANTASY_ROADMAP_PROMPT.md` and implement **Phase A** (Critical Fixes) while completing UAT Phase 2.
+
+**Kimi CLI:** Stand by to audit implementation as phases complete.
+
+**Timeline:** 12 weeks to full Phase D (elite differentiation), 6 months to Phase E.
+
+---
+
+**Document Version:** EMAC-082-FANTASY-ARCH
 **Last Updated:** March 25, 2026
