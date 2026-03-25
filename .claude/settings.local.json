@@ -32,7 +32,8 @@
       "Bash(flake8:*)",
       "Bash(rm:*)",
       "Bash(npx tsc:*)",
-      "Bash(py:*)"
+      "Bash(py:*)",
+      "WebFetch(domain:geminicli.com)"
     ]
   }
 }

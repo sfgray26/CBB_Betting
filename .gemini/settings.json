@@ -1,0 +1,25 @@
+{
+  "general": {
+    "sessionRetention": {
+      "enabled": true,
+      "maxAge": "30d",
+      "maxCount": 100
+    }
+  },
+  "ui": {
+    "hideTips": false,
+    "showContextSummary": true
+  },
+  "tools": {
+    "exclude": [
+      "write_file",
+      "apply_diff",
+      "run_git_command"
+    ]
+  },
+  "context": {
+    "fileName": ["GEMINI.md", "CONTEXT.md"],
+    "includeDirectories": [".gemini"],
+    "loadFromIncludeDirectories": true
+  }
+}
