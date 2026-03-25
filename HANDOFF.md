@@ -1870,27 +1870,40 @@ railway variables | grep -E "(INTEGRITY_SWEEP|ENABLE_MLB|ENABLE_INGESTION)"
 | MEDIUM | Enable ingestion | `railway variables set ENABLE_INGESTION_ORCHESTRATOR=true` | ⏳ PENDING |
 | LOW | Verify Discord webhook | Check `DISCORD_ALERTS_WEBHOOK` exists | ⏳ PENDING |
 
-### §16.5 Future Enhancement: Gemini Skills & Custom Commands
+### §16.5 Gemini Agent Skills — IMPLEMENTED (Mar 25, 2026)
 
-**Status:** Escalated to Claude Code (system design required)
+**Status:** COMPLETE — 4 skills live in `.gemini/skills/`
 
-**Context:** Gemini CLI supports **Agent Skills** and **Custom Commands** (see [docs](https://geminicli.com/docs/features/agent-skills/)). This could enhance DevOps Lead capabilities:
+**Evaluation:** Implemented. Skills add session resilience (Gemini re-reads SKILL.md after context loss), bundle verification scripts co-located with documentation, and enforce correct workflows (dry-run-first, secret masking). Value exceeds simple shell aliases.
 
-**Potential Skills to Implement:**
-| Skill | Purpose | Example Command |
-|-------|---------|-----------------|
-| `railway-logs` | Pre-configured log filtering | `/railway-logs --errors --last=1h` |
-| `db-migrate` | Run migrations with verification | `/db-migrate --dry-run` |
-| `env-diff` | Compare env vars across environments | `/env-diff prod vs staging` |
-| `health-check` | Automated system diagnostics | `/health-check --all` |
+**Format Note:** Gemini CLI uses `SKILL.md` (YAML frontmatter + markdown), NOT `skill.json` + `handler.sh` as originally described in the prompt. Scripts live in `scripts/` subdirectory.
 
-**Why Escalated:**
-- Skills require `.gemini/skills/` JSON definitions + implementation logic
-- Custom commands need shell scripts or JavaScript handlers
-- This is **system architecture** per AGENTS.md → Claude Code owns
-- Kimi (me) can audit the design once Claude proposes it
+**Implemented Skills:**
+| Skill | SKILL.md | Script | Purpose |
+|-------|----------|--------|---------|
+| `railway-logs` | `.gemini/skills/railway-logs/SKILL.md` | `scripts/filter-logs.sh` | Filter/diagnose Railway logs (`--errors`, `--grep=`, `--lines=`) |
+| `db-migrate` | `.gemini/skills/db-migrate/SKILL.md` | `scripts/run-migration.sh` | Run migrations dry-run-first; `--verify-only` checks schema |
+| `env-check` | `.gemini/skills/env-check/SKILL.md` | `scripts/check-vars.sh` | Verify Railway env vars; masks secrets; exits non-zero if wrong |
+| `health-check` | `.gemini/skills/health-check/SKILL.md` | `scripts/check-health.sh` | Multi-component health (Railway + API /health + scheduler) |
 
-**Next Step:** Claude to evaluate if skills add enough value vs. current shell-based workflow. See `CLAUDE_GEMINI_SKILLS_PROMPT.md` for implementation prompt.
+**Gemini Usage:**
+```
+# Skills are auto-discovered — just describe what you need:
+"check the env vars"          -> env-check skill activates
+"is the API up"               -> health-check skill activates
+"show me recent errors"       -> railway-logs skill activates
+"run the v7 migration"        -> db-migrate skill activates
+
+# Or run scripts directly:
+bash .gemini/skills/health-check/scripts/check-health.sh
+bash .gemini/skills/env-check/scripts/check-vars.sh --critical-only
+bash .gemini/skills/db-migrate/scripts/run-migration.sh migrate_v7 --dry-run
+```
+
+**Critical env vars verified by env-check skill:**
+- `INTEGRITY_SWEEP_ENABLED=false` (prevents restart loop)
+- `ENABLE_MLB_ANALYSIS=true`
+- `ENABLE_INGESTION_ORCHESTRATOR=true`
 
 ### §16.6 Gemini CLI Usage Pattern
 
@@ -1927,5 +1940,286 @@ grep -A10 "Current Pending Operations" HANDOFF.md
 
 ---
 
-**Document Version:** EMAC-082
+**Document Version:** EMAC-083
+**Last Updated:** March 25, 2026
+
+
+---
+
+## §17. Multi-Agent Orchestration & Workflow Automation
+
+**Status:** Solution Identified — Awaiting Implementation Decision  
+**Problem:** Manual handoffs between Claude/Kimi/Gemini via separate CLIs  
+**Solution:** Use OpenClaw's ACP to orchestrate agents in parallel  
+**Report:** `reports/OPENCLAW_ORCHESTRATION_WORKFLOW.md`  
+**Prompt:** `CLAUDE_OPENCLAW_ORCHESTRATION_PROMPT.md`
+
+### §17.1 Current Friction (Your Actual Problem)
+
+**Current Workflow:**
+```
+You → Check HANDOFF.md
+  → Open Claude Code CLI → "Do your tasks" → Wait
+  → Open Kimi CLI → "Do your audit" → Wait
+  → Open Gemini CLI → "Do your ops" → Wait
+  → Repeat...
+```
+
+**Issues:**
+- Manual context switching between 3 CLIs
+- You become the bottleneck
+- Agents work sequentially, not in parallel
+- Risk of missing HANDOFF.md updates
+
+**NOT a Cost Problem:** You're on Claude $200/year fixed plan + Kimi fixed plan. 
+Using agents more doesn't cost more. This is about **automation and efficiency**.
+
+### §17.2 Solution: OpenClaw 24/7 Orchestration
+
+Since OpenClaw already runs 24/7, use it as the central coordinator:
+
+```
+You in Discord/Telegram: "Start work session"
+  ↓
+OpenClaw spawns 3 ACP agents in parallel:
+  ├─→ Claude Code → "Work on architecture tasks" → Updates HANDOFF.md
+  ├─→ Kimi CLI → "Run audits" → Updates HANDOFF.md
+  └─→ Gemini CLI → "Complete Railway ops" → Updates HANDOFF.md
+  ↓
+OpenClaw notifies you: "All agents complete. Claude: 2 tasks done, 
+                       Kimi: 1 audit complete, Gemini: 3 ops done"
+```
+
+**Benefits:**
+- Agents work in **parallel** (faster completion)
+- **One interface** (Discord/Telegram) instead of 3 CLIs
+- **Automatic notifications** when work completes
+- **No context switching** for you
+- Still uses HANDOFF.md as coordination point
+
+### §17.3 Implementation: OpenClaw ACP Orchestration
+
+Since you're already on fixed-cost plans (Claude $200/year, Kimi fixed), the goal is **efficiency**, not cost reduction.
+
+**Implementation Steps:**
+
+**Phase 1: Configure ACP Agents in OpenClaw**
+```bash
+# Add to ~/.openclaw/config.json:
+{
+  "agents": {
+    "claude": {
+      "runtime": "acp",
+      "command": "claude-agent-acp",
+      "description": "Architecture and implementation"
+    },
+    "kimi": {
+      "runtime": "acp",
+      "command": "kimi acp",
+      "description": "Audit and analysis"
+    },
+    "gemini": {
+      "runtime": "acp",
+      "command": "gemini --acp",
+      "description": "DevOps and Railway operations"
+    }
+  }
+}
+```
+
+**Phase 2: Create Workflow Trigger**
+```bash
+# Add to OpenClaw:
+# Trigger: "Start work session"
+# Action: Spawn all 3 agents in parallel with HANDOFF.md context
+
+openclaw workflow create daily-sprint \
+  --agent claude --task "Complete architecture tasks from HANDOFF.md" \
+  --agent kimi --task "Run audits from HANDOFF.md" \
+  --agent gemini --task "Complete Railway ops from HANDOFF.md §16.4"
+```
+
+**Phase 3: Add Notifications**
+```bash
+# Watch HANDOFF.md for changes
+# Notify when each agent completes work
+```
+
+**Result:** One command spawns all 3 agents in parallel. You get notified as they complete.
+
+### §17.4 Three Approaches
+
+| Approach | Parallel | Automation | Setup | Best For |
+|----------|----------|------------|-------|----------|
+| **Status Quo** | ❌ Sequential | ❌ Manual | 0 | Keeping things simple |
+| **ACP Orchestration** ⭐ | ✅ Parallel | ✅ Triggered | 2-4 hours | **Your situation** |
+| **Full Workflow Automation** | ✅ Parallel | ✅ Scheduled | 1-2 days | Post-Apr 7 |
+
+### §17.5 Recommendation for CBB Edge
+
+**Do This Now (Before Apr 7):**
+- **ACP Orchestration** — Configure OpenClaw to spawn agents in parallel
+- **One trigger** "Start work" → all 3 agents activate
+- **Notifications** when HANDOFF.md updates
+- **Time investment:** 2-4 hours
+- **Benefit:** Eliminate manual context switching
+
+**Defer Until After Apr 7:**
+- Full workflow automation (scheduled runs)
+- Additional local LLM integration
+- Complex multi-step workflows
+
+### §17.6 Quick Wins (No Setup Required)
+
+While deciding on orchestration, try these immediately:
+
+**Option A: Shell Alias**
+```bash
+# Add to .bashrc/.zshrc
+alias start-work='
+  echo "Starting work session..." && \
+  echo "1. Checking HANDOFF.md" && \
+  grep -A3 "Next operator (Claude" HANDOFF.md && \
+  grep -A3 "Next operator (Kimi" HANDOFF.md && \
+  grep -A3 "Next operator (Gemini" HANDOFF.md
+'
+```
+
+**Option B: Simple Script**
+```bash
+# scripts/start-work.sh
+#!/bin/bash
+echo "=== CBB Edge Work Session ==="
+echo ""
+echo "CLAUDE TASKS:"
+grep -A5 "Next operator (Claude" HANDOFF.md
+echo ""
+echo "KIMI TASKS:"
+grep -A5 "Next operator (Kimi" HANDOFF.md
+echo ""
+echo "GEMINI TASKS:"
+grep -A5 "Next operator (Gemini" HANDOFF.md
+```
+
+### §17.7 Next Steps
+
+**To implement ACP orchestration:**
+
+1. **Review detailed plan:** `reports/OPENCLAW_ORCHESTRATION_WORKFLOW.md`
+2. **Give Claude the prompt:** `CLAUDE_OPENCLAW_ORCHESTRATION_PROMPT.md`
+3. **Test:** Trigger "Start work" and verify all 3 agents spawn
+4. **Iterate:** Add notifications, refine workflows
+
+**Files:**
+- Analysis: `reports/OPENCLAW_ORCHESTRATION_WORKFLOW.md`
+- Prompt: `CLAUDE_OPENCLAW_ORCHESTRATION_PROMPT.md`
+
+**Key Files:**
+- Analysis: `reports/MULTI_AGENT_ORCHESTRATION_ANALYSIS.md`
+- Prompt: `CLAUDE_LOCAL_LLM_PROMPT.md`
+- Tools: NadirClaw, Ollama, ACPX (optional)
+
+---
+
+**Document Version:** EMAC-082-ORCHESTRATION
+**Last Updated:** March 25, 2026
+
+
+---
+
+## §18. UAT Issues — Research Complete
+
+**Status:** Research Complete, Ready for Implementation  
+**Report:** `reports/UAT_ISSUES_ANALYSIS.md`  
+**Implementation Prompt:** `CLAUDE_UAT_FIXES_PROMPT.md`  
+
+### §18.1 Issues Summary (11 Total)
+
+| Priority | Issue | Status | Effort |
+|----------|-------|--------|--------|
+| 🔴 **CRITICAL** | Waiver Wire API 503 | API endpoint broken | 1-2 days |
+| 🔴 **CRITICAL** | Daily Lineup Yahoo 422 | Player/Game ID mismatch | 1-2 days |
+| 🟠 **HIGH** | Calibration empty | Missing brier calculation | 2-3 days |
+| 🟠 **HIGH** | Daily Lineup defaults | All players 4.50/1.000/4.625 | 2-3 days |
+| 🟠 **HIGH** | Odds Monitor broken | Portfolio fetch failing | 2-3 days |
+| 🟡 **MEDIUM** | Bet History filter | Shows all not placed | 1 day |
+| 🟡 **MEDIUM** | My Roster data | Z-score/undroppable issues | 1-2 days |
+| 🟡 **MEDIUM** | Current Matchup | Category stats/opponent | 1-2 days |
+| 🟡 **MEDIUM** | Risk Dashboard | Settlement validation | 1 day |
+| 🟢 **LOW** | Today's Bets checkbox | UI enhancement | 0.5 day |
+| 🟢 **LOW** | Remove Bracket Sim | UI cleanup | 0.5 day |
+
+### §18.2 Critical Issues (Fix First)
+
+#### Waiver Wire — 503 Error
+**Error:** `Invalid subresource stats requested`  
+**Root Cause:** Yahoo API no longer accepts `stats` subresource in players query  
+**Fix:** Remove `stats` from initial query, fetch separately or use different endpoint
+
+#### Daily Lineup — 422 Error  
+**Error:** `game_ids don't match for player key`  
+**Root Cause:** Player traded or game_id mismatch between roster and lineup API  
+**Fix:** Validate player team/game_id before setting lineup
+
+### §18.3 Key Findings
+
+**Yahoo API Changes:**
+- Waiver endpoint no longer accepts `out=metadata,stats`
+- Must use `out=metadata` only, fetch stats separately
+- This is a breaking change in Yahoo's API
+
+**Data Issues:**
+- MLB projections falling back to defaults (4.50/1.000/4.625)
+- Likely pybaseball cache stale or player matching failing
+- Recommendation: Force refresh Statcast data
+
+**Missing Features:**
+- Brier score calculation not implemented for calibration
+- User "placed bet" tracking not in data model
+- Settlement lookback validation bug (min="20" instead of min="1")
+
+### §18.4 Implementation Plan
+
+**Phase 1: Critical (This Week)**
+1. Fix Waiver Wire API endpoint
+2. Fix Daily Lineup Yahoo 422 error
+3. Test both features thoroughly
+
+**Phase 2: High Priority (Next Week)**
+4. Implement brier score calculation
+5. Debug MLB projection defaults
+6. Fix Odds Monitor portfolio fetch
+
+**Phase 3: Medium Priority (Following Week)**
+7. Bet history filter
+8. My roster data mapping
+9. Current matchup display
+10. Risk dashboard fixes
+
+**Phase 4: Cleanup (Final)**
+11. Today's bets checkbox
+12. Remove Bracket Simulator
+13. Full UAT re-test
+
+### §18.5 Files Created
+
+| File | Purpose |
+|------|---------|
+| `reports/UAT_ISSUES_ANALYSIS.md` | Full root cause analysis for all 11 issues |
+| `CLAUDE_UAT_FIXES_PROMPT.md` | Copy-paste prompt for Claude Code with code fixes |
+
+### §18.6 Next Action
+
+**Give Claude Code the prompt:**
+```
+claude "Read CLAUDE_UAT_FIXES_PROMPT.md and start with Priority 1 
+        (Waiver Wire 503 and Daily Lineup 422). Update HANDOFF.md 
+        §18 as you complete each fix."
+```
+
+**Estimated Timeline:** 6-9 days for all fixes
+
+---
+
+**Document Version:** EMAC-082-UAT
 **Last Updated:** March 25, 2026
