@@ -98,6 +98,11 @@ logger = logging.getLogger(__name__)
 # allowing async job handlers (nightly_job, _opener_attack_job) to await coroutines.
 scheduler = AsyncIOScheduler()
 
+# DailyIngestionOrchestrator -- instantiated in lifespan() when
+# ENABLE_INGESTION_ORCHESTRATOR=true. Declared at module level so the
+# /admin/ingestion/status endpoint can reference it without an import cycle.
+_ingestion_orchestrator = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -277,7 +282,17 @@ async def lifespan(app: FastAPI):
         "end_of_day@23:00, tournament_bracket@18:00 %s",
         nightly_hour, odds_monitor_interval, ratings_prewarm_hour, timezone,
     )
-    
+
+    # Ingestion Orchestrator -- gated by env var (off by default, safe for Railway)
+    global _ingestion_orchestrator
+    if os.getenv("ENABLE_INGESTION_ORCHESTRATOR", "false").lower() == "true":
+        from backend.services.daily_ingestion import DailyIngestionOrchestrator
+        _ingestion_orchestrator = DailyIngestionOrchestrator()
+        _ingestion_orchestrator.start()
+        logger.info("DailyIngestionOrchestrator started")
+    else:
+        logger.info("DailyIngestionOrchestrator disabled (ENABLE_INGESTION_ORCHESTRATOR not set)")
+
     # Pre-warm reanalysis cache for OddsMonitor
     try:
         db = SessionLocal()
@@ -2670,6 +2685,14 @@ async def get_scheduler_status(user: str = Depends(verify_admin_api_key)):
         "running": scheduler.running,
         "jobs": jobs,
     }
+
+
+@app.get("/admin/ingestion/status")
+async def ingestion_status(user: str = Depends(verify_api_key)):
+    """Return per-job status for the DailyIngestionOrchestrator, or disabled signal."""
+    if _ingestion_orchestrator is None:
+        return {"enabled": False, "jobs": {}}
+    return {"enabled": True, "jobs": _ingestion_orchestrator.get_status()}
 
 
 @app.get("/admin/portfolio/status")

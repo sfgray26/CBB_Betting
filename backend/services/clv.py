@@ -398,3 +398,151 @@ def calculate_clv_full(
         other_side_opening_odds=other_side_opening_odds,
         other_side_closing_odds=other_side_closing_odds,
     )
+
+
+# ---------------------------------------------------------------------------
+# Nightly CLV Attribution (EPIC-2 -- DailyIngestionOrchestrator)
+# ---------------------------------------------------------------------------
+
+class CLVAttributionError(Exception):
+    """Raised when compute_daily_clv_attribution() encounters a DB failure."""
+
+
+async def compute_daily_clv_attribution() -> dict:
+    """
+    Nightly CLV attribution: compare our projected margin vs closing spread.
+    Runs via DailyIngestionOrchestrator at 11 PM ET.
+
+    Column mapping (verified against models.py):
+      Prediction.projected_margin  -- model-projected home margin
+      ClosingLine.spread           -- closing home-team spread (negative = home fav)
+
+    clv_points = prediction.projected_margin - closing_line.spread
+    favorable  = clv_points > 0  (model projected a bigger home win than market closed)
+
+    Alerts discord if negative_streak_days >= 7.
+
+    Returns:
+        {
+            "date": str (yesterday ISO),
+            "games_processed": int,
+            "clv_positive": int,
+            "clv_negative": int,
+            "avg_clv_points": float,
+            "favorable_rate": float,
+            "negative_streak_days": int | None,
+            "records": list[dict],
+        }
+    Raises CLVAttributionError on DB failure.
+    """
+    from datetime import date as _date, timedelta as _timedelta
+    from backend.models import SessionLocal, Prediction, ClosingLine, ProjectionSnapshot
+
+    yesterday = _date.today() - _timedelta(days=1)
+
+    try:
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(Prediction, ClosingLine)
+                .join(ClosingLine, ClosingLine.game_id == Prediction.game_id)
+                .filter(Prediction.prediction_date == yesterday)
+                .all()
+            )
+        except Exception as exc:
+            raise CLVAttributionError(f"DB query failed: {exc}") from exc
+        finally:
+            db.close()
+    except CLVAttributionError:
+        raise
+    except Exception as exc:
+        raise CLVAttributionError(f"SessionLocal init failed: {exc}") from exc
+
+    records = []
+    clv_positive = 0
+    clv_negative = 0
+    clv_points_sum = 0.0
+
+    for pred, cl in rows:
+        if pred.projected_margin is None or cl.spread is None:
+            continue
+        clv_pts = pred.projected_margin - cl.spread
+        favorable = clv_pts > 0
+        if favorable:
+            clv_positive += 1
+        else:
+            clv_negative += 1
+        clv_points_sum += clv_pts
+        records.append({
+            "game_id": pred.game_id,
+            "projected_margin": pred.projected_margin,
+            "closing_spread": cl.spread,
+            "clv_points": round(clv_pts, 3),
+            "favorable": favorable,
+        })
+
+    games_processed = len(records)
+    avg_clv_points = round(clv_points_sum / games_processed, 3) if games_processed else 0.0
+    favorable_rate = round(clv_positive / games_processed, 4) if games_processed else 0.0
+
+    # Negative streak detection: inspect recent ProjectionSnapshot rows for cbb
+    negative_streak_days: Optional[int] = None
+    try:
+        db = SessionLocal()
+        try:
+            recent_snapshots = (
+                db.query(ProjectionSnapshot)
+                .filter(
+                    ProjectionSnapshot.sport == "cbb",
+                    ProjectionSnapshot.snapshot_date >= yesterday - _timedelta(days=14),
+                )
+                .order_by(ProjectionSnapshot.snapshot_date.desc())
+                .all()
+            )
+            streak = 0
+            for snap in recent_snapshots:
+                summary = (snap.player_changes or {}).get("clv_summary", {})
+                fav_rate = summary.get("favorable_rate", None)
+                if fav_rate is not None and fav_rate < 0.5:
+                    streak += 1
+                else:
+                    break
+            if favorable_rate < 0.5:
+                streak += 1
+            negative_streak_days = streak if streak > 0 else None
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.warning("CLV streak detection skipped: %s", exc)
+
+    # Alert if streak has reached danger threshold
+    if negative_streak_days is not None and negative_streak_days >= 7:
+        try:
+            from backend.services.discord_notifier import send_system_error
+            send_system_error(
+                "CLV ALERT: negative CLV streak has reached "
+                + str(negative_streak_days)
+                + " consecutive days. Avg CLV today: "
+                + str(round(avg_clv_points, 3))
+                + " pts, favorable_rate="
+                + str(round(favorable_rate * 100, 1))
+                + "%"
+            )
+        except Exception as exc:
+            logger.warning("CLV discord alert failed: %s", exc)
+
+    logger.info(
+        "compute_daily_clv_attribution: date=%s games=%d pos=%d neg=%d avg_clv=%.3f",
+        yesterday, games_processed, clv_positive, clv_negative, avg_clv_points,
+    )
+
+    return {
+        "date": yesterday.isoformat(),
+        "games_processed": games_processed,
+        "clv_positive": clv_positive,
+        "clv_negative": clv_negative,
+        "avg_clv_points": avg_clv_points,
+        "favorable_rate": favorable_rate,
+        "negative_streak_days": negative_streak_days,
+        "records": records,
+    }
