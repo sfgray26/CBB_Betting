@@ -13,7 +13,7 @@ import logging
 import os
 import time
 from datetime import datetime, date, timedelta
-from typing import Optional
+from typing import Optional, Any
 
 import requests
 from sqlalchemy import text

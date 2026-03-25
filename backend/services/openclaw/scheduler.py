@@ -16,6 +16,8 @@ from datetime import datetime
 from typing import Optional, Dict, Any, Callable
 import logging
 
+from .performance_monitor import DecaySeverity
+
 logger = logging.getLogger(__name__)
 
 

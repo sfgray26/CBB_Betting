@@ -84,17 +84,7 @@ class OpenClawDB:
             List of performance metrics ordered by date
         """
         # Query from model_performance_metrics table
-        query = """
-            SELECT sport, metric_type, value, sample_size, window_days, 
-                   calculated_at, metadata
-            FROM model_performance_metrics
-            WHERE sport = %s 
-              AND metric_type = %s
-              AND calculated_at >= NOW() - INTERVAL '%s days'
-            ORDER BY calculated_at ASC
-        """
-        
-        logger.debug(f"Fetching {metric_type} for {sport} over {days} days")
+        logger.debug("Fetching %s for %s over %s days", metric_type, sport, days)
         
         # Placeholder - actual DB connection handled by caller
         return []
@@ -109,18 +99,7 @@ class OpenClawDB:
         
         Returns list of {timestamp, edge_percent, closing_edge} for trend analysis.
         """
-        query = """
-            SELECT 
-                game_time as timestamp,
-                predicted_edge as edge_percent,
-                actual_clv as closing_edge
-            FROM clv_snapshots
-            WHERE sport = %s
-              AND game_time >= NOW() - INTERVAL '%s hours'
-            ORDER BY game_time ASC
-        """
-        
-        logger.debug(f"Fetching CLV window for {sport}: {window_hours}h")
+        logger.debug("Fetching CLV window for %s: %sh", sport, window_hours)
         return []
     
     def get_game_outcomes(
@@ -190,21 +169,7 @@ class OpenClawDB:
         Returns:
             List of active vulnerability reports
         """
-        severity_order = {'INFO': 0, 'WARNING': 1, 'CRITICAL': 2}
-        min_level = severity_order.get(min_severity, 1)
-        
-        query = """
-            SELECT sport, pattern_type, confidence, severity, description,
-                   affected_games, expected_impact, recommended_action,
-                   detected_at, resolved_at
-            FROM vulnerability_reports
-            WHERE resolved_at IS NULL
-        """
-        
-        if sport:
-            query += f" AND sport = '{sport}'"
-        
-        logger.debug(f"Fetching vulnerabilities: sport={sport}, min_severity={min_severity}")
+        logger.debug("Fetching vulnerabilities: sport=%s, min_severity=%s", sport, min_severity)
         return []
     
     # === WRITE OPERATIONS (Guardian-gated) ===
@@ -212,7 +177,7 @@ class OpenClawDB:
     def save_metric(self, metric: PerformanceMetric) -> bool:
         """Save performance metric. Blocked during Guardian freeze."""
         if self._read_only:
-            logger.warning(f"Guardian active: Cannot save metric (read-only mode)")
+            logger.warning("Guardian active: Cannot save metric (read-only mode)")
             return False
         
         # Insert into model_performance_metrics
@@ -222,7 +187,7 @@ class OpenClawDB:
     def save_vulnerability(self, vuln: VulnerabilityReport) -> bool:
         """Save vulnerability report. Blocked during Guardian freeze."""
         if self._read_only:
-            logger.warning(f"Guardian active: Cannot save vulnerability (read-only mode)")
+            logger.warning("Guardian active: Cannot save vulnerability (read-only mode)")
             return False
         
         # Insert into vulnerability_reports
@@ -236,7 +201,7 @@ class OpenClawDB:
     ) -> bool:
         """Mark vulnerability as resolved. Blocked during Guardian freeze."""
         if self._read_only:
-            logger.warning(f"Guardian active: Cannot resolve vulnerability (read-only mode)")
+            logger.warning("Guardian active: Cannot resolve vulnerability (read-only mode)")
             return False
         
         # Update vulnerability_reports set resolved_at = NOW()
