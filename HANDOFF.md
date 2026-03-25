@@ -1576,9 +1576,9 @@ Full OpenClaw (v4.0+) is an **autonomous system** per SOUL.md:
 
 ---
 
-**Document Version:** EMAC-082
+**Document Version:** EMAC-083
 **Last Updated:** March 25, 2026
-**Status:** ACTIVE — EPIC-1/2/3 COMPLETE. MLB model LIVE + team wRC+ wired (14 tests pass). Integrity sweep hang FIXED. Next: EPIC-4 Bracket Sunset (Apr 7).
+**Status:** ACTIVE — EPIC-1/2/3 COMPLETE. MLB model LIVE. Yahoo API bugs fixed (waiver + matchup). Suite 1103/1107. Next: EPIC-4 Bracket Sunset (Apr 7).
 **Branch:** main
 **Team:** Claude Code (Architect) · Kimi CLI (Audit) · OpenClaw (Execution Target) · Gemini (Ops/Railway only)
 **Next operator (Claude Code):** EPIC-4 Bracket Sunset — run after CBB championship Apr 7. Prompt is in §13.

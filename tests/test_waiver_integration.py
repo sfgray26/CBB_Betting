@@ -48,7 +48,7 @@ class TestYahooClientOutParam:
         client.get_free_agents(count=10)
 
         assert "out" in captured_params, "get_free_agents() must include 'out' param"
-        assert "percent_owned" in captured_params["out"]
+        assert "ownership" in captured_params["out"], "'ownership' is the correct Yahoo subresource (not 'percent_owned')"
 
     def test_get_waiver_players_includes_out_param(self):
         from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
@@ -69,7 +69,7 @@ class TestYahooClientOutParam:
         client.get_waiver_players(count=10)
 
         assert "out" in captured_params, "get_waiver_players() must include 'out' param"
-        assert "percent_owned" in captured_params["out"]
+        assert "ownership" in captured_params["out"], "'ownership' is the correct Yahoo subresource (not 'percent_owned')"
 
 
 # ---------------------------------------------------------------------------
