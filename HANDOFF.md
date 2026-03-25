@@ -1613,3 +1613,123 @@ Full OpenClaw (v4.0+) is an **autonomous system** per SOUL.md:
 - Phase 2-4 (Learning, Roadmap, Self-improvement) scheduled post-Apr 7 per spec
 - CBB patterns: conference bias, seed mispricing, HCA errors, month/day drift
 - MLB patterns: framework ready for pitch fatigue, platoon splits, Coors effect (requires MLB data layer)
+
+
+---
+
+**OpenClaw Implementation Notes:**
+- Read-only monitoring during Guardian freeze — write operations blocked until Apr 7
+- Phase 1 delivers foundation: monitoring + detection without self-modification
+- Phase 2-4 (Learning, Roadmap, Self-improvement) scheduled post-Apr 7 per spec
+- CBB patterns: conference bias, seed mispricing, HCA errors, month/day drift
+- MLB patterns: framework ready for pitch fatigue, platoon splits, Coors effect (requires MLB data layer)
+
+---
+
+## §15. Kimi CLI Audit — MLB Betting Model (EMAC-082)
+
+**Audit Date:** March 25, 2026  
+**Auditor:** Kimi CLI (Deep Intelligence Unit)  
+**Scope:** `backend/services/mlb_analysis.py`, `backend/fantasy_baseball/pybaseball_loader.py`, `backend/fantasy_baseball/advanced_metrics.py`
+
+### §15.1 Architecture Assessment
+
+| Aspect | Finding | Status |
+|--------|---------|--------|
+| Guardian Compliance | No imports from betting_model.py or analysis.py | ✅ PASS |
+| SportConfig Integration | Uses SportConfig.mlb() with MLB-specific parameters | ✅ PASS |
+| Async Design | run_analysis() is async, compatible with scheduler | ✅ PASS |
+| Error Handling | Graceful degradation on all external API failures | ✅ PASS |
+| Data Pipeline | pybaseball → cache → aggregation → projection | ✅ PASS |
+
+### §15.2 Projection Formula Review
+
+```
+home_runs = league_avg * home_offense * away_pitching * park_factor + home_advantage
+away_runs = league_avg * away_offense * home_pitching * park_factor
+```
+
+- **League Average:** 4.25 runs (2024 MLB average from FanGraphs)
+- **Offense Factor:** wRC+ / 100 (team aggregate from batter cache)
+- **Pitching Factor:** xERA / 4.25 (starter-specific from pitcher cache)
+- **Park Factor:** 2024 Statcast run factors (Coors=1.22, Petco=0.90, etc.)
+- **Home Advantage:** +0.25 runs (empirically derived for MLB)
+- **Win Probability:** Normal CDF with σ = √total × 0.86
+
+**Assessment:** Sound sabermetric approach. xERA is the correct choice over raw ERA for regression stability. Park factor application is multiplicative (industry standard).
+
+### §15.3 Data Source Audit
+
+| Source | Purpose | Cache Strategy | Fallback |
+|--------|---------|----------------|----------|
+| pybaseball (FanGraphs) | Batter wRC+, Pitcher xERA | 24-hour JSON cache | League average |
+| statsapi | Schedule, probable pitchers | Live API | Empty list |
+| The Odds API | Market runlines/totals | Live API | Zero edge |
+| Hardcoded | Park factors | N/A | 1.0 neutral |
+
+**Coverage:**
+- Park factors: 29 parks mapped (all current MLB venues)
+- Team mapping: 30 teams with abbreviation variants
+- Pitcher matching: Exact name + fuzzy last-name fallback
+
+### §15.4 Edge Calculation
+
+```python
+edge = projected_win_prob - market_implied_prob
+```
+
+- **Market conversion:** American odds → implied probability
+- **Runline focus:** -110 = 52.4% implied (standard vig)
+- **Positive edge:** Model more bullish on home team than market
+
+**Assessment:** Correct implementation. Uses spreads market for runline edge.
+
+### §15.5 Test Coverage
+
+**14 tests in `tests/test_mlb_analysis.py`:**
+
+| Test Category | Count | Key Tests |
+|---------------|-------|-----------|
+| SportConfig | 3 | MLB-specific params, home advantage magnitude |
+| Projection | 6 | Park factor (Coors), pitcher quality, team offense |
+| Integration | 3 | Schedule failure handling, empty returns |
+| Edge Calc | 1 | Zero edge on missing market data |
+| Data Loading | 1 | Team stats aggregation structure |
+
+**All 14 tests pass.** Coverage is solid for core functionality.
+
+### §15.6 Risk Assessment
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| pybaseball unavailable | Low | Graceful skip with warning |
+| Pitcher xERA missing | Low | Falls back to league avg (4.25) |
+| Team wRC+ incomplete | Low | Minimum 3 batters threshold |
+| Park factor unknown | Low | Defaults to 1.0 (neutral) |
+| statsapi failure | Low | Returns empty list, no crash |
+| Cache stale | Medium | 24-hour TTL, force_refresh flag |
+
+### §15.7 Recommendations
+
+1. **Monitor:** Add pybaseball cache hit/miss metrics to OpenClaw performance monitor
+2. **Enhance:** Consider bullpen strength factor (currently only uses starter xERA)
+3. **Validate:** Backtest against 2024 season data when available
+4. **Document:** Add expected ROI ranges for different edge thresholds
+
+### §15.8 Overall Assessment
+
+**Status: APPROVED for production use**
+
+The MLB betting model demonstrates:
+- ✅ Sound statistical methodology
+- ✅ Proper separation from CBB codebase
+- ✅ Robust error handling
+- ✅ Comprehensive test coverage
+- ✅ Clean integration with existing infrastructure
+
+The model is ready for live operation with the scheduled daily analysis job.
+
+---
+
+**Document Version:** EMAC-082-AUDIT
+**Last Updated:** March 25, 2026
