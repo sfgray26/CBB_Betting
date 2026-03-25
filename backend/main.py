@@ -103,6 +103,10 @@ scheduler = AsyncIOScheduler()
 # /admin/ingestion/status endpoint can reference it without an import cycle.
 _ingestion_orchestrator = None
 
+# MLBAnalysisService -- instantiated in lifespan() when
+# ENABLE_MLB_ANALYSIS=true. Kept at module level for future status endpoints.
+_mlb_analysis_service = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -292,6 +296,21 @@ async def lifespan(app: FastAPI):
         logger.info("DailyIngestionOrchestrator started")
     else:
         logger.info("DailyIngestionOrchestrator disabled (ENABLE_INGESTION_ORCHESTRATOR not set)")
+
+    # MLB nightly analysis -- 9:00 AM ET daily
+    # Only active when ENABLE_MLB_ANALYSIS=true (off by default during CBB overlap)
+    global _mlb_analysis_service
+    if os.getenv("ENABLE_MLB_ANALYSIS", "false").lower() == "true":
+        from backend.services.mlb_analysis import MLBAnalysisService
+        _mlb_analysis_service = MLBAnalysisService()
+        scheduler.add_job(
+            _run_mlb_analysis_job,
+            CronTrigger(hour=9, minute=0, timezone=timezone),
+            id="mlb_nightly_analysis",
+            name="MLB Nightly Analysis",
+            replace_existing=True,
+        )
+        logger.info("MLB nightly analysis enabled (09:00 %s)", timezone)
 
     # Pre-warm reanalysis cache for OddsMonitor
     try:
@@ -1006,6 +1025,17 @@ def _pybaseball_fetch_job():
         logger.info("pybaseball daily refresh complete")
     except Exception as e:
         logger.error("pybaseball fetch job failed: %s", e)
+
+
+async def _run_mlb_analysis_job():
+    """Run MLB nightly analysis at 9:00 AM ET and log results."""
+    try:
+        from backend.services.mlb_analysis import MLBAnalysisService
+        svc = MLBAnalysisService()
+        projections = await svc.run_analysis()
+        logger.info("MLB analysis complete: %d projections", len(projections))
+    except Exception as exc:
+        logger.error("MLB analysis job failed: %s", exc)
 
 
 def _openclaw_morning_job():

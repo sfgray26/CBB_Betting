@@ -40,6 +40,8 @@ LOCK_IDS = {
     "cleanup":     100_006,
     "waiver_scan": 100_007,
     "mlb_brief":   100_008,
+    "openclaw_perf":  100_009,
+    "openclaw_sweep": 100_010,
 }
 
 
@@ -84,6 +86,7 @@ class DailyIngestionOrchestrator:
     def __init__(self):
         self._scheduler = AsyncIOScheduler()
         self._job_status: dict[str, dict] = {}
+        self._openclaw: Optional[Any] = None
 
     # ------------------------------------------------------------------
     # Public interface
@@ -471,3 +474,41 @@ class DailyIngestionOrchestrator:
             return {"status": "success", "records": deleted, "elapsed_ms": elapsed}
 
         return await _with_advisory_lock(LOCK_IDS["cleanup"], _run)
+
+    def _start_openclaw_monitoring(self) -> None:
+        """
+        Initialize OpenClaw Phase 1 monitoring (Performance Monitor + Pattern Detector).
+        
+        This is read-only monitoring that does NOT violate the Guardian freeze.
+        Self-improvement features (Phase 4) remain disabled until Apr 7, 2026.
+        """
+        try:
+            from backend.services.openclaw.scheduler import OpenClawScheduler
+            
+            self._openclaw = OpenClawScheduler(
+                scheduler=self._scheduler,
+                sport='cbb',  # Primary focus during tournament season
+                discord_hook=self._send_discord_alert if os.getenv('DISCORD_ALERTS_ENABLED') else None
+            )
+            self._openclaw.start_monitoring()
+            
+            logger.info("OpenClaw Phase 1 monitoring started (Performance Monitor + Pattern Detector)")
+        except Exception as exc:
+            logger.warning("OpenClaw monitoring not started: %s", exc)
+    
+    def _send_discord_alert(self, embed: dict) -> None:
+        """Send Discord alert via webhook."""
+        import requests
+        
+        webhook_url = os.getenv('DISCORD_ALERTS_WEBHOOK')
+        if not webhook_url:
+            return
+        
+        try:
+            requests.post(
+                webhook_url,
+                json={"embeds": [embed]},
+                timeout=5
+            )
+        except Exception as exc:
+            logger.warning("Discord alert failed: %s", exc)

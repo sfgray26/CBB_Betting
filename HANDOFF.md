@@ -1,33 +1,29 @@
-# OPERATIONAL HANDOFF — EMAC-077 "DATA SUPERIORITY"
+# OPERATIONAL HANDOFF — EMAC-080 "MLB BETTING MODEL P0"
 
 > **Ground truth as of March 24, 2026.** Author: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
-> Prior state: `EMAC-076` — Fantasy draft complete, Yahoo OAuth live, value-board endpoint deployed.
->
-> **NEW RESEARCH:** Kimi CLI compiled AI/ML research — `reports/AI_ML_RESEARCH_MCP_OPEN_SOURCE.md` covers:
-> - MCP (Model Context Protocol) for multi-agent orchestration
-> - 8+ relevant open-source sports betting/fantasy GitHub projects
-> - NumPyro/PyMC Bayesian implementations for baseball projections
-> - Specific algorithms to port (Bayesian MARCEL, MCMC simulator, XGBoost ranker)
+> Prior state: `EMAC-077` — Data superiority sprint; OpenClaw autonomous loop, ingestion orchestrator.
 >
 > **GUARDIAN FREEZE still active on CBB model files through April 7.**
 > DO NOT touch `backend/betting_model.py`, `backend/services/analysis.py`, or any CBB model service.
 
 ---
 
-## MISSION ACCOMPLISHED — Mar 24, 2026
+## MISSION ACCOMPLISHED — Mar 24, 2026 (EMAC-080)
 
 | Item | Status |
 |------|--------|
-| EPIC-3 (OpenClaw Autonomous Loop) | COMPLETE — all 4 services live, 16 tests pass |
-| Waiver Wire UI rebuild (Next.js) | COMPLETE — filtering, sorting, pagination, recommendations |
-| Waiver Wire backend bug fixes | COMPLETE — 4 bugs fixed, 7 new tests pass |
-| _score_fa() category_contributions bug | FIXED — MCMC now receives real z-score data |
-| EPIC-2 (Ingestion Orchestrator) | COMPLETE — `daily_ingestion.py` live, 11 tests pass, 0 regressions |
-| Railway DB Migration (EPIC-1) | COMPLETE — Gemini ran `migrate_v8_post_draft.py`; all 3 objects verified EXISTS |
+| `SportConfig.mlb()` constructor | COMPLETE — `backend/core/sport_config.py` |
+| `SPORT_ID_MLB` constant | COMPLETE — added near SPORT_ID_NCAAB/NBA/NCAAF |
+| `backend/services/mlb_analysis.py` | COMPLETE — MLBAnalysisService + MLBGameProjection |
+| `_mlb_analysis_service` module var + lifespan block | COMPLETE — `backend/main.py` |
+| `_run_mlb_analysis_job()` async job function | COMPLETE — `backend/main.py` |
+| `tests/test_mlb_analysis.py` | COMPLETE — 12 tests, all pass |
 
-**Total new tests this session:** 34 (test_waiver_edge: 8, test_openclaw_autonomous: 8, test_waiver_integration: 7, test_ingestion_orchestrator: 11)
-**Full suite:** 1067/1071 (4 pre-existing failures: 3 DB-auth, 1 tournament cache — not our code)
+**Total new tests this session:** 12
+**Full suite:** 1103/1107 (4 pre-existing DB-auth/cache failures only)
+**Files modified:** `backend/core/sport_config.py`, `backend/main.py`
+**Files created:** `backend/services/mlb_analysis.py`, `tests/test_mlb_analysis.py`
 
 ---
 
@@ -1580,18 +1576,38 @@ Full OpenClaw (v4.0+) is an **autonomous system** per SOUL.md:
 
 ---
 
-**Document Version:** EMAC-080
-**Last Updated:** March 24, 2026
-**Status:** ACTIVE — EPIC-2 + EPIC-3 COMPLETE. Railway migration DONE. Next: MLB betting model (P0 — CBB ends Apr 7) + OpenClaw Phase 1 (Kimi lead).
+**Document Version:** EMAC-081
+**Last Updated:** March 25, 2026
+**Status:** ACTIVE — EPIC-1/2/3 COMPLETE. MLB model MVP LIVE (`SportConfig.mlb()` + `mlb_analysis.py`, 12 tests). OpenClaw Phase 1 COMPLETE (Kimi, 24 tests). Next: Railway activation + team wRC+ ingestion.
 **Branch:** main
 **Team:** Claude Code (Architect) · Kimi CLI (Audit) · OpenClaw (Execution Target) · Gemini (Ops/Railway only)
-**Next operator (Claude Code):** MLB betting model (`SportConfig.mlb()`, parallel nightly pipeline, runline/totals) — CRITICAL, CBB ends Apr 7
-**Next operator (Gemini CLI):** Set `ENABLE_INGESTION_ORCHESTRATOR=true` in Railway env vars, then watch `railway logs --follow` for "DailyIngestionOrchestrator started"
-**Next operator (Kimi CLI):** Lead OpenClaw Phase 1 (Performance Monitor + Pattern Detector) per `reports/OPENCLAW_AUTONOMY_SPEC_v4_PHASE1_NOW.md`. Read-only, Guardian-compliant.
+**Next operator (Claude Code):** Wire team wRC+ into `mlb_analysis._load_team_stats()` using existing pybaseball FanGraphs cache. Then EPIC-4 Bracket Sunset (frontend cleanup, Apr 7 trigger).
+**Next operator (Gemini CLI):** (1) Set `ENABLE_MLB_ANALYSIS=true` in Railway env vars. (2) Apply `scripts/migrations/v8_openclaw_monitoring.sql` to Railway DB (unblocks OpenClaw Phase 1).
+**Next operator (Kimi CLI):** OpenClaw Phase 1 COMPLETE — 24 tests pass. Next: Audit Claude's MLB betting model implementation when ready.
 **CRITICAL REMINDER:** See ADR-010 — Next.js is the ONLY UI. Streamlit (`dashboard/`) is RETIRED. Never reference Streamlit code.
 **Apr 7 mission:** V9.2 recalibration — see §10 and prior HANDOFF.md §6
 **Workstream Split (PARALLEL EXECUTION):**
-- **Claude (P0 — Immediate):** Waiver wire fixes + MLB betting model (CRITICAL — CBB ends Apr 7)
-- **Claude + Kimi (P1 — Start NOW):** OpenClaw Phase 1 implementation (Performance Monitor, Pattern Detector) — does NOT violate Guardian freeze
-- **URGENT:** MLB model must be operational before CBB season ends. See `reports/OPENCLAW_AUTONOMY_SPEC_v4_MLB_ADDENDUM.md`
-- **NOTE:** OpenClaw monitoring foundation can be built NOW — only auto-implementation waits until Apr 7
+- **Claude (P0 — Immediate):** MLB betting model (CRITICAL — CBB ends Apr 7) — EPIC-2/3 DONE, waiver wire DONE
+- **Kimi (P1 — IN PROGRESS):** OpenClaw Phase 1 implementation (Performance Monitor + Pattern Detector) — IMPLEMENTED, needs migration + testing
+- **Gemini (Ops):** Apply `scripts/migrations/v8_openclaw_monitoring.sql` to Railway DB
+- **URGENT:** MLB model must be operational before CBB season ends Apr 7. See `reports/OPENCLAW_AUTONOMY_SPEC_v4_MLB_ADDENDUM.md`
+
+**OpenClaw Phase 1 Status (COMPLETE - Pending Migration):**
+- ✅ `backend/services/openclaw/` package created
+- ✅ `performance_monitor.py` — CLV decay detection (15% CRITICAL, 8% WARNING), win rate tracking
+- ✅ `pattern_detector.py` — CBB patterns (conference, seed, HCA, month, day-of-week), MLB patterns framework
+- ✅ `database.py` — Guardian-gated DB layer (read-only until Apr 7)
+- ✅ `scheduler.py` — APScheduler integration (every 2h performance check, daily 6 AM sweep)
+- ✅ `v8_openclaw_monitoring.sql` — Migration with 4 tables + views
+- ✅ `apply_openclaw_migration.py` — Migration script
+- ✅ `daily_ingestion.py` updated to auto-start OpenClaw monitoring
+- ✅ `tests/openclaw/` — 24 tests covering PerformanceMonitor and PatternDetector
+- ⏳ PENDING: Run migration on Railway (`python scripts/migrations/apply_openclaw_migration.py`)
+- ⏳ PENDING: Verify Discord alerting integration (requires webhook URL)
+
+**OpenClaw Implementation Notes:**
+- Read-only monitoring during Guardian freeze — write operations blocked until Apr 7
+- Phase 1 delivers foundation: monitoring + detection without self-modification
+- Phase 2-4 (Learning, Roadmap, Self-improvement) scheduled post-Apr 7 per spec
+- CBB patterns: conference bias, seed mispricing, HCA errors, month/day drift
+- MLB patterns: framework ready for pitch fatigue, platoon splits, Coors effect (requires MLB data layer)

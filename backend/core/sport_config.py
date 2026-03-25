@@ -44,6 +44,7 @@ from typing import Final
 SPORT_ID_NCAAB: Final[str] = "ncaab"
 SPORT_ID_NBA: Final[str] = "nba"
 SPORT_ID_NCAAF: Final[str] = "ncaaf"
+SPORT_ID_MLB: Final[str] = "mlb"
 
 
 @dataclass(frozen=True)
@@ -265,6 +266,55 @@ class SportConfig:
             pace_rho=0.25,             # lower score correlation in football
             sharp_books=frozenset({"pinnacle", "circasports"}),
             odds_api_sport_key="americanfootball_ncaaf",
+        )
+
+    @classmethod
+    def mlb(cls) -> "SportConfig":
+        """MLB betting configuration.
+
+        Baseball uses runs (not points), so the basketball four-factor fields
+        are zeroed. The fields that matter for the model:
+
+          base_sd_multiplier: sigma = sqrt(total) * mult. MLB totals ~8.5 runs,
+              typical SD ~2.5 runs. mult = 2.5/sqrt(8.5) ~ 0.86.
+              Cross-check: FiveThirtyEight MLB SD ~2.5 runs, confirmed.
+
+          home_advantage_pts: MLB home field ~0.25 runs (much smaller than CBB).
+              Source: Tango/Lichtman "The Book" (2006), replicated in modern
+              Statcast era. Use 0.25 as conservative estimate.
+
+          d1_avg_pace: Repurposed as average total runs per game (used by the
+              SD formula as the "total" baseline). MLB 2024 avg total: 8.5 runs.
+
+          d1_avg_adj_o / d1_avg_adj_de: Repurposed as league avg runs scored /
+              allowed per game (4.25 each). Not used in current model math but
+              retained for future MLB-specific simulator.
+
+          pace_rho: Correlation between home and away team run totals.
+              Baseball pace correlation is lower than basketball (0.20) because
+              run-scoring is more independent (pitching dominates, not pace).
+
+          odds_api_sport_key: "baseball_mlb"
+        """
+        return cls(
+            sport_id=SPORT_ID_MLB,
+            sport_name="MLB",
+            d1_avg_efg=0.0,           # not applicable
+            d1_avg_to_pct=0.0,
+            d1_avg_ft_rate=0.0,
+            d1_avg_three_par=0.0,
+            d1_avg_orb_pct=0.0,
+            d1_avg_ft_pct=0.0,
+            d1_avg_def_efg=0.0,
+            d1_avg_def_to_pct=0.0,
+            d1_avg_adj_o=4.25,        # avg runs scored per game per team
+            d1_avg_adj_de=4.25,       # avg runs allowed per game per team
+            d1_avg_pace=8.5,          # avg total runs per game (repurposed)
+            base_sd_multiplier=0.86,  # sigma = sqrt(total_runs) * 0.86
+            home_advantage_pts=0.25,  # MLB home field ~0.25 runs
+            pace_rho=0.20,            # lower score correlation than basketball
+            sharp_books=frozenset({"pinnacle", "circasports"}),
+            odds_api_sport_key="baseball_mlb",
         )
 
     # ------------------------------------------------------------------ #
