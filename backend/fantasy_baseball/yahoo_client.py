@@ -180,6 +180,12 @@ class YahooFantasyClient:
         if params:
             default_params.update(params)
 
+        # Yahoo rejects URL-encoded commas in the `out` param (e.g. %2C).
+        # Extract it and append as a raw query-string fragment instead.
+        out_value = default_params.pop("out", None)
+        if out_value:
+            url = f"{url}?out={out_value}"
+
         for attempt in range(3):
             try:
                 resp = self._session.get(

@@ -3839,8 +3839,6 @@ async def get_fantasy_waiver_recommendations(
         free_agents = client.get_free_agents(
             position=position or "", start=_fa_start, count=per_page
         )
-        waiver_players = client.get_waiver_players(count=20)
-
         # Try to get matchup opponent
         try:
             matchups = client.get_scoreboard()
