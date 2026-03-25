@@ -393,7 +393,8 @@ class YahooFantasyClient:
         sort=AR ranks by percent rostered — the only sort that reflects real
         pickup value. Yahoo's default sort order is opaque and unreliable.
         """
-        params = {"status": "A", "start": start, "count": count, "sort": "AR"}
+        params = {"status": "A", "start": start, "count": count, "sort": "AR",
+                  "out": "metadata,percent_owned,stats"}
         if position:
             params["position"] = position
         data = self._get(f"league/{self.league_key}/players", params=params)
@@ -409,7 +410,8 @@ class YahooFantasyClient:
         return self._parse_player_with_stats(player)
 
     def get_waiver_players(self, start: int = 0, count: int = 25) -> list[dict]:
-        params = {"status": "W", "start": start, "count": count}
+        params = {"status": "W", "start": start, "count": count,
+                  "out": "metadata,percent_owned,stats"}
         data = self._get(f"league/{self.league_key}/players", params=params)
         players_raw = self._league_section(data, 1).get("players", {})
         return self._parse_players_block(players_raw)

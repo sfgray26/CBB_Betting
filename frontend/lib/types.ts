@@ -306,6 +306,7 @@ export interface WaiverPlayer {
   category_contributions: Record<string, number>
   owned_pct: number
   starts_this_week: number
+  statcast_signals?: string[]
 }
 
 export interface CategoryDeficit {
@@ -322,6 +323,30 @@ export interface WaiverWireResponse {
   category_deficits: CategoryDeficit[]
   top_available: WaiverPlayer[]
   two_start_pitchers: WaiverPlayer[]
+  pagination?: { page: number; per_page: number; has_next: boolean }
+  urgent_alert?: { type: string; player: string; position: string; message: string } | null
+}
+
+export interface WaiverRecommendation {
+  action: string
+  add_player: WaiverPlayer | null
+  drop_player_name: string | null
+  drop_player_position: string | null
+  rationale: string
+  need_score: number
+  confidence: number
+  statcast_signals: string[]
+  win_prob_before: number
+  win_prob_after: number
+  win_prob_gain: number
+  mcmc_enabled: boolean
+}
+
+export interface WaiverRecommendationsResponse {
+  week_end: string
+  matchup_opponent: string
+  recommendations: WaiverRecommendation[]
+  category_deficits: CategoryDeficit[]
 }
 
 // ---------------------------------------------------------------------------

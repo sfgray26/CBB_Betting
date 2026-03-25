@@ -1,11 +1,12 @@
 'use client'
 
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowLeftRight, RefreshCw } from 'lucide-react'
 import { endpoints } from '@/lib/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
-import type { CategoryDeficit, WaiverPlayer } from '@/lib/types'
+import type { CategoryDeficit, WaiverPlayer, WaiverRecommendation } from '@/lib/types'
 
 // ---------------------------------------------------------------------------
 // Category deficit card
@@ -54,7 +55,7 @@ function DeficitCard({ cat }: { cat: CategoryDeficit }) {
 }
 
 // ---------------------------------------------------------------------------
-// Category tracker skeleton
+// Skeletons
 // ---------------------------------------------------------------------------
 
 function CategorySkeleton() {
@@ -63,6 +64,35 @@ function CategorySkeleton() {
       {Array.from({ length: 10 }).map((_, i) => (
         <div key={i} className="h-24 bg-zinc-800 rounded-lg" />
       ))}
+    </div>
+  )
+}
+
+function TableSkeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-zinc-800 animate-pulse">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-zinc-800 bg-zinc-900/60">
+            {[160, 50, 60, 80, 70, 120, 50].map((w, i) => (
+              <th key={i} className="px-3 py-3">
+                <div className="h-3 bg-zinc-800 rounded" style={{ width: w }} />
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-800/60">
+          {Array.from({ length: rows }).map((_, i) => (
+            <tr key={i}>
+              {[160, 50, 60, 80, 70, 120, 50].map((w, j) => (
+                <td key={j} className="px-3 py-3">
+                  <div className="h-3 bg-zinc-800/70 rounded" style={{ width: w * 0.75 }} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -99,6 +129,25 @@ function WaiverTable({ players, label }: { players: WaiverPlayer[]; label: strin
               <tr key={p.player_id} className="hover:bg-zinc-800/50 transition-colors">
                 <td className="px-3 py-2.5">
                   <div className="font-medium text-zinc-100">{p.name}</div>
+                  {p.statcast_signals && p.statcast_signals.length > 0 && (
+                    <div className="flex gap-1 mt-0.5">
+                      {p.statcast_signals.map((sig) => (
+                        <span
+                          key={sig}
+                          className={cn(
+                            'px-1 py-0.5 rounded text-xs font-semibold',
+                            sig === 'BUY_LOW'
+                              ? 'bg-emerald-500/15 text-emerald-400'
+                              : sig === 'BREAKOUT'
+                              ? 'bg-sky-500/15 text-sky-400'
+                              : 'bg-zinc-700 text-zinc-400',
+                          )}
+                        >
+                          {sig}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </td>
                 <td className="px-3 py-2.5 text-zinc-400 text-xs">{p.position}</td>
                 <td className="px-3 py-2.5 text-zinc-400 font-mono text-xs">{p.team}</td>
@@ -193,34 +242,59 @@ function TwoStartTable({ pitchers }: { pitchers: WaiverPlayer[] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Table skeleton
+// Recommendation card
 // ---------------------------------------------------------------------------
 
-function TableSkeleton({ rows = 6 }: { rows?: number }) {
+function RecCard({ rec }: { rec: WaiverRecommendation }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-zinc-800 animate-pulse">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-zinc-800 bg-zinc-900/60">
-            {[160, 50, 60, 80, 70, 120, 50].map((w, i) => (
-              <th key={i} className="px-3 py-3">
-                <div className="h-3 bg-zinc-800 rounded" style={{ width: w }} />
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-zinc-800/60">
-          {Array.from({ length: rows }).map((_, i) => (
-            <tr key={i}>
-              {[160, 50, 60, 80, 70, 120, 50].map((w, j) => (
-                <td key={j} className="px-3 py-3">
-                  <div className="h-3 bg-zinc-800/70 rounded" style={{ width: w * 0.75 }} />
-                </td>
-              ))}
-            </tr>
+    <div className="rounded-lg border border-zinc-700 bg-zinc-900/60 p-4 space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <span
+            className={cn(
+              'px-2 py-0.5 rounded text-xs font-bold',
+              rec.action === 'ADD_DROP'
+                ? 'bg-amber-500/15 text-amber-400'
+                : 'bg-sky-500/15 text-sky-400',
+            )}
+          >
+            {rec.action}
+          </span>
+          <span className="text-zinc-100 font-medium text-sm">{rec.add_player?.name}</span>
+          {rec.drop_player_name && (
+            <span className="text-zinc-500 text-xs">
+              &rarr; drop {rec.drop_player_name}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-mono text-amber-400 tabular-nums">
+            edge: +{rec.need_score.toFixed(2)}
+          </span>
+          {rec.mcmc_enabled && (
+            <span className="text-xs font-mono text-emerald-400 tabular-nums">
+              WP: {(rec.win_prob_before * 100).toFixed(0)}% &rarr;{' '}
+              {(rec.win_prob_after * 100).toFixed(0)}%
+            </span>
+          )}
+          {rec.statcast_signals.map((sig) => (
+            <span
+              key={sig}
+              className={cn(
+                'px-1.5 py-0.5 rounded text-xs font-semibold',
+                sig === 'BUY_LOW'
+                  ? 'bg-emerald-500/15 text-emerald-400'
+                  : sig === 'BREAKOUT'
+                  ? 'bg-sky-500/15 text-sky-400'
+                  : 'bg-zinc-700 text-zinc-400',
+              )}
+            >
+              {sig}
+            </span>
           ))}
-        </tbody>
-      </table>
+        </div>
+      </div>
+      <p className="text-xs text-zinc-500 leading-relaxed">{rec.rationale}</p>
     </div>
   )
 }
@@ -229,11 +303,37 @@ function TableSkeleton({ rows = 6 }: { rows?: number }) {
 // Page
 // ---------------------------------------------------------------------------
 
+const POSITIONS = ['C', '1B', '2B', '3B', 'SS', 'OF', 'SP', 'RP']
+
 export default function WaiverWirePage() {
+  const [position, setPosition] = useState<string>('')
+  const [sort, setSort] = useState<'need_score' | 'percent_owned'>('need_score')
+  const [maxOwned, setMaxOwned] = useState<number>(90)
+  const [page, setPage] = useState<number>(1)
+  const [showRecs, setShowRecs] = useState<boolean>(false)
+
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
-    queryKey: ['fantasy-waiver'],
-    queryFn: endpoints.waiverWire,
+    queryKey: ['fantasy-waiver', position, sort, maxOwned, page],
+    queryFn: () =>
+      endpoints.waiverWire({
+        position: position || undefined,
+        sort,
+        max_percent_owned: maxOwned,
+        page,
+      }),
     refetchInterval: 10 * 60_000,
+  })
+
+  const {
+    data: recData,
+    isLoading: recLoading,
+    isError: recError,
+    refetch: recRefetch,
+  } = useQuery({
+    queryKey: ['fantasy-waiver-recs'],
+    queryFn: endpoints.waiverRecommendations,
+    enabled: showRecs,
+    retry: 1,
   })
 
   return (
@@ -269,13 +369,69 @@ export default function WaiverWirePage() {
         </button>
       </div>
 
+      {/* Filter controls */}
+      <div className="flex flex-wrap items-center gap-3">
+        <select
+          value={position}
+          onChange={(e) => {
+            setPosition(e.target.value)
+            setPage(1)
+          }}
+          className="px-3 py-1.5 text-sm bg-zinc-800 border border-zinc-700 rounded-md text-zinc-200 focus:outline-none focus:border-amber-500"
+        >
+          <option value="">All Positions</option>
+          {POSITIONS.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={sort}
+          onChange={(e) => setSort(e.target.value as 'need_score' | 'percent_owned')}
+          className="px-3 py-1.5 text-sm bg-zinc-800 border border-zinc-700 rounded-md text-zinc-200 focus:outline-none focus:border-amber-500"
+        >
+          <option value="need_score">Sort: Need Score</option>
+          <option value="percent_owned">Sort: % Owned</option>
+        </select>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-zinc-500">Max owned:</span>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={maxOwned}
+            onChange={(e) => setMaxOwned(Number(e.target.value))}
+            className="w-24 accent-amber-400"
+          />
+          <span className="text-xs font-mono text-zinc-400 tabular-nums w-10">{maxOwned}%</span>
+        </div>
+      </div>
+
+      {/* Urgent injury banner */}
+      {data?.urgent_alert && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 flex items-start gap-3">
+          <span className="text-amber-400 text-lg leading-none mt-0.5">&#9888;</span>
+          <div>
+            <p className="text-amber-400 font-semibold text-sm">
+              {data.urgent_alert.player} ({data.urgent_alert.position}) &mdash; Replacement Needed
+            </p>
+            <p className="text-amber-400/70 text-xs mt-0.5">{data.urgent_alert.message}</p>
+          </div>
+        </div>
+      )}
+
       {/* Error state */}
       {isError && (
         <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-5 flex items-center justify-between">
           <div>
             <p className="text-rose-400 font-medium text-sm">Failed to load waiver data</p>
             <p className="text-rose-400/60 text-xs mt-0.5">
-              {error instanceof Error ? error.message : 'Yahoo API error — check credentials in Railway.'}
+              {error instanceof Error
+                ? error.message
+                : 'Yahoo API error — check credentials in Railway.'}
             </p>
           </div>
           <button
@@ -310,7 +466,12 @@ export default function WaiverWirePage() {
       {/* Top available */}
       <Card className="p-0">
         <CardHeader className="px-5 pt-5 pb-0 mb-4">
-          <CardTitle className="text-base">Top Available Players</CardTitle>
+          <CardTitle className="text-base">
+            Top Available Players
+            {position && (
+              <span className="text-zinc-500 font-normal ml-2">&mdash; {position}</span>
+            )}
+          </CardTitle>
         </CardHeader>
         <div className="px-5 pb-5">
           {isLoading ? (
@@ -320,6 +481,27 @@ export default function WaiverWirePage() {
           ) : null}
         </div>
       </Card>
+
+      {/* Pagination */}
+      {data?.pagination && (
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 rounded-md transition-colors text-zinc-300 text-xs"
+          >
+            Previous
+          </button>
+          <span className="text-xs font-mono text-zinc-500">Page {page}</span>
+          <button
+            onClick={() => setPage((p) => p + 1)}
+            disabled={!data.pagination.has_next}
+            className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 rounded-md transition-colors text-zinc-300 text-xs"
+          >
+            Next
+          </button>
+        </div>
+      )}
 
       {/* 2-start pitchers */}
       <Card className="p-0">
@@ -332,6 +514,60 @@ export default function WaiverWirePage() {
           ) : isError ? null : data ? (
             <TwoStartTable pitchers={data.two_start_pitchers} />
           ) : null}
+        </div>
+      </Card>
+
+      {/* ADD/DROP Recommendations */}
+      <Card className="p-0">
+        <CardHeader className="px-5 pt-5 pb-0 mb-4 flex flex-row items-center justify-between">
+          <CardTitle className="text-base">ADD/DROP Recommendations</CardTitle>
+          {!showRecs ? (
+            <button
+              onClick={() => setShowRecs(true)}
+              className="px-3 py-1.5 text-xs bg-amber-500/15 hover:bg-amber-500/25 text-amber-400 border border-amber-500/30 rounded-md transition-colors"
+            >
+              Load Recommendations
+            </button>
+          ) : (
+            <button
+              onClick={() => recRefetch()}
+              disabled={recLoading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-300 rounded-md transition-colors"
+            >
+              <RefreshCw className={cn('h-3 w-3', recLoading && 'animate-spin')} />
+              Refresh
+            </button>
+          )}
+        </CardHeader>
+        <div className="px-5 pb-5">
+          {!showRecs ? (
+            <p className="text-zinc-600 text-sm text-center py-8">
+              Click &ldquo;Load Recommendations&rdquo; to run roster analysis vs free agents.
+            </p>
+          ) : recLoading ? (
+            <div className="space-y-3 animate-pulse">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="h-20 bg-zinc-800 rounded-lg" />
+              ))}
+            </div>
+          ) : recError ? (
+            <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-4">
+              <p className="text-rose-400 text-sm font-medium">Failed to load recommendations</p>
+              <p className="text-rose-400/60 text-xs mt-0.5">
+                Yahoo auth may be required or roster is empty.
+              </p>
+            </div>
+          ) : !recData?.recommendations.length ? (
+            <p className="text-zinc-600 text-sm text-center py-8">
+              No strong moves found. Roster looks solid!
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {recData.recommendations.map((rec, i) => (
+                <RecCard key={i} rec={rec} />
+              ))}
+            </div>
+          )}
         </div>
       </Card>
     </div>

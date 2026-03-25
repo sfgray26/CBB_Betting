@@ -33,6 +33,7 @@
 | EdgeGenerationEngine | NOT EXISTS | `backend/services/edge_engine.py` does not exist |
 | Migration scripts dir | ABSENT | No `backend/migrations/` directory. Precedent: `scripts/migrate_v*.py` |
 | Test suite | 647/650 pass | 3 pre-existing DB-auth failures — not our code |
+| **UI Stack** | **Next.js 15** | **Streamlit RETIRED** — see ADR-010. All UI work in `frontend/`. Do not reference `dashboard/`. |
 
 **Existing scheduler (CRITICAL READ BEFORE EPIC-2):**
 `main.py` line 96 instantiates `AsyncIOScheduler()` at module level and registers 14 jobs in
@@ -144,6 +145,38 @@ Before creating `DiscordRouter` routes to `#fantasy-waivers`, `#fantasy-lineups`
 the bot has access to those channels. The env var names already exist in `discord_notifier.py`
 (`DISCORD_CHANNEL_FANTASY_WAIVERS`, `DISCORD_CHANNEL_FANTASY_LINEUPS`). Set them in Railway env
 vars first. `DiscordRouter` reads the same env vars — it does NOT hardcode channel IDs.
+
+### ADR-010: UI Stack — Next.js Only, Streamlit Retired (Mar 24, 2026)
+
+**Problem:** The `dashboard/` folder contains a legacy Streamlit application that was the original
+UI. As of March 2026, we completed a full migration to Next.js 15 (see `FRONTEND_MIGRATION.md`).
+However, agents may still reference Streamlit code for UI patterns or mistakenly attempt to fix
+bugs in the deprecated `dashboard/pages/` files.
+
+**Decision:** 
+1. **Streamlit is RETIRED** — The `dashboard/` folder is deprecated and will be archived in EPIC-4.
+2. **Next.js is the ONLY UI** — All UI work goes in `frontend/` (Next.js 15, TypeScript, Tailwind).
+3. **NEVER reference Streamlit** — Agents must NOT look at `dashboard/` for UI patterns, components,
+   or logic. The Streamlit code is frozen and will be deleted.
+
+**Current State:**
+| Location | Status | Purpose |
+|----------|--------|---------|
+| `frontend/` | **ACTIVE** | Next.js 15 production UI — all new work here |
+| `dashboard/` | **DEPRECATED** | Old Streamlit app — do not modify, do not reference |
+
+**Agent Instructions:**
+- ❌ DO NOT open files in `dashboard/` for any reason
+- ❌ DO NOT use Streamlit as a reference for UI patterns
+- ❌ DO NOT fix bugs in `dashboard/pages/*.py`
+- ✅ DO build all UI in `frontend/app/(dashboard)/`
+- ✅ DO use `frontend/lib/types.ts` and `frontend/lib/api.ts` as source of truth
+- ✅ DO refer to `FRONTEND_MIGRATION.md` for component patterns
+
+**Removal Timeline:**
+- **Now:** Streamlit code is deprecated but present
+- **EPIC-4 (Apr 7, 2026):** `dashboard/` folder will be moved to `archive/dashboard/`
+- **Post-EPIC-4:** Streamlit dependencies removed from `requirements.txt`
 
 ---
 
@@ -1337,4 +1370,5 @@ Push to branch claude/clarify-bet-recommendations-ui-WC8Do.
 **Branch:** main
 **Team:** Claude Code (Architect) · Kimi CLI (Audit) · OpenClaw (Execution Target) · Gemini (Ops/Railway only)
 **Next operator:** Claude Code, Monday March 24 — run ignition command above, implement `scripts/migrate_v8_post_draft.py`
+**CRITICAL REMINDER:** See ADR-010 — Next.js is the ONLY UI. Streamlit (`dashboard/`) is RETIRED. Never reference Streamlit code.
 **Apr 7 mission:** V9.2 recalibration — see §10 and prior HANDOFF.md §6

@@ -26,6 +26,7 @@ import type {
   RatingsStatus,
   DailyLineupResponse,
   WaiverWireResponse,
+  WaiverRecommendationsResponse,
   RosterResponse,
   MatchupResponse,
   LineupApplyPlayer,
@@ -257,8 +258,27 @@ export const endpoints = {
   dailyLineup: (date?: string) =>
     apiFetch<DailyLineupResponse>(`/api/fantasy/lineup/${date ?? new Date().toISOString().slice(0, 10)}`),
 
-  waiverWire: () =>
-    apiFetch<WaiverWireResponse>('/api/fantasy/waiver'),
+  waiverWire: (params?: {
+    position?: string
+    sort?: 'need_score' | 'percent_owned'
+    min_z_score?: number
+    max_percent_owned?: number
+    page?: number
+    per_page?: number
+  }) => {
+    const qs = new URLSearchParams()
+    if (params?.position) qs.set('position', params.position)
+    if (params?.sort) qs.set('sort', params.sort)
+    if (params?.min_z_score !== undefined) qs.set('min_z_score', String(params.min_z_score))
+    if (params?.max_percent_owned !== undefined) qs.set('max_percent_owned', String(params.max_percent_owned))
+    if (params?.page !== undefined) qs.set('page', String(params.page))
+    if (params?.per_page !== undefined) qs.set('per_page', String(params.per_page))
+    const query = qs.toString()
+    return apiFetch<WaiverWireResponse>(`/api/fantasy/waiver${query ? `?${query}` : ''}`)
+  },
+
+  waiverRecommendations: () =>
+    apiFetch<WaiverRecommendationsResponse>('/api/fantasy/waiver/recommendations'),
 
   // Fantasy Baseball — Yahoo roster / matchup / lineup apply
   fantasyRoster: (): Promise<RosterResponse> =>

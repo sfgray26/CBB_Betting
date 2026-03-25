@@ -3768,6 +3768,12 @@ async def get_fantasy_lineup_recommendations(
 
 @app.get("/api/fantasy/waiver", response_model=WaiverWireResponse)
 async def get_fantasy_waiver_recommendations(
+    position: Optional[str] = Query(None),
+    sort: str = Query("need_score"),
+    min_z_score: Optional[float] = Query(None),
+    max_percent_owned: float = Query(90.0),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(25, ge=10, le=100),
     user: str = Depends(verify_api_key),
     db: Session = Depends(get_db),
 ):
@@ -3805,8 +3811,11 @@ async def get_fantasy_waiver_recommendations(
             except Exception:
                 my_team_key = ""
 
-        # Get free agents and waiver players (sort=AR = ranked by % rostered)
-        free_agents = client.get_free_agents(count=25)
+        # Get free agents with pagination + position filter
+        _fa_start = (page - 1) * per_page
+        free_agents = client.get_free_agents(
+            position=position or "", start=_fa_start, count=per_page
+        )
         waiver_players = client.get_waiver_players(count=20)
 
         # Try to get matchup opponent
@@ -3985,11 +3994,53 @@ async def get_fantasy_waiver_recommendations(
                 need_score=round(need_score, 3),
                 category_contributions=contributions,
                 owned_pct=p.get("percent_owned", 0.0),
-                starts_this_week=0,
+                starts_this_week=p.get("starts_this_week", 0),
             )
 
+        # Build + filter + sort top_available
         top_available = [_to_waiver_player(p) for p in free_agents]
-        two_start_pitchers = [_to_waiver_player(p) for p in waiver_players]
+        if min_z_score is not None:
+            top_available = [p for p in top_available if p.need_score >= min_z_score]
+        top_available = [p for p in top_available if p.owned_pct <= max_percent_owned]
+        if sort == "percent_owned":
+            top_available.sort(key=lambda x: x.owned_pct, reverse=True)
+        else:
+            top_available.sort(key=lambda x: x.need_score, reverse=True)
+
+        # Two-start pitchers: SPs from free agents with 2+ probable starts this week
+        from datetime import date as _dt, timedelta as _td
+        _today = date_type.today()
+        _week_end_ts = _today + _td(days=6)
+
+        def _count_probable_starts(player_name: str) -> int:
+            try:
+                import statsapi
+                schedule = statsapi.schedule(
+                    start_date=_today.strftime("%m/%d/%Y"),
+                    end_date=_week_end_ts.strftime("%m/%d/%Y"),
+                )
+                last = player_name.split()[-1].lower()
+                return sum(
+                    1 for g in schedule
+                    if last in (
+                        g.get("home_probable_pitcher", "") +
+                        g.get("away_probable_pitcher", "")
+                    ).lower()
+                )
+            except Exception:
+                return 0
+
+        sp_fas = [p for p in free_agents if "SP" in (p.get("positions") or [])]
+        two_start_pitchers_raw = []
+        for _sp in sp_fas[:20]:
+            _sp_name = (_sp.get("name") or "").strip()
+            _starts = _count_probable_starts(_sp_name)
+            if _starts >= 2:
+                _sp["starts_this_week"] = _starts
+                two_start_pitchers_raw.append(_to_waiver_player(_sp))
+        two_start_pitchers = sorted(
+            two_start_pitchers_raw, key=lambda x: x.need_score, reverse=True
+        )[:5]
 
     except YahooAuthError as exc:
         raise HTTPException(
@@ -4007,12 +4058,18 @@ async def get_fantasy_waiver_recommendations(
             detail=f"Unexpected error fetching waiver data: {exc}",
         ) from exc
 
+    from backend.schemas import PaginationOut
     return WaiverWireResponse(
         week_end=week_end,
         matchup_opponent=matchup_opponent,
         category_deficits=category_deficits,
         top_available=top_available,
         two_start_pitchers=two_start_pitchers,
+        pagination=PaginationOut(
+            page=page,
+            per_page=per_page,
+            has_next=len(top_available) == per_page,
+        ),
     )
 
 
@@ -4063,7 +4120,7 @@ async def get_waiver_recommendations(
         my_roster: list[dict] = []
         if my_team_key:
             try:
-                my_roster = client.get_my_roster()
+                my_roster = client.get_roster()
             except Exception:
                 pass
 

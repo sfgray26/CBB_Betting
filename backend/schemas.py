@@ -333,6 +333,14 @@ class WaiverPlayerOut(BaseModel):
     category_contributions: dict
     owned_pct: float
     starts_this_week: int
+    statcast_signals: List[str] = []
+
+
+class PaginationOut(BaseModel):
+    """Pagination metadata for list endpoints."""
+    page: int
+    per_page: int
+    has_next: bool
 
 
 class WaiverWireResponse(BaseModel):
@@ -342,6 +350,8 @@ class WaiverWireResponse(BaseModel):
     category_deficits: List[CategoryDeficitOut]
     top_available: List[WaiverPlayerOut]
     two_start_pitchers: List[WaiverPlayerOut]
+    pagination: Optional[PaginationOut] = None
+    urgent_alert: Optional[dict] = None
 
 
 class RosterMoveRecommendation(BaseModel):
