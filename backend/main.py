@@ -4858,11 +4858,17 @@ async def apply_fantasy_lineup(
     lineup_dicts = [{"player_key": p.player_key, "position": p.position} for p in payload.players]
 
     try:
-        client.set_lineup(team_key=team_key, date=apply_date, lineup=lineup_dicts)
+        result = client.set_lineup(team_key=team_key, date=apply_date, lineup=lineup_dicts)
     except YahooAPIError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return {"success": True, "applied": len(payload.players), "date": apply_date}
+    return {
+        "success": True,
+        "applied": len(result.get("applied", [])),
+        "skipped": len(result.get("skipped", [])),
+        "date": apply_date,
+        "warnings": result.get("warnings", []),
+    }
 
 
 # ============================================================================

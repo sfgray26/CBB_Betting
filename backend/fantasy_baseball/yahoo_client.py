@@ -400,7 +400,7 @@ class YahooFantasyClient:
         pickup value. Yahoo's default sort order is opaque and unreliable.
         """
         params = {"status": "A", "start": start, "count": count, "sort": "AR",
-                  "out": "metadata,stats"}
+                  "out": "metadata"}
         if position:
             params["position"] = position
         data = self._get(f"league/{self.league_key}/players", params=params)
@@ -417,7 +417,7 @@ class YahooFantasyClient:
 
     def get_waiver_players(self, start: int = 0, count: int = 25) -> list[dict]:
         params = {"status": "W", "start": start, "count": count,
-                  "out": "metadata,stats"}
+                  "out": "metadata"}
         data = self._get(f"league/{self.league_key}/players", params=params)
         players_raw = self._league_section(data, 1).get("players", {})
         return self._parse_players_block(players_raw)
@@ -489,47 +489,73 @@ class YahooFantasyClient:
         return players
 
     def set_lineup(self, team_key: Optional[str] = None, date: Optional[str] = None,
-                   lineup: Optional[list[dict]] = None) -> bool:
+                   lineup: Optional[list[dict]] = None) -> dict:
         """
         Set lineup for a given date.
 
         lineup: list of {player_key: str, position: str}
             position: 'C','1B','2B','3B','SS','OF','Util','SP','RP','P','BN','DL'
 
-        Returns True on success.
+        Returns dict: {applied: [player_keys], skipped: [player_keys], warnings: [str]}
+        Raises YahooAPIError only when ALL players fail and no partial success is possible.
         """
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+
         if team_key is None:
             team_key = self.get_my_team_key()
         if date is None:
             from datetime import datetime
             date = datetime.utcnow().strftime("%Y-%m-%d")
         if not lineup:
-            return False
+            return {"applied": [], "skipped": [], "warnings": []}
 
         self._ensure_token()
-        # Build XML payload (Yahoo lineup PUT requires XML)
-        player_xml = "\n".join(
-            f'<player><player_key>{p["player_key"]}</player_key>'
-            f'<position>{p["position"]}</position></player>'
-            for p in lineup
-        )
-        xml_body = (
-            f'<?xml version="1.0"?>'
-            f'<fantasy_content><roster><coverage_type>date</coverage_type>'
-            f'<date>{date}</date><players>{player_xml}</players></roster></fantasy_content>'
-        )
         url = f"{YAHOO_API_BASE}/team/{team_key}/roster"
-        resp = self._session.put(
-            url,
-            data=xml_body.encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self._access_token}",
-                "Content-Type": "application/xml",
-            },
-        )
-        if resp.status_code not in (200, 204):
-            raise YahooAPIError(f"set_lineup failed: {resp.status_code} — {resp.text[:300]}", resp.status_code)
-        return True
+        headers = {
+            "Authorization": f"Bearer {self._access_token}",
+            "Content-Type": "application/xml",
+        }
+
+        def _build_xml(players: list) -> bytes:
+            player_xml = "\n".join(
+                f'<player><player_key>{p["player_key"]}</player_key>'
+                f'<position>{p["position"]}</position></player>'
+                for p in players
+            )
+            return (
+                f'<?xml version="1.0"?>'
+                f'<fantasy_content><roster><coverage_type>date</coverage_type>'
+                f'<date>{date}</date><players>{player_xml}</players></roster></fantasy_content>'
+            ).encode("utf-8")
+
+        # Attempt full batch first (fast path)
+        resp = self._session.put(url, data=_build_xml(lineup), headers=headers)
+        if resp.status_code in (200, 204):
+            return {"applied": [p["player_key"] for p in lineup], "skipped": [], "warnings": []}
+
+        # If Yahoo returns "game_ids don't match", fall back to player-by-player
+        # so stale/traded players are skipped rather than blocking the whole lineup.
+        if "game_ids" in resp.text or "game_id" in resp.text.lower():
+            _log.warning("set_lineup batch rejected (game_id mismatch) — retrying per-player")
+            applied, skipped, warnings = [], [], []
+            for p in lineup:
+                r = self._session.put(url, data=_build_xml([p]), headers=headers)
+                if r.status_code in (200, 204):
+                    applied.append(p["player_key"])
+                else:
+                    skipped.append(p["player_key"])
+                    msg = f"Skipped {p['player_key']} (pos={p['position']}): {r.text[:200]}"
+                    _log.warning(msg)
+                    warnings.append(msg)
+            if not applied:
+                raise YahooAPIError(
+                    f"set_lineup failed for all {len(skipped)} player(s): {resp.text[:300]}",
+                    resp.status_code,
+                )
+            return {"applied": applied, "skipped": skipped, "warnings": warnings}
+
+        raise YahooAPIError(f"set_lineup failed: {resp.status_code} — {resp.text[:300]}", resp.status_code)
 
     def get_scoreboard(self, week: Optional[int] = None) -> list[dict]:
         """Fetch matchup scoreboard for a week (defaults to current).
