@@ -338,6 +338,7 @@ class WaiverPlayerOut(BaseModel):
     owned_pct: float
     starts_this_week: int
     statcast_signals: List[str] = []
+    projected_saves: float = 0.0
 
 
 class PaginationOut(BaseModel):
@@ -356,6 +357,9 @@ class WaiverWireResponse(BaseModel):
     two_start_pitchers: List[WaiverPlayerOut]
     pagination: Optional[PaginationOut] = None
     urgent_alert: Optional[dict] = None
+    closer_alert: Optional[str] = None      # "NO_CLOSERS" | "LOW_CLOSERS" | None
+    il_slots_used: int = 0
+    il_slots_available: int = 0
 
 
 class RosterMoveRecommendation(BaseModel):

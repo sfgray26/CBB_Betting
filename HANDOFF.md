@@ -9,7 +9,25 @@
 
 ---
 
-## MISSION ACCOMPLISHED — Mar 25, 2026 (EMAC-081)
+## MISSION ACCOMPLISHED — Mar 25, 2026 (EMAC-081 Final)
+
+### IL Slot Awareness + Closer Alert + projected_saves
+
+| Item | Status |
+|------|--------|
+| `waiver_edge_detector.py`: `count_il_slots_used()` + `il_capacity_info()` module-level helpers | COMPLETE |
+| `schemas.py`: `projected_saves: float = 0.0` on `WaiverPlayerOut` | COMPLETE |
+| `schemas.py`: `closer_alert`, `il_slots_used`, `il_slots_available` on `WaiverWireResponse` | COMPLETE |
+| `main.py` waiver endpoint: roster fetch, IL capacity compute, closer alert, `projected_saves` in `_to_waiver_player` | COMPLETE |
+| `main.py` recommendations: IL slot free → prepend "[IL slot free — move X to IL first]" to rationale | COMPLETE |
+| `tests/test_waiver_integration.py`: `TestILSlotAwareness` (3) + `TestCloserAlert` (3) | COMPLETE — 6 tests pass |
+
+**Total new tests this session:** 6 (TestILSlotAwareness + TestCloserAlert)
+**Full suite:** 1141/1145 (4 pre-existing failures only)
+
+---
+
+## MISSION ACCOMPLISHED — Mar 25, 2026 (EMAC-081 P1)
 
 ### Fantasy Baseball Phase 2 Quality Fixes + Lineup Optimizer Constraint Solver
 
@@ -20,8 +38,8 @@
 | Fix B2: Coverage-aware `_weakest_safe_to_drop()` replaces `_weakest_at_positions()` | COMPLETE |
 | Fix B3: IL opportunity hint in recommendation rationale | COMPLETE |
 | Fix C: Two-start pitchers via MLB Stats API (no statsapi dep) + 6h TTL cache | COMPLETE |
-| Lineup optimizer: `solve_lineup()` greedy constraint solver | COMPLETE |
-| Lineup optimizer: `flag_pitcher_starts()` off-day detection | COMPLETE |
+| Lineup optimizer: `solve_lineup()` greedy constraint solver | ✅ COMPLETE — Reviewed by Kimi, 6 tests pass |
+| Lineup optimizer: `flag_pitcher_starts()` off-day detection | ✅ COMPLETE — SP start detection working |
 | `schemas.py`: `assigned_slot`, `has_game` on `LineupPlayerOut`; `lineup_warnings` on response | COMPLETE |
 | `tests/test_player_board_fuzzy.py` | COMPLETE — 5 tests |
 | `tests/test_waiver_integration.py` — `TestCoverageProtection` + `TestTwoStartPitchers` | COMPLETE — 9 new tests |

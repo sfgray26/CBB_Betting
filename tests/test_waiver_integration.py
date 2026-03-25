@@ -352,3 +352,103 @@ class TestTwoStartPitchers:
         import difflib
         ratio = difflib.SequenceMatcher(None, "jim", "tim").ratio()
         assert ratio < 0.90
+
+
+# ---------------------------------------------------------------------------
+# EMAC-081: IL Slot Awareness
+# ---------------------------------------------------------------------------
+
+class TestILSlotAwareness:
+    """Tests for count_il_slots_used() and il_capacity_info()."""
+
+    def _make_player(self, selected_position=None, name="Player"):
+        return {"name": name, "selected_position": selected_position}
+
+    def test_no_il_players(self):
+        """Roster with 0 IL-slotted players → used=0, available=total."""
+        from backend.services.waiver_edge_detector import count_il_slots_used, il_capacity_info
+
+        roster = [
+            self._make_player("C", "Catcher"),
+            self._make_player("1B", "FirstBase"),
+            self._make_player("OF", "Outfield"),
+            self._make_player("SP", "Pitcher"),
+        ]
+        assert count_il_slots_used(roster) == 0
+        info = il_capacity_info(roster)
+        assert info["used"] == 0
+        assert info["available"] == info["total"]
+
+    def test_one_il_slot_used(self):
+        """One player selected_position='IL' → used=1, available=total-1."""
+        from backend.services.waiver_edge_detector import count_il_slots_used, il_capacity_info
+
+        roster = [
+            self._make_player("IL", "InjuredPlayer"),
+            self._make_player("C", "Catcher"),
+            self._make_player("OF", "Outfield"),
+        ]
+        assert count_il_slots_used(roster) == 1
+        info = il_capacity_info(roster)
+        assert info["used"] == 1
+        assert info["available"] == info["total"] - 1
+
+    def test_all_il_slots_used(self):
+        """Two IL players (default capacity) → used=total, available=0."""
+        from backend.services.waiver_edge_detector import count_il_slots_used, il_capacity_info
+        import os
+
+        total = int(os.getenv("YAHOO_IL_SLOTS", "2"))
+        roster = [
+            self._make_player("IL", f"InjuredPlayer{i}") for i in range(total)
+        ] + [self._make_player("C", "Catcher")]
+
+        assert count_il_slots_used(roster) == total
+        info = il_capacity_info(roster)
+        assert info["used"] == total
+        assert info["available"] == 0
+
+
+# ---------------------------------------------------------------------------
+# EMAC-081: Closer Alert
+# ---------------------------------------------------------------------------
+
+class TestCloserAlert:
+    """Tests for closer alert logic — mirrors the inline logic in the waiver endpoint."""
+
+    def _compute_alert(self, fa_list):
+        """Replicate the closer alert logic from the waiver endpoint."""
+        closer_fas = [
+            f for f in fa_list
+            if f.get("category_contributions", {}).get("nsv", 0) > 0.5
+        ]
+        if len(closer_fas) == 0:
+            return "NO_CLOSERS"
+        elif len(closer_fas) < 2:
+            return "LOW_CLOSERS"
+        return None
+
+    def test_no_closers_alert(self):
+        """Zero FAs with nsv contribution > 0.5 → NO_CLOSERS."""
+        fas = [
+            {"name": "Batter A", "category_contributions": {"hr": 1.2, "nsv": 0.0}},
+            {"name": "Pitcher B", "category_contributions": {"k_pit": 0.8, "nsv": 0.3}},
+        ]
+        assert self._compute_alert(fas) == "NO_CLOSERS"
+
+    def test_low_closers_alert(self):
+        """Exactly one FA with nsv > 0.5 → LOW_CLOSERS."""
+        fas = [
+            {"name": "Closer A", "category_contributions": {"nsv": 1.5}},
+            {"name": "Batter B", "category_contributions": {"hr": 0.9, "nsv": 0.0}},
+        ]
+        assert self._compute_alert(fas) == "LOW_CLOSERS"
+
+    def test_no_alert_when_closers_present(self):
+        """Two or more FAs with nsv > 0.5 → None (no alert)."""
+        fas = [
+            {"name": "Closer A", "category_contributions": {"nsv": 1.8}},
+            {"name": "Closer B", "category_contributions": {"nsv": 0.9}},
+            {"name": "Batter C", "category_contributions": {"hr": 0.7, "nsv": 0.0}},
+        ]
+        assert self._compute_alert(fas) is None

@@ -3929,6 +3929,8 @@ async def get_fantasy_waiver_recommendations(
     top_available: list = []
     two_start_pitchers: list = []
     category_deficits: list = []
+    _closer_alert: Optional[str] = None
+    _il_info: dict = {"used": 0, "total": 2, "available": 0}
 
     # Maps Yahoo category display names to player board cat_scores keys.
     # cat_scores are already z-normalized with direction baked in (ERA/WHIP negative = good).
@@ -3948,6 +3950,14 @@ async def get_fantasy_waiver_recommendations(
                 my_team_key = client.get_my_team_key()
             except Exception:
                 my_team_key = ""
+
+        # Fetch roster for IL capacity (best-effort; empty list if unavailable)
+        my_roster: list[dict] = []
+        if my_team_key:
+            try:
+                my_roster = client.get_roster()
+            except Exception:
+                pass
 
         # Get free agents with pagination + position filter
         _fa_start = (page - 1) * per_page
@@ -4097,6 +4107,7 @@ async def get_fantasy_waiver_recommendations(
             positions = p.get("positions") or []
             name = (p.get("name") or "").strip()
             board_player = _get_proj(p)  # always returns something
+            _raw_nsv = round(float((board_player.get("proj") or {}).get("nsv", 0.0)), 1)
 
             need_score = 0.0
             contributions: dict = {}
@@ -4131,6 +4142,7 @@ async def get_fantasy_waiver_recommendations(
                 category_contributions=contributions,
                 owned_pct=p.get("percent_owned", 0.0),
                 starts_this_week=p.get("starts_this_week", 0),
+                projected_saves=_raw_nsv,
             )
 
         # Build + filter + sort top_available
@@ -4206,6 +4218,18 @@ async def get_fantasy_waiver_recommendations(
             two_start_pitchers_raw, key=lambda x: x.need_score, reverse=True
         )[:5]
 
+        # Closer alert — FAs with meaningful saves projection (nsv cat_score z > 0.5)
+        _closer_fas = [f for f in top_available if f.category_contributions.get("nsv", 0) > 0.5]
+        _closer_alert: Optional[str] = None
+        if len(_closer_fas) == 0:
+            _closer_alert = "NO_CLOSERS"
+        elif len(_closer_fas) < 2:
+            _closer_alert = "LOW_CLOSERS"
+
+        # IL capacity
+        from backend.services.waiver_edge_detector import il_capacity_info as _il_cap
+        _il_info = _il_cap(my_roster) if my_roster else {"used": 0, "total": 2, "available": 0}
+
     except YahooAuthError as exc:
         raise HTTPException(
             status_code=503,
@@ -4234,6 +4258,9 @@ async def get_fantasy_waiver_recommendations(
             per_page=per_page,
             has_next=len(top_available) == per_page,
         ),
+        closer_alert=_closer_alert,
+        il_slots_used=_il_info["used"],
+        il_slots_available=_il_info["available"],
     )
 
 
@@ -4537,7 +4564,13 @@ async def get_waiver_recommendations(
             if is_proxy:
                 rationale += " [Call-up — projections estimated.]"
             if drop_candidate.get("status") in _IL_STATUSES:
-                rationale += f" [Note: {drop_candidate['name']} is {drop_candidate['status']} — consider IL slot if available]"
+                from backend.services.waiver_edge_detector import il_capacity_info as _il_cap2
+                if my_roster and _il_cap2(my_roster)["available"] > 0:
+                    rationale = (
+                        f"[IL slot free — move {drop_candidate['name']} to IL first] " + rationale
+                    )
+                else:
+                    rationale += f" [Note: {drop_candidate['name']} is {drop_candidate['status']} — consider IL slot if available]"
 
             # MCMC win-probability simulation (non-blocking, graceful fallback)
             _mcmc = {}

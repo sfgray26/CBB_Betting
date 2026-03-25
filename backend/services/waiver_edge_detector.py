@@ -4,6 +4,7 @@ enriches with MCMC win-probability. Rate-limit cache: FA list cached 10 min.
 Returns [] (not raise) on YahooAuthError.
 """
 import logging
+import os
 import time
 from typing import Optional
 
@@ -15,6 +16,22 @@ _INJURED_2B_Z_THRESHOLD = -1.0
 
 # Statuses that indicate player is on IL (doesn't count against active roster)
 _INACTIVE_STATUSES = frozenset({"IL", "IL10", "IL60", "NA", "OUT"})
+
+# Yahoo IL slot position labels (selected_position values for IL-slotted players)
+_IL_SLOT_POSITIONS = frozenset({"IL", "IL10", "IL60", "IL+"})
+_DEFAULT_IL_SLOTS = int(os.getenv("YAHOO_IL_SLOTS", "2"))
+
+
+def count_il_slots_used(roster: list[dict]) -> int:
+    """Count players currently occupying a Yahoo IL slot."""
+    return sum(1 for p in roster if p.get("selected_position") in _IL_SLOT_POSITIONS)
+
+
+def il_capacity_info(roster: list[dict]) -> dict:
+    """Return {used, total, available} for IL slots."""
+    used = count_il_slots_used(roster)
+    total = _DEFAULT_IL_SLOTS
+    return {"used": used, "total": total, "available": max(0, total - used)}
 
 # Maps FA position → roster position group eligible for drop pairing.
 # OF/LF/CF/RF all compete for the same outfield slots.
