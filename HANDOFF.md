@@ -1576,12 +1576,12 @@ Full OpenClaw (v4.0+) is an **autonomous system** per SOUL.md:
 
 ---
 
-**Document Version:** EMAC-083
+**Document Version:** EMAC-084
 **Last Updated:** March 25, 2026
-**Status:** ACTIVE — EPIC-1/2/3 COMPLETE. MLB model LIVE. Yahoo API bugs fixed (waiver + matchup). Suite 1103/1107. Next: EPIC-4 Bracket Sunset (Apr 7).
+**Status:** ACTIVE — EPIC-1/2/3 COMPLETE. MLB model LIVE. UAT Phase 1 COMPLETE (waiver+lineup fixed). Suite 1104/1109. Next: EPIC-4 Bracket Sunset (Apr 7) + UAT Phase 2.
 **Branch:** main
 **Team:** Claude Code (Architect) · Kimi CLI (Audit) · OpenClaw (Execution Target) · Gemini (Ops/Railway only)
-**Next operator (Claude Code):** EPIC-4 Bracket Sunset — run after CBB championship Apr 7. Prompt is in §13.
+**Next operator (Claude Code):** EPIC-4 Bracket Sunset (Apr 7) OR UAT Phase 2 (brier score, MLB projection defaults, Odds Monitor). See §18.4.
 **Next operator (Gemini CLI):** Railway env vars PENDING — see §16. Context retention config available in `.gemini/config.yaml`. DO NOT write code — ops/env vars only.
 **Next operator (Kimi CLI):** MLB model audit COMPLETE — see §15 for findings. OpenClaw CLI verified.
 **CRITICAL REMINDER:** See ADR-010 — Next.js is the ONLY UI. Streamlit (`dashboard/`) is RETIRED. Never reference Streamlit code.
@@ -2127,18 +2127,18 @@ grep -A5 "Next operator (Gemini" HANDOFF.md
 
 ---
 
-## §18. UAT Issues — Research Complete
+## §18. UAT Issues — Phase 1 COMPLETE
 
-**Status:** Research Complete, Ready for Implementation  
-**Report:** `reports/UAT_ISSUES_ANALYSIS.md`  
-**Implementation Prompt:** `CLAUDE_UAT_FIXES_PROMPT.md`  
+**Status:** Phase 1 DONE (Mar 25, 2026) — commit `35373be` · Phase 2 queued
+**Report:** `reports/UAT_ISSUES_ANALYSIS.md`
+**Implementation Prompt:** `CLAUDE_UAT_FIXES_PROMPT.md`
 
 ### §18.1 Issues Summary (11 Total)
 
 | Priority | Issue | Status | Effort |
 |----------|-------|--------|--------|
-| 🔴 **CRITICAL** | Waiver Wire API 503 | API endpoint broken | 1-2 days |
-| 🔴 **CRITICAL** | Daily Lineup Yahoo 422 | Player/Game ID mismatch | 1-2 days |
+| 🔴 **CRITICAL** | Waiver Wire API 503 | ✅ FIXED (Mar 25) | Done |
+| 🔴 **CRITICAL** | Daily Lineup Yahoo 422 | ✅ FIXED (Mar 25) | Done |
 | 🟠 **HIGH** | Calibration empty | Missing brier calculation | 2-3 days |
 | 🟠 **HIGH** | Daily Lineup defaults | All players 4.50/1.000/4.625 | 2-3 days |
 | 🟠 **HIGH** | Odds Monitor broken | Portfolio fetch failing | 2-3 days |
@@ -2149,17 +2149,17 @@ grep -A5 "Next operator (Gemini" HANDOFF.md
 | 🟢 **LOW** | Today's Bets checkbox | UI enhancement | 0.5 day |
 | 🟢 **LOW** | Remove Bracket Sim | UI cleanup | 0.5 day |
 
-### §18.2 Critical Issues (Fix First)
+### §18.2 Critical Issues (FIXED)
 
-#### Waiver Wire — 503 Error
-**Error:** `Invalid subresource stats requested`  
-**Root Cause:** Yahoo API no longer accepts `stats` subresource in players query  
-**Fix:** Remove `stats` from initial query, fetch separately or use different endpoint
+#### Waiver Wire — 503 Error [FIXED]
+**Error:** `Invalid subresource stats requested`
+**Root Cause:** Yahoo MLB rejects both `ownership` AND `stats` on `/players` collection endpoint
+**Fix applied:** `out=metadata` only in `get_free_agents()` + `get_waiver_players()`. Parser never used inline stats anyway — `_parse_player()` skips them. Tests: 7/7 pass.
 
-#### Daily Lineup — 422 Error  
-**Error:** `game_ids don't match for player key`  
-**Root Cause:** Player traded or game_id mismatch between roster and lineup API  
-**Fix:** Validate player team/game_id before setting lineup
+#### Daily Lineup — 422 Error [FIXED]
+**Error:** `game_ids don't match for player key`
+**Root Cause:** One stale/traded player in batch causes Yahoo to reject the entire lineup PUT
+**Fix applied:** `set_lineup()` now attempts full batch first; on game_id mismatch falls back to per-player retry, skips failures, returns `{applied, skipped, warnings}`. `apply_fantasy_lineup` surfaces `skipped` + `warnings` in response instead of hard 422. Tests: 19/19 pass.
 
 ### §18.3 Key Findings
 
@@ -2180,10 +2180,10 @@ grep -A5 "Next operator (Gemini" HANDOFF.md
 
 ### §18.4 Implementation Plan
 
-**Phase 1: Critical (This Week)**
-1. Fix Waiver Wire API endpoint
-2. Fix Daily Lineup Yahoo 422 error
-3. Test both features thoroughly
+**Phase 1: Critical — COMPLETE (Mar 25, 2026)**
+1. ✅ Fix Waiver Wire API endpoint — `out=metadata` only
+2. ✅ Fix Daily Lineup Yahoo 422 error — per-player fallback retry
+3. ✅ Tests: 19/19 lineup+yahoo+waiver pass
 
 **Phase 2: High Priority (Next Week)**
 4. Implement brier score calculation
