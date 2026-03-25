@@ -1915,7 +1915,7 @@ async def get_recent_games(
 
 @app.get("/api/bets")
 async def get_bet_logs(
-    status: str = Query(default="all", description="all | pending | settled | cancelled"),
+    status: str = Query(default="all", description="all | pending | settled | cancelled | placed"),
     days: int = Query(default=60, ge=1, le=365),
     dedup: bool = Query(default=True, description="Keep only the first BetLog per game per day"),
     user: str = Depends(verify_api_key),
@@ -1943,6 +1943,9 @@ async def get_bet_logs(
         query = query.filter(BetLog.outcome.isnot(None), BetLog.outcome != -1)
     elif status == "cancelled":
         query = query.filter(BetLog.outcome == -1)
+    elif status == "placed":
+        # "placed" — only bets that were actually executed (not paper trades)
+        query = query.filter(BetLog.executed.is_(True), BetLog.outcome != -1)
     else:
         # "all" — exclude internal cancelled/displaced bookkeeping rows
         query = query.filter(BetLog.outcome != -1)
@@ -2729,7 +2732,7 @@ async def ingestion_status(user: str = Depends(verify_api_key)):
 
 
 @app.get("/admin/portfolio/status")
-async def get_portfolio_status(user: str = Depends(verify_admin_api_key)):
+async def get_portfolio_status(user: str = Depends(verify_api_key)):
     """Return current portfolio state: exposure, drawdown, pending positions."""
     pm = get_portfolio_manager()
     state = pm.get_state()
@@ -2745,7 +2748,7 @@ async def get_portfolio_status(user: str = Depends(verify_admin_api_key)):
 
 
 @app.get("/admin/odds-monitor/status")
-async def get_odds_monitor_status(user: str = Depends(verify_admin_api_key)):
+async def get_odds_monitor_status(user: str = Depends(verify_api_key)):
     """Return odds monitor status: tracked games, last poll time."""
     monitor = get_odds_monitor()
     return monitor.get_status()

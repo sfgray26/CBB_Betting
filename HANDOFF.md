@@ -68,12 +68,40 @@
 
 ---
 
-## 🔴 CRITICAL BUGS — EMAC-082 "FANTASY BASEBALL PRESEASON FIXES"
+## ✅ COMPLETE — EMAC-083 "ADMIN PANEL + BET HISTORY + EPIC-1 GATES"
+
+> **Assignee:** Claude Code (Master Architect)
+> **Status:** ✅ COMPLETE — March 25, 2026
+> **Tests:** 1150 pass (no regressions)
+
+### Summary of Fixes
+
+| Gap | Fix | File(s) |
+|-----|-----|---------|
+| **A** Odds Monitor/Portfolio 403 | Downgraded read-only status endpoints from `verify_admin_api_key` to `verify_api_key` | `main.py:2732, 2748` |
+| **B** Bet History shows all | Added `placed` status filter (`BetLog.executed.is_(True)`) + "Placed (Real)" dropdown option | `main.py:1918,1945`, `bet-history/page.tsx:198` |
+| **C** EPIC-1 gates | `migrate_v8_post_draft.py` confirmed complete + `test_schema_v8.py` 7/7 pass | `scripts/`, `tests/` |
+
+---
+
+## ✅ COMPLETE — EMAC-082 "FANTASY BASEBALL PRESEASON FIXES"
 
 > **Discovered:** March 25, 2026 — User testing reveals multiple critical UX issues blocking fantasy baseball functionality.
 > **Severity:** P0 — Fantasy Baseball Opening Day is March 28 (3 days)
 > **Assignee:** Claude Code (Master Architect)
-> **Status:** ⏳ IN PROGRESS
+> **Status:** ✅ COMPLETE — March 25, 2026
+> **Tests:** 9/9 new tests pass, 1150 total pass
+
+### Summary of Fixes
+
+| Bug | Fix | File(s) |
+|-----|-----|---------|
+| **#1** is_undroppable string '0' → True | Explicit `in (1, '1', True, 'true')` check | `yahoo_client.py:760` |
+| **#2** Silent fallback scoring | Warning banner when odds unavailable | `main.py`, `types.ts`, `lineup/page.tsx` |
+| **#3** Lineup apply 400 block | Changed to `apply_warnings.append(...)` | `main.py:5000-5014` |
+| **#4** No Optimize Lineup button | Added Optimize button, Slot column badges, amber warning | `lineup/page.tsx`, `types.ts` |
+| **#5** Matchup page blank | Added `message: Optional[str]` to schema, blue info banner | `schemas.py`, `main.py`, `matchup/page.tsx` |
+| **#6** Waiver 503 swallows traceback | Added `logger.exception(...)` before 503 raises | `main.py` (2 handlers) |
 
 ### Bug 1: Roster Shows All Players as "Undroppable = Yes"
 
@@ -2894,8 +2922,8 @@ grep -A5 "Next operator (Gemini" HANDOFF.md
 | 🔴 **CRITICAL** | Daily Lineup Yahoo 422 | ✅ FIXED (Mar 25) | Done |
 | 🟠 **HIGH** | Calibration empty | Missing brier calculation | 2-3 days |
 | 🟠 **HIGH** | Daily Lineup defaults | Pre-season 400 + no_games_today flag FIXED; real odds await Mar 28 | ✅ FIXED (Mar 25) |
-| 🟠 **HIGH** | Odds Monitor broken | Portfolio fetch failing | 2-3 days |
-| 🟡 **MEDIUM** | Bet History filter | Shows all not placed | 1 day |
+| 🟠 **HIGH** | Odds Monitor broken | ✅ FIXED (Mar 25) — `verify_api_key` on status endpoints | Done |
+| 🟡 **MEDIUM** | Bet History filter | ✅ FIXED (Mar 25) — `placed` filter + "Placed (Real)" dropdown | Done |
 | 🟡 **MEDIUM** | My Roster data | Z-score FIXED (get_or_create_projection + is_proxy + cat_scores) | ✅ FIXED (Mar 25) |
 | 🟡 **MEDIUM** | Current Matchup | Category stats/opponent | 1-2 days |
 | 🟡 **MEDIUM** | Risk Dashboard | Settlement validation | 1 day |
