@@ -297,16 +297,17 @@ class LineupPlayerOut(BaseModel):
 
 
 class StartingPitcherOut(BaseModel):
-    """Daily SP recommendation."""
+    """Daily pitcher recommendation with SP/RP delineation."""
     player_id: str
     name: str
     team: str
+    pitcher_type: str = "SP"  # "SP" | "RP" | "P" (ambiguous)
     opponent: str = ""  # Opposing team
     opponent_implied_runs: float
     park_factor: float
     sp_score: float
     start_time: Optional[datetime] = None
-    status: str = "UNKNOWN"
+    status: str = "UNKNOWN"  # "START" | "NO_START" | "RP"
 
 
 class DailyLineupResponse(BaseModel):
