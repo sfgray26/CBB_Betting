@@ -1871,6 +1871,27 @@ async def update_bet_outcome(
     )
 
 
+@app.post("/api/bets/{bet_id}/placed")
+async def mark_bet_placed(
+    bet_id: int,
+    placed: bool = True,
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """Mark an existing BetLog as placed (executed=True) or unplaced (executed=False).
+
+    Used by the Today's Bets UI checkbox to toggle whether a recommendation
+    was actually placed at the sportsbook without creating a new BetLog entry.
+    """
+    bet = db.query(BetLog).filter(BetLog.id == bet_id).first()
+    if not bet:
+        raise HTTPException(status_code=404, detail="Bet not found")
+    bet.executed = placed
+    db.commit()
+    logger.info("Bet %d marked as %s by %s", bet_id, "placed" if placed else "unplaced", user)
+    return {"success": True, "bet_id": bet_id, "placed": placed}
+
+
 # ============================================================================
 # AUTHENTICATED ENDPOINTS - GAMES
 # ============================================================================
@@ -2733,9 +2754,17 @@ async def ingestion_status(user: str = Depends(verify_api_key)):
 
 
 @app.get("/admin/portfolio/status")
-async def get_portfolio_status(user: str = Depends(verify_api_key)):
-    """Return current portfolio state: exposure, drawdown, pending positions."""
+async def get_portfolio_status(
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """Return current portfolio state: exposure, drawdown, pending positions.
+
+    Loads bankroll and pending positions from DB on each call so that
+    drawdown_pct reflects real settled P&L rather than staying at 0%.
+    """
     pm = get_portfolio_manager()
+    pm.load_from_db(db)
     state = pm.get_state()
     return {
         "current_bankroll": state.current_bankroll,

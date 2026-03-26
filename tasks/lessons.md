@@ -50,6 +50,18 @@
 
 ---
 
+## UAT Fixes — Verify Before Fixing
+
+### Always read the code before acting on UAT bug reports
+- **Lesson**: UAT issues may already be fixed in the codebase. Read the actual file before writing a fix. In EMAC-086, issue #10a (min="20" on settlement input) was already `min={1}` in the code — no change needed. Issue #8 (z-scores) was already fully wired in both backend and frontend. Only issues #10b (drawdown 0%) and #3 endpoint (mark-as-placed) required actual changes.
+- **Context**: Three out of five sub-issues in UAT Phase 4 were already resolved. Acting without reading would have introduced unnecessary diffs.
+
+### PortfolioManager singleton drawdown always returns 0 without DB load
+- **Lesson**: `PortfolioManager` is a singleton that initializes `current_bankroll = starting_bankroll` (drawdown = 0%). It only computes real drawdown after `load_from_db()` is called. Any endpoint that surfaces `drawdown_pct` must call `pm.load_from_db(db)` first. Without this, the Risk Dashboard drawdown gauge always shows 0%.
+- **Context**: EMAC-086 fix 1b — `get_portfolio_status` endpoint now accepts `db: Session` dependency and calls `pm.load_from_db(db)` before returning state.
+
+---
+
 ## Fantasy Baseball
 
 ### Existing backend module

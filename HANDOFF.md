@@ -1,11 +1,36 @@
-# OPERATIONAL HANDOFF — EMAC-085 "WAIVER LOGGING + LINE MONITOR DEDUP"
+# OPERATIONAL HANDOFF — EMAC-086 "UAT PHASE 4 FIXES"
 
 > **Ground truth as of March 25, 2026.** Author: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
-> Prior state: `EMAC-084` — Brier calibration + bet-history Today filter.
+> Prior state: `EMAC-085` — Waiver 503 logging + line monitor dedup.
 >
 > **GUARDIAN FREEZE still active on CBB model files through April 7.**
 > DO NOT touch `backend/betting_model.py`, `backend/services/analysis.py`, or any CBB model service.
+
+---
+
+## MISSION ACCOMPLISHED — Mar 25, 2026 (EMAC-086)
+
+### UAT Phase 4 — Risk Dashboard + Bet Placement Fixes
+
+| Item | Status | Finding |
+|------|--------|---------|
+| Fix 1a: Settlement lookback `min="20"` → `min="1"` | ALREADY CORRECT | Code had `min={1}` in JSX — no change needed |
+| Fix 1b: Drawdown showing 0% | FIXED | `get_portfolio_status` now calls `pm.load_from_db(db)` |
+| Fix 2: Roster z-scores not populated | ALREADY CORRECT | Both backend (`z_score=proj.get("z_score")`) and frontend (Z-Score column) already wired |
+| Fix 3: `POST /api/bets/{bet_id}/placed` endpoint | ADDED | New endpoint toggles `executed` field on existing BetLog |
+
+**Root cause of drawdown 0%:** `PortfolioManager` is a singleton that initializes `current_bankroll = starting_bankroll`, meaning `drawdown_pct` is always 0 unless `load_from_db()` is called. The endpoint was calling `get_state()` directly without loading DB state first.
+
+**Fix:** `get_portfolio_status` now accepts `db: Session` dependency and calls `pm.load_from_db(db)` before reading state. The singleton's bankroll is reconstructed from the most recent settled `BetLog.bankroll_at_bet + profit_loss_dollars` on each call.
+
+**New endpoint contract:**
+- `POST /api/bets/{bet_id}/placed?placed=true` — sets `executed=True`
+- `POST /api/bets/{bet_id}/placed?placed=false` — sets `executed=False`
+- Returns `{"success": True, "bet_id": N, "placed": bool}`
+
+**Files changed:**
+- `backend/main.py` — 2 edits only (no analysis.py or betting_model.py touched)
 
 ---
 
