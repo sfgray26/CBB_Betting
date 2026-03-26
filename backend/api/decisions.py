@@ -186,3 +186,66 @@ async def get_decision_dashboard(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/pending/{date}")
+async def get_pending_decisions(
+    date: str,
+):
+    """Get all pending decisions for a date that need resolution."""
+    try:
+        from backend.fantasy_baseball.nightly_resolution import get_pending_resolutions
+        pending = get_pending_resolutions(date)
+        return {
+            "date": date,
+            "pending_count": len(pending),
+            "decisions": pending
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/resolve-bulk/{date}")
+async def resolve_bulk_decisions(
+    date: str,
+    resolutions: List[Dict],  # [{"decision_id": "...", "actual_stats": {...}}]
+    tracker: DecisionTracker = Depends(get_decision_tracker),
+):
+    """
+    Resolve multiple decisions at once.
+    
+    Example:
+    [
+      {"decision_id": "pete_alonso_2025-03-27", "actual_stats": {"hr": 1, "r": 2}},
+      {"decision_id": "mookie_betts_2025-03-27", "actual_stats": {"hr": 0, "r": 1}}
+    ]
+    """
+    results = []
+    for res in resolutions:
+        try:
+            tracker.resolve_decision(
+                res["decision_id"],
+                res.get("actual_stats", {}),
+                res.get("game_happened", True)
+            )
+            results.append({"decision_id": res["decision_id"], "status": "resolved"})
+        except Exception as e:
+            results.append({"decision_id": res["decision_id"], "status": "error", "error": str(e)})
+    
+    return {
+        "date": date,
+        "processed": len(results),
+        "successful": sum(1 for r in results if r["status"] == "resolved"),
+        "results": results
+    }
+
+
+@router.post("/run-nightly-resolution")
+async def run_nightly_resolution():
+    """Trigger the nightly resolution job (for cron)."""
+    try:
+        from backend.fantasy_baseball.nightly_resolution import resolve_yesterdays_decisions
+        result = resolve_yesterdays_decisions()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

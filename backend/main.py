@@ -95,7 +95,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Scheduler instance — AsyncIOScheduler runs jobs inside FastAPI's event loop,
+# Scheduler instance - AsyncIOScheduler runs jobs inside FastAPI's event loop,
 # allowing async job handlers (nightly_job, _opener_attack_job) to await coroutines.
 scheduler = AsyncIOScheduler()
 
@@ -117,11 +117,11 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     # Startup
     logger.info("🚀 Starting CBB Edge Analyzer")
-    
+
     # Start scheduler
     nightly_hour = int(os.getenv("NIGHTLY_CRON_HOUR", "3"))
     timezone = os.getenv("NIGHTLY_CRON_TIMEZONE", "America/New_York")
-    
+
     scheduler.add_job(
         nightly_job,
         CronTrigger(hour=nightly_hour, minute=0, timezone=timezone),
@@ -148,7 +148,7 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # O-10: Line movement monitor — runs every 30 minutes
+    # O-10: Line movement monitor - runs every 30 minutes
     scheduler.add_job(
         _line_monitor_job,
         IntervalTrigger(minutes=30),
@@ -203,7 +203,7 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # Odds monitor — poll every 5 minutes for line movements
+    # Odds monitor - poll every 5 minutes for line movements
     odds_monitor_interval = get_float_env("ODDS_MONITOR_INTERVAL_MIN", "5")
     scheduler.add_job(
         _odds_monitor_job,
@@ -213,7 +213,7 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # Opening line attack — run when overnight lines are posted.
+    # Opening line attack - run when overnight lines are posted.
     # Books typically hang openers between 10 PM and midnight ET.
     # We run analysis at 10:30 PM and 12:30 AM to catch early value.
     # Enabled by default; set OPENER_ATTACK_ENABLED=false to disable.
@@ -235,7 +235,7 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Opening line attack scheduler enabled (22:30, 00:30 %s)", timezone)
 
-    # Performance Sentinel — MAE, drawdown, pytest health check at 5:00 AM
+    # Performance Sentinel - MAE, drawdown, pytest health check at 5:00 AM
     # (30 min after daily snapshot, ensuring fresh data is available)
     scheduler.add_job(
         _nightly_health_check_job,
@@ -245,7 +245,7 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # Morning Briefing — summarize today's slate at 7 AM ET (after ratings are fresh)
+    # Morning Briefing - summarize today's slate at 7 AM ET (after ratings are fresh)
     scheduler.add_job(
         _morning_briefing_job,
         CronTrigger(hour=7, minute=0, timezone=timezone),
@@ -254,7 +254,7 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # End-of-day results — 11 PM ET
+    # End-of-day results - 11 PM ET
     scheduler.add_job(
         _end_of_day_results_job,
         CronTrigger(hour=23, minute=0, timezone=timezone),
@@ -263,7 +263,7 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # Tournament bracket release notifier — runs daily 6 PM ET, Mar 14–20
+    # Tournament bracket release notifier - runs daily 6 PM ET, Mar 14-20
     scheduler.add_job(
         _tournament_bracket_job,
         CronTrigger(hour=18, minute=0, timezone=timezone),
@@ -272,7 +272,7 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # Weekly model parameter recalibration — Sunday 5 AM ET
+    # Weekly model parameter recalibration - Sunday 5 AM ET
     # Note: recalibration and sentinel both run at 5:00 AM; they are independent.
     scheduler.add_job(
         _weekly_recalibration_job,
@@ -323,15 +323,15 @@ async def lifespan(app: FastAPI):
             from backend.models import Prediction
             from backend.services.odds_monitor import get_odds_monitor
             from backend.services.recalibration import load_current_params
-            
+
             today_utc = datetime.utcnow().date()
             preds = db.query(Prediction).filter(Prediction.prediction_date == today_utc).all()
-            
+
             if preds:
                 from backend.betting_model import ReanalysisEngine
                 params = load_current_params(db)
                 model = CBBEdgeModel(params)
-                
+
                 import math as _math
                 _sd_mult = get_float_env("SD_MULTIPLIER", "0.85")
                 cache = {}
@@ -341,7 +341,7 @@ async def lifespan(app: FastAPI):
                         inputs = fa.get("inputs", {})
                         calcs = fa.get("calculations", {})
 
-                        # full_analysis.inputs has no "game" key — reconstruct
+                        # full_analysis.inputs has no "game" key - reconstruct
                         # game_data directly from the SQLAlchemy Game relationship.
                         game_at = p.game.away_team or ""
                         game_ht = p.game.home_team or ""
@@ -377,7 +377,7 @@ async def lifespan(app: FastAPI):
                             cache[_key] = engine
                         except Exception:
                             continue
-                
+
                 if cache:
                     get_odds_monitor().set_reanalysis_cache(cache)
                     logger.info("Lifespan: Pre-warmed reanalysis cache with %d engines", len(cache))
@@ -403,7 +403,7 @@ async def lifespan(app: FastAPI):
 
     # ── Startup catch-up: if nightly analysis was missed (service restarted after
     # 3 AM ET with no predictions for today), run it automatically as a background task.
-    # APScheduler is in-memory — Railway deploys after 3 AM reset the next-run time to
+    # APScheduler is in-memory - Railway deploys after 3 AM reset the next-run time to
     # tomorrow, so without this check today's games would never get analysed.
     async def _startup_catchup():
         from pytz import timezone as _tz
@@ -412,10 +412,10 @@ async def lifespan(app: FastAPI):
         now_et = _dt.now(et)
         nightly_cutoff = int(os.getenv("NIGHTLY_CRON_HOUR", "3"))
         if now_et.hour < nightly_cutoff:
-            # Before 3 AM ET — nightly job hasn't run yet today, nothing to catch up
+            # Before 3 AM ET - nightly job hasn't run yet today, nothing to catch up
             return
         # Check if today already has predictions.
-        # Use ET date (not UTC) — the nightly job can run before midnight UTC
+        # Use ET date (not UTC) - the nightly job can run before midnight UTC
         # (e.g. 22:00 UTC = 6 PM ET), storing predictions with the ET date.
         # Querying UTC date after midnight UTC would miss those rows.
         today_et = now_et.date()
@@ -427,7 +427,7 @@ async def lifespan(app: FastAPI):
         finally:
             db.close()
         if count > 0:
-            logger.info("Lifespan: Today has %d predictions — no catch-up needed", count)
+            logger.info("Lifespan: Today has %d predictions - no catch-up needed", count)
             return
         logger.warning(
             "Lifespan: No predictions found for %s (now_et=%s). "
@@ -443,7 +443,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_startup_catchup())
 
     yield
-    
+
     # Shutdown
     logger.info("👋 Shutting down CBB Edge Analyzer")
     scheduler.shutdown()
@@ -456,7 +456,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — reads ALLOWED_ORIGINS env var (comma-separated) or falls back to wildcard.
+# CORS - reads ALLOWED_ORIGINS env var (comma-separated) or falls back to wildcard.
 # API key auth means wildcard origins are safe; credentials are never cookie-based.
 _raw_origins = os.getenv("ALLOWED_ORIGINS", "")
 _allowed_origins: list[str] = [o.strip() for o in _raw_origins.split(",") if o.strip()]
@@ -476,12 +476,12 @@ app.add_middleware(
 # ============================================================================
 
 async def nightly_job():
-    """Main nightly analysis job — runs at 3 AM ET by default."""
+    """Main nightly analysis job - runs at 3 AM ET by default."""
     logger.info("Starting nightly analysis job")
     try:
         results, cache = await run_nightly_analysis()
         logger.info("Nightly analysis complete: %s", results)
-        
+
         # EMAC-021: Update OddsMonitor cache for real-time pulse
         try:
             get_odds_monitor().set_reanalysis_cache(cache)
@@ -497,7 +497,7 @@ async def nightly_job():
 
 
 def _update_outcomes_job():
-    """Settle completed game bets — runs every 2 hours."""
+    """Settle completed game bets - runs every 2 hours."""
     try:
         results = update_completed_games()
         logger.info("Outcome update: %s", results)
@@ -506,7 +506,7 @@ def _update_outcomes_job():
 
 
 def _capture_lines_job():
-    """Capture closing lines for imminent games — runs every 30 min."""
+    """Capture closing lines for imminent games - runs every 30 min."""
     try:
         results = capture_closing_lines()
         logger.info("Closing lines captured: %s", results)
@@ -532,7 +532,7 @@ def _weekly_recalibration_job():
 
 
 def _nightly_health_check_job():
-    """Performance Sentinel — model accuracy, portfolio drawdown, pytest suite — runs at 5:00 AM."""
+    """Performance Sentinel - model accuracy, portfolio drawdown, pytest suite - runs at 5:00 AM."""
     try:
         result = run_nightly_health_check()
         logger.info("Sentinel health check complete: %s", result)
@@ -541,7 +541,7 @@ def _nightly_health_check_job():
 
 
 def _morning_briefing_job():
-    """Morning slate briefing at 7 AM ET — sends Discord notification with today's bets."""
+    """Morning slate briefing at 7 AM ET - sends Discord notification with today's bets."""
     import time as _time
     t0 = _time.monotonic()
     db = SessionLocal()
@@ -605,7 +605,7 @@ def _morning_briefing_job():
 
 
 def _end_of_day_results_job():
-    """End-of-day results summary at 11 PM ET — settles today's bets and sends Discord recap."""
+    """End-of-day results summary at 11 PM ET - settles today's bets and sends Discord recap."""
     from datetime import date
     from backend.services.discord_simple import send_eod_results
 
@@ -630,13 +630,13 @@ def _end_of_day_results_job():
 
             results = []
             daily_pl = 0
-            
+
             for b in settled:
                 team = b.game.home_team if b.bet_side == "home" else b.game.away_team
                 outcome_map = {1: "win", 0: "loss", 2: "push"}
                 pl = (b.profit_loss_dollars or 0) / 100
                 daily_pl += pl
-                
+
                 results.append({
                     "team": team,
                     "outcome": outcome_map.get(b.outcome, "unknown"),
@@ -657,9 +657,9 @@ def _tournament_bracket_job():
     """
     Tournament bracket release notifier.
 
-    Runs daily from March 15–17. On the day the bracket is released (Selection
+    Runs daily from March 15-17. On the day the bracket is released (Selection
     Sunday), The Odds API will start returning NCAAB tournament games. When we
-    first detect ≥4 new NCAAB games with tips scheduled Mar 18–19 (First Four),
+    first detect ≥4 new NCAAB games with tips scheduled Mar 18-19 (First Four),
     we send a Discord notification and mark the bracket as notified so we only
     fire once.
 
@@ -723,7 +723,7 @@ def _tournament_bracket_job():
                 }
                 for g in first_four_games[:8]
             ],
-            "footer": {"text": "CBB Edge — Tournament Mode Active"},
+            "footer": {"text": "CBB Edge - Tournament Mode Active"},
             "timestamp": datetime.now(_timezone.utc).isoformat(),
         }
 
@@ -775,7 +775,7 @@ def _tournament_bracket_job():
                     )[6]
 
                     bracket_embed = {
-                        "title": "Bracket Projection — Monte Carlo",
+                        "title": "Bracket Projection - Monte Carlo",
                         "description": (
                             f"**Projected Champion:** {_labeled(result.projected_champion)}"
                             f" ({champ_prob * 100:.0f}%)\n\n"
@@ -788,7 +788,7 @@ def _tournament_bracket_job():
                                 "value": (
                                     f"#{a['dog_seed']} {a['underdog']} vs "
                                     f"#{a['fav_seed']} {a['favorite']}"
-                                    f" — {a['upset_prob'] * 100:.0f}% upset chance"
+                                    f" - {a['upset_prob'] * 100:.0f}% upset chance"
                                 ),
                                 "inline": False,
                             }
@@ -823,7 +823,7 @@ async def get_bracket_projection(
     so the endpoint always returns a result during tournament weeks.
 
     Query parameters:
-      n_sims: Number of Monte Carlo simulations (1,000 – 50,000; default 10,000).
+      n_sims: Number of Monte Carlo simulations (1,000 - 50,000; default 10,000).
     """
     import json as _json
     from pathlib import Path as _Path
@@ -926,11 +926,11 @@ async def get_bracket_projection(
 
 
 def _daily_snapshot_job():
-    """Generate daily performance snapshot, adjust source weights, and run alert checks — runs at 4:30 AM."""
+    """Generate daily performance snapshot, adjust source weights, and run alert checks - runs at 4:30 AM."""
     db = SessionLocal()
     try:
         generate_daily_snapshot(db)
-        # Dynamic ensemble weight adjustment — runs after snapshot so today's
+        # Dynamic ensemble weight adjustment - runs after snapshot so today's
         # MAE data is available in PerformanceSnapshot for the rolling window.
         try:
             weight_result = compute_dynamic_weights(db, changed_by="auto_daily")
@@ -945,9 +945,9 @@ def _daily_snapshot_job():
 
 
 def _odds_monitor_job():
-    """Poll odds API for line movements — runs every 5 min (configurable).
+    """Poll odds API for line movements - runs every 5 min (configurable).
 
-    Only active during the configured operating window (default 12–23 ET)
+    Only active during the configured operating window (default 12-23 ET)
     to avoid burning API quota when no games are scheduled.
     """
     _tz_name = os.getenv("NIGHTLY_CRON_TIMEZONE", "America/New_York")
@@ -960,7 +960,7 @@ def _odds_monitor_job():
 
     if not (_start_h <= _local_hour < _end_h):
         logger.debug(
-            "Odds monitor: outside window [%d, %d) %s (current=%d) — skipping",
+            "Odds monitor: outside window [%d, %d) %s (current=%d) - skipping",
             _start_h, _end_h, _tz_name, _local_hour,
         )
         return
@@ -979,7 +979,7 @@ def _odds_monitor_job():
 
 
 def _line_monitor_job():
-    """Check for significant line movements vs. active bets — runs every 30 min."""
+    """Check for significant line movements vs. active bets - runs every 30 min."""
     try:
         results = check_line_movements()
         logger.info("Line monitor check: %s", results)
@@ -988,7 +988,7 @@ def _line_monitor_job():
 
 
 async def _fetch_ratings_job():
-    """Pre-warm ratings cache at 8 AM — fetches all sources concurrently.
+    """Pre-warm ratings cache at 8 AM - fetches all sources concurrently.
 
     Runs get_ratings_service().async_get_all_ratings(use_cache=False) so
     the nightly analysis (3 AM next day) hits a warm 6-hour cache.
@@ -1061,14 +1061,14 @@ async def _opener_attack_job():
     Run analysis when overnight opening lines are posted.
 
     Bookmakers hang openers with lower limits because their models are
-    vulnerable — they rely on sharp action to shape the line.  Running
+    vulnerable - they rely on sharp action to shape the line.  Running
     analysis immediately catches early value before the line moves.
 
     When BET verdicts are found, Discord alerts fire immediately so bets
     can be placed at the opening price rather than waiting for the 3 AM
     or 7 AM jobs (by which time sharp money may have moved the line).
     """
-    logger.info("Opening line attack triggered — running analysis on fresh openers")
+    logger.info("Opening line attack triggered - running analysis on fresh openers")
     try:
         results, cache = await run_nightly_analysis()
 
@@ -1081,7 +1081,7 @@ async def _opener_attack_job():
         bets = results.get("bets_recommended", 0)
         if bets > 0:
             logger.info(
-                "Opener attack: %d bets found in %d games (%.1fs) — sending Discord alert",
+                "Opener attack: %d bets found in %d games (%.1fs) - sending Discord alert",
                 bets, results.get("games_analyzed", 0),
                 results.get("duration_seconds", 0),
             )
@@ -1116,19 +1116,19 @@ async def root():
 async def health_check(db: Session = Depends(get_db)):
     """Health check endpoint"""
     health = {"status": "healthy", "database": "connected", "scheduler": "running"}
-    
+
     try:
         # CHANGE THIS LINE: Wrap the string in text()
-        db.execute(text("SELECT 1")) 
+        db.execute(text("SELECT 1"))
     except Exception as e:
         logger.error(f"Health check database error: {e}")
         health["status"] = "degraded"
         health["database"] = f"error: {str(e)}"
-    
+
     if not scheduler.running:
         health["status"] = "degraded"
         health["scheduler"] = "stopped"
-        
+
     return health
 
 
@@ -1383,7 +1383,7 @@ async def get_optimal_parlays(
     if true_remaining_capacity <= 0.0:
         return {
             "date": datetime.utcnow().date().isoformat(),
-            "message": "Portfolio capacity exhausted — no room for parlay sizing",
+            "message": "Portfolio capacity exhausted - no room for parlay sizing",
             "capital_allocated_dollars": round(already_allocated, 2),
             "max_daily_dollars": round(max_daily_dollars, 2),
             "parlays": [],
@@ -1614,7 +1614,7 @@ async def get_performance_by_team(
         roi = s["total_pl_dollars"] / s["total_risked"] if s["total_risked"] > 0 else 0.0
         mean_edge = sum(s["edges"]) / len(s["edges"]) if s["edges"] else None
         # Flag as anomaly if win rate is suspiciously high (>80%) or low (<20%)
-        # with at least 3 bets — possible mapping issue signal
+        # with at least 3 bets - possible mapping issue signal
         anomaly = s["bets"] >= 3 and (win_rate >= 0.80 or win_rate <= 0.20)
         results.append({
             "team": team_name,
@@ -1967,10 +1967,10 @@ async def get_bet_logs(
     elif status == "cancelled":
         query = query.filter(BetLog.outcome == -1)
     elif status == "placed":
-        # "placed" — only bets that were actually executed (not paper trades)
+        # "placed" - only bets that were actually executed (not paper trades)
         query = query.filter(BetLog.executed.is_(True), BetLog.outcome != -1)
     else:
-        # "all" — exclude internal cancelled/displaced bookkeeping rows
+        # "all" - exclude internal cancelled/displaced bookkeeping rows
         query = query.filter(BetLog.outcome != -1)
 
     bets = query.order_by(BetLog.id.asc()).all()
@@ -2151,7 +2151,7 @@ async def trigger_analysis_manually(
     logger.info("Manual analysis triggered by %s (discord=%s)", user, notify_discord)
     try:
         results, cache = await run_nightly_analysis()
-        
+
         # EMAC-021: Update OddsMonitor cache for real-time pulse
         try:
             get_odds_monitor().set_reanalysis_cache(cache)
@@ -2186,7 +2186,7 @@ async def discord_test(user: str = Depends(verify_admin_api_key)):
         raise HTTPException(status_code=400, detail="DISCORD_BOT_TOKEN not configured")
     payload = {
         "embeds": [{
-            "title": "CBB Edge — Discord Test",
+            "title": "CBB Edge - Discord Test",
             "description": "Bot connected successfully. Notifications are working.",
             "color": 0x2ECC71,
             "footer": {"text": f"Triggered by {user}"},
@@ -2196,20 +2196,20 @@ async def discord_test(user: str = Depends(verify_admin_api_key)):
     ok = _post(payload)
     if ok:
         return {"status": "ok", "channel_id": _channel_id()}
-    raise HTTPException(status_code=502, detail="Discord API call failed — check logs")
+    raise HTTPException(status_code=502, detail="Discord API call failed - check logs")
 
 
 @app.post("/admin/discord/test-simple")
 async def discord_test_simple(user: str = Depends(verify_admin_api_key)):
     """Test the simplified Discord notification system (admin only)."""
     from backend.services.discord_simple import send_test_message
-    
+
     success = send_test_message()
     if success:
         return {"status": "ok", "message": "Discord test messages sent to all configured channels"}
     raise HTTPException(
-        status_code=502, 
-        detail="Discord test failed — check DISCORD_BOT_TOKEN and channel IDs"
+        status_code=502,
+        detail="Discord test failed - check DISCORD_BOT_TOKEN and channel IDs"
     )
 
 
@@ -2251,7 +2251,7 @@ async def discord_send_todays_bets(
         .count()
     )
 
-    # Deduplicate — keep the highest-edge prediction per game
+    # Deduplicate - keep the highest-edge prediction per game
     seen_games: set = set()
     bet_details = []
     for p in sorted(predictions, key=lambda x: x.edge_conservative or 0.0, reverse=True):
@@ -2320,7 +2320,7 @@ async def manual_recalibration(
     next nightly analysis run.
 
     Query params:
-        dry_run=true  — compute and return diagnostics without writing changes.
+        dry_run=true  - compute and return diagnostics without writing changes.
     """
     from backend.services.recalibration import run_recalibration
 
@@ -2342,7 +2342,7 @@ async def recalibration_audit(
 ):
     """
     Get recalibration audit data (admin only).
-    
+
     Returns:
         - Settled bets count with prediction links
         - Current home_advantage and sd_multiplier values
@@ -2350,7 +2350,7 @@ async def recalibration_audit(
         - Recommendations for tournament prep
     """
     from sqlalchemy import func
-    
+
     # Count settled bets with prediction links
     settled_with_pred = (
         db.query(BetLog)
@@ -2358,7 +2358,7 @@ async def recalibration_audit(
         .filter(BetLog.prediction_id.isnot(None))
         .count()
     )
-    
+
     # Get current parameters
     current_ha = (
         db.query(ModelParameter)
@@ -2366,28 +2366,28 @@ async def recalibration_audit(
         .order_by(ModelParameter.effective_date.desc())
         .first()
     )
-    
+
     current_sd = (
         db.query(ModelParameter)
         .filter(ModelParameter.parameter_name == 'sd_multiplier')
         .order_by(ModelParameter.effective_date.desc())
         .first()
     )
-    
+
     ha_value = current_ha.parameter_value if current_ha else 3.09
     sd_value = current_sd.parameter_value if current_sd else 0.85
-    
+
     # Calculate drift from baselines
     baseline_ha = 3.09
     baseline_sd = 0.85
-    
+
     ha_drift = abs(ha_value - baseline_ha) / baseline_ha * 100
     sd_drift = abs(sd_value - baseline_sd) / baseline_sd * 100
-    
+
     # Check last recalibration date
     last_recal = current_ha.effective_date if current_ha else None
     days_since = (datetime.utcnow() - last_recal).days if last_recal else None
-    
+
     return {
         "settled_bets": settled_with_pred,
         "sufficient_data": settled_with_pred >= 30,
@@ -2482,22 +2482,22 @@ async def debug_bets_last_24h(
 ):
     """
     Debug endpoint: Get all bets from last 24 hours.
-    
+
     Returns simple list for debugging UI issues.
     """
     from datetime import timedelta
-    
+
     since = datetime.utcnow() - timedelta(hours=24)
-    
+
     predictions = (
         db.query(Prediction, Game)
         .join(Game, Prediction.game_id == Game.id)
         .filter(Game.game_date >= since)
         .all()
     )
-    
+
     bets = [(p, g) for p, g in predictions if p.verdict.startswith("Bet")]
-    
+
     return {
         "total_predictions": len(predictions),
         "bet_count": len(bets),
@@ -2531,7 +2531,7 @@ async def cleanup_duplicate_bets(
     one entry on the same calendar day.  The lowest id (first created) is kept;
     all others are deleted.
 
-    By default dry_run=true — set dry_run=false to actually delete.
+    By default dry_run=true - set dry_run=false to actually delete.
     """
     cutoff = datetime.utcnow() - timedelta(days=days)
 
@@ -2546,7 +2546,7 @@ async def cleanup_duplicate_bets(
         .all()
     )
 
-    # Group by (game_id, calendar_date) — keep lowest id (first-created)
+    # Group by (game_id, calendar_date) - keep lowest id (first-created)
     groups: dict = {}
     for b in bets:
         day_key = b.timestamp.date().isoformat() if b.timestamp else "unknown"
@@ -2689,7 +2689,7 @@ async def delete_game(
     if bet_logs and not force:
         raise HTTPException(
             status_code=409,
-            detail=f"Game {game_id} has {len(bet_logs)} bet log(s) — use ?force=true to delete anyway"
+            detail=f"Game {game_id} has {len(bet_logs)} bet log(s) - use ?force=true to delete anyway"
         )
 
     bet_logs_deleted = 0
@@ -2701,7 +2701,7 @@ async def delete_game(
     closing_deleted = db.query(ClosingLine).filter(ClosingLine.game_id == game_id).delete()
     db.delete(game)
     db.commit()
-    logger.info("Admin %s deleted game %d (%s @ %s) — %d predictions, %d closing lines, %d bet logs removed",
+    logger.info("Admin %s deleted game %d (%s @ %s) - %d predictions, %d closing lines, %d bet logs removed",
                 user, game_id, game.away_team, game.home_team, predictions_deleted, closing_deleted, bet_logs_deleted)
     return {
         "deleted": True,
@@ -3046,7 +3046,7 @@ async def dk_import_preview(
     Request body: {"csv_content": "<raw csv text>"}
 
     Returns a list of proposed matches with confidence scores.
-    No database writes occur — call /admin/dk/confirm to apply.
+    No database writes occur - call /admin/dk/confirm to apply.
     """
     csv_content = payload.get("csv_content", "")
     if not csv_content:
@@ -3118,7 +3118,7 @@ async def dk_direct_import_preview(
     """
     Preview DraftKings wagers for direct creation as real BetLog entries.
 
-    No paper trades required — creates brand-new BetLog rows for each wager,
+    No paper trades required - creates brand-new BetLog rows for each wager,
     matched to games by calendar date.
 
     Request body: {"csv_content": "<raw csv text>"}
@@ -3181,7 +3181,7 @@ async def dk_direct_import_confirm(
 
 
 # ============================================================================
-# FANTASY BASEBALL — PUBLIC API ENDPOINTS
+# FANTASY BASEBALL - PUBLIC API ENDPOINTS
 # ============================================================================
 
 @app.get("/api/fantasy/draft-board")
@@ -3466,7 +3466,7 @@ async def reset_draft_session(
     Optionally updates my_draft_position (use this to correct a test session
     before the real draft begins).
 
-    The session itself is preserved — use DELETE to fully remove it.
+    The session itself is preserved - use DELETE to fully remove it.
     """
     from backend.models import FantasyDraftSession, FantasyDraftPick
 
@@ -3500,7 +3500,7 @@ async def fantasy_value_board(
     user: str = Depends(verify_api_key),
 ):
     """
-    Advanced-metrics value board — ranks AVAILABLE players by a composite
+    Advanced-metrics value board - ranks AVAILABLE players by a composite
     value_score that combines projection z-scores, ADP gaps, Statcast quality,
     and regression signals (BUY_LOW / BREAKOUT / AVOID).
 
@@ -3523,7 +3523,7 @@ async def fantasy_value_board(
     # Shallow-copy so we don't mutate the singleton cache
     board = [dict(p) for p in raw_board]
 
-    # Attempt analytics overlay — silently degrades if CSVs missing
+    # Attempt analytics overlay - silently degrades if CSVs missing
     inject_advanced_analytics(board)
 
     # Filter out drafted players + all league keepers (hardcoded fallback)
@@ -3565,7 +3565,7 @@ async def sync_draft_from_yahoo(
     Poll Yahoo's draftresults endpoint and sync any new picks into the session.
 
     Call this every 15-30 seconds during the live draft to keep drafted_ids
-    current without manual entry.  Safe to call repeatedly — only new picks
+    current without manual entry.  Safe to call repeatedly - only new picks
     are recorded.
 
     Returns: picks_synced count, total picks in Yahoo, your current roster.
@@ -3593,7 +3593,7 @@ async def sync_draft_from_yahoo(
 
     # Build a lookup of player_key -> board player for name/position resolution
     board = get_board()
-    # Yahoo player_key is like "mlb.p.12345" — we match against board by name
+    # Yahoo player_key is like "mlb.p.12345" - we match against board by name
     # since we don't store Yahoo player keys in our board.
     # Build a name-normalised lookup from the board.
     def _norm(s: str) -> str:
@@ -3625,7 +3625,7 @@ async def sync_draft_from_yahoo(
             _, _, pick_pos = full_order[pick_num - 1]
         is_my_pick = (pick_pos == session.my_draft_position)
 
-        # Resolve player name — try to fetch from Yahoo, fall back to player_key as ID
+        # Resolve player name - try to fetch from Yahoo, fall back to player_key as ID
         player_name = player_key
         player_id = _norm(player_key)
         positions: list = []
@@ -3639,7 +3639,7 @@ async def sync_draft_from_yahoo(
             positions = yahoo_player.get("positions") or []
             player_id = _norm(player_name)
         except Exception:
-            pass  # Use player_key as fallback name — pick still recorded
+            pass  # Use player_key as fallback name - pick still recorded
 
         # Try to enrich from our board
         board_match = board_by_id.get(player_id) or board_by_name.get(player_id)
@@ -3693,8 +3693,8 @@ async def sync_keepers_pre_draft(
 ):
     """
     Pre-draft keeper sweep. Call once when the Yahoo draft room opens (~30 min
-    before picks start). Fetches all 12 teams' current rosters — any player
-    already on a roster is a keeper — and inserts them as pick_number=0
+    before picks start). Fetches all 12 teams' current rosters - any player
+    already on a roster is a keeper - and inserts them as pick_number=0
     sentinel rows so the value-board and available-player pool are clean before
     the first pick.
 
@@ -3808,13 +3808,13 @@ async def get_fantasy_lineup_recommendations(
 ):
     """
     Return daily lineup recommendations for a given date.
-    
+
     Args:
         lineup_date: YYYY-MM-DD
         use_smart_selector: If True, uses SmartLineupSelector with platoon splits,
                            opposing pitcher analysis, and category awareness.
                            If False, uses basic DailyLineupOptimizer.
-    
+
     Wired to SmartLineupSelector for advanced optimization (platoon, pitcher, category fit).
     """
     from datetime import date as date_type
@@ -3848,9 +3848,9 @@ async def get_fantasy_lineup_recommendations(
         try:
             from backend.fantasy_baseball import SmartLineupSelector, get_smart_selector
             from backend.fantasy_baseball.category_tracker import get_category_tracker
-            
+
             smart_selector = get_smart_selector()
-            
+
             # Fetch category needs from Yahoo matchup
             category_needs = []
             try:
@@ -3860,14 +3860,14 @@ async def get_fantasy_lineup_recommendations(
                     logger.info(f"Category needs: {[(c.category, c.needed) for c in category_needs]}")
             except Exception as e:
                 logger.warning(f"Could not fetch category needs: {e}")
-            
+
             assignments, lineup_warnings = smart_selector.solve_smart_lineup(
                 roster=_lineup_roster,
                 projections=_lineup_projections,
                 game_date=lineup_date,
                 category_needs=category_needs,
             )
-            
+
             batters = [
                 LineupPlayerOut(
                     player_id=a["player_id"] or a["player_name"],
@@ -3883,9 +3883,9 @@ async def get_fantasy_lineup_recommendations(
                 )
                 for a in assignments
             ]
-            
+
             logger.info(f"SmartLineupSelector produced {len(batters)} assignments for {lineup_date}")
-            
+
         except Exception as _exc:
             logger.warning(f"SmartLineupSelector failed, falling back to base optimizer: {_exc}")
             lineup_warnings.append(f"Smart selector unavailable: {_exc}")
@@ -3948,29 +3948,29 @@ async def get_fantasy_lineup_recommendations(
     pitchers: list[StartingPitcherOut] = []
     try:
         from backend.fantasy_baseball.smart_lineup_selector import get_smart_selector
-        
+
         # Use smart selector to get game context
         smart_selector = get_smart_selector()
         games = smart_selector.base_optimizer.fetch_mlb_odds(lineup_date)
         team_odds = smart_selector.base_optimizer._build_team_odds_map(games)
-        
+
         flagged_pitchers = optimizer.flag_pitcher_starts(
             roster=_lineup_roster,
             game_date=lineup_date,
         )
-        
+
         for p in flagged_pitchers:
             team = p.get("team", "")
             is_sp = p.get("pitcher_slot") == "SP"
             has_start = p.get("has_start", False)
-            
+
             # Get opponent and game context
             opponent = ""
             opp_implied = 4.5
             park_factor = 1.0
             sp_score = 0.0
             start_time = None
-            
+
             if team in team_odds:
                 opp = team_odds[team].get("opponent", "")
                 opponent = opp
@@ -3978,17 +3978,17 @@ async def get_fantasy_lineup_recommendations(
                     opp_implied = team_odds[opp].get("implied_runs", 4.5)
                 park_factor = team_odds[team].get("park_factor", 1.0)
                 start_time = team_odds[team].get("start_time")
-            
+
             # Calculate SP score (0-10 scale)
             if is_sp and has_start:
                 opp_factor = max(0, 5.0 - opp_implied)  # Lower opp runs = better
                 park_factor_score = (2.0 - park_factor) * 5  # Lower park = better
                 sp_score = min(10, opp_factor + park_factor_score)
-            
+
             status = "START" if has_start else "NO_START"
             if not is_sp:
                 status = "RP"
-            
+
             pitchers.append(StartingPitcherOut(
                 player_id=p.get("player_key") or p.get("name", ""),
                 name=p.get("name", ""),
@@ -4000,7 +4000,7 @@ async def get_fantasy_lineup_recommendations(
                 start_time=start_time,
                 status=status,
             ))
-        
+
         # Generate warnings for SPs without starts
         sp_no_start = [p for p in pitchers if p.status == "NO_START"]
         if sp_no_start:
@@ -4008,7 +4008,7 @@ async def get_fantasy_lineup_recommendations(
                 f"{len(sp_no_start)} SP(s) have no start today: "
                 + ", ".join(p.name for p in sp_no_start[:3])
             )
-            
+
     except Exception as _exc:
         logger.warning("flag_pitcher_starts failed: %s", _exc)
 
@@ -4019,7 +4019,7 @@ async def get_fantasy_lineup_recommendations(
             "(all teams at league-average 4.5 runs). Lineup ranked by projected stats only."
         )
 
-    # Detect active slot gaps — warn if suspiciously few active batters/pitchers
+    # Detect active slot gaps - warn if suspiciously few active batters/pitchers
     _BENCH_SLOTS = {"BN", None}
     _batter_active = [b for b in batters if b.assigned_slot not in _BENCH_SLOTS]
     _pitcher_active = [p for p in pitchers if p.status == "START"]
@@ -4047,22 +4047,27 @@ async def get_fantasy_lineup_recommendations(
 @app.get("/api/fantasy/briefing/{briefing_date}")
 async def get_daily_briefing(
     briefing_date: str,
+    record_decisions: bool = Query(True, description="Record decisions for accuracy tracking"),
     user: str = Depends(verify_api_key),
 ):
     """
     Get elite manager daily briefing.
-    
+
     Returns complete decision context with recommendations,
     confidence scores, and actionable alerts.
     
-    Example: /api/fantasy/briefing/2025-03-27
+    Args:
+        briefing_date: Date in YYYY-MM-DD format
+        record_decisions: Whether to save decisions for accuracy tracking (default: true)
+
+    Example: /api/fantasy/briefing/2025-03-27?record_decisions=true
     """
     from datetime import date as date_type
     try:
-        bd = date_type.fromisoformat(briefing_date)
+        _ = date_type.fromisoformat(briefing_date)  # Validate format
     except ValueError:
         raise HTTPException(status_code=422, detail="briefing_date must be YYYY-MM-DD")
-    
+
     # Fetch roster
     roster: list = []
     try:
@@ -4071,7 +4076,7 @@ async def get_daily_briefing(
     except Exception as e:
         logger.warning(f"Could not fetch roster: {e}")
         raise HTTPException(status_code=503, detail="Yahoo API unavailable")
-    
+
     # Build projections
     projections: list = []
     try:
@@ -4079,17 +4084,17 @@ async def get_daily_briefing(
         projections = [get_or_create_projection(p) for p in roster]
     except Exception as e:
         logger.warning(f"Could not load projections: {e}")
-    
+
     # Generate briefing
     try:
         from backend.fantasy_baseball.daily_briefing import get_briefing_generator
-        generator = get_briefing_generator()
+        generator = get_briefing_generator(record_decisions=record_decisions)
         briefing = generator.generate(
             roster=roster,
             projections=projections,
             game_date=briefing_date,
         )
-        
+
         return {
             "date": briefing_date,
             "generated_at": briefing.generated_at.isoformat(),
@@ -4116,6 +4121,10 @@ async def get_daily_briefing(
             "bench": [p.to_card() for p in briefing.bench_recommendations[:5]],
             "monitor": [p.to_card() for p in briefing.monitor_list],
             "alerts": briefing.alerts,
+            "_meta": {
+                "decisions_recorded": record_decisions,
+                "decisions_count": briefing.total_decisions,
+            }
         }
     except Exception as e:
         logger.exception("Failed to generate briefing")
@@ -4229,7 +4238,7 @@ async def get_fantasy_waiver_recommendations(
 
         # Build category deficits from scoreboard stats.
         # This must run before _to_waiver_player so need_score can be computed per player.
-        # Failures here are swallowed — waiver list still returns, just without need scoring.
+        # Failures here are swallowed - waiver list still returns, just without need scoring.
         try:
             from backend.schemas import CategoryDeficitOut
             if matchup_opponent != "TBD":
@@ -4324,7 +4333,7 @@ async def get_fantasy_waiver_recommendations(
         except Exception:
             category_deficits = []
 
-        # Universal projection lookup — board players get rich projections,
+        # Universal projection lookup - board players get rich projections,
         # call-ups / undrafted players get a conservative position-baseline proxy.
         from backend.fantasy_baseball.player_board import get_or_create_projection as _get_proj
 
@@ -4471,7 +4480,7 @@ async def get_fantasy_waiver_recommendations(
             two_start_pitchers_raw, key=lambda x: x.need_score, reverse=True
         )[:5]
 
-        # Closer alert — FAs with meaningful saves projection (nsv cat_score z > 0.5)
+        # Closer alert - FAs with meaningful saves projection (nsv cat_score z > 0.5)
         _closer_fas = [f for f in top_available if f.category_contributions.get("nsv", 0) > 0.5]
         _closer_alert: Optional[str] = None
         if len(_closer_fas) == 0:
@@ -4487,7 +4496,7 @@ async def get_fantasy_waiver_recommendations(
         logger.error("Waiver endpoint -- Yahoo auth error: %s", exc)
         raise HTTPException(
             status_code=503,
-            detail=f"Yahoo auth failed — refresh token may be expired. ({exc})",
+            detail=f"Yahoo auth failed - refresh token may be expired. ({exc})",
         ) from exc
     except YahooAPIError as exc:
         logger.error("Waiver endpoint -- Yahoo API error: %s", exc)
@@ -4691,10 +4700,10 @@ async def get_waiver_recommendations(
                 return None
             active = [p for p in candidates if p.get("status") not in _IL_STATUSES]
             if len(active) == 1:
-                # Only one active at this position — protected, do not drop
+                # Only one active at this position - protected, do not drop
                 return None
             if len(active) == 0:
-                # All injured — position already uncovered, anyone is droppable
+                # All injured - position already uncovered, anyone is droppable
                 return min(candidates, key=lambda x: x.get("z_score") or 0.0)
             return min(active, key=lambda x: x.get("z_score") or 0.0)
 
@@ -4765,7 +4774,7 @@ async def get_waiver_recommendations(
 
             drop_candidate = _weakest_safe_to_drop(pos_group)
             if not drop_candidate:
-                # No roster player at same position — still recommend add if FA is strong
+                # No roster player at same position - still recommend add if FA is strong
                 if adjusted_need >= 2.0:
                     signal_text = _fmt_signals(fa_signals, fa_reg_delta, fa_is_pitcher)
                     recommendations.append(RosterMoveRecommendation(
@@ -4774,7 +4783,7 @@ async def get_waiver_recommendations(
                         drop_player_name=None,
                         drop_player_position=None,
                         rationale=(
-                            f"Add {fa.name} ({fa.position}, {fa.team}) — "
+                            f"Add {fa.name} ({fa.position}, {fa.team}) - "
                             f"projected z={fa.need_score:+.1f}{signal_text}. "
                             f"No {pos_label} to drop suggested; check bench."
                         ),
@@ -4786,7 +4795,7 @@ async def get_waiver_recommendations(
                     ))
                 continue
 
-            # Statcast injury risk on drop candidate (pitcher only — higher risk = easier drop)
+            # Statcast injury risk on drop candidate (pitcher only - higher risk = easier drop)
             drop_is_pitcher = drop_candidate["positions"][0] in ("SP", "RP", "P") if drop_candidate["positions"] else False
             drop_signals, drop_reg_delta = build_statcast_signals(
                 drop_candidate["name"], drop_is_pitcher
@@ -4819,15 +4828,15 @@ async def get_waiver_recommendations(
                 f"Net gain: {gain:+.1f} ({drop_candidate['z_score']:+.1f} -> {adjusted_need:+.1f}){signal_text}{drop_signal_text}."
             )
             if is_proxy:
-                rationale += " [Call-up — projections estimated.]"
+                rationale += " [Call-up - projections estimated.]"
             if drop_candidate.get("status") in _IL_STATUSES:
                 from backend.services.waiver_edge_detector import il_capacity_info as _il_cap2
                 if my_roster and _il_cap2(my_roster)["available"] > 0:
                     rationale = (
-                        f"[IL slot free — move {drop_candidate['name']} to IL first] " + rationale
+                        f"[IL slot free - move {drop_candidate['name']} to IL first] " + rationale
                     )
                 else:
-                    rationale += f" [Note: {drop_candidate['name']} is {drop_candidate['status']} — consider IL slot if available]"
+                    rationale += f" [Note: {drop_candidate['name']} is {drop_candidate['status']} - consider IL slot if available]"
 
             # MCMC win-probability simulation (non-blocking, graceful fallback)
             _mcmc = {}
@@ -4879,7 +4888,7 @@ async def get_waiver_recommendations(
         logger.error("Waiver recommendations endpoint -- Yahoo auth error: %s", exc)
         raise HTTPException(
             status_code=503,
-            detail=f"Yahoo auth failed — refresh token may be expired. ({exc})",
+            detail=f"Yahoo auth failed - refresh token may be expired. ({exc})",
         ) from exc
     except YahooAPIError as exc:
         logger.error("Waiver recommendations endpoint -- Yahoo API error: %s", exc)
@@ -4981,13 +4990,13 @@ async def get_fantasy_lineup(
 
 
 # ============================================================================
-# YAHOO FANTASY BASEBALL — ROSTER / MATCHUP / LINEUP APPLY
+# YAHOO FANTASY BASEBALL - ROSTER / MATCHUP / LINEUP APPLY
 # ============================================================================
 
 @app.get("/api/fantasy/yahoo-diag")
 async def yahoo_diag(user: str = Depends(verify_api_key)):
     """
-    Diagnostic endpoint — returns Yahoo config status without making API calls.
+    Diagnostic endpoint - returns Yahoo config status without making API calls.
     Safe to call: reveals which env vars are present (values redacted).
     Remove after debugging is complete.
     """
@@ -5263,9 +5272,9 @@ async def apply_fantasy_lineup(
 ):
     """
     Push a lineup to Yahoo Fantasy with game-aware validation.
-    
+
     Body: {date?: YYYY-MM-DD, players: [{player_key, position}]}
-    
+
     The resilient client will:
     - Validate all players have games today
     - Auto-correct players with no games (if auto_correct=true)
@@ -5334,7 +5343,7 @@ async def apply_fantasy_lineup(
 
     # Build success response
     applied_count = len(result.changes) if result.changes else len(payload.players)
-    
+
     return {
         "success": True,
         "applied": applied_count,
@@ -5347,7 +5356,7 @@ async def apply_fantasy_lineup(
 
 
 # ============================================================================
-# YAHOO FANTASY BASEBALL — DEBUG ENDPOINTS
+# YAHOO FANTASY BASEBALL - DEBUG ENDPOINTS
 # ============================================================================
 
 @app.get("/admin/yahoo/test")
