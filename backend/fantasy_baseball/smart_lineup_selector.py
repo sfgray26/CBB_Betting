@@ -6,6 +6,7 @@ Integrates with:
 - daily_lineup_optimizer (odds, implied runs)
 - projections_loader (Steamer projections)
 - lineup_validator (game-aware validation)
+- platoon_fetcher (FanGraphs splits)
 - pybaseball_loader (Statcast data)
 """
 
@@ -21,6 +22,7 @@ from backend.fantasy_baseball.lineup_validator import (
     LineupValidator, OptimizedSlot, PlayerGameInfo, GameStatus
 )
 from backend.fantasy_baseball.daily_lineup_optimizer import DailyLineupOptimizer, BatterRanking
+from backend.fantasy_baseball.platoon_fetcher import PlatoonSplitFetcher, PlatoonSplits
 
 logger = logging.getLogger(__name__)
 
@@ -29,22 +31,6 @@ class Handedness(Enum):
     L = "L"
     R = "R"
     S = "S"  # Switch
-
-
-@dataclass
-class PlatoonSplits:
-    """Player's platoon split performance."""
-    vs_lhp: float = 0.0  # wOBA or OPS vs LHP
-    vs_rhp: float = 0.0  # wOBA or OPS vs RHP
-    sample_vs_l: int = 0  # PA sample size
-    sample_vs_r: int = 0
-    
-    @property
-    def split_delta(self) -> float:
-        """Positive = hits LHP better, Negative = hits RHP better."""
-        if self.sample_vs_l < 50 or self.sample_vs_r < 50:
-            return 0.0  # Insufficient sample
-        return self.vs_lhp - self.vs_rhp
 
 
 @dataclass
@@ -184,7 +170,7 @@ class SmartBatterRanking:
 class SmartLineupSelector:
     """
     Intelligent lineup selection using:
-    - Platoon splits
+    - Platoon splits (from FanGraphs)
     - Opposing pitcher quality
     - Sportsbook odds/implied totals
     - Category needs from matchup scoreboard
@@ -194,7 +180,7 @@ class SmartLineupSelector:
     def __init__(self):
         self.base_optimizer = DailyLineupOptimizer()
         self.lineup_validator = LineupValidator()
-        self._platoon_cache: Dict[str, PlatoonSplits] = {}
+        self.platoon_fetcher = PlatoonSplitFetcher()
         self._pitcher_cache: Dict[str, OpposingPitcher] = {}
     
     def select_optimal_lineup(
@@ -367,14 +353,9 @@ class SmartLineupSelector:
             k9=8.0,
         )
     
-    def _get_platoon_splits(self, player_name: str) -> Optional[PlatoonSplits]:
-        """Get platoon splits for a player (from cache or fetch)."""
-        if player_name in self._platoon_cache:
-            return self._platoon_cache[player_name]
-        
-        # TODO: Integrate with pybaseball for actual platoon splits
-        # For now, return None to use default projections
-        return None
+    def _get_platoon_splits(self, player_name: str, year: Optional[int] = None) -> Optional[PlatoonSplits]:
+        """Get platoon splits for a player (using cached fetcher)."""
+        return self.platoon_fetcher.get_splits(player_name, year)
     
     def solve_smart_lineup(
         self,

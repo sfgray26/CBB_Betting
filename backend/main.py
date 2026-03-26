@@ -3802,12 +3802,20 @@ async def sync_keepers_pre_draft(
 @app.get("/api/fantasy/lineup/{lineup_date}", response_model=DailyLineupResponse)
 async def get_fantasy_lineup_recommendations(
     lineup_date: str,
+    use_smart_selector: bool = True,  # Enable smart selector by default
     db: Session = Depends(get_db),
     user: str = Depends(verify_api_key),
 ):
     """
     Return daily lineup recommendations for a given date.
-    Wired to DailyLineupOptimizer for implied runs and park factors.
+    
+    Args:
+        lineup_date: YYYY-MM-DD
+        use_smart_selector: If True, uses SmartLineupSelector with platoon splits,
+                           opposing pitcher analysis, and category awareness.
+                           If False, uses basic DailyLineupOptimizer.
+    
+    Wired to SmartLineupSelector for advanced optimization (platoon, pitcher, category fit).
     """
     from datetime import date as date_type
     try:
@@ -3832,13 +3840,54 @@ async def get_fantasy_lineup_recommendations(
         except Exception as _exc:
             logger.warning("Could not load player board projections for lineup: %s", _exc)
 
-    optimizer = get_lineup_optimizer()
-
-    # --- Constraint-aware batter lineup ---
     lineup_warnings: list[str] = []
     batters: list[LineupPlayerOut] = []
-    if _lineup_roster and _lineup_projections:
+
+    # --- Use SmartLineupSelector if enabled ---
+    if use_smart_selector and _lineup_roster and _lineup_projections:
         try:
+            from backend.fantasy_baseball import SmartLineupSelector, get_smart_selector
+            
+            smart_selector = get_smart_selector()
+            
+            # TODO: Fetch category needs from Yahoo matchup scoreboard
+            # For now, use empty category needs (will use default projections)
+            category_needs = []
+            
+            assignments, lineup_warnings = smart_selector.solve_smart_lineup(
+                roster=_lineup_roster,
+                projections=_lineup_projections,
+                game_date=lineup_date,
+                category_needs=category_needs,
+            )
+            
+            batters = [
+                LineupPlayerOut(
+                    player_id=a["player_id"] or a["player_name"],
+                    name=a["player_name"],
+                    team=a.get("team", ""),
+                    position="?",  # Position determined by slot
+                    implied_runs=0.0,  # TODO: Extract from smart ranking
+                    park_factor=1.0,
+                    lineup_score=round(a.get("smart_score", 0), 3),
+                    status="START" if a["slot"] != "BN" else "BENCH",
+                    assigned_slot=a["slot"],
+                    has_game=a.get("has_game", False),
+                )
+                for a in assignments
+            ]
+            
+            logger.info(f"SmartLineupSelector produced {len(batters)} assignments for {lineup_date}")
+            
+        except Exception as _exc:
+            logger.warning(f"SmartLineupSelector failed, falling back to base optimizer: {_exc}")
+            lineup_warnings.append(f"Smart selector unavailable: {_exc}")
+            batters = []  # Reset to trigger fallback
+
+    # --- Fallback: Use base DailyLineupOptimizer ---
+    if not batters and _lineup_roster and _lineup_projections:
+        try:
+            optimizer = get_lineup_optimizer()
             solved_slots, lineup_warnings = optimizer.solve_lineup(
                 roster=_lineup_roster,
                 projections=_lineup_projections,
@@ -3865,6 +3914,7 @@ async def get_fantasy_lineup_recommendations(
 
     # Fallback: if solver produced nothing, use raw score ranking
     if not batters:
+        optimizer = get_lineup_optimizer()
         report = optimizer.build_daily_report(
             game_date=lineup_date,
             roster=_lineup_roster or None,

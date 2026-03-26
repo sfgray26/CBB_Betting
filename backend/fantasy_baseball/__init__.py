@@ -21,11 +21,17 @@ from backend.fantasy_baseball.lineup_validator import (
     format_lineup_report,
 )
 
+# Platoon splits fetcher (new)
+from backend.fantasy_baseball.platoon_fetcher import (
+    PlatoonSplitFetcher,
+    PlatoonSplits,
+    get_platoon_fetcher,
+)
+
 # Smart lineup selector (advanced optimizer)
 from backend.fantasy_baseball.smart_lineup_selector import (
     SmartLineupSelector,
     SmartBatterRanking,
-    PlatoonSplits,
     OpposingPitcher,
     CategoryNeed,
     Handedness,
@@ -59,10 +65,13 @@ __all__ = [
     "LineupValidation",
     "LineupSubmission",
     "format_lineup_report",
+    # Platoon fetcher
+    "PlatoonSplitFetcher",
+    "PlatoonSplits",
+    "get_platoon_fetcher",
     # Smart lineup selector (advanced optimizer)
     "SmartLineupSelector",
     "SmartBatterRanking",
-    "PlatoonSplits",
     "OpposingPitcher",
     "CategoryNeed",
     "Handedness",
