@@ -3944,43 +3944,71 @@ async def get_fantasy_lineup_recommendations(
     else:
         report = optimizer.build_daily_report(game_date=lineup_date)
 
-    # --- Pitcher start detection ---
+    # --- Pitcher start detection with full data ---
     pitchers: list[StartingPitcherOut] = []
     try:
+        from backend.fantasy_baseball.smart_lineup_selector import get_smart_selector
+        
+        # Use smart selector to get game context
+        smart_selector = get_smart_selector()
+        games = smart_selector.base_optimizer.fetch_mlb_odds(lineup_date)
+        team_odds = smart_selector.base_optimizer._build_team_odds_map(games)
+        
         flagged_pitchers = optimizer.flag_pitcher_starts(
             roster=_lineup_roster,
             game_date=lineup_date,
         )
-        # SP with a game today start; SP without sit; RP always listed
-        sp_with_start = [p for p in flagged_pitchers if p["pitcher_slot"] == "SP" and p["has_start"]]
-        sp_no_start = [p for p in flagged_pitchers if p["pitcher_slot"] == "SP" and not p["has_start"]]
-        rps = [p for p in flagged_pitchers if p["pitcher_slot"] == "RP"]
-
-        for p in sp_with_start + rps:
+        
+        for p in flagged_pitchers:
+            team = p.get("team", "")
+            is_sp = p.get("pitcher_slot") == "SP"
+            has_start = p.get("has_start", False)
+            
+            # Get opponent and game context
+            opponent = ""
+            opp_implied = 4.5
+            park_factor = 1.0
+            sp_score = 0.0
+            start_time = None
+            
+            if team in team_odds:
+                opp = team_odds[team].get("opponent", "")
+                opponent = opp
+                if opp in team_odds:
+                    opp_implied = team_odds[opp].get("implied_runs", 4.5)
+                park_factor = team_odds[team].get("park_factor", 1.0)
+                start_time = team_odds[team].get("start_time")
+            
+            # Calculate SP score (0-10 scale)
+            if is_sp and has_start:
+                opp_factor = max(0, 5.0 - opp_implied)  # Lower opp runs = better
+                park_factor_score = (2.0 - park_factor) * 5  # Lower park = better
+                sp_score = min(10, opp_factor + park_factor_score)
+            
+            status = "START" if has_start else "NO_START"
+            if not is_sp:
+                status = "RP"
+            
             pitchers.append(StartingPitcherOut(
                 player_id=p.get("player_key") or p.get("name", ""),
                 name=p.get("name", ""),
-                team=p.get("team", ""),
-                opponent_implied_runs=0.0,
-                park_factor=1.0,
-                sp_score=0.0,
-                status="START",
+                team=team,
+                opponent=opponent,
+                opponent_implied_runs=round(opp_implied, 2),
+                park_factor=round(park_factor, 3),
+                sp_score=round(sp_score, 3),
+                start_time=start_time,
+                status=status,
             ))
-        for p in sp_no_start:
-            pitchers.append(StartingPitcherOut(
-                player_id=p.get("player_key") or p.get("name", ""),
-                name=p.get("name", ""),
-                team=p.get("team", ""),
-                opponent_implied_runs=0.0,
-                park_factor=1.0,
-                sp_score=0.0,
-                status="NO_START",
-            ))
+        
+        # Generate warnings for SPs without starts
+        sp_no_start = [p for p in pitchers if p.status == "NO_START"]
         if sp_no_start:
             lineup_warnings.append(
                 f"{len(sp_no_start)} SP(s) have no start today: "
-                + ", ".join(p.get('name', '') for p in sp_no_start)
+                + ", ".join(p.name for p in sp_no_start[:3])
             )
+            
     except Exception as _exc:
         logger.warning("flag_pitcher_starts failed: %s", _exc)
 

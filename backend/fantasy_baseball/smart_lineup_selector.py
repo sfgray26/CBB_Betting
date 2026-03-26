@@ -25,6 +25,8 @@ from backend.fantasy_baseball.daily_lineup_optimizer import DailyLineupOptimizer
 from backend.fantasy_baseball.platoon_fetcher import PlatoonSplitFetcher, PlatoonSplits
 from backend.fantasy_baseball.pitcher_deep_dive import PitcherDeepDiveFetcher, get_pitcher_fetcher
 from backend.fantasy_baseball.elite_context import PitcherDeepDive, WeatherContext, RecentForm
+from backend.fantasy_baseball.weather_fetcher import WeatherFetcher, GameWeather, get_weather_fetcher
+from backend.fantasy_baseball.park_weather import ParkWeatherAnalyzer, get_park_analyzer
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +136,8 @@ class SmartBatterRanking:
     implied_team_runs: float = 4.5
     park_factor: float = 1.0
     game_time: Optional[datetime] = None
+    weather: Optional[WeatherContext] = None
+    hr_factor: float = 1.0  # Weather-adjusted HR factor
     
     # Platoon/matchup (from Statcast/pybaseball)
     platoon: Optional[PlatoonSplits] = None
@@ -162,8 +166,18 @@ class SmartBatterRanking:
         park_boost = (self.park_factor - 1.0) * 5  # Hitter parks
         home_boost = 0.5 if self.is_home else 0.0
         
+        # Weather boost (NEW)
+        weather_boost = 0.0
+        if self.weather:
+            weather_boost = (self.weather.hitter_friendly_score - 5.0) * 0.5
+        
+        # HR factor boost for power hitters
+        hr_weather_boost = 0.0
+        if self.hr_factor != 1.0 and self.proj_hr > 0.2:  # Power hitter
+            hr_weather_boost = (self.hr_factor - 1.0) * self.proj_hr * 10
+        
         # Combine environment factors
-        total_env_boost = env_boost + park_boost + home_boost
+        total_env_boost = env_boost + park_boost + home_boost + weather_boost + hr_weather_boost
         
         # Platoon advantage
         platoon_boost = 0.0
@@ -227,7 +241,10 @@ class SmartLineupSelector:
         self.lineup_validator = LineupValidator()
         self.platoon_fetcher = PlatoonSplitFetcher()
         self.pitcher_fetcher = PitcherDeepDiveFetcher()
+        self.weather_fetcher = get_weather_fetcher()
+        self.park_analyzer = get_park_analyzer()
         self._pitcher_cache: Dict[str, OpposingPitcher] = {}
+        self._weather_cache: Dict[str, GameWeather] = {}
     
     def select_optimal_lineup(
         self,
@@ -257,6 +274,17 @@ class SmartLineupSelector:
         # Fetch probable pitchers for the day
         probable_pitchers = self._fetch_probable_pitchers(game_date)
         
+        # Fetch weather for all games
+        game_list = []
+        for team, info in team_game_map.items():
+            game_list.append({
+                "venue": info.get("venue", ""),
+                "game_time": datetime.strptime(f"{game_date} 19:05", "%Y-%m-%d %H:%M"),  # Default 7:05pm
+                "home_team": team if info.get("is_home") else info.get("opponent"),
+            })
+        
+        weather_map = self.weather_fetcher.get_weather_for_games(game_list)
+        
         # Enhance each ranking with smart data
         smart_rankings = []
         warnings = []
@@ -265,6 +293,7 @@ class SmartLineupSelector:
             # Get game context
             game_info = team_game_map.get(base.team, {})
             opponent = game_info.get("opponent")
+            venue = game_info.get("venue", "")
             
             # Get opposing pitcher
             opp_pitcher = None
@@ -279,6 +308,30 @@ class SmartLineupSelector:
             
             # Get platoon splits
             platoon = self._get_platoon_splits(base.name)
+            
+            # Get weather with park-specific analysis
+            weather = None
+            hr_factor = 1.0
+            game_risk = "low"
+            park_weather_summary = ""
+            
+            if venue and venue in weather_map:
+                game_weather = weather_map[venue]
+                
+                # Use park analyzer for precise HR factor
+                analysis = self.park_analyzer.analyze_game(venue, game_weather)
+                hr_factor = analysis["total_hr_factor"]
+                park_weather_summary = analysis["description"]
+                
+                weather = game_weather.to_context()
+                weather.hitter_friendly_score = analysis["temp_factor"] * 10  # Adjust based on full analysis
+                
+                game_risk = game_weather.game_risk
+                logger.debug(f"{base.name} ({base.team}): {park_weather_summary}")
+            
+            # Warn about high-risk games
+            if game_risk in ["high", "postponement_risk"]:
+                warnings.append(f"⚠️ {base.name} ({base.team}): Game at risk - {game_weather.summary if venue in weather_map else 'weather concern'}")
             
             # Build smart ranking
             smart = SmartBatterRanking(
@@ -295,6 +348,8 @@ class SmartLineupSelector:
                 is_home=base.is_home,
                 implied_team_runs=base.implied_team_runs,
                 park_factor=base.park_factor,
+                weather=weather,
+                hr_factor=hr_factor,
                 platoon=platoon,
                 opposing_pitcher=opp_pitcher,
             )

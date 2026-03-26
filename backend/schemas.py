@@ -301,6 +301,7 @@ class StartingPitcherOut(BaseModel):
     player_id: str
     name: str
     team: str
+    opponent: str = ""  # Opposing team
     opponent_implied_runs: float
     park_factor: float
     sp_score: float

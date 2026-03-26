@@ -128,8 +128,11 @@ class DailyBriefing:
     # Alerts
     alerts: List[str] = field(default_factory=list)
     
+    # Weather
+    weather_highlights: List[str] = field(default_factory=list)
+    games_at_risk: List[str] = field(default_factory=list)
+    
     # Meta
-    weather_concerns: List[str] = field(default_factory=list)
     pitcher_scratches: List[str] = field(default_factory=list)
     late_game_notices: List[str] = field(default_factory=list)
     
@@ -424,6 +427,24 @@ class DailyBriefingGenerator:
                 factors.append(f"⚠️ vs ace {ranking.opposing_pitcher.name}")
             elif ranking.opposing_pitcher.is_streamable:
                 factors.append(f"✓ Target {ranking.opposing_pitcher.name}")
+        
+        # Weather factors (NEW)
+        if ranking.weather:
+            if ranking.weather.hitter_friendly_score > 7:
+                factors.append(f"☀️ Hitter weather ({ranking.weather.temperature}°F)")
+            elif ranking.weather.hitter_friendly_score < 3:
+                factors.append(f"❄️ Pitcher weather ({ranking.weather.temperature}°F)")
+            
+            if ranking.weather.wind_direction == "out" and ranking.weather.wind_speed > 10:
+                factors.append(f"💨 {ranking.weather.wind_speed}mph wind OUT")
+            elif ranking.weather.wind_direction == "in" and ranking.weather.wind_speed > 10:
+                factors.append(f"🌬️ {ranking.weather.wind_speed}mph wind IN")
+        
+        # HR factor for power hitters
+        if ranking.hr_factor > 1.15 and ranking.proj_hr > 0.2:
+            factors.append(f"⚾ HR boost ({ranking.hr_factor:.2f}x)")
+        elif ranking.hr_factor < 0.85 and ranking.proj_hr > 0.2:
+            factors.append(f"⚾ HR suppress ({ranking.hr_factor:.2f}x)")
         
         if ranking.implied_team_runs > 5.0:
             factors.append(f"🔥 High run env ({ranking.implied_team_runs:.1f})")
