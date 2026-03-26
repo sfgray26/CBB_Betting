@@ -70,6 +70,40 @@ VENUE_CITIES = {
     "Oracle Park": ("San Francisco", "CA"),
 }
 
+# Team abbreviation to venue mapping (fallback when venue not provided)
+TEAM_VENUES = {
+    "BAL": "Camden Yards",
+    "BOS": "Fenway Park",
+    "NYY": "Yankee Stadium",
+    "TB": "Tropicana Field",
+    "TOR": "Rogers Centre",
+    "CWS": "Guaranteed Rate Field",
+    "CLE": "Progressive Field",
+    "DET": "Comerica Park",
+    "KC": "Kauffman Stadium",
+    "MIN": "Target Field",
+    "HOU": "Minute Maid Park",
+    "LAA": "Angel Stadium",
+    "OAK": "Oakland Coliseum",
+    "SEA": "T-Mobile Park",
+    "TEX": "Globe Life Field",
+    "ATL": "Truist Park",
+    "MIA": "LoanDepot Park",
+    "NYM": "Citi Field",
+    "PHI": "Citizens Bank Park",
+    "WSH": "Nationals Park",
+    "CHC": "Wrigley Field",
+    "CIN": "Great American Ball Park",
+    "MIL": "American Family Field",
+    "PIT": "PNC Park",
+    "STL": "Busch Stadium",
+    "ARI": "Chase Field",
+    "COL": "Coors Field",
+    "LAD": "Dodger Stadium",
+    "SD": "Petco Park",
+    "SF": "Oracle Park",
+}
+
 # Stadium characteristics
 STADIUM_PROFILES = {
     "Coors Field": {"elevation": 5183, "park_factor": 1.35, "dome": False},
@@ -155,6 +189,15 @@ class WeatherFetcher:
         if not self.api_key:
             import os
             self.api_key = os.getenv("OPENWEATHER_API_KEY")
+        
+        # Log warning if no API key
+        if not self.api_key:
+            logger.warning(
+                "OPENWEATHER_API_KEY not set. Weather data will use seasonal estimates. "
+                "Set OPENWEATHER_API_KEY in Railway environment variables."
+            )
+        else:
+            logger.debug("WeatherFetcher initialized with API key")
     
     def get_game_weather(
         self, 
@@ -170,6 +213,19 @@ class WeatherFetcher:
             game_time: When the game starts
             team_abbr: Team abbreviation (for stadium lookup fallback)
         """
+        # Handle empty venue with team fallback
+        if not venue or venue.strip() == "":
+            if team_abbr and team_abbr.upper() in TEAM_VENUES:
+                venue = TEAM_VENUES[team_abbr.upper()]
+                logger.debug(f"Using venue '{venue}' from team {team_abbr}")
+            else:
+                logger.warning(f"Empty venue and no team provided, using neutral weather")
+                return GameWeather(
+                    venue="Unknown",
+                    game_time=game_time,
+                    temperature=72,
+                )
+        
         cache_key = f"{venue}_{game_time.strftime('%Y%m%d_%H%M')}"
         
         # Check cache
@@ -555,3 +611,37 @@ class WeatherFetcher:
 def get_weather_fetcher(api_key: Optional[str] = None) -> WeatherFetcher:
     """Factory function."""
     return WeatherFetcher(api_key)
+
+
+def validate_weather_api_key(api_key: Optional[str] = None) -> Tuple[bool, str]:
+    """
+    Validate OpenWeather API key.
+    
+    Returns:
+        (is_valid, message)
+    """
+    if not api_key:
+        import os
+        api_key = os.getenv("OPENWEATHER_API_KEY")
+    
+    if not api_key:
+        return False, "OPENWEATHER_API_KEY not set in environment"
+    
+    # Test API call
+    try:
+        url = "https://api.openweathermap.org/data/2.5/weather"
+        params = {
+            "q": "New York,NY,US",
+            "appid": api_key,
+        }
+        resp = requests.get(url, params=params, timeout=10)
+        
+        if resp.status_code == 401:
+            return False, "Invalid API key (401 Unauthorized)"
+        elif resp.status_code != 200:
+            return False, f"API error: {resp.status_code}"
+        
+        return True, "API key valid"
+        
+    except Exception as e:
+        return False, f"Failed to validate API key: {e}"
