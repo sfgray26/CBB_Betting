@@ -221,10 +221,13 @@ class DailyLineupOptimizer:
                 timeout=10,
             )
             if resp.status_code != 200:
-                logger.warning("Odds API returned %d for MLB odds", resp.status_code)
+                logger.warning("Odds API returned %d for MLB odds: %s", resp.status_code, resp.text[:200])
                 return []
 
             games_raw = resp.json()
+            logger.info(f"[ODDS_API_DEBUG] Raw response: {len(games_raw)} games for {game_date}")
+            if games_raw:
+                logger.info(f"[ODDS_API_DEBUG] First game sample: {games_raw[0]}")
             games = []
             for g in games_raw:
                 game = self._parse_game_odds(g)
@@ -694,10 +697,13 @@ class DailyLineupOptimizer:
         game_count = 0
         try:
             resp = requests.get(url, params=params, timeout=30)
+            logger.info(f"[MLB_API_DEBUG] Probable pitchers URL: {resp.url}")
             resp.raise_for_status()
             data = resp.json()
+            logger.info(f"[MLB_API_DEBUG] Response keys: {data.keys()}")
             
             for date_info in data.get("dates", []):
+                logger.info(f"[MLB_API_DEBUG] Date info: {date_info.get('date')}, games: {len(date_info.get('games', []))}")
                 for game in date_info.get("games", []):
                     game_count += 1
                     teams = game.get("teams", {})
