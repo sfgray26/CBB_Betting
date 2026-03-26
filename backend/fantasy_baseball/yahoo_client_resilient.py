@@ -12,6 +12,7 @@ import os
 import logging
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
+from datetime import timedelta
 
 from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
 from backend.fantasy_baseball.circuit_breaker import CircuitBreaker, CircuitOpenError

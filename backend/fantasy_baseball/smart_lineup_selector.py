@@ -162,6 +162,9 @@ class SmartBatterRanking:
         park_boost = (self.park_factor - 1.0) * 5  # Hitter parks
         home_boost = 0.5 if self.is_home else 0.0
         
+        # Combine environment factors
+        total_env_boost = env_boost + park_boost + home_boost
+        
         # Platoon advantage
         platoon_boost = 0.0
         if self.platoon and self.opposing_pitcher:
@@ -188,7 +191,7 @@ class SmartBatterRanking:
         
         self.smart_score = (
             base_score * 0.35 +
-            env_boost * 0.20 +
+            total_env_boost * 0.20 +
             platoon_boost * 0.15 +
             pitcher_penalty * 0.10 +
             cat_boost * 0.20
