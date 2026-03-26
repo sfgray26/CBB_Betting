@@ -45,6 +45,24 @@ from backend.fantasy_baseball.smart_lineup_selector import (
     get_smart_selector,
 )
 
+# Elite context (new)
+from backend.fantasy_baseball.elite_context import (
+    EliteManagerContextBuilder,
+    PlayerDecisionContext,
+    LineupDecisionReport,
+    RiskProfile,
+    MatchupStrategy,
+    WeatherContext,
+    RecentForm,
+    LineupSpot,
+)
+
+# Pitcher deep dive (new)
+from backend.fantasy_baseball.pitcher_deep_dive import (
+    PitcherDeepDiveFetcher,
+    get_pitcher_fetcher,
+)
+
 # Alias for backward compatibility
 YahooClient = YahooFantasyClient
 
@@ -80,11 +98,23 @@ __all__ = [
     "CategoryTracker",
     "MatchupStatus",
     "get_category_tracker",
-    # Smart lineup selector (advanced optimizer)
+    # Smart lineup selector
     "SmartLineupSelector",
     "SmartBatterRanking",
     "OpposingPitcher",
     "CategoryNeed",
     "Handedness",
     "get_smart_selector",
+    # Pitcher deep dive
+    "PitcherDeepDiveFetcher",
+    "get_pitcher_fetcher",
+    # Elite context
+    "EliteManagerContextBuilder",
+    "PlayerDecisionContext",
+    "LineupDecisionReport",
+    "RiskProfile",
+    "MatchupStrategy",
+    "WeatherContext",
+    "RecentForm",
+    "LineupSpot",
 ]

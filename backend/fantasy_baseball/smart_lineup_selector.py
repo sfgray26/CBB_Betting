@@ -23,6 +23,8 @@ from backend.fantasy_baseball.lineup_validator import (
 )
 from backend.fantasy_baseball.daily_lineup_optimizer import DailyLineupOptimizer, BatterRanking
 from backend.fantasy_baseball.platoon_fetcher import PlatoonSplitFetcher, PlatoonSplits
+from backend.fantasy_baseball.pitcher_deep_dive import PitcherDeepDiveFetcher, get_pitcher_fetcher
+from backend.fantasy_baseball.elite_context import PitcherDeepDive, WeatherContext, RecentForm
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +47,52 @@ class OpposingPitcher:
     pitch_mix: Dict[str, float] = field(default_factory=dict)  # pitch type %
     recent_form: float = 0.0  # Last 3 starts ERA
     
+    # Deep dive stats
+    fip: float = 4.50
+    xfip: float = 4.50
+    sierra: float = 4.50
+    gb_pct: float = 45.0
+    hard_hit_pct: float = 35.0
+    era_vs_lhb: float = 4.50
+    era_vs_rhb: float = 4.50
+    
+    @property
+    def is_ace(self) -> bool:
+        """Is this an elite pitcher?"""
+        return self.era < 3.00 and self.k9 > 9.0 and self.fip < 3.20
+    
+    @property
+    def is_streamable(self) -> bool:
+        """Is this a weak pitcher worth targeting?"""
+        return self.era > 5.00 or (self.era > 4.50 and self.k9 < 7.0)
+    
     @property
     def quality_score(self) -> float:
         """Composite pitcher quality (0-10, 10 = ace)."""
         era_score = max(0, min(10, (6.0 - self.era) * 2.5))
+        fip_score = max(0, min(10, (6.0 - self.fip) * 2.5))
         k_score = min(10, self.k9)
         whip_score = max(0, min(10, (2.0 - self.whip) * 10))
-        return (era_score * 0.4 + k_score * 0.3 + whip_score * 0.3)
+        return (era_score * 0.3 + fip_score * 0.3 + k_score * 0.2 + whip_score * 0.2)
+    
+    @classmethod
+    def from_deep_dive(cls, deep_dive: PitcherDeepDive) -> "OpposingPitcher":
+        """Create from PitcherDeepDive."""
+        return cls(
+            name=deep_dive.name,
+            team=deep_dive.team,
+            handedness=Handedness.L if deep_dive.handedness == "L" else Handedness.R,
+            era=deep_dive.era,
+            k9=deep_dive.k9,
+            whip=deep_dive.whip,
+            fip=deep_dive.fip,
+            xfip=deep_dive.xfip,
+            sierra=deep_dive.sierra,
+            gb_pct=deep_dive.gb_pct,
+            hard_hit_pct=deep_dive.hard_hit_pct,
+            era_vs_lhb=deep_dive.era_vs_lhb,
+            era_vs_rhb=deep_dive.era_vs_rhb,
+        )
 
 
 @dataclass
@@ -182,6 +223,7 @@ class SmartLineupSelector:
         self.base_optimizer = DailyLineupOptimizer()
         self.lineup_validator = LineupValidator()
         self.platoon_fetcher = PlatoonSplitFetcher()
+        self.pitcher_fetcher = PitcherDeepDiveFetcher()
         self._pitcher_cache: Dict[str, OpposingPitcher] = {}
     
     def select_optimal_lineup(
@@ -304,7 +346,7 @@ class SmartLineupSelector:
     
     def _fetch_probable_pitchers(self, game_date: str) -> Dict[str, OpposingPitcher]:
         """
-        Fetch probable pitchers for the day.
+        Fetch probable pitchers for the day with deep dive stats.
         Returns dict: team -> OpposingPitcher
         """
         # Use MLB Stats API for probable pitchers
@@ -329,19 +371,37 @@ class SmartLineupSelector:
                     home_team = teams.get("home", {}).get("team", {}).get("abbreviation", "")
                     home_pitcher = teams.get("home", {}).get("probablePitcher", {})
                     if home_pitcher and home_team:
-                        pitcher = self._parse_pitcher(home_pitcher)
-                        pitcher.team = home_team
+                        name = home_pitcher.get("fullName", "Unknown")
+                        # Try to get deep dive stats
+                        deep_dive = self.pitcher_fetcher.get_pitcher(name, home_team)
+                        if deep_dive:
+                            pitcher = OpposingPitcher.from_deep_dive(deep_dive)
+                            logger.info(f"Pitcher deep dive for {home_team}: {pitcher.name} "
+                                      f"(ERA: {pitcher.era:.2f}, FIP: {pitcher.fip:.2f}, "
+                                      f"K/9: {pitcher.k9:.1f})")
+                        else:
+                            # Fallback to basic parsing
+                            pitcher = self._parse_pitcher(home_pitcher)
+                            pitcher.team = home_team
+                            logger.debug(f"Basic pitcher data for {home_team}: {pitcher.name}")
                         result[home_team] = pitcher
-                        logger.debug(f"Found pitcher for {home_team}: {pitcher.name} (ERA: {pitcher.era})")
                     
                     # Away pitcher
                     away_team = teams.get("away", {}).get("team", {}).get("abbreviation", "")
                     away_pitcher = teams.get("away", {}).get("probablePitcher", {})
                     if away_pitcher and away_team:
-                        pitcher = self._parse_pitcher(away_pitcher)
-                        pitcher.team = away_team
+                        name = away_pitcher.get("fullName", "Unknown")
+                        deep_dive = self.pitcher_fetcher.get_pitcher(name, away_team)
+                        if deep_dive:
+                            pitcher = OpposingPitcher.from_deep_dive(deep_dive)
+                            logger.info(f"Pitcher deep dive for {away_team}: {pitcher.name} "
+                                      f"(ERA: {pitcher.era:.2f}, FIP: {pitcher.fip:.2f}, "
+                                      f"K/9: {pitcher.k9:.1f})")
+                        else:
+                            pitcher = self._parse_pitcher(away_pitcher)
+                            pitcher.team = away_team
+                            logger.debug(f"Basic pitcher data for {away_team}: {pitcher.name}")
                         result[away_team] = pitcher
-                        logger.debug(f"Found pitcher for {away_team}: {pitcher.name} (ERA: {pitcher.era})")
             
             logger.info(f"Fetched {len(result)} probable pitchers for {game_date}")
             
