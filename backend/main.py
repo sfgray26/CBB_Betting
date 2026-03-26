@@ -4039,6 +4039,10 @@ async def get_fantasy_lineup_recommendations(
     except Exception as _exc:
         logger.warning("flag_pitcher_starts failed: %s", _exc)
 
+    # Ensure report is defined for games_list lookup
+    if 'report' not in locals():
+        report = {"games": []}
+
     games_list = report.get("games", [])
     if len(games_list) == 0:
         lineup_warnings.insert(0,
