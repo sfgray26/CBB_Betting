@@ -2,7 +2,7 @@
 API endpoints for decision tracking and accuracy reporting.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 
