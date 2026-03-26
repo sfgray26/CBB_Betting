@@ -28,6 +28,11 @@ from backend.utils.env_utils import get_float_env
 
 logger = logging.getLogger(__name__)
 
+# Tracks last alerted curr_spread_team per bet_id to avoid repeated alerts
+# when the line stays put between 30-min scheduler runs.
+# Format: {bet_id: last_alerted_curr_spread}
+_alerted_moves: Dict[int, float] = {}
+
 
 def check_line_movements() -> Dict:
     """
@@ -112,12 +117,22 @@ def check_line_movements() -> Dict:
                 if abs(delta) >= move_threshold:
                     summary["significant_moves"] += 1
                     game_key = f"{game.away_team}@{game.home_team}"
-                    logger.warning(
-                        f"SIGNIFICANT_MOVE detected for {game_key}: "
-                        f"{bet.pick} -> current consensus {team_name} {curr_spread_team:+.1f} "
-                        f"(delta={delta:+.1f} pts)"
-                    )
-                    
+
+                    # Deduplicate: only log/alert if spread changed >= 0.5 pts since last alert
+                    last_alerted = _alerted_moves.get(bet.id)
+                    if last_alerted is not None and abs(curr_spread_team - last_alerted) < 0.5:
+                        logger.debug(
+                            "SIGNIFICANT_MOVE suppressed (no new movement) for %s bet %d",
+                            game_key, bet.id,
+                        )
+                    else:
+                        _alerted_moves[bet.id] = curr_spread_team
+                        logger.warning(
+                            f"SIGNIFICANT_MOVE detected for {game_key}: "
+                            f"{bet.pick} -> current consensus {team_name} {curr_spread_team:+.1f} "
+                            f"(delta={delta:+.1f} pts)"
+                        )
+
                     # 6. Re-analyze
                     if not bet.prediction_id:
                         logger.warning(f"No prediction_id for bet {bet.id}, skipping re-analysis")

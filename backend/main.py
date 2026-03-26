@@ -4240,11 +4240,13 @@ async def get_fantasy_waiver_recommendations(
         _il_info = _il_cap(my_roster) if my_roster else {"used": 0, "total": 2, "available": 0}
 
     except YahooAuthError as exc:
+        logger.error("Waiver endpoint -- Yahoo auth error: %s", exc)
         raise HTTPException(
             status_code=503,
             detail=f"Yahoo auth failed — refresh token may be expired. ({exc})",
         ) from exc
     except YahooAPIError as exc:
+        logger.error("Waiver endpoint -- Yahoo API error: %s", exc)
         raise HTTPException(
             status_code=503,
             detail=f"Yahoo API error: {exc}",
@@ -4629,11 +4631,13 @@ async def get_waiver_recommendations(
             ))
 
     except YahooAuthError as exc:
+        logger.error("Waiver recommendations endpoint -- Yahoo auth error: %s", exc)
         raise HTTPException(
             status_code=503,
             detail=f"Yahoo auth failed — refresh token may be expired. ({exc})",
         ) from exc
     except YahooAPIError as exc:
+        logger.error("Waiver recommendations endpoint -- Yahoo API error: %s", exc)
         raise HTTPException(
             status_code=503,
             detail=f"Yahoo API error: {exc}",

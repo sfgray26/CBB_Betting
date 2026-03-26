@@ -1,11 +1,29 @@
-# OPERATIONAL HANDOFF — EMAC-081 "FANTASY BASEBALL QUALITY P2"
+# OPERATIONAL HANDOFF — EMAC-085 "WAIVER LOGGING + LINE MONITOR DEDUP"
 
 > **Ground truth as of March 25, 2026.** Author: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
-> Prior state: `EMAC-080` — MLB Betting Model P0.
+> Prior state: `EMAC-084` — Brier calibration + bet-history Today filter.
 >
 > **GUARDIAN FREEZE still active on CBB model files through April 7.**
 > DO NOT touch `backend/betting_model.py`, `backend/services/analysis.py`, or any CBB model service.
+
+---
+
+## MISSION ACCOMPLISHED — Mar 25, 2026 (EMAC-085)
+
+### Waiver 503 Logging + Line Movement Deduplication
+
+| Item | Status |
+|------|--------|
+| `main.py` waiver endpoint: add `logger.error()` to `YahooAuthError` + `YahooAPIError` handlers | COMPLETE |
+| `main.py` waiver recommendations endpoint: same logging | COMPLETE |
+| `line_monitor.py`: module-level `_alerted_moves` dict; suppress repeated SIGNIFICANT_MOVE for unchanged spread | COMPLETE |
+
+**Root cause of waiver 503:** The error was being caught by `YahooAuthError` or `YahooAPIError` handlers, which had no logging — only the generic `except Exception` handler had `logger.exception()`. After this fix, Railway logs will show the actual Yahoo API error message.
+
+**Line monitor fix:** `_alerted_moves: Dict[int, float]` maps bet_id → last_alerted_curr_spread. Suppresses re-alert unless spread moves >= 0.5 pts from last alert. Duke -12.1 → -6.5 will fire once and stay silent until the line moves further.
+
+**Tests:** 14/14 pass (all EMAC-082/083/084 tests still green).
 
 ---
 
