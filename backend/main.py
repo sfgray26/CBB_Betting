@@ -3972,8 +3972,10 @@ async def get_fantasy_lineup_recommendations(
                 assigned_slot=None,
                 has_game=b.get("has_game", True),
             ))
-    else:
-        report = optimizer.build_daily_report(game_date=lineup_date)
+
+    # Ensure optimizer is available for pitcher section
+    if 'optimizer' not in locals():
+        optimizer = get_lineup_optimizer()
 
     # --- Pitcher start detection with full data ---
     pitchers: list[StartingPitcherOut] = []
