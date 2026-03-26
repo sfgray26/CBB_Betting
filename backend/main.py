@@ -3843,6 +3843,27 @@ async def get_fantasy_lineup_recommendations(
     lineup_warnings: list[str] = []
     batters: list[LineupPlayerOut] = []
 
+    # --- Fetch game data for opponent/start_time lookup ---
+    team_odds: dict = {}
+    try:
+        from backend.fantasy_baseball.smart_lineup_selector import get_smart_selector
+        _smart_sel = get_smart_selector()
+        _games = _smart_sel.base_optimizer.fetch_mlb_odds(lineup_date)
+        team_odds = _smart_sel.base_optimizer._build_team_odds_map(_games)
+    except Exception as e:
+        logger.warning(f"Could not fetch game odds: {e}")
+
+    def _get_game_context(team: str):
+        """Get (opponent, start_time, opp_implied) for a team."""
+        if team in team_odds:
+            opp = team_odds[team].get("opponent", "")
+            start = team_odds[team].get("start_time")
+            opp_impl = 4.5
+            if opp and opp in team_odds:
+                opp_impl = team_odds[opp].get("implied_runs", 4.5)
+            return opp, start, opp_impl
+        return "", None, 4.5
+
     # --- Use SmartLineupSelector if enabled ---
     if use_smart_selector and _lineup_roster and _lineup_projections:
         try:
@@ -3868,21 +3889,25 @@ async def get_fantasy_lineup_recommendations(
                 category_needs=category_needs,
             )
 
-            batters = [
-                LineupPlayerOut(
+            # Build batters with game context
+            batters = []
+            for a in assignments:
+                team = a.get("team", "")
+                opp, start, opp_impl = _get_game_context(team)
+                batters.append(LineupPlayerOut(
                     player_id=a["player_id"] or a["player_name"],
                     name=a["player_name"],
-                    team=a.get("team", ""),
-                    position="?",  # Position determined by slot
-                    implied_runs=0.0,  # TODO: Extract from smart ranking
+                    team=team,
+                    position="?",
+                    implied_runs=round(opp_impl, 2),
                     park_factor=1.0,
                     lineup_score=round(a.get("smart_score", 0), 3),
+                    start_time=start,
+                    opponent=opp,
                     status="START" if a["slot"] != "BN" else "BENCH",
                     assigned_slot=a["slot"],
                     has_game=a.get("has_game", False),
-                )
-                for a in assignments
-            ]
+                ))
 
             logger.info(f"SmartLineupSelector produced {len(batters)} assignments for {lineup_date}")
 
@@ -3900,21 +3925,23 @@ async def get_fantasy_lineup_recommendations(
                 projections=_lineup_projections,
                 game_date=lineup_date,
             )
-            batters = [
-                LineupPlayerOut(
+            batters = []
+            for s in solved_slots:
+                opp, start, opp_impl = _get_game_context(s.player_team)
+                batters.append(LineupPlayerOut(
                     player_id=s.player_name,
                     name=s.player_name,
                     team=s.player_team,
                     position=s.positions[0] if s.positions else "?",
-                    implied_runs=round(s.implied_runs, 2),
+                    implied_runs=round(opp_impl, 2),
                     park_factor=round(s.park_factor, 3),
                     lineup_score=round(s.lineup_score, 3),
+                    start_time=start,
+                    opponent=opp,
                     status="START" if s.slot != "BN" else "BENCH",
                     assigned_slot=s.slot,
                     has_game=s.has_game,
-                )
-                for s in solved_slots
-            ]
+                ))
         except Exception as _exc:
             logger.warning("solve_lineup failed, falling back to score-rank: %s", _exc)
             lineup_warnings.append(f"Constraint solver unavailable: {_exc}")
@@ -3927,33 +3954,31 @@ async def get_fantasy_lineup_recommendations(
             roster=_lineup_roster or None,
             projections=_lineup_projections or None,
         )
-        batters = [
-            LineupPlayerOut(
+        batters = []
+        for i, b in enumerate(report.get("batter_rankings", [])):
+            team = b.get("team", "")
+            opp, start, opp_impl = _get_game_context(team)
+            batters.append(LineupPlayerOut(
                 player_id=str(b.get("player_id", b.get("name", ""))),
                 name=b.get("name", ""),
-                team=b.get("team", ""),
+                team=team,
                 position=(b.get("positions") or ["OF"])[0],
-                implied_runs=float(b.get("implied_runs", 0)),
+                implied_runs=round(opp_impl, 2),
                 park_factor=float(b.get("park_factor", 1.0)),
                 lineup_score=float(b.get("score", 0)),
+                start_time=start,
+                opponent=opp,
                 status="START" if i < 9 else "BENCH",
                 assigned_slot=None,
-            )
-            for i, b in enumerate(report.get("batter_rankings", []))
-        ]
+                has_game=b.get("has_game", True),
+            ))
     else:
         report = optimizer.build_daily_report(game_date=lineup_date)
 
     # --- Pitcher start detection with full data ---
     pitchers: list[StartingPitcherOut] = []
     try:
-        from backend.fantasy_baseball.smart_lineup_selector import get_smart_selector
-
-        # Use smart selector to get game context
-        smart_selector = get_smart_selector()
-        games = smart_selector.base_optimizer.fetch_mlb_odds(lineup_date)
-        team_odds = smart_selector.base_optimizer._build_team_odds_map(games)
-
+        # team_odds already fetched above for batters
         flagged_pitchers = optimizer.flag_pitcher_starts(
             roster=_lineup_roster,
             game_date=lineup_date,
@@ -4033,6 +4058,19 @@ async def get_fantasy_lineup_recommendations(
             f"Only {len(_pitcher_active)} active pitcher slots filled -- "
             "consider streaming a SP."
         )
+
+    # Sort batters by position order: C, 1B, 2B, 3B, SS, OF, Util, BN
+    _POSITION_ORDER = {
+        "C": 0, "1B": 1, "2B": 2, "3B": 3, "SS": 4,
+        "OF": 5, "Util": 6, "BN": 7, None: 8, "?": 9
+    }
+    batters = sorted(
+        batters,
+        key=lambda b: (
+            _POSITION_ORDER.get(b.assigned_slot, 99),
+            -b.lineup_score  # Within same position, higher score first
+        )
+    )
 
     return DailyLineupResponse(
         date=ld,

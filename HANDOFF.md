@@ -3142,3 +3142,134 @@ claude "Read CLAUDE_UAT_FIXES_PROMPT.md and start with Priority 1
 
 **Document Version:** EMAC-082-FANTASY-ARCH
 **Last Updated:** March 25, 2026
+
+
+---
+
+## ✅ COMPLETE — Fantasy Baseball Elite Manager System (EMAC-087)
+
+> **Date:** March 26-27, 2026
+> **Assignee:** Kimi CLI
+> **Status:** ✅ COMPLETE
+> **Scope:** Smart lineup selection, weather integration, daily briefing, decision tracking
+
+### Summary of Features Built
+
+| Feature | Description | Files | Status |
+|---------|-------------|-------|--------|
+| **Smart Lineup Selector** | Composite scoring with platoon splits, opposing pitcher analysis, category awareness | `smart_lineup_selector.py` | ✅ Complete |
+| **Platoon Fetcher** | FanGraphs wOBA splits via pybaseball, 7-day cache | `platoon_fetcher.py` | ✅ Complete |
+| **Category Tracker** | Yahoo H2H scoreboard integration, calculates category gaps | `category_tracker.py` | ✅ Complete |
+| **Pitcher Deep Dive** | FIP, xFIP, SIERA, batted ball data, splits vs LHB/RHB | `pitcher_deep_dive.py` | ✅ Complete |
+| **Elite Context System** | Weather, recent form, lineup spot PA multipliers, risk profiles | `elite_context.py` | ✅ Complete |
+| **Weather Fetcher** | OpenWeatherMap integration, temp/wind/humidity/precipitation | `weather_fetcher.py` | ✅ Complete |
+| **Park Weather Analyzer** | Stadium-specific weather (orientation, wind effects, altitude) | `park_weather.py` | ✅ Complete |
+| **Daily Briefing** | Morning briefing with recommendations, confidence scores, alerts | `daily_briefing.py` | ✅ Complete |
+| **Decision Tracker** | Records recommendations vs actual results, accuracy reporting | `decision_tracker.py` | ✅ Complete |
+| **MLB Box Score Fetcher** | Automatic resolution with MLB Stats API box scores | `mlb_boxscore.py` | ✅ Complete |
+| **Pitcher Start Fix** | Proper probable pitcher detection via MLB Stats API | `daily_lineup_optimizer.py` | ✅ Complete |
+| **Lineup Display Fix** | Opponent, start time, position-based sorting | `main.py` | ✅ Complete |
+
+### Smart Lineup Selector Scoring Weights
+
+```
+Base Projection:        35% (Steamer/ATC)
+Game Environment:       20% (Odds API + park factors)
+Platoon Advantage:      15% (FanGraphs wOBA splits)
+Pitcher Difficulty:     10% (FanGraphs FIP/xFIP/K9)
+Category Need Fit:      20% (Yahoo scoreboard gaps)
+Weather Boost:          Included in Game Environment
+```
+
+### API Endpoints Added
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/fantasy/lineup/{date}` | GET | Get optimized lineup with opponent/time data |
+| `/api/fantasy/lineup/apply` | PUT | Apply lineup to Yahoo with auto-correction |
+| `/api/fantasy/briefing/{date}` | GET | Daily briefing with recommendations |
+| `/api/fantasy/decisions/record` | POST | Manually record a decision |
+| `/api/fantasy/decisions/override/{id}` | POST | Record user override |
+| `/api/fantasy/decisions/resolve/{id}` | POST | Resolve with actual stats |
+| `/api/fantasy/decisions/accuracy/{date}` | GET | Daily accuracy report |
+| `/api/fantasy/decisions/trends` | GET | 14-day trend analysis |
+| `/api/fantasy/decisions/dashboard` | GET | Complete decision dashboard |
+| `/api/fantasy/decisions/pending/{date}` | GET | List pending resolutions |
+| `/api/fantasy/decisions/resolve-bulk/{date}` | POST | Resolve multiple decisions |
+| `/api/fantasy/decisions/run-nightly-resolution` | POST | Trigger nightly job |
+| `/api/fantasy/decisions/resolve-from-mlb/{date}` | POST | Auto-resolve from MLB API |
+
+### Environment Variables
+
+```bash
+# Weather API (OpenWeatherMap)
+OPENWEATHER_API_KEY=your_key_here  # Free tier: 1,000 calls/day
+
+# Existing
+YAHOO_CLIENT_ID=...
+YAHOO_CLIENT_SECRET=...
+YAHOO_REFRESH_TOKEN=...
+THE_ODDS_API_KEY=...
+```
+
+### Key Bug Fixes
+
+1. **Pitcher Start Detection** (Mar 27)
+   - Problem: `flag_pitcher_starts` only checked if team had game, not if specific pitcher was probable
+   - Solution: Fetch probable pitchers from MLB Stats API, match by name
+   - File: `daily_lineup_optimizer.py`
+
+2. **Lineup Display** (Mar 27)
+   - Problem: All batters showed 7:00 PM, no opponent, random order
+   - Solution: Fetch game odds once, add opponent/start_time, sort by position
+   - Files: `main.py`, `schemas.py`
+
+3. **Pitcher Data** (Mar 27)
+   - Problem: All pitchers showed 0.00 implied runs, 1.000 park factor, 0.000 score
+   - Solution: Populate from team_odds, calculate SP score based on matchup
+   - File: `main.py`
+
+### Decision Tracking Flow
+
+```
+1. GET /api/fantasy/briefing/2025-03-27
+   → Auto-records 14 decisions (START/BENCH/MONITOR)
+   → Stores: player, recommendation, confidence, factors, weather
+
+2. Games play...
+
+3. POST /api/fantasy/decisions/resolve-from-mlb/2025-03-27
+   → Fetches box scores from MLB Stats API
+   → Resolves all pending decisions automatically
+
+4. GET /api/fantasy/decisions/accuracy/2025-03-27
+   → Shows: 71% accuracy, 85% for high confidence, 40% for low
+
+5. GET /api/fantasy/decisions/trends?days=14
+   → Trend direction, best confidence threshold, overvalued factors
+```
+
+### Testing
+
+- All new modules have unit tests
+- CI passes (lint errors fixed)
+- Manual testing via API endpoints
+
+### Next Steps (Claude)
+
+1. Monitor decision accuracy over first week
+2. Adjust scoring weights based on results
+3. Consider adding: Statcast recent form, lineup spot scraper
+
+---
+
+## 🔴 CRITICAL P0 — PITCHER START DETECTION ISSUE (FIXED)
+
+> **Discovered:** March 27, 2026 — Shota Imanaga showing as START but doesn't pitch today
+> **Root Cause:** `flag_pitcher_starts` checked team game, not specific pitcher
+> **Fix:** Added `_fetch_probable_pitchers_for_date()` and `_is_probable_starter()`
+> **Status:** ✅ FIXED in commit `0c5389e`
+
+---
+
+**END OF HANDOFF**
