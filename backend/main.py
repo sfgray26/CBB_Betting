@@ -3865,6 +3865,9 @@ async def get_fantasy_lineup_recommendations(
     # Build projections from player board (best-effort)
     _lineup_projections: list = []
     if _lineup_roster:
+        # Log roster teams for debugging
+        roster_teams = [p.get("team", "") for p in _lineup_roster if p.get("team")]
+        logger.info(f"[LINEUP_DEBUG] Yahoo roster teams: {roster_teams}")
         try:
             from backend.fantasy_baseball.player_board import get_or_create_projection as _get_lineup_proj
             _lineup_projections = [_get_lineup_proj(p) for p in _lineup_roster]
@@ -3881,7 +3884,9 @@ async def get_fantasy_lineup_recommendations(
         from backend.fantasy_baseball.smart_lineup_selector import get_smart_selector
         _smart_sel = get_smart_selector()
         _games = _smart_sel.base_optimizer.fetch_mlb_odds(lineup_date)
+        logger.info(f"[LINEUP_DEBUG] Fetched {len(_games)} games from Odds API")
         team_odds = _smart_sel.base_optimizer._build_team_odds_map(_games)
+        logger.info(f"[LINEUP_DEBUG] team_odds keys: {list(team_odds.keys())}")
         # Add start_time to team_odds from game data
         for g in _games:
             if hasattr(g, 'commence_time') and g.commence_time:
@@ -3900,13 +3905,16 @@ async def get_fantasy_lineup_recommendations(
 
     def _get_game_context(team: str):
         """Get (opponent, start_time, opp_implied) for a team."""
+        logger.debug(f"[LINEUP_DEBUG] _get_game_context for team: '{team}'")
         if team in team_odds:
             opp = team_odds[team].get("opponent", "")
             start = team_odds[team].get("start_time")
             opp_impl = 4.5
             if opp and opp in team_odds:
                 opp_impl = team_odds[opp].get("implied_runs", 4.5)
+            logger.debug(f"[LINEUP_DEBUG] Found team '{team}': opp={opp}, implied={opp_impl}")
             return opp, start, opp_impl
+        logger.warning(f"[LINEUP_DEBUG] Team '{team}' NOT FOUND in team_odds. Available: {list(team_odds.keys())}")
         return "", None, 4.5
 
     # --- Use SmartLineupSelector if enabled ---
