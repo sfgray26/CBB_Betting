@@ -38,7 +38,7 @@ def resolve_yesterdays_decisions() -> dict:
     
     # Try to get actual stats from Yahoo
     try:
-        client = YahooFantasyClient()
+        _ = YahooFantasyClient()  # Placeholder for future auto-resolution
         # TODO: Implement fetching actual stats from Yahoo
         # For now, we'll need manual resolution
         logger.info("Automatic stat fetching not yet implemented - decisions remain pending")
