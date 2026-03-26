@@ -4016,10 +4016,14 @@ async def get_fantasy_lineup_recommendations(
             if not is_sp:
                 status = "RP"
 
+            # Determine pitcher type
+            pitcher_type = "SP" if is_sp else "RP"
+
             pitchers.append(StartingPitcherOut(
                 player_id=p.get("player_key") or p.get("name", ""),
                 name=p.get("name", ""),
                 team=team,
+                pitcher_type=pitcher_type,
                 opponent=opponent,
                 opponent_implied_runs=round(opp_implied, 2),
                 park_factor=round(park_factor, 3),

@@ -3,11 +3,77 @@ MLB Stats API integration for fetching box scores and resolving decisions.
 """
 
 import logging
+import re
+import unicodedata
 import requests
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_name(name: str) -> str:
+    """
+    Normalize player name for matching.
+    
+    Handles:
+    - Unicode normalization (José → Jose)
+    - Case normalization
+    - Common suffixes (Jr., III, etc.)
+    - Extra whitespace
+    """
+    if not name:
+        return ""
+    
+    # Convert to lowercase
+    name = name.lower()
+    
+    # Normalize unicode (remove accents)
+    name = unicodedata.normalize('NFKD', name).encode('ASCII', 'ignore').decode('ASCII')
+    
+    # Remove common suffixes
+    suffixes = [r'\s+jr\.?', r'\s+sr\.?', r'\s+iii', r'\s+ii', r'\s+iv', r'\s+v']
+    for suffix in suffixes:
+        name = re.sub(suffix, '', name)
+    
+    # Remove extra whitespace
+    name = ' '.join(name.split())
+    
+    return name.strip()
+
+
+def fuzzy_name_match(name1: str, name2: str, threshold: float = 0.85) -> bool:
+    """
+    Fuzzy match two player names.
+    
+    Uses normalized comparison with edit distance ratio.
+    """
+    n1 = normalize_name(name1)
+    n2 = normalize_name(name2)
+    
+    # Exact match after normalization
+    if n1 == n2:
+        return True
+    
+    # Try simple substring match for last name
+    parts1 = n1.split()
+    parts2 = n2.split()
+    
+    if len(parts1) >= 1 and len(parts2) >= 1:
+        # Last name match (most reliable)
+        if parts1[-1] == parts2[-1]:
+            # First name initial match (e.g., "J. Smith" vs "John Smith")
+            if len(parts1) >= 2 and len(parts2) >= 2:
+                if parts1[0][0] == parts2[0][0]:
+                    return True
+    
+    # Calculate similarity ratio
+    try:
+        from difflib import SequenceMatcher
+        similarity = SequenceMatcher(None, n1, n2).ratio()
+        return similarity >= threshold
+    except ImportError:
+        return False
 
 
 class MLBBoxScoreFetcher:
@@ -27,6 +93,8 @@ class MLBBoxScoreFetcher:
         """
         Get batting stats for a player on a specific date.
         
+        Handles doubleheaders by aggregating stats across all games.
+        
         Args:
             player_name: Full player name (e.g., "Pete Alonso")
             team_abbr: Team abbreviation (e.g., "NYM")
@@ -36,20 +104,32 @@ class MLBBoxScoreFetcher:
             Dict with hr, r, rbi, sb, avg or None if no game/no stats
         """
         try:
-            # Find the game for this team on this date
-            game_pk = self._find_game_pk(team_abbr, game_date)
-            if not game_pk:
-                logger.debug(f"No game found for {team_abbr} on {game_date}")
+            # Find ALL games for this team on this date (handles doubleheaders)
+            game_pks = self._find_all_game_pks(team_abbr, game_date)
+            if not game_pks:
+                logger.debug(f"No games found for {team_abbr} on {game_date}")
                 return None
             
-            # Fetch box score
-            box_score = self._fetch_box_score(game_pk)
-            if not box_score:
-                return None
+            # Aggregate stats across all games
+            aggregated_stats = None
+            for game_pk in game_pks:
+                box_score = self._fetch_box_score(game_pk)
+                if not box_score:
+                    continue
+                
+                stats = self._extract_player_stats(box_score, player_name, team_abbr)
+                if stats:
+                    if aggregated_stats is None:
+                        aggregated_stats = stats.copy()
+                    else:
+                        # Sum counting stats
+                        for key in ['hr', 'r', 'rbi', 'sb', 'h', 'ab', '2b', '3b', 'bb']:
+                            aggregated_stats[key] += stats.get(key, 0)
+                        # Recalculate average
+                        if aggregated_stats['ab'] > 0:
+                            aggregated_stats['avg'] = round(aggregated_stats['h'] / aggregated_stats['ab'], 3)
             
-            # Find player stats
-            stats = self._extract_player_stats(box_score, player_name, team_abbr)
-            return stats
+            return aggregated_stats
             
         except Exception as e:
             logger.warning(f"Failed to fetch stats for {player_name}: {e}")
@@ -95,6 +175,11 @@ class MLBBoxScoreFetcher:
     
     def _find_game_pk(self, team_abbr: str, game_date: str) -> Optional[int]:
         """Find game PK for a team on a specific date."""
+        games = self._find_all_game_pks(team_abbr, game_date)
+        return games[0] if games else None
+    
+    def _find_all_game_pks(self, team_abbr: str, game_date: str) -> List[int]:
+        """Find all game PKs for a team on a specific date (handles doubleheaders)."""
         url = f"{self.BASE_URL}/schedule"
         params = {
             "sportId": 1,
@@ -102,6 +187,7 @@ class MLBBoxScoreFetcher:
             "teamId": self._get_team_id(team_abbr),
         }
         
+        game_pks = []
         try:
             resp = self.session.get(url, params=params, timeout=30)
             resp.raise_for_status()
@@ -109,12 +195,14 @@ class MLBBoxScoreFetcher:
             
             for date_info in data.get("dates", []):
                 for game in date_info.get("games", []):
-                    return game.get("gamePk")
+                    game_pk = game.get("gamePk")
+                    if game_pk:
+                        game_pks.append(game_pk)
                     
         except Exception as e:
-            logger.warning(f"Failed to find game for {team_abbr}: {e}")
+            logger.warning(f"Failed to find games for {team_abbr}: {e}")
         
-        return None
+        return game_pks
     
     def _get_games_for_date(self, game_date: str) -> List[Dict]:
         """Get all games for a date."""
@@ -156,7 +244,9 @@ class MLBBoxScoreFetcher:
         player_name: str, 
         team_abbr: str
     ) -> Optional[Dict[str, float]]:
-        """Extract stats for a specific player from box score."""
+        """Extract stats for a specific player from box score using fuzzy matching."""
+        normalized_search = normalize_name(player_name)
+        
         # Try both teams
         for team_type in ["home", "away"]:
             team_data = box_score.get("teams", {}).get(team_type, {})
@@ -166,10 +256,16 @@ class MLBBoxScoreFetcher:
                 info = player_data.get("person", {})
                 name = info.get("fullName", "")
                 
-                # Match player name (case insensitive)
+                # Try exact match first (fast path)
                 if name.lower() == player_name.lower():
                     return self._parse_hitting_stats(player_data)
+                
+                # Try fuzzy match
+                if fuzzy_name_match(name, player_name):
+                    logger.debug(f"Fuzzy matched '{player_name}' to '{name}'")
+                    return self._parse_hitting_stats(player_data)
         
+        logger.debug(f"Could not find player '{player_name}' (normalized: '{normalized_search}')")
         return None
     
     def _extract_all_players_stats(self, box_score: Dict) -> Dict[str, Dict[str, float]]:

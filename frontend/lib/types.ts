@@ -284,11 +284,13 @@ export interface StartingPitcher {
   player_id: string
   name: string
   team: string
+  pitcher_type: 'SP' | 'RP' | 'P'
+  opponent: string
   opponent_implied_runs: number
   park_factor: number
   sp_score: number
   start_time: string
-  status: 'START' | 'BENCH' | 'UNKNOWN'
+  status: 'START' | 'NO_START' | 'RP' | 'UNKNOWN'
 }
 
 export interface DailyLineupResponse {
