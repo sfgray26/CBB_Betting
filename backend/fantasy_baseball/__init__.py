@@ -28,6 +28,13 @@ from backend.fantasy_baseball.platoon_fetcher import (
     get_platoon_fetcher,
 )
 
+# Category tracker (new)
+from backend.fantasy_baseball.category_tracker import (
+    CategoryTracker,
+    MatchupStatus,
+    get_category_tracker,
+)
+
 # Smart lineup selector (advanced optimizer)
 from backend.fantasy_baseball.smart_lineup_selector import (
     SmartLineupSelector,
@@ -69,6 +76,10 @@ __all__ = [
     "PlatoonSplitFetcher",
     "PlatoonSplits",
     "get_platoon_fetcher",
+    # Category tracker
+    "CategoryTracker",
+    "MatchupStatus",
+    "get_category_tracker",
     # Smart lineup selector (advanced optimizer)
     "SmartLineupSelector",
     "SmartBatterRanking",

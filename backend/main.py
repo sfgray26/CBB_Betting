@@ -3847,12 +3847,19 @@ async def get_fantasy_lineup_recommendations(
     if use_smart_selector and _lineup_roster and _lineup_projections:
         try:
             from backend.fantasy_baseball import SmartLineupSelector, get_smart_selector
+            from backend.fantasy_baseball.category_tracker import get_category_tracker
             
             smart_selector = get_smart_selector()
             
-            # TODO: Fetch category needs from Yahoo matchup scoreboard
-            # For now, use empty category needs (will use default projections)
+            # Fetch category needs from Yahoo matchup
             category_needs = []
+            try:
+                tracker = get_category_tracker()
+                category_needs = tracker.get_category_needs()
+                if category_needs:
+                    logger.info(f"Category needs: {[(c.category, c.needed) for c in category_needs]}")
+            except Exception as e:
+                logger.warning(f"Could not fetch category needs: {e}")
             
             assignments, lineup_warnings = smart_selector.solve_smart_lineup(
                 roster=_lineup_roster,

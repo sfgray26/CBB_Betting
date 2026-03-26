@@ -133,8 +133,9 @@ class SmartBatterRanking:
         # Opposing pitcher difficulty
         pitcher_penalty = 0.0
         if self.opposing_pitcher:
-            # Facing an ace = penalty, facing weak SP = bonus
-            pitcher_penalty = (5.0 - self.opposing_pitcher.quality_score) * 0.5
+            # Facing an ace = penalty (negative), facing weak SP = bonus (positive)
+            # quality_score: 0-10 (10 = ace), so ace gives negative, weak gives positive
+            pitcher_penalty = (self.opposing_pitcher.quality_score - 5.0) * 0.5
         
         # Category need fit
         cat_boost = 0.0
@@ -224,6 +225,12 @@ class SmartLineupSelector:
             opp_pitcher = None
             if opponent and opponent in probable_pitchers:
                 opp_pitcher = probable_pitchers[opponent]
+                logger.debug(f"{base.name} ({base.team}) vs {opponent}: found pitcher {opp_pitcher.name}")
+            elif opponent:
+                logger.debug(f"{base.name} ({base.team}) vs {opponent}: NO pitcher data found")
+                # Try to find by iterating through all pitchers
+                for team, pitcher in probable_pitchers.items():
+                    logger.debug(f"  Available: {team} -> {pitcher.name}")
             
             # Get platoon splits
             platoon = self._get_platoon_splits(base.name)
@@ -322,13 +329,19 @@ class SmartLineupSelector:
                     home_team = teams.get("home", {}).get("team", {}).get("abbreviation", "")
                     home_pitcher = teams.get("home", {}).get("probablePitcher", {})
                     if home_pitcher and home_team:
-                        result[home_team] = self._parse_pitcher(home_pitcher)
+                        pitcher = self._parse_pitcher(home_pitcher)
+                        pitcher.team = home_team
+                        result[home_team] = pitcher
+                        logger.debug(f"Found pitcher for {home_team}: {pitcher.name} (ERA: {pitcher.era})")
                     
                     # Away pitcher
                     away_team = teams.get("away", {}).get("team", {}).get("abbreviation", "")
                     away_pitcher = teams.get("away", {}).get("probablePitcher", {})
                     if away_pitcher and away_team:
-                        result[away_team] = self._parse_pitcher(away_pitcher)
+                        pitcher = self._parse_pitcher(away_pitcher)
+                        pitcher.team = away_team
+                        result[away_team] = pitcher
+                        logger.debug(f"Found pitcher for {away_team}: {pitcher.name} (ERA: {pitcher.era})")
             
             logger.info(f"Fetched {len(result)} probable pitchers for {game_date}")
             

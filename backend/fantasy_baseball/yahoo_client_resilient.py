@@ -103,7 +103,7 @@ class ResilientYahooClient(YahooFantasyClient):
         
         self.cache = StaleCacheManager(
             cache_dir=os.getenv("YAHOO_CACHE_DIR", ".cache/fantasy"),
-            max_age_hours=int(os.getenv("YAHOO_CACHE_TTL_HOURS", "24")),
+            max_age=timedelta(hours=int(os.getenv("YAHOO_CACHE_TTL_HOURS", "24"))),
             enabled=os.getenv("YAHOO_CACHE_DISABLED", "false").lower() != "true"
         )
         
