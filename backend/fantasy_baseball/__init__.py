@@ -63,6 +63,16 @@ from backend.fantasy_baseball.pitcher_deep_dive import (
     get_pitcher_fetcher,
 )
 
+# Daily briefing (new)
+from backend.fantasy_baseball.daily_briefing import (
+    DailyBriefingGenerator,
+    DailyBriefing,
+    PlayerBriefing,
+    CategoryBriefing,
+    DecisionAction,
+    get_briefing_generator,
+)
+
 # Alias for backward compatibility
 YahooClient = YahooFantasyClient
 
@@ -108,6 +118,13 @@ __all__ = [
     # Pitcher deep dive
     "PitcherDeepDiveFetcher",
     "get_pitcher_fetcher",
+    # Daily briefing
+    "DailyBriefingGenerator",
+    "DailyBriefing",
+    "PlayerBriefing",
+    "CategoryBriefing",
+    "DecisionAction",
+    "get_briefing_generator",
     # Elite context
     "EliteManagerContextBuilder",
     "PlayerDecisionContext",

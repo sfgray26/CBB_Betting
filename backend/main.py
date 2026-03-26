@@ -4016,6 +4016,84 @@ async def get_fantasy_lineup_recommendations(
     )
 
 
+@app.get("/api/fantasy/briefing/{briefing_date}")
+async def get_daily_briefing(
+    briefing_date: str,
+    user: str = Depends(verify_api_key),
+):
+    """
+    Get elite manager daily briefing.
+    
+    Returns complete decision context with recommendations,
+    confidence scores, and actionable alerts.
+    
+    Example: /api/fantasy/briefing/2025-03-27
+    """
+    from datetime import date as date_type
+    try:
+        bd = date_type.fromisoformat(briefing_date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="briefing_date must be YYYY-MM-DD")
+    
+    # Fetch roster
+    roster: list = []
+    try:
+        client = YahooFantasyClient()
+        roster = client.get_roster()
+    except Exception as e:
+        logger.warning(f"Could not fetch roster: {e}")
+        raise HTTPException(status_code=503, detail="Yahoo API unavailable")
+    
+    # Build projections
+    projections: list = []
+    try:
+        from backend.fantasy_baseball.player_board import get_or_create_projection
+        projections = [get_or_create_projection(p) for p in roster]
+    except Exception as e:
+        logger.warning(f"Could not load projections: {e}")
+    
+    # Generate briefing
+    try:
+        from backend.fantasy_baseball.daily_briefing import get_briefing_generator
+        generator = get_briefing_generator()
+        briefing = generator.generate(
+            roster=roster,
+            projections=projections,
+            game_date=briefing_date,
+        )
+        
+        return {
+            "date": briefing_date,
+            "generated_at": briefing.generated_at.isoformat(),
+            "strategy": briefing.strategy,
+            "risk_profile": briefing.risk_profile,
+            "overall_confidence": briefing.overall_confidence,
+            "summary": {
+                "total_decisions": briefing.total_decisions,
+                "easy_decisions": briefing.easy_decisions,
+                "tough_decisions": briefing.tough_decisions,
+                "monitor_count": briefing.monitor_count,
+            },
+            "categories": [
+                {
+                    "category": c.category,
+                    "current": c.current,
+                    "opponent": c.opponent,
+                    "status": c.status,
+                    "urgency": c.urgency,
+                }
+                for c in briefing.categories
+            ],
+            "starters": [p.to_card() for p in briefing.start_recommendations],
+            "bench": [p.to_card() for p in briefing.bench_recommendations[:5]],
+            "monitor": [p.to_card() for p in briefing.monitor_list],
+            "alerts": briefing.alerts,
+        }
+    except Exception as e:
+        logger.exception("Failed to generate briefing")
+        raise HTTPException(status_code=500, detail=f"Briefing generation failed: {str(e)}")
+
+
 @app.get("/api/fantasy/waiver", response_model=WaiverWireResponse)
 async def get_fantasy_waiver_recommendations(
     position: Optional[str] = Query(None),
