@@ -381,10 +381,11 @@ class SmartLineupSelector:
     
     def _build_team_game_map(self, games: List) -> Dict[str, Dict]:
         """Build lookup of team -> game info."""
+        from backend.fantasy_baseball.daily_lineup_optimizer import normalize_team_abbr
         result = {}
         for game in games:
-            home = getattr(game, 'home_abbrev', None)
-            away = getattr(game, 'away_abbrev', None)
+            home = normalize_team_abbr(getattr(game, 'home_abbrev', None))
+            away = normalize_team_abbr(getattr(game, 'away_abbrev', None))
             
             if home:
                 result[home] = {

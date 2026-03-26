@@ -219,7 +219,7 @@ class WeatherFetcher:
                 venue = TEAM_VENUES[team_abbr.upper()]
                 logger.debug(f"Using venue '{venue}' from team {team_abbr}")
             else:
-                logger.warning(f"Empty venue and no team provided, using neutral weather")
+                logger.warning("Empty venue and no team provided, using neutral weather")
                 return GameWeather(
                     venue="Unknown",
                     game_time=game_time,

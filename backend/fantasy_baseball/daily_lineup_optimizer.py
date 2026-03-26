@@ -38,21 +38,44 @@ MLB_SPORT = "baseball_mlb"
 # MLB team abbreviation -> full name normalization map (Odds API uses full names)
 _TEAM_ABBREV = {
     "NYY": "New York Yankees", "BOS": "Boston Red Sox", "TOR": "Toronto Blue Jays",
-    "BAL": "Baltimore Orioles", "TBR": "Tampa Bay Rays", "TB": "Tampa Bay Rays",
+    "BAL": "Baltimore Orioles", "TB": "Tampa Bay Rays",
     "CLE": "Cleveland Guardians", "CWS": "Chicago White Sox", "DET": "Detroit Tigers",
-    "KCR": "Kansas City Royals", "KC": "Kansas City Royals", "MIN": "Minnesota Twins",
+    "KC": "Kansas City Royals", "MIN": "Minnesota Twins",
     "HOU": "Houston Astros", "TEX": "Texas Rangers", "SEA": "Seattle Mariners",
     "OAK": "Oakland Athletics", "LAA": "Los Angeles Angels",
     "NYM": "New York Mets", "PHI": "Philadelphia Phillies", "ATL": "Atlanta Braves",
-    "MIA": "Miami Marlins", "WSH": "Washington Nationals", "WSN": "Washington Nationals",
+    "MIA": "Miami Marlins", "WSH": "Washington Nationals",
     "MIL": "Milwaukee Brewers", "CHC": "Chicago Cubs", "STL": "St. Louis Cardinals",
     "CIN": "Cincinnati Reds", "PIT": "Pittsburgh Pirates",
-    "LAD": "Los Angeles Dodgers", "SFG": "San Francisco Giants", "SF": "San Francisco Giants",
-    "SDP": "San Diego Padres", "SD": "San Diego Padres", "COL": "Colorado Rockies",
-    "ARI": "Arizona Diamondbacks", "AZ": "Arizona Diamondbacks",
+    "LAD": "Los Angeles Dodgers", "SF": "San Francisco Giants",
+    "SD": "San Diego Padres", "COL": "Colorado Rockies",
+    "ARI": "Arizona Diamondbacks",
 }
-# Reverse: full name -> abbreviation
+# Reverse: full name -> abbreviation (use Yahoo's preferred abbreviations)
 _FULL_TO_ABBREV: Dict[str, str] = {v: k for k, v in _TEAM_ABBREV.items()}
+
+# Additional aliases for common alternate abbreviations
+_TEAM_ALIASES = {
+    "TBR": "TB",  # Tampa Bay Rays (ESPN/Odds API style)
+    "KCR": "KC",  # Kansas City Royals (ESPN/Odds API style)
+    "SFG": "SF",  # San Francisco Giants (ESPN/Odds API style)
+    "SDP": "SD",  # San Diego Padres (ESPN/Odds API style)
+    "WSN": "WSH", # Washington Nationals (ESPN style)
+    "AZ": "ARI",  # Arizona Diamondbacks (Yahoo style)
+}
+
+
+def normalize_team_abbr(abbr: str) -> str:
+    """Normalize team abbreviation to Yahoo standard."""
+    if not abbr:
+        return ""
+    abbr_upper = abbr.upper()
+    # First check if it's an alias
+    if abbr_upper in _TEAM_ALIASES:
+        return _TEAM_ALIASES[abbr_upper]
+    # Otherwise return as-is (already in standard form)
+    return abbr_upper
+
 
 # Park run factors (1.0 = neutral; > 1.0 = hitter-friendly)
 _PARK_FACTORS: Dict[str, float] = {
@@ -333,7 +356,8 @@ class DailyLineupOptimizer:
                 continue
 
             name = player.get("name", "")
-            team = player.get("team", "")
+            team_raw = player.get("team", "")
+            team = normalize_team_abbr(team_raw)
             proj = proj_by_name.get(name.lower(), {})
 
             # Get team's implied runs from odds
@@ -416,7 +440,8 @@ class DailyLineupOptimizer:
             if status in ("IL", "IL60", "NA"):
                 continue
             name = player.get("name", "")
-            team = player.get("team", "")
+            team_raw = player.get("team", "")
+            team = normalize_team_abbr(team_raw)
             proj = proj_by_name.get(name.lower(), {})
 
             k9 = proj.get("k9", 0.0)
@@ -612,14 +637,20 @@ class DailyLineupOptimizer:
         for p in roster:
             positions = p.get("positions", [])
             status = p.get("status")
+            player_name = p.get("name", "")
+            
+            logger.debug(f"[PITCHER_DEBUG] {player_name}: positions={positions}, status={status}")
+            
             if not any(pos in ("SP", "RP", "P") for pos in positions):
                 continue
             if status in _INACTIVE_STATUSES:
                 continue
             
             is_sp = "SP" in positions
-            team = p.get("team", "")
-            player_name = p.get("name", "")
+            team_raw = p.get("team", "")
+            team = normalize_team_abbr(team_raw)
+            
+            logger.debug(f"[PITCHER_DEBUG] {player_name}: is_sp={is_sp}, team={team}")
             
             # Check if this specific pitcher is the probable starter
             if is_sp:
@@ -789,20 +820,24 @@ class DailyLineupOptimizer:
         for g in games:
             # Always add teams to the map, even without implied runs
             # This ensures has_game detection works
-            if g.home_abbrev and g.away_abbrev:
-                result[g.home_abbrev] = {
+            # Normalize team abbreviations to Yahoo standard
+            home_norm = normalize_team_abbr(g.home_abbrev)
+            away_norm = normalize_team_abbr(g.away_abbrev)
+            
+            if home_norm and away_norm:
+                result[home_norm] = {
                     "implied_runs": g.implied_home_runs if g.implied_home_runs is not None else 4.5,
                     "is_home": True,
-                    "opponent": g.away_abbrev,
+                    "opponent": away_norm,
                     "park_factor": g.park_factor,
                 }
-                result[g.away_abbrev] = {
+                result[away_norm] = {
                     "implied_runs": g.implied_away_runs if g.implied_away_runs is not None else 4.5,
                     "is_home": False,
-                    "opponent": g.home_abbrev,
+                    "opponent": home_norm,
                     "park_factor": g.park_factor,
                 }
-                logger.debug(f"[BUILD_MAP] Added {g.home_abbrev} vs {g.away_abbrev} (implied: {g.implied_home_runs}, {g.implied_away_runs})")
+                logger.debug(f"[BUILD_MAP] Added {home_norm} vs {away_norm} (implied: {g.implied_home_runs}, {g.implied_away_runs})")
         logger.info(f"[BUILD_MAP] Final team_odds keys: {list(result.keys())}")
         return result
 
