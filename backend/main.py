@@ -263,6 +263,16 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Fantasy Baseball: Nightly decision resolution - 11:59 PM ET
+    # Resolves all pending lineup decisions with actual MLB stats
+    scheduler.add_job(
+        _nightly_decision_resolution_job,
+        CronTrigger(hour=23, minute=59, timezone=timezone),
+        id="nightly_decision_resolution",
+        name="Nightly Fantasy Decision Resolution",
+        replace_existing=True,
+    )
+
     # Tournament bracket release notifier - runs daily 6 PM ET, Mar 14-20
     scheduler.add_job(
         _tournament_bracket_job,
@@ -651,6 +661,27 @@ def _end_of_day_results_job():
             db.close()
     except Exception:
         logger.exception("End-of-day results job failed")
+
+
+def _nightly_decision_resolution_job():
+    """
+    Nightly fantasy baseball decision resolution at 11:59 PM ET.
+    
+    Resolves all pending lineup decisions from the previous day with actual MLB stats.
+    This enables accuracy tracking and trend analysis.
+    """
+    try:
+        from backend.fantasy_baseball.nightly_resolution import resolve_yesterdays_decisions
+        
+        result = resolve_yesterdays_decisions()
+        logger.info(
+            "Nightly decision resolution complete: %d resolved, %d no game, %d failed",
+            result.get("resolved", 0),
+            result.get("no_game", 0),
+            result.get("failed", 0)
+        )
+    except Exception:
+        logger.exception("Nightly decision resolution job failed")
 
 
 def _tournament_bracket_job():
