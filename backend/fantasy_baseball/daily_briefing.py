@@ -24,6 +24,7 @@ from backend.fantasy_baseball.elite_context import (
 )
 from backend.fantasy_baseball.smart_lineup_selector import SmartLineupSelector, CategoryNeed
 from backend.fantasy_baseball.category_tracker import CategoryTracker, get_category_tracker
+from backend.fantasy_baseball.decision_tracker import DecisionTracker, PlayerDecision, get_decision_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -241,10 +242,12 @@ class DailyBriefing:
 class DailyBriefingGenerator:
     """Generate daily briefings for elite managers."""
     
-    def __init__(self):
+    def __init__(self, record_decisions: bool = True):
         self.context_builder = EliteManagerContextBuilder()
         self.smart_selector = SmartLineupSelector()
         self.category_tracker = get_category_tracker()
+        self.decision_tracker = get_decision_tracker()
+        self.record_decisions = record_decisions
     
     def generate(
         self,
@@ -363,7 +366,7 @@ class DailyBriefingGenerator:
         # Generate alerts
         alerts = self._generate_alerts(starters, warnings)
         
-        return DailyBriefing(
+        briefing = DailyBriefing(
             date=date_obj,
             generated_at=datetime.now(),
             strategy=strategy.value,
@@ -379,6 +382,113 @@ class DailyBriefingGenerator:
             monitor_list=monitor,
             alerts=alerts,
         )
+        
+        # Record all decisions for tracking
+        if self.record_decisions:
+            self._record_all_decisions(briefing, smart_rankings, game_date)
+        
+        return briefing
+    
+    def _record_all_decisions(
+        self,
+        briefing: DailyBriefing,
+        rankings: List,
+        game_date: str
+    ) -> None:
+        """Record all lineup decisions to the tracker."""
+        recorded = 0
+        
+        # Create lookup for ranking data
+        ranking_map = {r.name: r for r in rankings}
+        
+        for player_briefing in (
+            briefing.start_recommendations + 
+            briefing.bench_recommendations + 
+            briefing.monitor_list
+        ):
+            try:
+                ranking = ranking_map.get(player_briefing.player_name)
+                if not ranking:
+                    continue
+                
+                # Build projected stats
+                proj_stats = {
+                    "hr": ranking.proj_hr,
+                    "r": ranking.proj_r,
+                    "rbi": ranking.proj_rbi,
+                    "sb": ranking.proj_sb,
+                    "avg": ranking.proj_avg,
+                }
+                
+                # Get weather factor
+                weather_factor = getattr(ranking, 'hr_factor', 1.0)
+                
+                # Get venue from ranking context if available
+                venue = ""
+                if ranking.weather and hasattr(ranking.weather, 'roof_closed'):
+                    # Weather context exists, try to find venue
+                    venue = self._get_venue_for_team(ranking.team)
+                
+                decision = PlayerDecision(
+                    decision_id=f"{player_briefing.player_name.replace(' ', '_').lower()}_{game_date}",
+                    date=game_date,
+                    player_name=player_briefing.player_name,
+                    player_id=player_briefing.player_name.replace(' ', '_').lower(),
+                    team=player_briefing.team,
+                    recommended_action=player_briefing.recommendation,
+                    confidence=player_briefing.confidence,
+                    factors=player_briefing.key_factors,
+                    opponent=player_briefing.opponent,
+                    opposing_pitcher=ranking.opposing_pitcher.name if ranking.opposing_pitcher else None,
+                    venue=venue,
+                    weather_factor=weather_factor,
+                    projected_stats=proj_stats,
+                )
+                
+                self.decision_tracker.record_decision(decision)
+                recorded += 1
+                
+            except Exception as e:
+                logger.warning(f"Failed to record decision for {player_briefing.player_name}: {e}")
+        
+        logger.info(f"Recorded {recorded} decisions for {game_date}")
+    
+    def _get_venue_for_team(self, team: str) -> str:
+        """Get home venue for a team."""
+        # Simple mapping - could be expanded
+        venue_map = {
+            "CHC": "Wrigley Field",
+            "BOS": "Fenway Park",
+            "NYY": "Yankee Stadium",
+            "COL": "Coors Field",
+            "SF": "Oracle Park",
+            "LAD": "Dodger Stadium",
+            "SD": "Petco Park",
+            "NYM": "Citi Field",
+            "PHI": "Citizens Bank Park",
+            "WSH": "Nationals Park",
+            "ATL": "Truist Park",
+            "MIA": "LoanDepot Park",
+            "CIN": "Great American Ball Park",
+            "STL": "Busch Stadium",
+            "PIT": "PNC Park",
+            "MIL": "American Family Field",
+            "ARI": "Chase Field",
+            "SEA": "T-Mobile Park",
+            "HOU": "Minute Maid Park",
+            "TEX": "Globe Life Field",
+            "TB": "Tropicana Field",
+            "BAL": "Camden Yards",
+            "TOR": "Rogers Centre",
+            "CLE": "Progressive Field",
+            "DET": "Comerica Park",
+            "CWS": "Guaranteed Rate Field",
+            "MIN": "Target Field",
+            "KC": "Kauffman Stadium",
+            "LAA": "Angel Stadium",
+            "OAK": "Oakland Coliseum",
+        }
+        return venue_map.get(team.upper(), "")
     
     def _determine_strategy(self, category_needs: List[CategoryNeed]) -> MatchupStrategy:
         """Determine optimal strategy."""
@@ -488,6 +598,6 @@ class DailyBriefingGenerator:
         return alerts
 
 
-def get_briefing_generator() -> DailyBriefingGenerator:
+def get_briefing_generator(record_decisions: bool = True) -> DailyBriefingGenerator:
     """Factory function."""
-    return DailyBriefingGenerator()
+    return DailyBriefingGenerator(record_decisions=record_decisions)
