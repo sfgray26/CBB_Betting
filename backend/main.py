@@ -3862,6 +3862,9 @@ async def get_fantasy_lineup_recommendations(
     except Exception as _exc:
         logger.warning("Could not fetch Yahoo roster for lineup optimizer: %s", _exc)
 
+    # Import team normalization function (used throughout this endpoint)
+    from backend.fantasy_baseball.daily_lineup_optimizer import normalize_team_abbr
+
     # Build projections from player board (best-effort)
     _lineup_projections: list = []
     if _lineup_roster:
@@ -3876,9 +3879,6 @@ async def get_fantasy_lineup_recommendations(
 
     lineup_warnings: list[str] = []
     batters: list[LineupPlayerOut] = []
-
-    # Import team normalization function
-    from backend.fantasy_baseball.daily_lineup_optimizer import normalize_team_abbr
 
     # --- Fetch game data for opponent/start_time lookup ---
     team_odds: dict = {}
