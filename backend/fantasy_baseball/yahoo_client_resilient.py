@@ -12,6 +12,7 @@ import os
 import logging
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
+from datetime import timedelta
 
 from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
 from backend.fantasy_baseball.circuit_breaker import CircuitBreaker, CircuitOpenError
@@ -103,7 +104,7 @@ class ResilientYahooClient(YahooFantasyClient):
         
         self.cache = StaleCacheManager(
             cache_dir=os.getenv("YAHOO_CACHE_DIR", ".cache/fantasy"),
-            max_age_hours=int(os.getenv("YAHOO_CACHE_TTL_HOURS", "24")),
+            max_age=timedelta(hours=int(os.getenv("YAHOO_CACHE_TTL_HOURS", "24"))),
             enabled=os.getenv("YAHOO_CACHE_DISABLED", "false").lower() != "true"
         )
         

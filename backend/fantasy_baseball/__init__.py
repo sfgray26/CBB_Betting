@@ -21,6 +21,58 @@ from backend.fantasy_baseball.lineup_validator import (
     format_lineup_report,
 )
 
+# Platoon splits fetcher (new)
+from backend.fantasy_baseball.platoon_fetcher import (
+    PlatoonSplitFetcher,
+    PlatoonSplits,
+    get_platoon_fetcher,
+)
+
+# Category tracker (new)
+from backend.fantasy_baseball.category_tracker import (
+    CategoryTracker,
+    MatchupStatus,
+    get_category_tracker,
+)
+
+# Smart lineup selector (advanced optimizer)
+from backend.fantasy_baseball.smart_lineup_selector import (
+    SmartLineupSelector,
+    SmartBatterRanking,
+    OpposingPitcher,
+    CategoryNeed,
+    Handedness,
+    get_smart_selector,
+)
+
+# Elite context (new)
+from backend.fantasy_baseball.elite_context import (
+    EliteManagerContextBuilder,
+    PlayerDecisionContext,
+    LineupDecisionReport,
+    RiskProfile,
+    MatchupStrategy,
+    WeatherContext,
+    RecentForm,
+    LineupSpot,
+)
+
+# Pitcher deep dive (new)
+from backend.fantasy_baseball.pitcher_deep_dive import (
+    PitcherDeepDiveFetcher,
+    get_pitcher_fetcher,
+)
+
+# Daily briefing (new)
+from backend.fantasy_baseball.daily_briefing import (
+    DailyBriefingGenerator,
+    DailyBriefing,
+    PlayerBriefing,
+    CategoryBriefing,
+    DecisionAction,
+    get_briefing_generator,
+)
+
 # Alias for backward compatibility
 YahooClient = YahooFantasyClient
 
@@ -48,4 +100,38 @@ __all__ = [
     "LineupValidation",
     "LineupSubmission",
     "format_lineup_report",
+    # Platoon fetcher
+    "PlatoonSplitFetcher",
+    "PlatoonSplits",
+    "get_platoon_fetcher",
+    # Category tracker
+    "CategoryTracker",
+    "MatchupStatus",
+    "get_category_tracker",
+    # Smart lineup selector
+    "SmartLineupSelector",
+    "SmartBatterRanking",
+    "OpposingPitcher",
+    "CategoryNeed",
+    "Handedness",
+    "get_smart_selector",
+    # Pitcher deep dive
+    "PitcherDeepDiveFetcher",
+    "get_pitcher_fetcher",
+    # Daily briefing
+    "DailyBriefingGenerator",
+    "DailyBriefing",
+    "PlayerBriefing",
+    "CategoryBriefing",
+    "DecisionAction",
+    "get_briefing_generator",
+    # Elite context
+    "EliteManagerContextBuilder",
+    "PlayerDecisionContext",
+    "LineupDecisionReport",
+    "RiskProfile",
+    "MatchupStrategy",
+    "WeatherContext",
+    "RecentForm",
+    "LineupSpot",
 ]
