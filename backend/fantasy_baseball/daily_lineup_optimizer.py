@@ -787,20 +787,22 @@ class DailyLineupOptimizer:
         result: Dict[str, dict] = {}
         logger.debug(f"[BUILD_MAP] Building team odds map from {len(games)} games")
         for g in games:
-            if g.implied_home_runs is not None:
+            # Always add teams to the map, even without implied runs
+            # This ensures has_game detection works
+            if g.home_abbrev and g.away_abbrev:
                 result[g.home_abbrev] = {
-                    "implied_runs": g.implied_home_runs,
+                    "implied_runs": g.implied_home_runs if g.implied_home_runs is not None else 4.5,
                     "is_home": True,
                     "opponent": g.away_abbrev,
                     "park_factor": g.park_factor,
                 }
                 result[g.away_abbrev] = {
-                    "implied_runs": g.implied_away_runs,
+                    "implied_runs": g.implied_away_runs if g.implied_away_runs is not None else 4.5,
                     "is_home": False,
                     "opponent": g.home_abbrev,
                     "park_factor": g.park_factor,
                 }
-                logger.debug(f"[BUILD_MAP] Added {g.home_abbrev} vs {g.away_abbrev}")
+                logger.debug(f"[BUILD_MAP] Added {g.home_abbrev} vs {g.away_abbrev} (implied: {g.implied_home_runs}, {g.implied_away_runs})")
         logger.info(f"[BUILD_MAP] Final team_odds keys: {list(result.keys())}")
         return result
 
