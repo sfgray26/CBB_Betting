@@ -203,9 +203,13 @@ class DailyLineupOptimizer:
             logger.warning("THE_ODDS_API_KEY not set — lineup optimizer running without odds data")
             return []
 
+        logger.info(f"[ODDS_API_DEBUG] Using API key: {self._api_key[:8]}... for date {game_date}")
+
         cache_key = game_date or "today"
-        if cache_key in self._odds_cache:
-            return self._odds_cache[cache_key]
+        # DEBUG: Always bypass cache to get fresh data
+        # if cache_key in self._odds_cache:
+        #     return self._odds_cache[cache_key]
+        logger.info(f"[ODDS_API_DEBUG] Bypassing cache for {cache_key}")
 
         try:
             resp = requests.get(
@@ -704,7 +708,15 @@ class DailyLineupOptimizer:
             
             for date_info in data.get("dates", []):
                 logger.info(f"[MLB_API_DEBUG] Date info: {date_info.get('date')}, games: {len(date_info.get('games', []))}")
+                for game in date_info.get("games", [])[:2]:  # Log first 2 games as sample
+                    teams = game.get("teams", {})
+                    home_pitcher = teams.get("home", {}).get("probablePitcher")
+                    away_pitcher = teams.get("away", {}).get("probablePitcher")
+                    logger.info(f"[MLB_API_DEBUG] Sample game: {teams.get('away', {}).get('team', {}).get('abbreviation')} @ {teams.get('home', {}).get('team', {}).get('abbreviation')} - Home pitcher: {home_pitcher}, Away pitcher: {away_pitcher}")
+                
                 for game in date_info.get("games", []):
+                    game_count += 1
+                    teams = game.get("teams", {})
                     game_count += 1
                     teams = game.get("teams", {})
                     
