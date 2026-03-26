@@ -20,6 +20,7 @@ class Player:
     positions: List[str]  # From projection source
     yahoo_positions: Optional[List[str]] = None  # Yahoo's view
     eligible_positions: Optional[List[str]] = None  # Valid Yahoo slots
+    team: Optional[str] = None  # Team abbreviation
 
 
 @dataclass
