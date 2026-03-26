@@ -637,6 +637,10 @@ class DailyLineupOptimizer:
         for p in roster:
             positions = p.get("positions", [])
             status = p.get("status")
+            player_name = p.get("name", "")
+            
+            logger.debug(f"[PITCHER_DEBUG] {player_name}: positions={positions}, status={status}")
+            
             if not any(pos in ("SP", "RP", "P") for pos in positions):
                 continue
             if status in _INACTIVE_STATUSES:
@@ -645,7 +649,8 @@ class DailyLineupOptimizer:
             is_sp = "SP" in positions
             team_raw = p.get("team", "")
             team = normalize_team_abbr(team_raw)
-            player_name = p.get("name", "")
+            
+            logger.debug(f"[PITCHER_DEBUG] {player_name}: is_sp={is_sp}, team={team}")
             
             # Check if this specific pitcher is the probable starter
             if is_sp:
