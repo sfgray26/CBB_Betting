@@ -24,6 +24,11 @@ from backend.fantasy_baseball.position_normalizer import (
     ValidationResult,
     LineupValidationError
 )
+from backend.fantasy_baseball.lineup_validator import (
+    LineupValidator,
+    OptimizedSlot,
+    format_lineup_report,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +108,7 @@ class ResilientYahooClient(YahooFantasyClient):
         )
         
         self.position_normalizer = PositionNormalizer()
+        self.lineup_validator = LineupValidator()
         
         # Track ADP data path for fallback enrichment
         self.adp_data_path = os.getenv(
@@ -322,7 +328,8 @@ class ResilientYahooClient(YahooFantasyClient):
     async def set_lineup_resilient(
         self, 
         team_id: str, 
-        optimized_lineup: Dict[str, Any]
+        optimized_lineup: Dict[str, Any],
+        auto_correct: bool = True,
     ) -> LineupResult:
         """
         Set lineup with pre-validation and graceful degradation.
@@ -330,8 +337,14 @@ class ResilientYahooClient(YahooFantasyClient):
         Steps:
         1. Get current Yahoo roster
         2. Normalize positions between optimizer and Yahoo
-        3. Validate before hitting API
-        4. Execute with circuit breaker
+        3. Game-aware validation (check players have games today)
+        4. Auto-correct if enabled (swap players with no games)
+        5. Execute with circuit breaker
+        
+        Args:
+            team_id: Yahoo team ID
+            optimized_lineup: Optimized lineup from optimizer
+            auto_correct: If True, automatically replace players with no games
         """
         try:
             # Step 1: Get current Yahoo roster
@@ -352,26 +365,80 @@ class ResilientYahooClient(YahooFantasyClient):
                     suggested_action="Check position eligibility in optimizer vs Yahoo roster"
                 )
             
-            # Step 3: Validate before API call
-            validation = self.position_normalizer.validate_lineup_before_submit(
+            # Step 3: Position validation before API call
+            position_validation = self.position_normalizer.validate_lineup_before_submit(
                 normalized_assignments,
                 yahoo_roster
             )
             
-            if not validation.valid:
+            if not position_validation.valid:
                 return LineupResult(
                     success=False,
-                    errors=validation.errors,
-                    warnings=validation.warnings,
+                    errors=position_validation.errors,
+                    warnings=position_validation.warnings,
                     retry_possible=False,
                     suggested_action="Fix position mismatches before retrying"
                 )
             
             # Log warnings but proceed
-            if validation.warnings:
-                logger.warning(f"Lineup warnings: {validation.warnings}")
+            if position_validation.warnings:
+                logger.warning(f"Lineup warnings: {position_validation.warnings}")
             
-            # Step 4: Execute with circuit breaker
+            # Step 4: Game-aware validation
+            # Convert to OptimizedSlot format
+            optimized_slots = [
+                OptimizedSlot(
+                    slot_id=slot_id,
+                    position=yahoo_roster.slots[0].position if yahoo_roster.slots else "Unknown",
+                    player_id=player_id,
+                    player_name=next(
+                        (p.name for p in yahoo_roster.players if p.id == player_id),
+                        None
+                    )
+                )
+                for slot_id, player_id in normalized_assignments.items()
+            ]
+            
+            roster_players = [
+                {
+                    "player_id": p.id,
+                    "name": p.name,
+                    "team": getattr(p, 'team', ''),
+                    "positions": p.eligible_positions or p.yahoo_positions or p.positions,
+                    "eligible_positions": p.eligible_positions or p.yahoo_positions or p.positions,
+                }
+                for p in yahoo_roster.players
+            ]
+            
+            if auto_correct:
+                # Auto-correct: replace players with no games
+                submission = self.lineup_validator.auto_correct_lineup(
+                    optimized_slots,
+                    roster_players
+                )
+                
+                if submission.changes_made:
+                    logger.info("Lineup auto-corrected:\n" + format_lineup_report(submission))
+                    normalized_assignments = submission.assignments
+            else:
+                # Just validate, don't auto-correct
+                game_validation = self.lineup_validator.validate_lineup(
+                    optimized_slots,
+                    roster_players,
+                    strict=False
+                )
+                
+                if game_validation.invalid_players:
+                    player_names = [p.player_name for p in game_validation.invalid_players]
+                    return LineupResult(
+                        success=False,
+                        errors=[f"Players with no games today: {', '.join(player_names)}"],
+                        warnings=game_validation.warnings,
+                        retry_possible=True,
+                        suggested_action="Enable auto_correct or manually adjust lineup"
+                    )
+            
+            # Step 5: Execute with circuit breaker
             try:
                 result = await self.circuit.call_async(
                     self._execute_lineup_set,
@@ -382,14 +449,14 @@ class ResilientYahooClient(YahooFantasyClient):
                 return LineupResult(
                     success=True,
                     changes=result,
-                    warnings=validation.warnings,
+                    warnings=position_validation.warnings,
                 )
                 
             except CircuitOpenError:
                 return LineupResult(
                     success=False,
                     errors=["Yahoo API circuit is open (too many failures)"],
-                    warnings=validation.warnings,
+                    warnings=position_validation.warnings,
                     retry_possible=True,
                     suggested_action="Wait 5 minutes for circuit to reset, then retry"
                 )

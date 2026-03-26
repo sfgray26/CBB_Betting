@@ -9,6 +9,18 @@ from backend.fantasy_baseball.cache_manager import StaleCacheManager, CacheResul
 from backend.fantasy_baseball.position_normalizer import PositionNormalizer, LineupValidationError
 from backend.fantasy_baseball.yahoo_client_resilient import ResilientYahooClient, WaiverResponse, LineupResult
 
+# Game-aware lineup validator (new)
+from backend.fantasy_baseball.lineup_validator import (
+    LineupValidator,
+    ScheduleFetcher,
+    OptimizedSlot,
+    GameStatus,
+    PlayerGameInfo,
+    LineupValidation,
+    LineupSubmission,
+    format_lineup_report,
+)
+
 # Alias for backward compatibility
 YahooClient = YahooFantasyClient
 
@@ -27,4 +39,13 @@ __all__ = [
     "ResilientYahooClient",
     "WaiverResponse",
     "LineupResult",
+    # Lineup validator (game-aware validation)
+    "LineupValidator",
+    "ScheduleFetcher",
+    "OptimizedSlot",
+    "GameStatus",
+    "PlayerGameInfo",
+    "LineupValidation",
+    "LineupSubmission",
+    "format_lineup_report",
 ]
