@@ -13,7 +13,7 @@ import logging
 from typing import List, Dict, Optional, Any
 from dataclasses import dataclass
 
-from backend.fantasy_baseball.yahoo_client import YahooClient
+from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
 from backend.fantasy_baseball.circuit_breaker import CircuitBreaker, CircuitOpenError
 from backend.fantasy_baseball.cache_manager import StaleCacheManager, CacheResult, NoDataAvailableError
 from backend.fantasy_baseball.position_normalizer import (
@@ -61,18 +61,18 @@ class LineupResult:
             self.warnings = []
 
 
-class ResilientYahooClient(YahooClient):
+class ResilientYahooClient(YahooFantasyClient):
     """
     Yahoo client with resilience patterns.
     
-    Extends the base YahooClient with:
+    Extends the base YahooFantasyClient with:
     - Circuit breaker to prevent cascading failures
     - Fallback to metadata-only when percent_owned fails
     - Position normalization to prevent lineup mismatches
     - Stale cache for availability during outages
     
     Usage:
-        client = ResilientYahooClient()  # Same init as YahooClient
+        client = ResilientYahooClient()  # Same init as YahooFantasyClient
         
         # Waiver wire with automatic fallback
         result = await client.get_waiver_players("mlb.l.12345")
