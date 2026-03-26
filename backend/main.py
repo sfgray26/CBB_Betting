@@ -3865,8 +3865,9 @@ async def get_fantasy_lineup_recommendations(
     # Build projections from player board (best-effort)
     _lineup_projections: list = []
     if _lineup_roster:
-        # Log roster teams for debugging
-        roster_teams = [p.get("team", "") for p in _lineup_roster if p.get("team")]
+        # Log roster teams for debugging (normalize them)
+        from backend.fantasy_baseball.daily_lineup_optimizer import normalize_team_abbr
+        roster_teams = [normalize_team_abbr(p.get("team", "")) for p in _lineup_roster if p.get("team")]
         logger.info(f"[LINEUP_DEBUG] Yahoo roster teams: {roster_teams}")
         try:
             from backend.fantasy_baseball.player_board import get_or_create_projection as _get_lineup_proj
@@ -3905,16 +3906,18 @@ async def get_fantasy_lineup_recommendations(
 
     def _get_game_context(team: str):
         """Get (opponent, start_time, opp_implied) for a team."""
-        logger.debug(f"[LINEUP_DEBUG] _get_game_context for team: '{team}'")
-        if team in team_odds:
-            opp = team_odds[team].get("opponent", "")
-            start = team_odds[team].get("start_time")
+        from backend.fantasy_baseball.daily_lineup_optimizer import normalize_team_abbr
+        team_norm = normalize_team_abbr(team)
+        logger.debug(f"[LINEUP_DEBUG] _get_game_context for team: '{team}' (normalized: '{team_norm}')")
+        if team_norm in team_odds:
+            opp = team_odds[team_norm].get("opponent", "")
+            start = team_odds[team_norm].get("start_time")
             opp_impl = 4.5
             if opp and opp in team_odds:
                 opp_impl = team_odds[opp].get("implied_runs", 4.5)
-            logger.debug(f"[LINEUP_DEBUG] Found team '{team}': opp={opp}, implied={opp_impl}")
+            logger.debug(f"[LINEUP_DEBUG] Found team '{team_norm}': opp={opp}, implied={opp_impl}")
             return opp, start, opp_impl
-        logger.warning(f"[LINEUP_DEBUG] Team '{team}' NOT FOUND in team_odds. Available: {list(team_odds.keys())}")
+        logger.warning(f"[LINEUP_DEBUG] Team '{team_norm}' NOT FOUND in team_odds. Available: {list(team_odds.keys())}")
         return "", None, 4.5
 
     # --- Use SmartLineupSelector if enabled ---
@@ -4062,11 +4065,13 @@ async def get_fantasy_lineup_recommendations(
         logger.debug(f"team_odds keys: {list(team_odds.keys())[:10]}")
 
         for p in flagged_pitchers:
-            team = p.get("team", "")
+            team_raw = p.get("team", "")
+            from backend.fantasy_baseball.daily_lineup_optimizer import normalize_team_abbr
+            team = normalize_team_abbr(team_raw)
             is_sp = p.get("pitcher_slot") == "SP"
             has_start = p.get("has_start", False)
             
-            logger.debug(f"Processing pitcher: {p.get('name')}, team: {team}, is_sp: {is_sp}, has_start: {has_start}")
+            logger.debug(f"Processing pitcher: {p.get('name')}, team: {team} (raw: {team_raw}), is_sp: {is_sp}, has_start: {has_start}")
 
             # Get opponent and game context
             opponent = ""
