@@ -147,7 +147,7 @@ class ResilientYahooClient(YahooClient):
             
         except CircuitOpenError:
             # Circuit open - use cache
-            logger.warning(f"Circuit open for waiver fetch, checking cache")
+            logger.warning("Circuit open for waiver fetch, checking cache")
             cached = self.cache.read(cache_key)
             
             if cached:
