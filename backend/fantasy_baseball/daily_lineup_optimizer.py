@@ -627,6 +627,13 @@ class DailyLineupOptimizer:
                 
                 # Check if this player matches a probable starter
                 is_probable = self._is_probable_starter(player_name, team, opponent, probable_pitchers)
+                
+                # FALLBACK: If no probable pitchers returned (spring training/offseason),
+                # assume all SPs on roster with a game are potential starters
+                if not probable_pitchers and has_game:
+                    is_probable = True
+                    logger.debug(f"No probable pitchers available, assuming {player_name} ({team}) is a starter")
+                
                 has_start = has_game and is_probable
             else:
                 has_start = True  # RP can pitch any day
