@@ -70,6 +70,15 @@ from backend.fantasy_baseball.weather_fetcher import (
     get_weather_fetcher,
 )
 
+# Park weather analyzer (new)
+from backend.fantasy_baseball.park_weather import (
+    ParkWeatherAnalyzer,
+    ParkWeatherProfile,
+    StadiumOrientation,
+    WindImpact,
+    get_park_analyzer,
+)
+
 # Daily briefing (new)
 from backend.fantasy_baseball.daily_briefing import (
     DailyBriefingGenerator,
@@ -78,6 +87,17 @@ from backend.fantasy_baseball.daily_briefing import (
     CategoryBriefing,
     DecisionAction,
     get_briefing_generator,
+)
+
+# Decision tracking (new)
+from backend.fantasy_baseball.decision_tracker import (
+    DecisionTracker,
+    PlayerDecision,
+    DailyAccuracy,
+    TrendReport,
+    DecisionType,
+    DecisionOutcome,
+    get_decision_tracker,
 )
 
 # Alias for backward compatibility
@@ -129,6 +149,12 @@ __all__ = [
     "WeatherFetcher",
     "GameWeather",
     "get_weather_fetcher",
+    # Park weather analyzer
+    "ParkWeatherAnalyzer",
+    "ParkWeatherProfile",
+    "StadiumOrientation",
+    "WindImpact",
+    "get_park_analyzer",
     # Daily briefing
     "DailyBriefingGenerator",
     "DailyBriefing",
@@ -136,6 +162,14 @@ __all__ = [
     "CategoryBriefing",
     "DecisionAction",
     "get_briefing_generator",
+    # Decision tracking
+    "DecisionTracker",
+    "PlayerDecision",
+    "DailyAccuracy",
+    "TrendReport",
+    "DecisionType",
+    "DecisionOutcome",
+    "get_decision_tracker",
     # Elite context
     "EliteManagerContextBuilder",
     "PlayerDecisionContext",

@@ -26,6 +26,7 @@ from backend.fantasy_baseball.platoon_fetcher import PlatoonSplitFetcher, Platoo
 from backend.fantasy_baseball.pitcher_deep_dive import PitcherDeepDiveFetcher, get_pitcher_fetcher
 from backend.fantasy_baseball.elite_context import PitcherDeepDive, WeatherContext, RecentForm
 from backend.fantasy_baseball.weather_fetcher import WeatherFetcher, GameWeather, get_weather_fetcher
+from backend.fantasy_baseball.park_weather import ParkWeatherAnalyzer, get_park_analyzer
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +242,7 @@ class SmartLineupSelector:
         self.platoon_fetcher = PlatoonSplitFetcher()
         self.pitcher_fetcher = PitcherDeepDiveFetcher()
         self.weather_fetcher = get_weather_fetcher()
+        self.park_analyzer = get_park_analyzer()
         self._pitcher_cache: Dict[str, OpposingPitcher] = {}
         self._weather_cache: Dict[str, GameWeather] = {}
     
@@ -307,16 +309,25 @@ class SmartLineupSelector:
             # Get platoon splits
             platoon = self._get_platoon_splits(base.name)
             
-            # Get weather
+            # Get weather with park-specific analysis
             weather = None
             hr_factor = 1.0
             game_risk = "low"
+            park_weather_summary = ""
+            
             if venue and venue in weather_map:
                 game_weather = weather_map[venue]
+                
+                # Use park analyzer for precise HR factor
+                analysis = self.park_analyzer.analyze_game(venue, game_weather)
+                hr_factor = analysis["total_hr_factor"]
+                park_weather_summary = analysis["description"]
+                
                 weather = game_weather.to_context()
-                hr_factor = game_weather.hr_factor
+                weather.hitter_friendly_score = analysis["temp_factor"] * 10  # Adjust based on full analysis
+                
                 game_risk = game_weather.game_risk
-                logger.debug(f"{base.name} ({base.team}): weather - {game_weather.summary}")
+                logger.debug(f"{base.name} ({base.team}): {park_weather_summary}")
             
             # Warn about high-risk games
             if game_risk in ["high", "postponement_risk"]:
