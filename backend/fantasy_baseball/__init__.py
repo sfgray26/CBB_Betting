@@ -63,6 +63,13 @@ from backend.fantasy_baseball.pitcher_deep_dive import (
     get_pitcher_fetcher,
 )
 
+# Weather (new)
+from backend.fantasy_baseball.weather_fetcher import (
+    WeatherFetcher,
+    GameWeather,
+    get_weather_fetcher,
+)
+
 # Daily briefing (new)
 from backend.fantasy_baseball.daily_briefing import (
     DailyBriefingGenerator,
@@ -118,6 +125,10 @@ __all__ = [
     # Pitcher deep dive
     "PitcherDeepDiveFetcher",
     "get_pitcher_fetcher",
+    # Weather
+    "WeatherFetcher",
+    "GameWeather",
+    "get_weather_fetcher",
     # Daily briefing
     "DailyBriefingGenerator",
     "DailyBriefing",
