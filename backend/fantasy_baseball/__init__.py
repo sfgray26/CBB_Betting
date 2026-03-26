@@ -21,6 +21,17 @@ from backend.fantasy_baseball.lineup_validator import (
     format_lineup_report,
 )
 
+# Smart lineup selector (advanced optimizer)
+from backend.fantasy_baseball.smart_lineup_selector import (
+    SmartLineupSelector,
+    SmartBatterRanking,
+    PlatoonSplits,
+    OpposingPitcher,
+    CategoryNeed,
+    Handedness,
+    get_smart_selector,
+)
+
 # Alias for backward compatibility
 YahooClient = YahooFantasyClient
 
@@ -48,4 +59,12 @@ __all__ = [
     "LineupValidation",
     "LineupSubmission",
     "format_lineup_report",
+    # Smart lineup selector (advanced optimizer)
+    "SmartLineupSelector",
+    "SmartBatterRanking",
+    "PlatoonSplits",
+    "OpposingPitcher",
+    "CategoryNeed",
+    "Handedness",
+    "get_smart_selector",
 ]
