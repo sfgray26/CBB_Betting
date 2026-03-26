@@ -310,6 +310,9 @@ export interface WaiverPlayer {
   owned_pct: number
   starts_this_week: number
   statcast_signals?: string[]
+  hot_cold?: 'HOT' | 'COLD' | null
+  status?: string | null
+  injury_note?: string | null
 }
 
 export interface CategoryDeficit {
@@ -328,6 +331,7 @@ export interface WaiverWireResponse {
   two_start_pitchers: WaiverPlayer[]
   pagination?: { page: number; per_page: number; has_next: boolean }
   urgent_alert?: { type: string; player: string; position: string; message: string } | null
+  faab_balance?: number | null
 }
 
 export interface WaiverRecommendation {

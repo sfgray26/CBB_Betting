@@ -128,7 +128,29 @@ function WaiverTable({ players, label }: { players: WaiverPlayer[]; label: strin
             return (
               <tr key={p.player_id} className="hover:bg-zinc-800/50 transition-colors">
                 <td className="px-3 py-2.5">
-                  <div className="font-medium text-zinc-100">{p.name}</div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-medium text-zinc-100">{p.name}</span>
+                    {p.hot_cold === 'HOT' && (
+                      <span className="text-xs font-mono bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded">
+                        HOT
+                      </span>
+                    )}
+                    {p.hot_cold === 'COLD' && (
+                      <span className="text-xs font-mono bg-blue-500/20 text-blue-400 border border-blue-500/30 px-1.5 py-0.5 rounded">
+                        COLD
+                      </span>
+                    )}
+                    {p.status && p.status !== 'Active' && (
+                      <span className={cn(
+                        'text-xs px-1.5 py-0.5 rounded border font-mono',
+                        p.status === 'DTD' ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30' :
+                        ['IL', 'DL', 'IL10', 'IL15', 'IL60'].includes(p.status ?? '') ? 'bg-rose-500/15 text-rose-400 border-rose-500/30' :
+                        'bg-zinc-700 text-zinc-400 border-zinc-600'
+                      )}>
+                        {p.status}
+                      </span>
+                    )}
+                  </div>
                   {p.statcast_signals && p.statcast_signals.length > 0 && (
                     <div className="flex gap-1 mt-0.5">
                       {p.statcast_signals.map((sig) => (
@@ -341,12 +363,17 @@ export default function WaiverWirePage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-zinc-100 flex items-center gap-2">
+          <h1 className="text-xl font-semibold text-zinc-100 flex items-center gap-2 flex-wrap">
             <ArrowLeftRight className="h-5 w-5 text-amber-400" />
             Waiver Wire
             {data && (
               <span className="text-zinc-500 font-normal text-base ml-1">
                 &mdash; Week ending {data.week_end}
+              </span>
+            )}
+            {data?.faab_balance != null && (
+              <span className="text-xs font-mono bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded">
+                FAAB: ${data.faab_balance.toFixed(0)}
               </span>
             )}
           </h1>

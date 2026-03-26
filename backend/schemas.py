@@ -339,6 +339,9 @@ class WaiverPlayerOut(BaseModel):
     starts_this_week: int
     statcast_signals: List[str] = []
     projected_saves: float = 0.0
+    hot_cold: Optional[str] = None        # "HOT" | "COLD" | None
+    status: Optional[str] = None          # Yahoo status: Active, DTD, IL, etc.
+    injury_note: Optional[str] = None     # Yahoo injury note text
 
 
 class PaginationOut(BaseModel):
@@ -360,6 +363,7 @@ class WaiverWireResponse(BaseModel):
     closer_alert: Optional[str] = None      # "NO_CLOSERS" | "LOW_CLOSERS" | None
     il_slots_used: int = 0
     il_slots_available: int = 0
+    faab_balance: Optional[float] = None    # Remaining FAAB budget (None if not FAAB league)
 
 
 class RosterMoveRecommendation(BaseModel):

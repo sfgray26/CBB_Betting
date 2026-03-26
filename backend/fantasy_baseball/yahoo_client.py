@@ -333,6 +333,28 @@ class YahooFantasyClient:
                 return meta["team_key"]
         raise YahooAPIError("Could not find your team — are you authenticated?")
 
+    def get_faab_balance(self) -> Optional[float]:
+        """Return authenticated user's remaining FAAB budget (None if not a FAAB league)."""
+        try:
+            data = self._get(f"league/{self.league_key}/teams")
+            teams_raw = self._league_section(data, 1).get("teams", {})
+            for team_list in self._iter_block(teams_raw, "team"):
+                meta = {}
+                entries = team_list if isinstance(team_list, list) else [team_list]
+                for d in entries:
+                    if isinstance(d, list):
+                        for item in d:
+                            if isinstance(item, dict):
+                                meta.update(item)
+                    elif isinstance(d, dict):
+                        meta.update(d)
+                if meta.get("is_owned_by_current_login"):
+                    val = meta.get("faab_balance")
+                    return float(val) if val is not None else None
+            return None
+        except Exception:
+            return None
+
     # ------------------------------------------------------------------
     # Roster endpoints
     # ------------------------------------------------------------------

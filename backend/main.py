@@ -3932,6 +3932,22 @@ async def get_fantasy_lineup_recommendations(
             "Odds API unavailable or no games today -- using projection-only scoring "
             "(all teams at league-average 4.5 runs). Lineup ranked by projected stats only."
         )
+
+    # Detect active slot gaps — warn if suspiciously few active batters/pitchers
+    _BENCH_SLOTS = {"BN", None}
+    _batter_active = [b for b in batters if b.assigned_slot not in _BENCH_SLOTS]
+    _pitcher_active = [p for p in pitchers if p.status == "START"]
+    if len(_batter_active) < 6:
+        lineup_warnings.append(
+            f"Only {len(_batter_active)} active batter slots filled -- "
+            "check bench/IL for promotable players."
+        )
+    if len(_pitcher_active) < 2:
+        lineup_warnings.append(
+            f"Only {len(_pitcher_active)} active pitcher slots filled -- "
+            "consider streaming a SP."
+        )
+
     return DailyLineupResponse(
         date=ld,
         batters=batters,
@@ -3969,6 +3985,7 @@ async def get_fantasy_waiver_recommendations(
     category_deficits: list = []
     _closer_alert: Optional[str] = None
     _il_info: dict = {"used": 0, "total": 2, "available": 0}
+    _faab_balance: Optional[float] = None
 
     # Maps Yahoo category display names to player board cat_scores keys.
     # cat_scores are already z-normalized with direction baked in (ERA/WHIP negative = good).
@@ -3996,6 +4013,12 @@ async def get_fantasy_waiver_recommendations(
                 my_roster = client.get_roster()
             except Exception:
                 pass
+
+        # Fetch FAAB balance (best-effort; None if not a FAAB league or error)
+        try:
+            _faab_balance = client.get_faab_balance()
+        except Exception:
+            pass
 
         # Get free agents with pagination + position filter
         _fa_start = (page - 1) * per_page
@@ -4141,6 +4164,18 @@ async def get_fantasy_waiver_recommendations(
         # call-ups / undrafted players get a conservative position-baseline proxy.
         from backend.fantasy_baseball.player_board import get_or_create_projection as _get_proj
 
+        def _hot_cold_flag(cat_contributions: dict) -> Optional[str]:
+            """Simple hot/cold based on category contribution z-scores."""
+            scores = list(cat_contributions.values())
+            if not scores:
+                return None
+            avg = sum(scores) / len(scores)
+            if avg > 0.4:
+                return "HOT"
+            if avg < -0.3:
+                return "COLD"
+            return None
+
         def _to_waiver_player(p: dict) -> WaiverPlayerOut:
             positions = p.get("positions") or []
             name = (p.get("name") or "").strip()
@@ -4171,6 +4206,19 @@ async def get_fantasy_waiver_recommendations(
                 # Pre-season or no active matchup: use overall board z_score.
                 need_score = board_player.get("z_score", 0.0)
 
+            # Hot/cold flag derived from contribution scores (best-effort)
+            _hc: Optional[str] = None
+            try:
+                _hc = _hot_cold_flag(contributions) if contributions else _hot_cold_flag(
+                    {k: v for k, v in (board_player.get("cat_scores") or {}).items()}
+                )
+            except Exception:
+                pass
+
+            # Status / injury note pass-through from Yahoo metadata
+            _status = p.get("status") or None
+            _injury_note = p.get("injury_note") or None
+
             return WaiverPlayerOut(
                 player_id=p.get("player_key") or "",
                 name=name,
@@ -4181,6 +4229,9 @@ async def get_fantasy_waiver_recommendations(
                 owned_pct=p.get("percent_owned", 0.0),
                 starts_this_week=p.get("starts_this_week", 0),
                 projected_saves=_raw_nsv,
+                hot_cold=_hc,
+                status=_status,
+                injury_note=_injury_note,
             )
 
         # Build + filter + sort top_available
@@ -4302,6 +4353,7 @@ async def get_fantasy_waiver_recommendations(
         closer_alert=_closer_alert,
         il_slots_used=_il_info["used"],
         il_slots_available=_il_info["available"],
+        faab_balance=_faab_balance,
     )
 
 
@@ -4896,6 +4948,7 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
             my_team_key = client.get_my_team_key()
         except Exception:
             my_team_key = ""
+    logger.info("Matchup: resolved my_team_key=%s", my_team_key)
 
     _stub_my = MatchupTeamOut(team_key=my_team_key, team_name="My Team", stats={})
     _stub_opp = MatchupTeamOut(team_key="", team_name="TBD", stats={})
@@ -4922,11 +4975,16 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
 
     try:
         matchups = client.get_scoreboard()
-    except (YahooAuthError, YahooAPIError):
-        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp, message="No active matchup. Season starts March 28, 2026.")
+        logger.info("Matchup scoreboard: %d matchups returned", len(matchups))
+        if matchups:
+            logger.info("Matchup[0] keys: %s", list(matchups[0].keys()) if isinstance(matchups[0], dict) else type(matchups[0]))
+    except (YahooAuthError, YahooAPIError) as exc:
+        logger.error("Matchup scoreboard fetch failed: %s", exc)
+        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp, message="Scoreboard unavailable -- Yahoo API error.")
 
     if not matchups:
-        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp, message="No active matchup. Season starts March 28, 2026.")
+        logger.warning("Matchup scoreboard returned empty list -- my_team_key=%s", my_team_key)
+        return MatchupResponse(my_team=_stub_my, opponent=_stub_opp, message="No matchup data yet -- season may be starting.")
 
     # Determine current week from first matchup
     week: int | None = None
@@ -5015,8 +5073,22 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
             is_playoffs=is_playoffs,
         )
 
-    # Our team not found in any matchup (pre-season / bye week)
-    return MatchupResponse(week=week, my_team=_stub_my, opponent=_stub_opp, message="No active matchup. Season starts March 28, 2026.")
+    # Our team not found in any matchup (pre-season / bye week / key mismatch)
+    all_keys = []
+    for m in matchups:
+        teams = m.get("teams", {}) if isinstance(m, dict) else {}
+        if isinstance(teams, dict):
+            for ti in range(int(teams.get("count", 0))):
+                entry = teams.get(str(ti), {}).get("team", [])
+                tk, _, _ = _extract_team_stats(entry)
+                all_keys.append(tk)
+        elif isinstance(teams, list):
+            for item in teams:
+                if isinstance(item, dict) and "team" in item:
+                    tk, _, _ = _extract_team_stats(item["team"])
+                    all_keys.append(tk)
+    logger.warning("My team key %s not found in scoreboard teams: %s", my_team_key, all_keys)
+    return MatchupResponse(week=week, my_team=_stub_my, opponent=_stub_opp, message="Your team was not found in the current week's matchup.")
 
 
 @app.put("/api/fantasy/lineup/apply")

@@ -60,7 +60,7 @@ function MatchupTable({ data }: { data: MatchupResponse }) {
   if (allCats.length === 0) {
     return (
       <p className="text-zinc-500 text-sm text-center py-8">
-        No category stats returned — check Yahoo API response.
+        No stats yet — all zeros at the start of the week.
       </p>
     )
   }
