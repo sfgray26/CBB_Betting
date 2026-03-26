@@ -3866,7 +3866,6 @@ async def get_fantasy_lineup_recommendations(
     _lineup_projections: list = []
     if _lineup_roster:
         # Log roster teams for debugging (normalize them)
-        from backend.fantasy_baseball.daily_lineup_optimizer import normalize_team_abbr
         roster_teams = [normalize_team_abbr(p.get("team", "")) for p in _lineup_roster if p.get("team")]
         logger.info(f"[LINEUP_DEBUG] Yahoo roster teams: {roster_teams}")
         try:
@@ -3877,6 +3876,9 @@ async def get_fantasy_lineup_recommendations(
 
     lineup_warnings: list[str] = []
     batters: list[LineupPlayerOut] = []
+
+    # Import team normalization function
+    from backend.fantasy_baseball.daily_lineup_optimizer import normalize_team_abbr
 
     # --- Fetch game data for opponent/start_time lookup ---
     team_odds: dict = {}
@@ -3906,7 +3908,6 @@ async def get_fantasy_lineup_recommendations(
 
     def _get_game_context(team: str):
         """Get (opponent, start_time, opp_implied) for a team."""
-        from backend.fantasy_baseball.daily_lineup_optimizer import normalize_team_abbr
         team_norm = normalize_team_abbr(team)
         logger.debug(f"[LINEUP_DEBUG] _get_game_context for team: '{team}' (normalized: '{team_norm}')")
         if team_norm in team_odds:
@@ -4066,7 +4067,6 @@ async def get_fantasy_lineup_recommendations(
 
         for p in flagged_pitchers:
             team_raw = p.get("team", "")
-            from backend.fantasy_baseball.daily_lineup_optimizer import normalize_team_abbr
             team = normalize_team_abbr(team_raw)
             is_sp = p.get("pitcher_slot") == "SP"
             has_start = p.get("has_start", False)
