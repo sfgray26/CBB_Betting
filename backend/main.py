@@ -85,6 +85,7 @@ from backend.fantasy_baseball.yahoo_client import (
     YahooAuthError,
     YahooAPIError,
 )
+from backend.fantasy_baseball.yahoo_client_resilient import ResilientYahooClient
 from backend.fantasy_baseball.daily_lineup_optimizer import get_lineup_optimizer
 
 # Logging setup
@@ -5095,15 +5096,23 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
 async def apply_fantasy_lineup(
     payload: LineupApplyRequest,
     user: str = Depends(verify_api_key),
+    auto_correct: bool = True,  # Enable game-aware auto-correction by default
 ):
     """
-    Push a lineup to Yahoo Fantasy.
+    Push a lineup to Yahoo Fantasy with game-aware validation.
+    
     Body: {date?: YYYY-MM-DD, players: [{player_key, position}]}
+    
+    The resilient client will:
+    - Validate all players have games today
+    - Auto-correct players with no games (if auto_correct=true)
+    - Apply circuit breaker protection for API failures
     """
     from datetime import datetime as _dt
 
     try:
-        client = YahooFantasyClient()
+        # Use ResilientYahooClient for game-aware validation and auto-correction
+        client = ResilientYahooClient()
     except YahooAuthError as exc:
         raise HTTPException(
             status_code=503,
@@ -5124,19 +5133,53 @@ async def apply_fantasy_lineup(
     except Exception as _exc:
         logger.warning("Could not pre-check MLB schedule for %s: %s", apply_date, _exc)
 
-    lineup_dicts = [{"player_key": p.player_key, "position": p.position} for p in payload.players]
+    # Build optimized_lineup dict expected by ResilientYahooClient
+    # The resilient client's set_lineup_resilient expects a specific format
+    optimized_lineup = {
+        "starters": [
+            {
+                "id": p.player_key,
+                "player_key": p.player_key,
+                "position": p.position,
+                "positions": [p.position],  # For validation
+            }
+            for p in payload.players
+        ]
+    }
 
     try:
-        result = client.set_lineup(team_key=team_key, date=apply_date, lineup=lineup_dicts)
-    except YahooAPIError as exc:
+        # Use the resilient method with game-aware validation
+        result = await client.set_lineup_resilient(
+            team_id=team_key,
+            optimized_lineup=optimized_lineup,
+            auto_correct=auto_correct,
+        )
+    except Exception as exc:
+        logger.exception("Error applying lineup with ResilientYahooClient")
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    if not result.success:
+        # Build error response with suggestions
+        detail = {
+            "success": False,
+            "error": result.errors,
+            "warnings": result.warnings,
+            "suggested_action": result.suggested_action,
+            "retry_possible": result.retry_possible,
+        }
+        raise HTTPException(status_code=422, detail=detail)
+
+    # Build success response
+    applied_count = len(result.changes) if result.changes else len(payload.players)
+    
     return {
         "success": True,
-        "applied": len(result.get("applied", [])),
-        "skipped": len(result.get("skipped", [])),
+        "applied": applied_count,
+        "skipped": 0,  # With auto-correct, we handle skips internally
         "date": apply_date,
-        "warnings": apply_warnings + result.get("warnings", []),
+        "warnings": apply_warnings + result.warnings,
+        "changes": result.changes,
+        "auto_correct": auto_correct,
     }
 
 

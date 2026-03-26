@@ -385,19 +385,21 @@ class ResilientYahooClient(YahooFantasyClient):
                 logger.warning(f"Lineup warnings: {position_validation.warnings}")
             
             # Step 4: Game-aware validation
+            # Build slot lookup from Yahoo roster
+            slot_lookup = {s.id: s for s in yahoo_roster.slots}
+            
             # Convert to OptimizedSlot format
-            optimized_slots = [
-                OptimizedSlot(
+            optimized_slots = []
+            for slot_id, player_id in normalized_assignments.items():
+                slot = slot_lookup.get(slot_id)
+                player = next((p for p in yahoo_roster.players if p.id == player_id), None)
+                
+                optimized_slots.append(OptimizedSlot(
                     slot_id=slot_id,
-                    position=yahoo_roster.slots[0].position if yahoo_roster.slots else "Unknown",
+                    position=slot.position if slot else "Unknown",
                     player_id=player_id,
-                    player_name=next(
-                        (p.name for p in yahoo_roster.players if p.id == player_id),
-                        None
-                    )
-                )
-                for slot_id, player_id in normalized_assignments.items()
-            ]
+                    player_name=player.name if player else None
+                ))
             
             roster_players = [
                 {
@@ -492,7 +494,8 @@ class ResilientYahooClient(YahooFantasyClient):
                 name=player_data.get("name", "Unknown"),
                 positions=player_data.get("positions", []),
                 yahoo_positions=player_data.get("eligible_positions", []),
-                eligible_positions=player_data.get("eligible_positions", [])
+                eligible_positions=player_data.get("eligible_positions", []),
+                team=player_data.get("editorial_team_abbr") or player_data.get("team", "")
             ))
         
         return YahooRoster(slots=slots, players=players)
