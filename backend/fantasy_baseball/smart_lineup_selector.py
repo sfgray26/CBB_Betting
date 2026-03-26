@@ -424,6 +424,7 @@ class SmartLineupSelector:
         }
         
         result = {}
+        game_count = 0
         try:
             resp = requests.get(url, params=params, timeout=30)
             resp.raise_for_status()
@@ -431,10 +432,12 @@ class SmartLineupSelector:
             
             for date_info in data.get("dates", []):
                 for game in date_info.get("games", []):
+                    game_count += 1
                     teams = game.get("teams", {})
                     
                     # Home pitcher
-                    home_team = teams.get("home", {}).get("team", {}).get("abbreviation", "")
+                    home_team_raw = teams.get("home", {}).get("team", {}).get("abbreviation", "")
+                    home_team = normalize_team_abbr(home_team_raw)
                     home_pitcher = teams.get("home", {}).get("probablePitcher", {})
                     if home_pitcher and home_team:
                         name = home_pitcher.get("fullName", "Unknown")
@@ -453,7 +456,8 @@ class SmartLineupSelector:
                         result[home_team] = pitcher
                     
                     # Away pitcher
-                    away_team = teams.get("away", {}).get("team", {}).get("abbreviation", "")
+                    away_team_raw = teams.get("away", {}).get("team", {}).get("abbreviation", "")
+                    away_team = normalize_team_abbr(away_team_raw)
                     away_pitcher = teams.get("away", {}).get("probablePitcher", {})
                     if away_pitcher and away_team:
                         name = away_pitcher.get("fullName", "Unknown")
@@ -469,7 +473,9 @@ class SmartLineupSelector:
                             logger.debug(f"Basic pitcher data for {away_team}: {pitcher.name}")
                         result[away_team] = pitcher
             
-            logger.info(f"Fetched {len(result)} probable pitchers for {game_date}")
+            logger.info(f"Fetched {len(result)} probable pitchers for {game_date} ({game_count} games)")
+            if not result and game_count > 0:
+                logger.info(f"Spring training mode - no probable pitchers assigned yet")
             
         except Exception as e:
             logger.warning(f"Failed to fetch probable pitchers: {e}")

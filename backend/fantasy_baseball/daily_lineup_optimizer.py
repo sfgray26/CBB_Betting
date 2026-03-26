@@ -691,6 +691,7 @@ class DailyLineupOptimizer:
         }
         
         probable = {}
+        game_count = 0
         try:
             resp = requests.get(url, params=params, timeout=30)
             resp.raise_for_status()
@@ -698,19 +699,26 @@ class DailyLineupOptimizer:
             
             for date_info in data.get("dates", []):
                 for game in date_info.get("games", []):
+                    game_count += 1
                     teams = game.get("teams", {})
                     
                     # Home pitcher
-                    home_team = teams.get("home", {}).get("team", {}).get("abbreviation", "")
+                    home_team_raw = teams.get("home", {}).get("team", {}).get("abbreviation", "")
+                    home_team = normalize_team_abbr(home_team_raw)
                     home_pitcher = teams.get("home", {}).get("probablePitcher", {})
                     if home_pitcher and home_team:
                         probable[home_team] = home_pitcher.get("fullName", "").lower()
                     
                     # Away pitcher
-                    away_team = teams.get("away", {}).get("team", {}).get("abbreviation", "")
+                    away_team_raw = teams.get("away", {}).get("team", {}).get("abbreviation", "")
+                    away_team = normalize_team_abbr(away_team_raw)
                     away_pitcher = teams.get("away", {}).get("probablePitcher", {})
                     if away_pitcher and away_team:
                         probable[away_team] = away_pitcher.get("fullName", "").lower()
+            
+            logger.info(f"[PITCHER_DEBUG] MLB Stats API: {game_count} games, {len(probable)} probable pitchers")
+            if not probable and game_count > 0:
+                logger.info(f"[PITCHER_DEBUG] Spring training mode - no probable pitchers assigned yet")
                         
         except Exception as e:
             logger.warning(f"Failed to fetch probable pitchers: {e}")
