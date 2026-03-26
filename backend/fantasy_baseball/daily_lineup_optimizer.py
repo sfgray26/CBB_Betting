@@ -100,6 +100,7 @@ class BatterRanking:
     status: Optional[str] = None
     lineup_score: float = 0.0   # composite daily score
     reason: str = ""
+    has_game: bool = False      # Whether team plays today
 
 
 @dataclass
@@ -338,6 +339,7 @@ class DailyLineupOptimizer:
             implied_runs = odds_data.get("implied_runs", 4.5)   # league avg fallback
             is_home = odds_data.get("is_home", False)
             park_factor = odds_data.get("park_factor", 1.0)
+            has_game = team in team_odds  # True if team has a game today
 
             # Composite lineup score
             # Weights: implied_runs (environment) + projected stats
@@ -373,6 +375,7 @@ class DailyLineupOptimizer:
                 status=status,
                 lineup_score=round(lineup_score, 3),
                 reason=", ".join(reason_parts),
+                has_game=has_game,
             ))
 
         rankings.sort(key=lambda x: x.lineup_score, reverse=True)
