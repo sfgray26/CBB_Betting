@@ -3876,11 +3876,25 @@ async def get_fantasy_lineup_recommendations(
 
     # --- Fetch game data for opponent/start_time lookup ---
     team_odds: dict = {}
+    _games: list = []  # Store games for report building
     try:
         from backend.fantasy_baseball.smart_lineup_selector import get_smart_selector
         _smart_sel = get_smart_selector()
         _games = _smart_sel.base_optimizer.fetch_mlb_odds(lineup_date)
         team_odds = _smart_sel.base_optimizer._build_team_odds_map(_games)
+        # Add start_time to team_odds from game data
+        for g in _games:
+            if hasattr(g, 'commence_time') and g.commence_time:
+                from datetime import datetime
+                try:
+                    # Parse ISO format and convert to datetime
+                    start_dt = datetime.fromisoformat(g.commence_time.replace('Z', '+00:00'))
+                    if g.home_abbrev in team_odds:
+                        team_odds[g.home_abbrev]['start_time'] = start_dt
+                    if g.away_abbrev in team_odds:
+                        team_odds[g.away_abbrev]['start_time'] = start_dt
+                except Exception:
+                    pass
     except Exception as e:
         logger.warning(f"Could not fetch game odds: {e}")
 
@@ -4004,6 +4018,25 @@ async def get_fantasy_lineup_recommendations(
                 has_game=b.get("has_game", True),
             ))
 
+    # Build report from games data for the response
+    report = {"games": []}
+    if _games:
+        report["games"] = [
+            {
+                "home": g.home_abbrev,
+                "away": g.away_abbrev,
+                "start_time": g.commence_time,
+            }
+            for g in _games
+        ]
+    elif 'optimizer' in locals():
+        # Fallback to optimizer's report if available
+        try:
+            _fallback_report = optimizer.build_daily_report(game_date=lineup_date)
+            report = {"games": _fallback_report.get("games", [])}
+        except Exception:
+            pass
+
     # Ensure optimizer is available for pitcher section
     if 'optimizer' not in locals():
         optimizer = get_lineup_optimizer()
@@ -4016,11 +4049,16 @@ async def get_fantasy_lineup_recommendations(
             roster=_lineup_roster,
             game_date=lineup_date,
         )
+        logger.info(f"flag_pitcher_starts returned {len(flagged_pitchers)} pitchers")
+        logger.debug(f"First pitcher: {flagged_pitchers[0] if flagged_pitchers else 'none'}")
+        logger.debug(f"team_odds keys: {list(team_odds.keys())[:10]}")
 
         for p in flagged_pitchers:
             team = p.get("team", "")
             is_sp = p.get("pitcher_slot") == "SP"
             has_start = p.get("has_start", False)
+            
+            logger.debug(f"Processing pitcher: {p.get('name')}, team: {team}, is_sp: {is_sp}, has_start: {has_start}")
 
             # Get opponent and game context
             opponent = ""
@@ -4036,12 +4074,16 @@ async def get_fantasy_lineup_recommendations(
                     opp_implied = team_odds[opp].get("implied_runs", 4.5)
                 park_factor = team_odds[team].get("park_factor", 1.0)
                 start_time = team_odds[team].get("start_time")
+                logger.debug(f"  Found team {team} in team_odds: opp={opponent}, implied={opp_implied}")
+            else:
+                logger.debug(f"  Team {team} NOT found in team_odds")
 
             # Calculate SP score (0-10 scale)
             if is_sp and has_start:
                 opp_factor = max(0, 5.0 - opp_implied)  # Lower opp runs = better
                 park_factor_score = (2.0 - park_factor) * 5  # Lower park = better
                 sp_score = min(10, opp_factor + park_factor_score)
+                logger.debug(f"  SP score calculated: {sp_score}")
 
             status = "START" if has_start else "NO_START"
             if not is_sp:
@@ -4049,6 +4091,8 @@ async def get_fantasy_lineup_recommendations(
 
             # Determine pitcher type
             pitcher_type = "SP" if is_sp else "RP"
+            
+            logger.debug(f"  Final status: {status}, pitcher_type: {pitcher_type}")
 
             pitchers.append(StartingPitcherOut(
                 player_id=p.get("player_key") or p.get("name", ""),
