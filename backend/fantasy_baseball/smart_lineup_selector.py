@@ -368,9 +368,16 @@ class SmartLineupSelector:
         smart_rankings.sort(key=lambda x: x.smart_score, reverse=True)
         
         # Generate warnings for potential issues
+        missing_odds_count = sum(1 for rank in smart_rankings[:9] if not rank.has_game)
+        if missing_odds_count >= 3:
+            # Spring training mode - too many teams without odds
+            warnings.append(f"Spring Training: {missing_odds_count} starters lack betting market data (limited spring odds)")
+        
         for rank in smart_rankings[:9]:  # Check starters
             if not rank.has_game:
-                warnings.append(f"{rank.name}: Starting but no game today")
+                # Only add individual warning if not already covered by spring training message
+                if missing_odds_count < 3:
+                    warnings.append(f"{rank.name}: Starting but no game today")
             if rank.opposing_pitcher and rank.opposing_pitcher.quality_score > 8:
                 warnings.append(f"{rank.name}: Facing ace {rank.opposing_pitcher.name} ({rank.opposing_pitcher.era:.2f} ERA)")
             if rank.platoon and abs(rank.platoon.split_delta) > 0.050:

@@ -4136,7 +4136,15 @@ async def get_fantasy_lineup_recommendations(
         report = {"games": []}
 
     games_list = report.get("games", [])
-    if len(games_list) == 0:
+    
+    # Check if this is spring training (limited data scenario)
+    if len(games_list) < 15 and len(team_odds) < 20:
+        lineup_warnings.insert(0,
+            "Spring Training Mode: Limited betting markets available. "
+            f"Only {len(team_odds)} teams have odds data. "
+            "Scores and recommendations are projection-based only."
+        )
+    elif len(games_list) == 0:
         lineup_warnings.insert(0,
             "Odds API unavailable or no games today -- using projection-only scoring "
             "(all teams at league-average 4.5 runs). Lineup ranked by projected stats only."
