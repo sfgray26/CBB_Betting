@@ -4064,7 +4064,7 @@ async def get_daily_briefing(
     """
     from datetime import date as date_type
     try:
-        bd = date_type.fromisoformat(briefing_date)
+        _ = date_type.fromisoformat(briefing_date)  # Validate format
     except ValueError:
         raise HTTPException(status_code=422, detail="briefing_date must be YYYY-MM-DD")
 
