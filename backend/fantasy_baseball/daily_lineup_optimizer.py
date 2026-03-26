@@ -599,6 +599,9 @@ class DailyLineupOptimizer:
 
         team_odds = self._build_team_odds_map(self.fetch_mlb_odds(game_date))
         has_slate = len(team_odds) >= 10
+        
+        # Fetch probable pitchers for accurate start detection
+        probable_pitchers = self._fetch_probable_pitchers_for_date(game_date)
 
         result = []
         for p in roster:
@@ -608,15 +611,87 @@ class DailyLineupOptimizer:
                 continue
             if status in _INACTIVE_STATUSES:
                 continue
+            
             is_sp = "SP" in positions
             team = p.get("team", "")
-            has_game = team in team_odds if has_slate else True
+            player_name = p.get("name", "")
+            
+            # Check if this specific pitcher is the probable starter
+            if is_sp:
+                # Get expected opponent if team has a game
+                has_game = team in team_odds if has_slate else True
+                opponent = team_odds.get(team, {}).get("opponent", "") if has_slate else ""
+                
+                # Check if this player matches a probable starter
+                is_probable = self._is_probable_starter(player_name, team, opponent, probable_pitchers)
+                has_start = has_game and is_probable
+            else:
+                has_start = True  # RP can pitch any day
+                
             result.append({
                 **p,
-                "has_start": has_game if is_sp else True,
+                "has_start": has_start,
                 "pitcher_slot": "SP" if is_sp else "RP",
             })
         return result
+    
+    def _fetch_probable_pitchers_for_date(self, game_date: str) -> dict:
+        """
+        Fetch probable pitchers from MLB Stats API.
+        Returns dict mapping team abbrev to pitcher name.
+        """
+        url = "https://statsapi.mlb.com/api/v1/schedule"
+        params = {
+            "sportId": 1,
+            "date": game_date,
+            "hydrate": "probablePitcher",
+        }
+        
+        probable = {}
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            
+            for date_info in data.get("dates", []):
+                for game in date_info.get("games", []):
+                    teams = game.get("teams", {})
+                    
+                    # Home pitcher
+                    home_team = teams.get("home", {}).get("team", {}).get("abbreviation", "")
+                    home_pitcher = teams.get("home", {}).get("probablePitcher", {})
+                    if home_pitcher and home_team:
+                        probable[home_team] = home_pitcher.get("fullName", "").lower()
+                    
+                    # Away pitcher
+                    away_team = teams.get("away", {}).get("team", {}).get("abbreviation", "")
+                    away_pitcher = teams.get("away", {}).get("probablePitcher", {})
+                    if away_pitcher and away_team:
+                        probable[away_team] = away_pitcher.get("fullName", "").lower()
+                        
+        except Exception as e:
+            logger.warning(f"Failed to fetch probable pitchers: {e}")
+            
+        return probable
+    
+    def _is_probable_starter(self, player_name: str, team: str, opponent: str, probable: dict) -> bool:
+        """
+        Check if a player is the probable starter.
+        Uses fuzzy matching on names.
+        """
+        if not player_name:
+            return False
+            
+        # Direct match
+        player_lower = player_name.lower()
+        if team in probable:
+            if probable[team] == player_lower:
+                return True
+            # Partial match (e.g., "Shota Imanaga" matches "Shota Imanaga")
+            if player_lower in probable[team] or probable[team] in player_lower:
+                return True
+                
+        return False
 
     # ------------------------------------------------------------------
     # Full daily report

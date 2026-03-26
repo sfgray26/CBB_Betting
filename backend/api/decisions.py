@@ -249,3 +249,59 @@ async def run_nightly_resolution():
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/resolve-from-mlb/{date}")
+async def resolve_from_mlb_api(
+    date: str,
+    dry_run: bool = Query(False, description="Preview without saving"),
+):
+    """
+    Resolve decisions using MLB Stats API box scores.
+    
+    This fetches actual game stats from MLB and resolves all pending decisions.
+    """
+    try:
+        from backend.fantasy_baseball.nightly_resolution import resolve_specific_date
+        from backend.fantasy_baseball.mlb_boxscore import get_mlb_fetcher
+        from backend.fantasy_baseball.decision_tracker import get_decision_tracker
+        
+        if dry_run:
+            # Preview what would be resolved
+            tracker = get_decision_tracker()
+            mlb = get_mlb_fetcher()
+            
+            pending = [d for d in tracker._load_decisions_for_date(date) if d.outcome == "pending"]
+            all_stats = mlb.get_all_stats_for_date(date)
+            
+            would_resolve = []
+            no_stats = []
+            
+            for d in pending:
+                if d.player_name in all_stats:
+                    would_resolve.append({
+                        "player": d.player_name,
+                        "stats": all_stats[d.player_name]
+                    })
+                else:
+                    no_stats.append(d.player_name)
+            
+            return {
+                "date": date,
+                "dry_run": True,
+                "pending_count": len(pending),
+                "would_resolve": len(would_resolve),
+                "no_stats": no_stats[:10],
+                "sample": would_resolve[:3]
+            }
+        
+        # Actual resolution
+        result = resolve_specific_date(date)
+        return {
+            "date": date,
+            "resolved": result.get("resolved", 0),
+            "total_pending": result.get("total_pending", 0),
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
