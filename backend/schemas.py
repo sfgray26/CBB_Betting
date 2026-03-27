@@ -295,6 +295,9 @@ class LineupPlayerOut(BaseModel):
     assigned_slot: Optional[str] = None  # "C", "1B", "2B", "3B", "SS", "OF", "Util", "BN"
     has_game: bool = True
 
+    class Config:
+        json_encoders = {datetime: lambda v: v.isoformat() if v else None}
+
 
 class StartingPitcherOut(BaseModel):
     """Daily pitcher recommendation with SP/RP delineation."""
@@ -308,6 +311,9 @@ class StartingPitcherOut(BaseModel):
     sp_score: float
     start_time: Optional[datetime] = None
     status: str = "UNKNOWN"  # "START" | "NO_START" | "RP"
+
+    class Config:
+        json_encoders = {datetime: lambda v: v.isoformat() if v else None}
 
 
 class DailyLineupResponse(BaseModel):

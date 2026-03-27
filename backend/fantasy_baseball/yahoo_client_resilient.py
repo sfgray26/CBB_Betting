@@ -475,28 +475,41 @@ class ResilientYahooClient(YahooFantasyClient):
     
     async def _get_yahoo_roster(self, team_id: str) -> YahooRoster:
         """Fetch and parse Yahoo roster."""
-        # This assumes parent has get_roster or similar
-        roster_data = await self.get_roster(team_id)
+        # Note: get_roster is synchronous, returns List[dict]
+        roster_list = self.get_roster(team_id)
         
         # Parse into YahooRoster structure
         slots = []
         players = []
         
-        for slot_data in roster_data.get("slots", []):
-            slots.append(RosterSlot(
-                id=str(slot_data.get("slot_id") or slot_data.get("id")),
-                position=slot_data.get("position", ""),
-                player_id=str(slot_data.get("player_id")) if slot_data.get("player_id") else None
-            ))
+        # Yahoo roster slots are determined by selected_position
+        # Track which slots are filled
+        slot_assignments: Dict[str, str] = {}  # position -> player_id
         
-        for player_data in roster_data.get("players", []):
+        for player_data in roster_list:
+            player_id = str(player_data.get("player_id") or player_data.get("id", ""))
+            selected_pos = player_data.get("selected_position", "BN")
+            
+            # Map player to their slot
+            if selected_pos and selected_pos != "BN":
+                slot_assignments[selected_pos] = player_id
+            
+            # Build Player object
             players.append(Player(
-                id=str(player_data.get("player_id") or player_data.get("id")),
+                id=player_id,
                 name=player_data.get("name", "Unknown"),
-                positions=player_data.get("positions", []),
+                positions=player_data.get("eligible_positions", []),
                 yahoo_positions=player_data.get("eligible_positions", []),
                 eligible_positions=player_data.get("eligible_positions", []),
                 team=player_data.get("editorial_team_abbr") or player_data.get("team", "")
+            ))
+        
+        # Build slots from assignments
+        for position, player_id in slot_assignments.items():
+            slots.append(RosterSlot(
+                id=f"slot_{position}",
+                position=position,
+                player_id=player_id
             ))
         
         return YahooRoster(slots=slots, players=players)

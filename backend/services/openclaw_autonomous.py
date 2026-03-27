@@ -6,6 +6,7 @@ Morning routine (8:30 AM APScheduler):
   3. High-impact (win_prob_gain >= 0.05) -> immediate Discord priority-2 alert
   4. Rest -> batch digest
 """
+import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ class OpenClawAutonomousLoop:
 
         try:
             from backend.services.openclaw_briefs import generate_and_send_morning_brief
-            generate_and_send_morning_brief()
+            asyncio.run(generate_and_send_morning_brief())
             summary["brief_sent"] = True
         except Exception as e:
             logger.warning("Morning brief failed: %s", e)

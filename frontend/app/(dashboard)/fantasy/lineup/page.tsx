@@ -21,12 +21,14 @@ function todayStr(): string {
   return `${year}-${month}-${day}`
 }
 
-function formatTime(iso: string): string {
+function formatTime(iso: string | null | undefined): string {
+  if (!iso) return '—'
   try {
     const d = new Date(iso)
+    if (isNaN(d.getTime())) return '—'
     return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
   } catch {
-    return iso
+    return '—'
   }
 }
 
