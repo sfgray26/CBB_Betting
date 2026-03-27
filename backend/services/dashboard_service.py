@@ -339,9 +339,6 @@ class DashboardService:
             if not roster:
                 return [], []
             
-            # Get player IDs from roster
-            roster_names = {p.get("name", "").lower() for p in roster}
-            
             # Query recent metrics from database
             recent_date = datetime.utcnow().date() - timedelta(days=1)
             metrics = db.query(PlayerDailyMetric).filter(
