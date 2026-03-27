@@ -1108,7 +1108,7 @@ def _statcast_daily_ingestion_job():
             # Log big movers for monitoring
             big_movers = result.get('big_mover_details', [])
             if big_movers:
-                logger.info(f"  Top movers:")
+                logger.info("  Top movers:")
                 for mover in big_movers[:5]:
                     delta = mover.get('delta', 0)
                     direction = "↑" if delta > 0 else "↓"
@@ -5625,7 +5625,7 @@ async def elite_optimize_lineup(
     
     try:
         yahoo = YahooFantasyClient()
-    except YahooAuthError as e:
+    except YahooAuthError:
         raise HTTPException(status_code=503, detail="Yahoo not configured")
     
     # Get roster

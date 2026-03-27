@@ -1,13 +1,11 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { api } from "@/lib/api"
+import { endpoints } from "@/lib/api"
 import type { DashboardResponse, DashboardData, UserPreferences } from "@/lib/types"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import {
   AlertCircle,
   TrendingUp,
@@ -19,13 +17,7 @@ import {
   Trophy,
 } from "lucide-react"
 
-// Dashboard panel components
-import { LineupGapsPanel } from "./components/LineupGapsPanel"
-import { StreaksPanel } from "./components/StreaksPanel"
-import { WaiverTargetsPanel } from "./components/WaiverTargetsPanel"
-import { InjuryFlagsPanel } from "./components/InjuryFlagsPanel"
-import { MatchupPreviewPanel } from "./components/MatchupPreviewPanel"
-import { ProbablePitchersPanel } from "./components/ProbablePitchersPanel"
+// Dashboard panel components - simplified inline versions
 
 export default function DashboardPage() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
@@ -40,7 +32,7 @@ export default function DashboardPage() {
   async function loadDashboard() {
     try {
       setLoading(true)
-      const response = await api.getDashboard()
+      const response = await endpoints.getDashboard()
       if (response.success) {
         setDashboard(response.data)
         setPreferences(response.preferences)
@@ -123,38 +115,119 @@ export default function DashboardPage() {
           trend="neutral"
         />
       </div>
+      
+      {dashboard.lineup_gaps.length > 0 && (
+        <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+          <h3 className="font-semibold text-amber-800 flex items-center gap-2">
+            <AlertCircle className="h-5 w-5" />
+            Lineup Gaps Detected: {dashboard.lineup_gaps.length} unfilled
+          </h3>
+        </div>
+      )}
 
-      {/* Main Dashboard Grid */}
+      {/* Main Dashboard Content */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Lineup Gaps - Full Width Priority */}
-        {dashboard.lineup_gaps.length > 0 && (
-          <div className="lg:col-span-2">
-            <LineupGapsPanel gaps={dashboard.lineup_gaps} />
+        {/* Hot Streaks */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-orange-600">
+              <TrendingUp className="h-5 w-5" />
+              Hot Streaks ({dashboard.hot_streaks.length})
+            </CardTitle>
+          </CardHeader>
+          <div className="p-6 pt-0">
+            {dashboard.hot_streaks.length === 0 ? (
+              <p className="text-muted-foreground">No hot streaks detected</p>
+            ) : (
+              <div className="space-y-2">
+                {dashboard.hot_streaks.map((player) => (
+                  <div key={player.player_id} className="flex justify-between p-2 bg-orange-50 rounded">
+                    <span className="font-medium">{player.name}</span>
+                    <span className="text-orange-600">+{player.trend_score.toFixed(2)} z</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
+        </Card>
 
-        {/* Left Column */}
-        <div className="space-y-6">
-          <StreaksPanel
-            hotStreaks={dashboard.hot_streaks}
-            coldStreaks={dashboard.cold_streaks}
-          />
-          <WaiverTargetsPanel targets={dashboard.waiver_targets} />
-        </div>
+        {/* Cold Streaks */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-blue-600">
+              <TrendingDown className="h-5 w-5" />
+              Cold Streaks ({dashboard.cold_streaks.length})
+            </CardTitle>
+          </CardHeader>
+          <div className="p-6 pt-0">
+            {dashboard.cold_streaks.length === 0 ? (
+              <p className="text-muted-foreground">No cold streaks detected</p>
+            ) : (
+              <div className="space-y-2">
+                {dashboard.cold_streaks.map((player) => (
+                  <div key={player.player_id} className="flex justify-between p-2 bg-blue-50 rounded">
+                    <span className="font-medium">{player.name}</span>
+                    <span className="text-blue-600">{player.trend_score.toFixed(2)} z</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Card>
 
-        {/* Right Column */}
-        <div className="space-y-6">
-          <InjuryFlagsPanel
-            flags={dashboard.injury_flags}
-            healthyCount={dashboard.healthy_count}
-            injuredCount={dashboard.injured_count}
-          />
-          <MatchupPreviewPanel preview={dashboard.matchup_preview} />
-          <ProbablePitchersPanel
-            pitchers={dashboard.probable_pitchers}
-            twoStarters={dashboard.two_start_pitchers}
-          />
-        </div>
+        {/* Waiver Targets */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Zap className="h-5 w-5" />
+              Waiver Targets
+            </CardTitle>
+          </CardHeader>
+          <div className="p-6 pt-0">
+            {dashboard.waiver_targets.length === 0 ? (
+              <p className="text-muted-foreground">No waiver targets available</p>
+            ) : (
+              <div className="space-y-2">
+                {dashboard.waiver_targets.slice(0, 5).map((target) => (
+                  <div key={target.player_id} className="flex justify-between p-2 border rounded">
+                    <div>
+                      <span className="font-medium">{target.name}</span>
+                      <span className="text-sm text-muted-foreground ml-2">{target.tier}</span>
+                    </div>
+                    <span className="font-semibold">{target.priority_score.toFixed(1)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Card>
+
+        {/* Injury Report */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Activity className="h-5 w-5" />
+              Injury Report
+            </CardTitle>
+          </CardHeader>
+          <div className="p-6 pt-0">
+            {dashboard.injury_flags.length === 0 ? (
+              <p className="text-green-600 font-medium">All players healthy</p>
+            ) : (
+              <div className="space-y-2">
+                {dashboard.injury_flags.map((flag) => (
+                  <div key={flag.player_id} className="flex justify-between p-2 bg-red-50 rounded">
+                    <div>
+                      <span className="font-medium">{flag.name}</span>
+                      <Badge variant="default" className="ml-2 bg-red-100 text-red-800">{flag.status}</Badge>
+                    </div>
+                    <span className="text-sm text-red-600">{flag.severity}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Card>
       </div>
     </div>
   )
@@ -203,18 +276,18 @@ function QuickStatCard({
 function DashboardSkeleton() {
   return (
     <div className="container mx-auto py-8 px-4">
-      <Skeleton className="h-10 w-64 mb-2" />
-      <Skeleton className="h-4 w-48 mb-8" />
+      <div className="h-10 w-64 mb-2 bg-gray-200 animate-pulse rounded" />
+      <div className="h-4 w-48 mb-8 bg-gray-200 animate-pulse rounded" />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         {[1, 2, 3, 4].map((i) => (
-          <Skeleton key={i} className="h-24" />
+          <div key={i} className="h-24 bg-gray-200 animate-pulse rounded" />
         ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {[1, 2, 3, 4, 5, 6].map((i) => (
-          <Skeleton key={i} className="h-64" />
+          <div key={i} className="h-64 bg-gray-200 animate-pulse rounded" />
         ))}
       </div>
     </div>

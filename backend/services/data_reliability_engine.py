@@ -152,9 +152,9 @@ class DataReliabilityEngine:
         try:
             # Check 1: Data completeness
             critical_fields = ["player_id", "player_name", "game_date", "pa"]
-            for field in critical_fields:
-                if field not in data or data[field] is None:
-                    errors.append(f"Missing critical field: {field}")
+            for field_name in critical_fields:
+                if field_name not in data or data[field_name] is None:
+                    errors.append(f"Missing critical field: {field_name}")
             
             # Check 2: Value ranges
             if data.get("exit_velocity_avg", 0) > 120:
@@ -245,9 +245,9 @@ class DataReliabilityEngine:
         # Check 3: Required fields
         required = ["name", "player_id", "positions"]
         for player in roster_data:
-            for field in required:
-                if field not in player:
-                    errors.append(f"Player missing {field}: {player.get('name', 'unknown')}")
+            for field_name in required:
+                if field_name not in player:
+                    errors.append(f"Player missing {field_name}: {player.get('name', 'unknown')}")
         
         # Check 4: Freshness
         freshness = self._calculate_freshness_minutes(timestamp)
@@ -290,12 +290,12 @@ class DataReliabilityEngine:
         
         results = []
         
-        for field in fields_to_validate:
-            if field not in primary_source or field not in secondary_source:
+        for field_name in fields_to_validate:
+            if field_name not in primary_source or field_name not in secondary_source:
                 continue
             
-            primary_val = primary_source[field]
-            secondary_val = secondary_source[field]
+            primary_val = primary_source[field_name]
+            secondary_val = secondary_source[field_name]
             
             # Skip if either is None
             if primary_val is None or secondary_val is None:
@@ -308,14 +308,14 @@ class DataReliabilityEngine:
                 else:
                     discrepancy = abs(primary_val - secondary_val) / abs(primary_val)
                 
-                threshold = self.VALIDATION_THRESHOLDS.get(field, 0.10)
+                threshold = self.VALIDATION_THRESHOLDS.get(field_name, 0.10)
                 
                 # For rate stats (avg, obp, etc.), use absolute difference
-                if field in ["avg", "obp", "slg", "ops", "woba", "xwoba"]:
+                if field_name in ["avg", "obp", "slg", "ops", "woba", "xwoba"]:
                     discrepancy = abs(primary_val - secondary_val)
                 
                 results.append(CrossValidationResult(
-                    field_name=field,
+                    field_name=field_name,
                     primary_value=primary_val,
                     secondary_value=secondary_val,
                     discrepancy_pct=discrepancy * 100,

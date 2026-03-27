@@ -17,6 +17,7 @@ const badgeVariants = cva(
         caution: 'bg-amber-400/15 text-amber-400',
         volatile: 'bg-rose-500/15 text-rose-400',
         default: 'bg-zinc-800 text-zinc-300 border border-zinc-700',
+        secondary: 'bg-zinc-700/50 text-zinc-400 border border-zinc-600',
       },
     },
     defaultVariants: { variant: 'default' },

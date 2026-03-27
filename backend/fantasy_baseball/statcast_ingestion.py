@@ -724,9 +724,9 @@ def run_daily_ingestion(target_date: Optional[date] = None):
     if target_date is None:
         target_date = date.today() - timedelta(days=1)
     
-    logger.info(f"=" * 60)
+    logger.info("=" * 60)
     logger.info(f"Starting daily Statcast ingestion for {target_date}")
-    logger.info(f"=" * 60)
+    logger.info("=" * 60)
     
     # Step 1: Ingest data
     agent = StatcastIngestionAgent()
@@ -766,13 +766,13 @@ def run_daily_ingestion(target_date: Optional[date] = None):
     big_movers = [p for p in updated_projections 
                   if abs(p.posterior_woba - p.prior_woba) > 0.020]
     
-    logger.info(f"=" * 60)
+    logger.info("=" * 60)
     logger.info(f"Daily ingestion complete for {target_date}")
     logger.info(f"  Records processed: {len(performances)}")
     logger.info(f"  Projections updated: {len(updated_projections)}")
     logger.info(f"  High confidence (>50% quality): {len(high_confidence)}")
     logger.info(f"  Big movers (>20 wOBA points): {len(big_movers)}")
-    logger.info(f"=" * 60)
+    logger.info("=" * 60)
     
     return {
         'success': True,
