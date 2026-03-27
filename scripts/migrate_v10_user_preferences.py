@@ -72,10 +72,10 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
--- Create indexes
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_prefs_user_id 
+-- Create indexes (removed CONCURRENTLY to avoid transaction block issues)
+CREATE INDEX IF NOT EXISTS idx_user_prefs_user_id 
     ON user_preferences (user_id);
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_prefs_email 
+CREATE INDEX IF NOT EXISTS idx_user_prefs_email 
     ON user_preferences (user_email) WHERE user_email IS NOT NULL;
 
 -- Add comment for documentation
@@ -84,8 +84,8 @@ COMMENT ON TABLE user_preferences IS 'User-customizable settings for fantasy bas
 
 DOWNGRADE_SQL = """
 -- Remove user_preferences table
-DROP INDEX CONCURRENTLY IF EXISTS idx_user_prefs_user_id;
-DROP INDEX CONCURRENTLY IF EXISTS idx_user_prefs_email;
+DROP INDEX IF EXISTS idx_user_prefs_user_id;
+DROP INDEX IF EXISTS idx_user_prefs_email;
 DROP TABLE IF EXISTS user_preferences;
 """
 
@@ -100,14 +100,14 @@ def upgrade(engine, dry_run=False):
         print("--- END DRY RUN ---\n")
         return
     
-    with engine.connect() as conn:
+    # Use autocommit mode to avoid transaction block issues with CREATE INDEX
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
         # Execute each statement separately for better error handling
         for statement in UPGRADE_SQL.split(';'):
             statement = statement.strip()
             if statement and not statement.startswith('--'):
                 try:
                     conn.execute(text(statement))
-                    conn.commit()
                 except Exception as e:
                     # Ignore "already exists" errors
                     if "already exists" in str(e).lower():
@@ -128,13 +128,13 @@ def downgrade(engine, dry_run=False):
         print("--- END DRY RUN ---\n")
         return
     
-    with engine.connect() as conn:
+    # Use autocommit mode to avoid transaction block issues
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
         for statement in DOWNGRADE_SQL.split(';'):
             statement = statement.strip()
             if statement and not statement.startswith('--'):
                 try:
                     conn.execute(text(statement))
-                    conn.commit()
                 except Exception as e:
                     print(f"  ⚠️  Warning: {str(e)[:80]}")
         
