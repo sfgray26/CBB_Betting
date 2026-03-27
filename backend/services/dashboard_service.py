@@ -315,7 +315,7 @@ class DashboardService:
         self, 
         user_id: str, 
         db: Optional[Session] = None
-    ) -> tuple[List[StreakPlayer], List[StreakPlayer]]]:
+    ) -> tuple[List[StreakPlayer], List[StreakPlayer]]:
         """
         B1.2: Calculate hot/cold streaks from Statcast data.
         
