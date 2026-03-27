@@ -348,8 +348,9 @@ class DailyLineupOptimizer:
         rankings = []
         for player in roster:
             positions = player.get("positions", [])
-            # Skip pitchers and bench/IL
-            if all(p in ("SP", "RP", "P") for p in positions):
+            # Skip pitchers - if ANY position is SP/RP/P, they're a pitcher
+            # This handles two-way players (e.g., Shohei Ohtani with SP + Util)
+            if any(p in ("SP", "RP", "P") for p in positions):
                 continue
             status = player.get("status")
             if status in ("IL", "IL60", "NA"):
@@ -370,12 +371,15 @@ class DailyLineupOptimizer:
             # Composite lineup score
             # Weights: implied_runs (environment) + projected stats
             base_score = implied_runs * park_factor
+            # Use player's actual projected AVG (default to 0 if missing, not 0.250)
+            # The 0.250 * 5.0 was adding 1.25 to every score, causing identical scores
+            proj_avg = proj.get("avg", 0.0)
             stat_bonus = (
                 proj.get("hr", 0) * 2.0
                 + proj.get("r", 0) * 0.3
                 + proj.get("rbi", 0) * 0.3
                 + proj.get("nsb", 0) * 0.5
-                + proj.get("avg", 0.250) * 5.0
+                + proj_avg * 5.0
             )
             lineup_score = base_score + stat_bonus * 0.1
 

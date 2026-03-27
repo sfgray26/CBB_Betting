@@ -3886,7 +3886,22 @@ async def get_fantasy_lineup_recommendations(
     try:
         from backend.fantasy_baseball.smart_lineup_selector import get_smart_selector
         _smart_sel = get_smart_selector()
+        
+        # Try fetching for the requested date first
         _games = _smart_sel.base_optimizer.fetch_mlb_odds(lineup_date)
+        
+        # If no games found, try the next day (UTC timezone issues)
+        # Odds API uses UTC, so evening US games might be on next day UTC
+        if not _games:
+            from datetime import datetime, timedelta
+            try:
+                next_day = (datetime.fromisoformat(lineup_date) + timedelta(days=1)).strftime("%Y-%m-%d")
+                _games = _smart_sel.base_optimizer.fetch_mlb_odds(next_day)
+                if _games:
+                    logger.info(f"[LINEUP_DEBUG] Found games on next day ({next_day}) due to UTC timezone")
+            except Exception:
+                pass
+        
         logger.info(f"[LINEUP_DEBUG] Fetched {len(_games)} games from Odds API")
         team_odds = _smart_sel.base_optimizer._build_team_odds_map(_games)
         logger.info(f"[LINEUP_DEBUG] team_odds keys: {list(team_odds.keys())}")
