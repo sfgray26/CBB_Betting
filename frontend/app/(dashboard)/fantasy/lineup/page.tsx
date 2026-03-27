@@ -24,9 +24,16 @@ function todayStr(): string {
 function formatTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   try {
+    // Handle ISO 8601 with Z suffix (UTC) - convert to local time
     const d = new Date(iso)
     if (isNaN(d.getTime())) return '—'
-    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+    // Use local timezone for display (West Coast games show in local time)
+    return d.toLocaleTimeString('en-US', { 
+      hour: 'numeric', 
+      minute: '2-digit', 
+      hour12: true,
+      timeZoneName: 'short'
+    })
   } catch {
     return '—'
   }

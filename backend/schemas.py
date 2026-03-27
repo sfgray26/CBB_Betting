@@ -286,17 +286,35 @@ class LineupPlayerOut(BaseModel):
     name: str
     team: str
     position: str
-    implied_runs: float
-    park_factor: float
-    lineup_score: float
+    implied_runs: float = 0.0
+    park_factor: float = 1.0
+    lineup_score: float = 0.0
     start_time: Optional[datetime] = None
     opponent: Optional[str] = None
     status: str = "UNKNOWN"       # "START" | "BENCH" | "UNKNOWN"
     assigned_slot: Optional[str] = None  # "C", "1B", "2B", "3B", "SS", "OF", "Util", "BN"
     has_game: bool = True
+    injury_status: Optional[str] = None   # Pass-through even if game data fails
+
+    @field_validator("implied_runs", "lineup_score", mode="before")
+    @classmethod
+    def default_zero_float(cls, v):
+        """Ensure None/NaN becomes 0.0."""
+        if v is None or (isinstance(v, float) and v != v):
+            return 0.0
+        return v
+    
+    @field_validator("park_factor", mode="before")
+    @classmethod
+    def default_park_factor(cls, v):
+        """Ensure None/NaN becomes 1.0 (neutral)."""
+        if v is None or (isinstance(v, float) and v != v):
+            return 1.0
+        return v
 
     class Config:
-        json_encoders = {datetime: lambda v: v.isoformat() if v else None}
+        # Serialize datetime as ISO 8601 with Z suffix for proper timezone handling
+        json_encoders = {datetime: lambda v: v.strftime("%Y-%m-%dT%H:%M:%SZ") if v else None}
 
 
 class StartingPitcherOut(BaseModel):
@@ -306,14 +324,30 @@ class StartingPitcherOut(BaseModel):
     team: str
     pitcher_type: str = "SP"  # "SP" | "RP" | "P" (ambiguous)
     opponent: str = ""  # Opposing team
-    opponent_implied_runs: float
-    park_factor: float
-    sp_score: float
+    opponent_implied_runs: float = 4.5
+    park_factor: float = 1.0
+    sp_score: float = 0.0
     start_time: Optional[datetime] = None
     status: str = "UNKNOWN"  # "START" | "NO_START" | "RP"
+    is_confirmed: bool = False  # True = confirmed starter, False = probable only
+    injury_status: Optional[str] = None  # Pass-through even if game data fails
+
+    @field_validator("opponent_implied_runs", "park_factor", "sp_score", mode="before")
+    @classmethod
+    def default_pitcher_floats(cls, v, info):
+        """Ensure None/NaN becomes safe default based on field."""
+        if v is None or (isinstance(v, float) and v != v):
+            # Return neutral defaults based on field name
+            if info.field_name == "opponent_implied_runs":
+                return 4.5  # League average
+            elif info.field_name == "park_factor":
+                return 1.0  # Neutral park
+            return 0.0
+        return v
 
     class Config:
-        json_encoders = {datetime: lambda v: v.isoformat() if v else None}
+        # Serialize datetime as ISO 8601 with Z suffix for proper timezone handling
+        json_encoders = {datetime: lambda v: v.strftime("%Y-%m-%dT%H:%M:%SZ") if v else None}
 
 
 class DailyLineupResponse(BaseModel):
@@ -341,15 +375,25 @@ class WaiverPlayerOut(BaseModel):
     name: str
     team: str
     position: str
-    need_score: float
-    category_contributions: dict
-    owned_pct: float
-    starts_this_week: int
+    need_score: float = 0.0
+    category_contributions: dict = {}
+    owned_pct: float = 0.0
+    starts_this_week: int = 0
     statcast_signals: List[str] = []
     projected_saves: float = 0.0
+    projected_points: float = 0.0         # Safe default prevents frontend NaN
     hot_cold: Optional[str] = None        # "HOT" | "COLD" | None
     status: Optional[str] = None          # Yahoo status: Active, DTD, IL, etc.
     injury_note: Optional[str] = None     # Yahoo injury note text
+    injury_status: Optional[str] = None   # Explicit injury status pass-through
+    
+    @field_validator("need_score", "owned_pct", "projected_saves", "projected_points", mode="before")
+    @classmethod
+    def default_floats(cls, v):
+        """Ensure None becomes 0.0 to prevent NaN in frontend."""
+        if v is None or (isinstance(v, float) and v != v):  # v != v checks for NaN
+            return 0.0
+        return v
 
 
 class PaginationOut(BaseModel):
@@ -423,13 +467,22 @@ class RosterPlayerOut(BaseModel):
     name: str
     team: Optional[str] = None
     positions: List[str] = []
-    status: Optional[str] = None
+    status: Optional[str] = None              # Yahoo status: Active, IL, DTD, etc.
     injury_note: Optional[str] = None
+    injury_status: Optional[str] = None       # Explicit injury status pass-through
     z_score: Optional[float] = None
     is_undroppable: bool = False
     is_proxy: bool = False
     cat_scores: dict = {}
     selected_position: Optional[str] = None  # Yahoo lineup slot: IL, BN, C, 1B, OF, etc.
+    
+    @field_validator("z_score", mode="before")
+    @classmethod
+    def default_z_score(cls, v):
+        """Ensure None/NaN doesn't break serialization."""
+        if v is None or (isinstance(v, float) and v != v):
+            return None  # Keep as None rather than 0 to indicate "no data"
+        return v
 
 
 class RosterResponse(BaseModel):

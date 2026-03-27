@@ -5292,25 +5292,28 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
     except YahooAPIError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    players_out: list[RosterPlayerOut] = []
+    # Deduplicate by player_key to prevent state duplication (Page 4 bug fix)
+    players_map: dict[str, RosterPlayerOut] = {}
     for p in raw_players:
+        player_key = p.get("player_key") or ""
+        if not player_key:
+            continue  # Skip players without keys
         name = p.get("name") or ""
         proj = get_or_create_projection(p) if name else {}
-        players_out.append(
-            RosterPlayerOut(
-                player_key=p.get("player_key") or "",
-                name=name,
-                team=p.get("team"),
-                positions=p.get("positions") or [],
-                status=p.get("status"),
-                injury_note=p.get("injury_note"),
-                z_score=proj.get("z_score"),
-                is_undroppable=bool(p.get("is_undroppable", 0)),
-                is_proxy=bool(proj.get("is_proxy", False)),
-                cat_scores=proj.get("cat_scores") or {},
-                selected_position=p.get("selected_position"),
-            )
+        players_map[player_key] = RosterPlayerOut(
+            player_key=player_key,
+            name=name,
+            team=p.get("team"),
+            positions=p.get("positions") or [],
+            status=p.get("status"),
+            injury_note=p.get("injury_note"),
+            z_score=proj.get("z_score"),
+            is_undroppable=bool(p.get("is_undroppable", 0)),
+            is_proxy=bool(proj.get("is_proxy", False)),
+            cat_scores=proj.get("cat_scores") or {},
+            selected_position=p.get("selected_position"),
         )
+    players_out = list(players_map.values())
 
     return RosterResponse(
         team_key=team_key,
@@ -5386,37 +5389,51 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
     def _extract_team_stats(team_entry) -> tuple[str, str, dict]:
         """Return (team_key, team_name, stats_dict) from Yahoo team entry.
         Stats are keyed by abbreviation (e.g. 'R', 'HR') when stat_id_map is populated,
-        otherwise by raw stat_id string."""
+        otherwise by raw stat_id string.
+        
+        Handles deeply nested Yahoo response structures with multiple array wrappers."""
         t_meta: dict = {}
         stats_raw: list = []
-        entries = team_entry if isinstance(team_entry, list) else [team_entry]
-        for sub in entries:
-            if isinstance(sub, list):
-                for item in sub:
-                    if isinstance(item, dict):
-                        t_meta.update(item)
-            elif isinstance(sub, dict):
-                if "team_stats" in sub:
-                    inner = sub["team_stats"].get("stats", [])
+        
+        # Flatten nested array structures that Yahoo returns
+        def flatten_entry(entry, depth=0):
+            """Recursively flatten nested lists/dicts to extract metadata."""
+            if depth > 5:  # Safety limit
+                return
+            if isinstance(entry, list):
+                for item in entry:
+                    flatten_entry(item, depth + 1)
+            elif isinstance(entry, dict):
+                # Check for team_stats first
+                if "team_stats" in entry:
+                    inner = entry["team_stats"].get("stats", [])
                     if isinstance(inner, list):
+                        nonlocal stats_raw
                         stats_raw = inner
-                else:
-                    t_meta.update(sub)
+                # Extract metadata fields
+                for key in ["team_key", "name", "team_id", "nickname"]:
+                    if key in entry:
+                        t_meta[key] = entry[key]
+        
+        flatten_entry(team_entry)
+        
+        # Build stats dict
         stats_dict: dict = {}
         for s in stats_raw:
             if isinstance(s, dict):
                 stat = s.get("stat", {})
                 if isinstance(stat, dict):
                     sid = str(stat.get("stat_id", ""))
-                    key = stat_id_map.get(sid, sid)  # resolve to abbrev or fall back to id
+                    key = stat_id_map.get(sid, sid)
                     val = stat.get("value", "")
                     if key:
                         stats_dict[key] = val
-        return (
-            t_meta.get("team_key", ""),
-            t_meta.get("name", ""),
-            stats_dict,
-        )
+        
+        # Try multiple key formats Yahoo might use
+        team_key = t_meta.get("team_key", "")
+        team_name = t_meta.get("name", "") or t_meta.get("nickname", "")
+        
+        return (team_key, team_name, stats_dict)
 
     for m in matchups:
         if not isinstance(m, dict):
@@ -5429,25 +5446,53 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                 pass
         is_playoffs = bool(m.get("is_playoffs", 0))
 
+        # Handle multiple Yahoo response shapes for teams
         teams = m.get("teams", {})
         team_data: list[tuple[str, str, dict]] = []
-        # Handle both Yahoo response shapes: indexed dict or list
+        
+        # Shape 1: teams is a list of {team: [...]} objects
         if isinstance(teams, list):
             for item in teams:
-                if isinstance(item, dict) and "team" in item:
-                    team_data.append(_extract_team_stats(item["team"]))
+                if isinstance(item, dict):
+                    if "team" in item:
+                        team_data.append(_extract_team_stats(item["team"]))
+                    else:
+                        # Direct team object
+                        team_data.append(_extract_team_stats(item))
+        # Shape 2: teams is a dict with count + indexed entries
         elif isinstance(teams, dict):
             count_t = int(teams.get("count", 0))
             for ti in range(count_t):
-                entry = teams.get(str(ti), {}).get("team", [])
-                team_data.append(_extract_team_stats(entry))
+                entry = teams.get(str(ti), {})
+                if isinstance(entry, dict):
+                    team_entry = entry.get("team", entry)  # Use entry itself if no "team" key
+                    team_data.append(_extract_team_stats(team_entry))
+        
+        # Also check for direct team array in matchup (alternate Yahoo format)
+        if not team_data and "team" in m:
+            direct_teams = m.get("team", [])
+            if isinstance(direct_teams, list):
+                for t in direct_teams:
+                    team_data.append(_extract_team_stats(t))
+            elif isinstance(direct_teams, dict):
+                team_data.append(_extract_team_stats(direct_teams))
 
-        # Check if our team is in this matchup
-        my_entry = next((t for t in team_data if t[0] == my_team_key), None)
+        # Check if our team is in this matchup (with flexible key matching)
+        my_entry = None
+        for t in team_data:
+            # Exact match
+            if t[0] == my_team_key:
+                my_entry = t
+                break
+            # Partial match (Yahoo sometimes prefixes/suffixes)
+            if t[0] and my_team_key and (t[0] in my_team_key or my_team_key in t[0]):
+                my_entry = t
+                break
+        
         if my_entry is None:
             continue
 
-        opp_entry = next((t for t in team_data if t[0] != my_team_key), None)
+        opp_entry = next((t for t in team_data if t[0] != my_entry[0]), None)
         if opp_entry is None:
             opp_entry = ("", "Unknown", {})
 
