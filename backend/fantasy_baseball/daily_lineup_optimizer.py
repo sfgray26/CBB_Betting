@@ -700,14 +700,16 @@ class DailyLineupOptimizer:
                 for game in date_info.get("games", []):
                     teams = game.get("teams", {})
                     
-                    # Home pitcher
-                    home_team = teams.get("home", {}).get("team", {}).get("abbreviation", "")
+                    # Home pitcher - normalize team abbreviation to Yahoo standard
+                    home_team_raw = teams.get("home", {}).get("team", {}).get("abbreviation", "")
+                    home_team = normalize_team_abbr(home_team_raw)
                     home_pitcher = teams.get("home", {}).get("probablePitcher", {})
                     if home_pitcher and home_team:
                         probable[home_team] = home_pitcher.get("fullName", "").lower()
                     
-                    # Away pitcher
-                    away_team = teams.get("away", {}).get("team", {}).get("abbreviation", "")
+                    # Away pitcher - normalize team abbreviation to Yahoo standard
+                    away_team_raw = teams.get("away", {}).get("team", {}).get("abbreviation", "")
+                    away_team = normalize_team_abbr(away_team_raw)
                     away_pitcher = teams.get("away", {}).get("probablePitcher", {})
                     if away_pitcher and away_team:
                         probable[away_team] = away_pitcher.get("fullName", "").lower()
