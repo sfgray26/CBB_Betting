@@ -21,7 +21,7 @@ import requests
 from backend.fantasy_baseball.lineup_validator import (
     LineupValidator, OptimizedSlot, PlayerGameInfo, GameStatus
 )
-from backend.fantasy_baseball.daily_lineup_optimizer import DailyLineupOptimizer, BatterRanking
+from backend.fantasy_baseball.daily_lineup_optimizer import DailyLineupOptimizer, BatterRanking, normalize_team_abbr
 from backend.fantasy_baseball.platoon_fetcher import PlatoonSplitFetcher, PlatoonSplits
 from backend.fantasy_baseball.pitcher_deep_dive import PitcherDeepDiveFetcher, get_pitcher_fetcher
 from backend.fantasy_baseball.elite_context import PitcherDeepDive, WeatherContext, RecentForm
