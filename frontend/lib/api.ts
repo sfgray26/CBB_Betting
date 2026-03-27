@@ -30,6 +30,9 @@ import type {
   RosterResponse,
   MatchupResponse,
   LineupApplyPlayer,
+  DashboardResponse,
+  UserPreferencesResponse,
+  UserPreferences,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -307,5 +310,36 @@ export const endpoints = {
     apiFetch<{ flag: string; enabled: boolean }>(
       `/admin/feature-flags/${flag}?enabled=${enabled}`,
       { method: 'POST' },
+    ),
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Phase B: Enhanced Dashboard
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** Get full dashboard data */
+  getDashboard: () =>
+    apiFetch<DashboardResponse>('/api/dashboard'),
+
+  /** Get user preferences */
+  getUserPreferences: () =>
+    apiFetch<UserPreferencesResponse>('/api/user/preferences'),
+
+  /** Update user preferences */
+  updateUserPreferences: (updates: Partial<UserPreferences>) =>
+    apiFetch<UserPreferencesResponse>('/api/user/preferences', {
+      method: 'POST',
+      body: JSON.stringify(updates),
+    }),
+
+  /** Get hot/cold streaks */
+  getDashboardStreaks: () =>
+    apiFetch<{ success: boolean; hot_streaks: any[]; cold_streaks: any[] }>(
+      '/api/dashboard/streaks'
+    ),
+
+  /** Get waiver targets */
+  getDashboardWaiverTargets: () =>
+    apiFetch<{ success: boolean; targets: any[] }>(
+      '/api/dashboard/waiver-targets'
     ),
 }

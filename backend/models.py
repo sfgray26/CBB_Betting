@@ -554,3 +554,293 @@ def init_db():
 
 if __name__ == "__main__":
     init_db()
+
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# FANTASY BASEBALL — LIVE DATA MODELS (Added March 26, 2026)
+# ═════════════════════════════════════════════════════════════════════════════
+
+class StatcastPerformance(Base):
+    """
+    Daily Statcast performance data from Baseball Savant.
+    
+    Stores granular hitting/pitching metrics for each player each day.
+    Used for Bayesian projection updates and pattern detection.
+    """
+    
+    __tablename__ = "statcast_performances"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Player identification
+    player_id = Column(String(50), nullable=False, index=True)
+    player_name = Column(String(100), nullable=False)
+    team = Column(String(10), nullable=False)
+    game_date = Column(Date, nullable=False, index=True)
+    
+    # Plate appearances and counting stats
+    pa = Column(Integer, default=0)  # Plate appearances
+    ab = Column(Integer, default=0)  # At-bats
+    h = Column(Integer, default=0)   # Hits
+    doubles = Column(Integer, default=0)
+    triples = Column(Integer, default=0)
+    hr = Column(Integer, default=0)  # Home runs
+    r = Column(Integer, default=0)   # Runs
+    rbi = Column(Integer, default=0) # RBIs
+    bb = Column(Integer, default=0)  # Walks
+    so = Column(Integer, default=0)  # Strikeouts
+    hbp = Column(Integer, default=0) # Hit by pitch
+    sb = Column(Integer, default=0)  # Stolen bases
+    cs = Column(Integer, default=0)  # Caught stealing
+    
+    # Statcast quality metrics
+    exit_velocity_avg = Column(Float, default=0.0)
+    launch_angle_avg = Column(Float, default=0.0)
+    hard_hit_pct = Column(Float, default=0.0)  # 95+ mph
+    barrel_pct = Column(Float, default=0.0)    # Ideal combination
+    
+    # Expected stats
+    xba = Column(Float, default=0.0)   # Expected batting average
+    xslg = Column(Float, default=0.0)  # Expected slugging
+    xwoba = Column(Float, default=0.0) # Expected weighted on-base average
+    
+    # Calculated traditional stats
+    avg = Column(Float, default=0.0)   # Batting average
+    obp = Column(Float, default=0.0)   # On-base percentage
+    slg = Column(Float, default=0.0)   # Slugging percentage
+    ops = Column(Float, default=0.0)   # On-base plus slugging
+    woba = Column(Float, default=0.0)  # Weighted on-base average
+    
+    # Pitching stats (if applicable)
+    ip = Column(Float, default=0.0)    # Innings pitched
+    er = Column(Integer, default=0)    # Earned runs
+    k_pit = Column(Integer, default=0) # Strikeouts (pitching)
+    bb_pit = Column(Integer, default=0) # Walks (pitching)
+    pitches = Column(Integer, default=0) # Total pitches thrown
+    
+    # Metadata
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Unique constraint: one record per player per day
+    __table_args__ = (
+        UniqueConstraint('player_id', 'game_date', name='uq_player_date'),
+    )
+
+
+class PlayerProjection(Base):
+    """
+    Live-updated player projections using Bayesian inference.
+    
+    Combines prior (Steamer/ZiPS) with likelihood (recent performance)
+    using shrinkage priors. Early season = trust prior more.
+    Late season = trust recent data more.
+    """
+    
+    __tablename__ = "player_projections"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Player identification
+    player_id = Column(String(50), nullable=False, unique=True, index=True)
+    player_name = Column(String(100), nullable=False)
+    team = Column(String(10))
+    positions = Column(JSON)  # List of eligible positions
+    
+    # Core projection stats (updated via Bayesian inference)
+    woba = Column(Float, default=0.320)   # Weighted on-base average
+    avg = Column(Float, default=0.250)    # Batting average
+    obp = Column(Float, default=0.320)    # On-base percentage
+    slg = Column(Float, default=0.400)    # Slugging percentage
+    ops = Column(Float, default=0.720)    # On-base plus slugging
+    xwoba = Column(Float, default=0.320)  # Expected wOBA
+    
+    # Counting stats (rate stats × projected PA)
+    hr = Column(Integer, default=15)
+    r = Column(Integer, default=65)
+    rbi = Column(Integer, default=65)
+    sb = Column(Integer, default=5)
+    
+    # Pitching stats
+    era = Column(Float, default=4.00)
+    whip = Column(Float, default=1.30)
+    k_per_nine = Column(Float, default=8.5)
+    bb_per_nine = Column(Float, default=3.0)
+    
+    # Bayesian metadata
+    shrinkage = Column(Float, default=1.0)  # 1.0 = trust prior fully
+    data_quality_score = Column(Float, default=0.0)  # 0-1 based on sample size
+    sample_size = Column(Integer, default=0)  # PA in recent sample
+    prior_source = Column(String(50), default='steamer')  # steamer, zips, thebat
+    update_method = Column(String(50), default='prior')  # prior, bayesian, manual
+    
+    # Category scores (for H2H leagues)
+    cat_scores = Column(JSONB, default=dict)  # Dict of category -> z-score
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PatternDetectionAlert(Base):
+    """
+    MLB-specific pattern detection alerts from OpenClaw.
+    
+    Detects: Pitcher fatigue, bullpen overuse, platoon splits,
+    travel fatigue, weather impacts, etc.
+    """
+    
+    __tablename__ = "pattern_detection_alerts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Alert classification
+    pattern_type = Column(String(50), nullable=False, index=True)
+    # pitcher_fatigue, bullpen_overuse, platoon_split, travel_fatigue,
+    # weather_impact, lineup_rest, etc.
+    
+    severity = Column(String(20), nullable=False)  # LOW, MEDIUM, HIGH, CRITICAL
+    confidence = Column(Float, default=0.5)  # 0.0 to 1.0
+    
+    # Affected entities
+    player_id = Column(String(50), nullable=True, index=True)
+    player_name = Column(String(100))
+    team = Column(String(10), nullable=True, index=True)
+    game_date = Column(Date, nullable=False, index=True)
+    
+    # Alert details
+    title = Column(String(200), nullable=False)
+    description = Column(Text)
+    betting_implication = Column(Text)  # How to exploit this edge
+    
+    # Detection metadata
+    detection_data = Column(JSONB, default=dict)  # Raw data that triggered alert
+    data_sources = Column(JSON, default=list)  # List of sources
+    
+    # Status
+    is_active = Column(Boolean, default=True)
+    resolved_at = Column(DateTime, nullable=True)
+    resolution_notes = Column(Text)
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    alerted_at = Column(DateTime, nullable=True)  # When Discord alert sent
+
+
+class DataIngestionLog(Base):
+    """
+    Audit log for all data ingestion operations.
+    
+    Tracks: Statcast pulls, projection updates, pattern detection runs.
+    Used for monitoring, debugging, and performance analysis.
+    """
+    
+    __tablename__ = "data_ingestion_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Job classification
+    job_type = Column(String(50), nullable=False, index=True)
+    # statcast_daily, bayesian_update, pattern_detection, etc.
+    
+    target_date = Column(Date, nullable=False, index=True)
+    
+    # Status
+    status = Column(String(20), nullable=False)  # SUCCESS, PARTIAL, FAILED
+    
+    # Metrics
+    records_processed = Column(Integer, default=0)
+    records_failed = Column(Integer, default=0)
+    processing_time_seconds = Column(Float)
+    
+    # Quality metrics
+    validation_errors = Column(Integer, default=0)
+    validation_warnings = Column(Integer, default=0)
+    data_quality_score = Column(Float)  # 0-1 overall quality
+    
+    # Details
+    error_details = Column(JSONB, default=list)  # List of error dicts
+    warning_details = Column(JSONB, default=list)  # List of warning dicts
+    summary_stats = Column(JSONB, default=dict)  # Job-specific stats
+    
+    # Timestamps
+    started_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    
+    # Error tracking
+    error_message = Column(Text, nullable=True)
+    stack_trace = Column(Text, nullable=True)
+
+
+class UserPreferences(Base):
+    """
+    User-customizable settings for the fantasy baseball dashboard.
+    
+    Stores notification preferences, dashboard layout configuration,
+    and projection blending weights.
+    """
+    
+    __tablename__ = "user_preferences"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # User identification (Yahoo user ID or internal user ID)
+    user_id = Column(String(100), nullable=False, unique=True, index=True)
+    user_email = Column(String(255), nullable=True)
+    
+    # Notification settings
+    notifications = Column(JSONB, nullable=False, default=lambda: {
+        "lineup_deadline": True,
+        "injury_alerts": True,
+        "waiver_suggestions": True,
+        "trade_offers": False,
+        "hot_streak_alerts": True,
+        "channels": ["discord"],  # Options: email, discord, push
+        "discord_user_id": None,
+        "email_enabled": False,
+    })
+    
+    # Dashboard layout configuration
+    dashboard_layout = Column(JSONB, nullable=False, default=lambda: {
+        "panels": [
+            {"id": "lineup_gaps", "position": "top-left", "size": "medium", "enabled": True},
+            {"id": "hot_cold_streaks", "position": "top-right", "size": "medium", "enabled": True},
+            {"id": "waiver_targets", "position": "middle-left", "size": "medium", "enabled": True},
+            {"id": "injury_flags", "position": "middle-right", "size": "small", "enabled": True},
+            {"id": "matchup_preview", "position": "bottom-left", "size": "medium", "enabled": True},
+            {"id": "probable_pitchers", "position": "bottom-right", "size": "small", "enabled": True},
+        ],
+        "refresh_interval_seconds": 300,  # 5 minutes
+        "theme": "dark",  # dark, light, system
+    })
+    
+    # Projection blending weights (must sum to 1.0)
+    projection_weights = Column(JSONB, nullable=False, default=lambda: {
+        "steamer": 0.30,
+        "zips": 0.25,
+        "depth_charts": 0.20,
+        "atc": 0.15,
+        "the_bat": 0.10,
+    })
+    
+    # Streak calculation preferences
+    streak_settings = Column(JSONB, nullable=False, default=lambda: {
+        "hot_threshold": 0.5,  # z-score threshold for "hot"
+        "cold_threshold": -0.5,  # z-score threshold for "cold"
+        "min_sample_days": 7,  # Minimum days for streak calculation
+        "rolling_windows": [7, 14, 30],  # Days to calculate trends
+    })
+    
+    # Waiver wire preferences
+    waiver_preferences = Column(JSONB, nullable=False, default=lambda: {
+        "min_percent_owned": 0,  # Show players with >X% ownership
+        "max_percent_owned": 60,  # Hide players owned by >X%
+        "positions_of_need": [],  # Auto-detect if empty
+        "priority_categories": [],  # Auto-detect if empty
+        "hide_injured": True,
+        "streamer_threshold": 0.3,  # z-score threshold for streamer suggestions
+    })
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

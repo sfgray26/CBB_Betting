@@ -397,3 +397,138 @@ export interface LineupApplyPlayer {
   player_key: string
   position: string
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Phase B: Enhanced Dashboard Types
+// ═════════════════════════════════════════════════════════════════════════════
+
+export interface LineupGap {
+  position: string
+  severity: "critical" | "warning" | "info"
+  message: string
+  suggested_add?: string | null
+}
+
+export interface StreakPlayer {
+  player_id: string
+  name: string
+  team: string
+  positions: string[]
+  trend: "hot" | "cold" | "neutral"
+  trend_score: number
+  last_7_avg: number
+  last_14_avg: number
+  last_30_avg: number
+  reason: string
+}
+
+export interface WaiverTarget {
+  player_id: string
+  name: string
+  team: string
+  positions: string[]
+  percent_owned: number
+  priority_score: number
+  tier: "must_add" | "strong_add" | "streamer"
+  reason: string
+}
+
+export interface InjuryFlag {
+  player_id: string
+  name: string
+  status: "IL" | "IL10" | "IL60" | "DTD" | "OUT"
+  injury_note?: string | null
+  severity: "critical" | "warning" | "info"
+  estimated_return?: string | null
+  action_needed: string
+}
+
+export interface MatchupPreviewData {
+  week_number: number
+  opponent_team_name: string
+  opponent_record: string
+  my_projected_categories: Record<string, number>
+  opponent_projected_categories: Record<string, number>
+  win_probability: number
+  category_advantages: string[]
+  category_disadvantages: string[]
+}
+
+export interface ProbablePitcherInfo {
+  name: string
+  team: string
+  opponent: string
+  game_date: string
+  is_two_start: boolean
+  matchup_quality: "favorable" | "neutral" | "unfavorable"
+  stream_score: number
+  reason: string
+}
+
+export interface DashboardData {
+  timestamp: string
+  user_id: string
+  lineup_gaps: LineupGap[]
+  lineup_filled_count: number
+  lineup_total_count: number
+  hot_streaks: StreakPlayer[]
+  cold_streaks: StreakPlayer[]
+  waiver_targets: WaiverTarget[]
+  injury_flags: InjuryFlag[]
+  healthy_count: number
+  injured_count: number
+  matchup_preview: MatchupPreviewData | null
+  probable_pitchers: ProbablePitcherInfo[]
+  two_start_pitchers: ProbablePitcherInfo[]
+}
+
+export interface DashboardResponse {
+  success: boolean
+  timestamp: string
+  data: DashboardData
+  preferences: UserPreferences
+}
+
+export interface UserPreferences {
+  notifications: {
+    lineup_deadline: boolean
+    injury_alerts: boolean
+    waiver_suggestions: boolean
+    trade_offers: boolean
+    hot_streak_alerts: boolean
+    channels: string[]
+    discord_user_id?: string | null
+    email_enabled: boolean
+  }
+  dashboard_layout: {
+    panels: DashboardPanel[]
+    refresh_interval_seconds: number
+    theme: "dark" | "light" | "system"
+  }
+  streak_settings: {
+    hot_threshold: number
+    cold_threshold: number
+    min_sample_days: number
+    rolling_windows: number[]
+  }
+  waiver_preferences: {
+    min_percent_owned: number
+    max_percent_owned: number
+    positions_of_need: string[]
+    priority_categories: string[]
+    hide_injured: boolean
+    streamer_threshold: number
+  }
+}
+
+export interface DashboardPanel {
+  id: string
+  position: string
+  size: "small" | "medium" | "large"
+  enabled: boolean
+}
+
+export interface UserPreferencesResponse {
+  success: boolean
+  preferences: UserPreferences
+}

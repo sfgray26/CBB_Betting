@@ -18,6 +18,8 @@ import {
   ArrowLeftRight,
   Users,
   Swords,
+  LayoutDashboard,
+  Settings,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
@@ -54,10 +56,18 @@ const navSections = [
   {
     label: 'Fantasy Baseball',
     items: [
+      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
       { href: '/fantasy/lineup', label: 'Daily Lineup', icon: ListChecks },
       { href: '/fantasy/waiver', label: 'Waiver Wire', icon: ArrowLeftRight },
       { href: '/fantasy/roster', label: 'My Roster', icon: Users },
       { href: '/fantasy/matchup', label: 'Matchup', icon: Swords },
+    ],
+    soon: false,
+  },
+  {
+    label: 'Settings',
+    items: [
+      { href: '/settings', label: 'Preferences', icon: Settings },
     ],
     soon: false,
   },

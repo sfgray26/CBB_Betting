@@ -13,6 +13,7 @@ from apscheduler.triggers.cron import CronTrigger
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+from dataclasses import asdict
 from typing import List, Optional
 import logging
 import os
@@ -191,6 +192,16 @@ async def lifespan(app: FastAPI):
         CronTrigger(hour=7, minute=30, timezone=timezone),
         id="fetch_pybaseball",
         name="Refresh pybaseball Statcast Leaderboards",
+        replace_existing=True,
+    )
+    
+    # Daily Statcast ingestion + Bayesian projection updates at 6:00 AM ET
+    # Runs after overnight games complete, before lineup decisions
+    scheduler.add_job(
+        _statcast_daily_ingestion_job,
+        CronTrigger(hour=6, minute=0, timezone=timezone),
+        id="statcast_daily_ingestion",
+        name="Statcast Daily Ingestion + Bayesian Updates",
         replace_existing=True,
     )
 
@@ -1060,6 +1071,53 @@ def _pybaseball_fetch_job():
         logger.info("pybaseball daily refresh complete")
     except Exception as e:
         logger.error("pybaseball fetch job failed: %s", e)
+
+
+def _statcast_daily_ingestion_job():
+    """
+    Daily 6:00 AM Statcast ingestion + Bayesian projection updates.
+    
+    This is the critical data pipeline that:
+    1. Pulls yesterday's Statcast data from Baseball Savant
+    2. Validates data quality
+    3. Runs Bayesian projection updates (prior + likelihood -> posterior)
+    4. Stores updated projections for lineup/waiver decisions
+    
+    Runs before lineup decisions so we have fresh data.
+    """
+    try:
+        from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
+        from datetime import date, timedelta
+        
+        # Run for yesterday (most recent completed day)
+        target_date = date.today() - timedelta(days=1)
+        
+        logger.info("=" * 60)
+        logger.info("Starting scheduled Statcast daily ingestion")
+        logger.info(f"Target date: {target_date}")
+        logger.info("=" * 60)
+        
+        result = run_daily_ingestion(target_date)
+        
+        if result.get('success'):
+            logger.info("Statcast daily ingestion completed successfully")
+            logger.info(f"  Records processed: {result.get('records_processed', 0)}")
+            logger.info(f"  Projections updated: {result.get('projections_updated', 0)}")
+            logger.info(f"  High confidence updates: {result.get('high_confidence_updates', 0)}")
+            
+            # Log big movers for monitoring
+            big_movers = result.get('big_mover_details', [])
+            if big_movers:
+                logger.info(f"  Top movers:")
+                for mover in big_movers[:5]:
+                    delta = mover.get('delta', 0)
+                    direction = "↑" if delta > 0 else "↓"
+                    logger.info(f"    {mover.get('name')}: {mover.get('prior')} → {mover.get('posterior')} ({direction}{abs(delta):.3f})")
+        else:
+            logger.error(f"Statcast daily ingestion failed: {result.get('error', 'Unknown error')}")
+            
+    except Exception as e:
+        logger.exception(f"Statcast daily ingestion job failed: {e}")
 
 
 async def _run_mlb_analysis_job():
@@ -5424,6 +5482,111 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                     all_keys.append(tk)
     logger.warning("My team key %s not found in scoreboard teams: %s", my_team_key, all_keys)
     return MatchupResponse(week=week, my_team=_stub_my, opponent=_stub_opp, message="Your team was not found in the current week's matchup.")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PHASE B: ENHANCED DASHBOARD API
+# ═════════════════════════════════════════════════════════════════════════════
+
+from backend.services.dashboard_service import get_dashboard_service
+
+
+@app.get("/api/dashboard")
+async def get_dashboard(user: str = Depends(verify_api_key)):
+    """
+    Phase B: Enhanced Dashboard
+    
+    Returns consolidated dashboard data:
+    - Lineup gaps detection
+    - Hot/cold streaks
+    - Waiver targets
+    - Injury flags
+    - Matchup preview
+    - Probable pitchers / two-start SPs
+    """
+    service = get_dashboard_service()
+    dashboard = await service.get_dashboard(user_id=user)
+    return {
+        "success": True,
+        "timestamp": dashboard.timestamp,
+        "data": {
+            "lineup_gaps": [asdict(g) for g in dashboard.lineup_gaps],
+            "lineup_filled_count": dashboard.lineup_filled_count,
+            "lineup_total_count": dashboard.lineup_total_count,
+            "hot_streaks": [asdict(s) for s in dashboard.hot_streaks],
+            "cold_streaks": [asdict(s) for s in dashboard.cold_streaks],
+            "waiver_targets": [asdict(t) for t in dashboard.waiver_targets],
+            "injury_flags": [asdict(i) for i in dashboard.injury_flags],
+            "healthy_count": dashboard.healthy_count,
+            "injured_count": dashboard.injured_count,
+            "matchup_preview": asdict(dashboard.matchup_preview) if dashboard.matchup_preview else None,
+            "probable_pitchers": [asdict(p) for p in dashboard.probable_pitchers],
+            "two_start_pitchers": [asdict(p) for p in dashboard.two_start_pitchers],
+        },
+        "preferences": dashboard.preferences,
+    }
+
+
+@app.get("/api/user/preferences")
+async def get_user_preferences(user: str = Depends(verify_api_key)):
+    """Get current user preferences."""
+    service = get_dashboard_service()
+    prefs = service.get_preferences(user_id=user)
+    return {"success": True, "preferences": prefs}
+
+
+@app.post("/api/user/preferences")
+async def update_user_preferences(
+    updates: dict,
+    user: str = Depends(verify_api_key),
+):
+    """
+    Update user preferences.
+    
+    Body can include any of:
+    - notifications: dict
+    - dashboard_layout: dict
+    - projection_weights: dict
+    - streak_settings: dict
+    - waiver_preferences: dict
+    """
+    service = get_dashboard_service()
+    updated = service.update_preferences(user_id=user, updates=updates)
+    return {"success": True, "preferences": updated}
+
+
+@app.get("/api/dashboard/streaks")
+async def get_dashboard_streaks(user: str = Depends(verify_api_key)):
+    """Get hot/cold streaks for rostered players."""
+    service = get_dashboard_service()
+    hot, cold = await service._get_streaks(user_id=user)
+    return {
+        "success": True,
+        "hot_streaks": [asdict(s) for s in hot[:5]],
+        "cold_streaks": [asdict(s) for s in cold[:5]],
+    }
+
+
+@app.get("/api/dashboard/waiver-targets")
+async def get_dashboard_waiver_targets(user: str = Depends(verify_api_key)):
+    """Get prioritized waiver wire targets."""
+    service = get_dashboard_service()
+    from backend.models import SessionLocal
+    db = SessionLocal()
+    try:
+        prefs = service._get_or_create_preferences(db, user)
+        targets = await service._get_waiver_targets(user_id=user, prefs=prefs)
+        return {
+            "success": True,
+            "targets": [asdict(t) for t in targets[:10]],
+        }
+    finally:
+        db.close()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# END PHASE B
+# ═════════════════════════════════════════════════════════════════════════════
 
 
 @app.put("/api/fantasy/lineup/apply")
