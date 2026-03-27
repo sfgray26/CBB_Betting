@@ -3933,7 +3933,12 @@ async def get_fantasy_lineup_recommendations(
                 opp_impl = team_odds[opp].get("implied_runs", 4.5)
             logger.debug(f"[LINEUP_DEBUG] Found team '{team_norm}': opp={opp}, implied={opp_impl}")
             return opp, start, opp_impl
-        logger.warning(f"[LINEUP_DEBUG] Team '{team_norm}' NOT FOUND in team_odds. Available: {list(team_odds.keys())}")
+        # Only log as warning if we have games data and team is missing
+        # This usually means the team doesn't play today, which is normal
+        if team_odds:
+            logger.info(f"[LINEUP_DEBUG] Team '{team_norm}' has no game today (not in {len(team_odds)} teams with games)")
+        else:
+            logger.warning(f"[LINEUP_DEBUG] Team '{team_norm}' not found - no games data available")
         return "", None, 4.5
 
     # --- Use SmartLineupSelector if enabled ---
@@ -4152,10 +4157,16 @@ async def get_fantasy_lineup_recommendations(
 
     games_list = report.get("games", [])
     if len(games_list) == 0:
-        lineup_warnings.insert(0,
-            "Odds API unavailable or no games today -- using projection-only scoring "
-            "(all teams at league-average 4.5 runs). Lineup ranked by projected stats only."
-        )
+        if not _games:
+            lineup_warnings.insert(0,
+                "No games found for this date -- Odds API may not have data yet "
+                f"(requested: {lineup_date}). Lineup ranked by projections only."
+            )
+        else:
+            lineup_warnings.insert(0,
+                f"Odds API returned {_games} games but no game data available. "
+                "Lineup ranked by projections only."
+            )
 
     # Detect active slot gaps - warn if suspiciously few active batters/pitchers
     _BENCH_SLOTS = {"BN", None}
