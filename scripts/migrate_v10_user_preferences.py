@@ -102,20 +102,15 @@ def upgrade(engine, dry_run=False):
     
     # Use autocommit mode to avoid transaction block issues with CREATE INDEX
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
-        # Execute each statement separately for better error handling
-        for statement in UPGRADE_SQL.split(';'):
-            statement = statement.strip()
-            if statement and not statement.startswith('--'):
-                try:
-                    conn.execute(text(statement))
-                except Exception as e:
-                    # Ignore "already exists" errors
-                    if "already exists" in str(e).lower():
-                        print(f"  WARNING: Skipping (already exists): {str(e)[:80]}")
-                    else:
-                        raise
-        
-        print("SUCCESS: user_preferences table created successfully")
+        try:
+            conn.execute(text(UPGRADE_SQL))
+            print("SUCCESS: user_preferences table created successfully")
+        except Exception as e:
+            # Ignore "already exists" errors
+            if "already exists" in str(e).lower():
+                print(f"  WARNING: Skipping (already exists): {str(e)[:80]}")
+            else:
+                raise
 
 
 def downgrade(engine, dry_run=False):
