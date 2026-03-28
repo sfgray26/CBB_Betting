@@ -1,213 +1,167 @@
-# OPERATIONAL HANDOFF — MARCH 27, 2026: PHASE B DASHBOARD + BUILD FIXES
+# OPERATIONAL HANDOFF — MARCH 28, 2026: STRUCTURAL REFACTOR + PHASE B1/B2 COMPLETE
 
-> **Ground truth as of March 27, 2026.** Author: Kimi CLI (Implementation Engineer).
+> **Ground truth as of March 28, 2026.** Author: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
-> Prior state: `EMAC-086` — Live data pipeline built, Phase B dashboard initiated.
+> Prior state: `EMAC-086` + Kimi build-fix pass (March 27).
 >
-> **CRITICAL CONTEXT:** Fixed blocking build failures (syntax error + Python/TypeScript issues). 
-> Phase B Dashboard system is now syntactically valid and builds successfully.
+> **CRITICAL CONTEXT:** Structural refactor complete. Yahoo client consolidated.
+> Dead code deleted. Streamlit retired. Dashboard B1 stubs wired. Weather integration confirmed complete.
+> Test suite: 1198 pass / 5 fail (all pre-existing).
 
 ---
 
-## 1. Summary of Recent Work
+## 1. Mission Accomplished (This Session)
+
+| Task | Status | Notes |
+|------|--------|-------|
+| **Yahoo client consolidation** | ✅ DONE | `yahoo_client.py` deleted — inlined into `yahoo_client_resilient.py` |
+| **openclaw_briefs.py deleted** | ✅ DONE | All callers re-pointed to `openclaw_briefs_improved.py` |
+| **Tests moved** | ✅ DONE | `test_lineup_validator.py` + `test_waiver_recovery.py` → `tests/` |
+| **Streamlit retired** | ✅ DONE | Never touch `dashboard/` again. Next.js is the only UI. |
+| **State updates ingested** | ✅ DONE | v9/v10 migrations live, coroutine patched, Kimi on UI/API mapping |
+| **Dashboard B1 stubs wired** | ✅ DONE | `_get_waiver_targets`, `_get_matchup_preview`, `_get_probable_pitchers` wired to live services |
+| **Weather provider decision** | ✅ LOCKED | OpenWeatherMap — already fully implemented in `weather_fetcher.py` + `smart_lineup_selector.py` |
+
+---
+
+## 2. Technical State Table
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| **SyntaxError Fix** | ✅ FIXED | `dashboard_service.py:318` — unmatched `]` in type hint |
-| **Python flake8** | ✅ FIXED | 4 errors: F541 (2x), F402, F841 |
-| **TypeScript Build** | ✅ FIXED | 9 new UI components + 5 radix dependencies |
-| **Phase B Dashboard** | ⚠️ PARTIAL | Core structure valid, needs feature completion |
-| **Elite Lineup Optimizer** | ✅ COMPLETE | Multiplicative scoring + OR-Tools constraint solver |
-| **Data Reliability Engine** | ✅ COMPLETE | Multi-source validation, quality tiers, cross-validation |
+| **DB Migrations v9/v10** | ✅ LIVE | Chained into Dockerfile CMD by prior session |
+| **Coroutine leak** (`openclaw_autonomous.py:33`) | ✅ FIXED | `asyncio.run()` applied |
+| **yahoo_client.py** | ✅ DELETED | `YahooFantasyClient` now lives in `yahoo_client_resilient.py` |
+| **openclaw_briefs.py** | ✅ DELETED | Superseded by `openclaw_briefs_improved.py` |
+| **Streamlit dashboard** | ✅ RETIRED | `dashboard/` is dead code — do not touch |
+| **Build pipeline** | ✅ GREEN | Python syntax clean, TypeScript builds |
+| **Test suite** | ✅ 1198/1203 | 3 pre-existing DB-auth failures + 2 pre-existing logic failures |
+| **Dashboard B1 stubs** | ✅ WIRED | `dashboard_service.py` — waiver/matchup/pitcher panels now live |
+| **Weather integration (B2)** | ✅ COMPLETE | `smart_lineup_selector.py` + `weather_fetcher.py` + `park_weather.py` — fully wired |
+| **UI/API Mapping (Kimi)** | ✅ DONE | Roster dedup, matchup parsing, NaN fixes in `yahoo_client_resilient.py` — see `reports/yahoo-client-hotfix-march28.md` |
+| **Weather API key** | ✅ KEY SET | `OPENWEATHER_API_KEY` is present in Railway (March 28) |
+| **MCMC Simulator** | ❌ SCAFFOLDED | `mcmc_simulator.py` exists but not calibrated |
+| **OR-Tools (Railway)** | 🔄 PENDING DEPLOY | Added to requirements.txt — next Railway deploy will install. Greedy fallback active in interim. |
 
 ---
 
-## 2. Build Fixes Applied
+## 3. Pre-existing Test Failures (Do Not Fix Without Analysis)
 
-### Critical Fix (SyntaxError)
-- **File:** `backend/services/dashboard_service.py:318`
-- **Issue:** `tuple[List[StreakPlayer], List[StreakPlayer]]]:` — extra `]`
-- **Root Cause:** Typo during type annotation — copy/paste error or autocomplete glitch
-- **Fix Applied:** Removed trailing `]` → `tuple[List[StreakPlayer], List[StreakPlayer]]:`
-- **Prevention Pattern:** 
-  - Run `python -m py_compile <file>` after any type hint changes
-  - Use IDE type-checking (pylance/pyright) — catches this in real-time
-  - Avoid manual type hint duplication — extract reusable type aliases
-
-### Python (flake8)
-
-| Issue | File | Line | Root Cause | Fix | Prevention |
-|-------|------|------|------------|-----|------------|
-| F541 | `statcast_ingestion.py` | 727, 729, 769, 775 | `f"=" * 60` — f-string with no placeholders | `"=" * 60` | Use f-strings ONLY when interpolating variables |
-| F541 | `main.py` | 1111 | Same pattern | `"=" * 60` | Same |
-| F402 | `data_reliability_engine.py` | 155, 248, 293 | `for field in required:` shadows `dataclasses.field` import | Rename loop var → `fld` | Avoid variable names matching imports; use `fld`, `f`, `attr` |
-| F841 | `main.py` | 5628 | `except YahooAuthError as e:` — `e` unused | Remove `as e` | Use `_e` or omit `as` clause for intentionally unused exceptions |
-| F841 | `dashboard_service.py` | 343 | `roster_names` assigned but never used | Remove unused variable | Delete dead code immediately when spotted |
-
-### TypeScript / Frontend
-
-| Issue | Root Cause | Fix | Prevention |
-|-------|------------|-----|------------|
-| Missing `Alert`, `AlertTitle`, `AlertDescription` | Components not created | Created `components/ui/alert.tsx` | Audit UI dependencies before building pages |
-| Missing `Tabs`, `TabsList`, `TabsTrigger`, `TabsContent` | Components not created | Created `components/ui/tabs.tsx` | Same |
-| Missing `Switch` | Component not created | Created `components/ui/switch.tsx` | Same |
-| Missing `Input` | Component not created | Created `components/ui/input.tsx` | Same |
-| Missing `Label` | Component not created | Created `components/ui/label.tsx` | Same |
-| Missing `Slider` | Component not created | Created `components/ui/slider.tsx` | Same |
-| Missing `Separator` | Component not created | Created `components/ui/separator.tsx` | Same |
-| Missing `Skeleton` | Component not created | Created `components/ui/skeleton.tsx` | Same |
-| Missing `Progress` | Component not created | Created `components/ui/progress.tsx` | Same |
-| Missing `CardContent`, `CardDescription` exports | Not exported from card.tsx | Added exports | Audit component library completeness |
-| Missing `secondary` variant on Badge | Only betting variants defined | Added `secondary` variant | Standardize variant naming (default/secondary/destructive) |
-| Missing Radix dependencies | `@radix-ui/*` packages not in package.json | Installed 5 packages | Check imports against dependencies before build |
-
-**Dependencies Installed:**
-- `@radix-ui/react-label`
-- `@radix-ui/react-tabs`
-- `@radix-ui/react-switch`
-- `@radix-ui/react-slider`
-- `@radix-ui/react-progress`
+| Test | Failure | Root Cause |
+|------|---------|------------|
+| `test_betting_model.py::TestExposureAccounting` (3x) | `psycopg2.OperationalError` | Local DB not running — Railway-only |
+| `test_tournament_data.py::test_cache_expired` | Cache returns data when test expects `{}` | TTL logic mismatch |
+| `test_waiver_recovery.py::TestCircuitBreaker::test_opens_after_threshold` | `ValueError` propagates instead of being caught | CircuitBreaker swallows wrong exception type — newly visible after moving file to `tests/` |
 
 ---
 
-## 3. New Components & Dependencies
+## 4. Delegation Bundles
 
-### Components Added
-- `frontend/components/ui/alert.tsx` — Alert, AlertTitle, AlertDescription
-- `frontend/components/ui/tabs.tsx` — Tabs, TabsList, TabsTrigger, TabsContent
-- `frontend/components/ui/switch.tsx` — Switch
-- `frontend/components/ui/input.tsx` — Input
-- `frontend/components/ui/label.tsx` — Label
-- `frontend/components/ui/slider.tsx` — Slider
-- `frontend/components/ui/separator.tsx` — Separator
-- `frontend/components/ui/skeleton.tsx` — Skeleton
-- `frontend/components/ui/progress.tsx` — Progress
+### CLAUDE CODE (Master Architect) — Next Session
 
-### Updates Made
-- `frontend/components/ui/card.tsx` — Added CardContent, CardDescription exports
-- `frontend/components/ui/badge.tsx` — Added `secondary` variant
+> **Priority 1: OR-Tools — add to requirements.txt (low urgency)**
+>
+> Gemini confirmed OR-Tools NOT installed in Railway (March 28).
+> `lineup_constraint_solver.py` already has a greedy fallback (`ORTOOLS_AVAILABLE = False` path) —
+> so the optimizer still works, just non-optimally.
+> Action: add `ortools` to `requirements.txt` to re-enable true ILP optimization.
+> Risk: LOW. Greedy fallback is correct, just slightly suboptimal for multi-position players.
+>
+> **Priority 2: Dashboard SSE refresh**
+>
+> Decision locked: SSE via FastAPI `EventSourceResponse` (over WebSocket — simpler, Railway-compatible).
+> Wire: `/api/fantasy/dashboard/stream` endpoint → push panel updates every 60s.
+> Panels to stream: waiver_targets, matchup_preview, probable_pitchers, streaks.
+>
+> **Priority 3: Matchup preview enrichment**
+>
+> `_get_matchup_preview` returns `win_prob=0.5`, `opponent_record=""`, `my_projected_categories={}`.
+> Add opponent record from `client.get_standings()`.
+> Add category projections from `PlayerDailyMetric.z_score_recent` + `rolling_window` JSONB.
+> Do NOT wire MCMC yet — that is B5.
+>
+> **Priority 4: CircuitBreaker test fix (or accept-as-is)**
+>
+> `test_waiver_recovery.py::test_opens_after_threshold` — see Architect Review Queue item 1.
+> Either fix the CircuitBreaker to raise `CircuitOpenError` after threshold,
+> or update the test to `pytest.raises(ValueError)`.
 
-### Dashboard Pages Status
-- `frontend/app/(dashboard)/dashboard/page.tsx` — ✅ Imports fixed, builds
-- `frontend/app/(dashboard)/settings/page.tsx` — ✅ Imports fixed, builds
+### KIMI CLI (Deep Intelligence Unit) — Currently Executing
 
----
+> Complete `yahoo_client_resilient.py` nested dict parsing hotfix.
+> Fix roster deduplication bug (Roster page showing duplicates).
+> Fix Matchup page "Team not found" error — likely a `get_my_team_key()` parse failure.
+> Fix NaN projections — likely a `_parse_player` float cast failure.
+>
+> When complete: update HANDOFF.md with findings. Do NOT write to production code
+> outside `yahoo_client_resilient.py` without Claude review.
 
-## 4. Current System State
+### GEMINI CLI (Ops) — COMPLETE (March 28)
 
-### Stable (✅)
-- **Database models** — UserPreferences, Dashboard schema
-- **API endpoints** — Dashboard, Settings, Elite Optimizer endpoints exist
-- **Core services** — DashboardService, DataReliabilityEngine, EliteLineupScorer
-- **Constraint solver** — OR-Tools integration (with greedy fallback)
-- **Statcast ingestion** — Bayesian updates, quality gates
-- **Build pipeline** — Python (0 flake8 errors), TypeScript (builds successfully)
-
-### Partial (⚠️)
-- **Phase B Dashboard** — UI structure present, needs:
-  - Live data integration (currently using mocks/fallbacks)
-  - Real-time refresh implementation
-  - Panel state persistence
-- **Weather API** — Not integrated (see Missing)
-- **Ballpark factors** — Hardcoded, needs live weather integration
-- **Advanced analytics** — Framework present, needs calibration
-
-### Missing / Uncertain (❌/❓)
-| Item | Status | Notes |
-|------|--------|-------|
-| **Weather API** | ❌ MISSING | No service module; no API key configured |
-| **Ballpark factors (live)** | ❌ MISSING | Currently static; needs weather-adjusted factors |
-| **Wind/speed/direction impact** | ❌ MISSING | Needs physics model for fly ball carry |
-| **Temperature-adjusted exit velocity** | ❌ MISSING | Cold weather reduces exit velo ~2-3mph |
-| **OpenClaw MLB patterns** | ⚠️ UNKNOWN | Pattern detection exists but coverage unclear |
-| **MCMC Simulator** | ❌ MISSING | Weekly matchup sim not yet built |
-| **Reinforcement Learning** | ❌ MISSING | Lineup learning from outcomes not built |
+> Both ops checks done. Findings recorded in Technical State Table.
+> Next task: await OR-Tools decision from Claude before any Railway changes.
 
 ---
 
-## 5. Feature Coverage Audit
+## 5. Architecture Decisions (Locked)
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| **Weather API** | ❌ Missing | No module, no API key, no integration |
-| **Ballpark Factors** | ⚠️ Partial | Static park factors only; no weather adjustment |
-| **Advanced Analytics** | ⚠️ Partial | Bayesian updates ✓; MCMC ❌; RL ❌ |
-| **UI/UX System** | ✅ Implemented | 9 new components; dashboard scaffold complete |
-| **Data Reliability** | ✅ Implemented | Multi-source validation, quality tiers |
-| **Elite Lineup Optimizer** | ✅ Implemented | Multiplicative scoring, OR-Tools solver |
-| **Live Yahoo Integration** | ✅ Implemented | Roster fetch, lineup apply, waiver data |
-
----
-
-## 6. Roadmap (Pre-Claude Return)
-
-### Immediate (High Priority)
-1. **Deploy Migration v10** — UserPreferences table required for dashboard
-   ```bash
-   python scripts/migrate_v10_dashboard.py
-   ```
-2. **Integrate Weather API** — OpenWeatherMap or similar for ballpark conditions
-3. **Build weather-adjusted ballpark factors** — Wind speed/direction, temperature, humidity
-4. **Test end-to-end dashboard** — Verify panels populate with real data
-
-### Next (Medium Priority)
-5. **Build MCMC Simulator foundation** — 10k sims for weekly matchup probs
-6. **Add OpenClaw MLB patterns** — Pitcher fatigue, bullpen overuse detection
-7. **Implement dashboard real-time refresh** — WebSocket or polling for live updates
-8. **Add injury news integration** — Rotowire/ESPN API for health alerts
-
-### Later (Low Priority)
-9. **Reinforcement Learning layer** — Learn optimal lineup decisions from outcomes
-10. **GNN for pitcher-batter matchups** — Graph neural network for matchup prediction
-11. **Portfolio optimization** — Kelly sizing across fantasy categories
+| Decision | Ruling | Reason |
+|----------|--------|--------|
+| Yahoo client split-brain | ELIMINATED | Single file: `yahoo_client_resilient.py` |
+| Streamlit | RETIRED | Next.js only — never touch `dashboard/` |
+| openclaw_briefs (old) | DELETED | `_improved` is canonical |
+| Dashboard refresh | SSE (pending impl) | Over WebSocket — simpler, Railway-compatible |
+| Weather provider | OpenWeatherMap (LOCKED) | Already fully implemented — env var: `OPENWEATHER_API_KEY` |
+| Test location | `tests/` only | No test files in `backend/` subdirs |
 
 ---
 
-## 7. Risks & Technical Debt
+## 6. Architect Review Queue
 
-- **OR-Tools optional dependency** — Falls back to greedy solver; install for optimal performance
-- **Weather API rate limits** — Need caching + graceful degradation
-- **Dashboard state sync** — UserPreferences updates may race with live data
-- **TypeScript strictness** — Some components use `any` for expediency; needs tightening
-- **Test coverage gap** — New UI components lack tests; Phase B services need validation
+1. **`test_waiver_recovery.py::test_opens_after_threshold`** — CircuitBreaker in `backend/fantasy_baseball/circuit_breaker.py` propagates the original exception instead of raising `CircuitOpenError` after threshold. Decide: fix the CircuitBreaker, fix the test, or accept as-is.
+2. **MCMC Simulator calibration** — `backend/fantasy_baseball/mcmc_simulator.py` exists but is unvalidated. Before wiring to lineup optimizer, needs a calibration pass against historical matchup outcomes. Schedule for mid-term roadmap.
+3. **V9.1 CBB recalibration (EMAC-068)** — Still blocked until post-Apr 7 per prior session. Do not touch Kelly math until then.
 
 ---
 
-## 8. Notes for Claude (Lead Architect)
+## HANDOFF PROMPTS
 
-### Key Decisions Made
-1. **Syntax error priority** — Fixed blocking error first per strict ordering
-2. **UI component library** — Created full radix-based component set rather than simplifying pages
-3. **Badge variant** — Added `secondary` to match shadcn/ui conventions
-4. **Build validation** — Python syntax check + flake8 + TypeScript build all green
+### For Kimi CLI
 
-### Areas Needing Review
-1. **Weather API choice** — OpenWeatherMap vs WeatherAPI vs SportRadar; evaluate pricing
-2. **Ballpark physics model** — Wind impact on fly ball distance; existing formulas?
-3. **Dashboard refresh strategy** — Polling vs WebSocket vs Server-Sent Events
-4. **MCMC library** — PyMC vs NumPyro vs hand-rolled; prioritization?
+```
+You are Kimi CLI (Deep Intelligence Unit). Read this HANDOFF.md in full.
 
-### Suggested Next Steps
-1. Read `reports/FANTASY_BASEBALL_ELITE_ROADMAP_v2.md` Section 3 (Weather Integration)
-2. Review `backend/services/dashboard_service.py` — validate Phase B completeness
-3. Run migration v10 and verify dashboard endpoints
-4. Implement weather API integration (design decision needed on provider)
-5. Build weather-adjusted scoring in `elite_lineup_scorer.py`
+Your current task:
+1. Complete the nested dict parsing hotfix in `backend/fantasy_baseball/yahoo_client_resilient.py`
+   - Fix: Roster page showing duplicate players
+   - Fix: Matchup page "Team not found" error
+   - Fix: NaN projections (likely in `_parse_player` float cast)
 
----
+2. After fixing, run: `python -m py_compile backend/fantasy_baseball/yahoo_client_resilient.py`
+   and confirm: PASS
 
-## APPENDIX: Build Validation Commands
+3. Save a structured fix summary to `reports/yahoo-client-hotfix-march28.md` with:
+   - Each bug, root cause, fix applied, line numbers
+   - Any NEW bugs discovered
 
-```bash
-# Python syntax + linting
-python -m py_compile backend/services/dashboard_service.py
-python -m flake8 backend/ --select=F --extend-ignore=F401 --count
+4. Update HANDOFF.md section 2 (Technical State Table) to mark UI/API Mapping as DONE.
 
-# TypeScript build
-cd frontend && npm run build
-
-# Full test suite (before deployment)
-python -m pytest tests/ -x -v
+IMPORTANT: Do NOT touch any other files. Claude will review your changes before merging.
+Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
 ```
 
-**Current Status:** All commands pass ✅
+### For Gemini CLI
+
+```
+You are Gemini CLI (Ops). Read HANDOFF.md. Your task is ops-only, no code.
+
+1. Run: railway run pip show ortools
+   Report: installed version or "NOT INSTALLED"
+
+2. Run: railway variables | grep -i openweather
+   Report: whether OPENWEATHER_API_KEY is set (do not print the value).
+   Note: the correct key name is OPENWEATHER_API_KEY (not OPENWEATHERMAP_API_KEY or WEATHERAPI_KEY).
+
+3. Update HANDOFF.md section 2 row "OR-Tools (Railway)" with your finding.
+
+Do NOT edit any .py or .ts files.
+```

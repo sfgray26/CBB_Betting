@@ -354,18 +354,45 @@ class YahooFantasyClient:
         """Return the team key for the authenticated user's team."""
         data = self._get(f"league/{self.league_key}/teams")
         teams_raw = self._league_section(data, 1).get("teams", {})
+        
         for team_list in self._iter_block(teams_raw, "team"):
             meta = {}
-            entries = team_list if isinstance(team_list, list) else [team_list]
-            for d in entries:
-                if isinstance(d, list):
-                    for item in d:
-                        if isinstance(item, dict):
-                            meta.update(item)
-                elif isinstance(d, dict):
-                    meta.update(d)
+            
+            # Handle deeply nested Yahoo response structures (Bugfix March 28)
+            def flatten_team_data(obj, depth=0):
+                """Recursively extract team metadata from nested lists/dicts."""
+                if depth > 5:
+                    return
+                if isinstance(obj, list):
+                    for item in obj:
+                        flatten_team_data(item, depth + 1)
+                elif isinstance(obj, dict):
+                    # Check for is_owned_by_current_login at any level
+                    if "is_owned_by_current_login" in obj:
+                        meta["is_owned_by_current_login"] = obj["is_owned_by_current_login"]
+                    # Extract key fields
+                    for key in ["team_key", "team_id", "name", "is_owned_by_current_login"]:
+                        if key in obj:
+                            meta[key] = obj[key]
+                    # Recurse into nested structures
+                    for v in obj.values():
+                        if isinstance(v, (list, dict)):
+                            flatten_team_data(v, depth + 1)
+            
+            flatten_team_data(team_list)
+            
             if meta.get("is_owned_by_current_login"):
-                return meta["team_key"]
+                team_key = meta.get("team_key")
+                if team_key:
+                    return team_key
+        
+        # Fallback: try environment variable
+        import os
+        env_team_key = os.getenv("YAHOO_TEAM_KEY")
+        if env_team_key:
+            logger.warning(f"Using YAHOO_TEAM_KEY from env: {env_team_key}")
+            return env_team_key
+            
         raise YahooAPIError("Could not find your team — are you authenticated?")
 
     def get_faab_balance(self) -> Optional[float]:
@@ -417,8 +444,11 @@ class YahooFantasyClient:
         roster = self._safe_get(team_data, "roster")
         slot_0 = self._safe_get(roster, "0")
         players_raw = self._safe_get(slot_0, "players")
-        players = []
+        
+        # Deduplicate by player_key to prevent roster page duplicates (Bugfix March 28)
+        players_by_key: dict[str, dict] = {}
         count = int(players_raw.get("count", 0))
+        
         for i in range(count):
             entry = players_raw.get(str(i), {})
             entry = self._flatten_league_section(entry) if isinstance(entry, list) else entry
@@ -429,9 +459,18 @@ class YahooFantasyClient:
             selected_pos = self._extract_selected_position(player_data)
             if selected_pos:
                 p["selected_position"] = selected_pos
-
-            players.append(p)
-        return players
+            
+            # Deduplicate by player_key (line 447-451)
+            player_key_val = p.get("player_key")
+            if player_key_val and player_key_val not in players_by_key:
+                players_by_key[player_key_val] = p
+            elif not player_key_val:
+                # Fallback: use player_id if player_key is missing
+                player_id = p.get("player_id") or p.get("name", f"unknown_{i}")
+                if player_id not in players_by_key:
+                    players_by_key[player_id] = p
+        
+        return list(players_by_key.values())
 
     @staticmethod
     def _extract_selected_position(player_data) -> Optional[str]:
@@ -651,7 +690,8 @@ class YahooFantasyClient:
         Yahoo's scoreboard nesting changed between API versions:
           v1: league[1].scoreboard.0.matchups   (older format)
           v2: league[1].scoreboard.matchups      (2025+ format)
-        Both paths are tried so this survives Yahoo response shape changes.
+          v3: league[1].scoreboard.0.matchups.0  (nested indexed format)
+        Multiple paths are tried so this survives Yahoo response shape changes.
         """
         path = f"league/{self.league_key}/scoreboard"
         params = {}
@@ -675,13 +715,48 @@ class YahooFantasyClient:
                 if isinstance(item, dict):
                     flat.update(item)
             matchups_raw = flat.get("matchups", {})
+        
+        # Deep search for matchups structure if still not found
+        if not matchups_raw and isinstance(scoreboard, dict):
+            # Search recursively for matchups
+            def find_matchups(obj, depth=0):
+                if depth > 3:
+                    return None
+                if isinstance(obj, dict):
+                    if "matchups" in obj:
+                        return obj["matchups"]
+                    for v in obj.values():
+                        result = find_matchups(v, depth + 1)
+                        if result:
+                            return result
+                elif isinstance(obj, list):
+                    for item in obj:
+                        result = find_matchups(item, depth + 1)
+                        if result:
+                            return result
+                return None
+            matchups_raw = find_matchups(scoreboard) or {}
 
         matchups = []
-        count = int(matchups_raw.get("count", 0)) if isinstance(matchups_raw, dict) else 0
-        for i in range(count):
-            entry = matchups_raw.get(str(i), {})
-            if isinstance(entry, dict) and "matchup" in entry:
-                matchups.append(entry["matchup"])
+        
+        # Handle both dict (indexed) and list formats
+        if isinstance(matchups_raw, list):
+            for entry in matchups_raw:
+                if isinstance(entry, dict):
+                    if "matchup" in entry:
+                        matchups.append(entry["matchup"])
+                    else:
+                        matchups.append(entry)
+        elif isinstance(matchups_raw, dict):
+            count = int(matchups_raw.get("count", 0))
+            for i in range(count):
+                entry = matchups_raw.get(str(i), {})
+                if isinstance(entry, dict):
+                    if "matchup" in entry:
+                        matchups.append(entry["matchup"])
+                    else:
+                        matchups.append(entry)
+        
         return matchups
 
     def add_drop_player(self, add_player_key: str, drop_player_key: Optional[str] = None,
@@ -751,17 +826,40 @@ class YahooFantasyClient:
         }
 
     @staticmethod
+    def _safe_float(value, default=0.0) -> float:
+        """Safely convert value to float, returning default on failure or NaN."""
+        if value is None:
+            return default
+        try:
+            result = float(value)
+            # Check for NaN (NaN != NaN)
+            if result != result:
+                return default
+            return result
+        except (ValueError, TypeError):
+            return default
+
+    @staticmethod
     def _parse_player(player_list: list) -> dict:
         """Flatten Yahoo's nested player structure."""
         meta = {}
-        if isinstance(player_list, list) and isinstance(player_list[0], list):
-            for item in player_list[0]:
-                if isinstance(item, dict):
-                    meta.update(item)
-        elif isinstance(player_list, list):
-            for item in player_list:
-                if isinstance(item, dict):
-                    meta.update(item)
+        
+        # Defensive parsing for nested list structures (Bugfix March 28)
+        def flatten_player_data(obj, depth=0):
+            """Recursively extract player metadata from nested lists/dicts."""
+            if depth > 5:
+                return
+            if isinstance(obj, list):
+                for item in obj:
+                    flatten_player_data(item, depth + 1)
+            elif isinstance(obj, dict):
+                meta.update(obj)
+                # Recurse into nested values that might contain more data
+                for v in obj.values():
+                    if isinstance(v, (list, dict)):
+                        flatten_player_data(v, depth + 1)
+        
+        flatten_player_data(player_list)
 
         # Extract eligible positions
         positions_raw = meta.get("eligible_positions", [])
@@ -775,37 +873,54 @@ class YahooFantasyClient:
         # Extract percent_owned — Yahoo returns this inside an "ownership" sub-block
         # at the outer player list level (not inside metadata).
         owned_pct = 0.0
-        if isinstance(player_list, list):
-            for outer_item in player_list:
-                if isinstance(outer_item, dict) and "ownership" in outer_item:
-                    pct_block = outer_item["ownership"].get("percent_owned", {})
+        
+        # Search recursively for ownership data
+        def find_ownership(obj, depth=0):
+            nonlocal owned_pct
+            if depth > 5 or owned_pct > 0:
+                return
+            if isinstance(obj, list):
+                for item in obj:
+                    find_ownership(item, depth + 1)
+            elif isinstance(obj, dict):
+                if "ownership" in obj:
+                    pct_block = obj["ownership"].get("percent_owned", {})
                     if isinstance(pct_block, dict):
                         raw = pct_block.get("value", 0)
                     else:
                         raw = pct_block
-                    try:
-                        owned_pct = float(raw or 0)
-                    except (ValueError, TypeError):
-                        owned_pct = 0.0
-                    break
+                    owned_pct = YahooFantasyClient._safe_float(raw, 0.0)
+                # Also check for old format
+                elif "percent_owned" in obj and "value" in obj["percent_owned"]:
+                    owned_pct = YahooFantasyClient._safe_float(
+                        obj["percent_owned"]["value"], 0.0
+                    )
+                # Recurse
+                for v in obj.values():
+                    if isinstance(v, (list, dict)):
+                        find_ownership(v, depth + 1)
+        
+        find_ownership(player_list)
+        
         # Fallback: old "percent_owned" key directly in metadata (pre-2025 format)
         if owned_pct == 0.0:
             owned_raw = meta.get("percent_owned", 0)
             if isinstance(owned_raw, dict):
-                try:
-                    owned_pct = float(owned_raw.get("value", 0) or 0)
-                except (ValueError, TypeError):
-                    owned_pct = 0.0
-            elif owned_raw:
-                try:
-                    owned_pct = float(owned_raw)
-                except (ValueError, TypeError):
-                    owned_pct = 0.0
+                owned_pct = YahooFantasyClient._safe_float(owned_raw.get("value", 0), 0.0)
+            else:
+                owned_pct = YahooFantasyClient._safe_float(owned_raw, 0.0)
 
+        # Extract name with defensive handling
+        name = meta.get("full_name")
+        if not name and isinstance(meta.get("name"), dict):
+            name = meta["name"].get("full")
+        if not name:
+            name = meta.get("name", "Unknown")
+        
         return {
             "player_key": meta.get("player_key"),
             "player_id": meta.get("player_id"),
-            "name": meta.get("full_name") or meta.get("name", {}).get("full"),
+            "name": name,
             "team": meta.get("editorial_team_abbr"),
             "positions": [p for p in positions if p],
             "status": meta.get("status"),

@@ -36,7 +36,10 @@
       "WebFetch(domain:geminicli.com)",
       "Bash(.venv/Scripts/python.exe:*)",
       "Bash(venv/Scripts/pytest.exe:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(venv/Scripts/python -m pytest tests/ -q --tb=short)",
+      "Bash(venv/Scripts/python -m py_compile backend/services/dashboard_service.py)",
+      "Bash(venv/Scripts/python -m pytest tests/test_mlb_analysis.py tests/test_lineup_optimizer.py tests/test_waiver_integration.py tests/test_lineup_validator.py tests/test_waiver_recovery.py -q --tb=short)"
     ]
   }
 }

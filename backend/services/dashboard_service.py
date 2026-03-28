@@ -261,7 +261,7 @@ class DashboardService:
         
         try:
             # Get roster from Yahoo
-            roster = client.get_roster(team_key) if team_key else []
+            roster = client.get_roster(team_key) if team_key else client.get_roster()
             
             # Validate roster data
             validation = self.reliability_engine.validate_yahoo_roster(
@@ -336,34 +336,41 @@ class DashboardService:
                 except Exception as e:
                     logger.warning(f"Could not fetch roster for streaks: {e}")
             
-            if not roster:
-                return [], []
-            
+            roster_scoped = bool(roster)
+
             # Query recent metrics from database
             recent_date = datetime.utcnow().date() - timedelta(days=1)
-            metrics = db.query(PlayerDailyMetric).filter(
+            metrics_q = db.query(PlayerDailyMetric).filter(
                 PlayerDailyMetric.metric_date >= recent_date - timedelta(days=30),
                 PlayerDailyMetric.sport == "mlb"
-            ).all()
+            )
+            if roster_scoped:
+                roster_names = {p.get("name", "").lower() for p in roster}
+                metrics_q = metrics_q.filter(
+                    PlayerDailyMetric.player_name.in_(roster_names)
+                )
+            metrics = metrics_q.all()
+
+            if not metrics:
+                return [], []
             
             hot = []
             cold = []
-            
-            for player in roster:
-                player_name = player.get("name", "").lower()
-                
-                # Find metrics for this player
-                player_metrics = [
-                    m for m in metrics 
-                    if m.player_name.lower() == player_name
-                ]
-                
-                if not player_metrics:
-                    continue
-                
-                # Get most recent metric
-                latest = max(player_metrics, key=lambda m: m.metric_date)
-                
+
+            # Build roster lookup for team/positions enrichment (empty when Yahoo unavailable)
+            roster_lookup: dict = {}
+            if roster_scoped:
+                for p in roster:
+                    roster_lookup[p.get("name", "").lower()] = p
+
+            # Dedupe: keep most-recent row per player
+            latest_per_player: dict = {}
+            for m in metrics:
+                key = m.player_id
+                if key not in latest_per_player or m.metric_date > latest_per_player[key].metric_date:
+                    latest_per_player[key] = m
+
+            for latest in latest_per_player.values():
                 # Validate data quality
                 validation = self.reliability_engine.validate_statcast_data(
                     latest.player_id,
@@ -375,26 +382,27 @@ class DashboardService:
                     },
                     timestamp=datetime.combine(latest.metric_date, datetime.min.time())
                 )
-                
+
                 # Only use data if quality is acceptable
                 if validation.quality_tier in (DataQualityTier.TIER_4_STALE, DataQualityTier.TIER_5_UNAVAILABLE):
                     logger.debug(f"Skipping stale data for {latest.player_name}")
                     continue
-                
+
                 # Calculate trend
                 z_score = latest.z_score_recent or 0
-                
+
                 # Get rolling averages
                 rolling = latest.rolling_window or {}
                 last_7 = rolling.get("7d", {}).get("avg", 0)
                 last_14 = rolling.get("14d", {}).get("avg", 0)
                 last_30 = rolling.get("30d", {}).get("avg", 0)
-                
+
+                roster_entry = roster_lookup.get(latest.player_name.lower(), {})
                 streak_player = StreakPlayer(
                     player_id=latest.player_id,
                     name=latest.player_name,
-                    team=latest.player_name,  # Would need to get from roster
-                    positions=player.get("positions", []),
+                    team=roster_entry.get("team", ""),
+                    positions=roster_entry.get("positions", []),
                     trend="hot" if z_score > 0.5 else "cold" if z_score < -0.5 else "neutral",
                     trend_score=z_score,
                     last_7_avg=last_7,
@@ -402,7 +410,7 @@ class DashboardService:
                     last_30_avg=last_30,
                     reason=f"z-score: {z_score:.2f} (data quality: {validation.quality_tier.value})"
                 )
-                
+
                 if z_score > 0.5:
                     hot.append(streak_player)
                 elif z_score < -0.5:
@@ -424,14 +432,75 @@ class DashboardService:
         prefs: UserPreferences
     ) -> List[WaiverTarget]:
         """
-        B1.3: Get prioritized waiver wire recommendations.
+        B1.3: Get prioritized waiver wire recommendations via WaiverEdgeDetector.
         """
-        targets = []
-        
-        # TODO: Integrate with WaiverEdgeDetector
-        # Apply user's waiver_preferences filters
-        
-        return targets
+        client = self._get_yahoo_client()
+        if not client:
+            logger.warning("Yahoo client unavailable - cannot get waiver targets")
+            return []
+
+        try:
+            my_roster = client.get_roster()
+
+            # Attempt to get opponent roster to improve category deficit scoring
+            opponent_roster: List[dict] = []
+            try:
+                scoreboard = client.get_scoreboard()
+                my_team_key = client.get_my_team_key()
+                for matchup in scoreboard:
+                    teams_raw = matchup.get("teams", {})
+                    opp_key = self._extract_opponent_key(teams_raw, my_team_key)
+                    if opp_key:
+                        opponent_roster = client.get_roster(opp_key)
+                        break
+            except Exception as e:
+                logger.debug(f"Opponent roster unavailable for waiver scoring: {e}")
+
+            moves = self.waiver_detector.get_top_moves(
+                my_roster, opponent_roster, n_candidates=10
+            )
+
+            targets = []
+            for move in moves:
+                fa = move.get("add_player") or {}
+                if not fa:
+                    continue
+
+                need_score = float(move.get("need_score", 0.0))
+                win_gain = float(move.get("win_prob_gain", 0.0))
+                priority_score = need_score + win_gain * 100
+
+                if priority_score > 2.0:
+                    tier = "must_add"
+                elif priority_score > 1.0:
+                    tier = "strong_add"
+                else:
+                    tier = "streamer"
+
+                drop_name = move.get("drop_player_name", "")
+                reason_parts = [f"Need score: {need_score:.2f}"]
+                if drop_name:
+                    reason_parts.append(f"Drop: {drop_name}")
+                if win_gain:
+                    reason_parts.append(f"Win gain: {win_gain:+.1%}")
+                reason = " | ".join(reason_parts)
+
+                targets.append(WaiverTarget(
+                    player_id=str(fa.get("player_id") or fa.get("player_key", "")),
+                    name=fa.get("name", "Unknown"),
+                    team=fa.get("team", ""),
+                    positions=fa.get("positions", []),
+                    percent_owned=float(fa.get("percent_owned", 0.0)),
+                    priority_score=priority_score,
+                    tier=tier,
+                    reason=reason,
+                ))
+
+            return targets
+
+        except Exception as e:
+            logger.error(f"Failed to get waiver targets: {e}")
+            return []
     
     async def _get_injury_flags(self, user_id: str) -> tuple[List[InjuryFlag], int, int]:
         """
@@ -509,28 +578,179 @@ class DashboardService:
         team_key: Optional[str]
     ) -> Optional[MatchupPreview]:
         """
-        B1.5: Get this week's matchup analysis.
+        B1.5: Get this week's matchup analysis from Yahoo scoreboard.
+
+        Win probability uses a 0.5 baseline — MCMC upgrade is mid-term roadmap.
         """
-        # TODO: Integrate with Yahoo scoreboard API
-        # Use MCMC simulator for projections
-        
-        return None
+        client = self._get_yahoo_client()
+        if not client:
+            return None
+
+        try:
+            my_team_key = team_key or client.get_my_team_key()
+            scoreboard = client.get_scoreboard()
+
+            if not scoreboard:
+                return None
+
+            # Find our matchup in the scoreboard
+            opponent_key = ""
+            week_number = 1
+            for matchup in scoreboard:
+                teams_raw = matchup.get("teams", {})
+                opp_key = self._extract_opponent_key(teams_raw, my_team_key)
+                if opp_key is not None:
+                    opponent_key = opp_key
+                    # Extract week number — Yahoo nests this differently per version
+                    week_raw = matchup.get("week") or matchup.get("week_number", 1)
+                    try:
+                        week_number = int(week_raw)
+                    except (TypeError, ValueError):
+                        week_number = 1
+                    break
+            else:
+                return None  # Our team not found in scoreboard
+
+            # Resolve opponent team name
+            opponent_name = "Opponent"
+            if opponent_key:
+                try:
+                    all_teams = client.get_all_teams()
+                    opp = next((t for t in all_teams if t.get("team_key") == opponent_key), None)
+                    if opp:
+                        opponent_name = opp.get("name", "Opponent")
+                except Exception:
+                    pass
+
+            return MatchupPreview(
+                week_number=week_number,
+                opponent_team_name=opponent_name,
+                opponent_record="",  # Requires standings query — deferred
+                my_projected_categories={},  # MCMC pending
+                opponent_projected_categories={},
+                win_probability=0.5,  # MCMC pending
+                category_advantages=[],
+                category_disadvantages=[],
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to get matchup preview: {e}")
+            return None
     
     async def _get_probable_pitchers(
         self,
         user_id: str
     ) -> tuple[List[ProbablePitcherInfo], List[ProbablePitcherInfo]]:
         """
-        B1.6: Get probable pitchers and two-start SPs.
+        B1.6: Get probable pitchers and two-start SPs via DailyLineupOptimizer.
+
+        Two-start detection: counts starts across the next 7 calendar days.
         """
-        pitchers = []
-        two_starts = []
-        
-        # TODO: Use DailyLineupOptimizer.flag_pitcher_starts()
-        # Cross-reference with free agents for streamer suggestions
-        
-        return pitchers, two_starts
+        client = self._get_yahoo_client()
+        if not client:
+            logger.warning("Yahoo client unavailable - cannot get probable pitchers")
+            return [], []
+
+        try:
+            roster = client.get_roster()
+            today = datetime.utcnow()
+            today_str = today.strftime("%Y-%m-%d")
+
+            # Flag today's starters
+            pitcher_data = self.lineup_optimizer.flag_pitcher_starts(roster, game_date=today_str)
+
+            # Count starts over rolling 7-day window for two-start detection
+            start_counts: Dict[str, int] = {}
+            for day_offset in range(7):
+                check_date = (today + timedelta(days=day_offset)).strftime("%Y-%m-%d")
+                try:
+                    week_pitchers = self.lineup_optimizer.flag_pitcher_starts(
+                        roster, game_date=check_date
+                    )
+                    for p in week_pitchers:
+                        if p.get("has_start") and p.get("pitcher_slot") == "SP":
+                            start_counts[p.get("name", "")] = (
+                                start_counts.get(p.get("name", ""), 0) + 1
+                            )
+                except Exception:
+                    pass  # Best-effort; a missing day doesn't break today's display
+
+            pitchers: List[ProbablePitcherInfo] = []
+            two_starts: List[ProbablePitcherInfo] = []
+
+            for p in pitcher_data:
+                if not p.get("has_start"):
+                    continue
+
+                name = p.get("name", "Unknown")
+                team = p.get("team", "")
+                is_two_start = start_counts.get(name, 1) >= 2
+
+                info = ProbablePitcherInfo(
+                    name=name,
+                    team=team,
+                    opponent="",  # Cross-ref with odds map deferred to next pass
+                    game_date=today_str,
+                    is_two_start=is_two_start,
+                    matchup_quality="neutral",  # Pitcher quality scoring deferred
+                    stream_score=float(start_counts.get(name, 1)),
+                    reason="Two-start week" if is_two_start else "Starting today",
+                )
+                pitchers.append(info)
+                if is_two_start:
+                    two_starts.append(info)
+
+            return pitchers, two_starts
+
+        except Exception as e:
+            logger.error(f"Failed to get probable pitchers: {e}")
+            return [], []
     
+    # ---------------------------------------------------------------------
+    # Internal helpers
+    # ---------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_opponent_key(teams_raw: Any, my_team_key: str) -> Optional[str]:
+        """
+        Given a Yahoo scoreboard 'teams' block (dict or list), return the
+        team_key of the opponent, or None if my_team_key is not in this matchup.
+
+        Returns None  → our team is not in this matchup (skip it).
+        Returns ""    → our team is here but opponent key could not be resolved.
+        """
+        team_keys: List[str] = []
+
+        if isinstance(teams_raw, dict):
+            count = int(teams_raw.get("count", 0))
+            for i in range(count):
+                entry = teams_raw.get(str(i), {})
+                team_list = entry.get("team", [])
+                meta: Dict = {}
+                items = team_list if isinstance(team_list, list) else [team_list]
+                for item in items:
+                    if isinstance(item, list):
+                        for sub in item:
+                            if isinstance(sub, dict):
+                                meta.update(sub)
+                    elif isinstance(item, dict):
+                        meta.update(item)
+                key = meta.get("team_key", "")
+                if key:
+                    team_keys.append(key)
+        elif isinstance(teams_raw, list):
+            for entry in teams_raw:
+                if isinstance(entry, dict):
+                    key = entry.get("team_key", "")
+                    if key:
+                        team_keys.append(key)
+
+        if my_team_key not in team_keys:
+            return None  # Signal: wrong matchup
+
+        opp_keys = [k for k in team_keys if k != my_team_key]
+        return opp_keys[0] if opp_keys else ""
+
     # ---------------------------------------------------------------------
     # User Preferences CRUD
     # ---------------------------------------------------------------------
