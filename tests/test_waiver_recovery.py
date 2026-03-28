@@ -46,17 +46,16 @@ class TestCircuitBreaker:
     
     def test_opens_after_threshold(self):
         cb = CircuitBreaker("test", failure_threshold=2)
-        
+
         def fail():
             raise ValueError("error")
-        
-        cb.call(fail)  # Failure 1
+
         with pytest.raises(ValueError):
-            pass  # Exception was raised and caught
-        
+            cb.call(fail)  # Failure 1 — circuit still CLOSED (count < threshold)
+
         with pytest.raises(ValueError):
-            cb.call(fail)  # Failure 2 - should open
-        
+            cb.call(fail)  # Failure 2 — hits threshold, circuit transitions to OPEN
+
         assert cb.state.value == "open"
     
     def test_rejects_calls_when_open(self):

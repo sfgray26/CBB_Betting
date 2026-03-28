@@ -1,86 +1,108 @@
-# 🦅 CBB Edge — Elite Multi-Agent Collective (EMAC)
+# ORCHESTRATION.md — Swarm Swimlane Rules & Task Routing
 
-This document establishes the "Hive Mentality" for the CBB Edge development team. We operate as a single unit of elite operators with deep mutual trust and a "Trust but Verify" mandate.
-
----
-
-## 🏛️ The Operator Profiles
-
-### 1. Claude Code — "The Master Architect"
-*   **Domain:** Algorithmic integrity, structural design, mathematical elegance.
-*   **Strengths:** Deep reasoning, complex TDD, edge-case mitigation.
-*   **Weakness:** Tedious CLI operations, environment configuration.
-*   **Ethos:** "Build for 10 years, not 10 minutes."
-*   **Elite Mandate:** Must review Gemini's code for architectural consistency and Pythonic elegance.
-
-### 2. Gemini CLI — "Ops & Research" (RESTRICTED — Mar 20, 2026)
-*   **Domain:** Railway ops, env vars, web research, documentation only.
-*   **Restriction:** No code write access. Created duplicate FastAPI routes and invalid dict key references in EMAC-075 — demoted from code dev.
-*   **Permitted:** `railway logs`, env var changes, single-doc web research, `.md` documentation edits.
-*   **NOT permitted:** Any edits to `backend/`, `frontend/`, `tests/`, `scripts/`.
-*   **Ethos:** "Support the team without breaking what works."
-
-### 3. Kimi CLI — "The Deep Intelligence Unit"
-*   **Domain:** Whole-corpus analysis, long-context synthesis, performance attribution, tournament intelligence.
-*   **Strengths:** 1M-token context window — can hold entire season datasets, all predictions, full codebase, and research papers simultaneously. Strong reasoning across large corpora. Ideal when other agents must chunk or summarise.
-*   **Weakness:** Latency and cost for real-time tasks. Not suitable for sub-second runtime integrity checks.
-*   **Ethos:** "See the whole board. Never chunk what you can read whole."
-*   **Primary uses:**
-    - Season-wide performance attribution (read all 600+ bet logs in one shot, identify systematic biases)
-    - Tournament intelligence packages (full bracket + all team profiles + historical data in one context)
-    - Tiered integrity: second-opinion on high-stakes BET verdicts (Elite Eight, Final Four) after OpenClaw first pass
-    - Codebase-wide audits (read all Python files simultaneously, identify anti-patterns, dead code, inconsistencies)
-    - Research synthesis when Gemini hits context limits (multiple long docs + code simultaneously)
-*   **Elite Mandate:** Kimi output is always a structured research memo delivered to HANDOFF.md or a `reports/` file. Claude acts on it. Kimi does NOT write production code directly — it proposes; Claude approves and implements.
-
-### 4. Local LLMs (OpenClaw) — "The Narrative Intel Unit"
-*   **Domain:** Real-time synthesis, narrative intelligence, integrity checks.
-*   **Strengths:** Fast, free, local inference. Handles high-volume repetitive tasks (nightly sweep of all BET candidates). Pattern matching in "soft" data (news, injury notes, vibes).
-*   **Weakness:** Context limited to 3b parameters. Not suited for complex multi-step reasoning or large data synthesis.
-*   **Ethos:** "Translate the math into reality — fast."
-*   **Tiered use with Kimi:** OpenClaw runs first pass on every BET candidate. If confidence < 0.7 or verdict is VOLATILE/CAUTION on a high-value game (>1.0u recommended size), escalate to Kimi for deep second-opinion integrity check.
+> Maintained by: Claude Code (Master Architect). Authority: absolute.
+> Last consolidated: March 28, 2026
+> This document defines WHO does WHAT. Violations require a post-mortem in HANDOFF.md.
 
 ---
 
-## 🤝 The Hive Protocol
+## System Overview
 
-### 1. The "Trust but Verify" Startup
-Every session starts with a **Peer Review**.
-*   **Claude:** Review Kimi's proposed changes from reports/. Approve and implement what's correct.
-*   **OpenClaw:** Validate all BET-tier integrity on the current slate before sizing is finalized.
-*   **Gemini:** Monitor Railway health, confirm env vars are set, tail logs if needed.
+This monorepo contains two production systems that share infrastructure but have distinct domains:
 
-### 2. The "Mission Handoff" (HANDOFF.md)
-We no longer "list tasks." We provide **Operational Briefings**.
-*   **Intelligence:** What did we learn about the system?
-*   **Status:** What is the technical "Ground Truth"?
-*   **Directives:** What is the specific mission for the next operator?
+| System | Domain | Model Version | Season Status |
+|--------|--------|---------------|---------------|
+| **CBB Betting Analyzer** | NCAA D1 basketball betting, Kelly sizing, integrity validation | V9.1 | Tournament active; recalibration blocked until Apr 7 |
+| **Fantasy Baseball Platform** | Yahoo Fantasy lineup optimization, waiver intelligence, dashboard | Season Live | Opening Day March 26, 2026 — Day 3 |
 
-### 3. Continuous Improvement
-After every successful "Mission," the operator must update `tasks/lessons.md` with one way the team can work better together (e.g., "Claude, please use this specific import pattern so I can grep it faster").
+All agents operate across both systems within their swimlanes.
 
 ---
 
-## 🔀 Task Routing Matrix
+## Task Routing Matrix
 
 | Task Type | Owner | Notes |
 |-----------|-------|-------|
-| Risk math, Kelly sizing, Monte Carlo changes | Claude | Architecture domain |
-| New API endpoint, schema change | Claude | Always grep for existing routes first |
-| Railway deploy, env vars | Gemini (ops only) | Gemini does NOT write code |
-| DB migrations (write) | Claude | Gemini may run `railway run python scripts/...` |
-| Quick web research, API doc lookup | Gemini | Single-doc only, no code output |
+| **ARCHITECTURE / BACKEND** | | |
+| Risk math, Kelly sizing, circuit breakers | Claude | Never delegated |
+| CBB model changes (spread, SD, CI) | Claude | Never delegated |
+| New FastAPI route | Claude | Always grep existing routes before creating |
+| Pydantic schema change | Claude | Validate against all callers before merging |
+| SQLAlchemy model change | Claude | Check migration impact before applying |
+| Yahoo client changes | Claude | `yahoo_client_resilient.py` is the single file — no forks |
+| Lineup optimizer logic | Claude | ILP math, scoring formula changes |
+| Waiver edge detection | Claude | Category deficit scoring, move ranking |
+| Dashboard service methods | Claude | All panel stub wiring |
+| **FRONTEND / UI** | | |
+| Next.js page routing | Claude | Architecture decisions |
+| React component build (delegated) | Kimi | Only when Claude issues explicit delegation bundle |
+| CSS / Tailwind fixes | Kimi | Delegated; Claude reviews before merge |
+| API response shape changes (frontend impact) | Claude | Always check Next.js consumers |
+| Streamlit (any) | NOBODY | Retired. Never touch `dashboard/` again. |
+| **DEVOPS / INFRASTRUCTURE** | | |
+| Railway deployment / redeploy | Gemini | `railway up` or dashboard trigger |
+| Env var changes | Gemini | Railway dashboard only |
+| Log tailing | Gemini | `railway logs --follow` |
+| DB migration (write) | Claude | Script authored by Claude |
+| DB migration (run) | Gemini | `railway run python scripts/migrate_vN.py` |
+| CI/CD pipeline | Claude | Gemini must not touch |
+| **RESEARCH / ANALYSIS** | | |
 | Multi-doc research synthesis (3+ long docs) | Kimi | 1M context window |
-| Full season performance attribution | Kimi | >500 records — must be whole-corpus |
+| Full season performance attribution | Kimi | >500 records — whole-corpus only |
 | Tournament intelligence packages | Kimi | Full bracket + all team profiles in one shot |
-| Codebase-wide anti-pattern audit | Kimi | Read all files simultaneously |
-| Runtime BET integrity check (all games, nightly) | OpenClaw (qwen2.5:3b) | Must be fast + cheap |
-| High-stakes integrity (Elite 8, Final 4, >1.5u) | Kimi | After OpenClaw first pass |
-| Monitoring, health checks, log tailing | Gemini | DevOps domain |
+| Codebase-wide anti-pattern audit | Kimi | Reads all files simultaneously |
+| Single-doc API research | Gemini | No code output |
+| **RUNTIME INTELLIGENCE** | | |
+| CBB integrity check (all BET games, nightly) | OpenClaw | qwen2.5:3b — fast, cheap |
+| CBB integrity second opinion (Elite 8+, ≥1.5u) | Kimi | After OpenClaw first pass |
+| Fantasy morning brief generation | OpenClaw | `openclaw_briefs_improved.py` |
+| Waiver move digest (batch) | OpenClaw | `discord_notifier.send_batch_digest` |
+| Monitoring, health checks | Gemini | DevOps domain |
 
-## 🚫 Guardrails (The No-Fail Rules)
-1.  **Never argue.** If an agent suggests a better way, the other agent evaluates it mathematically and adopts the superior path immediately.
-2.  **No ghost changes.** Every modification must be justified in the handoff.
-3.  **Handoffs are Elite.** No "I finished X." Instead: "Mission X accomplished. Verified via tests A/B. Handing over for high-velocity deployment of Y."
-4.  **Kimi proposes, Claude approves.** Kimi research memos go to HANDOFF.md. Claude reads them and decides what to implement. Kimi never writes directly to production code.
-5.  **Tier your integrity.** OpenClaw for the first pass on every game. Kimi only for high-stakes second opinions. Never skip both.
+---
+
+## Swimlane Violation Examples (with historical root causes)
+
+| Violation | What Happened | Consequence |
+|-----------|---------------|-------------|
+| Gemini edits backend code | EMAC-075: duplicate FastAPI routes, invalid dict keys | Gemini permanently restricted from code writes |
+| Kimi writes production code without delegation | — | Reverted; Kimi re-proposes via HANDOFF.md memo |
+| Claude uses `datetime.utcnow()` for MLB games | West Coast games (9pm+ EDT) dropped as "no game" | Fixed Mar 28, 2026. UTC is banned for game_date. |
+| `yahoo_client.py` forked from `yahoo_client_resilient.py` | Split-brain client state, duplicate auth logic | Merged Mar 28, 2026. Single file only. |
+
+---
+
+## Hive Protocol
+
+### Session Startup (All Agents)
+1. Read `HANDOFF.md`
+2. Read `ORCHESTRATION.md` (this file)
+3. Read `IDENTITY.md`
+4. Read `HEARTBEAT.md`
+5. Read `memory/YYYY-MM-DD.md` (today + yesterday)
+
+### Handoff Quality Standard
+Every HANDOFF.md must pass the cold-start test:
+> "If I gave this handoff document to the target agent with zero prior context, could they execute the task completely and correctly?"
+
+If not — add the missing detail. Handoffs are operational briefings, not task lists.
+
+### Change Justification Rule
+Every production file modification must be traceable to:
+- A HANDOFF.md delegation bundle, OR
+- An explicit in-session directive from the human operator
+
+Silent edits that appear in git history without a corresponding HANDOFF entry are violations.
+
+---
+
+## No-Fail Rules
+
+1. **Gemini does not write code.** Not `.py`, not `.ts`, not config files with runtime impact.
+2. **Kimi proposes, Claude approves.** Kimi output → `reports/` or HANDOFF.md → Claude implements.
+3. **No UTC for baseball.** `datetime.now(ZoneInfo("America/New_York"))` everywhere game dates are computed.
+4. **No split clients.** `yahoo_client_resilient.py` is the one Yahoo client. No new yahoo_* files.
+5. **Tier your integrity.** OpenClaw runs on every CBB BET game. Kimi escalation for Elite 8+ or VOLATILE.
+6. **Test before marking done.** No task is complete without `py_compile` passing and relevant tests green.
+7. **Policy lives in IDENTITY.md.** Risk parameters must be documented there before they appear in code.
+8. **Streamlit is dead.** Never reference, import, or edit anything in `dashboard/`.
