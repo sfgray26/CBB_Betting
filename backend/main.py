@@ -5305,8 +5305,9 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
             name=name,
             team=p.get("team"),
             positions=p.get("positions") or [],
-            status=p.get("status"),
-            injury_note=p.get("injury_note"),
+            status=p.get("status") or None,
+            injury_note=p.get("injury_note") or None,
+            injury_status=p.get("status") or None,
             z_score=proj.get("z_score"),
             is_undroppable=bool(p.get("is_undroppable", 0)),
             is_proxy=bool(proj.get("is_proxy", False)),
@@ -5447,7 +5448,8 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         is_playoffs = bool(m.get("is_playoffs", 0))
 
         # Handle multiple Yahoo response shapes for teams
-        teams = m.get("teams", {})
+        # Shape A: teams at top level  Shape B: teams nested under "0" (Yahoo indexed format)
+        teams = m.get("teams") or m.get("0", {}).get("teams", {})
         team_data: list[tuple[str, str, dict]] = []
         
         # Shape 1: teams is a list of {team: [...]} objects
@@ -5476,6 +5478,9 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                     team_data.append(_extract_team_stats(t))
             elif isinstance(direct_teams, dict):
                 team_data.append(_extract_team_stats(direct_teams))
+
+        if not team_data:
+            logger.warning("No team_data extracted from matchup. Matchup keys: %s", list(m.keys()))
 
         # Check if our team is in this matchup (with flexible key matching)
         my_entry = None

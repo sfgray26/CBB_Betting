@@ -22,6 +22,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, date
 from typing import Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -520,7 +521,7 @@ class DailyLineupOptimizer:
             warnings     — human-readable alerts (empty slot, off-day start, etc.)
         """
         if game_date is None:
-            game_date = datetime.utcnow().strftime("%Y-%m-%d")
+            game_date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
         games = self.fetch_mlb_odds(game_date)
         team_odds = self._build_team_odds_map(games)
@@ -629,7 +630,7 @@ class DailyLineupOptimizer:
         RP always has_start=True (they can pitch any day).
         """
         if game_date is None:
-            game_date = datetime.utcnow().strftime("%Y-%m-%d")
+            game_date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
         team_odds = self._build_team_odds_map(self.fetch_mlb_odds(game_date))
         has_slate = len(team_odds) >= 10
@@ -764,7 +765,7 @@ class DailyLineupOptimizer:
             - avoid_pitchers: opponents of high-implied-run teams
         """
         if game_date is None:
-            game_date = datetime.utcnow().strftime("%Y-%m-%d")
+            game_date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
         games = self.fetch_mlb_odds(game_date)
         team_odds = self._build_team_odds_map(games)

@@ -39,7 +39,11 @@
       "Bash(wc:*)",
       "Bash(venv/Scripts/python -m pytest tests/ -q --tb=short)",
       "Bash(venv/Scripts/python -m py_compile backend/services/dashboard_service.py)",
-      "Bash(venv/Scripts/python -m pytest tests/test_mlb_analysis.py tests/test_lineup_optimizer.py tests/test_waiver_integration.py tests/test_lineup_validator.py tests/test_waiver_recovery.py -q --tb=short)"
+      "Bash(venv/Scripts/python -m pytest tests/test_mlb_analysis.py tests/test_lineup_optimizer.py tests/test_waiver_integration.py tests/test_lineup_validator.py tests/test_waiver_recovery.py -q --tb=short)",
+      "Bash(venv/Scripts/python -m py_compile backend/main.py)",
+      "Bash(venv/Scripts/python -m py_compile backend/fantasy_baseball/yahoo_client_resilient.py)",
+      "Bash(venv/Scripts/python -m py_compile backend/fantasy_baseball/daily_lineup_optimizer.py)",
+      "Bash(venv/Scripts/python -m pytest tests/test_il_roster_support.py tests/test_yahoo_client_undroppable.py tests/test_opening_day_features.py -q --tb=short)"
     ]
   }
 }
