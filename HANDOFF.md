@@ -1,12 +1,8 @@
-# OPERATIONAL HANDOFF — MARCH 28, 2026: STRUCTURAL REFACTOR + PHASE B1/B2 COMPLETE
+# OPERATIONAL HANDOFF — MARCH 28, 2026: STATE CONSOLIDATION
 
-> **Ground truth as of March 28, 2026.** Author: Claude Code (Master Architect).
-> See `IDENTITY.md` for risk policy · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
-> Prior state: `EMAC-086` + Kimi build-fix pass (March 27).
->
-> **CRITICAL CONTEXT:** Structural refactor complete. Yahoo client consolidated.
-> Dead code deleted. Streamlit retired. Dashboard B1 stubs wired. Weather integration confirmed complete.
-> Test suite: 1198 pass / 5 fail (all pre-existing).
+> **Ground truth as of March 28, 2026 EOD.** Author: Claude Code (Master Architect).
+> See `IDENTITY.md` for risk posture · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
+> Prior active crises: DB migration failure, UI routing cascade, production outage — all resolved.
 
 ---
 
@@ -16,11 +12,14 @@
 |------|--------|-------|
 | **Yahoo client consolidation** | ✅ DONE | `yahoo_client.py` deleted — inlined into `yahoo_client_resilient.py` |
 | **openclaw_briefs.py deleted** | ✅ DONE | All callers re-pointed to `openclaw_briefs_improved.py` |
-| **Tests moved** | ✅ DONE | `test_lineup_validator.py` + `test_waiver_recovery.py` → `tests/` |
-| **Streamlit retired** | ✅ DONE | Never touch `dashboard/` again. Next.js is the only UI. |
-| **State updates ingested** | ✅ DONE | v9/v10 migrations live, coroutine patched, Kimi on UI/API mapping |
-| **Dashboard B1 stubs wired** | ✅ DONE | `_get_waiver_targets`, `_get_matchup_preview`, `_get_probable_pitchers` wired to live services |
-| **Weather provider decision** | ✅ LOCKED | OpenWeatherMap — already fully implemented in `weather_fetcher.py` + `smart_lineup_selector.py` |
+| **Tests moved to `tests/`** | ✅ DONE | `test_lineup_validator.py` + `test_waiver_recovery.py` |
+| **Streamlit retired** | ✅ DONE | `dashboard/` is dead code. Next.js is the only UI. Never touch again. |
+| **Dashboard B1 stubs wired** | ✅ DONE | `_get_waiver_targets`, `_get_matchup_preview`, `_get_probable_pitchers` → live services |
+| **Dashboard DB fallback** | ✅ DONE | `_get_lineup_gaps` roster bug fixed; `_get_streaks` falls back to DB when Yahoo down |
+| **Weather integration (B2)** | ✅ DONE | `smart_lineup_selector.py` → `weather_fetcher.py` → `park_weather.py` — fully wired |
+| **Production outage resolved** | ✅ DONE | Roster 500 fixed (Pydantic bool→str); injury_status wired; matchup team mapping; UTC→ET |
+| **OR-Tools added to deps** | ✅ DONE | `ortools>=9.8` in `requirements.txt`; greedy fallback active until Railway redeploys |
+| **EMAC doc consolidation** | ✅ DONE | HANDOFF, HEARTBEAT, AGENTS, ORCHESTRATION, IDENTITY all rewritten to current reality |
 
 ---
 
@@ -28,29 +27,33 @@
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| **DB Migrations v9/v10** | ✅ LIVE | Chained into Dockerfile CMD by prior session |
-| **Coroutine leak** (`openclaw_autonomous.py:33`) | ✅ FIXED | `asyncio.run()` applied |
-| **yahoo_client.py** | ✅ DELETED | `YahooFantasyClient` now lives in `yahoo_client_resilient.py` |
-| **openclaw_briefs.py** | ✅ DELETED | Superseded by `openclaw_briefs_improved.py` |
-| **Streamlit dashboard** | ✅ RETIRED | `dashboard/` is dead code — do not touch |
-| **Build pipeline** | ✅ GREEN | Python syntax clean, TypeScript builds |
-| **Test suite** | ✅ 1198/1203 | 3 pre-existing DB-auth failures + 2 pre-existing logic failures |
-| **Dashboard B1 stubs** | ✅ WIRED | `dashboard_service.py` — waiver/matchup/pitcher panels now live |
-| **Weather integration (B2)** | ✅ COMPLETE | `smart_lineup_selector.py` + `weather_fetcher.py` + `park_weather.py` — fully wired |
-| **UI/API Mapping (Kimi)** | ✅ DONE | Roster dedup, matchup parsing, NaN fixes in `yahoo_client_resilient.py` — see `reports/yahoo-client-hotfix-march28.md` |
-| **Weather API key** | ✅ KEY SET | `OPENWEATHER_API_KEY` is present in Railway (March 28) |
-| **MCMC Simulator** | ❌ SCAFFOLDED | `mcmc_simulator.py` exists but not calibrated |
-| **OR-Tools (Railway)** | 🔄 PENDING DEPLOY | Added to requirements.txt — next Railway deploy will install. Greedy fallback active in interim. |
+| **DB Migrations v9/v10** | ✅ LIVE | Chained into Dockerfile CMD; `user_preferences` table confirmed present |
+| **Yahoo client** | ✅ CONSOLIDATED | Single file: `yahoo_client_resilient.py`. Base class + resilient layer unified. |
+| **Roster endpoint (`/api/fantasy/roster`)** | ✅ LIVE | 200 OK. Pydantic `status` bool→None fixed. `injury_status` now populated. |
+| **Matchup endpoint (`/api/fantasy/matchup`)** | ✅ LIVE | Team mapping fixed — handles Yahoo indexed format (`m["0"]["teams"]`). Diagnostic log added. |
+| **UTC timezone bug** | ✅ FIXED | `daily_lineup_optimizer.py` — all 3 `datetime.utcnow()` → `datetime.now(ZoneInfo("America/New_York"))` |
+| **Weather integration** | ✅ LIVE | Provider: OpenWeatherMap. Env var `OPENWEATHER_API_KEY` confirmed set in Railway. |
+| **OR-Tools** | 🔄 PENDING DEPLOY | In `requirements.txt`. Greedy fallback active in interim. |
+| **Kimi UI/API hotfix** | ✅ MERGED | Roster dedup, `get_my_team_key()` recursive parse, `_safe_float()` NaN guard. |
+| **Streamlit** | ✅ RETIRED | `dashboard/` untouched. Next.js is canonical UI. |
+| **Test suite** | ✅ STABLE | 1198 pass / 5 pre-existing failures (3 DB-auth, 1 TTL logic, 1 CircuitBreaker) |
+| **Build pipeline** | ✅ GREEN | Python syntax clean across all modified files; TypeScript builds |
+| **MCMC Simulator** | ❌ SCAFFOLDED | `mcmc_simulator.py` exists, not calibrated. B5 roadmap item. |
+| **CBB V9.1 recalibration** | ⏸ BLOCKED | EMAC-068 — blocked until post-Apr 7. Do not touch Kelly math. |
 
 ---
 
-## 3. Pre-existing Test Failures (Do Not Fix Without Analysis)
+## 3. Resolved Crises (Archive — Do Not Revisit)
 
-| Test | Failure | Root Cause |
-|------|---------|------------|
-| `test_betting_model.py::TestExposureAccounting` (3x) | `psycopg2.OperationalError` | Local DB not running — Railway-only |
-| `test_tournament_data.py::test_cache_expired` | Cache returns data when test expects `{}` | TTL logic mismatch |
-| `test_waiver_recovery.py::TestCircuitBreaker::test_opens_after_threshold` | `ValueError` propagates instead of being caught | CircuitBreaker swallows wrong exception type — newly visible after moving file to `tests/` |
+| Crisis | Resolution | Date |
+|--------|------------|------|
+| `user_preferences` table missing | v9/v10 migrations chained into Dockerfile CMD | Mar 27, 2026 |
+| Pydantic `status: False` → HTTP 500 | `_parse_player` + `RosterPlayerOut` constructor guarded with `or None` | Mar 28, 2026 |
+| Matchup "Team not found" | `m.get("teams") or m.get("0", {}).get("teams", {})` | Mar 28, 2026 |
+| West Coast games showing no-game | `datetime.utcnow()` → `datetime.now(ZoneInfo("America/New_York"))` | Mar 28, 2026 |
+| `injury_status` always None | Added `injury_status=p.get("status") or None` to `RosterPlayerOut` constructor | Mar 28, 2026 |
+| `_get_lineup_gaps` empty on `team_key=None` | `client.get_roster()` (no-arg form) replaces silent `[]` | Mar 28, 2026 |
+| UI routing cascade (Kimi hotfix) | Roster dedup, team key recursive parse, NaN float guard | Mar 28, 2026 |
 
 ---
 
@@ -58,47 +61,51 @@
 
 ### CLAUDE CODE (Master Architect) — Next Session
 
-> **Priority 1: OR-Tools — add to requirements.txt (low urgency)**
+> **Priority 1: Railway redeploy**
 >
-> Gemini confirmed OR-Tools NOT installed in Railway (March 28).
-> `lineup_constraint_solver.py` already has a greedy fallback (`ORTOOLS_AVAILABLE = False` path) —
-> so the optimizer still works, just non-optimally.
-> Action: add `ortools` to `requirements.txt` to re-enable true ILP optimization.
-> Risk: LOW. Greedy fallback is correct, just slightly suboptimal for multi-position players.
+> `ortools>=9.8` is now in `requirements.txt`. Next Railway redeploy will install it and restore
+> ILP optimization in `lineup_constraint_solver.py` (currently running greedy fallback).
+> No code changes needed — just trigger deploy via Gemini.
+
+> **Priority 2: Dashboard SSE endpoint**
 >
-> **Priority 2: Dashboard SSE refresh**
->
-> Decision locked: SSE via FastAPI `EventSourceResponse` (over WebSocket — simpler, Railway-compatible).
-> Wire: `/api/fantasy/dashboard/stream` endpoint → push panel updates every 60s.
-> Panels to stream: waiver_targets, matchup_preview, probable_pitchers, streaks.
->
+> Decision locked: SSE via FastAPI `EventSourceResponse` (simpler than WebSocket, Railway-compatible).
+> Wire: `GET /api/fantasy/dashboard/stream` → yield panel updates every 60s.
+> Panels to stream: `waiver_targets`, `matchup_preview`, `probable_pitchers`, `streaks`.
+> Target file: `backend/main.py` (new route) + `backend/services/dashboard_service.py` (yield helper).
+
 > **Priority 3: Matchup preview enrichment**
 >
-> `_get_matchup_preview` returns `win_prob=0.5`, `opponent_record=""`, `my_projected_categories={}`.
-> Add opponent record from `client.get_standings()`.
-> Add category projections from `PlayerDailyMetric.z_score_recent` + `rolling_window` JSONB.
-> Do NOT wire MCMC yet — that is B5.
+> `_get_matchup_preview` is live but returns `win_prob=0.5`, `opponent_record=""`, `my_projected_categories={}`.
+> Next pass: populate `opponent_record` from `client.get_standings()`.
+> Populate `my_projected_categories` / `opponent_projected_categories` from
+> `PlayerDailyMetric.z_score_recent` + `rolling_window["7d"]["avg"]` for rostered players.
+> Do NOT wire MCMC win probability yet — that is B5, post-calibration.
+
+> **Priority 4: CircuitBreaker test decision**
 >
-> **Priority 4: CircuitBreaker test fix (or accept-as-is)**
+> `test_waiver_recovery.py::TestCircuitBreaker::test_opens_after_threshold` — pre-existing failure.
+> `backend/fantasy_baseball/circuit_breaker.py` propagates `ValueError` instead of `CircuitOpenError`.
+> Options: (a) fix CircuitBreaker to catch and re-raise as `CircuitOpenError`, or
+> (b) update test to `pytest.raises(ValueError)`. Option (b) is faster; option (a) is correct.
+
+### KIMI CLI (Deep Intelligence Unit) — Standby
+
+> Kimi's doc refactor (MASTER_DOCUMENT_INDEX.md + deprecation headers) is complete and accepted.
+> No active coding tasks. Next delegation will come when Matchup enrichment is scoped or
+> when the CBB recalibration (EMAC-068) is unblocked post-Apr 7.
 >
-> `test_waiver_recovery.py::test_opens_after_threshold` — see Architect Review Queue item 1.
-> Either fix the CircuitBreaker to raise `CircuitOpenError` after threshold,
-> or update the test to `pytest.raises(ValueError)`.
+> If initiating a new session unprompted: read this HANDOFF.md + `HEARTBEAT.md`.
+> Do not write to any production code files without a Claude delegation bundle.
 
-### KIMI CLI (Deep Intelligence Unit) — Currently Executing
+### GEMINI CLI (Ops) — Active
 
-> Complete `yahoo_client_resilient.py` nested dict parsing hotfix.
-> Fix roster deduplication bug (Roster page showing duplicates).
-> Fix Matchup page "Team not found" error — likely a `get_my_team_key()` parse failure.
-> Fix NaN projections — likely a `_parse_player` float cast failure.
+> 1. Trigger Railway redeploy to install `ortools>=9.8` from updated `requirements.txt`.
+>    Confirm: `railway run python -c "from ortools.sat.python import cp_model; print('ok')"`
+> 2. Monitor logs for 30 min post-deploy — confirm no new errors.
+> 3. Report back: `OR-Tools: INSTALLED` or any error seen in deploy logs.
 >
-> When complete: update HANDOFF.md with findings. Do NOT write to production code
-> outside `yahoo_client_resilient.py` without Claude review.
-
-### GEMINI CLI (Ops) — COMPLETE (March 28)
-
-> Both ops checks done. Findings recorded in Technical State Table.
-> Next task: await OR-Tools decision from Claude before any Railway changes.
+> Do NOT edit any `.py` or `.ts` files.
 
 ---
 
@@ -108,60 +115,56 @@
 |----------|--------|--------|
 | Yahoo client split-brain | ELIMINATED | Single file: `yahoo_client_resilient.py` |
 | Streamlit | RETIRED | Next.js only — never touch `dashboard/` |
-| openclaw_briefs (old) | DELETED | `_improved` is canonical |
-| Dashboard refresh | SSE (pending impl) | Over WebSocket — simpler, Railway-compatible |
-| Weather provider | OpenWeatherMap (LOCKED) | Already fully implemented — env var: `OPENWEATHER_API_KEY` |
-| Test location | `tests/` only | No test files in `backend/` subdirs |
+| `openclaw_briefs.py` (old) | DELETED | `_improved` is canonical |
+| Dashboard refresh strategy | SSE (pending impl) | Over WebSocket — simpler, Railway-compatible |
+| Weather provider | OpenWeatherMap (LOCKED) | Fully implemented in `weather_fetcher.py`; `OPENWEATHER_API_KEY` set |
+| Test file location | `tests/` only | No test files in `backend/` subdirs |
+| CBB recalibration | BLOCKED until Apr 7 | EMAC-068 — do not touch Kelly math before then |
 
 ---
 
 ## 6. Architect Review Queue
 
-1. **`test_waiver_recovery.py::test_opens_after_threshold`** — CircuitBreaker in `backend/fantasy_baseball/circuit_breaker.py` propagates the original exception instead of raising `CircuitOpenError` after threshold. Decide: fix the CircuitBreaker, fix the test, or accept as-is.
-2. **MCMC Simulator calibration** — `backend/fantasy_baseball/mcmc_simulator.py` exists but is unvalidated. Before wiring to lineup optimizer, needs a calibration pass against historical matchup outcomes. Schedule for mid-term roadmap.
-3. **V9.1 CBB recalibration (EMAC-068)** — Still blocked until post-Apr 7 per prior session. Do not touch Kelly math until then.
+1. **`test_waiver_recovery.py::test_opens_after_threshold`** — CircuitBreaker in `backend/fantasy_baseball/circuit_breaker.py` propagates `ValueError` instead of `CircuitOpenError` after threshold. Decide: fix the CircuitBreaker or update the test.
+2. **MCMC Simulator calibration** — `backend/fantasy_baseball/mcmc_simulator.py` exists but unvalidated. Schedule calibration pass for B5 roadmap (post-matchup enrichment).
+3. **CBB V9.1 recalibration (EMAC-068)** — Blocked until post-Apr 7. SNR/integrity scalar stacking issue confirmed. Do not touch Kelly math until then.
+4. **Matchup page RP-as-SP bug** — Edwin Díaz, Jason Adam (RPs) appearing in Starting Pitchers table. Root cause: SP filter not excluding by `pitcher_slot == "SP"`. Defer until after SSE work.
 
 ---
 
 ## HANDOFF PROMPTS
 
-### For Kimi CLI
+### For Gemini CLI
+
+```
+You are Gemini CLI (Ops). Read this HANDOFF.md in full.
+
+Your sole task this session:
+1. Trigger a Railway redeploy (push or manual trigger) so that requirements.txt changes take effect.
+   The key change: `ortools>=9.8` was added to requirements.txt.
+
+2. After deploy completes, run:
+   railway run python -c "from ortools.sat.python import cp_model; print('OR-Tools: INSTALLED')"
+   Report the output.
+
+3. Monitor Railway logs for 5 minutes post-deploy.
+   Report: any new errors seen, or "No new errors."
+
+4. Update HANDOFF.md Section 2 row "OR-Tools" to ✅ LIVE with today's date.
+
+Do NOT edit any .py or .ts files.
+Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
+```
+
+### For Kimi CLI (if initiating independently)
 
 ```
 You are Kimi CLI (Deep Intelligence Unit). Read this HANDOFF.md in full.
 
-Your current task:
-1. Complete the nested dict parsing hotfix in `backend/fantasy_baseball/yahoo_client_resilient.py`
-   - Fix: Roster page showing duplicate players
-   - Fix: Matchup page "Team not found" error
-   - Fix: NaN projections (likely in `_parse_player` float cast)
+No active coding tasks are assigned. Your standing responsibilities:
+- If any new `reports/` files have been requested in HANDOFF Delegation Bundles, execute them.
+- If CBB recalibration (EMAC-068) status changes to unblocked, prepare the V9.2 spec memo.
+- Do NOT write to any production code files without an explicit Claude delegation bundle.
 
-2. After fixing, run: `python -m py_compile backend/fantasy_baseball/yahoo_client_resilient.py`
-   and confirm: PASS
-
-3. Save a structured fix summary to `reports/yahoo-client-hotfix-march28.md` with:
-   - Each bug, root cause, fix applied, line numbers
-   - Any NEW bugs discovered
-
-4. Update HANDOFF.md section 2 (Technical State Table) to mark UI/API Mapping as DONE.
-
-IMPORTANT: Do NOT touch any other files. Claude will review your changes before merging.
 Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
-```
-
-### For Gemini CLI
-
-```
-You are Gemini CLI (Ops). Read HANDOFF.md. Your task is ops-only, no code.
-
-1. Run: railway run pip show ortools
-   Report: installed version or "NOT INSTALLED"
-
-2. Run: railway variables | grep -i openweather
-   Report: whether OPENWEATHER_API_KEY is set (do not print the value).
-   Note: the correct key name is OPENWEATHER_API_KEY (not OPENWEATHERMAP_API_KEY or WEATHERAPI_KEY).
-
-3. Update HANDOFF.md section 2 row "OR-Tools (Railway)" with your finding.
-
-Do NOT edit any .py or .ts files.
 ```
