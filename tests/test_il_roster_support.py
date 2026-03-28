@@ -9,7 +9,7 @@ Validates that:
 import pytest
 from unittest.mock import MagicMock, patch
 
-from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 from backend.services.waiver_edge_detector import WaiverEdgeDetector, _INACTIVE_STATUSES
 
 

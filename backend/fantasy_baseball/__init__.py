@@ -1,7 +1,7 @@
 """Fantasy Baseball module — Yahoo Fantasy integration, keeper evaluation, draft assistant."""
 
-# Original exports (preserve backward compatibility)
-from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+# Original exports (unified client — YahooFantasyClient + ResilientYahooClient in one module)
+from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient, YahooAuthError, YahooAPIError
 
 # Resilience components (new)
 from backend.fantasy_baseball.circuit_breaker import CircuitBreaker, CircuitOpenError

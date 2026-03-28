@@ -9,7 +9,7 @@ Run:
 """
 
 import pytest
-from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 
 
 def _build_player_list(is_undroppable_val):

@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """Diagnose the closer/saves gap in waiver recommendations."""
-from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 from backend.fantasy_baseball.player_board import get_or_create_projection
 from backend.services.waiver_edge_detector import WaiverEdgeDetector
 from backend.services.mcmc_simulator import MCMCWeeklySimulator

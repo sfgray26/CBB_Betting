@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """Diagnose what's wrong with the daily lineup optimizer."""
-from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 from backend.fantasy_baseball.daily_lineup_optimizer import get_lineup_optimizer
 from backend.fantasy_baseball.player_board import get_or_create_projection
 from datetime import date, timedelta

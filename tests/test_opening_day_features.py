@@ -68,14 +68,14 @@ class TestFaabBalanceField:
 
     def test_get_faab_balance_method_exists(self):
         """YahooFantasyClient must expose a get_faab_balance() method."""
-        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
         assert hasattr(YahooFantasyClient, "get_faab_balance"), \
             "YahooFantasyClient must have get_faab_balance()"
         assert callable(getattr(YahooFantasyClient, "get_faab_balance"))
 
     def test_get_faab_balance_returns_none_on_api_error(self):
         """get_faab_balance() must return None when an API error occurs."""
-        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 
         client = YahooFantasyClient.__new__(YahooFantasyClient)
         client.league_key = "mlb.l.99999"
@@ -89,7 +89,7 @@ class TestFaabBalanceField:
 
     def test_get_faab_balance_parses_owned_team(self):
         """get_faab_balance() must return faab_balance from authenticated user's team."""
-        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 
         client = YahooFantasyClient.__new__(YahooFantasyClient)
         client.league_key = "mlb.l.99999"
@@ -131,7 +131,7 @@ class TestFaabBalanceField:
 
         client._get = mock_get
         # Wire up the real _league_section and _iter_block
-        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient as _YFC
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient as _YFC
         client._league_section = _YFC._league_section.__get__(client, _YFC)
         client._iter_block = _YFC._iter_block
 

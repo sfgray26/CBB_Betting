@@ -202,6 +202,10 @@ def generate_and_send_morning_brief_improved() -> bool:
         return False
 
 
+# Canonical alias — callers should use this name
+generate_and_send_morning_brief = generate_and_send_morning_brief_improved
+
+
 if __name__ == "__main__":
     # Test mode
     import sys

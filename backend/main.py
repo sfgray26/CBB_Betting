@@ -81,12 +81,12 @@ from backend.schemas import (
     OraclePredictionDetail,
     MatchupSimulateRequest,
 )
-from backend.fantasy_baseball.yahoo_client import (
+from backend.fantasy_baseball.yahoo_client_resilient import (
     YahooFantasyClient,
     YahooAuthError,
     YahooAPIError,
+    ResilientYahooClient,
 )
-from backend.fantasy_baseball.yahoo_client_resilient import ResilientYahooClient
 from backend.fantasy_baseball.daily_lineup_optimizer import get_lineup_optimizer
 
 # Logging setup
@@ -3661,7 +3661,7 @@ async def sync_draft_from_yahoo(
     """
     from backend.models import FantasyDraftSession, FantasyDraftPick
     from backend.fantasy_baseball.player_board import get_board
-    from backend.fantasy_baseball.yahoo_client import YahooFantasyClient, YahooAuthError, YahooAPIError
+    from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient, YahooAuthError, YahooAPIError
 
     session = db.query(FantasyDraftSession).filter_by(session_key=session_key).first()
     if session is None:
@@ -3794,7 +3794,7 @@ async def sync_keepers_pre_draft(
     """
     from backend.models import FantasyDraftSession, FantasyDraftPick
     from backend.fantasy_baseball.player_board import get_board
-    from backend.fantasy_baseball.yahoo_client import YahooFantasyClient, YahooAuthError, YahooAPIError
+    from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient, YahooAuthError, YahooAPIError
 
     session = db.query(FantasyDraftSession).filter_by(session_key=session_key).first()
     if session is None:
@@ -5665,7 +5665,7 @@ async def elite_optimize_lineup(
     Returns:
         Optimal lineup with detailed scoring breakdown
     """
-    from backend.fantasy_baseball.yahoo_client import YahooFantasyClient, YahooAuthError
+    from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient, YahooAuthError
     from backend.fantasy_baseball.daily_lineup_optimizer import DailyLineupOptimizer
     
     try:
@@ -5776,7 +5776,7 @@ async def analyze_lineup_scarcity(user: str = Depends(verify_api_key)):
     
     Helps identify positional strengths/weaknesses for waiver/trade decisions.
     """
-    from backend.fantasy_baseball.yahoo_client import YahooFantasyClient, YahooAuthError
+    from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient, YahooAuthError
     from backend.fantasy_baseball.lineup_constraint_solver import get_lineup_solver
     
     try:
@@ -5958,7 +5958,7 @@ async def yahoo_test(user: str = Depends(verify_admin_api_key)):
     Requires YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET, YAHOO_REFRESH_TOKEN in env.
     """
     try:
-        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
         client = YahooFantasyClient()
         league = client.get_league()
         team_key = client.get_my_team_key()
@@ -5979,7 +5979,7 @@ async def yahoo_roster_raw(user: str = Depends(verify_admin_api_key)):
     Use this to inspect the exact shape Yahoo returns so parsing can be debugged.
     """
     try:
-        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
         client = YahooFantasyClient()
         raw = client.get_roster_raw()
         return {"fantasy_content": raw}
@@ -5993,7 +5993,7 @@ async def yahoo_roster(user: str = Depends(verify_admin_api_key)):
     Return your parsed Yahoo Fantasy roster.
     """
     try:
-        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
         client = YahooFantasyClient()
         roster = client.get_roster()
         return {"count": len(roster), "players": roster}

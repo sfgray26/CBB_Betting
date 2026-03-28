@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 from backend.fantasy_baseball.smart_lineup_selector import CategoryNeed
 
 logger = logging.getLogger(__name__)

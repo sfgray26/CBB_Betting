@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """Manually find available closers on the waiver wire."""
-from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 from backend.fantasy_baseball.player_board import get_or_create_projection
 
 # Top projected closers for 2026 - manual list since data is broken

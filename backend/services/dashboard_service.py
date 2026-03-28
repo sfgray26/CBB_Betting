@@ -24,7 +24,7 @@ from backend.services.data_reliability_engine import (
     DataQualityTier,
     DataSource,
 )
-from backend.fantasy_baseball.yahoo_client import YahooFantasyClient, YahooAuthError
+from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient, YahooAuthError
 
 logger = logging.getLogger(__name__)
 

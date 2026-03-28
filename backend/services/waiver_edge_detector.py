@@ -108,7 +108,7 @@ class WaiverEdgeDetector:
         ):
             return _FA_CACHE["fas"]
         try:
-            from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+            from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
             fas = YahooFantasyClient().get_free_agents()
             _FA_CACHE["fas"] = fas
             _FA_CACHE["ts"] = now

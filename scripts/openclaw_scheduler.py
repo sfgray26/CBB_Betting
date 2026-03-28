@@ -33,7 +33,7 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from backend.services.openclaw_briefs import generate_and_send_morning_brief
+from backend.services.openclaw_briefs_improved import generate_and_send_morning_brief
 from backend.services.openclaw_telemetry import check_system_health
 
 logging.basicConfig(

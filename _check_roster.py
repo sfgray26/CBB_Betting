@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """Check roster including all positions."""
-from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 from backend.fantasy_baseball.player_board import get_or_create_projection
 import json
 

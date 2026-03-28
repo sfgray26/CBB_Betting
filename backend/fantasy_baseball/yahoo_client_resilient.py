@@ -1,29 +1,53 @@
 """
-Resilient Yahoo Fantasy API client with circuit breaker, fallback, and cache.
+Yahoo Fantasy Sports API client — OAuth 2.0 with auto-refresh and resilience patterns.
 
-Drop-in replacement for YahooClient that handles:
+Unified client combining base OAuth logic with circuit breaker, fallback, and cache.
+
+Authentication flow (one-time setup):
+    python -m backend.fantasy_baseball.yahoo_client_resilient --auth
+
+This opens a browser, you authorize, paste the redirect URL back,
+and the refresh token is saved to .env automatically.
+
+Subsequent calls use the stored refresh token to obtain fresh access tokens.
+
+Yahoo Fantasy API base: https://fantasysports.yahooapis.com/fantasy/v2/
+League key format:      mlb.l.{YAHOO_LEAGUE_ID}
+
+Resilience features (ResilientYahooClient):
 - Circuit breaker for cascading failures
 - Metadata fallback when percent_owned is unavailable
 - Position normalization for lineup mismatches
 - Stale cache for graceful degradation
 """
 
-import os
+import csv
+import json
 import logging
-from typing import List, Dict, Optional, Any
+import os
+import re
+import threading
+import time
+import webbrowser
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode, urlparse, parse_qs
 
-from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+import requests
+from dotenv import load_dotenv, set_key
+
+from backend.core.circuit_breaker import CircuitBreaker as _CoreCircuitBreaker
 from backend.fantasy_baseball.circuit_breaker import CircuitBreaker, CircuitOpenError
 from backend.fantasy_baseball.cache_manager import StaleCacheManager, CacheResult, NoDataAvailableError
 from backend.fantasy_baseball.position_normalizer import (
-    PositionNormalizer, 
-    YahooRoster, 
-    RosterSlot, 
+    PositionNormalizer,
+    YahooRoster,
+    RosterSlot,
     Player,
     ValidationResult,
-    LineupValidationError
+    LineupValidationError,
 )
 from backend.fantasy_baseball.lineup_validator import (
     LineupValidator,
@@ -31,8 +55,825 @@ from backend.fantasy_baseball.lineup_validator import (
     format_lineup_report,
 )
 
+load_dotenv()
 logger = logging.getLogger(__name__)
 
+_token_lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+YAHOO_AUTH_URL = "https://api.login.yahoo.com/oauth2/request_auth"
+YAHOO_TOKEN_URL = "https://api.login.yahoo.com/oauth2/get_token"
+YAHOO_API_BASE = "https://fantasysports.yahooapis.com/fantasy/v2"
+YAHOO_SPORT = "mlb"
+
+ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
+
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+class YahooAuthError(Exception):
+    pass
+
+
+class YahooAPIError(Exception):
+    def __init__(self, message: str, status_code: int = 0):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+# ---------------------------------------------------------------------------
+# Base client — OAuth + HTTP + all Yahoo API methods
+# ---------------------------------------------------------------------------
+
+class YahooFantasyClient:
+    """
+    Thin wrapper around Yahoo Fantasy Sports API v2.
+
+    Usage:
+        client = YahooFantasyClient()
+        league = client.get_league()
+        roster = client.get_my_roster()
+    """
+
+    def __init__(self):
+        self.client_id = os.getenv("YAHOO_CLIENT_ID", "")
+        self.client_secret = os.getenv("YAHOO_CLIENT_SECRET", "")
+        self.league_id = os.getenv("YAHOO_LEAGUE_ID", "72586")
+        self.league_key = f"{YAHOO_SPORT}.l.{self.league_id}"
+        self._refresh_token = os.getenv("YAHOO_REFRESH_TOKEN", "")
+        self._access_token = os.getenv("YAHOO_ACCESS_TOKEN", "")
+        self._token_expiry: float = 0.0
+        self._session = requests.Session()
+        self._cb = _CoreCircuitBreaker(failure_threshold=3, recovery_timeout=60, window_seconds=300)
+
+        if not self.client_id or not self.client_secret:
+            raise YahooAuthError(
+                "YAHOO_CLIENT_ID and YAHOO_CLIENT_SECRET must be set in .env"
+            )
+
+    # ------------------------------------------------------------------
+    # OAuth 2.0 — Authorization Code Flow
+    # ------------------------------------------------------------------
+
+    def get_authorization_url(self) -> str:
+        params = {
+            "client_id": self.client_id,
+            "redirect_uri": "oob",
+            "response_type": "code",
+            "language": "en-us",
+        }
+        return f"{YAHOO_AUTH_URL}?{urlencode(params)}"
+
+    def exchange_code_for_tokens(self, auth_code: str) -> dict:
+        """Exchange authorization code for access + refresh tokens."""
+        response = requests.post(
+            YAHOO_TOKEN_URL,
+            data={
+                "grant_type": "authorization_code",
+                "code": auth_code.strip(),
+                "redirect_uri": "oob",
+            },
+            auth=(self.client_id, self.client_secret),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        if response.status_code != 200:
+            raise YahooAuthError(
+                f"Token exchange failed: {response.status_code} — {response.text}"
+            )
+        tokens = response.json()
+        self._store_tokens(tokens)
+        return tokens
+
+    def _refresh_access_token(self) -> None:
+        """Use refresh token to get a new access token."""
+        if not self._refresh_token:
+            raise YahooAuthError(
+                "No refresh token stored. Run: python -m backend.fantasy_baseball.yahoo_client_resilient --auth"
+            )
+        response = requests.post(
+            YAHOO_TOKEN_URL,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": self._refresh_token,
+            },
+            auth=(self.client_id, self.client_secret),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        if response.status_code != 200:
+            raise YahooAuthError(
+                f"Token refresh failed: {response.status_code} — {response.text}"
+            )
+        tokens = response.json()
+        self._store_tokens(tokens)
+
+    def _store_tokens(self, tokens: dict) -> None:
+        """Persist tokens to .env and update in-memory state.
+
+        On Railway (no writable .env), the write fails silently —
+        tokens are still live in-memory for the process lifetime.
+        Set YAHOO_REFRESH_TOKEN in Railway env vars directly after
+        completing the one-time auth flow locally.
+        """
+        self._access_token = tokens["access_token"]
+        self._refresh_token = tokens.get("refresh_token", self._refresh_token)
+        self._token_expiry = time.time() + tokens.get("expires_in", 3600) - 60
+        # Write back to .env — best-effort; fails silently on Railway
+        try:
+            set_key(str(ENV_PATH), "YAHOO_ACCESS_TOKEN", self._access_token)
+            set_key(str(ENV_PATH), "YAHOO_REFRESH_TOKEN", self._refresh_token)
+            logger.info("Yahoo tokens refreshed and persisted to .env")
+        except Exception as exc:
+            logger.info("Yahoo tokens refreshed (in-memory only — .env not writable: %s)", exc)
+
+    def _ensure_token(self) -> None:
+        """Thread-safe token refresh with double-check locking."""
+        # Fast path — no lock needed
+        if time.time() < self._token_expiry and self._access_token:
+            return
+        # Slow path — acquire lock, then re-check before refreshing
+        with _token_lock:
+            if time.time() < self._token_expiry and self._access_token:
+                return
+            self._refresh_access_token()
+
+    # ------------------------------------------------------------------
+    # HTTP helpers
+    # ------------------------------------------------------------------
+
+    def _get(self, path: str, params: Optional[dict] = None) -> dict:
+        """GET from Yahoo API with circuit breaker and timeout."""
+        if not self._cb.should_allow_request():
+            raise YahooAPIError("Yahoo API circuit breaker is OPEN — service temporarily unavailable", 503)
+
+        self._ensure_token()
+        url = f"{YAHOO_API_BASE}/{path.lstrip('/')}"
+        default_params = {"format": "json"}
+        if params:
+            default_params.update(params)
+
+        # Yahoo rejects URL-encoded commas in the `out` param (e.g. %2C).
+        # Extract it and append as a raw query-string fragment instead.
+        out_value = default_params.pop("out", None)
+        if out_value:
+            url = f"{url}?out={out_value}"
+
+        for attempt in range(3):
+            try:
+                resp = self._session.get(
+                    url,
+                    params=default_params,
+                    headers={"Authorization": f"Bearer {self._access_token}"},
+                    timeout=10,
+                )
+                if resp.status_code == 401:
+                    # Token may have just expired mid-request
+                    self._refresh_access_token()
+                    continue
+                if resp.status_code == 999:
+                    wait = 2 ** attempt
+                    logger.warning(f"Yahoo rate limit hit, waiting {wait}s")
+                    time.sleep(wait)
+                    continue
+                if resp.status_code != 200:
+                    raise YahooAPIError(
+                        f"Yahoo API error {resp.status_code}: {resp.text[:300]}",
+                        resp.status_code,
+                    )
+                self._cb.record_success()
+                return resp.json()
+            except YahooAPIError:
+                raise
+            except Exception:
+                if attempt == 2:
+                    self._cb.record_failure()
+                raise
+
+        raise YahooAPIError("Yahoo API failed after 3 attempts")
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _flatten_league_section(raw) -> dict:
+        """
+        Yahoo returns league[N] as either:
+          (a) a merged dict  {"name": "...", "teams": {...}, ...}
+          (b) a list of single-key dicts  [{"name": "..."}, {"teams": {...}}, ...]
+
+        This helper normalises both shapes to a plain dict.
+        """
+        if isinstance(raw, list):
+            out = {}
+            for item in raw:
+                if isinstance(item, dict):
+                    out.update(item)
+            return out
+        return raw if isinstance(raw, dict) else {}
+
+    def _league_section(self, data: dict, index: int) -> dict:
+        """Extract and flatten league[index] from a fantasy_content response."""
+        return self._flatten_league_section(
+            data["fantasy_content"]["league"][index]
+        )
+
+    def _safe_get(self, obj: dict, key: str) -> dict:
+        """Get key from a dict, auto-flattening the value if Yahoo returned it as a list."""
+        val = obj.get(key, {}) if isinstance(obj, dict) else {}
+        if isinstance(val, list):
+            return self._flatten_league_section(val)
+        return val if isinstance(val, dict) else {}
+
+    def _team_section(self, data: dict) -> dict:
+        """
+        Flatten the entire team array from a fantasy_content response.
+
+        Yahoo returns team as either:
+          (a) [[meta_dict, ...], {"roster": {...}}]   — 2-element list
+          (b) [{"team_key": ...}, {"name": ...}, ..., {"roster": {...}}]  — flat list
+
+        We flatten ALL dict items across the outer list, skipping nested lists,
+        so the result always contains keys like "roster", "name", etc.
+        """
+        return self._flatten_league_section(
+            data["fantasy_content"]["team"]
+        )
+
+    # ------------------------------------------------------------------
+    # League endpoints
+    # ------------------------------------------------------------------
+
+    def get_league(self) -> dict:
+        """League metadata: name, scoring type, settings."""
+        data = self._get(f"league/{self.league_key}")
+        return self._league_section(data, 0)
+
+    def get_league_settings(self) -> dict:
+        data = self._get(f"league/{self.league_key}/settings")
+        return self._league_section(data, 0)
+
+    @staticmethod
+    def _iter_block(block, item_key: str):
+        """Yield item_key values from either an indexed dict or a list block.
+
+        Yahoo 2025 format: {"count": N, "0": {item_key: ...}, "1": {item_key: ...}}
+        Yahoo 2026 format: [{item_key: ...}, {item_key: ...}]
+        """
+        if isinstance(block, list):
+            for item in block:
+                if isinstance(item, dict) and item_key in item:
+                    yield item[item_key]
+        elif isinstance(block, dict):
+            count = int(block.get("count", 0))
+            for i in range(count):
+                entry = block.get(str(i), {})
+                if isinstance(entry, dict) and item_key in entry:
+                    yield entry[item_key]
+
+    def get_standings(self) -> list[dict]:
+        data = self._get(f"league/{self.league_key}/standings")
+        sec = self._league_section(data, 1)
+        teams_raw = sec.get("standings", [{}])[0].get("teams", {})
+        teams = []
+        count = int(teams_raw.get("count", 0))
+        for i in range(count):
+            team_data = teams_raw[str(i)]["team"]
+            teams.append(self._parse_team(team_data))
+        return teams
+
+    def get_all_teams(self) -> list[dict]:
+        data = self._get(f"league/{self.league_key}/teams")
+        teams_raw = self._league_section(data, 1).get("teams", {})
+        return [self._parse_team(team_data) for team_data in self._iter_block(teams_raw, "team")]
+
+    def get_my_team_key(self) -> str:
+        """Return the team key for the authenticated user's team."""
+        data = self._get(f"league/{self.league_key}/teams")
+        teams_raw = self._league_section(data, 1).get("teams", {})
+        for team_list in self._iter_block(teams_raw, "team"):
+            meta = {}
+            entries = team_list if isinstance(team_list, list) else [team_list]
+            for d in entries:
+                if isinstance(d, list):
+                    for item in d:
+                        if isinstance(item, dict):
+                            meta.update(item)
+                elif isinstance(d, dict):
+                    meta.update(d)
+            if meta.get("is_owned_by_current_login"):
+                return meta["team_key"]
+        raise YahooAPIError("Could not find your team — are you authenticated?")
+
+    def get_faab_balance(self) -> Optional[float]:
+        """Return authenticated user's remaining FAAB budget (None if not a FAAB league)."""
+        try:
+            data = self._get(f"league/{self.league_key}/teams")
+            teams_raw = self._league_section(data, 1).get("teams", {})
+            for team_list in self._iter_block(teams_raw, "team"):
+                meta = {}
+                entries = team_list if isinstance(team_list, list) else [team_list]
+                for d in entries:
+                    if isinstance(d, list):
+                        for item in d:
+                            if isinstance(item, dict):
+                                meta.update(item)
+                    elif isinstance(d, dict):
+                        meta.update(d)
+                if meta.get("is_owned_by_current_login"):
+                    val = meta.get("faab_balance")
+                    return float(val) if val is not None else None
+            return None
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------------
+    # Roster endpoints
+    # ------------------------------------------------------------------
+
+    def get_roster_raw(self, team_key: Optional[str] = None) -> dict:
+        """Return the raw fantasy_content payload for debugging Yahoo response shapes."""
+        if team_key is None:
+            team_key = self.get_my_team_key()
+        data = self._get(f"team/{team_key}/roster/players")
+        return data.get("fantasy_content", {})
+
+    def get_roster(self, team_key: Optional[str] = None) -> list[dict]:
+        """Return full roster for team_key (defaults to authenticated user's team).
+
+        Includes selected_position field indicating Yahoo lineup slot:
+        - "IL", "IL10", "IL60" = Injured List (don't count against active roster)
+        - "BN" = Bench
+        - "C", "1B", "2B", "3B", "SS", "OF", "Util" = Active lineup slots
+        - "SP", "RP", "P" = Pitcher slots
+        """
+        if team_key is None:
+            team_key = self.get_my_team_key()
+        data = self._get(f"team/{team_key}/roster/players")
+        team_data = self._team_section(data)
+        roster = self._safe_get(team_data, "roster")
+        slot_0 = self._safe_get(roster, "0")
+        players_raw = self._safe_get(slot_0, "players")
+        players = []
+        count = int(players_raw.get("count", 0))
+        for i in range(count):
+            entry = players_raw.get(str(i), {})
+            entry = self._flatten_league_section(entry) if isinstance(entry, list) else entry
+            player_data = entry.get("player", entry) if isinstance(entry, dict) else entry
+            p = self._parse_player(player_data)
+
+            # Extract selected_position from roster data (indicates IL, BN, or active slot)
+            selected_pos = self._extract_selected_position(player_data)
+            if selected_pos:
+                p["selected_position"] = selected_pos
+
+            players.append(p)
+        return players
+
+    @staticmethod
+    def _extract_selected_position(player_data) -> Optional[str]:
+        """Extract selected_position (IL, BN, C, 1B, etc.) from Yahoo player data.
+
+        Yahoo returns this as a sibling to player metadata:
+        [{player_key...}, {name...}, {selected_position: {position: "IL"}}]
+        """
+        if not isinstance(player_data, list):
+            return None
+
+        for item in player_data:
+            if isinstance(item, dict) and "selected_position" in item:
+                sp = item["selected_position"]
+                if isinstance(sp, dict):
+                    return sp.get("position")
+                elif isinstance(sp, list):
+                    for spd in sp:
+                        if isinstance(spd, dict) and "position" in spd:
+                            return spd["position"]
+        return None
+
+    def get_all_rosters(self) -> dict[str, list[dict]]:
+        """All rosters keyed by team_key."""
+        teams = self.get_all_teams()
+        rosters = {}
+        for team in teams:
+            try:
+                rosters[team["team_key"]] = self.get_roster(team["team_key"])
+            except YahooAPIError as e:
+                logger.warning(f"Failed to fetch roster for {team['name']}: {e}")
+        return rosters
+
+    # ------------------------------------------------------------------
+    # Player endpoints
+    # ------------------------------------------------------------------
+
+    def get_player(self, player_key: str) -> dict:
+        data = self._get(f"player/{player_key}")
+        return self._parse_player(data["fantasy_content"]["player"][0])
+
+    def search_players(self, name: str, status: str = "A") -> list[dict]:
+        """
+        Search available players by name.
+        status: A=available, T=taken, W=on waivers, FA=free agent
+        """
+        data = self._get(
+            f"league/{self.league_key}/players",
+            params={"search": name, "status": status},
+        )
+        players_raw = self._league_section(data, 1).get("players", {})
+        return self._parse_players_block(players_raw)
+
+    def get_free_agents(self, position: str = "", start: int = 0, count: int = 25) -> list[dict]:
+        """Paginated available players (free agents + waivers, status=A).
+
+        sort=AR ranks by percent rostered — the only sort that reflects real
+        pickup value. Yahoo's default sort order is opaque and unreliable.
+        """
+        params = {"status": "A", "start": start, "count": count, "sort": "AR",
+                  "out": "metadata"}
+        if position:
+            params["position"] = position
+        data = self._get(f"league/{self.league_key}/players", params=params)
+        players_raw = self._league_section(data, 1).get("players", {})
+        return self._parse_players_block(players_raw)
+
+    def get_player_stats(self, player_key: str, stat_type: str = "season") -> dict:
+        """
+        stat_type: 'season', 'average', 'projected_season'
+        """
+        data = self._get(f"player/{player_key}/stats;type={stat_type}")
+        player = data["fantasy_content"]["player"]
+        return self._parse_player_with_stats(player)
+
+    def get_waiver_players(self, start: int = 0, count: int = 25) -> list[dict]:
+        params = {"status": "W", "start": start, "count": count,
+                  "out": "metadata"}
+        data = self._get(f"league/{self.league_key}/players", params=params)
+        players_raw = self._league_section(data, 1).get("players", {})
+        return self._parse_players_block(players_raw)
+
+    # ------------------------------------------------------------------
+    # Draft endpoints
+    # ------------------------------------------------------------------
+
+    def get_draft_results(self) -> list[dict]:
+        """Return completed draft picks (empty until draft runs)."""
+        data = self._get(f"league/{self.league_key}/draftresults")
+        picks_raw = (
+            self._league_section(data, 1)
+            .get("draft_results", {})
+            .get("0", {})
+            .get("draft_results", {})
+        )
+        picks = []
+        count = int(picks_raw.get("count", 0))
+        for i in range(count):
+            pick = picks_raw[str(i)]["draft_result"][0]
+            picks.append({
+                "pick": pick.get("pick"),
+                "round": pick.get("round"),
+                "team_key": pick.get("team_key"),
+                "player_key": pick.get("player_key"),
+            })
+        return picks
+
+    # ------------------------------------------------------------------
+    # Lineup management
+    # ------------------------------------------------------------------
+
+    def get_lineup(self, team_key: Optional[str] = None, date: Optional[str] = None) -> list[dict]:
+        """Fetch current lineup for a date (YYYY-MM-DD). Defaults to today."""
+        if team_key is None:
+            team_key = self.get_my_team_key()
+        if date is None:
+            from datetime import datetime
+            date = datetime.utcnow().strftime("%Y-%m-%d")
+        data = self._get(f"team/{team_key}/roster/players", params={"date": date})
+        players_raw = (
+            self._team_section(data)
+            .get("roster", {})
+            .get("0", {})
+            .get("players", {})
+        )
+        players = []
+        count = int(players_raw.get("count", 0))
+        for i in range(count):
+            player_data = players_raw[str(i)]["player"]
+            p = self._parse_player(player_data)
+            # selected_position may be in the player data
+            if isinstance(player_data, list):
+                for item in player_data:
+                    if isinstance(item, list):
+                        for sub in item:
+                            if isinstance(sub, dict) and "selected_position" in sub:
+                                sp = sub["selected_position"]
+                                if isinstance(sp, list):
+                                    for spd in sp:
+                                        if isinstance(spd, dict) and "position" in spd:
+                                            p["selected_position"] = spd["position"]
+            players.append(p)
+        return players
+
+    def set_lineup(self, team_key: Optional[str] = None, date: Optional[str] = None,
+                   lineup: Optional[list[dict]] = None) -> dict:
+        """
+        Set lineup for a given date.
+
+        lineup: list of {player_key: str, position: str}
+            position: 'C','1B','2B','3B','SS','OF','Util','SP','RP','P','BN','DL'
+
+        Returns dict: {applied: [player_keys], skipped: [player_keys], warnings: [str]}
+        Raises YahooAPIError only when ALL players fail and no partial success is possible.
+        """
+        import logging as _logging
+        _log = _logging.getLogger(__name__)
+
+        if team_key is None:
+            team_key = self.get_my_team_key()
+        if date is None:
+            from datetime import datetime
+            date = datetime.utcnow().strftime("%Y-%m-%d")
+        if not lineup:
+            return {"applied": [], "skipped": [], "warnings": []}
+
+        self._ensure_token()
+        url = f"{YAHOO_API_BASE}/team/{team_key}/roster"
+        headers = {
+            "Authorization": f"Bearer {self._access_token}",
+            "Content-Type": "application/xml",
+        }
+
+        def _build_xml(players: list) -> bytes:
+            player_xml = "\n".join(
+                f'<player><player_key>{p["player_key"]}</player_key>'
+                f'<position>{p["position"]}</position></player>'
+                for p in players
+            )
+            return (
+                f'<?xml version="1.0"?>'
+                f'<fantasy_content><roster><coverage_type>date</coverage_type>'
+                f'<date>{date}</date><players>{player_xml}</players></roster></fantasy_content>'
+            ).encode("utf-8")
+
+        # Attempt full batch first (fast path)
+        resp = self._session.put(url, data=_build_xml(lineup), headers=headers)
+        if resp.status_code in (200, 204):
+            return {"applied": [p["player_key"] for p in lineup], "skipped": [], "warnings": []}
+
+        # If Yahoo returns "game_ids don't match", fall back to player-by-player
+        # so stale/traded players are skipped rather than blocking the whole lineup.
+        if "game_ids" in resp.text or "game_id" in resp.text.lower():
+            _log.warning("set_lineup batch rejected (game_id mismatch) — retrying per-player")
+            applied, skipped, warnings = [], [], []
+            for p in lineup:
+                r = self._session.put(url, data=_build_xml([p]), headers=headers)
+                if r.status_code in (200, 204):
+                    applied.append(p["player_key"])
+                else:
+                    skipped.append(p["player_key"])
+                    msg = f"Skipped {p['player_key']} (pos={p['position']}): {r.text[:200]}"
+                    _log.warning(msg)
+                    warnings.append(msg)
+            if not applied:
+                raise YahooAPIError(
+                    f"set_lineup failed for all {len(skipped)} player(s): {resp.text[:300]}",
+                    resp.status_code,
+                )
+            return {"applied": applied, "skipped": skipped, "warnings": warnings}
+
+        raise YahooAPIError(f"set_lineup failed: {resp.status_code} — {resp.text[:300]}", resp.status_code)
+
+    def get_scoreboard(self, week: Optional[int] = None) -> list[dict]:
+        """Fetch matchup scoreboard for a week (defaults to current).
+
+        Yahoo's scoreboard nesting changed between API versions:
+          v1: league[1].scoreboard.0.matchups   (older format)
+          v2: league[1].scoreboard.matchups      (2025+ format)
+        Both paths are tried so this survives Yahoo response shape changes.
+        """
+        path = f"league/{self.league_key}/scoreboard"
+        params = {}
+        if week:
+            params["week"] = week
+        data = self._get(path, params=params if params else None)
+        sec = self._league_section(data, 1)
+        scoreboard = sec.get("scoreboard", {})
+
+        # Try v2 path first (scoreboard.matchups)
+        matchups_raw = scoreboard.get("matchups", {})
+
+        # Fall back to v1 path (scoreboard.0.matchups)
+        if not matchups_raw:
+            matchups_raw = scoreboard.get("0", {}).get("matchups", {})
+
+        # If scoreboard itself is a list, flatten it
+        if isinstance(scoreboard, list):
+            flat = {}
+            for item in scoreboard:
+                if isinstance(item, dict):
+                    flat.update(item)
+            matchups_raw = flat.get("matchups", {})
+
+        matchups = []
+        count = int(matchups_raw.get("count", 0)) if isinstance(matchups_raw, dict) else 0
+        for i in range(count):
+            entry = matchups_raw.get(str(i), {})
+            if isinstance(entry, dict) and "matchup" in entry:
+                matchups.append(entry["matchup"])
+        return matchups
+
+    def add_drop_player(self, add_player_key: str, drop_player_key: Optional[str] = None,
+                        team_key: Optional[str] = None) -> bool:
+        """Add a free agent (and optionally drop a player)."""
+        if team_key is None:
+            team_key = self.get_my_team_key()
+        self._ensure_token()
+        drop_xml = (
+            f'<player><player_key>{drop_player_key}</player_key>'
+            f'<transaction_data><type>drop</type>'
+            f'<destination_team_key>LW</destination_team_key></transaction_data></player>'
+        ) if drop_player_key else ""
+        xml_body = (
+            f'<?xml version="1.0"?><fantasy_content><transaction>'
+            f'<type>{"add/drop" if drop_player_key else "add"}</type>'
+            f'<trader_team_key>{team_key}</trader_team_key>'
+            f'<players>'
+            f'<player><player_key>{add_player_key}</player_key>'
+            f'<transaction_data><type>add</type>'
+            f'<destination_team_key>{team_key}</destination_team_key></transaction_data></player>'
+            f'{drop_xml}</players></transaction></fantasy_content>'
+        )
+        url = f"{YAHOO_API_BASE}/league/{self.league_key}/transactions"
+        resp = self._session.post(
+            url,
+            data=xml_body.encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._access_token}",
+                "Content-Type": "application/xml",
+            },
+        )
+        if resp.status_code not in (200, 201):
+            raise YahooAPIError(f"add/drop failed: {resp.status_code} — {resp.text[:300]}", resp.status_code)
+        return True
+
+    def get_transactions(self, t_type: str = "add,drop,trade") -> list[dict]:
+        """Recent transactions for the league."""
+        data = self._get(
+            f"league/{self.league_key}/transactions",
+            params={"type": t_type},
+        )
+        txns_raw = self._league_section(data, 1).get("transactions", {})
+        txns = []
+        count = int(txns_raw.get("count", 0))
+        for i in range(count):
+            txns.append(txns_raw[str(i)].get("transaction", {}))
+        return txns
+
+    # ------------------------------------------------------------------
+    # Parsing helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_team(team_list: list) -> dict:
+        """Flatten Yahoo's nested team structure."""
+        meta = {}
+        if isinstance(team_list[0], list):
+            for item in team_list[0]:
+                if isinstance(item, dict):
+                    meta.update(item)
+        return {
+            "team_key": meta.get("team_key"),
+            "team_id": meta.get("team_id"),
+            "name": meta.get("name"),
+            "manager": meta.get("managers", [{}])[0].get("manager", {}).get("nickname"),
+        }
+
+    @staticmethod
+    def _parse_player(player_list: list) -> dict:
+        """Flatten Yahoo's nested player structure."""
+        meta = {}
+        if isinstance(player_list, list) and isinstance(player_list[0], list):
+            for item in player_list[0]:
+                if isinstance(item, dict):
+                    meta.update(item)
+        elif isinstance(player_list, list):
+            for item in player_list:
+                if isinstance(item, dict):
+                    meta.update(item)
+
+        # Extract eligible positions
+        positions_raw = meta.get("eligible_positions", [])
+        positions = []
+        if isinstance(positions_raw, list):
+            positions = [p.get("position") for p in positions_raw if isinstance(p, dict)]
+        elif isinstance(positions_raw, dict):
+            pos = positions_raw.get("position")
+            positions = [pos] if pos else []
+
+        # Extract percent_owned — Yahoo returns this inside an "ownership" sub-block
+        # at the outer player list level (not inside metadata).
+        owned_pct = 0.0
+        if isinstance(player_list, list):
+            for outer_item in player_list:
+                if isinstance(outer_item, dict) and "ownership" in outer_item:
+                    pct_block = outer_item["ownership"].get("percent_owned", {})
+                    if isinstance(pct_block, dict):
+                        raw = pct_block.get("value", 0)
+                    else:
+                        raw = pct_block
+                    try:
+                        owned_pct = float(raw or 0)
+                    except (ValueError, TypeError):
+                        owned_pct = 0.0
+                    break
+        # Fallback: old "percent_owned" key directly in metadata (pre-2025 format)
+        if owned_pct == 0.0:
+            owned_raw = meta.get("percent_owned", 0)
+            if isinstance(owned_raw, dict):
+                try:
+                    owned_pct = float(owned_raw.get("value", 0) or 0)
+                except (ValueError, TypeError):
+                    owned_pct = 0.0
+            elif owned_raw:
+                try:
+                    owned_pct = float(owned_raw)
+                except (ValueError, TypeError):
+                    owned_pct = 0.0
+
+        return {
+            "player_key": meta.get("player_key"),
+            "player_id": meta.get("player_id"),
+            "name": meta.get("full_name") or meta.get("name", {}).get("full"),
+            "team": meta.get("editorial_team_abbr"),
+            "positions": [p for p in positions if p],
+            "status": meta.get("status"),
+            "injury_note": meta.get("injury_note"),
+            "is_undroppable": meta.get("is_undroppable", 0) in (1, '1', True, 'true'),
+            "percent_owned": owned_pct,
+        }
+
+    def _parse_player_with_stats(self, player: list) -> dict:
+        parsed = self._parse_player(player[0] if isinstance(player[0], list) else player)
+        stats_raw = {}
+        for item in player:
+            if isinstance(item, dict) and "player_stats" in item:
+                stats_list = item["player_stats"].get("stats", [])
+                for stat_entry in stats_list:
+                    if isinstance(stat_entry, dict):
+                        s = stat_entry.get("stat", {})
+                        stats_raw[s.get("stat_id")] = s.get("value")
+        parsed["stats"] = stats_raw
+        return parsed
+
+    def _parse_players_block(self, players_raw) -> list[dict]:
+        return [self._parse_player(p) for p in self._iter_block(players_raw, "player")]
+
+
+# ---------------------------------------------------------------------------
+# CLI: one-time auth setup
+# ---------------------------------------------------------------------------
+
+def run_auth_flow():
+    """Interactive OAuth setup — run once to get refresh token."""
+    load_dotenv()
+    client = YahooFantasyClient()
+
+    auth_url = client.get_authorization_url()
+    print("\n" + "=" * 60)
+    print("YAHOO FANTASY — ONE-TIME AUTHORIZATION")
+    print("=" * 60)
+    print(f"\nStep 1: Open this URL in your browser:\n\n  {auth_url}\n")
+    try:
+        webbrowser.open(auth_url)
+        print("(Browser opened automatically)")
+    except Exception:
+        pass
+
+    print("\nStep 2: Authorize the app")
+    print("Step 3: Yahoo will show you a 6-digit code (or redirect to oob://)")
+    code = input("\nEnter the authorization code: ").strip()
+
+    tokens = client.exchange_code_for_tokens(code)
+    print("\nAuthorization successful!")
+    print(f"  Access token expires in: {tokens.get('expires_in', '?')}s")
+    print("  Refresh token saved to .env")
+
+    # Quick test
+    try:
+        league = client.get_league()
+        print(f"\nConnected to league: {league.get('name')}")
+        my_key = client.get_my_team_key()
+        print(f"  Your team key: {my_key}")
+    except Exception as e:
+        print(f"\nAuth succeeded but test call failed: {e}")
+        print("  Tokens are saved — try again after retrying.")
+
+
+# ---------------------------------------------------------------------------
+# Resilience layer dataclasses
+# ---------------------------------------------------------------------------
 
 @dataclass
 class WaiverResponse:
@@ -42,7 +883,7 @@ class WaiverResponse:
     fresh: bool
     errors: List[str]
     metadata: Dict[str, Any]
-    
+
     def __post_init__(self):
         if self.metadata is None:
             self.metadata = {}
@@ -59,7 +900,7 @@ class LineupResult:
     warnings: List[str] = None
     retry_possible: bool = False
     suggested_action: Optional[str] = None
-    
+
     def __post_init__(self):
         if self.errors is None:
             self.errors = []
@@ -67,33 +908,37 @@ class LineupResult:
             self.warnings = []
 
 
+# ---------------------------------------------------------------------------
+# Resilient client — extends YahooFantasyClient with circuit breaker + cache
+# ---------------------------------------------------------------------------
+
 class ResilientYahooClient(YahooFantasyClient):
     """
     Yahoo client with resilience patterns.
-    
+
     Extends the base YahooFantasyClient with:
     - Circuit breaker to prevent cascading failures
     - Fallback to metadata-only when percent_owned fails
     - Position normalization to prevent lineup mismatches
     - Stale cache for availability during outages
-    
+
     Usage:
         client = ResilientYahooClient()  # Same init as YahooFantasyClient
-        
+
         # Waiver wire with automatic fallback
         result = await client.get_waiver_players("mlb.l.12345")
         if not result.fresh:
             logger.warning(f"Serving stale data: {result.errors}")
-        
+
         # Lineup with validation
         result = await client.set_lineup_resilient(team_id, optimized_lineup)
         if not result.success:
             print(result.suggested_action)
     """
-    
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        
+
         # Initialize resilience components
         self.circuit = CircuitBreaker(
             name="yahoo_fantasy_api",
@@ -101,30 +946,30 @@ class ResilientYahooClient(YahooFantasyClient):
             recovery_timeout=300,  # 5 minutes
             expected_exception=Exception,
         )
-        
+
         self.cache = StaleCacheManager(
             cache_dir=os.getenv("YAHOO_CACHE_DIR", ".cache/fantasy"),
             max_age=timedelta(hours=int(os.getenv("YAHOO_CACHE_TTL_HOURS", "24"))),
             enabled=os.getenv("YAHOO_CACHE_DISABLED", "false").lower() != "true"
         )
-        
+
         self.position_normalizer = PositionNormalizer()
         self.lineup_validator = LineupValidator()
-        
+
         # Track ADP data path for fallback enrichment
         self.adp_data_path = os.getenv(
-            "ADP_DATA_PATH", 
+            "ADP_DATA_PATH",
             "/app/data/projections/adp_yahoo_2026.csv"
         )
-    
+
     # ==================================================================
     # Waiver Wire Operations
     # ==================================================================
-    
+
     async def get_waiver_players(self, league_id: str, **filters) -> WaiverResponse:
         """
         Get waiver wire players with full fallback chain.
-        
+
         Fallback order:
         1. Try API with percent_owned (normal)
         2. Try API with metadata only + ADP enrichment
@@ -132,7 +977,7 @@ class ResilientYahooClient(YahooFantasyClient):
         4. Fail with clear error if no data available
         """
         cache_key = f"waiver_{league_id}_{hash(str(sorted(filters.items())))}"
-        
+
         try:
             # Attempt 1: Circuit breaker wrapped API call with fallback
             players = await self.circuit.call_async(
@@ -140,10 +985,10 @@ class ResilientYahooClient(YahooFantasyClient):
                 league_id,
                 filters
             )
-            
+
             # Cache successful result
             self.cache.write(cache_key, players, metadata={"filters": filters})
-            
+
             return WaiverResponse(
                 players=players,
                 source="yahoo_api",
@@ -151,12 +996,12 @@ class ResilientYahooClient(YahooFantasyClient):
                 errors=[],
                 metadata={"count": len(players), "cached": False}
             )
-            
+
         except CircuitOpenError:
             # Circuit open - use cache
             logger.warning("Circuit open for waiver fetch, checking cache")
             cached = self.cache.read(cache_key)
-            
+
             if cached:
                 return WaiverResponse(
                     players=cached.data,
@@ -169,7 +1014,7 @@ class ResilientYahooClient(YahooFantasyClient):
                         "cache_age_hours": self.cache.get_age_hours(cached)
                     }
                 )
-            
+
             # No cache available
             return WaiverResponse(
                 players=[],
@@ -178,7 +1023,7 @@ class ResilientYahooClient(YahooFantasyClient):
                 errors=["Yahoo API unavailable and no cache available"],
                 metadata={"circuit_open": True}
             )
-            
+
         except NoDataAvailableError as e:
             return WaiverResponse(
                 players=[],
@@ -187,10 +1032,10 @@ class ResilientYahooClient(YahooFantasyClient):
                 errors=[str(e)],
                 metadata={"error_type": "no_data_available"}
             )
-    
+
     async def _fetch_waiver_with_fallback(
-        self, 
-        league_id: str, 
+        self,
+        league_id: str,
         filters: Dict
     ) -> List[Dict]:
         """
@@ -199,20 +1044,20 @@ class ResilientYahooClient(YahooFantasyClient):
         try:
             # Primary: Try normal fetch (assumes parent has this method)
             return await self._fetch_waiver_primary(league_id, filters)
-            
+
         except Exception as e:
             error_str = str(e).lower()
-            
+
             # Check if it's the percent_owned error
             if "percent_owned" in error_str or "subresource" in error_str:
                 logger.warning(
                     f"percent_owned subresource failed, using metadata fallback: {e}"
                 )
                 return await self._fetch_waiver_metadata_only(league_id, filters)
-            
+
             # Re-raise other errors
             raise
-    
+
     async def _fetch_waiver_primary(self, league_id: str, filters: Dict) -> List[Dict]:
         """Primary waiver fetch - override if parent method differs."""
         # Call parent implementation - adjust method name as needed
@@ -222,64 +1067,59 @@ class ResilientYahooClient(YahooFantasyClient):
             return await super().get_waiver_players(league_id, **filters)
         else:
             raise NotImplementedError("YahooClient waiver method not found")
-    
+
     async def _fetch_waiver_metadata_only(
-        self, 
-        league_id: str, 
+        self,
+        league_id: str,
         filters: Dict
     ) -> List[Dict]:
         """
         Fallback: Fetch metadata only and enrich with ADP estimates.
         """
         logger.info(f"Fetching waiver metadata only for {league_id}")
-        
+
         # Fetch without percent_owned subresource
         # This assumes YahooClient has a way to specify subresources
         # Adjust the call based on your actual YahooClient API
-        
+
         players = await self._fetch_with_subresources(
-            league_id, 
+            league_id,
             subresources="metadata",
             **filters
         )
-        
+
         # Enrich with ADP-based ownership estimates
         adp_data = self._load_adp_data()
-        
+
         for player in players:
             player_name = player.get("name", "")
             estimated = self._estimate_ownership_from_adp(player_name, adp_data)
             player["percent_owned"] = estimated
             player["percent_owned_estimated"] = True
             player["percent_owned_source"] = "adp_proxy"
-        
+
         return players
-    
+
     async def _fetch_with_subresources(
-        self, 
-        league_id: str, 
+        self,
+        league_id: str,
         subresources: str,
         **filters
     ) -> List[Dict]:
         """Fetch players with specified subresources."""
-        # This is a placeholder - implement based on your YahooClient API
-        # You may need to override the URL construction to exclude percent_owned
-        
         url = f"/fantasy/v2/league/{league_id}/players"
         params = {
             "out": subresources,
             "format": "json",
             **filters
         }
-        
+
         # Call parent's request method
         response = await self._make_request(url, params)
         return self._parse_players_response(response)
-    
+
     def _load_adp_data(self) -> Dict[str, float]:
         """Load ADP data for ownership estimation."""
-        import csv
-        
         adp_map = {}
         try:
             with open(self.adp_data_path, 'r') as f:
@@ -294,24 +1134,24 @@ class ResilientYahooClient(YahooFantasyClient):
                             pass
         except FileNotFoundError:
             logger.warning(f"ADP data not found at {self.adp_data_path}")
-        
+
         return adp_map
-    
+
     def _estimate_ownership_from_adp(
-        self, 
-        player_name: str, 
+        self,
+        player_name: str,
         adp_data: Dict[str, float]
     ) -> float:
         """
         Estimate ownership percentage from ADP.
-        
+
         Lower ADP (drafted earlier) = higher ownership
         This is a rough heuristic - adjust formula as needed.
         """
         adp = adp_data.get(player_name)
         if not adp:
             return 0.0  # Unknown players = 0% owned
-        
+
         # Rough estimation: ADP 1-50 ~ 90-100%, ADP 200+ ~ 0-10%
         if adp <= 50:
             return max(0, 100 - (adp - 1) * 0.2)  # 100% at 1, 90% at 50
@@ -321,40 +1161,35 @@ class ResilientYahooClient(YahooFantasyClient):
             return max(0, 30 - (adp - 100) * 0.2)  # 30% at 100, 10% at 200
         else:
             return max(0, 10 - (adp - 200) * 0.05)  # 10% at 200, 0% at 400
-    
+
     # ==================================================================
     # Lineup Operations
     # ==================================================================
-    
+
     async def set_lineup_resilient(
-        self, 
-        team_id: str, 
+        self,
+        team_id: str,
         optimized_lineup: Dict[str, Any],
         auto_correct: bool = True,
     ) -> LineupResult:
         """
         Set lineup with pre-validation and graceful degradation.
-        
+
         Steps:
         1. Get current Yahoo roster
         2. Normalize positions between optimizer and Yahoo
         3. Game-aware validation (check players have games today)
         4. Auto-correct if enabled (swap players with no games)
         5. Execute with circuit breaker
-        
-        Args:
-            team_id: Yahoo team ID
-            optimized_lineup: Optimized lineup from optimizer
-            auto_correct: If True, automatically replace players with no games
         """
         try:
             # Step 1: Get current Yahoo roster
             yahoo_roster = await self._get_yahoo_roster(team_id)
-            
+
             # Step 2: Normalize positions
             try:
                 normalized_assignments = self.position_normalizer.normalize_lineup(
-                    optimized_lineup, 
+                    optimized_lineup,
                     yahoo_roster,
                     strict=False  # Don't fail on unmatched slots
                 )
@@ -365,13 +1200,13 @@ class ResilientYahooClient(YahooFantasyClient):
                     retry_possible=False,
                     suggested_action="Check position eligibility in optimizer vs Yahoo roster"
                 )
-            
+
             # Step 3: Position validation before API call
             position_validation = self.position_normalizer.validate_lineup_before_submit(
                 normalized_assignments,
                 yahoo_roster
             )
-            
+
             if not position_validation.valid:
                 return LineupResult(
                     success=False,
@@ -380,28 +1215,26 @@ class ResilientYahooClient(YahooFantasyClient):
                     retry_possible=False,
                     suggested_action="Fix position mismatches before retrying"
                 )
-            
+
             # Log warnings but proceed
             if position_validation.warnings:
                 logger.warning(f"Lineup warnings: {position_validation.warnings}")
-            
+
             # Step 4: Game-aware validation
-            # Build slot lookup from Yahoo roster
             slot_lookup = {s.id: s for s in yahoo_roster.slots}
-            
-            # Convert to OptimizedSlot format
+
             optimized_slots = []
             for slot_id, player_id in normalized_assignments.items():
                 slot = slot_lookup.get(slot_id)
                 player = next((p for p in yahoo_roster.players if p.id == player_id), None)
-                
+
                 optimized_slots.append(OptimizedSlot(
                     slot_id=slot_id,
                     position=slot.position if slot else "Unknown",
                     player_id=player_id,
                     player_name=player.name if player else None
                 ))
-            
+
             roster_players = [
                 {
                     "player_id": p.id,
@@ -412,25 +1245,23 @@ class ResilientYahooClient(YahooFantasyClient):
                 }
                 for p in yahoo_roster.players
             ]
-            
+
             if auto_correct:
-                # Auto-correct: replace players with no games
                 submission = self.lineup_validator.auto_correct_lineup(
                     optimized_slots,
                     roster_players
                 )
-                
+
                 if submission.changes_made:
                     logger.info("Lineup auto-corrected:\n" + format_lineup_report(submission))
                     normalized_assignments = submission.assignments
             else:
-                # Just validate, don't auto-correct
                 game_validation = self.lineup_validator.validate_lineup(
                     optimized_slots,
                     roster_players,
                     strict=False
                 )
-                
+
                 if game_validation.invalid_players:
                     player_names = [p.player_name for p in game_validation.invalid_players]
                     return LineupResult(
@@ -440,7 +1271,7 @@ class ResilientYahooClient(YahooFantasyClient):
                         retry_possible=True,
                         suggested_action="Enable auto_correct or manually adjust lineup"
                     )
-            
+
             # Step 5: Execute with circuit breaker
             try:
                 result = await self.circuit.call_async(
@@ -448,13 +1279,13 @@ class ResilientYahooClient(YahooFantasyClient):
                     team_id,
                     normalized_assignments
                 )
-                
+
                 return LineupResult(
                     success=True,
                     changes=result,
                     warnings=position_validation.warnings,
                 )
-                
+
             except CircuitOpenError:
                 return LineupResult(
                     success=False,
@@ -463,7 +1294,7 @@ class ResilientYahooClient(YahooFantasyClient):
                     retry_possible=True,
                     suggested_action="Wait 5 minutes for circuit to reset, then retry"
                 )
-                
+
         except Exception as e:
             logger.exception("Unexpected error setting lineup")
             return LineupResult(
@@ -472,29 +1303,24 @@ class ResilientYahooClient(YahooFantasyClient):
                 retry_possible=True,
                 suggested_action="Check logs and retry"
             )
-    
+
     async def _get_yahoo_roster(self, team_id: str) -> YahooRoster:
         """Fetch and parse Yahoo roster."""
         # Note: get_roster is synchronous, returns List[dict]
         roster_list = self.get_roster(team_id)
-        
-        # Parse into YahooRoster structure
+
         slots = []
         players = []
-        
-        # Yahoo roster slots are determined by selected_position
-        # Track which slots are filled
+
         slot_assignments: Dict[str, str] = {}  # position -> player_id
-        
+
         for player_data in roster_list:
             player_id = str(player_data.get("player_id") or player_data.get("id", ""))
             selected_pos = player_data.get("selected_position", "BN")
-            
-            # Map player to their slot
+
             if selected_pos and selected_pos != "BN":
                 slot_assignments[selected_pos] = player_id
-            
-            # Build Player object
+
             players.append(Player(
                 id=player_id,
                 name=player_data.get("name", "Unknown"),
@@ -503,33 +1329,31 @@ class ResilientYahooClient(YahooFantasyClient):
                 eligible_positions=player_data.get("eligible_positions", []),
                 team=player_data.get("editorial_team_abbr") or player_data.get("team", "")
             ))
-        
-        # Build slots from assignments
+
         for position, player_id in slot_assignments.items():
             slots.append(RosterSlot(
                 id=f"slot_{position}",
                 position=position,
                 player_id=player_id
             ))
-        
+
         return YahooRoster(slots=slots, players=players)
-    
+
     async def _execute_lineup_set(
-        self, 
-        team_id: str, 
+        self,
+        team_id: str,
         assignments: Dict[str, str]
     ) -> Dict:
         """Execute the actual lineup API call."""
-        # Call parent implementation
         if hasattr(super(), 'set_lineup'):
             return await super().set_lineup(team_id, assignments)
         else:
             raise NotImplementedError("YahooClient set_lineup method not found")
-    
+
     # ==================================================================
     # Health & Monitoring
     # ==================================================================
-    
+
     def get_health_status(self) -> Dict[str, Any]:
         """Get current health status of all resilience components."""
         return {
@@ -537,17 +1361,30 @@ class ResilientYahooClient(YahooFantasyClient):
             "cache": self.cache.get_stats(),
             "client_type": "ResilientYahooClient",
         }
-    
+
     def force_circuit_open(self):
         """Manually open circuit (for testing or emergency)."""
         self.circuit.force_open()
         logger.warning("Yahoo API circuit manually opened")
-    
+
     def force_circuit_close(self):
         """Manually close circuit (after fixing issue)."""
         self.circuit.force_close()
         logger.info("Yahoo API circuit manually closed")
-    
+
     def clear_cache(self):
         """Clear all cached data."""
         self.cache.clear_all()
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import sys
+    if "--auth" in sys.argv:
+        run_auth_flow()
+    else:
+        print("Usage: python -m backend.fantasy_baseball.yahoo_client_resilient --auth")
+        print("  Runs one-time OAuth setup to get your refresh token.")

@@ -23,12 +23,12 @@ def _make_loop(moves=None, brief_raises=False, detector_raises=False):
     # side_effect raises synchronously even when called without await.
     if brief_raises:
         brief_patch = patch(
-            "backend.services.openclaw_briefs.generate_and_send_morning_brief",
+            "backend.services.openclaw_briefs_improved.generate_and_send_morning_brief",
             new=MagicMock(side_effect=RuntimeError("brief failed")),
         )
     else:
         brief_patch = patch(
-            "backend.services.openclaw_briefs.generate_and_send_morning_brief",
+            "backend.services.openclaw_briefs_improved.generate_and_send_morning_brief",
             new=MagicMock(return_value=True),
         )
 

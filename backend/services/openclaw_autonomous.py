@@ -30,7 +30,7 @@ class OpenClawAutonomousLoop:
         }
 
         try:
-            from backend.services.openclaw_briefs import generate_and_send_morning_brief
+            from backend.services.openclaw_briefs_improved import generate_and_send_morning_brief
             asyncio.run(generate_and_send_morning_brief())
             summary["brief_sent"] = True
         except Exception as e:

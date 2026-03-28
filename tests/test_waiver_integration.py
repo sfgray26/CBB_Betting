@@ -30,7 +30,7 @@ def _make_yahoo_player(name="Test Player", positions=None, percent_owned=42.5):
 class TestYahooClientOutParam:
 
     def test_get_free_agents_includes_out_param(self):
-        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 
         client = YahooFantasyClient.__new__(YahooFantasyClient)
         client.league_key = "fake.lg.999"
@@ -55,7 +55,7 @@ class TestYahooClientOutParam:
         assert "metadata" in captured_params["out"]
 
     def test_get_waiver_players_includes_out_param(self):
-        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 
         client = YahooFantasyClient.__new__(YahooFantasyClient)
         client.league_key = "fake.lg.999"
@@ -127,7 +127,7 @@ class TestRosterMethodName:
 
     def test_get_roster_is_called_not_get_my_roster(self):
         """YahooFantasyClient.get_roster() must exist; get_my_roster() must not."""
-        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 
         assert hasattr(YahooFantasyClient, "get_roster"), (
             "YahooFantasyClient must have get_roster() method"
@@ -154,7 +154,7 @@ class TestPositionFilter:
 
     def test_position_filter_forwarded_to_yahoo(self):
         """When position='2B' is passed, get_free_agents() must receive position='2B'."""
-        from backend.fantasy_baseball.yahoo_client import YahooFantasyClient
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 
         client = YahooFantasyClient.__new__(YahooFantasyClient)
         client.league_key = "fake.lg.999"
