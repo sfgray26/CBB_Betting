@@ -78,9 +78,9 @@ export default function DashboardPage() {
     <div className="container mx-auto py-8 px-4">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Fantasy Baseball Dashboard</h1>
+        <h1 className="text-xl font-semibold text-zinc-100 mb-2">Fantasy Baseball Dashboard</h1>
         <p className="text-muted-foreground">
-          Last updated: {new Date(dashboard.timestamp).toLocaleString()}
+          Last updated: {new Date(dashboard.timestamp).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' })} ET
         </p>
       </div>
 
@@ -117,8 +117,8 @@ export default function DashboardPage() {
       </div>
       
       {dashboard.lineup_gaps.length > 0 && (
-        <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-          <h3 className="font-semibold text-amber-800 flex items-center gap-2">
+        <div className="mb-6 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+          <h3 className="font-semibold text-amber-400 flex items-center gap-2">
             <AlertCircle className="h-5 w-5" />
             Lineup Gaps Detected: {dashboard.lineup_gaps.length} unfilled
           </h3>
@@ -141,9 +141,9 @@ export default function DashboardPage() {
             ) : (
               <div className="space-y-2">
                 {dashboard.hot_streaks.map((player) => (
-                  <div key={player.player_id} className="flex justify-between p-2 bg-orange-50 rounded">
-                    <span className="font-medium">{player.name}</span>
-                    <span className="text-orange-600">+{player.trend_score.toFixed(2)} z</span>
+                  <div key={player.player_id} className="flex justify-between p-2 bg-amber-500/10 border border-amber-500/20 rounded-md">
+                    <span className="font-medium text-zinc-100">{player.name}</span>
+                    <span className="text-amber-400">+{player.trend_score.toFixed(2)} z</span>
                   </div>
                 ))}
               </div>
@@ -165,9 +165,9 @@ export default function DashboardPage() {
             ) : (
               <div className="space-y-2">
                 {dashboard.cold_streaks.map((player) => (
-                  <div key={player.player_id} className="flex justify-between p-2 bg-blue-50 rounded">
-                    <span className="font-medium">{player.name}</span>
-                    <span className="text-blue-600">{player.trend_score.toFixed(2)} z</span>
+                  <div key={player.player_id} className="flex justify-between p-2 bg-sky-500/10 border border-sky-500/20 rounded-md">
+                    <span className="font-medium text-zinc-100">{player.name}</span>
+                    <span className="text-sky-400">{player.trend_score.toFixed(2)} z</span>
                   </div>
                 ))}
               </div>
@@ -184,19 +184,23 @@ export default function DashboardPage() {
             </CardTitle>
           </CardHeader>
           <div className="p-6 pt-0">
-            {dashboard.waiver_targets.length === 0 ? (
-              <p className="text-muted-foreground">No waiver targets available</p>
+            {dashboard.waiver_targets.filter((t) => t.priority_score > 0).length === 0 ? (
+              <p className="text-zinc-500">No waiver targets available</p>
             ) : (
               <div className="space-y-2">
-                {dashboard.waiver_targets.slice(0, 5).map((target) => (
-                  <div key={target.player_id} className="flex justify-between p-2 border rounded">
+                {[...dashboard.waiver_targets]
+                  .filter((t) => t.priority_score > 0)
+                  .sort((a, b) => b.priority_score - a.priority_score)
+                  .slice(0, 5)
+                  .map((target) => (
+                  <div key={target.player_id} className="flex justify-between p-2 border border-zinc-700/60 bg-zinc-800/40 rounded-md">
                     <div>
-                      <span className="font-medium">{target.name}</span>
-                      <span className="text-sm text-muted-foreground ml-2">{target.tier}</span>
+                      <span className="font-medium text-zinc-100">{target.name}</span>
+                      <span className="text-xs text-zinc-500 ml-2">{target.tier}</span>
                     </div>
-                    <span className="font-semibold">{target.priority_score.toFixed(1)}</span>
+                    <span className="font-semibold text-emerald-400">{target.priority_score.toFixed(1)}</span>
                   </div>
-                ))}
+                  ))}
               </div>
             )}
           </div>
@@ -212,16 +216,18 @@ export default function DashboardPage() {
           </CardHeader>
           <div className="p-6 pt-0">
             {dashboard.injury_flags.length === 0 ? (
-              <p className="text-green-600 font-medium">All players healthy</p>
+              <p className="text-emerald-400 font-medium">All players healthy</p>
             ) : (
               <div className="space-y-2">
                 {dashboard.injury_flags.map((flag) => (
-                  <div key={flag.player_id} className="flex justify-between p-2 bg-red-50 rounded">
-                    <div>
-                      <span className="font-medium">{flag.name}</span>
-                      <Badge variant="default" className="ml-2 bg-red-100 text-red-800">{flag.status}</Badge>
+                  <div key={flag.player_id} className="flex justify-between p-2 bg-rose-500/10 border border-rose-500/20 rounded-md">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-zinc-100">{flag.name}</span>
+                      <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                        {flag.status}
+                      </span>
                     </div>
-                    <span className="text-sm text-red-600">{flag.severity}</span>
+                    <span className="text-xs text-rose-400/70 capitalize">{flag.severity}</span>
                   </div>
                 ))}
               </div>

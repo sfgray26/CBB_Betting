@@ -149,10 +149,19 @@ function BattersTable({ batters }: { batters: LineupPlayer[] }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-800/60">
-          {sorted.map((b) => (
-            <tr key={b.player_id} className="hover:bg-zinc-800/50 transition-colors">
+          {sorted.map((b) => {
+            const isIL = !!(b.injury_status && /^IL|^OUT$/i.test(b.injury_status))
+            return (
+            <tr key={b.player_id} className={cn('hover:bg-zinc-800/50 transition-colors', isIL && 'opacity-60')}>
               <td className="px-3 py-2.5">
-                <div className="font-medium text-zinc-100">{b.name}</div>
+                <div className="flex items-center gap-2">
+                  <span className={cn('font-medium', isIL ? 'text-zinc-400' : 'text-zinc-100')}>{b.name}</span>
+                  {isIL && (
+                    <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                      {b.injury_status!.toUpperCase()}
+                    </span>
+                  )}
+                </div>
                 <div className="text-xs text-zinc-500">{b.position}</div>
               </td>
               <td className="px-3 py-2.5 text-zinc-400 font-mono text-xs">{b.team}</td>
@@ -166,7 +175,8 @@ function BattersTable({ batters }: { batters: LineupPlayer[] }) {
               <td className="px-3 py-2.5 text-center">{slotBadge(b.assigned_slot)}</td>
               <td className="px-3 py-2.5 text-center">{statusBadge(b.status)}</td>
             </tr>
-          ))}
+            )
+          })}
         </tbody>
       </table>
     </div>
@@ -178,13 +188,15 @@ function BattersTable({ batters }: { batters: LineupPlayer[] }) {
 // ---------------------------------------------------------------------------
 
 function PitchersTable({ pitchers }: { pitchers: StartingPitcher[] }) {
-  const scores = pitchers.map((p) => p.sp_score)
+  // Only show true SPs — filter out RPs who may have appeared in Yahoo roster
+  const spOnly = pitchers.filter((p) => p.pitcher_type === 'SP')
+  const scores = spOnly.map((p) => p.sp_score)
 
-  if (pitchers.length === 0) {
+  if (spOnly.length === 0) {
     return <p className="text-zinc-600 text-sm text-center py-8">No starting pitchers scheduled for this date.</p>
   }
 
-  const sorted = [...pitchers].sort((a, b) => b.sp_score - a.sp_score)
+  const sorted = [...spOnly].sort((a, b) => b.sp_score - a.sp_score)
 
   return (
     <div className="overflow-x-auto rounded-lg border border-zinc-800">
@@ -242,7 +254,7 @@ export default function DailyLineupPage() {
       const starters = [
         ...(data?.batters ?? [])
           .filter((b) => b.status === 'START')
-          .map((b) => ({ player_key: b.player_id, position: b.position })),
+          .map((b) => ({ player_key: b.player_id, position: b.assigned_slot ?? b.position })),
         ...(data?.pitchers ?? [])
           .filter((p) => p.status === 'START')
           .map((p) => ({ player_key: p.player_id, position: 'SP' })),
@@ -261,7 +273,12 @@ export default function DailyLineupPage() {
 
   const starterCount =
     (data?.batters?.filter((b) => b.status === 'START').length ?? 0) +
-    (data?.pitchers?.filter((p) => p.status === 'START').length ?? 0)
+    (data?.pitchers?.filter((p) => p.status === 'START' && p.pitcher_type === 'SP').length ?? 0)
+
+  const ilStarters = (data?.batters ?? []).filter(
+    (b) => b.status === 'START' && b.injury_status && /^IL|^OUT$/i.test(b.injury_status),
+  )
+  const hasILStarter = ilStarters.length > 0
 
   return (
     <div className="space-y-6 max-w-6xl">
@@ -366,30 +383,40 @@ export default function DailyLineupPage() {
 
       {/* Apply to Yahoo section */}
       {data && (
-        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-          <button
-            onClick={() => {
-              setApplyStatus('idle')
-              applyLineup()
-            }}
-            disabled={isApplying || starterCount === 0}
-            title={starterCount === 0 ? 'No starters to apply' : undefined}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm rounded-md font-medium min-h-[44px] transition-colors disabled:cursor-not-allowed"
-          >
-            {isApplying ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-            {isApplying ? 'Applying...' : `Apply to Yahoo (${starterCount} starters)`}
-          </button>
+        <div className="flex flex-col gap-3">
+          {hasILStarter && (
+            <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-rose-400 flex-shrink-0 mt-0.5" />
+              <p className="text-rose-300 text-sm">
+                Cannot apply: {ilStarters.map((b) => `${b.name} (${b.injury_status})`).join(', ')} {ilStarters.length === 1 ? 'is' : 'are'} on IL and cannot start. Remove from active slots before applying.
+              </p>
+            </div>
+          )}
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+            <button
+              onClick={() => {
+                setApplyStatus('idle')
+                applyLineup()
+              }}
+              disabled={isApplying || starterCount === 0 || hasILStarter}
+              title={hasILStarter ? 'IL players in active slots — remove before applying' : starterCount === 0 ? 'No starters to apply' : undefined}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-700 disabled:text-zinc-500 text-white text-sm rounded-md font-medium min-h-[44px] transition-colors disabled:cursor-not-allowed"
+            >
+              {isApplying ? (
+                <RefreshCw className="h-4 w-4 animate-spin" />
+              ) : (
+                <Send className="h-4 w-4" />
+              )}
+              {isApplying ? 'Applying...' : `Apply to Yahoo (${starterCount} starters)`}
+            </button>
 
-          {applyStatus === 'success' && (
-            <p className="text-emerald-400 text-sm">{applyMessage}</p>
-          )}
-          {applyStatus === 'error' && (
-            <p className="text-rose-400 text-sm">{applyMessage}</p>
-          )}
+            {applyStatus === 'success' && (
+              <p className="text-emerald-400 text-sm">{applyMessage}</p>
+            )}
+            {applyStatus === 'error' && (
+              <p className="text-rose-400 text-sm">{applyMessage}</p>
+            )}
+          </div>
         </div>
       )}
     </div>

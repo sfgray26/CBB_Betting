@@ -3935,6 +3935,13 @@ async def get_fantasy_lineup_recommendations(
         except Exception as _exc:
             logger.warning("Could not load player board projections for lineup: %s", _exc)
 
+    # Build injury status lookup: player name (lowercase) -> injury status string
+    _injury_lookup: dict = {
+        p.get("name", "").lower(): p.get("status") or None
+        for p in _lineup_roster
+        if p.get("name")
+    }
+
     lineup_warnings: list[str] = []
     batters: list[LineupPlayerOut] = []
 
@@ -4034,14 +4041,15 @@ async def get_fantasy_lineup_recommendations(
                     name=a["player_name"],
                     team=team,
                     position="?",
-                    implied_runs=round(opp_impl, 2),
-                    park_factor=1.0,
+                    implied_runs=round(a.get("implied_runs", opp_impl), 2),
+                    park_factor=round(a.get("park_factor", 1.0), 3),
                     lineup_score=round(a.get("smart_score", 0), 3),
                     start_time=start,
                     opponent=opp,
                     status="START" if a["slot"] != "BN" else "BENCH",
                     assigned_slot=a["slot"],
                     has_game=a.get("has_game", False),
+                    injury_status=_injury_lookup.get(a["player_name"].lower()),
                 ))
 
             logger.info(f"SmartLineupSelector produced {len(batters)} assignments for {lineup_date}")
@@ -4076,6 +4084,7 @@ async def get_fantasy_lineup_recommendations(
                     status="START" if s.slot != "BN" else "BENCH",
                     assigned_slot=s.slot,
                     has_game=s.has_game,
+                    injury_status=_injury_lookup.get(s.player_name.lower()),
                 ))
         except Exception as _exc:
             logger.warning("solve_lineup failed, falling back to score-rank: %s", _exc)
@@ -4093,9 +4102,10 @@ async def get_fantasy_lineup_recommendations(
         for i, b in enumerate(report.get("batter_rankings", [])):
             team = b.get("team", "")
             opp, start, opp_impl = _get_game_context(team)
+            _b_name = b.get("name", "")
             batters.append(LineupPlayerOut(
-                player_id=str(b.get("player_id", b.get("name", ""))),
-                name=b.get("name", ""),
+                player_id=str(b.get("player_id", _b_name)),
+                name=_b_name,
                 team=team,
                 position=(b.get("positions") or ["OF"])[0],
                 implied_runs=round(opp_impl, 2),
@@ -4106,6 +4116,7 @@ async def get_fantasy_lineup_recommendations(
                 status="START" if i < 9 else "BENCH",
                 assigned_slot=None,
                 has_game=b.get("has_game", True),
+                injury_status=_injury_lookup.get(_b_name.lower()),
             ))
 
     # Build report from games data for the response
@@ -4952,7 +4963,6 @@ async def get_waiver_recommendations(
             return " [" + "; ".join(parts) + "]"
 
         # Generate recommendations for top FAs
-        seen_drops: set[str] = set()
         for fa in scored_fas[:15]:
             if len(recommendations) >= 5:
                 break
@@ -5026,15 +5036,10 @@ async def get_waiver_recommendations(
             if drop_score_adj >= adjusted_need:
                 continue
 
-            # Skip if we already suggested dropping this player
-            if drop_candidate["name"] in seen_drops:
-                continue
-
             gain = adjusted_need - drop_candidate["z_score"]
             if gain < 0.5:
                 continue  # Not worth the move
 
-            seen_drops.add(drop_candidate["name"])
             fa_proj = _get_proj({"player_key": fa.player_id, "name": fa.name, "positions": [fa.position]})
             is_proxy = fa_proj.get("is_proxy", False)
             confidence = 0.75 if not is_proxy else 0.45

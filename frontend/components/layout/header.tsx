@@ -72,7 +72,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
         <Menu className="h-5 w-5" />
       </Button>
 
-      <h1 className="text-base font-semibold text-zinc-100 flex-1 truncate">{title}</h1>
+      <span className="text-base font-semibold text-zinc-100 flex-1 truncate">{title}</span>
 
       <div className="flex items-center gap-3">
         <span className="text-xs text-zinc-500">

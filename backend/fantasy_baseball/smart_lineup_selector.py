@@ -193,7 +193,7 @@ class SmartBatterRanking:
         if self.opposing_pitcher:
             # Facing an ace = penalty (negative), facing weak SP = bonus (positive)
             # quality_score: 0-10 (10 = ace), so ace gives negative, weak gives positive
-            pitcher_penalty = (self.opposing_pitcher.quality_score - 5.0) * 0.5
+            pitcher_penalty = (5.0 - self.opposing_pitcher.quality_score) * 0.5
         
         # Category need fit
         cat_boost = 0.0
@@ -558,6 +558,8 @@ class SmartLineupSelector:
                     "team": selected.team,
                     "smart_score": selected.smart_score,
                     "has_game": selected.has_game,
+                    "park_factor": selected.park_factor,
+                    "implied_runs": selected.implied_team_runs,
                     "reason": ", ".join(reason_parts),
                 })
             else:
@@ -578,6 +580,8 @@ class SmartLineupSelector:
                     "team": rank.team,
                     "smart_score": rank.smart_score,
                     "has_game": rank.has_game,
+                    "park_factor": rank.park_factor,
+                    "implied_runs": rank.implied_team_runs,
                     "reason": "Bench",
                 })
         

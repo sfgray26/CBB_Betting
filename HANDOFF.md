@@ -33,7 +33,7 @@
 | **Matchup endpoint (`/api/fantasy/matchup`)** | ✅ LIVE | Team mapping fixed — handles Yahoo indexed format (`m["0"]["teams"]`). Diagnostic log added. |
 | **UTC timezone bug** | ✅ FIXED | `daily_lineup_optimizer.py` — all 3 `datetime.utcnow()` → `datetime.now(ZoneInfo("America/New_York"))` |
 | **Weather integration** | ✅ LIVE | Provider: OpenWeatherMap. Env var `OPENWEATHER_API_KEY` confirmed set in Railway. |
-| **OR-Tools** | 🔄 PENDING DEPLOY | In `requirements.txt`. Greedy fallback active in interim. |
+| **OR-Tools (Railway)** | ✅ LIVE (March 28, 2026) | Installed via requirements.txt; ILP optimization active. |
 | **Kimi UI/API hotfix** | ✅ MERGED | Roster dedup, `get_my_team_key()` recursive parse, `_safe_float()` NaN guard. |
 | **Streamlit** | ✅ RETIRED | `dashboard/` untouched. Next.js is canonical UI. |
 | **Test suite** | ✅ STABLE | 1198 pass / 5 pre-existing failures (3 DB-auth, 1 TTL logic, 1 CircuitBreaker) |

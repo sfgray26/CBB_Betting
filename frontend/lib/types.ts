@@ -278,6 +278,7 @@ export interface LineupPlayer {
   opponent: string
   status: 'START' | 'BENCH' | 'UNKNOWN'
   assigned_slot?: string | null
+  injury_status?: string | null
 }
 
 export interface StartingPitcher {
@@ -371,6 +372,7 @@ export interface RosterPlayer {
   injury_note: string | null
   z_score: number | null
   is_undroppable: boolean
+  selected_position?: string | null
 }
 
 export interface RosterResponse {

@@ -12,14 +12,15 @@ import type { MatchupResponse } from '@/lib/types'
 // ---------------------------------------------------------------------------
 
 // Known stat display names for the 18-category H2H league
+// Includes both Yahoo string keys and numeric category IDs
 const STAT_LABELS: Record<string, string> = {
-  R: 'Runs',
-  HR: 'Home Runs',
-  RBI: 'RBI',
-  SB: 'Stolen Bases',
+  R: 'Runs',       '8': 'Runs',
+  HR: 'Home Runs', '7': 'Home Runs',
+  RBI: 'RBI',      '12': 'RBI',
+  SB: 'Stolen Bases', '13': 'Stolen Bases',
   OBP: 'On-Base %',
   H: 'Hits',
-  AVG: 'Batting Avg',
+  AVG: 'Batting Avg', '3': 'Batting Avg',
   OPS: 'OPS',
   W: 'Wins',
   K: 'Strikeouts',
@@ -33,6 +34,9 @@ const STAT_LABELS: Record<string, string> = {
   K9: 'K/9',
 }
 
+// Ratio stats get 3 decimal places; counting stats get integer display
+const RATIO_STATS = new Set(['AVG', 'OBP', 'OPS', 'ERA', 'WHIP', 'K9', '3'])
+
 // ERA / WHIP: lower is better
 const LOWER_IS_BETTER = new Set(['ERA', 'WHIP'])
 
@@ -42,13 +46,15 @@ function winClass(cat: string, myVal: number, oppVal: number): string {
   return myWins ? 'text-emerald-400 font-semibold' : 'text-rose-400'
 }
 
-function formatVal(val: string | number | undefined): string {
+function formatVal(val: string | number | undefined, cat?: string): string {
   if (val === undefined || val === null) return '-'
   const n = parseFloat(String(val))
   if (isNaN(n)) return String(val)
-  // Ratios (OBP, AVG, OPS, ERA, WHIP) display 3 decimal places
-  if (n > 0 && n < 20) return n.toFixed(3)
-  return n.toLocaleString()
+  if (cat && RATIO_STATS.has(cat)) return n.toFixed(3)
+  // IP special case: 6.1 (not 6)
+  if (cat === 'IP') return n.toFixed(1)
+  // Integer counting stats
+  return Number.isInteger(n) ? n.toLocaleString() : n.toFixed(1)
 }
 
 // ---------------------------------------------------------------------------
@@ -99,10 +105,10 @@ function MatchupTable({ data }: { data: MatchupResponse }) {
                   {STAT_LABELS[cat] ?? cat}
                 </td>
                 <td className={cn('px-4 py-2.5 text-right font-mono tabular-nums', winClass(cat, myVal, oppVal))}>
-                  {formatVal(myRaw)}
+                  {formatVal(myRaw, cat)}
                 </td>
                 <td className={cn('px-4 py-2.5 text-right font-mono tabular-nums', winClass(cat, oppVal, myVal))}>
-                  {formatVal(oppRaw)}
+                  {formatVal(oppRaw, cat)}
                 </td>
                 <td className="px-4 py-2.5 text-center text-xs">
                   {tied ? (
@@ -156,7 +162,7 @@ function ScoreBanner({ data }: { data: MatchupResponse }) {
       </div>
       <div className="text-center px-4">
         <p className="text-xs text-zinc-500 uppercase tracking-widest font-semibold">
-          {data.is_playoffs ? 'Playoffs' : `Week ${data.week ?? '?'}`}
+          Week {data.week ?? '?'}{data.is_playoffs ? ' (Playoffs)' : ''}
         </p>
         <p className="text-zinc-600 text-sm mt-1">vs</p>
         {ties > 0 && <p className="text-xs text-zinc-600 mt-1">{ties} tied</p>}
@@ -248,7 +254,7 @@ export default function MatchupPage() {
 
       {/* Pre-season / no matchup message */}
       {data?.message && (
-        <div className="bg-blue-50 border border-blue-200 rounded p-3 text-blue-800 text-sm">
+        <div className="bg-sky-500/10 border border-sky-500/30 rounded-lg p-3 text-sky-300 text-sm">
           {data.message}
         </div>
       )}

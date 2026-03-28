@@ -98,6 +98,9 @@ function RosterTable({ players }: { players: RosterPlayer[] }) {
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider w-20">
               Pos
             </th>
+            <th className="px-3 py-3 text-center text-xs font-semibold text-zinc-500 uppercase tracking-wider w-14">
+              Slot
+            </th>
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider w-16">
               Team
             </th>
@@ -132,6 +135,22 @@ function RosterTable({ players }: { players: RosterPlayer[] }) {
                     </span>
                   ))}
                 </div>
+              </td>
+              <td className="px-3 py-2.5 text-center">
+                {p.selected_position ? (
+                  <span className={cn(
+                    'px-1.5 py-0.5 rounded text-xs font-mono font-semibold',
+                    p.selected_position === 'BN'
+                      ? 'bg-zinc-700/60 text-zinc-500 border border-zinc-600/40'
+                      : p.selected_position === 'IL' || p.selected_position?.startsWith('IL')
+                        ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                        : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30',
+                  )}>
+                    {p.selected_position}
+                  </span>
+                ) : (
+                  <span className="text-zinc-600 text-xs">—</span>
+                )}
               </td>
               <td className="px-3 py-2.5 text-zinc-400 font-mono text-xs">
                 {p.team ?? '-'}
@@ -168,7 +187,8 @@ export default function RosterPage() {
   })
 
   const errorMsg = error instanceof Error ? error.message : ''
-  const isYahooNotConfigured = isError && errorMsg.startsWith('503')
+  const httpStatus = errorMsg.match(/^(\d{3})/)?.[1] ?? null
+  const isYahooNotConfigured = isError && httpStatus === '503'
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -203,9 +223,14 @@ export default function RosterPage() {
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-5 flex items-start gap-3">
           <AlertTriangle className="h-5 w-5 text-amber-400 flex-shrink-0 mt-0.5" />
           <div>
-            <p className="text-amber-300 font-medium text-sm">Yahoo not configured</p>
+            <div className="flex items-center gap-2">
+              <p className="text-amber-300 font-medium text-sm">Yahoo not configured</p>
+              <span className="px-1.5 py-0.5 rounded text-xs font-mono font-semibold bg-amber-500/20 text-amber-400 border border-amber-500/40">
+                HTTP 503
+              </span>
+            </div>
             <p className="text-amber-300/60 text-xs mt-0.5">
-              {errorMsg || 'Set YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET, and YAHOO_REFRESH_TOKEN in Railway.'}
+              Set YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET, and YAHOO_REFRESH_TOKEN in Railway.
             </p>
           </div>
         </div>
@@ -214,9 +239,16 @@ export default function RosterPage() {
       {isError && !isYahooNotConfigured && (
         <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-5 flex items-center justify-between">
           <div>
-            <p className="text-rose-400 font-medium text-sm">Failed to load roster</p>
+            <div className="flex items-center gap-2">
+              <p className="text-rose-400 font-medium text-sm">Failed to load roster</p>
+              {httpStatus && (
+                <span className="px-1.5 py-0.5 rounded text-xs font-mono font-semibold bg-rose-500/20 text-rose-400 border border-rose-500/40">
+                  HTTP {httpStatus}
+                </span>
+              )}
+            </div>
             <p className="text-rose-400/60 text-xs mt-0.5">
-              {error instanceof Error ? error.message : 'Unknown error'}
+              {errorMsg || 'Unknown error'}
             </p>
           </div>
           <button

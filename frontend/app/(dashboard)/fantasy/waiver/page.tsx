@@ -264,10 +264,30 @@ function TwoStartTable({ pitchers }: { pitchers: WaiverPlayer[] }) {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const ACTION_LABELS: Record<string, string> = {
+  ADD_DROP: 'Add / Drop',
+  ADD: 'Add',
+  DROP: 'Drop',
+  HOLD: 'Hold',
+}
+
+const SIGNAL_LABELS: Record<string, string> = {
+  BUY_LOW: 'Buy Low',
+  BREAKOUT: 'Breakout',
+  SELL_HIGH: 'Sell High',
+}
+
+// ---------------------------------------------------------------------------
 // Recommendation card
 // ---------------------------------------------------------------------------
 
 function RecCard({ rec }: { rec: WaiverRecommendation }) {
+  // Strip [BUY_LOW ...] tags from rationale
+  const rationale = rec.rationale.replace(/\[BUY_LOW[^\]]*\]/gi, '').replace(/\[BREAKOUT[^\]]*\]/gi, '').trim()
+
   return (
     <div className="rounded-lg border border-zinc-700 bg-zinc-900/60 p-4 space-y-2">
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -280,7 +300,7 @@ function RecCard({ rec }: { rec: WaiverRecommendation }) {
                 : 'bg-sky-500/15 text-sky-400',
             )}
           >
-            {rec.action}
+            {ACTION_LABELS[rec.action] ?? rec.action}
           </span>
           <span className="text-zinc-100 font-medium text-sm">{rec.add_player?.name}</span>
           {rec.drop_player_name && (
@@ -311,12 +331,12 @@ function RecCard({ rec }: { rec: WaiverRecommendation }) {
                   : 'bg-zinc-700 text-zinc-400',
               )}
             >
-              {sig}
+              {SIGNAL_LABELS[sig] ?? sig}
             </span>
           ))}
         </div>
       </div>
-      <p className="text-xs text-zinc-500 leading-relaxed">{rec.rationale}</p>
+      <p className="text-xs text-zinc-500 leading-relaxed">{rationale}</p>
     </div>
   )
 }
@@ -379,8 +399,10 @@ export default function WaiverWirePage() {
           </h1>
           {data && (
             <p className="text-sm text-zinc-500 mt-0.5">
-              vs <span className="text-zinc-300">{data.matchup_opponent}</span>
-              &nbsp;&middot; refreshes every 10 min
+              {data.matchup_opponent && data.matchup_opponent !== 'TBD' && data.matchup_opponent !== '' && (
+                <>vs <span className="text-zinc-300">{data.matchup_opponent}</span>&nbsp;&middot; </>
+              )}
+              refreshes every 10 min
             </p>
           )}
           {!data && !isLoading && (
