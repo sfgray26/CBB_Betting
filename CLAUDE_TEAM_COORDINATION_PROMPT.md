@@ -1,6 +1,10 @@
 # Team Coordination Prompt — Optimizing Parallel Workstreams
 
-> **Context:** Token budget constraints require spreading fantasy baseball work across Kimi, Gemini, and OpenClaw. Need Claude's architectural guidance on dependencies, parallelization, and risk management.
+> **Authoritative Version:** This document supersedes `CLAUDE_COORDINATION_PROMPT.md` (now deprecated).
+> 
+> **Purpose:** Coordinate parallel work across Kimi, Gemini, and OpenClaw with Claude's architectural oversight.
+>
+> **Context:** Token budget constraints require spreading fantasy baseball work across agents. Need guidance on dependencies, parallelization, and risk management.
 
 ## Current State: 5 P0 Critical Gaps Identified
 

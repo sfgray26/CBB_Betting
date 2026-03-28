@@ -1,3 +1,16 @@
+# ⚠️ DEPRECATED — See CLAUDE_TEAM_COORDINATION_PROMPT.md
+
+> **Status:** SUPERCEDED (March 28, 2026)
+> 
+> This document has been consolidated into `CLAUDE_TEAM_COORDINATION_PROMPT.md`,
+> which contains the same P0 gap analysis with more detailed workstream assignments.
+> 
+> **Use this instead:** `CLAUDE_TEAM_COORDINATION_PROMPT.md`
+
+---
+
+*The content below is preserved for historical reference only.*
+
 # Claude Coordination Prompt: P0 Fantasy Baseball Gaps
 
 **Context:** 5 P0 critical gaps identified. Token constraints require parallel work across team. Need architectural decisions on work distribution.

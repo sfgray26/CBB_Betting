@@ -1,5 +1,7 @@
 # Prompt for Claude Code: UAT Critical Fixes
 
+> **Related:** `CLAUDE_ARCHITECT_PROMPT_MARCH28.md` (production issues) | `CLAUDE_TEAM_COORDINATION_PROMPT.md` (work assignments)
+
 Copy-paste into Claude Code to fix the UAT issues:
 
 ---

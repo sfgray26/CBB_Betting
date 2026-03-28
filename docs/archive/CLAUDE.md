@@ -1,4 +1,20 @@
-# CLAUDE.md — CBB Edge Analyzer
+# ⚠️ ARCHIVED — CBB Edge Analyzer (Legacy)
+
+> **Status:** ARCHIVED (Moved to `docs/archive/`)
+> 
+> **Superseded by:** 
+> - [AGENTS.md](/AGENTS.md) — Agent workspace guide
+> - [ORCHESTRATION.md](/ORCHESTRATION.md) — Multi-agent coordination
+> - [IDENTITY.md](/IDENTITY.md) — Risk posture and identity
+> - [CLAUDE_TEAM_COORDINATION_PROMPT.md](/CLAUDE_TEAM_COORDINATION_PROMPT.md) — Active coordination
+>
+> **Context:** This document reflects the single-agent era. The system now uses multi-agent orchestration (Claude, Kimi, Gemini, OpenClaw). See ORCHESTRATION.md for current workflow.
+
+---
+
+*The content below is preserved for historical reference only (pre-March 2026).*
+
+# CLAUDE.md — CBB Edge Analyzer (Legacy)
 
 ## Critical: Operating Procedures
 - Follow the high-rigor workflow defined in `.claude/rules/workflow.md`.

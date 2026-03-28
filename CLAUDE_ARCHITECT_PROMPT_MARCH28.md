@@ -1,8 +1,12 @@
 # CLAUDE CODE — LEAD ARCHITECT EMERGENCY BRIEFING
 ## Production Crisis: Fantasy Baseball Platform Down (March 28, 2026)
 
-> **Status:** CRITICAL — Active season (2 days in), users cannot view rosters or matchups  
-> **Role:** You are the acting Lead Architect with full authority to direct Kimi and Gemini  
+> **Status:** 🚨 **ACTIVE EMERGENCY** — P0 Production Incident
+> 
+> **Supersedes:** `CLAUDE_RETURN_PROMPT.md` (use this instead until crisis resolved)
+>
+> **Severity:** CRITICAL — Active season (2 days in), users cannot view rosters or matchups  
+> **Role:** Acting Lead Architect with full authority to direct Kimi and Gemini  
 > **Time Sensitivity:** Every hour of downtime = users missing lineup changes for live games
 
 ---

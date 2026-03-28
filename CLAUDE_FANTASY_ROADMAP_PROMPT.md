@@ -1,5 +1,7 @@
 # Prompt for Claude Code: Fantasy Baseball Elite Platform Implementation
 
+> **Related:** `CLAUDE_TEAM_COORDINATION_PROMPT.md` (work coordination) | `CLAUDE_ARCHITECT_PROMPT_MARCH28.md` (emergency issues)
+
 **Context:** Review `reports/FANTASY_BASEBALL_GAP_ANALYSIS.md` and implement the roadmap.
 
 ---

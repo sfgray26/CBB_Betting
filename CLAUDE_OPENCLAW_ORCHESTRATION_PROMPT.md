@@ -1,5 +1,7 @@
 # Prompt for Claude Code: OpenClaw 24/7 Agent Orchestration
 
+> **Related:** `AGENTS.md` (agent roles) | `ORCHESTRATION.md` (task routing)
+
 Copy-paste this into Claude Code to automate your agent handoffs:
 
 ---
