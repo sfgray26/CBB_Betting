@@ -575,16 +575,27 @@ class DashboardService:
     async def _get_matchup_preview(
         self,
         user_id: str,
-        team_key: Optional[str]
+        team_key: Optional[str],
+        db: Optional[Session] = None,
     ) -> Optional[MatchupPreview]:
         """
         B1.5: Get this week's matchup analysis from Yahoo scoreboard.
 
-        Win probability uses a 0.5 baseline — MCMC upgrade is mid-term roadmap.
+        Enrichments:
+        - opponent_record: pulled from Yahoo standings (W-L-T format)
+        - my_projected_categories / opponent_projected_categories: 7-day rolling
+          averages from PlayerDailyMetric for rostered players on each side.
+
+        Win probability remains 0.5 baseline — MCMC is B5 roadmap.
         """
         client = self._get_yahoo_client()
         if not client:
             return None
+
+        close_db = False
+        if db is None:
+            db = SessionLocal()
+            close_db = True
 
         try:
             my_team_key = team_key or client.get_my_team_key()
@@ -611,7 +622,7 @@ class DashboardService:
             else:
                 return None  # Our team not found in scoreboard
 
-            # Resolve opponent team name
+            # ── Resolve opponent team name ────────────────────────────────
             opponent_name = "Opponent"
             if opponent_key:
                 try:
@@ -622,13 +633,37 @@ class DashboardService:
                 except Exception:
                     pass
 
+            # ── Populate opponent_record from standings ───────────────────
+            opponent_record = ""
+            if opponent_key:
+                try:
+                    opponent_record = self._fetch_team_record(client, opponent_key)
+                except Exception as exc:
+                    logger.debug("Could not fetch opponent record: %s", exc)
+
+            # ── Populate projected categories from PlayerDailyMetric ──────
+            my_projected_categories: Dict[str, float] = {}
+            opponent_projected_categories: Dict[str, float] = {}
+            try:
+                my_roster = client.get_roster(team_key=my_team_key) if my_team_key else []
+                opp_roster = client.get_roster(team_key=opponent_key) if opponent_key else []
+
+                my_projected_categories = self._project_categories_from_db(
+                    db, [p.get("name", "") for p in my_roster if p.get("name")]
+                )
+                opponent_projected_categories = self._project_categories_from_db(
+                    db, [p.get("name", "") for p in opp_roster if p.get("name")]
+                )
+            except Exception as exc:
+                logger.debug("Could not compute projected categories: %s", exc)
+
             return MatchupPreview(
                 week_number=week_number,
                 opponent_team_name=opponent_name,
-                opponent_record="",  # Requires standings query — deferred
-                my_projected_categories={},  # MCMC pending
-                opponent_projected_categories={},
-                win_probability=0.5,  # MCMC pending
+                opponent_record=opponent_record,
+                my_projected_categories=my_projected_categories,
+                opponent_projected_categories=opponent_projected_categories,
+                win_probability=0.5,  # MCMC pending (B5)
                 category_advantages=[],
                 category_disadvantages=[],
             )
@@ -636,6 +671,126 @@ class DashboardService:
         except Exception as e:
             logger.error(f"Failed to get matchup preview: {e}")
             return None
+        finally:
+            if close_db:
+                db.close()
+
+    @staticmethod
+    def _extract_team_standings(team_list: Any) -> tuple:
+        """
+        Recursively flatten a Yahoo team standings entry and extract
+        team_key and outcome_totals.
+
+        Returns (team_key: str, outcome: dict).
+        """
+        found_key: List[str] = []
+        outcome: Dict = {}
+
+        def _walk(obj: Any, depth: int = 0) -> None:
+            if depth > 6:
+                return
+            if isinstance(obj, list):
+                for item in obj:
+                    _walk(item, depth + 1)
+            elif isinstance(obj, dict):
+                if "team_key" in obj and not found_key:
+                    found_key.append(str(obj["team_key"]))
+                if "outcome_totals" in obj:
+                    outcome.update(obj["outcome_totals"])
+                for v in obj.values():
+                    if isinstance(v, (list, dict)):
+                        _walk(v, depth + 1)
+
+        _walk(team_list)
+        return (found_key[0] if found_key else ""), outcome
+
+    @staticmethod
+    def _fetch_team_record(client: Any, team_key: str) -> str:
+        """
+        Query Yahoo standings and extract the W-L-T record for a given team_key.
+
+        Returns a string like "12-3-0" or "" if the data cannot be resolved.
+        The standings endpoint includes team_standings.outcome_totals which Yahoo
+        always populates (even at the start of the season with 0-0-0).
+        """
+        try:
+            raw = client._get(f"league/{client.league_key}/standings")
+            sec = client._league_section(raw, 1)
+            teams_raw = sec.get("standings", [{}])[0].get("teams", {})
+            count = int(teams_raw.get("count", 0))
+            for i in range(count):
+                entry = teams_raw.get(str(i), {})
+                team_list = entry.get("team", [])
+                tk, outcome = DashboardService._extract_team_standings(team_list)
+                if tk == team_key and outcome:
+                    w = outcome.get("wins", 0)
+                    l = outcome.get("losses", 0)
+                    t = outcome.get("ties", 0)
+                    return f"{w}-{l}-{t}"
+        except Exception as exc:
+            logger.debug("_fetch_team_record error: %s", exc)
+        return ""
+
+    @staticmethod
+    def _project_categories_from_db(
+        db: Session,
+        player_names: List[str],
+    ) -> Dict[str, float]:
+        """
+        Aggregate 7-day rolling average stats for a list of players from
+        PlayerDailyMetric.rolling_window["7d"]["avg"].
+
+        Returns a dict of category → summed 7-day average across the roster
+        (e.g. {"avg": 0.288, "hr": 2.1, "rbi": 8.4}).  Only includes
+        categories that appear in at least one player's rolling_window.
+        Returns an empty dict when no DB rows are found.
+        """
+        if not player_names:
+            return {}
+
+        try:
+            recent_cutoff = date.today() - timedelta(days=2)
+            metrics = (
+                db.query(PlayerDailyMetric)
+                .filter(
+                    PlayerDailyMetric.player_name.in_(player_names),
+                    PlayerDailyMetric.sport == "mlb",
+                    PlayerDailyMetric.metric_date >= recent_cutoff,
+                )
+                .all()
+            )
+
+            if not metrics:
+                return {}
+
+            # Keep most-recent row per player
+            latest: Dict[str, PlayerDailyMetric] = {}
+            for m in metrics:
+                existing = latest.get(m.player_name)
+                if existing is None or m.metric_date > existing.metric_date:
+                    latest[m.player_name] = m
+
+            totals: Dict[str, float] = {}
+            for m in latest.values():
+                window = m.rolling_window or {}
+                seven_day = window.get("7d", {})
+                avg_block = seven_day.get("avg", {})
+                if isinstance(avg_block, dict):
+                    for cat, val in avg_block.items():
+                        try:
+                            totals[cat] = totals.get(cat, 0.0) + float(val)
+                        except (TypeError, ValueError):
+                            pass
+                elif isinstance(avg_block, (int, float)):
+                    # Scalar avg — use z_score_recent as a fallback signal
+                    z = m.z_score_recent
+                    if z is not None:
+                        totals["z_score"] = totals.get("z_score", 0.0) + float(z)
+
+            return totals
+        except Exception as exc:
+            logger.debug("_project_categories_from_db error: %s", exc)
+            return {}
     
     async def _get_probable_pitchers(
         self,

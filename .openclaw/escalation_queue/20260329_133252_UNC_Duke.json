@@ -1,0 +1,11 @@
+{
+  "queue_id": "20260329_133252_UNC_Duke",
+  "timestamp": "2026-03-29T13:32:52.362984",
+  "game_key": "UNC@Duke",
+  "home_team": "Duke",
+  "away_team": "UNC",
+  "recommended_units": 1.5,
+  "integrity_verdict": "CONFIRMED",
+  "escalation_reason": "high stakes (1.5u)",
+  "status": "pending_review"
+}

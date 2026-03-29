@@ -5639,6 +5639,123 @@ async def get_dashboard_waiver_targets(user: str = Depends(verify_api_key)):
         db.close()
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SSE DASHBOARD STREAM
+# ─────────────────────────────────────────────────────────────────────────────
+
+import json as _json
+
+
+_ALL_PANELS = frozenset({"waiver_targets", "matchup_preview", "probable_pitchers", "streaks"})
+
+
+@app.get("/api/fantasy/dashboard/stream")
+async def dashboard_stream(
+    panels: Optional[str] = Query(
+        default=None,
+        description="Comma-separated panel names to stream. "
+        "Defaults to all panels: waiver_targets,matchup_preview,probable_pitchers,streaks",
+    ),
+    user: str = Depends(verify_api_key),
+):
+    """
+    Server-Sent Events stream for the fantasy dashboard.
+
+    Yields one SSE event per requested panel, then sleeps 60 seconds and repeats.
+    The client should reconnect automatically (EventSource does this by default).
+
+    Query param ?panels=waiver_targets,streaks restricts which panels are sent.
+    Omitting the param streams all four panels.
+
+    Event format:
+        event: <panel_name>
+        data: <JSON payload>
+    """
+    requested: frozenset[str]
+    if panels:
+        requested = frozenset(p.strip() for p in panels.split(",") if p.strip()) & _ALL_PANELS
+    else:
+        requested = _ALL_PANELS
+
+    service = get_dashboard_service()
+
+    def _fmt_event(name: str, payload: dict) -> str:
+        """Format a single SSE event string."""
+        return f"event: {name}\ndata: {_json.dumps(payload)}\n\n"
+
+    def _fmt_error(panel: str, msg: str) -> str:
+        return f"event: error\ndata: {_json.dumps({'panel': panel, 'error': msg})}\n\n"
+
+    async def generate():
+        while True:
+            # ── waiver_targets ──────────────────────────────────────────────
+            if "waiver_targets" in requested:
+                try:
+                    from backend.models import SessionLocal as _SL
+                    _db = _SL()
+                    try:
+                        prefs = service._get_or_create_preferences(_db, user)
+                        targets = await service._get_waiver_targets(user_id=user, prefs=prefs)
+                    finally:
+                        _db.close()
+                    yield _fmt_event("waiver_targets", {
+                        "targets": [asdict(t) for t in targets[:10]],
+                    })
+                except Exception as exc:
+                    logger.warning("SSE waiver_targets error: %s", exc)
+                    yield _fmt_error("waiver_targets", str(exc))
+
+            # ── matchup_preview ─────────────────────────────────────────────
+            if "matchup_preview" in requested:
+                try:
+                    matchup = await service._get_matchup_preview(user_id=user, team_key=None)
+                    yield _fmt_event("matchup_preview", {
+                        "matchup": asdict(matchup) if matchup else None,
+                    })
+                except Exception as exc:
+                    logger.warning("SSE matchup_preview error: %s", exc)
+                    yield _fmt_error("matchup_preview", str(exc))
+
+            # ── probable_pitchers ───────────────────────────────────────────
+            if "probable_pitchers" in requested:
+                try:
+                    pitchers, two_starts = await service._get_probable_pitchers(user_id=user)
+                    yield _fmt_event("probable_pitchers", {
+                        "pitchers": [asdict(p) for p in pitchers],
+                        "two_start_pitchers": [asdict(p) for p in two_starts],
+                    })
+                except Exception as exc:
+                    logger.warning("SSE probable_pitchers error: %s", exc)
+                    yield _fmt_error("probable_pitchers", str(exc))
+
+            # ── streaks ─────────────────────────────────────────────────────
+            if "streaks" in requested:
+                try:
+                    hot, cold = await service._get_streaks(user_id=user)
+                    yield _fmt_event("streaks", {
+                        "hot": [asdict(s) for s in hot[:5]],
+                        "cold": [asdict(s) for s in cold[:5]],
+                    })
+                except Exception as exc:
+                    logger.warning("SSE streaks error: %s", exc)
+                    yield _fmt_error("streaks", str(exc))
+
+            # Keep-alive comment so proxies don't close the connection
+            yield ": keep-alive\n\n"
+
+            await asyncio.sleep(60)
+
+    from fastapi.responses import StreamingResponse as _SR
+    return _SR(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering on Railway
+        },
+    )
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # ELITE LINEUP OPTIMIZER API — Day 3
 # ═════════════════════════════════════════════════════════════════════════════

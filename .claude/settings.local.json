@@ -46,7 +46,9 @@
       "Bash(venv/Scripts/python -m pytest tests/test_il_roster_support.py tests/test_yahoo_client_undroppable.py tests/test_opening_day_features.py -q --tb=short)",
       "Bash(venv/Scripts/python -m pytest tests/test_waiver_recovery.py -v --tb=short)",
       "Bash(venv/Scripts/python -m py_compile backend/fantasy_baseball/smart_lineup_selector.py)",
-      "Bash(npx playwright:*)"
+      "Bash(npx playwright:*)",
+      "Bash(venv/Scripts/python -m py_compile backend/fantasy_baseball/circuit_breaker.py)",
+      "Bash(venv/Scripts/python -m pytest tests/test_waiver_recovery.py tests/test_il_roster_support.py tests/test_opening_day_features.py -q --tb=short)"
     ]
   }
 }

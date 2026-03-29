@@ -78,24 +78,30 @@ class CircuitBreaker:
             result = func(*args, **kwargs)
             self._on_success()
             return result
-        except self.expected_exception:
+        except Exception:
+            # Count ALL exception types toward the failure threshold, not just
+            # self.expected_exception.  This ensures the circuit opens even when
+            # the wrapped function raises an unexpected error type.
+            # Re-raise the original exception unconditionally so callers see the
+            # real failure; subsequent calls against an OPEN circuit will receive
+            # CircuitOpenError via the guard at the top of this method.
             self._on_failure()
             raise
-    
+
     async def call_async(self, async_func: Callable, *args, **kwargs) -> Any:
         """Async version of call()."""
         self._update_state()
-        
+
         if self._state == CircuitState.OPEN:
             raise CircuitOpenError(
                 f"Circuit '{self.name}' is OPEN. Last failure: {self._last_failure_time}"
             )
-        
+
         try:
             result = await async_func(*args, **kwargs)
             self._on_success()
             return result
-        except self.expected_exception:
+        except Exception:
             self._on_failure()
             raise
     
