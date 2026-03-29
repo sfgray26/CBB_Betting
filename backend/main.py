@@ -4476,7 +4476,7 @@ async def get_fantasy_waiver_recommendations(
                 # Re-fetch scoreboard to get per-category stats
                 matchups2 = client.get_scoreboard()
                 # Build stat_id → display name map for readable labels
-                sid_map: dict[str, str] = {}
+                sid_map: dict[str, str] = dict(_YAHOO_STAT_FALLBACK)
                 try:
                     settings2 = client.get_league_settings()
                     stat_cats2 = (
@@ -4491,7 +4491,7 @@ async def get_fantasy_waiver_recommendations(
                             sid2 = str(s2.get("stat_id", ""))
                             abbr2 = s2.get("display_name") or s2.get("abbreviation") or s2.get("name") or sid2
                             if sid2:
-                                sid_map[sid2] = abbr2
+                                sid_map[sid2] = abbr2  # league-specific names override fallback
                 except Exception:
                     pass
                 lower_better = {"ERA", "WHIP"}
@@ -5331,6 +5331,18 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
     )
 
 
+# Hardcoded fallback for Yahoo numeric stat category IDs.
+# Used when get_league_settings() fails (auth error, pre-season, rate limit).
+# Maps Yahoo stat_id → abbreviation matching the frontend STAT_LABELS keys.
+_YAHOO_STAT_FALLBACK: dict[str, str] = {
+    "3": "AVG",   "7": "R",    "8": "H",    "12": "HR",  "13": "RBI",
+    "16": "SB",   "21": "IP",  "23": "W",   "26": "ERA", "27": "WHIP",
+    "28": "K",    "29": "QS",  "32": "SV",  "38": "K/BB","42": "K",
+    "50": "IP",   "55": "OPS", "57": "BB",  "60": "H",   "62": "GS",
+    "83": "NSV",  "85": "OBP",
+}
+
+
 @app.get("/api/fantasy/matchup", response_model=MatchupResponse)
 async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
     """
@@ -5358,8 +5370,10 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
     _stub_my = MatchupTeamOut(team_key=my_team_key, team_name="My Team", stats={})
     _stub_opp = MatchupTeamOut(team_key="", team_name="TBD", stats={})
 
-    # Build stat_id → abbreviation map from league settings (best-effort)
-    stat_id_map: dict[str, str] = {}
+    # Build stat_id → abbreviation map from league settings (best-effort).
+    # Pre-seeded with known Yahoo IDs so the page is readable even when
+    # get_league_settings() fails (auth error, pre-season, rate limit).
+    stat_id_map: dict[str, str] = dict(_YAHOO_STAT_FALLBACK)
     try:
         settings = client.get_league_settings()
         stat_cats = (
@@ -5374,9 +5388,9 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                 sid = str(s.get("stat_id", ""))
                 abbr = s.get("display_name") or s.get("abbreviation") or s.get("name") or sid
                 if sid:
-                    stat_id_map[sid] = abbr
+                    stat_id_map[sid] = abbr  # league-specific names override fallback
     except Exception:
-        pass  # fall back to raw stat_ids
+        pass  # fallback already seeded above
 
     try:
         matchups = client.get_scoreboard()

@@ -14,31 +14,32 @@ import type { MatchupResponse } from '@/lib/types'
 // Known stat display names for the 18-category H2H league
 // Includes both Yahoo string keys and numeric category IDs
 const STAT_LABELS: Record<string, string> = {
-  R: 'Runs',       '8': 'Runs',
-  HR: 'Home Runs', '7': 'Home Runs',
-  RBI: 'RBI',      '12': 'RBI',
-  SB: 'Stolen Bases', '13': 'Stolen Bases',
-  OBP: 'On-Base %',
-  H: 'Hits',
-  AVG: 'Batting Avg', '3': 'Batting Avg',
-  OPS: 'OPS',
-  W: 'Wins',
-  K: 'Strikeouts',
-  SV: 'Saves',
-  HLD: 'Holds',
-  ERA: 'ERA',
-  WHIP: 'WHIP',
-  QS: 'Quality Starts',
-  BB: 'Walks (P)',
-  IP: 'Innings Pitched',
-  K9: 'K/9',
+  // Batting — string keys
+  R: 'Runs',         H: 'Hits',          HR: 'Home Runs',
+  RBI: 'RBI',        SB: 'Stolen Bases', OBP: 'On-Base %',
+  AVG: 'Batting Avg', OPS: 'OPS',
+  // Batting — numeric IDs
+  '3': 'Batting Avg', '7': 'Runs',       '8': 'Hits',
+  '12': 'Home Runs',  '13': 'RBI',       '16': 'Stolen Bases',
+  '55': 'OPS',        '60': 'Hits',      '85': 'On-Base %',
+  // Pitching — string keys
+  W: 'Wins',   K: 'Strikeouts', SV: 'Saves', HLD: 'Holds',
+  ERA: 'ERA',  WHIP: 'WHIP',    QS: 'Quality Starts',
+  BB: 'Walks (P)', IP: 'Innings Pitched', K9: 'K/9',
+  NSV: 'Net Saves',
+  // Pitching — numeric IDs
+  '21': 'Innings Pitched', '23': 'Wins',          '26': 'ERA',
+  '27': 'WHIP',            '28': 'Strikeouts',    '29': 'Quality Starts',
+  '32': 'Saves',           '38': 'K/BB',          '42': 'Strikeouts',
+  '50': 'Innings Pitched', '57': 'Walks (P)',     '62': 'Games Started',
+  '83': 'Net Saves',
 }
 
 // Ratio stats get 3 decimal places; counting stats get integer display
-const RATIO_STATS = new Set(['AVG', 'OBP', 'OPS', 'ERA', 'WHIP', 'K9', '3'])
+const RATIO_STATS = new Set(['AVG', 'OBP', 'OPS', 'ERA', 'WHIP', 'K9', '3', '26', '27', '85', '55'])
 
 // ERA / WHIP: lower is better
-const LOWER_IS_BETTER = new Set(['ERA', 'WHIP'])
+const LOWER_IS_BETTER = new Set(['ERA', 'WHIP', '26', '27'])
 
 function winClass(cat: string, myVal: number, oppVal: number): string {
   if (myVal === oppVal) return 'text-zinc-400'
@@ -52,7 +53,7 @@ function formatVal(val: string | number | undefined, cat?: string): string {
   if (isNaN(n)) return String(val)
   if (cat && RATIO_STATS.has(cat)) return n.toFixed(3)
   // IP special case: 6.1 (not 6)
-  if (cat === 'IP') return n.toFixed(1)
+  if (cat === 'IP' || cat === '21' || cat === '50') return n.toFixed(1)
   // Integer counting stats
   return Number.isInteger(n) ? n.toLocaleString() : n.toFixed(1)
 }
