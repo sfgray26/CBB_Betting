@@ -4752,7 +4752,10 @@ async def get_fantasy_waiver_recommendations(
         pagination=PaginationOut(
             page=page,
             per_page=per_page,
-            has_next=len(top_available) == per_page,
+            # Use the raw Yahoo count, not the post-filter count.
+            # top_available can be shorter than per_page due to our own
+            # min_z_score / max_percent_owned filters even when Yahoo has more pages.
+            has_next=len(free_agents) == per_page,
         ),
         closer_alert=_closer_alert,
         il_slots_used=_il_info["used"],
