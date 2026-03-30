@@ -4121,6 +4121,17 @@ async def get_fantasy_lineup_recommendations(
                 injury_status=_injury_lookup.get(_b_name.lower()),
             ))
 
+    # Override: never recommend START for players with no game data.
+    # A player with opp=None received a fallback score (4.5 implied) that can
+    # beat real scores, causing the optimizer to start them despite no game today.
+    for _b in batters:
+        if _b.status == "START" and not _b.opponent:
+            _b.status = "BENCH"
+            _msg = f"{_b.name} moved to BENCH — no game data for {_b.team} on {lineup_date} (Odds API coverage gap)"
+            if _msg not in lineup_warnings:
+                lineup_warnings.append(_msg)
+            logger.warning("No-game START override: %s (%s)", _b.name, _b.team)
+
     # Build report from games data for the response
     report = {"games": []}
     if _games:

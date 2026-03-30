@@ -233,7 +233,10 @@ class DailyLineupOptimizer:
                     games.append(game)
 
             self._odds_cache[cache_key] = games
-            logger.info("Fetched %d MLB games from Odds API for %s", len(games), game_date or "today")
+            matchup_str = ", ".join(f"{g.away_abbrev}@{g.home_abbrev}" for g in games)
+            logger.info("Odds API [%s]: %d games — %s", game_date or "today", len(games), matchup_str or "NONE")
+            if not games:
+                logger.warning("Odds API returned 0 games for %s — check API key / coverage", game_date or "today")
             return games
 
         except Exception as exc:

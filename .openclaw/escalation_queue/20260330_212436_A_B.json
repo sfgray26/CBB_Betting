@@ -1,0 +1,11 @@
+{
+  "queue_id": "20260330_212436_A_B",
+  "timestamp": "2026-03-30T21:24:36.296139",
+  "game_key": "A@B",
+  "home_team": "B",
+  "away_team": "A",
+  "recommended_units": 2.0,
+  "integrity_verdict": "CONFIRMED",
+  "escalation_reason": "high stakes (2.0u)",
+  "status": "pending_review"
+}

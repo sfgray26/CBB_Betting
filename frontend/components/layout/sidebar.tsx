@@ -184,16 +184,6 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
           </div>
         </div>
 
-        {/* Streamlit link */}
-        <a
-          href="http://localhost:8501"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-2 px-2 py-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors rounded"
-        >
-          <span>Streamlit Dashboard</span>
-          <span className="text-zinc-600">&#8599;</span>
-        </a>
       </div>
     </aside>
   )

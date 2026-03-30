@@ -79,9 +79,15 @@ function statusBadge(status: LineupPlayer['status'] | StartingPitcher['status'])
       </span>
     )
   }
+  const FALLBACK_LABELS: Record<string, string> = {
+    UNKNOWN: 'NO START',
+    NO_START: 'NO START',
+    RP: 'RELIEVER',
+  }
+  const label = FALLBACK_LABELS[status as string] ?? (status as string) ?? 'NO START'
   return (
     <span className="px-2 py-0.5 rounded text-xs font-semibold bg-zinc-800 text-zinc-600 border border-zinc-700">
-      UNKNOWN
+      {label}
     </span>
   )
 }
@@ -223,7 +229,7 @@ function PitchersTable({ pitchers }: { pitchers: StartingPitcher[] }) {
               <td className="px-3 py-2.5 text-right font-mono text-xs text-zinc-300 tabular-nums">{p.opponent_implied_runs.toFixed(2)}</td>
               <td className="px-3 py-2.5 text-right font-mono text-xs text-zinc-400 tabular-nums">{p.park_factor.toFixed(3)}</td>
               <td className={cn('px-3 py-2.5 text-right font-mono text-xs font-semibold tabular-nums', scoreColor(p.sp_score, scores))}>
-                {p.sp_score.toFixed(3)}
+                {p.sp_score === 0 ? '—' : p.sp_score.toFixed(3)}
               </td>
               <td className="px-3 py-2.5 text-center">{statusBadge(p.status)}</td>
             </tr>
@@ -342,9 +348,11 @@ export default function DailyLineupPage() {
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 flex items-start gap-3">
           <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0 mt-0.5" />
           <div className="space-y-1">
-            {data.lineup_warnings.map((w, i) => (
-              <p key={i} className="text-amber-300 text-sm">{w}</p>
-            ))}
+            {data.lineup_warnings
+              .filter(w => !w.includes('validation error') && !w.includes('Traceback'))
+              .map((w, i) => (
+                <p key={i} className="text-amber-300 text-sm">{w}</p>
+              ))}
           </div>
         </div>
       )}
