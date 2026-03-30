@@ -834,7 +834,7 @@ class DashboardService:
             two_starts: List[ProbablePitcherInfo] = []
 
             for p in pitcher_data:
-                if not p.get("has_start"):
+                if not p.get("has_start") or p.get("pitcher_slot") != "SP":
                     continue
 
                 name = p.get("name", "Unknown")

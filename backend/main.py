@@ -3936,8 +3936,10 @@ async def get_fantasy_lineup_recommendations(
             logger.warning("Could not load player board projections for lineup: %s", _exc)
 
     # Build injury status lookup: player name (lowercase) -> injury status string
+    # Guard: Yahoo sometimes sends {"status": True} for active players. bool is not
+    # a valid str — pass through only actual string values, convert everything else to None.
     _injury_lookup: dict = {
-        p.get("name", "").lower(): p.get("status") or None
+        p.get("name", "").lower(): (p.get("status") if isinstance(p.get("status"), str) else None)
         for p in _lineup_roster
         if p.get("name")
     }
@@ -4492,8 +4494,8 @@ async def get_fantasy_waiver_recommendations(
                             abbr2 = s2.get("display_name") or s2.get("abbreviation") or s2.get("name") or sid2
                             if sid2:
                                 sid_map[sid2] = abbr2  # league-specific names override fallback
-                except Exception:
-                    pass
+                except Exception as _e:
+                    logger.warning("get_league_settings failed in waiver endpoint, using fallback: %s", _e)
                 lower_better = {"ERA", "WHIP"}
                 for m2 in matchups2:
                     if not isinstance(m2, dict):
@@ -5335,11 +5337,15 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
 # Used when get_league_settings() fails (auth error, pre-season, rate limit).
 # Maps Yahoo stat_id → abbreviation matching the frontend STAT_LABELS keys.
 _YAHOO_STAT_FALLBACK: dict[str, str] = {
+    # Batting — confirmed across leagues (matches category_tracker.YAHOO_STAT_MAP)
     "3": "AVG",   "7": "R",    "8": "H",    "12": "HR",  "13": "RBI",
-    "16": "SB",   "21": "IP",  "23": "W",   "26": "ERA", "27": "WHIP",
+    "16": "SB",   "55": "OPS", "60": "H",
+    # Pitching — confirmed across leagues
+    "21": "IP",   "23": "W",   "26": "ERA", "27": "WHIP",
     "28": "K",    "29": "QS",  "32": "SV",  "38": "K/BB","42": "K",
-    "50": "IP",   "55": "OPS", "57": "BB",  "60": "H",   "62": "GS",
-    "83": "NSV",  "85": "OBP",
+    "50": "IP",   "62": "GS",  "83": "NSV",
+    # NOTE: "57" (BB?) and "85" (OBP?) deliberately excluded — not in category_tracker
+    # and observed to map to wrong stats in this league. Let get_league_settings() handle them.
 }
 
 
@@ -5389,8 +5395,9 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                 abbr = s.get("display_name") or s.get("abbreviation") or s.get("name") or sid
                 if sid:
                     stat_id_map[sid] = abbr  # league-specific names override fallback
-    except Exception:
-        pass  # fallback already seeded above
+        logger.info("stat_id_map loaded from league settings: %d stats", len(stat_id_map))
+    except Exception as _e:
+        logger.warning("get_league_settings failed, using fallback stat_id_map: %s", _e)
 
     try:
         matchups = client.get_scoreboard()
@@ -5421,17 +5428,18 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         # Flatten nested array structures that Yahoo returns
         def flatten_entry(entry, depth=0):
             """Recursively flatten nested lists/dicts to extract metadata."""
+            nonlocal stats_raw
             if depth > 5:  # Safety limit
                 return
             if isinstance(entry, list):
                 for item in entry:
                     flatten_entry(item, depth + 1)
             elif isinstance(entry, dict):
-                # Check for team_stats first
-                if "team_stats" in entry:
+                # Take the FIRST team_stats found — do not overwrite with a later
+                # block (Yahoo may include both weekly and season stats; first = current week).
+                if "team_stats" in entry and not stats_raw:
                     inner = entry["team_stats"].get("stats", [])
                     if isinstance(inner, list):
-                        nonlocal stats_raw
                         stats_raw = inner
                 # Extract metadata fields
                 for key in ["team_key", "name", "team_id", "nickname"]:

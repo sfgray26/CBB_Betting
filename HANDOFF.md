@@ -92,12 +92,11 @@
 
 ### CLAUDE CODE — Next Session Roadmap
 
-> 1. **Matchup RP-as-SP bug**: Edwin Diaz, Jason Adam appearing in Starting Pitchers table.
->    Root cause: SP filter in `_get_probable_pitchers` doesn't exclude by `pitcher_slot == "SP"`.
->    Fix in `dashboard_service.py`.
-> 2. **MCMC Simulator calibration** (B5) — `backend/fantasy_baseball/mcmc_simulator.py` needs
+> 1. ~~**Matchup RP-as-SP bug**~~ ✅ DONE (Mar 29): Added `p.get("pitcher_slot") != "SP"` guard to `_get_probable_pitchers` in `dashboard_service.py`. Edwin Diaz / Jason Adam no longer appear as starters.
+> 2. **Yahoo stat category IDs** ✅ DONE (Mar 29): `_YAHOO_STAT_FALLBACK` dict pre-seeds `stat_id_map` in matchup + waiver endpoints. Frontend `STAT_LABELS` completed with all 22 numeric IDs.
+> 3. **MCMC Simulator calibration** (B5) — `backend/fantasy_baseball/mcmc_simulator.py` needs
 >    validation against historical matchup data before wiring into `win_probability`.
-> 3. **CBB V9.2 recalibration** (EMAC-068) — Unblocks Apr 7. SNR/integrity scalar stacking
+> 4. **CBB V9.2 recalibration** (EMAC-068) — Unblocks Apr 7. SNR/integrity scalar stacking
 >    correction. Do not touch Kelly math until then.
 
 ---
@@ -119,8 +118,7 @@
 
 ## 7. Architect Review Queue
 
-1. **Matchup page RP-as-SP bug** — Edwin Diaz, Jason Adam appearing in Starting Pitchers.
-   Root cause: `pitcher_slot` filter in `_get_probable_pitchers`. Defer until next session.
+1. ~~**Matchup page RP-as-SP bug**~~ ✅ RESOLVED Mar 29 — `pitcher_slot == "SP"` guard added.
 2. **MCMC Simulator calibration** — `backend/fantasy_baseball/mcmc_simulator.py` unvalidated. B5.
 3. **CBB V9.1 recalibration (EMAC-068)** — Blocked until post-Apr 7.
 4. **`_project_categories_from_db` day-0 scenario** — On Opening Day (no metrics in DB yet),

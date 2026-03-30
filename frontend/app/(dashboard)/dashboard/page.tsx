@@ -80,7 +80,7 @@ export default function DashboardPage() {
       <div className="mb-8">
         <h1 className="text-xl font-semibold text-zinc-100 mb-2">Fantasy Baseball Dashboard</h1>
         <p className="text-muted-foreground">
-          Last updated: {new Date(dashboard.timestamp).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' })} ET
+          Last updated: {dashboard.timestamp ? new Date(dashboard.timestamp).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' }) + ' ET' : 'N/A'}
         </p>
       </div>
 

@@ -27,16 +27,16 @@ const STAT_LABELS: Record<string, string> = {
   ERA: 'ERA',  WHIP: 'WHIP',    QS: 'Quality Starts',
   BB: 'Walks (P)', IP: 'Innings Pitched', K9: 'K/9',
   NSV: 'Net Saves',
-  // Pitching — numeric IDs
+  // Pitching — numeric IDs (57=BB and 85=OBP excluded: unconfirmed for this league)
   '21': 'Innings Pitched', '23': 'Wins',          '26': 'ERA',
   '27': 'WHIP',            '28': 'Strikeouts',    '29': 'Quality Starts',
   '32': 'Saves',           '38': 'K/BB',          '42': 'Strikeouts',
-  '50': 'Innings Pitched', '57': 'Walks (P)',     '62': 'Games Started',
+  '50': 'Innings Pitched',                        '62': 'Games Started',
   '83': 'Net Saves',
 }
 
 // Ratio stats get 3 decimal places; counting stats get integer display
-const RATIO_STATS = new Set(['AVG', 'OBP', 'OPS', 'ERA', 'WHIP', 'K9', '3', '26', '27', '85', '55'])
+const RATIO_STATS = new Set(['AVG', 'OBP', 'OPS', 'ERA', 'WHIP', 'K9', '3', '26', '27', '55'])
 
 // ERA / WHIP: lower is better
 const LOWER_IS_BETTER = new Set(['ERA', 'WHIP', '26', '27'])
