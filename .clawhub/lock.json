@@ -8,6 +8,18 @@
     "ollama-integration": {
       "version": "1.0.0",
       "installedAt": 1772372800175
+    },
+    "sonoscli": {
+      "version": "1.0.0",
+      "installedAt": 1774906381262
+    },
+    "capability-evolver": {
+      "version": "1.40.2",
+      "installedAt": 1774912907173
+    },
+    "yahoo-fantasy-baseball": {
+      "version": "0.1.9",
+      "installedAt": 1774913881607
     }
   }
 }

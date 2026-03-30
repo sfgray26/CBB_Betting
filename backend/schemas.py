@@ -311,6 +311,14 @@ class LineupPlayerOut(BaseModel):
         if v is None or (isinstance(v, float) and v != v):
             return 1.0
         return v
+    
+    @field_validator("injury_status", mode="before")
+    @classmethod
+    def coerce_injury_status_to_string(cls, v):
+        """Coerce boolean injury_status values to strings (Yahoo API sometimes returns bools)."""
+        if isinstance(v, bool):
+            return "Active" if v else "Inactive"
+        return v
 
     class Config:
         # Serialize datetime as ISO 8601 with Z suffix for proper timezone handling
@@ -482,6 +490,22 @@ class RosterPlayerOut(BaseModel):
         """Ensure None/NaN doesn't break serialization."""
         if v is None or (isinstance(v, float) and v != v):
             return None  # Keep as None rather than 0 to indicate "no data"
+        return v
+    
+    @field_validator("status", "injury_status", mode="before")
+    @classmethod
+    def coerce_status_to_string(cls, v):
+        """Coerce boolean status values to strings (Yahoo API sometimes returns bools)."""
+        if isinstance(v, bool):
+            return "Active" if v else "Inactive"
+        return v
+    
+    @field_validator("injury_note", mode="before")
+    @classmethod
+    def coerce_note_to_string(cls, v):
+        """Coerce boolean injury_note values to None."""
+        if isinstance(v, bool):
+            return None
         return v
 
 

@@ -5321,14 +5321,25 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
             continue  # Skip players without keys
         name = p.get("name") or ""
         proj = get_or_create_projection(p) if name else {}
+        # Coerce boolean status values to strings to prevent Pydantic validation errors
+        raw_status = p.get("status")
+        if isinstance(raw_status, bool):
+            status_str = "Active" if raw_status else "Inactive"
+        else:
+            status_str = raw_status if raw_status else None
+        
+        injury_note = p.get("injury_note")
+        if isinstance(injury_note, bool):
+            injury_note = None
+        
         players_map[player_key] = RosterPlayerOut(
             player_key=player_key,
             name=name,
             team=p.get("team"),
             positions=p.get("positions") or [],
-            status=p.get("status") or None,
-            injury_note=p.get("injury_note") or None,
-            injury_status=p.get("status") or None,
+            status=status_str,
+            injury_note=injury_note if injury_note else None,
+            injury_status=status_str,  # Pass through same coerced status
             z_score=proj.get("z_score"),
             is_undroppable=bool(p.get("is_undroppable", 0)),
             is_proxy=bool(proj.get("is_proxy", False)),

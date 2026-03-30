@@ -63,6 +63,7 @@ _TEAM_ALIASES = {
     "SDP": "SD",  # San Diego Padres (ESPN/Odds API style)
     "WSN": "WSH", # Washington Nationals (ESPN style)
     "AZ": "ARI",  # Arizona Diamondbacks (Yahoo style)
+    "CHW": "CWS", # Chicago White Sox (Yahoo/ESPN style -> standard)
 }
 
 
