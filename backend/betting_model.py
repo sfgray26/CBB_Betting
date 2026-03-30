@@ -24,6 +24,7 @@ from scipy.stats import norm
 from dataclasses import dataclass, asdict, field
 from typing import Dict, List, Tuple, Optional
 from datetime import datetime
+from zoneinfo import ZoneInfo
 import logging
 import os
 
@@ -490,6 +491,8 @@ class CBBEdgeModel:
         if integrity_verdict is None:
             return 1.0
         v = integrity_verdict.upper()
+        if "ABORT" in v or "RED FLAG" in v:
+            return 0.0  # Hard gate — zeroes Kelly before any sizing logic runs
         if "VOLATILE" in v:
             return get_float_env("INTEGRITY_VOLATILE_SCALAR", "0.5")
         if "CAUTION" in v:
@@ -605,7 +608,7 @@ class CBBEdgeModel:
             # Plateau raised 12% → 13% to account for active matchup engine
             # contributing ~1-2pp of legitimate edge (post-P1 fix).
             # Env-var override allows operator rollback to 0.12 if needed.
-            return get_float_env("CB_PLATEAU_PCT", "13") / 100.0
+            return max(0.06, min(0.20, get_float_env("CB_PLATEAU_PCT", "13") / 100.0))
         return 0.06 + 0.06 * math.exp(-1.5 * (4.0 - h))
 
     def kelly_fraction_with_push(
@@ -1618,17 +1621,13 @@ class CBBEdgeModel:
             )
 
         # ================================================================
-        # V9 INTEGRITY ABORT GATE
+        # V9 INTEGRITY ABORT GATE (second safety net)
         # ================================================================
-        # A hard PASS for any integrity_verdict containing "ABORT" or
-        # "RED FLAG".  These keywords signal a high-confidence risk that
-        # the Integrity Officer has identified — e.g. a confirmed key
-        # injury not yet reflected in the line, or a line-move that
-        # suggests sharp money is already on the opposite side.
-        #
-        # This check runs BEFORE every other sizing gate so that no
-        # downstream logic (tier sizing, circuit breaker) can accidentally
-        # re-open the bet.
+        # _integrity_kelly_scalar() already zeroes kelly_frac above for
+        # ABORT/RED FLAG verdicts.  This block is a belt-and-suspenders
+        # guard: it forces the verdict to PASS and emits a note so the
+        # outcome is explicit in the returned GameAnalysis regardless of
+        # how kelly_frac was computed.
         # ================================================================
         _ABORT_KEYWORDS = ("ABORT", "RED FLAG")
         _integrity_abort = (
@@ -1899,7 +1898,7 @@ class CBBEdgeModel:
 
         full_analysis_dict = {
             'model_version': 'v9.1',  # Updated for fatigue feature
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(ZoneInfo("America/New_York")).isoformat(),
             'inputs': {
                 'ratings': ratings,
                 'margin_components': {
