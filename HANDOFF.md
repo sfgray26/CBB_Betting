@@ -1,22 +1,92 @@
-# OPERATIONAL HANDOFF — MARCH 28, 2026: SSE + MATCHUP ENRICHMENT
+# OPERATIONAL HANDOFF — MARCH 30, 2026: DATA STRATEGY + POST-CBB ROADMAP
 
-> **Ground truth as of March 28, 2026 (second session).** Author: Claude Code (Master Architect).
+> **Ground truth as of March 30, 2026.** Author: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk posture · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
-> Prior active crises: all resolved (see archive below).
+> Prior active crises: all resolved (see §8 archive).
 
 ---
 
-## 1. Mission Accomplished (This Session)
+## 1. Data Provider Strategy — LOCKED DECISIONS
 
-| Task | Status | Notes |
-|------|--------|-------|
-| **Priority A: CircuitBreaker fix** | ✅ DONE | `except self.expected_exception` → `except Exception`; all failures now count toward threshold. `test_opens_after_threshold`, `test_rejects_calls_when_open`, `test_failures_increment_count` all pass. |
-| **Priority B: SSE endpoint** | ✅ DONE | `GET /api/fantasy/dashboard/stream` wired via `StreamingResponse` (no external deps). Streams 4 panels every 60s. `?panels=` filter supported. Yahoo auth errors yield `event: error` events. |
-| **Priority C: Matchup enrichment** | ✅ DONE | `_get_matchup_preview` now populates `opponent_record` (W-L-T from Yahoo standings) and `my_projected_categories`/`opponent_projected_categories` (7-day rolling avg from `PlayerDailyMetric`). Win prob stays 0.5 (MCMC is B5). |
+### SUBSCRIPTIONS
+
+| Provider | Status | Action |
+|----------|--------|--------|
+| **BallDontLie GOAT (NCAAB)** | ❌ CANCELLED | CBB season is over. Do NOT renew. |
+| **OddsAPI Champion** | ⏳ CANCEL AFTER APR 7 | Still needed for CBB tournament. Cancel once bracket concludes. |
+| **BallDontLie GOAT (MLB)** | ✅ SUBSCRIBE AFTER APR 7 | Replaces OddsAPI for all MLB use cases. $39.99/mo. |
+
+**Net cost after transition: $39.99/mo (down from $49/mo OddsAPI Champion). Saves ~$108/yr.**
 
 ---
 
-## 2. Technical State Table
+### WHY BALLDONTLIE FOR MLB (not OddsAPI)
+
+1. **Unified stats + odds in one API** — eliminates the raw OddsAPI call in `mlb_analysis._fetch_mlb_odds()` and the raw call in `daily_ingestion._poll_mlb_odds()`. Both are currently unabstracted stubs with no circuit breaker.
+2. **Webhooks** — 125+ MLB event types. Enables live game events for betting timing without polling.
+3. **600 req/min rate limit** — vs OddsAPI's 90,000/month call budget (polling only).
+4. **MCP server** — 250+ endpoints compatible with Claude Code agent workflows.
+5. **Bookmaker coverage tradeoff** — BDL covers ~15-20 books vs OddsAPI's 40+. Pinnacle IS included (confirmed in `balldontlie.py` `PREFERRED_BOOKS`). Sharp consensus logic is preserved.
+
+### WHY KEEP PYBASEBALL / STATCAST (do not replace with BDL)
+
+BallDontLie does not expose Statcast-tier metrics: **xwOBA, barrel%, exit velocity, hard-hit%**. These are the core of the fantasy projection engine (`statcast_ingestion.py`, `pybaseball_loader.py`). Keep pybaseball for Statcast. Add BDL for:
+- Real-time injury feed
+- Box scores (live game data)
+- Live event webhooks for betting triggers
+
+---
+
+## 2. Implementation Plan — Post-Apr 7
+
+### Phase 1: Cancel OddsAPI, Subscribe BDL GOAT (MLB) — Day 1 after tournament
+
+**Manual steps (human action required):**
+1. Cancel OddsAPI Champion subscription.
+2. Subscribe to BallDontLie GOAT ($39.99/mo).
+3. Set `BALLDONTLIE_API_KEY` env var in Railway (already present — update to MLB-tier key if different).
+4. Remove `THE_ODDS_API_KEY` from Railway env after confirming no CBB code paths call it.
+
+### Phase 2: Expand `balldontlie.py` for MLB — Claude Code task
+
+**File:** `backend/services/balldontlie.py`
+
+Current state: NCAAB-only (`/ncaab/v1/` prefix, TOURNAMENT_SEASON = 2025).
+
+Required additions:
+- Add `MLB_PREFIX = "/mlb/v1"` constant alongside `NCAAB_PREFIX`
+- Add `get_mlb_games(date)` — fetch today's schedule
+- Add `get_mlb_odds(date)` — fetch moneyline/runline/totals per game
+- Add `get_mlb_player_stats(season, player_ids)` — season batting/pitching stats
+- Add `get_mlb_injuries()` — active IL list
+- Add `get_mlb_box_score(game_id)` — live/final box score
+
+The existing client structure (session headers, `_get()`, `_paginate()`, circuit breaker pattern) is solid — replicate it for MLB endpoints. Do NOT break the existing NCAAB methods.
+
+### Phase 3: Migrate MLB Odds Callers — Claude Code task
+
+**Two dirty raw-OddsAPI callers to fix:**
+
+| File | Method | Current Problem | Fix |
+|------|--------|-----------------|-----|
+| `backend/services/mlb_analysis.py` | `_fetch_mlb_odds()` | Raw `requests.get` to OddsAPI, no circuit breaker, no sharp consensus logic | Replace with `get_bdl_client().get_mlb_odds(date)` |
+| `backend/services/daily_ingestion.py` | `_poll_mlb_odds()` | Same — raw OddsAPI call, not using `OddsAPIClient` | Replace with BDL call; preserve advisory lock pattern |
+
+Both callers already have graceful degradation (`return {}` / `return {"status": "skipped"}` on failure), so the swap is low-risk.
+
+### Phase 4: Add BDL as Fantasy Enrichment Feed — Claude Code task
+
+**Not a replacement — additive only.** Existing pybaseball/Statcast pipeline stays untouched.
+
+Add to `daily_ingestion.py` scheduler:
+- `_poll_mlb_injuries()` job — calls `get_mlb_injuries()`, writes to a new `PlayerInjuryStatus` table or updates `PlayerDailyMetric.injury_status`
+- `_ingest_mlb_box_scores()` job — post-game box scores for rolling stat updates
+
+This feeds the fantasy dashboard's injury display (currently sourced from Yahoo only, which lags by hours).
+
+---
+
+## 3. Current Technical State
 
 | Component | Status | Notes |
 |-----------|--------|-------|
@@ -24,80 +94,54 @@
 | **Yahoo client** | ✅ CONSOLIDATED | Single file: `yahoo_client_resilient.py`. Base class + resilient layer unified. |
 | **Roster endpoint (`/api/fantasy/roster`)** | ✅ LIVE | 200 OK. |
 | **Matchup endpoint (`/api/fantasy/matchup`)** | ✅ LIVE | Team mapping fixed. |
-| **SSE stream (`/api/fantasy/dashboard/stream`)** | ✅ NEW | `StreamingResponse`, `text/event-stream`, 60s interval. No `sse-starlette` dep needed. |
-| **Matchup enrichment** | ✅ NEW | `opponent_record` from standings. `*_projected_categories` from `PlayerDailyMetric`. |
+| **SSE stream (`/api/fantasy/dashboard/stream`)** | ✅ LIVE | `StreamingResponse`, `text/event-stream`, 60s interval. No `sse-starlette` dep. |
+| **Matchup enrichment** | ✅ LIVE | `opponent_record` from standings. `*_projected_categories` from `PlayerDailyMetric`. |
 | **CircuitBreaker** | ✅ FIXED | Catches `Exception` (not just `expected_exception`) so all error types trip the breaker. |
-| **Weather integration** | ✅ LIVE | Provider: OpenWeatherMap. |
-| **OR-Tools (Railway)** | ✅ LIVE (March 28, 2026) | Installed via requirements.txt. |
-| **Kimi UI/API hotfix** | ✅ MERGED | Roster dedup, `get_my_team_key()` recursive parse, `_safe_float()` NaN guard. |
+| **Weather integration** | ✅ LIVE | Provider: OpenWeatherMap (`OPENWEATHER_API_KEY` set). |
+| **OR-Tools (Railway)** | ✅ LIVE | Installed via requirements.txt. |
 | **Streamlit** | ✅ RETIRED | `dashboard/` untouched. Next.js is canonical UI. |
-| **Test suite** | ✅ STABLE | CircuitBreaker test fixed. Overall: 1199+ pass. |
-| **MCMC Simulator** | ❌ SCAFFOLDED | `mcmc_simulator.py` exists, not calibrated. B5 roadmap item. |
-| **CBB V9.1 recalibration** | ⏸ BLOCKED | EMAC-068 — blocked until post-Apr 7. Do not touch Kelly math. |
+| **Test suite** | ✅ STABLE | 1199+ pass. |
+| **RP-as-SP bug** | ✅ FIXED (Mar 29) | `pitcher_slot == "SP"` guard in `_get_probable_pitchers`. |
+| **Yahoo stat category IDs** | ✅ FIXED (Mar 29) | `_YAHOO_STAT_FALLBACK` dict + all 22 frontend `STAT_LABELS`. |
+| **MCMC Simulator** | ❌ SCAFFOLDED | `mcmc_simulator.py` exists, not calibrated. B5 roadmap item — calibrate against historical matchup data before wiring into `win_probability`. |
+| **CBB V9.2 recalibration** | ⏸ BLOCKED | EMAC-068 — SNR/integrity scalar stacking correction. Do NOT touch Kelly math until Apr 7. |
+| **`balldontlie.py`** | ⚠️ NCAAB-ONLY | Needs MLB endpoint expansion post-Apr 7 (see §2 Phase 2). |
+| **`mlb_analysis._fetch_mlb_odds()`** | ⚠️ DIRTY | Raw OddsAPI call — no circuit breaker, no abstraction. Migrate to BDL post-Apr 7. |
+| **`daily_ingestion._poll_mlb_odds()`** | ⚠️ DIRTY | Same — raw OddsAPI call. Migrate to BDL post-Apr 7. |
+| **BDL NCAAB subscription** | ❌ CANCELLED | CBB season over. `balldontlie.py` NCAAB methods will 401 — do not call them. |
 
 ---
 
-## 3. Files Modified This Session
+## 4. Advisory Lock IDs (do not reuse)
 
-| File | Change |
-|------|--------|
-| `backend/fantasy_baseball/circuit_breaker.py` | `except self.expected_exception:` → `except Exception:` in both `call()` and `call_async()`. Removed unused `expected_exception` branch. |
-| `backend/main.py` | Added `GET /api/fantasy/dashboard/stream` SSE endpoint (~115 lines). Added `import json as _json` and `_ALL_PANELS` module-level constant. |
-| `backend/services/dashboard_service.py` | `_get_matchup_preview` enriched with `opponent_record` + projected categories. Added static methods `_extract_team_standings`, `_fetch_team_record`, `_project_categories_from_db`. |
+| Lock ID | Job |
+|---------|-----|
+| 100_001 | mlb_odds |
+| 100_002 | statcast |
+| 100_003 | rolling_z |
+| 100_004 | cbb_ratings |
+| 100_005 | clv |
+| 100_006 | cleanup |
+| 100_007 | waiver_scan |
+| 100_008 | mlb_brief |
+| 100_009 | openclaw_perf |
+| 100_010 | openclaw_sweep |
 
----
-
-## 4. Resolved Crises (Archive — Do Not Revisit)
-
-| Crisis | Resolution | Date |
-|--------|------------|------|
-| `user_preferences` table missing | v9/v10 migrations chained into Dockerfile CMD | Mar 27, 2026 |
-| Pydantic `status: False` → HTTP 500 | `_parse_player` + `RosterPlayerOut` constructor guarded with `or None` | Mar 28, 2026 |
-| Matchup "Team not found" | `m.get("teams") or m.get("0", {}).get("teams", {})` | Mar 28, 2026 |
-| West Coast games showing no-game | `datetime.utcnow()` → `datetime.now(ZoneInfo("America/New_York"))` | Mar 28, 2026 |
-| `injury_status` always None | Added `injury_status=p.get("status") or None` to `RosterPlayerOut` constructor | Mar 28, 2026 |
-| `_get_lineup_gaps` empty on `team_key=None` | `client.get_roster()` (no-arg form) replaces silent `[]` | Mar 28, 2026 |
-| UI routing cascade (Kimi hotfix) | Roster dedup, team key recursive parse, NaN float guard | Mar 28, 2026 |
-| CircuitBreaker only counted `expected_exception` errors | `except Exception:` in `call()` and `call_async()` | Mar 28, 2026 |
+Next available: **100_011** (mlb_injuries), **100_012** (mlb_box_scores)
 
 ---
 
-## 5. Delegation Bundles
+## 5. Next Session Roadmap (Claude Code)
 
-### GEMINI CLI (Ops) — Active
+Priority order:
 
-> 1. Run `py_compile` verification for the two modified files:
->    ```
->    railway run python -m py_compile backend/fantasy_baseball/circuit_breaker.py && echo "OK circuit_breaker"
->    railway run python -m py_compile backend/services/dashboard_service.py && echo "OK dashboard_service"
->    railway run python -m py_compile backend/main.py && echo "OK main"
->    ```
-> 2. Trigger Railway redeploy (OR-Tools was already added in prior session; confirm it's still live).
-> 3. Smoke-test the SSE endpoint after deploy:
->    ```
->    curl -N -H "X-API-Key: $API_KEY" "https://<railway-url>/api/fantasy/dashboard/stream?panels=streaks" | head -20
->    ```
->    Expected: streaming SSE text with `event: streaks` or `event: error`.
-> 4. Report back: compile status, deploy status, SSE smoke test result.
->
-> Do NOT edit any `.py` or `.ts` files.
+1. **MCMC Simulator calibration** (B5) — `backend/fantasy_baseball/mcmc_simulator.py` is scaffolded but unvalidated. Calibrate against historical H2H matchup data. Wire into `win_probability` field in matchup endpoint once validated.
 
-### KIMI CLI (Deep Intelligence Unit) — Standby
+2. **CBB V9.2 recalibration** (EMAC-068) — Unblocks Apr 7. SNR/integrity scalar stacking correction. Do NOT touch Kelly math before then.
 
-> No active coding tasks. Next delegation will come when CBB recalibration (EMAC-068) is
-> unblocked post-Apr 7.
->
-> If initiating a new session unprompted: read this HANDOFF.md + `HEARTBEAT.md`.
-> Do not write to any production code files without a Claude delegation bundle.
+3. **Post-Apr 7: BDL MLB expansion** — Execute §2 Phases 1-4 in order. Confirm OddsAPI cancelled before writing any BDL MLB code to avoid calling a cancelled key.
 
-### CLAUDE CODE — Next Session Roadmap
-
-> 1. ~~**Matchup RP-as-SP bug**~~ ✅ DONE (Mar 29): Added `p.get("pitcher_slot") != "SP"` guard to `_get_probable_pitchers` in `dashboard_service.py`. Edwin Diaz / Jason Adam no longer appear as starters.
-> 2. **Yahoo stat category IDs** ✅ DONE (Mar 29): `_YAHOO_STAT_FALLBACK` dict pre-seeds `stat_id_map` in matchup + waiver endpoints. Frontend `STAT_LABELS` completed with all 22 numeric IDs.
-> 3. **MCMC Simulator calibration** (B5) — `backend/fantasy_baseball/mcmc_simulator.py` needs
->    validation against historical matchup data before wiring into `win_probability`.
-> 4. **CBB V9.2 recalibration** (EMAC-068) — Unblocks Apr 7. SNR/integrity scalar stacking
->    correction. Do not touch Kelly math until then.
+4. **Statcast freshness** — `statcast_ingestion.py` exists but data is stale. The `_update_statcast()` job in `daily_ingestion.py` is a stub (`status: "skipped"`). Implement it to actually call `StatcastIngestionAgent` from `statcast_ingestion.py`.
 
 ---
 
@@ -109,20 +153,64 @@
 | Streamlit | RETIRED | Next.js only — never touch `dashboard/` |
 | `openclaw_briefs.py` (old) | DELETED | `_improved` is canonical |
 | Dashboard refresh strategy | SSE (IMPLEMENTED) | `StreamingResponse` text/event-stream. No sse-starlette dep. |
-| Weather provider | OpenWeatherMap (LOCKED) | Fully implemented; `OPENWEATHER_API_KEY` set |
+| Weather provider | OpenWeatherMap (LOCKED) | `OPENWEATHER_API_KEY` set |
 | Test file location | `tests/` only | No test files in `backend/` subdirs |
 | CBB recalibration | BLOCKED until Apr 7 | EMAC-068 — do not touch Kelly math before then |
 | SSE keep-alive | `: keep-alive\n\n` comment line | Prevents Railway/nginx from closing idle SSE connections |
+| Odds provider — CBB | OddsAPI → CANCEL post-tournament | Battle-tested for CBB; BDL NCAAB subscription already cancelled |
+| Odds provider — MLB | BDL GOAT (post-Apr 7) | Unified stats+odds, webhooks, lower cost. Raw OddsAPI callers in mlb_analysis + daily_ingestion are stubs — low-risk swap |
+| Stats provider — Statcast | pybaseball (LOCKED) | BDL does not expose xwOBA/barrel%/exit velocity. Do not replace. |
+| Stats provider — injuries/box scores | BDL (additive, post-Apr 7) | Supplements Yahoo injury feed which lags by hours |
 
 ---
 
-## 7. Architect Review Queue
+## 7. Delegation Bundles
 
-1. ~~**Matchup page RP-as-SP bug**~~ ✅ RESOLVED Mar 29 — `pitcher_slot == "SP"` guard added.
-2. **MCMC Simulator calibration** — `backend/fantasy_baseball/mcmc_simulator.py` unvalidated. B5.
-3. **CBB V9.1 recalibration (EMAC-068)** — Blocked until post-Apr 7.
-4. **`_project_categories_from_db` day-0 scenario** — On Opening Day (no metrics in DB yet),
-   returns `{}`. This is correct behavior. Will populate as Statcast data flows in.
+### GEMINI CLI (Ops) — Standby
+
+No new tasks since Mar 28 deploy was confirmed. When BDL MLB migration executes:
+
+> 1. After Claude Code pushes BDL MLB changes, run py_compile on modified files:
+>    ```
+>    railway run python -m py_compile backend/services/balldontlie.py
+>    railway run python -m py_compile backend/services/mlb_analysis.py
+>    railway run python -m py_compile backend/services/daily_ingestion.py
+>    ```
+> 2. Confirm `BALLDONTLIE_API_KEY` is set in Railway env (MLB-tier key):
+>    ```
+>    railway variables | grep -i balldontlie
+>    ```
+> 3. Confirm `THE_ODDS_API_KEY` has been removed from Railway env after cancellation.
+> 4. Trigger redeploy and smoke-test:
+>    ```
+>    railway run python -c "from backend.services.balldontlie import get_bdl_client; c = get_bdl_client(); print('BDL OK')"
+>    ```
+> Do NOT edit any `.py` or `.ts` files.
+
+### KIMI CLI (Deep Intelligence Unit) — Standby
+
+> No active coding tasks. Standing responsibilities:
+> - If CBB recalibration (EMAC-068) status changes to unblocked, prepare the V9.2 spec memo.
+> - Do NOT write to any production code files without an explicit Claude delegation bundle.
+>
+> Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
+
+---
+
+## 8. Resolved Crises (Archive — Do Not Revisit)
+
+| Crisis | Resolution | Date |
+|--------|------------|------|
+| `user_preferences` table missing | v9/v10 migrations chained into Dockerfile CMD | Mar 27 |
+| Pydantic `status: False` → HTTP 500 | `_parse_player` + `RosterPlayerOut` guarded with `or None` | Mar 28 |
+| Matchup "Team not found" | `m.get("teams") or m.get("0", {}).get("teams", {})` | Mar 28 |
+| West Coast games showing no-game | `datetime.utcnow()` → `datetime.now(ZoneInfo("America/New_York"))` | Mar 28 |
+| `injury_status` always None | `injury_status=p.get("status") or None` in `RosterPlayerOut` | Mar 28 |
+| `_get_lineup_gaps` empty on `team_key=None` | `client.get_roster()` no-arg form | Mar 28 |
+| UI routing cascade (Kimi hotfix) | Roster dedup, team key recursive parse, NaN float guard | Mar 28 |
+| CircuitBreaker only counted `expected_exception` | `except Exception:` in `call()` and `call_async()` | Mar 28 |
+| RP-as-SP in probable pitchers | `pitcher_slot == "SP"` guard in `_get_probable_pitchers` | Mar 29 |
+| Yahoo stat category IDs returning raw numbers | `_YAHOO_STAT_FALLBACK` dict + 22-entry `STAT_LABELS` frontend map | Mar 29 |
 
 ---
 
@@ -131,28 +219,17 @@
 ### For Gemini CLI
 
 ```
-You are Gemini CLI (Ops). Read this HANDOFF.md in full.
+You are Gemini CLI (Ops). Read this HANDOFF.md in full before acting.
 
-Your tasks this session:
+Current status: standby. No active deploy tasks.
 
-1. Verify Python syntax is clean on the three modified files:
-   cd /path/to/cbb-edge
-   python -m py_compile backend/fantasy_baseball/circuit_breaker.py && echo "OK circuit_breaker"
-   python -m py_compile backend/services/dashboard_service.py && echo "OK dashboard_service"
-   python -m py_compile backend/main.py && echo "OK main"
+When Claude Code completes the BDL MLB migration (§2 Phases 2-3), you will be
+asked to verify. At that point:
 
-2. Trigger Railway redeploy if any changes are pending (git status will show).
-
-3. After deploy, smoke-test the SSE endpoint:
-   curl -N -H "X-API-Key: YOUR_API_KEY" \
-     "https://YOUR_RAILWAY_URL/api/fantasy/dashboard/stream?panels=streaks" \
-     --max-time 10
-   Expected output: lines starting with "event: streaks" or "event: error".
-
-4. Confirm OR-Tools is still installed:
-   railway run python -c "from ortools.sat.python import cp_model; print('OR-Tools: OK')"
-
-5. Report all results. If py_compile fails on any file, paste the exact error.
+1. py_compile the three modified files (balldontlie.py, mlb_analysis.py, daily_ingestion.py)
+2. Confirm BALLDONTLIE_API_KEY is present in Railway env (not the old NCAAB key)
+3. Confirm THE_ODDS_API_KEY has been removed
+4. Trigger redeploy and run the BDL smoke test shown in §7
 
 Do NOT edit any .py or .ts files.
 Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
@@ -163,10 +240,13 @@ Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
 ```
 You are Kimi CLI (Deep Intelligence Unit). Read this HANDOFF.md in full.
 
-No active coding tasks are assigned. Your standing responsibilities:
-- If any new `reports/` files have been requested in HANDOFF Delegation Bundles, execute them.
-- If CBB recalibration (EMAC-068) status changes to unblocked, prepare the V9.2 spec memo.
-- Do NOT write to any production code files without an explicit Claude delegation bundle.
+No active coding tasks are assigned. Key context for this session:
+- BallDontLie NCAAB subscription is CANCELLED. Do not call NCAAB endpoints.
+- OddsAPI will be cancelled post-Apr 7. Do not build new features depending on it.
+- BallDontLie GOAT (MLB) will be the new odds + enrichment provider post-Apr 7.
+- EMAC-068 (CBB V9.2 recalibration) is still blocked until Apr 7. Do not touch Kelly math.
+- MCMC calibration (B5) is the highest-value unblocked technical task.
 
+Do NOT write to any production code files without an explicit Claude delegation bundle.
 Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
 ```
