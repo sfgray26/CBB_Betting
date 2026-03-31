@@ -71,7 +71,14 @@
       "Bash(gh pr:*)",
       "mcp__kimi-code__kimi_list_sessions",
       "Bash(venv/Scripts/python -m py_compile backend/fantasy_baseball/mcmc_calibration.py)",
-      "Bash(venv/Scripts/python -m py_compile backend/services/daily_ingestion.py)"
+      "Bash(venv/Scripts/python -m py_compile backend/services/daily_ingestion.py)",
+      "Bash(venv/Scripts/python -m py_compile backend/contracts.py)",
+      "Bash(venv/Scripts/python -c \"from backend.contracts import LineupOptimizationRequest, PlayerValuationReport, ExecutionDecision; print\\('imports OK'\\)\")",
+      "Bash(venv/Scripts/python -m py_compile scripts/migrate_v11_job_queue.py)",
+      "Bash(DATABASE_URL=\"postgresql://test\" venv/Scripts/python scripts/migrate_v11_job_queue.py --dry-run)",
+      "Bash(DATABASE_URL=\"postgresql://test\" venv/Scripts/python scripts/migrate_v11_job_queue.py --downgrade --dry-run)",
+      "Bash(venv/Scripts/python -m py_compile backend/services/job_queue_service.py)",
+      "Bash(venv/Scripts/python -c \"from backend.services.job_queue_service import submit_job, get_job_status, process_pending_jobs; print\\('OK'\\)\")"
     ]
   }
 }
