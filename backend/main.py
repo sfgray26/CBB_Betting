@@ -58,6 +58,7 @@ from backend.services.dk_import import (
 from backend.services.odds_monitor import get_odds_monitor
 from backend.services.portfolio import get_portfolio_manager
 from backend.services.ratings import get_ratings_service
+from backend.services.job_queue_service import submit_job as jq_submit, get_job_status as jq_status, process_pending_jobs as jq_process
 from backend.utils.env_utils import get_float_env
 from backend.schemas import (
     BetLogCreate,
@@ -301,6 +302,15 @@ async def lifespan(app: FastAPI):
         CronTrigger(day_of_week="sun", hour=5, minute=0, timezone=timezone),
         id="weekly_recalibration",
         name="Weekly Model Parameter Recalibration",
+        replace_existing=True,
+    )
+
+    # Job queue processor — polls job_queue table every 5s for pending heavy ops
+    scheduler.add_job(
+        _process_job_queue_job,
+        IntervalTrigger(seconds=5),
+        id="job_queue_processor",
+        name="Async Job Queue Processor",
         replace_existing=True,
     )
 
@@ -560,6 +570,17 @@ def _nightly_health_check_job():
         logger.info("Sentinel health check complete: %s", result)
     except Exception:
         logger.exception("Sentinel health check job failed")
+
+
+async def _process_job_queue_job():
+    """Process pending async jobs every 5 seconds. Part of ARCH-001 Phase 1."""
+    db = SessionLocal()
+    try:
+        await jq_process(db)
+    except Exception:
+        logger.exception("Job queue processor error")
+    finally:
+        db.close()
 
 
 def _morning_briefing_job():
@@ -5816,6 +5837,40 @@ from backend.fantasy_baseball.lineup_constraint_solver import (
     get_lineup_solver,
     PositionSlot,
 )
+
+
+@app.post("/api/fantasy/lineup/async-optimize")
+async def async_optimize_lineup(
+    target_date: str,
+    risk_tolerance: str = "balanced",
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """
+    Submit lineup optimization as an async job. Returns immediately with job_id.
+    Poll GET /api/fantasy/jobs/{job_id} for status and result.
+    Part of ARCH-001 Phase 1 — API-Worker pattern.
+    """
+    job_id = jq_submit(
+        db,
+        job_type="lineup_optimization",
+        payload={"target_date": target_date, "risk_tolerance": risk_tolerance},
+        priority=3,
+    )
+    return {"job_id": job_id, "status": "queued", "poll_url": f"/api/fantasy/jobs/{job_id}"}
+
+
+@app.get("/api/fantasy/jobs/{job_id}")
+async def get_job_status(
+    job_id: str,
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """Poll async job status. Returns status + result when complete."""
+    result = jq_status(db, job_id)
+    if result.get("error") == "not_found":
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    return result
 
 
 @app.get("/api/fantasy/lineup/elite-optimize/{lineup_date}")

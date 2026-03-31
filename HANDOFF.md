@@ -1,8 +1,59 @@
-# OPERATIONAL HANDOFF — MARCH 30, 2026: UAT FIXES + DATA STRATEGY + POST-CBB ROADMAP
+# OPERATIONAL HANDOFF — MARCH 31, 2026: ARCH-001 CONTRACT LAYER + API-WORKER PATTERN
 
-> **Ground truth as of March 30, 2026 (end of day).** Author: Claude Code (Master Architect).
+> **Ground truth as of March 31, 2026 (end of day).** Author: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk posture · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
-> Prior active crises: all resolved (see §8 archive).
+> Architecture reference: `reports/ARCHITECTURE_ANALYSIS_API_WORKER_PATTERN.md` (ARCH-001)
+> Prior active crises: all resolved (see §9 archive).
+
+---
+
+## 0. Active Architecture Initiative — ARCH-001 (Phase 1 COMPLETE, Phase 2 IN PROGRESS)
+
+### What Was Built This Session (March 31)
+
+| File | Status | Purpose |
+|------|--------|---------|
+| `backend/contracts.py` | ✅ LIVE | Three immutable Pydantic contracts: LineupOptimizationRequest, PlayerValuationReport, ExecutionDecision |
+| `scripts/migrate_v11_job_queue.py` | ✅ READY | Creates job_queue + execution_decisions tables. Run before next deploy. |
+| `backend/services/job_queue_service.py` | ✅ LIVE | Submit/poll/process jobs. SELECT FOR UPDATE SKIP LOCKED. asyncio.to_thread dispatch. |
+| `backend/main.py` | ✅ WIRED | job_queue_processor job (5s interval) + POST /api/fantasy/lineup/async-optimize + GET /api/fantasy/jobs/{job_id} |
+
+### CRITICAL: Run Migration Before Deploy
+```bash
+# Local test (dry-run first)
+python scripts/migrate_v11_job_queue.py --dry-run
+
+# Railway production
+railway run python scripts/migrate_v11_job_queue.py
+```
+
+### Phase 2 — Next Session (Player Valuation Cache)
+1. Worker pre-computes `PlayerValuationReport` for all rostered players at 6 AM ET
+2. Lineup page reads from DB cache instead of hitting Yahoo/Statcast on every load
+3. Target: lineup page load time drops from 8s+ to <2s
+4. Gate: Phase 1 must be stable (job_queue running cleanly) before starting Phase 2
+
+### Architecture Rule (ADR-005 — LOCKED)
+**All heavy operations MUST go through job_queue_service. Never run synchronously in the HTTP request path.**
+Heavy = Yahoo API calls, Statcast ingestion, lineup optimization, MCMC simulation.
+
+---
+
+## 0b. Gemini UI Exploration — Forward-Looking (Non-Breaking)
+
+Gemini CLI has demonstrated strong UI capability. Proposed forward-looking delegation:
+
+**Scope (read-only first):** Gemini reads the Next.js frontend (`frontend/`) and produces a UI audit report identifying:
+- Components that block on API calls without loading states
+- Missing error boundaries
+- Hardcoded strings that should be dynamic
+
+**Gate before Gemini writes any frontend code:**
+1. Claude Code must review and approve the audit
+2. Changes must be non-breaking (no routing changes, no API contract changes)
+3. All frontend changes go through the same spec-review process as backend
+
+**This is exploratory — no Gemini frontend code until Claude approves the audit.**
 
 ---
 
@@ -123,6 +174,13 @@ This feeds the fantasy dashboard's injury display (currently sourced from Yahoo 
 | **ProjectionsLoader CSV re-read** | ✅ FIXED (Mar 31) | `@lru_cache(maxsize=1)` on `load_full_board()`; force reload via `POST /admin/fantasy/reload-board` |
 | **ADP match rate (was 32%)** | ✅ FIXED (Mar 31) | `_make_player_id` strips suffixes/flips last-name-first; `_apply_adp` adds initial fallback. Expect 80%+ match |
 | **Statcast ingestion stub** | ✅ FIXED (Mar 31) | `_update_statcast` now calls `run_daily_ingestion()` via `asyncio.to_thread`; Bayesian updates live |
+| **ARCH-001: contracts.py** | ✅ LIVE (Mar 31) | Three immutable Pydantic contracts. Frozen models. ET timestamps. |
+| **ARCH-001: job_queue_service** | ✅ LIVE (Mar 31) | PostgreSQL-backed queue. SELECT FOR UPDATE SKIP LOCKED. asyncio dispatch. |
+| **ARCH-001: /api/fantasy/lineup/async-optimize** | ✅ LIVE (Mar 31) | Submits job, returns {job_id, status, poll_url} immediately. |
+| **ARCH-001: /api/fantasy/jobs/{job_id}** | ✅ LIVE (Mar 31) | Poll job status + result. |
+| **ARCH-001: job_queue_processor** | ✅ LIVE (Mar 31) | APScheduler 5s interval. Processes up to 3 jobs per tick. |
+| **migrate_v11_job_queue.py** | ⚠️ PENDING DEPLOY | Run `railway run python scripts/migrate_v11_job_queue.py` before next deploy. |
+| **ARCH-001 Phase 2: Valuation Cache** | ⏳ NEXT | Pre-compute PlayerValuationReport at 6 AM. Lineup page reads cache. Target: <2s load. |
 
 ---
 
@@ -179,31 +237,54 @@ Priority order:
 
 ## 7. Delegation Bundles
 
-### GEMINI CLI (Ops) — Standby
+### GEMINI CLI (Ops) — ACTIVE TASK
 
-No new tasks since Mar 28 deploy was confirmed. When BDL MLB migration executes:
+**Immediate: Deploy ARCH-001 Phase 1**
 
-> 1. After Claude Code pushes BDL MLB changes, run py_compile on modified files:
->    ```
->    railway run python -m py_compile backend/services/balldontlie.py
->    railway run python -m py_compile backend/services/mlb_analysis.py
->    railway run python -m py_compile backend/services/daily_ingestion.py
->    ```
-> 2. Confirm `BALLDONTLIE_API_KEY` is set in Railway env (MLB-tier key):
->    ```
->    railway variables | grep -i balldontlie
->    ```
-> 3. Confirm `THE_ODDS_API_KEY` has been removed from Railway env after cancellation.
-> 4. Trigger redeploy and smoke-test:
->    ```
->    railway run python -c "from backend.services.balldontlie import get_bdl_client; c = get_bdl_client(); print('BDL OK')"
->    ```
-> Do NOT edit any `.py` or `.ts` files.
+```
+You are Gemini CLI (Ops). ARCH-001 Phase 1 has been built by Claude Code. Your job is to deploy it.
+
+Step 1: py_compile verification
+  railway run python -m py_compile backend/contracts.py
+  railway run python -m py_compile backend/services/job_queue_service.py
+  railway run python -m py_compile backend/main.py
+
+Step 2: Run the v11 migration
+  railway run python scripts/migrate_v11_job_queue.py --dry-run
+  # Confirm SQL looks correct, then:
+  railway run python scripts/migrate_v11_job_queue.py
+
+Step 3: Trigger redeploy and smoke-test
+  railway up
+  # Wait for deploy, then:
+  curl -s -X POST https://<app>.railway.app/api/fantasy/lineup/async-optimize \
+    -H "X-API-Key: $API_KEY" \
+    -d '{"target_date": "2026-04-01"}' | python -m json.tool
+  # Should return: {"job_id": "...", "status": "queued", "poll_url": "..."}
+
+Step 4: Report results back via HANDOFF.md update
+
+Do NOT edit any .py or .ts files.
+```
+
+**Forward-Looking: Gemini UI Audit (exploratory, read-only)**
+
+When ARCH-001 Phase 1 is confirmed stable on Railway, Gemini may run a read-only UI audit:
+```
+Read all files in frontend/app/(dashboard)/fantasy/
+Identify: components with no loading states, missing error boundaries, hardcoded strings.
+Output: reports/GEMINI_UI_AUDIT_2026-04-01.md
+Do NOT write any code. Read-only audit only.
+```
+Claude Code will review the audit before any frontend changes are made.
+
+---
 
 ### KIMI CLI (Deep Intelligence Unit) — Standby
 
 > No active coding tasks. Standing responsibilities:
 > - If CBB recalibration (EMAC-068) status changes to unblocked, prepare the V9.2 spec memo.
+> - ARCH-001 Phase 2 research when needed: optimal cache invalidation strategy for PlayerValuationReport.
 > - Do NOT write to any production code files without an explicit Claude delegation bundle.
 >
 > Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
