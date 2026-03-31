@@ -1508,9 +1508,13 @@ def get_yahoo_client() -> "YahooFantasyClient":
     Return the process-level YahooFantasyClient singleton.
 
     Thread-safe via double-checked locking. Token refresh is handled
-    internally by _ensure_token() — callers never need to refresh manually.
+    internally by _ensure_token() -- callers never need to refresh manually.
     """
     global _client
+    # NOTE: The outer check is safe on CPython (GIL makes reference
+    # assignment atomic) but would be a data race on free-threaded
+    # runtimes. If upgrading to Python 3.13+ with --disable-gil,
+    # remove the outer check and rely solely on the lock.
     if _client is not None:
         return _client
     with _client_lock:
@@ -1526,6 +1530,10 @@ def get_resilient_yahoo_client() -> "ResilientYahooClient":
     Use this for endpoints that need circuit-breaker + stale-cache behaviour.
     """
     global _resilient_client
+    # NOTE: The outer check is safe on CPython (GIL makes reference
+    # assignment atomic) but would be a data race on free-threaded
+    # runtimes. If upgrading to Python 3.13+ with --disable-gil,
+    # remove the outer check and rely solely on the lock.
     if _resilient_client is not None:
         return _resilient_client
     with _resilient_client_lock:

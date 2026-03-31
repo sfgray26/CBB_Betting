@@ -82,7 +82,6 @@ from backend.schemas import (
     MatchupSimulateRequest,
 )
 from backend.fantasy_baseball.yahoo_client_resilient import (
-    YahooFantasyClient,
     YahooAuthError,
     YahooAPIError,
     ResilientYahooClient,
