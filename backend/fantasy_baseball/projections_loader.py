@@ -33,6 +33,7 @@ import csv
 import logging
 import os
 import statistics
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -473,6 +474,7 @@ def _apply_position_eligibility(players: list[dict], eligibility: dict[str, list
 # Master loader — tries real CSVs, falls back to hardcoded board
 # ---------------------------------------------------------------------------
 
+@lru_cache(maxsize=1)
 def load_full_board(data_dir: Optional[Path] = None) -> Optional[list[dict]]:
     """
     Attempt to load real projection data from CSV files.

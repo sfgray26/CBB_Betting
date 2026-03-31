@@ -102,3 +102,35 @@ def test_get_yahoo_client_raises_on_missing_credentials(reset_singletons):
     # _client must remain None after the failed construction attempt
     # so the next call can retry with correct credentials
     assert mod._client is None
+
+
+# ---------------------------------------------------------------------------
+# Task 2: ProjectionsLoader lru_cache
+# ---------------------------------------------------------------------------
+
+def test_load_full_board_cached():
+    """load_full_board() must return the same list object on repeated calls."""
+    from backend.fantasy_baseball.projections_loader import load_full_board
+    load_full_board.cache_clear()
+
+    with patch("backend.fantasy_baseball.projections_loader.load_steamer_batting", return_value=[]):
+        with patch("backend.fantasy_baseball.projections_loader.load_steamer_pitching", return_value=[]):
+            with patch("pathlib.Path.exists", return_value=True):
+                r1 = load_full_board()
+                r2 = load_full_board()
+                assert r1 is r2
+
+
+def test_load_full_board_cache_clear_triggers_reload():
+    """cache_clear() must cause the next call to re-read CSVs."""
+    from backend.fantasy_baseball.projections_loader import load_full_board
+    load_full_board.cache_clear()
+
+    with patch("backend.fantasy_baseball.projections_loader.load_steamer_batting") as mock_bat:
+        with patch("backend.fantasy_baseball.projections_loader.load_steamer_pitching", return_value=[]):
+            with patch("pathlib.Path.exists", return_value=True):
+                mock_bat.return_value = []
+                load_full_board()
+                load_full_board.cache_clear()
+                load_full_board()
+                assert mock_bat.call_count == 2

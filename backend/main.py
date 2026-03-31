@@ -6196,6 +6196,22 @@ async def simulate_matchup(
     return result
 
 
+@app.post("/admin/fantasy/reload-board", dependencies=[Depends(verify_admin_api_key)])
+async def admin_reload_fantasy_board():
+    """
+    Force a fresh read of projection CSVs (data/projections/*.csv).
+    Call this after dropping new Steamer/ZiPS exports into data/projections/.
+    """
+    from backend.fantasy_baseball.projections_loader import load_full_board
+    from backend.fantasy_baseball import player_board
+
+    load_full_board.cache_clear()
+    player_board._BOARD = None  # Reset module-level sentinel
+
+    board = player_board.get_board()
+    return {"status": "ok", "players_loaded": len(board) if board else 0}
+
+
 @app.post("/admin/pybaseball/refresh")
 async def admin_refresh_pybaseball(year: int = 2025, user: str = Depends(verify_admin_api_key)):
     """Force-refresh pybaseball Statcast cache and invalidate in-memory statcast_loader cache."""
