@@ -57,6 +57,56 @@ Gemini CLI has demonstrated strong UI capability. Proposed forward-looking deleg
 
 ---
 
+## 0c. REVIEW TASK: Gemini CLI MCP Integration — Claude Code Determination Required
+
+**Status:** Analysis complete, pending Claude Code decision  
+**Reference:** `reports/GEMINI_MCP_ANALYSIS.md` (full assessment)  
+**Source:** https://geminicli.com/docs/tools/mcp-server/
+
+### Analysis Summary
+
+Analyzed Gemini CLI's MCP (Model Context Protocol) server capabilities for potential operational efficiency gains. MCP would allow Gemini CLI to discover and execute custom tools (e.g., `railway_health_check`, `validate_deploy_ready`) through a standardized protocol.
+
+| Factor | Assessment |
+|--------|------------|
+| **Implementation effort** | 3-4 days |
+| **Time savings** | ~3 hours/month |
+| **ROI break-even** | ~8 months |
+| **Policy risk** | HIGH — must avoid EMAC-075 violations |
+
+### Policy Constraint (Critical)
+
+Per AGENTS.md §2, Gemini CLI is **HARD RESTRICTED** from code writes (EMAC-075). Any MCP tools must be strictly scoped to:
+- ✅ Read-only operations (logs, health checks, report queries)
+- ✅ Railway DevOps (deploy, env var checks)
+- ✅ Pre-approved script execution
+- ❌ NO code generation
+- ❌ NO file modification
+- ❌ NO database writes
+
+### Review Task for Claude Code
+
+**ULTIMATE DETERMINATION:** Claude Code must decide whether to implement Gemini MCP integration.
+
+**Considerations:**
+1. Current AGENTS.md workflow is functional but manual
+2. MCP adds infrastructure complexity (additional process to maintain)
+3. EMAC-075 requires strict tool auditing to prevent indirect code modification
+4. MLB season is active — infrastructure changes carry risk
+5. Alternative: Claude Code MCP (not Gemini) may offer higher value with no policy conflicts
+
+**If Approved, Scope Strictly To:**
+- `railway_health_check` — Comprehensive Railway status
+- `validate_deploy_ready` — Pre-deployment validation (py_compile, env check)
+- `query_reports` — Read-only access to `reports/` directory
+- All tools with `trust: false` (require confirmation)
+
+**Timing Recommendation:** Defer until post-MLB season (October 2026) unless operational pain becomes critical.
+
+**Action Required:** Claude Code to review `reports/GEMINI_MCP_ANALYSIS.md` and make determination: IMPLEMENT / DEFER / REJECT. Update this section with decision.
+
+---
+
 ## 1. Data Provider Strategy — LOCKED DECISIONS
 
 ### SUBSCRIPTIONS
@@ -175,11 +225,10 @@ This feeds the fantasy dashboard's injury display (currently sourced from Yahoo 
 | **ADP match rate (was 32%)** | ✅ FIXED (Mar 31) | `_make_player_id` strips suffixes/flips last-name-first; `_apply_adp` adds initial fallback. Expect 80%+ match |
 | **Statcast ingestion stub** | ✅ FIXED (Mar 31) | `_update_statcast` now calls `run_daily_ingestion()` via `asyncio.to_thread`; Bayesian updates live |
 | **ARCH-001: contracts.py** | ✅ LIVE (Mar 31) | Three immutable Pydantic contracts. Frozen models. ET timestamps. |
-| **ARCH-001: job_queue_service** | ✅ LIVE (Mar 31) | PostgreSQL-backed queue. SELECT FOR UPDATE SKIP LOCKED. asyncio dispatch. |
-| **ARCH-001: /api/fantasy/lineup/async-optimize** | ✅ LIVE (Mar 31) | Submits job, returns {job_id, status, poll_url} immediately. |
-| **ARCH-001: /api/fantasy/jobs/{job_id}** | ✅ LIVE (Mar 31) | Poll job status + result. |
-| **ARCH-001: job_queue_processor** | ✅ LIVE (Mar 31) | APScheduler 5s interval. Processes up to 3 jobs per tick. |
-| **migrate_v11_job_queue.py** | ⚠️ PENDING DEPLOY | Run `railway run python scripts/migrate_v11_job_queue.py` before next deploy. |
+| **ARCH-001: job_queue_service** | ✅ VERIFIED | PostgreSQL-backed queue. Table created (v11). INSERT fixed (CAST AS JSONB). Verified picking up jobs. |
+| **ARCH-001: /api/fantasy/lineup/async-optimize** | ✅ VERIFIED | Smoke-tested: job submitted, queued, and processed (validation error captured as expected). |
+| **ARCH-001: job_queue_processor** | ✅ VERIFIED | Successfully polling and processing from job_queue table. |
+| **migrate_v11_job_queue.py** | ✅ COMPLETED | Executed on Railway Mar 31. |
 | **ARCH-001 Phase 2: Valuation Cache** | ⏳ NEXT | Pre-compute PlayerValuationReport at 6 AM. Lineup page reads cache. Target: <2s load. |
 
 ---

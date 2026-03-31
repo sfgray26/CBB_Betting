@@ -46,7 +46,7 @@ class JobQueueService:
                     (id, job_type, payload, status, priority, created_at,
                      retry_count, max_retries, league_key, team_key)
                 VALUES
-                    (:id, :job_type, :payload::jsonb, 'pending', :priority,
+                    (:id, :job_type, CAST(:payload AS JSONB), 'pending', :priority,
                      :created_at, 0, 3, :league_key, :team_key)
                 """
             ),
