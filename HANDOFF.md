@@ -1,6 +1,6 @@
-# OPERATIONAL HANDOFF — MARCH 30, 2026: DATA STRATEGY + POST-CBB ROADMAP
+# OPERATIONAL HANDOFF — MARCH 30, 2026: UAT FIXES + DATA STRATEGY + POST-CBB ROADMAP
 
-> **Ground truth as of March 30, 2026.** Author: Claude Code (Master Architect).
+> **Ground truth as of March 30, 2026 (end of day).** Author: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk posture · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 > Prior active crises: all resolved (see §8 archive).
 
@@ -103,6 +103,16 @@ This feeds the fantasy dashboard's injury display (currently sourced from Yahoo 
 | **Test suite** | ✅ STABLE | 1199+ pass. |
 | **RP-as-SP bug** | ✅ FIXED (Mar 29) | `pitcher_slot == "SP"` guard in `_get_probable_pitchers`. |
 | **Yahoo stat category IDs** | ✅ FIXED (Mar 29) | `_YAHOO_STAT_FALLBACK` dict + all 22 frontend `STAT_LABELS`. |
+| **UAT P0: No-game START** | ✅ FIXED (Mar 30) | Post-optimizer override loop demotes `START` → `BENCH` when `opponent` is empty. |
+| **UAT P1: SP score 0.000** | ✅ FIXED (Mar 30) | `p.sp_score === 0 ? '—' : p.sp_score.toFixed(3)` in lineup page. |
+| **UAT P1: UNKNOWN badge** | ✅ FIXED (Mar 30) | `FALLBACK_LABELS` map in `statusBadge()` — UNKNOWN/NO_START → "NO START", RP → "RELIEVER". |
+| **UAT P1: Streamlit sidebar link** | ✅ FIXED (Mar 30) | Removed `localhost:8501` link from `sidebar.tsx` (Streamlit retired). |
+| **UAT P1: Raw Pydantic errors** | ✅ FIXED (Mar 30) | Warning banner filters `validation error` / `Traceback` strings. |
+| **UAT: Global "Dashboard" header** | ✅ FIXED (Mar 30) | Fantasy routes added to `PAGE_TITLES` in `header.tsx`. |
+| **UAT: "Invalid Date ET"** | ✅ FIXED (Mar 30) | Null guard on `dashboard.timestamp` in dashboard page. |
+| **Yahoo flatten_entry last-wins bug** | ✅ FIXED (Mar 30) | `if not stats_raw:` guard in `flatten_entry` — takes only first `team_stats` block. |
+| **`_injury_lookup` bool crash** | ✅ FIXED (Mar 30) | `isinstance(p.get("status"), str)` guard — rejects Yahoo `status: False/True`. |
+| **`fetch_mlb_odds` coverage logging** | ✅ FIXED (Mar 30) | Logs game list + warns on 0-game response for Railway diagnostics. |
 | **MCMC Simulator** | ❌ SCAFFOLDED | `mcmc_simulator.py` exists, not calibrated. B5 roadmap item — calibrate against historical matchup data before wiring into `win_probability`. |
 | **CBB V9.2 recalibration** | ⏸ BLOCKED | EMAC-068 — SNR/integrity scalar stacking correction. Do NOT touch Kelly math until Apr 7. |
 | **`balldontlie.py`** | ⚠️ NCAAB-ONLY | Needs MLB endpoint expansion post-Apr 7 (see §2 Phase 2). |
@@ -211,6 +221,15 @@ No new tasks since Mar 28 deploy was confirmed. When BDL MLB migration executes:
 | CircuitBreaker only counted `expected_exception` | `except Exception:` in `call()` and `call_async()` | Mar 28 |
 | RP-as-SP in probable pitchers | `pitcher_slot == "SP"` guard in `_get_probable_pitchers` | Mar 29 |
 | Yahoo stat category IDs returning raw numbers | `_YAHOO_STAT_FALLBACK` dict + 22-entry `STAT_LABELS` frontend map | Mar 29 |
+| Yahoo `flatten_entry` last-wins bug (OBP>1, walks decimal, wins inflated) | `if not stats_raw:` guard in `flatten_entry` — takes only first `team_stats` block | Mar 30 |
+| `_injury_lookup` Pydantic crash (`status: False` → bool) | `isinstance(p.get("status"), str)` guard in `_injury_lookup` dict comprehension | Mar 30 |
+| No-game players (HOU/ARI/CLE/SF) receiving START | Post-optimizer override loop: `START` → `BENCH` when `opponent` is empty | Mar 30 |
+| Global "Dashboard" title on all fantasy pages | Added `/fantasy/*` routes to `PAGE_TITLES` in `header.tsx` | Mar 30 |
+| "Invalid Date ET" on dashboard timestamp | Null guard `dashboard.timestamp ? ... : 'N/A'` | Mar 30 |
+| SP score shows 0.000 for no-start pitchers | `p.sp_score === 0 ? '—' : ...` in lineup page | Mar 30 |
+| UNKNOWN status badge displayed verbatim | `FALLBACK_LABELS` map → "NO START"; RP → "RELIEVER" | Mar 30 |
+| Streamlit localhost:8501 link in production sidebar | Removed entire block from `sidebar.tsx` | Mar 30 |
+| Raw Pydantic validation errors in warning banner | Filter on "validation error" / "Traceback" strings | Mar 30 |
 
 ---
 
