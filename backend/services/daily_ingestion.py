@@ -9,6 +9,7 @@ ADR-001: Every job MUST use _with_advisory_lock.
 ADR-004: This file is additive only. Never import betting_model or analysis.
 """
 
+import asyncio
 import logging
 import os
 import time
@@ -23,6 +24,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from backend.models import SessionLocal, PlayerDailyMetric, ProjectionSnapshot
+from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
 
 logger = logging.getLogger(__name__)
 
@@ -236,22 +238,35 @@ class DailyIngestionOrchestrator:
         return await _with_advisory_lock(LOCK_IDS["mlb_odds"], _run)
 
     async def _update_statcast(self) -> dict:
-        """Run daily Statcast ingestion via StatcastIngestionAgent."""
+        """Daily Statcast enrichment — fetches yesterday's data and runs Bayesian projection updates."""      
         t0 = time.monotonic()
-
         async def _run():
-            import asyncio as _asyncio
-            from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
-            result = await _asyncio.to_thread(run_daily_ingestion)
-            elapsed = int((time.monotonic() - t0) * 1000)
-            if isinstance(result, dict):
-                records = result.get("records_processed", 0)
-                status = "ok" if result.get("success") else "error"
-            else:
-                records = 0
-                status = "error"
-            self._record_job_run("statcast", status)
-            return {"status": status, "records": records, "elapsed_ms": elapsed}
+            try:
+                result = await asyncio.to_thread(run_daily_ingestion)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                status = "success" if result.get("success") else "failed"
+
+                if not result.get("success"):
+                    logger.error(
+                        "_update_statcast: ingestion reported failure -- %s",
+                        result.get("error", "unknown error"),
+                    )
+
+                records = result.get("records_processed", 0) if isinstance(result, dict) else 0
+                self._record_job_run("statcast", status)
+
+                if isinstance(result, dict):
+                    result["status"] = status
+                    result["records"] = records
+                    result["elapsed_ms"] = elapsed
+                else:
+                    result = {"status": status, "records": 0, "elapsed_ms": elapsed}
+                return result
+            except Exception as exc:
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.exception("_update_statcast: unhandled error -- %s", exc)
+                self._record_job_run("statcast", "failed")
+                return {"status": "failed", "records": 0, "error": str(exc), "elapsed_ms": elapsed}
 
         return await _with_advisory_lock(LOCK_IDS["statcast"], _run)
 
