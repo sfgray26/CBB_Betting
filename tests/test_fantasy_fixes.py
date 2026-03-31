@@ -136,3 +136,49 @@ def test_load_full_board_cache_clear_triggers_reload():
                 load_full_board.cache_clear()
                 load_full_board()
                 assert mock_bat.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Task 3: ADP name normalization
+# ---------------------------------------------------------------------------
+
+def test_make_player_id_strips_suffix():
+    from backend.fantasy_baseball.projections_loader import _make_player_id
+    assert _make_player_id("Ronald Acuña Jr.") == _make_player_id("Ronald Acuna")
+    assert _make_player_id("Ken Griffey Jr.") == _make_player_id("Ken Griffey")
+    assert _make_player_id("Cal Ripken Jr.") == _make_player_id("Cal Ripken")
+
+
+def test_make_player_id_handles_last_name_first():
+    from backend.fantasy_baseball.projections_loader import _make_player_id
+    assert _make_player_id("Ohtani, Shohei") == _make_player_id("Shohei Ohtani")
+    assert _make_player_id("Betts, Mookie") == _make_player_id("Mookie Betts")
+
+
+def test_make_player_id_handles_extra_accents():
+    from backend.fantasy_baseball.projections_loader import _make_player_id
+    assert _make_player_id("José Ramîrez") == _make_player_id("Jose Ramirez")
+
+
+def test_apply_adp_last_name_initial_fallback():
+    """_apply_adp must match when exact ID fails but last+initial matches.
+
+    Some ADP sources (e.g. FantasyPros) export abbreviated first names like
+    "A. Judge" while the player board has "Aaron Judge". After normalization
+    these produce different IDs ("a_judge" vs "aaron_judge"), but the initial
+    fallback bridges them.
+    """
+    from backend.fantasy_baseball.projections_loader import _apply_adp, _make_player_id
+
+    # ADP CSV has abbreviated first name — normalizes to "a_judge"
+    adp_map = {"a_judge": 4.0}
+
+    # Player board has full name — normalizes to "aaron_judge"
+    players = [{
+        "id": _make_player_id("Aaron Judge"),
+        "name": "Aaron Judge",
+        "adp": 999.0,
+    }]
+
+    _apply_adp(players, adp_map)
+    assert players[0]["adp"] == 4.0
