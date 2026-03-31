@@ -86,6 +86,8 @@ from backend.fantasy_baseball.yahoo_client_resilient import (
     YahooAuthError,
     YahooAPIError,
     ResilientYahooClient,
+    get_yahoo_client,
+    get_resilient_yahoo_client,
 )
 from backend.fantasy_baseball.daily_lineup_optimizer import get_lineup_optimizer
 
@@ -3661,14 +3663,13 @@ async def sync_draft_from_yahoo(
     """
     from backend.models import FantasyDraftSession, FantasyDraftPick
     from backend.fantasy_baseball.player_board import get_board
-    from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient, YahooAuthError, YahooAPIError
 
     session = db.query(FantasyDraftSession).filter_by(session_key=session_key).first()
     if session is None:
         raise HTTPException(status_code=404, detail="Draft session not found")
 
     try:
-        client = YahooFantasyClient()
+        client = get_yahoo_client()
     except YahooAuthError as exc:
         raise HTTPException(status_code=401, detail=f"Yahoo auth not configured: {exc}")
 
@@ -3794,14 +3795,13 @@ async def sync_keepers_pre_draft(
     """
     from backend.models import FantasyDraftSession, FantasyDraftPick
     from backend.fantasy_baseball.player_board import get_board
-    from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient, YahooAuthError, YahooAPIError
 
     session = db.query(FantasyDraftSession).filter_by(session_key=session_key).first()
     if session is None:
         raise HTTPException(status_code=404, detail="Draft session not found")
 
     try:
-        client = YahooFantasyClient()
+        client = get_yahoo_client()
     except YahooAuthError as exc:
         raise HTTPException(status_code=401, detail=f"Yahoo auth not configured: {exc}")
 
@@ -3915,7 +3915,7 @@ async def get_fantasy_lineup_recommendations(
     # Fetch Yahoo roster for player-specific rankings (best-effort)
     _lineup_roster: list = []
     try:
-        _lineup_client = YahooFantasyClient()
+        _lineup_client = get_yahoo_client()
         _lineup_roster = _lineup_client.get_roster()
     except Exception as _exc:
         logger.warning("Could not fetch Yahoo roster for lineup optimizer: %s", _exc)
@@ -4315,7 +4315,7 @@ async def get_daily_briefing(
     # Fetch roster
     roster: list = []
     try:
-        client = YahooFantasyClient()
+        client = get_yahoo_client()
         roster = client.get_roster()
     except Exception as e:
         logger.warning(f"Could not fetch roster: {e}")
@@ -4415,7 +4415,7 @@ async def get_fantasy_waiver_recommendations(
     }
 
     try:
-        client = YahooFantasyClient()
+        client = get_yahoo_client()
         my_team_key = os.getenv("YAHOO_TEAM_KEY", "")
         if not my_team_key:
             try:
@@ -4812,7 +4812,7 @@ async def get_waiver_recommendations(
     recommendations: list[RosterMoveRecommendation] = []
 
     try:
-        client = YahooFantasyClient()
+        client = get_yahoo_client()
         my_team_key = os.getenv("YAHOO_TEAM_KEY", "")
         if not my_team_key:
             try:
@@ -5251,7 +5251,7 @@ async def yahoo_diag(user: str = Depends(verify_api_key)):
     constructor_ok = False
     constructor_error = None
     try:
-        _c = YahooFantasyClient()
+        _c = get_yahoo_client()
         constructor_ok = True
     except YahooAuthError as e:
         constructor_error = str(e)
@@ -5297,7 +5297,7 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
     from backend.fantasy_baseball.player_board import get_or_create_projection
 
     try:
-        client = YahooFantasyClient()
+        client = get_yahoo_client()
     except YahooAuthError as exc:
         raise HTTPException(
             status_code=503,
@@ -5378,7 +5378,7 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
     Returns stub with empty stats if scoreboard is unavailable (pre-season).
     """
     try:
-        client = YahooFantasyClient()
+        client = get_yahoo_client()
     except YahooAuthError as exc:
         raise HTTPException(
             status_code=503,
@@ -5839,14 +5839,13 @@ async def elite_optimize_lineup(
     Returns:
         Optimal lineup with detailed scoring breakdown
     """
-    from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient, YahooAuthError
     from backend.fantasy_baseball.daily_lineup_optimizer import DailyLineupOptimizer
-    
+
     try:
-        yahoo = YahooFantasyClient()
+        yahoo = get_yahoo_client()
     except YahooAuthError:
         raise HTTPException(status_code=503, detail="Yahoo not configured")
-    
+
     # Get roster
     try:
         roster = yahoo.get_roster()
@@ -5950,11 +5949,10 @@ async def analyze_lineup_scarcity(user: str = Depends(verify_api_key)):
     
     Helps identify positional strengths/weaknesses for waiver/trade decisions.
     """
-    from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient, YahooAuthError
     from backend.fantasy_baseball.lineup_constraint_solver import get_lineup_solver
-    
+
     try:
-        yahoo = YahooFantasyClient()
+        yahoo = get_yahoo_client()
     except YahooAuthError:
         raise HTTPException(status_code=503, detail="Yahoo not configured")
     
@@ -6049,7 +6047,7 @@ async def apply_fantasy_lineup(
 
     try:
         # Use ResilientYahooClient for game-aware validation and auto-correction
-        client = ResilientYahooClient()
+        client = get_resilient_yahoo_client()
     except YahooAuthError as exc:
         raise HTTPException(
             status_code=503,
@@ -6132,8 +6130,7 @@ async def yahoo_test(user: str = Depends(verify_admin_api_key)):
     Requires YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET, YAHOO_REFRESH_TOKEN in env.
     """
     try:
-        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
-        client = YahooFantasyClient()
+        client = get_yahoo_client()
         league = client.get_league()
         team_key = client.get_my_team_key()
         return {
@@ -6153,8 +6150,7 @@ async def yahoo_roster_raw(user: str = Depends(verify_admin_api_key)):
     Use this to inspect the exact shape Yahoo returns so parsing can be debugged.
     """
     try:
-        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
-        client = YahooFantasyClient()
+        client = get_yahoo_client()
         raw = client.get_roster_raw()
         return {"fantasy_content": raw}
     except Exception as exc:
@@ -6167,8 +6163,7 @@ async def yahoo_roster(user: str = Depends(verify_admin_api_key)):
     Return your parsed Yahoo Fantasy roster.
     """
     try:
-        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
-        client = YahooFantasyClient()
+        client = get_yahoo_client()
         roster = client.get_roster()
         return {"count": len(roster), "players": roster}
     except Exception as exc:
