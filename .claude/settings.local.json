@@ -68,7 +68,10 @@
       "Bash(\"C:/Users/sfgra/repos/Fixed/cbb-edge/venv/Scripts/python\" -m pytest \"C:/Users/sfgra/repos/Fixed/cbb-edge/.worktrees/fantasy-fixes/tests/test_fantasy_fixes.py\" -v --tb=short 2>&1)",
       "Bash(\"C:/Users/sfgra/repos/Fixed/cbb-edge/venv/Scripts/python\" -m py_compile \"C:/Users/sfgra/repos/Fixed/cbb-edge/.worktrees/fantasy-fixes/backend/fantasy_baseball/statcast_ingestion.py\")",
       "Bash(\"C:/Users/sfgra/repos/Fixed/cbb-edge/venv/Scripts/python\" -m py_compile \"C:/Users/sfgra/repos/Fixed/cbb-edge/.worktrees/fantasy-fixes/backend/services/daily_ingestion.py\")",
-      "Bash(gh pr:*)"
+      "Bash(gh pr:*)",
+      "mcp__kimi-code__kimi_list_sessions",
+      "Bash(venv/Scripts/python -m py_compile backend/fantasy_baseball/mcmc_calibration.py)",
+      "Bash(venv/Scripts/python -m py_compile backend/services/daily_ingestion.py)"
     ]
   }
 }

@@ -106,7 +106,7 @@ def _get_player_z_score_from_db(
         logger.debug(f"Failed to fetch z-score for {player_name}: {e}")
         return None
     finally:
-        if close_db:
+        if close_db and db is not None:
             db.close()
 
 

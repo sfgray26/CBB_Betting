@@ -236,11 +236,22 @@ class DailyIngestionOrchestrator:
         return await _with_advisory_lock(LOCK_IDS["mlb_odds"], _run)
 
     async def _update_statcast(self) -> dict:
-        """Statcast enrichment stub. Full implementation deferred to EPIC-3."""
+        """Run daily Statcast ingestion via StatcastIngestionAgent."""
+        t0 = time.monotonic()
+
         async def _run():
-            logger.info("_update_statcast: statcast update not yet implemented")
-            self._record_job_run("statcast", "skipped")
-            return {"status": "skipped", "records": 0, "elapsed_ms": 0}
+            import asyncio as _asyncio
+            from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
+            result = await _asyncio.to_thread(run_daily_ingestion)
+            elapsed = int((time.monotonic() - t0) * 1000)
+            if isinstance(result, dict):
+                records = result.get("records_processed", 0)
+                status = "ok" if result.get("success") else "error"
+            else:
+                records = 0
+                status = "error"
+            self._record_job_run("statcast", status)
+            return {"status": status, "records": records, "elapsed_ms": elapsed}
 
         return await _with_advisory_lock(LOCK_IDS["statcast"], _run)
 

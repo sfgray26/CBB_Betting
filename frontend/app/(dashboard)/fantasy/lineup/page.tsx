@@ -271,9 +271,16 @@ export default function DailyLineupPage() {
       setApplyStatus('success')
       setApplyMessage(`Applied ${result.applied} players for ${result.date}`)
     },
-    onError: (err: Error) => {
+    onError: (err: unknown) => {
+      let message = 'Failed to apply lineup'
+      if (err instanceof Error) {
+        message = err.message
+      } else if (typeof err === 'object' && err !== null) {
+        const e = err as Record<string, unknown>
+        message = String(e.detail ?? e.error ?? e.message ?? message)
+      }
       setApplyStatus('error')
-      setApplyMessage(err.message)
+      setApplyMessage(message)
     },
   })
 

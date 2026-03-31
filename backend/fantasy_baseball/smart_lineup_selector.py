@@ -13,6 +13,7 @@ Integrates with:
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 
@@ -262,7 +263,7 @@ class SmartLineupSelector:
             ranked_players: Sorted list of SmartBatterRanking (best first)
         """
         if game_date is None:
-            game_date = datetime.utcnow().strftime("%Y-%m-%d")
+            game_date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         
         # Get base rankings from odds optimizer
         base_rankings = self.base_optimizer.rank_batters(roster, projections, game_date)

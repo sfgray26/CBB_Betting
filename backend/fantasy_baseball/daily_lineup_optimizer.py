@@ -441,7 +441,8 @@ class DailyLineupOptimizer:
         games = self.fetch_mlb_odds(game_date)
         team_odds = self._build_team_odds_map(games)
 
-        proj_by_name = {p["name"].lower(): p for p in projections if p.get("player_type") == "pitcher"}
+        proj_by_name = {p["name"].lower(): p for p in projections
+                        if (p.get("type") or p.get("player_type", "")) == "pitcher"}
 
         rankings = []
         for player in free_agents:

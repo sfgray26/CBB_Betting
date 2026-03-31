@@ -30,7 +30,9 @@ import threading
 import time
 import webbrowser
 from dataclasses import dataclass
-from datetime import timedelta
+import asyncio
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode, urlparse, parse_qs
@@ -587,8 +589,7 @@ class YahooFantasyClient:
         if team_key is None:
             team_key = self.get_my_team_key()
         if date is None:
-            from datetime import datetime
-            date = datetime.utcnow().strftime("%Y-%m-%d")
+            date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         data = self._get(f"team/{team_key}/roster/players", params={"date": date})
         players_raw = (
             self._team_section(data)
@@ -632,8 +633,7 @@ class YahooFantasyClient:
         if team_key is None:
             team_key = self.get_my_team_key()
         if date is None:
-            from datetime import datetime
-            date = datetime.utcnow().strftime("%Y-%m-%d")
+            date = datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
         if not lineup:
             return {"applied": [], "skipped": [], "warnings": []}
 
@@ -1174,14 +1174,13 @@ class ResilientYahooClient(YahooFantasyClient):
             raise
 
     async def _fetch_waiver_primary(self, league_id: str, filters: Dict) -> List[Dict]:
-        """Primary waiver fetch - override if parent method differs."""
-        # Call parent implementation - adjust method name as needed
-        if hasattr(super(), 'get_waiver_wire_players'):
-            return await super().get_waiver_wire_players(league_id, **filters)
-        elif hasattr(super(), 'get_waiver_players'):
-            return await super().get_waiver_players(league_id, **filters)
-        else:
-            raise NotImplementedError("YahooClient waiver method not found")
+        """Primary waiver fetch via sync parent, run in thread pool."""
+        start = filters.get("start", 0)
+        count = filters.get("count", 25)
+        return await asyncio.to_thread(
+            super(ResilientYahooClient, self).get_waiver_players,
+            start, count
+        )
 
     async def _fetch_waiver_metadata_only(
         self,
@@ -1459,11 +1458,14 @@ class ResilientYahooClient(YahooFantasyClient):
         team_id: str,
         assignments: Dict[str, str]
     ) -> Dict:
-        """Execute the actual lineup API call."""
-        if hasattr(super(), 'set_lineup'):
-            return await super().set_lineup(team_id, assignments)
-        else:
-            raise NotImplementedError("YahooClient set_lineup method not found")
+        """Execute the actual lineup API call via sync parent, run in thread pool."""
+        lineup_list = [{"player_key": pk, "position": pos}
+                       for pos, pk in assignments.items()]
+        return await asyncio.to_thread(
+            super(ResilientYahooClient, self).set_lineup,
+            team_key=team_id,
+            lineup=lineup_list
+        )
 
     # ==================================================================
     # Health & Monitoring
