@@ -484,6 +484,9 @@ def load_full_board(data_dir: Optional[Path] = None) -> Optional[list[dict]]:
     1. Steamer 2026 (most accurate, publicly available on FanGraphs)
     2. ZiPS 2026 (optional second source for averaging)
     3. ATC (average of all systems — if available)
+
+    Note: passing a non-None data_dir bypasses and may evict the production
+    cache (lru_cache is keyed on all args). Use non-None only in tests.
     """
     if data_dir is None:
         data_dir = DATA_DIR

@@ -109,16 +109,18 @@ def test_get_yahoo_client_raises_on_missing_credentials(reset_singletons):
 # ---------------------------------------------------------------------------
 
 def test_load_full_board_cached():
-    """load_full_board() must return the same list object on repeated calls."""
+    """load_full_board() must not re-execute CSV parsing on repeated calls."""
     from backend.fantasy_baseball.projections_loader import load_full_board
     load_full_board.cache_clear()
 
-    with patch("backend.fantasy_baseball.projections_loader.load_steamer_batting", return_value=[]):
+    with patch("backend.fantasy_baseball.projections_loader.load_steamer_batting") as mock_bat:
         with patch("backend.fantasy_baseball.projections_loader.load_steamer_pitching", return_value=[]):
             with patch("pathlib.Path.exists", return_value=True):
-                r1 = load_full_board()
-                r2 = load_full_board()
-                assert r1 is r2
+                mock_bat.return_value = []
+                load_full_board()
+                load_full_board()
+                # The CSV loader must be called exactly once — second call hits cache
+                assert mock_bat.call_count == 1
 
 
 def test_load_full_board_cache_clear_triggers_reload():
