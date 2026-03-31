@@ -242,7 +242,7 @@ class DailyIngestionOrchestrator:
         async def _run():
             try:
                 result = await asyncio.to_thread(run_daily_ingestion)
-                status = "ok" if result.get("success") else "failed"
+                status = "success" if result.get("success") else "failed"
                 if not result.get("success"):
                     logger.error(
                         "_update_statcast: ingestion reported failure -- %s",
