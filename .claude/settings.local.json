@@ -48,7 +48,27 @@
       "Bash(venv/Scripts/python -m py_compile backend/fantasy_baseball/smart_lineup_selector.py)",
       "Bash(npx playwright:*)",
       "Bash(venv/Scripts/python -m py_compile backend/fantasy_baseball/circuit_breaker.py)",
-      "Bash(venv/Scripts/python -m pytest tests/test_waiver_recovery.py tests/test_il_roster_support.py tests/test_opening_day_features.py -q --tb=short)"
+      "Bash(venv/Scripts/python -m pytest tests/test_waiver_recovery.py tests/test_il_roster_support.py tests/test_opening_day_features.py -q --tb=short)",
+      "mcp__kimi-code__kimi_analyze",
+      "mcp__kimi-code__kimi_query",
+      "Bash(\"C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge\\\\venv/Scripts/python\" -m pytest tests/test_fantasy_fixes.py::test_get_yahoo_client_returns_same_instance -v)",
+      "Bash(\"C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge\\\\venv/Scripts/python\" -m pytest tests/test_fantasy_fixes.py -v)",
+      "Bash(\"C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge\\\\venv/Scripts/python\" -m py_compile backend/fantasy_baseball/yahoo_client_resilient.py)",
+      "Bash(\"C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge\\\\venv/Scripts/python\" -m py_compile backend/main.py)",
+      "Bash(\"C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge\\\\venv/Scripts/python\" -m pytest tests/test_fantasy_fixes.py -q --tb=short)",
+      "Bash(venv/Scripts/python -m pytest tests/test_fantasy_fixes.py -v --tb=short)",
+      "Bash(\"C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge\\\\venv\\\\Scripts\\\\python.exe\" -m pytest \"C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge\\\\.worktrees\\\\fantasy-fixes\\\\tests\\\\test_fantasy_fixes.py\" -v --tb=short)",
+      "Bash(\"C:/Users/sfgra/repos/Fixed/cbb-edge/venv/Scripts/python\" -m pytest tests/test_fantasy_fixes.py -v)",
+      "Bash(venv/Scripts/python -m pytest tests/test_fantasy_fixes.py -q --tb=short)",
+      "Bash(\"C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge\\\\venv\\\\Scripts\\\\python\" -m pytest \"C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge\\\\.worktrees\\\\fantasy-fixes\\\\tests\\\\test_fantasy_fixes.py\" -q --tb=short 2>&1)",
+      "Bash(\"C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge\\\\venv/Scripts/python\" -m py_compile backend/fantasy_baseball/projections_loader.py)",
+      "Bash(\"C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge\\\\venv/Scripts/python\" -m pytest tests/test_fantasy_fixes.py::test_make_player_id_strips_suffix tests/test_fantasy_fixes.py::test_make_player_id_handles_last_name_first -v)",
+      "Bash(\"C:/Users/sfgra/repos/Fixed/cbb-edge/venv/Scripts/python\" -c \"import pytest_asyncio; print\\('ok'\\)\" 2>&1)",
+      "Bash(\"C:/Users/sfgra/repos/Fixed/cbb-edge/venv/Scripts/python\" -m pytest \"C:/Users/sfgra/repos/Fixed/cbb-edge/.worktrees/fantasy-fixes/tests/test_fantasy_fixes.py::test_update_statcast_calls_run_daily_ingestion\" -v --tb=short 2>&1)",
+      "Bash(\"C:/Users/sfgra/repos/Fixed/cbb-edge/venv/Scripts/python\" -m pytest \"C:/Users/sfgra/repos/Fixed/cbb-edge/.worktrees/fantasy-fixes/tests/test_fantasy_fixes.py\" -v --tb=short 2>&1)",
+      "Bash(\"C:/Users/sfgra/repos/Fixed/cbb-edge/venv/Scripts/python\" -m py_compile \"C:/Users/sfgra/repos/Fixed/cbb-edge/.worktrees/fantasy-fixes/backend/fantasy_baseball/statcast_ingestion.py\")",
+      "Bash(\"C:/Users/sfgra/repos/Fixed/cbb-edge/venv/Scripts/python\" -m py_compile \"C:/Users/sfgra/repos/Fixed/cbb-edge/.worktrees/fantasy-fixes/backend/services/daily_ingestion.py\")",
+      "Bash(gh pr:*)"
     ]
   }
 }

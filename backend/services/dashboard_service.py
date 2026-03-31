@@ -585,8 +585,8 @@ class DashboardService:
         - opponent_record: pulled from Yahoo standings (W-L-T format)
         - my_projected_categories / opponent_projected_categories: 7-day rolling
           averages from PlayerDailyMetric for rostered players on each side.
-
-        Win probability remains 0.5 baseline — MCMC is B5 roadmap.
+        - win_probability: MCMC-simulated using cat_scores from player board
+          or PlayerDailyMetric z-scores (B5 — calibrated March 30, 2026)
         """
         client = self._get_yahoo_client()
         if not client:
@@ -657,15 +657,39 @@ class DashboardService:
             except Exception as exc:
                 logger.debug("Could not compute projected categories: %s", exc)
 
+            # ── Calculate win probability via MCMC simulation ─────────────
+            win_prob = 0.5
+            cat_advantages: List[str] = []
+            cat_disadvantages: List[str] = []
+            try:
+                from backend.fantasy_baseball.mcmc_calibration import (
+                    calculate_matchup_win_probability,
+                )
+                mcmc_result = calculate_matchup_win_probability(
+                    my_roster, opp_roster, db=db, n_sims=1000, seed=42
+                )
+                win_prob = mcmc_result.get("win_prob", 0.5)
+                
+                # Derive category advantages/disadvantages from simulation
+                cat_win_probs = mcmc_result.get("category_win_probs", {})
+                for cat, prob in cat_win_probs.items():
+                    if prob > 0.6:
+                        cat_advantages.append(cat.upper())
+                    elif prob < 0.4:
+                        cat_disadvantages.append(cat.upper())
+            except Exception as exc:
+                logger.debug("MCMC win probability calculation failed: %s", exc)
+                win_prob = 0.5  # Fallback to 50/50
+
             return MatchupPreview(
                 week_number=week_number,
                 opponent_team_name=opponent_name,
                 opponent_record=opponent_record,
                 my_projected_categories=my_projected_categories,
                 opponent_projected_categories=opponent_projected_categories,
-                win_probability=0.5,  # MCMC pending (B5)
-                category_advantages=[],
-                category_disadvantages=[],
+                win_probability=win_prob,
+                category_advantages=cat_advantages,
+                category_disadvantages=cat_disadvantages,
             )
 
         except Exception as e:
@@ -736,15 +760,7 @@ class DashboardService:
         db: Session,
         player_names: List[str],
     ) -> Dict[str, float]:
-        """
-        Aggregate 7-day rolling average stats for a list of players from
-        PlayerDailyMetric.rolling_window["7d"]["avg"].
-
-        Returns a dict of category → summed 7-day average across the roster
-        (e.g. {"avg": 0.288, "hr": 2.1, "rbi": 8.4}).  Only includes
-        categories that appear in at least one player's rolling_window.
-        Returns an empty dict when no DB rows are found.
-        """
+        """Aggregate 7-day rolling average stats from PlayerDailyMetric."""
         if not player_names:
             return {}
 
@@ -871,8 +887,8 @@ class DashboardService:
         Given a Yahoo scoreboard 'teams' block (dict or list), return the
         team_key of the opponent, or None if my_team_key is not in this matchup.
 
-        Returns None  → our team is not in this matchup (skip it).
-        Returns ""    → our team is here but opponent key could not be resolved.
+        Returns None  -> our team is not in this matchup (skip it).
+        Returns ""    -> our team is here but opponent key could not be resolved.
         """
         team_keys: List[str] = []
 

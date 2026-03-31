@@ -113,7 +113,7 @@ This feeds the fantasy dashboard's injury display (currently sourced from Yahoo 
 | **Yahoo flatten_entry last-wins bug** | ✅ FIXED (Mar 30) | `if not stats_raw:` guard in `flatten_entry` — takes only first `team_stats` block. |
 | **`_injury_lookup` bool crash** | ✅ FIXED (Mar 30) | `isinstance(p.get("status"), str)` guard — rejects Yahoo `status: False/True`. |
 | **`fetch_mlb_odds` coverage logging** | ✅ FIXED (Mar 30) | Logs game list + warns on 0-game response for Railway diagnostics. |
-| **MCMC Simulator** | ❌ SCAFFOLDED | `mcmc_simulator.py` exists, not calibrated. B5 roadmap item — calibrate against historical matchup data before wiring into `win_probability`. |
+| **MCMC Simulator** | ✅ LIVE (Mar 30) | Calibrated and wired into `_get_matchup_preview()`. New `mcmc_calibration.py` converts Yahoo rosters to MCMC format using player_board + PlayerDailyMetric z-scores. Returns win_probability + category advantages/disadvantages.
 | **CBB V9.2 recalibration** | ⏸ BLOCKED | EMAC-068 — SNR/integrity scalar stacking correction. Do NOT touch Kelly math until Apr 7. |
 | **`balldontlie.py`** | ⚠️ NCAAB-ONLY | Needs MLB endpoint expansion post-Apr 7 (see §2 Phase 2). |
 | **`mlb_analysis._fetch_mlb_odds()`** | ⚠️ DIRTY | Raw OddsAPI call — no circuit breaker, no abstraction. Migrate to BDL post-Apr 7. |
@@ -145,13 +145,13 @@ Next available: **100_011** (mlb_injuries), **100_012** (mlb_box_scores)
 
 Priority order:
 
-1. **MCMC Simulator calibration** (B5) — `backend/fantasy_baseball/mcmc_simulator.py` is scaffolded but unvalidated. Calibrate against historical H2H matchup data. Wire into `win_probability` field in matchup endpoint once validated.
+1. **CBB V9.2 recalibration** (EMAC-068) — Unblocks Apr 7. SNR/integrity scalar stacking correction. Do NOT touch Kelly math before then.
 
-2. **CBB V9.2 recalibration** (EMAC-068) — Unblocks Apr 7. SNR/integrity scalar stacking correction. Do NOT touch Kelly math before then.
+2. **Post-Apr 7: BDL MLB expansion** — Execute §2 Phases 1-4 in order. Confirm OddsAPI cancelled before writing any BDL MLB code to avoid calling a cancelled key.
 
-3. **Post-Apr 7: BDL MLB expansion** — Execute §2 Phases 1-4 in order. Confirm OddsAPI cancelled before writing any BDL MLB code to avoid calling a cancelled key.
+3. **Statcast freshness** — `statcast_ingestion.py` exists but data is stale. The `_update_statcast()` job in `daily_ingestion.py` is a stub (`status: "skipped"`). Implement it to actually call `StatcastIngestionAgent` from `statcast_ingestion.py`.
 
-4. **Statcast freshness** — `statcast_ingestion.py` exists but data is stale. The `_update_statcast()` job in `daily_ingestion.py` is a stub (`status: "skipped"`). Implement it to actually call `StatcastIngestionAgent` from `statcast_ingestion.py`.
+4. **Historical MCMC validation** — Collect actual H2H matchup outcomes to validate win_probability calibration (backtesting). Current calibration uses proxy z-scores; empirical validation pending season data.
 
 ---
 
@@ -230,6 +230,7 @@ No new tasks since Mar 28 deploy was confirmed. When BDL MLB migration executes:
 | UNKNOWN status badge displayed verbatim | `FALLBACK_LABELS` map → "NO START"; RP → "RELIEVER" | Mar 30 |
 | Streamlit localhost:8501 link in production sidebar | Removed entire block from `sidebar.tsx` | Mar 30 |
 | Raw Pydantic validation errors in warning banner | Filter on "validation error" / "Traceback" strings | Mar 30 |
+| MCMC Simulator calibration (B5) | `mcmc_calibration.py` created; wired into `_get_matchup_preview()`; returns win_probability + category advantages | Mar 30 |
 
 ---
 
@@ -264,7 +265,7 @@ No active coding tasks are assigned. Key context for this session:
 - OddsAPI will be cancelled post-Apr 7. Do not build new features depending on it.
 - BallDontLie GOAT (MLB) will be the new odds + enrichment provider post-Apr 7.
 - EMAC-068 (CBB V9.2 recalibration) is still blocked until Apr 7. Do not touch Kelly math.
-- MCMC calibration (B5) is the highest-value unblocked technical task.
+- MCMC calibration (B5) is COMPLETED as of Mar 30. Next: empirical validation against actual H2H outcomes.
 
 Do NOT write to any production code files without an explicit Claude delegation bundle.
 Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
