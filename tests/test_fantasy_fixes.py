@@ -182,3 +182,55 @@ def test_apply_adp_last_name_initial_fallback():
 
     _apply_adp(players, adp_map)
     assert players[0]["adp"] == 4.0
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Statcast wire-up
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_update_statcast_calls_run_daily_ingestion():
+    """_update_statcast must delegate to run_daily_ingestion, not return 'skipped'."""
+    import backend.services.daily_ingestion as di_mod
+
+    mock_result = {
+        "success": True,
+        "date": "2026-03-30",
+        "records_processed": 42,
+        "projections_updated": 10,
+    }
+
+    async def passthrough_lock(lock_id, coro):
+        return await coro()
+
+    with patch.object(di_mod, "_with_advisory_lock", side_effect=passthrough_lock):
+        with patch.object(di_mod, "run_daily_ingestion", return_value=mock_result) as mock_ingest:
+            from backend.services.daily_ingestion import DailyIngestionOrchestrator
+            orchestrator = DailyIngestionOrchestrator.__new__(DailyIngestionOrchestrator)
+            orchestrator._job_status = {}
+            orchestrator._scheduler = MagicMock()
+
+            result = await orchestrator._update_statcast()
+
+            mock_ingest.assert_called_once()
+            assert result.get("success") is True
+            assert result.get("records_processed") == 42
+
+
+@pytest.mark.asyncio
+async def test_update_statcast_records_failed_on_exception():
+    """_update_statcast must record 'failed' status if run_daily_ingestion raises."""
+    import backend.services.daily_ingestion as di_mod
+
+    async def passthrough_lock(lock_id, coro):
+        return await coro()
+
+    with patch.object(di_mod, "_with_advisory_lock", side_effect=passthrough_lock):
+        with patch.object(di_mod, "run_daily_ingestion", side_effect=RuntimeError("Baseball Savant timeout")):
+            from backend.services.daily_ingestion import DailyIngestionOrchestrator
+            orchestrator = DailyIngestionOrchestrator.__new__(DailyIngestionOrchestrator)
+            orchestrator._job_status = {}
+            orchestrator._scheduler = MagicMock()
+
+            result = await orchestrator._update_statcast()
+            assert result["status"] == "failed"

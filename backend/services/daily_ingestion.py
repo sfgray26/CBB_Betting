@@ -9,6 +9,7 @@ ADR-001: Every job MUST use _with_advisory_lock.
 ADR-004: This file is additive only. Never import betting_model or analysis.
 """
 
+import asyncio
 import logging
 import os
 import time
@@ -23,6 +24,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from backend.models import SessionLocal, PlayerDailyMetric, ProjectionSnapshot
+from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
 
 logger = logging.getLogger(__name__)
 
@@ -236,11 +238,22 @@ class DailyIngestionOrchestrator:
         return await _with_advisory_lock(LOCK_IDS["mlb_odds"], _run)
 
     async def _update_statcast(self) -> dict:
-        """Statcast enrichment stub. Full implementation deferred to EPIC-3."""
+        """Daily Statcast enrichment — fetches yesterday's data and runs Bayesian projection updates."""
         async def _run():
-            logger.info("_update_statcast: statcast update not yet implemented")
-            self._record_job_run("statcast", "skipped")
-            return {"status": "skipped", "records": 0, "elapsed_ms": 0}
+            try:
+                result = await asyncio.to_thread(run_daily_ingestion)
+                status = "ok" if result.get("success") else "failed"
+                if not result.get("success"):
+                    logger.error(
+                        "_update_statcast: ingestion reported failure -- %s",
+                        result.get("error", "unknown error"),
+                    )
+                self._record_job_run("statcast", status)
+                return result
+            except Exception as exc:
+                logger.exception("_update_statcast: unhandled error -- %s", exc)
+                self._record_job_run("statcast", "failed")
+                return {"status": "failed", "records": 0, "error": str(exc)}
 
         return await _with_advisory_lock(LOCK_IDS["statcast"], _run)
 
