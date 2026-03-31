@@ -311,6 +311,12 @@ def _apply_adp(players: list[dict], adp_map: dict[str, float]) -> None:
             key = f"{first_initial}_{last_name}"
             if key not in initial_map:
                 initial_map[key] = adp_id
+            else:
+                logger.warning(
+                    "ADP initial-fallback collision: key %r claimed by %r, ignoring %r -- "
+                    "both players will attempt exact match only",
+                    key, initial_map[key], adp_id,
+                )
 
     matched_exact = 0
     matched_fallback = 0
