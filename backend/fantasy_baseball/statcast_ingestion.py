@@ -20,6 +20,7 @@ from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 import pandas as pd
@@ -444,7 +445,7 @@ class StatcastIngestionAgent:
                     slg=perf.slg,
                     ops=perf.ops,
                     
-                    created_at=datetime.utcnow()
+                    created_at=datetime.now(ZoneInfo("America/New_York"))
                 )
                 
                 self.db.add(record)
@@ -687,7 +688,7 @@ class BayesianProjectionUpdater:
             existing.shrinkage = updated.shrinkage
             existing.data_quality_score = updated.data_quality_score
             existing.sample_size = updated.sample_size
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = datetime.now(ZoneInfo("America/New_York"))
             existing.update_method = 'bayesian'
         else:
             # Create new
@@ -703,7 +704,7 @@ class BayesianProjectionUpdater:
                 shrinkage=updated.shrinkage,
                 data_quality_score=updated.data_quality_score,
                 sample_size=updated.sample_size,
-                updated_at=datetime.utcnow(),
+                updated_at=datetime.now(ZoneInfo("America/New_York")),
                 update_method='bayesian'
             )
             self.db.add(record)

@@ -75,3 +75,6 @@ frontend/tsconfig.tsbuildinfo
 
 # Temporary
 .tmp/
+
+# Git worktrees
+.worktrees/

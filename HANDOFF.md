@@ -119,6 +119,10 @@ This feeds the fantasy dashboard's injury display (currently sourced from Yahoo 
 | **`mlb_analysis._fetch_mlb_odds()`** | ⚠️ DIRTY | Raw OddsAPI call — no circuit breaker, no abstraction. Migrate to BDL post-Apr 7. |
 | **`daily_ingestion._poll_mlb_odds()`** | ⚠️ DIRTY | Same — raw OddsAPI call. Migrate to BDL post-Apr 7. |
 | **BDL NCAAB subscription** | ❌ CANCELLED | CBB season over. `balldontlie.py` NCAAB methods will 401 — do not call them. |
+| **Yahoo token over-refresh** | ✅ FIXED (Mar 31) | Singleton via `get_yahoo_client()` / `get_resilient_yahoo_client()` — token refreshed once per process, not per request |
+| **ProjectionsLoader CSV re-read** | ✅ FIXED (Mar 31) | `@lru_cache(maxsize=1)` on `load_full_board()`; force reload via `POST /admin/fantasy/reload-board` |
+| **ADP match rate (was 32%)** | ✅ FIXED (Mar 31) | `_make_player_id` strips suffixes/flips last-name-first; `_apply_adp` adds initial fallback. Expect 80%+ match |
+| **Statcast ingestion stub** | ✅ FIXED (Mar 31) | `_update_statcast` now calls `run_daily_ingestion()` via `asyncio.to_thread`; Bayesian updates live |
 
 ---
 
@@ -150,8 +154,6 @@ Priority order:
 2. **CBB V9.2 recalibration** (EMAC-068) — Unblocks Apr 7. SNR/integrity scalar stacking correction. Do NOT touch Kelly math before then.
 
 3. **Post-Apr 7: BDL MLB expansion** — Execute §2 Phases 1-4 in order. Confirm OddsAPI cancelled before writing any BDL MLB code to avoid calling a cancelled key.
-
-4. **Statcast freshness** — `statcast_ingestion.py` exists but data is stale. The `_update_statcast()` job in `daily_ingestion.py` is a stub (`status: "skipped"`). Implement it to actually call `StatcastIngestionAgent` from `statcast_ingestion.py`.
 
 ---
 

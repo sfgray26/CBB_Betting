@@ -32,7 +32,9 @@ Run this module standalone to validate loaded data:
 import csv
 import logging
 import os
+import re as _re
 import statistics
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -77,11 +79,48 @@ def _normalize_positions(pos_str: str) -> list[str]:
     return result if result else ["Util"]
 
 
+# Suffixes to strip before normalizing (word-boundary, case-insensitive)
+_SUFFIX_RE = _re.compile(r'\b(jr|sr|ii|iii|iv)\.?\s*$', _re.IGNORECASE)
+
+
 def _make_player_id(name: str) -> str:
+    """Normalize a player name to a stable ASCII identifier.
+
+    Handles:
+    - Accented characters (e, a, o, u, i, n, c variants)
+    - Name suffixes (Jr., Sr., II, III, IV)
+    - Last-name-first format ("Ohtani, Shohei" -> "shohei_ohtani")
+    """
+    if not name:
+        return ""
+    name = name.strip()
+
+    # Flip last-name-first format
+    if "," in name:
+        parts = [p.strip() for p in name.split(",", 1)]
+        name = f"{parts[1]} {parts[0]}"
+
+    # Strip generational suffixes
+    name = _SUFFIX_RE.sub("", name).strip()
+
+    # Normalize accented characters
+    name = (name
+            .replace("e\u0301", "e").replace("e\u0300", "e")  # é, è (combining)
+            .replace("\xe9", "e").replace("\xe8", "e").replace("\xea", "e")
+            .replace("a\u0301", "a").replace("a\u0300", "a")
+            .replace("\xe1", "a").replace("\xe0", "a").replace("\xe2", "a")
+            .replace("o\u0301", "o").replace("o\u0300", "o")
+            .replace("\xf3", "o").replace("\xf2", "o").replace("\xf4", "o")
+            .replace("u\u0301", "u").replace("u\u0300", "u")
+            .replace("\xfa", "u").replace("\xf9", "u").replace("\xfb", "u").replace("\xfc", "u")
+            .replace("i\u0301", "i").replace("i\u0300", "i")
+            .replace("\xed", "i").replace("\xec", "i").replace("\xee", "i").replace("\xef", "i")
+            .replace("\xf1", "n")   # ñ
+            .replace("\xe7", "c")   # ç
+            )
+
     return (name.lower()
             .replace(" ", "_").replace(".", "").replace("'", "")
-            .replace("é", "e").replace("á", "a").replace("ó", "o")
-            .replace("ú", "u").replace("í", "i").replace("ñ", "n")
             .replace(",", "").replace("-", "_"))
 
 
@@ -256,22 +295,56 @@ def load_adp(path: Path) -> dict[str, float]:
 
 
 def _apply_adp(players: list[dict], adp_map: dict[str, float]) -> None:
-    """Merge ADP data into player list in-place."""
-    matched = 0
+    """Merge ADP data into player list in-place.
+
+    Match strategy (in order):
+    1. Exact normalized ID match
+    2. Last name + first initial match (handles abbreviated first names)
+    """
+    # Pre-build first_initial_last_name -> adp_id map for fallback lookups
+    initial_map: dict[str, str] = {}
+    for adp_id in adp_map:
+        parts = adp_id.split("_")
+        if len(parts) >= 2:
+            first_initial = parts[0][0] if parts[0] else ""
+            last_name = parts[-1]
+            key = f"{first_initial}_{last_name}"
+            if key not in initial_map:
+                initial_map[key] = adp_id
+            else:
+                logger.warning(
+                    "ADP initial-fallback collision: key %r claimed by %r, ignoring %r -- "
+                    "both players will attempt exact match only",
+                    key, initial_map[key], adp_id,
+                )
+
+    matched_exact = 0
+    matched_fallback = 0
+
     for p in players:
         pid = p["id"]
+
+        # Pass 1: exact match
         if pid in adp_map:
             p["adp"] = adp_map[pid]
-            matched += 1
-        else:
-            # Fallback: try partial name match
-            name_lower = p["name"].lower()
-            for adp_id, adp_val in adp_map.items():
-                if adp_id.replace("_", " ") in name_lower:
-                    p["adp"] = adp_val
-                    matched += 1
-                    break
-    logger.info(f"ADP matched {matched}/{len(players)} players")
+            matched_exact += 1
+            continue
+
+        # Pass 2: last name + first initial fallback
+        parts = pid.split("_")
+        if len(parts) >= 2:
+            first_initial = parts[0][0] if parts[0] else ""
+            last_name = parts[-1]
+            key = f"{first_initial}_{last_name}"
+            if key in initial_map:
+                p["adp"] = adp_map[initial_map[key]]
+                matched_fallback += 1
+
+    total = matched_exact + matched_fallback
+    logger.info(
+        f"ADP matched {total}/{len(players)} players "
+        f"(exact={matched_exact}, fallback={matched_fallback})"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +546,7 @@ def _apply_position_eligibility(players: list[dict], eligibility: dict[str, list
 # Master loader — tries real CSVs, falls back to hardcoded board
 # ---------------------------------------------------------------------------
 
+@lru_cache(maxsize=1)
 def load_full_board(data_dir: Optional[Path] = None) -> Optional[list[dict]]:
     """
     Attempt to load real projection data from CSV files.
@@ -482,6 +556,9 @@ def load_full_board(data_dir: Optional[Path] = None) -> Optional[list[dict]]:
     1. Steamer 2026 (most accurate, publicly available on FanGraphs)
     2. ZiPS 2026 (optional second source for averaging)
     3. ATC (average of all systems — if available)
+
+    Note: passing a non-None data_dir bypasses and may evict the production
+    cache (lru_cache is keyed on all args). Use non-None only in tests.
     """
     if data_dir is None:
         data_dir = DATA_DIR
