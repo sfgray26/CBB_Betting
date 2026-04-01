@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeftRight, RefreshCw, Clock, AlertTriangle } from 'lucide-react'
+import { ArrowLeftRight, RefreshCw, Clock } from 'lucide-react'
 import { endpoints } from '@/lib/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'

@@ -20,11 +20,6 @@ function getVerdictType(verdict: string): 'BET' | 'CONSIDER' | 'PASS' {
   return 'PASS'
 }
 
-function signed(v: number | null, decimals = 1): string {
-  if (v == null) return '—'
-  return `${v >= 0 ? '+' : ''}${v.toFixed(decimals)}`
-}
-
 function pct(v: number | null, decimals = 1): string {
   if (v == null) return '—'
   return `${(v * 100).toFixed(decimals)}%`
@@ -99,13 +94,6 @@ function parsedFromFullAnalysis(
   }
 }
 
-// Market spread from verdict, home-team perspective (negative = home favored)
-function marketSpreadHome(parsed: ParsedVerdict | null): number | null {
-  if (!parsed?.spread) return null
-  const val = parseFloat(parsed.spread)
-  return parsed.side === 'home' ? val : -val
-}
-
 // ---------------------------------------------------------------------------
 // BET card — prominent amber
 // ---------------------------------------------------------------------------
@@ -169,18 +157,7 @@ function BetCard({ p }: { p: PredictionEntry }) {
   const homeTeam = p.game.home_team
   const awayTeam = p.game.away_team
   const parsed = parseVerdict(p.verdict) ?? parsedFromFullAnalysis(p)
-  const marketHome = marketSpreadHome(parsed)
   const [placedState, setPlacedState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
-
-  // Line delta: model's projected winning margin vs market's implied winning margin.
-  // projected_margin uses winning-margin convention (positive = home wins).
-  // marketHome uses spread convention (positive = home gets pts = home underdog).
-  // Market's implied home winning margin = -marketHome, so:
-  //   lineDelta = projected_margin - (-marketHome) = projected_margin + marketHome
-  const lineDelta =
-    p.projected_margin != null && marketHome != null
-      ? p.projected_margin + marketHome
-      : null
 
   // Plain-English model projection: "Arkansas wins by 16.5"
   const modelProjection =

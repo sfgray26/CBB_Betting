@@ -35,6 +35,8 @@ import type {
   UserPreferences,
   ValuationsResponse,
   AsyncJobStatus,
+  StreakPlayer,
+  WaiverTarget,
 } from '@/lib/types'
 import { etTodayStr } from '@/lib/constants'
 
@@ -354,13 +356,13 @@ export const endpoints = {
 
   /** Get hot/cold streaks */
   getDashboardStreaks: () =>
-    apiFetch<{ success: boolean; hot_streaks: any[]; cold_streaks: any[] }>(
+    apiFetch<{ success: boolean; hot_streaks: StreakPlayer[]; cold_streaks: StreakPlayer[] }>(
       '/api/dashboard/streaks'
     ),
 
   /** Get waiver targets */
   getDashboardWaiverTargets: () =>
-    apiFetch<{ success: boolean; targets: any[] }>(
+    apiFetch<{ success: boolean; targets: WaiverTarget[] }>(
       '/api/dashboard/waiver-targets'
     ),
 }

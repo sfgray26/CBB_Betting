@@ -336,7 +336,6 @@ interface DraftSessionTabProps {
   session: DraftSession | null | undefined
   sessionLoading: boolean
   availablePlayers: FantasyPlayer[]
-  draftedIds: Set<string>
   recommendations: FantasyPlayer[]
   isPickPending: boolean
   isCurrentlyMyTurn: boolean
@@ -361,7 +360,6 @@ function DraftSessionTab({
   session,
   sessionLoading,
   availablePlayers,
-  draftedIds,
   recommendations,
   isPickPending,
   isCurrentlyMyTurn,
@@ -848,25 +846,24 @@ export default function FantasyPage() {
             />
           ) : (
             <DraftSessionTab
-          session={session}
-          sessionLoading={sessionLoading}
-          availablePlayers={availablePlayers}
-          draftedIds={draftedIds}
-          recommendations={recommendations}
-          isPickPending={pickMutation.isPending}
-          isCurrentlyMyTurn={isCurrentlyMyTurn}
-          myTurnIn={myTurnIn}
-          currentDrafter={currentDrafter}
-          draftPosition={draftPosition}
-          setDraftPosition={setDraftPosition}
-          numTeams={numTeams}
-          setNumTeams={setNumTeams}
-          numRounds={numRounds}
-          setNumRounds={setNumRounds}
-          isCreating={createMutation.isPending}
-          onCreateSession={() => createMutation.mutate()}
-          onDraftMe={handleDraftMe}
-          onMarkDrafted={handleMarkDrafted}
+              session={session}
+              sessionLoading={sessionLoading}
+              availablePlayers={availablePlayers}
+              recommendations={recommendations}
+              isPickPending={pickMutation.isPending}
+              isCurrentlyMyTurn={isCurrentlyMyTurn}
+              myTurnIn={myTurnIn}
+              currentDrafter={currentDrafter}
+              draftPosition={draftPosition}
+              setDraftPosition={setDraftPosition}
+              numTeams={numTeams}
+              setNumTeams={setNumTeams}
+              numRounds={numRounds}
+              setNumRounds={setNumRounds}
+              isCreating={createMutation.isPending}
+              onCreateSession={() => createMutation.mutate()}
+              onDraftMe={handleDraftMe}
+              onMarkDrafted={handleMarkDrafted}
               sessionKey={sessionKey}
               onClearSession={handleClearSession}
               sessionError={sessionError}

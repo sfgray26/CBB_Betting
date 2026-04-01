@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react"
 import { endpoints } from "@/lib/api"
-import type { DashboardResponse, DashboardData, UserPreferences } from "@/lib/types"
+import type { DashboardData } from "@/lib/types"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import {
   AlertCircle,
@@ -12,16 +11,13 @@ import {
   TrendingDown,
   Users,
   Activity,
-  Calendar,
   Zap,
-  Trophy,
 } from "lucide-react"
 
 // Dashboard panel components - simplified inline versions
 
 export default function DashboardPage() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null)
-  const [preferences, setPreferences] = useState<UserPreferences | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -35,7 +31,6 @@ export default function DashboardPage() {
       const response = await endpoints.getDashboard()
       if (response.success) {
         setDashboard(response.data)
-        setPreferences(response.preferences)
       } else {
         setError("Failed to load dashboard data")
       }

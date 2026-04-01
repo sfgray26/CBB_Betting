@@ -12,7 +12,6 @@ import {
   Activity,
   Radio,
   Trophy,
-  Dumbbell,
   ShieldAlert,
   ListChecks,
   ArrowLeftRight,
