@@ -10,6 +10,11 @@
 
 The Yahoo Fantasy API occasionally returns impossible negative values for counting statistics (e.g., `-1` for Games Started). These values propagate through the system:
 
+**IMPORTANT DOMAIN CORRECTION:** Not all negative values are "impossible." Net Stolen Bases (NSB) CAN be negative:
+- Example: 0 Stolen Bases, 1 Caught Stealing = NSB of -1
+- Raw Yahoo data shows Geraldo Perdomo with `"NSB": -1` (valid)
+- Only clamp categories where negative is mathematically impossible (GS, HR, RBI, R, W, SV)
+
 1. `_extract_team_stats()` (main.py ~5577) extracts raw values without validation
 2. `MatchupTeamOut.stats: dict` accepts any values without schema validation
 3. Frontend displays raw `-1` to users, appearing as a bug
