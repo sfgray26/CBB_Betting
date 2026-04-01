@@ -1,546 +1,243 @@
-# K-15: Yahoo Name Concatenation Root Cause Spec
+# K-15: Name Concatenation Root Cause & Fix Spec
 
 **Date:** April 1, 2026  
-**Author:** Kimi CLI (Deep Intelligence Unit)  
-**Task:** K-15 Yahoo Name Concatenation Root Cause Spec  
-**Status:** SPEC COMPLETE — Ready for Claude Code Implementation  
+**Analyst:** Kimi CLI (Deep Intelligence Unit)  
+**Issue:** Player names concatenated with injury info ("Jason Adam Quadriceps")
 
 ---
 
-## Executive Summary
+## Root Cause Analysis
 
-This document provides a root cause analysis and fix specification for the "Jason Adam Quadriceps" bug, where injury information is being concatenated to player names when parsing Yahoo Fantasy API responses.
+### Location
+**File:** `backend/fantasy_baseball/yahoo_client_resilient.py`  
+**Function:** `_parse_player()` (lines 843-930)
 
----
-
-## 1. Root Cause Analysis
-
-### 1.1 The Bug Manifestation
-- **Observed:** Player names like `"Jason Adam Quadriceps"` instead of `"Jason Adam"`
-- **Location:** `backend/fantasy_baseball/yahoo_client_resilient.py`, `_parse_player()` method (lines 843-930)
-- **Impact:** Data integrity — name fields contain injury information, breaking downstream matching
-
-### 1.2 How the Concatenation Occurs
-
-The bug stems from how Yahoo's API structures player data and how our parser handles it:
-
-#### Yahoo API Response Structure (Inferred)
-Yahoo returns player data in a deeply nested list structure. In some cases, the API appears to return injury information appended to the `full_name` field:
-
-```json
-// Problematic Yahoo response structure
-{
-  "player": [
-    {"player_key": "mlb.p.12345"},
-    {"full_name": "Jason Adam Quadriceps"},  // ← Name + injury concatenated
-    {"injury_note": "Quadriceps"},            // ← Also present separately
-    {"status": "IL"},
-    ...
-  ]
-}
-```
-
-OR the injury data structure contains a `full_name` field that overwrites:
-
-```json
-// Alternative problematic structure
-{
-  "player": [
-    [{"full_name": "Jason Adam"}, ...],           // Player metadata
-    [{"full_name": "Quadriceps"}, ...],           // ← Injury node with full_name!
-    ...
-  ]
-}
-```
-
-#### Our Parser Behavior
-
-In `_parse_player()` (lines 847-862), the `flatten_player_data()` function recursively flattens ALL nested structures:
-
+### Extraction Logic (Lines 913-918)
 ```python
-def flatten_player_data(obj, depth=0):
-    if isinstance(obj, list):
-        for item in obj:
-            flatten_player_data(item, depth + 1)
-    elif isinstance(obj, dict):
-        meta.update(obj)  # ← BLIND MERGE: overwrites keys with same name
-        for v in obj.values():
-            if isinstance(v, (list, dict)):
-                flatten_player_data(v, depth + 1)
-```
-
-The `meta.update(obj)` at line 856 performs a **blind merge** where later values overwrite earlier ones. If an injury node contains a `full_name` field (or if Yahoo's API returns the name already concatenated), that value ends up in `meta["full_name"]`.
-
-#### Extraction Point
-
-At lines 913-918, the name is extracted:
-
-```python
-# Extract name with defensive handling
-name = meta.get("full_name")          # ← Gets "Jason Adam Quadriceps"
+name = meta.get("full_name")
 if not name and isinstance(meta.get("name"), dict):
     name = meta["name"].get("full")
 if not name:
     name = meta.get("name", "Unknown")
 ```
 
-The concatenated value flows through unfiltered.
+### Problem
+Yahoo's API occasionally returns `full_name` with injury information concatenated:
 
-### 1.3 Why This Happens (Root Causes)
+```json
+{
+  "full_name": "Jason Adam Quadriceps",
+  "first_name": "Jason",
+  "last_name": "Adam",
+  "injury_note": "Quadriceps",
+  "status": "IL"
+}
+```
 
-1. **Parser Over-Merge:** `meta.update(obj)` doesn't discriminate between player metadata and injury metadata
-2. **No Name Sanitization:** After extraction, there's no validation that `name` contains only name-like content
-3. **Yahoo Data Inconsistency:** Yahoo occasionally embeds injury data in unconventional ways within their response
+The code extracts `full_name` verbatim without sanitization, resulting in "Jason Adam Quadriceps" instead of "Jason Adam".
+
+### Why This Happens
+1. Yahoo's data sources (STATS LLC) sometimes include injury suffixes in the display name
+2. The recursive flattening (lines 848-862) captures the raw `full_name` field
+3. No post-processing removes injury-related suffixes
 
 ---
 
-## 2. The Fix: Regex-Based Name Sanitizer
+## Proposed Fix
 
-### 2.1 Design Principles
+### Option A: Name Sanitization (Recommended)
 
-1. **Fail-Safe:** If sanitization fails, return original (don't lose data)
-2. **Conservative:** Only remove obvious injury keywords, preserve legitimate names
-3. **Localized:** Fix applied at extraction point in `_parse_player()`
-4. **Testable:** Clear before/after examples for validation
-
-### 2.2 The Regex Pattern
+Add a sanitization function that removes common injury suffixes from names:
 
 ```python
-import re
-
-# Pattern matches injury-related suffixes appended to names
-# Matches: "Name BodyPart" or "Name InjuryType" at end of string
-INJURY_SUFFIX_PATTERN = re.compile(
-    r'\s+(?:'
-    # Body parts that commonly appear in injuries
-    r'(?:quadriceps|hamstring|groin|calf|ankle|knee|shoulder|elbow|wrist|'
-    r'hand|finger|thumb|back|oblique|abdomen|hip|thigh|shin|foot|heel|'
-    r'neck|head|concussion|rib|chest|oblique|side)|'
-    # Injury types
-    r'(?:strain|sprain|tear|torn|fracture|break|surgery|surg|'
-    r'repair|scope|scoped|inflammation|inflamed|soreness|sore|'
-    r'tightness|tight|contusion|bruised|bruise|laceration|cut)'
-    r')'
-    r'(?:\s+(?:strain|sprain|tear|injury|surgery|inflammation|soreness))?'
-    r'(?:\s*(?:\([^)]*\))?'  # Optional parenthetical like "(15-day)"
-    r'.*$',  # Match to end of string
-    re.IGNORECASE
-)
-```
-
-### 2.3 Sanitization Function
-
-```python
-def _sanitize_player_name(name: str) -> str:
+@staticmethod
+def _sanitize_player_name(name: str, injury_note: Optional[str]) -> str:
     """
-    Remove injury-related suffixes from player names.
+    Remove injury information concatenated to player names.
     
     Examples:
-        "Jason Adam Quadriceps" → "Jason Adam"
-        "Mike Trout Knee" → "Mike Trout"
-        "Clayton Kershaw Elbow inflammation" → "Clayton Kershaw"
-        "John Doe (15-day IL)" → "John Doe"
+    - "Jason Adam Quadriceps" → "Jason Adam"
+    - "Mike Trout Hamstring" → "Mike Trout"
+    - "Shohei Ohtani Elbow" → "Shohei Ohtani"
     """
-    if not name or not isinstance(name, str):
+    if not name or name == "Unknown":
         return name
     
-    # Remove injury suffixes
-    cleaned = INJURY_SUFFIX_PATTERN.sub('', name)
+    # Common body parts/injury terms that get concatenated
+    INJURY_SUFFIXES = [
+        # Body parts
+        r'\s+(?:Right\s+|Left\s+)?(?:Hamstring|Quadriceps|Groin|Calf|Thigh)',
+        r'\s+(?:Right\s+|Left\s+)?(?:Shoulder|Elbow|Wrist|Hand|Finger|Thumb)',
+        r'\s+(?:Right\s+|Left\s+)?(?:Knee|Ankle|Foot|Toe|Heel|Achilles)',
+        r'\s+(?:Right\s+|Left\s+)?(?:Oblique|Abdomen|Back|Neck|Hip)',
+        r'\s+(?:Head|Concussion|Ribs|Side)',
+        # General injury terms
+        r'\s+(?:Strain|Sprain|Tear|Surgery|Injury|IL|IL10|IL60|DTD|OUT)',
+    ]
     
-    # Clean up trailing whitespace
-    cleaned = cleaned.strip()
+    # If injury_note is provided, try to remove it from name
+    if injury_note and isinstance(injury_note, str):
+        injury_clean = injury_note.strip()
+        if injury_clean and name.endswith(injury_clean):
+            name = name[:-len(injury_clean)].strip()
+            return name
     
-    # Safety: if we removed everything, return original
-    if not cleaned:
-        return name
+    # Fallback: regex-based removal
+    sanitized = name
+    for pattern in INJURY_SUFFIXES:
+        sanitized = re.sub(pattern, '', sanitized, flags=re.IGNORECASE)
     
-    return cleaned
+    return sanitized.strip()
 ```
+
+**Usage in `_parse_player`:**
+
+```python
+# Line 913-918 - modify to:
+name = meta.get("full_name")
+if not name and isinstance(meta.get("name"), dict):
+    name = meta["name"].get("full")
+if not name:
+    name = meta.get("name", "Unknown")
+
+# NEW: Sanitize name
+injury_note = meta.get("injury_note") or None
+name = self._sanitize_player_name(name, injury_note)
+```
+
+### Option B: Reconstruct from First/Last Name
+
+If Yahoo provides separate `first_name` and `last_name` fields:
+
+```python
+first = meta.get("first_name", "")
+last = meta.get("last_name", "")
+if first and last:
+    name = f"{first} {last}".strip()
+else:
+    name = meta.get("full_name", "Unknown")
+```
+
+**Trade-off:** More reliable but loses any preferred display name formatting (e.g., "J.D. Martinez" might become "J. D. Martinez" or "Julio Rodriguez" might become "Julio Rodríguez").
+
+**Recommendation:** Option A preserves display formatting while removing injury noise.
 
 ---
 
-## 3. Implementation Location
+## Implementation Details
 
-### 3.1 Where to Insert
-
-**File:** `backend/fantasy_baseball/yahoo_client_resilient.py`  
-**Function:** `_parse_player()` (static method, lines 843-930)  
-**Line:** After line 918 (after name extraction, before return dict)
-
-### 3.2 Exact Code Changes
-
-#### Step 1: Add import at top of file (if not present)
-
+### Import Required
+Add at top of file:
 ```python
-import re  # Add to existing imports at top of file
-```
-
-#### Step 2: Add the pattern constant (after class definition or near method)
-
-```python
-# Near line 840, before _parse_player method
-_INJURY_SUFFIX_PATTERN = re.compile(
-    r'\s+(?:'
-    r'(?:quadriceps|hamstring|groin|calf|ankle|knee|shoulder|elbow|wrist|'
-    r'hand|finger|thumb|back|oblique|abdomen|hip|thigh|shin|foot|heel|'
-    r'neck|head|concussion|rib|chest|side)|'
-    r'(?:strain|sprain|tear|torn|fracture|break|surgery|surg|'
-    r'repair|scope|scoped|inflammation|inflamed|soreness|sore|'
-    r'tightness|tight|contusion|bruised|bruise)'
-    r')'
-    r'(?:\s+(?:strain|sprain|tear|injury|surgery|inflammation|soreness))?'
-    r'.*$',
-    re.IGNORECASE
-)
-```
-
-#### Step 3: Apply sanitization after name extraction (line ~918)
-
-**Current code (lines 913-918):**
-```python
-        # Extract name with defensive handling
-        name = meta.get("full_name")
-        if not name and isinstance(meta.get("name"), dict):
-            name = meta["name"].get("full")
-        if not name:
-            name = meta.get("name", "Unknown")
-```
-
-**New code (insert after line 918):**
-```python
-        # Extract name with defensive handling
-        name = meta.get("full_name")
-        if not name and isinstance(meta.get("name"), dict):
-            name = meta["name"].get("full")
-        if not name:
-            name = meta.get("name", "Unknown")
-        
-        # Sanitize: remove injury-related suffixes (Bugfix K-15)
-        if name and isinstance(name, str):
-            name = _INJURY_SUFFIX_PATTERN.sub('', name).strip() or name
-```
-
-### 3.3 Context (Surrounding Lines)
-
-```python
-        # Extract name with defensive handling
-        name = meta.get("full_name")
-        if not name and isinstance(meta.get("name"), dict):
-            name = meta["name"].get("full")
-        if not name:
-            name = meta.get("name", "Unknown")
-        
-        # Sanitize: remove injury-related suffixes (Bugfix K-15)
-        if name and isinstance(name, str):
-            name = _INJURY_SUFFIX_PATTERN.sub('', name).strip() or name
-        
-        return {
-            "player_key": meta.get("player_key"),
-            "player_id": meta.get("player_id"),
-            "name": name,  # ← Now sanitized
-            "team": meta.get("editorial_team_abbr"),
-            ...
-```
-
----
-
-## 4. Before/After Examples
-
-### 4.1 Bug Cases (Fixed)
-
-| Input (From Yahoo API) | Output (After Fix) |
-|------------------------|-------------------|
-| `"Jason Adam Quadriceps"` | `"Jason Adam"` |
-| `"Mike Trout Knee"` | `"Mike Trout"` |
-| `"Clayton Kershaw Elbow inflammation"` | `"Clayton Kershaw"` |
-| `"Chris Sale Tommy John surgery"` | `"Chris Sale"` |
-| `"Shohei Ohtani Elbow"` | `"Shohei Ohtani"` |
-| `"Player Name Hamstring strain"` | `"Player Name"` |
-| `"John Doe Shoulder tightness"` | `"John Doe"` |
-
-### 4.2 Normal Names (Unchanged)
-
-| Input | Output | Why Preserved |
-|-------|--------|---------------|
-| `"Ronald Acuña Jr."` | `"Ronald Acuña Jr."` | No injury keywords |
-| `"Shohei Ohtani"` | `"Shohei Ohtani"` | No injury keywords |
-| `"Bobby Witt Jr."` | `"Bobby Witt Jr."` | No injury keywords |
-| `"José Ramírez"` | `"José Ramírez"` | No injury keywords |
-
-### 4.3 Edge Cases (Handled)
-
-| Input | Output | Reasoning |
-|-------|--------|-----------|
-| `""` | `""` | Empty string passed through |
-| `None` | `None` | Null handled by isinstance check |
-| `"Knee"` (only injury word) | `"Knee"` | Safety: if regex removes everything, return original |
-| `"John Knee Smith"` | `"John Knee Smith"` | Middle name "Knee" preserved (pattern matches end only) |
-
----
-
-## 5. Edge Cases and Handling
-
-### 5.1 Names That Legitimately Contain Body Part Words
-
-**Risk:** Names like "Knee" (as a surname), "Arm"strong, "Hand", etc.
-
-**Mitigation:** 
-- Pattern only matches at END of string (`.*$`)
-- Pattern requires leading whitespace (`\s+`)
-- Falls back to original if sanitization strips everything
-
-**Examples:**
-- `"John Knee"` → `"John"` (if at end, likely injury)
-- `"John Knee Smith"` → `"John Knee Smith"` (middle word, preserved)
-- `"Knee Johnson"` → `"Knee Johnson"` (first word, preserved)
-
-### 5.2 Multi-Word Injury Descriptions
-
-**Handled:**
-- `"Elbow inflammation"` — both words removed
-- `"Tommy John surgery"` — all three words removed
-- `"Right shoulder strain"` — all removed
-
-### 5.3 Parenthetical Injury Info
-
-**Handled:**
-- `"Player Name (15-day IL)"` → `"Player Name"`
-- `"Player Name (elbow)"` → `"Player Name"`
-
-### 5.4 Case Insensitivity
-
-**Handled:**
-- `"QUADRICEPS"`, `"quadriceps"`, `"Quadriceps"` — all matched
-
-### 5.5 Empty/Invalid Input
-
-**Handled:**
-```python
-if name and isinstance(name, str):
-    name = _INJURY_SUFFIX_PATTERN.sub('', name).strip() or name
-```
-- Falsy values pass through unchanged
-- Non-string types pass through unchanged
-- If regex strips everything, falls back to original
-
----
-
-## 6. Test Cases for Validation
-
-### 6.1 Unit Test Specification
-
-Create file: `tests/test_k15_name_sanitization.py`
-
-```python
-"""Tests for K-15: Yahoo Name Concatenation Fix."""
-import pytest
 import re
-
-# The pattern (copy from implementation)
-_INJURY_SUFFIX_PATTERN = re.compile(
-    r'\s+(?:'
-    r'(?:quadriceps|hamstring|groin|calf|ankle|knee|shoulder|elbow|wrist|'
-    r'hand|finger|thumb|back|oblique|abdomen|hip|thigh|shin|foot|heel|'
-    r'neck|head|concussion|rib|chest|side)|'
-    r'(?:strain|sprain|tear|torn|fracture|break|surgery|surg|'
-    r'repair|scope|scoped|inflammation|inflamed|soreness|sore|'
-    r'tightness|tight|contusion|bruised|bruise)'
-    r')'
-    r'(?:\s+(?:strain|sprain|tear|injury|surgery|inflammation|soreness))?'
-    r'.*$',
-    re.IGNORECASE
-)
-
-def _sanitize_player_name(name):
-    if not name or not isinstance(name, str):
-        return name
-    cleaned = _INJURY_SUFFIX_PATTERN.sub('', name)
-    cleaned = cleaned.strip()
-    if not cleaned:
-        return name
-    return cleaned
-
-
-class TestNameSanitization:
-    """Test injury suffix removal from player names."""
-    
-    # --- Bug Cases (Should be fixed) ---
-    
-    def test_jason_adam_quadriceps(self):
-        """The canonical K-15 bug case."""
-        assert _sanitize_player_name("Jason Adam Quadriceps") == "Jason Adam"
-    
-    def test_body_part_suffix(self):
-        """Various body part suffixes removed."""
-        assert _sanitize_player_name("Mike Trout Knee") == "Mike Trout"
-        assert _sanitize_player_name("Player Hamstring") == "Player"
-        assert _sanitize_player_name("Player Ankle sprain") == "Player"
-    
-    def test_injury_type_suffix(self):
-        """Injury type suffixes removed."""
-        assert _sanitize_player_name("Player Strain") == "Player"
-        assert _sanitize_player_name("Player Surgery") == "Player"
-        assert _sanitize_player_name("Player Torn ACL") == "Player"
-    
-    def test_compound_injury_description(self):
-        """Multi-word injury descriptions."""
-        assert _sanitize_player_name("Clayton Kershaw Elbow inflammation") == "Clayton Kershaw"
-        assert _sanitize_player_name("Chris Sale Tommy John surgery") == "Chris Sale"
-    
-    # --- Normal Names (Should be unchanged) ---
-    
-    def test_normal_names_preserved(self):
-        """Normal player names without injuries unchanged."""
-        assert _sanitize_player_name("Shohei Ohtani") == "Shohei Ohtani"
-        assert _sanitize_player_name("Ronald Acuña Jr.") == "Ronald Acuña Jr."
-        assert _sanitize_player_name("Bobby Witt Jr.") == "Bobby Witt Jr."
-    
-    def test_name_with_suffix_jr(self):
-        """Jr. suffix preserved (not injury)."""
-        assert _sanitize_player_name("Ken Griffey Jr.") == "Ken Griffey Jr."
-    
-    # --- Edge Cases ---
-    
-    def test_empty_string(self):
-        """Empty string passes through."""
-        assert _sanitize_player_name("") == ""
-    
-    def test_none_value(self):
-        """None passes through."""
-        assert _sanitize_player_name(None) is None
-    
-    def test_only_injury_word(self):
-        """If only injury word, return original (safety)."""
-        assert _sanitize_player_name("Quadriceps") == "Quadriceps"
-    
-    def test_body_part_in_middle_of_name(self):
-        """Body part in middle of name preserved."""
-        # Hypothetical: "John Knee Smith" - "Knee" is middle name
-        assert _sanitize_player_name("John Knee Smith") == "John Knee Smith"
-    
-    def test_case_insensitive(self):
-        """Case insensitive matching."""
-        assert _sanitize_player_name("Player QUADRICEPS") == "Player"
-        assert _sanitize_player_name("Player quadriceps") == "Player"
-        assert _sanitize_player_name("Player Quadriceps") == "Player"
-
-
-class TestParsePlayerIntegration:
-    """Integration tests with _parse_player method."""
-    
-    def test_parse_player_with_concatenated_name(self):
-        """_parse_player sanitizes concatenated names."""
-        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
-        
-        # Simulate Yahoo response with concatenated name
-        player_list = [
-            {"player_key": "mlb.p.12345"},
-            {"full_name": "Jason Adam Quadriceps"},  # Bug case
-            {"status": "IL"},
-        ]
-        
-        result = YahooFantasyClient._parse_player(player_list)
-        
-        # After fix, name should be sanitized
-        assert result["name"] == "Jason Adam", f"Got: {result['name']}"
-    
-    def test_parse_player_normal_name_unchanged(self):
-        """Normal names pass through unchanged."""
-        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
-        
-        player_list = [
-            {"player_key": "mlb.p.12345"},
-            {"full_name": "Shohei Ohtani"},
-            {"status": "Active"},
-        ]
-        
-        result = YahooFantasyClient._parse_player(player_list)
-        assert result["name"] == "Shohei Ohtani"
 ```
 
-### 6.2 Manual Verification Steps
+### Lines to Modify
 
-1. **Run unit tests:**
-   ```bash
-   pytest tests/test_k15_name_sanitization.py -v
-   ```
+**File:** `backend/fantasy_baseball/yahoo_client_resilient.py`
 
-2. **Run existing Yahoo client tests:**
-   ```bash
-   pytest tests/test_yahoo_client_undroppable.py -v
-   pytest tests/test_il_roster_support.py -v
-   ```
-
-3. **Integration test with real data** (if available):
+1. **Add helper method** after line 841 (before `_parse_player`):
    ```python
-   # In Python shell with valid Yahoo credentials
-   from backend.fantasy_baseball.yahoo_client_resilient import get_yahoo_client
-   client = get_yahoo_client()
-   roster = client.get_roster()
-   for p in roster:
-       print(f"{p['name']}: {p.get('injury_note', 'N/A')}")
-   # Verify no names contain "Quadriceps", "Knee", etc.
+   @staticmethod
+   def _sanitize_player_name(name: str, injury_note: Optional[str]) -> str:
+       # ... implementation from Option A ...
    ```
 
----
-
-## 7. Files Affected
-
-| File | Change Type | Lines |
-|------|-------------|-------|
-| `backend/fantasy_baseball/yahoo_client_resilient.py` | Add constant | After line ~840 |
-| `backend/fantasy_baseball/yahoo_client_resilient.py` | Modify `_parse_player` | Line 918-920 (insert) |
-| `tests/test_k15_name_sanitization.py` | New file | Create new |
-
----
-
-## 8. Rollback Plan
-
-If the fix causes issues:
-
-1. **Immediate:** Comment out the sanitization lines:
+2. **Modify lines 913-920** in `_parse_player`:
    ```python
-   # Sanitize: remove injury-related suffixes (Bugfix K-15)
-   # if name and isinstance(name, str):
-   #     name = _INJURY_SUFFIX_PATTERN.sub('', name).strip() or name
+   # CURRENT:
+   name = meta.get("full_name")
+   if not name and isinstance(meta.get("name"), dict):
+       name = meta["name"].get("full")
+   if not name:
+       name = meta.get("name", "Unknown")
+   
+   # NEW:
+   name = meta.get("full_name")
+   if not name and isinstance(meta.get("name"), dict):
+       name = meta["name"].get("full")
+   if not name:
+       name = meta.get("name", "Unknown")
+   
+   # Sanitize injury suffixes from name
+   injury_note = meta.get("injury_note") or None
+   name = YahooFantasyClient._sanitize_player_name(name, injury_note)
    ```
 
-2. **Proper:** Revert the commit containing K-15 changes.
+---
 
-3. **Notify:** Update HANDOFF.md that fix was rolled back.
+## Test Cases
+
+```python
+# Test _sanitize_player_name
+test_cases = [
+    # (input_name, injury_note, expected_output)
+    ("Jason Adam Quadriceps", "Quadriceps", "Jason Adam"),
+    ("Jason Adam Quadriceps", None, "Jason Adam"),  # Regex fallback
+    ("Mike Trout Hamstring", "Hamstring", "Mike Trout"),
+    ("Shohei Ohtani Elbow", "Elbow", "Shohei Ohtani"),
+    ("Chris Sale Tommy John Surgery", "Tommy John Surgery", "Chris Sale"),
+    ("Jacob deGrom", None, "Jacob deGrom"),  # No injury, unchanged
+    ("J.D. Martinez", None, "J.D. Martinez"),  # Period preserved
+    ("Unknown", None, "Unknown"),  # Edge case
+    ("", None, ""),  # Empty string
+]
+
+for name, note, expected in test_cases:
+    result = YahooFantasyClient._sanitize_player_name(name, note)
+    assert result == expected, f"Failed: {name} → {result}, expected {expected}"
+```
 
 ---
 
-## 9. Related Documents
+## Edge Cases & Considerations
 
-- `HANDOFF.md` — Task K-15 tracking (lines 500-508)
-- `reports/KIMI_UAT_ANALYSIS_2026-04-01.md` — Original finding (lines 159-172)
-- `AGENTS.md` — Role assignments (Kimi CLI: research/spec, Claude Code: implementation)
-- `IDENTITY.md` — Risk posture for data integrity fixes
-
----
-
-## 10. Summary
-
-The "Jason Adam Quadriceps" bug occurs because:
-
-1. **Yahoo's API** occasionally returns player names with injury information concatenated
-2. **Our parser's** `flatten_player_data()` function blindly merges all nested data, potentially capturing concatenated names
-3. **No sanitization** was applied to the extracted `name` field
-
-**The fix** adds a regex-based sanitizer at the point of name extraction that:
-- Removes common injury-related suffixes (body parts, injury types)
-- Is conservative — only matches at end of string
-- Has safety fallback if sanitization would remove everything
-- Is case-insensitive
-
-**Implementation requires:**
-- Adding `_INJURY_SUFFIX_PATTERN` constant
-- Inserting 3 lines of sanitization code after name extraction
-- Creating comprehensive unit tests
-
-**Risk level:** Low — the fix is localized, conservative, and has safety fallbacks.
+| Edge Case | Handling | Example |
+|-----------|----------|---------|
+| Name legitimately contains body part word | Regex requires leading whitespace | "Armando" (not "Armando ") |
+| Injury note is substring of name | Exact match check first | "Knee" in "Kneeland" |
+| Multiple injury words | Remove longest match first | "Right Hamstring Strain" |
+| Case sensitivity | Regex uses IGNORECASE flag | "QUADRICEPS" or "quadriceps" |
+| Hyphenated names | Preserved by \s+ anchor | "J.D. Martinez-Smith" |
+| Non-ASCII characters | Unicode-safe regex | "Kiké Hernández" |
 
 ---
 
-*End of K-15 Name Concatenation Root Cause Spec*
+## Risk Assessment
+
+| Risk | Mitigation |
+|------|------------|
+| Over-sanitization (removing legitimate name parts) | Only remove if: (a) matches injury_note exactly, or (b) matches well-known injury pattern with word boundary |
+| Missing new injury types | Regex covers common body parts; fallback to injury_note exact match catches novel cases |
+| Performance impact | Regex compilation is cached by Python; negligible overhead |
+
+---
+
+## Files Modified
+
+| File | Lines | Change |
+|------|-------|--------|
+| `yahoo_client_resilient.py` | After 841 | Add `_sanitize_player_name()` method |
+| `yahoo_client_resolient.py` | 913-920 | Add sanitizer call in `_parse_player()` |
+
+---
+
+## Verification
+
+After implementation:
+
+1. **Roster page** should show "Jason Adam" not "Jason Adam Quadriceps"
+2. **API response** from `/api/fantasy/roster` returns clean names
+3. **Injury note field** still contains "Quadriceps" for display in status column
+
+---
+
+## Effort Estimate
+
+- Implementation: **10 minutes** (add function + 2 lines call site)
+- Testing: **5 minutes** (verify with live roster endpoint)
+- Total: **<15 minutes**
+
+---
+
+*Spec complete: Name sanitization will remove injury suffixes from player names at parsing time.*

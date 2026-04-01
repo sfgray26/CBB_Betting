@@ -30,15 +30,15 @@ export function StatusBadge({ status, className, showTooltip = true }: StatusBad
     bgColor = "bg-amber-500/15"
     textColor = "text-amber-400"
     Icon = AlertTriangle
-    if (s === "dtd") tooltipText = "Day-to-Day — monitor before lock"
-    else tooltipText = `Listed as ${s.toUpperCase()} — check beat reporters`
+    if (s === "dtd") tooltipText = "Day-to-Day â€” monitor before lock"
+    else tooltipText = `Listed as ${s.toUpperCase()} â€” check beat reporters`
   } else if (["il", "il10", "il60", "out", "dl", "ir"].includes(s)) {
     bgColor = "bg-rose-500/15"
     textColor = "text-rose-400"
     Icon = XCircle
     if (s === "il10") tooltipText = "On the 10-day Injured List"
     else if (s === "il60") tooltipText = "On the 60-day Injured List"
-    else if (s === "out") tooltipText = "Out — do not start"
+    else if (s === "out") tooltipText = "Out â€” do not start"
     else tooltipText = "Injured List"
   } else if (s === "no_start" || s === "unknown") {
     tooltipText = "No game today"
