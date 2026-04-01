@@ -6,6 +6,7 @@ import { ListChecks, RefreshCw, Send, Wand2, AlertTriangle, Clock, CheckCircle2,
 import { endpoints } from '@/lib/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import { StatusBadge } from '@/components/shared/status-badge'
 import type { LineupPlayer, StartingPitcher, ValuationReport } from '@/lib/types'
 
 // ---------------------------------------------------------------------------
@@ -55,34 +56,6 @@ function slotBadge(slot: string | null | undefined) {
         : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
     )}>
       {slot}
-    </span>
-  )
-}
-
-function statusBadge(status: LineupPlayer['status'] | StartingPitcher['status']) {
-  if (status === 'START') {
-    return (
-      <span className="px-2 py-0.5 rounded text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-        START
-      </span>
-    )
-  }
-  if (status === 'BENCH') {
-    return (
-      <span className="px-2 py-0.5 rounded text-xs font-semibold bg-zinc-700/60 text-zinc-500 border border-zinc-600/40">
-        BENCH
-      </span>
-    )
-  }
-  const FALLBACK_LABELS: Record<string, string> = {
-    UNKNOWN: 'NO START',
-    NO_START: 'NO START',
-    RP: 'RELIEVER',
-  }
-  const label = FALLBACK_LABELS[status as string] ?? (status as string) ?? 'NO START'
-  return (
-    <span className="px-2 py-0.5 rounded text-xs font-semibold bg-zinc-800 text-zinc-600 border border-zinc-700">
-      {label}
     </span>
   )
 }
@@ -293,10 +266,8 @@ function BattersTable({
                 <td className="px-3 py-2.5">
                   <div className="flex items-center gap-2">
                     <span className={cn('font-medium', isIL ? 'text-zinc-400' : 'text-zinc-100')}>{b.name}</span>
-                    {isIL && (
-                      <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/30">
-                        {b.injury_status!.toUpperCase()}
-                      </span>
+                    {b.injury_status && (
+                      <StatusBadge status={b.injury_status} />
                     )}
                   </div>
                   <div className="text-xs text-zinc-500">{b.position}</div>
@@ -322,7 +293,9 @@ function BattersTable({
                   )}
                 </td>
                 <td className="px-3 py-2.5 text-center">{slotBadge(b.assigned_slot)}</td>
-                <td className="px-3 py-2.5 text-center">{statusBadge(b.status)}</td>
+                <td className="px-3 py-2.5 text-center">
+                  <StatusBadge status={b.status} />
+                </td>
               </tr>
             )
           })}
@@ -373,7 +346,9 @@ function PitchersTable({ pitchers }: { pitchers: StartingPitcher[] }) {
               <td className={cn('px-3 py-2.5 text-right font-mono text-xs font-semibold tabular-nums', scoreColor(p.sp_score, scores))}>
                 {p.sp_score === 0 ? '—' : p.sp_score.toFixed(3)}
               </td>
-              <td className="px-3 py-2.5 text-center">{statusBadge(p.status)}</td>
+              <td className="px-3 py-2.5 text-center">
+                <StatusBadge status={p.status} />
+              </td>
             </tr>
           ))}
         </tbody>

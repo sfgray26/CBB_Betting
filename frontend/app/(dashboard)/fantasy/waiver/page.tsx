@@ -1,11 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeftRight, RefreshCw } from 'lucide-react'
+import { ArrowLeftRight, RefreshCw, Clock, AlertTriangle } from 'lucide-react'
 import { endpoints } from '@/lib/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import { StatusBadge } from '@/components/shared/status-badge'
 import type { CategoryDeficit, WaiverPlayer, WaiverRecommendation } from '@/lib/types'
 
 // ---------------------------------------------------------------------------
@@ -140,15 +141,8 @@ function WaiverTable({ players, label }: { players: WaiverPlayer[]; label: strin
                         COLD
                       </span>
                     )}
-                    {p.status && p.status !== 'Active' && (
-                      <span className={cn(
-                        'text-xs px-1.5 py-0.5 rounded border font-mono',
-                        p.status === 'DTD' ? 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30' :
-                        ['IL', 'DL', 'IL10', 'IL15', 'IL60'].includes(p.status ?? '') ? 'bg-rose-500/15 text-rose-400 border-rose-500/30' :
-                        'bg-zinc-700 text-zinc-400 border-zinc-600'
-                      )}>
-                        {p.status}
-                      </span>
+                    {p.status && (
+                      <StatusBadge status={p.status} />
                     )}
                   </div>
                   {p.statcast_signals && p.statcast_signals.length > 0 && (
@@ -355,6 +349,7 @@ export default function WaiverWirePage() {
   const [maxOwned, setMaxOwned] = useState<number>(90)
   const [page, setPage] = useState<number>(1)
   const [showRecs, setShowRecs] = useState<boolean>(false)
+  const [isStuck, setIsStuck] = useState(false)
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['fantasy-waiver', position, sort, maxOwned, page],
@@ -367,6 +362,19 @@ export default function WaiverWirePage() {
       }),
     refetchInterval: 10 * 60_000,
   })
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout
+    if (isLoading) {
+      setIsStuck(false)
+      timer = setTimeout(() => {
+        setIsStuck(true)
+      }, 15000)
+    } else {
+      setIsStuck(false)
+    }
+    return () => clearTimeout(timer)
+  }, [isLoading])
 
   const {
     data: recData,
@@ -501,16 +509,35 @@ export default function WaiverWirePage() {
         </CardHeader>
         <div className="px-5 pb-5">
           {isLoading ? (
-            <CategorySkeleton />
-          ) : isError ? null : data && data.category_deficits.length === 0 ? (
+            isStuck ? (
+              <div className="py-12 flex flex-col items-center justify-center border border-zinc-800 rounded-lg bg-zinc-900/40 space-y-4">
+                <div className="flex items-center gap-2 text-amber-400">
+                  <Clock className="h-5 w-5" />
+                  <span className="text-sm font-medium">Taking longer than expected</span>
+                </div>
+                <p className="text-xs text-zinc-500 text-center max-w-xs">
+                  Yahoo&apos;s API may be slow. If this persists, try refreshing the page.
+                </p>
+                <button
+                  onClick={() => refetch()}
+                  className="flex items-center gap-2 px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs rounded-md transition-colors border border-zinc-700"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <CategorySkeleton />
+            )
+          ) : isError ? null : !data || data.category_deficits.length === 0 ? (
             <p className="text-zinc-600 text-sm text-center py-8">No category data available.</p>
-          ) : data ? (
+          ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               {data.category_deficits.map((cat: CategoryDeficit) => (
                 <DeficitCard key={cat.category} cat={cat} />
               ))}
             </div>
-          ) : null}
+          )}
         </div>
       </Card>
 
@@ -526,8 +553,13 @@ export default function WaiverWirePage() {
         </CardHeader>
         <div className="px-5 pb-5">
           {isLoading ? (
-            <TableSkeleton rows={8} />
-          ) : isError ? null : data ? (
+            !isStuck && <TableSkeleton rows={8} />
+          ) : isError ? null : data && data.top_available.length === 0 ? (
+            <div className="py-12 flex flex-col items-center justify-center border border-dashed border-zinc-800 rounded-lg">
+              <p className="text-zinc-400 text-sm font-medium">No waiver targets found</p>
+              <p className="text-zinc-600 text-xs mt-1">Projections update daily after 6 AM ET.</p>
+            </div>
+          ) : data ? (
             <WaiverTable players={data.top_available} label="available players" />
           ) : null}
         </div>

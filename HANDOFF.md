@@ -1,34 +1,181 @@
-# OPERATIONAL HANDOFF — MARCH 31, 2026: ARCH-001 CONTRACT LAYER + API-WORKER PATTERN
+# OPERATIONAL HANDOFF — APRIL 1, 2026: ARCH-003 FRONTEND UI/UX REFACTOR
 
-> **Ground truth as of March 31, 2026 (end of session 2).** Author: Claude Code (Master Architect).
+> **Ground truth as of April 1, 2026.** Author: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk posture · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
-> Architecture reference: `reports/ARCHITECTURE_ANALYSIS_API_WORKER_PATTERN.md` (ARCH-001)
+> Active initiative: ARCH-003 (frontend UI/UX — Gemini CLI executing). ARCH-001/002 complete.
 > Prior active crises: all resolved (see §9 archive).
 
 ---
 
-## 0. Active Architecture Initiative — ARCH-003 (UI/UX REDESIGN - PENDING SIGN-OFF)
+## 0. Active Architecture Initiative — ARCH-003 (UI/UX REDESIGN - CLAUDE CODE APPROVED)
 
-**Status:** Strategic Design Complete. **AWAITING CLAUDE CODE SIGN-OFF.**
+**Status:** ✅ CLAUDE CODE SIGN-OFF GRANTED. Gemini CLI is cleared to execute the frontend-only tasks below.
 
-Gemini CLI has produced a comprehensive refactor plan to transform the bloated frontend into a "Command Center."
+### ARCH-003 Objective
+Fix the worst fantasy UX pain points: fractured branding, inconsistent status display, poor scan-ability on the roster page, silent loading failures on waiver wire, and raw data leaking to UI. No backend changes. No route restructuring. No new data fetches unless strictly for UI state.
 
-### Core Directives (ARCH-003)
-1. **Standardize UI**: Replace all 6 raw HTML tables with a unified `DataTable` (@/components/shared/data-table.tsx).
-2. **Consolidate Monoliths**: Break down 800+ line page files into a `features/` directory structure.
-3. **URL-as-State**: Use `nuqs` to move all filters, tabs, and date selections into search params.
-4. **ET-Normalization**: Replace all local UTC date slicing with a shared `America/New_York` helper.
+### HARD BOUNDARY — Gemini CLI Must Not Cross
+- **NO** changes to any `.py` file
+- **NO** changes to API endpoints, schemas, or database queries
+- **NO** new `useQuery` hooks fetching from different endpoints
+- **NO** changes to business logic (Kelly math, lineup optimization, projection scoring)
+- **NO** changes to `api.ts` data-fetching functions
+- TypeScript must continue to pass after every task
 
-### Proposed Route Architecture
-- `/dashboard` (The Pulse): Aggregated KPI health.
-- `/fantasy/hq` (The Command Center): **[NEW]** Unified Lineup + Matchup view.
-- `/fantasy/market` (The Explorer): Refactored high-density waiver browser.
-- `/fantasy/roster` (The Lab): Owned player deep-dive.
+---
 
-### Refactor Hitlist (DELETE & REPLACE)
-- **DELETE**: Duplicated `TableSkeleton` versions. **REPLACE**: Generic `DataTableSkeleton`.
-- **DELETE**: Inline `statusBadge()` helpers. **REPLACE**: Centralized `@/components/shared/status-badge.tsx`.
-- **DELETE**: Manual UTC date slicing in `api.ts`. **REPLACE**: ET-anchored helper.
+### Task F1 — Context-Aware Sidebar Branding
+**File:** `frontend/components/layout/sidebar.tsx`
+
+**Current issue:** "CBB EDGE" logo and Portfolio DD/Exp bottom panel show on `/fantasy/*` routes. Fantasy users see betting metrics they don't care about; the app feels like it's for someone else.
+
+**Frontend-only change:**
+- Use `usePathname()` (already imported) to detect `pathname.startsWith('/fantasy')`
+- On fantasy routes: replace logo text "CBB EDGE" → "FANTASY BASEBALL" (or "Fantasy HQ")
+- On fantasy routes: hide the Portfolio DD/Exp bottom panel entirely (no alternative panel needed — just remove it from the DOM)
+- On betting routes: behavior unchanged
+
+**Acceptance criteria:**
+- Navigating to `/fantasy/lineup` shows "FANTASY BASEBALL" in the sidebar logo area
+- Portfolio DD/Exp chip is not visible on any `/fantasy/*` route
+- Navigating to `/dashboard` or `/analytics` still shows "CBB EDGE" + Portfolio panel
+
+---
+
+### Task F2 — Centralized StatusBadge Component
+**File:** `frontend/components/shared/status-badge.tsx` (new file)
+
+**Current issue:** `statusBadge()` is duplicated inline in `lineup/page.tsx` and `roster/page.tsx` with inconsistent colors and missing status values. Some statuses fall through to raw strings.
+
+**Frontend-only change:**
+Create a shared `<StatusBadge status={string} />` React component with this exact color map:
+- **Green** (`bg-emerald-500/15 text-emerald-400`): `ACTIVE`, `Active`, `active`, empty/null (treat as active)
+- **Yellow** (`bg-amber-500/15 text-amber-400`): `DTD`, `QUESTIONABLE`, `PROBABLE`, `Probable`
+- **Red** (`bg-rose-500/15 text-rose-400`): `IL`, `IL10`, `IL60`, `OUT`, `DL`, `IR`
+- **Gray** (`bg-zinc-700 text-zinc-400`): `UNKNOWN`, `NO_START`, `NA`, `BENCH`, any unrecognized value
+
+Display text rules:
+- `IL10` → "IL-10", `IL60` → "IL-60"
+- `NO_START` / `UNKNOWN` → "NO START"
+- `DTD` → "DTD"
+- Unrecognized → show the raw value uppercased (not silently hide it)
+
+**Then replace** the inline `statusBadge()` function in both `lineup/page.tsx` and `roster/page.tsx` with `<StatusBadge />`.
+
+**Acceptance criteria:**
+- Status badges have consistent colors on both lineup and roster pages
+- No raw status strings visible to users (all values map to a readable label)
+- No duplicate `statusBadge` function exists in the codebase after this task
+
+---
+
+### Task F3 — Roster Page: Status Column First + Icons
+**File:** `frontend/app/(dashboard)/fantasy/roster/page.tsx`
+
+**Current issue:** Status column is buried to the right, center-aligned, not visually distinct. Elite fantasy players scan for injuries first; current layout buries this.
+
+**Frontend-only change:**
+- Move the Status column to be the **second column** (immediately after player name)
+- Add a Lucide icon inside the badge using `StatusBadge` from F2:
+  - Active: `Activity` icon (green)
+  - DTD/QUESTIONABLE: `AlertTriangle` icon (yellow)  
+  - IL/OUT: `XCircle` icon (red)
+  - Unknown/NA: no icon
+- Keep all other columns in their current order
+
+**Acceptance criteria:**
+- Status is the second visible column on the roster page
+- Icons appear inside status badges
+- No layout breakage on mobile-width containers
+
+---
+
+### Task F4 — Status Tooltips on Lineup Page
+**File:** `frontend/app/(dashboard)/fantasy/lineup/page.tsx`
+
+**Current issue:** Question mark icons appear next to player names with no explanation. Status values are cryptic without context.
+
+**Frontend-only change:**
+- Wrap `<StatusBadge />` with `@radix-ui/react-tooltip` (already in `package.json`) — no new dependency
+- Tooltip content for each status tier:
+  - Active: "In the lineup / no injury designation"
+  - DTD: "Day-to-Day — monitor before lock"
+  - QUESTIONABLE/PROBABLE: "Listed as [status] — check beat reporters"
+  - IL-10/IL-60: "On the [10/60]-day Injured List"
+  - OUT: "Out — do not start"
+  - NO START: "No game today"
+  - Unknown: "Status unavailable from Yahoo"
+- Remove any existing question mark / unknown icons that have no explanation
+
+**Acceptance criteria:**
+- Hovering any status badge shows a tooltip with a plain-English description
+- No unexplained `?` or icon without hover text
+- Tooltip uses `sideOffset={4}` for consistent positioning
+
+---
+
+### Task F5 — Waiver Wire: Loading Timeout + Empty State
+**File:** `frontend/app/(dashboard)/fantasy/waiver/page.tsx`
+
+**Current issue:** Infinite skeleton when Yahoo API is slow. No empty state. Users can't tell if data is loading vs. missing.
+
+**Frontend-only change:**
+- Add a `isStuck` state: set to `true` after 15 seconds if `isLoading` is still `true`
+- When `isStuck`: replace skeleton with message: *"Taking longer than expected. Yahoo's API may be slow — try refreshing."* + a "Retry" button that calls `refetch()`
+- When `!isLoading && players.length === 0`: show empty state: *"No waiver targets found. Projections update daily after 6 AM ET."*
+- Use `useEffect` + `setTimeout` for the 15-second trigger; clear timeout on unmount and when `isLoading` becomes `false`
+
+**Acceptance criteria:**
+- After 15 seconds of loading, skeleton is replaced by the "Taking longer" message + Retry button
+- When data returns empty array, empty state message appears (not infinite skeleton)
+- Retry button successfully re-triggers the query
+
+---
+
+### Task F6 — Matchup Page: Suppress Impossible Stat Values
+**File:** `frontend/app/(dashboard)/fantasy/matchup/page.tsx`
+
+**Current issue:** Backend occasionally returns negative values (e.g., `-1 GS`). These display as raw negative numbers, which look like bugs to users.
+
+**Frontend-only change:**
+- In the `formatVal()` function, add a guard: if the value is a number and is negative, return `"—"` instead of the raw value
+- Apply this guard to counting stats only (GS, W, SV, K, HR, RBI, R, SB). Ratio stats (ERA, WHIP) can legitimately be 0 but not negative — apply same rule.
+
+**Acceptance criteria:**
+- `-1 GS` displays as `—` in the matchup table
+- No negative numbers visible anywhere in the matchup stat breakdown
+- Valid zero values (e.g., `0 HR`) still display as `0`
+
+---
+
+### Task F7 — Category "57" Fallback Label
+**File:** `frontend/app/(dashboard)/fantasy/matchup/page.tsx`
+
+**Current issue:** When `STAT_LABELS["57"]` is undefined, the matchup table shows the raw `"57"` as the column header. This looks broken.
+
+**Frontend-only change:**
+- Update the display fallback in the category rendering from `` `${cat}` `` to `` `Cat. ${cat}` `` — so unmapped IDs show "Cat. 57" instead of "57"
+- Do **not** add a mapping for "57" to STAT_LABELS — the correct label is unconfirmed and must be verified via Yahoo API first (backend task, not this session)
+
+**Acceptance criteria:**
+- Unmapped category IDs display as "Cat. 57" (or "Cat. 85") not the raw number
+- The `STAT_LABELS` object is not modified
+
+---
+
+### ARCH-003 Verification Checklist
+- [x] `/fantasy/lineup`: logo shows "FANTASY BASEBALL", Portfolio panel hidden
+- [x] `/fantasy/lineup`: status badges are color-coded (green/yellow/red/gray)
+- [x] `/fantasy/lineup`: hovering a status badge shows a tooltip
+- [x] `/fantasy/lineup`: no unexplained `?` icons
+- [x] `/fantasy/roster`: status column is second from left, with icons
+- [x] `/fantasy/roster`: status badges use same colors as lineup page
+- [x] `/fantasy/waiver`: after 15s loading → "Taking longer" message + Retry button
+- [x] `/fantasy/waiver`: empty data → empty state message (not skeleton)
+- [x] `/fantasy/matchup`: negative stat values display as `—`
+- [x] `/fantasy/matchup`: unmapped categories show "Cat. N" not raw number
+- [x] TypeScript type-check passes: `npx tsc --noEmit`
+- [x] `/dashboard` and betting routes: sidebar unchanged (CBB EDGE + Portfolio panel visible)
 
 ---
 
@@ -41,13 +188,64 @@ Gemini CLI has produced a comprehensive refactor plan to transform the bloated f
 
 ---
 
-## 1. REVIEW TASK: ARCH-003 Refactor Sign-Off — Claude Code Action Required
+## 0c. KIMI K-13: UI/UX UAT Analysis — COMPLETE (April 1, 2026)
 
-**Claude Code:** Review the refactor plan in §0 and the detailed report at `reports/GEMINI_UI_AUDIT_2026-04-01.md`. 
+**Status:** Analysis complete. Detailed report at `reports/KIMI_UAT_ANALYSIS_2026-04-01.md`
 
-**Directive:** 
-- If you approve the architectural direction of ARCH-003, please update §7 with a "GO" signal.
-- Once sign-off is granted, Gemini CLI (Ops) will begin the component extraction and file deletion process.
+### Summary for Claude Code
+
+Kimi CLI has completed a deep root-cause analysis of the Executive UI/UX UAT Report. This analysis is **independent of and complementary to** ARCH-003 — while ARCH-003 addresses structural frontend architecture, K-13 addresses specific data/logic/UX bugs identified in user acceptance testing.
+
+### Critical Findings (P0/P1)
+
+| Issue | Location | Root Cause | Fix Complexity |
+|-------|----------|------------|----------------|
+| **Category "57" leaking** | `constants.ts`, `main.py` | Deliberately excluded mapping, but ID displays raw | Low |
+| **Injury names concatenated** | `yahoo_client_resilient.py` | Yahoo API parsing bug ("Jason Adam Quadriceps") | Low |
+| **Platform identity crisis** | `sidebar.tsx`, `header.tsx` | Hardcoded "CBB EDGE" branding on fantasy routes | Medium |
+| **Status badges inconsistent** | `lineup/page.tsx`, `roster/page.tsx` | No centralized status normalization | Medium |
+| **Impossible stats (-1 GS)** | `main.py` matchup endpoint | Missing validation on Yahoo API data | Low |
+
+### Key Technical Findings
+
+1. **Category "57"**: Confirmed in `frontend/lib/constants.ts` line 31 and `backend/main.py` lines 5465-5466 as deliberately excluded. Requires Yahoo API verification to determine correct mapping (likely "BB" - Walks).
+
+2. **Name Concatenation**: Yahoo's API occasionally returns injury info appended to player names. Requires regex sanitization in `_parse_player()`.
+
+3. **Identity Crisis**: The sidebar (lines 118-121, 172-185) shows betting portfolio metrics (DD/Exp) even on fantasy routes. Needs route-aware conditional rendering.
+
+4. **Status Warnings**: Yahoo returns boolean `status: False` which schemas now handle (schemas.py lines 495-501), but frontend badge mapping is inconsistent across pages.
+
+### Implementation Guidance
+
+- **Backend changes**: Low-risk, targeted fixes to data parsing and validation
+- **Frontend changes**: Aligns with ARCH-003's goal of standardizing UI components (status badges, table skeletons)
+- **Priority**: P0/P1 issues can be fixed independently of ARCH-003's larger refactor
+
+### Files Requiring Modification
+
+**Backend:**
+- `backend/main.py` (stat_id mapping, stat validation)
+- `backend/fantasy_baseball/yahoo_client_resilient.py` (name sanitization)
+- `backend/services/dashboard_service.py` (timestamp timezone)
+
+**Frontend:**
+- `frontend/lib/constants.ts` (STAT_LABELS update)
+- `frontend/components/layout/sidebar.tsx` (context-aware branding)
+- `frontend/app/(dashboard)/fantasy/roster/page.tsx` (status column)
+- `frontend/app/(dashboard)/fantasy/lineup/page.tsx` (status badges)
+- `frontend/app/(dashboard)/fantasy/waiver/page.tsx` (loading states)
+
+---
+
+## 1. Sign-Off Log
+
+| Initiative | Approved By | Date | Notes |
+|------------|-------------|------|-------|
+| ARCH-001 | Claude Code | Mar 31 | Contract layer + async job queue |
+| ARCH-002 | Claude Code | Mar 31 | Reliability contracts Phase 1 |
+| ARCH-003 | Claude Code | Apr 1 | Frontend-only UI/UX refactor (F1–F7); Gemini executing |
+| K-14 to K-18 | Claude Code | Apr 1 | Kimi research tasks; no code changes authorized |
 
 ---
 
@@ -167,6 +365,8 @@ This feeds the fantasy dashboard's injury display (currently sourced from Yahoo 
 | **Yahoo token over-refresh** | ✅ FIXED (Mar 31) | Singleton via `get_yahoo_client()` / `get_resilient_yahoo_client()` — token refreshed once per process, not per request |
 | **ProjectionsLoader CSV re-read** | ✅ FIXED (Mar 31) | `@lru_cache(maxsize=1)` on `load_full_board()`; force reload via `POST /admin/fantasy/reload-board` |
 | **ARCH-001 Phase 3: Frontend Integration** | ✅ VERIFIED | Lineup page reads valuations cache, async optimize polling, skeletons. |
+| **ARCH-003 F1–F7 (UI Refactor)** | ✅ COMPLETE (Apr 1) | Shared StatusBadge, context-aware sidebar, waiver timeout, matchup fixes. |
+| **Railway Operations** | ✅ COMPLETE (Apr 1) | `INTEGRITY_SWEEP` disabled, `ENABLE_MLB_ANALYSIS` + `INGESTION` enabled. |
 | **asyncOptimizeLineup (api.ts)** | ✅ FIXED | Contract mismatch fixed (query params, not body). Smoke-tested on Railway. |
 | **getPlayerValuations (api.ts)** | ✅ VERIFIED | Reading from cache (v12) with empty/stale degradation. |
 | **`todayStr()` ET anchor** | ✅ FIXED (Apr 1) | `toLocaleDateString('en-CA', {timeZone: 'America/New_York'})` — West Coast users no longer see wrong date. |
@@ -241,68 +441,174 @@ ARCH-001 is fully shipped: Phases 1 + 2 + 3 LIVE on Railway. All Gemini audit fi
 
 ## 7. Delegation Bundles
 
-### GEMINI CLI (Ops) — ACTIVE TASK
+### GEMINI CLI (Ops) — ACTIVE TASK: ARCH-003 UI Refactor
 
-**Deploy ARCH-001 Phase 3 (frontend)**
+**Claude Code has approved ARCH-003 and scoped it to 7 frontend-only tasks (F1–F7). Details in §0.**
 
-```
-You are Gemini CLI (Ops). ARCH-001 Phase 3 frontend has been built by Claude Code.
-Your job is to deploy it to Railway.
+**Execution order (dependencies):**
+1. **F2 first** — creates the shared `StatusBadge` component that F3 and F4 depend on
+2. **F1, F5, F6, F7** — independent, can be done in any order after F2
+3. **F3, F4** — after F2 is complete
 
-Step 1: Trigger redeploy (Phase 3 is frontend-only — no migration needed)
-  railway up
+**After completing all tasks:**
+- Run `npx tsc --noEmit` in `frontend/` — must pass with zero errors
+- Run `railway up` to deploy
+- Verify the checklist at the bottom of §0
 
-Step 2: Smoke-test the async optimize endpoint
-  curl -s -X POST https://<app>.railway.app/api/fantasy/lineup/async-optimize \
-    -H "X-API-Key: $API_KEY" \
-    -d '{"target_date": "2026-04-01"}' | python -m json.tool
-  # Should return: {"job_id": "...", "status": "queued", "poll_url": "..."}
+**Hard constraints (repeat for clarity):**
+- Do NOT edit any `.py` file
+- Do NOT modify `frontend/lib/api.ts` data-fetching functions
+- Do NOT add new API calls or new `useQuery` hooks fetching new endpoints
+- Do NOT change any route paths
+- TypeScript must pass after every task
 
-Step 3: Smoke-test the valuations endpoint
-  curl -s "https://<app>.railway.app/api/fantasy/players/valuations?date=2026-04-01" | python -m json.tool
-  # Should return: {"cache_status": "fresh"|"stale"|"empty", ...}
+**Previous UI Audit Findings (✅ COMPLETE — Apr 1):**
 
-Step 4: Verify the lineup page in the browser
-  - Navigate to /fantasy/lineup
-  - Confirm page loads without hanging (skeleton → data in <2s)
-  - Confirm "Optimize Lineup" button shows progress bar (Queued → Processing → Complete)
-  - Confirm "Proj" column appears in batters table (may show — if cache is empty)
-  - Confirm cache banner appears if valuations are stale/empty
-
-Step 5: Report results back via HANDOFF.md update
-
-Do NOT edit any .py or .ts files.
-```
-
-**Forward-Looking: Gemini UI Audit** (✅ COMPLETE — Apr 1)
-
-Gemini CLI has completed a read-only UI audit of the `frontend/app/(dashboard)/fantasy/` directory.
-
-**Findings resolved by Claude Code (Apr 1):**
-
-| Severity | Issue | Fix | Status |
-|----------|-------|-----|--------|
-| **HIGH** | `asyncOptimizeLineup` sends JSON body; backend expects query params → 422 | Changed to `?target_date=X&risk_tolerance=balanced` in `api.ts` | ✅ FIXED |
-| **MEDIUM** | No `loading.tsx`/`error.tsx` for `/fantasy/matchup/` | Created both files with skeleton + error UI | ✅ FIXED |
-| **MEDIUM** | `todayStr()` uses local browser time — West Coast users get wrong date after 9 PM PT | `toLocaleDateString('en-CA', { timeZone: 'America/New_York' })` | ✅ FIXED |
-| **LOW** | Hardcoded "Draft: March 23 @ 7:30am" in `fantasy/page.tsx` | Deferred — next cleanup pass | ⏳ QUEUED |
-| **LOW** | `STAT_LABELS` hardcoded in matchup page | Deferred — no user impact, centralize in next cleanup | ⏳ QUEUED |
-| **LOW** | Waiver "Add" button permanently disabled | Deferred — convert to Yahoo deep link in next pass | ⏳ QUEUED |
-| **LOW** | Inconsistent skeleton usage in `DraftBoardTab` and waiver recs | Deferred — cosmetic | ⏳ QUEUED |
-
-TypeScript type-check passes after all fixes.
+| Severity | Issue | Status |
+|----------|-------|--------|
+| **HIGH** | `asyncOptimizeLineup` 422 bug | ✅ FIXED Mar 31 |
+| **MEDIUM** | No `loading.tsx`/`error.tsx` for matchup | ✅ FIXED Apr 1 |
+| **MEDIUM** | `todayStr()` UTC vs ET bug | ✅ FIXED Mar 31 |
+| **LOW** | Hardcoded draft date in `fantasy/page.tsx` | ✅ FIXED Apr 1 |
+| **LOW** | Waiver "Add" button → Yahoo deep link | ✅ FIXED Apr 1 |
+| **LOW** | Skeleton inconsistency in DraftBoardTab | ✅ FIXED Apr 1 |
 
 
 ---
 
-### KIMI CLI (Deep Intelligence Unit) — Standby
+### KIMI CLI (Deep Intelligence Unit) — ACTIVE: K-14 through K-18
 
-> No active coding tasks. Standing responsibilities:
-> - If CBB recalibration (EMAC-068) status changes to unblocked, prepare the V9.2 spec memo.
-> - ARCH-001 Phase 2 is complete. No further research needed on cache invalidation.
-> - Do NOT write to any production code files without an explicit Claude delegation bundle.
->
-> Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
+**Mission (Apr 1–4):** Reduce implementation uncertainty for Claude across five bounded research and validation tasks. All output is a written report in `reports/`. No production code changes.
+
+---
+
+#### K-14 — Yahoo Stat ID "57" Confirmation
+**Why Kimi:** Long-context reading of Yahoo API docs + cross-reference with category_tracker.py  
+**Deliverable:** `reports/K14_STAT57_CONFIRMATION.md`  
+**Task:** 
+- Read `backend/main.py` lines 5456–5520 (`_YAHOO_STAT_FALLBACK` dict + comment about "57")
+- Read `backend/fantasy_baseball/category_tracker.py` — document what stat IDs it tracks and what's absent
+- Search Yahoo Fantasy Sports API docs (public) for stat ID 57 and 85
+- State with confidence: does stat 57 = "BB" (walks)? Does 85 = "OBP"?
+- Output: confirmed mapping or "unconfirmed — requires live API call" with exact test query to verify
+- Do NOT modify any file
+
+**Acceptance criteria:** Memo states definitively whether "57" → "BB" and "85" → "OBP", with source citation or an explicit test request for Claude Code to run against the live league endpoint.
+
+---
+
+#### K-15 — Yahoo Name Concatenation Root Cause Spec
+**Why Kimi:** Parsing bug requires careful source tracing before any fix to avoid regression in `_parse_player()`  
+**Deliverable:** `reports/K15_NAME_CONCAT_SPEC.md`  
+**Task:**
+- Read `backend/fantasy_baseball/yahoo_client_resilient.py` — specifically `_parse_player()` (lines ~843–930)
+- Identify: which fields are pulled for `full_name`? Is injury info in a separate field? Where does concatenation occur?
+- Design the exact fix: regex pattern, field extraction logic, where to apply it
+- Include: before/after example ("Jason Adam Quadriceps" → "Jason Adam"), edge cases (names with body part words), test cases
+- Do NOT modify any file
+
+**Acceptance criteria:** Spec is complete enough for Claude to implement the fix in one focused edit with no ambiguity about what to change.
+
+---
+
+#### K-16 — Yahoo Ingestion Pipeline Failure Mode Audit
+**Why Kimi:** The daily ingestion pipeline has multiple data sources with silent failure modes that are not well documented  
+**Deliverable:** `reports/K16_INGESTION_AUDIT.md`  
+**Task:**
+- Read `backend/services/daily_ingestion.py` — document each scheduled job: name, schedule, what it does, what it writes, what fails silently
+- Read `backend/fantasy_baseball/statcast_ingestion.py` — trace the path from `run_daily_ingestion()` through validation, storage, and Bayesian update
+- Identify: where does the pipeline fail silently vs raise? What are the retry patterns? What happens on Yahoo auth failure mid-ingestion?
+- Read `backend/fantasy_baseball/projections_loader.py` — document what CSV files are expected in `data/projections/`, what columns each needs, what happens if files are missing or have wrong column names
+- Check `data/projections/` directory — list what files actually exist
+- Output: failure mode table (job → failure mode → current behavior → risk level) + projections file inventory
+
+**Acceptance criteria:** Table lists every job, its failure mode, and whether it has adequate error recovery. Projections inventory states exactly which CSVs are present and whether columns match loader expectations.
+
+---
+
+#### K-17 — Backend UTC Datetime Audit
+**Why Kimi:** Per ORCHESTRATION.md rule, all game-time datetimes must use ET not UTC. Compliance unknown.  
+**Deliverable:** `reports/K17_DATETIME_AUDIT.md`  
+**Task:**
+- Search across `backend/services/dashboard_service.py`, `backend/fantasy_baseball/daily_briefing.py`, `backend/fantasy_baseball/nightly_resolution.py`, `backend/main.py` for uses of `datetime.utcnow()` or `.isoformat()` without timezone info
+- For each occurrence: file, line number, context (what is the datetime used for?), whether it's game-time-adjacent or admin-only
+- Classify: MUST FIX (game-time / user-visible) vs LOW RISK (internal logging / non-display)
+- Do NOT modify any file
+
+**Acceptance criteria:** Complete list of `datetime.utcnow()` calls with classification. Must fix list is actionable for Claude in one session.
+
+---
+
+#### K-18 — Matchup Impossible-Stats Backend Spec
+**Why Kimi:** The -1 GS bug needs a backend fix but the spec must be precise to avoid breaking the matchup endpoint  
+**Deliverable:** `reports/K18_STAT_VALIDATION_SPEC.md`  
+**Task:**
+- Read `backend/main.py` lines 5537–5585 (`_extract_team_stats()`) and the matchup endpoint around line 4880–4960
+- Trace where stat values enter the response: is -1 GS coming from Yahoo raw data or from a calculation?
+- Design the exact backend fix: where to clamp impossible values, which stat IDs need guards, what the clamped value should be (0 or None?)
+- Include: the schema field (`MatchupTeamOut.stats: dict`) and whether a Pydantic validator is appropriate vs a manual clamp in the endpoint
+- Do NOT modify any file
+
+**Acceptance criteria:** Spec identifies the exact line(s) to modify, the guard condition, and the clamped value, with reasoning. Claude can implement in <10 lines.
+
+---
+
+## 8. Yahoo Ingestion Pipeline — Current State & Uncertainty Map
+
+### What is working (confirmed live)
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `yahoo_client_resilient.py` | ✅ LIVE | Token refresh singleton, all roster/lineup/matchup methods |
+| `statcast_ingestion.py` | ✅ LIVE | Bayesian projection update wired into daily scheduler |
+| `projections_loader.py` | ✅ LIVE | Steamer CSV → player_board; `@lru_cache`; reload via `/admin/fantasy/reload-board` |
+| `daily_ingestion.py` waiver_scan job | ✅ LIVE | Lock 100_007 |
+| `daily_ingestion.py` statcast job | ✅ LIVE | Lock 100_002 |
+
+### Known Issues Requiring Backend Fixes (Claude Code, post-Apr 7 or earlier)
+| Issue | File | Complexity | Blocked on |
+|-------|------|-----------|------------|
+| Name concatenation ("Jason Adam Quadriceps") | `yahoo_client_resilient.py` `_parse_player()` | Low | K-15 spec |
+| Impossible stat values (-1 GS) | `main.py` matchup endpoint | Low | K-18 spec |
+| Stat ID "57"/"85" unmapped | `main.py` `_YAHOO_STAT_FALLBACK` | Low | K-14 confirmation |
+| `datetime.utcnow()` in dashboard_service | `dashboard_service.py` line ~206 | Low | K-17 audit |
+
+### Pending Research (Kimi K-14 to K-18)
+All four backend fixes above are gated on Kimi delivering specs by Thursday. Once specs arrive:
+- Claude implements all four in a single targeted session (estimated <1 hour total)
+- No schema changes required for any of them
+- Test suite should be unaffected (all are data sanitization guards)
+
+### Architecture Intent
+The Yahoo ingestion pipeline feeds three surfaces:
+1. **Roster page** — `_parse_player()` data via `/api/fantasy/roster`
+2. **Matchup page** — `_extract_team_stats()` data via `/api/fantasy/matchup`
+3. **Daily lineup optimizer** — `_injury_lookup` dict fed into start/bench decisions
+
+All three are currently serving data. The bugs above cause display issues only — no data loss, no incorrect lineup decisions (the optimizer already guards against bad status with the `isinstance(str)` fix). Fix priority is UX, not correctness.
+
+---
+
+## 8b. Delegation Matrix — Full View
+
+| Task | Owner | Why | Deliverable | Risk | Dependency |
+|------|-------|-----|-------------|------|-----------|
+| ARCH-003 F1–F7 (UI) | Gemini CLI | Frontend-only, no py files | 7 .tsx changes + tsc pass | Low | None |
+| K-14 Stat ID "57" confirm | Kimi CLI | Long-context doc research | `K14_STAT57_CONFIRMATION.md` | None | None |
+| K-15 Name concat spec | Kimi CLI | Source trace, no code change | `K15_NAME_CONCAT_SPEC.md` | None | None |
+| K-16 Ingestion failure audit | Kimi CLI | Read-only pipeline analysis | `K16_INGESTION_AUDIT.md` | None | None |
+| K-17 UTC datetime audit | Kimi CLI | Grep + classify across files | `K17_DATETIME_AUDIT.md` | None | None |
+| K-18 Impossible stats spec | Kimi CLI | Matchup endpoint tracing | `K18_STAT_VALIDATION_SPEC.md` | None | None |
+| Backend fixes (K-14/15/17/18) | Claude Code | Architectural judgment needed | Code changes in py files | Low | K-14/15/17/18 specs |
+| BDL MLB expansion | Claude Code | Contract design | `balldontlie.py` MLB methods | Medium | Apr 7 + BDL subscription |
+| CBB V9.2 recalibration | Claude Code | Kelly math — no delegation | `betting_model.py` update | High | Apr 7 (EMAC-068) |
+| MCMC Brier score validation | Claude Code | Needs 4 weeks season data | Calibration script | Low | Apr 28+ |
+
+### Hard Boundary — Kimi Must Not Cross
+- **No edits to any `.py` file** — Kimi is analysis-only
+- **No schema or API contract changes** — these require Claude sign-off
+- **No speculative implementation** — if unsure, document the uncertainty and escalate
+- **No Kelly math** — EMAC-068 block applies until Apr 7, full stop
+- **Escalate to Claude** if any finding is ambiguous, contradictory, or requires a non-obvious tradeoff
 
 ---
 
@@ -361,50 +667,98 @@ The "Elite Advancement Plan" identifies 5 high-priority architectural gaps to re
 ### For Gemini CLI
 
 ```
-You are Gemini CLI (Ops). Read this HANDOFF.md in full before acting.
+You are Gemini CLI (Ops). Read HANDOFF.md §0 (ARCH-003) before acting.
 
-Current status: ARCH-001 Phase 3 fully deployed. Backend (CBB_Betting) and Frontend (observant-benevolence) confirmed LIVE.
+Current status: ARCH-001/002 complete. System stable. ARCH-003 UI refactor is now approved
+and ready for execution. This is a FRONTEND-ONLY task — no .py files, no API changes.
 
-Active tasks:
-1. Gemini UI Audit COMPLETE (see reports/GEMINI_UI_AUDIT_2026-04-01.md).
-2. Deployment timeout investigated: Error 4408 (Connection initialisation timeout) was a transient CLI/websocket issue during log streaming. Server-side deployment (ID: 60982b25) was SUCCESSFUL.
-3. Smoke tests PASSED: async-optimize + valuations cache.
+Active task: Execute ARCH-003 UI refactor (7 tasks, details in HANDOFF.md §0).
 
-All pre-Apr-7 Claude Code tasks are now complete. System is stable.
+Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
+Frontend directory: frontend/
 
-Active task: deploy the latest changes (ARCH-002 Phase 1 + UI cleanup).
-  railway up
-  Verify:
-    - Fantasy lineup page: async optimize button → job polls to completion (not timeout)
-    - Lineup page default date: should match today's ET date (not UTC)
-    - Fantasy page: no hardcoded draft date ("2026 season active" shown)
-    - Waiver page: "Add" buttons link out to Yahoo Fantasy Baseball
-    - Matchup page: loads category breakdown without errors
+HARD RULES:
+- Do NOT edit any .py file (zero exceptions)
+- Do NOT modify frontend/lib/api.ts data-fetching functions
+- Do NOT add new API endpoints or useQuery hooks fetching new endpoints
+- TypeScript must pass after every task: cd frontend && npx tsc --noEmit
 
-Backend changes deployed: backend/services/job_queue_service.py (status string fixes)
-Frontend changes deployed: frontend/lib/constants.ts (etTodayStr), frontend/lib/api.ts (dailyLineup ET fix + asyncOptimize query params fix)
+EXECUTION ORDER:
+1. F2 first: create frontend/components/shared/status-badge.tsx
+2. F1: context-aware sidebar branding (sidebar.tsx)
+3. F3: roster page status column (roster/page.tsx) — depends on F2
+4. F4: status tooltips on lineup page (lineup/page.tsx) — depends on F2
+5. F5: waiver loading timeout + empty state (waiver/page.tsx)
+6. F6: matchup negative stat suppression (matchup/page.tsx)
+7. F7: category "57" fallback label (matchup/page.tsx)
 
-After deploy confirms, system is in full holding pattern until Apr 7.
+After all tasks:
+  cd frontend && npx tsc --noEmit   # must show 0 errors
+  railway up                         # deploy
 
-Do NOT edit any .py or .ts files.
+Verification checklist (from HANDOFF.md §0 bottom):
+- /fantasy/lineup: logo shows "FANTASY BASEBALL", Portfolio panel hidden
+- /fantasy/lineup: status badges color-coded, hoverable with tooltips
+- /fantasy/roster: status column is second from left, with icons
+- /fantasy/waiver: 15s timeout → retry message; empty array → empty state
+- /fantasy/matchup: negative values show "—"; unmapped cats show "Cat. N"
+- /dashboard: sidebar unchanged (CBB EDGE logo + Portfolio panel visible)
+
+Report results by updating §3 Current Technical State in HANDOFF.md with
+a row for each task (ARCH-003 F1–F7) and final tsc/deploy status.
+
+Do NOT modify any .py files.
 Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
 ```
 
-### For Kimi CLI (if initiating independently)
+### For Kimi CLI
 
 ```
-You are Kimi CLI (Deep Intelligence Unit). Read this HANDOFF.md in full.
+You are Kimi CLI (Deep Intelligence Unit).
+Read HANDOFF.md §7 (Kimi K-14 through K-18) before acting.
 
-Current session context:
-- ARCH-001 Phases 1, 2, 3 are all COMPLETE, DEPLOYED, and VERIFIED on Railway.
-- Gemini UI Audit is COMPLETE — all High + Medium findings fixed by Claude Code.
-- BallDontLie NCAAB subscription is CANCELLED. Do not call NCAAB endpoints.
-- OddsAPI will be cancelled post-Apr 7. Do not build new features depending on it.
-- BallDontLie GOAT (MLB) will be the new odds + enrichment provider post-Apr 7.
-- EMAC-068 (CBB V9.2 recalibration) is BLOCKED until Apr 7. Do not touch Kelly math.
-- MCMC calibration (B5) is COMPLETED as of Mar 30. Next: empirical Brier score validation post-4 weeks.
-- K-12 spec memo (V9.2 recalibration) should be ready to hand to Claude Code on Apr 7.
+Current status: ARCH-001/002/003 in progress. System stable. Your role this week
+(Apr 1-4) is research and specification — no production code changes.
 
-Do NOT write to any production code files without an explicit Claude delegation bundle.
+You have 5 active tasks. Complete them in order of difficulty (easiest first):
+
+TASK ORDER:
+1. K-17 (UTC datetime audit) — grep-based, fastest
+2. K-14 (stat ID "57" confirmation) — cross-ref category_tracker + Yahoo docs
+3. K-18 (impossible stats backend spec) — trace matchup endpoint
+4. K-15 (name concat spec) — trace _parse_player(), design regex fix
+5. K-16 (ingestion failure audit) — broadest, most reading required
+
+ALL TASKS:
+- Read-only analysis. Do NOT edit any .py or .ts file.
+- Output goes to reports/K{N}_*.md (see task names in §7)
+- If you find something ambiguous or uncertain, document it explicitly — don't guess
+- Escalate to Claude Code anything that requires a non-obvious tradeoff
+
+KEY CONSTRAINTS:
+- EMAC-068 is BLOCKED: Do NOT touch Kelly math, betting_model.py, or recalibration until Apr 7
+- BDL NCAAB subscription is CANCELLED: do not reference /ncaab/v1/ endpoints
+- Do NOT write to any production code file under any circumstances
+
+CONTEXT:
+- K-12 spec memo (V9.2 recalibration) should be finalized and ready for Claude on Apr 7
+- MCMC calibration is live; empirical Brier score validation is deferred until Apr 28+
+- The 4 backend fixes unlocked by K-14/15/17/18 are estimated <1 hour for Claude to implement
+  once your specs land — your specs are the bottleneck, make them complete and unambiguous
+
 Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
 ```
+@'
+
+---
+
+## 16.4. Railway Operations Log (DevOps Lead)
+
+| Operation | Command | Status | Date |
+|-----------|---------|--------|------|
+| Disable Integrity Sweep | railway variables set INTEGRITY_SWEEP_ENABLED=false | ? COMPLETE | Apr 1, 2026 |
+| Enable MLB Analysis | railway variables set ENABLE_MLB_ANALYSIS=true | ? COMPLETE | Apr 1, 2026 |
+| Enable Ingestion Orchestrator | railway variables set ENABLE_INGESTION_ORCHESTRATOR=true | ? COMPLETE | Apr 1, 2026 |
+| ARCH-003 UI Refactor | Execute F1�F7 frontend changes | ? COMPLETE | Apr 1, 2026 |
+'@
+

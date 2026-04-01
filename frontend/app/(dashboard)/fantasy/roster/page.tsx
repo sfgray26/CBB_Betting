@@ -5,35 +5,12 @@ import { Users, RefreshCw, AlertTriangle } from 'lucide-react'
 import { endpoints } from '@/lib/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import { StatusBadge } from '@/components/shared/status-badge'
 import type { RosterPlayer } from '@/lib/types'
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function statusBadge(status: string | null) {
-  if (!status) {
-    return (
-      <span className="px-2 py-0.5 rounded text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-        OK
-      </span>
-    )
-  }
-  const upper = status.toUpperCase()
-  if (upper === 'DTD') {
-    return (
-      <span className="px-2 py-0.5 rounded text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">
-        DTD
-      </span>
-    )
-  }
-  // IL, O, or anything else — out
-  return (
-    <span className="px-2 py-0.5 rounded text-xs font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/30">
-      {status}
-    </span>
-  )
-}
 
 function zScoreColor(z: number | null): string {
   if (z === null) return 'text-zinc-500'
@@ -95,6 +72,9 @@ function RosterTable({ players }: { players: RosterPlayer[] }) {
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider">
               Player
             </th>
+            <th className="px-3 py-3 text-center text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">
+              Status
+            </th>
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider w-20">
               Pos
             </th>
@@ -103,9 +83,6 @@ function RosterTable({ players }: { players: RosterPlayer[] }) {
             </th>
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider w-16">
               Team
-            </th>
-            <th className="px-3 py-3 text-center text-xs font-semibold text-zinc-500 uppercase tracking-wider w-20">
-              Status
             </th>
             <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">
               Z-Score
@@ -123,6 +100,9 @@ function RosterTable({ players }: { players: RosterPlayer[] }) {
                 {p.injury_note && (
                   <div className="text-xs text-zinc-500 mt-0.5">{p.injury_note}</div>
                 )}
+              </td>
+              <td className="px-3 py-2.5 text-center">
+                <StatusBadge status={p.status} />
               </td>
               <td className="px-3 py-2.5">
                 <div className="flex flex-wrap gap-1">
@@ -155,7 +135,6 @@ function RosterTable({ players }: { players: RosterPlayer[] }) {
               <td className="px-3 py-2.5 text-zinc-400 font-mono text-xs">
                 {p.team ?? '-'}
               </td>
-              <td className="px-3 py-2.5 text-center">{statusBadge(p.status)}</td>
               <td className={cn('px-3 py-2.5 text-right font-mono text-xs font-semibold tabular-nums', zScoreColor(p.z_score))}>
                 {p.z_score !== null ? (p.z_score >= 0 ? '+' : '') + p.z_score.toFixed(2) : '-'}
               </td>

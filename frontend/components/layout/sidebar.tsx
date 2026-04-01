@@ -87,6 +87,7 @@ interface SidebarProps {
 
 export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
   const pathname = usePathname()
+  const isFantasy = pathname.startsWith('/fantasy')
 
   const { data: portfolio } = useQuery({
     queryKey: ['portfolio'],
@@ -116,8 +117,12 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
     >
       {/* Logo */}
       <div className="px-5 py-5 border-b border-zinc-800">
-        <div className="font-bold text-lg text-amber-400 tracking-tight">CBB EDGE</div>
-        <div className="text-xs text-zinc-500 mt-0.5">Analytics</div>
+        <div className="font-bold text-lg text-amber-400 tracking-tight">
+          {isFantasy ? 'FANTASY BASEBALL' : 'CBB EDGE'}
+        </div>
+        <div className="text-xs text-zinc-500 mt-0.5">
+          {isFantasy ? 'Fantasy HQ' : 'Analytics'}
+        </div>
       </div>
 
       {/* Nav */}
@@ -170,21 +175,22 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
       </nav>
 
       {/* Bottom panel */}
-      <div className="border-t border-zinc-800 px-4 py-3 space-y-2">
-        {/* Portfolio chip */}
-        <div className="flex items-center gap-2 px-2 py-2 bg-zinc-800/50 rounded-md">
-          <span className={cn('h-2 w-2 rounded-full flex-shrink-0', dotColor)} />
-          <div className="flex-1 min-w-0">
-            <div className="text-xs text-zinc-400 leading-none">Portfolio</div>
-            <div className="text-xs font-mono text-zinc-300 mt-0.5 tabular-nums">
-              {portfolio
-                ? `DD: ${drawdown.toFixed(1)}% | Exp: ${portfolio.total_exposure_pct.toFixed(1)}%`
-                : 'Loading...'}
+      {!isFantasy && (
+        <div className="border-t border-zinc-800 px-4 py-3 space-y-2">
+          {/* Portfolio chip */}
+          <div className="flex items-center gap-2 px-2 py-2 bg-zinc-800/50 rounded-md">
+            <span className={cn('h-2 w-2 rounded-full flex-shrink-0', dotColor)} />
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-zinc-400 leading-none">Portfolio</div>
+              <div className="text-xs font-mono text-zinc-300 mt-0.5 tabular-nums">
+                {portfolio
+                  ? `DD: ${drawdown.toFixed(1)}% | Exp: ${portfolio.total_exposure_pct.toFixed(1)}%`
+                  : 'Loading...'}
+              </div>
             </div>
           </div>
         </div>
-
-      </div>
+      )}
     </aside>
   )
 }

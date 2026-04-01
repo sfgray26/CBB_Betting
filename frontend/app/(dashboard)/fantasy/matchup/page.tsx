@@ -18,6 +18,10 @@ function formatVal(val: string | number | undefined, cat?: string): string {
   if (val === undefined || val === null) return '-'
   const n = parseFloat(String(val))
   if (isNaN(n)) return String(val)
+
+  // F6: Suppress negative values which look like bugs to users (e.g., -1 GS)
+  if (n < 0) return '—'
+
   if (cat && RATIO_STATS.has(cat)) return n.toFixed(3)
   // IP special case: 6.1 (not 6)
   if (cat === 'IP' || cat === '21' || cat === '50') return n.toFixed(1)
@@ -70,7 +74,7 @@ function MatchupTable({ data }: { data: MatchupResponse }) {
             return (
               <tr key={cat} className="hover:bg-zinc-800/40 transition-colors">
                 <td className="px-4 py-2.5 text-zinc-400 font-medium">
-                  {STAT_LABELS[cat] ?? cat}
+                  {STAT_LABELS[cat] ?? `Cat. ${cat}`}
                 </td>
                 <td className={cn('px-4 py-2.5 text-right font-mono tabular-nums', winClass(cat, myVal, oppVal))}>
                   {formatVal(myRaw, cat)}
