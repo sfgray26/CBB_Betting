@@ -7,31 +7,38 @@
 
 ---
 
-## 0. Active Architecture Initiative — ARCH-001 (Phase 1 COMPLETE, Phase 2 IN PROGRESS)
+## 0. Active Architecture Initiative — ARCH-001 (Phase 1 COMPLETE, Phase 2 COMPLETE)
 
 ### What Was Built This Session (March 31)
 
 | File | Status | Purpose |
 |------|--------|---------|
 | `backend/contracts.py` | ✅ LIVE | Three immutable Pydantic contracts: LineupOptimizationRequest, PlayerValuationReport, ExecutionDecision |
-| `scripts/migrate_v11_job_queue.py` | ✅ READY | Creates job_queue + execution_decisions tables. Run before next deploy. |
+| `scripts/migrate_v11_job_queue.py` | ✅ RAN ON RAILWAY | Creates job_queue + execution_decisions tables |
 | `backend/services/job_queue_service.py` | ✅ LIVE | Submit/poll/process jobs. SELECT FOR UPDATE SKIP LOCKED. asyncio.to_thread dispatch. |
 | `backend/main.py` | ✅ WIRED | job_queue_processor job (5s interval) + POST /api/fantasy/lineup/async-optimize + GET /api/fantasy/jobs/{job_id} |
+| `scripts/migrate_v12_valuation_cache.py` | ✅ READY | Creates player_valuation_cache table. Run on Railway before next deploy. |
+| `backend/models.py` | ✅ EXTENDED | PlayerValuationCache ORM class added |
+| `backend/fantasy_baseball/valuation_worker.py` | ✅ LIVE | run_valuation_worker(league_key) — 6 AM ET, Yahoo + Statcast, soft-delete upsert |
+| `backend/services/daily_ingestion.py` | ✅ EXTENDED | valuation_cache job at 06:00 ET, advisory lock 100_011, gated on FANTASY_LEAGUES env var |
+| `backend/main.py` | ✅ EXTENDED | GET /api/fantasy/players/valuations — exact-date + 7-day stale fallback, never 500 |
 
-### CRITICAL: Run Migration Before Deploy
+### CRITICAL: Run Migration Before Next Deploy
 ```bash
-# Local test (dry-run first)
-python scripts/migrate_v11_job_queue.py --dry-run
+# Railway production — v12 must run before valuation_worker fires at 6 AM
+railway run python scripts/migrate_v12_valuation_cache.py --dry-run
+# Confirm SQL looks correct, then:
+railway run python scripts/migrate_v12_valuation_cache.py
 
-# Railway production
-railway run python scripts/migrate_v11_job_queue.py
+# Also set env var so the 6 AM job activates:
+# railway variables set FANTASY_LEAGUES=<your_league_key>
 ```
 
-### Phase 2 — Next Session (Player Valuation Cache)
-1. Worker pre-computes `PlayerValuationReport` for all rostered players at 6 AM ET
-2. Lineup page reads from DB cache instead of hitting Yahoo/Statcast on every load
-3. Target: lineup page load time drops from 8s+ to <2s
-4. Gate: Phase 1 must be stable (job_queue running cleanly) before starting Phase 2
+### Phase 2 — COMPLETE
+- `player_valuation_cache` table stores pre-computed `PlayerValuationReport` per player per day
+- Worker runs at 6 AM ET (gated on `FANTASY_LEAGUES` env var)
+- API endpoint degrades to stale data on cache miss — never breaks the page
+- All syntax checks pass
 
 ### Architecture Rule (ADR-005 — LOCKED)
 **All heavy operations MUST go through job_queue_service. Never run synchronously in the HTTP request path.**
@@ -103,7 +110,9 @@ Per AGENTS.md §2, Gemini CLI is **HARD RESTRICTED** from code writes (EMAC-075)
 
 **Timing Recommendation:** Defer until post-MLB season (October 2026) unless operational pain becomes critical.
 
-**Action Required:** Claude Code to review `reports/GEMINI_MCP_ANALYSIS.md` and make determination: IMPLEMENT / DEFER / REJECT. Update this section with decision.
+**Decision: DEFER — post-MLB season (October 2026)**
+
+Rationale: 8-month ROI break-even, EMAC-075 policy scope requires careful auditing, MLB season active (minimize infra changes), current manual workflow is functional and compliant. Re-evaluate October 2026 when season concludes. No action this session.
 
 ---
 
@@ -229,7 +238,7 @@ This feeds the fantasy dashboard's injury display (currently sourced from Yahoo 
 | **ARCH-001: /api/fantasy/lineup/async-optimize** | ✅ VERIFIED | Smoke-tested: job submitted, queued, and processed (validation error captured as expected). |
 | **ARCH-001: job_queue_processor** | ✅ VERIFIED | Successfully polling and processing from job_queue table. |
 | **migrate_v11_job_queue.py** | ✅ COMPLETED | Executed on Railway Mar 31. |
-| **ARCH-001 Phase 2: Valuation Cache** | ⏳ NEXT | Pre-compute PlayerValuationReport at 6 AM. Lineup page reads cache. Target: <2s load. |
+| **ARCH-001 Phase 2: Valuation Cache** | ✅ BUILT (Mar 31) | migrate_v12 + valuation_worker + daily job at 6 AM ET. Needs Railway deploy + FANTASY_LEAGUES env var. |
 
 ---
 
@@ -288,30 +297,41 @@ Priority order:
 
 ### GEMINI CLI (Ops) — ACTIVE TASK
 
-**Immediate: Deploy ARCH-001 Phase 1**
+**Deploy ARCH-001 Phase 1 + Phase 2**
 
 ```
-You are Gemini CLI (Ops). ARCH-001 Phase 1 has been built by Claude Code. Your job is to deploy it.
+You are Gemini CLI (Ops). ARCH-001 Phase 1 and Phase 2 have been built by Claude Code.
+Your job is to deploy both phases to Railway.
 
-Step 1: py_compile verification
+Step 1: py_compile verification (run all)
   railway run python -m py_compile backend/contracts.py
   railway run python -m py_compile backend/services/job_queue_service.py
+  railway run python -m py_compile backend/fantasy_baseball/valuation_worker.py
+  railway run python -m py_compile backend/services/daily_ingestion.py
   railway run python -m py_compile backend/main.py
 
-Step 2: Run the v11 migration
-  railway run python scripts/migrate_v11_job_queue.py --dry-run
+Step 2: Run the v12 migration (v11 already ran previously)
+  railway run python scripts/migrate_v12_valuation_cache.py --dry-run
   # Confirm SQL looks correct, then:
-  railway run python scripts/migrate_v11_job_queue.py
+  railway run python scripts/migrate_v12_valuation_cache.py
 
-Step 3: Trigger redeploy and smoke-test
+Step 3: Set the FANTASY_LEAGUES env var so the 6 AM valuation job activates
+  railway variables set FANTASY_LEAGUES=<league_key>
+  # Get the league_key from: railway run python -c "from backend.fantasy_baseball.yahoo_client_resilient import ResilientYahooClient; c = ResilientYahooClient(); print(c.get_my_team_key())"
+
+Step 4: Trigger redeploy and smoke-test
   railway up
-  # Wait for deploy, then:
+  # Wait for deploy, then test Phase 1 job queue:
   curl -s -X POST https://<app>.railway.app/api/fantasy/lineup/async-optimize \
     -H "X-API-Key: $API_KEY" \
     -d '{"target_date": "2026-04-01"}' | python -m json.tool
   # Should return: {"job_id": "...", "status": "queued", "poll_url": "..."}
+  
+  # Test Phase 2 valuations endpoint (will return empty/stale until 6 AM job runs):
+  curl -s "https://<app>.railway.app/api/fantasy/players/valuations?date=2026-04-01" | python -m json.tool
+  # Should return: {"cache_status": "empty" or "stale", "count": 0, "valuations": []}
 
-Step 4: Report results back via HANDOFF.md update
+Step 5: Report results back via HANDOFF.md update
 
 Do NOT edit any .py or .ts files.
 ```
@@ -333,7 +353,7 @@ Claude Code will review the audit before any frontend changes are made.
 
 > No active coding tasks. Standing responsibilities:
 > - If CBB recalibration (EMAC-068) status changes to unblocked, prepare the V9.2 spec memo.
-> - ARCH-001 Phase 2 research when needed: optimal cache invalidation strategy for PlayerValuationReport.
+> - ARCH-001 Phase 2 is complete. No further research needed on cache invalidation.
 > - Do NOT write to any production code files without an explicit Claude delegation bundle.
 >
 > Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge

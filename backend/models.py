@@ -545,6 +545,32 @@ class ProjectionSnapshot(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class PlayerValuationCache(Base):
+    """
+    Pre-computed PlayerValuationReport per player per day (ARCH-001 Phase 2).
+    Worker writes at 6 AM ET; API reads. Soft-delete via invalidated_at.
+    """
+
+    __tablename__ = "player_valuation_cache"
+
+    id = Column(String(36), primary_key=True)  # UUID stored as string
+    player_id = Column(String(50), nullable=False, index=True)
+    player_name = Column(String(100), nullable=False)
+    target_date = Column(Date, nullable=False)
+    league_key = Column(String(100), nullable=False)
+    report = Column(JSONB, nullable=False)
+    computed_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    invalidated_at = Column(DateTime, nullable=True)
+    data_as_of = Column(DateTime, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "player_id", "target_date", "league_key",
+            name="_pvc_player_date_league_uc"
+        ),
+    )
+
+
 # Create all tables
 def init_db():
     """Initialize database tables"""

@@ -15,6 +15,7 @@ import os
 import time
 from datetime import datetime, date, timedelta
 from typing import Optional, Any
+from zoneinfo import ZoneInfo
 
 import requests
 from sqlalchemy import text
@@ -23,7 +24,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from backend.models import SessionLocal, PlayerDailyMetric, ProjectionSnapshot
+from backend.models import SessionLocal, PlayerDailyMetric, ProjectionSnapshot, PlayerValuationCache
 from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ LOCK_IDS = {
     "mlb_brief":   100_008,
     "openclaw_perf":  100_009,
     "openclaw_sweep": 100_010,
+    "valuation_cache": 100_011,
 }
 
 
@@ -143,8 +145,23 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Player valuation cache: daily 6 AM ET
+        # Only runs if FANTASY_LEAGUES env var is set (comma-separated league keys)
+        _fantasy_leagues = os.getenv("FANTASY_LEAGUES", "")
+        if _fantasy_leagues:
+            self._scheduler.add_job(
+                self._refresh_valuation_cache,
+                CronTrigger(hour=6, minute=0, timezone=tz),
+                id="valuation_cache",
+                name="Player Valuation Cache Refresh",
+                replace_existing=True,
+            )
+
         # Initialise status dict so get_status() never returns missing keys
-        for job_id in ("mlb_odds", "statcast", "rolling_z", "clv", "cleanup"):
+        _all_job_ids = ["mlb_odds", "statcast", "rolling_z", "clv", "cleanup"]
+        if _fantasy_leagues:
+            _all_job_ids.append("valuation_cache")
+        for job_id in _all_job_ids:
             if job_id not in self._job_status:
                 self._job_status[job_id] = {
                     "name": job_id,
@@ -156,7 +173,7 @@ class DailyIngestionOrchestrator:
 
         self._scheduler.start()
         # Populate next_run now that jobs are scheduled
-        for job_id in ("mlb_odds", "statcast", "rolling_z", "clv", "cleanup"):
+        for job_id in _all_job_ids:
             self._job_status[job_id]["next_run"] = self._get_next_run(job_id)
 
     def get_status(self) -> dict:
@@ -500,6 +517,46 @@ class DailyIngestionOrchestrator:
             return {"status": "success", "records": deleted, "elapsed_ms": elapsed}
 
         return await _with_advisory_lock(LOCK_IDS["cleanup"], _run)
+
+    async def _refresh_valuation_cache(self) -> None:
+        """
+        Refresh player valuation cache for all configured leagues.
+        Advisory lock: 100_011.
+        """
+        from backend.fantasy_baseball.valuation_worker import run_valuation_worker
+
+        league_str = os.getenv("FANTASY_LEAGUES", "")
+        if not league_str:
+            logger.info("valuation_cache: FANTASY_LEAGUES not set -- skipping")
+            return
+
+        leagues = [lk.strip() for lk in league_str.split(",") if lk.strip()]
+
+        async def _run():
+            results = []
+            for lk in leagues:
+                try:
+                    result = await run_valuation_worker(lk)
+                    results.append(result)
+                except Exception as exc:
+                    logger.error("valuation_cache: failed for league=%s (%s)", lk, exc)
+            return results
+
+        self._job_status["valuation_cache"] = {
+            "name": "valuation_cache",
+            "enabled": True,
+            "last_run": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+            "last_status": "running",
+            "next_run": self._get_next_run("valuation_cache"),
+        }
+
+        try:
+            results = await _with_advisory_lock(LOCK_IDS["valuation_cache"], _run)
+            self._job_status["valuation_cache"]["last_status"] = "ok"
+            logger.info("valuation_cache: complete -- %s", results)
+        except Exception as exc:
+            self._job_status["valuation_cache"]["last_status"] = f"error: {exc}"
+            logger.error("valuation_cache: job failed (%s)", exc)
 
     def _start_openclaw_monitoring(self) -> None:
         """

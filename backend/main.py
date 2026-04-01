@@ -5375,6 +5375,82 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
     )
 
 
+@app.get("/api/fantasy/players/valuations")
+async def get_player_valuations(
+    date: Optional[str] = None,
+    league_key: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Return cached PlayerValuationReports for a given date and league.
+
+    Degrades gracefully: returns stale data (most recent valid) if today's
+    cache hasn't been built yet. Never returns a 500 on cache miss.
+    """
+    from sqlalchemy import text
+
+    target_date = date or datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+
+    try:
+        query = """
+            SELECT player_id, player_name, target_date, report, computed_at
+            FROM player_valuation_cache
+            WHERE invalidated_at IS NULL
+        """
+        params: dict = {}
+
+        if league_key:
+            query += " AND league_key = :league_key"
+            params["league_key"] = league_key
+
+        # Prefer exact date; fall back to most recent within 7 days
+        exact_rows = db.execute(
+            text(query + " AND target_date = :tdate ORDER BY computed_at DESC"),
+            {**params, "tdate": target_date},
+        ).fetchall()
+
+        if exact_rows:
+            rows = exact_rows
+            cache_status = "fresh"
+        else:
+            # Stale fallback: most recent date within 7 days
+            fallback_cutoff = (
+                datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=7)
+            ).isoformat()
+            rows = db.execute(
+                text(query + " AND target_date >= :cutoff ORDER BY target_date DESC, computed_at DESC"),
+                {**params, "cutoff": fallback_cutoff},
+            ).fetchall()
+            cache_status = "stale" if rows else "empty"
+
+        return {
+            "cache_status": cache_status,
+            "target_date": target_date,
+            "league_key": league_key,
+            "count": len(rows),
+            "valuations": [
+                {
+                    "player_id": r.player_id,
+                    "player_name": r.player_name,
+                    "target_date": r.target_date.isoformat() if r.target_date else None,
+                    "computed_at": r.computed_at.isoformat() if r.computed_at else None,
+                    "report": r.report,
+                }
+                for r in rows
+            ],
+        }
+    except Exception as exc:
+        logger.error("get_player_valuations: DB error (%s)", exc)
+        return {
+            "cache_status": "error",
+            "target_date": target_date,
+            "league_key": league_key,
+            "count": 0,
+            "valuations": [],
+            "error": "Cache unavailable -- try again later",
+        }
+
+
 # Hardcoded fallback for Yahoo numeric stat category IDs.
 # Used when get_league_settings() fails (auth error, pre-season, rate limit).
 # Maps Yahoo stat_id → abbreviation matching the frontend STAT_LABELS keys.
