@@ -313,15 +313,11 @@ This feeds the fantasy dashboard's injury display (currently sourced from Yahoo 
 | **BDL NCAAB subscription** | ❌ CANCELLED | CBB season over. `balldontlie.py` NCAAB methods will 401 — do not call them. |
 | **Yahoo token over-refresh** | ✅ FIXED (Mar 31) | Singleton via `get_yahoo_client()` / `get_resilient_yahoo_client()` — token refreshed once per process, not per request |
 | **ProjectionsLoader CSV re-read** | ✅ FIXED (Mar 31) | `@lru_cache(maxsize=1)` on `load_full_board()`; force reload via `POST /admin/fantasy/reload-board` |
-| **ADP match rate (was 32%)** | ✅ FIXED (Mar 31) | `_make_player_id` strips suffixes/flips last-name-first; `_apply_adp` adds initial fallback. Expect 80%+ match |
-| **Statcast ingestion stub** | ✅ FIXED (Mar 31) | `_update_statcast` now calls `run_daily_ingestion()` via `asyncio.to_thread`; Bayesian updates live |
-| **ARCH-001: contracts.py** | ✅ LIVE (Mar 31) | Three immutable Pydantic contracts. Frozen models. ET timestamps. |
-| **ARCH-001: job_queue_service** | ✅ VERIFIED | PostgreSQL-backed queue. Table created (v11). INSERT fixed (CAST AS JSONB). Verified picking up jobs. |
-| **ARCH-001: /api/fantasy/lineup/async-optimize** | ✅ VERIFIED | Smoke-tested: job submitted, queued, and processed (validation error captured as expected). |
-| **ARCH-001: job_queue_processor** | ✅ VERIFIED | Successfully polling and processing from job_queue table. |
-| **migrate_v11_job_queue.py** | ✅ COMPLETED | Executed on Railway Mar 31. |
-| **ARCH-001 Phase 2: Valuation Cache** | ✅ VERIFIED | migrate_v12 + valuation_worker + daily job at 6 AM ET. Verified endpoint returns valid response. |
-| **migrate_v12_valuation_cache.py** | ✅ COMPLETED | Executed on Railway Apr 1. |
+| **ARCH-001 Phase 3: Frontend Integration** | ✅ VERIFIED | Lineup page reads valuations cache, async optimize polling, skeletons. |
+| **asyncOptimizeLineup (api.ts)** | ✅ FIXED | Contract mismatch fixed (query params, not body). Smoke-tested on Railway. |
+| **getPlayerValuations (api.ts)** | ✅ VERIFIED | Reading from cache (v12) with empty/stale degradation. |
+| **`todayStr()` ET anchor** | ✅ FIXED (Apr 1) | `toLocaleDateString('en-CA', {timeZone: 'America/New_York'})` — West Coast users no longer see wrong date. |
+| **matchup `loading.tsx` / `error.tsx`** | ✅ FIXED (Apr 1) | Created both — skeleton + error UI with retry button. |
 
 ---
 
@@ -347,21 +343,27 @@ Next available: **100_012** (mlb_injuries), **100_013** (mlb_box_scores)
 
 ## 5. Next Session Roadmap (Claude Code)
 
-Priority order:
+### Current State (Apr 1, 2026)
+ARCH-001 is fully shipped: Phases 1 + 2 + 3 LIVE on Railway. All Gemini audit findings resolved (High + Medium severity). The system is **stable**. We are in a holding pattern until April 7 unlocks the next major workstream.
 
-1. **ARCH-001 Phase 3: Frontend Integration** — Wire the lineup page to the async backend (see §0 Phase 3 spec above). This is the highest-leverage work right now: Phase 1+2 built the foundation but the frontend still calls blocking endpoints. Phase 3 closes the loop and delivers the <2s load time goal.
-   - **Gate:** Gemini confirms Phase 1+2 smoke tests passing on Railway
-   - **Execution:** Subagent-driven, Phase 3a → 3b → 3c in order (3a is independent, 3b depends on 3a being stable)
+### Immediate (Before Apr 7) — Low effort, low risk
+1. **Low-severity UI cleanup** (from Gemini audit) — small targeted fixes, no architectural changes:
+   - Remove hardcoded "Draft: March 23 @ 7:30am" from `frontend/app/(dashboard)/fantasy/page.tsx`
+   - Convert waiver "Add" button to a Yahoo deep link (remove permanently-disabled state)
+   - Swap `DraftBoardTab` text loader for `TableSkeleton`
+   - Swap waiver rec pulse divs for card-shaped skeletons
+   - Centralise `STAT_LABELS` into `frontend/lib/constants.ts` (dedup from matchup page)
 
-2. **Gemini UI Audit** — Once Phase 3 is implemented, delegate Gemini the read-only audit of `frontend/app/(dashboard)/fantasy/` to identify remaining rough edges (missing loading states, hardcoded strings, broken responsive layout). Claude Code reviews and approves before any frontend code is written.
+2. **Historical MCMC validation setup** — create a lightweight script that reads actual H2H outcomes from Yahoo weekly matchup results and computes Brier score against `win_probability` from `execution_decisions` table. No model changes — just measurement. (Can be queued for post-Apr 7 if bandwidth is tight.)
 
-3. **CBB V9.2 recalibration** (EMAC-068) — Unblocks Apr 7. SNR/integrity scalar stacking correction. Do NOT touch Kelly math before then. Kimi has the spec memo ready (K-12).
+### April 7+ — EMAC-068 Unblocks
+3. **CBB V9.2 recalibration** — Kimi has the K-12 spec memo ready. Fix SNR/integrity scalar stacking that makes the effective Kelly divisor ~3.4× instead of the calibrated 2.0×. This is the primary lever to improve the CBB win record. Do NOT touch any Kelly math before Apr 7.
 
-4. **Post-Apr 7: BDL MLB expansion** — Execute §2 Phases 1-4 in order. Confirm OddsAPI cancelled before writing any BDL MLB code to avoid calling a cancelled key. Lock IDs 100_012 (mlb_injuries) and 100_013 (mlb_box_scores) reserved.
+4. **Cancel OddsAPI, subscribe BDL GOAT MLB** — Day 1 action after tournament concludes. Manual steps documented in §2 Phase 1. Claude Code then expands `balldontlie.py` with `/mlb/v1/` endpoints and migrates the two raw OddsAPI callers (§2 Phases 2-3). Advisory locks 100_012 + 100_013 reserved.
 
-5. **MLB Betting Module** — After fantasy module is stabilized (Phase 3 complete + BDL wired). `mlb_analysis.py` currently at stub level. Full implementation deferred until data providers are solid.
+5. **MLB Betting Module** — After BDL is wired and tested. `mlb_analysis.py` is at stub level. Full implementation of edge calculation, Kelly sizing, and alert generation. Modelled on the CBB pipeline but using `mlb_analysis.py` as the entry point instead of `betting_model.py`.
 
-6. **Historical MCMC validation** — Collect actual H2H matchup outcomes to validate win_probability calibration. Current calibration uses proxy z-scores; empirical validation pending sufficient season data (target: 4 weeks of results).
+6. **MCMC empirical calibration** — After 4 weeks of season data, run the Brier score script and adjust `win_probability` output scaling if needed.
 
 ---
 
@@ -419,33 +421,24 @@ Step 5: Report results back via HANDOFF.md update
 Do NOT edit any .py or .ts files.
 ```
 
-**Forward-Looking: Gemini UI Audit (READY — activate after Phase 3 implementation)**
+**Forward-Looking: Gemini UI Audit** (✅ COMPLETE — Apr 1)
 
-Once Claude Code completes ARCH-001 Phase 3 (frontend async wiring), Gemini runs a read-only UI audit:
-```
-You are Gemini CLI (Ops). ARCH-001 Phase 3 has been implemented by Claude Code.
-Your job is a READ-ONLY UI audit — no code changes.
+Gemini CLI has completed a read-only UI audit of the `frontend/app/(dashboard)/fantasy/` directory.
 
-Read all files in:
-  frontend/app/(dashboard)/fantasy/
-  frontend/components/
+**Findings resolved by Claude Code (Apr 1):**
 
-Identify and document in reports/GEMINI_UI_AUDIT_2026-04-01.md:
-1. Pages/components with no loading states (blank flash on load)
-2. Missing error boundaries (components that can crash the whole page)
-3. Hardcoded strings that should come from the API (team names, dates, league names)
-4. Responsive layout issues visible in the component structure (not runtime)
-5. Any remaining blocking API calls that should be async
+| Severity | Issue | Fix | Status |
+|----------|-------|-----|--------|
+| **HIGH** | `asyncOptimizeLineup` sends JSON body; backend expects query params → 422 | Changed to `?target_date=X&risk_tolerance=balanced` in `api.ts` | ✅ FIXED |
+| **MEDIUM** | No `loading.tsx`/`error.tsx` for `/fantasy/matchup/` | Created both files with skeleton + error UI | ✅ FIXED |
+| **MEDIUM** | `todayStr()` uses local browser time — West Coast users get wrong date after 9 PM PT | `toLocaleDateString('en-CA', { timeZone: 'America/New_York' })` | ✅ FIXED |
+| **LOW** | Hardcoded "Draft: March 23 @ 7:30am" in `fantasy/page.tsx` | Deferred — next cleanup pass | ⏳ QUEUED |
+| **LOW** | `STAT_LABELS` hardcoded in matchup page | Deferred — no user impact, centralize in next cleanup | ⏳ QUEUED |
+| **LOW** | Waiver "Add" button permanently disabled | Deferred — convert to Yahoo deep link in next pass | ⏳ QUEUED |
+| **LOW** | Inconsistent skeleton usage in `DraftBoardTab` and waiver recs | Deferred — cosmetic | ⏳ QUEUED |
 
-Format each finding as:
-  File: <path>
-  Issue: <one-line description>
-  Severity: high | medium | low
-  Suggested fix: <one-line description for Claude Code to implement>
+TypeScript type-check passes after all fixes.
 
-Do NOT write any code. Do NOT edit any files. Output only to reports/GEMINI_UI_AUDIT_2026-04-01.md.
-```
-Claude Code reviews the audit output before any frontend changes are actioned.
 
 ---
 
@@ -494,15 +487,13 @@ Claude Code reviews the audit output before any frontend changes are actioned.
 ```
 You are Gemini CLI (Ops). Read this HANDOFF.md in full before acting.
 
-Current status: ARCH-001 Phase 1 + Phase 2 + Phase 3 all built. Phase 3 frontend ready to deploy.
+Current status: ARCH-001 Phases 1-3 LIVE. UI Audit COMPLETE. All High+Medium findings fixed.
 
-Active tasks:
-1. Deploy Phase 3: railway up
-2. Smoke-test async optimize endpoint and valuations endpoint (curl commands in §7)
-3. Verify lineup page in browser — confirm no blocking load, async progress bar works
-4. Report results via HANDOFF.md update
+No active deploy tasks. System is stable.
 
-After Phase 3 is confirmed stable, run the read-only UI audit per §7.
+Next trigger: when Claude Code completes the Low-severity UI cleanup items (§5), deploy with:
+  railway up
+  Verify lineup page, matchup page, waiver page in browser.
 
 Do NOT edit any .py or .ts files.
 Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
@@ -514,14 +505,14 @@ Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
 You are Kimi CLI (Deep Intelligence Unit). Read this HANDOFF.md in full.
 
 Current session context:
-- ARCH-001 Phase 1 + Phase 2 are COMPLETE and deployed to Railway.
-- ARCH-001 Phase 3 (frontend async wiring) is NEXT — Claude Code owns this.
+- ARCH-001 Phases 1, 2, 3 are all COMPLETE, DEPLOYED, and VERIFIED on Railway.
+- Gemini UI Audit is COMPLETE — all High + Medium findings fixed by Claude Code.
 - BallDontLie NCAAB subscription is CANCELLED. Do not call NCAAB endpoints.
 - OddsAPI will be cancelled post-Apr 7. Do not build new features depending on it.
 - BallDontLie GOAT (MLB) will be the new odds + enrichment provider post-Apr 7.
-- EMAC-068 (CBB V9.2 recalibration) is still blocked until Apr 7. Do not touch Kelly math.
-- MCMC calibration (B5) is COMPLETED as of Mar 30. Next: empirical validation against actual H2H outcomes.
-- V9.2 spec memo (K-12) should be ready to hand to Claude Code on Apr 7.
+- EMAC-068 (CBB V9.2 recalibration) is BLOCKED until Apr 7. Do not touch Kelly math.
+- MCMC calibration (B5) is COMPLETED as of Mar 30. Next: empirical Brier score validation post-4 weeks.
+- K-12 spec memo (V9.2 recalibration) should be ready to hand to Claude Code on Apr 7.
 
 Do NOT write to any production code files without an explicit Claude delegation bundle.
 Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge

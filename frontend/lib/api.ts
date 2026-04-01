@@ -298,11 +298,13 @@ export const endpoints = {
       body: JSON.stringify({ date, players }),
     }),
 
-  asyncOptimizeLineup: (targetDate: string, leagueKey?: string) =>
-    apiFetch<{ job_id: string; status: string; poll_url: string }>('/api/fantasy/lineup/async-optimize', {
-      method: 'POST',
-      body: JSON.stringify({ target_date: targetDate, ...(leagueKey ? { league_key: leagueKey } : {}) }),
-    }),
+  asyncOptimizeLineup: (targetDate: string, riskTolerance = 'balanced') => {
+    const params = new URLSearchParams({ target_date: targetDate, risk_tolerance: riskTolerance })
+    return apiFetch<{ job_id: string; status: string; poll_url: string }>(
+      `/api/fantasy/lineup/async-optimize?${params}`,
+      { method: 'POST' },
+    )
+  },
 
   getJobStatus: (jobId: string) =>
     apiFetch<AsyncJobStatus>(`/api/fantasy/jobs/${jobId}`),

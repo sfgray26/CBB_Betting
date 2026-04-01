@@ -1,30 +1,47 @@
 # GEMINI UI AUDIT REPORT - 2026-04-01
 
 ## 1. Executive Summary
-The frontend is functional but has not yet been updated to utilize the **ARCH-001 API-Worker pattern** deployed in the backend. Several components lack robust loading skeletons and error boundaries, and critical configuration data (like draft dates and stat labels) is hardcoded.
+The ARCH-001 Phase 3 implementation successfully introduced the contract-driven API-Worker pattern to the frontend. However, a critical mismatch was identified in the `asyncOptimizeLineup` API call, and several pages still lack robust loading/error handling.
 
-## 2. ARCH-001 Integration Gaps
-*   **`lineup/page.tsx`**: The "Optimize Lineup" button currently triggers a simple `refetch()` on the daily lineup endpoint. It **MUST** be updated to:
-    1. Call `POST /api/fantasy/lineup/async-optimize`.
-    2. Enter a polling state using `GET /api/fantasy/jobs/{job_id}`.
-    3. Show a progress indicator while the job is `queued` or `running`.
-*   **`waiver/page.tsx`**: The "Load Recommendations" action is also a candidate for the job queue, as it performs complex H2H deficit analysis.
+## 2. High Severity: API Contract Mismatch
+*   **File:** `frontend/lib/api.ts`
+*   **Issue:** `asyncOptimizeLineup` sends `target_date` and `risk_tolerance` in the JSON body of a POST request. The FastAPI backend endpoint (`/api/fantasy/lineup/async-optimize`) expects these as **query parameters**.
+*   **Impact:** The "Optimize Lineup" button will fail with a 422 Unprocessable Entity error (missing field: target_date) in production.
+*   **Suggested fix:** Update `api.ts` to append these values to the URL as query strings instead of sending them in the body.
 
-## 3. Loading States & UX
-*   **`matchup/page.tsx`**: Lacks a `loading.tsx` file for App Router streaming. The inline skeleton is too basic and doesn't match the final table layout.
-*   **`fantasy/page.tsx`**: `DraftBoardTab` displays "Loading draft board..." text. This should be replaced with a `TableSkeleton` similar to the lineup and waiver pages.
-*   **`waiver/page.tsx`**: The recommendations section uses a simple pulse div. It should use card-shaped skeletons to prevent layout shift.
+## 3. Medium Severity: Missing Error/Loading Infrastructure
+*   **File:** `frontend/app/(dashboard)/fantasy/matchup/page.tsx`
+*   **Issue:** Missing `loading.tsx` and `error.tsx` in this directory. 
+*   **Impact:** Users will see a blank screen or a full-page crash if the matchup data fails to load or is slow.
+*   **Suggested fix:** Create `loading.tsx` (using skeletons) and `error.tsx` for the matchup route.
 
-## 4. Error Handling
-*   **`matchup/page.tsx`**: Missing a directory-level `error.tsx` file. Unhandled runtime errors in this route will bubble up to the root, providing a poor user experience.
-*   **Inconsistent Error Messaging**: Many error states use generic "Failed to load" messages. They should provide more specific guidance (e.g., "Yahoo Token Expired - Please Re-authenticate").
+*   **File:** `frontend/app/(dashboard)/fantasy/lineup/page.tsx`
+*   **Issue:** `todayStr()` uses local browser time.
+*   **Impact:** Users on the West Coast checking the site between 9 PM and midnight PT will see "today's" date as tomorrow's date relative to the MLB/Yahoo ET-based schedule.
+*   **Suggested fix:** Use a library or helper that anchors "today" to US Eastern Time (matching the backend's `_now_et()`).
 
-## 5. Hardcoded Strings & Technical Debt
-*   **Draft Schedule**: `fantasy/page.tsx` has "Draft: March 23 @ 7:30am" hardcoded.
-*   **Stat Mapping**: `STAT_LABELS` in `matchup/page.tsx` is hardcoded. This map should ideally be centralized in `@/lib/constants.ts` or fetched from a backend config endpoint to ensure consistency with the backend's `_YAHOO_STAT_FALLBACK`.
-*   **Date Handling**: `lineup/page.tsx` uses `new Date()` for local "today". This can lead to "off-by-one" date issues for West Coast users during the 12am-3am ET window.
+## 4. Low Severity: Hardcoded Strings & UX Polish
+*   **File:** `frontend/app/(dashboard)/fantasy/page.tsx`
+*   **Issue:** Hardcoded draft date: "Draft: March 23 @ 7:30am".
+*   **Impact:** Displays incorrect, stale information to the user.
+*   **Suggested fix:** Move to an environment variable or a config endpoint.
 
-## 6. Recommended Next Steps
-1.  **Phase 1.1 (Frontend Fixes)**: Update `lineup/page.tsx` to use the `async-optimize` endpoint and implement the job polling UI.
-2.  **Phase 1.2 (Hardening)**: Add missing `loading.tsx` and `error.tsx` to the `matchup/` route.
-3.  **Phase 1.3 (Refactoring)**: Centralize `STAT_LABELS` and move hardcoded draft dates to environment variables or feature flags.
+*   **File:** `frontend/app/(dashboard)/fantasy/matchup/page.tsx`
+*   **Issue:** `STAT_LABELS` is hardcoded with dozens of entries.
+*   **Impact:** High maintenance burden and potential for mismatch with backend stat mapping.
+*   **Suggested fix:** Centralize stat labels in `frontend/lib/constants.ts`.
+
+*   **File:** `frontend/app/(dashboard)/fantasy/waiver/page.tsx`
+*   **Issue:** "Add" button is permanently disabled with a "visual only" title.
+*   **Impact:** Confusing UX; the button should either be hidden or implemented as a deep link to Yahoo.
+
+## 5. Component Structure & Performance
+*   **File:** `frontend/app/(dashboard)/fantasy/page.tsx`
+*   **Issue:** `DraftBoardTab` uses a text-based loading message instead of the shared `TableSkeleton`.
+*   **Impact:** Inconsistent UX across the app.
+*   **Suggested fix:** Swap the text loader for `TableSkeleton`.
+
+*   **File:** `frontend/app/(dashboard)/fantasy/waiver/page.tsx`
+*   **Issue:** Recommendations loading state uses generic pulse divs.
+*   **Impact:** Layout shift when the actual recommendation cards load.
+*   **Suggested fix:** Use card-shaped skeletons that match `RecCard`.

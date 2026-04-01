@@ -13,11 +13,9 @@ import type { LineupPlayer, StartingPitcher, ValuationReport } from '@/lib/types
 // ---------------------------------------------------------------------------
 
 function todayStr(): string {
-  const d = new Date()
-  const year = d.getFullYear()
-  const month = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+  // en-CA locale produces YYYY-MM-DD; America/New_York anchors to ET
+  // so West Coast users see the same "today" as the backend
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
 }
 
 function formatTime(iso: string | null | undefined): string {
