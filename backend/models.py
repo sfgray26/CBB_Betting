@@ -867,7 +867,7 @@ class UserPreferences(Base):
     # Waiver wire preferences
     waiver_preferences = Column(JSONB, nullable=False, default=lambda: {
         "min_percent_owned": 0,  # Show players with >X% ownership
-        "max_percent_owned": 60,  # Hide players owned by >X%
+        "max_percent_owned": 100,  # Hide players owned by >X% (default: show all free agents)
         "positions_of_need": [],  # Auto-detect if empty
         "priority_categories": [],  # Auto-detect if empty
         "hide_injured": True,

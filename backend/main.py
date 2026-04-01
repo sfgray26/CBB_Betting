@@ -4400,7 +4400,7 @@ async def get_fantasy_waiver_recommendations(
     position: Optional[str] = Query(None),
     sort: str = Query("need_score"),
     min_z_score: Optional[float] = Query(None),
-    max_percent_owned: float = Query(90.0),
+    max_percent_owned: float = Query(100.0),
     page: int = Query(1, ge=1),
     per_page: int = Query(25, ge=10, le=100),
     user: str = Depends(verify_api_key),

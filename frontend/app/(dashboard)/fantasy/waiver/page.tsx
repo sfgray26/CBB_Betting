@@ -370,7 +370,7 @@ const POSITIONS = ['C', '1B', '2B', '3B', 'SS', 'OF', 'SP', 'RP']
 export default function WaiverWirePage() {
   const [position, setPosition] = useState<string>('')
   const [sort, setSort] = useState<'need_score' | 'percent_owned'>('need_score')
-  const [maxOwned, setMaxOwned] = useState<number>(50)
+  const [maxOwned, setMaxOwned] = useState<number>(100)
   const [page, setPage] = useState<number>(1)
   const [showRecs, setShowRecs] = useState<boolean>(false)
   const [isStuck, setIsStuck] = useState(false)
