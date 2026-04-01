@@ -1,4 +1,4 @@
-﻿# OPERATIONAL HANDOFF Ã¢â‚¬â€ APRIL 1, 2026: ARCH-003 FRONTEND UI/UX REFACTOR
+﻿# OPERATIONAL HANDOFF -- APRIL 1, 2026 (SESSION 4): YAHOO PIPELINE FIXES + FRONTEND UAT
 
 > **Ground truth as of April 1, 2026.** Author: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk posture Ã‚Â· `AGENTS.md` for roles Ã‚Â· `HEARTBEAT.md` for loops.
@@ -381,7 +381,11 @@ This feeds the fantasy dashboard's injury display (currently sourced from Yahoo 
 | **Stat ID 57/83/85 unmapped** | âœ… FIXED (Apr 1) | `_YAHOO_STAT_FALLBACK` now maps 57â†’BB, 83â†’NSV, 85â†’OBP. **VERIFIED** via `/league/{game_key}.l.{league_id}/settings?format=json` endpoint. Dynamic mapping recommended. |
 | **Negative stat values (-1 GS)** | âœ… FIXED (Apr 1) | `_extract_team_stats()` clamps `float(val) < 0` â†’ â€œ0â€ for counting stats only (GS, HR). **NOTE:** NSB (Net Stolen Bases) CAN be negative (e.g., 0 SB - 1 CS = -1) â€” do NOT clamp. |
 | **Dashboard timestamp UTC** | âœ… FIXED (Apr 1) | `dashboard_service.py` lines 206 + 827 now use `datetime.now(ZoneInfo(â€œAmerica/New_Yorkâ€))`. |
-| **In-season projection pipeline** | âš ï¸ CRITICAL GAP | Pre-season CSVs at 100% weight while season is live. No FanGraphs RoS, no ensemble blender. K-19 spec in progress. |
+| **In-season projection pipeline** | âš ï¸ CRITICAL GAP | Pre-season CSVs at 100% weight while season is live. No FanGraphs RoS, no ensemble blender. K-19 spec complete. |
+| **NSB negative clamp regression** | ✅ FIXED (Apr 1 S4) | `_NON_NEGATIVE_STATS` frozenset in `main.py` `_extract_team_stats()` -- NSB excluded (can be negative: 0 SB - 1 CS = -1). |
+| **Playoffs hallucination** | ✅ FIXED (Apr 1 S4) | `is_playoffs = raw_playoffs and (week >= 20)` guard in matchup endpoint -- Yahoo falsely sets is_playoffs=1 in early weeks. |
+| **Waiver owned% = 0.0%** | ✅ FIXED (Apr 1 S4) | Removed `"out": "metadata"` from `get_free_agents()` + `get_waiver_players()`; `find_ownership()` checks `percent_rostered` first. |
+| **Statcast UTC yesterday bug** | ✅ FIXED (Apr 1 S4) | `run_daily_ingestion()` uses `(datetime.now(ZoneInfo("America/New_York")) - timedelta(days=1)).date()` -- Railway UTC fetched wrong date after midnight ET. |
 
 ---
 
@@ -452,86 +456,161 @@ ARCH-001 is fully shipped: Phases 1 + 2 + 3 LIVE on Railway. All Gemini audit fi
 
 ## 7. Delegation Bundles
 
-### GEMINI CLI (Ops) â€” ACTIVE: Deploy Session 3 Fixes + UI Re-Audit
+### GEMINI CLI (Ops) -- ACTIVE: Session 4 Frontend Fixes (K-21/22/23)
 
-**ARCH-003 F1â€“F7: COMPLETE.** New tasks for this session:
+**G-1 through G-3: COMPLETE (prior session).** New tasks from Kimi K-21/K-22/K-23 UAT reports.
 
-#### G-1: Deploy Session 3 Backend Fixes
-```
+**Hard constraints (all tasks):**
+- Do NOT edit any `.py` file
+- TypeScript must pass: `cd frontend && npx tsc --noEmit`
+- Each task is independent -- ship in any order
+
+---
+
+#### G-4: Deploy Session 4 Backend Fixes
+```bash
 railway up
 ```
 Verify after deploy:
-- `/api/fantasy/lineup/async-optimize` â€” submit a job, poll it to completion (no Pydantic crash)
-- `/api/fantasy/roster` â€” player names have no injury suffixes (â€œJason Adamâ€ not â€œJason Adam Quadricepsâ€)
-- `/api/fantasy/matchup` â€” no negative stat values visible
-- Dashboard timestamp shows ET time (e.g., â€œ1:30 PM ETâ€ not UTC offset)
+- `/api/fantasy/matchup` -- no "Playoffs" label in Week 2; no negative stat values
+- `/api/fantasy/waiver` -- owned% values are non-zero (e.g., "82%" for Brandon Lowe)
+- Dashboard timestamp shows ET time (not UTC)
 
-#### G-2: Live Yahoo API Response Capture
-**Purpose:** Claude needs exact JSON structures to fix remaining Yahoo parsing issues.
+---
 
-Run these Railway commands and save full output to `reports/GEMINI_YAHOO_RESPONSES_2026-04-01.md`:
+#### G-5: Fix `apiFetch` Error Parsing (K-21 Critical)
+**File:** `frontend/lib/api.ts` lines 66-75
 
+**Problem:** When Yahoo returns a 422 with `body.detail = {error: ["msg"]}`, the error
+handler does `String(detail)` which produces `"[object Object]"`. Users see "433:[object Object]".
+
+**Fix:**
+```typescript
+// Replace the current detail extraction with:
+let detail = ''
+try {
+  const body = await res.json()
+  const raw = body?.detail ?? body?.message ?? ''
+  detail = typeof raw === 'string' ? raw : JSON.stringify(raw)
+} catch (_) { /* body not JSON */ }
+throw new Error(`${res.status}${detail ? `: ${detail}` : `: ${path}`}`)
+```
+
+**Acceptance:** Lineup page optimize error shows "422: Field required: league_key" not "[object Object]"
+
+---
+
+#### G-6: "Score" -> "Smart Score" + Tooltip (K-21 Critical)
+**File:** `frontend/app/(dashboard)/fantasy/lineup/page.tsx`
+
+**Problem:** Column header says "Score" but the value is `smart_score` (a weighted algo
+that CAN be negative when pitcher is an ace or park conditions are poor). Users are confused
+by negative scores.
+
+**Fix:**
+1. Change column header from "Score" to "Smart Score"
+2. Add a Radix `<Tooltip>` with content:
+   `"Weighted composite: projections + park factor + pitcher matchup. Negative = tough spot."`
+3. When `smart_score === 0 || smart_score == null`, show "--" instead of "0.000"
+
+**Acceptance:** Column says "Smart Score"; hovering shows tooltip; 0 shows "--"
+
+---
+
+#### G-7: PROJ Column Fallback to `implied_runs` (K-21 High)
+**File:** `frontend/app/(dashboard)/fantasy/lineup/page.tsx` lines 283-293
+
+**Problem:** `valuationsMap` is missing most players (only populated for pre-ranked players),
+so PROJ column shows "--" for most of the roster.
+
+**Fix:** When `valuationsMap[p.player_id]` is falsy, fall back to `p.implied_runs`:
+```typescript
+const proj = valuationsMap[p.player_id]?.projected_value ?? p.implied_runs ?? null
+// Display: proj != null ? proj.toFixed(2) : '--'
+```
+
+**Acceptance:** PROJ column shows a value for >80% of roster (not mostly "--")
+
+---
+
+#### G-8: Add Missing Stat Labels to `constants.ts` (K-22 Medium)
+**File:** `frontend/lib/constants.ts`
+
+**Add to STAT_LABELS** (these are currently missing and show as raw IDs or undefined):
+```typescript
+// Add to string keys section:
+'K/BB': 'K/BB Ratio',
+'GS': 'Games Started',
+'NSV': 'Net Saves',
+// Add to numeric IDs section:
+'38': 'K/BB Ratio',
+'62': 'Games Started',
+'83': 'Net Saves',
+```
+
+Note: `'83': 'Net Saves'` and `'62': 'Games Started'` may already exist -- check before adding.
+
+**Acceptance:** Matchup page shows "K/BB Ratio", "Games Started", "Net Saves" instead of raw IDs
+
+---
+
+#### G-9: Rebuild Settings Page (K-23 Critical)
+**File:** `frontend/app/(dashboard)/settings/page.tsx`
+
+**Problem:** Settings page shows raw JSON (`["discord"]`, `null`, `300 s`) with no interactive
+controls -- it is a read-only JSON viewer, not a settings UI.
+
+**Step 1 -- Install missing shadcn components (run in `frontend/`):**
 ```bash
-# Roster raw response (first 3 players, full structure)
-railway run python -c â€œ
-from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
-import json
-c = YahooFantasyClient()
-raw = c.get_roster_raw()
-print(json.dumps(raw, indent=2, default=str))
-â€œ 2>&1 | head -200
-
-# Free agents sample (5 players)
-railway run python -c â€œ
-from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
-import json
-c = YahooFantasyClient()
-fa = c.get_free_agents(count=5)
-print(json.dumps(fa, indent=2, default=str))
-â€œ 2>&1 | head -200
-
-# League settings (stat category IDs) â€” MUST append ?format=json to get JSON (default is XML)
-railway run python -c â€œ
-from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
-import json
-c = YahooFantasyClient()
-s = c.get_league_settings()
-print(json.dumps(s, indent=2, default=str))
-â€œ 2>&1 | head -100
+npx shadcn@latest add switch slider select radio-group tooltip
 ```
 
-**Expected JSON Structure:** Stat categories live at `fantasy_content.league[1].settings[0].stat_categories.stats[].stat`
-```json
-{
-  "stat_id": "57",           // â† Stat 57 = BB (Walks)
-  "name": "Walks",
-  "display_name": "BB",
-  "position_type": "B"
-}
+**Step 2 -- Replace the generic render loop** with typed sections:
+
+**Section: Notifications**
+- `notifications_enabled` boolean --> `<Switch checked={...} onCheckedChange={...} />`
+- `notification_channels` array --> render each channel as a badge; `["discord"]` shows Discord badge
+- `discord_user_id` null/string --> show "Not connected" or the user ID
+
+**Section: Analysis Cadence**
+- `analysis_interval_seconds` number --> `<Select>` with options:
+  - 300 -> "5 minutes", 600 -> "10 minutes", 1800 -> "30 minutes", 3600 -> "1 hour"
+- Default selected = current value
+
+**Section: Waiver Wire**
+- `waiver_min_owned` number --> `<Slider min={0} max={100} step={5} />` with "Min owned: X%" label
+- `waiver_max_owned` number --> `<Slider min={0} max={100} step={5} />` with "Max owned: X%" label
+
+**Section: Lineup Strategy**
+- `hot_streak_threshold` number (z-score) --> `<RadioGroup>` with 3 options:
+  - Aggressive (z > 0.3), Balanced (z > 0.5), Conservative (z > 0.8)
+  - Map current value to nearest preset; show preset labels NOT raw z-score
+
+**State:** Use `useState` initialized from API data. Add a "Save" button per section that
+calls `PATCH /api/fantasy/settings` with the section's changed fields.
+
+**Acceptance criteria:**
+- No raw JSON strings visible to users
+- Toggles, sliders, and selects are interactive
+- "Save" button calls the API (even if the backend returns 501 -- just don't crash)
+- TypeScript passes
+
+---
+
+#### G-10: Fix PROBABLE Badge (Domain Correction)
+**File:** `frontend/components/shared/status-badge.tsx`
+
+**Problem:** PROBABLE was mapped to yellow (injury warning color). In baseball, PROBABLE
+means "Probable Pitcher" (i.e., confirmed starter) -- this is GOOD news, not a warning.
+
+**Fix:** Add `PROBABLE` and `Probable` to the GREEN set (same as ACTIVE):
+```typescript
+case 'PROBABLE':
+case 'Probable':
+  return { color: 'bg-emerald-500/15 text-emerald-400', label: 'STARTING' }
 ```
 
-**VERIFIED Stat IDs for your league:**
-- `57` = BB (Walks)
-- `83` = NSV (Net Saves)  
-- `85` = OBP (On-base Percentage)
-
-Save output to `reports/GEMINI_YAHOO_RESPONSES_2026-04-01.md`. This is the primary input for Claudeâ€™s next session.
-
-#### G-3: UI Issues Re-Audit
-**Context:** User says â€œcountless UI issues remainâ€ despite ARCH-003 completion. Do a fresh read-only audit of all fantasy pages and report whatâ€™s visually broken, confusing, or missing.
-
-For each issue found:
-- Page affected
-- Exact description of what the user sees
-- Severity (P0=blocks use, P1=confusing, P2=cosmetic)
-- Whether itâ€™s frontend-only or needs backend data fix
-
-Save to `reports/GEMINI_UI_AUDIT2_2026-04-01.md`.
-
-**Hard constraints:**
-- Do NOT edit any `.py` file
-- TypeScript must pass: `cd frontend && npx tsc --noEmit`
-
+**Acceptance:** Player with status=PROBABLE shows green "STARTING" badge
 
 ---
 
@@ -825,8 +904,8 @@ npm install @dnd-kit/sortable @dnd-kit/core
 
 ## 8. Yahoo Ingestion Pipeline â€” Current State
 
-### Session 3 Fixes (COMPLETE â€” April 1, 2026)
-All K-14 through K-18 backend fixes shipped. Test suite: 1091 pass, 1 pre-existing failure.
+### Session 3+4 Fixes (COMPLETE -- April 1, 2026)
+All K-14 through K-18 backend fixes shipped + 4 Session 4 fixes (NSB clamp, playoffs guard, waiver owned%, Statcast UTC). Test suite: 1091 pass, 1 pre-existing failure.
 
 ### What is working (confirmed live)
 | Component | Status | Notes |

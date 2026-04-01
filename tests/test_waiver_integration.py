@@ -29,7 +29,9 @@ def _make_yahoo_player(name="Test Player", positions=None, percent_owned=42.5):
 
 class TestYahooClientOutParam:
 
-    def test_get_free_agents_includes_out_param(self):
+    def test_get_free_agents_omits_out_param(self):
+        # K-20 finding: "out=metadata" strips percent_rostered from Yahoo response.
+        # Fix: remove the "out" param entirely so default response includes ownership data.
         from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 
         client = YahooFantasyClient.__new__(YahooFantasyClient)
@@ -47,14 +49,16 @@ class TestYahooClientOutParam:
 
         client.get_free_agents(count=10)
 
-        assert "out" in captured_params, "get_free_agents() must include 'out' param"
-        # Yahoo MLB rejects both 'ownership' and 'stats' on the /players collection endpoint
-        # (400: Invalid subresource requested). Use metadata only.
-        assert "ownership" not in captured_params["out"], "ownership subresource breaks MLB API"
-        assert "stats" not in captured_params["out"], "stats subresource breaks MLB players endpoint"
-        assert "metadata" in captured_params["out"]
+        assert "out" not in captured_params, (
+            "get_free_agents() must NOT include 'out' param -- "
+            "K-20: out=metadata strips percent_rostered from Yahoo response"
+        )
+        # Verify other required params are present
+        assert "status" in captured_params
+        assert "count" in captured_params
 
-    def test_get_waiver_players_includes_out_param(self):
+    def test_get_waiver_players_omits_out_param(self):
+        # K-20 finding: "out=metadata" strips percent_rostered from Yahoo response.
         from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 
         client = YahooFantasyClient.__new__(YahooFantasyClient)
@@ -72,11 +76,12 @@ class TestYahooClientOutParam:
 
         client.get_waiver_players(count=10)
 
-        assert "out" in captured_params, "get_waiver_players() must include 'out' param"
-        # Yahoo MLB rejects both 'ownership' and 'stats' on the /players collection endpoint
-        assert "ownership" not in captured_params["out"], "ownership subresource breaks MLB API"
-        assert "stats" not in captured_params["out"], "stats subresource breaks MLB players endpoint"
-        assert "metadata" in captured_params["out"]
+        assert "out" not in captured_params, (
+            "get_waiver_players() must NOT include 'out' param -- "
+            "K-20: out=metadata strips percent_rostered from Yahoo response"
+        )
+        assert "status" in captured_params
+        assert "count" in captured_params
 
 
 # ---------------------------------------------------------------------------

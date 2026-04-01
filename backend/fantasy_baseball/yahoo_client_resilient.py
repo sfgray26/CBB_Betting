@@ -532,8 +532,9 @@ class YahooFantasyClient:
         sort=AR ranks by percent rostered — the only sort that reflects real
         pickup value. Yahoo's default sort order is opaque and unreliable.
         """
-        params = {"status": "A", "start": start, "count": count, "sort": "AR",
-                  "out": "metadata"}
+        # Do NOT pass "out": "metadata" — that strips ownership data from the response.
+        # Yahoo returns percent_rostered (not percent_owned) in the rankings block.
+        params = {"status": "A", "start": start, "count": count, "sort": "AR"}
         if position:
             params["position"] = position
         data = self._get(f"league/{self.league_key}/players", params=params)
@@ -549,8 +550,7 @@ class YahooFantasyClient:
         return self._parse_player_with_stats(player)
 
     def get_waiver_players(self, start: int = 0, count: int = 25) -> list[dict]:
-        params = {"status": "W", "start": start, "count": count,
-                  "out": "metadata"}
+        params = {"status": "W", "start": start, "count": count}
         data = self._get(f"league/{self.league_key}/players", params=params)
         players_raw = self._league_section(data, 1).get("players", {})
         return self._parse_players_block(players_raw)
@@ -884,16 +884,24 @@ class YahooFantasyClient:
                     find_ownership(item, depth + 1)
             elif isinstance(obj, dict):
                 if "ownership" in obj:
-                    pct_block = obj["ownership"].get("percent_owned", {})
-                    if isinstance(pct_block, dict):
-                        raw = pct_block.get("value", 0)
-                    else:
-                        raw = pct_block
-                    owned_pct = YahooFantasyClient._safe_float(raw, 0.0)
-                # Also check for old format
-                elif "percent_owned" in obj and "value" in obj["percent_owned"]:
+                    own = obj["ownership"]
+                    # Yahoo 2025+ returns percent_rostered; older format used percent_owned
+                    for _key in ("percent_rostered", "percent_owned"):
+                        pct_block = own.get(_key)
+                        if pct_block is not None:
+                            if isinstance(pct_block, dict):
+                                raw = pct_block.get("value", 0)
+                            else:
+                                raw = pct_block
+                            owned_pct = YahooFantasyClient._safe_float(raw, 0.0)
+                            if owned_pct > 0:
+                                break
+                # Also check for old flat format
+                elif "percent_rostered" in obj:
+                    owned_pct = YahooFantasyClient._safe_float(obj["percent_rostered"], 0.0)
+                elif "percent_owned" in obj and isinstance(obj.get("percent_owned"), dict):
                     owned_pct = YahooFantasyClient._safe_float(
-                        obj["percent_owned"]["value"], 0.0
+                        obj["percent_owned"].get("value", 0), 0.0
                     )
                 # Recurse
                 for v in obj.values():

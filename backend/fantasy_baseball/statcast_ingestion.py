@@ -723,7 +723,8 @@ def run_daily_ingestion(target_date: Optional[date] = None):
         target_date: Date to ingest (default: yesterday)
     """
     if target_date is None:
-        target_date = date.today() - timedelta(days=1)
+        # Anchor to ET — Railway runs UTC so date.today() can be wrong after midnight ET
+        target_date = (datetime.now(ZoneInfo("America/New_York")) - timedelta(days=1)).date()
     
     logger.info("=" * 60)
     logger.info(f"Starting daily Statcast ingestion for {target_date}")

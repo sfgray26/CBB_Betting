@@ -5576,12 +5576,18 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                     sid = str(stat.get("stat_id", ""))
                     key = stat_id_map.get(sid, sid)
                     val = stat.get("value", "")
-                    # Clamp impossible negative values (Yahoo occasionally sends -1 for GS etc.)
-                    try:
-                        if float(val) < 0:
-                            val = "0"
-                    except (TypeError, ValueError):
-                        pass
+                    # Clamp negative values only for stats where negative is impossible.
+                    # NSB (Net Stolen Bases) CAN be negative (0 SB - 1 CS = -1) — do not clamp.
+                    _NON_NEGATIVE_STATS = frozenset({
+                        "GS", "W", "SV", "K", "HR", "R", "RBI", "H",
+                        "IP", "HLD", "QS", "BB", "NSV", "62",
+                    })
+                    if key in _NON_NEGATIVE_STATS:
+                        try:
+                            if float(val) < 0:
+                                val = "0"
+                        except (TypeError, ValueError):
+                            pass
                     if key:
                         stats_dict[key] = val
         
@@ -5600,7 +5606,10 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                 week = int(w)
             except (TypeError, ValueError):
                 pass
-        is_playoffs = bool(m.get("is_playoffs", 0))
+        # Guard: Yahoo sometimes returns is_playoffs=1 mid-season (Week 2 etc.)
+        # MLB fantasy regular season runs Weeks 1-19; playoffs start Week 20+.
+        raw_playoffs = bool(m.get("is_playoffs", 0))
+        is_playoffs = raw_playoffs and (week is not None and week >= 20)
 
         # Handle multiple Yahoo response shapes for teams
         # Shape A: teams at top level  Shape B: teams nested under "0" (Yahoo indexed format)
