@@ -1,6 +1,6 @@
 # HANDOFF.md — Fantasy Baseball Platform Master Plan (In-Season 2026 Edition)
 
-> **Date:** April 1, 2026 | **Author:** Claude Code (Master Architect)
+> **Date:** April 1, 2026 (updated session S7) | **Author:** Claude Code (Master Architect)
 > **Risk Level:** ELEVATED — in-season with pre-season CSV fallback still active
 
 ---
@@ -39,15 +39,15 @@ The platform is live for the 2026 MLB fantasy season. The Yahoo API pipeline is 
 | K/9 value (16.20) appearing in Walks column | K-22 | HIGH | Decimal guard in `_extract_team_stats()`: float BB != int -> reject + warn | Claude | FIXED S5 |
 | Missing NSV on matchup (1 save shown as 0) | K-22 | HIGH | Stat ID 83 extraction + fallback mapping audit | Claude + Gemini | PENDING G-8 |
 | Stat labels missing: K/BB, GS, NSV in `constants.ts` | K-22 | MEDIUM | Add string + numeric ID mappings | Gemini | PENDING G-8 |
-| **Matchup score calculation wrong** | **K-26** | **CRITICAL** | **H/AB + IP counted as scoring; Batter K uses wrong win direction** | **Claude** | **OPEN HIGHEST PRIORITY** |
+| Matchup score calculation wrong | K-26 | CRITICAL | `MATCHUP_DISPLAY_ONLY` set excludes IP/H_AB/GS; `LOWER_IS_BETTER` expanded with L/26/27/29; `MATCHUP_STAT_ORDER` enforces display order; ScoreBanner filters display-only before score calc | Claude | **FIXED S7** |
 | PROBABLE badge shown yellow/injury (should be green/SP) | K-19 domain | MEDIUM | Map PROBABLE to emerald/STARTING | Gemini | PENDING G-10 |
 | Waiver "Key Stats" blank (shows deficit analysis, not stats) | K-20 | HIGH | Added `stats: dict` to `WaiverPlayerOut`; `get_free_agents()` now passes `out=stats,percent_owned`; `_to_waiver_player()` extracts stats | Claude | FIXED S6 |
 | Settings page is a read-only JSON dump | K-23 | CRITICAL | Rebuild with Switch/Select/Slider; hide z-score behind presets | Gemini | PENDING G-9 |
 | Pre-season CSV at 100% weight while season is live | K-17 | CRITICAL | `fangraphs_loader.py` built with ensemble blend; needs daily_ingestion wiring (100_012 + 100_014) | Claude | IN PROGRESS S6 |
-| No FanGraphs RoS download | K-17 / K-19 | CRITICAL | `fangraphs_loader.py` built — 4 systems (ATC/BAT/Steamer/ZiPS), cloudscraper, name normalization | Claude | BUILT S6 — needs daily_ingestion wiring |
-| No ensemble blender (ATC/Steamer/ZiPS/THE BAT) | K-17 / K-19 | CRITICAL | Schema: 5 blend columns added to `PlayerDailyMetric` model + SQL migration; `compute_ensemble_blend()` in `fangraphs_loader.py` | Claude | BUILT S6 — needs daily_ingestion job (100_014) |
-| No Yahoo ADP/injury polling | K-17 / K-19 | HIGH | Lock 100_013 reserved; 4-hour cadence designed | Claude | OPEN |
-| No projection freshness alerting | K-16 / K-17 | HIGH | Lock 100_015 reserved; 1-hour SLA gate designed | Claude | OPEN |
+| No FanGraphs RoS download | K-17 / K-19 | CRITICAL | `fangraphs_loader.py` built + wired: `_fetch_fangraphs_ros()` job (100_012, daily 3 AM ET) populates `_ROS_CACHE`; `_update_ensemble_blend()` job (100_014, daily 5 AM ET) computes + upserts blend columns | Claude | **FIXED S7** |
+| No ensemble blender (ATC/Steamer/ZiPS/THE BAT) | K-17 / K-19 | CRITICAL | `_update_ensemble_blend()` job wired (100_014, daily 5 AM ET); reads `_ROS_CACHE` or re-fetches, calls `compute_ensemble_blend()`, upserts `blend_hr/rbi/avg/era/whip` | Claude | **FIXED S7** |
+| No Yahoo ADP/injury polling | K-17 / K-19 | HIGH | `get_adp_and_injury_feed()` added to `yahoo_client_resilient.py`; `_poll_yahoo_adp_injury()` job wired in `daily_ingestion.py` (100_013, every 4h) | Claude | **FIXED S7** |
+| No projection freshness alerting | K-16 / K-17 | HIGH | `_check_projection_freshness()` implemented — queries ensemble_blend (<12h), statcast (<6h), checks `_ROS_CACHE` (<12h); WARNs per violation; stores report in `_job_status` | Claude | **FIXED S7** |
 | CSV loader rejects full file on column mismatch | K-16 | MEDIUM | Header validation warning added to both loaders; per-row errors upgraded to WARNING | Claude | FIXED S5 |
 | CBB V9.2 recalibration (SNR/integrity scalar stacking) | K-12 | BLOCKED | EMAC-068 — do not touch Kelly math before Apr 7 | Claude | BLOCKED APR 7 |
 | OddsAPI to BDL GOAT MLB migration | CLAUDE.md | BLOCKED | Cancel post-tournament; expand `balldontlie.py` | Claude | BLOCKED APR 7 |
@@ -106,15 +106,15 @@ Layer 5: Projection Freshness Guard
 | Job | Lock ID | Cadence | Status | Notes |
 |-----|---------|---------|--------|-------|
 | `statcast` | 100_002 | Daily 2 AM ET | LIVE | UTC bug fixed (S4) |
-| `rolling_z` | 100_003 | Daily 3 AM ET | FRAGILE | Silently skips if < 7 days data; no alert |
+| `rolling_z` | 100_003 | Daily 3 AM ET | LIVE | M-5 fixed: WARNs when all or majority of players skipped |
 | `waiver_scan` | 100_007 | Daily 6 AM ET | LIVE | Owned% fix deployed |
 | `mlb_brief` | 100_008 | Daily 7 AM ET | LIVE | |
 | `valuation_cache` | 100_011 | On demand + scheduled | LIVE | ARCH-001 Phase 2 |
 | `mlb_odds` | 100_001 | Every 30 min | DIRTY | Raw OddsAPI — migrate to BDL Apr 7 |
-| `fangraphs_ros` | 100_012 | Daily 3 AM ET | NOT BUILT | Highest priority |
-| `yahoo_adp_injury` | 100_013 | Every 4 hours | NOT BUILT | |
-| `ensemble_update` | 100_014 | Daily 5 AM ET | NOT BUILT | Depends on 100_012 |
-| `projection_freshness_check` | 100_015 | Every 1 hour | NOT BUILT | SLA gate before lineup opt |
+| `fangraphs_ros` | 100_012 | Daily 3 AM ET | **LIVE** | `_fetch_fangraphs_ros()` — populates `_ROS_CACHE` |
+| `yahoo_adp_injury` | 100_013 | Every 4 hours | **LIVE** | `_poll_yahoo_adp_injury()` — upserts status/injury to `rolling_window` |
+| `ensemble_update` | 100_014 | Daily 5 AM ET | **LIVE** | `_update_ensemble_blend()` — upserts blend_hr/rbi/avg/era/whip |
+| `projection_freshness_check` | 100_015 | Every 1 hour | **LIVE** | `_check_projection_freshness()` — alert-only SLA gate |
 
 ---
 
@@ -139,11 +139,11 @@ Layer 5: Projection Freshness Guard
 |---|------|-------|-------------|
 | 2.1 | FanGraphs RoS downloader | Claude | `fangraphs_loader.py` — 4 systems, cloudscraper, ensemble blend | **DONE S6** |
 | 2.2 | `PlayerDailyMetric` schema extension | Claude | SQL migration `add_blend_columns.sql` + model columns | **DONE S6** |
-| 2.3 | Ensemble blender job (100_014) | Claude | `daily_ingestion.py` — weighted blend logic |
-| 2.4 | Yahoo ADP/injury poller (100_013) | Claude | `yahoo_client_resilient.py` — pagination + DB write |
-| 2.5 | Projection freshness alerting (100_015) | Claude | `daily_ingestion.py` — SLA gate before lineup opt |
-| 2.6 | OddsAPI to BDL GOAT MLB migration | Claude | `balldontlie.py` — `/mlb/v1/` endpoints |
-| 2.7 | CBB V9.2 recalibration (EMAC-068 unlocks Apr 7) | Claude | `betting_model.py` — scalar stacking fix per K-12 |
+| 2.3 | Ensemble blender job (100_014) | Claude | `daily_ingestion.py` — weighted blend logic | **DONE S7** |
+| 2.4 | Yahoo ADP/injury poller (100_013) | Claude | `yahoo_client_resilient.py` — pagination + DB write | **DONE S7** |
+| 2.5 | Projection freshness alerting (100_015) | Claude | `daily_ingestion.py` — SLA gate, alert-only | **DONE S7** |
+| 2.6 | OddsAPI to BDL GOAT MLB migration | Claude | `balldontlie.py` — `/mlb/v1/` endpoints | BLOCKED APR 7 |
+| 2.7 | CBB V9.2 recalibration (EMAC-068 unlocks Apr 7) | Claude | `betting_model.py` — scalar stacking fix per K-12 | BLOCKED APR 7 |
 
 ### Phase 3 — Intelligence Upgrades (Target: Apr 21, after 3 weeks live data)
 
@@ -304,25 +304,36 @@ const scoringCats = allCats.filter(cat => MATCHUP_CATEGORIES[cat]?.scoring !== f
 
 ## Immediate Action Items
 
-### Complete This Session (S5)
+### Complete This Session (S7 — Apr 1, 2026)
 
 | # | Item | Status |
 |---|------|--------|
-| H-2 | K/9 decimal guard in `_extract_team_stats()` | DONE |
-| 1.8 | CSV header validation + WARNING logging in both loaders | DONE |
+| H-2 | Matchup Category Alignment Fix (constants.ts + matchup/page.tsx) | ✅ DONE |
+| M-5 | rolling_z silent skip alert | ✅ DONE |
+| 2.3 | Ensemble blender (100_014) wired to daily_ingestion | ✅ DONE |
+| 2.4 | Yahoo ADP/injury poller (100_013) | ✅ DONE |
+| 2.5 | Projection freshness SLA gate (100_015) | ✅ DONE |
+| 2.1 | fangraphs_ros (100_012) wired to daily_ingestion | ✅ DONE |
 
-### Pending (Claude -- requires quota or K-24/K-25/K-26 first)
+### Pending (Claude)
 
 | # | Item | Dependency | File | Effort |
 |---|------|-----------|------|--------|
-| **H-2** | **Matchup Category Alignment Fix** | **K-26 report** | **`frontend/lib/constants.ts` + `matchup/page.tsx`** | **Medium** |
-| H-1 | WaiverPlayerOut `stats` field | K-24 report | `schemas.py` line 380, `main.py` `_to_waiver_player()` | Medium |
-| Phase 2.1 | `fangraphs_loader.py` (new file) | K-25 report | `backend/fantasy_baseball/` | Large |
-| Phase 2.2 | `PlayerDailyMetric` schema: 5 blend columns | After 2.1 | Alembic migration | Small |
-| Phase 2.3 | Ensemble blender job (lock 100_014) | After 2.2 | `daily_ingestion.py` | Medium |
-| Phase 2.4 | Yahoo ADP/injury poller (lock 100_013) | After K-24 | `yahoo_client_resilient.py` | Medium |
-| Phase 2.5 | Projection freshness SLA gate (lock 100_015) | After 2.3 | `daily_ingestion.py` | Small |
-| M-5 | `rolling_z` silent skip alert | None | `daily_ingestion.py` rolling_z job | Small |
+| Phase 2.6 | OddsAPI → BDL GOAT MLB migration | Apr 7 subscription swap | `balldontlie.py` — `/mlb/v1/` endpoints | Large |
+| Phase 2.7 | CBB V9.2 recalibration (EMAC-068 unlocks Apr 7) | Apr 7 | `betting_model.py` | Large |
+| Phase 3.1 | Expose `projection_freshness` report via `/admin/ingestion/status` | None | `main.py` admin route | Small |
+| Phase 3.2 | Upgrade freshness gate to BLOCK lineup opt when SLA violated | After 3.1 stable | `daily_ingestion.py` + `main.py` lineup route | Medium |
+
+### S7 Completed (All closed this session)
+
+| # | Item | File | Status |
+|---|------|------|--------|
+| H-2 | Matchup Category Alignment Fix | `frontend/lib/constants.ts` + `matchup/page.tsx` | ✅ DONE |
+| M-5 | `rolling_z` silent skip alert | `backend/services/daily_ingestion.py` | ✅ DONE |
+| 2.1 | FanGraphs RoS wired to scheduler (100_012) | `daily_ingestion.py` | ✅ DONE |
+| 2.3 | Ensemble blender wired to scheduler (100_014) | `daily_ingestion.py` | ✅ DONE |
+| 2.4 | Yahoo ADP/injury poller (100_013) | `yahoo_client_resilient.py` + `daily_ingestion.py` | ✅ DONE |
+| 2.5 | Projection freshness SLA gate (100_015) | `daily_ingestion.py` | ✅ DONE |
 
 
 ## Advisory Lock Registry
@@ -340,10 +351,10 @@ const scoringCats = allCats.filter(cat => MATCHUP_CATEGORIES[cat]?.scoring !== f
 | 100_009 | openclaw_perf | LIVE |
 | 100_010 | openclaw_sweep | LIVE |
 | 100_011 | valuation_cache | LIVE |
-| 100_012 | fangraphs_ros | RESERVED |
-| 100_013 | yahoo_adp_injury | RESERVED |
-| 100_014 | ensemble_update | RESERVED |
-| 100_015 | projection_freshness_check | RESERVED |
+| 100_012 | fangraphs_ros | LIVE |
+| 100_013 | yahoo_adp_injury | LIVE |
+| 100_014 | ensemble_update | LIVE |
+| 100_015 | projection_freshness_check | LIVE |
 
 **Next available:** 100_016
 
@@ -368,26 +379,100 @@ const scoringCats = allCats.filter(cat => MATCHUP_CATEGORIES[cat]?.scoring !== f
 
 ---
 
-## Session 4 Summary � Gemini CLI (Ops) � Apr 1, 2026
+## Session 4 Summary — Gemini CLI (Ops) — Apr 1, 2026
 
 ### G-1: Deployment & Verification
-- **Build Fixed:** Resolved UTF-8 encoding issue in \status-badge.tsx\ that was blocking production builds.
-- **Deploy:** \
-ailway up\ successful.
+- **Build Fixed:** Resolved UTF-8 encoding issue in `status-badge.tsx` that was blocking production builds.
+- **Deploy:** `railway up` successful.
 - **Verification:**
-    - Player Names: ? CLEAN (no injury suffixes).
-    - Matchup Stats: ? NO NEGATIVES ( GS clamped to 0).
-    - Dashboard Timestamp: ? ET ANCHORED (EDT/-04:00).
-    - **Async-Optimize Job:** ? CRITICAL FAILURE. Job hangs in \processing\ due to SQL Syntax Error in \job_queue_service.py\ (line 124: \:result::jsonb\). Worker transaction aborts. Verified via live polling and code inspection.
+    - Player Names: CLEAN (no injury suffixes).
+    - Matchup Stats: NO NEGATIVES (GS clamped to 0).
+    - Dashboard Timestamp: ET ANCHORED (EDT/-04:00).
+    - **Async-Optimize Job:** CRITICAL FAILURE. Job hangs in `processing` due to SQL Syntax Error in `job_queue_service.py` (line 124: `:result::jsonb`). Worker transaction aborts. Verified via live polling and code inspection.
 
 ### G-2: Yahoo API Capture
 - Captured full roster, free agents sample, and league settings JSON.
-- Saved to \
-eports/GEMINI_YAHOO_RESPONSES_2026-04-01.md\.
+- Saved to `reports/GEMINI_YAHOO_RESPONSES_2026-04-01.md`.
 - High-fidelity data confirmed for Claude's parsing logic fixes.
 
 ### G-3: UI Re-Audit
 - Fresh read-only pass across fantasy pages.
-- Documented 10+ UX/UI issues in \
-eports/GEMINI_UI_AUDIT2_2026-04-01.md\.
+- Documented 10+ UX/UI issues in `reports/GEMINI_UI_AUDIT2_2026-04-01.md`.
 - Key findings: dense tables, confusing column naming (Score vs Proj), and missing interactivity in dashboard flags.
+
+---
+
+## Session 7 Summary — Claude Code (Architect) — Apr 1, 2026
+
+**All 6 items in Claude's S7 queue completed and pushed.**
+
+### S7-1: H-2 — Matchup Category Alignment Fix
+
+**Problem:** Matchup score was miscalculated because IP and H/AB (display-only reference stats) were counted as scoring categories, Losses (L) was not in `LOWER_IS_BETTER`, and stats displayed in random Yahoo API order.
+
+**Files changed:**
+- `frontend/lib/constants.ts` — Added `MATCHUP_DISPLAY_ONLY` set (`IP`, `H/AB`, `GS`, `21`, `50`, `62`); expanded `LOWER_IS_BETTER` to include `L`, `26`, `27`, `29`; added `MATCHUP_STAT_ORDER` array enforcing Batters→Pitchers section order
+- `frontend/app/(dashboard)/fantasy/matchup/page.tsx` — `MatchupTable` now uses `orderedCats` (MATCHUP_STAT_ORDER first, unknowns appended); display-only stats show "(ref)" label and "—" in Edge column; `ScoreBanner` filters `MATCHUP_DISPLAY_ONLY` before computing score
+
+### S7-2: M-5 — rolling_z Silent Skip Alert
+
+**Problem:** `_calc_rolling_zscores` returned `records=0` with no log output when the season was < 7 days old and all players lacked sufficient history.
+
+**File changed:** `backend/services/daily_ingestion.py`
+- Added `skipped_insufficient_data` counter
+- `logger.warning` when all or majority (>50%) of players are skipped
+- `logger.debug` for minor skips (< 50%)
+- **Note:** There was also an indentation bug introduced here (missing `try:` line before the rows query) — this was discovered and fixed via py_compile during S7
+
+### S7-3: 100_012 — fangraphs_ros Wired to Scheduler
+
+**File changed:** `backend/services/daily_ingestion.py`
+- Added `fangraphs_ros: 100_012` to `LOCK_IDS`
+- Added module-level `_ROS_CACHE: dict = {}` for inter-job data sharing
+- Registered `_fetch_fangraphs_ros` job — daily 3 AM ET
+- Implemented `_fetch_fangraphs_ros()`: calls `fetch_all_ros("bat")` + `fetch_all_ros("pit")` from `fangraphs_loader.py`, stores results in `_ROS_CACHE` with `fetched_at` timestamp
+
+### S7-4: 100_014 — ensemble_update Wired to Scheduler
+
+**File changed:** `backend/services/daily_ingestion.py`
+- Added `ensemble_update: 100_014` to `LOCK_IDS`
+- Registered `_update_ensemble_blend` job — daily 5 AM ET (after fangraphs_ros at 3 AM)
+- Implemented `_update_ensemble_blend()`: reads `_ROS_CACHE` (re-fetches if stale), calls `compute_ensemble_blend()`, upserts `blend_hr/blend_rbi/blend_avg/blend_era/blend_whip` to `PlayerDailyMetric`
+
+### S7-5: 100_013 — Yahoo ADP/Injury Poller
+
+**Files changed:**
+- `backend/fantasy_baseball/yahoo_client_resilient.py` — Added `get_adp_and_injury_feed(pages=4, count_per_page=25)`: fetches players sorted by `sort=DA` (ADP order), 4 pages × 25 players, per-page `YahooAPIError` catch for partial tolerance
+- `backend/services/daily_ingestion.py` — Added `yahoo_adp_injury: 100_013`; registered `_poll_yahoo_adp_injury` job (every 4 hours); implemented method that calls client, upserts `status`/`injury_note`/`percent_owned` into `PlayerDailyMetric.rolling_window`
+
+### S7-6: 100_015 — Projection Freshness SLA Gate
+
+**File changed:** `backend/services/daily_ingestion.py`
+- Added `projection_freshness: 100_015` to `LOCK_IDS`
+- Registered `_check_projection_freshness` job (every 1 hour)
+- Implemented `_check_projection_freshness()`:
+  - Queries DB: latest `ensemble_blend` row (SLA: 12h) and latest `statcast` row (SLA: 6h)
+  - Checks `_ROS_CACHE["fetched_at"]` in-memory (SLA: 12h)
+  - `logger.warning` per violation with staleness hours
+  - Stores full report in `self._job_status["projection_freshness"]` for `/admin/ingestion/status`
+  - Alert-only — does NOT block anything yet (Phase 3.2 will add the hard gate)
+
+### S7 Test Results
+
+```
+1222 passed, 4 pre-existing failures, 3 warnings
+Pre-existing failures:
+  - test_betting_model.py::TestExposureAccounting × 3  (no local Postgres — DB auth fails)
+  - test_tournament_data.py::TestTournamentDataClient::test_cache_expired  (stale bracket cache)
+```
+
+`tests/test_ingestion_orchestrator.py::test_orchestrator_get_status_returns_all_jobs` was updated to include the 4 new job IDs.
+
+### Next Up for Claude (post-S7)
+
+| # | Item | When | File |
+|---|------|------|------|
+| Phase 3.1 | Expose `projection_freshness` report via `/admin/ingestion/status` | Any time | `main.py` admin route |
+| Phase 3.2 | Upgrade freshness gate to BLOCK lineup opt when SLA violated | After 3.1 stable | `daily_ingestion.py` + lineup route |
+| Phase 2.6 | OddsAPI → BDL GOAT MLB migration | Apr 7 | `balldontlie.py` |
+| Phase 2.7 | CBB V9.2 recalibration (EMAC-068) | Apr 7 | `betting_model.py` |

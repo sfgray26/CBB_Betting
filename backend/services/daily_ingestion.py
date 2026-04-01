@@ -790,10 +790,11 @@ class DailyIngestionOrchestrator:
             violations: list[str] = []
             report: dict = {"checked_at": now.isoformat(), "violations": violations}
 
-            async with get_db_session() as db:
+            db = SessionLocal()
+            try:
                 # --- ensemble_blend SLA (12 hours) ---
                 SLA_ENSEMBLE_H = 12
-                result = await db.execute(
+                result = db.execute(
                     text(
                         "SELECT MAX(date) FROM player_daily_metrics "
                         "WHERE data_source = 'ensemble_blend'"
@@ -816,7 +817,7 @@ class DailyIngestionOrchestrator:
 
                 # --- statcast SLA (6 hours) ---
                 SLA_STATCAST_H = 6
-                result = await db.execute(
+                result = db.execute(
                     text(
                         "SELECT MAX(date) FROM player_daily_metrics "
                         "WHERE data_source = 'statcast'"
@@ -836,6 +837,8 @@ class DailyIngestionOrchestrator:
                         msg = f"statcast stale: {age_h:.1f}h > SLA {SLA_STATCAST_H}h"
                         logger.warning("PROJECTION FRESHNESS: %s", msg)
                         violations.append(msg)
+            finally:
+                db.close()
 
             # --- _ROS_CACHE SLA (12 hours, in-memory) ---
             SLA_ROS_H = 12
