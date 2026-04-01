@@ -346,15 +346,15 @@ Next available: **100_012** (mlb_injuries), **100_013** (mlb_box_scores)
 ### Current State (Apr 1, 2026)
 ARCH-001 is fully shipped: Phases 1 + 2 + 3 LIVE on Railway. All Gemini audit findings resolved (High + Medium severity). The system is **stable**. We are in a holding pattern until April 7 unlocks the next major workstream.
 
-### Immediate (Before Apr 7) — Low effort, low risk
-1. **Low-severity UI cleanup** (from Gemini audit) — small targeted fixes, no architectural changes:
-   - Remove hardcoded "Draft: March 23 @ 7:30am" from `frontend/app/(dashboard)/fantasy/page.tsx`
-   - Convert waiver "Add" button to a Yahoo deep link (remove permanently-disabled state)
-   - Swap `DraftBoardTab` text loader for `TableSkeleton`
-   - Swap waiver rec pulse divs for card-shaped skeletons
-   - Centralise `STAT_LABELS` into `frontend/lib/constants.ts` (dedup from matchup page)
+### Immediate (Before Apr 7) — COMPLETE
+1. **Low-severity UI cleanup** ✅ — all 5 items done (Apr 1):
+   - `fantasy/page.tsx`: hardcoded draft date removed; `DraftBoardTab` text loader replaced with table skeleton
+   - `waiver/page.tsx`: disabled "Add" button → Yahoo deep link (`baseball.fantasysports.yahoo.com`); rec pulse divs → card-shaped skeletons
+   - `frontend/lib/constants.ts`: created — `STAT_LABELS`, `RATIO_STATS`, `LOWER_IS_BETTER` exported
+   - `matchup/page.tsx`: imports from `@/lib/constants` instead of local duplication
+   - TypeScript passes after all changes
 
-2. **Historical MCMC validation setup** — create a lightweight script that reads actual H2H outcomes from Yahoo weekly matchup results and computes Brier score against `win_probability` from `execution_decisions` table. No model changes — just measurement. (Can be queued for post-Apr 7 if bandwidth is tight.)
+2. **Historical MCMC validation setup** — deferred post-Apr 7. Needs 4 weeks of season data first. Script will read H2H outcomes from Yahoo via `/api/fantasy/matchup` history and compute Brier score against `execution_decisions.win_probability`.
 
 ### April 7+ — EMAC-068 Unblocks
 3. **CBB V9.2 recalibration** — Kimi has the K-12 spec memo ready. Fix SNR/integrity scalar stacking that makes the effective Kelly divisor ~3.4× instead of the calibrated 2.0×. This is the primary lever to improve the CBB win record. Do NOT touch any Kelly math before Apr 7.
@@ -487,13 +487,20 @@ TypeScript type-check passes after all fixes.
 ```
 You are Gemini CLI (Ops). Read this HANDOFF.md in full before acting.
 
-Current status: ARCH-001 Phases 1-3 LIVE. UI Audit COMPLETE. All High+Medium findings fixed.
+Current status: ARCH-001 Phase 3 fully deployed. Backend (CBB_Betting) and Frontend (observant-benevolence) confirmed LIVE.
 
-No active deploy tasks. System is stable.
+Active tasks:
+1. Gemini UI Audit COMPLETE (see reports/GEMINI_UI_AUDIT_2026-04-01.md).
+2. Deployment timeout investigated: Error 4408 (Connection initialisation timeout) was a transient CLI/websocket issue during log streaming. Server-side deployment (ID: 60982b25) was SUCCESSFUL.
+3. Smoke tests PASSED: async-optimize + valuations cache.
 
-Next trigger: when Claude Code completes the Low-severity UI cleanup items (§5), deploy with:
+All pre-Apr-7 Claude Code tasks are now complete. System is stable.
+
+Active task: deploy the latest frontend changes (low-severity UI cleanup).
   railway up
-  Verify lineup page, matchup page, waiver page in browser.
+  Verify: fantasy page (no hardcoded draft date), waiver page ("Add" links to Yahoo), matchup page loads
+
+After deploy confirms, system is in full holding pattern until Apr 7.
 
 Do NOT edit any .py or .ts files.
 Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge

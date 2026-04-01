@@ -190,13 +190,15 @@ function WaiverTable({ players, label }: { players: WaiverPlayer[]; label: strin
                   ))}
                 </td>
                 <td className="px-3 py-2.5 text-center">
-                  <button
+                  <a
+                    href="https://baseball.fantasysports.yahoo.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="px-2 py-0.5 rounded text-xs font-semibold bg-sky-500/15 text-sky-400 border border-sky-500/30 hover:bg-sky-500/25 transition-colors"
-                    disabled
-                    title="Waiver add is visual only"
+                    title="Add on Yahoo Fantasy"
                   >
                     Add
-                  </button>
+                  </a>
                 </td>
               </tr>
             )
@@ -596,7 +598,15 @@ export default function WaiverWirePage() {
           ) : recLoading ? (
             <div className="space-y-3 animate-pulse">
               {Array.from({ length: 3 }).map((_, i) => (
-                <div key={i} className="h-20 bg-zinc-800 rounded-lg" />
+                <div key={i} className="rounded-lg border border-zinc-800 p-4 flex items-start gap-3">
+                  <div className="h-8 w-8 bg-zinc-800 rounded-full flex-shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3 bg-zinc-800 rounded w-32" />
+                    <div className="h-3 bg-zinc-800/70 rounded w-48" />
+                    <div className="h-3 bg-zinc-800/50 rounded w-24" />
+                  </div>
+                  <div className="h-6 w-12 bg-zinc-800 rounded flex-shrink-0" />
+                </div>
               ))}
             </div>
           ) : recError ? (

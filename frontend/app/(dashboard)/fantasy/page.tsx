@@ -189,7 +189,32 @@ function FilterBar({ posFilter, setPosFilter, typeFilter, setTypeFilter, tierMax
 
 function DraftBoardTab({ players, isLoading, isError }: { players: FantasyPlayer[]; isLoading: boolean; isError: boolean }) {
   if (isLoading) {
-    return <div className="flex items-center justify-center h-48 text-zinc-500">Loading draft board...</div>
+    return (
+      <div className="overflow-x-auto rounded-lg border border-zinc-800 animate-pulse">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-zinc-800 bg-zinc-900/60">
+              {[40, 160, 60, 70, 80, 80, 80].map((w, i) => (
+                <th key={i} className="px-3 py-3">
+                  <div className="h-3 bg-zinc-800 rounded" style={{ width: w }} />
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-800/60">
+            {Array.from({ length: 12 }).map((_, i) => (
+              <tr key={i}>
+                {[40, 160, 60, 70, 80, 80, 80].map((w, j) => (
+                  <td key={j} className="px-3 py-3">
+                    <div className="h-3 bg-zinc-800/70 rounded" style={{ width: w * 0.8 }} />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
   }
   if (isError) {
     return <div className="flex items-center justify-center h-48 text-rose-400">Failed to load draft board. Check API connection.</div>
@@ -755,7 +780,7 @@ export default function FantasyPage() {
           </h1>
           <p className="text-sm text-zinc-500 mt-1">
             2026 Steamer/ZiPS consensus · {boardData?.count ?? '—'} players ·{' '}
-            <span className="text-amber-500/80">Draft: March 23 @ 7:30am</span>
+            <span className="text-zinc-600">2026 season active</span>
           </p>
         </div>
         <div className="flex items-center gap-3">
