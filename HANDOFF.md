@@ -35,7 +35,7 @@ The platform is live for the 2026 MLB fantasy season. The Yahoo API pipeline is 
 | Async lineup optimizer Pydantic crash (5 validation errors) | K-21 | CRITICAL | Worker fetches Yahoo data at execution time; correct `solve_smart_lineup()` call | Claude | FIXED S3 |
 | `apiFetch` converts nested error to `[object Object]` | K-21 | CRITICAL | Parse nested detail; extract readable string | Gemini | PENDING G-5 |
 | "Score" column is `smart_score`; mislabelled; can be negative | K-21 | HIGH | Rename to "Smart Score" + tooltip; PROJ falls back to `implied_runs` | Gemini | PENDING G-6/G-7 |
-| K/9 value (16.20) appearing in Walks column | K-22 | HIGH | Decimal type guard: BB cannot have decimals | Claude | OPEN backend |
+| K/9 value (16.20) appearing in Walks column | K-22 | HIGH | Decimal guard in `_extract_team_stats()`: float BB != int -> reject + warn | Claude | FIXED S5 |
 | Missing NSV on matchup (1 save shown as 0) | K-22 | HIGH | Stat ID 83 extraction + fallback mapping audit | Claude + Gemini | PENDING G-8 |
 | Stat labels missing: K/BB, GS, NSV in `constants.ts` | K-22 | MEDIUM | Add string + numeric ID mappings | Gemini | PENDING G-8 |
 | PROBABLE badge shown yellow/injury (should be green/SP) | K-19 domain | MEDIUM | Map PROBABLE to emerald/STARTING | Gemini | PENDING G-10 |
@@ -46,7 +46,7 @@ The platform is live for the 2026 MLB fantasy season. The Yahoo API pipeline is 
 | No ensemble blender (ATC/Steamer/ZiPS/THE BAT) | K-17 / K-19 | CRITICAL | Schema: 5 new columns on `PlayerDailyMetric`; weights decided | Claude | OPEN |
 | No Yahoo ADP/injury polling | K-17 / K-19 | HIGH | Lock 100_013 reserved; 4-hour cadence designed | Claude | OPEN |
 | No projection freshness alerting | K-16 / K-17 | HIGH | Lock 100_015 reserved; 1-hour SLA gate designed | Claude | OPEN |
-| CSV loader rejects full file on column mismatch | K-16 | MEDIUM | Column-intersection partial loading | Claude | OPEN |
+| CSV loader rejects full file on column mismatch | K-16 | MEDIUM | Header validation warning added to both loaders; per-row errors upgraded to WARNING | Claude | FIXED S5 |
 | CBB V9.2 recalibration (SNR/integrity scalar stacking) | K-12 | BLOCKED | EMAC-068 — do not touch Kelly math before Apr 7 | Claude | BLOCKED APR 7 |
 | OddsAPI to BDL GOAT MLB migration | CLAUDE.md | BLOCKED | Cancel post-tournament; expand `balldontlie.py` | Claude | BLOCKED APR 7 |
 
@@ -158,48 +158,100 @@ Layer 5: Projection Freshness Guard
 
 | Area | Owner | Responsibility | Next Deliverable |
 |------|-------|----------------|-----------------|
-| Backend Python | Claude | All `.py` files, DB migrations, scheduler jobs | WaiverPlayerOut stats fix + in-season pipeline (Phase 2) |
-| Frontend TypeScript | Gemini | All Next.js files; zero `.py` changes | G-5 through G-10 (Phase 1 bug closures) |
-| Deep research / audit | Kimi | Read-only analysis; reports to `reports/K*.md` | K-24 if ensemble blender validation needed |
-| Railway DevOps | Gemini | `railway up`, env vars, smoke tests | Deploy Session 4 fixes |
+| Backend Python | Claude | All `.py` files, DB migrations, scheduler jobs | H-1 WaiverPlayerOut stats; Phase 2 pipeline |
+| Frontend TypeScript | Gemini | All Next.js files; zero `.py` changes | G-5 through G-10 + deploy |
+| Deep research / audit | Kimi | Read-only; output to `reports/K*.md` | K-24 Yahoo player_stats spec; K-25 FanGraphs column map |
+| Railway DevOps | Gemini | `railway up`, smoke tests | Deploy after G-5 through G-10 complete |
 | CBB recalibration | Claude | K-12 spec to V9.2 | After EMAC-068 unblocks Apr 7 |
 | MLB odds migration | Claude | BDL GOAT integration | After subscription swap Apr 7 |
 
 ---
 
-## Immediate Action Items
+## Active Delegation Bundles
 
-### HIGH — Blocking or Data-Corrupting
+### GEMINI -- Frontend Bug Closures (G-5 through G-10)
 
-| # | Item | Report | File | Next Step |
-|---|------|--------|------|-----------|
-| H-1 | WaiverPlayerOut missing `stats` field | K-20 | `schemas.py` line 380, `main.py` `_to_waiver_player()` | Add `stats: dict`; fetch Yahoo `player_stats`; map HR/RBI/AVG for hitters, ERA/WHIP/K for pitchers |
-| H-2 | K/9 bleeding into Walks column | K-22 | `main.py` lines 5457-5468 | Decimal guard: if stat mapped to BB and `float(val) != int(float(val))`, log and skip |
-| H-3 | `apiFetch` shows `[object Object]` | K-21 | `api.ts` lines 66-75 | `detail = typeof raw === 'string' ? raw : JSON.stringify(raw)` — Gemini G-5 |
-| H-4 | PROJ column blank for most roster | K-21 | `lineup/page.tsx` lines 283-293 | Fallback to `p.implied_runs` when `valuationsMap[id]` is falsy — Gemini G-7 |
-| H-5 | Start in-season pipeline | K-17 / K-19 | `backend/services/daily_ingestion.py` | Build `fangraphs_loader.py` first — public URLs, no auth, cloudscraper |
+**Guardrails:** Zero `.py` changes. TypeScript must pass (`cd frontend && npx tsc --noEmit`) after every task.
+**Deploy:** After all G-tasks pass TypeScript: `railway up`. Then verify each acceptance criterion live.
 
-### MEDIUM — UX-Blocking or Confusing
-
-| # | Item | Report | File | Next Step |
-|---|------|--------|------|-----------|
-| M-1 | "Score" label factually wrong | K-21 | `lineup/page.tsx` line 252 | Rename to "Smart Score" + Radix tooltip — Gemini G-6 |
-| M-2 | Settings page non-functional | K-23 | `settings/page.tsx` | shadcn Switch/Select/Slider; replace `JSON.stringify` at line 124 — Gemini G-9 |
-| M-3 | Stat labels missing (K/BB, GS, NSV as raw IDs) | K-22 | `constants.ts` lines 17-38 | Add full string + numeric ID mappings — Gemini G-8 |
-| M-4 | PROBABLE badge yellow | K-19 domain | `status-badge.tsx` | Map to emerald/STARTING — Gemini G-10 |
-| M-5 | `rolling_z` silently skips on sparse data | K-16 | `daily_ingestion.py` | Add `logger.warning()` + alert when player count below threshold |
-| M-6 | CSV loader rejects full file on mismatch | K-16 | `projections_loader.py` lines 150-250 | Load column intersection only; warn on missing columns |
-
-### LOW — Technical Debt
-
-| # | Item | Report | Next Step |
-|---|------|--------|-----------|
-| L-1 | 82 remaining `datetime.utcnow()` calls (non-user-visible) | K-17 | Fix on file touch; no dedicated sprint needed |
-| L-2 | Waiver maxOwned default = 90% | K-20 | `waiver/page.tsx` line 349 — change to 50%; one-liner for Gemini |
-| L-3 | Matchup remaining games tracker + pace | K-22 | Phase 3 — after in-season data pipeline live |
-| L-4 | Discord OAuth + notification toggles | K-23 | Phase 3 — requires Discord developer setup |
+| Task | File | Change | Acceptance |
+|------|------|--------|------------|
+| G-5 | `frontend/lib/api.ts` lines 66-75 | `detail = typeof raw === 'string' ? raw : JSON.stringify(raw)` | Error messages read "422: Field required" not "[object Object]" |
+| G-6 | `lineup/page.tsx` line 252 | Header "Score" to "Smart Score" + Radix Tooltip explaining composite score | Column says "Smart Score" with tooltip on hover |
+| G-7 | `lineup/page.tsx` lines 283-293 | `const proj = valuationsMap[p.player_id]?.projected_value ?? p.implied_runs ?? null` | PROJ column populated for >80% of roster |
+| G-8 | `frontend/lib/constants.ts` | Add: `'K/BB': 'K/BB Ratio', 'GS': 'Games Started', 'NSV': 'Net Saves', '38': 'K/BB Ratio', '62': 'Games Started', '83': 'Net Saves'` (skip duplicates) | Matchup shows "Net Saves" not "83", "Games Started" not "62" |
+| G-9 | `settings/page.tsx` | Install shadcn Switch/Select/Slider; replace `JSON.stringify` at line 124; booleans get Switch, intervals get Select (300s="5 min"), thresholds get Slider; z-score hidden behind Aggressive/Balanced/Conservative RadioGroup; Save calls `PATCH /api/fantasy/settings` | No raw JSON visible; controls are interactive |
+| G-10 | `status-badge.tsx` | Add `PROBABLE`/`Probable` to green set: `{ color: 'bg-emerald-500/15 text-emerald-400', label: 'STARTING' }` | PROBABLE shows green "STARTING" badge |
+| G-L2 | `waiver/page.tsx` line 349 | Change maxOwned default from 90 to 50 | Default max owned filter is 50% |
 
 ---
+
+### KIMI -- Research to Unblock Phase 2 Backend
+
+**Guardrails:** Read-only. No code changes. Output to `reports/K24_*.md` and `reports/K25_*.md`.
+
+#### K-24: Yahoo `player_stats` Endpoint Spec
+
+**Why needed:** Claude is implementing `_to_waiver_player()` stats field (H-1). Without the
+exact Yahoo API contract, this is guesswork that will break in prod.
+
+**Read first:**
+- `backend/fantasy_baseball/yahoo_client_resilient.py` -- understand `_get()` and league URL patterns
+- `reports/GEMINI_YAHOO_RESPONSES_2026-04-01.md` -- live API response samples
+
+**Deliver `reports/K24_YAHOO_PLAYER_STATS_SPEC.md` answering:**
+1. What URL endpoint returns season stats for a specific player or batch of players?
+2. What is the exact JSON path to batting stats (HR, RBI, R, AVG, SB)?
+3. What is the exact JSON path to pitching stats (ERA, WHIP, K, IP, W)?
+4. What stat IDs map to each? (Cross-ref K-14: 57=BB, 83=NSV, 85=OBP)
+5. Can multiple player keys be batched? What is the limit?
+6. Should `_to_waiver_player()` make a separate stats batch call or reuse data already in the free-agents response?
+
+Output: Exact URL template + exact JSON path + stat IDs. Under 400 words. Contract, not prose.
+
+---
+
+#### K-25: FanGraphs RoS Projection Column Map
+
+**Why needed:** Claude is building `fangraphs_loader.py` (Phase 2.1). Steamer columns are
+documented in `projections_loader.py` lines 17-23. ATC and THE BAT column names are unknown.
+
+**Read first:**
+- `backend/fantasy_baseball/projections_loader.py` lines 17-23 -- existing Steamer column docs
+- `reports/K19_INSEASON_PIPELINE_SPEC.md` -- prior FanGraphs URL research
+
+**Deliver `reports/K25_FANGRAPHS_COLUMN_MAP.md` with:**
+1. Exact public download URL for ATC batting, ATC pitching, THE BAT batting, THE BAT pitching
+2. For each system, the exact CSV column header for: HR, RBI, R, AVG, SB (batting) and ERA, WHIP, K/SO, IP, W, GS (pitching)
+3. Does strikeout column name differ across systems? (Steamer="SO", others?)
+4. What is the Name column header per system?
+5. Which systems require cloudscraper vs plain requests?
+
+Output: Table with System | Stat | Column Name | URL. Under 500 words. Include confidence level per URL.
+
+---
+
+## Immediate Action Items
+
+### Complete This Session (S5)
+
+| # | Item | Status |
+|---|------|--------|
+| H-2 | K/9 decimal guard in `_extract_team_stats()` | DONE |
+| 1.8 | CSV header validation + WARNING logging in both loaders | DONE |
+
+### Pending (Claude -- requires quota or K-24/K-25 first)
+
+| # | Item | Dependency | File | Effort |
+|---|------|-----------|------|--------|
+| H-1 | WaiverPlayerOut `stats` field | K-24 report | `schemas.py` line 380, `main.py` `_to_waiver_player()` | Medium |
+| Phase 2.1 | `fangraphs_loader.py` (new file) | K-25 report | `backend/fantasy_baseball/` | Large |
+| Phase 2.2 | `PlayerDailyMetric` schema: 5 blend columns | After 2.1 | Alembic migration | Small |
+| Phase 2.3 | Ensemble blender job (lock 100_014) | After 2.2 | `daily_ingestion.py` | Medium |
+| Phase 2.4 | Yahoo ADP/injury poller (lock 100_013) | After K-24 | `yahoo_client_resilient.py` | Medium |
+| Phase 2.5 | Projection freshness SLA gate (lock 100_015) | After 2.3 | `daily_ingestion.py` | Small |
+| M-5 | `rolling_z` silent skip alert | None | `daily_ingestion.py` rolling_z job | Small |
+
 
 ## Advisory Lock Registry
 

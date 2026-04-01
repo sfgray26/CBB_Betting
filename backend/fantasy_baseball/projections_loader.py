@@ -138,8 +138,19 @@ def load_steamer_batting(path: Path) -> list[dict]:
         logger.warning(f"Steamer batting file not found: {path}")
         return players
 
+    _BATTING_EXPECTED = {"Name", "PA", "HR", "RBI", "R", "AVG"}
     with open(path, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
+        # K-16: Warn loudly on missing critical columns — never reject the whole file.
+        if reader.fieldnames:
+            headers = {h.strip() for h in reader.fieldnames if h}
+            missing = _BATTING_EXPECTED - headers
+            if missing:
+                logger.warning(
+                    "Steamer batting CSV missing expected columns %s — "
+                    "affected stats will default to 0. Check FanGraphs export format.",
+                    sorted(missing),
+                )
         for row in reader:
             try:
                 name = row.get("Name", row.get("name", "")).strip()
@@ -183,7 +194,7 @@ def load_steamer_batting(path: Path) -> list[dict]:
                 }
                 players.append(player)
             except (ValueError, KeyError) as e:
-                logger.debug(f"Skipping row {row.get('Name', '?')}: {e}")
+                logger.warning("Skipping projection row %r: %s", row.get('Name', '?'), e)
 
     logger.info(f"Loaded {len(players)} Steamer batters from {path}")
     return players
@@ -203,8 +214,19 @@ def load_steamer_pitching(path: Path) -> list[dict]:
         logger.warning(f"Steamer pitching file not found: {path}")
         return players
 
+    _PITCHING_EXPECTED = {"Name", "IP", "ERA", "WHIP", "W", "SO"}
     with open(path, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
+        # K-16: Warn loudly on missing critical columns — never reject the whole file.
+        if reader.fieldnames:
+            headers = {h.strip() for h in reader.fieldnames if h}
+            missing = _PITCHING_EXPECTED - headers
+            if missing:
+                logger.warning(
+                    "Steamer pitching CSV missing expected columns %s — "
+                    "affected stats will default to 0. Check FanGraphs export format.",
+                    sorted(missing),
+                )
         for row in reader:
             try:
                 name = row.get("Name", row.get("name", "")).strip()
@@ -254,7 +276,7 @@ def load_steamer_pitching(path: Path) -> list[dict]:
                 }
                 players.append(player)
             except (ValueError, KeyError) as e:
-                logger.debug(f"Skipping row {row.get('Name', '?')}: {e}")
+                logger.warning("Skipping projection row %r: %s", row.get('Name', '?'), e)
 
     logger.info(f"Loaded {len(players)} Steamer pitchers from {path}")
     return players

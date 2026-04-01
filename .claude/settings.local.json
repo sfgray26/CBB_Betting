@@ -81,7 +81,10 @@
       "Bash(venv/Scripts/python -c \"from backend.services.job_queue_service import submit_job, get_job_status, process_pending_jobs; print\\('OK'\\)\")",
       "Bash(venv/Scripts/python -m pytest tests/ -q --tb=short -x)",
       "Bash(venv/Scripts/python -m py_compile backend/services/dashboard_service.py backend/fantasy_baseball/yahoo_client_resilient.py backend/services/job_queue_service.py)",
-      "Bash(venv/Scripts/python -m py_compile backend/fantasy_baseball/statcast_ingestion.py backend/main.py backend/fantasy_baseball/yahoo_client_resilient.py)"
+      "Bash(venv/Scripts/python -m py_compile backend/fantasy_baseball/statcast_ingestion.py backend/main.py backend/fantasy_baseball/yahoo_client_resilient.py)",
+      "Bash(venv/Scripts/python update_handoff.py)",
+      "Bash(rm update_handoff.py)",
+      "Bash(venv/Scripts/python -m pytest tests/test_waiver_integration.py tests/test_mlb_analysis.py tests/test_lineup_optimizer.py -q --tb=short)"
     ]
   }
 }

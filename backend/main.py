@@ -5588,6 +5588,21 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                                 val = "0"
                         except (TypeError, ValueError):
                             pass
+                    # K-22: BB (Walks) is a counting stat — must be an integer.
+                    # If a decimal sneaks in (e.g., K/9 rate mis-mapped to stat 57),
+                    # discard it rather than corrupt the Walks column.
+                    if key == "BB":
+                        try:
+                            fval = float(val)
+                            if fval != int(fval):
+                                logger.warning(
+                                    "Rejected decimal value %.3f for BB (stat_id=%s) — "
+                                    "likely K/9 stat ID mis-mapped; skipping.",
+                                    fval, sid,
+                                )
+                                continue
+                        except (TypeError, ValueError):
+                            pass
                     if key:
                         stats_dict[key] = val
         
