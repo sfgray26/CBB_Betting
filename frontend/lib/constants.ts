@@ -1,7 +1,16 @@
 /**
- * Shared constants used across fantasy baseball pages.
- * Centralised here to prevent drift between matchup, lineup, and waiver pages.
+ * Shared constants and helpers used across fantasy baseball pages.
+ * Centralised here to prevent drift between matchup, lineup, waiver, and API client.
  */
+
+/**
+ * Return today's date as YYYY-MM-DD anchored to US Eastern Time.
+ * Uses en-CA locale which produces the ISO-style format natively.
+ * Always use this instead of new Date().toISOString().slice(0,10) which is UTC.
+ */
+export function etTodayStr(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+}
 
 // Known stat display names for the 18-category H2H league.
 // Includes both Yahoo string keys and numeric category IDs.

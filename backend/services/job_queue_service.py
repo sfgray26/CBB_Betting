@@ -111,7 +111,7 @@ class JobQueueService:
                 text(
                     """
                     UPDATE job_queue
-                    SET status = 'running', picked_at = :now
+                    SET status = 'processing', picked_at = :now
                     WHERE id = :job_id
                     """
                 ),
@@ -121,11 +121,14 @@ class JobQueueService:
 
             try:
                 result = await asyncio.to_thread(self._dispatch_job, db, row._asdict())
+                # Gap 2 fix: treat logical errors (returned as dicts) as job failures
+                if isinstance(result, dict) and result.get("status") == "error":
+                    raise RuntimeError(result.get("error", "Job returned error status"))
                 db.execute(
                     text(
                         """
                         UPDATE job_queue
-                        SET status = 'done',
+                        SET status = 'completed',
                             completed_at = :now,
                             result = :result::jsonb
                         WHERE id = :job_id
@@ -188,17 +191,15 @@ class JobQueueService:
         raise ValueError(f"Unknown job_type: {job_type}")
 
     def _run_lineup_optimization(self, db, request: LineupOptimizationRequest) -> dict:
-        try:
-            from backend.fantasy_baseball.smart_lineup_selector import SmartLineupSelector  # noqa: PLC0415
-            selector = SmartLineupSelector(db)
-            decision = selector.select(request)
-            return {
-                "status": "ok",
-                "decision": decision if isinstance(decision, dict) else decision.dict(),
-                "target_date": request.target_date,
-            }
-        except Exception as e:
-            return {"status": "error", "error": str(e)}
+        # Raises on any failure — caller (process_pending_jobs) handles retry/fail logic
+        from backend.fantasy_baseball.smart_lineup_selector import SmartLineupSelector  # noqa: PLC0415
+        selector = SmartLineupSelector(db)
+        decision = selector.select(request)
+        return {
+            "status": "ok",
+            "decision": decision if isinstance(decision, dict) else decision.dict(),
+            "target_date": request.target_date,
+        }
 
 
 # ---------------------------------------------------------------------------

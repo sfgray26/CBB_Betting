@@ -36,6 +36,7 @@ import type {
   ValuationsResponse,
   AsyncJobStatus,
 } from '@/lib/types'
+import { etTodayStr } from '@/lib/constants'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
@@ -261,7 +262,7 @@ export const endpoints = {
 
   // Fantasy Baseball — Season Ops
   dailyLineup: (date?: string) =>
-    apiFetch<DailyLineupResponse>(`/api/fantasy/lineup/${date ?? new Date().toISOString().slice(0, 10)}`),
+    apiFetch<DailyLineupResponse>(`/api/fantasy/lineup/${date ?? etTodayStr()}`),
 
   waiverWire: (params?: {
     position?: string
