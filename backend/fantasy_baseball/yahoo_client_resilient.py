@@ -531,16 +531,70 @@ class YahooFantasyClient:
 
         sort=AR ranks by percent rostered — the only sort that reflects real
         pickup value. Yahoo's default sort order is opaque and unreliable.
+
+        HOTFIX (K-24 regression): out=stats is NOT a valid subresource on
+        league/.../players — Yahoo returns 400 "Invalid subresource stats
+        requested". Stats are fetched separately via get_players_stats_batch()
+        and merged in as a best-effort enrichment step so a stats API failure
+        cannot take down the waiver surface.
         """
-        # K-24: include out=stats,percent_owned to get season stats + ownership
-        # in a single call — no extra API requests needed.
-        params = {"status": "A", "start": start, "count": count, "sort": "AR",
-                  "out": "stats,percent_owned"}
+        params = {"status": "A", "start": start, "count": count, "sort": "AR"}
         if position:
             params["position"] = position
         data = self._get(f"league/{self.league_key}/players", params=params)
         players_raw = self._league_section(data, 1).get("players", {})
-        return self._parse_players_block(players_raw)
+        players = self._parse_players_block(players_raw)
+
+        # Best-effort: enrich with season stats via the supported batch endpoint.
+        # If the call fails for any reason the players list is still returned
+        # with stats={} for each player — the waiver endpoint must not 503.
+        try:
+            player_keys = [p["player_key"] for p in players if p.get("player_key")]
+            if player_keys:
+                stats_map = self.get_players_stats_batch(player_keys)
+                for p in players:
+                    if "stats" not in p:
+                        p["stats"] = stats_map.get(p.get("player_key") or "", {})
+        except Exception as _stats_err:
+            logger.warning("get_free_agents stats batch failed (non-fatal): %s", _stats_err)
+
+        return players
+
+    def get_players_stats_batch(self, player_keys: list, stat_type: str = "season") -> dict:
+        """Fetch season stats for a batch of players via the supported batch stats endpoint.
+
+        Uses: league/{league_key}/players;player_keys={k1},{k2},.../stats;type={stat_type}
+        Returns: {player_key: {stat_id_str: value_str, ...}}
+        Max 25 player_keys per Yahoo hard limit.
+        """
+        if not player_keys:
+            return {}
+        keys_str = ",".join(player_keys[:25])
+        data = self._get(
+            f"league/{self.league_key}/players;player_keys={keys_str}/stats;type={stat_type}"
+        )
+        result: dict = {}
+        players_raw = self._league_section(data, 1).get("players", {})
+        for p in self._iter_block(players_raw, "player"):
+            player_key: Optional[str] = None
+            stats_raw: dict = {}
+            if isinstance(p, list):
+                for item in p:
+                    if isinstance(item, list):
+                        for sub in item:
+                            if isinstance(sub, dict) and "player_key" in sub:
+                                player_key = sub["player_key"]
+                    elif isinstance(item, dict):
+                        if "player_stats" in item:
+                            for stat_entry in item["player_stats"].get("stats", []):
+                                if isinstance(stat_entry, dict):
+                                    s = stat_entry.get("stat", {})
+                                    sid = s.get("stat_id")
+                                    if sid is not None:
+                                        stats_raw[str(sid)] = s.get("value", "")
+            if player_key and stats_raw:
+                result[player_key] = stats_raw
+        return result
 
     def get_player_stats(self, player_key: str, stat_type: str = "season") -> dict:
         """

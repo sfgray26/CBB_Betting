@@ -29,19 +29,21 @@ def _make_yahoo_player(name="Test Player", positions=None, percent_owned=42.5):
 
 class TestYahooClientOutParam:
 
-    def test_get_free_agents_includes_stats_out_param(self):
-        # K-24 update: get_free_agents() now includes out=stats,percent_owned
-        # to fetch season stats in the same API call (no extra rate limit exposure).
-        # K-20 original fix removed out=metadata which stripped ownership —
-        # out=stats,percent_owned preserves ownership and adds stats.
+    def test_get_free_agents_omits_out_param(self):
+        # HOTFIX (K-24 regression): out=stats is NOT a valid subresource on
+        # league/.../players. Yahoo returns 400 "Invalid subresource stats
+        # requested". get_free_agents() must NOT include the out param in the
+        # base players call. Stats are now fetched via get_players_stats_batch().
         from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 
         client = YahooFantasyClient.__new__(YahooFantasyClient)
         client.league_key = "fake.lg.999"
 
         captured_params = {}
+        captured_paths = []
 
         def mock_get(path, params=None):
+            captured_paths.append(path)
             captured_params.update(params or {})
             return {"fantasy_content": {"league": [{}, {"players": {}}]}}
 
@@ -51,13 +53,42 @@ class TestYahooClientOutParam:
 
         client.get_free_agents(count=10)
 
-        assert captured_params.get("out") == "stats,percent_owned", (
-            "get_free_agents() must include out=stats,percent_owned -- "
-            "K-24: fetch season stats + ownership in a single API call"
+        # The base players call must NOT include out=stats (rejected by Yahoo with 400)
+        assert "out" not in captured_params, (
+            "get_free_agents() must NOT include 'out' in the base players call -- "
+            "K-24 hotfix: out=stats causes Yahoo 400 on league/.../players endpoint"
         )
-        # Verify other required params are present
-        assert "status" in captured_params
+        # Other required params must still be present
+        assert captured_params.get("status") == "A"
         assert "count" in captured_params
+
+    def test_get_free_agents_stats_failure_is_non_fatal(self):
+        # Stats batch enrichment must not propagate exceptions.
+        # If get_players_stats_batch() raises, get_free_agents() must still
+        # return the players list with stats={} per player.
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
+
+        client = YahooFantasyClient.__new__(YahooFantasyClient)
+        client.league_key = "fake.lg.999"
+
+        def mock_get(path, params=None):
+            return {"fantasy_content": {"league": [{}, {"players": {}}]}}
+
+        client._get = mock_get
+        client._league_section = lambda data, idx: {}
+        # Return two players from parse so stats merge path is exercised
+        client._parse_players_block = lambda raw: [
+            {"player_key": "469.p.111", "name": "Player A"},
+            {"player_key": "469.p.222", "name": "Player B"},
+        ]
+        # Simulate stats batch always failing
+        client.get_players_stats_batch = lambda keys: (_ for _ in ()).throw(
+            Exception("Yahoo stats batch 400")
+        )
+
+        # Must not raise even when stats batch fails
+        result = client.get_free_agents(count=2)
+        assert isinstance(result, list), "get_free_agents must return a list even when stats fail"
 
     def test_get_waiver_players_omits_out_param(self):
         # K-20 finding: "out=metadata" strips percent_rostered from Yahoo response.

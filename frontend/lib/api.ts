@@ -67,7 +67,12 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     let detail = ''
     try {
       const body = await res.json()
-      detail = body?.detail ?? ''
+      const rawDetail = body?.detail
+      if (typeof rawDetail === 'object' && rawDetail !== null) {
+        detail = rawDetail.error || rawDetail.message || JSON.stringify(rawDetail)
+      } else {
+        detail = rawDetail ?? ''
+      }
     } catch {}
     throw new Error(`${res.status}${detail ? `: ${detail}` : `: ${path}`}`)
   }

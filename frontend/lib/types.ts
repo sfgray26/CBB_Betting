@@ -338,6 +338,7 @@ export interface WaiverPlayer {
   position: string
   need_score: number
   category_contributions: Record<string, number>
+  stats?: Record<string, string>
   owned_pct: number
   starts_this_week: number
   statcast_signals?: string[]

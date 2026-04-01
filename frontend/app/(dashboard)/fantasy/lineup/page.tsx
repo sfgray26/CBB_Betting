@@ -7,6 +7,7 @@ import { endpoints } from '@/lib/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { StatusBadge } from '@/components/shared/status-badge'
+import { Tooltip } from '@/components/shared/tooltip'
 import type { LineupPlayer, StartingPitcher, ValuationReport } from '@/lib/types'
 
 // ---------------------------------------------------------------------------
@@ -249,7 +250,11 @@ function BattersTable({
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Time</th>
             <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-28">Implied Runs</th>
             <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Park Factor</th>
-            <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-20">Score</th>
+            <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-20">
+              <Tooltip content="Composite ranking based on projections, matchup quality, and recent form.">
+                <span className="cursor-help border-b border-dotted border-zinc-500">Smart Score</span>
+              </Tooltip>
+            </th>
             <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-20">Proj</th>
             <th className="px-3 py-3 text-center text-xs font-semibold text-zinc-500 uppercase tracking-wider w-16">Slot</th>
             <th className="px-3 py-3 text-center text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Action</th>
@@ -259,7 +264,10 @@ function BattersTable({
           {sorted.map((b) => {
             const isIL = !!(b.injury_status && /^IL|^OUT$/i.test(b.injury_status))
             const val = valuationsMap.get(b.player_id)
-            const projValue = val?.report?.composite_value?.point_estimate
+            let projValue = val?.report?.composite_value?.point_estimate
+            if (!projValue || projValue === 0) {
+              projValue = b.implied_runs
+            }
             const formDelta = val?.report?.recent_form_delta ?? 0
             return (
               <tr key={b.player_id} className={cn('hover:bg-zinc-800/50 transition-colors', isIL && 'opacity-60')}>
@@ -329,7 +337,11 @@ function PitchersTable({ pitchers }: { pitchers: StartingPitcher[] }) {
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Time</th>
             <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-28">Opp Implied</th>
             <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Park Factor</th>
-            <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">SP Score</th>
+            <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">
+              <Tooltip content="Composite ranking based on projections, matchup quality, and pitching tier.">
+                <span className="cursor-help border-b border-dotted border-zinc-500">Smart Score</span>
+              </Tooltip>
+            </th>
             <th className="px-3 py-3 text-center text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Action</th>
           </tr>
         </thead>

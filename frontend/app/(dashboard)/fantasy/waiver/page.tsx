@@ -7,7 +7,14 @@ import { endpoints } from '@/lib/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { StatusBadge } from '@/components/shared/status-badge'
+import { STAT_LABELS } from '@/lib/constants'
 import type { CategoryDeficit, WaiverPlayer, WaiverRecommendation } from '@/lib/types'
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const PRIORITY_STATS = ['HR', 'RBI', 'AVG', 'ERA', 'WHIP', 'K', 'NSV']
 
 // ---------------------------------------------------------------------------
 // Category deficit card
@@ -174,14 +181,31 @@ function WaiverTable({ players, label }: { players: WaiverPlayer[]; label: strin
                   {p.owned_pct.toFixed(1)}%
                 </td>
                 <td className="px-3 py-2.5 text-xs text-zinc-500 font-mono">
-                  {topStats.map(([cat, val]) => (
-                    <span key={cat} className="mr-2">
-                      <span className="text-zinc-600">{cat}:</span>
-                      <span className={cn('ml-1', val >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
-                        {val >= 0 ? '+' : ''}{typeof val === 'number' && val % 1 !== 0 ? val.toFixed(2) : val}
+                  {p.stats ? (
+                    <div className="flex gap-x-3 gap-y-1 flex-wrap">
+                      {PRIORITY_STATS.map((label) => {
+                        // Find stat ID for this label
+                        const statId = Object.keys(STAT_LABELS).find(key => STAT_LABELS[key] === label)
+                        const val = statId ? p.stats![statId] : null
+                        if (val === null || val === undefined) return null
+                        return (
+                          <span key={label}>
+                            <span className="text-zinc-600">{label}:</span>
+                            <span className="ml-1 text-zinc-300">{val}</span>
+                          </span>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    topStats.map(([cat, val]) => (
+                      <span key={cat} className="mr-2">
+                        <span className="text-zinc-600">{cat}:</span>
+                        <span className={cn('ml-1', val >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
+                          {val >= 0 ? '+' : ''}{typeof val === 'number' && val % 1 !== 0 ? val.toFixed(2) : val}
+                        </span>
                       </span>
-                    </span>
-                  ))}
+                    ))
+                  )}
                 </td>
                 <td className="px-3 py-2.5 text-center">
                   <a
@@ -346,7 +370,7 @@ const POSITIONS = ['C', '1B', '2B', '3B', 'SS', 'OF', 'SP', 'RP']
 export default function WaiverWirePage() {
   const [position, setPosition] = useState<string>('')
   const [sort, setSort] = useState<'need_score' | 'percent_owned'>('need_score')
-  const [maxOwned, setMaxOwned] = useState<number>(90)
+  const [maxOwned, setMaxOwned] = useState<number>(50)
   const [page, setPage] = useState<number>(1)
   const [showRecs, setShowRecs] = useState<boolean>(false)
   const [isStuck, setIsStuck] = useState(false)

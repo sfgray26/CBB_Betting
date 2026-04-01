@@ -20,13 +20,14 @@ export function StatusBadge({ status, className, showTooltip = true }: StatusBad
   let Icon: React.ElementType | null = null
   let tooltipText = "Status unavailable from Yahoo"
 
-  if (["active", "", "start"].includes(s)) {
+  if (["active", "", "start", "probable"].includes(s)) {
     bgColor = "bg-emerald-500/15"
     textColor = "text-emerald-400"
     Icon = Activity
     if (s === "start") tooltipText = "Confirmed starter for today"
+    else if (s === "probable") tooltipText = "Probable starting pitcher"
     else tooltipText = "In the lineup / no injury designation"
-  } else if (["dtd", "questionable", "probable"].includes(s)) {
+  } else if (["dtd", "questionable"].includes(s)) {
     bgColor = "bg-amber-500/15"
     textColor = "text-amber-400"
     Icon = AlertTriangle
@@ -54,6 +55,7 @@ export function StatusBadge({ status, className, showTooltip = true }: StatusBad
   else if (["no_start", "unknown"].includes(s)) displayText = "NO START"
   else if (s === "dtd") displayText = "DTD"
   else if (s === "active" || s === "") displayText = "ACTIVE"
+  else if (s === "probable") displayText = "STARTING"
 
   const badge = (
     <div
