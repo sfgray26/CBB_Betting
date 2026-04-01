@@ -306,24 +306,26 @@ TypeScript type-check passes after all fixes.
 
 ---
 
-## 9. Elite Advancement Plan — ARCH-002 (LOCKED ROADMAP)
+## 9. Elite Advancement Plan — ARCH-002
 
 The "Elite Advancement Plan" identifies 5 high-priority architectural gaps to resolve for maximum reliability and scalability.
 
-### High-Priority Gaps (To be fixed by Claude Code)
+### Gap Status
 
-1. **Async Status Contract Drift**: Backend uses `pending/running/done/failed` while Frontend/Types expect `pending/processing/completed/failed`.
-2. **Queue Error Masking**: `JobQueueService.process_pending_jobs` marks jobs `done` even if `_run_lineup_optimization` returns a logical error.
-3. **Fragmented MLB Provider**: Raw Odds API calls found in `mlb_analysis.py` and `daily_ingestion.py`. Must migrate to a unified `balldontlie.py` adapter.
-4. **`main.py` Monolith**: File is 6,374 lines. Must extract domain routers (fantasy, jobs, admin, etc.).
-5. **Date Defaulting Drift**: `frontend/lib/api.ts` uses UTC `ISOString` slicing while `lineup/page.tsx` uses ET-aware `toLocaleDateString`. Must centralise to a shared ET helper.
+| # | Gap | Status | Fix |
+|---|-----|--------|-----|
+| 1 | **Async Status Contract Drift** — backend used `running`/`done`, frontend expected `processing`/`completed` | ✅ FIXED Mar 31 | `job_queue_service.py` status strings updated |
+| 2 | **Queue Error Masking** — `process_pending_jobs` marked jobs `done` even on logical errors | ✅ FIXED Mar 31 | `_run_lineup_optimization` now raises; caller handles retry/fail |
+| 3 | **Fragmented MLB Provider** — raw OddsAPI calls in `mlb_analysis.py` + `daily_ingestion.py` | ⏳ Post-Apr 7 | Migrate to BDL GOAT MLB after subscription activates |
+| 4 | **`main.py` Monolith** — 6,374-line file, no domain routers | ⏳ Deferred | Extract routers after MLB module stabilises |
+| 5 | **Date UTC Drift** — `api.ts` used `toISOString().slice(0,10)` (UTC) instead of ET | ✅ FIXED Mar 31 | `etTodayStr()` in `constants.ts`; `dailyLineup` default updated |
 
 ### 90-Day Roadmap (ARCH-002)
 
-*   **Phase 1: Reliability Contracts** — Unify status enums, fix queue failure semantics, add contract tests.
-*   **Phase 2: Data Source Unification** — Implement BDL adapter, migrate all MLB odds/injuries/schedule consumers.
-*   **Phase 3: API Modularization** — Decompose `main.py` into routers.
-*   **Phase 4: Performance & Calibration Ops** — Empirical Brier score evaluation, recommendation ROI tracking, SLO dashboards.
+*   **Phase 1: Reliability Contracts** ✅ COMPLETE (Mar 31) — Gaps 1, 2, 5 fixed. Contract tests pending (low priority).
+*   **Phase 2: Data Source Unification** ⏳ GATED Apr 7 — Implement BDL adapter, migrate all MLB odds/injuries/schedule consumers.
+*   **Phase 3: API Modularization** ⏳ DEFERRED — Decompose `main.py` into routers after MLB module is live.
+*   **Phase 4: Performance & Calibration Ops** ⏳ DEFERRED — Empirical Brier score evaluation, recommendation ROI tracking, SLO dashboards (needs 4 weeks season data).
 
 ---
 
@@ -370,9 +372,17 @@ Active tasks:
 
 All pre-Apr-7 Claude Code tasks are now complete. System is stable.
 
-Active task: deploy the latest frontend changes (low-severity UI cleanup).
+Active task: deploy the latest changes (ARCH-002 Phase 1 + UI cleanup).
   railway up
-  Verify: fantasy page (no hardcoded draft date), waiver page ("Add" links to Yahoo), matchup page loads
+  Verify:
+    - Fantasy lineup page: async optimize button → job polls to completion (not timeout)
+    - Lineup page default date: should match today's ET date (not UTC)
+    - Fantasy page: no hardcoded draft date ("2026 season active" shown)
+    - Waiver page: "Add" buttons link out to Yahoo Fantasy Baseball
+    - Matchup page: loads category breakdown without errors
+
+Backend changes deployed: backend/services/job_queue_service.py (status string fixes)
+Frontend changes deployed: frontend/lib/constants.ts (etTodayStr), frontend/lib/api.ts (dailyLineup ET fix + asyncOptimize query params fix)
 
 After deploy confirms, system is in full holding pattern until Apr 7.
 
