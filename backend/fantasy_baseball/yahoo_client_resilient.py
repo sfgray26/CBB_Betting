@@ -532,9 +532,10 @@ class YahooFantasyClient:
         sort=AR ranks by percent rostered — the only sort that reflects real
         pickup value. Yahoo's default sort order is opaque and unreliable.
         """
-        # Do NOT pass "out": "metadata" — that strips ownership data from the response.
-        # Yahoo returns percent_rostered (not percent_owned) in the rankings block.
-        params = {"status": "A", "start": start, "count": count, "sort": "AR"}
+        # K-24: include out=stats,percent_owned to get season stats + ownership
+        # in a single call — no extra API requests needed.
+        params = {"status": "A", "start": start, "count": count, "sort": "AR",
+                  "out": "stats,percent_owned"}
         if position:
             params["position"] = position
         data = self._get(f"league/{self.league_key}/players", params=params)
@@ -962,7 +963,25 @@ class YahooFantasyClient:
         return parsed
 
     def _parse_players_block(self, players_raw) -> list[dict]:
-        return [self._parse_player(p) for p in self._iter_block(players_raw, "player")]
+        results = []
+        for p in self._iter_block(players_raw, "player"):
+            parsed = self._parse_player(p)
+            # K-24: extract season stats when present (out=stats on free agent calls)
+            stats_raw = {}
+            if isinstance(p, list):
+                for item in p:
+                    if isinstance(item, dict) and "player_stats" in item:
+                        stats_list = item["player_stats"].get("stats", [])
+                        for stat_entry in stats_list:
+                            if isinstance(stat_entry, dict):
+                                s = stat_entry.get("stat", {})
+                                sid = s.get("stat_id")
+                                if sid is not None:
+                                    stats_raw[str(sid)] = s.get("value", "")
+            if stats_raw:
+                parsed["stats"] = stats_raw
+            results.append(parsed)
+        return results
 
 
 # ---------------------------------------------------------------------------

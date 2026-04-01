@@ -16,19 +16,22 @@
 ## 2. Fantasy UI Read-Only Audit (G-3)
 
 ### Lineup Page (/fantasy/lineup)
-*   **Scanability:** The table is dense. "Implied Runs" (28px) and "Park Factor" (24px) consume significant horizontal space.
+*   **Scanability:** The table is dense. "Implied Runs" and "Park Factor" consume significant horizontal space.
 *   **Confusing Columns:** "Score" (Lineup Score) and "Proj" (Valuation Projection) are styled almost identically. Elite users might confuse "Score" (matchup-specific) with "Proj" (raw value).
 *   **UX Friction:** The "Apply to Yahoo" button is only at the bottom. For teams with many pitchers/bench players, this requires significant scrolling.
 *   **Missing Feature:** No "Lock" mechanism to protect specific players from being moved by the \Optimize Lineup\ tool.
+*   **Empty States:** Both Batters and Pitchers tables show "No games scheduled for this date" when empty. It would be better to show which teams ARE playing or if it's a league-wide off-day.
 
 ### Roster Page (/fantasy/roster)
 *   **Improvement:** Status column in 2nd position is much better for scanability.
 *   **Missing Context:** No recent performance indicators (last 7/14 days). Managers have to navigate away to see who's actually hitting.
-*   **Abstract Metrics:** "Z-Score" is technically sound but lacks a tooltip or legend for non-statistical users.
+*   **Abstract Metrics:** "Z-Score" is technically sound but lacks a tooltip or legend for non-statistical users (e.g. what is a 'good' score?).
+*   **Missing Stats:** No counting stats (HR, RBI, etc.) on the roster page, only Z-Score.
 
 ### Waiver Page (/fantasy/waiver)
-*   **Feedback:** Empty state ("No waiver targets found") is functional but "dead-end". 
-*   **Recommendation:** Suggest changing filters (e.g., "Try increasing Max Owned %") when empty.
+*   **Empty Trackers:** Category/2-start pitchers show dead zones when empty. 
+*   **Add Button Inconsistency:** "Add" button in \TwoStartTable\ is \disabled\ with a tooltip "Waiver add is visual only", while \WaiverTable\ links to Yahoo.
+*   **Need Score Enigma:** No explanation of what a "good" Need Score is or how it's calculated.
 
 ### Dashboard (/dashboard)
 *   **Actionability:** "Injury Flags" tell the user to "Move to IL immediately" but provide no direct link or button to perform the action.
@@ -36,6 +39,5 @@
 
 ## 3. Yahoo API Response Capture (G-2)
 
-*   Captured full roster raw response (294KB JSON).
-*   Captured league settings and free agents sample.
+*   Captured full roster raw response, free agents, and league settings.
 *   Saved to \eports/GEMINI_YAHOO_RESPONSES_2026-04-01.md\.

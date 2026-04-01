@@ -29,9 +29,11 @@ def _make_yahoo_player(name="Test Player", positions=None, percent_owned=42.5):
 
 class TestYahooClientOutParam:
 
-    def test_get_free_agents_omits_out_param(self):
-        # K-20 finding: "out=metadata" strips percent_rostered from Yahoo response.
-        # Fix: remove the "out" param entirely so default response includes ownership data.
+    def test_get_free_agents_includes_stats_out_param(self):
+        # K-24 update: get_free_agents() now includes out=stats,percent_owned
+        # to fetch season stats in the same API call (no extra rate limit exposure).
+        # K-20 original fix removed out=metadata which stripped ownership —
+        # out=stats,percent_owned preserves ownership and adds stats.
         from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 
         client = YahooFantasyClient.__new__(YahooFantasyClient)
@@ -49,9 +51,9 @@ class TestYahooClientOutParam:
 
         client.get_free_agents(count=10)
 
-        assert "out" not in captured_params, (
-            "get_free_agents() must NOT include 'out' param -- "
-            "K-20: out=metadata strips percent_rostered from Yahoo response"
+        assert captured_params.get("out") == "stats,percent_owned", (
+            "get_free_agents() must include out=stats,percent_owned -- "
+            "K-24: fetch season stats + ownership in a single API call"
         )
         # Verify other required params are present
         assert "status" in captured_params

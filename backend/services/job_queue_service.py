@@ -130,7 +130,7 @@ class JobQueueService:
                         UPDATE job_queue
                         SET status = 'completed',
                             completed_at = :now,
-                            result = :result::jsonb
+                            result = CAST(:result AS jsonb)
                         WHERE id = :job_id
                         """
                     ),

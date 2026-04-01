@@ -4669,6 +4669,7 @@ async def get_fantasy_waiver_recommendations(
                 hot_cold=_hc,
                 status=_status,
                 injury_note=_injury_note,
+                stats=p.get("stats") or {},
             )
 
         # Build + filter + sort top_available

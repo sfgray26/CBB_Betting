@@ -516,6 +516,13 @@ class PlayerDailyMetric(Base):
     # Flexible rolling windows: {"7d": {"avg": 0.310, ...}, "30d": {...}}
     rolling_window = Column(JSONB, nullable=False, default=dict)
 
+    # Ensemble RoS blend columns (Phase 2.2 — ATC/BAT/Steamer/ZiPS weighted average)
+    blend_hr = Column(Float)
+    blend_rbi = Column(Float)
+    blend_avg = Column(Float)
+    blend_era = Column(Float)
+    blend_whip = Column(Float)
+
     data_source = Column(String(50))
     fetched_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 

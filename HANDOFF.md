@@ -33,17 +33,18 @@ The platform is live for the 2026 MLB fantasy season. The Yahoo API pipeline is 
 | Waiver owned% = 0% for all players | K-20 | CRITICAL | Removed `"out": "metadata"`; lookup changed to `percent_rostered` | Claude | FIXED S4 |
 | Playoffs hallucination (Week 2 shows "PLAYOFFS") | K-22 | CRITICAL | `is_playoffs = raw_playoffs and (week >= 20)` guard | Claude | FIXED S4 |
 | Async lineup optimizer Pydantic crash (5 validation errors) | K-21 | CRITICAL | Worker fetches Yahoo data at execution time; correct `solve_smart_lineup()` call | Claude | FIXED S3 |
+| SQL Syntax Error in Job Queue (`:result::jsonb`) | G-1 | CRITICAL | Changed to `CAST(:result AS jsonb)` in `job_queue_service.py` | Claude | FIXED S6 |
 | `apiFetch` converts nested error to `[object Object]` | K-21 | CRITICAL | Parse nested detail; extract readable string | Gemini | PENDING G-5 |
 | "Score" column is `smart_score`; mislabelled; can be negative | K-21 | HIGH | Rename to "Smart Score" + tooltip; PROJ falls back to `implied_runs` | Gemini | PENDING G-6/G-7 |
 | K/9 value (16.20) appearing in Walks column | K-22 | HIGH | Decimal guard in `_extract_team_stats()`: float BB != int -> reject + warn | Claude | FIXED S5 |
 | Missing NSV on matchup (1 save shown as 0) | K-22 | HIGH | Stat ID 83 extraction + fallback mapping audit | Claude + Gemini | PENDING G-8 |
 | Stat labels missing: K/BB, GS, NSV in `constants.ts` | K-22 | MEDIUM | Add string + numeric ID mappings | Gemini | PENDING G-8 |
 | PROBABLE badge shown yellow/injury (should be green/SP) | K-19 domain | MEDIUM | Map PROBABLE to emerald/STARTING | Gemini | PENDING G-10 |
-| Waiver "Key Stats" blank (shows deficit analysis, not stats) | K-20 | HIGH | Add `stats` field to `WaiverPlayerOut`; fetch from Yahoo | Claude | OPEN backend |
+| Waiver "Key Stats" blank (shows deficit analysis, not stats) | K-20 | HIGH | Added `stats: dict` to `WaiverPlayerOut`; `get_free_agents()` now passes `out=stats,percent_owned`; `_to_waiver_player()` extracts stats | Claude | FIXED S6 |
 | Settings page is a read-only JSON dump | K-23 | CRITICAL | Rebuild with Switch/Select/Slider; hide z-score behind presets | Gemini | PENDING G-9 |
-| Pre-season CSV at 100% weight while season is live | K-17 | CRITICAL | In-season pipeline designed; not yet built | Claude | OPEN highest priority |
-| No FanGraphs RoS download | K-17 / K-19 | CRITICAL | Lock 100_012 reserved; cloudscraper approach validated | Claude | OPEN |
-| No ensemble blender (ATC/Steamer/ZiPS/THE BAT) | K-17 / K-19 | CRITICAL | Schema: 5 new columns on `PlayerDailyMetric`; weights decided | Claude | OPEN |
+| Pre-season CSV at 100% weight while season is live | K-17 | CRITICAL | `fangraphs_loader.py` built with ensemble blend; needs daily_ingestion wiring (100_012 + 100_014) | Claude | IN PROGRESS S6 |
+| No FanGraphs RoS download | K-17 / K-19 | CRITICAL | `fangraphs_loader.py` built — 4 systems (ATC/BAT/Steamer/ZiPS), cloudscraper, name normalization | Claude | BUILT S6 — needs daily_ingestion wiring |
+| No ensemble blender (ATC/Steamer/ZiPS/THE BAT) | K-17 / K-19 | CRITICAL | Schema: 5 blend columns added to `PlayerDailyMetric` model + SQL migration; `compute_ensemble_blend()` in `fangraphs_loader.py` | Claude | BUILT S6 — needs daily_ingestion job (100_014) |
 | No Yahoo ADP/injury polling | K-17 / K-19 | HIGH | Lock 100_013 reserved; 4-hour cadence designed | Claude | OPEN |
 | No projection freshness alerting | K-16 / K-17 | HIGH | Lock 100_015 reserved; 1-hour SLA gate designed | Claude | OPEN |
 | CSV loader rejects full file on column mismatch | K-16 | MEDIUM | Header validation warning added to both loaders; per-row errors upgraded to WARNING | Claude | FIXED S5 |
@@ -127,7 +128,7 @@ Layer 5: Projection Freshness Guard
 | 1.3 | Fix stat label mappings (K/BB, GS, NSV, HLD) | Gemini G-8 | `constants.ts` — complete stat label map |
 | 1.4 | Settings page rebuild | Gemini G-9 | `settings/page.tsx` — Switch/Select/Slider |
 | 1.5 | PROBABLE badge green/STARTING | Gemini G-10 | `status-badge.tsx` — correct color map |
-| 1.6 | WaiverPlayerOut add `stats` field | Claude | `schemas.py` + `main.py` `_to_waiver_player()` |
+| 1.6 | WaiverPlayerOut add `stats` field | Claude | `schemas.py` + `main.py` `_to_waiver_player()` + `yahoo_client_resilient.py` `out=stats` | **DONE S6** |
 | 1.7 | K/9 bleed into Walks column | Claude | `main.py` `_extract_team_stats()` — decimal type guard |
 | 1.8 | CSV partial loader | Claude | `projections_loader.py` — column intersection; never reject full file |
 
@@ -135,8 +136,8 @@ Layer 5: Projection Freshness Guard
 
 | # | Item | Owner | Deliverable |
 |---|------|-------|-------------|
-| 2.1 | FanGraphs RoS downloader | Claude | `fangraphs_loader.py` — 4 systems, daily 3 AM ET |
-| 2.2 | `PlayerDailyMetric` schema extension | Claude | Alembic migration — 5 blend columns |
+| 2.1 | FanGraphs RoS downloader | Claude | `fangraphs_loader.py` — 4 systems, cloudscraper, ensemble blend | **DONE S6** |
+| 2.2 | `PlayerDailyMetric` schema extension | Claude | SQL migration `add_blend_columns.sql` + model columns | **DONE S6** |
 | 2.3 | Ensemble blender job (100_014) | Claude | `daily_ingestion.py` — weighted blend logic |
 | 2.4 | Yahoo ADP/injury poller (100_013) | Claude | `yahoo_client_resilient.py` — pagination + DB write |
 | 2.5 | Projection freshness alerting (100_015) | Claude | `daily_ingestion.py` — SLA gate before lineup opt |
@@ -190,44 +191,54 @@ Layer 5: Projection Freshness Guard
 
 **Guardrails:** Read-only. No code changes. Output to `reports/K24_*.md` and `reports/K25_*.md`.
 
-#### K-24: Yahoo `player_stats` Endpoint Spec
+### KIMI -- Research COMPLETE
 
-**Why needed:** Claude is implementing `_to_waiver_player()` stats field (H-1). Without the
-exact Yahoo API contract, this is guesswork that will break in prod.
+**K-24 and K-25 research delivered.** All findings documented in:
+- `reports/K24_YAHOO_PLAYER_STATS_SPEC.md` — Yahoo API contract for player stats
+- `reports/K25_FANGRAPHS_COLUMN_MAP.md` — FanGraphs RoS column headers
 
-**Read first:**
-- `backend/fantasy_baseball/yahoo_client_resilient.py` -- understand `_get()` and league URL patterns
-- `reports/GEMINI_YAHOO_RESPONSES_2026-04-01.md` -- live API response samples
+#### K-24 Findings Summary
 
-**Deliver `reports/K24_YAHOO_PLAYER_STATS_SPEC.md` answering:**
-1. What URL endpoint returns season stats for a specific player or batch of players?
-2. What is the exact JSON path to batting stats (HR, RBI, R, AVG, SB)?
-3. What is the exact JSON path to pitching stats (ERA, WHIP, K, IP, W)?
-4. What stat IDs map to each? (Cross-ref K-14: 57=BB, 83=NSV, 85=OBP)
-5. Can multiple player keys be batched? What is the limit?
-6. Should `_to_waiver_player()` make a separate stats batch call or reuse data already in the free-agents response?
+**Recommendation for `_to_waiver_player()`:** Reuse existing `get_free_agents()` call by adding `out=stats,metadata,percent_owned` parameter. This returns stats in the same API call (no batching needed for 25 players/page).
 
-Output: Exact URL template + exact JSON path + stat IDs. Under 400 words. Contract, not prose.
+| Stat | ID | Path |
+|------|-----|------|
+| HR | 7 | `player[1].player_stats.stats[n].stat.value` |
+| RBI | 8 | Same structure |
+| R | 6 | Same structure |
+| SB | 5 | Same structure |
+| AVG | 3 | Same structure |
+| ERA | 26 | Same structure |
+| WHIP | 27 | Same structure |
+
+**Batch limit:** 25 player keys per call (Yahoo hard limit).
+
+#### K-25 Findings Summary
+
+**Column consistency:** ALL systems (ATC, THE BAT, ZiPS DC, Steamer) use identical column headers.
+
+| Stat | Column | Notes |
+|------|--------|-------|
+| HR | `HR` | Consistent all systems |
+| RBI | `RBI` | Consistent all systems |
+| R | `R` | Consistent all systems |
+| AVG | `AVG` | Consistent all systems |
+| SB | `SB` | Consistent all systems |
+| ERA | `ERA` | Consistent all systems |
+| WHIP | `WHIP` | Consistent all systems |
+| Strikeouts | `SO` | **Not "K" — all systems use "SO"** |
+| Innings | `IP` | Format: "182.1" |
+| Name | `Name` | Format: "Last, First" |
+
+**Scraping:** All systems require `cloudscraper` (Cloudflare protected).
+
+**URLs:**
+- ATC: `projections.aspx?...type=atc`
+- THE BAT: `projections.aspx?...type=thebat`
+- ZiPS DC: `projections.aspx?...type=zipsdc`
+- Steamer RoS: `projections.aspx?...type=steamerr`
 
 ---
-
-#### K-25: FanGraphs RoS Projection Column Map
-
-**Why needed:** Claude is building `fangraphs_loader.py` (Phase 2.1). Steamer columns are
-documented in `projections_loader.py` lines 17-23. ATC and THE BAT column names are unknown.
-
-**Read first:**
-- `backend/fantasy_baseball/projections_loader.py` lines 17-23 -- existing Steamer column docs
-- `reports/K19_INSEASON_PIPELINE_SPEC.md` -- prior FanGraphs URL research
-
-**Deliver `reports/K25_FANGRAPHS_COLUMN_MAP.md` with:**
-1. Exact public download URL for ATC batting, ATC pitching, THE BAT batting, THE BAT pitching
-2. For each system, the exact CSV column header for: HR, RBI, R, AVG, SB (batting) and ERA, WHIP, K/SO, IP, W, GS (pitching)
-3. Does strikeout column name differ across systems? (Steamer="SO", others?)
-4. What is the Name column header per system?
-5. Which systems require cloudscraper vs plain requests?
-
-Output: Table with System | Stat | Column Name | URL. Under 500 words. Include confidence level per URL.
 
 ---
 
@@ -293,3 +304,29 @@ Output: Table with System | Stat | Column Name | URL. Under 500 words. Include c
 ---
 
 *Handoff complete. New HANDOFF.md is clean, contract-driven, and ready for execution. All K-15-K-23 issues acknowledged and roadmap simplified.*
+
+---
+
+## Session 4 Summary � Gemini CLI (Ops) � Apr 1, 2026
+
+### G-1: Deployment & Verification
+- **Build Fixed:** Resolved UTF-8 encoding issue in \status-badge.tsx\ that was blocking production builds.
+- **Deploy:** \
+ailway up\ successful.
+- **Verification:**
+    - Player Names: ? CLEAN (no injury suffixes).
+    - Matchup Stats: ? NO NEGATIVES ( GS clamped to 0).
+    - Dashboard Timestamp: ? ET ANCHORED (EDT/-04:00).
+    - **Async-Optimize Job:** ? CRITICAL FAILURE. Job hangs in \processing\ due to SQL Syntax Error in \job_queue_service.py\ (line 124: \:result::jsonb\). Worker transaction aborts. Verified via live polling and code inspection.
+
+### G-2: Yahoo API Capture
+- Captured full roster, free agents sample, and league settings JSON.
+- Saved to \
+eports/GEMINI_YAHOO_RESPONSES_2026-04-01.md\.
+- High-fidelity data confirmed for Claude's parsing logic fixes.
+
+### G-3: UI Re-Audit
+- Fresh read-only pass across fantasy pages.
+- Documented 10+ UX/UI issues in \
+eports/GEMINI_UI_AUDIT2_2026-04-01.md\.
+- Key findings: dense tables, confusing column naming (Score vs Proj), and missing interactivity in dashboard flags.
