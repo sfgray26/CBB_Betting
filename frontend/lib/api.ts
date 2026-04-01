@@ -33,6 +33,8 @@ import type {
   DashboardResponse,
   UserPreferencesResponse,
   UserPreferences,
+  ValuationsResponse,
+  AsyncJobStatus,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -295,6 +297,22 @@ export const endpoints = {
       method: 'PUT',
       body: JSON.stringify({ date, players }),
     }),
+
+  asyncOptimizeLineup: (targetDate: string, leagueKey?: string) =>
+    apiFetch<{ job_id: string; status: string; poll_url: string }>('/api/fantasy/lineup/async-optimize', {
+      method: 'POST',
+      body: JSON.stringify({ target_date: targetDate, ...(leagueKey ? { league_key: leagueKey } : {}) }),
+    }),
+
+  getJobStatus: (jobId: string) =>
+    apiFetch<AsyncJobStatus>(`/api/fantasy/jobs/${jobId}`),
+
+  getPlayerValuations: (date?: string, leagueKey?: string) => {
+    const params = new URLSearchParams()
+    if (date) params.set('date', date)
+    if (leagueKey) params.set('league_key', leagueKey)
+    return apiFetch<ValuationsResponse>(`/api/fantasy/players/valuations?${params}`)
+  },
 
   // Admin
   schedulerStatus: () =>

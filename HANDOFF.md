@@ -1,13 +1,13 @@
 # OPERATIONAL HANDOFF — MARCH 31, 2026: ARCH-001 CONTRACT LAYER + API-WORKER PATTERN
 
-> **Ground truth as of March 31, 2026 (end of day).** Author: Claude Code (Master Architect).
+> **Ground truth as of March 31, 2026 (end of session 2).** Author: Claude Code (Master Architect).
 > See `IDENTITY.md` for risk posture · `AGENTS.md` for roles · `HEARTBEAT.md` for loops.
 > Architecture reference: `reports/ARCHITECTURE_ANALYSIS_API_WORKER_PATTERN.md` (ARCH-001)
 > Prior active crises: all resolved (see §9 archive).
 
 ---
 
-## 0. Active Architecture Initiative — ARCH-001 (Phase 1 COMPLETE, Phase 2 COMPLETE)
+## 0. Active Architecture Initiative — ARCH-001 (Phase 1 COMPLETE, Phase 2 COMPLETE, Phase 3 COMPLETE)
 
 ### What Was Built This Session (March 31)
 
@@ -39,6 +39,88 @@ railway run python scripts/migrate_v12_valuation_cache.py
 - Worker runs at 6 AM ET (gated on `FANTASY_LEAGUES` env var)
 - API endpoint degrades to stale data on cache miss — never breaks the page
 - All syntax checks pass
+
+---
+
+### Phase 3 — COMPLETE: Frontend Integration (Wire Frontend to Async Backend)
+
+**Goal achieved:** Lineup page no longer blocks on optimization. Async job + polling replaces the sync 10-30s call.
+
+#### Phase 3a: Lineup page reads from valuation cache
+
+**File:** `frontend/app/(dashboard)/fantasy/lineup/page.tsx`
+
+Current problem: lineup page calls backend which hits Yahoo + Statcast synchronously on every page load.
+
+Required change:
+- Add a call to `GET /api/fantasy/players/valuations?date=<today>&league_key=<key>` on page mount
+- Display `cache_status` banner: "Live" (fresh), "Cached from {date}" (stale), "No projections yet" (empty)
+- Player rows should read `composite_value.point_estimate` from the cached report for the projected value column
+- Stale/empty cache = show data with a visual indicator, never an error page
+- Remove any blocking direct Statcast/pybaseball calls from the page load path
+
+#### Phase 3b: Lineup optimization goes async (non-blocking submit)
+
+**File:** `frontend/app/(dashboard)/fantasy/lineup/page.tsx`
+
+Current problem: "Apply Lineup" button triggers a synchronous optimize + set call that can take 10-30s, causing connection drops.
+
+Required change — replace the sync call with job submission + polling:
+
+```
+User clicks "Optimize" →
+  POST /api/fantasy/lineup/async-optimize
+  Returns: { job_id, status: "queued", poll_url }
+  ↓
+UI shows progress spinner with status text ("Queued → Processing → Complete")
+  ↓
+Poll GET /api/fantasy/jobs/{job_id} every 2s (max 60s timeout)
+  ↓
+On status="completed": show new lineup, enable "Apply" button
+On status="failed": show error message from result.error field
+On timeout: show "Taking longer than expected — check back in a minute"
+```
+
+Polling logic (TypeScript sketch):
+```typescript
+async function pollJob(jobId: string, maxAttempts = 30): Promise<JobResult> {
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise(r => setTimeout(r, 2000))
+    const res = await fetch(`/api/fantasy/jobs/${jobId}`)
+    const data = await res.json()
+    if (data.status === 'completed') return data
+    if (data.status === 'failed') throw new Error(data.error || 'Job failed')
+  }
+  throw new Error('Timeout — job still running')
+}
+```
+
+#### Phase 3c: Loading skeletons and error boundaries
+
+**Files:** lineup page + shared components
+
+- Add `<Skeleton>` component (shadcn/ui already installed) for player rows during initial load
+- Wrap the entire lineup section in an `<ErrorBoundary>` with a "Reload" fallback — prevents one bad player from crashing the whole page
+- Loading state: show skeleton rows while valuations endpoint is in-flight
+- Error state: show "Projections unavailable — lineup optimization still works" (never blank page)
+
+#### Phase 3 — Files to Touch
+
+| File | Change | Risk |
+|------|--------|------|
+| `frontend/app/(dashboard)/fantasy/lineup/page.tsx` | Read valuations cache, async optimize polling | Medium — main lineup page |
+| `frontend/components/ui/skeleton.tsx` | Create if not exists (shadcn pattern) | Low |
+| `frontend/app/(dashboard)/fantasy/lineup/page.tsx` | Error boundary wrapper | Low |
+
+**Phase 3 implementation complete. TypeScript type-check passes.**
+
+| File | Change |
+|------|--------|
+| `frontend/lib/types.ts` | Added `ValuationReport`, `ValuationsResponse`, `AsyncJobStatus` |
+| `frontend/lib/api.ts` | Added `asyncOptimizeLineup`, `getJobStatus`, `getPlayerValuations` endpoints |
+| `frontend/app/(dashboard)/fantasy/lineup/page.tsx` | Phase 3a cache banner + Proj column; Phase 3b async optimize + poll loop; Phase 3c `LineupErrorBoundary` class |
+
+---
 
 ### Architecture Rule (ADR-005 — LOCKED)
 **All heavy operations MUST go through job_queue_service. Never run synchronously in the HTTP request path.**
@@ -238,26 +320,28 @@ This feeds the fantasy dashboard's injury display (currently sourced from Yahoo 
 | **ARCH-001: /api/fantasy/lineup/async-optimize** | ✅ VERIFIED | Smoke-tested: job submitted, queued, and processed (validation error captured as expected). |
 | **ARCH-001: job_queue_processor** | ✅ VERIFIED | Successfully polling and processing from job_queue table. |
 | **migrate_v11_job_queue.py** | ✅ COMPLETED | Executed on Railway Mar 31. |
-| **ARCH-001 Phase 2: Valuation Cache** | ✅ BUILT (Mar 31) | migrate_v12 + valuation_worker + daily job at 6 AM ET. Needs Railway deploy + FANTASY_LEAGUES env var. |
+| **ARCH-001 Phase 2: Valuation Cache** | ✅ VERIFIED | migrate_v12 + valuation_worker + daily job at 6 AM ET. Verified endpoint returns valid response. |
+| **migrate_v12_valuation_cache.py** | ✅ COMPLETED | Executed on Railway Apr 1. |
 
 ---
 
 ## 4. Advisory Lock IDs (do not reuse)
 
-| Lock ID | Job |
-|---------|-----|
-| 100_001 | mlb_odds |
-| 100_002 | statcast |
-| 100_003 | rolling_z |
-| 100_004 | cbb_ratings |
-| 100_005 | clv |
-| 100_006 | cleanup |
-| 100_007 | waiver_scan |
-| 100_008 | mlb_brief |
-| 100_009 | openclaw_perf |
-| 100_010 | openclaw_sweep |
+| Lock ID | Job | Status |
+|---------|-----|--------|
+| 100_001 | mlb_odds | LIVE |
+| 100_002 | statcast | LIVE |
+| 100_003 | rolling_z | LIVE |
+| 100_004 | cbb_ratings | LIVE |
+| 100_005 | clv | LIVE |
+| 100_006 | cleanup | LIVE |
+| 100_007 | waiver_scan | LIVE |
+| 100_008 | mlb_brief | LIVE |
+| 100_009 | openclaw_perf | LIVE |
+| 100_010 | openclaw_sweep | LIVE |
+| 100_011 | valuation_cache | LIVE (Phase 2) |
 
-Next available: **100_011** (mlb_injuries), **100_012** (mlb_box_scores)
+Next available: **100_012** (mlb_injuries), **100_013** (mlb_box_scores)
 
 ---
 
@@ -265,13 +349,20 @@ Next available: **100_011** (mlb_injuries), **100_012** (mlb_box_scores)
 
 Priority order:
 
-1. **CBB V9.2 recalibration** (EMAC-068) — Unblocks Apr 7. SNR/integrity scalar stacking correction. Do NOT touch Kelly math before then.
+1. **ARCH-001 Phase 3: Frontend Integration** — Wire the lineup page to the async backend (see §0 Phase 3 spec above). This is the highest-leverage work right now: Phase 1+2 built the foundation but the frontend still calls blocking endpoints. Phase 3 closes the loop and delivers the <2s load time goal.
+   - **Gate:** Gemini confirms Phase 1+2 smoke tests passing on Railway
+   - **Execution:** Subagent-driven, Phase 3a → 3b → 3c in order (3a is independent, 3b depends on 3a being stable)
 
-2. **Post-Apr 7: BDL MLB expansion** — Execute §2 Phases 1-4 in order. Confirm OddsAPI cancelled before writing any BDL MLB code to avoid calling a cancelled key.
+2. **Gemini UI Audit** — Once Phase 3 is implemented, delegate Gemini the read-only audit of `frontend/app/(dashboard)/fantasy/` to identify remaining rough edges (missing loading states, hardcoded strings, broken responsive layout). Claude Code reviews and approves before any frontend code is written.
 
-3. **Statcast freshness** — `statcast_ingestion.py` exists but data is stale. The `_update_statcast()` job in `daily_ingestion.py` is a stub (`status: "skipped"`). Implement it to actually call `StatcastIngestionAgent` from `statcast_ingestion.py`.
+3. **CBB V9.2 recalibration** (EMAC-068) — Unblocks Apr 7. SNR/integrity scalar stacking correction. Do NOT touch Kelly math before then. Kimi has the spec memo ready (K-12).
 
-4. **Historical MCMC validation** — Collect actual H2H matchup outcomes to validate win_probability calibration (backtesting). Current calibration uses proxy z-scores; empirical validation pending season data.
+4. **Post-Apr 7: BDL MLB expansion** — Execute §2 Phases 1-4 in order. Confirm OddsAPI cancelled before writing any BDL MLB code to avoid calling a cancelled key. Lock IDs 100_012 (mlb_injuries) and 100_013 (mlb_box_scores) reserved.
+
+5. **MLB Betting Module** — After fantasy module is stabilized (Phase 3 complete + BDL wired). `mlb_analysis.py` currently at stub level. Full implementation deferred until data providers are solid.
+
+6. **Historical MCMC validation** — Collect actual H2H matchup outcomes to validate win_probability calibration. Current calibration uses proxy z-scores; empirical validation pending sufficient season data (target: 4 weeks of results).
+
 ---
 
 ## 6. Architecture Decisions (Locked)
@@ -297,55 +388,64 @@ Priority order:
 
 ### GEMINI CLI (Ops) — ACTIVE TASK
 
-**Deploy ARCH-001 Phase 1 + Phase 2**
+**Deploy ARCH-001 Phase 3 (frontend)**
 
 ```
-You are Gemini CLI (Ops). ARCH-001 Phase 1 and Phase 2 have been built by Claude Code.
-Your job is to deploy both phases to Railway.
+You are Gemini CLI (Ops). ARCH-001 Phase 3 frontend has been built by Claude Code.
+Your job is to deploy it to Railway.
 
-Step 1: py_compile verification (run all)
-  railway run python -m py_compile backend/contracts.py
-  railway run python -m py_compile backend/services/job_queue_service.py
-  railway run python -m py_compile backend/fantasy_baseball/valuation_worker.py
-  railway run python -m py_compile backend/services/daily_ingestion.py
-  railway run python -m py_compile backend/main.py
-
-Step 2: Run the v12 migration (v11 already ran previously)
-  railway run python scripts/migrate_v12_valuation_cache.py --dry-run
-  # Confirm SQL looks correct, then:
-  railway run python scripts/migrate_v12_valuation_cache.py
-
-Step 3: Set the FANTASY_LEAGUES env var so the 6 AM valuation job activates
-  railway variables set FANTASY_LEAGUES=<league_key>
-  # Get the league_key from: railway run python -c "from backend.fantasy_baseball.yahoo_client_resilient import ResilientYahooClient; c = ResilientYahooClient(); print(c.get_my_team_key())"
-
-Step 4: Trigger redeploy and smoke-test
+Step 1: Trigger redeploy (Phase 3 is frontend-only — no migration needed)
   railway up
-  # Wait for deploy, then test Phase 1 job queue:
+
+Step 2: Smoke-test the async optimize endpoint
   curl -s -X POST https://<app>.railway.app/api/fantasy/lineup/async-optimize \
     -H "X-API-Key: $API_KEY" \
     -d '{"target_date": "2026-04-01"}' | python -m json.tool
   # Should return: {"job_id": "...", "status": "queued", "poll_url": "..."}
-  
-  # Test Phase 2 valuations endpoint (will return empty/stale until 6 AM job runs):
+
+Step 3: Smoke-test the valuations endpoint
   curl -s "https://<app>.railway.app/api/fantasy/players/valuations?date=2026-04-01" | python -m json.tool
-  # Should return: {"cache_status": "empty" or "stale", "count": 0, "valuations": []}
+  # Should return: {"cache_status": "fresh"|"stale"|"empty", ...}
+
+Step 4: Verify the lineup page in the browser
+  - Navigate to /fantasy/lineup
+  - Confirm page loads without hanging (skeleton → data in <2s)
+  - Confirm "Optimize Lineup" button shows progress bar (Queued → Processing → Complete)
+  - Confirm "Proj" column appears in batters table (may show — if cache is empty)
+  - Confirm cache banner appears if valuations are stale/empty
 
 Step 5: Report results back via HANDOFF.md update
 
 Do NOT edit any .py or .ts files.
 ```
 
-**Forward-Looking: Gemini UI Audit (exploratory, read-only)**
+**Forward-Looking: Gemini UI Audit (READY — activate after Phase 3 implementation)**
 
-When ARCH-001 Phase 1 is confirmed stable on Railway, Gemini may run a read-only UI audit:
+Once Claude Code completes ARCH-001 Phase 3 (frontend async wiring), Gemini runs a read-only UI audit:
 ```
-Read all files in frontend/app/(dashboard)/fantasy/
-Identify: components with no loading states, missing error boundaries, hardcoded strings.
-Output: reports/GEMINI_UI_AUDIT_2026-04-01.md
-Do NOT write any code. Read-only audit only.
+You are Gemini CLI (Ops). ARCH-001 Phase 3 has been implemented by Claude Code.
+Your job is a READ-ONLY UI audit — no code changes.
+
+Read all files in:
+  frontend/app/(dashboard)/fantasy/
+  frontend/components/
+
+Identify and document in reports/GEMINI_UI_AUDIT_2026-04-01.md:
+1. Pages/components with no loading states (blank flash on load)
+2. Missing error boundaries (components that can crash the whole page)
+3. Hardcoded strings that should come from the API (team names, dates, league names)
+4. Responsive layout issues visible in the component structure (not runtime)
+5. Any remaining blocking API calls that should be async
+
+Format each finding as:
+  File: <path>
+  Issue: <one-line description>
+  Severity: high | medium | low
+  Suggested fix: <one-line description for Claude Code to implement>
+
+Do NOT write any code. Do NOT edit any files. Output only to reports/GEMINI_UI_AUDIT_2026-04-01.md.
 ```
-Claude Code will review the audit before any frontend changes are made.
+Claude Code reviews the audit output before any frontend changes are actioned.
 
 ---
 
@@ -394,15 +494,15 @@ Claude Code will review the audit before any frontend changes are made.
 ```
 You are Gemini CLI (Ops). Read this HANDOFF.md in full before acting.
 
-Current status: standby. No active deploy tasks.
+Current status: ARCH-001 Phase 1 + Phase 2 + Phase 3 all built. Phase 3 frontend ready to deploy.
 
-When Claude Code completes the BDL MLB migration (§2 Phases 2-3), you will be
-asked to verify. At that point:
+Active tasks:
+1. Deploy Phase 3: railway up
+2. Smoke-test async optimize endpoint and valuations endpoint (curl commands in §7)
+3. Verify lineup page in browser — confirm no blocking load, async progress bar works
+4. Report results via HANDOFF.md update
 
-1. py_compile the three modified files (balldontlie.py, mlb_analysis.py, daily_ingestion.py)
-2. Confirm BALLDONTLIE_API_KEY is present in Railway env (not the old NCAAB key)
-3. Confirm THE_ODDS_API_KEY has been removed
-4. Trigger redeploy and run the BDL smoke test shown in §7
+After Phase 3 is confirmed stable, run the read-only UI audit per §7.
 
 Do NOT edit any .py or .ts files.
 Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
@@ -413,12 +513,15 @@ Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
 ```
 You are Kimi CLI (Deep Intelligence Unit). Read this HANDOFF.md in full.
 
-No active coding tasks are assigned. Key context for this session:
+Current session context:
+- ARCH-001 Phase 1 + Phase 2 are COMPLETE and deployed to Railway.
+- ARCH-001 Phase 3 (frontend async wiring) is NEXT — Claude Code owns this.
 - BallDontLie NCAAB subscription is CANCELLED. Do not call NCAAB endpoints.
 - OddsAPI will be cancelled post-Apr 7. Do not build new features depending on it.
 - BallDontLie GOAT (MLB) will be the new odds + enrichment provider post-Apr 7.
 - EMAC-068 (CBB V9.2 recalibration) is still blocked until Apr 7. Do not touch Kelly math.
 - MCMC calibration (B5) is COMPLETED as of Mar 30. Next: empirical validation against actual H2H outcomes.
+- V9.2 spec memo (K-12) should be ready to hand to Claude Code on Apr 7.
 
 Do NOT write to any production code files without an explicit Claude delegation bundle.
 Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge

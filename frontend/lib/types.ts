@@ -303,6 +303,34 @@ export interface DailyLineupResponse {
   lineup_warnings?: string[]
 }
 
+export interface ValuationReport {
+  player_id: string
+  player_name: string
+  target_date: string
+  computed_at: string
+  report: {
+    composite_value: { point_estimate: number; std_dev: number }
+    matchup_quality: number
+    start_probability: number
+    recent_form_delta: number
+  }
+}
+
+export interface ValuationsResponse {
+  cache_status: 'fresh' | 'stale' | 'empty' | 'error'
+  target_date: string
+  league_key: string | null
+  count: number
+  valuations: ValuationReport[]
+}
+
+export interface AsyncJobStatus {
+  job_id: string
+  status: 'pending' | 'processing' | 'completed' | 'failed'
+  result?: unknown
+  error?: string
+}
+
 export interface WaiverPlayer {
   player_id: string
   name: string
