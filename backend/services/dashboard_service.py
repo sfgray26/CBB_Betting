@@ -11,6 +11,7 @@ Usage:
 
 import logging
 from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 
@@ -203,7 +204,7 @@ class DashboardService:
             pitchers, two_starts = await self._get_probable_pitchers(user_id)
             
             return DashboardData(
-                timestamp=datetime.utcnow().isoformat(),
+                timestamp=datetime.now(ZoneInfo("America/New_York")).isoformat(),
                 user_id=user_id,
                 lineup_gaps=lineup_gaps,
                 lineup_filled_count=filled,
@@ -824,7 +825,7 @@ class DashboardService:
 
         try:
             roster = client.get_roster()
-            today = datetime.utcnow()
+            today = datetime.now(ZoneInfo("America/New_York"))
             today_str = today.strftime("%Y-%m-%d")
 
             # Flag today's starters

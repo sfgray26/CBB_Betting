@@ -916,6 +916,17 @@ class YahooFantasyClient:
             name = meta["name"].get("full")
         if not name:
             name = meta.get("name", "Unknown")
+        # Strip injury descriptions occasionally appended by Yahoo to the name field
+        # e.g. "Jason Adam Quadriceps" -> "Jason Adam"
+        if isinstance(name, str):
+            name = re.sub(
+                r"\s+(?:Quadriceps|Hamstring|Shoulder|Elbow|Hip|Knee|Back|Wrist|Ankle|"
+                r"Oblique|Forearm|Calf|Groin|Thumb|Finger|Ribs?|Concussion|"
+                r"Strain|Sprain|Fracture|Tear|Surgery|Illness|Fatigue|IL|DL)\b.*$",
+                "",
+                name,
+                flags=re.IGNORECASE,
+            ).strip()
         
         return {
             "player_key": meta.get("player_key"),

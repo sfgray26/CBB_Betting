@@ -186,19 +186,39 @@ class JobQueueService:
             payload = job_row["payload"]
             if isinstance(payload, str):
                 payload = json.loads(payload)
-            request = LineupOptimizationRequest(**payload)
-            return self._run_lineup_optimization(db, request)
+            target_date = payload.get("target_date", "")
+            risk_tolerance = payload.get("risk_tolerance", "balanced")
+            return self._run_lineup_optimization(db, target_date, risk_tolerance)
         raise ValueError(f"Unknown job_type: {job_type}")
 
-    def _run_lineup_optimization(self, db, request: LineupOptimizationRequest) -> dict:
+    def _run_lineup_optimization(self, db, target_date: str, risk_tolerance: str = "balanced") -> dict:
         # Raises on any failure — caller (process_pending_jobs) handles retry/fail logic
-        from backend.fantasy_baseball.smart_lineup_selector import SmartLineupSelector  # noqa: PLC0415
-        selector = SmartLineupSelector(db)
-        decision = selector.select(request)
+        from backend.fantasy_baseball.smart_lineup_selector import SmartLineupSelector, get_smart_selector  # noqa: PLC0415
+        from backend.fantasy_baseball.projections_loader import load_full_board  # noqa: PLC0415
+        from backend.fantasy_baseball.yahoo_client_resilient import get_resilient_yahoo_client  # noqa: PLC0415
+
+        # Hydrate Yahoo roster at worker execution time (not at submission time)
+        try:
+            yahoo = get_resilient_yahoo_client()
+            roster = yahoo.get_roster()
+        except Exception as exc:
+            raise RuntimeError(f"Yahoo roster fetch failed: {exc}") from exc
+
+        # Load projections (cached via lru_cache — fast after first call)
+        try:
+            projections = load_full_board()
+        except Exception as exc:
+            logger.warning("Projections board unavailable, proceeding with empty list: %s", exc)
+            projections = []
+
+        selector = get_smart_selector()
+        assignments, warnings = selector.solve_smart_lineup(roster, projections, game_date=target_date)
         return {
             "status": "ok",
-            "decision": decision if isinstance(decision, dict) else decision.dict(),
-            "target_date": request.target_date,
+            "target_date": target_date,
+            "risk_tolerance": risk_tolerance,
+            "lineup": assignments,
+            "warnings": warnings,
         }
 
 

@@ -5462,8 +5462,9 @@ _YAHOO_STAT_FALLBACK: dict[str, str] = {
     "21": "IP",   "23": "W",   "26": "ERA", "27": "WHIP",
     "28": "K",    "29": "QS",  "32": "SV",  "38": "K/BB","42": "K",
     "50": "IP",   "62": "GS",  "83": "NSV",
-    # NOTE: "57" (BB?) and "85" (OBP?) deliberately excluded — not in category_tracker
-    # and observed to map to wrong stats in this league. Let get_league_settings() handle them.
+    # "57" = BB (Walks) and "85" = OBP per Kimi K-14 research (Yahoo API docs).
+    # get_league_settings() will override these with league-specific names if available.
+    "57": "BB",  "85": "OBP",
 }
 
 
@@ -5575,6 +5576,12 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                     sid = str(stat.get("stat_id", ""))
                     key = stat_id_map.get(sid, sid)
                     val = stat.get("value", "")
+                    # Clamp impossible negative values (Yahoo occasionally sends -1 for GS etc.)
+                    try:
+                        if float(val) < 0:
+                            val = "0"
+                    except (TypeError, ValueError):
+                        pass
                     if key:
                         stats_dict[key] = val
         

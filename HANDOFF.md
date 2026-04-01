@@ -371,7 +371,13 @@ This feeds the fantasy dashboard's injury display (currently sourced from Yahoo 
 | **asyncOptimizeLineup (api.ts)** | âœ… FIXED | Contract mismatch fixed (query params, not body). Smoke-tested on Railway. |
 | **getPlayerValuations (api.ts)** | âœ… VERIFIED | Reading from cache (v12) with empty/stale degradation. |
 | **`todayStr()` ET anchor** | âœ… FIXED (Apr 1) | `toLocaleDateString('en-CA', {timeZone: 'America/New_York'})` â€” West Coast users no longer see wrong date. |
-| **matchup `loading.tsx` / `error.tsx`** | âœ… FIXED (Apr 1) | Created both â€” skeleton + error UI with retry button. |
+| **matchup `loading.tsx` / `error.tsx`** | ✅ FIXED (Apr 1) | Created both — skeleton + error UI with retry button. |
+| **async-optimize Pydantic crash** | ✅ FIXED (Apr 1) | `_dispatch_job` now passes `target_date`+`risk_tolerance` directly; worker fetches Yahoo roster at execution time via `get_resilient_yahoo_client()` + `solve_smart_lineup()`. 3 bugs fixed. |
+| **Name concat bug** | ✅ FIXED (Apr 1) | Regex in `_parse_player()` strips body-part keywords from player names. |
+| **Stat ID 57/85 unmapped** | ✅ FIXED (Apr 1) | `_YAHOO_STAT_FALLBACK` now maps 57→BB, 85→OBP; `constants.ts` adds '57'→'Walks'. |
+| **Negative stat values (-1 GS)** | ✅ FIXED (Apr 1) | `_extract_team_stats()` clamps `float(val) < 0` → “0”. |
+| **Dashboard timestamp UTC** | ✅ FIXED (Apr 1) | `dashboard_service.py` lines 206 + 827 now use `datetime.now(ZoneInfo(“America/New_York”))`. |
+| **In-season projection pipeline** | ⚠️ CRITICAL GAP | Pre-season CSVs at 100% weight while season is live. No FanGraphs RoS, no ensemble blender. K-19 spec in progress. |
 
 ---
 
@@ -442,124 +448,121 @@ ARCH-001 is fully shipped: Phases 1 + 2 + 3 LIVE on Railway. All Gemini audit fi
 
 ## 7. Delegation Bundles
 
-### GEMINI CLI (Ops) â€” ACTIVE TASK: ARCH-003 UI Refactor
+### GEMINI CLI (Ops) — ACTIVE: Deploy Session 3 Fixes + UI Re-Audit
 
-**Claude Code has approved ARCH-003 and scoped it to 7 frontend-only tasks (F1â€“F7). Details in Â§0.**
+**ARCH-003 F1–F7: COMPLETE.** New tasks for this session:
 
-**Execution order (dependencies):**
-1. **F2 first** â€” creates the shared `StatusBadge` component that F3 and F4 depend on
-2. **F1, F5, F6, F7** â€” independent, can be done in any order after F2
-3. **F3, F4** â€” after F2 is complete
+#### G-1: Deploy Session 3 Backend Fixes
+```
+railway up
+```
+Verify after deploy:
+- `/api/fantasy/lineup/async-optimize` — submit a job, poll it to completion (no Pydantic crash)
+- `/api/fantasy/roster` — player names have no injury suffixes (“Jason Adam” not “Jason Adam Quadriceps”)
+- `/api/fantasy/matchup` — no negative stat values visible
+- Dashboard timestamp shows ET time (e.g., “1:30 PM ET” not UTC offset)
 
-**After completing all tasks:**
-- Run `npx tsc --noEmit` in `frontend/` â€” must pass with zero errors
-- Run `railway up` to deploy
-- Verify the checklist at the bottom of Â§0
+#### G-2: Live Yahoo API Response Capture
+**Purpose:** Claude needs exact JSON structures to fix remaining Yahoo parsing issues.
 
-**Hard constraints (repeat for clarity):**
+Run these Railway commands and save full output to `reports/GEMINI_YAHOO_RESPONSES_2026-04-01.md`:
+
+```bash
+# Roster raw response (first 3 players, full structure)
+railway run python -c “
+from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
+import json
+c = YahooFantasyClient()
+raw = c.get_roster_raw()
+print(json.dumps(raw, indent=2, default=str))
+“ 2>&1 | head -200
+
+# Free agents sample (5 players)
+railway run python -c “
+from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
+import json
+c = YahooFantasyClient()
+fa = c.get_free_agents(count=5)
+print(json.dumps(fa, indent=2, default=str))
+“ 2>&1 | head -200
+
+# League settings (stat category IDs)
+railway run python -c “
+from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
+import json
+c = YahooFantasyClient()
+s = c.get_league_settings()
+print(json.dumps(s, indent=2, default=str))
+“ 2>&1 | head -100
+```
+
+Save output to `reports/GEMINI_YAHOO_RESPONSES_2026-04-01.md`. This is the primary input for Claude’s next session.
+
+#### G-3: UI Issues Re-Audit
+**Context:** User says “countless UI issues remain” despite ARCH-003 completion. Do a fresh read-only audit of all fantasy pages and report what’s visually broken, confusing, or missing.
+
+For each issue found:
+- Page affected
+- Exact description of what the user sees
+- Severity (P0=blocks use, P1=confusing, P2=cosmetic)
+- Whether it’s frontend-only or needs backend data fix
+
+Save to `reports/GEMINI_UI_AUDIT2_2026-04-01.md`.
+
+**Hard constraints:**
 - Do NOT edit any `.py` file
-- Do NOT modify `frontend/lib/api.ts` data-fetching functions
-- Do NOT add new API calls or new `useQuery` hooks fetching new endpoints
-- Do NOT change any route paths
-- TypeScript must pass after every task
-
-**Previous UI Audit Findings (âœ… COMPLETE â€” Apr 1):**
-
-| Severity | Issue | Status |
-|----------|-------|--------|
-| **HIGH** | `asyncOptimizeLineup` 422 bug | âœ… FIXED Mar 31 |
-| **MEDIUM** | No `loading.tsx`/`error.tsx` for matchup | âœ… FIXED Apr 1 |
-| **MEDIUM** | `todayStr()` UTC vs ET bug | âœ… FIXED Mar 31 |
-| **LOW** | Hardcoded draft date in `fantasy/page.tsx` | âœ… FIXED Apr 1 |
-| **LOW** | Waiver "Add" button â†’ Yahoo deep link | âœ… FIXED Apr 1 |
-| **LOW** | Skeleton inconsistency in DraftBoardTab | âœ… FIXED Apr 1 |
+- TypeScript must pass: `cd frontend && npx tsc --noEmit`
 
 
 ---
 
-### KIMI CLI (Deep Intelligence Unit) â€” âœ… COMPLETE: K-14 through K-18
+### KIMI CLI (Deep Intelligence Unit) — ACTIVE: K-19 In-Season Pipeline Spec
 
-**Status:** All research tasks completed. Reports saved to `reports/`. Backend fixes unblocked.
+**K-14 through K-18: COMPLETE.** All backend fixes implemented by Claude Code (session 3). See §3 for status.
 
-**Mission (Apr 1â€“4):** Reduce implementation uncertainty for Claude across five bounded research and validation tasks. All output is a written report in `reports/`. No production code changes.
+**New assignment:** K-19 — In-Season Projection Pipeline Architecture Spec
 
----
-
-#### K-14 â€” Yahoo Stat ID "57" Confirmation
-**Why Kimi:** Long-context reading of Yahoo API docs + cross-reference with category_tracker.py  
-**Deliverable:** `reports/K14_STAT57_CONFIRMATION.md`  
-**Task:** 
-- Read `backend/main.py` lines 5456â€“5520 (`_YAHOO_STAT_FALLBACK` dict + comment about "57")
-- Read `backend/fantasy_baseball/category_tracker.py` â€” document what stat IDs it tracks and what's absent
-- Search Yahoo Fantasy Sports API docs (public) for stat ID 57 and 85
-- State with confidence: does stat 57 = "BB" (walks)? Does 85 = "OBP"?
-- Output: confirmed mapping or "unconfirmed â€” requires live API call" with exact test query to verify
-- Do NOT modify any file
-
-**Acceptance criteria:** Memo states definitively whether "57" â†’ "BB" and "85" â†’ "OBP", with source citation or an explicit test request for Claude Code to run against the live league endpoint.
+**K-14 through K-18: COMPLETE.** All backend fixes implemented by Claude Code (session 3):
+- K-14: `_YAHOO_STAT_FALLBACK` now maps “57”→”BB”, “85”→”OBP”; `constants.ts` updated
+- K-15: Name sanitization regex added to `_parse_player()` in `yahoo_client_resilient.py`
+- K-17: `dashboard_service.py` now uses `datetime.now(ZoneInfo(“America/New_York”))` in 2 places
+- K-18: Negative stat clamp added in `_extract_team_stats()` in `main.py`
 
 ---
 
-#### K-15 â€” Yahoo Name Concatenation Root Cause Spec
-**Why Kimi:** Parsing bug requires careful source tracing before any fix to avoid regression in `_parse_player()`  
-**Deliverable:** `reports/K15_NAME_CONCAT_SPEC.md`  
+#### K-19 — In-Season Projection Pipeline Architecture Spec
+**Why Kimi:** K-17 overhaul report identified a CRITICAL gap: platform is running on pre-season CSVs while the MLB season is live. Architecture decisions required before Claude implements.
+
+**Deliverable:** `reports/K19_INSEASON_PIPELINE_SPEC.md`
+
 **Task:**
-- Read `backend/fantasy_baseball/yahoo_client_resilient.py` â€” specifically `_parse_player()` (lines ~843â€“930)
-- Identify: which fields are pulled for `full_name`? Is injury info in a separate field? Where does concatenation occur?
-- Design the exact fix: regex pattern, field extraction logic, where to apply it
-- Include: before/after example ("Jason Adam Quadriceps" â†’ "Jason Adam"), edge cases (names with body part words), test cases
-- Do NOT modify any file
+Read `reports/K17_INSEASON_PIPELINE_OVERHAUL.md` (your prior report) and the following files:
+- `backend/fantasy_baseball/projections_loader.py` — understand current CSV load logic
+- `backend/services/daily_ingestion.py` — understand scheduler and job patterns
+- `backend/fantasy_baseball/statcast_ingestion.py` — understand Bayesian update path
 
-**Acceptance criteria:** Spec is complete enough for Claude to implement the fix in one focused edit with no ambiguity about what to change.
+Then produce a spec that answers these exact architectural questions for Claude:
 
----
+1. **FanGraphs RoS Downloads** — which FanGraphs export URLs are publicly accessible without auth? What are the exact CSV column names for Steamer RoS batting and pitching? Is rate-limiting a concern?
 
-#### K-16 â€” Yahoo Ingestion Pipeline Failure Mode Audit
-**Why Kimi:** The daily ingestion pipeline has multiple data sources with silent failure modes that are not well documented  
-**Deliverable:** `reports/K16_INGESTION_AUDIT.md`  
-**Task:**
-- Read `backend/services/daily_ingestion.py` â€” document each scheduled job: name, schedule, what it does, what it writes, what fails silently
-- Read `backend/fantasy_baseball/statcast_ingestion.py` â€” trace the path from `run_daily_ingestion()` through validation, storage, and Bayesian update
-- Identify: where does the pipeline fail silently vs raise? What are the retry patterns? What happens on Yahoo auth failure mid-ingestion?
-- Read `backend/fantasy_baseball/projections_loader.py` â€” document what CSV files are expected in `data/projections/`, what columns each needs, what happens if files are missing or have wrong column names
-- Check `data/projections/` directory â€” list what files actually exist
-- Output: failure mode table (job â†’ failure mode â†’ current behavior â†’ risk level) + projections file inventory
+2. **Ensemble Blender Design** — the prior report proposes ATC 30% / Steamer 20% / ZiPS 20% / THE BAT 15% / Statcast 15%. How should this weight decay as the season progresses? What’s the simplest schema change that stores blended projections without breaking the existing `PlayerDailyMetric` table?
 
-**Acceptance criteria:** Table lists every job, its failure mode, and whether it has adequate error recovery. Projections inventory states exactly which CSVs are present and whether columns match loader expectations.
+3. **Yahoo ADP/Injury Polling** — what Yahoo Fantasy API endpoints return waiver wire ADP and injury designations? What’s the pagination pattern? Should this use the existing `yahoo_client_resilient.py` base class or a new lightweight async client?
+
+4. **Statcast UTC Bug Fix Scope** — K-17 identified `statcast_ingestion.py` uses UTC for “yesterday” date. Confirm: is the fix simply replacing `datetime.utcnow().date() - timedelta(days=1)` with `(datetime.now(ZoneInfo(“America/New_York”)) - timedelta(days=1)).date()`? Are there other date anchors in that file?
+
+5. **Lock IDs** — confirm the 4 new lock IDs from K-17 overhaul (100_012 through 100_015) don’t conflict with the advisory lock table in HANDOFF.md §4. Current next available is 100_012.
+
+**Output format:** Numbered answers to the 5 questions above. For each: recommendation + confidence level + any blocker that requires human action (e.g., API key, FanGraphs account). Keep total under 800 words — Claude needs decisions, not prose.
+
+**Hard constraints:** Read-only. Do NOT modify any file.
 
 ---
 
-#### K-17 â€” Backend UTC Datetime Audit
-**Why Kimi:** Per ORCHESTRATION.md rule, all game-time datetimes must use ET not UTC. Compliance unknown.  
-**Deliverable:** `reports/K17_DATETIME_AUDIT.md`  
-**Task:**
-- Search across `backend/services/dashboard_service.py`, `backend/fantasy_baseball/daily_briefing.py`, `backend/fantasy_baseball/nightly_resolution.py`, `backend/main.py` for uses of `datetime.utcnow()` or `.isoformat()` without timezone info
-- For each occurrence: file, line number, context (what is the datetime used for?), whether it's game-time-adjacent or admin-only
-- Classify: MUST FIX (game-time / user-visible) vs LOW RISK (internal logging / non-display)
-- Do NOT modify any file
+## 8. Yahoo Ingestion Pipeline — Current State
 
-**Acceptance criteria:** Complete list of `datetime.utcnow()` calls with classification. Must fix list is actionable for Claude in one session.
-
----
-
-#### K-18 â€” Matchup Impossible-Stats Backend Spec
-**Why Kimi:** The -1 GS bug needs a backend fix but the spec must be precise to avoid breaking the matchup endpoint  
-**Deliverable:** `reports/K18_STAT_VALIDATION_SPEC.md`  
-**Task:**
-- Read `backend/main.py` lines 5537â€“5585 (`_extract_team_stats()`) and the matchup endpoint around line 4880â€“4960
-- Trace where stat values enter the response: is -1 GS coming from Yahoo raw data or from a calculation?
-- Design the exact backend fix: where to clamp impossible values, which stat IDs need guards, what the clamped value should be (0 or None?)
-- Include: the schema field (`MatchupTeamOut.stats: dict`) and whether a Pydantic validator is appropriate vs a manual clamp in the endpoint
-- Do NOT modify any file
-
-**Acceptance criteria:** Spec identifies the exact line(s) to modify, the guard condition, and the clamped value, with reasoning. Claude can implement in <10 lines.
-
----
-
-## 8. Yahoo Ingestion Pipeline â€” Current State
-
-### Research Phase Complete
-All Kimi research tasks (K-14 through K-18) are complete. See "Kimi Research Findings Summary" above for consolidated findings. Backend fixes are unblocked and ready for implementation.
+### Session 3 Fixes (COMPLETE — April 1, 2026)
+All K-14 through K-18 backend fixes shipped. Test suite: 1091 pass, 1 pre-existing failure.
 
 ### What is working (confirmed live)
 | Component | Status | Notes |
@@ -720,47 +723,29 @@ The "Elite Advancement Plan" identifies 5 high-priority architectural gaps to re
 ### For Gemini CLI
 
 ```
-You are Gemini CLI (Ops). Read HANDOFF.md Â§0 (ARCH-003) before acting.
+You are Gemini CLI (Ops). Read HANDOFF.md §7 (Gemini G-1/G-2/G-3) before acting.
 
-Current status: ARCH-001/002 complete. System stable. ARCH-003 UI refactor is now approved
-and ready for execution. This is a FRONTEND-ONLY task â€” no .py files, no API changes.
+Current status: ARCH-003 COMPLETE. Session 3 backend fixes deployed (Claude Code).
+System is stable on Railway.
 
-Active task: Execute ARCH-003 UI refactor (7 tasks, details in HANDOFF.md Â§0).
+Active tasks (in order):
+1. G-1: Deploy session 3 backend changes: railway up
+   Verify: async-optimize job completes without Pydantic crash, player names clean,
+           no negative stats in matchup, dashboard timestamp shows ET
 
-Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
-Frontend directory: frontend/
+2. G-2: Capture live Yahoo API JSON responses (roster raw, free agents x5, league settings)
+   Save full output to: reports/GEMINI_YAHOO_RESPONSES_2026-04-01.md
+   Commands are in HANDOFF.md §7 G-2 section.
+
+3. G-3: Fresh UI re-audit — user reports “countless issues remain.”
+   Read-only pass across all fantasy pages. Document what’s broken/confusing.
+   Save to: reports/GEMINI_UI_AUDIT2_2026-04-01.md
 
 HARD RULES:
-- Do NOT edit any .py file (zero exceptions)
-- Do NOT modify frontend/lib/api.ts data-fetching functions
-- Do NOT add new API endpoints or useQuery hooks fetching new endpoints
-- TypeScript must pass after every task: cd frontend && npx tsc --noEmit
+- Do NOT edit any .py file
+- TypeScript must pass: cd frontend && npx tsc --noEmit before any commit
+- Do NOT add new API endpoints or useQuery hooks
 
-EXECUTION ORDER:
-1. F2 first: create frontend/components/shared/status-badge.tsx
-2. F1: context-aware sidebar branding (sidebar.tsx)
-3. F3: roster page status column (roster/page.tsx) â€” depends on F2
-4. F4: status tooltips on lineup page (lineup/page.tsx) â€” depends on F2
-5. F5: waiver loading timeout + empty state (waiver/page.tsx)
-6. F6: matchup negative stat suppression (matchup/page.tsx)
-7. F7: category "57" fallback label (matchup/page.tsx)
-
-After all tasks:
-  cd frontend && npx tsc --noEmit   # must show 0 errors
-  railway up                         # deploy
-
-Verification checklist (from HANDOFF.md Â§0 bottom):
-- /fantasy/lineup: logo shows "FANTASY BASEBALL", Portfolio panel hidden
-- /fantasy/lineup: status badges color-coded, hoverable with tooltips
-- /fantasy/roster: status column is second from left, with icons
-- /fantasy/waiver: 15s timeout â†’ retry message; empty array â†’ empty state
-- /fantasy/matchup: negative values show "â€”"; unmapped cats show "Cat. N"
-- /dashboard: sidebar unchanged (CBB EDGE logo + Portfolio panel visible)
-
-Report results by updating Â§3 Current Technical State in HANDOFF.md with
-a row for each task (ARCH-003 F1â€“F7) and final tsc/deploy status.
-
-Do NOT modify any .py files.
 Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
 ```
 
@@ -768,36 +753,27 @@ Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
 
 ```
 You are Kimi CLI (Deep Intelligence Unit).
-Read HANDOFF.md Â§7 (Kimi K-14 through K-18) before acting.
+Read HANDOFF.md §7 (Kimi K-19) before acting.
 
-Current status: ARCH-001/002/003 in progress. System stable. Your role this week
-(Apr 1-4) is research and specification â€” no production code changes.
+Current status:
+- K-14 through K-18 COMPLETE. All 4 backend fixes implemented by Claude Code (session 3).
+- ARCH-003 UI refactor COMPLETE (Gemini).
+- Async-optimize Pydantic crash FIXED (Claude Code, session 3).
+- System stable. Season is live.
 
-You have 5 active tasks. Complete them in order of difficulty (easiest first):
+Your active task: K-19 — In-Season Projection Pipeline Architecture Spec
+Details in HANDOFF.md §7. Output to: reports/K19_INSEASON_PIPELINE_SPEC.md
 
-TASK ORDER:
-1. K-17 (UTC datetime audit) â€” grep-based, fastest
-2. K-14 (stat ID "57" confirmation) â€” cross-ref category_tracker + Yahoo docs
-3. K-18 (impossible stats backend spec) â€” trace matchup endpoint
-4. K-15 (name concat spec) â€” trace _parse_player(), design regex fix
-5. K-16 (ingestion failure audit) â€” broadest, most reading required
-
-ALL TASKS:
-- Read-only analysis. Do NOT edit any .py or .ts file.
-- Output goes to reports/K{N}_*.md (see task names in Â§7)
-- If you find something ambiguous or uncertain, document it explicitly â€” don't guess
-- Escalate to Claude Code anything that requires a non-obvious tradeoff
+CRITICAL CONTEXT:
+- The platform is running on pre-season projection CSVs. MLB season is live and in Week 1.
+- No FanGraphs RoS downloads, no ensemble blender, no Yahoo ADP/injury polling automation.
+- This is now the highest-priority unblocked research item.
+- Your K-17 overhaul report identified this; K-19 is the architecture spec to fix it.
 
 KEY CONSTRAINTS:
-- EMAC-068 is BLOCKED: Do NOT touch Kelly math, betting_model.py, or recalibration until Apr 7
-- BDL NCAAB subscription is CANCELLED: do not reference /ncaab/v1/ endpoints
-- Do NOT write to any production code file under any circumstances
-
-CONTEXT:
-- K-12 spec memo (V9.2 recalibration) should be finalized and ready for Claude on Apr 7
-- MCMC calibration is live; empirical Brier score validation is deferred until Apr 28+
-- The 4 backend fixes unlocked by K-14/15/17/18 are estimated <1 hour for Claude to implement
-  once your specs land â€” your specs are the bottleneck, make them complete and unambiguous
+- EMAC-068 still BLOCKED until Apr 7: Do NOT touch Kelly math, betting_model.py
+- Do NOT write to any production code file
+- K-12 (V9.2 recalibration spec) should still be ready to hand to Claude on Apr 7
 
 Working directory: C:/Users/sfgra/repos/Fixed/cbb-edge
 ```

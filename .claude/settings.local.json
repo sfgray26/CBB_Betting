@@ -78,7 +78,9 @@
       "Bash(DATABASE_URL=\"postgresql://test\" venv/Scripts/python scripts/migrate_v11_job_queue.py --dry-run)",
       "Bash(DATABASE_URL=\"postgresql://test\" venv/Scripts/python scripts/migrate_v11_job_queue.py --downgrade --dry-run)",
       "Bash(venv/Scripts/python -m py_compile backend/services/job_queue_service.py)",
-      "Bash(venv/Scripts/python -c \"from backend.services.job_queue_service import submit_job, get_job_status, process_pending_jobs; print\\('OK'\\)\")"
+      "Bash(venv/Scripts/python -c \"from backend.services.job_queue_service import submit_job, get_job_status, process_pending_jobs; print\\('OK'\\)\")",
+      "Bash(venv/Scripts/python -m pytest tests/ -q --tb=short -x)",
+      "Bash(venv/Scripts/python -m py_compile backend/services/dashboard_service.py backend/fantasy_baseball/yahoo_client_resilient.py backend/services/job_queue_service.py)"
     ]
   }
 }
