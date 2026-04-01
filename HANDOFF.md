@@ -39,6 +39,7 @@ The platform is live for the 2026 MLB fantasy season. The Yahoo API pipeline is 
 | K/9 value (16.20) appearing in Walks column | K-22 | HIGH | Decimal guard in `_extract_team_stats()`: float BB != int -> reject + warn | Claude | FIXED S5 |
 | Missing NSV on matchup (1 save shown as 0) | K-22 | HIGH | Stat ID 83 extraction + fallback mapping audit | Claude + Gemini | PENDING G-8 |
 | Stat labels missing: K/BB, GS, NSV in `constants.ts` | K-22 | MEDIUM | Add string + numeric ID mappings | Gemini | PENDING G-8 |
+| **Matchup score calculation wrong** | **K-26** | **CRITICAL** | **H/AB + IP counted as scoring; Batter K uses wrong win direction** | **Claude** | **OPEN HIGHEST PRIORITY** |
 | PROBABLE badge shown yellow/injury (should be green/SP) | K-19 domain | MEDIUM | Map PROBABLE to emerald/STARTING | Gemini | PENDING G-10 |
 | Waiver "Key Stats" blank (shows deficit analysis, not stats) | K-20 | HIGH | Added `stats: dict` to `WaiverPlayerOut`; `get_free_agents()` now passes `out=stats,percent_owned`; `_to_waiver_player()` extracts stats | Claude | FIXED S6 |
 | Settings page is a read-only JSON dump | K-23 | CRITICAL | Rebuild with Switch/Select/Slider; hide z-score behind presets | Gemini | PENDING G-9 |
@@ -175,15 +176,15 @@ Layer 5: Projection Freshness Guard
 **Guardrails:** Zero `.py` changes. TypeScript must pass (`cd frontend && npx tsc --noEmit`) after every task.
 **Deploy:** After all G-tasks pass TypeScript: `railway up`. Then verify each acceptance criterion live.
 
-| Task | File | Change | Acceptance |
-|------|------|--------|------------|
-| G-5 | `frontend/lib/api.ts` lines 66-75 | `detail = typeof raw === 'string' ? raw : JSON.stringify(raw)` | Error messages read "422: Field required" not "[object Object]" |
-| G-6 | `lineup/page.tsx` line 252 | Header "Score" to "Smart Score" + Radix Tooltip explaining composite score | Column says "Smart Score" with tooltip on hover |
-| G-7 | `lineup/page.tsx` lines 283-293 | `const proj = valuationsMap[p.player_id]?.projected_value ?? p.implied_runs ?? null` | PROJ column populated for >80% of roster |
-| G-8 | `frontend/lib/constants.ts` | Add: `'K/BB': 'K/BB Ratio', 'GS': 'Games Started', 'NSV': 'Net Saves', '38': 'K/BB Ratio', '62': 'Games Started', '83': 'Net Saves'` (skip duplicates) | Matchup shows "Net Saves" not "83", "Games Started" not "62" |
-| G-9 | `settings/page.tsx` | Install shadcn Switch/Select/Slider; replace `JSON.stringify` at line 124; booleans get Switch, intervals get Select (300s="5 min"), thresholds get Slider; z-score hidden behind Aggressive/Balanced/Conservative RadioGroup; Save calls `PATCH /api/fantasy/settings` | No raw JSON visible; controls are interactive |
-| G-10 | `status-badge.tsx` | Add `PROBABLE`/`Probable` to green set: `{ color: 'bg-emerald-500/15 text-emerald-400', label: 'STARTING' }` | PROBABLE shows green "STARTING" badge |
-| G-L2 | `waiver/page.tsx` line 349 | Change maxOwned default from 90 to 50 | Default max owned filter is 50% |
+| Task | File | Change | Status |
+|------|------|--------|--------|
+| G-5 | `frontend/lib/api.ts` lines 66-75 | Handle nested error objects in `body.detail` | ✅ FIXED |
+| G-6 | `lineup/page.tsx` line 252 | Header "Score" to "Smart Score" + Radix Tooltip | ✅ FIXED |
+| G-7 | `lineup/page.tsx` lines 283-293 | PROJ fallback to `implied_runs` | ✅ FIXED |
+| G-8 | `frontend/lib/constants.ts` | Fix stat label mappings (Holds, K/BB, GS, NSB) | ✅ FIXED |
+| G-9 | `settings/page.tsx` | Rebuild with Switch/Select/Slider + Z-Score presets | ✅ COMPLETE |
+| G-10 | `status-badge.tsx` | Map PROBABLE to green "STARTING" badge | ✅ FIXED |
+| G-L2 | `waiver/page.tsx` line 349 | Change maxOwned default from 90 to 50 | ✅ FIXED |
 
 ---
 
@@ -240,6 +241,65 @@ Layer 5: Projection Freshness Guard
 
 ---
 
+### K-26: Matchup Category Alignment & Logic Issues — NEW CRITICAL
+
+**Research:** `reports/K26_MATCHUP_CATEGORY_ALIGNMENT_SPEC.md`
+
+**Problem:** The Matchup page displays categories in random order and miscalculates the overall score. The 9-6 score (or similar) is **wrong** and doesn't match Yahoo's official standings.
+
+**Root Causes:**
+1. **Non-scoring stats counted**: H/AB and IP are display-only reference stats but are being counted toward win/loss totals
+2. **Missing inverse logic**: Batter K (strikeouts) should award "Win" to the *lower* value (fewer strikeouts is better for batters), but currently higher wins
+3. **Random ordering**: Stats display in Yahoo API order instead of logical Batters→Pitchers sections
+
+**Required Category Order (Batters):**
+| # | Stat | Scoring? | Win Condition |
+|---|------|----------|---------------|
+| 1 | H/AB | ❌ Display Only | N/A |
+| 2 | R | ✅ Yes | Higher |
+| 3 | H | ✅ Yes | Higher |
+| 4 | HR | ✅ Yes | Higher |
+| 5 | RBI | ✅ Yes | Higher |
+| 6 | **K** | ✅ Yes | **LOWER** ⚠️ |
+| 7 | TB | ✅ Yes | Higher |
+| 8 | AVG | ✅ Yes | Higher |
+| 9 | OPS | ✅ Yes | Higher |
+| 10 | NSB | ✅ Yes | Higher |
+
+**Required Category Order (Pitchers):**
+| # | Stat | Scoring? | Win Condition |
+|---|------|----------|---------------|
+| 1 | IP | ❌ Display Only | N/A |
+| 2 | W | ✅ Yes | Higher |
+| 3 | L | ✅ Yes | Lower |
+| 4 | HR | ✅ Yes | Lower |
+| 5 | K | ✅ Yes | Higher |
+| 6 | ERA | ✅ Yes | Lower |
+| 7 | WHIP | ✅ Yes | Lower |
+| 8 | K/9 | ✅ Yes | Higher |
+| 9 | QS | ✅ Yes | Higher |
+| 10 | NSV | ✅ Yes | Higher |
+
+**Files to Modify:**
+- `frontend/lib/constants.ts` — Add `MATCHUP_CATEGORIES` config with ordering, section, and `lower_is_better` flags
+- `frontend/app/(dashboard)/fantasy/matchup/page.tsx` — Update `MatchupTable` and `ScoreBanner` to use ordered categories and exclude display-only stats from scoring
+
+**Key Logic Fix:**
+```typescript
+// In constants.ts
+export const MATCHUP_CATEGORIES = {
+  H_AB: { label: 'H/AB', section: 'batting', scoring: false },
+  R: { label: 'Runs', section: 'batting', scoring: true, lowerIsBetter: false },
+  // ... etc
+  K: { label: 'Strikeouts', section: 'batting', scoring: true, lowerIsBetter: true }, // ⚠️ KEY FIX
+  IP: { label: 'Innings Pitched', section: 'pitching', scoring: false },
+  // ... etc
+}
+
+// In matchup/page.tsx ScoreBanner
+const scoringCats = allCats.filter(cat => MATCHUP_CATEGORIES[cat]?.scoring !== false)
+```
+
 ---
 
 ## Immediate Action Items
@@ -251,10 +311,11 @@ Layer 5: Projection Freshness Guard
 | H-2 | K/9 decimal guard in `_extract_team_stats()` | DONE |
 | 1.8 | CSV header validation + WARNING logging in both loaders | DONE |
 
-### Pending (Claude -- requires quota or K-24/K-25 first)
+### Pending (Claude -- requires quota or K-24/K-25/K-26 first)
 
 | # | Item | Dependency | File | Effort |
 |---|------|-----------|------|--------|
+| **H-2** | **Matchup Category Alignment Fix** | **K-26 report** | **`frontend/lib/constants.ts` + `matchup/page.tsx`** | **Medium** |
 | H-1 | WaiverPlayerOut `stats` field | K-24 report | `schemas.py` line 380, `main.py` `_to_waiver_player()` | Medium |
 | Phase 2.1 | `fangraphs_loader.py` (new file) | K-25 report | `backend/fantasy_baseball/` | Large |
 | Phase 2.2 | `PlayerDailyMetric` schema: 5 blend columns | After 2.1 | Alembic migration | Small |
