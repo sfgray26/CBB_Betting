@@ -7,198 +7,51 @@
 
 ---
 
-## 0. Active Architecture Initiative — ARCH-001 (Phase 1 COMPLETE, Phase 2 COMPLETE, Phase 3 COMPLETE)
+## 0. Active Architecture Initiative — ARCH-003 (UI/UX REDESIGN - PENDING SIGN-OFF)
 
-### What Was Built This Session (March 31)
+**Status:** Strategic Design Complete. **AWAITING CLAUDE CODE SIGN-OFF.**
 
-| File | Status | Purpose |
-|------|--------|---------|
-| `backend/contracts.py` | ✅ LIVE | Three immutable Pydantic contracts: LineupOptimizationRequest, PlayerValuationReport, ExecutionDecision |
-| `scripts/migrate_v11_job_queue.py` | ✅ RAN ON RAILWAY | Creates job_queue + execution_decisions tables |
-| `backend/services/job_queue_service.py` | ✅ LIVE | Submit/poll/process jobs. SELECT FOR UPDATE SKIP LOCKED. asyncio.to_thread dispatch. |
-| `backend/main.py` | ✅ WIRED | job_queue_processor job (5s interval) + POST /api/fantasy/lineup/async-optimize + GET /api/fantasy/jobs/{job_id} |
-| `scripts/migrate_v12_valuation_cache.py` | ✅ READY | Creates player_valuation_cache table. Run on Railway before next deploy. |
-| `backend/models.py` | ✅ EXTENDED | PlayerValuationCache ORM class added |
-| `backend/fantasy_baseball/valuation_worker.py` | ✅ LIVE | run_valuation_worker(league_key) — 6 AM ET, Yahoo + Statcast, soft-delete upsert |
-| `backend/services/daily_ingestion.py` | ✅ EXTENDED | valuation_cache job at 06:00 ET, advisory lock 100_011, gated on FANTASY_LEAGUES env var |
-| `backend/main.py` | ✅ EXTENDED | GET /api/fantasy/players/valuations — exact-date + 7-day stale fallback, never 500 |
+Gemini CLI has produced a comprehensive refactor plan to transform the bloated frontend into a "Command Center."
 
-### CRITICAL: Run Migration Before Next Deploy
-```bash
-# Railway production — v12 must run before valuation_worker fires at 6 AM
-railway run python scripts/migrate_v12_valuation_cache.py --dry-run
-# Confirm SQL looks correct, then:
-railway run python scripts/migrate_v12_valuation_cache.py
+### Core Directives (ARCH-003)
+1. **Standardize UI**: Replace all 6 raw HTML tables with a unified `DataTable` (@/components/shared/data-table.tsx).
+2. **Consolidate Monoliths**: Break down 800+ line page files into a `features/` directory structure.
+3. **URL-as-State**: Use `nuqs` to move all filters, tabs, and date selections into search params.
+4. **ET-Normalization**: Replace all local UTC date slicing with a shared `America/New_York` helper.
 
-# Also set env var so the 6 AM job activates:
-# railway variables set FANTASY_LEAGUES=<your_league_key>
-```
+### Proposed Route Architecture
+- `/dashboard` (The Pulse): Aggregated KPI health.
+- `/fantasy/hq` (The Command Center): **[NEW]** Unified Lineup + Matchup view.
+- `/fantasy/market` (The Explorer): Refactored high-density waiver browser.
+- `/fantasy/roster` (The Lab): Owned player deep-dive.
 
-### Phase 2 — COMPLETE
-- `player_valuation_cache` table stores pre-computed `PlayerValuationReport` per player per day
-- Worker runs at 6 AM ET (gated on `FANTASY_LEAGUES` env var)
-- API endpoint degrades to stale data on cache miss — never breaks the page
-- All syntax checks pass
+### Refactor Hitlist (DELETE & REPLACE)
+- **DELETE**: Duplicated `TableSkeleton` versions. **REPLACE**: Generic `DataTableSkeleton`.
+- **DELETE**: Inline `statusBadge()` helpers. **REPLACE**: Centralized `@/components/shared/status-badge.tsx`.
+- **DELETE**: Manual UTC date slicing in `api.ts`. **REPLACE**: ET-anchored helper.
 
 ---
 
-### Phase 3 — COMPLETE: Frontend Integration (Wire Frontend to Async Backend)
+## 0b. ARCH-001 & ARCH-002 (COMPLETE)
 
-**Goal achieved:** Lineup page no longer blocks on optimization. Async job + polling replaces the sync 10-30s call.
-
-#### Phase 3a: Lineup page reads from valuation cache
-
-**File:** `frontend/app/(dashboard)/fantasy/lineup/page.tsx`
-
-Current problem: lineup page calls backend which hits Yahoo + Statcast synchronously on every page load.
-
-Required change:
-- Add a call to `GET /api/fantasy/players/valuations?date=<today>&league_key=<key>` on page mount
-- Display `cache_status` banner: "Live" (fresh), "Cached from {date}" (stale), "No projections yet" (empty)
-- Player rows should read `composite_value.point_estimate` from the cached report for the projected value column
-- Stale/empty cache = show data with a visual indicator, never an error page
-- Remove any blocking direct Statcast/pybaseball calls from the page load path
-
-#### Phase 3b: Lineup optimization goes async (non-blocking submit)
-
-**File:** `frontend/app/(dashboard)/fantasy/lineup/page.tsx`
-
-Current problem: "Apply Lineup" button triggers a synchronous optimize + set call that can take 10-30s, causing connection drops.
-
-Required change — replace the sync call with job submission + polling:
-
-```
-User clicks "Optimize" →
-  POST /api/fantasy/lineup/async-optimize
-  Returns: { job_id, status: "queued", poll_url }
-  ↓
-UI shows progress spinner with status text ("Queued → Processing → Complete")
-  ↓
-Poll GET /api/fantasy/jobs/{job_id} every 2s (max 60s timeout)
-  ↓
-On status="completed": show new lineup, enable "Apply" button
-On status="failed": show error message from result.error field
-On timeout: show "Taking longer than expected — check back in a minute"
-```
-
-Polling logic (TypeScript sketch):
-```typescript
-async function pollJob(jobId: string, maxAttempts = 30): Promise<JobResult> {
-  for (let i = 0; i < maxAttempts; i++) {
-    await new Promise(r => setTimeout(r, 2000))
-    const res = await fetch(`/api/fantasy/jobs/${jobId}`)
-    const data = await res.json()
-    if (data.status === 'completed') return data
-    if (data.status === 'failed') throw new Error(data.error || 'Job failed')
-  }
-  throw new Error('Timeout — job still running')
-}
-```
-
-#### Phase 3c: Loading skeletons and error boundaries
-
-**Files:** lineup page + shared components
-
-- Add `<Skeleton>` component (shadcn/ui already installed) for player rows during initial load
-- Wrap the entire lineup section in an `<ErrorBoundary>` with a "Reload" fallback — prevents one bad player from crashing the whole page
-- Loading state: show skeleton rows while valuations endpoint is in-flight
-- Error state: show "Projections unavailable — lineup optimization still works" (never blank page)
-
-#### Phase 3 — Files to Touch
-
-| File | Change | Risk |
-|------|--------|------|
-| `frontend/app/(dashboard)/fantasy/lineup/page.tsx` | Read valuations cache, async optimize polling | Medium — main lineup page |
-| `frontend/components/ui/skeleton.tsx` | Create if not exists (shadcn pattern) | Low |
-| `frontend/app/(dashboard)/fantasy/lineup/page.tsx` | Error boundary wrapper | Low |
-
-**Phase 3 implementation complete. TypeScript type-check passes.**
-
-| File | Change |
-|------|--------|
-| `frontend/lib/types.ts` | Added `ValuationReport`, `ValuationsResponse`, `AsyncJobStatus` |
-| `frontend/lib/api.ts` | Added `asyncOptimizeLineup`, `getJobStatus`, `getPlayerValuations` endpoints |
-| `frontend/app/(dashboard)/fantasy/lineup/page.tsx` | Phase 3a cache banner + Proj column; Phase 3b async optimize + poll loop; Phase 3c `LineupErrorBoundary` class |
+| Initiative | Status | Purpose |
+|------------|--------|---------|
+| **ARCH-001** | ✅ COMPLETE | Contract Layer + Async Job Queue + Phase 3 Integration. |
+| **ARCH-002** | ✅ COMPLETE | Reliability Roadmap: Status normalization and BDL migration plan. |
 
 ---
 
-### Architecture Rule (ADR-005 — LOCKED)
-**All heavy operations MUST go through job_queue_service. Never run synchronously in the HTTP request path.**
-Heavy = Yahoo API calls, Statcast ingestion, lineup optimization, MCMC simulation.
+## 1. REVIEW TASK: ARCH-003 Refactor Sign-Off — Claude Code Action Required
+
+**Claude Code:** Review the refactor plan in §0 and the detailed report at `reports/GEMINI_UI_AUDIT_2026-04-01.md`. 
+
+**Directive:** 
+- If you approve the architectural direction of ARCH-003, please update §7 with a "GO" signal.
+- Once sign-off is granted, Gemini CLI (Ops) will begin the component extraction and file deletion process.
 
 ---
 
-## 0b. Gemini UI Exploration — Forward-Looking (Non-Breaking)
-
-Gemini CLI has demonstrated strong UI capability. Proposed forward-looking delegation:
-
-**Scope (read-only first):** Gemini reads the Next.js frontend (`frontend/`) and produces a UI audit report identifying:
-- Components that block on API calls without loading states
-- Missing error boundaries
-- Hardcoded strings that should be dynamic
-
-**Gate before Gemini writes any frontend code:**
-1. Claude Code must review and approve the audit
-2. Changes must be non-breaking (no routing changes, no API contract changes)
-3. All frontend changes go through the same spec-review process as backend
-
-**This is exploratory — no Gemini frontend code until Claude approves the audit.**
-
----
-
-## 0c. REVIEW TASK: Gemini CLI MCP Integration — Claude Code Determination Required
-
-**Status:** Analysis complete, pending Claude Code decision  
-**Reference:** `reports/GEMINI_MCP_ANALYSIS.md` (full assessment)  
-**Source:** https://geminicli.com/docs/tools/mcp-server/
-
-### Analysis Summary
-
-Analyzed Gemini CLI's MCP (Model Context Protocol) server capabilities for potential operational efficiency gains. MCP would allow Gemini CLI to discover and execute custom tools (e.g., `railway_health_check`, `validate_deploy_ready`) through a standardized protocol.
-
-| Factor | Assessment |
-|--------|------------|
-| **Implementation effort** | 3-4 days |
-| **Time savings** | ~3 hours/month |
-| **ROI break-even** | ~8 months |
-| **Policy risk** | HIGH — must avoid EMAC-075 violations |
-
-### Policy Constraint (Critical)
-
-Per AGENTS.md §2, Gemini CLI is **HARD RESTRICTED** from code writes (EMAC-075). Any MCP tools must be strictly scoped to:
-- ✅ Read-only operations (logs, health checks, report queries)
-- ✅ Railway DevOps (deploy, env var checks)
-- ✅ Pre-approved script execution
-- ❌ NO code generation
-- ❌ NO file modification
-- ❌ NO database writes
-
-### Review Task for Claude Code
-
-**ULTIMATE DETERMINATION:** Claude Code must decide whether to implement Gemini MCP integration.
-
-**Considerations:**
-1. Current AGENTS.md workflow is functional but manual
-2. MCP adds infrastructure complexity (additional process to maintain)
-3. EMAC-075 requires strict tool auditing to prevent indirect code modification
-4. MLB season is active — infrastructure changes carry risk
-5. Alternative: Claude Code MCP (not Gemini) may offer higher value with no policy conflicts
-
-**If Approved, Scope Strictly To:**
-- `railway_health_check` — Comprehensive Railway status
-- `validate_deploy_ready` — Pre-deployment validation (py_compile, env check)
-- `query_reports` — Read-only access to `reports/` directory
-- All tools with `trust: false` (require confirmation)
-
-**Timing Recommendation:** Defer until post-MLB season (October 2026) unless operational pain becomes critical.
-
-**Decision: DEFER — post-MLB season (October 2026)**
-
-Rationale: 8-month ROI break-even, EMAC-075 policy scope requires careful auditing, MLB season active (minimize infra changes), current manual workflow is functional and compliant. Re-evaluate October 2026 when season concludes. No action this session.
-
----
-
-## 1. Data Provider Strategy — LOCKED DECISIONS
+## 2. Data Provider Strategy — LOCKED DECISIONS
 
 ### SUBSCRIPTIONS
 
@@ -453,7 +306,28 @@ TypeScript type-check passes after all fixes.
 
 ---
 
-## 8. Resolved Crises (Archive — Do Not Revisit)
+## 9. Elite Advancement Plan — ARCH-002 (LOCKED ROADMAP)
+
+The "Elite Advancement Plan" identifies 5 high-priority architectural gaps to resolve for maximum reliability and scalability.
+
+### High-Priority Gaps (To be fixed by Claude Code)
+
+1. **Async Status Contract Drift**: Backend uses `pending/running/done/failed` while Frontend/Types expect `pending/processing/completed/failed`.
+2. **Queue Error Masking**: `JobQueueService.process_pending_jobs` marks jobs `done` even if `_run_lineup_optimization` returns a logical error.
+3. **Fragmented MLB Provider**: Raw Odds API calls found in `mlb_analysis.py` and `daily_ingestion.py`. Must migrate to a unified `balldontlie.py` adapter.
+4. **`main.py` Monolith**: File is 6,374 lines. Must extract domain routers (fantasy, jobs, admin, etc.).
+5. **Date Defaulting Drift**: `frontend/lib/api.ts` uses UTC `ISOString` slicing while `lineup/page.tsx` uses ET-aware `toLocaleDateString`. Must centralise to a shared ET helper.
+
+### 90-Day Roadmap (ARCH-002)
+
+*   **Phase 1: Reliability Contracts** — Unify status enums, fix queue failure semantics, add contract tests.
+*   **Phase 2: Data Source Unification** — Implement BDL adapter, migrate all MLB odds/injuries/schedule consumers.
+*   **Phase 3: API Modularization** — Decompose `main.py` into routers.
+*   **Phase 4: Performance & Calibration Ops** — Empirical Brier score evaluation, recommendation ROI tracking, SLO dashboards.
+
+---
+
+## 10. Resolved Crises (Archive — Do Not Revisit)
 
 | Crisis | Resolution | Date |
 |--------|------------|------|
