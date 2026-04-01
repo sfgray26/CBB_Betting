@@ -168,7 +168,10 @@ def test_orchestrator_get_status_returns_all_jobs():
     orch = DailyIngestionOrchestrator()
     orch.start()
     status = orch.get_status()
-    expected_jobs = {"mlb_odds", "statcast", "rolling_z", "clv", "cleanup"}
+    expected_jobs = {
+        "mlb_odds", "statcast", "rolling_z", "clv", "cleanup",
+        "fangraphs_ros", "yahoo_adp_injury", "ensemble_update", "projection_freshness",
+    }
     assert expected_jobs == set(status.keys())
     for job_id, info in status.items():
         assert info["name"] == job_id

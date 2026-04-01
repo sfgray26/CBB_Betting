@@ -610,6 +610,40 @@ class YahooFantasyClient:
         players_raw = self._league_section(data, 1).get("players", {})
         return self._parse_players_block(players_raw)
 
+    def get_adp_and_injury_feed(
+        self,
+        pages: int = 4,
+        count_per_page: int = 25,
+    ) -> list[dict]:
+        """Paginated ADP + injury status snapshot for all rostered + available players.
+
+        Fetches all players sorted by Average Draft Position (sort=DA) so that
+        the caller can detect rank movement and surface new injury flags.
+        Returns up to pages*count_per_page players (default 100).
+
+        Each returned dict has:
+            player_key, name, team, positions, status, injury_note,
+            is_undroppable, percent_owned
+        """
+        results: list[dict] = []
+        for page in range(pages):
+            start = page * count_per_page
+            try:
+                params = {"start": start, "count": count_per_page, "sort": "DA"}
+                data = self._get(f"league/{self.league_key}/players", params=params)
+                players_raw = self._league_section(data, 1).get("players", {})
+                batch = self._parse_players_block(players_raw)
+                if not batch:
+                    break  # Yahoo returned empty page — no more players
+                results.extend(batch)
+            except YahooAPIError as exc:
+                logger.warning(
+                    "get_adp_and_injury_feed page %d failed (%s) — returning partial results",
+                    page, exc,
+                )
+                break
+        return results
+
     # ------------------------------------------------------------------
     # Draft endpoints
     # ------------------------------------------------------------------

@@ -6,7 +6,7 @@ import { endpoints } from '@/lib/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import type { MatchupResponse } from '@/lib/types'
-import { STAT_LABELS, RATIO_STATS, LOWER_IS_BETTER } from '@/lib/constants'
+import { STAT_LABELS, RATIO_STATS, LOWER_IS_BETTER, MATCHUP_DISPLAY_ONLY, MATCHUP_STAT_ORDER } from '@/lib/constants'
 
 function winClass(cat: string, myVal: number, oppVal: number): string {
   if (myVal === oppVal) return 'text-zinc-400'
@@ -43,6 +43,12 @@ function MatchupTable({ data }: { data: MatchupResponse }) {
     )
   }
 
+  // K-26: display in canonical order (batting then pitching); unknown cats appended at end
+  const orderedCats = [
+    ...MATCHUP_STAT_ORDER.filter(c => allCats.includes(c)),
+    ...allCats.filter(c => !MATCHUP_STAT_ORDER.includes(c)),
+  ]
+
   return (
     <div className="overflow-x-auto rounded-lg border border-zinc-800">
       <table className="w-full text-sm">
@@ -63,27 +69,34 @@ function MatchupTable({ data }: { data: MatchupResponse }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-800/60">
-          {allCats.map((cat) => {
+          {orderedCats.map((cat) => {
             const myRaw = data.my_team.stats[cat]
             const oppRaw = data.opponent.stats[cat]
             const myVal = parseFloat(String(myRaw ?? 0))
             const oppVal = parseFloat(String(oppRaw ?? 0))
             const myWins = LOWER_IS_BETTER.has(cat) ? myVal < oppVal : myVal > oppVal
             const tied = myVal === oppVal
+            // K-26: display-only stats show values but no WIN/LOSS edge
+            const isDisplayOnly = MATCHUP_DISPLAY_ONLY.has(cat)
 
             return (
               <tr key={cat} className="hover:bg-zinc-800/40 transition-colors">
                 <td className="px-4 py-2.5 text-zinc-400 font-medium">
                   {STAT_LABELS[cat] ?? `Cat. ${cat}`}
+                  {isDisplayOnly && (
+                    <span className="ml-1 text-[10px] text-zinc-600 font-normal uppercase">(ref)</span>
+                  )}
                 </td>
-                <td className={cn('px-4 py-2.5 text-right font-mono tabular-nums', winClass(cat, myVal, oppVal))}>
+                <td className={cn('px-4 py-2.5 text-right font-mono tabular-nums', isDisplayOnly ? 'text-zinc-400' : winClass(cat, myVal, oppVal))}>
                   {formatVal(myRaw, cat)}
                 </td>
-                <td className={cn('px-4 py-2.5 text-right font-mono tabular-nums', winClass(cat, oppVal, myVal))}>
+                <td className={cn('px-4 py-2.5 text-right font-mono tabular-nums', isDisplayOnly ? 'text-zinc-400' : winClass(cat, oppVal, myVal))}>
                   {formatVal(oppRaw, cat)}
                 </td>
                 <td className="px-4 py-2.5 text-center text-xs">
-                  {tied ? (
+                  {isDisplayOnly ? (
+                    <span className="text-zinc-700">—</span>
+                  ) : tied ? (
                     <span className="text-zinc-600">TIE</span>
                   ) : myWins ? (
                     <span className="text-emerald-400 font-semibold">WIN</span>
@@ -110,7 +123,10 @@ function ScoreBanner({ data }: { data: MatchupResponse }) {
   let oppWins = 0
   let ties = 0
 
-  allCats.forEach((cat) => {
+  // K-26: exclude display-only stats (IP, GS, H/AB) from score calculation
+  const scoringCats = allCats.filter(cat => !MATCHUP_DISPLAY_ONLY.has(cat))
+
+  scoringCats.forEach((cat) => {
     const myVal = parseFloat(String(data.my_team.stats[cat] ?? 0))
     const oppVal = parseFloat(String(data.opponent.stats[cat] ?? 0))
     if (myVal === oppVal) { ties++; return }

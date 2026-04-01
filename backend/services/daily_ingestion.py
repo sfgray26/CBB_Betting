@@ -30,6 +30,11 @@ from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
 logger = logging.getLogger(__name__)
 
 
+# Module-level cache: RoS projections fetched by fangraphs_ros (100_012)
+# consumed by ensemble_update (100_014) within the same Railway process.
+_ROS_CACHE: dict = {}
+
+
 # ---------------------------------------------------------------------------
 # Advisory lock IDs — must match HANDOFF.md LOCK_IDS table
 # ---------------------------------------------------------------------------
@@ -46,6 +51,10 @@ LOCK_IDS = {
     "openclaw_perf":  100_009,
     "openclaw_sweep": 100_010,
     "valuation_cache": 100_011,
+    "fangraphs_ros":   100_012,
+    "yahoo_adp_injury": 100_013,
+    "ensemble_update": 100_014,
+    "projection_freshness": 100_015,
 }
 
 
@@ -157,8 +166,46 @@ class DailyIngestionOrchestrator:
                 replace_existing=True,
             )
 
+        # FanGraphs RoS projections: daily 3 AM ET (before ensemble at 5 AM)
+        self._scheduler.add_job(
+            self._fetch_fangraphs_ros,
+            CronTrigger(hour=3, minute=0, timezone=tz),
+            id="fangraphs_ros",
+            name="FanGraphs RoS Fetch",
+            replace_existing=True,
+        )
+
+        # Yahoo ADP + injury feed: every 4 hours
+        self._scheduler.add_job(
+            self._poll_yahoo_adp_injury,
+            IntervalTrigger(hours=4),
+            id="yahoo_adp_injury",
+            name="Yahoo ADP & Injury Poll",
+            replace_existing=True,
+        )
+
+        # Ensemble blend update: daily 5 AM ET (after RoS fetch at 3 AM)
+        self._scheduler.add_job(
+            self._update_ensemble_blend,
+            CronTrigger(hour=5, minute=0, timezone=tz),
+            id="ensemble_update",
+            name="Ensemble Blend Update",
+            replace_existing=True,
+        )
+
+        # Projection freshness SLA gate: hourly
+        self._scheduler.add_job(
+            self._check_projection_freshness,
+            IntervalTrigger(hours=1),
+            id="projection_freshness",
+            name="Projection Freshness Check",
+            replace_existing=True,
+        )
+
         # Initialise status dict so get_status() never returns missing keys
-        _all_job_ids = ["mlb_odds", "statcast", "rolling_z", "clv", "cleanup"]
+        _all_job_ids = ["mlb_odds", "statcast", "rolling_z", "clv", "cleanup",
+                        "fangraphs_ros", "yahoo_adp_injury", "ensemble_update",
+                        "projection_freshness"]
         if _fantasy_leagues:
             _all_job_ids.append("valuation_cache")
         for job_id in _all_job_ids:
@@ -307,7 +354,7 @@ class DailyIngestionOrchestrator:
             db = SessionLocal()
             records_updated = 0
             significant_changes = 0
-
+            skipped_insufficient_data = 0
             try:
                 rows = (
                     db.query(PlayerDailyMetric)
@@ -361,6 +408,7 @@ class DailyIngestionOrchestrator:
                             new_z_total = 0.0
 
                     if new_z_recent is None and new_z_total is None:
+                        skipped_insufficient_data += 1
                         continue
 
                     # Detect significant change vs stored values
@@ -427,10 +475,396 @@ class DailyIngestionOrchestrator:
                 "_calc_rolling_zscores: updated %d players, %d significant changes",
                 records_updated, significant_changes,
             )
+            # M-5: alert when most players lack sufficient history (first 7 days of season)
+            total_seen = len(players)
+            if total_seen > 0 and skipped_insufficient_data > 0:
+                skip_pct = skipped_insufficient_data / total_seen * 100
+                if skipped_insufficient_data == total_seen:
+                    logger.warning(
+                        "rolling_z: ALL %d players skipped — insufficient data "
+                        "(need >= 7 days of vorp_7d). Season may be < 7 days old.",
+                        total_seen,
+                    )
+                elif skip_pct > 50:
+                    logger.warning(
+                        "rolling_z: %d/%d players skipped (%.0f%%) — insufficient data. "
+                        "z-scores will improve as season history accumulates.",
+                        skipped_insufficient_data, total_seen, skip_pct,
+                    )
+                else:
+                    logger.debug(
+                        "rolling_z: %d players skipped for insufficient data (<7 rows)",
+                        skipped_insufficient_data,
+                    )
             self._record_job_run("rolling_z", "success", records_updated)
             return {"status": "success", "records": records_updated, "elapsed_ms": elapsed}
 
         return await _with_advisory_lock(LOCK_IDS["rolling_z"], _run)
+
+    async def _poll_yahoo_adp_injury(self) -> dict:
+        """Fetch Yahoo ADP + injury status snapshot every 4 hours (lock 100_013).
+
+        Pulls up to 100 players sorted by ADP (sort=DA) and caches their
+        injury status in PlayerDailyMetric.  This feed is the sole source for
+        detecting new injuries and ADP rank movements without polling each
+        player individually.
+
+        Data written: player status, injury_note, percent_owned updated on today's row.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.fantasy_baseball.yahoo_client_resilient import (
+                YahooFantasyClient, YahooAuthError, YahooAPIError,
+            )
+            try:
+                client = YahooFantasyClient()
+            except YahooAuthError as exc:
+                logger.error("yahoo_adp_injury: auth error — %s", exc)
+                self._record_job_run("yahoo_adp_injury", "failed")
+                return {"status": "failed", "records": 0}
+
+            try:
+                players = client.get_adp_and_injury_feed(pages=4, count_per_page=25)
+            except (YahooAuthError, YahooAPIError) as exc:
+                logger.error("yahoo_adp_injury: API error — %s", exc)
+                self._record_job_run("yahoo_adp_injury", "failed")
+                return {"status": "failed", "records": 0}
+
+            if not players:
+                logger.warning("yahoo_adp_injury: no players returned")
+                self._record_job_run("yahoo_adp_injury", "success", 0)
+                return {"status": "success", "records": 0}
+
+            today = date.today()
+            db = SessionLocal()
+            records_written = 0
+            injury_flags = 0
+            try:
+                for p in players:
+                    pid = p.get("player_key") or ""
+                    if not pid:
+                        continue
+                    status_val = p.get("status") or None
+                    injury_note = p.get("injury_note") or None
+                    owned_pct = p.get("percent_owned", 0.0) or 0.0
+
+                    if injury_note:
+                        injury_flags += 1
+
+                    existing = (
+                        db.query(PlayerDailyMetric)
+                        .filter(
+                            PlayerDailyMetric.player_id == pid,
+                            PlayerDailyMetric.metric_date == today,
+                            PlayerDailyMetric.sport == "mlb",
+                        )
+                        .first()
+                    )
+                    if existing:
+                        # Patch injury / ownership fields on existing row
+                        existing.rolling_window = {
+                            **(existing.rolling_window or {}),
+                            "status": status_val,
+                            "injury_note": injury_note,
+                            "percent_owned": owned_pct,
+                            "adp_updated_at": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+                        }
+                    else:
+                        db.add(PlayerDailyMetric(
+                            player_id=pid,
+                            player_name=p.get("name", pid),
+                            metric_date=today,
+                            sport="mlb",
+                            rolling_window={
+                                "status": status_val,
+                                "injury_note": injury_note,
+                                "percent_owned": owned_pct,
+                                "adp_updated_at": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+                            },
+                            data_source="yahoo_adp_injury",
+                        ))
+                    records_written += 1
+
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                logger.error("yahoo_adp_injury DB write failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("yahoo_adp_injury", "failed")
+                return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.info(
+                "yahoo_adp_injury: wrote %d rows (%d injury flags) in %dms",
+                records_written, injury_flags, elapsed,
+            )
+            self._record_job_run("yahoo_adp_injury", "success", records_written)
+            return {
+                "status": "success",
+                "records": records_written,
+                "injury_flags": injury_flags,
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["yahoo_adp_injury"], _run)
+
+    async def _fetch_fangraphs_ros(self) -> dict:
+        """Fetch daily Rest-of-Season projections from FanGraphs (lock 100_012).
+
+        Runs at 3 AM ET, before the ensemble blend job at 5 AM.
+        Stores raw blend results in a module-level cache so _update_ensemble_blend
+        can use them without re-fetching.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.fantasy_baseball.fangraphs_loader import (
+                fetch_all_ros, compute_ensemble_blend,
+            )
+
+            bat_raw = fetch_all_ros("bat", delay_seconds=3.0)
+            pit_raw = fetch_all_ros("pit", delay_seconds=3.0)
+
+            bat_count = sum(len(df) for df in bat_raw.values()) if bat_raw else 0
+            pit_count = sum(len(df) for df in pit_raw.values()) if pit_raw else 0
+
+            # Cache for ensemble job
+            _ROS_CACHE["bat"] = bat_raw
+            _ROS_CACHE["pit"] = pit_raw
+            _ROS_CACHE["fetched_at"] = datetime.now(ZoneInfo("America/New_York"))
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            status = "ok" if (bat_raw or pit_raw) else "failed"
+            logger.info(
+                "fangraphs_ros: %d bat / %d pit rows from %d/%d systems; status=%s",
+                bat_count, pit_count,
+                len(bat_raw) + len(pit_raw), 8,  # 4 systems × 2 stat types
+                status,
+            )
+            if status == "failed":
+                logger.warning("fangraphs_ros: all FanGraphs fetches failed — cloudscraper or network issue")
+            self._record_job_run("fangraphs_ros", status, bat_count + pit_count)
+            return {"status": status, "bat_rows": bat_count, "pit_rows": pit_count, "elapsed_ms": elapsed}
+
+        return await _with_advisory_lock(LOCK_IDS["fangraphs_ros"], _run)
+
+    async def _update_ensemble_blend(self) -> dict:
+        """Compute weighted ensemble blend and persist to PlayerDailyMetric (lock 100_014).
+
+        Runs at 5 AM ET, 2 hours after _fetch_fangraphs_ros.
+        Uses the in-process _ROS_CACHE from the earlier fetch.
+        Blend columns written: blend_hr, blend_rbi, blend_avg, blend_era, blend_whip.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.fantasy_baseball.fangraphs_loader import (
+                fetch_all_ros, compute_ensemble_blend,
+            )
+
+            # Use cached RoS data if fresh (< 4 hours); otherwise re-fetch
+            bat_raw = None
+            pit_raw = None
+            cached_at = _ROS_CACHE.get("fetched_at")
+            if cached_at:
+                age_h = (datetime.now(ZoneInfo("America/New_York")) - cached_at).total_seconds() / 3600
+                if age_h < 4:
+                    bat_raw = _ROS_CACHE.get("bat")
+                    pit_raw = _ROS_CACHE.get("pit")
+
+            if not bat_raw and not pit_raw:
+                logger.info("ensemble_update: cache miss — re-fetching FanGraphs RoS")
+                bat_raw = fetch_all_ros("bat", delay_seconds=3.0)
+                pit_raw = fetch_all_ros("pit", delay_seconds=3.0)
+
+            if not bat_raw and not pit_raw:
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.error("ensemble_update: no RoS data available — skipping blend")
+                self._record_job_run("ensemble_update", "failed")
+                return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+
+            bat_blend = compute_ensemble_blend(bat_raw or {}, stat_columns=["HR", "R", "RBI", "SB", "AVG"]) if bat_raw else None
+            pit_blend = compute_ensemble_blend(pit_raw or {}, stat_columns=["ERA", "WHIP"]) if pit_raw else None
+
+            today = date.today()
+            db = SessionLocal()
+            records_written = 0
+            try:
+                # Upsert batting blend values
+                if bat_blend is not None:
+                    for _, row in bat_blend.iterrows():
+                        pid = row.get("player_id", "")
+                        if not pid:
+                            continue
+                        existing = (
+                            db.query(PlayerDailyMetric)
+                            .filter(
+                                PlayerDailyMetric.player_id == pid,
+                                PlayerDailyMetric.metric_date == today,
+                                PlayerDailyMetric.sport == "mlb",
+                            )
+                            .first()
+                        )
+                        if existing:
+                            existing.blend_hr = row.get("HR")
+                            existing.blend_rbi = row.get("RBI")
+                            existing.blend_avg = row.get("AVG")
+                        else:
+                            db.add(PlayerDailyMetric(
+                                player_id=pid,
+                                player_name=row.get("name", pid),
+                                metric_date=today,
+                                sport="mlb",
+                                blend_hr=row.get("HR"),
+                                blend_rbi=row.get("RBI"),
+                                blend_avg=row.get("AVG"),
+                                rolling_window={},
+                                data_source="ensemble_blend",
+                            ))
+                        records_written += 1
+
+                # Upsert pitching blend values
+                if pit_blend is not None:
+                    for _, row in pit_blend.iterrows():
+                        pid = row.get("player_id", "")
+                        if not pid:
+                            continue
+                        existing = (
+                            db.query(PlayerDailyMetric)
+                            .filter(
+                                PlayerDailyMetric.player_id == pid,
+                                PlayerDailyMetric.metric_date == today,
+                                PlayerDailyMetric.sport == "mlb",
+                            )
+                            .first()
+                        )
+                        if existing:
+                            existing.blend_era = row.get("ERA")
+                            existing.blend_whip = row.get("WHIP")
+                        else:
+                            db.add(PlayerDailyMetric(
+                                player_id=pid,
+                                player_name=row.get("name", pid),
+                                metric_date=today,
+                                sport="mlb",
+                                blend_era=row.get("ERA"),
+                                blend_whip=row.get("WHIP"),
+                                rolling_window={},
+                                data_source="ensemble_blend",
+                            ))
+                        records_written += 1
+
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                logger.error("ensemble_update DB write failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("ensemble_update", "failed")
+                return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.info("ensemble_update: wrote %d player blend rows in %dms", records_written, elapsed)
+            self._record_job_run("ensemble_update", "success", records_written)
+            return {"status": "success", "records": records_written, "elapsed_ms": elapsed}
+
+        return await _with_advisory_lock(LOCK_IDS["ensemble_update"], _run)
+
+    async def _check_projection_freshness(self) -> dict:
+        """
+        SLA gate: warn when projection data is stale but do NOT block anything.
+        SLAs: ensemble_blend ≤ 12 h, statcast ≤ 6 h, _ROS_CACHE ≤ 12 h.
+        Results stored in self._job_status["projection_freshness"] for /admin/ingestion/status.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            now = datetime.now(ZoneInfo("America/New_York"))
+            violations: list[str] = []
+            report: dict = {"checked_at": now.isoformat(), "violations": violations}
+
+            async with get_db_session() as db:
+                # --- ensemble_blend SLA (12 hours) ---
+                SLA_ENSEMBLE_H = 12
+                result = await db.execute(
+                    text(
+                        "SELECT MAX(date) FROM player_daily_metrics "
+                        "WHERE data_source = 'ensemble_blend'"
+                    )
+                )
+                latest_ensemble = result.scalar()
+                if latest_ensemble is None:
+                    msg = "ensemble_blend: no rows found — pipeline may not have run yet"
+                    logger.warning("PROJECTION FRESHNESS: %s", msg)
+                    violations.append(msg)
+                else:
+                    if hasattr(latest_ensemble, "tzinfo") and latest_ensemble.tzinfo is None:
+                        latest_ensemble = latest_ensemble.replace(tzinfo=ZoneInfo("America/New_York"))
+                    age_h = (now - latest_ensemble).total_seconds() / 3600
+                    report["ensemble_blend_age_h"] = round(age_h, 1)
+                    if age_h > SLA_ENSEMBLE_H:
+                        msg = f"ensemble_blend stale: {age_h:.1f}h > SLA {SLA_ENSEMBLE_H}h"
+                        logger.warning("PROJECTION FRESHNESS: %s", msg)
+                        violations.append(msg)
+
+                # --- statcast SLA (6 hours) ---
+                SLA_STATCAST_H = 6
+                result = await db.execute(
+                    text(
+                        "SELECT MAX(date) FROM player_daily_metrics "
+                        "WHERE data_source = 'statcast'"
+                    )
+                )
+                latest_statcast = result.scalar()
+                if latest_statcast is None:
+                    msg = "statcast: no rows found — statcast ingestion may not have run yet"
+                    logger.warning("PROJECTION FRESHNESS: %s", msg)
+                    violations.append(msg)
+                else:
+                    if hasattr(latest_statcast, "tzinfo") and latest_statcast.tzinfo is None:
+                        latest_statcast = latest_statcast.replace(tzinfo=ZoneInfo("America/New_York"))
+                    age_h = (now - latest_statcast).total_seconds() / 3600
+                    report["statcast_age_h"] = round(age_h, 1)
+                    if age_h > SLA_STATCAST_H:
+                        msg = f"statcast stale: {age_h:.1f}h > SLA {SLA_STATCAST_H}h"
+                        logger.warning("PROJECTION FRESHNESS: %s", msg)
+                        violations.append(msg)
+
+            # --- _ROS_CACHE SLA (12 hours, in-memory) ---
+            SLA_ROS_H = 12
+            ros_fetched_at = _ROS_CACHE.get("fetched_at")
+            if ros_fetched_at is None:
+                msg = "_ROS_CACHE empty — fangraphs_ros job has not run this process yet"
+                logger.warning("PROJECTION FRESHNESS: %s", msg)
+                violations.append(msg)
+            else:
+                if hasattr(ros_fetched_at, "tzinfo") and ros_fetched_at.tzinfo is None:
+                    ros_fetched_at = ros_fetched_at.replace(tzinfo=ZoneInfo("America/New_York"))
+                age_h = (now - ros_fetched_at).total_seconds() / 3600
+                report["ros_cache_age_h"] = round(age_h, 1)
+                if age_h > SLA_ROS_H:
+                    msg = f"_ROS_CACHE stale: {age_h:.1f}h > SLA {SLA_ROS_H}h"
+                    logger.warning("PROJECTION FRESHNESS: %s", msg)
+                    violations.append(msg)
+
+            elapsed = round((time.monotonic() - t0) * 1000)
+            report["elapsed_ms"] = elapsed
+            report["violation_count"] = len(violations)
+
+            if not violations:
+                logger.debug("PROJECTION FRESHNESS: all SLAs met (checked in %d ms)", elapsed)
+
+            self._job_status["projection_freshness"] = report
+            return {"status": "success", **report}
+
+        return await _with_advisory_lock(LOCK_IDS["projection_freshness"], _run)
 
     async def _compute_clv(self) -> dict:
         """

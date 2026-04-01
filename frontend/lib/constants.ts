@@ -39,8 +39,32 @@ export const STAT_LABELS: Record<string, string> = {
 
 // Ratio stats get 3 decimal places; counting stats get integer display.
 export const RATIO_STATS = new Set([
-  'AVG', 'OBP', 'OPS', 'ERA', 'WHIP', 'K9', '3', '26', '27', '55',
+  'AVG', 'OBP', 'OPS', 'ERA', 'WHIP', 'K9', 'K/9', '3', '26', '27', '55',
 ])
 
-// ERA / WHIP: lower is better.
-export const LOWER_IS_BETTER = new Set(['ERA', 'WHIP', '26', '27'])
+// Stats where LOWER value wins the category.
+// K-26 fix: added L (Losses), K/BB (lower K/BB is worse — actually higher K/BB is better —
+// but L (Losses) is definitely lower-is-better).
+export const LOWER_IS_BETTER = new Set([
+  'ERA', 'WHIP', 'L',
+  '26',  // ERA by numeric ID
+  '27',  // WHIP by numeric ID
+  '29',  // L (Losses) by numeric ID — some leagues use QS here; backend overrides via settings
+])
+
+// K-26 fix: display-only reference stats that must NOT count toward the matchup score.
+// H/AB and IP are informational; GS is a pitching reference, not a scoring category.
+export const MATCHUP_DISPLAY_ONLY = new Set([
+  'IP', 'H/AB', 'GS',
+  '21', '50',  // IP by numeric ID
+  '62',        // GS by numeric ID
+])
+
+// Canonical display order for matchup categories.
+// Batting section first, then pitching. Stats not in this list are appended at the end.
+export const MATCHUP_STAT_ORDER: string[] = [
+  // Batting
+  'H/AB', 'R', 'H', 'HR', 'RBI', 'SB', 'NSB', 'TB', 'AVG', 'OBP', 'OPS',
+  // Pitching
+  'IP', 'W', 'L', 'K', 'SV', 'NSV', 'HLD', 'ERA', 'WHIP', 'K/9', 'K9', 'QS', 'K/BB', 'GS', 'BB',
+]
