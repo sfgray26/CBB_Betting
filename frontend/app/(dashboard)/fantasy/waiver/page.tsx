@@ -15,6 +15,11 @@ import type { CategoryDeficit, WaiverPlayer, WaiverRecommendation } from '@/lib/
 // ---------------------------------------------------------------------------
 
 const PRIORITY_STATS = ['HR', 'RBI', 'AVG', 'ERA', 'WHIP', 'K', 'NSV']
+// Map priority stat abbreviations to Yahoo numeric stat IDs (stats dict uses IDs as keys)
+const PRIORITY_STAT_IDS: Record<string, string> = {
+  HR: '12', RBI: '13', AVG: '3', ERA: '26', WHIP: '27', K: '28', NSV: '83',
+}
+const RATIO_DISPLAY = new Set(['AVG', 'ERA', 'WHIP'])
 
 // ---------------------------------------------------------------------------
 // Category deficit card
@@ -181,17 +186,19 @@ function WaiverTable({ players, label }: { players: WaiverPlayer[]; label: strin
                   {p.owned_pct.toFixed(1)}%
                 </td>
                 <td className="px-3 py-2.5 text-xs text-zinc-500 font-mono">
-                  {p.stats ? (
+                  {p.stats && Object.keys(p.stats).length > 0 ? (
                     <div className="flex gap-x-3 gap-y-1 flex-wrap">
-                      {PRIORITY_STATS.map((label) => {
-                        // Find stat ID for this label
-                        const statId = Object.keys(STAT_LABELS).find(key => STAT_LABELS[key] === label)
-                        const val = statId ? p.stats![statId] : null
-                        if (val === null || val === undefined) return null
+                      {PRIORITY_STATS.map((abbr) => {
+                        const statId = PRIORITY_STAT_IDS[abbr]
+                        const raw = p.stats![statId]
+                        if (raw === null || raw === undefined || raw === '') return null
+                        const display = RATIO_DISPLAY.has(abbr)
+                          ? parseFloat(raw).toFixed(3)
+                          : raw
                         return (
-                          <span key={label}>
-                            <span className="text-zinc-600">{label}:</span>
-                            <span className="ml-1 text-zinc-300">{val}</span>
+                          <span key={abbr}>
+                            <span className="text-zinc-600">{abbr}:</span>
+                            <span className="ml-1 text-zinc-300">{display}</span>
                           </span>
                         )
                       })}

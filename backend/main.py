@@ -5458,14 +5458,14 @@ async def get_player_valuations(
 _YAHOO_STAT_FALLBACK: dict[str, str] = {
     # Batting — confirmed across leagues (matches category_tracker.YAHOO_STAT_MAP)
     "3": "AVG",   "7": "R",    "8": "H",    "12": "HR",  "13": "RBI",
-    "16": "SB",   "55": "OPS", "60": "H",
+    "16": "SB",   "55": "OPS", "60": "NSB",  # 60=NSB (Net Stolen Bases), NOT H
     # Pitching — confirmed across leagues
     "21": "IP",   "23": "W",   "26": "ERA", "27": "WHIP",
     "28": "K",    "29": "QS",  "32": "SV",  "38": "K/BB","42": "K",
     "50": "IP",   "62": "GS",  "83": "NSV",
-    # "57" = BB (Walks) and "85" = OBP per Kimi K-14 research (Yahoo API docs).
-    # get_league_settings() will override these with league-specific names if available.
-    "57": "BB",  "85": "OBP",
+    # 57=K/9 (confirmed via production logs — decimal values rejected as BB).
+    # 85=OBP per Yahoo API docs. get_league_settings() overrides when available.
+    "57": "K/9",  "85": "OBP",
 }
 
 

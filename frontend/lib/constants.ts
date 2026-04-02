@@ -23,11 +23,14 @@ export const STAT_LABELS: Record<string, string> = {
   '3': 'Batting Avg', '7': 'Runs',         '8': 'Hits',
   '12': 'Home Runs',  '13': 'RBI',         '16': 'Stolen Bases',
   '55': 'OPS',        '60': 'Net SB',      '85': 'On-Base %',
+  // Batting extra — string keys
+  TB: 'Total Bases',  NSB: 'Net SB',       'H/AB': 'H/AB',
+  L: 'Losses',
   // Pitching — string keys
   W: 'Wins',          K: 'Strikeouts',     SV: 'Saves',   HLD: 'Holds',
   ERA: 'ERA',         WHIP: 'WHIP',        QS: 'Quality Starts',
-  BB: 'Walks (P)',    IP: 'Innings Pitched', K9: 'K/9',
-  NSV: 'Net Saves',   GS: 'Games Started',
+  BB: 'Walks (P)',    IP: 'Innings Pitched', K9: 'K/9',   'K/9': 'K/9',
+  NSV: 'Net Saves',   GS: 'Games Started', 'K/BB': 'K/BB',
   // Pitching — numeric IDs (57=BB confirmed per K-14 research; 85=OBP already mapped above)
   '57': 'Walks',
   '21': 'Innings Pitched', '23': 'Wins',      '26': 'ERA',

@@ -269,9 +269,10 @@ class WeatherFetcher:
         for game in games:
             venue = game.get("venue", "")
             game_time = game.get("game_time", datetime.now())
+            team_abbr = game.get("home_team") or game.get("team")
             
             try:
-                weather = self.get_game_weather(venue, game_time)
+                weather = self.get_game_weather(venue, game_time, team_abbr=team_abbr)
                 results[venue] = weather
             except Exception as e:
                 logger.warning(f"Failed to fetch weather for {venue}: {e}")
