@@ -14,7 +14,7 @@ JobRow = namedtuple("JobRow", ["id", "job_type", "payload", "retry_count", "max_
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def test_dispatch_job_rejects_invalid_payload_immediately():

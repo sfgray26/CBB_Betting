@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import time
+import math
 from datetime import datetime, date, timedelta
 from typing import Optional, Any
 from zoneinfo import ZoneInfo
@@ -176,7 +177,15 @@ def _extract_blend_rows(blend_df: Any, metric_map: dict[str, str]) -> tuple[list
             continue
 
         metrics = {dest: row.get(src) for src, dest in metric_map.items()}
-        if all(value is None for value in metrics.values()):
+
+        def _is_missing_metric(value: Any) -> bool:
+            if value is None:
+                return True
+            if isinstance(value, float) and math.isnan(value):
+                return True
+            return False
+
+        if all(_is_missing_metric(value) for value in metrics.values()):
             skipped += 1
             continue
 
