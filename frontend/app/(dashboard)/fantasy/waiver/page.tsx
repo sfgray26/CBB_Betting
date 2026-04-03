@@ -7,7 +7,6 @@ import { endpoints } from '@/lib/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { StatusBadge } from '@/components/shared/status-badge'
-import { STAT_LABELS } from '@/lib/constants'
 import type { CategoryDeficit, WaiverPlayer, WaiverRecommendation } from '@/lib/types'
 
 // ---------------------------------------------------------------------------
