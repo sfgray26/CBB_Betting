@@ -3960,7 +3960,7 @@ async def sync_keepers_pre_draft(
 async def get_fantasy_lineup_recommendations(
     lineup_date: str,
     use_smart_selector: bool = True,  # Enable smart selector by default
-    force_stale: bool = Query(False, description="Allow lineup generation even when projection freshness SLA is violated."),
+    force_stale: bool = Query(True, description="Allow lineup generation even when projection freshness SLA is violated."),
     db: Session = Depends(get_db),
     user: str = Depends(verify_api_key),
 ):
@@ -4553,6 +4553,34 @@ async def get_fantasy_waiver_recommendations(
         except Exception:
             pass
 
+        # Build stat_id → abbreviation map once.  Used for both category-deficit labels
+        # and translating raw p.stats keys before sending to the frontend.
+        # Pre-seeded with known fallback; league settings override if available.
+        sid_map: dict[str, str] = dict(_YAHOO_STAT_FALLBACK)
+        try:
+            _settings_waiver = client.get_league_settings()
+            _stat_cats_waiver = (
+                _settings_waiver
+                .get("settings", [{}])[0]
+                .get("stat_categories", {})
+                .get("stats", [])
+            )
+            for _entry_w in _stat_cats_waiver:
+                if isinstance(_entry_w, dict):
+                    _s_w = _entry_w.get("stat", {})
+                    _sid_w = str(_s_w.get("stat_id", ""))
+                    _abbr_w = (
+                        _s_w.get("display_name")
+                        or _s_w.get("abbreviation")
+                        or _s_w.get("name")
+                        or _sid_w
+                    )
+                    if _sid_w:
+                        sid_map[_sid_w] = _abbr_w
+            logger.info("Waiver sid_map loaded from league settings: %d stats", len(sid_map))
+        except Exception as _e_sid:
+            logger.warning("get_league_settings failed in waiver sid_map build (using fallback): %s", _e_sid)
+
         # Build category deficits from scoreboard stats.
         # This must run before _to_waiver_player so need_score can be computed per player.
         # Failures here are swallowed - waiver list still returns, just without need scoring.
@@ -4561,25 +4589,7 @@ async def get_fantasy_waiver_recommendations(
             if matchup_opponent != "TBD":
                 # Re-fetch scoreboard to get per-category stats
                 matchups2 = client.get_scoreboard()
-                # Build stat_id → display name map for readable labels
-                sid_map: dict[str, str] = dict(_YAHOO_STAT_FALLBACK)
-                try:
-                    settings2 = client.get_league_settings()
-                    stat_cats2 = (
-                        settings2
-                        .get("settings", [{}])[0]
-                        .get("stat_categories", {})
-                        .get("stats", [])
-                    )
-                    for entry in stat_cats2:
-                        if isinstance(entry, dict):
-                            s2 = entry.get("stat", {})
-                            sid2 = str(s2.get("stat_id", ""))
-                            abbr2 = s2.get("display_name") or s2.get("abbreviation") or s2.get("name") or sid2
-                            if sid2:
-                                sid_map[sid2] = abbr2  # league-specific names override fallback
-                except Exception as _e:
-                    logger.warning("get_league_settings failed in waiver endpoint, using fallback: %s", _e)
+                # sid_map already built above — no need to rebuild here
                 lower_better = {"ERA", "WHIP"}
                 for m2 in matchups2:
                     if not isinstance(m2, dict):
@@ -4672,6 +4682,13 @@ async def get_fantasy_waiver_recommendations(
             board_player = _get_proj(p)  # always returns something
             _raw_nsv = round(float((board_player.get("proj") or {}).get("nsv", 0.0)), 1)
 
+            # Translate raw Yahoo stat_id keys → abbreviations so the frontend can
+            # display stats by name (K, NSV, ERA…) without hardcoding numeric IDs.
+            _raw_stats: dict = p.get("stats") or {}
+            _translated_stats: dict = {
+                sid_map.get(k, k): v for k, v in _raw_stats.items()
+            }
+
             need_score = 0.0
             contributions: dict = {}
 
@@ -4722,7 +4739,7 @@ async def get_fantasy_waiver_recommendations(
                 hot_cold=_hc,
                 status=_status,
                 injury_note=_injury_note,
-                stats=p.get("stats") or {},
+                stats=_translated_stats,
             )
 
         # Build + filter + sort top_available
@@ -5541,6 +5558,11 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
     # Pre-seeded with known Yahoo IDs so the page is readable even when
     # get_league_settings() fails (auth error, pre-season, rate limit).
     stat_id_map: dict[str, str] = dict(_YAHOO_STAT_FALLBACK)
+    # active_stat_abbrs: set of abbreviations that are SCORING categories in this league.
+    # When populated from league settings, used to filter out display-only / non-league stats
+    # (e.g. OBP, K/BB) that Yahoo includes in scoreboard responses even for leagues that
+    # don't score them.  Empty set = settings unavailable, no filtering applied.
+    active_stat_abbrs: set[str] = set()
     try:
         settings = client.get_league_settings()
         stat_cats = (
@@ -5556,7 +5578,14 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                 abbr = s.get("display_name") or s.get("abbreviation") or s.get("name") or sid
                 if sid:
                     stat_id_map[sid] = abbr  # league-specific names override fallback
-        logger.info("stat_id_map loaded from league settings: %d stats", len(stat_id_map))
+                    # is_only_display_stat == 1 means the stat is shown but not scored.
+                    # Include stat when the flag is absent (assume scoring) or 0.
+                    if not s.get("is_only_display_stat", 0):
+                        active_stat_abbrs.add(abbr)
+        logger.info(
+            "stat_id_map loaded from league settings: %d stats, %d active scoring categories: %s",
+            len(stat_id_map), len(active_stat_abbrs), sorted(active_stat_abbrs),
+        )
     except Exception as _e:
         logger.warning("get_league_settings failed, using fallback stat_id_map: %s", _e)
 
@@ -5645,9 +5674,12 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                                 continue
                         except (TypeError, ValueError):
                             pass
+                    logger.debug(
+                        "matchup stat_id=%s → key=%s val=%s", sid, key, val
+                    )
                     if key:
                         stats_dict[key] = val
-        
+
         # Try multiple key formats Yahoo might use
         team_key = t_meta.get("team_key", "")
         team_name = t_meta.get("name", "") or t_meta.get("nickname", "")
@@ -5722,17 +5754,40 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         if opp_entry is None:
             opp_entry = ("", "Unknown", {})
 
+        # Filter stats to active scoring categories only.
+        # When active_stat_abbrs is populated from league settings, this removes stats
+        # that Yahoo includes in the scoreboard (OBP, K/BB, etc.) but that are not
+        # scored in this league.  Fall back to filtering out "-" / empty values when
+        # league settings were unavailable.
+        def _filter_stats(stats: dict) -> dict:
+            if active_stat_abbrs:
+                # League settings available — keep only active scoring categories
+                # plus display-only stats (IP, GS) which are harmless to show.
+                _ALWAYS_KEEP = {"IP", "GS", "H/AB", "21", "50", "62"}
+                return {
+                    k: v for k, v in stats.items()
+                    if k in active_stat_abbrs or k in _ALWAYS_KEEP
+                }
+            # Fallback: drop stats with "-" or empty values (Yahoo marker for inactive cats).
+            return {k: v for k, v in stats.items() if v not in ("", "-", None)}
+
+        my_stats = _filter_stats(my_entry[2])
+        opp_stats = _filter_stats(opp_entry[2])
+        logger.info(
+            "Matchup filtered stats keys (my_team): %s", sorted(my_stats.keys())
+        )
+
         return MatchupResponse(
             week=week,
             my_team=MatchupTeamOut(
                 team_key=my_entry[0],
                 team_name=my_entry[1],
-                stats=my_entry[2],
+                stats=my_stats,
             ),
             opponent=MatchupTeamOut(
                 team_key=opp_entry[0],
                 team_name=opp_entry[1],
-                stats=opp_entry[2],
+                stats=opp_stats,
             ),
             is_playoffs=is_playoffs,
         )

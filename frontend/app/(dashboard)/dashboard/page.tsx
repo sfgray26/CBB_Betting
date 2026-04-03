@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useQuery } from "@tanstack/react-query"
 import { endpoints } from "@/lib/api"
 import type { DashboardData } from "@/lib/types"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
@@ -17,31 +17,19 @@ import {
 // Dashboard panel components - simplified inline versions
 
 export default function DashboardPage() {
-  const [dashboard, setDashboard] = useState<DashboardData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const { data: response, isLoading, error: queryError } = useQuery({
+    queryKey: ['dashboard'],
+    queryFn: endpoints.getDashboard,
+    staleTime: 2 * 60_000,       // serve cached data for 2 min
+    refetchInterval: 5 * 60_000, // auto-refresh every 5 min
+  })
 
-  useEffect(() => {
-    loadDashboard()
-  }, [])
+  const dashboard: DashboardData | null = response?.success ? response.data : null
+  const error: string | null = queryError
+    ? (queryError instanceof Error ? queryError.message : "Failed to load dashboard")
+    : response && !response.success ? "Failed to load dashboard data" : null
 
-  async function loadDashboard() {
-    try {
-      setLoading(true)
-      const response = await endpoints.getDashboard()
-      if (response.success) {
-        setDashboard(response.data)
-      } else {
-        setError("Failed to load dashboard data")
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load dashboard")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  if (loading) {
+  if (isLoading) {
     return <DashboardSkeleton />
   }
 
@@ -75,7 +63,11 @@ export default function DashboardPage() {
       <div className="mb-8">
         <h1 className="text-xl font-semibold text-zinc-100 mb-2">Fantasy Baseball Dashboard</h1>
         <p className="text-muted-foreground">
-          Last updated: {dashboard.timestamp ? new Date(dashboard.timestamp).toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short' }) + ' ET' : 'N/A'}
+          Last updated: {
+            new Date(dashboard.timestamp ?? Date.now()).toLocaleString('en-US', {
+              timeZone: 'America/New_York', dateStyle: 'short', timeStyle: 'short'
+            }) + ' ET'
+          }{!dashboard.timestamp ? ' (approx)' : ''}
         </p>
       </div>
 
@@ -104,7 +96,7 @@ export default function DashboardPage() {
         />
         <QuickStatCard
           title="Waiver Targets"
-          value={`${dashboard.waiver_targets.length}`}
+          value={`${dashboard.waiver_targets.filter((t) => t.priority_score > 0).length}`}
           description="Recommended adds"
           icon={<Zap className="h-4 w-4" />}
           trend="neutral"

@@ -14,10 +14,7 @@ import type { CategoryDeficit, WaiverPlayer, WaiverRecommendation } from '@/lib/
 // ---------------------------------------------------------------------------
 
 const PRIORITY_STATS = ['HR', 'RBI', 'AVG', 'ERA', 'WHIP', 'K', 'NSV']
-// Map priority stat abbreviations to Yahoo numeric stat IDs (stats dict uses IDs as keys)
-const PRIORITY_STAT_IDS: Record<string, string> = {
-  HR: '12', RBI: '13', AVG: '3', ERA: '26', WHIP: '27', K: '28', NSV: '83',
-}
+// Stats dict is now keyed by abbreviation (translated server-side via league settings sid_map).
 const RATIO_DISPLAY = new Set(['AVG', 'ERA', 'WHIP'])
 
 // ---------------------------------------------------------------------------
@@ -188,11 +185,11 @@ function WaiverTable({ players, label }: { players: WaiverPlayer[]; label: strin
                   {p.stats && Object.keys(p.stats).length > 0 ? (
                     <div className="flex gap-x-3 gap-y-1 flex-wrap">
                       {PRIORITY_STATS.map((abbr) => {
-                        const statId = PRIORITY_STAT_IDS[abbr]
-                        const raw = p.stats![statId]
+                        // stats dict is keyed by abbreviation (translated server-side)
+                        const raw = p.stats![abbr]
                         if (raw === null || raw === undefined || raw === '') return null
                         const display = RATIO_DISPLAY.has(abbr)
-                          ? parseFloat(raw).toFixed(3)
+                          ? parseFloat(String(raw)).toFixed(3)
                           : raw
                         return (
                           <span key={abbr}>
