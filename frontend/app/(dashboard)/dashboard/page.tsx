@@ -9,7 +9,6 @@ import {
   AlertCircle,
   TrendingUp,
   TrendingDown,
-  Users,
   Activity,
   Zap,
   Target,
