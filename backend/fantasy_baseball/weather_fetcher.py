@@ -185,6 +185,7 @@ class WeatherFetcher:
         self.cache_dir = CACHE_DIR
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._session = requests.Session()
+        self._api_key_failed = False  # Circuit breaker: skip API calls after auth failure
         
         # Try to get API key from environment
         if not self.api_key:
@@ -305,8 +306,8 @@ class WeatherFetcher:
         
         city, state = city_state
         
-        # Use OpenWeatherMap if API key available
-        if self.api_key:
+        # Use OpenWeatherMap if API key available and not circuit-broken
+        if self.api_key and not self._api_key_failed:
             return self._fetch_openweather(venue, game_time, city, state, stadium_profile)
         else:
             # Fallback: estimate based on stadium profile and season
@@ -408,7 +409,18 @@ class WeatherFetcher:
             return weather
             
         except Exception as e:
-            logger.warning(f"OpenWeather fetch failed for {venue}: {e}")
+            # Trip circuit breaker on auth failures so we don't hammer a dead key
+            # for every single stadium in the same request cycle.
+            err_str = str(e)
+            if "401" in err_str or "403" in err_str or "Unauthorized" in err_str:
+                self._api_key_failed = True
+                logger.error(
+                    "OpenWeather API key rejected (401/403) — disabling live weather for this "
+                    "session. Renew OPENWEATHER_API_KEY in Railway environment variables. "
+                    "Note: OneCall 3.0 (data/3.0/onecall) requires a paid subscription."
+                )
+            else:
+                logger.warning(f"OpenWeather fetch failed for {venue}: {e}")
             return self._estimate_weather(venue, game_time, stadium_profile)
     
     def _estimate_weather(

@@ -4018,6 +4018,14 @@ async def get_fantasy_lineup_recommendations(
         if p.get("name")
     }
 
+    # Build name → Yahoo player_key lookup so lineup response includes real keys
+    # for the "Apply to Yahoo" action.  Match is case-insensitive on player name.
+    _name_to_player_key: dict[str, str] = {
+        p.get("name", "").strip().lower(): p.get("player_key", "")
+        for p in _lineup_roster
+        if p.get("name") and p.get("player_key")
+    }
+
     batters: list[LineupPlayerOut] = []
 
     # --- Fetch game data for opponent/start_time lookup ---
@@ -4111,9 +4119,11 @@ async def get_fantasy_lineup_recommendations(
             for a in assignments:
                 team = a.get("team", "")
                 opp, start, opp_impl = _get_game_context(team)
+                _pname = a["player_name"]
                 batters.append(LineupPlayerOut(
-                    player_id=a["player_id"] or a["player_name"],
-                    name=a["player_name"],
+                    player_id=a["player_id"] or _pname,
+                    player_key=_name_to_player_key.get(_pname.lower().strip(), "") or None,
+                    name=_pname,
                     team=team,
                     position="?",
                     implied_runs=round(a.get("implied_runs", opp_impl), 2),
@@ -4124,7 +4134,7 @@ async def get_fantasy_lineup_recommendations(
                     status="START" if a["slot"] != "BN" else "BENCH",
                     assigned_slot=a["slot"],
                     has_game=a.get("has_game", False),
-                    injury_status=_injury_lookup.get(a["player_name"].lower()),
+                    injury_status=_injury_lookup.get(_pname.lower()),
                 ))
 
             logger.info(f"SmartLineupSelector produced {len(batters)} assignments for {lineup_date}")
@@ -4148,6 +4158,7 @@ async def get_fantasy_lineup_recommendations(
                 opp, start, opp_impl = _get_game_context(s.player_team)
                 batters.append(LineupPlayerOut(
                     player_id=s.player_name,
+                    player_key=_name_to_player_key.get(s.player_name.lower().strip(), "") or None,
                     name=s.player_name,
                     team=s.player_team,
                     position=s.positions[0] if s.positions else "?",
@@ -4180,6 +4191,7 @@ async def get_fantasy_lineup_recommendations(
             _b_name = b.get("name", "")
             batters.append(LineupPlayerOut(
                 player_id=str(b.get("player_id", _b_name)),
+                player_key=_name_to_player_key.get(_b_name.lower().strip(), "") or None,
                 name=_b_name,
                 team=team,
                 position=(b.get("positions") or ["OF"])[0],
@@ -4284,6 +4296,7 @@ async def get_fantasy_lineup_recommendations(
 
             pitchers.append(StartingPitcherOut(
                 player_id=p.get("player_key") or p.get("name", ""),
+                player_key=p.get("player_key") or _name_to_player_key.get(p.get("name", "").lower().strip(), "") or None,
                 name=p.get("name", ""),
                 team=team,
                 pitcher_type=pitcher_type,
@@ -4565,6 +4578,8 @@ async def get_fantasy_waiver_recommendations(
                 .get("stat_categories", {})
                 .get("stats", [])
             )
+            # Collect entries then disambiguate batting/pitching collisions (HR, K)
+            _waiver_stat_entries: list[tuple[str, str, str]] = []
             for _entry_w in _stat_cats_waiver:
                 if isinstance(_entry_w, dict):
                     _s_w = _entry_w.get("stat", {})
@@ -4575,8 +4590,22 @@ async def get_fantasy_waiver_recommendations(
                         or _s_w.get("name")
                         or _sid_w
                     )
+                    _pos_w = _s_w.get("position_type", "")
                     if _sid_w:
-                        sid_map[_sid_w] = _abbr_w
+                        _waiver_stat_entries.append((_sid_w, _abbr_w, _pos_w))
+            _waiver_abbr_pos: dict[str, set[str]] = {}
+            for _sid_w, _abbr_w, _pos_w in _waiver_stat_entries:
+                _waiver_abbr_pos.setdefault(_abbr_w, set()).add(_pos_w)
+            _P_RENAME = {"HR": "HRA", "K": "K(P)"}
+            _B_RENAME = {"K": "K(B)", "HR": "HR"}
+            for _sid_w, _abbr_w, _pos_w in _waiver_stat_entries:
+                _final = _abbr_w
+                if len(_waiver_abbr_pos.get(_abbr_w, set())) > 1:
+                    if _pos_w == "P" and _abbr_w in _P_RENAME:
+                        _final = _P_RENAME[_abbr_w]
+                    elif _pos_w == "B" and _abbr_w in _B_RENAME:
+                        _final = _B_RENAME[_abbr_w]
+                sid_map[_sid_w] = _final
             logger.info("Waiver sid_map loaded from league settings: %d stats", len(sid_map))
         except Exception as _e_sid:
             logger.warning("get_league_settings failed in waiver sid_map build (using fallback): %s", _e_sid)
@@ -4590,7 +4619,7 @@ async def get_fantasy_waiver_recommendations(
                 # Re-fetch scoreboard to get per-category stats
                 matchups2 = client.get_scoreboard()
                 # sid_map already built above — no need to rebuild here
-                lower_better = {"ERA", "WHIP"}
+                lower_better = {"ERA", "WHIP", "L", "K(B)", "HRA"}
                 for m2 in matchups2:
                     if not isinstance(m2, dict):
                         continue
@@ -4680,7 +4709,6 @@ async def get_fantasy_waiver_recommendations(
             positions = p.get("positions") or []
             name = (p.get("name") or "").strip()
             board_player = _get_proj(p)  # always returns something
-            _raw_nsv = round(float((board_player.get("proj") or {}).get("nsv", 0.0)), 1)
 
             # Translate raw Yahoo stat_id keys → abbreviations so the frontend can
             # display stats by name (K, NSV, ERA…) without hardcoding numeric IDs.
@@ -4688,6 +4716,24 @@ async def get_fantasy_waiver_recommendations(
             _translated_stats: dict = {
                 sid_map.get(k, k): v for k, v in _raw_stats.items()
             }
+
+            # NSV: prefer actual Yahoo season stats (stat_id 83 → "NSV") over stale
+            # board projections.  Board projections are pre-season and don't reflect
+            # role changes (e.g., SP→RP or vice versa).
+            _raw_nsv = 0.0
+            if "NSV" in _translated_stats:
+                try:
+                    _raw_nsv = round(float(_translated_stats["NSV"]), 1)
+                except (TypeError, ValueError):
+                    pass
+            elif "83" in _raw_stats:
+                try:
+                    _raw_nsv = round(float(_raw_stats["83"]), 1)
+                except (TypeError, ValueError):
+                    pass
+            else:
+                # Fallback to board projection only if no Yahoo stats available
+                _raw_nsv = round(float((board_player.get("proj") or {}).get("nsv", 0.0)), 1)
 
             need_score = 0.0
             contributions: dict = {}
@@ -5571,21 +5617,44 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
             .get("stat_categories", {})
             .get("stats", [])
         )
+        # First pass: collect all entries to detect batting/pitching abbreviation collisions
+        _stat_entries: list[tuple[str, str, str, bool]] = []  # (sid, abbr, pos_type, is_display)
         for entry in stat_cats:
             if isinstance(entry, dict):
                 s = entry.get("stat", {})
                 sid = str(s.get("stat_id", ""))
                 abbr = s.get("display_name") or s.get("abbreviation") or s.get("name") or sid
+                pos_type = s.get("position_type", "")  # "B" = batting, "P" = pitching
+                is_display = bool(s.get("is_only_display_stat", 0))
                 if sid:
-                    stat_id_map[sid] = abbr  # league-specific names override fallback
-                    # is_only_display_stat == 1 means the stat is shown but not scored.
-                    # Include stat when the flag is absent (assume scoring) or 0.
-                    if not s.get("is_only_display_stat", 0):
-                        active_stat_abbrs.add(abbr)
+                    _stat_entries.append((sid, abbr, pos_type, is_display))
+
+        # Count occurrences of each abbreviation to detect collisions (e.g. HR, K used in both B & P)
+        _abbr_positions: dict[str, set[str]] = {}
+        for sid, abbr, pos_type, _ in _stat_entries:
+            _abbr_positions.setdefault(abbr, set()).add(pos_type)
+
+        # Disambiguation map for known collisions
+        _PITCHER_RENAME = {"HR": "HRA", "K": "K(P)"}
+        _BATTER_RENAME = {"K": "K(B)", "HR": "HR"}
+
+        for sid, abbr, pos_type, is_display in _stat_entries:
+            final_abbr = abbr
+            # Disambiguate when same abbreviation is used for both batting and pitching
+            if len(_abbr_positions.get(abbr, set())) > 1:
+                if pos_type == "P" and abbr in _PITCHER_RENAME:
+                    final_abbr = _PITCHER_RENAME[abbr]
+                elif pos_type == "B" and abbr in _BATTER_RENAME:
+                    final_abbr = _BATTER_RENAME[abbr]
+            stat_id_map[sid] = final_abbr
+            if not is_display:
+                active_stat_abbrs.add(final_abbr)
         logger.info(
             "stat_id_map loaded from league settings: %d stats, %d active scoring categories: %s",
             len(stat_id_map), len(active_stat_abbrs), sorted(active_stat_abbrs),
         )
+        # Log full stat_id_map for debugging column alignment issues
+        logger.debug("Full stat_id_map: %s", {k: v for k, v in stat_id_map.items() if not k.startswith("_")})
     except Exception as _e:
         logger.warning("get_league_settings failed, using fallback stat_id_map: %s", _e)
 

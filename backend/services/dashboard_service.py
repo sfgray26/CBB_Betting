@@ -9,6 +9,7 @@ Usage:
     dashboard = await service.get_dashboard(user_id, team_key)
 """
 
+import asyncio
 import logging
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
@@ -195,13 +196,22 @@ class DashboardService:
             # Load user preferences
             prefs = self._get_or_create_preferences(db, user_id)
             
-            # Gather all dashboard components in parallel where possible
-            lineup_gaps, filled, total = await self._get_lineup_gaps(user_id, team_key)
-            hot_streaks, cold_streaks = await self._get_streaks(user_id)
-            waiver_targets = await self._get_waiver_targets(user_id, prefs)
-            injury_flags, healthy, injured = await self._get_injury_flags(user_id)
-            matchup = await self._get_matchup_preview(user_id, team_key)
-            pitchers, two_starts = await self._get_probable_pitchers(user_id)
+            # Gather all dashboard components in parallel
+            (
+                (lineup_gaps, filled, total),
+                (hot_streaks, cold_streaks),
+                waiver_targets,
+                (injury_flags, healthy, injured),
+                matchup,
+                (pitchers, two_starts),
+            ) = await asyncio.gather(
+                self._get_lineup_gaps(user_id, team_key),
+                self._get_streaks(user_id),
+                self._get_waiver_targets(user_id, prefs),
+                self._get_injury_flags(user_id),
+                self._get_matchup_preview(user_id, team_key),
+                self._get_probable_pitchers(user_id),
+            )
             
             return DashboardData(
                 timestamp=datetime.now(ZoneInfo("America/New_York")).isoformat(),

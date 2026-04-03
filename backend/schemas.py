@@ -283,6 +283,7 @@ class LineupSaveRequest(BaseModel):
 class LineupPlayerOut(BaseModel):
     """Daily batter recommendation."""
     player_id: str
+    player_key: Optional[str] = None  # Yahoo player key (mlb.p.XXXXX) for API operations
     name: str
     team: str
     position: str
@@ -328,6 +329,7 @@ class LineupPlayerOut(BaseModel):
 class StartingPitcherOut(BaseModel):
     """Daily pitcher recommendation with SP/RP delineation."""
     player_id: str
+    player_key: Optional[str] = None  # Yahoo player key (mlb.p.XXXXX) for API operations
     name: str
     team: str
     pitcher_type: str = "SP"  # "SP" | "RP" | "P" (ambiguous)

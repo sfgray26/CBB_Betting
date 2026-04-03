@@ -268,6 +268,7 @@ export interface RecordPickResponse {
 
 export interface LineupPlayer {
   player_id: string
+  player_key?: string | null
   name: string
   team: string
   position: string
@@ -283,6 +284,7 @@ export interface LineupPlayer {
 
 export interface StartingPitcher {
   player_id: string
+  player_key?: string | null
   name: string
   team: string
   pitcher_type: 'SP' | 'RP' | 'P'

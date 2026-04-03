@@ -23,5 +23,5 @@ def test_shared_stat_contract_loader_reads_canonical_json():
 def test_shared_stat_contract_keeps_critical_ids_aligned():
     assert YAHOO_STAT_ID_FALLBACK["57"] == "K/9"
     assert YAHOO_STAT_ID_FALLBACK["60"] == "NSB"
-    assert CATEGORY_NEED_STAT_MAP["60"] == "sb"
+    assert CATEGORY_NEED_STAT_MAP["60"] == "nsb"
     assert "29" not in LOWER_IS_BETTER

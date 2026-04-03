@@ -458,11 +458,11 @@ export default function DailyLineupPage() {
     mutationFn: () => {
       const starters = [
         ...(data?.batters ?? [])
-          .filter((b) => b.status === 'START')
-          .map((b) => ({ player_key: b.player_id, position: b.assigned_slot ?? b.position })),
+          .filter((b) => b.status === 'START' && (b.player_key || b.player_id))
+          .map((b) => ({ player_key: b.player_key ?? b.player_id, position: b.assigned_slot ?? b.position })),
         ...(data?.pitchers ?? [])
-          .filter((p) => p.status === 'START')
-          .map((p) => ({ player_key: p.player_id, position: 'SP' })),
+          .filter((p) => p.status === 'START' && (p.player_key || p.player_id))
+          .map((p) => ({ player_key: p.player_key ?? p.player_id, position: p.pitcher_type ?? 'SP' })),
       ]
       return endpoints.fantasyApplyLineup(date, starters)
     },

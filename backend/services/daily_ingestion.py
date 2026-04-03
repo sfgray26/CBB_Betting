@@ -429,7 +429,11 @@ class DailyIngestionOrchestrator:
                 n = len(games) if isinstance(games, list) else 0
                 elapsed = int((time.monotonic() - t0) * 1000)
                 if n == 0:
-                    logger.info("_poll_mlb_odds: API returned 0 games (off-season or quiet)")
+                    logger.info(
+                        "_poll_mlb_odds: API returned 0 games — The Odds API typically "
+                        "only publishes lines 1-3 days out; future dates may not have "
+                        "odds yet. This is expected and not an error."
+                    )
                     self._record_job_run("mlb_odds", "skipped")
                     return {"status": "skipped", "records": 0, "elapsed_ms": elapsed}
                 logger.info("_poll_mlb_odds: fetched %d MLB games", n)
