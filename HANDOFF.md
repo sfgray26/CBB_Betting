@@ -9,6 +9,13 @@
 
 The platform is live for the 2026 MLB fantasy season. The Yahoo API pipeline is functional and data is flowing to all four surfaces (roster, matchup, waiver, lineup optimizer). However, the system is operating with a structural debt: pre-season Steamer CSVs are still the primary projection source while the season is active. Kimi audits K-17 through K-23 collectively expose twelve critical bugs (data corruption, silent failures, broken UI contracts) and one existential architectural gap (stale projections at 100% weight in-season). The immediate mandate is twofold: (1) close all critical bugs — twelve are identified, eight are already fixed — and (2) implement the in-season projection pipeline before pre-season CSVs become materially wrong, which is now. Every remaining open item has a clear owner and a concrete next deliverable. No vague work items exist in this document.
 
+### Session S9 Hotfix (Apr 3)
+
+- Fixed backend cold-start crash in Railway: `FileNotFoundError` for `/app/frontend/lib/fantasy-stat-contract.json`.
+- Root cause: `.dockerignore` excludes `frontend/`, but backend contract loader imported that file at module import time.
+- Remediation: `backend/utils/fantasy_stat_contract.py` now checks both frontend and backend-local contract paths.
+- Added backend runtime copy at `backend/utils/fantasy_stat_contract.json` so backend service boots even when frontend is absent from image.
+
 ---
 
 ## Session S8 Checkpoint (Apr 2)

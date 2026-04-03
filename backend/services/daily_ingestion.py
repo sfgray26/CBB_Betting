@@ -878,6 +878,7 @@ class DailyIngestionOrchestrator:
             inserted = 0
             updated = 0
             skipped = bat_skipped + pit_skipped
+            errors = 0
             try:
                 all_rows = bat_rows + pit_rows
                 existing_ids: set[str] = set()
@@ -933,21 +934,31 @@ class DailyIngestionOrchestrator:
                 db.commit()
             except Exception as exc:
                 db.rollback()
+                errors = 1
                 logger.error("ensemble_update DB write failed: %s", exc)
                 elapsed = int((time.monotonic() - t0) * 1000)
                 self._record_job_run("ensemble_update", "failed")
-                return {"status": "failed", "records": 0, "elapsed_ms": elapsed, "inserted": inserted, "updated": updated, "skipped": skipped}
+                return {
+                    "status": "failed",
+                    "records": 0,
+                    "elapsed_ms": elapsed,
+                    "inserted": inserted,
+                    "updated": updated,
+                    "skipped": skipped,
+                    "errors": errors,
+                }
             finally:
                 db.close()
 
             elapsed = int((time.monotonic() - t0) * 1000)
             logger.info(
-                "ensemble_update: wrote %d player blend rows in %dms (inserted=%d updated=%d skipped=%d)",
+                "ensemble_update: wrote %d player blend rows in %dms (inserted=%d updated=%d skipped=%d errors=%d)",
                 records_written,
                 elapsed,
                 inserted,
                 updated,
                 skipped,
+                errors,
             )
             self._record_job_run("ensemble_update", "success", records_written)
             return {
@@ -957,6 +968,7 @@ class DailyIngestionOrchestrator:
                 "inserted": inserted,
                 "updated": updated,
                 "skipped": skipped,
+                "errors": errors,
             }
 
         return await _with_advisory_lock(LOCK_IDS["ensemble_update"], _run)

@@ -21,6 +21,10 @@
 
 ## Build System
 
+### Backend image must not depend on frontend assets
+- **Lesson**: If `.dockerignore` excludes `frontend/`, backend runtime code cannot import JSON/config files from `frontend/*` at module import time. Keep backend runtime assets under `backend/` and optionally probe frontend paths only as non-required fallbacks.
+- **Context**: Railway boot crash after introducing shared fantasy stat contract path in backend loader (`FileNotFoundError: /app/frontend/lib/fantasy-stat-contract.json`).
+
 ### Next.js Google Fonts in network-isolated builders
 - **Lesson**: `next/font/google` fetches fonts at build time. In Railway's network-isolated build environment, this causes a build failure. Always pass `preload: false` as an option:
   ```typescript

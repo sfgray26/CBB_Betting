@@ -87,3 +87,21 @@ def test_process_pending_jobs_marks_retryable_failure_terminal_at_max_retries():
         if len(call.args) > 1 and call.kwargs == {} and call.args[1].get("job_id") == "job-3" and call.args[1].get("error") == "temporary yahoo outage"
     )
     assert failed_update.args[1]["retry_count"] == 3
+
+
+def test_process_pending_jobs_marks_unknown_job_type_fatal():
+    service = JobQueueService()
+    db = MagicMock()
+    db.execute.return_value.fetchall.return_value = [
+        JobRow("job-4", "unknown_job", json.dumps({}), 0, 3)
+    ]
+
+    with patch("backend.services.job_queue_service.asyncio.to_thread", new=AsyncMock(side_effect=lambda func, *args: func(*args))):
+        processed = _run(service.process_pending_jobs(db))
+
+    assert processed == 1
+    failed_update = next(
+        call for call in db.execute.call_args_list
+        if len(call.args) > 1 and call.kwargs == {} and call.args[1].get("job_id") == "job-4" and "Unknown job_type" in call.args[1].get("error", "")
+    )
+    assert failed_update.args[1]["retry_count"] == 0

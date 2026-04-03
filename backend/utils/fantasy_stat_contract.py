@@ -11,13 +11,22 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-_CONTRACT_PATH = Path(__file__).resolve().parents[2] / "frontend" / "lib" / "fantasy-stat-contract.json"
+_ROOT_DIR = Path(__file__).resolve().parents[2]
+_CONTRACT_CANDIDATE_PATHS = (
+    _ROOT_DIR / "frontend" / "lib" / "fantasy-stat-contract.json",
+    _ROOT_DIR / "backend" / "utils" / "fantasy_stat_contract.json",
+)
 
 
 @lru_cache(maxsize=1)
 def get_fantasy_stat_contract() -> dict[str, Any]:
-    with _CONTRACT_PATH.open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+    for path in _CONTRACT_CANDIDATE_PATHS:
+        if path.exists():
+            with path.open("r", encoding="utf-8") as handle:
+                return json.load(handle)
+
+    searched = ", ".join(str(path) for path in _CONTRACT_CANDIDATE_PATHS)
+    raise FileNotFoundError(f"Fantasy stat contract not found. Checked: {searched}")
 
 
 _FANTASY_STAT_CONTRACT = get_fantasy_stat_contract()
