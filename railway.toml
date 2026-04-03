@@ -1,9 +1,9 @@
 # Root Railway Configuration
-# Points to the cbb-edge-analyzer subdirectory
+# Build context is repo root, Dockerfile is at root level
 
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "cbb-edge-analyzer/Dockerfile"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 startCommand = "node apps/api/dist/server.js"

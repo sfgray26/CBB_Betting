@@ -1,0 +1,104 @@
+# Railway Service Configuration
+# Place this at the root of your repository
+
+# ============================================================================
+# API Service
+# Handles HTTP requests, webhooks, and serves as the query interface
+# ============================================================================
+[[services]]
+name = "api"
+
+[services.build]
+builder = "DOCKERFILE"
+dockerfilePath = "apps/api/Dockerfile"
+
+[services.deploy]
+startCommand = "node dist/server.js"
+numReplicas = 1
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[services.deploy.resources]
+memory = "512Mi"
+cpu = "0.5"
+
+[services.environment]
+NODE_ENV = "production"
+PORT = "3000"
+LOG_LEVEL = "info"
+
+# ============================================================================
+# Worker Service
+# Background job processor - handles data sync, analytics, and scheduled tasks
+# ============================================================================
+[[services]]
+name = "worker"
+
+[services.build]
+builder = "DOCKERFILE"
+dockerfilePath = "apps/worker/Dockerfile"
+
+[services.deploy]
+startCommand = "node dist/worker.js"
+numReplicas = 1
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
+
+[services.deploy.resources]
+memory = "1Gi"                      # Analytics can be memory-intensive
+cpu = "1"
+
+[services.environment]
+NODE_ENV = "production"
+LOG_LEVEL = "info"
+WORKER_CONCURRENCY = "5"
+
+# ============================================================================
+# Scheduled Jobs (Cron)
+# Runs periodic tasks like data refresh, projection updates
+# ============================================================================
+[[services]]
+name = "scheduler"
+
+[services.build]
+builder = "DOCKERFILE"
+dockerfilePath = "apps/worker/Dockerfile"
+
+[services.deploy]
+startCommand = "node dist/scheduler.js"
+
+[services.schedule]
+cron = "*/15 * * * *"               # Run every 15 minutes
+
+[services.deploy.resources]
+memory = "512Mi"
+cpu = "0.5"
+
+# ============================================================================
+# Database Migration Job
+# One-off job to run migrations on deploy
+# ============================================================================
+[[services]]
+name = "db-migrate"
+
+[services.build]
+builder = "DOCKERFILE"
+dockerfilePath = "packages/infrastructure/Dockerfile.migrate"
+
+[services.deploy]
+startCommand = "pnpm prisma migrate deploy"
+
+# ============================================================================
+# Plugin References
+# These connect to Railway-managed services
+# ============================================================================
+
+# Redis - Used for job queue and caching
+# [plugins]
+# redis = { plugin = "redis", name = "cbb-redis" }
+
+# PostgreSQL - Primary database
+# [plugins]
+# postgres = { plugin = "postgresql", name = "cbb-postgres" }

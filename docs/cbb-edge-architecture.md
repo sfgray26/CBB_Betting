@@ -1,0 +1,553 @@
+# CBB Edge Analyzer - Architecture Blueprint
+
+## System Overview
+
+A quantitative trading-inspired fantasy baseball decision engine. Intelligence-first architecture with explicit separation between data ingestion, decision/analysis, execution, and UI layers.
+
+---
+
+## Repository Structure
+
+```
+cbb-edge-analyzer/
+├── .github/
+│   └── workflows/
+│       └── deploy.yml              # Railway deployment pipeline
+├── apps/
+│   ├── api/                        # Railway: API service
+│   │   ├── src/
+│   │   │   ├── routes/
+│   │   │   ├── middleware/
+│   │   │   └── server.ts
+│   │   ├── package.json
+│   │   └── Dockerfile
+│   │
+│   └── worker/                     # Railway: Background worker/cron
+│       ├── src/
+│       │   ├── jobs/
+│       │   ├── schedulers/
+│       │   └── worker.ts
+│       ├── package.json
+│       └── Dockerfile
+│
+├── packages/
+│   ├── core/                       # Domain layer - framework agnostic
+│   │   ├── src/
+│   │   │   ├── decisions/          # Decision contracts (immutable)
+│   │   │   ├── entities/           # Domain entities
+│   │   │   ├── services/           # Business logic
+│   │   │   └── utils/
+│   │   ├── package.json
+│   │   └── tsconfig.json
+│   │
+│   ├── analytics/                  # Quantitative analysis engine
+│   │   ├── src/
+│   │   │   ├── simulations/        # Monte Carlo, projections
+│   │   │   ├── factors/            # Ballpark, weather, splits
+│   │   │   ├── models/             # Statistical models
+│   │   │   └── engines/
+│   │   ├── package.json
+│   │   └── tsconfig.json
+│   │
+│   ├── data/                       # Data ingestion contracts & adapters
+│   │   ├── src/
+│   │   │   ├── contracts/          # Data source interfaces
+│   │   │   ├── adapters/           # MLB Stats API, FanGraphs, etc.
+│   │   │   ├── transformers/       # Data normalization
+│   │   │   └── cache/
+│   │   ├── package.json
+│   │   └── tsconfig.json
+│   │
+│   ├── infrastructure/             # Railway-specific infrastructure
+│   │   ├── src/
+│   │   │   ├── database/           # Prisma/Drizzle schemas
+│   │   │   ├── queue/              # Redis queue for Railway
+│   │   │   ├── scheduler/          # Cron abstraction
+│       │   └── logging/
+│   │   ├── package.json
+│   │   └── tsconfig.json
+│   │
+│   └── types/                      # Shared TypeScript definitions
+│       ├── src/
+│       │   ├── api.ts
+│       │   ├── domain.ts
+│       │   └── decisions.ts
+│       └── package.json
+│
+├── shared/
+│   └── config/                     # Environment configs, feature flags
+│       ├── railway.toml            # Railway service definitions
+│       └── docker-compose.yml      # Local development stack
+│
+├── scripts/
+│   ├── setup.sh                    # Initial project setup
+│   └── migrate.sh                  # Database migrations
+│
+├── package.json                    # Root workspace configuration
+├── turbo.json                      # Turborepo pipeline
+└── README.md
+```
+
+---
+
+## Decision Contracts (Immutable)
+
+The system revolves around three core decision contracts. These are immutable records that flow through the system.
+
+### 1. LineupOptimizationRequest
+
+```typescript
+// packages/core/src/decisions/lineup-optimization.ts
+
+/**
+ * Represents a request to optimize a fantasy lineup
+ * Immutable - once created, never modified
+ */
+export interface LineupOptimizationRequest {
+  readonly id: string;                    // UUID v4
+  readonly version: 'v1';
+  readonly createdAt: ISO8601Timestamp;
+  
+  // Context
+  readonly leagueConfig: LeagueConfiguration;
+  readonly scoringPeriod: ScoringPeriod;
+  readonly rosterConstraints: RosterConstraints;
+  
+  // Inputs
+  readonly availablePlayers: PlayerPool;
+  readonly optimizationObjective: OptimizationObjective;
+  readonly riskTolerance: RiskProfile;    // Conservative | Balanced | Aggressive
+  
+  // Optional constraints
+  readonly weatherSensitivity?: WeatherSensitivity;
+  readonly correlationPreferences?: CorrelationPreferences;
+}
+
+export interface LeagueConfiguration {
+  readonly platform: 'yahoo' | 'espn' | 'fantrax' | 'sleeper';
+  readonly format: 'h2h' | 'roto' | 'points';
+  readonly scoringRules: ScoringRules;
+  readonly rosterPositions: RosterPosition[];
+}
+
+export interface OptimizationObjective {
+  readonly type: 'maximize_expected' | 'maximize_floor' | 'maximize_ceiling' | 'balanced';
+  readonly constraints?: {
+    readonly maxExposurePerPlayer?: Percentage;
+    readonly stackPreferences?: StackPreference[];
+  };
+}
+
+export type RiskProfile = 
+  | { readonly type: 'conservative'; varianceTolerance: 0.1 }
+  | { readonly type: 'balanced'; varianceTolerance: 0.3 }
+  | { readonly type: 'aggressive'; varianceTolerance: 0.5 };
+```
+
+### 2. PlayerValuationReport
+
+```typescript
+// packages/core/src/decisions/player-valuation.ts
+
+/**
+ * Immutable valuation report for a player in specific context
+ * Generated by the analytics engine, consumed by optimization
+ */
+export interface PlayerValuationReport {
+  readonly id: string;
+  readonly version: 'v1';
+  readonly generatedAt: ISO8601Timestamp;
+  readonly validUntil: ISO8601Timestamp;
+  
+  readonly player: PlayerIdentity;
+  readonly context: ValuationContext;
+  
+  // Core valuations
+  readonly pointProjection: Distribution;       // Probabilistic projection
+  readonly valueOverReplacement: number;
+  readonly positionalScarcity: PositionalScarcity;
+  
+  // Risk-adjusted metrics
+  readonly riskProfile: PlayerRiskProfile;
+  readonly floorProjection: number;
+  readonly ceilingProjection: number;
+  
+  // Contextual factors
+  readonly factors: AppliedFactors[];
+  
+  // Audit trail
+  readonly methodology: ValuationMethodology;
+  readonly dataSources: DataSourceReference[];
+}
+
+export interface Distribution {
+  readonly mean: number;
+  readonly median: number;
+  readonly standardDeviation: number;
+  readonly percentiles: {
+    readonly p10: number;
+    readonly p25: number;
+    readonly p75: number;
+    readonly p90: number;
+  };
+  // Serialized histogram for reconstruction
+  readonly histogramBins?: HistogramBin[];
+}
+
+export interface AppliedFactors {
+  readonly factorType: 
+    | 'weather' 
+    | 'ballpark' 
+    | 'platoon_split' 
+    | 'rest' 
+    | 'momentum'
+    | 'lineup_position';
+  readonly impact: number;              // Multiplier effect
+  readonly confidence: ConfidenceLevel;
+  readonly rawData: unknown;            // Opaque factor-specific data
+}
+
+export interface ValuationMethodology {
+  readonly modelType: 'monte_carlo' | 'ensemble' | 'regression';
+  readonly simulationCount?: number;
+  readonly featuresUsed: string[];
+  readonly modelVersion: string;
+}
+```
+
+### 3. ExecutionDecision
+
+```typescript
+// packages/core/src/decisions/execution.ts
+
+/**
+ * Immutable record of a decision to execute (or not execute) a fantasy action
+ * This is the final output of the decision engine before human review or automation
+ */
+export interface ExecutionDecision {
+  readonly id: string;
+  readonly version: 'v1';
+  readonly createdAt: ISO8601Timestamp;
+  
+  readonly decisionType: 
+    | 'set_lineup' 
+    | 'add_player' 
+    | 'drop_player' 
+    | 'claim_waiver'
+    | 'trade_proposal'
+    | 'sit_player'
+    | 'start_player';
+  
+  readonly target: FantasyEntity;
+  readonly recommendedAction: RecommendedAction;
+  
+  // Decision rationale
+  readonly reasoning: DecisionReasoning;
+  readonly confidence: ConfidenceLevel;
+  readonly alternativeActions: AlternativeAction[];
+  
+  // Safety controls
+  readonly executionMode: ExecutionMode;
+  readonly humanReviewRequired: boolean;
+  readonly autoExecuteConditions?: AutoExecuteCondition[];
+}
+
+export interface RecommendedAction {
+  readonly type: string;
+  readonly parameters: Record<string, unknown>;
+  readonly expectedOutcome: ExpectedOutcome;
+  readonly riskAssessment: RiskAssessment;
+}
+
+export interface DecisionReasoning {
+  readonly primaryFactor: string;
+  readonly supportingFactors: string[];
+  readonly counterIndicators: string[];
+  readonly keyAssumptions: string[];
+  readonly projectionDelta: number;     // vs baseline
+}
+
+export type ExecutionMode =
+  | { readonly type: 'manual_review' }           // Human must approve
+  | { readonly type: 'suggest_only' }            // Notification only
+  | { readonly type: 'auto_if_confident'; minConfidence: number; maxRiskScore: number }
+  | { readonly type: 'full_auto'; constraints: AutoExecuteConstraint[] };
+
+export interface AutoExecuteCondition {
+  readonly metric: string;
+  readonly operator: 'gt' | 'lt' | 'eq' | 'between';
+  readonly value: number | [number, number];
+  readonly currentValue: number;
+  readonly satisfied: boolean;
+}
+```
+
+---
+
+## Railway Service Mapping
+
+### Service Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Railway Project                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐ │
+│  │   API       │    │   Worker    │    │  Redis (Upstash)    │ │
+│  │  Service    │◄──►│  Service    │◄──►│  - Queue            │ │
+│  │             │    │             │    │  - Cache            │ │
+│  │ Port: 3000  │    │ Cron: */15  │    │  - Pub/Sub          │ │
+│  │             │    │             │    │                     │ │
+│  └──────┬──────┘    └─────────────┘    └─────────────────────┘ │
+│         │                                                       │
+│         ▼                                                       │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │              PostgreSQL (Neon/Railway)                     │  │
+│  │  - player_valuations                                       │  │
+│  │  - decision_history                                        │  │
+│  │  - execution_logs                                          │  │
+│  └───────────────────────────────────────────────────────────┘  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Service Responsibilities
+
+| Railway Service | Package | Responsibility |
+|----------------|---------|----------------|
+| `api` | `apps/api` | HTTP API, webhook receivers, decision query interface |
+| `worker` | `apps/worker` | Background jobs, scheduled analysis, data sync |
+| `redis` | N/A (managed) | Job queue (BullMQ), caching layer, rate limiting |
+| `postgres` | N/A (managed) | Persistent storage, audit trail, time-series projections |
+
+### Service Communication
+
+```
+API Service:
+  - Receives: HTTP requests, webhooks from fantasy platforms
+  - Produces: Decision requests → Redis queue
+  - Consumes: Decision results from cache
+  - Stores: Request logs, decision history
+
+Worker Service:
+  - Consumes: Decision requests from Redis queue
+  - Produces: Valuation reports, execution decisions
+  - Schedules: Data sync jobs, projection updates, lineup optimization
+  - Stores: Raw data, processed analytics, simulation results
+```
+
+---
+
+## Architectural Principles
+
+### 1. Contract-First Design
+All inter-service communication happens through immutable decision contracts. Never pass domain entities directly across boundaries.
+
+### 2. Framework-Agnostic Core
+The `packages/core` directory contains pure TypeScript with zero framework dependencies. It could be extracted and used in a Python service, a CLI tool, or a browser extension.
+
+### 3. Railway-Native, Not Railway-Locked
+Infrastructure code lives in `packages/infrastructure`. While optimized for Railway (Redis, PostgreSQL), the abstractions allow migration to AWS/GCP later without touching core logic.
+
+### 4. Analytics as a Service
+The analytics package exposes functions, not data. External packages don't query raw projection tables - they request valuations through the analytics engine's API.
+
+### 5. Explicit Safety Ladder
+Automation is added through progressive confidence levels:
+- Level 0: Manual review only (default)
+- Level 1: Auto-execute if confidence > 0.9 and risk < 0.1
+- Level 2: Full auto with daily digest
+- Level 3: Full auto with exception alerts only
+
+### 6. Audit Everything
+Every decision includes full provenance: what data was used, which models ran, what assumptions were made. The system is explainable by design.
+
+### 7. Defensive Data
+All external data goes through adapters that normalize to internal contracts. If FanGraphs changes their API, only the adapter changes - no downstream effects.
+
+---
+
+## Data Flow
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                     Data Ingestion Layer                        │
+│  MLB Stats API ──┐                                              │
+│  FanGraphs ──────┼──► Data Adapters ──► Normalized Cache       │
+│  Weather API ────┘                                              │
+└──────────────────────────────┬─────────────────────────────────┘
+                               │
+                               ▼
+┌────────────────────────────────────────────────────────────────┐
+│                    Analytics Engine                             │
+│  ┌─────────────┐   ┌─────────────┐   ┌─────────────────────┐   │
+│  │   Monte     │   │   Factor    │   │   Ensemble          │   │
+│  │   Carlo     │──►│   Engine    │──►│   Model             │   │
+│  │   Sims      │   │             │   │                     │   │
+│  └─────────────┘   └─────────────┘   └─────────────────────┘   │
+│                                                 │               │
+│                                                 ▼               │
+│                               PlayerValuationReport            │
+└──────────────────────────────┬─────────────────────────────────┘
+                               │
+                               ▼
+┌────────────────────────────────────────────────────────────────┐
+│                   Decision Engine                               │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │           LineupOptimizationRequest                       │  │
+│  │                    │                                     │  │
+│  │                    ▼                                     │  │
+│  │         ┌─────────────────┐                              │  │
+│  │         │  Optimizer      │◄── PlayerValuationReports    │  │
+│  │         │  (Constraint    │                              │  │
+│  │         │   Solver)       │                              │  │
+│  │         └────────┬────────┘                              │  │
+│  │                  │                                       │  │
+│  │                  ▼                                       │  │
+│  │         ExecutionDecision                                │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└──────────────────────────────┬─────────────────────────────────┘
+                               │
+              ┌────────────────┼────────────────┐
+              ▼                ▼                ▼
+        ┌──────────┐    ┌──────────┐    ┌──────────────┐
+        │  Human   │    │   API    │    │  Automation  │
+        │  Review  │    │  Response│    │  (Future)    │
+        └──────────┘    └──────────┘    └──────────────┘
+```
+
+---
+
+## Development Workflow
+
+### Local Development
+
+```bash
+# 1. Clone and setup
+git clone <repo>
+cd cbb-edge-analyzer
+pnpm install
+
+# 2. Start infrastructure (Redis + Postgres)
+docker-compose up -d
+
+# 3. Run database migrations
+pnpm db:migrate
+
+# 4. Seed development data
+pnpm db:seed
+
+# 5. Start all services in dev mode
+pnpm dev
+# - API available at http://localhost:3000
+# - Worker processing jobs
+# - Hot reload on changes
+
+# 6. Run tests
+pnpm test
+pnpm test:integration
+```
+
+### Railway Deployment
+
+```bash
+# 1. Install Railway CLI
+npm install -g @railway/cli
+
+# 2. Login and link project
+railway login
+railway link
+
+# 3. Deploy all services
+railway up
+
+# 4. Set environment variables
+railway variables set DATABASE_URL="..."
+railway variables set REDIS_URL="..."
+railway variables set MLB_API_KEY="..."
+```
+
+### Service Configuration (railway.toml)
+
+```toml
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "apps/api/Dockerfile"
+
+[deploy]
+startCommand = "node dist/server.js"
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[[services]]
+name = "api"
+[services.deploy]
+numReplicas = 1
+
+[[services]]
+name = "worker"
+[services.deploy]
+numReplicas = 1
+[services.schedule]
+cron = "*/15 * * * *"  # Run every 15 minutes
+```
+
+---
+
+## Technology Stack (Recommended)
+
+| Layer | Technology | Rationale |
+|-------|-----------|-----------|
+| Monorepo | Turborepo | Cache-aware builds, pipeline orchestration |
+| Language | TypeScript | Type safety across full stack |
+| API | Fastify | Lightweight, high performance, Railway-friendly |
+| Worker | BullMQ + Redis | Reliable job processing, rate limiting |
+| Database | PostgreSQL + Prisma | Relational data with migrations |
+| Analytics | Plain TS + mathjs | Keep analytics layer dependency-light |
+| Testing | Vitest | Fast, modern test runner |
+| Deployment | Railway | Native support for the architecture |
+
+---
+
+## Future Extension Points
+
+### Browser Automation Layer
+When ready for full automation, add:
+```
+apps/
+  browser-worker/          # New Railway service
+    - Puppeteer/Playwright automation
+    - Secure credential vault integration
+    - ExecutionDecision consumer
+```
+
+### UI Layer
+When ready for visualization, add:
+```
+apps/
+  web/                     # Next.js or similar
+    - Decision history browser
+    - Projection visualizations
+    - Manual override interface
+```
+
+### Additional Data Sources
+Add adapters in `packages/data/src/adapters/`:
+- Savant (Statcast)
+- Baseball Prospectus
+- RotoWire
+- Weather APIs (OpenWeatherMap, VisualCrossing)
+
+---
+
+## Success Criteria
+
+This architecture succeeds when:
+1. A new data source can be added by modifying only the data package
+2. A new decision type requires only adding a contract and handler
+3. The system runs for a full season without structural changes
+4. Automation can be enabled progressively without code changes
+5. Every decision is fully explainable from input to output
