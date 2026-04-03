@@ -463,16 +463,12 @@ test.describe('Waiver Wire Page', () => {
     await expect(page.getByText('Geraldo Perdomo')).toBeVisible({ timeout: 10_000 })
   })
 
-  test('Owned % values are populated and non-zero', async ({ page }) => {
+  test('need scores are populated and non-zero', async ({ page }) => {
     await expect(page.getByText('Geraldo Perdomo')).toBeVisible({ timeout: 10_000 })
-    // owned_pct: 42.5 should appear as "42.5%" or "42%"
-    await expect(page.getByText(/42\.?5?%/)).toBeVisible()
-    // Must NOT display "0.0%" as the only owned value
-    const zeroOwned = page.getByText('0.0%')
-    // Either it doesn't exist, or it's not the primary value for Perdomo
+    // need_score: 1.8 should appear as "1.80" in the main table
     const perdomo = page.getByText('Geraldo Perdomo')
     const row = perdomo.locator('xpath=ancestor::tr')
-    await expect(row.getByText('0.0%')).not.toBeVisible()
+    await expect(row.getByText('1.80')).toBeVisible()
   })
 
   test('matchup opponent is real team name — no "vs TBD"', async ({ page }) => {
@@ -520,11 +516,12 @@ test.describe('Dashboard Page', () => {
     await expect(page.getByText(/Last updated:.*ET/i)).toBeVisible()
   })
 
-  test('lineup status is not 0/9 — reflects filled lineup', async ({ page }) => {
+  test('close categories card renders — not stale lineup widget', async ({ page }) => {
     await expect(page.getByRole('heading', { name: 'Fantasy Baseball Dashboard' })).toBeVisible({ timeout: 10_000 })
-    // Mock returns lineup_filled_count=9, lineup_total_count=9
-    await expect(page.getByText('9/9')).toBeVisible()
-    await expect(page.getByText('0/9')).not.toBeVisible()
+    // Dashboard now shows Close Categories instead of Lineup Status
+    await expect(page.getByText('Close Categories')).toBeVisible()
+    // matchup_preview is null in mock → 0 close categories
+    await expect(page.getByText('No tight races')).toBeVisible()
   })
 
   test('hot streak player name renders', async ({ page }) => {
