@@ -60,7 +60,11 @@ from backend.services.portfolio import get_portfolio_manager
 from backend.services.ratings import get_ratings_service
 from backend.services.job_queue_service import submit_job as jq_submit, get_job_status as jq_status, process_pending_jobs as jq_process
 from backend.utils.env_utils import get_float_env
-from backend.utils.fantasy_stat_contract import YAHOO_STAT_ID_FALLBACK, LEAGUE_SCORING_CATEGORIES
+from backend.utils.deployment import (
+    deployment_role,
+    main_scheduler_enabled,
+    startup_catchup_enabled,
+)
 from backend.utils.time_utils import today_et
 from backend.schemas import (
     BetLogCreate,
@@ -90,6 +94,12 @@ from backend.fantasy_baseball.yahoo_client_resilient import (
     ResilientYahooClient,
     get_yahoo_client,
     get_resilient_yahoo_client,
+)
+from backend.fantasy_baseball.league_contract import (
+    ACTIVE_ROSTER_SLOTS,
+    ACTIVE_SCORING_CATEGORIES,
+    CANONICAL_SCORING_STAT_ID_MAP,
+    ordered_scoring_stats,
 )
 from backend.fantasy_baseball.daily_lineup_optimizer import get_lineup_optimizer
 
@@ -168,208 +178,191 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     # Startup
     logger.info("🚀 Starting CBB Edge Analyzer")
+    logger.info(
+        "Deployment role=%s main_scheduler=%s startup_catchup=%s",
+        deployment_role(),
+        main_scheduler_enabled(),
+        startup_catchup_enabled(),
+    )
 
-    # Start scheduler
     nightly_hour = int(os.getenv("NIGHTLY_CRON_HOUR", "3"))
     timezone = os.getenv("NIGHTLY_CRON_TIMEZONE", "America/New_York")
-
-    scheduler.add_job(
-        nightly_job,
-        CronTrigger(hour=nightly_hour, minute=0, timezone=timezone),
-        id="nightly_analysis",
-        name="Nightly Game Analysis",
-        replace_existing=True,
-    )
-
-    # Settle outcomes every 2 hours
-    scheduler.add_job(
-        _update_outcomes_job,
-        IntervalTrigger(hours=2),
-        id="update_outcomes",
-        name="Update Completed Game Outcomes",
-        replace_existing=True,
-    )
-
-    # Capture closing lines every 30 minutes
-    scheduler.add_job(
-        _capture_lines_job,
-        IntervalTrigger(minutes=30),
-        id="capture_closing_lines",
-        name="Capture Closing Lines",
-        replace_existing=True,
-    )
-
-    # O-10: Line movement monitor - runs every 30 minutes
-    scheduler.add_job(
-        _line_monitor_job,
-        IntervalTrigger(minutes=30),
-        id="line_monitor",
-        name="Line Movement Monitor",
-        replace_existing=True,
-    )
-
-    # Daily performance snapshot + alert check at 4:30 AM (after settle job)
-    scheduler.add_job(
-        _daily_snapshot_job,
-        CronTrigger(hour=4, minute=30, timezone=timezone),
-        id="daily_snapshot",
-        name="Daily Performance Snapshot",
-        replace_existing=True,
-    )
-
-    # Settle outcomes once daily at 4 AM (in addition to every-2h interval job)
-    scheduler.add_job(
-        _update_outcomes_job,
-        CronTrigger(hour=4, minute=0, timezone=timezone),
-        id="settle_games_daily",
-        name="Daily Settle Completed Games",
-        replace_existing=True,
-    )
-
-    # Pre-warm ratings cache at 8 AM so nightly analysis uses fresh data
     ratings_prewarm_hour = int(os.getenv("RATINGS_PREWARM_HOUR", "8"))
-    scheduler.add_job(
-        _fetch_ratings_job,
-        CronTrigger(hour=ratings_prewarm_hour, minute=0, timezone=timezone),
-        id="fetch_ratings",
-        name="Pre-warm Ratings Cache",
-        replace_existing=True,
-    )
-
-    # Refresh pybaseball FanGraphs leaderboard caches at 7:30 AM daily
-    scheduler.add_job(
-        _pybaseball_fetch_job,
-        CronTrigger(hour=7, minute=30, timezone=timezone),
-        id="fetch_pybaseball",
-        name="Refresh pybaseball Statcast Leaderboards",
-        replace_existing=True,
-    )
-    
-    # Daily Statcast ingestion + Bayesian projection updates at 6:00 AM ET
-    # Runs after overnight games complete, before lineup decisions
-    scheduler.add_job(
-        _statcast_daily_ingestion_job,
-        CronTrigger(hour=6, minute=0, timezone=timezone),
-        id="statcast_daily_ingestion",
-        name="Statcast Daily Ingestion + Bayesian Updates",
-        replace_existing=True,
-    )
-
-    # OpenClaw autonomous waiver intelligence at 8:30 AM daily
-    scheduler.add_job(
-        _openclaw_morning_job,
-        CronTrigger(hour=8, minute=30, timezone=timezone),
-        id="openclaw_morning",
-        name="OpenClaw Autonomous Morning Workflow",
-        replace_existing=True,
-    )
-
-    # Odds monitor - poll every 5 minutes for line movements
     odds_monitor_interval = get_float_env("ODDS_MONITOR_INTERVAL_MIN", "5")
-    scheduler.add_job(
-        _odds_monitor_job,
-        IntervalTrigger(minutes=odds_monitor_interval),
-        id="odds_monitor",
-        name="Odds Line Movement Monitor",
-        replace_existing=True,
-    )
 
-    # Opening line attack - run when overnight lines are posted.
-    # Books typically hang openers between 10 PM and midnight ET.
-    # We run analysis at 10:30 PM and 12:30 AM to catch early value.
-    # Enabled by default; set OPENER_ATTACK_ENABLED=false to disable.
-    opener_enabled = os.getenv("OPENER_ATTACK_ENABLED", "true").lower() == "true"
-    if opener_enabled:
+    if main_scheduler_enabled():
         scheduler.add_job(
-            _opener_attack_job,
-            CronTrigger(hour=22, minute=30, timezone=timezone),
-            id="opener_attack_2230",
-            name="Opening Line Attack (10:30 PM)",
+            nightly_job,
+            CronTrigger(hour=nightly_hour, minute=0, timezone=timezone),
+            id="nightly_analysis",
+            name="Nightly Game Analysis",
             replace_existing=True,
         )
+
         scheduler.add_job(
-            _opener_attack_job,
-            CronTrigger(hour=0, minute=30, timezone=timezone),
-            id="opener_attack_0030",
-            name="Opening Line Attack (12:30 AM)",
+            _update_outcomes_job,
+            IntervalTrigger(hours=2),
+            id="update_outcomes",
+            name="Update Completed Game Outcomes",
             replace_existing=True,
         )
-        logger.info("Opening line attack scheduler enabled (22:30, 00:30 %s)", timezone)
 
-    # Performance Sentinel - MAE, drawdown, pytest health check at 5:00 AM
-    # (30 min after daily snapshot, ensuring fresh data is available)
-    scheduler.add_job(
-        _nightly_health_check_job,
-        CronTrigger(hour=5, minute=0, timezone=timezone),
-        id="nightly_health_check",
-        name="Performance Sentinel Health Check",
-        replace_existing=True,
-    )
+        scheduler.add_job(
+            _capture_lines_job,
+            IntervalTrigger(minutes=30),
+            id="capture_closing_lines",
+            name="Capture Closing Lines",
+            replace_existing=True,
+        )
 
-    # Morning Briefing - summarize today's slate at 7 AM ET (after ratings are fresh)
-    scheduler.add_job(
-        _morning_briefing_job,
-        CronTrigger(hour=7, minute=0, timezone=timezone),
-        id="morning_briefing",
-        name="Morning Slate Briefing",
-        replace_existing=True,
-    )
+        scheduler.add_job(
+            _line_monitor_job,
+            IntervalTrigger(minutes=30),
+            id="line_monitor",
+            name="Line Movement Monitor",
+            replace_existing=True,
+        )
 
-    # End-of-day results - 11 PM ET
-    scheduler.add_job(
-        _end_of_day_results_job,
-        CronTrigger(hour=23, minute=0, timezone=timezone),
-        id="end_of_day_results",
-        name="End-of-Day Results Summary",
-        replace_existing=True,
-    )
+        scheduler.add_job(
+            _daily_snapshot_job,
+            CronTrigger(hour=4, minute=30, timezone=timezone),
+            id="daily_snapshot",
+            name="Daily Performance Snapshot",
+            replace_existing=True,
+        )
 
-    # Fantasy Baseball: Nightly decision resolution - 11:59 PM ET
-    # Resolves all pending lineup decisions with actual MLB stats
-    scheduler.add_job(
-        _nightly_decision_resolution_job,
-        CronTrigger(hour=23, minute=59, timezone=timezone),
-        id="nightly_decision_resolution",
-        name="Nightly Fantasy Decision Resolution",
-        replace_existing=True,
-    )
+        scheduler.add_job(
+            _update_outcomes_job,
+            CronTrigger(hour=4, minute=0, timezone=timezone),
+            id="settle_games_daily",
+            name="Daily Settle Completed Games",
+            replace_existing=True,
+        )
 
-    # Tournament bracket release notifier - runs daily 6 PM ET, Mar 14-20
-    scheduler.add_job(
-        _tournament_bracket_job,
-        CronTrigger(hour=18, minute=0, timezone=timezone),
-        id="tournament_bracket_notifier",
-        name="Tournament Bracket Release Notifier",
-        replace_existing=True,
-    )
+        scheduler.add_job(
+            _fetch_ratings_job,
+            CronTrigger(hour=ratings_prewarm_hour, minute=0, timezone=timezone),
+            id="fetch_ratings",
+            name="Pre-warm Ratings Cache",
+            replace_existing=True,
+        )
 
-    # Weekly model parameter recalibration - Sunday 5 AM ET
-    # Note: recalibration and sentinel both run at 5:00 AM; they are independent.
-    scheduler.add_job(
-        _weekly_recalibration_job,
-        CronTrigger(day_of_week="sun", hour=5, minute=0, timezone=timezone),
-        id="weekly_recalibration",
-        name="Weekly Model Parameter Recalibration",
-        replace_existing=True,
-    )
+        scheduler.add_job(
+            _pybaseball_fetch_job,
+            CronTrigger(hour=7, minute=30, timezone=timezone),
+            id="fetch_pybaseball",
+            name="Refresh pybaseball Statcast Leaderboards",
+            replace_existing=True,
+        )
 
-    # Job queue processor — polls job_queue table every 5s for pending heavy ops
-    scheduler.add_job(
-        _process_job_queue_job,
-        IntervalTrigger(seconds=5),
-        id="job_queue_processor",
-        name="Async Job Queue Processor",
-        replace_existing=True,
-    )
+        scheduler.add_job(
+            _statcast_daily_ingestion_job,
+            CronTrigger(hour=6, minute=0, timezone=timezone),
+            id="statcast_daily_ingestion",
+            name="Statcast Daily Ingestion + Bayesian Updates",
+            replace_existing=True,
+        )
 
-    scheduler.start()
-    logger.info(
-        "Scheduler started: nightly@%02d:00, outcomes every 2h + daily@04:00, "
-        "lines every 30min, odds monitor every %dmin, snapshot@04:30, "
-        "sentinel@05:00, briefing@07:00, ratings prewarm@%02d:00, recalibration@sun05:00, "
-        "end_of_day@23:00, tournament_bracket@18:00 %s",
-        nightly_hour, odds_monitor_interval, ratings_prewarm_hour, timezone,
-    )
+        scheduler.add_job(
+            _openclaw_morning_job,
+            CronTrigger(hour=8, minute=30, timezone=timezone),
+            id="openclaw_morning",
+            name="OpenClaw Autonomous Morning Workflow",
+            replace_existing=True,
+        )
+
+        scheduler.add_job(
+            _odds_monitor_job,
+            IntervalTrigger(minutes=odds_monitor_interval),
+            id="odds_monitor",
+            name="Odds Line Movement Monitor",
+            replace_existing=True,
+        )
+
+        opener_enabled = os.getenv("OPENER_ATTACK_ENABLED", "true").lower() == "true"
+        if opener_enabled:
+            scheduler.add_job(
+                _opener_attack_job,
+                CronTrigger(hour=22, minute=30, timezone=timezone),
+                id="opener_attack_2230",
+                name="Opening Line Attack (10:30 PM)",
+                replace_existing=True,
+            )
+            scheduler.add_job(
+                _opener_attack_job,
+                CronTrigger(hour=0, minute=30, timezone=timezone),
+                id="opener_attack_0030",
+                name="Opening Line Attack (12:30 AM)",
+                replace_existing=True,
+            )
+            logger.info("Opening line attack scheduler enabled (22:30, 00:30 %s)", timezone)
+
+        scheduler.add_job(
+            _nightly_health_check_job,
+            CronTrigger(hour=5, minute=0, timezone=timezone),
+            id="nightly_health_check",
+            name="Performance Sentinel Health Check",
+            replace_existing=True,
+        )
+
+        scheduler.add_job(
+            _morning_briefing_job,
+            CronTrigger(hour=7, minute=0, timezone=timezone),
+            id="morning_briefing",
+            name="Morning Slate Briefing",
+            replace_existing=True,
+        )
+
+        scheduler.add_job(
+            _end_of_day_results_job,
+            CronTrigger(hour=23, minute=0, timezone=timezone),
+            id="end_of_day_results",
+            name="End-of-Day Results Summary",
+            replace_existing=True,
+        )
+
+        scheduler.add_job(
+            _nightly_decision_resolution_job,
+            CronTrigger(hour=23, minute=59, timezone=timezone),
+            id="nightly_decision_resolution",
+            name="Nightly Fantasy Decision Resolution",
+            replace_existing=True,
+        )
+
+        scheduler.add_job(
+            _tournament_bracket_job,
+            CronTrigger(hour=18, minute=0, timezone=timezone),
+            id="tournament_bracket_notifier",
+            name="Tournament Bracket Release Notifier",
+            replace_existing=True,
+        )
+
+        scheduler.add_job(
+            _weekly_recalibration_job,
+            CronTrigger(day_of_week="sun", hour=5, minute=0, timezone=timezone),
+            id="weekly_recalibration",
+            name="Weekly Model Parameter Recalibration",
+            replace_existing=True,
+        )
+
+        scheduler.add_job(
+            _process_job_queue_job,
+            IntervalTrigger(seconds=5),
+            id="job_queue_processor",
+            name="Async Job Queue Processor",
+            replace_existing=True,
+        )
+
+        scheduler.start()
+        logger.info(
+            "Scheduler started: nightly@%02d:00, outcomes every 2h + daily@04:00, "
+            "lines every 30min, odds monitor every %dmin, snapshot@04:30, "
+            "sentinel@05:00, briefing@07:00, ratings prewarm@%02d:00, recalibration@sun05:00, "
+            "end_of_day@23:00, tournament_bracket@18:00 %s",
+            nightly_hour, odds_monitor_interval, ratings_prewarm_hour, timezone,
+        )
+    else:
+        logger.info("Main APScheduler disabled by ENABLE_MAIN_SCHEDULER=false")
 
     # Ingestion Orchestrator -- gated by env var (off by default, safe for Railway)
     global _ingestion_orchestrator
@@ -384,7 +377,7 @@ async def lifespan(app: FastAPI):
     # MLB nightly analysis -- 9:00 AM ET daily
     # Only active when ENABLE_MLB_ANALYSIS=true (off by default during CBB overlap)
     global _mlb_analysis_service
-    if os.getenv("ENABLE_MLB_ANALYSIS", "false").lower() == "true":
+    if os.getenv("ENABLE_MLB_ANALYSIS", "false").lower() == "true" and main_scheduler_enabled():
         from backend.services.mlb_analysis import MLBAnalysisService
         _mlb_analysis_service = MLBAnalysisService()
         scheduler.add_job(
@@ -395,6 +388,8 @@ async def lifespan(app: FastAPI):
             replace_existing=True,
         )
         logger.info("MLB nightly analysis enabled (09:00 %s)", timezone)
+    elif os.getenv("ENABLE_MLB_ANALYSIS", "false").lower() == "true":
+        logger.info("MLB nightly analysis requested but skipped because ENABLE_MAIN_SCHEDULER=false")
 
     # Pre-warm reanalysis cache for OddsMonitor
     try:
@@ -520,13 +515,17 @@ async def lifespan(app: FastAPI):
         except Exception as catchup_exc:
             logger.error("Lifespan: Catch-up analysis failed: %s", catchup_exc, exc_info=True)
 
-    asyncio.create_task(_startup_catchup())
+    if startup_catchup_enabled():
+        asyncio.create_task(_startup_catchup())
+    else:
+        logger.info("Startup catch-up disabled by ENABLE_STARTUP_CATCHUP=false")
 
     yield
 
     # Shutdown
     logger.info("👋 Shutting down CBB Edge Analyzer")
-    scheduler.shutdown()
+    if scheduler.running:
+        scheduler.shutdown()
 
 
 app = FastAPI(
@@ -1267,6 +1266,7 @@ async def root():
         "app": "CBB Edge Analyzer",
         "version": "9.0",
         "status": "operational",
+        "deployment_role": deployment_role(),
         "timestamp": datetime.utcnow().isoformat(),
     }
 
@@ -1274,7 +1274,16 @@ async def root():
 @app.get("/health")
 async def health_check(db: Session = Depends(get_db)):
     """Health check endpoint"""
-    health = {"status": "healthy", "database": "connected", "scheduler": "running"}
+    scheduler_mode = "disabled"
+    if main_scheduler_enabled():
+        scheduler_mode = "running" if scheduler.running else "stopped"
+
+    health = {
+        "status": "healthy",
+        "database": "connected",
+        "scheduler": scheduler_mode,
+        "deployment_role": deployment_role(),
+    }
 
     try:
         # CHANGE THIS LINE: Wrap the string in text()
@@ -1284,7 +1293,7 @@ async def health_check(db: Session = Depends(get_db)):
         health["status"] = "degraded"
         health["database"] = f"error: {str(e)}"
 
-    if not scheduler.running:
+    if main_scheduler_enabled() and not scheduler.running:
         health["status"] = "degraded"
         health["scheduler"] = "stopped"
 
@@ -4566,49 +4575,13 @@ async def get_fantasy_waiver_recommendations(
         except Exception:
             pass
 
-        # Build stat_id → abbreviation map once.  Used for both category-deficit labels
-        # and translating raw p.stats keys before sending to the frontend.
-        # Pre-seeded with known fallback; league settings override if available.
-        sid_map: dict[str, str] = dict(_YAHOO_STAT_FALLBACK)
+        # Build stat_id → abbreviation map once from the league SSOT contract.
+        sid_map: dict[str, str] = dict(CANONICAL_SCORING_STAT_ID_MAP)
         try:
-            _settings_waiver = client.get_league_settings()
-            _stat_cats_waiver = (
-                _settings_waiver
-                .get("settings", [{}])[0]
-                .get("stat_categories", {})
-                .get("stats", [])
-            )
-            # Collect entries then disambiguate batting/pitching collisions (HR, K)
-            _waiver_stat_entries: list[tuple[str, str, str]] = []
-            for _entry_w in _stat_cats_waiver:
-                if isinstance(_entry_w, dict):
-                    _s_w = _entry_w.get("stat", {})
-                    _sid_w = str(_s_w.get("stat_id", ""))
-                    _abbr_w = (
-                        _s_w.get("display_name")
-                        or _s_w.get("abbreviation")
-                        or _s_w.get("name")
-                        or _sid_w
-                    )
-                    _pos_w = _s_w.get("position_type", "")
-                    if _sid_w:
-                        _waiver_stat_entries.append((_sid_w, _abbr_w, _pos_w))
-            _waiver_abbr_pos: dict[str, set[str]] = {}
-            for _sid_w, _abbr_w, _pos_w in _waiver_stat_entries:
-                _waiver_abbr_pos.setdefault(_abbr_w, set()).add(_pos_w)
-            _P_RENAME = {"HR": "HRA", "K": "K(P)"}
-            _B_RENAME = {"K": "K(B)", "HR": "HR"}
-            for _sid_w, _abbr_w, _pos_w in _waiver_stat_entries:
-                _final = _abbr_w
-                if len(_waiver_abbr_pos.get(_abbr_w, set())) > 1:
-                    if _pos_w == "P" and _abbr_w in _P_RENAME:
-                        _final = _P_RENAME[_abbr_w]
-                    elif _pos_w == "B" and _abbr_w in _B_RENAME:
-                        _final = _B_RENAME[_abbr_w]
-                sid_map[_sid_w] = _final
-            logger.info("Waiver sid_map loaded from league settings: %d stats", len(sid_map))
+            sid_map = client.get_league_scoring_stat_map()
+            logger.info("Waiver sid_map loaded from league settings: %d active stats", len(sid_map))
         except Exception as _e_sid:
-            logger.warning("get_league_settings failed in waiver sid_map build (using fallback): %s", _e_sid)
+            logger.warning("get_league_settings failed in waiver sid_map build (using SSOT): %s", _e_sid)
 
         # Build category deficits from scoreboard stats.
         # This must run before _to_waiver_player so need_score can be computed per player.
@@ -4655,7 +4628,9 @@ async def get_fantasy_waiver_recommendations(
                                 stobj = st2.get("stat", {})
                                 if isinstance(stobj, dict):
                                     sid_k = str(stobj.get("stat_id", ""))
-                                    key2 = sid_map.get(sid_k, sid_k)
+                                    key2 = sid_map.get(sid_k)
+                                    if not key2:
+                                        continue
                                     try:
                                         sd2[key2] = float(stobj.get("value", 0) or 0)
                                     except (TypeError, ValueError):
@@ -4715,19 +4690,21 @@ async def get_fantasy_waiver_recommendations(
             _raw_stats: dict = p.get("stats") or {}
             _translated_stats: dict = {}
             for k, v in _raw_stats.items():
-                _translated_key = sid_map.get(k, k)
-                if _translated_key == "K(P)":
-                    _translated_key = "K"
-                _translated_stats[_translated_key] = v
+                _translated_key = sid_map.get(str(k))
+                if _translated_key:
+                    _translated_stats[_translated_key] = v
 
             # NSV: prefer actual Yahoo season stats (stat_id 83 → "NSV") over stale
             # board projections.  Board projections are pre-season and don't reflect
             # role changes (e.g., SP→RP or vice versa).
             # IMPORTANT: Only assign NSV to actual Relief Pitchers. Starting pitchers
             # should never show saves — Yahoo may return stale/zero values for SPs.
-            _is_reliever = "RP" in positions
+            _player_type = "RP" if "RP" in positions else "SP" if "SP" in positions else (positions[0] if positions else "?")
+            _is_reliever = _player_type == "RP"
             _raw_nsv = 0.0
-            if _is_reliever:
+            if _player_type == "SP":
+                _raw_nsv = 0.0
+            elif _is_reliever:
                 if "NSV" in _translated_stats:
                     try:
                         _raw_nsv = round(float(_translated_stats["NSV"]), 1)
@@ -5618,11 +5595,6 @@ async def get_player_valuations(
         }
 
 
-# Shared fallback for Yahoo numeric stat category IDs.
-# Canonical source: frontend/lib/fantasy-stat-contract.json
-_YAHOO_STAT_FALLBACK: dict[str, str] = dict(YAHOO_STAT_ID_FALLBACK)
-
-
 @app.get("/api/fantasy/matchup", response_model=MatchupResponse)
 async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
     """
@@ -5650,69 +5622,13 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
     _stub_my = MatchupTeamOut(team_key=my_team_key, team_name="My Team", stats={})
     _stub_opp = MatchupTeamOut(team_key="", team_name="TBD", stats={})
 
-    # Build stat_id → abbreviation map from league settings (best-effort).
-    # Pre-seeded with known Yahoo IDs so the page is readable even when
-    # get_league_settings() fails (auth error, pre-season, rate limit).
-    stat_id_map: dict[str, str] = dict(_YAHOO_STAT_FALLBACK)
-    # active_stat_abbrs: set of abbreviations that are SCORING categories in this league.
-    # When populated from league settings, used to filter out display-only / non-league stats
-    # (e.g. OBP, K/BB) that Yahoo includes in scoreboard responses even for leagues that
-    # don't score them.  Empty set = settings unavailable, no filtering applied.
-    active_stat_abbrs: set[str] = set()
     try:
-        settings = client.get_league_settings()
-        stat_cats = (
-            settings
-            .get("settings", [{}])[0]
-            .get("stat_categories", {})
-            .get("stats", [])
-        )
-        # First pass: collect all entries to detect batting/pitching abbreviation collisions
-        _stat_entries: list[tuple[str, str, str, bool]] = []  # (sid, abbr, pos_type, is_display)
-        for entry in stat_cats:
-            if isinstance(entry, dict):
-                s = entry.get("stat", {})
-                sid = str(s.get("stat_id", ""))
-                abbr = s.get("display_name") or s.get("abbreviation") or s.get("name") or sid
-                pos_type = s.get("position_type", "")  # "B" = batting, "P" = pitching
-                is_display = bool(s.get("is_only_display_stat", 0))
-                if sid:
-                    _stat_entries.append((sid, abbr, pos_type, is_display))
-
-        # Count occurrences of each abbreviation to detect collisions (e.g. HR, K used in both B & P)
-        _abbr_positions: dict[str, set[str]] = {}
-        for sid, abbr, pos_type, _ in _stat_entries:
-            _abbr_positions.setdefault(abbr, set()).add(pos_type)
-
-        # Disambiguation map for known collisions
-        _PITCHER_RENAME = {"HR": "HRA", "K": "K(P)"}
-        _BATTER_RENAME = {"K": "K(B)", "HR": "HR"}
-
-        for sid, abbr, pos_type, is_display in _stat_entries:
-            final_abbr = abbr
-            # Disambiguate when same abbreviation is used for both batting and pitching
-            if len(_abbr_positions.get(abbr, set())) > 1:
-                if pos_type == "P" and abbr in _PITCHER_RENAME:
-                    final_abbr = _PITCHER_RENAME[abbr]
-                elif pos_type == "B" and abbr in _BATTER_RENAME:
-                    final_abbr = _BATTER_RENAME[abbr]
-            stat_id_map[sid] = final_abbr
-            if not is_display:
-                active_stat_abbrs.add(final_abbr)
-        logger.info(
-            "stat_id_map loaded from league settings: %d stats, %d active scoring categories: %s",
-            len(stat_id_map), len(active_stat_abbrs), sorted(active_stat_abbrs),
-        )
-        # Log full stat_id_map for debugging column alignment issues
-        logger.debug("Full stat_id_map: %s", {k: v for k, v in stat_id_map.items() if not k.startswith("_")})
+        stat_id_map = client.get_league_scoring_stat_map()
     except Exception as _e:
-        logger.warning("get_league_settings failed, using fallback stat_id_map: %s", _e)
+        logger.warning("League settings fetch failed, using SSOT scoring stat map: %s", _e)
+        stat_id_map = dict(CANONICAL_SCORING_STAT_ID_MAP)
 
-    # If league settings were unavailable, fall back to the hardcoded league scoring
-    # categories so we still filter out display-only/non-league stats (OBP, K/BB, etc.)
-    if not active_stat_abbrs and LEAGUE_SCORING_CATEGORIES:
-        active_stat_abbrs = set(LEAGUE_SCORING_CATEGORIES)
-        logger.info("Using hardcoded LEAGUE_SCORING_CATEGORIES as fallback: %s", sorted(active_stat_abbrs))
+    active_stat_abbrs = set(ACTIVE_SCORING_CATEGORIES)
 
     try:
         matchups = client.get_scoreboard()
@@ -5770,12 +5686,10 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                 stat = s.get("stat", {})
                 if isinstance(stat, dict):
                     sid = str(stat.get("stat_id", ""))
-                    key = stat_id_map.get(sid, sid)
-                    val = stat.get("value", "")
-                    if active_stat_abbrs and key not in active_stat_abbrs:
-                        # Skip display-only/non-active categories to prevent
-                        # frontend column drift (e.g. OBP, K/BB in 9x9 leagues).
+                    key = stat_id_map.get(sid)
+                    if not key:
                         continue
+                    val = stat.get("value", "")
                     # Clamp negative values only for stats where negative is impossible.
                     # NSB (Net Stolen Bases) CAN be negative (0 SB - 1 CS = -1) — do not clamp.
                     _NON_NEGATIVE_STATS = frozenset({
@@ -5883,22 +5797,9 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         if opp_entry is None:
             opp_entry = ("", "Unknown", {})
 
-        # Filter stats to active scoring categories only.
-        # When active_stat_abbrs is populated from league settings, this removes stats
-        # that Yahoo includes in the scoreboard (OBP, K/BB, etc.) but that are not
-        # scored in this league.  Fall back to filtering out "-" / empty values when
-        # league settings were unavailable.
         def _filter_stats(stats: dict) -> dict:
-            if active_stat_abbrs:
-                # League settings available — keep only active scoring categories
-                # plus display-only stats (IP, GS) which are harmless to show.
-                _ALWAYS_KEEP = {"IP", "GS", "H/AB", "21", "50", "62"}
-                return {
-                    k: v for k, v in stats.items()
-                    if k in active_stat_abbrs or k in _ALWAYS_KEEP
-                }
-            # Fallback: drop stats with "-" or empty values (Yahoo marker for inactive cats).
-            return {k: v for k, v in stats.items() if v not in ("", "-", None)}
+            filtered = {k: v for k, v in stats.items() if k in active_stat_abbrs and v not in ("", None)}
+            return ordered_scoring_stats(filtered, fill_missing=True)
 
         my_stats = _filter_stats(my_entry[2])
         opp_stats = _filter_stats(opp_entry[2])
@@ -6184,10 +6085,44 @@ async def async_optimize_lineup(
     Poll GET /api/fantasy/jobs/{job_id} for status and result.
     Part of ARCH-001 Phase 1 — API-Worker pattern.
     """
+    try:
+        yahoo = get_yahoo_client()
+        team_key = os.getenv("YAHOO_TEAM_KEY") or yahoo.get_my_team_key()
+        roster = yahoo.get_roster(team_key=team_key, date=target_date)
+    except YahooAuthError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Yahoo not configured -- set YAHOO_REFRESH_TOKEN",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to hydrate Yahoo roster for async optimization: {exc}",
+        ) from exc
+
+    payload = {
+        "league_key": yahoo.league_key,
+        "team_key": team_key,
+        "scoring_categories": list(ACTIVE_SCORING_CATEGORIES),
+        "roster_positions": list(ACTIVE_ROSTER_SLOTS),
+        "available_players": [
+            {
+                "player_id": str(player.get("player_key") or player.get("player_id") or ""),
+                "name": player.get("name", "Unknown"),
+                "eligible_positions": list(player.get("positions") or []),
+                "injury_status": player.get("status") or player.get("injury_note"),
+            }
+            for player in roster
+            if player.get("player_key") or player.get("player_id")
+        ],
+        "target_date": target_date,
+        "risk_tolerance": risk_tolerance,
+    }
+
     job_id = jq_submit(
         db,
         job_type="lineup_optimization",
-        payload={"target_date": target_date, "risk_tolerance": risk_tolerance},
+        payload=payload,
         priority=3,
     )
     return {"job_id": job_id, "status": "queued", "poll_url": f"/api/fantasy/jobs/{job_id}"}
@@ -6443,12 +6378,12 @@ async def apply_fantasy_lineup(
         ) from exc
 
     apply_date = payload.date or _dt.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
-    team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+    team_key = os.getenv("YAHOO_TEAM_KEY") or client.get_my_team_key()
 
     roster_lookup_by_key: dict[str, dict] = {}
     roster_lookup_by_name: dict[str, dict] = {}
     try:
-        roster_players = client.get_roster(team_key=team_key)
+        roster_players = client.get_roster(team_key=team_key, date=apply_date)
         for rp in roster_players:
             rp_key = str(rp.get("player_key") or "").strip()
             rp_name = str(rp.get("name") or "").strip().lower()
@@ -6544,6 +6479,7 @@ async def apply_fantasy_lineup(
             team_id=team_key,
             optimized_lineup=optimized_lineup,
             auto_correct=auto_correct,
+            target_date=apply_date,
         )
     except Exception as exc:
         logger.exception("Error applying lineup with ResilientYahooClient")

@@ -18,27 +18,15 @@ import type {
   OddsMonitorStatus,
   PortfolioStatusFull,
   BracketProjection,
-  FantasyDraftBoardResponse,
-  DraftSession,
-  CreateDraftSessionResponse,
-  RecordPickResponse,
   SchedulerStatus,
   RatingsStatus,
-  DailyLineupResponse,
-  WaiverWireResponse,
-  WaiverRecommendationsResponse,
-  RosterResponse,
-  MatchupResponse,
-  LineupApplyPlayer,
   DashboardResponse,
   UserPreferencesResponse,
   UserPreferences,
-  ValuationsResponse,
   AsyncJobStatus,
   StreakPlayer,
   WaiverTarget,
 } from '@/lib/types'
-import { etTodayStr } from '@/lib/constants'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
 
@@ -233,88 +221,6 @@ export const endpoints = {
   bracketProjection: (nSims = 10000) =>
     apiFetch<BracketProjection>(`/api/tournament/bracket-projection?n_sims=${nSims}`),
 
-  // Fantasy Baseball — Draft Board
-  fantasyDraftBoard: (params?: { position?: string; player_type?: string; tier_max?: number; limit?: number }) => {
-    const qs = new URLSearchParams()
-    if (params?.position) qs.set('position', params.position)
-    if (params?.player_type) qs.set('player_type', params.player_type)
-    if (params?.tier_max !== undefined) qs.set('tier_max', String(params.tier_max))
-    if (params?.limit !== undefined) qs.set('limit', String(params.limit))
-    const query = qs.toString()
-    return apiFetch<FantasyDraftBoardResponse>(`/api/fantasy/draft-board${query ? `?${query}` : ''}`)
-  },
-
-  // Fantasy Baseball — Draft Session
-  fantasyCreateSession: (params: { my_draft_position: number; num_teams?: number; num_rounds?: number }) => {
-    const qs = new URLSearchParams()
-    qs.set('my_draft_position', String(params.my_draft_position))
-    if (params.num_teams !== undefined) qs.set('num_teams', String(params.num_teams))
-    if (params.num_rounds !== undefined) qs.set('num_rounds', String(params.num_rounds))
-    return apiFetch<CreateDraftSessionResponse>(`/api/fantasy/draft-session?${qs.toString()}`, { method: 'POST' })
-  },
-
-  fantasyRecordPick: (sessionKey: string, params: { player_id: string; drafter_position: number; is_my_pick?: boolean }) => {
-    const qs = new URLSearchParams()
-    qs.set('player_id', params.player_id)
-    qs.set('drafter_position', String(params.drafter_position))
-    if (params.is_my_pick !== undefined) qs.set('is_my_pick', String(params.is_my_pick))
-    return apiFetch<RecordPickResponse>(`/api/fantasy/draft-session/${sessionKey}/pick?${qs.toString()}`, { method: 'POST' })
-  },
-
-  fantasyGetSession: (sessionKey: string) =>
-    apiFetch<DraftSession>(`/api/fantasy/draft-session/${sessionKey}`),
-
-  fantasyDeleteSession: (sessionKey: string) =>
-    apiFetch<{ message: string }>(`/api/fantasy/draft-session/${sessionKey}`, { method: 'DELETE' }),
-
-  // Fantasy Baseball — Season Ops
-  dailyLineup: (date?: string) =>
-    apiFetch<DailyLineupResponse>(`/api/fantasy/lineup/${date ?? etTodayStr()}`),
-
-  waiverWire: (params?: {
-    position?: string
-    sort?: 'need_score' | 'percent_owned'
-    min_z_score?: number
-    max_percent_owned?: number
-    page?: number
-    per_page?: number
-  }) => {
-    const qs = new URLSearchParams()
-    if (params?.position) qs.set('position', params.position)
-    if (params?.sort) qs.set('sort', params.sort)
-    if (params?.min_z_score !== undefined) qs.set('min_z_score', String(params.min_z_score))
-    if (params?.max_percent_owned !== undefined) qs.set('max_percent_owned', String(params.max_percent_owned))
-    if (params?.page !== undefined) qs.set('page', String(params.page))
-    if (params?.per_page !== undefined) qs.set('per_page', String(params.per_page))
-    const query = qs.toString()
-    return apiFetch<WaiverWireResponse>(`/api/fantasy/waiver${query ? `?${query}` : ''}`)
-  },
-
-  waiverRecommendations: () =>
-    apiFetch<WaiverRecommendationsResponse>('/api/fantasy/waiver/recommendations'),
-
-  waiverAddPlayer: (addPlayerKey: string, dropPlayerKey?: string) => {
-    const qs = new URLSearchParams({ add_player_key: addPlayerKey })
-    if (dropPlayerKey) qs.set('drop_player_key', dropPlayerKey)
-    return apiFetch<{ success: boolean; added: string; dropped?: string | null }>(
-      `/api/fantasy/waiver/add?${qs.toString()}`,
-      { method: 'POST' },
-    )
-  },
-
-  // Fantasy Baseball — Yahoo roster / matchup / lineup apply
-  fantasyRoster: (): Promise<RosterResponse> =>
-    apiFetch<RosterResponse>('/api/fantasy/roster'),
-
-  fantasyMatchup: (): Promise<MatchupResponse> =>
-    apiFetch<MatchupResponse>('/api/fantasy/matchup'),
-
-  fantasyApplyLineup: (date: string, players: LineupApplyPlayer[]): Promise<{ success: boolean; applied: number; date: string }> =>
-    apiFetch('/api/fantasy/lineup/apply', {
-      method: 'PUT',
-      body: JSON.stringify({ date, players }),
-    }),
-
   asyncOptimizeLineup: (targetDate: string, riskTolerance = 'balanced') => {
     const params = new URLSearchParams({ target_date: targetDate, risk_tolerance: riskTolerance })
     return apiFetch<{ job_id: string; status: string; poll_url: string }>(
@@ -325,13 +231,6 @@ export const endpoints = {
 
   getJobStatus: (jobId: string) =>
     apiFetch<AsyncJobStatus>(`/api/fantasy/jobs/${jobId}`),
-
-  getPlayerValuations: (date?: string, leagueKey?: string) => {
-    const params = new URLSearchParams()
-    if (date) params.set('date', date)
-    if (leagueKey) params.set('league_key', leagueKey)
-    return apiFetch<ValuationsResponse>(`/api/fantasy/players/valuations?${params}`)
-  },
 
   // Admin
   schedulerStatus: () =>

@@ -75,6 +75,7 @@ class PositionNormalizer:
 
     # Valid outfield slot positions in this league (no generic OF slot)
     OUTFIELD_POSITIONS = {"LF", "CF", "RF"}
+    ACTIVE_LEAGUE_SLOTS = ("C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "Util", "SP", "RP", "P")
     
     @classmethod
     def normalize_position(cls, position: str) -> str:
@@ -153,6 +154,9 @@ class PositionNormalizer:
         
         for slot in yahoo_roster.slots:
             slot_pos = cls.normalize_position(slot.position)
+            if slot_pos == "OF":
+                logger.warning("Skipping invalid generic OF slot from Yahoo roster model")
+                continue
             
             # Find best matching player from optimization
             matched = False

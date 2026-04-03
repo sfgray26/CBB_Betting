@@ -79,6 +79,60 @@ Make sure these are also set in Railway:
 | `YAHOO_REFRESH_TOKEN` | Auth flow | Fantasy baseball auth |
 | `OPENWEATHER_API_KEY` | OpenWeatherMap | Weather data |
 
+## Deployment Isolation Flags
+
+Use these when separating the current CBB production deployment from a new MLB UAT Railway project.
+
+| Variable | CBB Production | MLB UAT | Purpose |
+|----------|----------------|---------|---------|
+| `DEPLOYMENT_ROLE` | `cbb-prod` | `mlb-uat` | Labels the deployment in `/` and `/health` responses |
+| `ENABLE_MAIN_SCHEDULER` | `true` | `false` for first safe boot | Controls the main APScheduler loop in `backend/main.py` |
+| `ENABLE_STARTUP_CATCHUP` | `true` | `false` | Prevents post-3AM CBB catch-up analysis from running in UAT |
+| `ENABLE_INGESTION_ORCHESTRATOR` | current intended value | `false` until verified | Controls separate MLB ingestion scheduler |
+| `ENABLE_MLB_ANALYSIS` | `false` during CBB freeze | `false` until verified | Prevents MLB scheduled analysis before UAT is ready |
+| `RUN_STARTUP_MIGRATIONS` | `true` | `true` only against the UAT database | Controls boot-time migration scripts in the Docker container |
+| `RUN_STARTUP_DB_INIT` | `true` | `true` only against the UAT database | Controls `python -m backend.models` schema init on boot |
+
+### Recommended First-Boot Posture For MLB UAT
+
+Set these before the first UAT deploy:
+
+```bash
+DEPLOYMENT_ROLE=mlb-uat
+ENABLE_MAIN_SCHEDULER=false
+ENABLE_STARTUP_CATCHUP=false
+ENABLE_INGESTION_ORCHESTRATOR=false
+ENABLE_MLB_ANALYSIS=false
+RUN_STARTUP_MIGRATIONS=true
+RUN_STARTUP_DB_INIT=true
+```
+
+That gives you a safe application boot against an isolated UAT database without starting the shared production scheduler or triggering CBB startup catch-up behavior.
+
+## GitHub + Railway Cutover Sequence
+
+1. Tag the current production-safe CBB commit.
+
+```bash
+git tag -a cbb-prod-v1.0 -m "Frozen CBB production baseline before MLB UAT split"
+git push origin cbb-prod-v1.0
+```
+
+2. Create a protected production branch for CBB.
+
+```bash
+git checkout -b stable/cbb-prod
+git push -u origin stable/cbb-prod
+```
+
+3. In Railway, repoint the existing live CBB project to `stable/cbb-prod`.
+
+4. Create a separate Railway project for MLB UAT with its own Postgres service and its own variables.
+
+5. Point MLB UAT at `main` or a dedicated branch such as `mlb/uat`, never at `stable/cbb-prod`.
+
+6. Verify the MLB UAT `DATABASE_URL` is different from CBB production before the first deploy.
+
 ## Troubleshooting
 
 ### "Weather unavailable" in logs

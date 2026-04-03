@@ -65,6 +65,39 @@
 
 **Checkpoint verification completed:** `py_compile` on touched backend files plus targeted pytest subset (`test_ingestion_orchestrator.py`, `test_fantasy_stat_contract.py`, `test_waiver_integration.py`, `test_weather_fetcher.py`) are green, and `frontend` passes `npx tsc --noEmit`.
 
+### 0B. Fantasy Data-Layer Hard Reset — Apr 3 (ACTIVE)
+**Spec:** operator directive in session | **Priority:** critical
+
+| Task | File | Done? |
+|------|------|-------|
+| Rebuild Yahoo league settings parser for exact 18 active scoring categories | `backend/fantasy_baseball/yahoo_client_resilient.py`, `backend/main.py` | [x] |
+| Fix Yahoo roster fetch signature to safely accept `date` kwarg | `backend/fantasy_baseball/yahoo_client_resilient.py` | [x] |
+| Rewrite `LineupOptimizationRequest` with strict required fields and roster slot validation | `backend/contracts.py` | [x] |
+| Remove generic OF handling and enforce LF/CF/RF lineup normalization | `backend/fantasy_baseball/position_normalizer.py`, lineup actuation path | [x] |
+| Harden lineup apply payload to use valid Yahoo player keys and slate-compatible game IDs | `backend/main.py`, `backend/fantasy_baseball/yahoo_client_resilient.py` | [x] |
+| Refactor matchup stat mapping to exact active scoring categories only | `backend/main.py` | [x] |
+| Add waiver stat validation for SP NSV and correct pitcher strikeout source mapping | waiver ingestion path | [x] |
+| Gracefully degrade weather fetcher on OpenWeather auth/endpoint mismatch | `backend/fantasy_baseball/weather_fetcher.py` | [x] |
+| Validate with `py_compile` and targeted pytest coverage | backend + tests | [x] |
+
+**Review:** League 72586 now has a backend-owned SSOT contract for roster slots and scoring categories, the Yahoo client resolves exactly 18 scoring stats, async lineup jobs submit fully validated payloads, lineup actuation uses canonical Yahoo player keys and explicit OF slot resolution, matchup and waiver payloads only emit scoring stats, and weather auth failures degrade cleanly. Verification passed with `py_compile` on touched backend files and targeted pytest coverage: `47 passed`.
+
+### 0C. Fantasy UI Removal — Contract-Preserving Frontend Excision (COMPLETED)
+**Spec:** Apr 3 contract-preserving frontend removal directive | **Priority:** critical
+
+| Task | File | Done? |
+|------|------|-------|
+| Classify async/job lifecycle frontend consumers before deletion | `frontend/app/(dashboard)/fantasy/lineup/page.tsx`, `frontend/lib/api.ts` | [x] |
+| Delete isolated fantasy route tree only | `frontend/app/(dashboard)/fantasy/**` | [x] |
+| Prune fantasy-only API helpers while preserving dashboard/settings and async polling methods | `frontend/lib/api.ts` | [x] |
+| Prune fantasy-only types while preserving `UserPreferences`, dashboard types, and async job types | `frontend/lib/types.ts` | [x] |
+| Remove fantasy-only constants and contract JSON | `frontend/lib/constants.ts`, `frontend/lib/fantasy-stat-contract.json` | [x] |
+| Remove fantasy-only shared component and E2E spec | `frontend/components/shared/status-badge.tsx`, `frontend/tests/e2e/fantasy_baseball.spec.ts` | [x] |
+| Clean shared shell pages without touching backend contracts | `frontend/components/layout/sidebar.tsx`, `frontend/components/layout/header.tsx`, `frontend/app/(dashboard)/dashboard/page.tsx`, `frontend/app/(dashboard)/admin/page.tsx` | [x] |
+| Validate clean frontend build and absence of fantasy routes | frontend build + source search | [x] |
+
+**Review:** Fantasy UI routes and route-only consumers were removed without touching backend Python logic or backend response contracts. Shared settings and dashboard flows were preserved, async job polling methods remained in `frontend/lib/api.ts`, and the frontend production build passed with the final route set excluding all fantasy pages.
+
 ---
 
 ### 1. EPIC-1 — Time-Series Schema (DO FIRST)

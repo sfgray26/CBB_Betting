@@ -267,7 +267,7 @@ class JobQueueService:
         # Hydrate Yahoo roster at worker execution time (not at submission time)
         try:
             yahoo = get_resilient_yahoo_client()
-            roster = yahoo.get_roster()
+            roster = yahoo.get_roster(team_key=request.team_key, date=request.target_date)
         except Exception as exc:
             raise RetryableJobError(f"Yahoo roster fetch failed: {exc}") from exc
 

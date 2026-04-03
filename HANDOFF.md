@@ -38,6 +38,148 @@ The platform is live for the 2026 MLB fantasy season. The Yahoo API pipeline is 
   - Smart Score now rendered on normalized 0-100 scale for readability.
   - Apply payload only sends canonical Yahoo player keys.
 
+### Session S11 Hard Reset (Apr 3)
+
+- Completed the fantasy data-layer SSOT refactor for Yahoo league `72586`.
+- Added backend-owned league contract at `backend/fantasy_baseball/league_contract.py`:
+  - exact active roster slots: `C, 1B, 2B, 3B, SS, LF, CF, RF, Util, SP, SP, RP, RP, P, P, P`
+  - exact active scoring categories: `R, H, HR, RBI, K(B), TB, AVG, OPS, NSB, W, L, HRA, K, ERA, WHIP, K/9, QS, NSV`
+- Yahoo client hardening in `backend/fantasy_baseball/yahoo_client_resilient.py`:
+  - `get_league_scoring_stat_map()` now parses league settings against the SSOT and resolves exactly 18 active scoring categories.
+  - `get_roster()` now accepts `date=` safely.
+  - resilient lineup actuation now canonicalizes player keys to `469.p.XXXXX`, expands all 16 active slots, and submits explicit slot positions instead of synthetic slot IDs or generic `OF`.
+- Request-model hardening in `backend/contracts.py`:
+  - `LineupOptimizationRequest` now strictly validates the SSOT scoring categories, SSOT roster slot order, and non-empty `available_players`.
+- API and worker integration in `backend/main.py` and `backend/services/job_queue_service.py`:
+  - async lineup jobs now submit full validated payloads including `league_key`, `team_key`, `scoring_categories`, `roster_positions`, and `available_players`.
+  - lineup apply now hydrates date-aware rosters and passes the target date through the resilient apply path.
+  - matchup and waiver endpoints now consume the SSOT stat map and drop non-scoring categories.
+  - waiver translation now forces `SP -> NSV = 0` and keeps pitcher strikeouts on the pitcher stat path.
+- Weather resilience in `backend/fantasy_baseball/weather_fetcher.py`:
+  - 401/403 on the free-tier `2.5/weather` call now degrades to estimated weather without crashing the queue.
+- Added regression coverage in `tests/test_fantasy_ssot_reset.py` and `tests/test_weather_fetcher.py`.
+- Verification:
+  - `C:/Users/sfgra/repos/Fixed/cbb-edge/venv/Scripts/python.exe -m py_compile backend/fantasy_baseball/league_contract.py backend/contracts.py backend/fantasy_baseball/position_normalizer.py backend/fantasy_baseball/yahoo_client_resilient.py backend/main.py backend/services/job_queue_service.py backend/fantasy_baseball/weather_fetcher.py`
+  - `C:/Users/sfgra/repos/Fixed/cbb-edge/venv/Scripts/python.exe -m pytest tests/test_fantasy_ssot_reset.py tests/test_weather_fetcher.py tests/test_fantasy_fixes.py tests/test_waiver_integration.py -q --tb=short`
+  - Result: `47 passed`
+
+### Session S12 Contract-Preserving Fantasy UI Removal (Apr 3)
+
+- Removed the Fantasy Baseball frontend route tree only:
+  - `frontend/app/(dashboard)/fantasy/**`
+- Preserved backend Python logic and backend response contracts exactly; no backend files were edited in this session.
+- Classified shared frontend surfaces before deletion:
+  - preserved dashboard/settings consumers and async job polling methods in `frontend/lib/api.ts`
+  - preserved shared dashboard/settings types and async job status in `frontend/lib/types.ts`
+  - removed only fantasy-route-only API helpers and fantasy-route-only type definitions
+- Removed fantasy-only frontend artifacts:
+  - `frontend/components/shared/status-badge.tsx`
+  - `frontend/lib/fantasy-stat-contract.json`
+  - `frontend/tests/e2e/fantasy_baseball.spec.ts`
+- Cleaned shared UI shell files to remove fantasy-only presentation while preserving shared routes:
+  - `frontend/components/layout/sidebar.tsx`
+  - `frontend/components/layout/header.tsx`
+  - `frontend/app/(dashboard)/dashboard/page.tsx`
+  - `frontend/app/(dashboard)/admin/page.tsx`
+- Async / job lifecycle outcome:
+  - preserved `asyncOptimizeLineup` and `getJobStatus` in `frontend/lib/api.ts`
+  - removed their only fantasy-route consumer with the deleted lineup page
+  - made no changes to backend queue endpoints or job contracts
+- Dashboard / settings outcome:
+  - preserved `getDashboard`, `getDashboardStreaks`, `getDashboardWaiverTargets`, `getUserPreferences`, and `updateUserPreferences`
+  - preserved `UserPreferences`, `DashboardData`, `DashboardResponse`, `StreakPlayer`, `WaiverTarget`, and `AsyncJobStatus`
+- Verification:
+  - source search under `frontend/{app,components,lib,tests}` shows no remaining fantasy route references; only preserved async API endpoints remain in `frontend/lib/api.ts`
+  - `cd frontend && npm run build`
+  - Result: build passed and generated routes no longer include any `/fantasy/*` pages
+
+### Session S12 Technical State
+
+| Area | State | Evidence |
+|------|-------|----------|
+| Fantasy frontend routes | REMOVED | `frontend/app/(dashboard)/fantasy/**` deleted |
+| Dashboard/settings contracts | PRESERVED | `frontend/app/(dashboard)/dashboard/page.tsx` and `frontend/app/(dashboard)/settings/page.tsx` still consume preserved API methods/types |
+| Async job polling contract | PRESERVED | `frontend/lib/api.ts` still exports `asyncOptimizeLineup` and `getJobStatus` |
+| Backend fantasy APIs | UNCHANGED | no backend Python edits in Session S12 |
+| Frontend validation | PASS | `cd frontend && npm run build` |
+
+### Session S12 Delegation Bundles
+
+- Claude next: if requested, perform a backend-only follow-up to quarantine or retire `backend/services/dashboard_service.py` and evaluate whether preserved async API helpers without UI consumers should remain exported long-term.
+- Gemini next: no action required for fantasy UI; any future frontend work should treat dashboard/settings as shared surfaces and must not reintroduce fantasy route coupling into `api.ts` or `types.ts`.
+- Kimi next: optional audit only if a future session wants a contract snapshot memo for the preserved fantasy backend endpoints.
+
+### Session S12 HANDOFF PROMPTS
+
+#### Claude Code
+
+Continue in `c:\Users\sfgra\repos\Fixed\cbb-edge`. Read `HANDOFF.md`, `ORCHESTRATION.md`, `IDENTITY.md`, `HEARTBEAT.md`, and `tasks/todo.md` first. The fantasy frontend route tree has been removed, but backend fantasy APIs were intentionally preserved. If the next task is backend cleanup, do NOT change API response shapes. First classify preserved fantasy endpoints into supported domain APIs vs legacy UI orchestration. Review `backend/services/dashboard_service.py`, `backend/main.py` fantasy dashboard endpoints, and `frontend/lib/api.ts` async helpers. Report what can be quarantined, what must remain, and what additional contract tests are needed before any retirement.
+
+#### Gemini CLI
+
+Do not edit backend Python. If asked to touch frontend after Session S12, treat `frontend/app/(dashboard)/dashboard/page.tsx` and `frontend/app/(dashboard)/settings/page.tsx` as shared surfaces. Do not reintroduce fantasy-only symbols into `frontend/lib/api.ts` or `frontend/lib/types.ts`. Validate with `cd frontend && npm run build` before reporting completion.
+
+### Session S12 Architect Review Queue
+
+- Decide whether `frontend/lib/api.ts` should keep `asyncOptimizeLineup` and `getJobStatus` exported with no active UI consumer, or whether they should move to a future admin/debug surface.
+- Decide whether `backend/services/dashboard_service.py` remains a supported backend aggregation surface or becomes legacy code pending retirement.
+- Decide whether the `/dashboard` page should stay as a minimal shared operational page or be folded into another non-fantasy route later.
+
+### Session S13 Deployment Isolation Groundwork (Apr 3)
+
+- Added explicit deployment helpers in `backend/utils/deployment.py` for:
+  - `DEPLOYMENT_ROLE`
+  - `ENABLE_MAIN_SCHEDULER`
+  - `ENABLE_STARTUP_CATCHUP`
+- Hardened `backend/main.py` so a separate Railway project can boot in safe UAT mode:
+  - main APScheduler startup is now gated by `ENABLE_MAIN_SCHEDULER` and remains enabled by default
+  - startup catch-up analysis is now gated by `ENABLE_STARTUP_CATCHUP` and defaults to the scheduler setting
+  - health endpoints now report `deployment_role`
+  - `/health` reports `scheduler=disabled` without degrading status when the scheduler is intentionally off
+  - MLB scheduled analysis is skipped if requested while the main scheduler is disabled
+- Hardened container boot path in `Dockerfile`:
+  - `RUN_STARTUP_MIGRATIONS` controls boot-time migration scripts
+  - `RUN_STARTUP_DB_INIT` controls `python -m backend.models` schema init on boot
+  - both default to `true` to preserve current production behavior
+- Extended `docs/RAILWAY_ENV_SETUP.md` with:
+  - CBB production vs MLB UAT env-flag matrix
+  - first-boot MLB UAT posture
+  - GitHub tag + stable branch + Railway cutover sequence
+- Verification:
+  - editor diagnostics on `backend/main.py` and `backend/utils/deployment.py`: no errors
+  - `C:/Users/sfgra/repos/Fixed/cbb-edge/venv/Scripts/python.exe -m py_compile backend/main.py backend/utils/deployment.py`
+  - Result: pass
+
+### Session S13 Technical State
+
+| Area | State | Evidence |
+|------|-------|----------|
+| Main scheduler isolation | ACTIVE | `backend/main.py` gated by `ENABLE_MAIN_SCHEDULER` |
+| Startup catch-up isolation | ACTIVE | `backend/main.py` gated by `ENABLE_STARTUP_CATCHUP` |
+| Container boot mutation control | ACTIVE | `Dockerfile` uses `RUN_STARTUP_MIGRATIONS` and `RUN_STARTUP_DB_INIT` |
+| UAT health semantics | ACTIVE | `/health` no longer degrades when scheduler is intentionally disabled |
+| Cutover documentation | ACTIVE | `docs/RAILWAY_ENV_SETUP.md` updated with branch/project/env strategy |
+
+### Session S13 Delegation Bundles
+
+- Claude next: execute the actual GitHub and Railway cutover only after confirming the current production-safe CBB commit to tag. Create `cbb-prod-v1.0`, create `stable/cbb-prod`, repoint CBB Railway production to that branch, then create MLB UAT as a separate Railway project with a distinct Postgres attachment.
+- Gemini next: when asked to perform Railway work, do not reuse the production `DATABASE_URL` or blindly clone production variables into MLB UAT. Validate `DEPLOYMENT_ROLE=mlb-uat`, `ENABLE_MAIN_SCHEDULER=false`, and `ENABLE_STARTUP_CATCHUP=false` before first UAT boot.
+
+### Session S13 HANDOFF PROMPTS
+
+#### Claude Code
+
+Continue in `c:\Users\sfgra\repos\Fixed\cbb-edge`. Read `HANDOFF.md`, `ORCHESTRATION.md`, `IDENTITY.md`, and `HEARTBEAT.md` first. Session S13 added deployment isolation controls, but the actual infrastructure cutover has not been executed yet. Next task: identify the exact production-safe CBB commit, create annotated tag `cbb-prod-v1.0`, create branch `stable/cbb-prod`, and prepare a no-surprises Railway cutover checklist for moving the current CBB deployment off `main`. Then define the MLB UAT variable set and first-boot verification checklist using the new env gates.
+
+#### Gemini CLI
+
+Do not edit Python. If asked to perform the Railway split after Session S13, create a separate Railway project for MLB UAT with its own Postgres service and distinct variables. Before deploying MLB UAT, confirm `DATABASE_URL` is different from CBB production, set `DEPLOYMENT_ROLE=mlb-uat`, `ENABLE_MAIN_SCHEDULER=false`, `ENABLE_STARTUP_CATCHUP=false`, `ENABLE_INGESTION_ORCHESTRATOR=false`, and `ENABLE_MLB_ANALYSIS=false`, then verify `/health` returns healthy with `scheduler=disabled`.
+
+### Session S13 Architect Review Queue
+
+- Decide whether `RUN_STARTUP_DB_INIT` should remain available long-term or be replaced by formal migration-only boot behavior.
+- Decide whether a future repo split into `/core`, `/apps/cbb_betting`, and `/apps/mlb_fantasy` should happen only after MLB UAT is stable on its own Railway project.
+
 ---
 
 ## Session S8 Checkpoint (Apr 2)

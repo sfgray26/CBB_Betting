@@ -12,8 +12,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from zoneinfo import ZoneInfo
+
+from backend.fantasy_baseball.league_contract import (
+    ACTIVE_ROSTER_SLOTS,
+    ACTIVE_SCORING_CATEGORIES,
+    VALID_ROSTER_SLOT_SET,
+)
 
 
 def _now_et() -> datetime:
@@ -103,6 +109,37 @@ class LineupOptimizationRequest(BaseModel):
 
     class Config:
         frozen = True
+
+    @field_validator("scoring_categories")
+    @classmethod
+    def validate_scoring_categories(cls, value: List[str]) -> List[str]:
+        expected = list(ACTIVE_SCORING_CATEGORIES)
+        if value != expected:
+            raise ValueError(
+                f"scoring_categories must exactly match the league SSOT order: {expected}"
+            )
+        return value
+
+    @field_validator("roster_positions")
+    @classmethod
+    def validate_roster_positions(cls, value: List[str]) -> List[str]:
+        expected = list(ACTIVE_ROSTER_SLOTS)
+        if value != expected:
+            raise ValueError(
+                f"roster_positions must exactly match the league SSOT order: {expected}"
+            )
+        if any(slot not in VALID_ROSTER_SLOT_SET for slot in value):
+            raise ValueError("roster_positions contains an invalid slot for league 72586")
+        if "OF" in value:
+            raise ValueError("roster_positions must not contain generic OF slots")
+        return value
+
+    @field_validator("available_players")
+    @classmethod
+    def validate_available_players(cls, value: List[PlayerSlot]) -> List[PlayerSlot]:
+        if not value:
+            raise ValueError("available_players must contain the current Yahoo roster snapshot")
+        return value
 
 
 # ---------------------------------------------------------------------------

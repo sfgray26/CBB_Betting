@@ -360,7 +360,9 @@ class WeatherFetcher:
                 stadium_profile=stadium_profile,
             )
             # If game_time is within ~2h of now, current conditions are good enough
-            return current_weather
+            if current_weather is not None:
+                return current_weather
+            return self._estimate_weather(venue, game_time, stadium_profile)
             
         except Exception as e:
             # Trip circuit breaker on auth failures so we don't hammer a dead key
@@ -382,7 +384,7 @@ class WeatherFetcher:
         lat: float,
         lon: float,
         stadium_profile: Dict,
-    ) -> GameWeather:
+    ) -> Optional[GameWeather]:
         """Fallback for free-tier keys: current conditions only."""
         weather_url = "https://api.openweathermap.org/data/2.5/weather"
         weather_resp = self._session.get(
@@ -395,7 +397,16 @@ class WeatherFetcher:
             },
             timeout=10,
         )
-        weather_resp.raise_for_status()
+        try:
+            weather_resp.raise_for_status()
+        except requests.HTTPError:
+            if weather_resp.status_code in (401, 403):
+                self._api_key_failed = True
+                logger.error(
+                    "OpenWeather current-conditions request rejected (401/403) — falling back to estimated weather."
+                )
+                return None
+            raise
         data = weather_resp.json()
 
         main = data.get("main", {})

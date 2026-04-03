@@ -51,6 +51,12 @@ from backend.fantasy_baseball.position_normalizer import (
     ValidationResult,
     LineupValidationError,
 )
+from backend.fantasy_baseball.league_contract import (
+    ACTIVE_ROSTER_SLOTS,
+    ACTIVE_SCORING_CATEGORIES,
+    CANONICAL_SCORING_STAT_ID_MAP,
+    build_scoring_stat_map_from_settings,
+)
 from backend.fantasy_baseball.lineup_validator import (
     LineupValidator,
     OptimizedSlot,
@@ -318,6 +324,24 @@ class YahooFantasyClient:
         data = self._get(f"league/{self.league_key}/settings")
         return self._league_section(data, 0)
 
+    def get_league_scoring_stat_map(self) -> dict[str, str]:
+        settings = self.get_league_settings()
+        try:
+            stat_map = build_scoring_stat_map_from_settings(settings)
+            logger.info(
+                "stat_id_map loaded from league settings: %d stats, %d active scoring categories: %s",
+                len(stat_map),
+                len(stat_map),
+                list(stat_map.values()),
+            )
+            return stat_map
+        except ValueError as exc:
+            logger.warning(
+                "League settings parser did not resolve canonical scoring contract; using SSOT stat map: %s",
+                exc,
+            )
+            return dict(CANONICAL_SCORING_STAT_ID_MAP)
+
     @staticmethod
     def _iter_block(block, item_key: str):
         """Yield item_key values from either an indexed dict or a list block.
@@ -430,7 +454,7 @@ class YahooFantasyClient:
         data = self._get(f"team/{team_key}/roster/players")
         return data.get("fantasy_content", {})
 
-    def get_roster(self, team_key: Optional[str] = None) -> list[dict]:
+    def get_roster(self, team_key: Optional[str] = None, date: Optional[str] = None, **_: Any) -> list[dict]:
         """Return full roster for team_key (defaults to authenticated user's team).
 
         Includes selected_position field indicating Yahoo lineup slot:
@@ -441,7 +465,8 @@ class YahooFantasyClient:
         """
         if team_key is None:
             team_key = self.get_my_team_key()
-        data = self._get(f"team/{team_key}/roster/players")
+        params = {"date": date} if date else None
+        data = self._get(f"team/{team_key}/roster/players", params=params)
         team_data = self._team_section(data)
         roster = self._safe_get(team_data, "roster")
         slot_0 = self._safe_get(roster, "0")
@@ -1411,6 +1436,7 @@ class ResilientYahooClient(YahooFantasyClient):
         team_id: str,
         optimized_lineup: Dict[str, Any],
         auto_correct: bool = True,
+        target_date: Optional[str] = None,
     ) -> LineupResult:
         """
         Set lineup with pre-validation and graceful degradation.
@@ -1424,7 +1450,7 @@ class ResilientYahooClient(YahooFantasyClient):
         """
         try:
             # Step 1: Get current Yahoo roster
-            yahoo_roster = await self._get_yahoo_roster(team_id)
+            yahoo_roster = await self._get_yahoo_roster(team_id, target_date)
 
             # Step 2: Normalize positions
             try:
@@ -1514,10 +1540,32 @@ class ResilientYahooClient(YahooFantasyClient):
 
             # Step 5: Execute with circuit breaker
             try:
+                roster_player_keys = {
+                    self._normalize_player_key(player.id, team_id)
+                    for player in yahoo_roster.players
+                    if player.id
+                }
+                lineup_entries: list[dict[str, str]] = []
+                for slot in yahoo_roster.slots:
+                    player_key = normalized_assignments.get(slot.id)
+                    if not player_key:
+                        continue
+                    normalized_key = self._normalize_player_key(player_key, team_id)
+                    if normalized_key not in roster_player_keys:
+                        return LineupResult(
+                            success=False,
+                            errors=[f"Player {normalized_key} is not on the current Yahoo roster"],
+                            warnings=position_validation.warnings,
+                            retry_possible=False,
+                            suggested_action="Refresh roster and retry lineup apply",
+                        )
+                    lineup_entries.append({"player_key": normalized_key, "position": slot.position})
+
                 result = await self.circuit.call_async(
                     self._execute_lineup_set,
                     team_id,
-                    normalized_assignments
+                    lineup_entries,
+                    target_date,
                 )
 
                 return LineupResult(
@@ -1544,53 +1592,72 @@ class ResilientYahooClient(YahooFantasyClient):
                 suggested_action="Check logs and retry"
             )
 
-    async def _get_yahoo_roster(self, team_id: str) -> YahooRoster:
+    async def _get_yahoo_roster(self, team_id: str, target_date: Optional[str] = None) -> YahooRoster:
         """Fetch and parse Yahoo roster."""
         # Note: get_roster is synchronous, returns List[dict]
-        roster_list = self.get_roster(team_id)
+        roster_list = self.get_roster(team_id, date=target_date)
 
         slots = []
         players = []
 
-        slot_assignments: Dict[str, str] = {}  # position -> player_id
+        slot_assignments: Dict[str, list[str]] = {}
 
         for player_data in roster_list:
-            player_id = str(player_data.get("player_id") or player_data.get("id", ""))
+            player_key = str(player_data.get("player_key") or player_data.get("player_id") or player_data.get("id", ""))
             selected_pos = player_data.get("selected_position", "BN")
 
             if selected_pos and selected_pos != "BN":
-                slot_assignments[selected_pos] = player_id
+                slot_assignments.setdefault(selected_pos, []).append(player_key)
 
             players.append(Player(
-                id=player_id,
+                id=player_key,
                 name=player_data.get("name", "Unknown"),
-                positions=player_data.get("eligible_positions", []),
-                yahoo_positions=player_data.get("eligible_positions", []),
-                eligible_positions=player_data.get("eligible_positions", []),
+                positions=player_data.get("eligible_positions") or player_data.get("positions", []),
+                yahoo_positions=player_data.get("eligible_positions") or player_data.get("positions", []),
+                eligible_positions=player_data.get("eligible_positions") or player_data.get("positions", []),
                 team=player_data.get("editorial_team_abbr") or player_data.get("team", "")
             ))
 
-        for position, player_id in slot_assignments.items():
+        slot_cursors: Dict[str, int] = {}
+        for index, position in enumerate(ACTIVE_ROSTER_SLOTS, start=1):
+            assigned_players = slot_assignments.get(position, [])
+            cursor = slot_cursors.get(position, 0)
+            player_id = assigned_players[cursor] if cursor < len(assigned_players) else None
+            slot_cursors[position] = cursor + 1
             slots.append(RosterSlot(
-                id=f"slot_{position}",
+                id=f"slot_{index}_{position}",
                 position=position,
                 player_id=player_id
             ))
 
         return YahooRoster(slots=slots, players=players)
 
+    @staticmethod
+    def _normalize_player_key(player_key: str, team_id: str) -> str:
+        raw_key = str(player_key or "").strip()
+        if not raw_key:
+            return raw_key
+
+        game_prefix = str(team_id or "").split(".", 1)[0] or YAHOO_SPORT
+        parts = raw_key.split(".")
+        if len(parts) == 3 and parts[1] == "p" and parts[2].isdigit():
+            if parts[0].isdigit():
+                return raw_key
+            return f"{game_prefix}.p.{parts[2]}"
+        return raw_key
+
     async def _execute_lineup_set(
         self,
         team_id: str,
-        assignments: Dict[str, str]
+        lineup_entries: list[dict[str, str]],
+        target_date: Optional[str] = None,
     ) -> Dict:
         """Execute the actual lineup API call via sync parent, run in thread pool."""
-        lineup_list = [{"player_key": pk, "position": pos}
-                       for pos, pk in assignments.items()]
         return await asyncio.to_thread(
             super(ResilientYahooClient, self).set_lineup,
             team_key=team_id,
-            lineup=lineup_list
+            date=target_date,
+            lineup=lineup_entries,
         )
 
     # ==================================================================

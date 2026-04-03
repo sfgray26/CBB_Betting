@@ -73,3 +73,15 @@
 - Yahoo API credentials are already in `.env.example`.
 - `player_board.get_board()` returns a list of player dicts sorted by rank; each has `id`, `name`, `team`, `positions`, `type`, `tier`, `rank`, `adp`, `proj`, `z_score`, `cat_scores`.
 - When adding fantasy API routes, wire directly to these modules — do NOT reimplement ranking logic.
+
+### Yahoo fantasy contract must stay league-specific
+- **Lesson**: For Yahoo league 72586, roster slots and scoring categories must come from one backend-owned SSOT contract. Do not rebuild stat maps inline in `main.py` or rely on generic `is_only_display_stat` heuristics alone. Parse league settings against the canonical 18-category contract and fall back only to the league-specific stat-id map, never a generic mixed stat map.
+- **Context**: Fantasy data-layer hard reset on Apr 3, 2026 fixed zero active scoring categories, matchup column drift, waiver stat leakage, and async lineup payload validation failures.
+
+### Lineup actuation must use Yahoo player keys and full slot expansion
+- **Lesson**: The resilient lineup path must operate on Yahoo player keys, not numeric player IDs or names, and must expand the active roster into all 16 concrete league slots including duplicate `SP`, `RP`, and `P` slots. Generic `OF` must never be submitted to Yahoo; outfield eligibility is fine, but actuation positions must be `LF`, `CF`, or `RF`.
+- **Context**: Apr 3, 2026 hard reset fixed `Player does not play that position`, `game_ids don't match for player key`, and `get_roster(date=...)` crashes.
+
+### Shared frontend surfaces must be classified, not bulk-deleted
+- **Lesson**: In the fantasy UI removal pass, `frontend/lib/api.ts` and `frontend/lib/types.ts` looked fantasy-heavy but were mixed surfaces. `UserPreferences` remained live in `frontend/app/(dashboard)/settings/page.tsx`, dashboard types remained live in `frontend/app/(dashboard)/dashboard/page.tsx`, and async job polling methods had to remain exported even after the fantasy routes were deleted. Always classify each symbol by consumer before deleting a shared file block.
+- **Context**: Apr 3, 2026 contract-preserving frontend excision removed `frontend/app/(dashboard)/fantasy/**` while preserving dashboard/settings contracts and async polling helpers.
