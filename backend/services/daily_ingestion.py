@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -159,6 +160,35 @@ def _load_persisted_ros_cache(include_payload: bool = True) -> tuple[Optional[di
         )
     finally:
         db.close()
+
+
+def _extract_blend_rows(blend_df: Any, metric_map: dict[str, str]) -> tuple[list[dict[str, Any]], int]:
+    """Normalize a blend dataframe into upsert rows and count skipped entries."""
+    if blend_df is None:
+        return [], 0
+
+    rows: list[dict[str, Any]] = []
+    skipped = 0
+    for _, row in blend_df.iterrows():
+        player_id = row.get("player_id", "")
+        if not player_id:
+            skipped += 1
+            continue
+
+        metrics = {dest: row.get(src) for src, dest in metric_map.items()}
+        if all(value is None for value in metrics.values()):
+            skipped += 1
+            continue
+
+        rows.append(
+            {
+                "player_id": player_id,
+                "player_name": row.get("name", player_id),
+                **metrics,
+            }
+        )
+
+    return rows, skipped
 
 
 # ---------------------------------------------------------------------------
@@ -773,7 +803,7 @@ class DailyIngestionOrchestrator:
         """Compute weighted ensemble blend and persist to PlayerDailyMetric (lock 100_014).
 
         Runs at 5 AM ET, 2 hours after _fetch_fangraphs_ros.
-        Uses the in-process _ROS_CACHE from the earlier fetch.
+        Uses the durable Fangraphs cache from the earlier fetch when available.
         Blend columns written: blend_hr, blend_rbi, blend_avg, blend_era, blend_whip.
         """
         t0 = time.monotonic()
@@ -827,71 +857,69 @@ class DailyIngestionOrchestrator:
 
             today = today_et()
             db = SessionLocal()
+            bat_rows, bat_skipped = _extract_blend_rows(
+                bat_blend,
+                {"HR": "blend_hr", "RBI": "blend_rbi", "AVG": "blend_avg"},
+            )
+            pit_rows, pit_skipped = _extract_blend_rows(
+                pit_blend,
+                {"ERA": "blend_era", "WHIP": "blend_whip"},
+            )
             records_written = 0
+            inserted = 0
+            updated = 0
+            skipped = bat_skipped + pit_skipped
             try:
-                # Upsert batting blend values
-                if bat_blend is not None:
-                    for _, row in bat_blend.iterrows():
-                        pid = row.get("player_id", "")
-                        if not pid:
-                            continue
-                        existing = (
-                            db.query(PlayerDailyMetric)
+                all_rows = bat_rows + pit_rows
+                existing_ids: set[str] = set()
+                if all_rows:
+                    existing_ids = {
+                        player_id
+                        for (player_id,) in (
+                            db.query(PlayerDailyMetric.player_id)
                             .filter(
-                                PlayerDailyMetric.player_id == pid,
                                 PlayerDailyMetric.metric_date == today,
                                 PlayerDailyMetric.sport == "mlb",
+                                PlayerDailyMetric.player_id.in_([row["player_id"] for row in all_rows]),
                             )
-                            .first()
+                            .all()
                         )
-                        if existing:
-                            existing.blend_hr = row.get("HR")
-                            existing.blend_rbi = row.get("RBI")
-                            existing.blend_avg = row.get("AVG")
-                        else:
-                            db.add(PlayerDailyMetric(
-                                player_id=pid,
-                                player_name=row.get("name", pid),
-                                metric_date=today,
-                                sport="mlb",
-                                blend_hr=row.get("HR"),
-                                blend_rbi=row.get("RBI"),
-                                blend_avg=row.get("AVG"),
-                                rolling_window={},
-                                data_source="ensemble_blend",
-                            ))
-                        records_written += 1
+                    }
 
-                # Upsert pitching blend values
-                if pit_blend is not None:
-                    for _, row in pit_blend.iterrows():
-                        pid = row.get("player_id", "")
-                        if not pid:
-                            continue
-                        existing = (
-                            db.query(PlayerDailyMetric)
-                            .filter(
-                                PlayerDailyMetric.player_id == pid,
-                                PlayerDailyMetric.metric_date == today,
-                                PlayerDailyMetric.sport == "mlb",
-                            )
-                            .first()
-                        )
-                        if existing:
-                            existing.blend_era = row.get("ERA")
-                            existing.blend_whip = row.get("WHIP")
-                        else:
-                            db.add(PlayerDailyMetric(
-                                player_id=pid,
-                                player_name=row.get("name", pid),
-                                metric_date=today,
-                                sport="mlb",
-                                blend_era=row.get("ERA"),
-                                blend_whip=row.get("WHIP"),
-                                rolling_window={},
-                                data_source="ensemble_blend",
-                            ))
-                        records_written += 1
+                for row in all_rows:
+                    stmt = pg_insert(PlayerDailyMetric.__table__).values(
+                        player_id=row["player_id"],
+                        player_name=row["player_name"],
+                        metric_date=today,
+                        sport="mlb",
+                        rolling_window={},
+                        data_source="ensemble_blend",
+                        fetched_at=now_et(),
+                        blend_hr=row.get("blend_hr"),
+                        blend_rbi=row.get("blend_rbi"),
+                        blend_avg=row.get("blend_avg"),
+                        blend_era=row.get("blend_era"),
+                        blend_whip=row.get("blend_whip"),
+                    ).on_conflict_do_update(
+                        index_elements=["player_id", "metric_date", "sport"],
+                        set_={
+                            "player_name": row["player_name"],
+                            "data_source": "ensemble_blend",
+                            "fetched_at": now_et(),
+                            "blend_hr": row.get("blend_hr"),
+                            "blend_rbi": row.get("blend_rbi"),
+                            "blend_avg": row.get("blend_avg"),
+                            "blend_era": row.get("blend_era"),
+                            "blend_whip": row.get("blend_whip"),
+                        },
+                    )
+                    db.execute(stmt)
+                    if row["player_id"] in existing_ids:
+                        updated += 1
+                    else:
+                        inserted += 1
+                        existing_ids.add(row["player_id"])
+                    records_written += 1
 
                 db.commit()
             except Exception as exc:
@@ -899,14 +927,28 @@ class DailyIngestionOrchestrator:
                 logger.error("ensemble_update DB write failed: %s", exc)
                 elapsed = int((time.monotonic() - t0) * 1000)
                 self._record_job_run("ensemble_update", "failed")
-                return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+                return {"status": "failed", "records": 0, "elapsed_ms": elapsed, "inserted": inserted, "updated": updated, "skipped": skipped}
             finally:
                 db.close()
 
             elapsed = int((time.monotonic() - t0) * 1000)
-            logger.info("ensemble_update: wrote %d player blend rows in %dms", records_written, elapsed)
+            logger.info(
+                "ensemble_update: wrote %d player blend rows in %dms (inserted=%d updated=%d skipped=%d)",
+                records_written,
+                elapsed,
+                inserted,
+                updated,
+                skipped,
+            )
             self._record_job_run("ensemble_update", "success", records_written)
-            return {"status": "success", "records": records_written, "elapsed_ms": elapsed}
+            return {
+                "status": "success",
+                "records": records_written,
+                "elapsed_ms": elapsed,
+                "inserted": inserted,
+                "updated": updated,
+                "skipped": skipped,
+            }
 
         return await _with_advisory_lock(LOCK_IDS["ensemble_update"], _run)
 

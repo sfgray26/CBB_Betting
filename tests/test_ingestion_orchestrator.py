@@ -99,6 +99,7 @@ from backend.services.daily_ingestion import (  # noqa: E402
     DailyIngestionOrchestrator,
     _with_advisory_lock,
     LOCK_IDS,
+    _extract_blend_rows,
     _serialize_ros_frames,
     _deserialize_ros_frames,
     _load_persisted_ros_cache,
@@ -476,3 +477,21 @@ def test_load_persisted_ros_cache_metadata_only():
     assert bat_raw is None
     assert pit_raw is None
     assert loaded_at == fetched_at
+
+
+def test_extract_blend_rows_skips_missing_player_id_and_empty_metrics():
+    """Blend row extraction should skip malformed rows before the atomic upsert stage."""
+    import pandas as pd
+
+    blend_df = pd.DataFrame([
+        {"player_id": "player_1", "name": "Player One", "HR": 22, "AVG": 0.271},
+        {"player_id": "", "name": "Missing Id", "HR": 10, "AVG": 0.244},
+        {"player_id": "player_2", "name": "Empty Metrics", "HR": None, "AVG": None},
+    ])
+
+    rows, skipped = _extract_blend_rows(blend_df, {"HR": "blend_hr", "AVG": "blend_avg"})
+
+    assert skipped == 2
+    assert len(rows) == 1
+    assert rows[0]["player_id"] == "player_1"
+    assert rows[0]["blend_hr"] == 22

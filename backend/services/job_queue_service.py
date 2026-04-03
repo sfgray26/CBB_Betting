@@ -27,6 +27,14 @@ def _now_et() -> datetime:
     return datetime.now(ZoneInfo("America/New_York"))
 
 
+class RetryableJobError(RuntimeError):
+    """Transient job failure that should be retried."""
+
+
+class FatalJobError(RuntimeError):
+    """Permanent job failure that should not be retried."""
+
+
 class JobQueueService:
 
     def submit_job(
@@ -123,7 +131,7 @@ class JobQueueService:
                 result = await asyncio.to_thread(self._dispatch_job, db, row._asdict())
                 # Gap 2 fix: treat logical errors (returned as dicts) as job failures
                 if isinstance(result, dict) and result.get("status") == "error":
-                    raise RuntimeError(result.get("error", "Job returned error status"))
+                    raise RetryableJobError(result.get("error", "Job returned error status"))
                 db.execute(
                     text(
                         """
@@ -140,6 +148,60 @@ class JobQueueService:
                         "job_id": job_id,
                     },
                 )
+            except FatalJobError as exc:
+                db.execute(
+                    text(
+                        """
+                        UPDATE job_queue
+                        SET status = 'failed',
+                            completed_at = :now,
+                            error = :error,
+                            retry_count = :retry_count
+                        WHERE id = :job_id
+                        """
+                    ),
+                    {
+                        "now": _now_et(),
+                        "error": str(exc),
+                        "retry_count": row.retry_count,
+                        "job_id": job_id,
+                    },
+                )
+                logger.warning("Job %s failed permanently: %s", job_id, exc)
+            except RetryableJobError as exc:
+                new_retry_count = row.retry_count + 1
+                if new_retry_count >= row.max_retries:
+                    db.execute(
+                        text(
+                            """
+                            UPDATE job_queue
+                            SET status = 'failed',
+                                completed_at = :now,
+                                error = :error,
+                                retry_count = :retry_count
+                            WHERE id = :job_id
+                            """
+                        ),
+                        {
+                            "now": _now_et(),
+                            "error": str(exc),
+                            "retry_count": new_retry_count,
+                            "job_id": job_id,
+                        },
+                    )
+                else:
+                    db.execute(
+                        text(
+                            """
+                            UPDATE job_queue
+                            SET status = 'pending',
+                                retry_count = :retry_count
+                            WHERE id = :job_id
+                            """
+                        ),
+                        {"retry_count": new_retry_count, "job_id": job_id},
+                    )
+                logger.warning("Job %s failed (attempt %d): %s", job_id, new_retry_count, exc)
             except Exception as exc:
                 new_retry_count = row.retry_count + 1
                 if new_retry_count >= row.max_retries:
@@ -185,13 +247,18 @@ class JobQueueService:
         if job_type == "lineup_optimization":
             payload = job_row["payload"]
             if isinstance(payload, str):
-                payload = json.loads(payload)
-            target_date = payload.get("target_date", "")
-            risk_tolerance = payload.get("risk_tolerance", "balanced")
-            return self._run_lineup_optimization(db, target_date, risk_tolerance)
-        raise ValueError(f"Unknown job_type: {job_type}")
+                try:
+                    payload = json.loads(payload)
+                except json.JSONDecodeError as exc:
+                    raise FatalJobError(f"Invalid JSON payload: {exc}") from exc
+            try:
+                request = LineupOptimizationRequest.model_validate(payload)
+            except Exception as exc:
+                raise FatalJobError(f"Invalid lineup optimization payload: {exc}") from exc
+            return self._run_lineup_optimization(db, request)
+        raise FatalJobError(f"Unknown job_type: {job_type}")
 
-    def _run_lineup_optimization(self, db, target_date: str, risk_tolerance: str = "balanced") -> dict:
+    def _run_lineup_optimization(self, db, request: LineupOptimizationRequest) -> dict:
         # Raises on any failure — caller (process_pending_jobs) handles retry/fail logic
         from backend.fantasy_baseball.smart_lineup_selector import SmartLineupSelector, get_smart_selector  # noqa: PLC0415
         from backend.fantasy_baseball.projections_loader import load_full_board  # noqa: PLC0415
@@ -202,7 +269,7 @@ class JobQueueService:
             yahoo = get_resilient_yahoo_client()
             roster = yahoo.get_roster()
         except Exception as exc:
-            raise RuntimeError(f"Yahoo roster fetch failed: {exc}") from exc
+            raise RetryableJobError(f"Yahoo roster fetch failed: {exc}") from exc
 
         # Load projections (cached via lru_cache — fast after first call)
         try:
@@ -212,11 +279,18 @@ class JobQueueService:
             projections = []
 
         selector = get_smart_selector()
-        assignments, warnings = selector.solve_smart_lineup(roster, projections, game_date=target_date)
+        try:
+            assignments, warnings = selector.solve_smart_lineup(
+                roster,
+                projections,
+                game_date=request.target_date,
+            )
+        except Exception as exc:
+            raise RetryableJobError(f"Lineup optimization failed: {exc}") from exc
         return {
             "status": "ok",
-            "target_date": target_date,
-            "risk_tolerance": risk_tolerance,
+            "target_date": request.target_date,
+            "risk_tolerance": request.risk_tolerance.value,
             "lineup": assignments,
             "warnings": warnings,
         }
