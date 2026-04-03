@@ -1,0 +1,17 @@
+# Root Railway Configuration
+# Points to the cbb-edge-analyzer subdirectory
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "cbb-edge-analyzer/Dockerfile"
+
+[deploy]
+startCommand = "node apps/api/dist/server.js"
+numReplicas = 1
+healthcheckPath = "/health"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[deploy.resources]
+memory = "512Mi"
