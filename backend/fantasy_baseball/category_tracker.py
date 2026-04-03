@@ -10,30 +10,12 @@ from typing import Dict, List, Optional
 
 from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 from backend.fantasy_baseball.smart_lineup_selector import CategoryNeed
+from backend.utils.fantasy_stat_contract import BATTING_CATEGORIES, CATEGORY_NEED_STAT_MAP
 
 logger = logging.getLogger(__name__)
 
 
-# Yahoo stat_id to category name mapping (H2H categories)
-YAHOO_STAT_MAP = {
-    "60": "h",       # Hits
-    "7": "r",        # Runs
-    "12": "hr",      # Home Runs
-    "13": "rbi",     # RBI
-    "16": "sb",      # Stolen Bases
-    "3": "avg",      # Batting Average
-    "55": "ops",     # OPS
-    "50": "ip",      # Innings Pitched
-    "23": "w",       # Wins
-    "32": "sv",      # Saves
-    "42": "k",       # Strikeouts
-    "26": "era",     # ERA
-    "27": "whip",    # WHIP
-    "83": "nsv",     # Net Saves (SV - BS)
-}
-
-# Categories we track for lineup optimization (batting only for now)
-BATTING_CATEGORIES = ["r", "hr", "rbi", "sb", "avg", "ops"]
+YAHOO_STAT_MAP = dict(CATEGORY_NEED_STAT_MAP)
 
 
 @dataclass

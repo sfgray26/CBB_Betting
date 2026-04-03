@@ -151,6 +151,7 @@ class GameWeather:
     hitter_friendly_score: float = 5.0  # 0-10
     hr_factor: float = 1.0  # Multiplier
     game_risk: str = "low"  # "low", "medium", "high", "postponement_risk"
+    fallback_mode: bool = False
     
     def to_context(self) -> WeatherContext:
         """Convert to WeatherContext for elite context."""
@@ -451,14 +452,30 @@ class WeatherFetcher:
         
         elevation = stadium_profile.get("elevation", 0)
         park_factor = stadium_profile.get("park_factor", 1.0)
+        wind_speed = 0
+        wind_impact = "neutral"
         
         return GameWeather(
             venue=venue,
             game_time=game_time,
             temperature=temp,
             elevation=elevation,
-            hitter_friendly_score=5.0 + (park_factor - 1.0) * 10,
-            hr_factor=park_factor * (1 + (temp - 72) / 500),  # Temp adjustment
+            wind_speed=wind_speed,
+            wind_direction=wind_impact,
+            hitter_friendly_score=self._calculate_hitter_score(
+                temp,
+                wind_speed,
+                wind_impact,
+                park_factor,
+            ),
+            hr_factor=self._calculate_hr_factor(
+                temp,
+                wind_speed,
+                wind_impact,
+                park_factor,
+                elevation,
+            ),
+            fallback_mode=True,
         )
     
     def _degrees_to_direction(self, degrees: int) -> str:

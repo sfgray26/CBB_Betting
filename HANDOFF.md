@@ -1,6 +1,6 @@
 # HANDOFF.md — Fantasy Baseball Platform Master Plan (In-Season 2026 Edition)
 
-> **Date:** April 1, 2026 (updated session S7) | **Author:** Claude Code (Master Architect)
+> **Date:** April 2, 2026 (updated session S8) | **Author:** Claude Code (Master Architect)
 > **Risk Level:** ELEVATED — in-season with pre-season CSV fallback still active
 
 ---
@@ -8,6 +8,51 @@
 ## Executive Summary
 
 The platform is live for the 2026 MLB fantasy season. The Yahoo API pipeline is functional and data is flowing to all four surfaces (roster, matchup, waiver, lineup optimizer). However, the system is operating with a structural debt: pre-season Steamer CSVs are still the primary projection source while the season is active. Kimi audits K-17 through K-23 collectively expose twelve critical bugs (data corruption, silent failures, broken UI contracts) and one existential architectural gap (stale projections at 100% weight in-season). The immediate mandate is twofold: (1) close all critical bugs — twelve are identified, eight are already fixed — and (2) implement the in-season projection pipeline before pre-season CSVs become materially wrong, which is now. Every remaining open item has a clear owner and a concrete next deliverable. No vague work items exist in this document.
+
+---
+
+## Session S8 Checkpoint (Apr 2)
+
+### Mission Accomplished
+
+- Added ET-safe shared time helpers in `backend/utils/time_utils.py` and applied them to ingestion job status plus the verified fantasy lineup/statcast job hot paths.
+- Activated the projection freshness guard on `GET /api/fantasy/lineup/{lineup_date}` with `force_stale=true` override support and explicit 503 error payloads.
+- Reworked fallback weather estimation so hitter scoring and HR factor respond to estimated temperature rather than a fixed neutral value, and marked fallback responses with `fallback_mode=True`.
+- Replaced the duplicated Yahoo/fantasy stat metadata with one shared contract in `frontend/lib/fantasy-stat-contract.json`, consumed by both frontend constants and backend services.
+- Replaced process-local Fangraphs RoS dependency with a durable `projection_cache_entries` handoff path used by `fangraphs_ros`, `ensemble_update`, and the projection freshness check.
+- Added regression coverage for the new freshness gate and fallback weather behavior.
+
+### Technical State
+
+| Area | State | Evidence |
+|------|-------|----------|
+| ET date anchoring | PARTIALLY HARDENED | `daily_ingestion.py` and fantasy lineup/statcast scheduled helpers now use ET helper functions |
+| Lineup freshness gate | ACTIVE | `backend/main.py` blocks stale lineup requests with 503 unless `force_stale=true` |
+| Weather fallback realism | ACTIVE | `weather_fetcher.py` fallback score now uses estimated temperature and exposes `fallback_mode` |
+| Stat contract | CANONICALIZED | `frontend/lib/fantasy-stat-contract.json` now feeds `frontend/lib/constants.ts`, `backend/main.py`, and `backend/fantasy_baseball/category_tracker.py` |
+| RoS handoff durability | ACTIVE | `daily_ingestion.py` persists Fangraphs payloads in `projection_cache_entries` via `ProjectionCacheEntry` |
+| Verification | PASS | `py_compile` passed on touched files; `pytest tests/test_ingestion_orchestrator.py tests/test_fantasy_stat_contract.py tests/test_waiver_integration.py tests/test_weather_fetcher.py -q --tb=short` → 43 passed; `cd frontend && npx tsc --noEmit` passed |
+
+### Delegation Bundles
+
+- Claude next: A5 atomic ensemble upsert and A6 retry taxonomy.
+- Gemini next: no new frontend work until Claude finishes the shared stat contract export required for stable fantasy UI semantics.
+- Kimi next: no new research required for this checkpoint.
+
+### HANDOFF PROMPTS
+
+#### Claude Code
+
+Implement Phase A continuation in `c:\Users\sfgra\repos\Fixed\cbb-edge`. Read `HANDOFF.md`, `ORCHESTRATION.md`, `IDENTITY.md`, and `HEARTBEAT.md` first. Continue fantasy stabilization with these tasks only: (1) convert the ensemble write path in `backend/services/daily_ingestion.py` to atomic upsert semantics with inserted/updated/skipped counters using the new durable Fangraphs cache path, and (2) split retryable vs fatal exceptions in `backend/services/job_queue_service.py`. Validate with `venv\Scripts\python -m py_compile backend\services\daily_ingestion.py backend\services\job_queue_service.py backend\main.py backend\models.py` and the relevant pytest subset. Report exact file changes, verification output summary, and any migration requirement.
+
+#### Gemini CLI
+
+Do not edit Python. Stand by for frontend implementation after Claude lands the shared stat contract export. When unblocked, target only fantasy frontend files and verify with `cd frontend && npx tsc --noEmit` before any deploy.
+
+### Architect Review Queue
+
+- Decide whether the freshness gate should remain hard 503 for every lineup request or be relaxed for historical dates only.
+- Decide whether `fallback_mode` should surface directly in frontend weather chips once Gemini resumes UI work.
 
 ---
 
@@ -47,7 +92,7 @@ The platform is live for the 2026 MLB fantasy season. The Yahoo API pipeline is 
 | No FanGraphs RoS download | K-17 / K-19 | CRITICAL | `fangraphs_loader.py` built + wired: `_fetch_fangraphs_ros()` job (100_012, daily 3 AM ET) populates `_ROS_CACHE`; `_update_ensemble_blend()` job (100_014, daily 5 AM ET) computes + upserts blend columns | Claude | **FIXED S7** |
 | No ensemble blender (ATC/Steamer/ZiPS/THE BAT) | K-17 / K-19 | CRITICAL | `_update_ensemble_blend()` job wired (100_014, daily 5 AM ET); reads `_ROS_CACHE` or re-fetches, calls `compute_ensemble_blend()`, upserts `blend_hr/rbi/avg/era/whip` | Claude | **FIXED S7** |
 | No Yahoo ADP/injury polling | K-17 / K-19 | HIGH | `get_adp_and_injury_feed()` added to `yahoo_client_resilient.py`; `_poll_yahoo_adp_injury()` job wired in `daily_ingestion.py` (100_013, every 4h) | Claude | **FIXED S7** |
-| No projection freshness alerting | K-16 / K-17 | HIGH | `_check_projection_freshness()` implemented — queries ensemble_blend (<12h), statcast (<6h), checks `_ROS_CACHE` (<12h); WARNs per violation; stores report in `_job_status` | Claude | **FIXED S7** |
+| No projection freshness alerting | K-16 / K-17 | HIGH | `_check_projection_freshness()` implemented and `GET /api/fantasy/lineup/{lineup_date}` now blocks on violations unless `force_stale=true`; report stored in `_job_status` | Claude | **FIXED S8** |
 | CSV loader rejects full file on column mismatch | K-16 | MEDIUM | Header validation warning added to both loaders; per-row errors upgraded to WARNING | Claude | FIXED S5 |
 | CBB V9.2 recalibration (SNR/integrity scalar stacking) | K-12 | BLOCKED | EMAC-068 — do not touch Kelly math before Apr 7 | Claude | BLOCKED APR 7 |
 | OddsAPI to BDL GOAT MLB migration | CLAUDE.md | BLOCKED | Cancel post-tournament; expand `balldontlie.py` | Claude | BLOCKED APR 7 |
@@ -114,7 +159,7 @@ Layer 5: Projection Freshness Guard
 | `fangraphs_ros` | 100_012 | Daily 3 AM ET | **LIVE** | `_fetch_fangraphs_ros()` — populates `_ROS_CACHE` |
 | `yahoo_adp_injury` | 100_013 | Every 4 hours | **LIVE** | `_poll_yahoo_adp_injury()` — upserts status/injury to `rolling_window` |
 | `ensemble_update` | 100_014 | Daily 5 AM ET | **LIVE** | `_update_ensemble_blend()` — upserts blend_hr/rbi/avg/era/whip |
-| `projection_freshness_check` | 100_015 | Every 1 hour | **LIVE** | `_check_projection_freshness()` — alert-only SLA gate |
+| `projection_freshness_check` | 100_015 | Every 1 hour | **LIVE** | `_check_projection_freshness()` feeds active lineup SLA gate |
 
 ---
 

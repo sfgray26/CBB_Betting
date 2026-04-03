@@ -60,6 +60,8 @@ from backend.services.portfolio import get_portfolio_manager
 from backend.services.ratings import get_ratings_service
 from backend.services.job_queue_service import submit_job as jq_submit, get_job_status as jq_status, process_pending_jobs as jq_process
 from backend.utils.env_utils import get_float_env
+from backend.utils.fantasy_stat_contract import YAHOO_STAT_ID_FALLBACK
+from backend.utils.time_utils import today_et
 from backend.schemas import (
     BetLogCreate,
     BetLogResponse,
@@ -113,6 +115,52 @@ _mlb_analysis_service = None
 
 # MLB probable-starts cache: {"data": {...}, "fetched_at": datetime}
 _STARTS_CACHE: dict = {}
+
+
+def _get_projection_freshness_report() -> dict:
+    """Return the latest projection freshness report from the ingestion orchestrator."""
+    if _ingestion_orchestrator is None:
+        return {
+            "checked_at": None,
+            "violations": ["projection_freshness unavailable: ingestion orchestrator is disabled"],
+            "violation_count": 1,
+        }
+
+    jobs = _ingestion_orchestrator.get_status() or {}
+    report = jobs.get("projection_freshness") or {}
+    violations = list(report.get("violations") or [])
+
+    if report.get("checked_at") is None:
+        violations.append("projection_freshness unavailable: no freshness report has been recorded yet")
+
+    return {
+        **report,
+        "violations": violations,
+        "violation_count": len(violations),
+    }
+
+
+def _enforce_projection_freshness(consumer: str, force_stale: bool = False) -> list[str]:
+    """Block stale fantasy decisions unless the caller explicitly overrides the guard."""
+    report = _get_projection_freshness_report()
+    violations = list(report.get("violations") or [])
+    if not violations:
+        return []
+
+    message = f"Projection freshness gate triggered for {consumer}"
+    detail = {
+        "error": "projection_freshness_violation",
+        "message": message,
+        "consumer": consumer,
+        "force_stale_available": True,
+        "freshness": report,
+    }
+
+    if not force_stale:
+        raise HTTPException(status_code=503, detail=detail)
+
+    logger.warning("%s -- proceeding due to force_stale override: %s", message, violations)
+    return [f"Stale-data override active: {'; '.join(violations)}"]
 
 
 @asynccontextmanager
@@ -594,7 +642,7 @@ def _morning_briefing_job():
         from backend.services.scout import generate_morning_briefing_narrative
         from backend.services.discord_simple import send_morning_brief
 
-        today = _date.today()
+        today = today_et()
         preds = (
             db.query(Prediction)
             .join(Game)
@@ -655,7 +703,7 @@ def _end_of_day_results_job():
     try:
         db = SessionLocal()
         try:
-            today = date.today()
+            today = today_et()
             settled = (
                 db.query(BetLog)
                 .join(Game)
@@ -734,7 +782,7 @@ def _tournament_bracket_job():
     from backend.services.discord_notifier import _post, _bot_token
 
     try:
-        today = date.today()
+        today = today_et()
         year = today.year
 
         # Only run between March 14 and March 20 inclusive
@@ -1112,7 +1160,7 @@ def _statcast_daily_ingestion_job():
         from datetime import date, timedelta
         
         # Run for yesterday (most recent completed day)
-        target_date = date.today() - timedelta(days=1)
+        target_date = today_et() - timedelta(days=1)
         
         logger.info("=" * 60)
         logger.info("Starting scheduled Statcast daily ingestion")
@@ -3912,6 +3960,7 @@ async def sync_keepers_pre_draft(
 async def get_fantasy_lineup_recommendations(
     lineup_date: str,
     use_smart_selector: bool = True,  # Enable smart selector by default
+    force_stale: bool = Query(False, description="Allow lineup generation even when projection freshness SLA is violated."),
     db: Session = Depends(get_db),
     user: str = Depends(verify_api_key),
 ):
@@ -3931,6 +3980,11 @@ async def get_fantasy_lineup_recommendations(
         ld = date_type.fromisoformat(lineup_date)
     except ValueError:
         raise HTTPException(status_code=422, detail="lineup_date must be YYYY-MM-DD")
+
+    lineup_warnings: list[str] = _enforce_projection_freshness(
+        consumer=f"lineup optimizer for {lineup_date}",
+        force_stale=force_stale,
+    )
 
     # Fetch Yahoo roster for player-specific rankings (best-effort)
     _lineup_roster: list = []
@@ -3964,7 +4018,6 @@ async def get_fantasy_lineup_recommendations(
         if p.get("name")
     }
 
-    lineup_warnings: list[str] = []
     batters: list[LineupPlayerOut] = []
 
     # --- Fetch game data for opponent/start_time lookup ---
@@ -5452,21 +5505,9 @@ async def get_player_valuations(
         }
 
 
-# Hardcoded fallback for Yahoo numeric stat category IDs.
-# Used when get_league_settings() fails (auth error, pre-season, rate limit).
-# Maps Yahoo stat_id → abbreviation matching the frontend STAT_LABELS keys.
-_YAHOO_STAT_FALLBACK: dict[str, str] = {
-    # Batting — confirmed across leagues (matches category_tracker.YAHOO_STAT_MAP)
-    "3": "AVG",   "7": "R",    "8": "H",    "12": "HR",  "13": "RBI",
-    "16": "SB",   "55": "OPS", "60": "NSB",  # 60=NSB (Net Stolen Bases), NOT H
-    # Pitching — confirmed across leagues
-    "21": "IP",   "23": "W",   "26": "ERA", "27": "WHIP",
-    "28": "K",    "29": "QS",  "32": "SV",  "38": "K/BB","42": "K",
-    "50": "IP",   "62": "GS",  "83": "NSV",
-    # 57=K/9 (confirmed via production logs — decimal values rejected as BB).
-    # 85=OBP per Yahoo API docs. get_league_settings() overrides when available.
-    "57": "K/9",  "85": "OBP",
-}
+# Shared fallback for Yahoo numeric stat category IDs.
+# Canonical source: frontend/lib/fantasy-stat-contract.json
+_YAHOO_STAT_FALLBACK: dict[str, str] = dict(YAHOO_STAT_ID_FALLBACK)
 
 
 @app.get("/api/fantasy/matchup", response_model=MatchupResponse)

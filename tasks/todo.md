@@ -1,5 +1,5 @@
 # CBB Edge — Task Tracker
-*Updated: 2026-03-23 (end of session) | Architect: Claude Sonnet 4.6 | Mission: EMAC-077 "DATA SUPERIORITY"*
+*Updated: 2026-04-02 (implementation checkpoint) | Architect: Claude Sonnet 4.6 | Mission: Fantasy Baseball stabilization Phase A*
 
 > **Canonical source:** `HANDOFF.md` — full specs, ADRs, exit criteria for each EPIC.
 > This file is the status board. HANDOFF.md has the implementation detail.
@@ -35,6 +35,24 @@
 ---
 
 ## Active Priority Queue
+
+### 0. Fantasy Stabilization — Phase A (ACTIVE)
+**Spec:** `HANDOFF.md` fantasy in-season pipeline sections | **Priority:** highest until stale-data risk is removed
+
+| Task | File | Done? |
+|------|------|-------|
+| Unify ET date anchoring for ingestion + fantasy lineup hot paths | `backend/services/daily_ingestion.py`, `backend/main.py`, `backend/utils/time_utils.py` | [x] |
+| Enforce projection freshness gate on lineup endpoint with `force_stale` override | `backend/main.py` | [x] |
+| Make fallback weather scoring temperature-aware and expose fallback flag | `backend/fantasy_baseball/weather_fetcher.py` | [x] |
+| Add regression coverage for freshness gate and weather fallback | `tests/test_waiver_integration.py`, `tests/test_weather_fetcher.py` | [x] |
+| Canonicalize backend/frontend stat ID contract | `frontend/lib/fantasy-stat-contract.json`, `backend/utils/fantasy_stat_contract.py`, `backend/main.py`, `backend/fantasy_baseball/category_tracker.py`, `frontend/lib/constants.ts` | [x] |
+| Replace `_ROS_CACHE` with durable DB-backed handoff | `backend/services/daily_ingestion.py`, `backend/models.py` | [x] |
+| Convert ensemble write path to atomic upsert counters | `backend/services/daily_ingestion.py` | [ ] |
+| Split retryable vs fatal job queue failures | `backend/services/job_queue_service.py` | [ ] |
+
+**Checkpoint verification completed:** `py_compile` on touched backend files plus targeted pytest subset (`test_ingestion_orchestrator.py`, `test_fantasy_stat_contract.py`, `test_waiver_integration.py`, `test_weather_fetcher.py`) are green, and `frontend` passes `npx tsc --noEmit`.
+
+---
 
 ### 1. EPIC-1 — Time-Series Schema (DO FIRST)
 **Spec:** `HANDOFF.md §2` | **No prerequisites**

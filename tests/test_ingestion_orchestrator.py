@@ -7,7 +7,7 @@ All tests use unittest.mock -- no real DB or real API calls are made.
 import asyncio
 import sys
 import types
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 import pytest
@@ -99,6 +99,9 @@ from backend.services.daily_ingestion import (  # noqa: E402
     DailyIngestionOrchestrator,
     _with_advisory_lock,
     LOCK_IDS,
+    _serialize_ros_frames,
+    _deserialize_ros_frames,
+    _load_persisted_ros_cache,
 )
 
 
@@ -434,3 +437,42 @@ def test_ingestion_status_endpoint_returns_enabled_false_when_not_started():
 
     assert response_body["enabled"] is False
     assert response_body["jobs"] == {}
+
+
+# ===========================================================================
+# 12. durable RoS cache helpers
+# ===========================================================================
+
+def test_ros_cache_serialize_deserialize_round_trip():
+    """Persisted Fangraphs payload helper must preserve row-level projection data."""
+    import pandas as pd
+
+    frames = {
+        "atc": pd.DataFrame([
+            {"player_id": "player_001", "Name": "Test Player", "HR": 31, "AVG": 0.287}
+        ])
+    }
+
+    serialized = _serialize_ros_frames(frames)
+    restored = _deserialize_ros_frames(serialized)
+
+    assert list(serialized.keys()) == ["atc"]
+    assert restored["atc"].to_dict(orient="records")[0]["player_id"] == "player_001"
+    assert restored["atc"].to_dict(orient="records")[0]["HR"] == 31
+
+
+def test_load_persisted_ros_cache_metadata_only():
+    """Metadata-only cache load should return fetched_at without hydrating payload DataFrames."""
+    fetched_at = datetime(2026, 4, 3, 8, 0, 0)
+    entry = MagicMock(payload={"bat": {"atc": [{"player_id": "p1"}]}, "pit": {}}, fetched_at=fetched_at)
+
+    db_mock = MagicMock()
+    db_mock.query.return_value.filter.return_value.first.return_value = entry
+
+    with patch("backend.services.daily_ingestion._ensure_projection_cache_table", return_value=None), \
+         patch("backend.services.daily_ingestion.SessionLocal", return_value=db_mock):
+        bat_raw, pit_raw, loaded_at = _load_persisted_ros_cache(include_payload=False)
+
+    assert bat_raw is None
+    assert pit_raw is None
+    assert loaded_at == fetched_at

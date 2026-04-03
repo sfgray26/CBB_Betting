@@ -552,6 +552,19 @@ class ProjectionSnapshot(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
+class ProjectionCacheEntry(Base):
+    """Durable JSON cache for projection pipeline handoff data."""
+
+    __tablename__ = "projection_cache_entries"
+
+    id = Column(Integer, primary_key=True)
+    cache_key = Column(String(100), nullable=False, unique=True, index=True)
+    payload = Column(JSONB, nullable=False, default=dict)
+    fetched_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class PlayerValuationCache(Base):
     """
     Pre-computed PlayerValuationReport per player per day (ARCH-001 Phase 2).

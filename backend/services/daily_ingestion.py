@@ -10,6 +10,7 @@ ADR-004: This file is additive only. Never import betting_model or analysis.
 """
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -24,15 +25,25 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
-from backend.models import SessionLocal, PlayerDailyMetric, ProjectionSnapshot, PlayerValuationCache
+from backend.models import (
+    SessionLocal,
+    PlayerDailyMetric,
+    ProjectionSnapshot,
+    PlayerValuationCache,
+    ProjectionCacheEntry,
+    engine,
+)
 from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
+from backend.utils.time_utils import now_et, today_et
 
 logger = logging.getLogger(__name__)
 
 
-# Module-level cache: RoS projections fetched by fangraphs_ros (100_012)
-# consumed by ensemble_update (100_014) within the same Railway process.
+# Module-level mirror: RoS projections fetched by fangraphs_ros (100_012)
+# and also persisted to projection_cache_entries for cross-process durability.
 _ROS_CACHE: dict = {}
+_ROS_CACHE_KEY = "fangraphs_ros"
+_ROS_CACHE_TABLE_READY = False
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +67,98 @@ LOCK_IDS = {
     "ensemble_update": 100_014,
     "projection_freshness": 100_015,
 }
+
+
+def _ensure_projection_cache_table() -> None:
+    """Create the durable projection cache table if the migration has not run yet."""
+    global _ROS_CACHE_TABLE_READY
+    if _ROS_CACHE_TABLE_READY:
+        return
+    ProjectionCacheEntry.__table__.create(bind=engine, checkfirst=True)
+    _ROS_CACHE_TABLE_READY = True
+
+
+def _serialize_ros_frames(frames: Optional[dict]) -> dict[str, list[dict[str, Any]]]:
+    """Convert a dict of pandas DataFrames into JSON-safe row lists."""
+    if not frames:
+        return {}
+
+    serialized: dict[str, list[dict[str, Any]]] = {}
+    for system_key, frame in frames.items():
+        if frame is None:
+            continue
+        serialized[system_key] = json.loads(frame.to_json(orient="records", date_format="iso"))
+    return serialized
+
+
+def _deserialize_ros_frames(payload: Optional[dict]) -> dict[str, Any]:
+    """Rebuild pandas DataFrames from persisted RoS row payloads."""
+    if not payload:
+        return {}
+
+    import pandas as pd
+
+    restored: dict[str, Any] = {}
+    for system_key, rows in payload.items():
+        restored[system_key] = pd.DataFrame(rows or [])
+    return restored
+
+
+def _store_persisted_ros_cache(
+    bat_raw: Optional[dict],
+    pit_raw: Optional[dict],
+    fetched_at: datetime,
+) -> None:
+    """Persist raw Fangraphs payloads so downstream jobs survive process restarts."""
+    _ensure_projection_cache_table()
+    db = SessionLocal()
+    try:
+        entry = (
+            db.query(ProjectionCacheEntry)
+            .filter(ProjectionCacheEntry.cache_key == _ROS_CACHE_KEY)
+            .first()
+        )
+        payload = {
+            "bat": _serialize_ros_frames(bat_raw),
+            "pit": _serialize_ros_frames(pit_raw),
+        }
+        if entry is None:
+            entry = ProjectionCacheEntry(
+                cache_key=_ROS_CACHE_KEY,
+                payload=payload,
+                fetched_at=fetched_at,
+            )
+            db.add(entry)
+        else:
+            entry.payload = payload
+            entry.fetched_at = fetched_at
+        db.commit()
+    finally:
+        db.close()
+
+
+def _load_persisted_ros_cache(include_payload: bool = True) -> tuple[Optional[dict], Optional[dict], Optional[datetime]]:
+    """Load the last persisted Fangraphs payload and fetched timestamp."""
+    _ensure_projection_cache_table()
+    db = SessionLocal()
+    try:
+        entry = (
+            db.query(ProjectionCacheEntry)
+            .filter(ProjectionCacheEntry.cache_key == _ROS_CACHE_KEY)
+            .first()
+        )
+        if entry is None:
+            return None, None, None
+        if not include_payload:
+            return None, None, entry.fetched_at
+        payload = entry.payload or {}
+        return (
+            _deserialize_ros_frames(payload.get("bat")),
+            _deserialize_ros_frames(payload.get("pit")),
+            entry.fetched_at,
+        )
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +352,7 @@ class DailyIngestionOrchestrator:
         self._job_status[job_id] = {
             "name": job_id,
             "enabled": True,
-            "last_run": datetime.utcnow().isoformat(),
+            "last_run": now_et().isoformat(),
             "last_status": status,
             "next_run": self._get_next_run(job_id),
         }
@@ -349,7 +452,7 @@ class DailyIngestionOrchestrator:
         async def _run():
             import statistics
 
-            today = date.today()
+            today = today_et()
             cutoff = today - timedelta(days=30)
             db = SessionLocal()
             records_updated = 0
@@ -536,7 +639,7 @@ class DailyIngestionOrchestrator:
                 self._record_job_run("yahoo_adp_injury", "success", 0)
                 return {"status": "success", "records": 0}
 
-            today = date.today()
+            today = today_et()
             db = SessionLocal()
             records_written = 0
             injury_flags = 0
@@ -627,14 +730,29 @@ class DailyIngestionOrchestrator:
 
             bat_raw = fetch_all_ros("bat", delay_seconds=3.0)
             pit_raw = fetch_all_ros("pit", delay_seconds=3.0)
+            fetched_at = now_et()
 
             bat_count = sum(len(df) for df in bat_raw.values()) if bat_raw else 0
             pit_count = sum(len(df) for df in pit_raw.values()) if pit_raw else 0
 
-            # Cache for ensemble job
+            # Mirror in memory for same-process handoff and persist for cross-process durability.
             _ROS_CACHE["bat"] = bat_raw
             _ROS_CACHE["pit"] = pit_raw
-            _ROS_CACHE["fetched_at"] = datetime.now(ZoneInfo("America/New_York"))
+            _ROS_CACHE["fetched_at"] = fetched_at
+
+            try:
+                _store_persisted_ros_cache(bat_raw, pit_raw, fetched_at)
+            except Exception as exc:
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.error("fangraphs_ros: failed to persist durable cache: %s", exc)
+                self._record_job_run("fangraphs_ros", "failed")
+                return {
+                    "status": "failed",
+                    "bat_rows": bat_count,
+                    "pit_rows": pit_count,
+                    "elapsed_ms": elapsed,
+                    "error": "durable cache persist failed",
+                }
 
             elapsed = int((time.monotonic() - t0) * 1000)
             status = "ok" if (bat_raw or pit_raw) else "failed"
@@ -670,15 +788,33 @@ class DailyIngestionOrchestrator:
             pit_raw = None
             cached_at = _ROS_CACHE.get("fetched_at")
             if cached_at:
-                age_h = (datetime.now(ZoneInfo("America/New_York")) - cached_at).total_seconds() / 3600
+                age_h = (now_et() - cached_at).total_seconds() / 3600
                 if age_h < 4:
                     bat_raw = _ROS_CACHE.get("bat")
                     pit_raw = _ROS_CACHE.get("pit")
 
             if not bat_raw and not pit_raw:
+                persisted_bat, persisted_pit, persisted_at = _load_persisted_ros_cache()
+                if persisted_at is not None:
+                    age_h = (now_et() - persisted_at).total_seconds() / 3600
+                    if age_h < 4:
+                        bat_raw = persisted_bat
+                        pit_raw = persisted_pit
+                        cached_at = persisted_at
+                        _ROS_CACHE["bat"] = bat_raw
+                        _ROS_CACHE["pit"] = pit_raw
+                        _ROS_CACHE["fetched_at"] = persisted_at
+
+            if not bat_raw and not pit_raw:
                 logger.info("ensemble_update: cache miss — re-fetching FanGraphs RoS")
                 bat_raw = fetch_all_ros("bat", delay_seconds=3.0)
                 pit_raw = fetch_all_ros("pit", delay_seconds=3.0)
+                if bat_raw or pit_raw:
+                    fetched_at = now_et()
+                    _ROS_CACHE["bat"] = bat_raw
+                    _ROS_CACHE["pit"] = pit_raw
+                    _ROS_CACHE["fetched_at"] = fetched_at
+                    _store_persisted_ros_cache(bat_raw, pit_raw, fetched_at)
 
             if not bat_raw and not pit_raw:
                 elapsed = int((time.monotonic() - t0) * 1000)
@@ -689,7 +825,7 @@ class DailyIngestionOrchestrator:
             bat_blend = compute_ensemble_blend(bat_raw or {}, stat_columns=["HR", "R", "RBI", "SB", "AVG"]) if bat_raw else None
             pit_blend = compute_ensemble_blend(pit_raw or {}, stat_columns=["ERA", "WHIP"]) if pit_raw else None
 
-            today = date.today()
+            today = today_et()
             db = SessionLocal()
             records_written = 0
             try:
@@ -777,7 +913,7 @@ class DailyIngestionOrchestrator:
     async def _check_projection_freshness(self) -> dict:
         """
         SLA gate: warn when projection data is stale but do NOT block anything.
-        SLAs: ensemble_blend ≤ 12 h, statcast ≤ 6 h, _ROS_CACHE ≤ 12 h.
+        SLAs: ensemble_blend ≤ 12 h, statcast ≤ 6 h, Fangraphs RoS cache ≤ 12 h.
         Results stored in self._job_status["projection_freshness"] for /admin/ingestion/status.
         """
         t0 = time.monotonic()
@@ -840,11 +976,11 @@ class DailyIngestionOrchestrator:
             finally:
                 db.close()
 
-            # --- _ROS_CACHE SLA (12 hours, in-memory) ---
+            # --- persisted Fangraphs RoS cache SLA (12 hours) ---
             SLA_ROS_H = 12
-            ros_fetched_at = _ROS_CACHE.get("fetched_at")
+            _, _, ros_fetched_at = _load_persisted_ros_cache(include_payload=False)
             if ros_fetched_at is None:
-                msg = "_ROS_CACHE empty — fangraphs_ros job has not run this process yet"
+                msg = "fangraphs_ros cache missing — durable RoS cache has not been persisted yet"
                 logger.warning("PROJECTION FRESHNESS: %s", msg)
                 violations.append(msg)
             else:
@@ -853,7 +989,7 @@ class DailyIngestionOrchestrator:
                 age_h = (now - ros_fetched_at).total_seconds() / 3600
                 report["ros_cache_age_h"] = round(age_h, 1)
                 if age_h > SLA_ROS_H:
-                    msg = f"_ROS_CACHE stale: {age_h:.1f}h > SLA {SLA_ROS_H}h"
+                    msg = f"fangraphs_ros cache stale: {age_h:.1f}h > SLA {SLA_ROS_H}h"
                     logger.warning("PROJECTION FRESHNESS: %s", msg)
                     violations.append(msg)
 
@@ -888,7 +1024,7 @@ class DailyIngestionOrchestrator:
                 return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
 
             # Persist summary to ProjectionSnapshot
-            yesterday = date.today() - timedelta(days=1)
+            yesterday = today_et() - timedelta(days=1)
             db = SessionLocal()
             try:
                 snapshot = ProjectionSnapshot(
@@ -928,7 +1064,7 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            cutoff = date.today() - timedelta(days=90)
+            cutoff = today_et() - timedelta(days=90)
             db = SessionLocal()
             try:
                 result = db.execute(

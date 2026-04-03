@@ -490,3 +490,75 @@ class TestCloserAlert:
             {"name": "Batter C", "category_contributions": {"hr": 0.7, "nsv": 0.0}},
         ]
         assert self._compute_alert(fas) is None
+
+
+# ---------------------------------------------------------------------------
+# EMAC-082: Projection Freshness Gate
+# ---------------------------------------------------------------------------
+
+class TestProjectionFreshnessGate:
+
+    def test_missing_orchestrator_reports_violation(self):
+        import backend.main as main_module
+
+        with patch.object(main_module, "_ingestion_orchestrator", None):
+            report = main_module._get_projection_freshness_report()
+
+        assert report["violation_count"] == 1
+        assert "disabled" in report["violations"][0]
+
+    def test_freshness_gate_blocks_without_override(self):
+        from fastapi import HTTPException
+        import backend.main as main_module
+
+        fake_orchestrator = MagicMock()
+        fake_orchestrator.get_status.return_value = {
+            "projection_freshness": {
+                "checked_at": "2026-04-02T09:00:00-04:00",
+                "violations": ["ensemble_blend stale: 13.2h > SLA 12h"],
+            }
+        }
+
+        with patch.object(main_module, "_ingestion_orchestrator", fake_orchestrator):
+            with pytest.raises(HTTPException) as exc_info:
+                main_module._enforce_projection_freshness("lineup optimizer for 2026-04-02")
+
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.detail["error"] == "projection_freshness_violation"
+        assert exc_info.value.detail["freshness"]["violation_count"] == 1
+
+    def test_freshness_gate_allows_force_override(self):
+        import backend.main as main_module
+
+        fake_orchestrator = MagicMock()
+        fake_orchestrator.get_status.return_value = {
+            "projection_freshness": {
+                "checked_at": "2026-04-02T09:00:00-04:00",
+                "violations": ["statcast stale: 7.1h > SLA 6h"],
+            }
+        }
+
+        with patch.object(main_module, "_ingestion_orchestrator", fake_orchestrator):
+            warnings = main_module._enforce_projection_freshness(
+                "lineup optimizer for 2026-04-02",
+                force_stale=True,
+            )
+
+        assert len(warnings) == 1
+        assert "Stale-data override active" in warnings[0]
+
+    def test_freshness_gate_allows_clean_report(self):
+        import backend.main as main_module
+
+        fake_orchestrator = MagicMock()
+        fake_orchestrator.get_status.return_value = {
+            "projection_freshness": {
+                "checked_at": "2026-04-02T09:00:00-04:00",
+                "violations": [],
+            }
+        }
+
+        with patch.object(main_module, "_ingestion_orchestrator", fake_orchestrator):
+            warnings = main_module._enforce_projection_freshness("lineup optimizer for 2026-04-02")
+
+        assert warnings == []
