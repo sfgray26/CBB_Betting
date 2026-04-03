@@ -46,18 +46,22 @@ class PositionNormalizer:
     sources like Steamer. This class handles the mapping and validation.
     """
     
-    # Map common position codes to Yahoo's expected format
+    # Map common position codes to Yahoo's expected format.
+    # League 72586 uses LF/CF/RF — there is NO generic "OF" slot.
+    # Projection sources that emit "OF" must be resolved to a specific
+    # outfield position at lineup-solve time; the normalizer preserves the
+    # original value so the solver can pick the best available slot.
     POSITION_MAP = {
         # Hitters
         "C": "C",
         "1B": "1B",
-        "2B": "2B", 
+        "2B": "2B",
         "3B": "3B",
         "SS": "SS",
         "LF": "LF",
         "CF": "CF",
         "RF": "RF",
-        "OF": "OF",  # Generic outfield (Yahoo accepts OF)
+        "OF": "OF",  # Kept for eligibility checks; NOT a valid roster slot
         "DH": "Util",  # Designated hitter -> Utility slot
         "UTIL": "Util",
         # Pitchers
@@ -65,9 +69,12 @@ class PositionNormalizer:
         "RP": "RP",
         "P": "P",  # Generic pitcher (Yahoo accepts P)
     }
-    
+
     # Positions that can fill utility slot
-    UTILITY_ELIGIBLE = {"1B", "2B", "3B", "SS", "C", "OF", "LF", "CF", "RF", "DH"}
+    UTILITY_ELIGIBLE = {"1B", "2B", "3B", "SS", "C", "LF", "CF", "RF", "OF", "DH"}
+
+    # Valid outfield slot positions in this league (no generic OF slot)
+    OUTFIELD_POSITIONS = {"LF", "CF", "RF"}
     
     @classmethod
     def normalize_position(cls, position: str) -> str:
@@ -100,11 +107,14 @@ class PositionNormalizer:
         # Direct match
         if slot_pos in player_positions:
             return True
-        
-        # Outfield flexibility: LF/CF/RF can fill OF slot
-        if slot_pos == "OF" and player_positions.intersection({"LF", "CF", "RF"}):
-            return True
-        
+
+        # Outfield flexibility: LF/CF/RF slots can be filled by any OF-eligible player.
+        # A player tagged "OF" (generic) can fill LF, CF, or RF.
+        # A player tagged LF can also fill CF/RF (Yahoo allows cross-OF).
+        if slot_pos in cls.OUTFIELD_POSITIONS:
+            if player_positions.intersection(cls.OUTFIELD_POSITIONS | {"OF"}):
+                return True
+
         # Utility slot: Any hitter can fill Util
         if slot_pos == "Util" and player_positions.intersection(cls.UTILITY_ELIGIBLE):
             return True

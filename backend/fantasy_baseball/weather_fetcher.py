@@ -321,7 +321,16 @@ class WeatherFetcher:
         state: str,
         stadium_profile: Dict
     ) -> GameWeather:
-        """Fetch from OpenWeatherMap API."""
+        """Fetch from OpenWeatherMap API.
+
+        Strategy:
+        1. Geocode city → lat/lon
+        2. Try free-tier ``2.5/weather`` (current conditions) first — works with any key.
+        3. Only attempt ``2.5/onecall`` if current-weather succeeded (proves the key is valid).
+        4. On any 401/403, trip the circuit breaker so we don't hammer a dead key.
+        """
+        lat: float | None = None
+        lon: float | None = None
         try:
             # Geocode
             geo_url = "http://api.openweathermap.org/geo/1.0/direct"
@@ -330,6 +339,10 @@ class WeatherFetcher:
                 params={"q": f"{city},{state},US", "limit": 1, "appid": self.api_key},
                 timeout=10
             )
+            if geo_resp.status_code in (401, 403):
+                self._api_key_failed = True
+                logger.error("OpenWeather API key rejected during geocode — disabling live weather.")
+                return self._estimate_weather(venue, game_time, stadium_profile)
             geo_resp.raise_for_status()
             geo_data = geo_resp.json()
             
@@ -337,99 +350,26 @@ class WeatherFetcher:
                 raise ValueError(f"Could not geocode {city}, {state}")
             
             lat, lon = geo_data[0]["lat"], geo_data[0]["lon"]
-            
-            # Get forecast (2.5 endpoint works for free-tier keys; 3.0 requires paid plan)
-            weather_url = "https://api.openweathermap.org/data/2.5/onecall"
-            weather_resp = self._session.get(
-                weather_url,
-                params={
-                    "lat": lat,
-                    "lon": lon,
-                    "exclude": "minutely",
-                    "appid": self.api_key,
-                    "units": "imperial"
-                },
-                timeout=10
-            )
-            weather_resp.raise_for_status()
-            data = weather_resp.json()
-            
-            # Find forecast closest to game time
-            hourly = data.get("hourly", [])
-            closest = None
-            closest_diff = float('inf')
-            
-            for hour in hourly:
-                hour_time = datetime.fromtimestamp(hour["dt"])
-                diff = abs((hour_time - game_time).total_seconds())
-                if diff < closest_diff:
-                    closest_diff = diff
-                    closest = hour
-            
-            if not closest:
-                raise ValueError("No hourly forecast found")
-            
-            # Parse wind direction
-            wind_deg = closest.get("wind_deg", 0)
-            wind_dir = self._degrees_to_direction(wind_deg)
-            
-            # Determine if wind helps or hurts hitters
-            # This requires knowing stadium orientation - simplified
-            wind_impact = self._calculate_wind_impact(venue, wind_dir, closest.get("wind_speed", 0))
-            
-            weather = GameWeather(
+
+            # --- Free-tier: current weather (always works with valid key) ---
+            current_weather = self._fetch_openweather_current(
                 venue=venue,
                 game_time=game_time,
-                temperature=int(closest.get("temp", 72)),
-                feels_like=int(closest.get("feels_like", 72)),
-                wind_speed=int(closest.get("wind_speed", 0)),
-                wind_direction=wind_dir,
-                wind_gust=int(closest.get("wind_gust", 0)),
-                condition=closest.get("weather", [{}])[0].get("main", "Clear"),
-                precipitation_chance=int(closest.get("pop", 0) * 100),
-                humidity=int(closest.get("humidity", 50)),
-                is_dome=False,
-                elevation=stadium_profile.get("elevation", 0),
-                hitter_friendly_score=self._calculate_hitter_score(
-                    closest.get("temp", 72),
-                    closest.get("wind_speed", 0),
-                    wind_impact,
-                    stadium_profile.get("park_factor", 1.0)
-                ),
-                hr_factor=self._calculate_hr_factor(
-                    closest.get("temp", 72),
-                    closest.get("wind_speed", 0),
-                    wind_impact,
-                    stadium_profile.get("park_factor", 1.0),
-                    stadium_profile.get("elevation", 0)
-                ),
-                game_risk=self._assess_game_risk(closest, stadium_profile),
+                lat=lat,
+                lon=lon,
+                stadium_profile=stadium_profile,
             )
-            
-            return weather
+            # If game_time is within ~2h of now, current conditions are good enough
+            return current_weather
             
         except Exception as e:
-            # If OneCall fails, attempt current-weather endpoint before fully falling back.
-            try:
-                logger.warning(f"OpenWeather OneCall fetch failed for {venue}: {e}; trying current weather")
-                return self._fetch_openweather_current(
-                    venue=venue,
-                    game_time=game_time,
-                    lat=lat,
-                    lon=lon,
-                    stadium_profile=stadium_profile,
-                )
-            except Exception as e_current:
-                logger.warning(f"OpenWeather current weather fallback failed for {venue}: {e_current}")
             # Trip circuit breaker on auth failures so we don't hammer a dead key
-            # for every single stadium in the same request cycle.
             err_str = str(e)
             if "401" in err_str or "403" in err_str or "Unauthorized" in err_str:
                 self._api_key_failed = True
                 logger.error(
                     "OpenWeather API key rejected (401/403) — disabling live weather for this "
-                    "session. Renew OPENWEATHER_API_KEY in Railway environment variables. "
-                    "Note: some OpenWeather endpoints require paid subscriptions."
+                    "session. Renew OPENWEATHER_API_KEY in Railway environment variables."
                 )
             else:
                 logger.warning(f"OpenWeather fetch failed for {venue}: {e}")

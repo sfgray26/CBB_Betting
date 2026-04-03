@@ -60,7 +60,7 @@ from backend.services.portfolio import get_portfolio_manager
 from backend.services.ratings import get_ratings_service
 from backend.services.job_queue_service import submit_job as jq_submit, get_job_status as jq_status, process_pending_jobs as jq_process
 from backend.utils.env_utils import get_float_env
-from backend.utils.fantasy_stat_contract import YAHOO_STAT_ID_FALLBACK
+from backend.utils.fantasy_stat_contract import YAHOO_STAT_ID_FALLBACK, LEAGUE_SCORING_CATEGORIES
 from backend.utils.time_utils import today_et
 from backend.schemas import (
     BetLogCreate,
@@ -4723,24 +4723,24 @@ async def get_fantasy_waiver_recommendations(
             # NSV: prefer actual Yahoo season stats (stat_id 83 → "NSV") over stale
             # board projections.  Board projections are pre-season and don't reflect
             # role changes (e.g., SP→RP or vice versa).
+            # IMPORTANT: Only assign NSV to actual Relief Pitchers. Starting pitchers
+            # should never show saves — Yahoo may return stale/zero values for SPs.
+            _is_reliever = "RP" in positions
             _raw_nsv = 0.0
-            if "NSV" in _translated_stats:
-                try:
-                    _raw_nsv = round(float(_translated_stats["NSV"]), 1)
-                except (TypeError, ValueError):
-                    pass
-            elif "83" in _raw_stats:
-                try:
-                    _raw_nsv = round(float(_raw_stats["83"]), 1)
-                except (TypeError, ValueError):
-                    pass
-            else:
-                # Fallback to board projection only for relievers.
-                _is_reliever = "RP" in positions
-                if _is_reliever:
-                    _raw_nsv = round(float((board_player.get("proj") or {}).get("nsv", 0.0)), 1)
+            if _is_reliever:
+                if "NSV" in _translated_stats:
+                    try:
+                        _raw_nsv = round(float(_translated_stats["NSV"]), 1)
+                    except (TypeError, ValueError):
+                        pass
+                elif "83" in _raw_stats:
+                    try:
+                        _raw_nsv = round(float(_raw_stats["83"]), 1)
+                    except (TypeError, ValueError):
+                        pass
                 else:
-                    _raw_nsv = 0.0
+                    # Fallback to board projection for relievers only.
+                    _raw_nsv = round(float((board_player.get("proj") or {}).get("nsv", 0.0)), 1)
 
             need_score = 0.0
             contributions: dict = {}
@@ -5708,6 +5708,12 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
     except Exception as _e:
         logger.warning("get_league_settings failed, using fallback stat_id_map: %s", _e)
 
+    # If league settings were unavailable, fall back to the hardcoded league scoring
+    # categories so we still filter out display-only/non-league stats (OBP, K/BB, etc.)
+    if not active_stat_abbrs and LEAGUE_SCORING_CATEGORIES:
+        active_stat_abbrs = set(LEAGUE_SCORING_CATEGORIES)
+        logger.info("Using hardcoded LEAGUE_SCORING_CATEGORIES as fallback: %s", sorted(active_stat_abbrs))
+
     try:
         matchups = client.get_scoreboard()
         logger.info("Matchup scoreboard: %d matchups returned", len(matchups))
@@ -6442,7 +6448,7 @@ async def apply_fantasy_lineup(
     roster_lookup_by_key: dict[str, dict] = {}
     roster_lookup_by_name: dict[str, dict] = {}
     try:
-        roster_players = client.get_roster(team_key=team_key, date=apply_date)
+        roster_players = client.get_roster(team_key=team_key)
         for rp in roster_players:
             rp_key = str(rp.get("player_key") or "").strip()
             rp_name = str(rp.get("name") or "").strip().lower()
@@ -6467,6 +6473,16 @@ async def apply_fantasy_lineup(
     # Build optimized_lineup dict expected by ResilientYahooClient
     # The resilient client's set_lineup_resilient expects a specific format
     sanitized_players: list[dict] = []
+    # Yahoo player keys can be "mlb.p.XXXXX" (sport alias) or "469.p.XXXXX" (game-id prefix).
+    # Both are valid — Yahoo accepts either format in the set_lineup XML payload.
+    def _is_valid_yahoo_key(key: str) -> bool:
+        """Return True if key looks like a Yahoo player key (mlb.p.X or NNN.p.X)."""
+        if not key:
+            return False
+        parts = key.split(".")
+        # Must be format: <prefix>.p.<id>
+        return len(parts) == 3 and parts[1] == "p" and parts[2].isdigit()
+
     invalid_players: list[str] = []
     for p in payload.players:
         raw_identifier = (p.player_key or "").strip()
@@ -6476,11 +6492,11 @@ async def apply_fantasy_lineup(
         if rp is None and raw_identifier:
             rp = roster_lookup_by_name.get(raw_identifier.lower())
 
-        resolved_player_key = raw_identifier if raw_identifier.startswith("mlb.p.") else ""
+        resolved_player_key = raw_identifier if _is_valid_yahoo_key(raw_identifier) else ""
         if rp:
             resolved_player_key = str(rp.get("player_key") or resolved_player_key or "").strip()
 
-        if not resolved_player_key.startswith("mlb.p."):
+        if not _is_valid_yahoo_key(resolved_player_key):
             invalid_players.append(raw_identifier or "<missing>")
             continue
 
@@ -6514,7 +6530,7 @@ async def apply_fantasy_lineup(
                 "success": False,
                 "error": (
                     "Invalid player identifiers in lineup payload. Expected Yahoo player keys "
-                    "formatted as mlb.p.XXXXX or exact roster names."
+                    "formatted as mlb.p.XXXXX or 469.p.XXXXX, or exact roster names."
                 ),
                 "invalid_players": invalid_players,
             },

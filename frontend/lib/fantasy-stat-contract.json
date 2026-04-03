@@ -115,8 +115,6 @@
     "AVG",
     "OPS",
     "NSB",
-    "SB",
-    "H/AB",
     "W",
     "L",
     "HRA",
@@ -128,12 +126,7 @@
     "QS",
     "NSV",
     "IP",
-    "SV",
-    "HLD",
-    "K/BB",
-    "GS",
-    "BB",
-    "OBP"
+    "GS"
   ],
   "categoryNeedStatMap": {
     "3": "avg",
@@ -155,5 +148,9 @@
     "avg",
     "ops",
     "nsb"
+  ],
+  "leagueScoringCategories": [
+    "R", "H", "HR", "RBI", "K(B)", "TB", "AVG", "OPS", "NSB",
+    "W", "L", "HRA", "K", "ERA", "WHIP", "K/9", "QS", "NSV"
   ]
 }

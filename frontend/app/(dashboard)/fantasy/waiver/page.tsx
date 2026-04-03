@@ -218,7 +218,6 @@ function TwoStartTable({ pitchers, onAdd, isAdding }: { pitchers: WaiverPlayer[]
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider">Pitcher</th>
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider w-14">Team</th>
             <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-28">Starts This Week</th>
-            <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-20">Owned%</th>
             <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Need Score</th>
             <th className="px-3 py-3 text-center text-xs font-semibold text-zinc-500 uppercase tracking-wider w-16">Add</th>
           </tr>
@@ -233,9 +232,6 @@ function TwoStartTable({ pitchers, onAdd, isAdding }: { pitchers: WaiverPlayer[]
               <td className="px-3 py-2.5 text-zinc-400 font-mono text-xs">{p.team}</td>
               <td className="px-3 py-2.5 text-right font-mono text-xs font-semibold text-sky-400 tabular-nums">
                 {p.starts_this_week}
-              </td>
-              <td className="px-3 py-2.5 text-right font-mono text-xs text-zinc-400 tabular-nums">
-                {p.owned_pct.toFixed(1)}%
               </td>
               <td className="px-3 py-2.5 text-right font-mono text-xs font-semibold text-amber-400 tabular-nums">
                 {p.need_score.toFixed(2)}

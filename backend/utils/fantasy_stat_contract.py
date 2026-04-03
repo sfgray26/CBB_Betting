@@ -38,3 +38,8 @@ MATCHUP_DISPLAY_ONLY: tuple[str, ...] = tuple(_FANTASY_STAT_CONTRACT["matchupDis
 MATCHUP_STAT_ORDER: tuple[str, ...] = tuple(_FANTASY_STAT_CONTRACT["matchupStatOrder"])
 CATEGORY_NEED_STAT_MAP: dict[str, str] = dict(_FANTASY_STAT_CONTRACT["categoryNeedStatMap"])
 BATTING_CATEGORIES: tuple[str, ...] = tuple(_FANTASY_STAT_CONTRACT["battingCategories"])
+# Hard-coded league scoring categories (League 72586): 9 batting + 9 pitching = 18 total.
+# Used as fallback when get_league_settings() is unavailable.
+LEAGUE_SCORING_CATEGORIES: frozenset[str] = frozenset(
+    _FANTASY_STAT_CONTRACT.get("leagueScoringCategories", [])
+)

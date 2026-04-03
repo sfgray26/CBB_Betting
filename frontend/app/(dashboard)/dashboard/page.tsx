@@ -1,6 +1,6 @@
 "use client"
 
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, keepPreviousData } from "@tanstack/react-query"
 import { endpoints } from "@/lib/api"
 import type { DashboardData } from "@/lib/types"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
@@ -12,16 +12,18 @@ import {
   Users,
   Activity,
   Zap,
+  Target,
 } from "lucide-react"
 
 // Dashboard panel components - simplified inline versions
 
 export default function DashboardPage() {
-  const { data: response, isLoading, error: queryError } = useQuery({
+  const { data: response, isLoading, isFetching, error: queryError } = useQuery({
     queryKey: ['dashboard'],
     queryFn: endpoints.getDashboard,
     staleTime: 2 * 60_000,       // serve cached data for 2 min
     refetchInterval: 5 * 60_000, // auto-refresh every 5 min
+    placeholderData: keepPreviousData,
   })
 
   const dashboard: DashboardData | null = response?.success ? response.data : null
@@ -29,7 +31,8 @@ export default function DashboardPage() {
     ? (queryError instanceof Error ? queryError.message : "Failed to load dashboard")
     : response && !response.success ? "Failed to load dashboard data" : null
 
-  if (isLoading) {
+  // Only show skeleton on very first load (no cached data yet)
+  if (isLoading && !dashboard) {
     return <DashboardSkeleton />
   }
 
@@ -57,8 +60,27 @@ export default function DashboardPage() {
     )
   }
 
+  // Compute close categories from matchup preview
+  const closeCategories = (() => {
+    const mp = dashboard.matchup_preview
+    if (!mp) return []
+    return Object.keys(mp.my_projected_categories).filter((cat) => {
+      const mine = mp.my_projected_categories[cat] ?? 0
+      const theirs = mp.opponent_projected_categories[cat] ?? 0
+      return Math.abs(mine - theirs) < 2
+    })
+  })()
+
   return (
     <div className="container mx-auto py-8 px-4">
+      {/* Stale indicator */}
+      {isFetching && (
+        <div className="mb-4 text-xs text-zinc-500 flex items-center gap-1.5">
+          <span className="inline-block h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+          Refreshing…
+        </div>
+      )}
+
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-xl font-semibold text-zinc-100 mb-2">Fantasy Baseball Dashboard</h1>
@@ -74,11 +96,11 @@ export default function DashboardPage() {
       {/* Quick Stats Row */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         <QuickStatCard
-          title="Lineup Status"
-          value={`${dashboard.lineup_filled_count}/${dashboard.lineup_total_count}`}
-          description="Positions filled"
-          icon={<Users className="h-4 w-4" />}
-          trend={dashboard.lineup_gaps.length === 0 ? "good" : "warning"}
+          title="Close Categories"
+          value={`${closeCategories.length}`}
+          description={closeCategories.length > 0 ? closeCategories.slice(0, 3).join(', ') : 'No tight races'}
+          icon={<Target className="h-4 w-4" />}
+          trend={closeCategories.length > 3 ? "warning" : closeCategories.length > 0 ? "neutral" : "good"}
         />
         <QuickStatCard
           title="Healthy Players"

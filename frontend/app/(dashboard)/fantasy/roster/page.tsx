@@ -87,9 +87,6 @@ function RosterTable({ players }: { players: RosterPlayer[] }) {
             <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">
               Z-Score
             </th>
-            <th className="px-3 py-3 text-center text-xs font-semibold text-zinc-500 uppercase tracking-wider w-28">
-              Undroppable
-            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-800/60">
@@ -137,13 +134,6 @@ function RosterTable({ players }: { players: RosterPlayer[] }) {
               </td>
               <td className={cn('px-3 py-2.5 text-right font-mono text-xs font-semibold tabular-nums', zScoreColor(p.z_score))}>
                 {p.z_score !== null ? (p.z_score >= 0 ? '+' : '') + p.z_score.toFixed(2) : '-'}
-              </td>
-              <td className="px-3 py-2.5 text-center text-xs text-zinc-500">
-                {p.is_undroppable ? (
-                  <span className="text-amber-400 font-semibold">Yes</span>
-                ) : (
-                  '-'
-                )}
               </td>
             </tr>
           ))}
