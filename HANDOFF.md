@@ -16,6 +16,28 @@ The platform is live for the 2026 MLB fantasy season. The Yahoo API pipeline is 
 - Remediation: `backend/utils/fantasy_stat_contract.py` now checks both frontend and backend-local contract paths.
 - Added backend runtime copy at `backend/utils/fantasy_stat_contract.json` so backend service boots even when frontend is absent from image.
 
+### Session S10 Hotfix (Apr 3)
+
+- Hardened lineup actuation pipeline at `PUT /api/fantasy/lineup/apply`:
+  - Enforced ET date default (`America/New_York`) for apply date.
+  - Added strict incoming player identifier sanitization (must resolve to `mlb.p.XXXXX`).
+  - Added roster-backed position enrichment so OF payloads can resolve to LF/CF/RF eligibility when needed.
+- Weather fetch compatibility fix in `backend/fantasy_baseball/weather_fetcher.py`:
+  - Switched OneCall request to `data/2.5/onecall` (free-tier compatible path).
+  - Added fallback to `data/2.5/weather` before degrading to estimated weather.
+- Matchup payload alignment fix in `GET /api/fantasy/matchup`:
+  - Team stat extraction now filters to active scoring categories from league settings to prevent OBP/K-BB column drift.
+- Waiver wire reliability improvements in `GET /api/fantasy/waiver`:
+  - Normalized outgoing strikeout key for frontend (`K(P)` → `K`).
+  - Prevented NSV projection fallback for non-RP players.
+- Added direct waiver actuation endpoint:
+  - `POST /api/fantasy/waiver/add?add_player_key=...&drop_player_key=...`
+  - Frontend wired to call endpoint from waiver tables (replaces Yahoo deep-link-only flow).
+- Frontend lineup UX cleanup:
+  - Added Debug Mode toggle to hide/show Implied Runs and Park Factor columns.
+  - Smart Score now rendered on normalized 0-100 scale for readability.
+  - Apply payload only sends canonical Yahoo player keys.
+
 ---
 
 ## Session S8 Checkpoint (Apr 2)

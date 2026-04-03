@@ -36,6 +36,19 @@
 
 ## Active Priority Queue
 
+### 0A. Fantasy Production Audit Hotfix — Apr 3 (COMPLETED)
+
+| Task | File | Done? |
+|------|------|-------|
+| Harden lineup apply payload: strict Yahoo key sanitization + OF fallback + ET date | `backend/main.py`, `frontend/app/(dashboard)/fantasy/lineup/page.tsx` | [x] |
+| Fix weather API compatibility: OneCall free-tier fallback chain | `backend/fantasy_baseball/weather_fetcher.py` | [x] |
+| Filter matchup payload to active scoring categories only | `backend/main.py` | [x] |
+| Stabilize waiver stat rendering and NSV reliever-only fallback | `backend/main.py` | [x] |
+| Add direct waiver add/drop API actuation + frontend button wiring | `backend/main.py`, `frontend/lib/api.ts`, `frontend/app/(dashboard)/fantasy/waiver/page.tsx` | [x] |
+| Validation: py_compile + frontend typecheck | backend + frontend | [x] |
+
+**Review:** Critical / High fantasy production regressions addressed in code with compile and type checks passing. Remaining medium UX redesign items (dashboard widget model and roster trend data source) need separate scoped implementation.
+
 ### 0. Fantasy Stabilization — Phase A (ACTIVE)
 **Spec:** `HANDOFF.md` fantasy in-season pipeline sections | **Priority:** highest until stale-data risk is removed
 

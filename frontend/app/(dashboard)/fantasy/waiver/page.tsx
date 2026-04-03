@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation } from '@tanstack/react-query'
 import { ArrowLeftRight, RefreshCw, Clock } from 'lucide-react'
 import { endpoints } from '@/lib/api'
 import { Card, CardHeader, CardTitle } from '@/components/ui/card'
@@ -13,9 +13,6 @@ import type { CategoryDeficit, WaiverPlayer, WaiverRecommendation } from '@/lib/
 // Helpers
 // ---------------------------------------------------------------------------
 
-const PRIORITY_STATS = ['HR', 'RBI', 'AVG', 'ERA', 'WHIP', 'K', 'NSV']
-// Stats dict is now keyed by abbreviation (translated server-side via league settings sid_map).
-const RATIO_DISPLAY = new Set(['AVG', 'ERA', 'WHIP'])
 
 // ---------------------------------------------------------------------------
 // Category deficit card
@@ -110,7 +107,19 @@ function TableSkeleton({ rows = 6 }: { rows?: number }) {
 // Waiver player table
 // ---------------------------------------------------------------------------
 
-function WaiverTable({ players, label }: { players: WaiverPlayer[]; label: string }) {
+function WaiverTable({
+  players,
+  label,
+  onAdd,
+  isAdding,
+  addedKey,
+}: {
+  players: WaiverPlayer[]
+  label: string
+  onAdd: (playerKey: string) => void
+  isAdding: boolean
+  addedKey: string | null
+}) {
   if (players.length === 0) {
     return <p className="text-zinc-600 text-sm text-center py-8">No {label.toLowerCase()} available.</p>
   }
@@ -124,16 +133,11 @@ function WaiverTable({ players, label }: { players: WaiverPlayer[]; label: strin
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider w-12">Pos</th>
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider w-14">Team</th>
             <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Need Score</th>
-            <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-20">Owned%</th>
-            <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider">Key Stats</th>
             <th className="px-3 py-3 text-center text-xs font-semibold text-zinc-500 uppercase tracking-wider w-16">Add</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-800/60">
           {players.map((p) => {
-            const topStats = Object.entries(p.category_contributions)
-              .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
-              .slice(0, 3)
             return (
               <tr key={p.player_id} className="hover:bg-zinc-800/50 transition-colors">
                 <td className="px-3 py-2.5">
@@ -178,48 +182,15 @@ function WaiverTable({ players, label }: { players: WaiverPlayer[]; label: strin
                 <td className="px-3 py-2.5 text-right font-mono text-xs font-semibold text-amber-400 tabular-nums">
                   {p.need_score.toFixed(2)}
                 </td>
-                <td className="px-3 py-2.5 text-right font-mono text-xs text-zinc-400 tabular-nums">
-                  {p.owned_pct.toFixed(1)}%
-                </td>
-                <td className="px-3 py-2.5 text-xs text-zinc-500 font-mono">
-                  {p.stats && Object.keys(p.stats).length > 0 ? (
-                    <div className="flex gap-x-3 gap-y-1 flex-wrap">
-                      {PRIORITY_STATS.map((abbr) => {
-                        // stats dict is keyed by abbreviation (translated server-side)
-                        const raw = p.stats![abbr]
-                        if (raw === null || raw === undefined || raw === '') return null
-                        const display = RATIO_DISPLAY.has(abbr)
-                          ? parseFloat(String(raw)).toFixed(3)
-                          : raw
-                        return (
-                          <span key={abbr}>
-                            <span className="text-zinc-600">{abbr}:</span>
-                            <span className="ml-1 text-zinc-300">{display}</span>
-                          </span>
-                        )
-                      })}
-                    </div>
-                  ) : (
-                    topStats.map(([cat, val]) => (
-                      <span key={cat} className="mr-2">
-                        <span className="text-zinc-600">{cat}:</span>
-                        <span className={cn('ml-1', val >= 0 ? 'text-emerald-400' : 'text-rose-400')}>
-                          {val >= 0 ? '+' : ''}{typeof val === 'number' && val % 1 !== 0 ? val.toFixed(2) : val}
-                        </span>
-                      </span>
-                    ))
-                  )}
-                </td>
                 <td className="px-3 py-2.5 text-center">
-                  <a
-                    href="https://baseball.fantasysports.yahoo.com/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-2 py-0.5 rounded text-xs font-semibold bg-sky-500/15 text-sky-400 border border-sky-500/30 hover:bg-sky-500/25 transition-colors"
-                    title="Add on Yahoo Fantasy"
+                  <button
+                    onClick={() => onAdd(p.player_id)}
+                    disabled={isAdding}
+                    className="px-2 py-0.5 rounded text-xs font-semibold bg-sky-500/15 text-sky-400 border border-sky-500/30 hover:bg-sky-500/25 transition-colors disabled:opacity-60"
+                    title="Add player now"
                   >
-                    Add
-                  </a>
+                    {isAdding ? 'Adding...' : addedKey === p.player_id ? 'Added' : 'Add'}
+                  </button>
                 </td>
               </tr>
             )
@@ -234,7 +205,7 @@ function WaiverTable({ players, label }: { players: WaiverPlayer[]; label: strin
 // 2-start pitcher table
 // ---------------------------------------------------------------------------
 
-function TwoStartTable({ pitchers }: { pitchers: WaiverPlayer[] }) {
+function TwoStartTable({ pitchers, onAdd, isAdding }: { pitchers: WaiverPlayer[]; onAdd: (playerKey: string) => void; isAdding: boolean }) {
   if (pitchers.length === 0) {
     return <p className="text-zinc-600 text-sm text-center py-8">No 2-start pitchers available this week.</p>
   }
@@ -271,11 +242,12 @@ function TwoStartTable({ pitchers }: { pitchers: WaiverPlayer[] }) {
               </td>
               <td className="px-3 py-2.5 text-center">
                 <button
+                  onClick={() => onAdd(p.player_id)}
                   className="px-2 py-0.5 rounded text-xs font-semibold bg-sky-500/15 text-sky-400 border border-sky-500/30 hover:bg-sky-500/25 transition-colors"
-                  disabled
-                  title="Waiver add is visual only"
+                  disabled={isAdding}
+                  title="Add player now"
                 >
-                  Add
+                  {isAdding ? 'Adding...' : 'Add'}
                 </button>
               </td>
             </tr>
@@ -377,6 +349,21 @@ export default function WaiverWirePage() {
   const [page, setPage] = useState<number>(1)
   const [showRecs, setShowRecs] = useState<boolean>(false)
   const [isStuck, setIsStuck] = useState(false)
+  const [addedKey, setAddedKey] = useState<string | null>(null)
+  const [actionMessage, setActionMessage] = useState<string>('')
+
+  const { mutate: addPlayer, isPending: isAdding } = useMutation({
+    mutationFn: (playerKey: string) => endpoints.waiverAddPlayer(playerKey),
+    onSuccess: (result) => {
+      setAddedKey(result.added)
+      setActionMessage(`Added ${result.added}`)
+      refetch()
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : 'Failed to add player'
+      setActionMessage(msg)
+    },
+  })
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['fantasy-waiver', position, sort, maxOwned, page],
@@ -529,6 +516,12 @@ export default function WaiverWirePage() {
         </div>
       )}
 
+      {actionMessage && (
+        <div className="rounded-lg border border-zinc-700/50 bg-zinc-800/40 px-4 py-2 text-xs text-zinc-300">
+          {actionMessage}
+        </div>
+      )}
+
       {/* Category tracker */}
       <Card className="p-0">
         <CardHeader className="px-5 pt-5 pb-0 mb-4">
@@ -587,7 +580,13 @@ export default function WaiverWirePage() {
               <p className="text-zinc-600 text-xs mt-1">Projections update daily after 6 AM ET.</p>
             </div>
           ) : data ? (
-            <WaiverTable players={data.top_available} label="available players" />
+            <WaiverTable
+              players={data.top_available}
+              label="available players"
+              onAdd={(playerKey) => addPlayer(playerKey)}
+              isAdding={isAdding}
+              addedKey={addedKey}
+            />
           ) : null}
         </div>
       </Card>
@@ -622,7 +621,7 @@ export default function WaiverWirePage() {
           {isLoading ? (
             <TableSkeleton rows={4} />
           ) : isError ? null : data ? (
-            <TwoStartTable pitchers={data.two_start_pitchers} />
+            <TwoStartTable pitchers={data.two_start_pitchers} onAdd={(playerKey) => addPlayer(playerKey)} isAdding={isAdding} />
           ) : null}
         </div>
       </Card>

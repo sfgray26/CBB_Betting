@@ -46,6 +46,15 @@ function scoreColor(score: number, scores: number[]): string {
   return 'text-zinc-300'
 }
 
+function normalizeSmartScore(score: number, scores: number[]): number {
+  if (scores.length === 0) return 50
+  const min = Math.min(...scores)
+  const max = Math.max(...scores)
+  if (max <= min) return 50
+  const normalized = ((score - min) / (max - min)) * 100
+  return Math.max(0, Math.min(100, Math.round(normalized)))
+}
+
 function slotBadge(slot: string | null | undefined) {
   if (!slot) return null
   const isBench = slot === 'BN'
@@ -227,9 +236,11 @@ class LineupErrorBoundary extends Component<
 function BattersTable({
   batters,
   valuationsMap,
+  showDebug,
 }: {
   batters: LineupPlayer[]
   valuationsMap: Map<string, ValuationReport>
+  showDebug: boolean
 }) {
   const scores = batters.map((b) => b.lineup_score)
 
@@ -248,8 +259,8 @@ function BattersTable({
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider w-14">Team</th>
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider w-14">Opp</th>
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Time</th>
-            <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-28">Implied Runs</th>
-            <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Park Factor</th>
+            {showDebug && <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-28">Implied Runs</th>}
+            {showDebug && <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Park Factor</th>}
             <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-20">
               <Tooltip content="Composite ranking based on projections, matchup quality, and recent form.">
                 <span className="cursor-help border-b border-dotted border-zinc-500">Smart Score</span>
@@ -283,10 +294,10 @@ function BattersTable({
                 <td className="px-3 py-2.5 text-zinc-400 font-mono text-xs">{b.team}</td>
                 <td className="px-3 py-2.5 text-zinc-500 font-mono text-xs">{b.opponent}</td>
                 <td className="px-3 py-2.5 text-zinc-500 text-xs tabular-nums">{formatTime(b.start_time)}</td>
-                <td className="px-3 py-2.5 text-right font-mono text-xs text-zinc-300 tabular-nums">{b.implied_runs.toFixed(2)}</td>
-                <td className="px-3 py-2.5 text-right font-mono text-xs text-zinc-400 tabular-nums">{b.park_factor.toFixed(3)}</td>
+                {showDebug && <td className="px-3 py-2.5 text-right font-mono text-xs text-zinc-300 tabular-nums">{b.implied_runs.toFixed(2)}</td>}
+                {showDebug && <td className="px-3 py-2.5 text-right font-mono text-xs text-zinc-400 tabular-nums">{b.park_factor.toFixed(3)}</td>}
                 <td className={cn('px-3 py-2.5 text-right font-mono text-xs font-semibold tabular-nums', scoreColor(b.lineup_score, scores))}>
-                  {b.lineup_score.toFixed(3)}
+                  {normalizeSmartScore(b.lineup_score, scores)}
                 </td>
                 <td className="px-3 py-2.5 text-right tabular-nums">
                   {projValue != null ? (
@@ -317,7 +328,7 @@ function BattersTable({
 // Pitchers table
 // ---------------------------------------------------------------------------
 
-function PitchersTable({ pitchers }: { pitchers: StartingPitcher[] }) {
+function PitchersTable({ pitchers, showDebug }: { pitchers: StartingPitcher[]; showDebug: boolean }) {
   const spOnly = pitchers.filter((p) => p.pitcher_type === 'SP')
   const scores = spOnly.map((p) => p.sp_score)
 
@@ -335,8 +346,8 @@ function PitchersTable({ pitchers }: { pitchers: StartingPitcher[] }) {
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider">Pitcher</th>
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider w-14">Team</th>
             <th className="px-3 py-3 text-left text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Time</th>
-            <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-28">Opp Implied</th>
-            <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Park Factor</th>
+            {showDebug && <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-28">Opp Implied</th>}
+            {showDebug && <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">Park Factor</th>}
             <th className="px-3 py-3 text-right text-xs font-semibold text-zinc-500 uppercase tracking-wider w-24">
               <Tooltip content="Composite ranking based on projections, matchup quality, and pitching tier.">
                 <span className="cursor-help border-b border-dotted border-zinc-500">Smart Score</span>
@@ -353,10 +364,10 @@ function PitchersTable({ pitchers }: { pitchers: StartingPitcher[] }) {
               </td>
               <td className="px-3 py-2.5 text-zinc-400 font-mono text-xs">{p.team}</td>
               <td className="px-3 py-2.5 text-zinc-500 text-xs tabular-nums">{formatTime(p.start_time)}</td>
-              <td className="px-3 py-2.5 text-right font-mono text-xs text-zinc-300 tabular-nums">{p.opponent_implied_runs.toFixed(2)}</td>
-              <td className="px-3 py-2.5 text-right font-mono text-xs text-zinc-400 tabular-nums">{p.park_factor.toFixed(3)}</td>
+              {showDebug && <td className="px-3 py-2.5 text-right font-mono text-xs text-zinc-300 tabular-nums">{p.opponent_implied_runs.toFixed(2)}</td>}
+              {showDebug && <td className="px-3 py-2.5 text-right font-mono text-xs text-zinc-400 tabular-nums">{p.park_factor.toFixed(3)}</td>}
               <td className={cn('px-3 py-2.5 text-right font-mono text-xs font-semibold tabular-nums', scoreColor(p.sp_score, scores))}>
-                {p.sp_score === 0 ? '—' : p.sp_score.toFixed(3)}
+                {p.sp_score === 0 ? '—' : normalizeSmartScore(p.sp_score, scores)}
               </td>
               <td className="px-3 py-2.5 text-center">
                 <StatusBadge status={p.status} />
@@ -375,6 +386,7 @@ function PitchersTable({ pitchers }: { pitchers: StartingPitcher[] }) {
 
 export default function DailyLineupPage() {
   const [date, setDate] = useState<string>(todayStr())
+  const [debugMode, setDebugMode] = useState<boolean>(false)
   const [applyStatus, setApplyStatus] = useState<'idle' | 'success' | 'error'>('idle')
   const [applyMessage, setApplyMessage] = useState<string>('')
 
@@ -458,11 +470,11 @@ export default function DailyLineupPage() {
     mutationFn: () => {
       const starters = [
         ...(data?.batters ?? [])
-          .filter((b) => b.status === 'START' && (b.player_key || b.player_id))
-          .map((b) => ({ player_key: b.player_key ?? b.player_id, position: b.assigned_slot ?? b.position })),
+          .filter((b) => b.status === 'START' && !!b.player_key && b.player_key.startsWith('mlb.p.'))
+          .map((b) => ({ player_key: b.player_key as string, position: b.assigned_slot ?? b.position })),
         ...(data?.pitchers ?? [])
-          .filter((p) => p.status === 'START' && (p.player_key || p.player_id))
-          .map((p) => ({ player_key: p.player_key ?? p.player_id, position: p.pitcher_type ?? 'SP' })),
+          .filter((p) => p.status === 'START' && !!p.player_key && p.player_key.startsWith('mlb.p.'))
+          .map((p) => ({ player_key: p.player_key as string, position: p.pitcher_type ?? 'SP' })),
       ]
       return endpoints.fantasyApplyLineup(date, starters)
     },
@@ -533,6 +545,17 @@ export default function DailyLineupPage() {
           >
             <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />
           </button>
+          <button
+            onClick={() => setDebugMode((v) => !v)}
+            className={cn(
+              'px-3 py-2 text-xs rounded-md border transition-colors',
+              debugMode
+                ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:bg-zinc-700'
+            )}
+          >
+            Debug Mode
+          </button>
         </div>
       </div>
 
@@ -571,6 +594,7 @@ export default function DailyLineupPage() {
           <div className="space-y-1">
             {data.lineup_warnings
               .filter(w => !w.includes('validation error') && !w.includes('Traceback'))
+              .filter(w => !w.includes('active batter slots filled') && !w.includes('active pitcher slots filled'))
               .map((w, i) => (
                 <p key={i} className="text-amber-300 text-sm">{w}</p>
               ))}
@@ -590,7 +614,7 @@ export default function DailyLineupPage() {
             ) : isError ? null : data && data.batters.length === 0 ? (
               <p className="text-zinc-600 text-sm text-center py-8">No games scheduled for this date.</p>
             ) : data ? (
-              <BattersTable batters={data.batters} valuationsMap={valuationsMap} />
+              <BattersTable batters={data.batters} valuationsMap={valuationsMap} showDebug={debugMode} />
             ) : null}
           </div>
         </Card>
@@ -607,7 +631,7 @@ export default function DailyLineupPage() {
             ) : isError ? null : data && data.pitchers.length === 0 ? (
               <p className="text-zinc-600 text-sm text-center py-8">No games scheduled for this date.</p>
             ) : data ? (
-              <PitchersTable pitchers={data.pitchers} />
+              <PitchersTable pitchers={data.pitchers} showDebug={debugMode} />
             ) : null}
           </div>
         </Card>

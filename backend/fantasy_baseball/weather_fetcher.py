@@ -338,8 +338,8 @@ class WeatherFetcher:
             
             lat, lon = geo_data[0]["lat"], geo_data[0]["lon"]
             
-            # Get forecast
-            weather_url = "https://api.openweathermap.org/data/3.0/onecall"
+            # Get forecast (2.5 endpoint works for free-tier keys; 3.0 requires paid plan)
+            weather_url = "https://api.openweathermap.org/data/2.5/onecall"
             weather_resp = self._session.get(
                 weather_url,
                 params={
@@ -409,6 +409,18 @@ class WeatherFetcher:
             return weather
             
         except Exception as e:
+            # If OneCall fails, attempt current-weather endpoint before fully falling back.
+            try:
+                logger.warning(f"OpenWeather OneCall fetch failed for {venue}: {e}; trying current weather")
+                return self._fetch_openweather_current(
+                    venue=venue,
+                    game_time=game_time,
+                    lat=lat,
+                    lon=lon,
+                    stadium_profile=stadium_profile,
+                )
+            except Exception as e_current:
+                logger.warning(f"OpenWeather current weather fallback failed for {venue}: {e_current}")
             # Trip circuit breaker on auth failures so we don't hammer a dead key
             # for every single stadium in the same request cycle.
             err_str = str(e)
@@ -417,11 +429,77 @@ class WeatherFetcher:
                 logger.error(
                     "OpenWeather API key rejected (401/403) — disabling live weather for this "
                     "session. Renew OPENWEATHER_API_KEY in Railway environment variables. "
-                    "Note: OneCall 3.0 (data/3.0/onecall) requires a paid subscription."
+                    "Note: some OpenWeather endpoints require paid subscriptions."
                 )
             else:
                 logger.warning(f"OpenWeather fetch failed for {venue}: {e}")
             return self._estimate_weather(venue, game_time, stadium_profile)
+
+    def _fetch_openweather_current(
+        self,
+        venue: str,
+        game_time: datetime,
+        lat: float,
+        lon: float,
+        stadium_profile: Dict,
+    ) -> GameWeather:
+        """Fallback for free-tier keys: current conditions only."""
+        weather_url = "https://api.openweathermap.org/data/2.5/weather"
+        weather_resp = self._session.get(
+            weather_url,
+            params={
+                "lat": lat,
+                "lon": lon,
+                "appid": self.api_key,
+                "units": "imperial",
+            },
+            timeout=10,
+        )
+        weather_resp.raise_for_status()
+        data = weather_resp.json()
+
+        main = data.get("main", {})
+        wind = data.get("wind", {})
+        weather_arr = data.get("weather", [{}])
+        weather_main = weather_arr[0].get("main", "Clear") if weather_arr else "Clear"
+
+        wind_speed = int(wind.get("speed", 0) or 0)
+        wind_dir = self._degrees_to_direction(int(wind.get("deg", 0) or 0))
+        wind_impact = self._calculate_wind_impact(venue, wind_dir, wind_speed)
+
+        temp = float(main.get("temp", 72) or 72)
+        feels_like = float(main.get("feels_like", temp) or temp)
+        park_factor = stadium_profile.get("park_factor", 1.0)
+        elevation = stadium_profile.get("elevation", 0)
+
+        return GameWeather(
+            venue=venue,
+            game_time=game_time,
+            temperature=int(temp),
+            feels_like=int(feels_like),
+            wind_speed=wind_speed,
+            wind_direction=wind_dir,
+            wind_gust=int(wind.get("gust", 0) or 0),
+            condition=weather_main,
+            precipitation_chance=0,
+            humidity=int(main.get("humidity", 50) or 50),
+            is_dome=False,
+            elevation=elevation,
+            hitter_friendly_score=self._calculate_hitter_score(
+                temp,
+                wind_speed,
+                wind_impact,
+                park_factor,
+            ),
+            hr_factor=self._calculate_hr_factor(
+                temp,
+                wind_speed,
+                wind_impact,
+                park_factor,
+                elevation,
+            ),
+            fallback_mode=True,
+        )
     
     def _estimate_weather(
         self,

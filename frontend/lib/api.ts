@@ -293,6 +293,15 @@ export const endpoints = {
   waiverRecommendations: () =>
     apiFetch<WaiverRecommendationsResponse>('/api/fantasy/waiver/recommendations'),
 
+  waiverAddPlayer: (addPlayerKey: string, dropPlayerKey?: string) => {
+    const qs = new URLSearchParams({ add_player_key: addPlayerKey })
+    if (dropPlayerKey) qs.set('drop_player_key', dropPlayerKey)
+    return apiFetch<{ success: boolean; added: string; dropped?: string | null }>(
+      `/api/fantasy/waiver/add?${qs.toString()}`,
+      { method: 'POST' },
+    )
+  },
+
   // Fantasy Baseball — Yahoo roster / matchup / lineup apply
   fantasyRoster: (): Promise<RosterResponse> =>
     apiFetch<RosterResponse>('/api/fantasy/roster'),

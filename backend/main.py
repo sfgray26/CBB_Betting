@@ -4713,9 +4713,12 @@ async def get_fantasy_waiver_recommendations(
             # Translate raw Yahoo stat_id keys → abbreviations so the frontend can
             # display stats by name (K, NSV, ERA…) without hardcoding numeric IDs.
             _raw_stats: dict = p.get("stats") or {}
-            _translated_stats: dict = {
-                sid_map.get(k, k): v for k, v in _raw_stats.items()
-            }
+            _translated_stats: dict = {}
+            for k, v in _raw_stats.items():
+                _translated_key = sid_map.get(k, k)
+                if _translated_key == "K(P)":
+                    _translated_key = "K"
+                _translated_stats[_translated_key] = v
 
             # NSV: prefer actual Yahoo season stats (stat_id 83 → "NSV") over stale
             # board projections.  Board projections are pre-season and don't reflect
@@ -4732,8 +4735,12 @@ async def get_fantasy_waiver_recommendations(
                 except (TypeError, ValueError):
                     pass
             else:
-                # Fallback to board projection only if no Yahoo stats available
-                _raw_nsv = round(float((board_player.get("proj") or {}).get("nsv", 0.0)), 1)
+                # Fallback to board projection only for relievers.
+                _is_reliever = "RP" in positions
+                if _is_reliever:
+                    _raw_nsv = round(float((board_player.get("proj") or {}).get("nsv", 0.0)), 1)
+                else:
+                    _raw_nsv = 0.0
 
             need_score = 0.0
             contributions: dict = {}
@@ -4912,6 +4919,49 @@ async def get_fantasy_waiver_recommendations(
         il_slots_available=_il_info["available"],
         faab_balance=_faab_balance,
     )
+
+
+@app.post("/api/fantasy/waiver/add")
+async def add_fantasy_waiver_player(
+    add_player_key: str = Query(..., description="Yahoo player key to add (mlb.p.XXXXX)"),
+    drop_player_key: Optional[str] = Query(None, description="Yahoo player key to drop (mlb.p.XXXXX)"),
+    user: str = Depends(verify_api_key),
+):
+    """Execute a direct Yahoo add/drop transaction from waiver UI."""
+    try:
+        client = get_yahoo_client()
+    except YahooAuthError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Yahoo not configured -- set YAHOO_REFRESH_TOKEN",
+        ) from exc
+
+    add_key = add_player_key.strip()
+    drop_key = (drop_player_key or "").strip() or None
+
+    if not add_key.startswith("mlb.p."):
+        raise HTTPException(status_code=422, detail="add_player_key must be mlb.p.XXXXX")
+    if drop_key and not drop_key.startswith("mlb.p."):
+        raise HTTPException(status_code=422, detail="drop_player_key must be mlb.p.XXXXX")
+
+    team_key = os.getenv("YAHOO_TEAM_KEY") or client.get_my_team_key()
+    try:
+        ok = client.add_drop_player(
+            add_player_key=add_key,
+            drop_player_key=drop_key,
+            team_key=team_key,
+        )
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=502, detail=f"Yahoo add/drop failed: {exc}") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Waiver add failed: {exc}") from exc
+
+    return {
+        "success": bool(ok),
+        "added": add_key,
+        "dropped": drop_key,
+        "team_key": team_key,
+    }
 
 
 @app.get("/api/fantasy/waiver/recommendations")
@@ -5716,6 +5766,10 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                     sid = str(stat.get("stat_id", ""))
                     key = stat_id_map.get(sid, sid)
                     val = stat.get("value", "")
+                    if active_stat_abbrs and key not in active_stat_abbrs:
+                        # Skip display-only/non-active categories to prevent
+                        # frontend column drift (e.g. OBP, K/BB in 9x9 leagues).
+                        continue
                     # Clamp negative values only for stats where negative is impossible.
                     # NSB (Net Stolen Bases) CAN be negative (0 SB - 1 CS = -1) — do not clamp.
                     _NON_NEGATIVE_STATS = frozenset({
@@ -6371,6 +6425,7 @@ async def apply_fantasy_lineup(
     - Apply circuit breaker protection for API failures
     """
     from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
 
     try:
         # Use ResilientYahooClient for game-aware validation and auto-correction
@@ -6381,8 +6436,22 @@ async def apply_fantasy_lineup(
             detail="Yahoo not configured -- set YAHOO_REFRESH_TOKEN",
         ) from exc
 
-    apply_date = payload.date or _dt.utcnow().strftime("%Y-%m-%d")
+    apply_date = payload.date or _dt.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
     team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+
+    roster_lookup_by_key: dict[str, dict] = {}
+    roster_lookup_by_name: dict[str, dict] = {}
+    try:
+        roster_players = client.get_roster(team_key=team_key, date=apply_date)
+        for rp in roster_players:
+            rp_key = str(rp.get("player_key") or "").strip()
+            rp_name = str(rp.get("name") or "").strip().lower()
+            if rp_key:
+                roster_lookup_by_key[rp_key] = rp
+            if rp_name:
+                roster_lookup_by_name[rp_name] = rp
+    except Exception as _exc:
+        logger.warning("Could not prefetch Yahoo roster for lineup apply sanitization: %s", _exc)
 
     # Pre-check: warn (but don't block) if no MLB games exist for this date
     apply_warnings: list[str] = []
@@ -6397,17 +6466,61 @@ async def apply_fantasy_lineup(
 
     # Build optimized_lineup dict expected by ResilientYahooClient
     # The resilient client's set_lineup_resilient expects a specific format
-    optimized_lineup = {
-        "starters": [
+    sanitized_players: list[dict] = []
+    invalid_players: list[str] = []
+    for p in payload.players:
+        raw_identifier = (p.player_key or "").strip()
+        requested_position = (p.position or "").strip()
+
+        rp = roster_lookup_by_key.get(raw_identifier)
+        if rp is None and raw_identifier:
+            rp = roster_lookup_by_name.get(raw_identifier.lower())
+
+        resolved_player_key = raw_identifier if raw_identifier.startswith("mlb.p.") else ""
+        if rp:
+            resolved_player_key = str(rp.get("player_key") or resolved_player_key or "").strip()
+
+        if not resolved_player_key.startswith("mlb.p."):
+            invalid_players.append(raw_identifier or "<missing>")
+            continue
+
+        eligible_positions = [str(x).strip() for x in (rp.get("positions") or [])] if rp else []
+        if not eligible_positions:
+            eligible_positions = [requested_position] if requested_position else []
+
+        resolved_position = requested_position
+        if resolved_position == "OF" and "OF" not in eligible_positions:
+            for of_pos in ("LF", "CF", "RF"):
+                if of_pos in eligible_positions:
+                    resolved_position = of_pos
+                    break
+        if not resolved_position:
+            resolved_position = eligible_positions[0] if eligible_positions else "BN"
+
+        sanitized_players.append(
             {
-                "id": p.player_key,
-                "player_key": p.player_key,
-                "position": p.position,
-                "positions": [p.position],  # For validation
+                "id": resolved_player_key,
+                "player_key": resolved_player_key,
+                "position": resolved_position,
+                "positions": eligible_positions,
+                "name": (rp.get("name") if rp else None),
             }
-            for p in payload.players
-        ]
-    }
+        )
+
+    if invalid_players:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "success": False,
+                "error": (
+                    "Invalid player identifiers in lineup payload. Expected Yahoo player keys "
+                    "formatted as mlb.p.XXXXX or exact roster names."
+                ),
+                "invalid_players": invalid_players,
+            },
+        )
+
+    optimized_lineup = {"starters": sanitized_players}
 
     try:
         # Use the resilient method with game-aware validation
