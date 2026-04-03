@@ -111,7 +111,8 @@ class PositionNormalizer:
         # Outfield flexibility: LF/CF/RF slots can be filled by any OF-eligible player.
         # A player tagged "OF" (generic) can fill LF, CF, or RF.
         # A player tagged LF can also fill CF/RF (Yahoo allows cross-OF).
-        if slot_pos in cls.OUTFIELD_POSITIONS:
+        # An "OF" slot can be filled by any LF/CF/RF/OF player.
+        if slot_pos in cls.OUTFIELD_POSITIONS or slot_pos == "OF":
             if player_positions.intersection(cls.OUTFIELD_POSITIONS | {"OF"}):
                 return True
 
