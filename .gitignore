@@ -79,3 +79,4 @@ frontend/tsconfig.tsbuildinfo
 # Git worktrees
 .worktrees/
 reports/GEMINI_YAHOO_PIPELINE_PAYLOADS.
+.superpowers/
