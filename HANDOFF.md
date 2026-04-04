@@ -16,6 +16,39 @@ The platform is live for the 2026 MLB fantasy season. The Yahoo API pipeline is 
 - Remediation: `backend/utils/fantasy_stat_contract.py` now checks both frontend and backend-local contract paths.
 - Added backend runtime copy at `backend/utils/fantasy_stat_contract.json` so backend service boots even when frontend is absent from image.
 
+### Session S12 (Apr 4)
+
+Phases 1-5 of fantasy/edge structural decoupling complete. `main.py` unchanged and still serves production traffic (strangler-fig).
+
+**New files:**
+- `backend/db.py` — engine factory, `NamespacedKey` (4 tests pass)
+- `backend/redis_client.py` — `NamespacedCache`, `edge_cache`, `fantasy_cache` singletons (5 tests pass)
+- `backend/models_edge.py` — typed re-export shim for betting model classes
+- `backend/models_fantasy.py` — typed re-export shim for fantasy model classes
+- `backend/routers/__init__.py`, `backend/schedulers/__init__.py` — package stubs
+- `backend/routers/edge.py` — 24 betting/analysis routes extracted from main.py
+- `backend/routers/fantasy.py` — 35 fantasy routes extracted from main.py
+- `backend/routers/admin.py` — 37 admin/health/root routes extracted from main.py
+- `backend/schedulers/edge_scheduler.py` — edge APScheduler module (imports job fns from main.py)
+- `backend/schedulers/fantasy_scheduler.py` — fantasy APScheduler module (imports job fns from main.py)
+- `backend/edge_app.py` — independent edge service entry point (4 tests pass)
+- `backend/fantasy_app.py` — independent fantasy service entry point (4 tests pass)
+
+**Test suite:** 1256 passed, 4 pre-existing failures unchanged. Route isolation verified: edge_app returns 404 for fantasy routes; fantasy_app returns 404 for edge routes.
+
+**Commits:** ab62db0 → 0a0b197 (10 commits)
+
+**Phase 6-7 (separate Postgres, Redis integration, data migration, cleanup) pending Railway provisioning by Gemini.** See `docs/superpowers/specs/2026-04-04-fantasy-edge-decoupling-design.md` Phase 6-7.
+
+**Gemini next:** Provision Fantasy Postgres service in Railway, set `FANTASY_DATABASE_URL` env var on the fantasy service, then trigger Plan B implementation.
+
+### Session S11 (Apr 3)
+
+- A5: Ensemble write path in `_update_ensemble_blend` converted to per-row savepoint semantics (`db.begin_nested()`). Individual row failures now increment `errors` counter and skip that row without aborting the whole batch. Outer commit guard retained.
+- A6: Bare `except Exception` in `process_pending_jobs` changed from retryable to fatal semantics. Unexpected exceptions no longer consume retry slots; error string prefixed with `[unexpected:TypeName]` for DB triage.
+- Phase 3.1 verified already complete — `/admin/ingestion/status` (line 2908 of `main.py`) already returns full orchestrator status including `projection_freshness` key.
+- Verification: `py_compile` passed on both files; `test_job_queue_service.py` (5/5) and `test_ingestion_orchestrator.py` (14/14) pass independently.
+
 ### Session S10 Hotfix (Apr 3)
 
 - Hardened lineup actuation pipeline at `PUT /api/fantasy/lineup/apply`:
@@ -64,7 +97,7 @@ The platform is live for the 2026 MLB fantasy season. The Yahoo API pipeline is 
 
 ### Delegation Bundles
 
-- Claude next: A5 atomic ensemble upsert and A6 retry taxonomy.
+- Claude next: Phase 3.2 (freshness gate hard-block) when ready; otherwise blocked until Apr 7 (Phase 2.6, 2.7).
 - Gemini next: no new frontend work until Claude finishes the shared stat contract export required for stable fantasy UI semantics.
 - Kimi next: no new research required for this checkpoint.
 
@@ -395,8 +428,9 @@ const scoringCats = allCats.filter(cat => MATCHUP_CATEGORIES[cat]?.scoring !== f
 |---|------|-----------|------|--------|
 | Phase 2.6 | OddsAPI → BDL GOAT MLB migration | Apr 7 subscription swap | `balldontlie.py` — `/mlb/v1/` endpoints | Large |
 | Phase 2.7 | CBB V9.2 recalibration (EMAC-068 unlocks Apr 7) | Apr 7 | `betting_model.py` | Large |
-| Phase 3.1 | Expose `projection_freshness` report via `/admin/ingestion/status` | None | `main.py` admin route | Small |
-| Phase 3.2 | Upgrade freshness gate to BLOCK lineup opt when SLA violated | After 3.1 stable | `daily_ingestion.py` + `main.py` lineup route | Medium |
+| Phase 2.6 | OddsAPI → BDL GOAT MLB migration | Apr 7 subscription swap | `balldontlie.py` — `/mlb/v1/` endpoints | Large |
+| Phase 2.7 | CBB V9.2 recalibration (EMAC-068 unlocks Apr 7) | Apr 7 | `betting_model.py` | Large |
+| Phase 3.2 | Upgrade freshness gate to BLOCK lineup opt when SLA violated | Phase 3.1 done | `daily_ingestion.py` + `main.py` lineup route | Medium |
 
 ### S7 Completed (All closed this session)
 
