@@ -536,6 +536,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# --- Strangler-fig router mounts (Phase 3) ---
+# These routers duplicate the routes already inline in this file.
+# FastAPI routes are matched in registration order; the inline routes
+# still win because they were registered first. Once Phase 5 cut-over
+# is complete and inline routes are removed, these mounts take over.
+from backend.routers.edge import router as _edge_router  # noqa: E402
+from backend.routers.fantasy import router as _fantasy_router  # noqa: E402
+from backend.routers.admin import router as _admin_router  # noqa: E402
+app.include_router(_edge_router)
+app.include_router(_fantasy_router)
+app.include_router(_admin_router)
+# --- end strangler-fig mounts ---
+
 # CORS - reads ALLOWED_ORIGINS env var (comma-separated) or falls back to wildcard.
 # API key auth means wildcard origins are safe; credentials are never cookie-based.
 _raw_origins = os.getenv("ALLOWED_ORIGINS", "")
