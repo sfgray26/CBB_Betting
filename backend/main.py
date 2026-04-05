@@ -173,13 +173,18 @@ async def lifespan(app: FastAPI):
     nightly_hour = int(os.getenv("NIGHTLY_CRON_HOUR", "3"))
     timezone = os.getenv("NIGHTLY_CRON_TIMEZONE", "America/New_York")
 
-    scheduler.add_job(
-        nightly_job,
-        CronTrigger(hour=nightly_hour, minute=0, timezone=timezone),
-        id="nightly_analysis",
-        name="Nightly Game Analysis",
-        replace_existing=True,
-    )
+    # Guard flags (INFRA-A, INFRA-B)
+    cbb_active = os.getenv("CBB_SEASON_ACTIVE", "false").lower() == "true"
+    fantasy_active = os.getenv("ENABLE_FANTASY_SCHEDULER", "false").lower() == "true"
+
+    if cbb_active:
+        scheduler.add_job(
+            nightly_job,
+            CronTrigger(hour=nightly_hour, minute=0, timezone=timezone),
+            id="nightly_analysis",
+            name="Nightly Game Analysis",
+            replace_existing=True,
+        )
 
     # Settle outcomes every 2 hours
     scheduler.add_job(
@@ -199,14 +204,15 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # O-10: Line movement monitor - runs every 30 minutes
-    scheduler.add_job(
-        _line_monitor_job,
-        IntervalTrigger(minutes=30),
-        id="line_monitor",
-        name="Line Movement Monitor",
-        replace_existing=True,
-    )
+    if cbb_active:
+        # O-10: Line movement monitor - runs every 30 minutes
+        scheduler.add_job(
+            _line_monitor_job,
+            IntervalTrigger(minutes=30),
+            id="line_monitor",
+            name="Line Movement Monitor",
+            replace_existing=True,
+        )
 
     # Daily performance snapshot + alert check at 4:30 AM (after settle job)
     scheduler.add_job(
@@ -226,160 +232,163 @@ async def lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # Pre-warm ratings cache at 8 AM so nightly analysis uses fresh data
-    ratings_prewarm_hour = int(os.getenv("RATINGS_PREWARM_HOUR", "8"))
-    scheduler.add_job(
-        _fetch_ratings_job,
-        CronTrigger(hour=ratings_prewarm_hour, minute=0, timezone=timezone),
-        id="fetch_ratings",
-        name="Pre-warm Ratings Cache",
-        replace_existing=True,
-    )
-
-    # Refresh pybaseball FanGraphs leaderboard caches at 7:30 AM daily
-    scheduler.add_job(
-        _pybaseball_fetch_job,
-        CronTrigger(hour=7, minute=30, timezone=timezone),
-        id="fetch_pybaseball",
-        name="Refresh pybaseball Statcast Leaderboards",
-        replace_existing=True,
-    )
-    
-    # Daily Statcast ingestion + Bayesian projection updates at 6:00 AM ET
-    # Runs after overnight games complete, before lineup decisions
-    scheduler.add_job(
-        _statcast_daily_ingestion_job,
-        CronTrigger(hour=6, minute=0, timezone=timezone),
-        id="statcast_daily_ingestion",
-        name="Statcast Daily Ingestion + Bayesian Updates",
-        replace_existing=True,
-    )
-
-    # OpenClaw autonomous waiver intelligence at 8:30 AM daily
-    scheduler.add_job(
-        _openclaw_morning_job,
-        CronTrigger(hour=8, minute=30, timezone=timezone),
-        id="openclaw_morning",
-        name="OpenClaw Autonomous Morning Workflow",
-        replace_existing=True,
-    )
-
-    # Odds monitor - poll every 5 minutes for line movements
-    odds_monitor_interval = get_float_env("ODDS_MONITOR_INTERVAL_MIN", "5")
-    scheduler.add_job(
-        _odds_monitor_job,
-        IntervalTrigger(minutes=odds_monitor_interval),
-        id="odds_monitor",
-        name="Odds Line Movement Monitor",
-        replace_existing=True,
-    )
-
-    # Opening line attack - run when overnight lines are posted.
-    # Books typically hang openers between 10 PM and midnight ET.
-    # We run analysis at 10:30 PM and 12:30 AM to catch early value.
-    # Enabled by default; set OPENER_ATTACK_ENABLED=false to disable.
-    opener_enabled = os.getenv("OPENER_ATTACK_ENABLED", "true").lower() == "true"
-    if opener_enabled:
+    if cbb_active:
+        # Pre-warm ratings cache at 8 AM so nightly analysis uses fresh data
+        ratings_prewarm_hour = int(os.getenv("RATINGS_PREWARM_HOUR", "8"))
         scheduler.add_job(
-            _opener_attack_job,
-            CronTrigger(hour=22, minute=30, timezone=timezone),
-            id="opener_attack_2230",
-            name="Opening Line Attack (10:30 PM)",
+            _fetch_ratings_job,
+            CronTrigger(hour=ratings_prewarm_hour, minute=0, timezone=timezone),
+            id="fetch_ratings",
+            name="Pre-warm Ratings Cache",
             replace_existing=True,
         )
+
+    if fantasy_active:
+        # Refresh pybaseball FanGraphs leaderboard caches at 7:30 AM daily
         scheduler.add_job(
-            _opener_attack_job,
-            CronTrigger(hour=0, minute=30, timezone=timezone),
-            id="opener_attack_0030",
-            name="Opening Line Attack (12:30 AM)",
+            _pybaseball_fetch_job,
+            CronTrigger(hour=7, minute=30, timezone=timezone),
+            id="fetch_pybaseball",
+            name="Refresh pybaseball Statcast Leaderboards",
             replace_existing=True,
         )
-        logger.info("Opening line attack scheduler enabled (22:30, 00:30 %s)", timezone)
+        
+        # Daily Statcast ingestion + Bayesian projection updates at 6:00 AM ET
+        # Runs after overnight games complete, before lineup decisions
+        scheduler.add_job(
+            _statcast_daily_ingestion_job,
+            CronTrigger(hour=6, minute=0, timezone=timezone),
+            id="statcast_daily_ingestion",
+            name="Statcast Daily Ingestion + Bayesian Updates",
+            replace_existing=True,
+        )
 
-    # Performance Sentinel - MAE, drawdown, pytest health check at 5:00 AM
-    # (30 min after daily snapshot, ensuring fresh data is available)
-    scheduler.add_job(
-        _nightly_health_check_job,
-        CronTrigger(hour=5, minute=0, timezone=timezone),
-        id="nightly_health_check",
-        name="Performance Sentinel Health Check",
-        replace_existing=True,
-    )
+        # OpenClaw autonomous waiver intelligence at 8:30 AM daily
+        scheduler.add_job(
+            _openclaw_morning_job,
+            CronTrigger(hour=8, minute=30, timezone=timezone),
+            id="openclaw_morning",
+            name="OpenClaw Autonomous Morning Workflow",
+            replace_existing=True,
+        )
 
-    # Morning Briefing - summarize today's slate at 7 AM ET (after ratings are fresh)
-    scheduler.add_job(
-        _morning_briefing_job,
-        CronTrigger(hour=7, minute=0, timezone=timezone),
-        id="morning_briefing",
-        name="Morning Slate Briefing",
-        replace_existing=True,
-    )
+    if cbb_active:
+        # Odds monitor - poll every 5 minutes for line movements
+        odds_monitor_interval = get_float_env("ODDS_MONITOR_INTERVAL_MIN", "5")
+        scheduler.add_job(
+            _odds_monitor_job,
+            IntervalTrigger(minutes=odds_monitor_interval),
+            id="odds_monitor",
+            name="Odds Line Movement Monitor",
+            replace_existing=True,
+        )
 
-    # End-of-day results - 11 PM ET
-    scheduler.add_job(
-        _end_of_day_results_job,
-        CronTrigger(hour=23, minute=0, timezone=timezone),
-        id="end_of_day_results",
-        name="End-of-Day Results Summary",
-        replace_existing=True,
-    )
+        # Opening line attack - run when overnight lines are posted.
+        # Books typically hang openers between 10 PM and midnight ET.
+        # We run analysis at 10:30 PM and 12:30 AM to catch early value.
+        # Enabled by default; set OPENER_ATTACK_ENABLED=false to disable.
+        opener_enabled = os.getenv("OPENER_ATTACK_ENABLED", "true").lower() == "true"
+        if opener_enabled:
+            scheduler.add_job(
+                _opener_attack_job,
+                CronTrigger(hour=22, minute=30, timezone=timezone),
+                id="opener_attack_2230",
+                name="Opening Line Attack (10:30 PM)",
+                replace_existing=True,
+            )
+            scheduler.add_job(
+                _opener_attack_job,
+                CronTrigger(hour=0, minute=30, timezone=timezone),
+                id="opener_attack_0030",
+                name="Opening Line Attack (12:30 AM)",
+                replace_existing=True,
+            )
+            logger.info("Opening line attack scheduler enabled (22:30, 00:30 %s)", timezone)
 
-    # Fantasy Baseball: Nightly decision resolution - 11:59 PM ET
-    # Resolves all pending lineup decisions with actual MLB stats
-    scheduler.add_job(
-        _nightly_decision_resolution_job,
-        CronTrigger(hour=23, minute=59, timezone=timezone),
-        id="nightly_decision_resolution",
-        name="Nightly Fantasy Decision Resolution",
-        replace_existing=True,
-    )
+        # Performance Sentinel - MAE, drawdown, pytest health check at 5:00 AM
+        # (30 min after daily snapshot, ensuring fresh data is available)
+        scheduler.add_job(
+            _nightly_health_check_job,
+            CronTrigger(hour=5, minute=0, timezone=timezone),
+            id="nightly_health_check",
+            name="Performance Sentinel Health Check",
+            replace_existing=True,
+        )
 
-    # Tournament bracket release notifier - runs daily 6 PM ET, Mar 14-20
-    scheduler.add_job(
-        _tournament_bracket_job,
-        CronTrigger(hour=18, minute=0, timezone=timezone),
-        id="tournament_bracket_notifier",
-        name="Tournament Bracket Release Notifier",
-        replace_existing=True,
-    )
+        # Morning Briefing - summarize today's slate at 7 AM ET (after ratings are fresh)
+        scheduler.add_job(
+            _morning_briefing_job,
+            CronTrigger(hour=7, minute=0, timezone=timezone),
+            id="morning_briefing",
+            name="Morning Slate Briefing",
+            replace_existing=True,
+        )
 
-    # Weekly model parameter recalibration - Sunday 5 AM ET
-    # Note: recalibration and sentinel both run at 5:00 AM; they are independent.
-    scheduler.add_job(
-        _weekly_recalibration_job,
-        CronTrigger(day_of_week="sun", hour=5, minute=0, timezone=timezone),
-        id="weekly_recalibration",
-        name="Weekly Model Parameter Recalibration",
-        replace_existing=True,
-    )
+        # End-of-day results - 11 PM ET
+        scheduler.add_job(
+            _end_of_day_results_job,
+            CronTrigger(hour=23, minute=0, timezone=timezone),
+            id="end_of_day_results",
+            name="End-of-Day Results Summary",
+            replace_existing=True,
+        )
 
-    # Job queue processor — polls job_queue table every 5s for pending heavy ops
-    scheduler.add_job(
-        _process_job_queue_job,
-        IntervalTrigger(seconds=5),
-        id="job_queue_processor",
-        name="Async Job Queue Processor",
-        replace_existing=True,
-    )
+    if fantasy_active:
+        # Fantasy Baseball: Nightly decision resolution - 11:59 PM ET
+        # Resolves all pending lineup decisions with actual MLB stats
+        scheduler.add_job(
+            _nightly_decision_resolution_job,
+            CronTrigger(hour=23, minute=59, timezone=timezone),
+            id="nightly_decision_resolution",
+            name="Nightly Fantasy Decision Resolution",
+            replace_existing=True,
+        )
+
+    if cbb_active:
+        # Tournament bracket release notifier - runs daily 6 PM ET, Mar 14-20
+        scheduler.add_job(
+            _tournament_bracket_job,
+            CronTrigger(hour=18, minute=0, timezone=timezone),
+            id="tournament_bracket_notifier",
+            name="Tournament Bracket Release Notifier",
+            replace_existing=True,
+        )
+
+        # Weekly model parameter recalibration - Sunday 5 AM ET
+        # Note: recalibration and sentinel both run at 5:00 AM; they are independent.
+        scheduler.add_job(
+            _weekly_recalibration_job,
+            CronTrigger(day_of_week="sun", hour=5, minute=0, timezone=timezone),
+            id="weekly_recalibration",
+            name="Weekly Model Parameter Recalibration",
+            replace_existing=True,
+        )
+
+    if fantasy_active:
+        # Job queue processor — polls job_queue table every 5s for pending heavy ops
+        scheduler.add_job(
+            _process_job_queue_job,
+            IntervalTrigger(seconds=5),
+            id="job_queue_processor",
+            name="Async Job Queue Processor",
+            replace_existing=True,
+        )
 
     scheduler.start()
     logger.info(
-        "Scheduler started: nightly@%02d:00, outcomes every 2h + daily@04:00, "
-        "lines every 30min, odds monitor every %dmin, snapshot@04:30, "
-        "sentinel@05:00, briefing@07:00, ratings prewarm@%02d:00, recalibration@sun05:00, "
-        "end_of_day@23:00, tournament_bracket@18:00 %s",
-        nightly_hour, odds_monitor_interval, ratings_prewarm_hour, timezone,
+        "Scheduler started: cbb_active=%s, fantasy_active=%s",
+        cbb_active, fantasy_active
     )
 
     # Ingestion Orchestrator -- gated by env var (off by default, safe for Railway)
     global _ingestion_orchestrator
-    if os.getenv("ENABLE_INGESTION_ORCHESTRATOR", "false").lower() == "true":
+    if fantasy_active and os.getenv("ENABLE_INGESTION_ORCHESTRATOR", "false").lower() == "true":
         from backend.services.daily_ingestion import DailyIngestionOrchestrator
         _ingestion_orchestrator = DailyIngestionOrchestrator()
         _ingestion_orchestrator.start()
         logger.info("DailyIngestionOrchestrator started")
     else:
-        logger.info("DailyIngestionOrchestrator disabled (ENABLE_INGESTION_ORCHESTRATOR not set)")
+        logger.info("DailyIngestionOrchestrator disabled (ENABLE_INGESTION_ORCHESTRATOR not set or fantasy_active=False)")
 
     # MLB nightly analysis -- 9:00 AM ET daily
     # Only active when ENABLE_MLB_ANALYSIS=true (off by default during CBB overlap)
@@ -396,75 +405,76 @@ async def lifespan(app: FastAPI):
         )
         logger.info("MLB nightly analysis enabled (09:00 %s)", timezone)
 
-    # Pre-warm reanalysis cache for OddsMonitor
-    try:
-        db = SessionLocal()
+    if cbb_active:
+        # Pre-warm reanalysis cache for OddsMonitor
         try:
-            from backend.models import Prediction
-            from backend.services.odds_monitor import get_odds_monitor
-            from backend.services.recalibration import load_current_params
+            db = SessionLocal()
+            try:
+                from backend.models import Prediction
+                from backend.services.odds_monitor import get_odds_monitor
+                from backend.services.recalibration import load_current_params
 
-            today_utc = datetime.utcnow().date()
-            preds = db.query(Prediction).filter(Prediction.prediction_date == today_utc).all()
+                today_utc = datetime.utcnow().date()
+                preds = db.query(Prediction).filter(Prediction.prediction_date == today_utc).all()
 
-            if preds:
-                from backend.betting_model import ReanalysisEngine
-                params = load_current_params(db)
-                model = CBBEdgeModel(params)
+                if preds:
+                    from backend.betting_model import ReanalysisEngine
+                    params = load_current_params(db)
+                    model = CBBEdgeModel(params)
 
-                import math as _math
-                _sd_mult = get_float_env("SD_MULTIPLIER", "0.85")
-                cache = {}
-                for p in preds:
-                    if p.full_analysis:
-                        fa = p.full_analysis
-                        inputs = fa.get("inputs", {})
-                        calcs = fa.get("calculations", {})
+                    import math as _math
+                    _sd_mult = get_float_env("SD_MULTIPLIER", "0.85")
+                    cache = {}
+                    for p in preds:
+                        if p.full_analysis:
+                            fa = p.full_analysis
+                            inputs = fa.get("inputs", {})
+                            calcs = fa.get("calculations", {})
 
-                        # full_analysis.inputs has no "game" key - reconstruct
-                        # game_data directly from the SQLAlchemy Game relationship.
-                        game_at = p.game.away_team or ""
-                        game_ht = p.game.home_team or ""
-                        _key = f"{game_at}@{game_ht}"
+                            # full_analysis.inputs has no "game" key - reconstruct
+                            # game_data directly from the SQLAlchemy Game relationship.
+                            game_at = p.game.away_team or ""
+                            game_ht = p.game.home_team or ""
+                            _key = f"{game_at}@{game_ht}"
 
-                        # Derive base_sd_override from odds total so the
-                        # unchanged-spread invariant holds for pre-warmed engines.
-                        _total = (inputs.get("odds", {}).get("total")
-                                  or inputs.get("odds", {}).get("sharp_consensus_total"))
-                        _base_sd = _math.sqrt(float(_total)) * _sd_mult if _total else None
+                            # Derive base_sd_override from odds total so the
+                            # unchanged-spread invariant holds for pre-warmed engines.
+                            _total = (inputs.get("odds", {}).get("total")
+                                      or inputs.get("odds", {}).get("sharp_consensus_total"))
+                            _base_sd = _math.sqrt(float(_total)) * _sd_mult if _total else None
 
-                        try:
-                            engine = ReanalysisEngine.from_analysis_pass(
-                                model=model,
-                                game_data={
-                                    "home_team": game_ht,
-                                    "away_team": game_at,
-                                    "is_neutral": getattr(p.game, "is_neutral", False) or False,
-                                },
-                                odds=inputs.get("odds", {}),
-                                ratings=inputs.get("ratings", {}),
-                                injuries=inputs.get("injuries"),
-                                home_style=inputs.get("home_style"),
-                                away_style=inputs.get("away_style"),
-                                matchup_margin_adj=inputs.get("margin_components", {}).get("matchup_adj", 0.0),
-                                hours_to_tipoff=calcs.get("hours_to_tipoff"),
-                                concurrent_exposure=0.0,  # approximation for startup
-                                sharp_books_available=inputs.get("odds", {}).get("sharp_books_available", 0),
-                                integrity_verdict=p.integrity_verdict,
-                                base_sd_override=_base_sd,
-                                original_verdict=p.verdict,
-                            )
-                            cache[_key] = engine
-                        except Exception:
-                            continue
+                            try:
+                                engine = ReanalysisEngine.from_analysis_pass(
+                                    model=model,
+                                    game_data={
+                                        "home_team": game_ht,
+                                        "away_team": game_at,
+                                        "is_neutral": getattr(p.game, "is_neutral", False) or False,
+                                    },
+                                    odds=inputs.get("odds", {}),
+                                    ratings=inputs.get("ratings", {}),
+                                    injuries=inputs.get("injuries"),
+                                    home_style=inputs.get("home_style"),
+                                    away_style=inputs.get("away_style"),
+                                    matchup_margin_adj=inputs.get("margin_components", {}).get("matchup_adj", 0.0),
+                                    hours_to_tipoff=calcs.get("hours_to_tipoff"),
+                                    concurrent_exposure=0.0,  # approximation for startup
+                                    sharp_books_available=inputs.get("odds", {}).get("sharp_books_available", 0),
+                                    integrity_verdict=p.integrity_verdict,
+                                    base_sd_override=_base_sd,
+                                    original_verdict=p.verdict,
+                                )
+                                cache[_key] = engine
+                            except Exception:
+                                continue
 
-                if cache:
-                    get_odds_monitor().set_reanalysis_cache(cache)
-                    logger.info("Lifespan: Pre-warmed reanalysis cache with %d engines", len(cache))
-        finally:
-            db.close()
-    except Exception as startup_exc:
-        logger.warning("Lifespan: Failed to pre-warm reanalysis cache: %s", startup_exc)
+                    if cache:
+                        get_odds_monitor().set_reanalysis_cache(cache)
+                        logger.info("Lifespan: Pre-warmed reanalysis cache with %d engines", len(cache))
+            finally:
+                db.close()
+        except Exception as startup_exc:
+            logger.warning("Lifespan: Failed to pre-warm reanalysis cache: %s", startup_exc)
 
     # EMAC-024: Register VERDICT_FLIP callback for real-time Discord alerts
     def _verdict_flip_handler(movement):
@@ -486,6 +496,8 @@ async def lifespan(app: FastAPI):
     # APScheduler is in-memory - Railway deploys after 3 AM reset the next-run time to
     # tomorrow, so without this check today's games would never get analysed.
     async def _startup_catchup():
+        if not cbb_active:
+            return
         from pytz import timezone as _tz
         from datetime import datetime as _dt
         et = _tz("America/New_York")
