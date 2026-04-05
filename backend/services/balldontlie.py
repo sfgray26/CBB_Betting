@@ -362,6 +362,43 @@ class BallDontLieClient:
         return odds
 
     # ------------------------------------------------------------------
+    # MLB Injuries — Priority 3c
+    # ------------------------------------------------------------------
+
+    def get_mlb_injuries(self) -> List[MLBInjury]:
+        """
+        Fetch the full current MLB injury list (IL + DTD).
+
+        Uses cursor pagination — the live endpoint returns 25 items per page
+        with next_cursor set. Fetches all pages to return the complete list.
+        Returns empty list on any API error (logged, never raises).
+
+        Returns:
+            list[MLBInjury] — Pydantic-validated. Never raw dicts.
+        """
+        injuries: List[MLBInjury] = []
+        cursor: Optional[int] = None
+        page = 0
+        max_pages = 50  # ~1250 players max — generous ceiling
+        while page < max_pages:
+            params: Dict[str, Any] = {}
+            if cursor is not None:
+                params["cursor"] = cursor
+            try:
+                raw = self._mlb_get("/player_injuries", params=params or None)
+                resp = BDLResponse[MLBInjury].model_validate(raw)
+                injuries.extend(resp.data)
+                cursor = resp.meta.next_cursor
+                if cursor is None:
+                    break
+                page += 1
+                time.sleep(0.1)
+            except Exception as exc:
+                logger.error("get_mlb_injuries() page=%d failed: %s", page, exc)
+                break
+        return injuries
+
+    # ------------------------------------------------------------------
     # Player season stats (for tournament_exp field)
     # ------------------------------------------------------------------
 

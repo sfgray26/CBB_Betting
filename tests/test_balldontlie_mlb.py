@@ -18,7 +18,7 @@ import pytest
 import requests
 
 from backend.services.balldontlie import BallDontLieClient
-from backend.data_contracts import MLBBettingOdd, MLBGame
+from backend.data_contracts import MLBBettingOdd, MLBGame, MLBInjury
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -177,3 +177,99 @@ class TestGetMlbOdds:
         with patch.object(client, "_mlb_get", return_value=empty):
             result = client.get_mlb_odds(9999999)
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# get_mlb_injuries
+# ---------------------------------------------------------------------------
+
+class TestGetMlbInjuries:
+    def test_returns_list_of_mlb_injury(self, client):
+        """Fixture-based: parses first page (25 items) then stops on empty final page."""
+        fixture = load("bdl_mlb_injuries.json")  # has next_cursor=409031
+        final_page = {"data": [], "meta": {"per_page": 25}}  # no cursor = done
+
+        responses = [fixture, final_page]
+        call_count = 0
+
+        def fake_get(path, params=None):
+            nonlocal call_count
+            r = responses[min(call_count, 1)]
+            call_count += 1
+            return r
+
+        with patch.object(client, "_mlb_get", side_effect=fake_get):
+            result = client.get_mlb_injuries()
+        assert len(result) == 25
+        assert all(isinstance(i, MLBInjury) for i in result)
+
+    def test_injury_player_is_validated(self, client):
+        """Nested MLBPlayer inside MLBInjury is fully validated."""
+        fixture = load("bdl_mlb_injuries.json")
+        with patch.object(client, "_mlb_get", return_value=fixture):
+            result = client.get_mlb_injuries()
+        first = result[0]
+        assert first.player.full_name == "Travis Adams"
+        assert first.status == "15-Day-IL"
+        assert first.type == "Triceps"
+
+    def test_nullable_fields_handled(self, client):
+        """detail and side can be None — both appear in live fixture."""
+        fixture = load("bdl_mlb_injuries.json")
+        with patch.object(client, "_mlb_get", return_value=fixture):
+            result = client.get_mlb_injuries()
+        details = [i.detail for i in result]
+        sides = [i.side for i in result]
+        assert None in details
+        assert None in sides
+
+    def test_pagination_fetches_all_pages(self, client):
+        """Cursor from page 1 triggers page 2 fetch — both pages combined."""
+        fixture = load("bdl_mlb_injuries.json")  # has next_cursor=409031
+        page2 = {
+            "data": fixture["data"][:3],
+            "meta": {"per_page": 25},           # no next_cursor = last page
+        }
+        responses = [fixture, page2]
+        call_count = 0
+
+        def fake_get(path, params=None):
+            nonlocal call_count
+            r = responses[call_count]
+            call_count += 1
+            return r
+
+        with patch.object(client, "_mlb_get", side_effect=fake_get):
+            result = client.get_mlb_injuries()
+
+        assert call_count == 2
+        assert len(result) == 28  # 25 + 3
+
+    def test_http_error_returns_empty_list(self, client):
+        """HTTP error on first page → empty list, never raises."""
+        def fake_get(path, params=None):
+            raise requests.HTTPError("500 Internal Server Error")
+
+        with patch.object(client, "_mlb_get", side_effect=fake_get):
+            result = client.get_mlb_injuries()
+
+        assert result == []
+
+    def test_http_error_on_page2_returns_partial(self, client):
+        """Error mid-pagination returns what was collected so far (logged)."""
+        fixture = load("bdl_mlb_injuries.json")  # has next_cursor
+        call_count = 0
+
+        def fake_get(path, params=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return fixture
+            raise requests.HTTPError("503 Service Unavailable")
+
+        with patch.object(client, "_mlb_get", side_effect=fake_get):
+            result = client.get_mlb_injuries()
+
+        # First page (25 items) was collected before error on page 2
+        assert len(result) == 25
+        assert all(isinstance(i, MLBInjury) for i in result)
