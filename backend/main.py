@@ -476,20 +476,21 @@ async def lifespan(app: FastAPI):
         except Exception as startup_exc:
             logger.warning("Lifespan: Failed to pre-warm reanalysis cache: %s", startup_exc)
 
-    # EMAC-024: Register VERDICT_FLIP callback for real-time Discord alerts
-    def _verdict_flip_handler(movement):
-        if movement.event_type == "VERDICT_FLIP" and movement.fresh_analysis:
-            from backend.services.discord_notifier import send_verdict_flip_alert
-            try:
-                send_verdict_flip_alert(movement)
-            except Exception as alert_exc:
-                logger.error("Failed to send verdict flip alert: %s", alert_exc)
+    if cbb_active:
+        # EMAC-024: Register VERDICT_FLIP callback for real-time Discord alerts
+        def _verdict_flip_handler(movement):
+            if movement.event_type == "VERDICT_FLIP" and movement.fresh_analysis:
+                from backend.services.discord_notifier import send_verdict_flip_alert
+                try:
+                    send_verdict_flip_alert(movement)
+                except Exception as alert_exc:
+                    logger.error("Failed to send verdict flip alert: %s", alert_exc)
 
-    try:
-        get_odds_monitor().on_significant_move(_verdict_flip_handler)
-        logger.info("Lifespan: Registered VERDICT_FLIP Discord handler")
-    except Exception as reg_exc:
-        logger.warning("Lifespan: Failed to register movement handler: %s", reg_exc)
+        try:
+            get_odds_monitor().on_significant_move(_verdict_flip_handler)
+            logger.info("Lifespan: Registered VERDICT_FLIP Discord handler")
+        except Exception as reg_exc:
+            logger.warning("Lifespan: Failed to register movement handler: %s", reg_exc)
 
     # ── Startup catch-up: if nightly analysis was missed (service restarted after
     # 3 AM ET with no predictions for today), run it automatically as a background task.
