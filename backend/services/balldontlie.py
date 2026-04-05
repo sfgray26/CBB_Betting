@@ -399,6 +399,63 @@ class BallDontLieClient:
         return injuries
 
     # ------------------------------------------------------------------
+    # MLB Players — Priority 3d
+    # ------------------------------------------------------------------
+
+    def get_mlb_player(self, player_id: int) -> Optional[MLBPlayer]:
+        """
+        Fetch a single MLB player by BDL player ID.
+
+        NOTE: /players/{id} response envelope is unverified. BDL may return
+        the object directly or wrapped in {"data": {...}}. If this method fails
+        in production, capture the raw response and update accordingly.
+        Use search_mlb_players() as the verified alternative.
+
+        Returns None on any error (logged, never raises).
+        """
+        try:
+            raw = self._mlb_get(f"/players/{player_id}")
+            # BDL may wrap in {"data": {...}} or return object directly
+            if "data" in raw and isinstance(raw["data"], dict):
+                return MLBPlayer.model_validate(raw["data"])
+            return MLBPlayer.model_validate(raw)
+        except Exception as exc:
+            logger.error("get_mlb_player(player_id=%d) failed: %s", player_id, exc)
+            return None
+
+    def search_mlb_players(self, query: str) -> List[MLBPlayer]:
+        """
+        Search MLB players by name fragment.
+
+        Returns list (may be empty). Handles pagination — a common name
+        like "Smith" may span multiple pages.
+
+        Returns:
+            list[MLBPlayer] — Pydantic-validated. Never raw dicts.
+        """
+        players: List[MLBPlayer] = []
+        cursor: Optional[int] = None
+        page = 0
+        max_pages = 10
+        while page < max_pages:
+            params: Dict[str, Any] = {"search": query}
+            if cursor is not None:
+                params["cursor"] = cursor
+            try:
+                raw = self._mlb_get("/players", params=params)
+                resp = BDLResponse[MLBPlayer].model_validate(raw)
+                players.extend(resp.data)
+                cursor = resp.meta.next_cursor
+                if cursor is None:
+                    break
+                page += 1
+                time.sleep(0.1)
+            except Exception as exc:
+                logger.error("search_mlb_players(%r) page=%d failed: %s", query, page, exc)
+                break
+        return players
+
+    # ------------------------------------------------------------------
     # Player season stats (for tournament_exp field)
     # ------------------------------------------------------------------
 

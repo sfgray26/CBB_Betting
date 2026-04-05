@@ -18,7 +18,7 @@ import pytest
 import requests
 
 from backend.services.balldontlie import BallDontLieClient
-from backend.data_contracts import MLBBettingOdd, MLBGame, MLBInjury
+from backend.data_contracts import MLBBettingOdd, MLBGame, MLBInjury, MLBPlayer
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -255,7 +255,7 @@ class TestGetMlbInjuries:
 
         assert result == []
 
-    def test_http_error_on_page2_returns_partial(self, client):
+    def test_http_error_on_page2_returns_partial_results(self, client):
         """Error mid-pagination returns what was collected so far (logged)."""
         fixture = load("bdl_mlb_injuries.json")  # has next_cursor
         call_count = 0
@@ -273,3 +273,66 @@ class TestGetMlbInjuries:
         # First page (25 items) was collected before error on page 2
         assert len(result) == 25
         assert all(isinstance(i, MLBInjury) for i in result)
+
+
+# ---------------------------------------------------------------------------
+# search_mlb_players / get_mlb_player
+# ---------------------------------------------------------------------------
+
+class TestMlbPlayers:
+    def test_search_returns_list_of_mlb_player(self, client):
+        """Fixture-based: Ohtani search returns 1 player."""
+        fixture = load("bdl_mlb_players.json")
+        with patch.object(client, "_mlb_get", return_value=fixture):
+            result = client.search_mlb_players("Ohtani")
+        assert len(result) == 1
+        assert all(isinstance(p, MLBPlayer) for p in result)
+        assert result[0].full_name == "Shohei Ohtani"
+        assert result[0].team.abbreviation == "LAD"
+
+    def test_search_player_fields(self, client):
+        """Nullable fields (college, draft) correctly null."""
+        fixture = load("bdl_mlb_players.json")
+        with patch.object(client, "_mlb_get", return_value=fixture):
+            result = client.search_mlb_players("Ohtani")
+        p = result[0]
+        assert p.college is None
+        assert p.draft is None
+        assert p.dob == "5/7/1994"  # D/M/YYYY format preserved as-is
+
+    def test_search_http_error_returns_empty(self, client):
+        """HTTP error → empty list, never raises."""
+        def fake_get(path, params=None):
+            raise requests.HTTPError("404 Not Found")
+
+        with patch.object(client, "_mlb_get", side_effect=fake_get):
+            result = client.search_mlb_players("zzzzunknown")
+
+        assert result == []
+
+    def test_get_player_by_id_direct_object(self, client):
+        """get_mlb_player handles direct object response (no data wrapper)."""
+        fixture = load("bdl_mlb_players.json")
+        raw_player = fixture["data"][0]  # plain player dict
+        with patch.object(client, "_mlb_get", return_value=raw_player):
+            result = client.get_mlb_player(208)
+        assert isinstance(result, MLBPlayer)
+        assert result.full_name == "Shohei Ohtani"
+
+    def test_get_player_by_id_wrapped_response(self, client):
+        """get_mlb_player handles data-wrapped response."""
+        fixture = load("bdl_mlb_players.json")
+        wrapped = {"data": fixture["data"][0]}
+        with patch.object(client, "_mlb_get", return_value=wrapped):
+            result = client.get_mlb_player(208)
+        assert isinstance(result, MLBPlayer)
+
+    def test_get_player_by_id_not_found(self, client):
+        """HTTP error on player lookup → None, never raises."""
+        def fake_get(path, params=None):
+            raise requests.HTTPError("404 Not Found")
+
+        with patch.object(client, "_mlb_get", side_effect=fake_get):
+            result = client.get_mlb_player(9999999)
+
+        assert result is None
