@@ -1,6 +1,6 @@
 # HANDOFF.md — Fantasy Baseball Platform Master Plan (In-Season 2026)
 
-> **Date:** April 4, 2026 (updated Session S12) | **Author:** Claude Code (Master Architect)
+> **Date:** April 5, 2026 (updated Session S13) | **Author:** Claude Code (Master Architect)
 > **Risk Level:** ELEVATED — Fantasy data layer under embargo; raw ingestion unvalidated
 
 ---
@@ -34,7 +34,6 @@ Step 1 (Gemini):  Provision Fantasy Postgres. Set FANTASY_DATABASE_URL on the fa
                   DO NOT start the service yet.
 
 Step 2 (Claude):  Run database migrations against FANTASY_DATABASE_URL.
-                  Copy UserPreferences rows from edge DB to fantasy DB.
                   Verify schema with: SELECT table_name FROM information_schema.tables
                   WHERE table_schema = 'public';
 
@@ -353,11 +352,21 @@ Read `backend/services/daily_ingestion.py` focusing on the `_fetch_fangraphs_ros
 
 ## Session History (Recent)
 
-### S12 — Structural Decoupling (Apr 4)
+### S13 — Frontend Cleanup (Apr 5)
+
+Removed all remaining fantasy-specific frontend surface. Deleted `frontend/app/(dashboard)/settings/page.tsx` (432 lines — UserPreferences/waiver sliders, 100% fantasy). Removed Settings nav section from sidebar. Removed `UserPreferences`, `UserPreferencesResponse`, `DashboardPanel` TypeScript types and `getUserPreferences`/`updateUserPreferences` API methods. Bracket Simulator hidden via `SHOW_BRACKET = false` flag in `sidebar.tsx` (page on disk, not linked).
+
+Running UI now: betting analytics only (Dashboard, Performance, CLV, Bet History, Calibration, Alerts, Today's Bets, Live Slate, Odds Monitor, Admin). No fantasy UI. No settings. No bracket.
+
+Commit: `cc1e7ce`
+
+### S12 — Structural Decoupling + Fantasy UI Removal (Apr 4)
 
 Phases 1-5 of the fantasy/edge modular monorepo split complete. `main.py` unchanged — strangler-fig, production unaffected.
 
 New files: `backend/db.py`, `backend/redis_client.py`, `backend/models_edge.py`, `backend/models_fantasy.py`, `backend/routers/{edge,fantasy,admin}.py`, `backend/schedulers/{edge,fantasy}_scheduler.py`, `backend/edge_app.py`, `backend/fantasy_app.py`.
+
+Fantasy UI fully removed: `frontend/app/(dashboard)/fantasy/` (17 files), `frontend/components/shared/status-badge.tsx`, `frontend/lib/fantasy-stat-contract.json`, `frontend/tests/e2e/fantasy_baseball.spec.ts`, sidebar fantasy nav section, fantasy API methods, fantasy TypeScript types.
 
 Test suite: 1256 passed, 4 pre-existing failures unchanged.
 
