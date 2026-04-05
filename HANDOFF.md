@@ -92,7 +92,7 @@ All embargoes lifted by explicit human instruction only. No date-based triggers.
 | BDL GOAT MLB | **ACTIVE** | Purchased. Zero `/mlb/v1/` code exists yet — build from scratch. |
 | OddsAPI Basic | **ACTIVE** | 20k calls/month. CBB archival only. MLB odds via BDL. |
 | BDL NCAAB | **DEAD** | Subscription cancelled — never call `/ncaab/v1/` |
-| MLB Data Pipeline | **P1+P2 CERTIFIED** | Layer 0 contracts live in `backend/data_contracts/`. 18/18 tests pass. P3 (validated BDL client) is next. |
+| MLB Data Pipeline | **P1+P2+P3 CERTIFIED** | Layer 0 contracts + validated BDL client complete. 42/42 tests pass. P4 (Yahoo validation) is next. |
 | `mlb_analysis.py` | **PROTOTYPE — DO NOT BUILD ON** | Raw OddsAPI calls, no validation, silent 0.0 returns, fuzzy name matching. Rebuild with validated contracts. |
 | Fantasy projection pipeline | **EMBARGOED** | Jobs 100_012-100_015 disabled pending data floor certification |
 | Fantasy/Edge structural split | **PHASES 1-5 DONE** | Phase 6-7 in infrastructure track |
@@ -101,7 +101,7 @@ All embargoes lifted by explicit human instruction only. No date-based triggers.
 
 | Component | Reality |
 |-----------|---------|
-| `balldontlie.py` | 100% NCAAB. Zero MLB code. Auth + pagination patterns reusable. |
+| `balldontlie.py` | NCAAB + MLB. `get_mlb_games`, `get_mlb_odds`, `get_mlb_injuries`, `search_mlb_players`, `get_mlb_player` — all returning Pydantic-validated objects. |
 | `mlb_analysis.py` | Calls OddsAPI via raw `requests.get()`. No retry. No validation. Returns `0.0` silently on errors. |
 | `daily_ingestion._poll_mlb_odds()` | Raw OddsAPI. Validates only `isinstance(games, list)`. No DB persistence. |
 | `daily_ingestion._poll_yahoo_adp_injury()` | Checks `if not pid` only. No schema validation. Writes directly to DB. |
@@ -150,39 +150,32 @@ Key decisions locked in contracts:
 
 **Yahoo contracts (yahoo_roster.py, yahoo_waiver.py):** PENDING Yahoo live capture.
 
-### Priority 3 — Layer 2: Validated BDL MLB Client (one endpoint at a time) ← ACTIVE
+### Priority 3 — Layer 2: Validated BDL MLB Client ✅ COMPLETE
 
-**Next action: `get_mlb_games()` in `backend/services/balldontlie.py`**
+**Completed Session S15 (Apr 5 2026)**
 
-Build API client methods that return Pydantic-validated domain objects. NEVER raw dicts.
-Expand the existing `BallDontLieClient` class (NCAAB patterns reusable: auth, cursor pagination, session).
+All four methods added to `BallDontLieClient` in `backend/services/balldontlie.py`:
 
-**Strict sequence — do not skip ahead:**
+| Method | Commit | Tests |
+|--------|--------|-------|
+| `get_mlb_games(date)` → `list[MLBGame]` | `ebaabd9` | 6/6 |
+| `get_mlb_odds(game_id)` → `list[MLBBettingOdd]` | `539644e` | 6/6 |
+| `get_mlb_injuries()` → `list[MLBInjury]` | `c1ccc34` | 6/6 |
+| `search_mlb_players(query)` → `list[MLBPlayer]` | `ebf133f` | 3/3 |
+| `get_mlb_player(player_id)` → `MLBPlayer \| None` | `ebf133f` | 3/3 |
 
-**3a. `get_mlb_games(date: str) -> list[MLBGame]`** ← START HERE
-- Location: `backend/services/balldontlie.py` — add to existing `BallDontLieClient`
-- Calls `GET /mlb/v1/games?dates[]={date}`, handles cursor pagination
-- Returns `list[MLBGame]` (contracts from `backend.data_contracts`)
-- On HTTP error: logs specific error + returns `[]` — never silent, never raises
-- Tests in `tests/test_balldontlie_mlb.py`:
-  - Fixture-based test (uses `tests/fixtures/bdl_mlb_games.json`)
-  - Pagination test (mock two-page response)
-  - Empty-on-error test (mock 4xx response → returns [])
-- Compile-check, run tests, prove all pass. **Commit. Only then proceed to 3b.**
+`tests/test_balldontlie_mlb.py` — 24/24 pass.
+All MLB data layer tests combined: 42/42.
 
-**3b. `get_mlb_odds(game_id: int) -> list[MLBBettingOdd]`**
-- Test. Prove. **Commit. Proceed.**
+**One open item:** `/players/{id}` response envelope unverified — both direct-object and `{"data": {...}}` shapes handled defensively. Confirm actual shape in next live API session.
 
-**3c. `get_mlb_injuries(cursor: int | None = None) -> list[MLBInjury]`**
-- Must handle cursor pagination (injuries response has `next_cursor`)
-- Test. Prove. **Commit. Proceed.**
+**Future BDL MLB endpoints (post-embargo, ordered by value):**
+1. `/mlb/v1/lineups` — starting lineup cards. Critical for fantasy DFS roster lock decisions.
+2. `/mlb/v1/stats` — per-game box stats per player (hits, HR, ERA, IP).
+3. `/mlb/v1/season_stats` — season aggregates + WAR.
+4. `/mlb/v1/plate_appearances` — full Statcast-level per-PA data (may overlap pybaseball).
 
-**3d. `get_mlb_player(player_id: int) -> MLBPlayer | None`**
-- Test. Prove. **Commit.**
-
-**Each method is its own commit.** If live API reveals a contract mismatch, fix the contract (P2) first, re-run P2 tests, then proceed.
-
-### Priority 4 — Layer 2: Validated Yahoo Ingestion
+### Priority 4 — Layer 2: Validated Yahoo Ingestion ← ACTIVE
 
 Existing Yahoo client methods STAY (hardened across 11 sessions). Add a validation LAYER on top.
 
@@ -276,63 +269,52 @@ Rename stale references (cbb-architect -> mlb-architect, etc.). Documentation on
 
 ## HANDOFF PROMPTS
 
-### Claude Code — Priority 3: Validated BDL MLB Client (`get_mlb_games` first)
+### Claude Code — Priority 4: Validated Yahoo Ingestion
 
 Execute in `C:\Users\sfgra\repos\Fixed\cbb-edge`. Read `HANDOFF.md` and `CLAUDE.md` first.
 
-**Context:** Layer 0 contracts are certified (18/18 tests pass). Priority 3 builds the Layer 2 API client methods in `backend/services/balldontlie.py`. One method at a time. Each returns Pydantic-validated objects from `backend.data_contracts`. No raw dicts cross the layer boundary.
+**Context:** BDL MLB data layer is certified (42/42 tests). Priority 4 adds a Pydantic validation layer on top of the existing Yahoo client. The Yahoo client methods STAY — do not rewrite them. Add contracts that parse their output, log any validation failures, and block bad data from reaching the DB.
 
-**Current state of `balldontlie.py`:**
-- Has `BallDontLieClient` class with NCAAB patterns (auth, cursor pagination, session)
-- Auth: bare key `Authorization: {API_KEY}` (no "Bearer" prefix)
-- Base URL: `https://api.balldontlie.io`
-- Zero `/mlb/v1/` methods exist — add them to the existing class
+**Prerequisite:** Yahoo live payload capture must happen first.
 
-**Task: Add `get_mlb_games(date: str) -> list[MLBGame]`**
-
-1. Read `backend/services/balldontlie.py` to understand existing class structure.
-2. Add the method:
-   ```python
-   from backend.data_contracts import MLBGame, BDLResponse
-
-   def get_mlb_games(self, date: str) -> list[MLBGame]:
-       """
-       Fetch MLB games for a given date (YYYY-MM-DD).
-       Handles cursor pagination. Returns [] on any API error (logged, not raised).
-       """
-       games: list[MLBGame] = []
-       cursor: int | None = None
-       while True:
-           params: dict = {"dates[]": date}
-           if cursor is not None:
-               params["cursor"] = cursor
-           try:
-               raw = self._get("/mlb/v1/games", params=params)
-               resp = BDLResponse[MLBGame].model_validate(raw)
-               games.extend(resp.data)
-               cursor = resp.meta.next_cursor
-               if cursor is None:
-                   break
-           except Exception as exc:
-               logger.error("get_mlb_games(%s) failed: %s", date, exc)
-               break
-       return games
-   ```
-3. Compile-check: `venv/Scripts/python -m py_compile backend/services/balldontlie.py`
-4. Write `tests/test_balldontlie_mlb.py`:
-   - `test_get_mlb_games_from_fixture` — loads `tests/fixtures/bdl_mlb_games.json`, monkeypatches `_get`, asserts returns `list[MLBGame]` with len==19
-   - `test_get_mlb_games_pagination` — two-page mock: first returns data+cursor, second returns data+no cursor, asserts combined list
-   - `test_get_mlb_games_http_error` — mock raises `requests.HTTPError`, asserts returns `[]`
-5. Run: `venv/Scripts/python -m pytest tests/test_balldontlie_mlb.py -v --tb=short`
-6. All pass: commit. Then report back.
-
-**Do NOT proceed to `get_mlb_odds` until tests pass and commit is made.**
-
-**Compile check after all changes:**
+**Step 0 — Capture live Yahoo payloads:**
 ```bash
-venv/Scripts/python -m py_compile backend/services/balldontlie.py
-venv/Scripts/python -m pytest tests/test_balldontlie_mlb.py tests/test_data_contracts.py -q --tb=short
+railway run python -c "
+from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
+import json
+c = YahooFantasyClient()
+roster = c.get_team_roster()
+with open('tests/fixtures/yahoo_roster.json', 'w') as f:
+    json.dump(roster, f, indent=2, default=str)
+free_agents = c.get_free_agents()
+with open('tests/fixtures/yahoo_free_agents.json', 'w') as f:
+    json.dump(free_agents, f, indent=2, default=str)
+print('Done')
+"
 ```
+
+Document in `reports/SCHEMA_DISCOVERY.md` Yahoo section:
+- Actual key names for ownership data (`percent_owned` vs `percent_rostered`)
+- Depth of `ownership` nesting in real response
+- Which stat IDs appear in practice (K27 flagged 28/42 duplicate)
+
+**Step 1 — Build contracts in `backend/data_contracts/`:**
+Based on K27 audit + live capture, create:
+- `yahoo_player.py` — `YahooPlayer`, `YahooPlayerWithStats`
+- `yahoo_roster.py` — `YahooRosterEntry`
+
+Required fields per K27 audit docstring contract:
+`player_key`, `name`, `team`, `positions`, `status` (nullable), `injury_note` (nullable), `is_undroppable`, `percent_owned`
+
+**Step 2 — Wrap existing client output:**
+In `yahoo_client_resilient.py` OR a thin adapter layer, parse `get_team_roster()` and `get_free_agents()` returns through contracts. Log `ValidationError` at ERROR level with field name + value. Never suppress.
+
+**Step 3 — Tests:**
+`tests/test_yahoo_contracts.py` — feed captured fixtures through contracts. 100% parse rate required before proceeding.
+
+**Acceptance criteria for lifting job 100_013 embargo:**
+- Live `get_adp_and_injury_feed()` parses 100% through contracts
+- Human approval in writing
 
 ---
 
