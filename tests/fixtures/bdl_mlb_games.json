@@ -1,1 +1,1455 @@
-{}
+{
+  "data": [
+    {
+      "id": 5057892,
+      "home_team_name": "Colorado Rockies",
+      "away_team_name": "Philadelphia Phillies",
+      "home_team": {
+        "id": 9,
+        "slug": "colorado-rockies",
+        "abbreviation": "COL",
+        "display_name": "Colorado Rockies",
+        "short_display_name": "Rockies",
+        "name": "Rockies",
+        "location": "Colorado",
+        "league": "National",
+        "division": "West"
+      },
+      "away_team": {
+        "id": 21,
+        "slug": "philadelphia-phillies",
+        "abbreviation": "PHI",
+        "display_name": "Philadelphia Phillies",
+        "short_display_name": "Phillies",
+        "name": "Phillies",
+        "location": "Philadelphia",
+        "league": "National",
+        "division": "East"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T00:10:00.000Z",
+      "home_team_data": {
+        "hits": 6,
+        "runs": 1,
+        "errors": 0,
+        "inning_scores": [
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "away_team_data": {
+        "hits": 7,
+        "runs": 2,
+        "errors": 0,
+        "inning_scores": [
+          1,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "venue": "Coors Field",
+      "attendance": 39718,
+      "conference_play": false,
+      "status": "STATUS_FINAL",
+      "period": 9,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": [
+        {
+          "play": "Schwarber doubled to left, Turner scored.",
+          "inning": "top",
+          "period": "1st",
+          "away_score": 1,
+          "home_score": 0
+        },
+        {
+          "play": "Sullivan singled to right, Johnston scored.",
+          "inning": "bottom",
+          "period": "3rd",
+          "away_score": 1,
+          "home_score": 1
+        },
+        {
+          "play": "Turner doubled to left, Marsh scored, Crawford to third.",
+          "inning": "top",
+          "period": "5th",
+          "away_score": 2,
+          "home_score": 1
+        }
+      ]
+    },
+    {
+      "id": 5057893,
+      "home_team_name": "San Francisco Giants",
+      "away_team_name": "New York Mets",
+      "home_team": {
+        "id": 24,
+        "slug": "san-francisco-giants",
+        "abbreviation": "SF",
+        "display_name": "San Francisco Giants",
+        "short_display_name": "Giants",
+        "name": "Giants",
+        "location": "San Francisco",
+        "league": "National",
+        "division": "West"
+      },
+      "away_team": {
+        "id": 18,
+        "slug": "new-york-mets",
+        "abbreviation": "NYM",
+        "display_name": "New York Mets",
+        "short_display_name": "Mets",
+        "name": "Mets",
+        "location": "New York",
+        "league": "National",
+        "division": "East"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T01:05:00.000Z",
+      "home_team_data": {
+        "hits": 3,
+        "runs": 0,
+        "errors": 3,
+        "inning_scores": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "away_team_data": {
+        "hits": 12,
+        "runs": 9,
+        "errors": 1,
+        "inning_scores": [
+          0,
+          3,
+          0,
+          0,
+          5,
+          0,
+          1,
+          0,
+          0
+        ]
+      },
+      "venue": "Oracle Park",
+      "attendance": 36553,
+      "conference_play": false,
+      "status": "STATUS_FINAL",
+      "period": 9,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": [
+        {
+          "play": "Vientos scored and Young scored on fielding error by first baseman Encarnacion, Benge safe at first on fielding error by third baseman Chapman, Semien safe at third on error.",
+          "inning": "top",
+          "period": "2nd",
+          "away_score": 2,
+          "home_score": 0
+        },
+        {
+          "play": "Torrens grounded out to second, Semien scored, Benge to second.",
+          "inning": "top",
+          "period": "2nd",
+          "away_score": 3,
+          "home_score": 0
+        },
+        {
+          "play": "Bichette singled to center, Torrens scored.",
+          "inning": "top",
+          "period": "5th",
+          "away_score": 4,
+          "home_score": 0
+        },
+        {
+          "play": "Vientos singled to right, Bichette scored, Baty to third.",
+          "inning": "top",
+          "period": "5th",
+          "away_score": 5,
+          "home_score": 0
+        },
+        {
+          "play": "Taylor homered to center (419 feet), Baty scored and Vientos scored.",
+          "inning": "top",
+          "period": "5th",
+          "away_score": 8,
+          "home_score": 0
+        },
+        {
+          "play": "Taylor singled to right, Baty scored on error, Taylor safe at second on throwing error by right fielder Lee.",
+          "inning": "top",
+          "period": "7th",
+          "away_score": 9,
+          "home_score": 0
+        }
+      ]
+    },
+    {
+      "id": 5057894,
+      "home_team_name": "Los Angeles Angels",
+      "away_team_name": "Seattle Mariners",
+      "home_team": {
+        "id": 13,
+        "slug": "los-angeles-angels",
+        "abbreviation": "LAA",
+        "display_name": "Los Angeles Angels",
+        "short_display_name": "Angels",
+        "name": "Angels",
+        "location": "Los Angeles",
+        "league": "American",
+        "division": "West"
+      },
+      "away_team": {
+        "id": 25,
+        "slug": "seattle-mariners",
+        "abbreviation": "SEA",
+        "display_name": "Seattle Mariners",
+        "short_display_name": "Mariners",
+        "name": "Mariners",
+        "location": "Seattle",
+        "league": "American",
+        "division": "West"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T01:38:00.000Z",
+      "home_team_data": {
+        "hits": 7,
+        "runs": 1,
+        "errors": 0,
+        "inning_scores": [
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "away_team_data": {
+        "hits": 5,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "venue": "Angel Stadium",
+      "attendance": 44084,
+      "conference_play": false,
+      "status": "STATUS_FINAL",
+      "period": 9,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": [
+        {
+          "play": "Neto homered to left center (443 feet).",
+          "inning": "bottom",
+          "period": "1st",
+          "away_score": 0,
+          "home_score": 1
+        }
+      ]
+    },
+    {
+      "id": 5057899,
+      "home_team_name": "Cleveland Guardians",
+      "away_team_name": "Chicago Cubs",
+      "home_team": {
+        "id": 8,
+        "slug": "cleveland-guardians",
+        "abbreviation": "CLE",
+        "display_name": "Cleveland Guardians",
+        "short_display_name": "Guardians",
+        "name": "Guardians",
+        "location": "Cleveland",
+        "league": "American",
+        "division": "Central"
+      },
+      "away_team": {
+        "id": 5,
+        "slug": "chicago-cubs",
+        "abbreviation": "CHC",
+        "display_name": "Chicago Cubs",
+        "short_display_name": "Cubs",
+        "name": "Cubs",
+        "location": "Chicago",
+        "league": "National",
+        "division": "Central"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T17:10:00.000Z",
+      "home_team_data": {
+        "hits": 1,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "away_team_data": {
+        "hits": 2,
+        "runs": 1,
+        "errors": 0,
+        "inning_scores": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0
+        ]
+      },
+      "venue": "Progressive Field",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_FINAL",
+      "period": 9,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": [
+        {
+          "play": "Amaya singled to right, Carlson scored.",
+          "inning": "top",
+          "period": "8th",
+          "away_score": 1,
+          "home_score": 0
+        }
+      ]
+    },
+    {
+      "id": 5057895,
+      "home_team_name": "Pittsburgh Pirates",
+      "away_team_name": "Baltimore Orioles",
+      "home_team": {
+        "id": 22,
+        "slug": "pittsburgh-pirates",
+        "abbreviation": "PIT",
+        "display_name": "Pittsburgh Pirates",
+        "short_display_name": "Pirates",
+        "name": "Pirates",
+        "location": "Pittsburgh",
+        "league": "National",
+        "division": "Central"
+      },
+      "away_team": {
+        "id": 3,
+        "slug": "baltimore-orioles",
+        "abbreviation": "BAL",
+        "display_name": "Baltimore Orioles",
+        "short_display_name": "Orioles",
+        "name": "Orioles",
+        "location": "Baltimore",
+        "league": "American",
+        "division": "East"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T17:35:00.000Z",
+      "home_team_data": {
+        "hits": 10,
+        "runs": 8,
+        "errors": 0,
+        "inning_scores": [
+          2,
+          4,
+          0,
+          0,
+          0,
+          2,
+          0,
+          0
+        ]
+      },
+      "away_team_data": {
+        "hits": 8,
+        "runs": 2,
+        "errors": 0,
+        "inning_scores": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          1,
+          0
+        ]
+      },
+      "venue": "PNC Park",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_IN_PROGRESS",
+      "period": 8,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": [
+        {
+          "play": "O'Hearn homered to center (402 feet), Reynolds scored.",
+          "inning": "bottom",
+          "period": "1st",
+          "away_score": 0,
+          "home_score": 2
+        },
+        {
+          "play": "Cruz reached on infield single to catcher, Horwitz scored, Mangum to second, Davis to third.",
+          "inning": "bottom",
+          "period": "2nd",
+          "away_score": 0,
+          "home_score": 3
+        },
+        {
+          "play": "Reynolds hit sacrifice fly to right, Mangum scored.",
+          "inning": "bottom",
+          "period": "2nd",
+          "away_score": 0,
+          "home_score": 4
+        },
+        {
+          "play": "O'Hearn doubled to center, Lowe scored and Cruz scored.",
+          "inning": "bottom",
+          "period": "2nd",
+          "away_score": 0,
+          "home_score": 6
+        },
+        {
+          "play": "Alonso doubled to center, Ward scored.",
+          "inning": "top",
+          "period": "4th",
+          "away_score": 1,
+          "home_score": 6
+        },
+        {
+          "play": "Cruz homered to center (415 feet), Mangum scored.",
+          "inning": "bottom",
+          "period": "6th",
+          "away_score": 1,
+          "home_score": 8
+        },
+        {
+          "play": "Jackson singled to right, O'Neill scored, Beavers to second.",
+          "inning": "top",
+          "period": "7th",
+          "away_score": 2,
+          "home_score": 8
+        }
+      ]
+    },
+    {
+      "id": 5057896,
+      "home_team_name": "Washington Nationals",
+      "away_team_name": "Los Angeles Dodgers",
+      "home_team": {
+        "id": 30,
+        "slug": "washington-nationals",
+        "abbreviation": "WSH",
+        "display_name": "Washington Nationals",
+        "short_display_name": "Nationals",
+        "name": "Nationals",
+        "location": "Washington",
+        "league": "National",
+        "division": "East"
+      },
+      "away_team": {
+        "id": 14,
+        "slug": "los-angeles-dodgers",
+        "abbreviation": "LAD",
+        "display_name": "Los Angeles Dodgers",
+        "short_display_name": "Dodgers",
+        "name": "Dodgers",
+        "location": "Los Angeles",
+        "league": "National",
+        "division": "West"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T17:35:00.000Z",
+      "home_team_data": {
+        "hits": 1,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": [
+          0
+        ]
+      },
+      "away_team_data": {
+        "hits": 0,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": [
+          0,
+          0
+        ]
+      },
+      "venue": "Nationals Park",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_IN_PROGRESS",
+      "period": 2,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": []
+    },
+    {
+      "id": 5057897,
+      "home_team_name": "New York Yankees",
+      "away_team_name": "Miami Marlins",
+      "home_team": {
+        "id": 19,
+        "slug": "new-york-yankees",
+        "abbreviation": "NYY",
+        "display_name": "New York Yankees",
+        "short_display_name": "Yankees",
+        "name": "Yankees",
+        "location": "New York",
+        "league": "American",
+        "division": "East"
+      },
+      "away_team": {
+        "id": 15,
+        "slug": "miami-marlins",
+        "abbreviation": "MIA",
+        "display_name": "Miami Marlins",
+        "short_display_name": "Marlins",
+        "name": "Marlins",
+        "location": "Miami",
+        "league": "National",
+        "division": "East"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T17:35:00.000Z",
+      "home_team_data": {
+        "hits": 0,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": []
+      },
+      "away_team_data": {
+        "hits": 0,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": []
+      },
+      "venue": "Yankee Stadium",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_RAIN_DELAY",
+      "period": 1,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": []
+    },
+    {
+      "id": 5057898,
+      "home_team_name": "Boston Red Sox",
+      "away_team_name": "San Diego Padres",
+      "home_team": {
+        "id": 4,
+        "slug": "boston-red-sox",
+        "abbreviation": "BOS",
+        "display_name": "Boston Red Sox",
+        "short_display_name": "Red Sox",
+        "name": "Red Sox",
+        "location": "Boston",
+        "league": "American",
+        "division": "East"
+      },
+      "away_team": {
+        "id": 23,
+        "slug": "san-diego-padres",
+        "abbreviation": "SD",
+        "display_name": "San Diego Padres",
+        "short_display_name": "Padres",
+        "name": "Padres",
+        "location": "San Diego",
+        "league": "National",
+        "division": "West"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T17:35:00.000Z",
+      "home_team_data": {
+        "hits": 9,
+        "runs": 6,
+        "errors": 2,
+        "inning_scores": [
+          0,
+          0,
+          4,
+          0,
+          0,
+          0,
+          2
+        ]
+      },
+      "away_team_data": {
+        "hits": 11,
+        "runs": 7,
+        "errors": 0,
+        "inning_scores": [
+          0,
+          0,
+          0,
+          3,
+          3,
+          0,
+          0,
+          1
+        ]
+      },
+      "venue": "Fenway Park",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_IN_PROGRESS",
+      "period": 8,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": [
+        {
+          "play": "Duran doubled to right, Anthony scored and Narv\u00e1ez scored.",
+          "inning": "bottom",
+          "period": "3rd",
+          "away_score": 0,
+          "home_score": 2
+        },
+        {
+          "play": "Abreu tripled to right, Duran scored.",
+          "inning": "bottom",
+          "period": "3rd",
+          "away_score": 0,
+          "home_score": 3
+        },
+        {
+          "play": "Yoshida doubled to right, Abreu scored.",
+          "inning": "bottom",
+          "period": "3rd",
+          "away_score": 0,
+          "home_score": 4
+        },
+        {
+          "play": "Merrill singled to center, Tatis Jr. scored.",
+          "inning": "top",
+          "period": "4th",
+          "away_score": 1,
+          "home_score": 4
+        },
+        {
+          "play": "Castellanos singled to left, Machado scored and Merrill scored, Bogaerts to second.",
+          "inning": "top",
+          "period": "4th",
+          "away_score": 3,
+          "home_score": 4
+        },
+        {
+          "play": "Machado homered to left (365 feet), Campusano scored and Merrill scored.",
+          "inning": "top",
+          "period": "5th",
+          "away_score": 6,
+          "home_score": 4
+        },
+        {
+          "play": "Yoshida doubled to second, Abreu scored and Contreras scored.",
+          "inning": "bottom",
+          "period": "7th",
+          "away_score": 6,
+          "home_score": 6
+        },
+        {
+          "play": "Merrill homered to left center (384 feet).",
+          "inning": "top",
+          "period": "8th",
+          "away_score": 7,
+          "home_score": 6
+        }
+      ]
+    },
+    {
+      "id": 5057900,
+      "home_team_name": "Kansas City Royals",
+      "away_team_name": "Milwaukee Brewers",
+      "home_team": {
+        "id": 12,
+        "slug": "kansas-city-royals",
+        "abbreviation": "KC",
+        "display_name": "Kansas City Royals",
+        "short_display_name": "Royals",
+        "name": "Royals",
+        "location": "Kansas City",
+        "league": "American",
+        "division": "Central"
+      },
+      "away_team": {
+        "id": 16,
+        "slug": "milwaukee-brewers",
+        "abbreviation": "MIL",
+        "display_name": "Milwaukee Brewers",
+        "short_display_name": "Brewers",
+        "name": "Brewers",
+        "location": "Milwaukee",
+        "league": "National",
+        "division": "Central"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T18:10:00.000Z",
+      "home_team_data": {
+        "hits": 4,
+        "runs": 2,
+        "errors": 0,
+        "inning_scores": [
+          0,
+          0,
+          2,
+          0,
+          0,
+          0
+        ]
+      },
+      "away_team_data": {
+        "hits": 7,
+        "runs": 6,
+        "errors": 0,
+        "inning_scores": [
+          3,
+          0,
+          0,
+          1,
+          0,
+          0,
+          2
+        ]
+      },
+      "venue": "Kauffman Stadium",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_IN_PROGRESS",
+      "period": 7,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": [
+        {
+          "play": "Yelich tripled to left, Contreras scored.",
+          "inning": "top",
+          "period": "1st",
+          "away_score": 1,
+          "home_score": 0
+        },
+        {
+          "play": "S\u00e1nchez homered to left center (414 feet), Yelich scored.",
+          "inning": "top",
+          "period": "1st",
+          "away_score": 3,
+          "home_score": 0
+        },
+        {
+          "play": "Garcia homered to left (388 feet), India scored.",
+          "inning": "bottom",
+          "period": "3rd",
+          "away_score": 3,
+          "home_score": 2
+        },
+        {
+          "play": "Perkins doubled to left, Lockridge scored.",
+          "inning": "top",
+          "period": "4th",
+          "away_score": 4,
+          "home_score": 2
+        },
+        {
+          "play": "Contreras singled to left, Turang scored and Rengifo scored.",
+          "inning": "top",
+          "period": "7th",
+          "away_score": 6,
+          "home_score": 2
+        }
+      ]
+    },
+    {
+      "id": 5057901,
+      "home_team_name": "Minnesota Twins",
+      "away_team_name": "Tampa Bay Rays",
+      "home_team": {
+        "id": 17,
+        "slug": "minnesota-twins",
+        "abbreviation": "MIN",
+        "display_name": "Minnesota Twins",
+        "short_display_name": "Twins",
+        "name": "Twins",
+        "location": "Minnesota",
+        "league": "American",
+        "division": "Central"
+      },
+      "away_team": {
+        "id": 27,
+        "slug": "tampa-bay-rays",
+        "abbreviation": "TB",
+        "display_name": "Tampa Bay Rays",
+        "short_display_name": "Rays",
+        "name": "Rays",
+        "location": "Tampa Bay",
+        "league": "American",
+        "division": "East"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T18:10:00.000Z",
+      "home_team_data": {
+        "hits": 3,
+        "runs": 1,
+        "errors": 0,
+        "inning_scores": [
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "away_team_data": {
+        "hits": 6,
+        "runs": 1,
+        "errors": 0,
+        "inning_scores": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "venue": "Target Field",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_IN_PROGRESS",
+      "period": 8,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": [
+        {
+          "play": "Wallner homered to right (409 feet).",
+          "inning": "bottom",
+          "period": "2nd",
+          "away_score": 0,
+          "home_score": 1
+        },
+        {
+          "play": "Caminero homered to left (397 feet).",
+          "inning": "top",
+          "period": "4th",
+          "away_score": 1,
+          "home_score": 1
+        }
+      ]
+    },
+    {
+      "id": 5057902,
+      "home_team_name": "Chicago White Sox",
+      "away_team_name": "Toronto Blue Jays",
+      "home_team": {
+        "id": 6,
+        "slug": "chicago-white-sox",
+        "abbreviation": "CHW",
+        "display_name": "Chicago White Sox",
+        "short_display_name": "White Sox",
+        "name": "White Sox",
+        "location": "Chicago",
+        "league": "American",
+        "division": "Central"
+      },
+      "away_team": {
+        "id": 29,
+        "slug": "toronto-blue-jays",
+        "abbreviation": "TOR",
+        "display_name": "Toronto Blue Jays",
+        "short_display_name": "Blue Jays",
+        "name": "Blue Jays",
+        "location": "Toronto",
+        "league": "American",
+        "division": "East"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T18:10:00.000Z",
+      "home_team_data": {
+        "hits": 6,
+        "runs": 3,
+        "errors": 0,
+        "inning_scores": [
+          1,
+          0,
+          1,
+          1,
+          0,
+          0
+        ]
+      },
+      "away_team_data": {
+        "hits": 4,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "venue": "Rate Field",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_IN_PROGRESS",
+      "period": 6,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": [
+        {
+          "play": "Vargas tripled to left, Meidroth scored.",
+          "inning": "bottom",
+          "period": "1st",
+          "away_score": 0,
+          "home_score": 1
+        },
+        {
+          "play": "Sosa doubled to left, Murakami scored.",
+          "inning": "bottom",
+          "period": "3rd",
+          "away_score": 0,
+          "home_score": 2
+        },
+        {
+          "play": "Hays singled to right, Acu\u00f1a scored, Hays to second.",
+          "inning": "bottom",
+          "period": "4th",
+          "away_score": 0,
+          "home_score": 3
+        }
+      ]
+    },
+    {
+      "id": 5057903,
+      "home_team_name": "Texas Rangers",
+      "away_team_name": "Cincinnati Reds",
+      "home_team": {
+        "id": 28,
+        "slug": "texas-rangers",
+        "abbreviation": "TEX",
+        "display_name": "Texas Rangers",
+        "short_display_name": "Rangers",
+        "name": "Rangers",
+        "location": "Texas",
+        "league": "American",
+        "division": "West"
+      },
+      "away_team": {
+        "id": 7,
+        "slug": "cincinnati-reds",
+        "abbreviation": "CIN",
+        "display_name": "Cincinnati Reds",
+        "short_display_name": "Reds",
+        "name": "Reds",
+        "location": "Cincinnati",
+        "league": "National",
+        "division": "Central"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T18:35:00.000Z",
+      "home_team_data": {
+        "hits": 2,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "away_team_data": {
+        "hits": 4,
+        "runs": 1,
+        "errors": 0,
+        "inning_scores": [
+          0,
+          0,
+          0,
+          1,
+          0,
+          0
+        ]
+      },
+      "venue": "Globe Life Field",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_IN_PROGRESS",
+      "period": 6,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": [
+        {
+          "play": "Su\u00e1rez singled to center, De La Cruz scored.",
+          "inning": "top",
+          "period": "4th",
+          "away_score": 1,
+          "home_score": 0
+        }
+      ]
+    },
+    {
+      "id": 5057904,
+      "home_team_name": "Colorado Rockies",
+      "away_team_name": "Philadelphia Phillies",
+      "home_team": {
+        "id": 9,
+        "slug": "colorado-rockies",
+        "abbreviation": "COL",
+        "display_name": "Colorado Rockies",
+        "short_display_name": "Rockies",
+        "name": "Rockies",
+        "location": "Colorado",
+        "league": "National",
+        "division": "West"
+      },
+      "away_team": {
+        "id": 21,
+        "slug": "philadelphia-phillies",
+        "abbreviation": "PHI",
+        "display_name": "Philadelphia Phillies",
+        "short_display_name": "Phillies",
+        "name": "Phillies",
+        "location": "Philadelphia",
+        "league": "National",
+        "division": "East"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T19:10:00.000Z",
+      "home_team_data": {
+        "hits": 3,
+        "runs": 3,
+        "errors": 0,
+        "inning_scores": [
+          3,
+          0,
+          0
+        ]
+      },
+      "away_team_data": {
+        "hits": 2,
+        "runs": 1,
+        "errors": 0,
+        "inning_scores": [
+          0,
+          1,
+          0,
+          0
+        ]
+      },
+      "venue": "Coors Field",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_IN_PROGRESS",
+      "period": 4,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": [
+        {
+          "play": "Moniak homered to right (433 feet).",
+          "inning": "bottom",
+          "period": "1st",
+          "away_score": 0,
+          "home_score": 1
+        },
+        {
+          "play": "Rumfield homered to right (387 feet), Goodman scored.",
+          "inning": "bottom",
+          "period": "1st",
+          "away_score": 0,
+          "home_score": 3
+        },
+        {
+          "play": "Garc\u00eda homered to right center (405 feet).",
+          "inning": "top",
+          "period": "2nd",
+          "away_score": 1,
+          "home_score": 3
+        }
+      ]
+    },
+    {
+      "id": 5057905,
+      "home_team_name": "Athletics",
+      "away_team_name": "Houston Astros",
+      "home_team": {
+        "id": 20,
+        "slug": "oakland-athletics",
+        "abbreviation": "OAK",
+        "display_name": "Oakland Athletics",
+        "short_display_name": "Athletics",
+        "name": "Athletics",
+        "location": "Oakland",
+        "league": "American",
+        "division": "West"
+      },
+      "away_team": {
+        "id": 11,
+        "slug": "houston-astros",
+        "abbreviation": "HOU",
+        "display_name": "Houston Astros",
+        "short_display_name": "Astros",
+        "name": "Astros",
+        "location": "Houston",
+        "league": "American",
+        "division": "West"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T20:05:00.000Z",
+      "home_team_data": {
+        "hits": 0,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": []
+      },
+      "away_team_data": {
+        "hits": 0,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": []
+      },
+      "venue": "Sutter Health Park",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_SCHEDULED",
+      "period": 1,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": []
+    },
+    {
+      "id": 5057906,
+      "home_team_name": "San Francisco Giants",
+      "away_team_name": "New York Mets",
+      "home_team": {
+        "id": 24,
+        "slug": "san-francisco-giants",
+        "abbreviation": "SF",
+        "display_name": "San Francisco Giants",
+        "short_display_name": "Giants",
+        "name": "Giants",
+        "location": "San Francisco",
+        "league": "National",
+        "division": "West"
+      },
+      "away_team": {
+        "id": 18,
+        "slug": "new-york-mets",
+        "abbreviation": "NYM",
+        "display_name": "New York Mets",
+        "short_display_name": "Mets",
+        "name": "Mets",
+        "location": "New York",
+        "league": "National",
+        "division": "East"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T20:05:00.000Z",
+      "home_team_data": {
+        "hits": 0,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": []
+      },
+      "away_team_data": {
+        "hits": 0,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": []
+      },
+      "venue": "Oracle Park",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_SCHEDULED",
+      "period": 1,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": []
+    },
+    {
+      "id": 5057907,
+      "home_team_name": "Los Angeles Angels",
+      "away_team_name": "Seattle Mariners",
+      "home_team": {
+        "id": 13,
+        "slug": "los-angeles-angels",
+        "abbreviation": "LAA",
+        "display_name": "Los Angeles Angels",
+        "short_display_name": "Angels",
+        "name": "Angels",
+        "location": "Los Angeles",
+        "league": "American",
+        "division": "West"
+      },
+      "away_team": {
+        "id": 25,
+        "slug": "seattle-mariners",
+        "abbreviation": "SEA",
+        "display_name": "Seattle Mariners",
+        "short_display_name": "Mariners",
+        "name": "Mariners",
+        "location": "Seattle",
+        "league": "American",
+        "division": "West"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T20:07:00.000Z",
+      "home_team_data": {
+        "hits": 0,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": []
+      },
+      "away_team_data": {
+        "hits": 0,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": []
+      },
+      "venue": "Angel Stadium",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_SCHEDULED",
+      "period": 1,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": []
+    },
+    {
+      "id": 5057908,
+      "home_team_name": "Arizona Diamondbacks",
+      "away_team_name": "Atlanta Braves",
+      "home_team": {
+        "id": 1,
+        "slug": "arizona-diamondbacks",
+        "abbreviation": "ARI",
+        "display_name": "Arizona Diamondbacks",
+        "short_display_name": "Diamondbacks",
+        "name": "Diamondbacks",
+        "location": "Arizona",
+        "league": "National",
+        "division": "West"
+      },
+      "away_team": {
+        "id": 2,
+        "slug": "atlanta-braves",
+        "abbreviation": "ATL",
+        "display_name": "Atlanta Braves",
+        "short_display_name": "Braves",
+        "name": "Braves",
+        "location": "Atlanta",
+        "league": "National",
+        "division": "East"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T20:10:00.000Z",
+      "home_team_data": {
+        "hits": 0,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": []
+      },
+      "away_team_data": {
+        "hits": 0,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": []
+      },
+      "venue": "Chase Field",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_SCHEDULED",
+      "period": 1,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": []
+    },
+    {
+      "id": 6127497,
+      "home_team_name": "Cleveland Guardians",
+      "away_team_name": "Chicago Cubs",
+      "home_team": {
+        "id": 8,
+        "slug": "cleveland-guardians",
+        "abbreviation": "CLE",
+        "display_name": "Cleveland Guardians",
+        "short_display_name": "Guardians",
+        "name": "Guardians",
+        "location": "Cleveland",
+        "league": "American",
+        "division": "Central"
+      },
+      "away_team": {
+        "id": 5,
+        "slug": "chicago-cubs",
+        "abbreviation": "CHC",
+        "display_name": "Chicago Cubs",
+        "short_display_name": "Cubs",
+        "name": "Cubs",
+        "location": "Chicago",
+        "league": "National",
+        "division": "Central"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T20:30:00.000Z",
+      "home_team_data": {
+        "hits": 0,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": []
+      },
+      "away_team_data": {
+        "hits": 0,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": []
+      },
+      "venue": "Progressive Field",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_SCHEDULED",
+      "period": 1,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": []
+    },
+    {
+      "id": 5057909,
+      "home_team_name": "Detroit Tigers",
+      "away_team_name": "St. Louis Cardinals",
+      "home_team": {
+        "id": 10,
+        "slug": "detroit-tigers",
+        "abbreviation": "DET",
+        "display_name": "Detroit Tigers",
+        "short_display_name": "Tigers",
+        "name": "Tigers",
+        "location": "Detroit",
+        "league": "American",
+        "division": "Central"
+      },
+      "away_team": {
+        "id": 26,
+        "slug": "st-louis-cardinals",
+        "abbreviation": "STL",
+        "display_name": "St. Louis Cardinals",
+        "short_display_name": "Cardinals",
+        "name": "Cardinals",
+        "location": "St. Louis",
+        "league": "National",
+        "division": "Central"
+      },
+      "season": 2026,
+      "postseason": false,
+      "season_type": "regular",
+      "date": "2026-04-05T23:20:00.000Z",
+      "home_team_data": {
+        "hits": 0,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": []
+      },
+      "away_team_data": {
+        "hits": 0,
+        "runs": 0,
+        "errors": 0,
+        "inning_scores": []
+      },
+      "venue": "Comerica Park",
+      "attendance": 0,
+      "conference_play": false,
+      "status": "STATUS_SCHEDULED",
+      "period": 1,
+      "clock": 0,
+      "display_clock": "0:00",
+      "scoring_summary": []
+    }
+  ],
+  "meta": {
+    "per_page": 25
+  }
+}

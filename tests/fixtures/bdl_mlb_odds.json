@@ -1,1 +1,97 @@
-{}
+{
+  "data": [
+    {
+      "id": 216857092,
+      "game_id": 5057892,
+      "vendor": "fanduel",
+      "spread_home_value": "1.5",
+      "spread_home_odds": -1000,
+      "spread_away_value": "-1.5",
+      "spread_away_odds": 520,
+      "moneyline_home_odds": 2500,
+      "moneyline_away_odds": -20000,
+      "total_value": "3.5",
+      "total_over_odds": 360,
+      "total_under_odds": -580,
+      "updated_at": "2026-04-05T03:07:04.088Z"
+    },
+    {
+      "id": 217005639,
+      "game_id": 5057892,
+      "vendor": "fanatics",
+      "spread_home_value": "1.5",
+      "spread_home_odds": -2800,
+      "spread_away_value": "-1.5",
+      "spread_away_odds": 1200,
+      "moneyline_home_odds": 2800,
+      "moneyline_away_odds": -10000,
+      "total_value": "4.5",
+      "total_over_odds": 265,
+      "total_under_odds": -375,
+      "updated_at": "2026-04-05T03:05:05.373Z"
+    },
+    {
+      "id": 217279518,
+      "game_id": 5057892,
+      "vendor": "betrivers",
+      "spread_home_value": "1",
+      "spread_home_odds": -670,
+      "spread_away_value": "-1",
+      "spread_away_odds": 295,
+      "moneyline_home_odds": 525,
+      "moneyline_away_odds": -1115,
+      "total_value": "4",
+      "total_over_odds": 275,
+      "total_under_odds": -835,
+      "updated_at": "2026-04-05T02:49:04.461Z"
+    },
+    {
+      "id": 217318873,
+      "game_id": 5057892,
+      "vendor": "caesars",
+      "spread_home_value": "1.5",
+      "spread_home_odds": -240,
+      "spread_away_value": "-1.5",
+      "spread_away_odds": 185,
+      "moneyline_home_odds": 2500,
+      "moneyline_away_odds": -15000,
+      "total_value": "4.5",
+      "total_over_odds": 1200,
+      "total_under_odds": -4000,
+      "updated_at": "2026-04-05T03:05:05.893Z"
+    },
+    {
+      "id": 217354791,
+      "game_id": 5057892,
+      "vendor": "draftkings",
+      "spread_home_value": "1.5",
+      "spread_home_odds": -5900,
+      "spread_away_value": "-1.5",
+      "spread_away_odds": 1140,
+      "moneyline_home_odds": 481,
+      "moneyline_away_odds": -830,
+      "total_value": "3.5",
+      "total_over_odds": 308,
+      "total_under_odds": -452,
+      "updated_at": "2026-04-05T02:49:04.051Z"
+    },
+    {
+      "id": 217372242,
+      "game_id": 5057892,
+      "vendor": "betmgm",
+      "spread_home_value": "1.5",
+      "spread_home_odds": -350,
+      "spread_away_value": "-1.5",
+      "spread_away_odds": 260,
+      "moneyline_home_odds": 1850,
+      "moneyline_away_odds": -10000,
+      "total_value": "5.5",
+      "total_over_odds": 140,
+      "total_under_odds": -180,
+      "updated_at": "2026-04-05T03:05:05.714Z"
+    }
+  ],
+  "meta": {
+    "per_page": 25
+  }
+}

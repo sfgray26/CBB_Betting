@@ -110,7 +110,10 @@ def capture_games(today: str) -> dict:
 
 
 def capture_odds(games_payload: dict) -> None:
-    """Task 2: GET /mlb/v1/odds?game_id={first_game_id}"""
+    """Task 2: GET /mlb/v1/odds?game_ids[]={first_game_id}
+    OpenAPI spec: param is 'game_ids' (array), not 'game_id'.
+    Spread values are strings (e.g. '+1.5'), odds are integers (American).
+    """
     logger.info("=== Task 2: MLB odds ===")
     data = games_payload.get("data", [])
     if not data:
@@ -124,7 +127,8 @@ def capture_odds(games_payload: dict) -> None:
         return
     logger.info("Using game_id=%s for odds lookup", game_id)
     try:
-        payload = _get("/odds", {"game_id": game_id})
+        # Spec: param name is 'game_ids[]' (array), not 'game_id'
+        payload = _get("/odds", {"game_ids[]": game_id})
         _save("bdl_mlb_odds.json", payload)
         _print_field_summary("bdl_mlb_odds", payload)
     except requests.HTTPError as exc:
@@ -133,24 +137,27 @@ def capture_odds(games_payload: dict) -> None:
 
 
 def capture_injuries() -> None:
-    """Task 3: GET /mlb/v1/injuries — endpoint may not exist on current tier."""
-    logger.info("=== Task 3: MLB injuries ===")
+    """Task 3: GET /mlb/v1/player_injuries
+    OpenAPI spec: endpoint is '/player_injuries', NOT '/injuries'.
+    Returns player object + injury detail fields.
+    """
+    logger.info("=== Task 3: MLB player injuries ===")
     try:
-        payload = _get("/injuries")
+        payload = _get("/player_injuries")
         _save("bdl_mlb_injuries.json", payload)
         _print_field_summary("bdl_mlb_injuries", payload)
         if not payload.get("data"):
-            logger.info("injuries endpoint returned empty data array")
+            logger.info("player_injuries endpoint returned empty data array")
     except requests.HTTPError as exc:
         status = exc.response.status_code if exc.response is not None else "unknown"
         if status in (404, 403, 401):
             logger.info(
-                "injuries endpoint not available (HTTP %s) — "
-                "this endpoint may not exist on current BDL tier",
+                "player_injuries endpoint not available (HTTP %s) — "
+                "may not be on current BDL tier",
                 status,
             )
         else:
-            logger.error("injuries endpoint failed with HTTP %s: %s", status, exc)
+            logger.error("player_injuries endpoint failed with HTTP %s: %s", status, exc)
         _save("bdl_mlb_injuries.json", {})
 
 
