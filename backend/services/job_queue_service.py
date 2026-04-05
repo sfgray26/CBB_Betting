@@ -203,39 +203,30 @@ class JobQueueService:
                     )
                 logger.warning("Job %s failed (attempt %d): %s", job_id, new_retry_count, exc)
             except Exception as exc:
-                new_retry_count = row.retry_count + 1
-                if new_retry_count >= row.max_retries:
-                    db.execute(
-                        text(
-                            """
-                            UPDATE job_queue
-                            SET status = 'failed',
-                                completed_at = :now,
-                                error = :error,
-                                retry_count = :retry_count
-                            WHERE id = :job_id
-                            """
-                        ),
-                        {
-                            "now": _now_et(),
-                            "error": str(exc),
-                            "retry_count": new_retry_count,
-                            "job_id": job_id,
-                        },
-                    )
-                else:
-                    db.execute(
-                        text(
-                            """
-                            UPDATE job_queue
-                            SET status = 'pending',
-                                retry_count = :retry_count
-                            WHERE id = :job_id
-                            """
-                        ),
-                        {"retry_count": new_retry_count, "job_id": job_id},
-                    )
-                logger.warning("Job %s failed (attempt %d): %s", job_id, new_retry_count, exc)
+                logger.error(
+                    "Job %s raised unexpected exception (treated as fatal, no retry): %s: %s",
+                    job_id,
+                    type(exc).__name__,
+                    exc,
+                )
+                db.execute(
+                    text(
+                        """
+                        UPDATE job_queue
+                        SET status = 'failed',
+                            completed_at = :now,
+                            error = :error,
+                            retry_count = :retry_count
+                        WHERE id = :job_id
+                        """
+                    ),
+                    {
+                        "now": _now_et(),
+                        "error": f"[unexpected:{type(exc).__name__}] {exc}",
+                        "retry_count": row.retry_count,
+                        "job_id": job_id,
+                    },
+                )
 
             db.commit()
             processed += 1

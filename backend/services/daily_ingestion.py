@@ -927,18 +927,26 @@ class DailyIngestionOrchestrator:
                             "blend_whip": row.get("blend_whip"),
                         },
                     )
-                    db.execute(stmt)
-                    if row["player_id"] in existing_ids:
-                        updated += 1
-                    else:
-                        inserted += 1
-                        existing_ids.add(row["player_id"])
-                    records_written += 1
+                    try:
+                        with db.begin_nested():
+                            db.execute(stmt)
+                        if row["player_id"] in existing_ids:
+                            updated += 1
+                        else:
+                            inserted += 1
+                            existing_ids.add(row["player_id"])
+                        records_written += 1
+                    except Exception as row_exc:
+                        errors += 1
+                        logger.warning(
+                            "ensemble_update: skip row %s -- %s",
+                            row.get("player_id"),
+                            row_exc,
+                        )
 
                 db.commit()
             except Exception as exc:
                 db.rollback()
-                errors = 1
                 logger.error("ensemble_update DB write failed: %s", exc)
                 elapsed = int((time.monotonic() - t0) * 1000)
                 self._record_job_run("ensemble_update", "failed")
