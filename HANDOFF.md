@@ -92,7 +92,7 @@ All embargoes lifted by explicit human instruction only. No date-based triggers.
 | BDL GOAT MLB | **ACTIVE** | Purchased. Zero `/mlb/v1/` code exists yet — build from scratch. |
 | OddsAPI Basic | **ACTIVE** | 20k calls/month. CBB archival only. MLB odds via BDL. |
 | BDL NCAAB | **DEAD** | Subscription cancelled — never call `/ncaab/v1/` |
-| MLB Data Pipeline | **P1+P2+P3 CERTIFIED** | Layer 0 contracts + validated BDL client complete. 42/42 tests pass. P4 (Yahoo validation) is next. |
+| MLB Data Pipeline | **P1+P2+P3+P4 CERTIFIED** | Layer 0 contracts (MLB + Yahoo) + validated BDL client + Yahoo ingestion layer complete. 78/78 total tests pass (42 BDL + 36 Yahoo). P5 (job 100_013 re-enable) is next pending human approval. |
 | `mlb_analysis.py` | **PROTOTYPE — DO NOT BUILD ON** | Raw OddsAPI calls, no validation, silent 0.0 returns, fuzzy name matching. Rebuild with validated contracts. |
 | Fantasy projection pipeline | **EMBARGOED** | Jobs 100_012-100_015 disabled pending data floor certification |
 | Fantasy/Edge structural split | **PHASES 1-5 DONE** | Phase 6-7 in infrastructure track |
@@ -175,9 +175,27 @@ All MLB data layer tests combined: 42/42.
 3. `/mlb/v1/season_stats` — season aggregates + WAR.
 4. `/mlb/v1/plate_appearances` — full Statcast-level per-PA data (may overlap pybaseball).
 
-### Priority 4 — Layer 2: Validated Yahoo Ingestion ← ACTIVE
+### Priority 4 — Layer 2: Validated Yahoo Ingestion ✅ COMPLETE
 
-**Yahoo live capture COMPLETE (S15, Apr 5)** — fixtures in `tests/fixtures/yahoo_*.json`.
+**Completed Session S16 (Apr 5 2026)**
+
+Files created:
+- `backend/data_contracts/yahoo_player.py` — YahooPlayer base (strict=True, is_injured property)
+- `backend/data_contracts/yahoo_roster.py` — YahooRosterEntry (adds selected_position)
+- `backend/data_contracts/yahoo_waiver.py` -- YahooWaiverCandidate (adds stats dict)
+- `backend/data_contracts/__init__.py` -- updated to export all three Yahoo models
+- `backend/services/yahoo_ingestion.py` -- Layer 2 adapter wrapping client methods
+- `tests/test_yahoo_contracts.py` -- 36 tests, all fixture parse rates verified
+
+Key decisions locked:
+- `status: Optional[bool]` -- strict=True means string "IL" is rejected at validation boundary
+- `is_injured` checks all three independent signals: status, injury_note, "IL" in positions
+- `percent_owned: float` -- always present, null rejected by contract
+- `selected_position` on YahooRosterEntry only -- not on base or waiver model
+- `stats: Optional[dict[str,str]]` on YahooWaiverCandidate -- stat 60 stays as "H/AB" string
+- "NA" in positions is accepted (Yahoo "Not Active" token) -- does NOT trigger is_injured
+
+**Yahoo live capture COMPLETE (S15, Apr 5)** -- fixtures in `tests/fixtures/yahoo_*.json`.
 
 #### Critical findings from live capture (override K27 assumptions):
 
@@ -251,7 +269,7 @@ Rename stale references (cbb-architect -> mlb-architect, etc.). Documentation on
 | `valuation_cache` | 100_011 | On demand | LIVE |
 | `mlb_odds` | 100_001 | Every 30 min | DIRTY — rebuild with BDL validated client |
 | `fangraphs_ros` | 100_012 | Daily 3 AM ET | **EMBARGOED** |
-| `yahoo_adp_injury` | 100_013 | Every 4h | **EMBARGOED** |
+| `yahoo_adp_injury` | 100_013 | Every 4h | **EMBARGOED** -- P4 contracts certified; awaiting human approval to re-enable |
 | `ensemble_update` | 100_014 | Daily 5 AM ET | **EMBARGOED** |
 | `projection_freshness_check` | 100_015 | Every 1h | **DISABLE** (gates on embargoed jobs = false violations) |
 
