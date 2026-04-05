@@ -1,17 +1,39 @@
-# HANDOFF.md — Fantasy Baseball Platform Master Plan (In-Season 2026)
+# HANDOFF.md — MLB Platform Master Plan (In-Season 2026)
 
-> **Date:** April 5, 2026 (updated Session S13) | **Author:** Claude Code (Master Architect)
-> **Risk Level:** ELEVATED — Fantasy data layer under embargo; raw ingestion unvalidated
+> **Date:** April 5, 2026 (updated Session S14) | **Author:** Claude Code (Master Architect)
+> **Risk Level:** ELEVATED — Data pipeline under construction; raw ingestion unvalidated
+
+---
+
+## CORE PHILOSOPHY — Data-First, Contracts Before Plumbing
+
+We are building this system like a quantitative trading desk. The data pipeline IS the product. Everything else — UI, optimization, automation — is a window into it that does not exist until the data is pristine.
+
+**Five non-negotiable principles:**
+
+1. **Data First:** The data pipeline is the entire product right now.
+2. **Contracts Before Plumbing:** Define the shape of reality (Pydantic V2 models) before writing the API clients that fetch it.
+3. **One Feed at a Time:** Do not move to odds or injuries until the core game schedule is pristine.
+4. **No Silent Failures:** `dict.get()` with defaults is suppression, not validation. Every input passes strict schema validation.
+5. **Strict Embargo:** All downstream logic (optimization, matchups, waivers, ensemble blending) remains cut off until the data floor is certified.
+
+**Layer model:**
+
+```
+Layer 0: Decision Contracts (Pydantic V2 models — immutable truth of what valid data looks like)
+Layer 1: Pure Intelligence Functions (stateless transforms: raw -> validated)
+Layer 2: Data Adapters (API clients, ingestion — swappable plumbing)
+Layer 3: Orchestration (schedulers, job queues — when things run)
+Layer 4: Presentation (API endpoints, UI — the face)
+```
+
+Build bottom-up. Never build Layer 2 without Layer 0 contracts. Never build Layer 4 without Layer 1 proven.
 
 ---
 
 ## ACTIVE DIRECTIVES (read before every session)
 
-### DIRECTIVE 1 — Fantasy Data-First Mandate (STRIP-BACK)
-
-**The assumption that the fantasy pipeline is "LIVE" and reliable is false.**
-
-The projection pipeline was built layer-by-layer but the raw ingestion foundations have not been independently validated. We are executing a deliberate strip-back: validate the data floor before any math runs on top of it.
+### DIRECTIVE 1 — Data-First Mandate (STRICT EMBARGO)
 
 **HARD EMBARGO — do not lift without explicit human instruction:**
 - Lineup optimization
@@ -20,60 +42,44 @@ The projection pipeline was built layer-by-layer but the raw ingestion foundatio
 - FanGraphs RoS ingestion (job 100_012)
 - Yahoo ADP/injury polling (job 100_013)
 - Any derived stats (wOBA, FIP, barrel%, etc.)
-
-**The only active priority:** prove that raw Yahoo roster state and BallDontLie MLB data can be ingested daily with zero silent failures, validated end-to-end through strict Pydantic V2 models, before any row is written to the relational database or surface reaches the UI.
+- Any new UI surface
 
 **Nothing proceeds to the DB or UI until:** incoming payloads pass strict Pydantic V2 validation models. Every field, every type, every nullable must be explicitly declared and verified against live API responses.
 
-### DIRECTIVE 2 — Phase 6-7 Deployment Sequence (Boot/Migration Deadlock Fix)
-
-The previous handoff had Gemini deploying the standalone fantasy service before the database schema existed. That will crash on boot. The correct sequence is strictly ordered:
+### DIRECTIVE 2 — Phase 6-7 Deployment Sequence (Infrastructure Track)
 
 ```
-Step 1 (Gemini):  Provision Fantasy Postgres. Set FANTASY_DATABASE_URL on the fantasy service.
+Step 1 (Gemini):  Provision Fantasy Postgres. Set FANTASY_DATABASE_URL.
                   DO NOT start the service yet.
 
 Step 2 (Claude):  Run database migrations against FANTASY_DATABASE_URL.
                   Verify schema with: SELECT table_name FROM information_schema.tables
                   WHERE table_schema = 'public';
 
-Step 3 (Gemini):  Deploy fantasy_app.py standalone service ONLY after Claude confirms Step 2.
+Step 3 (Gemini):  Deploy fantasy_app.py ONLY after Claude confirms Step 2.
                   Start Command: uvicorn backend.fantasy_app:app --host 0.0.0.0 --port $PORT
 ```
 
-**Gemini must not deploy until receiving explicit confirmation from Claude that migrations ran clean.**
-
 ### DIRECTIVE 3 — Strangler-Fig Scheduler Duplication (Race Condition Fix)
 
-If the new `fantasy_app.py` boots with `ENABLE_INGESTION_ORCHESTRATOR=true` while the legacy `main.py` service is still running, both containers will execute the same ingestion jobs simultaneously against the same database. This will cause duplicate writes, advisory lock timeouts, and data corruption.
-
-**Required sequence before booting the new fantasy service:**
-
-1. Set `ENABLE_FANTASY_SCHEDULER=false` on the **legacy CBB `main.py` service** in Railway. This disables its fantasy scheduler start path without affecting CBB betting jobs.
-2. Verify the legacy service has redeployed and its fantasy scheduler is not running (check `/admin/scheduler/status`).
-3. Only then start the fantasy_app.py service.
-
-This variable must be respected in `backend/main.py`'s lifespan. **Claude to implement** `ENABLE_FANTASY_SCHEDULER` guard in the lifespan before Phase 6-7 cut-over.
+Before booting new fantasy service:
+1. Set `ENABLE_FANTASY_SCHEDULER=false` on legacy `main.py` service in Railway.
+2. Verify legacy service redeployed and fantasy scheduler is not running.
+3. Only then start fantasy_app.py.
 
 ### DIRECTIVE 4 — Redis / Advisory Lock Contention
 
-The advisory lock registry (100_001–100_015) uses **PostgreSQL `pg_try_advisory_lock`**, not Redis. Once the fantasy service has its own Postgres (Phase 6-7), the lock namespaces are physically separate — no collision possible.
+Advisory locks use PostgreSQL `pg_try_advisory_lock` (NOT Redis). Lock IDs: 100_001-100_010 = edge/CBB, 100_011-100_015 = fantasy. Do not cross-assign.
 
-**However, during the transition period** (both services pointing at the same Postgres), the edge and fantasy services share the same advisory lock integer namespace. Lock IDs must not overlap. Current assignment is safe: 100_001–100_010 are edge/CBB jobs; 100_011–100_015 are fantasy jobs. This must not change.
-
-**Redis shared instance:** Both services share one Railway Redis. The `NamespacedCache` in `backend/redis_client.py` enforces `edge:` and `fantasy:` key prefixes at the application layer. This is sufficient for cache keys. It does **not** protect advisory locks (those are Postgres). No separate Redis instance is required provided the key prefix discipline is maintained in all new code.
-
-**Requirement for any new Redis key written by either service:** it must use `edge_cache.set(...)` or `fantasy_cache.set(...)` — never raw `redis.set(...)`.
+Redis shared instance: use `edge_cache.set(...)` or `fantasy_cache.set(...)` — never raw `redis.set(...)`.
 
 ### DIRECTIVE 5 — No LLM Time-Gates
 
-Do not write "execute on [date]" or any date-based trigger in agent instructions. LLMs cannot be trusted to parse the current system date reliably. All embargoes are lifted by explicit human instruction only.
+All embargoes lifted by explicit human instruction only. No date-based triggers.
 
-**CBB V9.2 recalibration (EMAC-068):** MOOT. CBB season is permanently closed. Do not recalibrate. Do not touch Kelly math. The model is archived as-is.
-
-**BDL MLB integration:** ACTIVE. BDL GOAT MLB is purchased. Expand `balldontlie.py` with `/mlb/v1/` endpoints immediately. No trigger phrase required — this is normal in-progress work.
-
-**OddsAPI:** NOT cancelled — downgraded to Basic (20k calls/month). Kept for CBB archival closing lines only. Do NOT migrate away from OddsAPI for closing line capture. Do NOT use OddsAPI for any MLB feature.
+- **CBB V9.2 recalibration:** MOOT. CBB season permanently closed. Model archived.
+- **BDL MLB integration:** ACTIVE. No trigger phrase needed.
+- **OddsAPI:** NOT cancelled — Basic plan (20k calls/month). CBB archival closing lines only. MLB odds via BDL.
 
 ---
 
@@ -81,106 +87,157 @@ Do not write "execute on [date]" or any date-based trigger in agent instructions
 
 | System | State | Notes |
 |--------|-------|-------|
-| CBB Season | **CLOSED** | Permanently archived. No recalibration. CBB scheduler jobs to be disabled. |
-| CBB Betting Model | **FROZEN PERMANENTLY** | Season over. Kelly math untouched. Archive only. |
-| BDL GOAT MLB | **ACTIVE** | Purchased. `/mlb/v1/` endpoints ready to integrate in `balldontlie.py`. |
-| OddsAPI Basic | **ACTIVE** | 20k calls/month. CBB archival closing lines only. MLB odds via BDL. |
+| CBB Season | **CLOSED** | Permanently archived. No recalibration. |
+| CBB Betting Model | **FROZEN PERMANENTLY** | Kelly math untouched. Archive only. |
+| BDL GOAT MLB | **ACTIVE** | Purchased. Zero `/mlb/v1/` code exists yet — build from scratch. |
+| OddsAPI Basic | **ACTIVE** | 20k calls/month. CBB archival only. MLB odds via BDL. |
 | BDL NCAAB | **DEAD** | Subscription cancelled — never call `/ncaab/v1/` |
-| MLB Betting Model | **IN DEVELOPMENT** | `mlb_analysis.py` stub-level. BDL active unblocks real implementation. |
-| Fantasy projection pipeline | **EMBARGOED** | Jobs 100_012, 100_013, 100_014 disabled pending raw data validation |
-| Fantasy raw ingestion (Yahoo + BDL) | **NEEDS VALIDATION** | Pydantic V2 contract verification not yet done |
-| Fantasy lineup optimizer | **EMBARGOED** | Blocked until ingestion layer certified |
-| Fantasy/Edge structural split | **PHASES 1-5 DONE** | New entry points exist; Phase 6-7 needs correct deploy sequence (Directive 2) |
+| MLB Data Pipeline | **UNDER CONSTRUCTION** | No Pydantic contracts. No validated clients. Ground-up build. |
+| `mlb_analysis.py` | **PROTOTYPE — DO NOT BUILD ON** | Raw OddsAPI calls, no validation, silent 0.0 returns, fuzzy name matching. Rebuild with validated contracts. |
+| Fantasy projection pipeline | **EMBARGOED** | Jobs 100_012-100_015 disabled pending data floor certification |
+| Fantasy/Edge structural split | **PHASES 1-5 DONE** | Phase 6-7 in infrastructure track |
+
+### Ground Truth: What Actually Exists
+
+| Component | Reality |
+|-----------|---------|
+| `balldontlie.py` | 100% NCAAB. Zero MLB code. Auth + pagination patterns reusable. |
+| `mlb_analysis.py` | Calls OddsAPI via raw `requests.get()`. No retry. No validation. Returns `0.0` silently on errors. |
+| `daily_ingestion._poll_mlb_odds()` | Raw OddsAPI. Validates only `isinstance(games, list)`. No DB persistence. |
+| `daily_ingestion._poll_yahoo_adp_injury()` | Checks `if not pid` only. No schema validation. Writes directly to DB. |
+| `odds.py` | 100% CBB. Zero MLB methods. |
+| MLB Pydantic models | None exist. |
+| MLB API endpoints | None exposed. No `/api/mlb/*` routes. |
 
 ---
 
-## What's Actually Pending (Ordered by Priority)
+## DATA PIPELINE TRACK — All Effort Goes Here
 
-### Priority 0 — BDL MLB Integration (Claude, immediate)
+### Priority 1 — Raw Payload Capture + Schema Discovery
 
-BDL GOAT MLB is purchased and active. This is the data foundation for all MLB work.
+**READ-ONLY reconnaissance. No code changes. No DB writes.**
 
-**Deliverables:**
+Before writing any wrapper code or validation model, capture what the APIs actually return. The delta between what the code ASSUMES and what the API ACTUALLY sends is where every bug lives.
 
-1. Expand `backend/services/balldontlie.py` with `/mlb/v1/` endpoints:
-   - `get_mlb_games(date)` — today's schedule + live scores
-   - `get_mlb_player(player_id)` — player lookup
-   - `get_mlb_injuries()` — current injury report (replaces CBS scraper)
-   - `get_mlb_odds(game_id)` — moneyline + spread (primary MLB odds source)
-   - `get_mlb_box_score(game_id)` — post-game box score
+**BDL MLB API (`/mlb/v1/`):**
 
-2. Migrate `mlb_analysis._fetch_mlb_odds()` to use `get_mlb_odds()` instead of raw OddsAPI call.
+BDL GOAT MLB is purchased. `balldontlie.py` has the auth pattern (Bearer token via `BALLDONTLIE_API_KEY`, base URL `https://api.balldontlie.io`, cursor pagination). But zero `/mlb/v1/` calls have ever been made.
 
-3. Migrate `daily_ingestion._poll_mlb_odds()` to use BDL.
+Tasks:
+1. Hit `GET /mlb/v1/games?dates[]={today}` with existing BDL API key. Capture full raw JSON. Document every field, type, nullable.
+2. Hit `GET /mlb/v1/odds?game_id={id}` for a real game. Capture. Document market types, sportsbook names, line format.
+3. Hit `GET /mlb/v1/injuries` if endpoint exists. Capture. Document.
+4. Hit `GET /mlb/v1/players?search={name}`. Capture. Document.
+5. Save captured payloads to `tests/fixtures/bdl_mlb_*.json` (test fixtures, not production code).
 
-4. Write `tests/test_bdl_mlb.py` covering each new method with mocked responses.
+**Yahoo Fantasy API:**
 
-5. Compile checks: `venv/Scripts/python -m py_compile backend/services/balldontlie.py backend/services/mlb_analysis.py`
+Yahoo client exists and works. But field-level response shapes have never been documented.
 
-Commit: `git commit -m "feat: BDL GOAT MLB integration -- /mlb/v1/ endpoints, migrate MLB odds off OddsAPI"`
+Tasks:
+1. Call `get_team_roster()` via Railway. Capture raw response. Document every field path.
+2. Call `get_free_agents()` via Railway. Capture. Document.
+3. Save to `tests/fixtures/yahoo_*.json`.
 
-### Priority 0b — Disable CBB Scheduler Jobs (Claude, immediate)
+**Kimi K27 audit runs in parallel** — reads the codebase to map what code ASSUMES. Claude captures what APIs ACTUALLY return. The delta is the bug map.
 
-CBB season is closed. The APScheduler is still firing CBB-specific jobs every night (nightly_analysis, fetch_ratings, opener_attack) against a dead model. These must be disabled.
+**Acceptance gate:** Every data source has a captured real payload and a documented field map before moving to Priority 2.
 
-In `backend/schedulers/edge_scheduler.py`, gate the following jobs behind `CBB_SEASON_ACTIVE` env var (default `false`):
-- `nightly_analysis`
-- `fetch_ratings` (KenPom/BartTorvik)
-- `opener_attack` jobs
-- `odds_monitor` (CBB odds)
+### Priority 2 — Layer 0: Pydantic V2 Decision Contracts
 
-**Keep running unconditionally:**
-- `update_outcomes` — historical game settlement still needed
-- `capture_closing_lines` — archival data for future recalibration research
-- `daily_snapshot`
+Define canonical domain models. These are the IMMUTABLE CONTRACTS. No raw dicts cross layer boundaries.
 
-When `CBB_SEASON_ACTIVE=false` (default), log: `"CBB scheduler jobs disabled -- season closed"`
+**Location: `backend/data_contracts/`**
 
-Compile check + test: `venv/Scripts/python -m py_compile backend/schedulers/edge_scheduler.py`
+```
+backend/data_contracts/__init__.py
+backend/data_contracts/mlb_game.py        -- MLBGame, MLBTeam
+backend/data_contracts/mlb_odds.py        -- MLBOddsLine, MLBMarket, MLBSportsbook
+backend/data_contracts/mlb_injury.py      -- MLBInjuryReport, MLBInjuredPlayer
+backend/data_contracts/yahoo_roster.py    -- YahooRosterEntry, YahooPlayerStats
+backend/data_contracts/yahoo_waiver.py    -- YahooWaiverCandidate
+backend/data_contracts/validation.py      -- ValidationReport (shared)
+```
 
-Commit: `git commit -m "feat: CBB_SEASON_ACTIVE flag -- disable CBB nightly jobs, keep archival jobs running"`
+**Requirements:**
+- Pydantic V2 `BaseModel` with `model_config = ConfigDict(strict=True)`
+- Every field typed. `Optional[T]` with explicit `None` default for nullables.
+- `model_validator` / `field_validator` where business rules apply (e.g., `percent_rostered` must be 0-100).
+- Tests: feed captured payloads from Priority 1 through each model. **100% parse rate required.**
 
-### Priority 1 — Validate Raw Ingestion Layer (Fantasy + BDL MLB, Claude)
+**Acceptance gate:** Every captured payload parses with zero `ValidationError` before moving to Priority 3.
 
-**Do this before anything else.**
+### Priority 3 — Layer 2: Validated BDL MLB Client (one endpoint at a time)
 
-The task: write strict Pydantic V2 models for Yahoo and BallDontLie API responses, run live fetches, and prove the data is clean before allowing any downstream job to consume it.
+Build API client methods in `backend/services/balldontlie.py`. Each method returns Pydantic-validated domain objects. NEVER raw dicts.
 
-**Deliverables:**
+**Strict sequence — do not skip ahead:**
 
-1. `backend/fantasy_baseball/validators/yahoo_roster_validator.py` — Pydantic V2 model for Yahoo roster API response. Every field typed. Nullable fields explicit. Validate a live `get_team_roster()` call and log any validation errors.
+**3a.** `get_mlb_games(date: str) -> list[MLBGame]`
+- Calls `/mlb/v1/games?dates[]={date}`
+- Parses through `MLBGame` contract
+- Handles pagination (reuse existing NCAAB cursor pattern)
+- Empty list on API error (logged, never silent)
+- Test with captured fixture. Prove against live API. **Commit. Only then proceed.**
 
-2. `backend/fantasy_baseball/validators/yahoo_waiver_validator.py` — Pydantic V2 model for Yahoo free agent API response. Validate a live `get_free_agents()` call.
+**3b.** `get_mlb_odds(game_id: int) -> list[MLBOddsLine]`
+- Test. Prove. **Commit. Proceed.**
 
-3. `backend/fantasy_baseball/validators/bdl_game_validator.py` — Pydantic V2 model for BallDontLie `/mlb/v1/games` response. Validate a live fetch for today's schedule.
+**3c.** `get_mlb_injuries() -> list[MLBInjuredPlayer]`
+- Test. Prove. **Commit. Proceed.**
 
-4. Each validator must: parse the live payload, log every field that is missing or type-mismatched, return a `ValidationReport` with pass/fail counts.
+**3d.** `get_mlb_box_score(game_id: int) -> MLBBoxScore` (if BDL exposes)
+- Test. Prove. **Commit.**
 
-5. No data is written to the database during this phase. Validation only.
+**Each step is its own commit.** If 3b reveals the BDL odds schema differs from our contract, we fix the contract (Priority 2) FIRST — not after.
 
-6. Report: per-endpoint pass rate, any schema mismatches against what the code currently assumes, and explicit confirmation that the raw data is safe to consume.
+### Priority 4 — Layer 2: Validated Yahoo Ingestion
 
-**Only after this is confirmed clean:** re-enable 100_013 (Yahoo ADP/injury). Jobs 100_012 and 100_014 remain embargoed until the blending logic is re-validated separately.
+Existing Yahoo client methods STAY (hardened across 11 sessions). Add a validation LAYER on top.
 
-### Priority 2 — ENABLE_FANTASY_SCHEDULER Guard (Claude, before Phase 6-7)
+1. Wrap `get_team_roster()` return in `YahooRosterEntry` contract parsing.
+2. Wrap `get_free_agents()` return in `YahooWaiverCandidate` contract parsing.
+3. Any field that fails validation: logged with exact field name, expected type, actual value. Never suppressed.
+4. Test against captured Yahoo fixtures.
 
-Implement the `ENABLE_FANTASY_SCHEDULER` environment variable guard in `backend/main.py` lifespan. When `ENABLE_FANTASY_SCHEDULER=false`, the legacy service must not start the fantasy ingestion orchestrator, the job_queue_processor for fantasy jobs, or any of jobs 100_012–100_015.
-
-This is required before Phase 6-7 cut-over (Directive 3).
-
-### Priority 3 — Phase 6-7 Infrastructure (Gemini → Claude → Gemini)
-
-Execute strictly per Directive 2 sequence. Do not skip steps.
-
-### Priority 4 — CBB Archive (housekeeping, low urgency)
-
-Rename `.claude/agents/cbb-architect.md` → `mlb-architect.md`. Update `.claude/skills/cbb-identity/SKILL.md` mission statement from CBB to MLB+Fantasy. No code changes — documentation only.
-
-*Note: CBB V9.2 recalibration is permanently cancelled. Season is closed.*
+**Acceptance criteria for lifting job 100_013 embargo:**
+- Live `get_adp_and_injury_feed()` parses 100% through contracts
+- Zero `ValidationError` on any player record
+- Any `null` in `percent_rostered` explicitly handled (logged + default to 0.0, documented in contract)
+- Written confirmation with pass/fail counts
+- Human approval before re-enabling
 
 ---
 
-## Job Registry — Current Status
+## INFRASTRUCTURE TRACK (parallel, non-blocking, never delays data pipeline)
+
+These are operationally important but architecturally irrelevant to data quality. Execute at any time without blocking the data pipeline.
+
+### INFRA-A — Disable CBB Scheduler Jobs
+
+Gate behind `CBB_SEASON_ACTIVE` env var (default `false`):
+- Disable: `nightly_analysis`, `fetch_ratings`, `opener_attack`, `odds_monitor`
+- Keep: `update_outcomes`, `capture_closing_lines`, `daily_snapshot` (archival)
+
+### INFRA-B — ENABLE_FANTASY_SCHEDULER Guard
+
+Add guard to `backend/main.py` lifespan. When `false`, disable all fantasy scheduler jobs (100_012-100_015, DailyIngestionOrchestrator, job_queue_processor).
+
+### INFRA-C — Phase 6-7 Railway Deployment
+
+Execute per Directive 2 sequence. Strict ordering.
+
+### INFRA-D — Disable Projection Freshness Gate (100_015)
+
+Job 100_015 is listed LIVE but gates on embargoed jobs — permanently tripped, producing false violations. Disable alongside embargoed jobs until data floor is certified.
+
+### INFRA-E — CBB Archive (housekeeping, low urgency)
+
+Rename stale references (cbb-architect -> mlb-architect, etc.). Documentation only.
+
+---
+
+## Job Registry
 
 | Job | Lock | Cadence | Status |
 |-----|------|---------|--------|
@@ -189,15 +246,15 @@ Rename `.claude/agents/cbb-architect.md` → `mlb-architect.md`. Update `.claude
 | `waiver_scan` | 100_007 | Daily 6 AM ET | LIVE |
 | `mlb_brief` | 100_008 | Daily 7 AM ET | LIVE |
 | `valuation_cache` | 100_011 | On demand | LIVE |
-| `mlb_odds` | 100_001 | Every 30 min | DIRTY — migrate on trigger |
+| `mlb_odds` | 100_001 | Every 30 min | DIRTY — rebuild with BDL validated client |
 | `fangraphs_ros` | 100_012 | Daily 3 AM ET | **EMBARGOED** |
 | `yahoo_adp_injury` | 100_013 | Every 4h | **EMBARGOED** |
 | `ensemble_update` | 100_014 | Daily 5 AM ET | **EMBARGOED** |
-| `projection_freshness_check` | 100_015 | Every 1h | LIVE (gate active; SLA will flag embargoed jobs as missing — expected) |
+| `projection_freshness_check` | 100_015 | Every 1h | **DISABLE** (gates on embargoed jobs = false violations) |
 
 **Next available lock ID:** 100_016
 
-**Advisory lock namespace rule:** 100_001–100_010 are edge/CBB. 100_011–100_015 are fantasy. Do not cross-assign.
+**Advisory lock namespace:** 100_001-100_010 = edge/CBB. 100_011-100_015 = fantasy. Do not cross-assign.
 
 ---
 
@@ -205,235 +262,158 @@ Rename `.claude/agents/cbb-architect.md` → `mlb-architect.md`. Update `.claude
 
 | Rule | Reason |
 |------|--------|
-| Do NOT run ensemble blender (100_014) | Directive 1 — raw data not validated |
-| Do NOT run FanGraphs RoS fetch (100_012) | Directive 1 — embargoed |
-| Do NOT run Yahoo ADP/injury poll (100_013) | Directive 1 — embargoed |
-| Do NOT run lineup optimization | Directive 1 — embargoed |
+| Do NOT build Layer 2 (API clients) without Layer 0 contracts | Core philosophy — contracts before plumbing |
+| Do NOT build more than one BDL endpoint at a time | Core philosophy — one feed at a time |
+| Do NOT use `dict.get()` as validation in new data code | Core philosophy — no silent failures |
+| Do NOT run embargoed jobs (100_012, 100_013, 100_014) | Directive 1 — data floor not certified |
+| Do NOT run lineup optimization or ensemble blending | Directive 1 — downstream embargo |
 | Do NOT modify Kelly math in `betting_model.py` | CBB season closed — model archived permanently |
 | Do NOT call BDL `/ncaab/v1/` endpoints | Subscription cancelled — will 401 |
 | Do NOT use OddsAPI for MLB features | 20k/month budget — MLB odds via BDL only |
+| Do NOT build on `mlb_analysis.py` as-is | Prototype with silent failures — rebuild with contracts |
 | Do NOT touch `dashboard/` (Streamlit) | Retired — Next.js is canonical |
-| Do NOT use `datetime.utcnow()` for game times | Use `datetime.now(ZoneInfo("America/New_York"))` |
+| Do NOT use `datetime.utcnow()` | Use `datetime.now(ZoneInfo("America/New_York"))` |
 | Do NOT write test files outside `tests/` | Architecture locked |
 | Do NOT import `betting_model` from fantasy modules | GUARDIAN FREEZE / ADR-004 |
-| Do NOT import `backend.models_edge` from `backend.models_fantasy` | Hard architectural boundary |
-| Do NOT deploy fantasy_app.py before DB migrations run | Directive 2 — boot/migration deadlock |
-| Do NOT boot new fantasy service before disabling legacy fantasy scheduler | Directive 3 — race condition |
-| Do NOT write raw Redis keys without namespace prefix | Directive 4 — use edge_cache or fantasy_cache |
+| Do NOT deploy fantasy_app.py before DB migrations | Directive 2 |
+| Do NOT boot new fantasy service before disabling legacy scheduler | Directive 3 |
+| Do NOT write raw Redis keys without namespace prefix | Directive 4 |
 
 ---
 
 ## HANDOFF PROMPTS
 
-### Claude Code — Priority 1: Raw Ingestion Validation
+### Claude Code — Priority 1: Raw Payload Capture
 
 Execute in `C:\Users\sfgra\repos\Fixed\cbb-edge`. Read `HANDOFF.md` and `CLAUDE.md` first.
 
-**Context (read carefully):** The fantasy projection pipeline is under a data-first embargo. All ensemble blending, lineup optimization, and derived stats are disabled until the raw ingestion layer is independently validated through strict Pydantic V2 models. Your job is to build those validators and run them against live APIs. No database writes. No math. Validation only.
+**Context:** We are building validated data contracts before API client plumbing. Step 1 is capturing real API responses to document exactly what each source returns. This is READ-ONLY reconnaissance. No wrapper code. No DB writes.
 
-**Task 1 — Yahoo Roster Validator:**
+**Task 1 — BDL MLB Payload Capture:**
 
-Create `backend/fantasy_baseball/validators/__init__.py` (empty) and `backend/fantasy_baseball/validators/yahoo_roster_validator.py`.
+`balldontlie.py` has the auth pattern but zero MLB code. Use the existing `BALLDONTLIE_API_KEY` and base URL `https://api.balldontlie.io`.
 
-The validator must:
-- Define a Pydantic V2 model hierarchy for the Yahoo roster API response structure. Start with a real live call: `from backend.fantasy_baseball.yahoo_client_resilient import get_resilient_yahoo_client; client = get_resilient_yahoo_client(); roster = client.get_team_roster()` — inspect the raw response and model every field.
-- Define a `ValidationReport` dataclass: `{endpoint: str, total_records: int, passed: int, failed: int, field_errors: list[str]}`.
-- The `validate_roster(raw_response)` function must return a `ValidationReport`. Log every field that is null when it shouldn't be, wrong type, or absent.
-- Run it: `railway run python -c "from backend.fantasy_baseball.validators.yahoo_roster_validator import validate_roster; ..."` and report the result.
+```python
+# Run locally or via railway run:
+import requests, json, os
 
-**Task 2 — Yahoo Waiver Validator:**
+API_KEY = os.environ["BALLDONTLIE_API_KEY"]
+headers = {"Authorization": f"Bearer {API_KEY}"}
+base = "https://api.balldontlie.io"
 
-Same pattern. Create `backend/fantasy_baseball/validators/yahoo_waiver_validator.py`. Validate a live `get_free_agents()` response. The key fields to validate: `player_key`, `name`, `eligible_positions`, `percent_rostered` (must be float 0-100, not string, not None). Log any stat ID that appears in the response but is not in `YAHOO_STAT_ID_FALLBACK`.
+# 1. Games for today
+r = requests.get(f"{base}/mlb/v1/games", headers=headers, params={"dates[]": "2026-04-05"})
+with open("tests/fixtures/bdl_mlb_games.json", "w") as f:
+    json.dump(r.json(), f, indent=2)
 
-**Task 3 — BallDontLie Game Validator:**
+# 2. Odds for a specific game (use a game_id from step 1)
+game_id = <first_game_id_from_above>
+r = requests.get(f"{base}/mlb/v1/odds", headers=headers, params={"game_id": game_id})
+with open("tests/fixtures/bdl_mlb_odds.json", "w") as f:
+    json.dump(r.json(), f, indent=2)
 
-Create `backend/fantasy_baseball/validators/bdl_game_validator.py`. Hit the BDL MLB games endpoint for today's date. Validate: `game_id` (int), `home_team` (object with `id`, `full_name`), `visitor_team`, `date` (ISO date string), `status` (one of `Final`, `In Progress`, `Scheduled`). Report any games where `status` is an unexpected value.
+# 3. Injuries (try — may not exist)
+r = requests.get(f"{base}/mlb/v1/injuries", headers=headers)
+with open("tests/fixtures/bdl_mlb_injuries.json", "w") as f:
+    json.dump(r.json(), f, indent=2)
 
-**Task 4 — Test coverage:**
-
-Write `tests/test_validators.py` with unit tests for each validator using mocked payloads that intentionally include bad data (wrong types, missing fields). Tests must demonstrate that the validator catches the bad data and reports it rather than silently passing.
-
-Run: `venv/Scripts/python -m pytest tests/test_validators.py -q --tb=short`
-
-**Task 5 — Compile check all new files:**
-```bash
-venv/Scripts/python -m py_compile backend/fantasy_baseball/validators/yahoo_roster_validator.py
-venv/Scripts/python -m py_compile backend/fantasy_baseball/validators/yahoo_waiver_validator.py
-venv/Scripts/python -m py_compile backend/fantasy_baseball/validators/bdl_game_validator.py
+# 4. Player search
+r = requests.get(f"{base}/mlb/v1/players", headers=headers, params={"search": "Ohtani"})
+with open("tests/fixtures/bdl_mlb_players.json", "w") as f:
+    json.dump(r.json(), f, indent=2)
 ```
 
-**Task 6 — Report back with:**
-- Pass/fail counts from live validation runs
-- Any field mismatches found (schema vs actual API response)
-- Explicit recommendation: is job 100_013 (Yahoo ADP/injury poll) safe to re-enable? State the evidence.
-- Any schema assumptions in existing code that are wrong
+For EACH response, document in `reports/SCHEMA_DISCOVERY.md`:
+- Every field name and its type
+- Which fields are nullable
+- Pagination structure (`meta`, `next_cursor`, etc.)
+- Any unexpected fields or values
 
-Commit: `git commit -m "feat: Pydantic V2 validators for Yahoo and BDL raw ingestion -- data-first mandate"`
+**Task 2 — Yahoo Payload Capture:**
+
+```python
+# Via railway run (requires Yahoo OAuth):
+from backend.fantasy_baseball.yahoo_client_resilient import get_resilient_yahoo_client
+import json
+
+client = get_resilient_yahoo_client()
+
+roster = client.get_team_roster()
+with open("tests/fixtures/yahoo_roster.json", "w") as f:
+    json.dump(roster, f, indent=2, default=str)
+
+free_agents = client.get_free_agents()
+with open("tests/fixtures/yahoo_free_agents.json", "w") as f:
+    json.dump(free_agents, f, indent=2, default=str)
+```
+
+Document in `reports/SCHEMA_DISCOVERY.md`:
+- Every field path accessed by existing code vs. what actually comes back
+- Fields accessed without null checks (the delta = bugs waiting to happen)
+
+**Task 3 — Output:**
+
+Commit fixture files: `git add tests/fixtures/bdl_mlb_*.json tests/fixtures/yahoo_*.json reports/SCHEMA_DISCOVERY.md`
+
+Report: field maps for each API. Do NOT write any wrapper code or Pydantic models yet. This is recon only.
 
 ---
 
-### Claude Code — Priority 2: ENABLE_FANTASY_SCHEDULER Guard
-
-Execute only after Priority 1 validation is complete and reported.
-
-**Context:** Before the new `fantasy_app.py` service can be deployed standalone, the legacy `main.py` service must stop running fantasy scheduler jobs. Otherwise both containers execute the same ingestion jobs simultaneously against the same database (race condition, duplicate writes, advisory lock timeouts).
-
-**Task:** Add an `ENABLE_FANTASY_SCHEDULER` environment variable guard to `backend/main.py` lifespan.
-
-When `ENABLE_FANTASY_SCHEDULER=false`:
-- Do NOT start the `DailyIngestionOrchestrator`
-- Do NOT register the `job_queue_processor` job (100_016+ fantasy jobs)
-- Do NOT register jobs 100_012, 100_013, 100_014, 100_015
-- DO continue running all CBB/edge jobs (nightly_analysis, update_outcomes, etc.)
-- Log clearly: `"Fantasy scheduler disabled by ENABLE_FANTASY_SCHEDULER=false"`
-
-Default value if env var is absent: `true` (backwards-compatible — legacy service keeps running as-is until Gemini explicitly sets it to false during Phase 6-7).
-
-Write a test in `tests/test_main_scheduler_guard.py` that mocks `os.getenv("ENABLE_FANTASY_SCHEDULER", "true")` returning `"false"` and asserts that `DailyIngestionOrchestrator` is never instantiated during lifespan startup.
-
-Compile check: `venv/Scripts/python -m py_compile backend/main.py && echo OK`
-Test: `venv/Scripts/python -m pytest tests/test_main_scheduler_guard.py -q`
-
-Commit: `git commit -m "feat: ENABLE_FANTASY_SCHEDULER guard in main.py lifespan -- prevents scheduler race on cut-over"`
-
----
-
-### Gemini CLI — Phase 6-7 Infrastructure (Execute ONLY after Claude confirms Priority 2 is done)
-
-**You are Step 1 and Step 3. Claude is Step 2. Do not do Step 3 before Claude does Step 2.**
-
-Read this entire prompt before taking any action.
-
-**Step 1 — Provision Fantasy Postgres and set env vars:**
-
-```bash
-railway status
-railway service list
-```
-
-In the Railway dashboard, add a new PostgreSQL database service. Name it `fantasy-postgres`. Copy the `DATABASE_URL` it generates.
-
-On the fantasy service (the service that will run `fantasy_app.py`), set these environment variables:
-```
-FANTASY_DATABASE_URL   = <connection string from fantasy-postgres>
-DEPLOYMENT_ROLE        = fantasy-prod
-ENABLE_MAIN_SCHEDULER  = false
-ENABLE_FANTASY_SCHEDULER = true
-ENABLE_INGESTION_ORCHESTRATOR = false    ← keep disabled until raw data validated
-```
-
-On the **legacy CBB main.py service**, set:
-```
-ENABLE_FANTASY_SCHEDULER = false
-```
-
-Then trigger a redeploy of the legacy CBB service and confirm it comes up healthy:
-```bash
-curl -s https://<cbb-service-url>/health | python -m json.tool
-```
-Expected: `{"status": "healthy", ...}` and logs should show `"Fantasy scheduler disabled by ENABLE_FANTASY_SCHEDULER=false"`.
-
-**Report to Claude:** "Step 1 complete. FANTASY_DATABASE_URL is set. Legacy service redeployed with ENABLE_FANTASY_SCHEDULER=false. Health check passed."
-
-**Step 2 — WAIT.** Do not proceed until Claude explicitly confirms: "Migrations complete. Fantasy DB schema verified. Ready for Step 3."
-
-**Step 3 — Deploy fantasy_app.py standalone:**
-
-Only after receiving Claude's confirmation above:
-
-In Railway, set the Start Command on the fantasy service to:
-```
-uvicorn backend.fantasy_app:app --host 0.0.0.0 --port $PORT
-```
-
-Deploy. Smoke test:
-```bash
-curl -s https://<fantasy-service-url>/health | python -m json.tool
-curl -s -o /dev/null -w "%{http_code}" https://<fantasy-service-url>/api/predictions/today
-# Expected: 404 (edge route not mounted on fantasy service)
-curl -s -o /dev/null -w "%{http_code}" https://<fantasy-service-url>/api/fantasy/roster
-# Expected: 200 (fantasy route is mounted)
-```
-
-Report: fantasy service URL, health check output, smoke test HTTP codes.
-
-**Zero `.py` file changes throughout. TypeScript check if any frontend files touched: `cd frontend && npx tsc --noEmit`.**
-
----
-
-### Kimi CLI — Raw Ingestion Spec Audit (Unblock Priority 1)
+### Kimi CLI — Raw Ingestion Spec Audit (parallel with Priority 1)
 
 Read-only. No code changes. Output to `reports/K27_RAW_INGESTION_AUDIT.md`.
 
-**Context:** The fantasy pipeline is under a data-first embargo. BDL GOAT MLB is now purchased and active. Claude will be building (1) BDL MLB `/mlb/v1/` endpoint wrappers and (2) Pydantic V2 validators for Yahoo and BDL. Your job is to audit what the codebase currently assumes these APIs return, so Claude builds validators against reality rather than guessing.
+**Context:** Claude is capturing live API payloads. Your job is the other half: audit what the CODEBASE currently assumes these APIs return. The delta between Claude's capture and your audit is the bug map.
 
-**Research Task 1 — Yahoo API Response Audit:**
+**Research Task 1 — Yahoo API Assumptions:**
 
-Read `backend/fantasy_baseball/yahoo_client_resilient.py` in full. For each method that makes a live API call (get_team_roster, get_free_agents, get_matchup_stats, get_league_settings, get_adp_and_injury_feed), document:
-- What the code assumes the response shape is
-- What fields it accesses (e.g., `player[1]['player_stats']`)
-- Which fields are accessed without a null check
-- Which stat IDs are hardcoded vs. derived from the response
+Read `backend/fantasy_baseball/yahoo_client_resilient.py` in full. For each method (get_team_roster, get_free_agents, get_matchup_stats, get_league_settings, get_adp_and_injury_feed):
+- What fields does the code access?
+- Which accesses have no null check?
+- Which stat IDs are hardcoded?
 
-**Research Task 2 — BDL MLB Integration Gap:**
+**Research Task 2 — BDL Client Patterns:**
 
-Read `backend/services/balldontlie.py` in full. Document:
-- What MLB endpoints already exist (if any)
-- What NBA/NCAAB patterns can be reused for MLB (auth, pagination, error handling)
-- The exact BDL API base URL and auth header pattern used
-- Recommended endpoint list for `/mlb/v1/` expansion: games, players, injuries, odds, box scores
+Read `backend/services/balldontlie.py`. Document:
+- Auth pattern, base URL, pagination structure
+- Which NCAAB patterns are reusable for MLB
+- Current MLB support: explicitly state "ZERO" if none
 
-**Research Task 3 — MLB Analysis Current State:**
+**Research Task 3 — `mlb_analysis.py` OddsAPI Calls:**
 
 Read `backend/services/mlb_analysis.py`. Document:
-- Every place it calls OddsAPI directly (these need migrating to BDL)
-- Every place it calls `balldontlie.py` (if any)
-- Current `_fetch_mlb_odds()` implementation — what fields it expects, how it maps to the DB
+- Every direct OddsAPI call (these will be rebuilt, not migrated)
+- What fields `_fetch_mlb_odds()` expects
+- All silent failure paths (returns 0.0, empty dict, etc.)
 
-**Research Task 4 — Silent Failure Points:**
+**Research Task 4 — Silent Failure Audit:**
 
-Read `backend/services/daily_ingestion.py` focusing on `_fetch_fangraphs_ros`, `_poll_yahoo_adp_injury`, `_poll_mlb_odds`, and `_update_ensemble_blend`. Identify every place where an API response field is accessed without type validation.
+Read `backend/services/daily_ingestion.py`. Focus on `_poll_mlb_odds`, `_poll_yahoo_adp_injury`, `_fetch_fangraphs_ros`, `_update_ensemble_blend`. Every field access without type validation = silent failure point.
 
-**Report in `reports/K27_RAW_INGESTION_AUDIT.md`:**
-- Per-method table: endpoint, fields accessed, null-safety (yes/no), type-checked (yes/no)
-- BDL auth pattern + recommended endpoint list with field schemas
-- OddsAPI call locations that need migrating to BDL
-- Top-5 highest-risk silent failure points
-- Recommended field list for Claude's Pydantic V2 validators (Yahoo + BDL)
+**Report:**
+- Per-method table: endpoint, fields accessed, null-safe (y/n), type-checked (y/n)
+- Top-5 silent failure risks
+- Recommended field list for Pydantic V2 contracts
 
 ---
 
 ## Session History (Recent)
 
+### S14 — Philosophy Alignment + HANDOFF Rewrite (Apr 5)
+
+Three-persona audit (Quant Dev, Architect, Elite Player) of HANDOFF.md. Found priorities were backwards: BDL endpoint construction listed above data validation. Corrected to contracts-before-plumbing philosophy. Separated infrastructure track from data pipeline track. Stripped all downstream references (optimization, matchups, waivers) from visible roadmap.
+
 ### S13 — Frontend Cleanup (Apr 5)
 
-Removed all remaining fantasy-specific frontend surface. Deleted `frontend/app/(dashboard)/settings/page.tsx` (432 lines — UserPreferences/waiver sliders, 100% fantasy). Removed Settings nav section from sidebar. Removed `UserPreferences`, `UserPreferencesResponse`, `DashboardPanel` TypeScript types and `getUserPreferences`/`updateUserPreferences` API methods. Bracket Simulator hidden via `SHOW_BRACKET = false` flag in `sidebar.tsx` (page on disk, not linked).
-
-Running UI now: betting analytics only (Dashboard, Performance, CLV, Bet History, Calibration, Alerts, Today's Bets, Live Slate, Odds Monitor, Admin). No fantasy UI. No settings. No bracket.
-
-Commit: `cc1e7ce`
+Removed settings page (432 lines, 100% fantasy). Hidden bracket via `SHOW_BRACKET = false`. Running UI: betting analytics only. Commit: `cc1e7ce`
 
 ### S12 — Structural Decoupling + Fantasy UI Removal (Apr 4)
 
-Phases 1-5 of the fantasy/edge modular monorepo split complete. `main.py` unchanged — strangler-fig, production unaffected.
-
-New files: `backend/db.py`, `backend/redis_client.py`, `backend/models_edge.py`, `backend/models_fantasy.py`, `backend/routers/{edge,fantasy,admin}.py`, `backend/schedulers/{edge,fantasy}_scheduler.py`, `backend/edge_app.py`, `backend/fantasy_app.py`.
-
-Fantasy UI fully removed: `frontend/app/(dashboard)/fantasy/` (17 files), `frontend/components/shared/status-badge.tsx`, `frontend/lib/fantasy-stat-contract.json`, `frontend/tests/e2e/fantasy_baseball.spec.ts`, sidebar fantasy nav section, fantasy API methods, fantasy TypeScript types.
-
-Test suite: 1256 passed, 4 pre-existing failures unchanged.
+Phases 1-5 of fantasy/edge split. New entry points (`edge_app.py`, `fantasy_app.py`). Fantasy UI fully removed (17 files). Test suite: 1256 passed, 4 pre-existing failures.
 
 ### S11 — Ensemble Hardening (Apr 3)
 
-Per-row `db.begin_nested()` savepoints in `_update_ensemble_blend`. Fatal bare-except in `process_pending_jobs`.
-
-### S9/S10 — Fantasy Hotfixes (Apr 3)
-
-Cold-start fix, lineup apply hardening, direct waiver actuation, matchup scoring fix, weather fallback.
-
-### S7/S8 — Projection Pipeline (Apr 1-2)
-
-Jobs 100_012–100_015 built and wired. Now embargoed pending raw data validation.
+Per-row savepoints in `_update_ensemble_blend`. Fatal bare-except in `process_pending_jobs`.
 
 ---
 
@@ -443,20 +423,22 @@ Jobs 100_012–100_015 built and wired. Now embargoed pending raw data validatio
 
 | Entry Point | Command | Status |
 |-------------|---------|--------|
-| `backend/main.py` | `uvicorn backend.main:app` | LIVE in Railway (CBB production) |
-| `backend/edge_app.py` | `uvicorn backend.edge_app:app` | Built — not yet deployed standalone |
-| `backend/fantasy_app.py` | `uvicorn backend.fantasy_app:app` | Built — awaiting Phase 6-7 deploy sequence |
+| `backend/main.py` | `uvicorn backend.main:app` | LIVE in Railway |
+| `backend/edge_app.py` | `uvicorn backend.edge_app:app` | Built — not yet deployed |
+| `backend/fantasy_app.py` | `uvicorn backend.fantasy_app:app` | Built — awaiting Phase 6-7 |
 
 ### Key File Map
 
 | What | Where |
 |------|-------|
+| Data contracts (TO BUILD) | `backend/data_contracts/` |
+| BDL client (NCAAB only, MLB TBD) | `backend/services/balldontlie.py` |
+| MLB analysis (PROTOTYPE - rebuild) | `backend/services/mlb_analysis.py` |
 | Fantasy routes | `backend/routers/fantasy.py` |
 | Edge/betting routes | `backend/routers/edge.py` |
 | Admin/health routes | `backend/routers/admin.py` |
 | Shared DB engine factory | `backend/db.py` |
-| Redis namespace helpers | `backend/redis_client.py` (use `edge_cache` / `fantasy_cache` only) |
-| Decoupling spec (Phases 6-7) | `docs/superpowers/specs/2026-04-04-fantasy-edge-decoupling-design.md` |
+| Redis namespace helpers | `backend/redis_client.py` |
 | Kelly math (FROZEN) | `backend/core/kelly.py`, `backend/betting_model.py` |
 | Yahoo OAuth client | `backend/fantasy_baseball/yahoo_client_resilient.py` |
 | Ingestion scheduler | `backend/services/daily_ingestion.py` |
