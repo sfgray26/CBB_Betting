@@ -177,17 +177,34 @@ All MLB data layer tests combined: 42/42.
 
 ### Priority 4 — Layer 2: Validated Yahoo Ingestion ← ACTIVE
 
-Existing Yahoo client methods STAY (hardened across 11 sessions). Add a validation LAYER on top.
+**Yahoo live capture COMPLETE (S15, Apr 5)** — fixtures in `tests/fixtures/yahoo_*.json`.
 
-1. Wrap `get_team_roster()` return in `YahooRosterEntry` contract parsing.
-2. Wrap `get_free_agents()` return in `YahooWaiverCandidate` contract parsing.
-3. Any field that fails validation: logged with exact field name, expected type, actual value. Never suppressed.
-4. Test against captured Yahoo fixtures.
+#### Critical findings from live capture (override K27 assumptions):
+
+| Finding | Impact on contracts |
+|---------|---------------------|
+| `status` is `Optional[bool]` (`True`=injured, `None`=healthy) — NOT a string | Any code doing `status == "IL"` is silently broken |
+| `injury_note` is independent of `status` — Verlander has `status=None` + `injury_note="Hip"` | Must check BOTH fields for injury detection |
+| `positions` includes `"IL"` for IL players — reliable injury signal | Third injury signal to check |
+| `percent_owned: float` always present, always normalized | K27 `percent_rostered` concern is moot |
+| `selected_position` only in roster response, not FA or ADP | Separate models needed for each endpoint |
+| Stat ID 60 returns `"H/AB"` combined format e.g. `"8/20"` — NOT same as ID 8 (raw H) | Not a duplicate — different semantics |
+| Stat IDs 28 vs 42: likely pitching K vs batting K | Build separate fields, not same mapping |
+
+#### Next action: Build Yahoo contracts, then wrap client methods
+
+**Files to create:**
+- `backend/data_contracts/yahoo_player.py` — `YahooPlayer` base (shared fields)
+- `backend/data_contracts/yahoo_roster.py` — `YahooRosterEntry` (adds `selected_position`)
+- `backend/data_contracts/yahoo_waiver.py` — `YahooWaiverCandidate` (adds `stats: dict`)
+
+**Existing client methods STAY.** Add validation at their call sites or in a thin wrapper layer.
 
 **Acceptance criteria for lifting job 100_013 embargo:**
-- Live `get_adp_and_injury_feed()` parses 100% through contracts
-- Zero `ValidationError` on any player record
-- Any `null` in `percent_rostered` explicitly handled (logged + default to 0.0, documented in contract)
+- `get_adp_and_injury_feed()` parses 100% through `YahooPlayer` contract
+- Zero `ValidationError` on any of the 100 ADP feed players
+- `status: Optional[bool]` correct (not Optional[str])
+- `injury_note` checked independently from `status`
 - Written confirmation with pass/fail counts
 - Human approval before re-enabling
 
@@ -269,52 +286,88 @@ Rename stale references (cbb-architect -> mlb-architect, etc.). Documentation on
 
 ## HANDOFF PROMPTS
 
-### Claude Code — Priority 4: Validated Yahoo Ingestion
+### Claude Code — Priority 4: Yahoo Pydantic Contracts + Validation Layer
 
 Execute in `C:\Users\sfgra\repos\Fixed\cbb-edge`. Read `HANDOFF.md` and `CLAUDE.md` first.
 
-**Context:** BDL MLB data layer is certified (42/42 tests). Priority 4 adds a Pydantic validation layer on top of the existing Yahoo client. The Yahoo client methods STAY — do not rewrite them. Add contracts that parse their output, log any validation failures, and block bad data from reaching the DB.
+**Context:** BDL MLB data layer is certified (42/42 tests). Yahoo live fixtures are captured in `tests/fixtures/yahoo_*.json`. Priority 4 builds Pydantic V2 contracts for the Yahoo response shapes and adds a validation layer on top of the existing client methods. The Yahoo client STAYS — do not rewrite it.
 
-**Prerequisite:** Yahoo live payload capture must happen first.
+**Ground truth is in `reports/SCHEMA_DISCOVERY.md` Yahoo section.** Read that before writing any model.
 
-**Step 0 — Capture live Yahoo payloads:**
-```bash
-railway run python -c "
-from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
-import json
-c = YahooFantasyClient()
-roster = c.get_team_roster()
-with open('tests/fixtures/yahoo_roster.json', 'w') as f:
-    json.dump(roster, f, indent=2, default=str)
-free_agents = c.get_free_agents()
-with open('tests/fixtures/yahoo_free_agents.json', 'w') as f:
-    json.dump(free_agents, f, indent=2, default=str)
-print('Done')
-"
-```
-
-Document in `reports/SCHEMA_DISCOVERY.md` Yahoo section:
-- Actual key names for ownership data (`percent_owned` vs `percent_rostered`)
-- Depth of `ownership` nesting in real response
-- Which stat IDs appear in practice (K27 flagged 28/42 duplicate)
+**Critical facts from live capture (override K27 assumptions):**
+- `status: Optional[bool]` — `True` = injured, `None` = healthy. NOT a string.
+- `injury_note` is independent of `status` — must check BOTH for injury detection
+- `positions` includes `"IL"` for IL players — third injury signal
+- `percent_owned: float` — always present, never null
+- `selected_position: str` — roster only, NOT in FA or ADP responses
+- `stats: dict[str, str]` — FA only; stat 60 is `"H/AB"` format, NOT same as stat 8
 
 **Step 1 — Build contracts in `backend/data_contracts/`:**
-Based on K27 audit + live capture, create:
-- `yahoo_player.py` — `YahooPlayer`, `YahooPlayerWithStats`
-- `yahoo_roster.py` — `YahooRosterEntry`
 
-Required fields per K27 audit docstring contract:
-`player_key`, `name`, `team`, `positions`, `status` (nullable), `injury_note` (nullable), `is_undroppable`, `percent_owned`
+Create `backend/data_contracts/yahoo_player.py`:
+```python
+class YahooPlayer(BaseModel):
+    model_config = ConfigDict(strict=True)
+    player_key: str
+    player_id: str
+    name: str
+    team: str
+    positions: list[str]
+    status: Optional[bool] = None      # True=injured, None=healthy. NOT a string.
+    injury_note: Optional[str] = None  # Body part only. Independent of status.
+    is_undroppable: bool
+    percent_owned: float               # Always present, 0.0-100.0
+```
 
-**Step 2 — Wrap existing client output:**
-In `yahoo_client_resilient.py` OR a thin adapter layer, parse `get_team_roster()` and `get_free_agents()` returns through contracts. Log `ValidationError` at ERROR level with field name + value. Never suppress.
+Create `backend/data_contracts/yahoo_roster.py`:
+```python
+class YahooRosterEntry(YahooPlayer):
+    selected_position: str             # Where slotted: "C", "SP", "BN", etc.
+```
 
-**Step 3 — Tests:**
-`tests/test_yahoo_contracts.py` — feed captured fixtures through contracts. 100% parse rate required before proceeding.
+Create `backend/data_contracts/yahoo_waiver.py`:
+```python
+class YahooWaiverCandidate(YahooPlayer):
+    stats: Optional[dict[str, str]] = None  # Stat ID -> value string. May be absent.
+```
 
-**Acceptance criteria for lifting job 100_013 embargo:**
-- Live `get_adp_and_injury_feed()` parses 100% through contracts
-- Human approval in writing
+Update `backend/data_contracts/__init__.py` to export all three.
+
+**Step 2 — Tests in `tests/test_yahoo_contracts.py`:**
+- Parse all 24 roster items through `YahooRosterEntry` — 100% required
+- Parse all 25 FA items through `YahooWaiverCandidate` — 100% required
+- Parse all 100 ADP items through `YahooPlayer` — 100% required
+- Test `status=True` parsed correctly as bool (not coerced from string)
+- Test player with `status=None` + `injury_note="Hip"` parsed correctly
+
+**Step 3 — Add validation at call sites:**
+Wrap the three key client methods in `backend/services/yahoo_ingestion.py` (new file):
+```python
+def get_validated_roster(client: YahooFantasyClient) -> list[YahooRosterEntry]:
+    raw = client.get_roster()
+    return [YahooRosterEntry.model_validate(p) for p in raw]
+
+def get_validated_free_agents(client: YahooFantasyClient) -> list[YahooWaiverCandidate]:
+    raw = client.get_free_agents()
+    return [YahooWaiverCandidate.model_validate(p) for p in raw]
+
+def get_validated_adp_feed(client: YahooFantasyClient) -> list[YahooPlayer]:
+    raw = client.get_adp_and_injury_feed()
+    return [YahooPlayer.model_validate(p) for p in raw]
+```
+
+Log any `ValidationError` at ERROR level with field + value. Never suppress.
+
+**Compile checks:**
+```bash
+venv/Scripts/python -m py_compile backend/data_contracts/yahoo_player.py
+venv/Scripts/python -m py_compile backend/data_contracts/yahoo_roster.py
+venv/Scripts/python -m py_compile backend/data_contracts/yahoo_waiver.py
+venv/Scripts/python -m py_compile backend/services/yahoo_ingestion.py
+venv/Scripts/python -m pytest tests/test_yahoo_contracts.py -v --tb=short
+```
+
+All tests pass → commit → report back with pass/fail counts.
 
 ---
 

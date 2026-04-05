@@ -1,1 +1,662 @@
-{}
+[
+  {
+    "player_key": "469.p.63648",
+    "player_id": "63648",
+    "name": "Liam Hicks",
+    "team": "MIA",
+    "positions": [
+      "C",
+      "1B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "60": "8/20",
+      "7": "7",
+      "8": "8",
+      "12": "3",
+      "13": "12",
+      "21": "1",
+      "23": "18",
+      "3": ".400",
+      "55": "1.380",
+      "62": "0"
+    }
+  },
+  {
+    "player_key": "469.p.11471",
+    "player_id": "11471",
+    "name": "Kyle Isbel",
+    "team": "KC",
+    "positions": [
+      "CF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "60": "11/23",
+      "7": "5",
+      "8": "11",
+      "12": "2",
+      "13": "5",
+      "21": "5",
+      "23": "18",
+      "3": ".478",
+      "55": "1.261",
+      "62": "3"
+    }
+  },
+  {
+    "player_key": "469.p.12589",
+    "player_id": "12589",
+    "name": "Joey Wiemer",
+    "team": "WSH",
+    "positions": [
+      "LF",
+      "CF",
+      "RF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "60": "10/17",
+      "7": "7",
+      "8": "10",
+      "12": "2",
+      "13": "4",
+      "21": "4",
+      "23": "18",
+      "3": ".588",
+      "55": "1.741",
+      "62": "0"
+    }
+  },
+  {
+    "player_key": "469.p.60129",
+    "player_id": "60129",
+    "name": "Sal Stewart",
+    "team": "CIN",
+    "positions": [
+      "1B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "60": "11/27",
+      "7": "5",
+      "8": "11",
+      "12": "2",
+      "13": "4",
+      "21": "5",
+      "23": "20",
+      "3": ".407",
+      "55": "1.270",
+      "62": "0"
+    }
+  },
+  {
+    "player_key": "469.p.11327",
+    "player_id": "11327",
+    "name": "Jos\u00e9 Soriano",
+    "team": "LAA",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "50": "12.0",
+      "28": "2",
+      "29": "0",
+      "38": "0",
+      "42": "11",
+      "26": "0.00",
+      "27": "0.83",
+      "57": "8.25",
+      "83": "2",
+      "85": "0"
+    }
+  },
+  {
+    "player_key": "469.p.11781",
+    "player_id": "11781",
+    "name": "Miguel Vargas",
+    "team": "CWS",
+    "positions": [
+      "1B",
+      "3B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "60": "7/25",
+      "7": "8",
+      "8": "7",
+      "12": "1",
+      "13": "6",
+      "21": "7",
+      "23": "13",
+      "3": ".280",
+      "55": ".926",
+      "62": "3"
+    }
+  },
+  {
+    "player_key": "469.p.12500",
+    "player_id": "12500",
+    "name": "Randy V\u00e1squez",
+    "team": "SD",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "50": "12.0",
+      "28": "1",
+      "29": "0",
+      "38": "0",
+      "42": "11",
+      "26": "0.75",
+      "27": "1.00",
+      "57": "8.25",
+      "83": "2",
+      "85": "0"
+    }
+  },
+  {
+    "player_key": "469.p.12152",
+    "player_id": "12152",
+    "name": "Garrett Mitchell",
+    "team": "MIL",
+    "positions": [
+      "CF",
+      "RF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "60": "7/22",
+      "7": "4",
+      "8": "7",
+      "12": "1",
+      "13": "11",
+      "21": "10",
+      "23": "13",
+      "3": ".318",
+      "55": ".991",
+      "62": "3"
+    }
+  },
+  {
+    "player_key": "469.p.9575",
+    "player_id": "9575",
+    "name": "Lance McCullers Jr.",
+    "team": "HOU",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "50": "7.0",
+      "28": "1",
+      "29": "0",
+      "38": "0",
+      "42": "9",
+      "26": "1.29",
+      "27": "0.71",
+      "57": "11.57",
+      "83": "1",
+      "85": "0"
+    }
+  },
+  {
+    "player_key": "469.p.10423",
+    "player_id": "10423",
+    "name": "Michael Soroka",
+    "team": "AZ",
+    "positions": [
+      "SP",
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "50": "10.0",
+      "28": "2",
+      "29": "0",
+      "38": "0",
+      "42": "13",
+      "26": "0.90",
+      "27": "1.20",
+      "57": "11.70",
+      "83": "0",
+      "85": "0"
+    }
+  },
+  {
+    "player_key": "469.p.10919",
+    "player_id": "10919",
+    "name": "Andr\u00e9s Gim\u00e9nez",
+    "team": "TOR",
+    "positions": [
+      "2B",
+      "SS",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "60": "9/30",
+      "7": "2",
+      "8": "9",
+      "12": "2",
+      "13": "7",
+      "21": "5",
+      "23": "17",
+      "3": ".300",
+      "55": ".911",
+      "62": "2"
+    }
+  },
+  {
+    "player_key": "469.p.12127",
+    "player_id": "12127",
+    "name": "Owen Caissie",
+    "team": "MIA",
+    "positions": [
+      "CF",
+      "RF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "60": "8/25",
+      "7": "4",
+      "8": "8",
+      "12": "2",
+      "13": "9",
+      "21": "9",
+      "23": "16",
+      "3": ".320",
+      "55": ".997",
+      "62": "1"
+    }
+  },
+  {
+    "player_key": "469.p.12120",
+    "player_id": "12120",
+    "name": "Bryce Elder",
+    "team": "ATL",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "50": "13.0",
+      "28": "1",
+      "29": "1",
+      "38": "0",
+      "42": "13",
+      "26": "0.00",
+      "27": "0.85",
+      "57": "9.00",
+      "83": "2",
+      "85": "0"
+    }
+  },
+  {
+    "player_key": "469.p.9595",
+    "player_id": "9595",
+    "name": "Dominic Smith",
+    "team": "ATL",
+    "positions": [
+      "1B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "60": "7/20",
+      "7": "6",
+      "8": "7",
+      "12": "2",
+      "13": "6",
+      "21": "4",
+      "23": "13",
+      "3": ".350",
+      "55": "1.059",
+      "62": "0"
+    }
+  },
+  {
+    "player_key": "469.p.10922",
+    "player_id": "10922",
+    "name": "Mark Vientos",
+    "team": "NYM",
+    "positions": [
+      "3B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "60": "8/17",
+      "7": "4",
+      "8": "8",
+      "12": "1",
+      "13": "3",
+      "21": "3",
+      "23": "13",
+      "3": ".471",
+      "55": "1.291",
+      "62": "0"
+    }
+  },
+  {
+    "player_key": "469.p.12635",
+    "player_id": "12635",
+    "name": "Jake Bird",
+    "team": "NYY",
+    "positions": [
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "50": "4.1",
+      "28": "1",
+      "29": "0",
+      "38": "0",
+      "42": "5",
+      "26": "0.00",
+      "27": "0.23",
+      "57": "10.38",
+      "83": "0",
+      "85": "0"
+    }
+  },
+  {
+    "player_key": "469.p.60042",
+    "player_id": "60042",
+    "name": "Parker Messick",
+    "team": "CLE",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "50": "6.0",
+      "28": "1",
+      "29": "0",
+      "38": "0",
+      "42": "5",
+      "26": "0.00",
+      "27": "0.83",
+      "57": "7.50",
+      "83": "1",
+      "85": "0"
+    }
+  },
+  {
+    "player_key": "469.p.9329",
+    "player_id": "9329",
+    "name": "Michael Wacha",
+    "team": "KC",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "50": "6.0",
+      "28": "0",
+      "29": "0",
+      "38": "0",
+      "42": "7",
+      "26": "0.00",
+      "27": "0.67",
+      "57": "10.50",
+      "83": "1",
+      "85": "0"
+    }
+  },
+  {
+    "player_key": "469.p.11125",
+    "player_id": "11125",
+    "name": "Brandon Lowe",
+    "team": "PIT",
+    "positions": [
+      "2B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "60": "7/25",
+      "7": "3",
+      "8": "7",
+      "12": "3",
+      "13": "4",
+      "21": "6",
+      "23": "18",
+      "3": ".280",
+      "55": "1.139",
+      "62": "0"
+    }
+  },
+  {
+    "player_key": "469.p.12501",
+    "player_id": "12501",
+    "name": "Max Muncy",
+    "team": "ATH",
+    "positions": [
+      "2B",
+      "3B",
+      "SS",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "60": "9/30",
+      "7": "6",
+      "8": "9",
+      "12": "2",
+      "13": "5",
+      "21": "12",
+      "23": "18",
+      "3": ".300",
+      "55": ".923",
+      "62": "1"
+    }
+  },
+  {
+    "player_key": "469.p.10864",
+    "player_id": "10864",
+    "name": "Tony Santillan",
+    "team": "CIN",
+    "positions": [
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "50": "5.0",
+      "28": "1",
+      "29": "0",
+      "38": "0",
+      "42": "7",
+      "26": "0.00",
+      "27": "1.00",
+      "57": "12.60",
+      "83": "0",
+      "85": "0"
+    }
+  },
+  {
+    "player_key": "469.p.12311",
+    "player_id": "12311",
+    "name": "Calvin Faucher",
+    "team": "MIA",
+    "positions": [
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "50": "3.0",
+      "28": "1",
+      "29": "0",
+      "38": "0",
+      "42": "5",
+      "26": "0.00",
+      "27": "0.67",
+      "57": "15.00",
+      "83": "0",
+      "85": "0"
+    }
+  },
+  {
+    "player_key": "469.p.10326",
+    "player_id": "10326",
+    "name": "Seth Lugo",
+    "team": "KC",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "50": "11.1",
+      "28": "1",
+      "29": "0",
+      "38": "0",
+      "42": "10",
+      "26": "1.59",
+      "27": "0.97",
+      "57": "7.94",
+      "83": "1",
+      "85": "0"
+    }
+  },
+  {
+    "player_key": "469.p.11453",
+    "player_id": "11453",
+    "name": "Rico Garcia",
+    "team": "BAL",
+    "positions": [
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "50": "3.2",
+      "28": "1",
+      "29": "0",
+      "38": "0",
+      "42": "4",
+      "26": "0.00",
+      "27": "0.27",
+      "57": "9.82",
+      "83": "0",
+      "85": "0"
+    }
+  },
+  {
+    "player_key": "469.p.11846",
+    "player_id": "11846",
+    "name": "Riley O'Brien",
+    "team": "STL",
+    "positions": [
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0,
+    "stats": {
+      "50": "4.1",
+      "28": "1",
+      "29": "0",
+      "38": "0",
+      "42": "4",
+      "26": "0.00",
+      "27": "0.92",
+      "57": "8.31",
+      "83": "0",
+      "85": "1"
+    }
+  }
+]

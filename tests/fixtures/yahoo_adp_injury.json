@@ -1,0 +1,1456 @@
+[
+  {
+    "player_key": "469.p.7590",
+    "player_id": "7590",
+    "name": "Justin Verlander",
+    "team": "DET",
+    "positions": [
+      "SP",
+      "P",
+      "IL"
+    ],
+    "status": null,
+    "injury_note": "Hip",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.7977",
+    "player_id": "7977",
+    "name": "Andrew McCutchen",
+    "team": "TEX",
+    "positions": [
+      "RF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8185",
+    "player_id": "8185",
+    "name": "Carlos Carrasco",
+    "team": "ATL",
+    "positions": [
+      "SP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8193",
+    "player_id": "8193",
+    "name": "Max Scherzer",
+    "team": "TOR",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8287",
+    "player_id": "8287",
+    "name": "David Robertson",
+    "team": "PHI",
+    "positions": [
+      "RP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8588",
+    "player_id": "8588",
+    "name": "Justin Turner",
+    "team": "CHC",
+    "positions": [
+      "1B",
+      "3B",
+      "Util",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8616",
+    "player_id": "8616",
+    "name": "Aroldis Chapman",
+    "team": "BOS",
+    "positions": [
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8619",
+    "player_id": "8619",
+    "name": "Carlos Santana",
+    "team": "AZ",
+    "positions": [
+      "1B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8621",
+    "player_id": "8621",
+    "name": "Jason Heyward",
+    "team": "SD",
+    "positions": [
+      "LF",
+      "RF",
+      "Util",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8622",
+    "player_id": "8622",
+    "name": "Craig Kimbrel",
+    "team": "NYM",
+    "positions": [
+      "RP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8634",
+    "player_id": "8634",
+    "name": "Giancarlo Stanton",
+    "team": "NYY",
+    "positions": [
+      "LF",
+      "RF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8652",
+    "player_id": "8652",
+    "name": "Mart\u00edn P\u00e9rez",
+    "team": "ATL",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8658",
+    "player_id": "8658",
+    "name": "Freddie Freeman",
+    "team": "LAD",
+    "positions": [
+      "1B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8758",
+    "player_id": "8758",
+    "name": "Kenley Jansen",
+    "team": "DET",
+    "positions": [
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8780",
+    "player_id": "8780",
+    "name": "Chris Sale",
+    "team": "ATL",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8848",
+    "player_id": "8848",
+    "name": "Jose Iglesias",
+    "team": "SD",
+    "positions": [
+      "2B",
+      "3B",
+      "SS",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": "Suspension",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8861",
+    "player_id": "8861",
+    "name": "Mike Trout",
+    "team": "LAA",
+    "positions": [
+      "CF",
+      "RF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8871",
+    "player_id": "8871",
+    "name": "Shelby Miller",
+    "team": "CHC",
+    "positions": [
+      "RP",
+      "P",
+      "IL"
+    ],
+    "status": null,
+    "injury_note": "Elbow",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8875",
+    "player_id": "8875",
+    "name": "Bryce Harper",
+    "team": "PHI",
+    "positions": [
+      "1B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8918",
+    "player_id": "8918",
+    "name": "Alex Cobb",
+    "team": "DET",
+    "positions": [
+      "SP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": "Hip",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8967",
+    "player_id": "8967",
+    "name": "Paul Goldschmidt",
+    "team": "NYY",
+    "positions": [
+      "1B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.8996",
+    "player_id": "8996",
+    "name": "Jose Altuve",
+    "team": "HOU",
+    "positions": [
+      "2B",
+      "LF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9007",
+    "player_id": "9007",
+    "name": "Nathan Eovaldi",
+    "team": "TEX",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9015",
+    "player_id": "9015",
+    "name": "Salvador Perez",
+    "team": "KC",
+    "positions": [
+      "C",
+      "1B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9017",
+    "player_id": "9017",
+    "name": "Wade Miley",
+    "team": "CIN",
+    "positions": [
+      "SP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": "Forearm",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9057",
+    "player_id": "9057",
+    "name": "Liam Hendriks",
+    "team": "MIN",
+    "positions": [
+      "RP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9068",
+    "player_id": "9068",
+    "name": "Drew Pomeranz",
+    "team": "LAA",
+    "positions": [
+      "SP",
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9095",
+    "player_id": "9095",
+    "name": "Yu Darvish",
+    "team": "SD",
+    "positions": [
+      "SP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": "Elbow",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9096",
+    "player_id": "9096",
+    "name": "Travis d'Arnaud",
+    "team": "LAA",
+    "positions": [
+      "C",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9097",
+    "player_id": "9097",
+    "name": "Gary S\u00e1nchez",
+    "team": "MIL",
+    "positions": [
+      "C",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9105",
+    "player_id": "9105",
+    "name": "Nolan Arenado",
+    "team": "AZ",
+    "positions": [
+      "3B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9106",
+    "player_id": "9106",
+    "name": "Anthony Rendon",
+    "team": "LAA",
+    "positions": [
+      "3B",
+      "Util",
+      "IL"
+    ],
+    "status": null,
+    "injury_note": "Hip",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9108",
+    "player_id": "9108",
+    "name": "Nick Castellanos",
+    "team": "SD",
+    "positions": [
+      "RF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9111",
+    "player_id": "9111",
+    "name": "Manny Machado",
+    "team": "SD",
+    "positions": [
+      "3B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9112",
+    "player_id": "9112",
+    "name": "Jurickson Profar",
+    "team": "ATL",
+    "positions": [
+      "LF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": "Suspension",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9116",
+    "player_id": "9116",
+    "name": "Francisco Lindor",
+    "team": "NYM",
+    "positions": [
+      "SS",
+      "Util"
+    ],
+    "status": true,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9118",
+    "player_id": "9118",
+    "name": "Starling Marte",
+    "team": "KC",
+    "positions": [
+      "LF",
+      "RF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9121",
+    "player_id": "9121",
+    "name": "Gerrit Cole",
+    "team": "NYY",
+    "positions": [
+      "SP",
+      "P",
+      "IL"
+    ],
+    "status": null,
+    "injury_note": "Elbow",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9123",
+    "player_id": "9123",
+    "name": "Jameson Taillon",
+    "team": "CHC",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9124",
+    "player_id": "9124",
+    "name": "Zack Wheeler",
+    "team": "PHI",
+    "positions": [
+      "SP",
+      "P",
+      "IL"
+    ],
+    "status": null,
+    "injury_note": "Shoulder",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9135",
+    "player_id": "9135",
+    "name": "Erasmo Ram\u00edrez",
+    "team": "MIN",
+    "positions": [
+      "RP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9168",
+    "player_id": "9168",
+    "name": "Patrick Corbin",
+    "team": "TOR",
+    "positions": [
+      "SP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9173",
+    "player_id": "9173",
+    "name": "Miles Mikolas",
+    "team": "WSH",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9176",
+    "player_id": "9176",
+    "name": "Jose Quintana",
+    "team": "COL",
+    "positions": [
+      "SP",
+      "P",
+      "IL"
+    ],
+    "status": null,
+    "injury_note": "Hamstring",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9190",
+    "player_id": "9190",
+    "name": "Donovan Solano",
+    "team": "TEX",
+    "positions": [
+      "1B",
+      "Util",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9228",
+    "player_id": "9228",
+    "name": "Jorge Soler",
+    "team": "LAA",
+    "positions": [
+      "RF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9262",
+    "player_id": "9262",
+    "name": "Brooks Raley",
+    "team": "NYM",
+    "positions": [
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9272",
+    "player_id": "9272",
+    "name": "Justin Wilson",
+    "team": "BOS",
+    "positions": [
+      "RP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9319",
+    "player_id": "9319",
+    "name": "Xander Bogaerts",
+    "team": "SD",
+    "positions": [
+      "SS",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9320",
+    "player_id": "9320",
+    "name": "Christian Yelich",
+    "team": "MIL",
+    "positions": [
+      "LF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9321",
+    "player_id": "9321",
+    "name": "Taijuan Walker",
+    "team": "PHI",
+    "positions": [
+      "SP",
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9329",
+    "player_id": "9329",
+    "name": "Michael Wacha",
+    "team": "KC",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9334",
+    "player_id": "9334",
+    "name": "Kevin Gausman",
+    "team": "TOR",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9336",
+    "player_id": "9336",
+    "name": "Austin Hedges",
+    "team": "CLE",
+    "positions": [
+      "C",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9339",
+    "player_id": "9339",
+    "name": "George Springer",
+    "team": "TOR",
+    "positions": [
+      "LF",
+      "CF",
+      "RF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9350",
+    "player_id": "9350",
+    "name": "T.J. McFarland",
+    "team": "ATH",
+    "positions": [
+      "RP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9358",
+    "player_id": "9358",
+    "name": "Ryan Pressly",
+    "team": "CHC",
+    "positions": [
+      "RP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9385",
+    "player_id": "9385",
+    "name": "Marcell Ozuna",
+    "team": "PIT",
+    "positions": [
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9388",
+    "player_id": "9388",
+    "name": "Ryan Brasier",
+    "team": "TEX",
+    "positions": [
+      "RP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9402",
+    "player_id": "9402",
+    "name": "Caleb Thielbar",
+    "team": "CHC",
+    "positions": [
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9414",
+    "player_id": "9414",
+    "name": "Joc Pederson",
+    "team": "TEX",
+    "positions": [
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9455",
+    "player_id": "9455",
+    "name": "Luis Garc\u00eda",
+    "team": "NYM",
+    "positions": [
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9459",
+    "player_id": "9459",
+    "name": "Sonny Gray",
+    "team": "BOS",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9483",
+    "player_id": "9483",
+    "name": "Wilmer Flores",
+    "team": "SF",
+    "positions": [
+      "1B",
+      "Util",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9507",
+    "player_id": "9507",
+    "name": "Jos\u00e9 Ram\u00edrez",
+    "team": "CLE",
+    "positions": [
+      "3B",
+      "Util"
+    ],
+    "status": true,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9517",
+    "player_id": "9517",
+    "name": "Marcus Semien",
+    "team": "NYM",
+    "positions": [
+      "2B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9530",
+    "player_id": "9530",
+    "name": "Christian Bethancourt",
+    "team": "CHC",
+    "positions": [
+      "C",
+      "Util",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9544",
+    "player_id": "9544",
+    "name": "Lucas Sims",
+    "team": "CWS",
+    "positions": [
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9546",
+    "player_id": "9546",
+    "name": "Eduardo Rodriguez",
+    "team": "AZ",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9547",
+    "player_id": "9547",
+    "name": "Hunter Harvey",
+    "team": "CHC",
+    "positions": [
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9552",
+    "player_id": "9552",
+    "name": "Mookie Betts",
+    "team": "LAD",
+    "positions": [
+      "SS",
+      "Util",
+      "IL"
+    ],
+    "status": null,
+    "injury_note": "Oblique",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9557",
+    "player_id": "9557",
+    "name": "Javier B\u00e1ez",
+    "team": "DET",
+    "positions": [
+      "2B",
+      "3B",
+      "SS",
+      "CF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9558",
+    "player_id": "9558",
+    "name": "Kris Bryant",
+    "team": "COL",
+    "positions": [
+      "Util",
+      "IL"
+    ],
+    "status": null,
+    "injury_note": "Back",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9559",
+    "player_id": "9559",
+    "name": "Pierce Johnson",
+    "team": "CIN",
+    "positions": [
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9561",
+    "player_id": "9561",
+    "name": "Jesse Winker",
+    "team": "NYM",
+    "positions": [
+      "LF",
+      "RF",
+      "Util",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9563",
+    "player_id": "9563",
+    "name": "Robert Stephenson",
+    "team": "LAA",
+    "positions": [
+      "RP",
+      "P",
+      "IL"
+    ],
+    "status": null,
+    "injury_note": "Elbow",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9567",
+    "player_id": "9567",
+    "name": "Jon Gray",
+    "team": "TEX",
+    "positions": [
+      "RP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": "Shoulder",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9570",
+    "player_id": "9570",
+    "name": "Tom Murphy",
+    "team": "SF",
+    "positions": [
+      "C",
+      "Util",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": "Back",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9571",
+    "player_id": "9571",
+    "name": "Trevor Story",
+    "team": "BOS",
+    "positions": [
+      "SS",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9573",
+    "player_id": "9573",
+    "name": "Carlos Correa",
+    "team": "HOU",
+    "positions": [
+      "3B",
+      "SS",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9575",
+    "player_id": "9575",
+    "name": "Lance McCullers Jr.",
+    "team": "HOU",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9582",
+    "player_id": "9582",
+    "name": "Sean Manaea",
+    "team": "NYM",
+    "positions": [
+      "SP",
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9584",
+    "player_id": "9584",
+    "name": "Corey Seager",
+    "team": "TEX",
+    "positions": [
+      "SS",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9586",
+    "player_id": "9586",
+    "name": "Andrew Heaney",
+    "team": "LAD",
+    "positions": [
+      "SP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9590",
+    "player_id": "9590",
+    "name": "Byron Buxton",
+    "team": "MIN",
+    "positions": [
+      "CF",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9595",
+    "player_id": "9595",
+    "name": "Dominic Smith",
+    "team": "ATL",
+    "positions": [
+      "1B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9598",
+    "player_id": "9598",
+    "name": "Rafael Montero",
+    "team": "NYY",
+    "positions": [
+      "RP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": "Personal",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9599",
+    "player_id": "9599",
+    "name": "Steven Matz",
+    "team": "TB",
+    "positions": [
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9603",
+    "player_id": "9603",
+    "name": "Tyler Austin",
+    "team": "CHC",
+    "positions": [
+      "1B",
+      "Util",
+      "IL"
+    ],
+    "status": null,
+    "injury_note": "Knee",
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9605",
+    "player_id": "9605",
+    "name": "Matt Olson",
+    "team": "ATL",
+    "positions": [
+      "1B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9606",
+    "player_id": "9606",
+    "name": "Max Muncy",
+    "team": "LAD",
+    "positions": [
+      "3B",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9610",
+    "player_id": "9610",
+    "name": "J.P. Crawford",
+    "team": "SEA",
+    "positions": [
+      "SS",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9615",
+    "player_id": "9615",
+    "name": "Reese McGuire",
+    "team": "CWS",
+    "positions": [
+      "C",
+      "Util"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9616",
+    "player_id": "9616",
+    "name": "Tyler Glasnow",
+    "team": "LAD",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9620",
+    "player_id": "9620",
+    "name": "Max Fried",
+    "team": "NYY",
+    "positions": [
+      "SP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9632",
+    "player_id": "9632",
+    "name": "Luke Jackson",
+    "team": "NYM",
+    "positions": [
+      "RP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9637",
+    "player_id": "9637",
+    "name": "Marcus Stroman",
+    "team": "NYY",
+    "positions": [
+      "SP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9640",
+    "player_id": "9640",
+    "name": "Lucas Giolito",
+    "team": "BOS",
+    "positions": [
+      "SP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9651",
+    "player_id": "9651",
+    "name": "Nick Martinez",
+    "team": "TB",
+    "positions": [
+      "SP",
+      "RP",
+      "P"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  },
+  {
+    "player_key": "469.p.9653",
+    "player_id": "9653",
+    "name": "Tommy Kahnle",
+    "team": "BOS",
+    "positions": [
+      "RP",
+      "P",
+      "NA"
+    ],
+    "status": null,
+    "injury_note": null,
+    "is_undroppable": false,
+    "percent_owned": 0.0
+  }
+]

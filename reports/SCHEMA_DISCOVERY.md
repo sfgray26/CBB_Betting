@@ -209,4 +209,126 @@ class BDLResponse(BaseModel, Generic[T]):
 ---
 
 ## Yahoo Schema
-Status: PENDING — capture requires live OAuth session. Kimi K27 audit findings in HANDOFF.md cover the code-side assumptions. Live capture to be done in a separate Railway session once Yahoo token is confirmed active.
+Date captured: 2026-04-05
+Fixtures: `tests/fixtures/yahoo_roster.json`, `yahoo_free_agents.json`, `yahoo_adp_injury.json`
+Captured via: `railway run venv/Scripts/python.exe scripts/yahoo_capture.py`
+
+---
+
+### `get_roster()` Response — 24 players
+
+#### Fields (verified across all 24)
+| Field | Type | Nullable | Notes |
+|-------|------|----------|-------|
+| `player_key` | `str` | No | e.g. `"469.p.12435"` — league_id.p.player_id format |
+| `player_id` | `str` | No | Numeric string e.g. `"12435"` |
+| `name` | `str` | No | Full display name |
+| `team` | `str` | No | Team abbreviation e.g. `"HOU"` |
+| `positions` | `list[str]` | No | Eligible positions e.g. `["C", "Util"]` |
+| `status` | `bool` | **Yes** (22/24 null) | **`True` = player is injured.** NOT a string. `None` = healthy. |
+| `injury_note` | `str` | **Yes** (19/24 null) | Body part string e.g. `"Calf"`. Present when injured. |
+| `is_undroppable` | `bool` | No | `False` for most players |
+| `percent_owned` | `float` | No | 0.0–100.0. **Already normalized** by client — K27 `percent_rostered` concern is resolved. |
+| `selected_position` | `str` | No | Where currently slotted e.g. `"C"`, `"SP"`, `"BN"` |
+
+**CRITICAL:** `status` is `bool` (`True` = injured), NOT a string like `"IL"`. The K27 audit assumed string. This is a breaking assumption in any code that checks `if player["status"] == "IL"`.
+
+---
+
+### `get_free_agents()` Response — 25 players per page
+
+#### Fields (verified across 25)
+| Field | Type | Nullable | Notes |
+|-------|------|----------|-------|
+| `player_key` | `str` | No | Same format as roster |
+| `player_id` | `str` | No | |
+| `name` | `str` | No | |
+| `team` | `str` | No | |
+| `positions` | `list[str]` | No | |
+| `status` | `bool` | **Yes** (25/25 null in this page) | Same bool type as roster |
+| `injury_note` | `str` | **Yes** (25/25 null in this page) | |
+| `is_undroppable` | `bool` | No | |
+| `percent_owned` | `float` | No | |
+| `stats` | `dict[str, str]` | No | **Only on FA, not roster.** Stat ID strings → value strings |
+
+**`stats` field:** dictionary of Yahoo stat ID → value string. Values are raw strings (not floats).
+Stat ID 60 returns `"8/20"` format (H/AB combined) — NOT the same as stat ID 8 (raw H count).
+
+**Stat IDs observed in live FA data:**
+| ID | Likely meaning | Notes |
+|----|----------------|-------|
+| 3 | AVG | e.g. `".400"` |
+| 7 | R | |
+| 8 | H | Raw count |
+| 12 | HR | |
+| 13 | RBI | |
+| 21 | IP | |
+| 23 | W | |
+| 26 | ERA | |
+| 27 | WHIP | |
+| 28 | K (pitching) | |
+| 29 | QS | |
+| 38 | K/BB | |
+| 42 | K (batting?) | K27 flagged as duplicate of 28 — likely batting K, not pitching |
+| 50 | IP (duplicate?) | K27 flagged as duplicate of 21 |
+| 55 | OPS | e.g. `"1.380"` |
+| 57 | BB | |
+| 60 | H/AB | Returns `"8/20"` format — NOT same as stat ID 8 |
+| 62 | GS | |
+| 83 | NSV | |
+| 85 | OBP | |
+
+**Stat IDs 28 vs 42 and 21 vs 50:** K27 correctly flagged these as potential duplicates. IDs 42 and 50 are probably batting K and total IP respectively — need league settings API to confirm exact mappings.
+
+---
+
+### `get_adp_and_injury_feed()` Response — 100 players
+
+This is the **embargo-critical method** for job 100_013.
+
+#### Fields (verified across 100)
+| Field | Type | Nullable | Notes |
+|-------|------|----------|-------|
+| `player_key` | `str` | No | |
+| `player_id` | `str` | No | |
+| `name` | `str` | No | |
+| `team` | `str` | No | |
+| `positions` | `list[str]` | No | Includes `"IL"` as a position for injured players |
+| `status` | `bool` | **Yes** (98/100 null) | `True` = injured per Yahoo flag. Can be `None` even when `injury_note` is present. |
+| `injury_note` | `str` | **Yes** (82/100 null) | Body part only e.g. `"Hip"`. NOT a full description. |
+| `is_undroppable` | `bool` | No | |
+| `percent_owned` | `float` | No | |
+
+**CRITICAL:** `status=None` + `injury_note="Hip"` is valid — Verlander has no Yahoo status flag but does have an injury note. Both fields must be checked independently. Code that checks only `status is not None` to detect injuries will miss these players.
+
+**`positions` includes `"IL"`** for players on the IL — this is a reliable injury signal in addition to `injury_note`.
+
+---
+
+### Delta: K27 Assumptions vs Reality
+
+| K27 Assumption | Actual | Impact |
+|----------------|--------|--------|
+| `status` is a string e.g. `"IL"` | `status` is `bool` (`True`/`None`) | Any `status == "IL"` check silently misses all injuries |
+| `percent_rostered` path depth varies (4+ locations) | Client normalizes to `percent_owned: float` — always present | Non-issue: client already handles the path complexity |
+| `_parse_player()` hides response structure | `get_roster()` returns clean flat dicts — structure is known now | No hidden fields found in live data |
+| Stat 28/42 both = pitching K | 42 likely = batting K (returned for hitters, 28 for pitchers) | Need to build separate fields in contracts |
+| Stat 60 = H (duplicate of 8) | Stat 60 = `"H/AB"` combined format e.g. `"8/20"` | Not a duplicate — different data shape entirely |
+
+---
+
+### Yahoo Pydantic Contract Requirements (Priority 4)
+
+```
+backend/data_contracts/yahoo_player.py   -- YahooPlayer (shared base)
+backend/data_contracts/yahoo_roster.py   -- YahooRosterEntry (adds selected_position)
+backend/data_contracts/yahoo_waiver.py   -- YahooWaiverCandidate (adds stats dict)
+```
+
+Key contract decisions:
+- `status: Optional[bool]` — NOT `Optional[str]`
+- `injury_note: Optional[str]` — independent of status; must check both
+- `percent_owned: float` — always present, no null guard needed
+- `selected_position: str` — roster only, not present in FA or ADP feed
+- `stats: Optional[dict[str, str]]` — FA and stats-enriched paths only; None on roster/ADP
+- `positions: list[str]` — check for `"IL"` as reliable injury signal
