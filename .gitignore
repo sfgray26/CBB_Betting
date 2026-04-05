@@ -79,3 +79,9 @@ frontend/tsconfig.tsbuildinfo
 # Git worktrees
 .worktrees/
 reports/GEMINI_YAHOO_PIPELINE_PAYLOADS.
+.superpowers/
+
+# OpenClaw runtime state (changes every run)
+.openclaw/telemetry_state.json
+.openclaw/workspace-state.json
+.openclaw/operational-state.json

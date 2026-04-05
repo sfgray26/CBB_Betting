@@ -84,7 +84,10 @@
       "Bash(venv/Scripts/python -m py_compile backend/fantasy_baseball/statcast_ingestion.py backend/main.py backend/fantasy_baseball/yahoo_client_resilient.py)",
       "Bash(venv/Scripts/python update_handoff.py)",
       "Bash(rm update_handoff.py)",
-      "Bash(venv/Scripts/python -m pytest tests/test_waiver_integration.py tests/test_mlb_analysis.py tests/test_lineup_optimizer.py -q --tb=short)"
+      "Bash(venv/Scripts/python -m pytest tests/test_waiver_integration.py tests/test_mlb_analysis.py tests/test_lineup_optimizer.py -q --tb=short)",
+      "Bash(venv/Scripts/python -m pytest tests/test_fantasy_app.py -v)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

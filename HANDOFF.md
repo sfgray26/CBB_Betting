@@ -1,436 +1,260 @@
-# HANDOFF.md — Fantasy Baseball Platform Master Plan (In-Season 2026 Edition)
+# HANDOFF.md — MLB Platform Master Plan (In-Season 2026)
 
-> **Date:** April 2, 2026 (updated session S8) | **Author:** Claude Code (Master Architect)
-> **Risk Level:** ELEVATED — in-season with pre-season CSV fallback still active
-
----
-
-## Executive Summary
-
-The platform is live for the 2026 MLB fantasy season. The Yahoo API pipeline is functional and data is flowing to all four surfaces (roster, matchup, waiver, lineup optimizer). However, the system is operating with a structural debt: pre-season Steamer CSVs are still the primary projection source while the season is active. Kimi audits K-17 through K-23 collectively expose twelve critical bugs (data corruption, silent failures, broken UI contracts) and one existential architectural gap (stale projections at 100% weight in-season). The immediate mandate is twofold: (1) close all critical bugs — twelve are identified, eight are already fixed — and (2) implement the in-season projection pipeline before pre-season CSVs become materially wrong, which is now. Every remaining open item has a clear owner and a concrete next deliverable. No vague work items exist in this document.
-
-### Session S9 Hotfix (Apr 3)
-
-- Fixed backend cold-start crash in Railway: `FileNotFoundError` for `/app/frontend/lib/fantasy-stat-contract.json`.
-- Root cause: `.dockerignore` excludes `frontend/`, but backend contract loader imported that file at module import time.
-- Remediation: `backend/utils/fantasy_stat_contract.py` now checks both frontend and backend-local contract paths.
-- Added backend runtime copy at `backend/utils/fantasy_stat_contract.json` so backend service boots even when frontend is absent from image.
-
-### Session S10 Hotfix (Apr 3)
-
-- Hardened lineup actuation pipeline at `PUT /api/fantasy/lineup/apply`:
-  - Enforced ET date default (`America/New_York`) for apply date.
-  - Added strict incoming player identifier sanitization (must resolve to `mlb.p.XXXXX`).
-  - Added roster-backed position enrichment so OF payloads can resolve to LF/CF/RF eligibility when needed.
-- Weather fetch compatibility fix in `backend/fantasy_baseball/weather_fetcher.py`:
-  - Switched OneCall request to `data/2.5/onecall` (free-tier compatible path).
-  - Added fallback to `data/2.5/weather` before degrading to estimated weather.
-- Matchup payload alignment fix in `GET /api/fantasy/matchup`:
-  - Team stat extraction now filters to active scoring categories from league settings to prevent OBP/K-BB column drift.
-- Waiver wire reliability improvements in `GET /api/fantasy/waiver`:
-  - Normalized outgoing strikeout key for frontend (`K(P)` → `K`).
-  - Prevented NSV projection fallback for non-RP players.
-- Added direct waiver actuation endpoint:
-  - `POST /api/fantasy/waiver/add?add_player_key=...&drop_player_key=...`
-  - Frontend wired to call endpoint from waiver tables (replaces Yahoo deep-link-only flow).
-- Frontend lineup UX cleanup:
-  - Added Debug Mode toggle to hide/show Implied Runs and Park Factor columns.
-  - Smart Score now rendered on normalized 0-100 scale for readability.
-  - Apply payload only sends canonical Yahoo player keys.
+> **Date:** April 5, 2026 (updated Session S14) | **Author:** Claude Code (Master Architect)
+> **Risk Level:** ELEVATED — Data pipeline under construction; raw ingestion unvalidated
 
 ---
 
-## Session S8 Checkpoint (Apr 2)
+## CORE PHILOSOPHY — Data-First, Contracts Before Plumbing
 
-### Mission Accomplished
+We are building this system like a quantitative trading desk. The data pipeline IS the product. Everything else — UI, optimization, automation — is a window into it that does not exist until the data is pristine.
 
-- Added ET-safe shared time helpers in `backend/utils/time_utils.py` and applied them to ingestion job status plus the verified fantasy lineup/statcast job hot paths.
-- Activated the projection freshness guard on `GET /api/fantasy/lineup/{lineup_date}` with `force_stale=true` override support and explicit 503 error payloads.
-- Reworked fallback weather estimation so hitter scoring and HR factor respond to estimated temperature rather than a fixed neutral value, and marked fallback responses with `fallback_mode=True`.
-- Replaced the duplicated Yahoo/fantasy stat metadata with one shared contract in `frontend/lib/fantasy-stat-contract.json`, consumed by both frontend constants and backend services.
-- Replaced process-local Fangraphs RoS dependency with a durable `projection_cache_entries` handoff path used by `fangraphs_ros`, `ensemble_update`, and the projection freshness check.
-- Added regression coverage for the new freshness gate and fallback weather behavior.
+**Five non-negotiable principles:**
 
-### Technical State
+1. **Data First:** The data pipeline is the entire product right now.
+2. **Contracts Before Plumbing:** Define the shape of reality (Pydantic V2 models) before writing the API clients that fetch it.
+3. **One Feed at a Time:** Do not move to odds or injuries until the core game schedule is pristine.
+4. **No Silent Failures:** `dict.get()` with defaults is suppression, not validation. Every input passes strict schema validation.
+5. **Strict Embargo:** All downstream logic (optimization, matchups, waivers, ensemble blending) remains cut off until the data floor is certified.
 
-| Area | State | Evidence |
-|------|-------|----------|
-| ET date anchoring | PARTIALLY HARDENED | `daily_ingestion.py` and fantasy lineup/statcast scheduled helpers now use ET helper functions |
-| Lineup freshness gate | ACTIVE | `backend/main.py` blocks stale lineup requests with 503 unless `force_stale=true` |
-| Weather fallback realism | ACTIVE | `weather_fetcher.py` fallback score now uses estimated temperature and exposes `fallback_mode` |
-| Stat contract | CANONICALIZED | `frontend/lib/fantasy-stat-contract.json` now feeds `frontend/lib/constants.ts`, `backend/main.py`, and `backend/fantasy_baseball/category_tracker.py` |
-| RoS handoff durability | ACTIVE | `daily_ingestion.py` persists Fangraphs payloads in `projection_cache_entries` via `ProjectionCacheEntry` |
-| Verification | PASS | `py_compile` passed on touched files; `pytest tests/test_ingestion_orchestrator.py tests/test_fantasy_stat_contract.py tests/test_waiver_integration.py tests/test_weather_fetcher.py -q --tb=short` → 43 passed; `cd frontend && npx tsc --noEmit` passed |
-
-### Delegation Bundles
-
-- Claude next: A5 atomic ensemble upsert and A6 retry taxonomy.
-- Gemini next: no new frontend work until Claude finishes the shared stat contract export required for stable fantasy UI semantics.
-- Kimi next: no new research required for this checkpoint.
-
-### HANDOFF PROMPTS
-
-#### Claude Code
-
-Implement Phase A continuation in `c:\Users\sfgra\repos\Fixed\cbb-edge`. Read `HANDOFF.md`, `ORCHESTRATION.md`, `IDENTITY.md`, and `HEARTBEAT.md` first. Continue fantasy stabilization with these tasks only: (1) convert the ensemble write path in `backend/services/daily_ingestion.py` to atomic upsert semantics with inserted/updated/skipped counters using the new durable Fangraphs cache path, and (2) split retryable vs fatal exceptions in `backend/services/job_queue_service.py`. Validate with `venv\Scripts\python -m py_compile backend\services\daily_ingestion.py backend\services\job_queue_service.py backend\main.py backend\models.py` and the relevant pytest subset. Report exact file changes, verification output summary, and any migration requirement.
-
-#### Gemini CLI
-
-Do not edit Python. Stand by for frontend implementation after Claude lands the shared stat contract export. When unblocked, target only fantasy frontend files and verify with `cd frontend && npx tsc --noEmit` before any deploy.
-
-### Architect Review Queue
-
-- Decide whether the freshness gate should remain hard 503 for every lineup request or be relaxed for historical dates only.
-- Decide whether `fallback_mode` should surface directly in frontend weather chips once Gemini resumes UI work.
-
----
-
-## Core Principles
-
-- **Contracts first.** Every layer must publish an explicit schema. No implicit data shapes, no "should be fine" assumptions. If a Yahoo API key name changes, it fails loudly, not silently.
-- **Determinism before probability.** Fix the data pipeline before tuning the model. A correct batting average beats a sophisticated model fed corrupt stats.
-- **Decisions before automation.** Architect the ensemble blender on paper before writing a scheduler job. Premature automation of a bad design just runs the bad design faster.
-- **Intelligence before integration.** The MCMC win probability is only as good as its inputs. Do not add a fourth projection system until the three active sources are clean and fresh.
-- **Every layer exists only to make the next layer simpler — never smarter.** Ingestion produces clean rows. Scoring produces a ranked list. The UI displays it. No layer compensates for broken upstream.
-
----
-
-## Major Issues Acknowledged & Mitigation Plan
-
-| Issue | Source | Severity | Current Mitigation | Owner | Status |
-|-------|--------|----------|--------------------|-------|--------|
-| Name concat with injury text ("Jason Adam Quadriceps") | K-15 | HIGH | Regex strip in `_parse_player()` | Claude | FIXED S3 |
-| `date.today()` UTC bias in Statcast ingestion | K-16 / K-19 | HIGH | ET anchor via `ZoneInfo` in `run_daily_ingestion()` | Claude | FIXED S4 |
-| Dashboard timestamp shown in UTC to users | K-17 | HIGH | `datetime.now(ZoneInfo("America/New_York"))` at `dashboard_service.py` lines 206, 827 | Claude | FIXED S3 |
-| Stat IDs 57/83/85 unmapped (BB/NSV/OBP blank) | K-14 | HIGH | `_YAHOO_STAT_FALLBACK` dict + `constants.ts` STAT_LABELS | Claude | FIXED S3 |
-| Impossible negative stat values (-1 GS) | K-18 | MEDIUM | `_NON_NEGATIVE_STATS` frozenset clamp; NSB explicitly excluded | Claude | FIXED S4 |
-| Waiver owned% = 0% for all players | K-20 | CRITICAL | Removed `"out": "metadata"`; lookup changed to `percent_rostered` | Claude | FIXED S4 |
-| Playoffs hallucination (Week 2 shows "PLAYOFFS") | K-22 | CRITICAL | `is_playoffs = raw_playoffs and (week >= 20)` guard | Claude | FIXED S4 |
-| Async lineup optimizer Pydantic crash (5 validation errors) | K-21 | CRITICAL | Worker fetches Yahoo data at execution time; correct `solve_smart_lineup()` call | Claude | FIXED S3 |
-| SQL Syntax Error in Job Queue (`:result::jsonb`) | G-1 | CRITICAL | Changed to `CAST(:result AS jsonb)` in `job_queue_service.py` | Claude | FIXED S6 |
-| `apiFetch` converts nested error to `[object Object]` | K-21 | CRITICAL | Parse nested detail; extract readable string | Gemini | PENDING G-5 |
-| "Score" column is `smart_score`; mislabelled; can be negative | K-21 | HIGH | Rename to "Smart Score" + tooltip; PROJ falls back to `implied_runs` | Gemini | PENDING G-6/G-7 |
-| K/9 value (16.20) appearing in Walks column | K-22 | HIGH | Decimal guard in `_extract_team_stats()`: float BB != int -> reject + warn | Claude | FIXED S5 |
-| Missing NSV on matchup (1 save shown as 0) | K-22 | HIGH | Stat ID 83 extraction + fallback mapping audit | Claude + Gemini | PENDING G-8 |
-| Stat labels missing: K/BB, GS, NSV in `constants.ts` | K-22 | MEDIUM | Add string + numeric ID mappings | Gemini | PENDING G-8 |
-| Matchup score calculation wrong | K-26 | CRITICAL | `MATCHUP_DISPLAY_ONLY` set excludes IP/H_AB/GS; `LOWER_IS_BETTER` expanded with L/26/27/29; `MATCHUP_STAT_ORDER` enforces display order; ScoreBanner filters display-only before score calc | Claude | **FIXED S7** |
-| PROBABLE badge shown yellow/injury (should be green/SP) | K-19 domain | MEDIUM | Map PROBABLE to emerald/STARTING | Gemini | PENDING G-10 |
-| Waiver "Key Stats" blank (shows deficit analysis, not stats) | K-20 | HIGH | Added `stats: dict` to `WaiverPlayerOut`; `get_free_agents()` now passes `out=stats,percent_owned`; `_to_waiver_player()` extracts stats | Claude | FIXED S6 |
-| Settings page is a read-only JSON dump | K-23 | CRITICAL | Rebuild with Switch/Select/Slider; hide z-score behind presets | Gemini | PENDING G-9 |
-| Pre-season CSV at 100% weight while season is live | K-17 | CRITICAL | `fangraphs_loader.py` built with ensemble blend; needs daily_ingestion wiring (100_012 + 100_014) | Claude | IN PROGRESS S6 |
-| No FanGraphs RoS download | K-17 / K-19 | CRITICAL | `fangraphs_loader.py` built + wired: `_fetch_fangraphs_ros()` job (100_012, daily 3 AM ET) populates `_ROS_CACHE`; `_update_ensemble_blend()` job (100_014, daily 5 AM ET) computes + upserts blend columns | Claude | **FIXED S7** |
-| No ensemble blender (ATC/Steamer/ZiPS/THE BAT) | K-17 / K-19 | CRITICAL | `_update_ensemble_blend()` job wired (100_014, daily 5 AM ET); reads `_ROS_CACHE` or re-fetches, calls `compute_ensemble_blend()`, upserts `blend_hr/rbi/avg/era/whip` | Claude | **FIXED S7** |
-| No Yahoo ADP/injury polling | K-17 / K-19 | HIGH | `get_adp_and_injury_feed()` added to `yahoo_client_resilient.py`; `_poll_yahoo_adp_injury()` job wired in `daily_ingestion.py` (100_013, every 4h) | Claude | **FIXED S7** |
-| No projection freshness alerting | K-16 / K-17 | HIGH | `_check_projection_freshness()` implemented and `GET /api/fantasy/lineup/{lineup_date}` now blocks on violations unless `force_stale=true`; report stored in `_job_status` | Claude | **FIXED S8** |
-| CSV loader rejects full file on column mismatch | K-16 | MEDIUM | Header validation warning added to both loaders; per-row errors upgraded to WARNING | Claude | FIXED S5 |
-| CBB V9.2 recalibration (SNR/integrity scalar stacking) | K-12 | BLOCKED | EMAC-068 — do not touch Kelly math before Apr 7 | Claude | BLOCKED APR 7 |
-| OddsAPI to BDL GOAT MLB migration | CLAUDE.md | BLOCKED | Cancel post-tournament; expand `balldontlie.py` | Claude | BLOCKED APR 7 |
-
----
-
-## In-Season Data Strategy & Architecture
-
-### Single Source of Truth: Dynamic RoS + Statcast Bayesian Ensemble
+**Layer model:**
 
 ```
-Layer 1: Rest-of-Season Projections (counting stats only)
-  Sources: ATC 30% / THE BAT 30% / Steamer 20% / ZiPS 20%
-  Fetch:   Daily 3 AM ET via cloudscraper (FanGraphs public, no auth required)
-  Lock:    100_012
-
-Layer 2: Statcast Underlying Metrics (trend modifiers ONLY — NOT counting stats)
-  Sources: pybaseball (Baseball Savant) — xwOBA, Barrel%, Exit Velocity
-  Use:     Boost/penalty multiplier on RoS blend — never blended with HR/RBI directly
-  Lock:    100_002 (live; UTC bug fixed S4)
-
-Layer 3: Ensemble Blender
-  Schema:  5 new columns on PlayerDailyMetric: blend_hr, blend_rbi, blend_avg, blend_era, blend_whip
-  Runs:    Daily 5 AM ET after RoS download completes
-  Lock:    100_014
-
-Layer 4: Yahoo ADP + Injury Feed
-  Source:  YahooFantasyClient (existing base class, new pagination method)
-  Cadence: Every 4 hours
-  Lock:    100_013
-
-Layer 5: Projection Freshness Guard
-  Alert if: RoS > 12h, Statcast > 6h, Yahoo injuries > 4h
-  Gate:    Block lineup optimization if any SLA violated
-  Lock:    100_015
+Layer 0: Decision Contracts (Pydantic V2 models — immutable truth of what valid data looks like)
+Layer 1: Pure Intelligence Functions (stateless transforms: raw -> validated)
+Layer 2: Data Adapters (API clients, ingestion — swappable plumbing)
+Layer 3: Orchestration (schedulers, job queues — when things run)
+Layer 4: Presentation (API endpoints, UI — the face)
 ```
 
-### Pre-Season CSV: Fallback Only
-
-`projections_loader.py` Steamer CSV is retained as fallback **for players not yet in the ensemble** (call-ups, trades). It must never be blended against RoS projections. The `@lru_cache` on `load_full_board()` is acceptable for this fallback use case only.
-
-### Data Freshness SLAs
-
-| Data Type | Max Age | Current Status |
-|-----------|---------|----------------|
-| Rest-of-Season Projections | < 12 hours | NOT IMPLEMENTED |
-| Statcast Metrics | < 6 hours | UTC bug fixed — otherwise live |
-| Yahoo ADP / Injuries | < 4 hours | Not automated |
-| Ensemble Projections | < 12 hours | NOT IMPLEMENTED |
-| Player Roster / Status | < 1 hour | Live via Yahoo client |
+Build bottom-up. Never build Layer 2 without Layer 0 contracts. Never build Layer 4 without Layer 1 proven.
 
 ---
 
-## Current Pipeline State
+## ACTIVE DIRECTIVES (read before every session)
 
-| Job | Lock ID | Cadence | Status | Notes |
-|-----|---------|---------|--------|-------|
-| `statcast` | 100_002 | Daily 2 AM ET | LIVE | UTC bug fixed (S4) |
-| `rolling_z` | 100_003 | Daily 3 AM ET | LIVE | M-5 fixed: WARNs when all or majority of players skipped |
-| `waiver_scan` | 100_007 | Daily 6 AM ET | LIVE | Owned% fix deployed |
-| `mlb_brief` | 100_008 | Daily 7 AM ET | LIVE | |
-| `valuation_cache` | 100_011 | On demand + scheduled | LIVE | ARCH-001 Phase 2 |
-| `mlb_odds` | 100_001 | Every 30 min | DIRTY | Raw OddsAPI — migrate to BDL Apr 7 |
-| `fangraphs_ros` | 100_012 | Daily 3 AM ET | **LIVE** | `_fetch_fangraphs_ros()` — populates `_ROS_CACHE` |
-| `yahoo_adp_injury` | 100_013 | Every 4 hours | **LIVE** | `_poll_yahoo_adp_injury()` — upserts status/injury to `rolling_window` |
-| `ensemble_update` | 100_014 | Daily 5 AM ET | **LIVE** | `_update_ensemble_blend()` — upserts blend_hr/rbi/avg/era/whip |
-| `projection_freshness_check` | 100_015 | Every 1 hour | **LIVE** | `_check_projection_freshness()` feeds active lineup SLA gate |
+### DIRECTIVE 1 — Data-First Mandate (STRICT EMBARGO)
 
----
+**HARD EMBARGO — do not lift without explicit human instruction:**
+- Lineup optimization
+- Projection blending
+- Ensemble update (job 100_014)
+- FanGraphs RoS ingestion (job 100_012)
+- Yahoo ADP/injury polling (job 100_013)
+- Any derived stats (wOBA, FIP, barrel%, etc.)
+- Any new UI surface
 
-## Future Roadmap
+**Nothing proceeds to the DB or UI until:** incoming payloads pass strict Pydantic V2 validation models. Every field, every type, every nullable must be explicitly declared and verified against live API responses.
 
-### Phase 1 — Close All Critical Bugs (Target: Apr 3)
+### DIRECTIVE 2 — Phase 6-7 Deployment Sequence (Infrastructure Track)
 
-| # | Item | Owner | Deliverable |
-|---|------|-------|-------------|
-| 1.1 | Fix `apiFetch` error parsing | Gemini G-5 | `api.ts` lines 66-75 — readable error messages |
-| 1.2 | Smart Score rename + tooltip + PROJ fallback | Gemini G-6/G-7 | `lineup/page.tsx` — column rename, `implied_runs` fallback |
-| 1.3 | Fix stat label mappings (K/BB, GS, NSV, HLD) | Gemini G-8 | `constants.ts` — complete stat label map |
-| 1.4 | Settings page rebuild | Gemini G-9 | `settings/page.tsx` — Switch/Select/Slider |
-| 1.5 | PROBABLE badge green/STARTING | Gemini G-10 | `status-badge.tsx` — correct color map |
-| 1.6 | WaiverPlayerOut add `stats` field | Claude | `schemas.py` + `main.py` `_to_waiver_player()` + `yahoo_client_resilient.py` `out=stats` | **DONE S6** |
-| 1.7 | K/9 bleed into Walks column | Claude | `main.py` `_extract_team_stats()` — decimal type guard |
-| 1.8 | CSV partial loader | Claude | `projections_loader.py` — column intersection; never reject full file |
+```
+Step 1 (Gemini):  Provision Fantasy Postgres. Set FANTASY_DATABASE_URL.
+                  DO NOT start the service yet.
 
-### Phase 2 — In-Season Pipeline (Target: Apr 7)
+Step 2 (Claude):  Run database migrations against FANTASY_DATABASE_URL.
+                  Verify schema with: SELECT table_name FROM information_schema.tables
+                  WHERE table_schema = 'public';
 
-| # | Item | Owner | Deliverable |
-|---|------|-------|-------------|
-| 2.1 | FanGraphs RoS downloader | Claude | `fangraphs_loader.py` — 4 systems, cloudscraper, ensemble blend | **DONE S6** |
-| 2.2 | `PlayerDailyMetric` schema extension | Claude | SQL migration `add_blend_columns.sql` + model columns | **DONE S6** |
-| 2.3 | Ensemble blender job (100_014) | Claude | `daily_ingestion.py` — weighted blend logic | **DONE S7** |
-| 2.4 | Yahoo ADP/injury poller (100_013) | Claude | `yahoo_client_resilient.py` — pagination + DB write | **DONE S7** |
-| 2.5 | Projection freshness alerting (100_015) | Claude | `daily_ingestion.py` — SLA gate, alert-only | **DONE S7** |
-| 2.6 | OddsAPI to BDL GOAT MLB migration | Claude | `balldontlie.py` — `/mlb/v1/` endpoints | BLOCKED APR 7 |
-| 2.7 | CBB V9.2 recalibration (EMAC-068 unlocks Apr 7) | Claude | `betting_model.py` — scalar stacking fix per K-12 | BLOCKED APR 7 |
-
-### Phase 3 — Intelligence Upgrades (Target: Apr 21, after 3 weeks live data)
-
-| # | Item | Owner | Deliverable |
-|---|------|-------|-------------|
-| 3.1 | MCMC empirical calibration (Brier score) | Claude | Script: H2H outcomes vs `win_probability` |
-| 3.2 | Matchup pace/projections + remaining games | Claude + Gemini | `/api/fantasy/matchup/pace` + frontend display |
-| 3.3 | Discord notification pipeline | Gemini | OAuth + per-type toggles in settings |
-| 3.4 | MLB betting module (full build) | Claude | Edge calc + Kelly sizing via BDL |
-
----
-
-## Delegation Matrix
-
-| Area | Owner | Responsibility | Next Deliverable |
-|------|-------|----------------|-----------------|
-| Backend Python | Claude | All `.py` files, DB migrations, scheduler jobs | H-1 WaiverPlayerOut stats; Phase 2 pipeline |
-| Frontend TypeScript | Gemini | All Next.js files; zero `.py` changes | G-5 through G-10 + deploy |
-| Deep research / audit | Kimi | Read-only; output to `reports/K*.md` | K-24 Yahoo player_stats spec; K-25 FanGraphs column map |
-| Railway DevOps | Gemini | `railway up`, smoke tests | Deploy after G-5 through G-10 complete |
-| CBB recalibration | Claude | K-12 spec to V9.2 | After EMAC-068 unblocks Apr 7 |
-| MLB odds migration | Claude | BDL GOAT integration | After subscription swap Apr 7 |
-
----
-
-## Active Delegation Bundles
-
-### GEMINI -- Frontend Bug Closures (G-5 through G-10)
-
-**Guardrails:** Zero `.py` changes. TypeScript must pass (`cd frontend && npx tsc --noEmit`) after every task.
-**Deploy:** After all G-tasks pass TypeScript: `railway up`. Then verify each acceptance criterion live.
-
-| Task | File | Change | Status |
-|------|------|--------|--------|
-| G-5 | `frontend/lib/api.ts` lines 66-75 | Handle nested error objects in `body.detail` | ✅ FIXED |
-| G-6 | `lineup/page.tsx` line 252 | Header "Score" to "Smart Score" + Radix Tooltip | ✅ FIXED |
-| G-7 | `lineup/page.tsx` lines 283-293 | PROJ fallback to `implied_runs` | ✅ FIXED |
-| G-8 | `frontend/lib/constants.ts` | Fix stat label mappings (Holds, K/BB, GS, NSB) | ✅ FIXED |
-| G-9 | `settings/page.tsx` | Rebuild with Switch/Select/Slider + Z-Score presets | ✅ COMPLETE |
-| G-10 | `status-badge.tsx` | Map PROBABLE to green "STARTING" badge | ✅ FIXED |
-| G-L2 | `waiver/page.tsx` line 349 | Change maxOwned default from 90 to 50 | ✅ FIXED |
-
----
-
-### KIMI -- Research to Unblock Phase 2 Backend
-
-**Guardrails:** Read-only. No code changes. Output to `reports/K24_*.md` and `reports/K25_*.md`.
-
-### KIMI -- Research COMPLETE
-
-**K-24 and K-25 research delivered.** All findings documented in:
-- `reports/K24_YAHOO_PLAYER_STATS_SPEC.md` — Yahoo API contract for player stats
-- `reports/K25_FANGRAPHS_COLUMN_MAP.md` — FanGraphs RoS column headers
-
-#### K-24 Findings Summary
-
-**Recommendation for `_to_waiver_player()`:** Reuse existing `get_free_agents()` call by adding `out=stats,metadata,percent_owned` parameter. This returns stats in the same API call (no batching needed for 25 players/page).
-
-| Stat | ID | Path |
-|------|-----|------|
-| HR | 7 | `player[1].player_stats.stats[n].stat.value` |
-| RBI | 8 | Same structure |
-| R | 6 | Same structure |
-| SB | 5 | Same structure |
-| AVG | 3 | Same structure |
-| ERA | 26 | Same structure |
-| WHIP | 27 | Same structure |
-
-**Batch limit:** 25 player keys per call (Yahoo hard limit).
-
-#### K-25 Findings Summary
-
-**Column consistency:** ALL systems (ATC, THE BAT, ZiPS DC, Steamer) use identical column headers.
-
-| Stat | Column | Notes |
-|------|--------|-------|
-| HR | `HR` | Consistent all systems |
-| RBI | `RBI` | Consistent all systems |
-| R | `R` | Consistent all systems |
-| AVG | `AVG` | Consistent all systems |
-| SB | `SB` | Consistent all systems |
-| ERA | `ERA` | Consistent all systems |
-| WHIP | `WHIP` | Consistent all systems |
-| Strikeouts | `SO` | **Not "K" — all systems use "SO"** |
-| Innings | `IP` | Format: "182.1" |
-| Name | `Name` | Format: "Last, First" |
-
-**Scraping:** All systems require `cloudscraper` (Cloudflare protected).
-
-**URLs:**
-- ATC: `projections.aspx?...type=atc`
-- THE BAT: `projections.aspx?...type=thebat`
-- ZiPS DC: `projections.aspx?...type=zipsdc`
-- Steamer RoS: `projections.aspx?...type=steamerr`
-
----
-
-### K-26: Matchup Category Alignment & Logic Issues — NEW CRITICAL
-
-**Research:** `reports/K26_MATCHUP_CATEGORY_ALIGNMENT_SPEC.md`
-
-**Problem:** The Matchup page displays categories in random order and miscalculates the overall score. The 9-6 score (or similar) is **wrong** and doesn't match Yahoo's official standings.
-
-**Root Causes:**
-1. **Non-scoring stats counted**: H/AB and IP are display-only reference stats but are being counted toward win/loss totals
-2. **Missing inverse logic**: Batter K (strikeouts) should award "Win" to the *lower* value (fewer strikeouts is better for batters), but currently higher wins
-3. **Random ordering**: Stats display in Yahoo API order instead of logical Batters→Pitchers sections
-
-**Required Category Order (Batters):**
-| # | Stat | Scoring? | Win Condition |
-|---|------|----------|---------------|
-| 1 | H/AB | ❌ Display Only | N/A |
-| 2 | R | ✅ Yes | Higher |
-| 3 | H | ✅ Yes | Higher |
-| 4 | HR | ✅ Yes | Higher |
-| 5 | RBI | ✅ Yes | Higher |
-| 6 | **K** | ✅ Yes | **LOWER** ⚠️ |
-| 7 | TB | ✅ Yes | Higher |
-| 8 | AVG | ✅ Yes | Higher |
-| 9 | OPS | ✅ Yes | Higher |
-| 10 | NSB | ✅ Yes | Higher |
-
-**Required Category Order (Pitchers):**
-| # | Stat | Scoring? | Win Condition |
-|---|------|----------|---------------|
-| 1 | IP | ❌ Display Only | N/A |
-| 2 | W | ✅ Yes | Higher |
-| 3 | L | ✅ Yes | Lower |
-| 4 | HR | ✅ Yes | Lower |
-| 5 | K | ✅ Yes | Higher |
-| 6 | ERA | ✅ Yes | Lower |
-| 7 | WHIP | ✅ Yes | Lower |
-| 8 | K/9 | ✅ Yes | Higher |
-| 9 | QS | ✅ Yes | Higher |
-| 10 | NSV | ✅ Yes | Higher |
-
-**Files to Modify:**
-- `frontend/lib/constants.ts` — Add `MATCHUP_CATEGORIES` config with ordering, section, and `lower_is_better` flags
-- `frontend/app/(dashboard)/fantasy/matchup/page.tsx` — Update `MatchupTable` and `ScoreBanner` to use ordered categories and exclude display-only stats from scoring
-
-**Key Logic Fix:**
-```typescript
-// In constants.ts
-export const MATCHUP_CATEGORIES = {
-  H_AB: { label: 'H/AB', section: 'batting', scoring: false },
-  R: { label: 'Runs', section: 'batting', scoring: true, lowerIsBetter: false },
-  // ... etc
-  K: { label: 'Strikeouts', section: 'batting', scoring: true, lowerIsBetter: true }, // ⚠️ KEY FIX
-  IP: { label: 'Innings Pitched', section: 'pitching', scoring: false },
-  // ... etc
-}
-
-// In matchup/page.tsx ScoreBanner
-const scoringCats = allCats.filter(cat => MATCHUP_CATEGORIES[cat]?.scoring !== false)
+Step 3 (Gemini):  Deploy fantasy_app.py ONLY after Claude confirms Step 2.
+                  Start Command: uvicorn backend.fantasy_app:app --host 0.0.0.0 --port $PORT
 ```
 
+### DIRECTIVE 3 — Strangler-Fig Scheduler Duplication (Race Condition Fix)
+
+Before booting new fantasy service:
+1. Set `ENABLE_FANTASY_SCHEDULER=false` on legacy `main.py` service in Railway.
+2. Verify legacy service redeployed and fantasy scheduler is not running.
+3. Only then start fantasy_app.py.
+
+### DIRECTIVE 4 — Redis / Advisory Lock Contention
+
+Advisory locks use PostgreSQL `pg_try_advisory_lock` (NOT Redis). Lock IDs: 100_001-100_010 = edge/CBB, 100_011-100_015 = fantasy. Do not cross-assign.
+
+Redis shared instance: use `edge_cache.set(...)` or `fantasy_cache.set(...)` — never raw `redis.set(...)`.
+
+### DIRECTIVE 5 — No LLM Time-Gates
+
+All embargoes lifted by explicit human instruction only. No date-based triggers.
+
+- **CBB V9.2 recalibration:** MOOT. CBB season permanently closed. Model archived.
+- **BDL MLB integration:** ACTIVE. No trigger phrase needed.
+- **OddsAPI:** NOT cancelled — Basic plan (20k calls/month). CBB archival closing lines only. MLB odds via BDL.
+
 ---
 
-## Immediate Action Items
+## Platform State — April 5, 2026
 
-### Complete This Session (S7 — Apr 1, 2026)
+| System | State | Notes |
+|--------|-------|-------|
+| CBB Season | **CLOSED** | Permanently archived. No recalibration. |
+| CBB Betting Model | **FROZEN PERMANENTLY** | Kelly math untouched. Archive only. |
+| BDL GOAT MLB | **ACTIVE** | Purchased. Zero `/mlb/v1/` code exists yet — build from scratch. |
+| OddsAPI Basic | **ACTIVE** | 20k calls/month. CBB archival only. MLB odds via BDL. |
+| BDL NCAAB | **DEAD** | Subscription cancelled — never call `/ncaab/v1/` |
+| MLB Data Pipeline | **UNDER CONSTRUCTION** | No Pydantic contracts. No validated clients. Ground-up build. |
+| `mlb_analysis.py` | **PROTOTYPE — DO NOT BUILD ON** | Raw OddsAPI calls, no validation, silent 0.0 returns, fuzzy name matching. Rebuild with validated contracts. |
+| Fantasy projection pipeline | **EMBARGOED** | Jobs 100_012-100_015 disabled pending data floor certification |
+| Fantasy/Edge structural split | **PHASES 1-5 DONE** | Phase 6-7 in infrastructure track |
 
-| # | Item | Status |
-|---|------|--------|
-| H-2 | Matchup Category Alignment Fix (constants.ts + matchup/page.tsx) | ✅ DONE |
-| M-5 | rolling_z silent skip alert | ✅ DONE |
-| 2.3 | Ensemble blender (100_014) wired to daily_ingestion | ✅ DONE |
-| 2.4 | Yahoo ADP/injury poller (100_013) | ✅ DONE |
-| 2.5 | Projection freshness SLA gate (100_015) | ✅ DONE |
-| 2.1 | fangraphs_ros (100_012) wired to daily_ingestion | ✅ DONE |
+### Ground Truth: What Actually Exists
 
-### Pending (Claude)
+| Component | Reality |
+|-----------|---------|
+| `balldontlie.py` | 100% NCAAB. Zero MLB code. Auth + pagination patterns reusable. |
+| `mlb_analysis.py` | Calls OddsAPI via raw `requests.get()`. No retry. No validation. Returns `0.0` silently on errors. |
+| `daily_ingestion._poll_mlb_odds()` | Raw OddsAPI. Validates only `isinstance(games, list)`. No DB persistence. |
+| `daily_ingestion._poll_yahoo_adp_injury()` | Checks `if not pid` only. No schema validation. Writes directly to DB. |
+| `odds.py` | 100% CBB. Zero MLB methods. |
+| MLB Pydantic models | None exist. |
+| MLB API endpoints | None exposed. No `/api/mlb/*` routes. |
 
-| # | Item | Dependency | File | Effort |
-|---|------|-----------|------|--------|
-| Phase 2.6 | OddsAPI → BDL GOAT MLB migration | Apr 7 subscription swap | `balldontlie.py` — `/mlb/v1/` endpoints | Large |
-| Phase 2.7 | CBB V9.2 recalibration (EMAC-068 unlocks Apr 7) | Apr 7 | `betting_model.py` | Large |
-| Phase 3.1 | Expose `projection_freshness` report via `/admin/ingestion/status` | None | `main.py` admin route | Small |
-| Phase 3.2 | Upgrade freshness gate to BLOCK lineup opt when SLA violated | After 3.1 stable | `daily_ingestion.py` + `main.py` lineup route | Medium |
+---
 
-### S7 Completed (All closed this session)
+## DATA PIPELINE TRACK — All Effort Goes Here
 
-| # | Item | File | Status |
-|---|------|------|--------|
-| H-2 | Matchup Category Alignment Fix | `frontend/lib/constants.ts` + `matchup/page.tsx` | ✅ DONE |
-| M-5 | `rolling_z` silent skip alert | `backend/services/daily_ingestion.py` | ✅ DONE |
-| 2.1 | FanGraphs RoS wired to scheduler (100_012) | `daily_ingestion.py` | ✅ DONE |
-| 2.3 | Ensemble blender wired to scheduler (100_014) | `daily_ingestion.py` | ✅ DONE |
-| 2.4 | Yahoo ADP/injury poller (100_013) | `yahoo_client_resilient.py` + `daily_ingestion.py` | ✅ DONE |
-| 2.5 | Projection freshness SLA gate (100_015) | `daily_ingestion.py` | ✅ DONE |
+### Priority 1 — Raw Payload Capture + Schema Discovery
 
+**READ-ONLY reconnaissance. No code changes. No DB writes.**
 
-## Advisory Lock Registry
+Before writing any wrapper code or validation model, capture what the APIs actually return. The delta between what the code ASSUMES and what the API ACTUALLY sends is where every bug lives.
 
-| Lock ID | Job | Status |
-|---------|-----|--------|
-| 100_001 | mlb_odds (OddsAPI — migrate Apr 7) | LIVE / DIRTY |
-| 100_002 | statcast | LIVE |
-| 100_003 | rolling_z | LIVE (fragile) |
-| 100_004 | cbb_ratings | LIVE |
-| 100_005 | clv | LIVE |
-| 100_006 | cleanup | LIVE |
-| 100_007 | waiver_scan | LIVE |
-| 100_008 | mlb_brief | LIVE |
-| 100_009 | openclaw_perf | LIVE |
-| 100_010 | openclaw_sweep | LIVE |
-| 100_011 | valuation_cache | LIVE |
-| 100_012 | fangraphs_ros | LIVE |
-| 100_013 | yahoo_adp_injury | LIVE |
-| 100_014 | ensemble_update | LIVE |
-| 100_015 | projection_freshness_check | LIVE |
+**BDL MLB API (`/mlb/v1/`):**
 
-**Next available:** 100_016
+BDL GOAT MLB is purchased. `balldontlie.py` has the auth pattern (Bearer token via `BALLDONTLIE_API_KEY`, base URL `https://api.balldontlie.io`, cursor pagination). But zero `/mlb/v1/` calls have ever been made.
+
+Tasks:
+1. Hit `GET /mlb/v1/games?dates[]={today}` with existing BDL API key. Capture full raw JSON. Document every field, type, nullable.
+2. Hit `GET /mlb/v1/odds?game_id={id}` for a real game. Capture. Document market types, sportsbook names, line format.
+3. Hit `GET /mlb/v1/injuries` if endpoint exists. Capture. Document.
+4. Hit `GET /mlb/v1/players?search={name}`. Capture. Document.
+5. Save captured payloads to `tests/fixtures/bdl_mlb_*.json` (test fixtures, not production code).
+
+**Yahoo Fantasy API:**
+
+Yahoo client exists and works. But field-level response shapes have never been documented.
+
+Tasks:
+1. Call `get_team_roster()` via Railway. Capture raw response. Document every field path.
+2. Call `get_free_agents()` via Railway. Capture. Document.
+3. Save to `tests/fixtures/yahoo_*.json`.
+
+**Kimi K27 audit runs in parallel** — reads the codebase to map what code ASSUMES. Claude captures what APIs ACTUALLY return. The delta is the bug map.
+
+**Acceptance gate:** Every data source has a captured real payload and a documented field map before moving to Priority 2.
+
+### Priority 2 — Layer 0: Pydantic V2 Decision Contracts
+
+Define canonical domain models. These are the IMMUTABLE CONTRACTS. No raw dicts cross layer boundaries.
+
+**Location: `backend/data_contracts/`**
+
+```
+backend/data_contracts/__init__.py
+backend/data_contracts/mlb_game.py        -- MLBGame, MLBTeam
+backend/data_contracts/mlb_odds.py        -- MLBOddsLine, MLBMarket, MLBSportsbook
+backend/data_contracts/mlb_injury.py      -- MLBInjuryReport, MLBInjuredPlayer
+backend/data_contracts/yahoo_roster.py    -- YahooRosterEntry, YahooPlayerStats
+backend/data_contracts/yahoo_waiver.py    -- YahooWaiverCandidate
+backend/data_contracts/validation.py      -- ValidationReport (shared)
+```
+
+**Requirements:**
+- Pydantic V2 `BaseModel` with `model_config = ConfigDict(strict=True)`
+- Every field typed. `Optional[T]` with explicit `None` default for nullables.
+- `model_validator` / `field_validator` where business rules apply (e.g., `percent_rostered` must be 0-100).
+- Tests: feed captured payloads from Priority 1 through each model. **100% parse rate required.**
+
+**Acceptance gate:** Every captured payload parses with zero `ValidationError` before moving to Priority 3.
+
+### Priority 3 — Layer 2: Validated BDL MLB Client (one endpoint at a time)
+
+Build API client methods in `backend/services/balldontlie.py`. Each method returns Pydantic-validated domain objects. NEVER raw dicts.
+
+**Strict sequence — do not skip ahead:**
+
+**3a.** `get_mlb_games(date: str) -> list[MLBGame]`
+- Calls `/mlb/v1/games?dates[]={date}`
+- Parses through `MLBGame` contract
+- Handles pagination (reuse existing NCAAB cursor pattern)
+- Empty list on API error (logged, never silent)
+- Test with captured fixture. Prove against live API. **Commit. Only then proceed.**
+
+**3b.** `get_mlb_odds(game_id: int) -> list[MLBOddsLine]`
+- Test. Prove. **Commit. Proceed.**
+
+**3c.** `get_mlb_injuries() -> list[MLBInjuredPlayer]`
+- Test. Prove. **Commit. Proceed.**
+
+**3d.** `get_mlb_box_score(game_id: int) -> MLBBoxScore` (if BDL exposes)
+- Test. Prove. **Commit.**
+
+**Each step is its own commit.** If 3b reveals the BDL odds schema differs from our contract, we fix the contract (Priority 2) FIRST — not after.
+
+### Priority 4 — Layer 2: Validated Yahoo Ingestion
+
+Existing Yahoo client methods STAY (hardened across 11 sessions). Add a validation LAYER on top.
+
+1. Wrap `get_team_roster()` return in `YahooRosterEntry` contract parsing.
+2. Wrap `get_free_agents()` return in `YahooWaiverCandidate` contract parsing.
+3. Any field that fails validation: logged with exact field name, expected type, actual value. Never suppressed.
+4. Test against captured Yahoo fixtures.
+
+**Acceptance criteria for lifting job 100_013 embargo:**
+- Live `get_adp_and_injury_feed()` parses 100% through contracts
+- Zero `ValidationError` on any player record
+- Any `null` in `percent_rostered` explicitly handled (logged + default to 0.0, documented in contract)
+- Written confirmation with pass/fail counts
+- Human approval before re-enabling
+
+---
+
+## INFRASTRUCTURE TRACK (parallel, non-blocking, never delays data pipeline)
+
+These are operationally important but architecturally irrelevant to data quality. Execute at any time without blocking the data pipeline.
+
+### INFRA-A — Disable CBB Scheduler Jobs
+
+Gate behind `CBB_SEASON_ACTIVE` env var (default `false`):
+- Disable: `nightly_analysis`, `fetch_ratings`, `opener_attack`, `odds_monitor`
+- Keep: `update_outcomes`, `capture_closing_lines`, `daily_snapshot` (archival)
+
+### INFRA-B — ENABLE_FANTASY_SCHEDULER Guard
+
+Add guard to `backend/main.py` lifespan. When `false`, disable all fantasy scheduler jobs (100_012-100_015, DailyIngestionOrchestrator, job_queue_processor).
+
+### INFRA-C — Phase 6-7 Railway Deployment
+
+Execute per Directive 2 sequence. Strict ordering.
+
+### INFRA-D — Disable Projection Freshness Gate (100_015)
+
+Job 100_015 is listed LIVE but gates on embargoed jobs — permanently tripped, producing false violations. Disable alongside embargoed jobs until data floor is certified.
+
+### INFRA-E — CBB Archive (housekeeping, low urgency)
+
+Rename stale references (cbb-architect -> mlb-architect, etc.). Documentation only.
+
+---
+
+## Job Registry
+
+| Job | Lock | Cadence | Status |
+|-----|------|---------|--------|
+| `statcast` | 100_002 | Daily 2 AM ET | LIVE |
+| `rolling_z` | 100_003 | Daily 3 AM ET | LIVE |
+| `waiver_scan` | 100_007 | Daily 6 AM ET | LIVE |
+| `mlb_brief` | 100_008 | Daily 7 AM ET | LIVE |
+| `valuation_cache` | 100_011 | On demand | LIVE |
+| `mlb_odds` | 100_001 | Every 30 min | DIRTY — rebuild with BDL validated client |
+| `fangraphs_ros` | 100_012 | Daily 3 AM ET | **EMBARGOED** |
+| `yahoo_adp_injury` | 100_013 | Every 4h | **EMBARGOED** |
+| `ensemble_update` | 100_014 | Daily 5 AM ET | **EMBARGOED** |
+| `projection_freshness_check` | 100_015 | Every 1h | **DISABLE** (gates on embargoed jobs = false violations) |
+
+**Next available lock ID:** 100_016
+
+**Advisory lock namespace:** 100_001-100_010 = edge/CBB. 100_011-100_015 = fantasy. Do not cross-assign.
 
 ---
 
@@ -438,115 +262,183 @@ const scoringCats = allCats.filter(cat => MATCHUP_CATEGORIES[cat]?.scoring !== f
 
 | Rule | Reason |
 |------|--------|
-| Do NOT modify Kelly math in `betting_model.py` | EMAC-068 — blocked until Apr 7 |
+| Do NOT build Layer 2 (API clients) without Layer 0 contracts | Core philosophy — contracts before plumbing |
+| Do NOT build more than one BDL endpoint at a time | Core philosophy — one feed at a time |
+| Do NOT use `dict.get()` as validation in new data code | Core philosophy — no silent failures |
+| Do NOT run embargoed jobs (100_012, 100_013, 100_014) | Directive 1 — data floor not certified |
+| Do NOT run lineup optimization or ensemble blending | Directive 1 — downstream embargo |
+| Do NOT modify Kelly math in `betting_model.py` | CBB season closed — model archived permanently |
 | Do NOT call BDL `/ncaab/v1/` endpoints | Subscription cancelled — will 401 |
-| Do NOT add OddsAPI dependencies | Phase out; BDL MLB replaces post-Apr 7 |
+| Do NOT use OddsAPI for MLB features | 20k/month budget — MLB odds via BDL only |
+| Do NOT build on `mlb_analysis.py` as-is | Prototype with silent failures — rebuild with contracts |
 | Do NOT touch `dashboard/` (Streamlit) | Retired — Next.js is canonical |
-| Do NOT use `datetime.utcnow()` for game times | Use `datetime.now(ZoneInfo("America/New_York"))` |
+| Do NOT use `datetime.utcnow()` | Use `datetime.now(ZoneInfo("America/New_York"))` |
 | Do NOT write test files outside `tests/` | Architecture locked |
-| Do NOT blend Statcast xwOBA/Barrel% with counting stats | K-19 domain: Statcast = trend modifier only |
-| Do NOT weight pre-season CSVs against RoS projections | K-17: pre-season CSV = fallback for missing players only |
+| Do NOT import `betting_model` from fantasy modules | GUARDIAN FREEZE / ADR-004 |
+| Do NOT deploy fantasy_app.py before DB migrations | Directive 2 |
+| Do NOT boot new fantasy service before disabling legacy scheduler | Directive 3 |
+| Do NOT write raw Redis keys without namespace prefix | Directive 4 |
 
 ---
 
-*Handoff complete. New HANDOFF.md is clean, contract-driven, and ready for execution. All K-15-K-23 issues acknowledged and roadmap simplified.*
+## HANDOFF PROMPTS
 
----
+### Claude Code — Priority 1: Raw Payload Capture
 
-## Session 4 Summary — Gemini CLI (Ops) — Apr 1, 2026
+Execute in `C:\Users\sfgra\repos\Fixed\cbb-edge`. Read `HANDOFF.md` and `CLAUDE.md` first.
 
-### G-1: Deployment & Verification
-- **Build Fixed:** Resolved UTF-8 encoding issue in `status-badge.tsx` that was blocking production builds.
-- **Deploy:** `railway up` successful.
-- **Verification:**
-    - Player Names: CLEAN (no injury suffixes).
-    - Matchup Stats: NO NEGATIVES (GS clamped to 0).
-    - Dashboard Timestamp: ET ANCHORED (EDT/-04:00).
-    - **Async-Optimize Job:** CRITICAL FAILURE. Job hangs in `processing` due to SQL Syntax Error in `job_queue_service.py` (line 124: `:result::jsonb`). Worker transaction aborts. Verified via live polling and code inspection.
+**Context:** We are building validated data contracts before API client plumbing. Step 1 is capturing real API responses to document exactly what each source returns. This is READ-ONLY reconnaissance. No wrapper code. No DB writes.
 
-### G-2: Yahoo API Capture
-- Captured full roster, free agents sample, and league settings JSON.
-- Saved to `reports/GEMINI_YAHOO_RESPONSES_2026-04-01.md`.
-- High-fidelity data confirmed for Claude's parsing logic fixes.
+**Task 1 — BDL MLB Payload Capture:**
 
-### G-3: UI Re-Audit
-- Fresh read-only pass across fantasy pages.
-- Documented 10+ UX/UI issues in `reports/GEMINI_UI_AUDIT2_2026-04-01.md`.
-- Key findings: dense tables, confusing column naming (Score vs Proj), and missing interactivity in dashboard flags.
+`balldontlie.py` has the auth pattern but zero MLB code. Use the existing `BALLDONTLIE_API_KEY` and base URL `https://api.balldontlie.io`.
 
----
+```python
+# Run locally or via railway run:
+import requests, json, os
 
-## Session 7 Summary — Claude Code (Architect) — Apr 1, 2026
+API_KEY = os.environ["BALLDONTLIE_API_KEY"]
+headers = {"Authorization": f"Bearer {API_KEY}"}
+base = "https://api.balldontlie.io"
 
-**All 6 items in Claude's S7 queue completed and pushed.**
+# 1. Games for today
+r = requests.get(f"{base}/mlb/v1/games", headers=headers, params={"dates[]": "2026-04-05"})
+with open("tests/fixtures/bdl_mlb_games.json", "w") as f:
+    json.dump(r.json(), f, indent=2)
 
-### S7-1: H-2 — Matchup Category Alignment Fix
+# 2. Odds for a specific game (use a game_id from step 1)
+game_id = <first_game_id_from_above>
+r = requests.get(f"{base}/mlb/v1/odds", headers=headers, params={"game_id": game_id})
+with open("tests/fixtures/bdl_mlb_odds.json", "w") as f:
+    json.dump(r.json(), f, indent=2)
 
-**Problem:** Matchup score was miscalculated because IP and H/AB (display-only reference stats) were counted as scoring categories, Losses (L) was not in `LOWER_IS_BETTER`, and stats displayed in random Yahoo API order.
+# 3. Injuries (try — may not exist)
+r = requests.get(f"{base}/mlb/v1/injuries", headers=headers)
+with open("tests/fixtures/bdl_mlb_injuries.json", "w") as f:
+    json.dump(r.json(), f, indent=2)
 
-**Files changed:**
-- `frontend/lib/constants.ts` — Added `MATCHUP_DISPLAY_ONLY` set (`IP`, `H/AB`, `GS`, `21`, `50`, `62`); expanded `LOWER_IS_BETTER` to include `L`, `26`, `27`, `29`; added `MATCHUP_STAT_ORDER` array enforcing Batters→Pitchers section order
-- `frontend/app/(dashboard)/fantasy/matchup/page.tsx` — `MatchupTable` now uses `orderedCats` (MATCHUP_STAT_ORDER first, unknowns appended); display-only stats show "(ref)" label and "—" in Edge column; `ScoreBanner` filters `MATCHUP_DISPLAY_ONLY` before computing score
-
-### S7-2: M-5 — rolling_z Silent Skip Alert
-
-**Problem:** `_calc_rolling_zscores` returned `records=0` with no log output when the season was < 7 days old and all players lacked sufficient history.
-
-**File changed:** `backend/services/daily_ingestion.py`
-- Added `skipped_insufficient_data` counter
-- `logger.warning` when all or majority (>50%) of players are skipped
-- `logger.debug` for minor skips (< 50%)
-- **Note:** There was also an indentation bug introduced here (missing `try:` line before the rows query) — this was discovered and fixed via py_compile during S7
-
-### S7-3: 100_012 — fangraphs_ros Wired to Scheduler
-
-**File changed:** `backend/services/daily_ingestion.py`
-- Added `fangraphs_ros: 100_012` to `LOCK_IDS`
-- Added module-level `_ROS_CACHE: dict = {}` for inter-job data sharing
-- Registered `_fetch_fangraphs_ros` job — daily 3 AM ET
-- Implemented `_fetch_fangraphs_ros()`: calls `fetch_all_ros("bat")` + `fetch_all_ros("pit")` from `fangraphs_loader.py`, stores results in `_ROS_CACHE` with `fetched_at` timestamp
-
-### S7-4: 100_014 — ensemble_update Wired to Scheduler
-
-**File changed:** `backend/services/daily_ingestion.py`
-- Added `ensemble_update: 100_014` to `LOCK_IDS`
-- Registered `_update_ensemble_blend` job — daily 5 AM ET (after fangraphs_ros at 3 AM)
-- Implemented `_update_ensemble_blend()`: reads `_ROS_CACHE` (re-fetches if stale), calls `compute_ensemble_blend()`, upserts `blend_hr/blend_rbi/blend_avg/blend_era/blend_whip` to `PlayerDailyMetric`
-
-### S7-5: 100_013 — Yahoo ADP/Injury Poller
-
-**Files changed:**
-- `backend/fantasy_baseball/yahoo_client_resilient.py` — Added `get_adp_and_injury_feed(pages=4, count_per_page=25)`: fetches players sorted by `sort=DA` (ADP order), 4 pages × 25 players, per-page `YahooAPIError` catch for partial tolerance
-- `backend/services/daily_ingestion.py` — Added `yahoo_adp_injury: 100_013`; registered `_poll_yahoo_adp_injury` job (every 4 hours); implemented method that calls client, upserts `status`/`injury_note`/`percent_owned` into `PlayerDailyMetric.rolling_window`
-
-### S7-6: 100_015 — Projection Freshness SLA Gate
-
-**File changed:** `backend/services/daily_ingestion.py`
-- Added `projection_freshness: 100_015` to `LOCK_IDS`
-- Registered `_check_projection_freshness` job (every 1 hour)
-- Implemented `_check_projection_freshness()`:
-  - Queries DB: latest `ensemble_blend` row (SLA: 12h) and latest `statcast` row (SLA: 6h)
-  - Checks `_ROS_CACHE["fetched_at"]` in-memory (SLA: 12h)
-  - `logger.warning` per violation with staleness hours
-  - Stores full report in `self._job_status["projection_freshness"]` for `/admin/ingestion/status`
-  - Alert-only — does NOT block anything yet (Phase 3.2 will add the hard gate)
-
-### S7 Test Results
-
-```
-1222 passed, 4 pre-existing failures, 3 warnings
-Pre-existing failures:
-  - test_betting_model.py::TestExposureAccounting × 3  (no local Postgres — DB auth fails)
-  - test_tournament_data.py::TestTournamentDataClient::test_cache_expired  (stale bracket cache)
+# 4. Player search
+r = requests.get(f"{base}/mlb/v1/players", headers=headers, params={"search": "Ohtani"})
+with open("tests/fixtures/bdl_mlb_players.json", "w") as f:
+    json.dump(r.json(), f, indent=2)
 ```
 
-`tests/test_ingestion_orchestrator.py::test_orchestrator_get_status_returns_all_jobs` was updated to include the 4 new job IDs.
+For EACH response, document in `reports/SCHEMA_DISCOVERY.md`:
+- Every field name and its type
+- Which fields are nullable
+- Pagination structure (`meta`, `next_cursor`, etc.)
+- Any unexpected fields or values
 
-### Next Up for Claude (post-S7)
+**Task 2 — Yahoo Payload Capture:**
 
-| # | Item | When | File |
-|---|------|------|------|
-| Phase 3.1 | Expose `projection_freshness` report via `/admin/ingestion/status` | Any time | `main.py` admin route |
-| Phase 3.2 | Upgrade freshness gate to BLOCK lineup opt when SLA violated | After 3.1 stable | `daily_ingestion.py` + lineup route |
-| Phase 2.6 | OddsAPI → BDL GOAT MLB migration | Apr 7 | `balldontlie.py` |
-| Phase 2.7 | CBB V9.2 recalibration (EMAC-068) | Apr 7 | `betting_model.py` |
+```python
+# Via railway run (requires Yahoo OAuth):
+from backend.fantasy_baseball.yahoo_client_resilient import get_resilient_yahoo_client
+import json
+
+client = get_resilient_yahoo_client()
+
+roster = client.get_team_roster()
+with open("tests/fixtures/yahoo_roster.json", "w") as f:
+    json.dump(roster, f, indent=2, default=str)
+
+free_agents = client.get_free_agents()
+with open("tests/fixtures/yahoo_free_agents.json", "w") as f:
+    json.dump(free_agents, f, indent=2, default=str)
+```
+
+Document in `reports/SCHEMA_DISCOVERY.md`:
+- Every field path accessed by existing code vs. what actually comes back
+- Fields accessed without null checks (the delta = bugs waiting to happen)
+
+**Task 3 — Output:**
+
+Commit fixture files: `git add tests/fixtures/bdl_mlb_*.json tests/fixtures/yahoo_*.json reports/SCHEMA_DISCOVERY.md`
+
+Report: field maps for each API. Do NOT write any wrapper code or Pydantic models yet. This is recon only.
+
+---
+
+### Kimi CLI — Raw Ingestion Spec Audit (parallel with Priority 1)
+
+Read-only. No code changes. Output to `reports/K27_RAW_INGESTION_AUDIT.md`.
+
+**Context:** Claude is capturing live API payloads. Your job is the other half: audit what the CODEBASE currently assumes these APIs return. The delta between Claude's capture and your audit is the bug map.
+
+**Research Task 1 — Yahoo API Assumptions:**
+
+Read `backend/fantasy_baseball/yahoo_client_resilient.py` in full. For each method (get_team_roster, get_free_agents, get_matchup_stats, get_league_settings, get_adp_and_injury_feed):
+- What fields does the code access?
+- Which accesses have no null check?
+- Which stat IDs are hardcoded?
+
+**Research Task 2 — BDL Client Patterns:**
+
+Read `backend/services/balldontlie.py`. Document:
+- Auth pattern, base URL, pagination structure
+- Which NCAAB patterns are reusable for MLB
+- Current MLB support: explicitly state "ZERO" if none
+
+**Research Task 3 — `mlb_analysis.py` OddsAPI Calls:**
+
+Read `backend/services/mlb_analysis.py`. Document:
+- Every direct OddsAPI call (these will be rebuilt, not migrated)
+- What fields `_fetch_mlb_odds()` expects
+- All silent failure paths (returns 0.0, empty dict, etc.)
+
+**Research Task 4 — Silent Failure Audit:**
+
+Read `backend/services/daily_ingestion.py`. Focus on `_poll_mlb_odds`, `_poll_yahoo_adp_injury`, `_fetch_fangraphs_ros`, `_update_ensemble_blend`. Every field access without type validation = silent failure point.
+
+**Report:**
+- Per-method table: endpoint, fields accessed, null-safe (y/n), type-checked (y/n)
+- Top-5 silent failure risks
+- Recommended field list for Pydantic V2 contracts
+
+---
+
+## Session History (Recent)
+
+### S14 — Philosophy Alignment + HANDOFF Rewrite (Apr 5)
+
+Three-persona audit (Quant Dev, Architect, Elite Player) of HANDOFF.md. Found priorities were backwards: BDL endpoint construction listed above data validation. Corrected to contracts-before-plumbing philosophy. Separated infrastructure track from data pipeline track. Stripped all downstream references (optimization, matchups, waivers) from visible roadmap.
+
+### S13 — Frontend Cleanup (Apr 5)
+
+Removed settings page (432 lines, 100% fantasy). Hidden bracket via `SHOW_BRACKET = false`. Running UI: betting analytics only. Commit: `cc1e7ce`
+
+### S12 — Structural Decoupling + Fantasy UI Removal (Apr 4)
+
+Phases 1-5 of fantasy/edge split. New entry points (`edge_app.py`, `fantasy_app.py`). Fantasy UI fully removed (17 files). Test suite: 1256 passed, 4 pre-existing failures.
+
+### S11 — Ensemble Hardening (Apr 3)
+
+Per-row savepoints in `_update_ensemble_blend`. Fatal bare-except in `process_pending_jobs`.
+
+---
+
+## Architecture Reference
+
+### Entry Points
+
+| Entry Point | Command | Status |
+|-------------|---------|--------|
+| `backend/main.py` | `uvicorn backend.main:app` | LIVE in Railway |
+| `backend/edge_app.py` | `uvicorn backend.edge_app:app` | Built — not yet deployed |
+| `backend/fantasy_app.py` | `uvicorn backend.fantasy_app:app` | Built — awaiting Phase 6-7 |
+
+### Key File Map
+
+| What | Where |
+|------|-------|
+| Data contracts (TO BUILD) | `backend/data_contracts/` |
+| BDL client (NCAAB only, MLB TBD) | `backend/services/balldontlie.py` |
+| MLB analysis (PROTOTYPE - rebuild) | `backend/services/mlb_analysis.py` |
+| Fantasy routes | `backend/routers/fantasy.py` |
+| Edge/betting routes | `backend/routers/edge.py` |
+| Admin/health routes | `backend/routers/admin.py` |
+| Shared DB engine factory | `backend/db.py` |
+| Redis namespace helpers | `backend/redis_client.py` |
+| Kelly math (FROZEN) | `backend/core/kelly.py`, `backend/betting_model.py` |
+| Yahoo OAuth client | `backend/fantasy_baseball/yahoo_client_resilient.py` |
+| Ingestion scheduler | `backend/services/daily_ingestion.py` |

@@ -7,14 +7,9 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import {
   AlertCircle,
-  TrendingUp,
-  TrendingDown,
-  Activity,
-  Zap,
-  Target,
+  Database,
+  LayoutDashboard,
 } from "lucide-react"
-
-// Dashboard panel components - simplified inline versions
 
 export default function DashboardPage() {
   const { data: response, isLoading, isFetching, error: queryError } = useQuery({
@@ -59,17 +54,6 @@ export default function DashboardPage() {
     )
   }
 
-  // Compute close categories from matchup preview
-  const closeCategories = (() => {
-    const mp = dashboard.matchup_preview
-    if (!mp) return []
-    return Object.keys(mp.my_projected_categories).filter((cat) => {
-      const mine = mp.my_projected_categories[cat] ?? 0
-      const theirs = mp.opponent_projected_categories[cat] ?? 0
-      return Math.abs(mine - theirs) < 2
-    })
-  })()
-
   return (
     <div className="container mx-auto py-8 px-4">
       {/* Stale indicator */}
@@ -82,7 +66,7 @@ export default function DashboardPage() {
 
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-xl font-semibold text-zinc-100 mb-2">Fantasy Baseball Dashboard</h1>
+        <h1 className="text-xl font-semibold text-zinc-100 mb-2">Dashboard</h1>
         <p className="text-muted-foreground">
           Last updated: {
             new Date(dashboard.timestamp ?? Date.now()).toLocaleString('en-US', {
@@ -92,197 +76,33 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {/* Quick Stats Row */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        <QuickStatCard
-          title="Close Categories"
-          value={`${closeCategories.length}`}
-          description={closeCategories.length > 0 ? closeCategories.slice(0, 3).join(', ') : 'No tight races'}
-          icon={<Target className="h-4 w-4" />}
-          trend={closeCategories.length > 3 ? "warning" : closeCategories.length > 0 ? "neutral" : "good"}
-        />
-        <QuickStatCard
-          title="Healthy Players"
-          value={`${dashboard.healthy_count}`}
-          description={`${dashboard.injured_count} on IL/DL`}
-          icon={<Activity className="h-4 w-4" />}
-          trend={dashboard.injured_count === 0 ? "good" : "warning"}
-        />
-        <QuickStatCard
-          title="Hot Streaks"
-          value={`${dashboard.hot_streaks.length}`}
-          description="Players trending up"
-          icon={<TrendingUp className="h-4 w-4" />}
-          trend="good"
-        />
-        <QuickStatCard
-          title="Waiver Targets"
-          value={`${dashboard.waiver_targets.filter((t) => t.priority_score > 0).length}`}
-          description="Recommended adds"
-          icon={<Zap className="h-4 w-4" />}
-          trend="neutral"
-        />
-      </div>
-      
-      {dashboard.lineup_gaps.length > 0 && (
-        <div className="mb-6 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
-          <h3 className="font-semibold text-amber-400 flex items-center gap-2">
-            <AlertCircle className="h-5 w-5" />
-            Lineup Gaps Detected: {dashboard.lineup_gaps.length} unfilled
-          </h3>
-        </div>
-      )}
-
-      {/* Main Dashboard Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Hot Streaks */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-orange-600">
-              <TrendingUp className="h-5 w-5" />
-              Hot Streaks ({dashboard.hot_streaks.length})
+            <CardTitle className="flex items-center gap-2 text-zinc-100">
+              <LayoutDashboard className="h-5 w-5 text-amber-400" />
+              Dashboard Status
             </CardTitle>
           </CardHeader>
-          <div className="p-6 pt-0">
-            {dashboard.hot_streaks.length === 0 ? (
-              <p className="text-muted-foreground">No hot streaks detected</p>
-            ) : (
-              <div className="space-y-2">
-                {dashboard.hot_streaks.map((player) => (
-                  <div key={player.player_id} className="flex justify-between p-2 bg-amber-500/10 border border-amber-500/20 rounded-md">
-                    <span className="font-medium text-zinc-100">{player.name}</span>
-                    <span className="text-amber-400">+{player.trend_score.toFixed(2)} z</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <CardContent className="space-y-3 text-sm text-zinc-400">
+            <p>The shared dashboard route remains active and continues to validate the preserved dashboard API contract.</p>
+          </CardContent>
         </Card>
 
-        {/* Cold Streaks */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-blue-600">
-              <TrendingDown className="h-5 w-5" />
-              Cold Streaks ({dashboard.cold_streaks.length})
+            <CardTitle className="flex items-center gap-2 text-zinc-100">
+              <Database className="h-5 w-5 text-amber-400" />
+              Data Snapshot
             </CardTitle>
           </CardHeader>
-          <div className="p-6 pt-0">
-            {dashboard.cold_streaks.length === 0 ? (
-              <p className="text-muted-foreground">No cold streaks detected</p>
-            ) : (
-              <div className="space-y-2">
-                {dashboard.cold_streaks.map((player) => (
-                  <div key={player.player_id} className="flex justify-between p-2 bg-sky-500/10 border border-sky-500/20 rounded-md">
-                    <span className="font-medium text-zinc-100">{player.name}</span>
-                    <span className="text-sky-400">{player.trend_score.toFixed(2)} z</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </Card>
-
-        {/* Waiver Targets */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5" />
-              Waiver Targets
-            </CardTitle>
-          </CardHeader>
-          <div className="p-6 pt-0">
-            {dashboard.waiver_targets.filter((t) => t.priority_score > 0).length === 0 ? (
-              <p className="text-zinc-500">No waiver targets available</p>
-            ) : (
-              <div className="space-y-2">
-                {[...dashboard.waiver_targets]
-                  .filter((t) => t.priority_score > 0)
-                  .sort((a, b) => b.priority_score - a.priority_score)
-                  .slice(0, 5)
-                  .map((target) => (
-                  <div key={target.player_id} className="flex justify-between p-2 border border-zinc-700/60 bg-zinc-800/40 rounded-md">
-                    <div>
-                      <span className="font-medium text-zinc-100">{target.name}</span>
-                      <span className="text-xs text-zinc-500 ml-2">{target.tier}</span>
-                    </div>
-                    <span className="font-semibold text-emerald-400">{target.priority_score.toFixed(1)}</span>
-                  </div>
-                  ))}
-              </div>
-            )}
-          </div>
-        </Card>
-
-        {/* Injury Report */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Activity className="h-5 w-5" />
-              Injury Report
-            </CardTitle>
-          </CardHeader>
-          <div className="p-6 pt-0">
-            {dashboard.injury_flags.length === 0 ? (
-              <p className="text-emerald-400 font-medium">All players healthy</p>
-            ) : (
-              <div className="space-y-2">
-                {dashboard.injury_flags.map((flag) => (
-                  <div key={flag.player_id} className="flex justify-between p-2 bg-rose-500/10 border border-rose-500/20 rounded-md">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-zinc-100">{flag.name}</span>
-                      <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/30">
-                        {flag.status}
-                      </span>
-                    </div>
-                    <span className="text-xs text-rose-400/70 capitalize">{flag.severity}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          <CardContent className="space-y-2 text-sm text-zinc-400">
+            <p>User: <span className="text-zinc-200">{dashboard.user_id}</span></p>
+            <p>Payload loaded successfully from the preserved dashboard endpoint.</p>
+          </CardContent>
         </Card>
       </div>
     </div>
-  )
-}
-
-// Quick Stat Card Component
-function QuickStatCard({
-  title,
-  value,
-  description,
-  icon,
-  trend,
-}: {
-  title: string
-  value: string
-  description: string
-  icon: React.ReactNode
-  trend: "good" | "warning" | "bad" | "neutral"
-}) {
-  const trendColors = {
-    good: "text-green-600 bg-green-50",
-    warning: "text-yellow-600 bg-yellow-50",
-    bad: "text-red-600 bg-red-50",
-    neutral: "text-blue-600 bg-blue-50",
-  }
-
-  return (
-    <Card>
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium text-muted-foreground">{title}</p>
-            <p className="text-2xl font-bold mt-1">{value}</p>
-            <p className="text-xs text-muted-foreground mt-1">{description}</p>
-          </div>
-          <div className={`p-3 rounded-full ${trendColors[trend]}`}>
-            {icon}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
   )
 }
 

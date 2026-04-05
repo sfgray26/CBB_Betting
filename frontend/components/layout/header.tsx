@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 
 const PAGE_TITLES: Record<string, string> = {
   // CBB betting pages
+  '/dashboard': 'Dashboard',
   '/performance': 'Performance',
   '/clv': 'CLV Analysis',
   '/bet-history': 'Bet History',
@@ -17,13 +18,6 @@ const PAGE_TITLES: Record<string, string> = {
   '/today': "Today's Bets",
   '/live-slate': 'Live Slate',
   '/odds-monitor': 'Odds Monitor',
-  '/bracket': 'Bracket Simulator',
-  // Fantasy baseball pages
-  '/fantasy/lineup': 'Daily Lineup',
-  '/fantasy/waiver': 'Waiver Wire',
-  '/fantasy/roster': 'My Roster',
-  '/fantasy/matchup': 'Current Matchup',
-  '/fantasy/dashboard': 'Fantasy Dashboard',
 }
 
 interface HeaderProps {
