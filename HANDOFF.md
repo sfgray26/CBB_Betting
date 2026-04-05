@@ -67,37 +67,80 @@ The advisory lock registry (100_001–100_015) uses **PostgreSQL `pg_try_advisor
 
 ### DIRECTIVE 5 — No LLM Time-Gates
 
-Do not write "execute on April 7" or any date-based trigger in agent instructions. LLMs cannot be trusted to parse the current system date reliably.
+Do not write "execute on [date]" or any date-based trigger in agent instructions. LLMs cannot be trusted to parse the current system date reliably. All embargoes are lifted by explicit human instruction only.
 
-**CBB V9.2 recalibration (EMAC-068):** Embargoed until the human developer explicitly inputs the trigger phrase:
+**CBB V9.2 recalibration (EMAC-068):** MOOT. CBB season is permanently closed. Do not recalibrate. Do not touch Kelly math. The model is archived as-is.
 
-> **"The EMAC-068 block is lifted. Execute Task A."**
+**BDL MLB integration:** ACTIVE. BDL GOAT MLB is purchased. Expand `balldontlie.py` with `/mlb/v1/` endpoints immediately. No trigger phrase required — this is normal in-progress work.
 
-Until that phrase is received, treat Kelly math as completely frozen. Do not read the spec. Do not plan the implementation. Do not estimate timing.
-
-**OddsAPI → BDL migration:** Embargoed until the human developer explicitly inputs:
-
-> **"OddsAPI is cancelled. Execute the BDL migration."**
+**OddsAPI:** NOT cancelled — downgraded to Basic (20k calls/month). Kept for CBB archival closing lines only. Do NOT migrate away from OddsAPI for closing line capture. Do NOT use OddsAPI for any MLB feature.
 
 ---
 
-## Platform State — April 4, 2026
+## Platform State — April 5, 2026
 
 | System | State | Notes |
 |--------|-------|-------|
+| CBB Season | **CLOSED** | Permanently archived. No recalibration. CBB scheduler jobs to be disabled. |
+| CBB Betting Model | **FROZEN PERMANENTLY** | Season over. Kelly math untouched. Archive only. |
+| BDL GOAT MLB | **ACTIVE** | Purchased. `/mlb/v1/` endpoints ready to integrate in `balldontlie.py`. |
+| OddsAPI Basic | **ACTIVE** | 20k calls/month. CBB archival closing lines only. MLB odds via BDL. |
+| BDL NCAAB | **DEAD** | Subscription cancelled — never call `/ncaab/v1/` |
+| MLB Betting Model | **IN DEVELOPMENT** | `mlb_analysis.py` stub-level. BDL active unblocks real implementation. |
 | Fantasy projection pipeline | **EMBARGOED** | Jobs 100_012, 100_013, 100_014 disabled pending raw data validation |
 | Fantasy raw ingestion (Yahoo + BDL) | **NEEDS VALIDATION** | Pydantic V2 contract verification not yet done |
 | Fantasy lineup optimizer | **EMBARGOED** | Blocked until ingestion layer certified |
-| CBB Betting Model | **FROZEN** | Kelly math blocked — lift only on human trigger phrase |
-| OddsAPI Champion | **EXPIRING** | Migrate only on human trigger phrase |
-| BDL NCAAB | **DEAD** | Subscription cancelled — never call `/ncaab/v1/` |
 | Fantasy/Edge structural split | **PHASES 1-5 DONE** | New entry points exist; Phase 6-7 needs correct deploy sequence (Directive 2) |
 
 ---
 
 ## What's Actually Pending (Ordered by Priority)
 
-### Priority 1 — Validate Raw Ingestion Layer (Fantasy, Claude)
+### Priority 0 — BDL MLB Integration (Claude, immediate)
+
+BDL GOAT MLB is purchased and active. This is the data foundation for all MLB work.
+
+**Deliverables:**
+
+1. Expand `backend/services/balldontlie.py` with `/mlb/v1/` endpoints:
+   - `get_mlb_games(date)` — today's schedule + live scores
+   - `get_mlb_player(player_id)` — player lookup
+   - `get_mlb_injuries()` — current injury report (replaces CBS scraper)
+   - `get_mlb_odds(game_id)` — moneyline + spread (primary MLB odds source)
+   - `get_mlb_box_score(game_id)` — post-game box score
+
+2. Migrate `mlb_analysis._fetch_mlb_odds()` to use `get_mlb_odds()` instead of raw OddsAPI call.
+
+3. Migrate `daily_ingestion._poll_mlb_odds()` to use BDL.
+
+4. Write `tests/test_bdl_mlb.py` covering each new method with mocked responses.
+
+5. Compile checks: `venv/Scripts/python -m py_compile backend/services/balldontlie.py backend/services/mlb_analysis.py`
+
+Commit: `git commit -m "feat: BDL GOAT MLB integration -- /mlb/v1/ endpoints, migrate MLB odds off OddsAPI"`
+
+### Priority 0b — Disable CBB Scheduler Jobs (Claude, immediate)
+
+CBB season is closed. The APScheduler is still firing CBB-specific jobs every night (nightly_analysis, fetch_ratings, opener_attack) against a dead model. These must be disabled.
+
+In `backend/schedulers/edge_scheduler.py`, gate the following jobs behind `CBB_SEASON_ACTIVE` env var (default `false`):
+- `nightly_analysis`
+- `fetch_ratings` (KenPom/BartTorvik)
+- `opener_attack` jobs
+- `odds_monitor` (CBB odds)
+
+**Keep running unconditionally:**
+- `update_outcomes` — historical game settlement still needed
+- `capture_closing_lines` — archival data for future recalibration research
+- `daily_snapshot`
+
+When `CBB_SEASON_ACTIVE=false` (default), log: `"CBB scheduler jobs disabled -- season closed"`
+
+Compile check + test: `venv/Scripts/python -m py_compile backend/schedulers/edge_scheduler.py`
+
+Commit: `git commit -m "feat: CBB_SEASON_ACTIVE flag -- disable CBB nightly jobs, keep archival jobs running"`
+
+### Priority 1 — Validate Raw Ingestion Layer (Fantasy + BDL MLB, Claude)
 
 **Do this before anything else.**
 
@@ -129,13 +172,11 @@ This is required before Phase 6-7 cut-over (Directive 3).
 
 Execute strictly per Directive 2 sequence. Do not skip steps.
 
-### Priority 4 — CBB V9.2 Recalibration
+### Priority 4 — CBB Archive (housekeeping, low urgency)
 
-**Embargoed.** Execute only on human trigger: `"The EMAC-068 block is lifted. Execute Task A."`
+Rename `.claude/agents/cbb-architect.md` → `mlb-architect.md`. Update `.claude/skills/cbb-identity/SKILL.md` mission statement from CBB to MLB+Fantasy. No code changes — documentation only.
 
-### Priority 5 — OddsAPI → BDL Migration
-
-**Embargoed.** Execute only on human trigger: `"OddsAPI is cancelled. Execute the BDL migration."`
+*Note: CBB V9.2 recalibration is permanently cancelled. Season is closed.*
 
 ---
 
@@ -168,9 +209,9 @@ Execute strictly per Directive 2 sequence. Do not skip steps.
 | Do NOT run FanGraphs RoS fetch (100_012) | Directive 1 — embargoed |
 | Do NOT run Yahoo ADP/injury poll (100_013) | Directive 1 — embargoed |
 | Do NOT run lineup optimization | Directive 1 — embargoed |
-| Do NOT modify Kelly math in `betting_model.py` | Frozen — lift only on human trigger phrase |
+| Do NOT modify Kelly math in `betting_model.py` | CBB season closed — model archived permanently |
 | Do NOT call BDL `/ncaab/v1/` endpoints | Subscription cancelled — will 401 |
-| Do NOT add `THE_ODDS_API_KEY` dependencies | Phasing out — migrate only on human trigger |
+| Do NOT use OddsAPI for MLB features | 20k/month budget — MLB odds via BDL only |
 | Do NOT touch `dashboard/` (Streamlit) | Retired — Next.js is canonical |
 | Do NOT use `datetime.utcnow()` for game times | Use `datetime.now(ZoneInfo("America/New_York"))` |
 | Do NOT write test files outside `tests/` | Architecture locked |
@@ -324,7 +365,7 @@ Report: fantasy service URL, health check output, smoke test HTTP codes.
 
 Read-only. No code changes. Output to `reports/K27_RAW_INGESTION_AUDIT.md`.
 
-**Context:** The fantasy pipeline is under a data-first embargo. Before Claude writes Pydantic V2 validators, we need a clear audit of what the Yahoo and BallDontLie APIs actually return vs. what the codebase currently assumes they return.
+**Context:** The fantasy pipeline is under a data-first embargo. BDL GOAT MLB is now purchased and active. Claude will be building (1) BDL MLB `/mlb/v1/` endpoint wrappers and (2) Pydantic V2 validators for Yahoo and BDL. Your job is to audit what the codebase currently assumes these APIs return, so Claude builds validators against reality rather than guessing.
 
 **Research Task 1 — Yahoo API Response Audit:**
 
@@ -334,19 +375,31 @@ Read `backend/fantasy_baseball/yahoo_client_resilient.py` in full. For each meth
 - Which fields are accessed without a null check
 - Which stat IDs are hardcoded vs. derived from the response
 
-**Research Task 2 — BallDontLie MLB Schema:**
+**Research Task 2 — BDL MLB Integration Gap:**
 
-Read `backend/services/balldontlie.py`. Document the current API call structure for MLB endpoints. If there are no MLB endpoints yet (only NBA/NCAAB), state that explicitly — it means the BDL MLB integration does not exist yet and must be built from scratch.
+Read `backend/services/balldontlie.py` in full. Document:
+- What MLB endpoints already exist (if any)
+- What NBA/NCAAB patterns can be reused for MLB (auth, pagination, error handling)
+- The exact BDL API base URL and auth header pattern used
+- Recommended endpoint list for `/mlb/v1/` expansion: games, players, injuries, odds, box scores
 
-**Research Task 3 — Silent Failure Points:**
+**Research Task 3 — MLB Analysis Current State:**
 
-Read `backend/services/daily_ingestion.py` focusing on the `_fetch_fangraphs_ros`, `_poll_yahoo_adp_injury`, and `_update_ensemble_blend` functions. Identify every place where an API response field is accessed without type validation — these are silent failure points where bad data corrupts the DB silently.
+Read `backend/services/mlb_analysis.py`. Document:
+- Every place it calls OddsAPI directly (these need migrating to BDL)
+- Every place it calls `balldontlie.py` (if any)
+- Current `_fetch_mlb_odds()` implementation — what fields it expects, how it maps to the DB
+
+**Research Task 4 — Silent Failure Points:**
+
+Read `backend/services/daily_ingestion.py` focusing on `_fetch_fangraphs_ros`, `_poll_yahoo_adp_injury`, `_poll_mlb_odds`, and `_update_ensemble_blend`. Identify every place where an API response field is accessed without type validation.
 
 **Report in `reports/K27_RAW_INGESTION_AUDIT.md`:**
 - Per-method table: endpoint, fields accessed, null-safety (yes/no), type-checked (yes/no)
-- List of the top-5 highest-risk silent failure points
-- Whether BDL MLB endpoints exist in the codebase or must be built
-- Recommended field list for Claude's Pydantic V2 models
+- BDL auth pattern + recommended endpoint list with field schemas
+- OddsAPI call locations that need migrating to BDL
+- Top-5 highest-risk silent failure points
+- Recommended field list for Claude's Pydantic V2 validators (Yahoo + BDL)
 
 ---
 

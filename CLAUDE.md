@@ -13,17 +13,17 @@ Deployed on Railway. Python/FastAPI backend. Next.js frontend. PostgreSQL databa
 
 ---
 
-## Current Season State (as of March 30, 2026)
+## Current Season State (as of April 5, 2026)
 
 | Fact | Status |
 |------|--------|
-| CBB season | OVER — archive post-tournament |
-| CBB betting model | FROZEN — EMAC-068 blocks until Apr 7 |
-| MLB fantasy app | LIVE on Railway — active season |
-| MLB betting model | In development — `mlb_analysis.py` exists, stub-level only |
+| CBB season | CLOSED — permanently archived |
+| CBB betting model | FROZEN permanently — season over, no recalibration planned |
+| MLB fantasy app | LIVE on Railway — active season, data layer under validation |
+| MLB betting model | In development — `mlb_analysis.py` stub-level, BDL now active |
 | BDL NCAAB subscription | CANCELLED — do not call `/ncaab/v1/` endpoints (will 401) |
-| OddsAPI Champion | ACTIVE until Apr 7, then cancel |
-| BDL GOAT (MLB) | Subscribe post-Apr 7 — replaces OddsAPI for all MLB work |
+| BDL GOAT MLB | ACTIVE — purchased. Expand `balldontlie.py` with `/mlb/v1/` endpoints |
+| OddsAPI Basic | ACTIVE — 20k calls/month. CBB archival closing lines only. MLB odds via BDL. |
 
 **Always read `HANDOFF.md` for the exact current task queue before touching any code.**
 
@@ -71,12 +71,12 @@ Statcast:  pybaseball>=2.2.5 (wraps Baseball Savant)
 
 | Rule | Reason |
 |------|--------|
-| Do NOT modify Kelly math in `betting_model.py` | EMAC-068 — blocked until Apr 7 |
+| Do NOT modify Kelly math in `betting_model.py` | CBB season closed — model archived, not recalibrating |
 | Do NOT call BDL `/ncaab/v1/` endpoints | Subscription cancelled — will 401 |
-| Do NOT build new features on OddsAPI | Being cancelled post-Apr 7 |
+| Do NOT route MLB odds through OddsAPI | 20k/month budget — MLB odds via BDL only |
 | Do NOT touch `dashboard/` (Streamlit) | Retired — Next.js is canonical |
 | Do NOT write test files outside `tests/` | Architecture decision locked |
-| Do NOT add `THE_ODDS_API_KEY` dependencies | Phase out, not in |
+| Do NOT use `THE_ODDS_API_KEY` for new MLB features | OddsAPI Basic reserved for CBB archival closing lines only |
 | Do NOT use `datetime.utcnow()` for game times | Use `datetime.now(ZoneInfo("America/New_York"))` |
 
 ---
@@ -89,7 +89,7 @@ The emac-protocol skill lists Gemini+OpenClaw — **Kimi CLI has replaced OpenCl
 |-------|------|---------------|
 | **Claude Code** (you) | Master Architect — algorithms, schema, core logic | DevOps, deployment, Railway ops |
 | **Gemini CLI** | Ops/DevOps — Railway deploy, py_compile verify, smoke tests | Backend schema changes, Yahoo API |
-| **Kimi CLI** | Deep research, spec memos, CBB recalibration prep | Production code without Claude delegation bundle |
+| **Kimi CLI** | Deep research, spec memos, API audits, MLB analysis research | Production code without Claude delegation bundle |
 
 ---
 
@@ -98,19 +98,19 @@ The emac-protocol skill lists Gemini+OpenClaw — **Kimi CLI has replaced OpenCl
 ```
 LIVE NOW:
   Yahoo Fantasy API     — OAuth 2.0, league/roster/matchup ops (yahoo_client_resilient.py)
+  BallDontLie GOAT MLB  — ACTIVE. Primary source for MLB schedule, scores, injuries, odds.
+                          Expand balldontlie.py with /mlb/v1/ endpoints.
+                          Migrate mlb_analysis._fetch_mlb_odds() to BDL.
+                          Migrate daily_ingestion._poll_mlb_odds() to BDL.
   MLB Stats API         — statsapi library, schedule/scores (mlb_analysis._fetch_schedule)
   pybaseball            — Statcast/FanGraphs, xERA/wRC+ (pybaseball_loader.py)
-  OddsAPI Champion      — CBB odds only, expires Apr 7 (odds.py)
+  OddsAPI Basic         — 20k calls/month. CBB archival closing lines ONLY (odds.py).
+                          Do NOT use for any new MLB feature — route all MLB odds through BDL.
   OpenWeatherMap        — Park weather (park_weather.py)
 
 CANCELLED:
   BallDontLie NCAAB     — Subscription ended with CBB season
-
-COMING POST-APR 7:
-  BallDontLie GOAT MLB  — Replaces OddsAPI for all MLB odds + adds injuries/box scores
-                          Expand balldontlie.py with /mlb/v1/ endpoints
-                          Migrate mlb_analysis._fetch_mlb_odds() off raw OddsAPI call
-                          Migrate daily_ingestion._poll_mlb_odds() off raw OddsAPI call
+  OddsAPI Champion      — Downgraded to Basic plan
 
 DO NOT REPLACE:
   pybaseball/Statcast   — BDL does not expose xwOBA/barrel%/exit velocity. Keep forever.
@@ -124,7 +124,7 @@ These exist in the codebase and are known-outdated — do not fix without a dedi
 
 - `.claude/agents/cbb-architect.md` — agent named `cbb-architect`, references "CBB Edge Analyzer" and "V9 Predictive Confidence Engine". Rename to `mlb-architect` in a future housekeeping session.
 - `.claude/skills/cbb-identity/SKILL.md` — mission statement says "NCAA D1 basketball bets". Now dual-purpose (fantasy + MLB betting). Update when CBB archive task runs post-Apr 7.
-- `backend/services/mlb_analysis.py` — `GUARDIAN FREEZE` comment says do not import `betting_model`. This freeze is still active (EMAC-068). Obey it.
+- `backend/services/mlb_analysis.py` — `GUARDIAN FREEZE` comment says do not import `betting_model`. CBB season is closed but the architectural boundary (ADR-004) stays — MLB analysis must never import the CBB betting model.
 
 ---
 
