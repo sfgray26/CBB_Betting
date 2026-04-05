@@ -18,7 +18,6 @@ const PAGE_TITLES: Record<string, string> = {
   '/today': "Today's Bets",
   '/live-slate': 'Live Slate',
   '/odds-monitor': 'Odds Monitor',
-  '/bracket': 'Bracket Simulator',
 }
 
 interface HeaderProps {

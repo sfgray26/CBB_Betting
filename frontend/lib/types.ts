@@ -286,49 +286,4 @@ export interface DashboardResponse {
   success: boolean
   timestamp: string
   data: DashboardData
-  preferences: UserPreferences
-}
-
-export interface UserPreferences {
-  notifications: {
-    lineup_deadline: boolean
-    injury_alerts: boolean
-    waiver_suggestions: boolean
-    trade_offers: boolean
-    hot_streak_alerts: boolean
-    channels: string[]
-    discord_user_id?: string | null
-    email_enabled: boolean
-  }
-  dashboard_layout: {
-    panels: DashboardPanel[]
-    refresh_interval_seconds: number
-    theme: "dark" | "light" | "system"
-  }
-  streak_settings: {
-    hot_threshold: number
-    cold_threshold: number
-    min_sample_days: number
-    rolling_windows: number[]
-  }
-  waiver_preferences: {
-    min_percent_owned: number
-    max_percent_owned: number
-    positions_of_need: string[]
-    priority_categories: string[]
-    hide_injured: boolean
-    streamer_threshold: number
-  }
-}
-
-export interface DashboardPanel {
-  id: string
-  position: string
-  size: "small" | "medium" | "large"
-  enabled: boolean
-}
-
-export interface UserPreferencesResponse {
-  success: boolean
-  preferences: UserPreferences
 }

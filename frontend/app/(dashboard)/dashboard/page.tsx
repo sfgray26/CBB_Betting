@@ -86,8 +86,6 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-zinc-400">
             <p>The shared dashboard route remains active and continues to validate the preserved dashboard API contract.</p>
-            <p>Refresh interval: {response?.preferences.dashboard_layout.refresh_interval_seconds ?? 'n/a'}s</p>
-            <p>Configured panels: {response?.preferences.dashboard_layout.panels.length ?? 0}</p>
           </CardContent>
         </Card>
 

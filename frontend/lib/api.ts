@@ -21,8 +21,6 @@ import type {
   SchedulerStatus,
   RatingsStatus,
   DashboardResponse,
-  UserPreferencesResponse,
-  UserPreferences,
   AsyncJobStatus,
   StreakPlayer,
   WaiverTarget,
@@ -255,17 +253,6 @@ export const endpoints = {
   /** Get full dashboard data */
   getDashboard: () =>
     apiFetch<DashboardResponse>('/api/dashboard'),
-
-  /** Get user preferences */
-  getUserPreferences: () =>
-    apiFetch<UserPreferencesResponse>('/api/user/preferences'),
-
-  /** Update user preferences */
-  updateUserPreferences: (updates: Partial<UserPreferences>) =>
-    apiFetch<UserPreferencesResponse>('/api/user/preferences', {
-      method: 'POST',
-      body: JSON.stringify(updates),
-    }),
 
   /** Get hot/cold streaks */
   getDashboardStreaks: () =>

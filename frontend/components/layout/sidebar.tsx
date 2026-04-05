@@ -12,10 +12,10 @@ import {
   Zap,
   Activity,
   Radio,
-  Trophy,
   ShieldAlert,
-  Settings,
 } from 'lucide-react'
+
+const SHOW_BRACKET = false
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -32,6 +32,7 @@ const navSections = [
       { href: '/alerts', label: 'Alerts', icon: Bell },
     ],
     soon: false,
+    hidden: false,
   },
   {
     label: 'Trading',
@@ -41,20 +42,15 @@ const navSections = [
       { href: '/odds-monitor', label: 'Odds Monitor', icon: Radio },
     ],
     soon: false,
+    hidden: false,
   },
   {
     label: 'Tournament',
     items: [
-      { href: '/bracket', label: 'Bracket Simulator', icon: Trophy },
+      { href: '/bracket', label: 'Bracket Simulator', icon: LayoutDashboard },
     ],
     soon: true,
-  },
-  {
-    label: 'Settings',
-    items: [
-      { href: '/settings', label: 'Preferences', icon: Settings },
-    ],
-    soon: false,
+    hidden: !SHOW_BRACKET,
   },
   {
     label: 'Admin',
@@ -62,6 +58,7 @@ const navSections = [
       { href: '/admin', label: 'Risk Dashboard', icon: ShieldAlert },
     ],
     soon: false,
+    hidden: false,
   },
 ]
 
@@ -111,7 +108,7 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-6">
-        {navSections.map((section) => (
+        {navSections.filter((s) => !s.hidden).map((section) => (
           <div key={section.label}>
             <p className="px-2 mb-2 text-xs font-semibold text-zinc-600 uppercase tracking-wider">
               {section.label}
