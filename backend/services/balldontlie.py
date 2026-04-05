@@ -288,7 +288,7 @@ class BallDontLieClient:
         return resp.json()
 
     # ------------------------------------------------------------------
-    # MLB Games — Priority 3a
+    # MLB Games — Priority 3a ✅
     # ------------------------------------------------------------------
 
     def get_mlb_games(self, date: str) -> List[MLBGame]:
@@ -322,6 +322,44 @@ class BallDontLieClient:
                 logger.error("get_mlb_games(%s) page=%d failed: %s", date, page, exc)
                 break
         return games
+
+    # ------------------------------------------------------------------
+    # MLB Odds — Priority 3b
+    # ------------------------------------------------------------------
+
+    def get_mlb_odds(self, game_id: int) -> List[MLBBettingOdd]:
+        """
+        Fetch all sportsbook lines for a specific MLB game.
+
+        BDL returns one record per vendor (fanduel, draftkings, betmgm, etc.).
+        Spread and total values arrive as strings — use .spread_home_float etc.
+        Handles pagination (unlikely for single-game odds, but correct regardless).
+        Returns empty list on any API error (logged, never raises).
+
+        Returns:
+            list[MLBBettingOdd] — Pydantic-validated. Never raw dicts.
+        """
+        odds: List[MLBBettingOdd] = []
+        cursor: Optional[int] = None
+        page = 0
+        max_pages = 10
+        while page < max_pages:
+            params: Dict[str, Any] = {"game_ids[]": game_id}
+            if cursor is not None:
+                params["cursor"] = cursor
+            try:
+                raw = self._mlb_get("/odds", params=params)
+                resp = BDLResponse[MLBBettingOdd].model_validate(raw)
+                odds.extend(resp.data)
+                cursor = resp.meta.next_cursor
+                if cursor is None:
+                    break
+                page += 1
+                time.sleep(0.1)
+            except Exception as exc:
+                logger.error("get_mlb_odds(game_id=%d) page=%d failed: %s", game_id, page, exc)
+                break
+        return odds
 
     # ------------------------------------------------------------------
     # Player season stats (for tournament_exp field)

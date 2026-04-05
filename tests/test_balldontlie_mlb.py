@@ -18,7 +18,7 @@ import pytest
 import requests
 
 from backend.services.balldontlie import BallDontLieClient
-from backend.data_contracts import MLBGame
+from backend.data_contracts import MLBBettingOdd, MLBGame
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -112,4 +112,68 @@ class TestGetMlbGames:
         empty = {"data": [], "meta": {"per_page": 25}}
         with patch.object(client, "_mlb_get", return_value=empty):
             result = client.get_mlb_games("2020-01-01")
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# get_mlb_odds
+# ---------------------------------------------------------------------------
+
+class TestGetMlbOdds:
+    def test_returns_list_of_mlb_betting_odd(self, client):
+        """Fixture-based: parses 6-vendor odds payload, returns list[MLBBettingOdd]."""
+        fixture = load("bdl_mlb_odds.json")
+        with patch.object(client, "_mlb_get", return_value=fixture):
+            result = client.get_mlb_odds(5057892)
+        assert len(result) == 6
+        assert all(isinstance(o, MLBBettingOdd) for o in result)
+
+    def test_spread_values_are_strings(self, client):
+        """Contract enforcement: spread/total values arrive as strings."""
+        fixture = load("bdl_mlb_odds.json")
+        with patch.object(client, "_mlb_get", return_value=fixture):
+            result = client.get_mlb_odds(5057892)
+        for odd in result:
+            assert isinstance(odd.spread_home_value, str)
+            assert isinstance(odd.total_value, str)
+
+    def test_float_properties_accessible(self, client):
+        """Float properties work on the returned models."""
+        fixture = load("bdl_mlb_odds.json")
+        with patch.object(client, "_mlb_get", return_value=fixture):
+            result = client.get_mlb_odds(5057892)
+        fanduel = next(o for o in result if o.vendor == "fanduel")
+        assert fanduel.spread_home_float == 1.5
+        assert fanduel.total_float == 3.5
+
+    def test_game_ids_param_sent_correctly(self, client):
+        """Verifies game_ids[] param is passed (not game_id)."""
+        fixture = load("bdl_mlb_odds.json")
+        captured_params = {}
+
+        def fake_get(path, params=None):
+            captured_params.update(params or {})
+            return fixture
+
+        with patch.object(client, "_mlb_get", side_effect=fake_get):
+            client.get_mlb_odds(5057892)
+
+        assert "game_ids[]" in captured_params
+        assert captured_params["game_ids[]"] == 5057892
+
+    def test_http_error_returns_empty_list(self, client):
+        """Any HTTP error → empty list, never raises."""
+        def fake_get(path, params=None):
+            raise requests.HTTPError("403 Forbidden")
+
+        with patch.object(client, "_mlb_get", side_effect=fake_get):
+            result = client.get_mlb_odds(5057892)
+
+        assert result == []
+
+    def test_no_odds_for_game_returns_empty_list(self, client):
+        """Pre-game or no market → empty data → empty list."""
+        empty = {"data": [], "meta": {"per_page": 25}}
+        with patch.object(client, "_mlb_get", return_value=empty):
+            result = client.get_mlb_odds(9999999)
         assert result == []
