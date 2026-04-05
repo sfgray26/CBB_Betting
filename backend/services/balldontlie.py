@@ -1,15 +1,24 @@
 """
-BallDontLie GOAT API client for NCAAB data.
+BallDontLie GOAT API client for NCAAB and MLB data.
 
-Subscription valid through April 7, 2026.
 Base URL: https://api.balldontlie.io
-Auth: Authorization header with API key (env: BALLDONTLIE_API_KEY)
+Auth: Authorization header with bare API key (env: BALLDONTLIE_API_KEY).
+      No "Bearer" prefix — raw key only.
 
-Key endpoints used:
+NCAAB endpoints (CBB season closed — archive/read only):
   /ncaab/v1/bracket         — Tournament bracket structure (GOAT tier)
   /ncaab/v1/odds            — Live ML/spread/total per sportsbook
   /ncaab/v1/games           — Game results (live scores, completed)
   /ncaab/v1/team_season_stats — Season pace/3PT stats for TournamentTeam enrichment
+
+MLB endpoints (active — 2026 season):
+  /mlb/v1/games             — Schedule + scores (validated via MLBGame contract)
+  /mlb/v1/odds              — Lines per sportsbook (validated via MLBBettingOdd contract)
+  /mlb/v1/player_injuries   — IL + DTD list (validated via MLBInjury contract)
+  /mlb/v1/players           — Player lookup (validated via MLBPlayer contract)
+
+Build sequence: get_mlb_games → get_mlb_odds → get_mlb_injuries → get_mlb_player
+Each method returns validated Pydantic objects. Never raw dicts.
 """
 
 import os
@@ -19,10 +28,13 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from backend.data_contracts import MLBBettingOdd, MLBGame, MLBInjury, MLBPlayer, BDLResponse
+
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.balldontlie.io"
 NCAAB_PREFIX = "/ncaab/v1"
+MLB_PREFIX = "/mlb/v1"
 TOURNAMENT_SEASON = 2025   # 2025-26 season (API accepts 2025, returns 2026 bracket)
 
 # Sportsbooks to prefer for market_ml extraction (in priority order)
@@ -263,6 +275,53 @@ class BallDontLieClient:
             if t.get("name", "").lower() == name.lower():
                 return t["id"]
         return teams[0]["id"]
+
+    # ------------------------------------------------------------------
+    # MLB internal helpers
+    # ------------------------------------------------------------------
+
+    def _mlb_get(self, path: str, params: Optional[Dict] = None) -> Dict:
+        """Single GET against the BDL MLB API. Raises on non-2xx."""
+        url = BASE_URL + MLB_PREFIX + path
+        resp = self.session.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+
+    # ------------------------------------------------------------------
+    # MLB Games — Priority 3a
+    # ------------------------------------------------------------------
+
+    def get_mlb_games(self, date: str) -> List[MLBGame]:
+        """
+        Fetch all MLB games for a given date (YYYY-MM-DD).
+
+        Handles cursor pagination. Returns empty list on any API error
+        (logged at ERROR level — never silent, never raises).
+
+        Returns:
+            list[MLBGame] — Pydantic-validated. Never raw dicts.
+        """
+        games: List[MLBGame] = []
+        cursor: Optional[int] = None
+        page = 0
+        max_pages = 20
+        while page < max_pages:
+            params: Dict[str, Any] = {"dates[]": date}
+            if cursor is not None:
+                params["cursor"] = cursor
+            try:
+                raw = self._mlb_get("/games", params=params)
+                resp = BDLResponse[MLBGame].model_validate(raw)
+                games.extend(resp.data)
+                cursor = resp.meta.next_cursor
+                if cursor is None:
+                    break
+                page += 1
+                time.sleep(0.1)
+            except Exception as exc:
+                logger.error("get_mlb_games(%s) page=%d failed: %s", date, page, exc)
+                break
+        return games
 
     # ------------------------------------------------------------------
     # Player season stats (for tournament_exp field)
