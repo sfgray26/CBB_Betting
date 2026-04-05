@@ -434,6 +434,38 @@ class BDLMLBGame(BaseModel):  # VERIFY WITH CLAUDE'S CAPTURE
 | `/mlb/v1/` mirrors `/ncaab/v1/` | ENDPOINTS MAY NOT EXIST — verify first |
 | OddsAPI returns `away_team`/`home_team` strings | May be ID-based in MLB endpoint |
 
+### Gemini CLI — Railway Branch Verification (S16)
+
+**Context:** `stable/cbb-prod` was merged into `main` on April 5, 2026 (commit `1ed8c8d`). This pushed 8 commits of S15-S16 data layer work (Pydantic contracts, validated BDL client, Yahoo ingestion). Railway should auto-deploy from `main`. This prompt verifies Railway is watching the right branch and that env vars survived.
+
+**Working directory:** `C:\Users\sfgra\repos\Fixed\cbb-edge`
+
+**What to verify (in Railway dashboard or via `railway` CLI):**
+
+1. **Backend service branch:** Confirm the `CBB_Betting` (or equivalent backend) Railway service is set to deploy from `main`, not a pinned commit or old branch.
+
+2. **Frontend service branch:** Confirm the Next.js frontend Railway service is also watching `main`.
+
+3. **Env var survival:** After the redeploy triggered by the push, verify these env vars are still set on the backend service:
+   - `ENABLE_FANTASY_SCHEDULER=false`
+   - `CBB_SEASON_ACTIVE=false`
+   - `ENABLE_PROJECTION_FRESHNESS=false`
+   - `FANTASY_DATABASE_URL` (should point to `Postgres-ygnV`)
+
+4. **Dockerfile CMD (read-only check):** The current Dockerfile CMD runs:
+   ```
+   python scripts/migrate_v9_live_data.py && python scripts/migrate_v10_user_preferences.py && python -m backend.models && uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}
+   ```
+   This is CORRECT for now. Do NOT change it — Phase 6-7 service split is a separate task.
+
+5. **Smoke test:** After confirming the redeploy completed, hit the health endpoint:
+   ```
+   railway run curl https://<backend-url>/health
+   ```
+   Confirm it returns 200. Do NOT run any migration scripts or scheduler commands.
+
+**Report back:** For each item above, report [CONFIRMED] or [ACTION NEEDED] with exact Railway dashboard values observed. Do not make changes beyond what is listed here — if anything needs changing, flag it and wait for Claude to review.
+
 ---
 
 ## Session History (Recent)

@@ -1898,7 +1898,6 @@ async def get_waiver_recommendations(
             detail=f"Unexpected error: {exc}",
         ) from exc
 
-    from backend.schemas import WaiverRecommendationsResponse
     return WaiverRecommendationsResponse(
         week_end=week_end,
         matchup_opponent=matchup_opponent,
@@ -2101,12 +2100,12 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
 
 @router.get("/api/fantasy/players/valuations")
 async def get_player_valuations(
-    date: Optional[str] = None,
+    date_str: Optional[str] = Query(None, alias="date"),
     league_key: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     """Return cached PlayerValuationReports for a given date and league."""
-    target_date = date or datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    target_date = date_str or datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
     try:
         query = """

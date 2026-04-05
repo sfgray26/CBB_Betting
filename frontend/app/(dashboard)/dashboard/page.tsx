@@ -12,7 +12,7 @@ import {
 } from "lucide-react"
 
 export default function DashboardPage() {
-  const { data: response, isLoading, isFetching, error: queryError } = useQuery({
+  const { data: response, isLoading, isFetching, isError, error: queryError } = useQuery({
     queryKey: ['dashboard'],
     queryFn: endpoints.getDashboard,
     staleTime: 2 * 60_000,       // serve cached data for 2 min
@@ -21,7 +21,7 @@ export default function DashboardPage() {
   })
 
   const dashboard: DashboardData | null = response?.success ? response.data : null
-  const error: string | null = queryError
+  const error: string | null = isError || queryError
     ? (queryError instanceof Error ? queryError.message : "Failed to load dashboard")
     : response && !response.success ? "Failed to load dashboard data" : null
 
