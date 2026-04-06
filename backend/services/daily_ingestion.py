@@ -2023,8 +2023,6 @@ class DailyIngestionOrchestrator:
     
     def _send_discord_alert(self, embed: dict) -> None:
         """Send Discord alert via webhook."""
-        import requests
-        
         webhook_url = os.getenv('DISCORD_ALERTS_WEBHOOK')
         if not webhook_url:
             return

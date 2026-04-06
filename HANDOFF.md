@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Master Plan (In-Season 2026)
 
 > **Date:** April 6, 2026 (updated Session S22) | **Author:** Claude Code (Master Architect)
-> **Risk Level:** LOW-MODERATE — P1-P14 certified. Phases 2-4 complete. Next: Gemini deploy migrate_v17, then P15 (momentum signals ΔZ).
+> **Risk Level:** LOW-MODERATE — P1-P14 certified. Phases 2-4 complete. Next: P15 (momentum signals ΔZ).
 
 ---
 
@@ -40,8 +40,8 @@ This is the north star. Every session's work maps to one of these phases. Never 
 | **1 — Layered Architecture** | Separate side effects (bottom) from pure functions (top). Contracts before plumbing. | ✅ DONE — layer model established, Pydantic contracts in place |
 | **2 — Data Foundation** | Ingest every game + stat + player. Normalize. Resolve IDs. Never compute from raw API. Build as standalone microservice: idempotent, raw+normalized dual-write, schema drift detection, anomaly detection. | ✅ DONE — Phase 2 complete (S20). All tables live and verified in production. |
 | **3 — Derived Stats** | 30/14/7-day rolling windows. Exponential decay λ=0.95. Per-game aggregation. Hitter + pitcher parity. | ✅ DONE — Phase 3 complete (S21). `player_rolling_stats` verified live in production. |
-| **4 — Scoring Engine** | League Z-scores + position Z-scores. Z_adj = 0.7·Z_league + 0.3·Z_position. Confidence regression. 0–100 output. | ✅ DONE — `scoring_engine.py` built, `player_scores` schema ready (S22). Pending: Gemini deploy migrate_v17. Position Z deferred (no position data yet). |
-| **5 — Momentum Layer** | ΔZ = Z_14d − Z_30d. Signals: Surging / Hot / Cold / Collapsing / Breakout / Collapse. | ⏳ BLOCKED on migrate_v17 deploy |
+| **4 — Scoring Engine** | League Z-scores + position Z-scores. Z_adj = 0.7·Z_league + 0.3·Z_position. Confidence regression. 0–100 output. | ✅ DONE — Phase 4 complete (S22). `player_scores` verified live in production. |
+| **5 — Momentum Layer** | ΔZ = Z_14d − Z_30d. Signals: Surging / Hot / Cold / Collapsing / Breakout / Collapse. | 🔄 IN PROGRESS — unblocked by Phase 4 (S22) |
 | **6 — Probabilistic Layer** | 1000-run ROS Monte Carlo. Percentiles (P10/25/50/75/90). Risk metrics. P(top-10/25/50). | ⏳ BLOCKED on Phase 5 |
 | **7 — Decision Engines** | Lineup optimizer, waiver optimizer, trade evaluator. World-with vs world-without sim. | **HARD EMBARGO** — do not touch |
 | **8 — Backtesting Harness** | Historical loader, simulation engine, baselines, golden regression detector. | **EMBARGO** — after Phase 7 |
@@ -67,6 +67,7 @@ This is the north star. Every session's work maps to one of these phases. Never 
 - Projection blending / ensemble update (job 100_014)
 - FanGraphs RoS ingestion (job 100_012)
 - Any derived stats / rolling windows (Phase 3 — complete)
+- Any scoring / scores DB persistence (Phase 4 — complete)
 - Any new UI surface
 - Monte Carlo / probabilistic layer (Phase 6)
 
@@ -99,7 +100,7 @@ Step 3 (Gemini):  Deploy fantasy_app.py.
 | System | State | Notes |
 |--------|-------|-------|
 | CBB Season | **CLOSED** | Permanently archived. |
-| MLB Data Pipeline | **P1-P14 CERTIFIED** | All contracts + BDL/Yahoo clients + jobs 100_001/100_013/100_016-100_019 wired + full schema live. Phase 4 scoring engine built (S22). Pending: Gemini deploy migrate_v17. |
+| MLB Data Pipeline | **P1-P14 CERTIFIED** | All contracts + BDL/Yahoo clients + jobs 100_001/100_013/100_016-100_019 wired + full schema live. Phase 4 scoring engine verified in production (S22). P15 momentum layer next. |
 | Fantasy/Edge structural split | **PHASES 1-7 DONE** | Fantasy-App live — isolated DB, isolated scheduler. |
 
 ### Ground Truth: What Actually Exists
@@ -109,31 +110,24 @@ Step 3 (Gemini):  Deploy fantasy_app.py.
 | `balldontlie.py` | NCAAB + MLB. All verified clients returning validated objects. |
 | `player_id_resolver.py` | **CLEAN (S20)** — Cache-first lookup → pybaseball fallback → persist. |
 | `rolling_window_engine.py`| **CLEAN (S21)** — Exponential decay computations λ=0.95. |
-| `daily_ingestion._compute_rolling_windows()` | **BUILT (S21)** — lock 100_018, daily 3 AM ET. Upserts to `player_rolling_stats`. |
+| `scoring_engine.py` | **CLEAN (S22)** — League Z-scores, percentile scoring, confidence. |
+| `daily_ingestion._compute_player_scores()` | **BUILT (S22)** — lock 100_019, daily 4 AM ET. Upserts to `player_scores`. |
 
 ---
 
 ## FORWARD ROADMAP — Ordered by Blueprint Phase
 
-### P14 — Scoring engine: Z-scores + confidence ✅ COMPLETE (S22)
-
-`backend/services/scoring_engine.py` — pure computation: `HITTER_CATEGORIES`, `PITCHER_CATEGORIES`, `PlayerScoreResult`, `compute_league_zscores()`.
-- Hitter categories: HR, RBI, SB, AVG, OBP (5 categories)
-- Pitcher categories: ERA (inverted), WHIP (inverted), K/9 (3 categories)
-- League Z-scores only (position Z deferred — no position data in schema yet)
-- Z capped ±3.0. MIN_SAMPLE=5. Confidence = games/window_days capped at 1.0
-- score_0_100 = percentile rank within player_type
-- stdlib math only (no numpy/scipy)
-`backend/models.py` — `PlayerScore` ORM. Natural key `(bdl_player_id, as_of_date, window_days)`.
-`scripts/migrate_v17_player_scores.py` — dry-run verified.
-`backend/services/daily_ingestion.py` — `_compute_player_scores()` lock 100_019, 4 AM ET.
-Tests: `tests/test_scoring_engine.py` — 21/21 pass (incl. Z-cap fixture fix: need n≥12 for Z>3.0).
-Full suite: 1399/1403 pass.
-
-**Pending: Gemini deploy migrate_v17 to both services.**
-
 ### P15 — Momentum signals [Phase 5]
-Compare 14d vs 30d Z-scores. ΔZ = Z_14d − Z_30d. Signals: Surging / Hot / Stable / Cold / Collapsing. Blueprint: Phase 5. **Do not start until migrate_v17 is deployed.**
+
+**Claude Task:** Build `backend/services/momentum_engine.py`:
+- Read `player_scores` for a player (14d vs 30d).
+- Derive `ΔZ = Z_14d - Z_30d`.
+- Assign signals: SURGING (ΔZ > 0.5), HOT (ΔZ > 0.2), STABLE, COLD (ΔZ < -0.2), COLLAPSING (ΔZ < -0.5).
+- Build `PlayerMomentum` ORM + migration `migrate_v18_player_momentum.py`.
+- Implement `_compute_player_momentum()` job (Lock 100_020, 5 AM ET).
+
+### P16 — Probabilistic Layer [Phase 6]
+1000-run ROS Monte Carlo. Percentiles. Risk metrics.
 
 ---
 
@@ -141,40 +135,20 @@ Compare 14d vs 30d Z-scores. ΔZ = Z_14d − Z_30d. Signals: Surging / Hot / Sta
 
 ### S22 — P14 Complete: Z-score Scoring Engine (Apr 6)
 
-**P14:** `scoring_engine.py` — `compute_league_zscores()`. 5 hitter + 3 pitcher categories. League Z-scores, Z-cap ±3.0, MIN_SAMPLE=5, percentile score_0_100, confidence. stdlib only.
-**Schema:** `player_scores` ORM + `migrate_v17`. Natural key `(bdl_player_id, as_of_date, window_days)`.
-**Job:** `_compute_player_scores()` lock 100_019, 4 AM ET.
-**Test fix:** Z-cap tests require n≥12 players (population std: max Z = √(n-1), need n≥11 for Z>3.0).
-**Suite:** 1399/1403 pass (22 new tests, 4 pre-existing failures unchanged).
-**Next:** Gemini deploy migrate_v17 → P15 momentum signals.
-
----
+**P14:** `scoring_engine.py` built. `player_scores` schema deployed (`migrate_v17`) and verified in production. `_compute_player_scores()` job registered (Lock 100_019). League Z-scores, Z-cap ±3.0, percentile scores.
 
 ### S21 — P13 Complete: Rolling Windows (Apr 6)
 
-**P13:** `rolling_window_engine.py` built. `player_rolling_stats` schema deployed (`migrate_v16`) and verified in production. `_compute_rolling_windows()` job registered (Lock 100_018). Correctness enforced for `parse_ip("6.2")=6.667`.
-
-### S20 — P11 + P12 Complete (Apr 6)
-
-**P11:** `MLBPlayerStats` Pydantic contract + `get_mlb_stats()` BDL client + `mlb_player_stats` ORM + `migrate_v15` + `_ingest_mlb_box_stats()` job (lock 100_017, 2 AM ET).
-**P12:** `PlayerIDResolver` service — cache + pybaseball fallback + persist.
+**P13:** `rolling_window_engine.py` built. `player_rolling_stats` schema deployed (`migrate_v16`) and verified in production. `_compute_rolling_windows()` job registered (Lock 100_018).
 
 ---
 
-### Gemini CLI — P14 Deploy: migrate_v17 (S22) ← NEXT GEMINI TASK
+### Gemini CLI — P14 Deploy: migrate_v17 (S22) ✅ COMPLETE
 
-**Context:** Session S22 built `player_scores` schema (P14). Deploy to both services.
-
-```bash
-railway run python scripts/migrate_v17_player_scores.py
-railway run --service fantasy-app python scripts/migrate_v17_player_scores.py
-```
-
-Verify: `railway run python -c "from backend.models import SessionLocal; from sqlalchemy import text; db=SessionLocal(); print(db.execute(text(\"SELECT COUNT(*) FROM information_schema.tables WHERE table_name='player_scores'\")).scalar()); db.close()"`
-
-Expected: `1`. Report back.
-
----
+**Status:**
+- `migrate_v17` deployed to Legacy and Fantasy DBs.
+- `player_scores` table verified live.
+- `player_scores` job registered (Lock 100_019).
 
 ### Gemini CLI — P13 Deploy: migrate_v16 (S21) ✅ COMPLETE
 
@@ -182,10 +156,3 @@ Expected: `1`. Report back.
 - `migrate_v16` deployed to Legacy and Fantasy DBs.
 - `player_rolling_stats` table verified live.
 - `rolling_windows` job registered (Lock 100_018).
-
-### Gemini CLI — P11 Deploy: migrate_v15 (S20) ✅ COMPLETE
-
-**Status:**
-- `migrate_v15` deployed to Legacy and Fantasy DBs.
-- `mlb_player_stats` table verified live.
-- `mlb_box_stats` job registered (Lock 100_017).

@@ -81,7 +81,7 @@ COMMENT ON TABLE player_scores IS
     'P14 league Z-scores + composite 0-100 ranking per player per date per window size. '
     'Computed daily by _compute_player_scores() (lock 100_019, 4 AM ET). '
     'Input: player_rolling_stats (P13). Window sizes: 7, 14, 30 days. '
-    'Z-score methodology: population std (ddof=0); MIN_SAMPLE=5; Z capped at +/-3.0. '
+    'Z-score methodology: population std (ddof=0) -- MIN_SAMPLE=5 -- Z capped at +/-3.0. '
     'Lower-is-better categories (ERA, WHIP): Z is negated so higher Z = better player. '
     'Hitter categories: z_hr, z_rbi, z_sb, z_avg, z_obp. '
     'Pitcher categories: z_era, z_whip, z_k_per_9. '
