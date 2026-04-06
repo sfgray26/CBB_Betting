@@ -173,7 +173,7 @@ def test_orchestrator_get_status_returns_all_jobs():
     orch.start()
     status = orch.get_status()
     expected_jobs = {
-        "mlb_odds", "statcast", "rolling_z", "clv", "cleanup",
+        "mlb_game_log", "mlb_odds", "statcast", "rolling_z", "clv", "cleanup",
         "fangraphs_ros", "yahoo_adp_injury", "ensemble_update", "projection_freshness",
     }
     assert expected_jobs == set(status.keys())
