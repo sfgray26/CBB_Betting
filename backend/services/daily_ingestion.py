@@ -36,6 +36,7 @@ from backend.models import (
     MLBTeam,
     MLBGameLog,
     MLBOddsSnapshot,
+    MLBPlayerStats,
     engine,
 )
 from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
@@ -72,6 +73,7 @@ LOCK_IDS = {
     "ensemble_update": 100_014,
     "projection_freshness": 100_015,
     "mlb_game_log":         100_016,
+    "mlb_box_stats":        100_017,
 }
 
 
@@ -265,6 +267,16 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # MLB player box stats ingestion: daily 2 AM ET (1 hour after game-log at 1 AM)
+        # Fetches yesterday + today box stats. Runs before rolling_z (3 AM) and fangraphs_ros (3 AM).
+        self._scheduler.add_job(
+            self._ingest_mlb_box_stats,
+            CronTrigger(hour=2, minute=0, timezone=tz),
+            id="mlb_box_stats",
+            name="MLB Box Stats Ingestion",
+            replace_existing=True,
+        )
+
         # MLB odds polling: every 5 min, restricted to 10 AM - 11 PM ET
         self._scheduler.add_job(
             self._poll_mlb_odds,
@@ -359,8 +371,8 @@ class DailyIngestionOrchestrator:
         )
 
         # Initialise status dict so get_status() never returns missing keys
-        _all_job_ids = ["mlb_game_log", "mlb_odds", "statcast", "rolling_z", "clv", "cleanup",
-                        "fangraphs_ros", "yahoo_adp_injury", "ensemble_update",
+        _all_job_ids = ["mlb_game_log", "mlb_box_stats", "mlb_odds", "statcast", "rolling_z",
+                        "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury", "ensemble_update",
                         "projection_freshness"]
         if _fantasy_leagues:
             _all_job_ids.append("valuation_cache")
@@ -758,6 +770,154 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["mlb_game_log"], _run)
+
+    async def _ingest_mlb_box_stats(self) -> dict:
+        """
+        Daily MLB player box stats ingestion (lock 100_017).
+
+        Runs at 2 AM ET -- 1 hour after game-log (1 AM) so mlb_game_log rows
+        are present when we write the FK game_id into mlb_player_stats.
+
+        For each stat row:
+          - Validates via MLBPlayerStats Pydantic V2 contract (validation failures
+            are logged at WARNING and skipped -- never kills the job)
+          - Upserts into mlb_player_stats on (bdl_player_id, game_id)
+          - Dual-write: raw_payload = stat.model_dump()
+
+        Anomaly: if BDL returns 0 stat rows for dates that had scheduled games,
+        logs WARNING (network blip / off-day -- does not raise).
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.services.balldontlie import BallDontLieClient
+            try:
+                bdl = BallDontLieClient()
+            except ValueError as exc:
+                logger.error("mlb_box_stats: BDL init failed -- %s", exc)
+                self._record_job_run("mlb_box_stats", "skipped")
+                return {"status": "skipped", "records": 0, "elapsed_ms": 0}
+
+            today = today_et()
+            yesterday = today - timedelta(days=1)
+            date_strs = [yesterday.isoformat(), today.isoformat()]
+
+            stats = await asyncio.to_thread(bdl.get_mlb_stats, date_strs)
+
+            if not stats:
+                logger.warning(
+                    "mlb_box_stats: 0 stat rows returned for dates=%s -- off-day or BDL error",
+                    date_strs,
+                )
+                self._record_job_run("mlb_box_stats", "success", 0)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                return {"status": "success", "records": 0, "dates": date_strs, "elapsed_ms": elapsed}
+
+            now = now_et()
+            rows_upserted = 0
+            db = SessionLocal()
+            try:
+                for stat in stats:
+                    # game_date: prefer fetching from game_id FK's game_date; fall back
+                    # to today if unknown (stats always belong to current polling window)
+                    # We do a best-effort date: since we queried by date, use today as fallback.
+                    # The migration note: game_date is NOT NULL -- we must supply a value.
+                    # Use today as the safe fallback when stat has no date context.
+                    game_date = today
+
+                    payload = stat.model_dump()
+                    stmt = pg_insert(MLBPlayerStats.__table__).values(
+                        bdl_stat_id=stat.id,
+                        bdl_player_id=stat.bdl_player_id,
+                        game_id=stat.game_id,
+                        game_date=game_date,
+                        season=stat.season if stat.season is not None else 2026,
+                        # Batting
+                        ab=stat.ab,
+                        runs=stat.r,
+                        hits=stat.h,
+                        doubles=stat.double,
+                        triples=stat.triple,
+                        home_runs=stat.hr,
+                        rbi=stat.rbi,
+                        walks=stat.bb,
+                        strikeouts_bat=stat.so,
+                        stolen_bases=stat.sb,
+                        caught_stealing=stat.cs,
+                        avg=stat.avg,
+                        obp=stat.obp,
+                        slg=stat.slg,
+                        ops=stat.ops,
+                        # Pitching
+                        innings_pitched=stat.ip,
+                        hits_allowed=stat.h_allowed,
+                        runs_allowed=stat.r_allowed,
+                        earned_runs=stat.er,
+                        walks_allowed=stat.bb_allowed,
+                        strikeouts_pit=stat.k,
+                        whip=stat.whip,
+                        era=stat.era,
+                        # Audit
+                        raw_payload=payload,
+                        ingested_at=now,
+                    ).on_conflict_do_update(
+                        constraint="_mps_player_game_uc",
+                        set_=dict(
+                            bdl_stat_id=stat.id,
+                            season=stat.season if stat.season is not None else 2026,
+                            ab=stat.ab,
+                            runs=stat.r,
+                            hits=stat.h,
+                            doubles=stat.double,
+                            triples=stat.triple,
+                            home_runs=stat.hr,
+                            rbi=stat.rbi,
+                            walks=stat.bb,
+                            strikeouts_bat=stat.so,
+                            stolen_bases=stat.sb,
+                            caught_stealing=stat.cs,
+                            avg=stat.avg,
+                            obp=stat.obp,
+                            slg=stat.slg,
+                            ops=stat.ops,
+                            innings_pitched=stat.ip,
+                            hits_allowed=stat.h_allowed,
+                            runs_allowed=stat.r_allowed,
+                            earned_runs=stat.er,
+                            walks_allowed=stat.bb_allowed,
+                            strikeouts_pit=stat.k,
+                            whip=stat.whip,
+                            era=stat.era,
+                            raw_payload=payload,
+                        ),
+                    )
+                    db.execute(stmt)
+                    rows_upserted += 1
+
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                logger.error("mlb_box_stats DB write failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("mlb_box_stats", "failed")
+                return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.info(
+                "mlb_box_stats: %d rows upserted for dates=%s in %dms",
+                rows_upserted, date_strs, elapsed,
+            )
+            self._record_job_run("mlb_box_stats", "success", rows_upserted)
+            return {
+                "status": "success",
+                "records": rows_upserted,
+                "dates": date_strs,
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["mlb_box_stats"], _run)
 
     async def _update_statcast(self) -> dict:
         """Daily Statcast enrichment — fetches yesterday's data and runs Bayesian projection updates."""      

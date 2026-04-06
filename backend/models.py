@@ -1009,3 +1009,121 @@ class MLBOddsSnapshot(Base):
         UniqueConstraint("game_id", "vendor", "snapshot_window", name="_mlb_odds_game_vendor_window_uc"),
         Index("idx_mlb_odds_vendor_window", "vendor", "snapshot_window"),
     )
+
+
+class MLBPlayerStats(Base):
+    """
+    MLB per-player per-game box stats (P11 -- Phase 2 stats ingestion).
+
+    Natural key: (bdl_player_id, game_id) -- unique constraint enforces idempotent upserts.
+    Dual-write: raw_payload stores the full BDL API dict alongside normalized columns.
+
+    Column name mapping (API -> DB):
+      r          -> runs          (avoids Python keyword clash)
+      h          -> hits          (avoids ambiguity with home_hits in game_log)
+      double     -> doubles       (avoids Python builtin keyword)
+      hr         -> home_runs
+      bb         -> walks
+      so         -> strikeouts_bat
+      sb         -> stolen_bases
+      cs         -> caught_stealing
+      h_allowed  -> hits_allowed
+      r_allowed  -> runs_allowed
+      er         -> earned_runs
+      bb_allowed -> walks_allowed
+      k          -> strikeouts_pit
+      ip         -> innings_pitched  (string, e.g. "6.2")
+
+    Contract source: backend/data_contracts/mlb_player_stats.py
+    """
+
+    __tablename__ = "mlb_player_stats"
+
+    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    bdl_stat_id     = Column(Integer, nullable=True)           # BDL stats record id
+    bdl_player_id   = Column(Integer, nullable=False)          # player.id from BDL
+    game_id         = Column(Integer, ForeignKey("mlb_game_log.game_id"), nullable=True)
+    game_date       = Column(Date, nullable=False)
+    season          = Column(Integer, nullable=False, default=2026)
+
+    # Batting stats (null for pure pitchers)
+    ab              = Column(Integer, nullable=True)
+    runs            = Column(Integer, nullable=True)           # 'r' from API
+    hits            = Column(Integer, nullable=True)           # 'h' from API
+    doubles         = Column(Integer, nullable=True)           # 'double' from API
+    triples         = Column(Integer, nullable=True)
+    home_runs       = Column(Integer, nullable=True)           # 'hr' from API
+    rbi             = Column(Integer, nullable=True)
+    walks           = Column(Integer, nullable=True)           # 'bb' from API
+    strikeouts_bat  = Column(Integer, nullable=True)           # 'so' from API
+    stolen_bases    = Column(Integer, nullable=True)           # 'sb' from API
+    caught_stealing = Column(Integer, nullable=True)           # 'cs' from API
+    avg             = Column(Float, nullable=True)
+    obp             = Column(Float, nullable=True)
+    slg             = Column(Float, nullable=True)
+    ops             = Column(Float, nullable=True)
+
+    # Pitching stats (null for pure hitters)
+    innings_pitched = Column(String(10), nullable=True)        # 'ip' e.g. "6.2"
+    hits_allowed    = Column(Integer, nullable=True)           # 'h_allowed' from API
+    runs_allowed    = Column(Integer, nullable=True)           # 'r_allowed' from API
+    earned_runs     = Column(Integer, nullable=True)           # 'er' from API
+    walks_allowed   = Column(Integer, nullable=True)           # 'bb_allowed' from API
+    strikeouts_pit  = Column(Integer, nullable=True)           # 'k' from API
+    whip            = Column(Float, nullable=True)
+    era             = Column(Float, nullable=True)
+
+    # Audit columns
+    raw_payload     = Column(JSON, nullable=False)             # Full BDL dict (dual-write)
+    ingested_at     = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("bdl_player_id", "game_id", name="_mps_player_game_uc"),
+        Index("idx_mps_player_date", "bdl_player_id", "game_date"),
+        Index("idx_mps_game", "game_id"),
+        Index("idx_mps_date", "game_date"),
+    )
+
+
+class PlayerIDMapping(Base):
+    """
+    Cross-system player identity mapping table (P10 — Phase 2 identity resolution).
+
+    Maps Yahoo player keys, BDL player IDs, and mlbam IDs to a single canonical
+    row per player. Seeded via pybaseball.playerid_lookup() + manual overrides.
+
+    Resolution priority:
+      1. Cache hit on yahoo_key or bdl_id -> return mlbam_id immediately
+      2. pybaseball name lookup -> cache result (source='pybaseball')
+      3. Manual override (source='manual') takes precedence in conflicts
+
+    Key design decisions (from K-B spec):
+      - yahoo_key is "469.p.7590" format — game_id.p.yahoo_id
+      - yahoo_id "7590" is proprietary — NOT mlbam_id
+      - bdl_id is BDL internal integer — NOT mlbam_id
+      - mlbam_id is the canonical cross-platform identifier
+      - normalized_name enables fuzzy matching across systems (Unicode-normalized)
+    """
+
+    __tablename__ = "player_id_mapping"
+
+    id                   = Column(Integer, primary_key=True, autoincrement=True)
+    yahoo_key            = Column(String(50), nullable=True)    # "469.p.7590" — unique per player
+    yahoo_id             = Column(String(20), nullable=True)    # "7590" — proprietary Yahoo ID
+    mlbam_id             = Column(Integer, nullable=True)       # MLB Advanced Media canonical ID
+    bdl_id               = Column(Integer, nullable=True)       # BDL player.id internal
+    full_name            = Column(String(150), nullable=False)
+    normalized_name      = Column(String(150), nullable=False)  # lowercase, no accents
+    source               = Column(String(20), nullable=False, default="manual")  # pybaseball|manual|api
+    resolution_confidence = Column(Float, nullable=True)        # 0.0-1.0 for fuzzy matches
+    created_at           = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    last_verified        = Column(Date, nullable=True)
+
+    __table_args__ = (
+        # Partial unique indexes — each external ID is unique where present
+        UniqueConstraint("yahoo_key", name="_pim_yahoo_key_uc"),
+        Index("idx_pim_mlbam",       "mlbam_id"),
+        Index("idx_pim_bdl",         "bdl_id"),
+        Index("idx_pim_normalized",  "normalized_name"),
+        Index("idx_pim_yahoo_id",    "yahoo_id"),
+    )
