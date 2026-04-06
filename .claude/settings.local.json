@@ -89,7 +89,8 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(venv/Scripts/python:*)",
-      "Bash(DATABASE_URL=postgresql://x venv/Scripts/python:*)"
+      "Bash(DATABASE_URL=postgresql://x venv/Scripts/python:*)",
+      "Bash(DATABASE_URL=postgresql://placeholder venv/Scripts/python scripts/migrate_v16_player_rolling_stats.py --dry-run)"
     ]
   }
 }
