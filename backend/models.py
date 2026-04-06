@@ -1259,3 +1259,49 @@ class PlayerScore(Base):
         Index("idx_ps_player_date", "bdl_player_id", "as_of_date"),
         Index("idx_ps_score", "as_of_date", "window_days", "score_0_100"),
     )
+
+
+class PlayerMomentum(Base):
+    """
+    P15 Momentum layer -- delta-Z signals derived from 14d vs 30d player_scores.
+
+    Computed daily by _compute_player_momentum() (lock 100_020, 5 AM ET).
+    Input: player_scores (P14). Output: SURGING / HOT / STABLE / COLD / COLLAPSING.
+
+    Signal thresholds:
+      delta_z >  0.5  -> SURGING
+      delta_z >= 0.2  -> HOT
+      delta_z >  -0.2 -> STABLE
+      delta_z >= -0.5 -> COLD
+      else            -> COLLAPSING
+    """
+
+    __tablename__ = "player_momentum"
+
+    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    bdl_player_id   = Column(Integer, nullable=False)
+    as_of_date      = Column(Date, nullable=False)
+    player_type     = Column(String(10), nullable=False)
+    delta_z         = Column(Float, nullable=False)
+    signal          = Column(String(12), nullable=False)
+    composite_z_14d = Column(Float, nullable=False)
+    composite_z_30d = Column(Float, nullable=False)
+    score_14d       = Column(Float, nullable=False)
+    score_30d       = Column(Float, nullable=False)
+    confidence_14d  = Column(Float, nullable=False)
+    confidence_30d  = Column(Float, nullable=False)
+    confidence      = Column(Float, nullable=False)
+    computed_at     = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "bdl_player_id", "as_of_date",
+            name="_pm_player_date_uc",
+        ),
+        Index("idx_pm_date_signal", "as_of_date", "signal"),
+        Index("idx_pm_player_date", "bdl_player_id", "as_of_date"),
+    )

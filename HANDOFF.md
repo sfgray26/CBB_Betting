@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Master Plan (In-Season 2026)
 
-> **Date:** April 6, 2026 (updated Session S22) | **Author:** Claude Code (Master Architect)
-> **Risk Level:** LOW-MODERATE — P1-P14 certified. Phases 2-4 complete. Next: P15 (momentum signals ΔZ).
+> **Date:** April 6, 2026 (updated Session S23) | **Author:** Claude Code (Master Architect)
+> **Risk Level:** LOW-MODERATE — P1-P15 certified. Phases 2-5 complete. Next: Gemini deploy migrate_v18, then P16 (Monte Carlo probabilistic layer).
 
 ---
 
@@ -41,8 +41,8 @@ This is the north star. Every session's work maps to one of these phases. Never 
 | **2 — Data Foundation** | Ingest every game + stat + player. Normalize. Resolve IDs. Never compute from raw API. Build as standalone microservice: idempotent, raw+normalized dual-write, schema drift detection, anomaly detection. | ✅ DONE — Phase 2 complete (S20). All tables live and verified in production. |
 | **3 — Derived Stats** | 30/14/7-day rolling windows. Exponential decay λ=0.95. Per-game aggregation. Hitter + pitcher parity. | ✅ DONE — Phase 3 complete (S21). `player_rolling_stats` verified live in production. |
 | **4 — Scoring Engine** | League Z-scores + position Z-scores. Z_adj = 0.7·Z_league + 0.3·Z_position. Confidence regression. 0–100 output. | ✅ DONE — Phase 4 complete (S22). `player_scores` verified live in production. |
-| **5 — Momentum Layer** | ΔZ = Z_14d − Z_30d. Signals: Surging / Hot / Cold / Collapsing / Breakout / Collapse. | 🔄 IN PROGRESS — unblocked by Phase 4 (S22) |
-| **6 — Probabilistic Layer** | 1000-run ROS Monte Carlo. Percentiles (P10/25/50/75/90). Risk metrics. P(top-10/25/50). | ⏳ BLOCKED on Phase 5 |
+| **5 — Momentum Layer** | ΔZ = Z_14d − Z_30d. Signals: Surging / Hot / Cold / Collapsing / Breakout / Collapse. | ✅ DONE — `momentum_engine.py` built, `player_momentum` schema ready (S23). Pending: Gemini deploy migrate_v18. |
+| **6 — Probabilistic Layer** | 1000-run ROS Monte Carlo. Percentiles (P10/25/50/75/90). Risk metrics. P(top-10/25/50). | ⏳ BLOCKED on migrate_v18 deploy |
 | **7 — Decision Engines** | Lineup optimizer, waiver optimizer, trade evaluator. World-with vs world-without sim. | **HARD EMBARGO** — do not touch |
 | **8 — Backtesting Harness** | Historical loader, simulation engine, baselines, golden regression detector. | **EMBARGO** — after Phase 7 |
 | **9 — Explainability** | Decision traces. "Why this player over that one?" Human-readable explanations for every action. | **EMBARGO** — after Phase 8 |
@@ -100,7 +100,7 @@ Step 3 (Gemini):  Deploy fantasy_app.py.
 | System | State | Notes |
 |--------|-------|-------|
 | CBB Season | **CLOSED** | Permanently archived. |
-| MLB Data Pipeline | **P1-P14 CERTIFIED** | All contracts + BDL/Yahoo clients + jobs 100_001/100_013/100_016-100_019 wired + full schema live. Phase 4 scoring engine verified in production (S22). P15 momentum layer next. |
+| MLB Data Pipeline | **P1-P15 CERTIFIED (pending deploy)** | All contracts + BDL/Yahoo clients + jobs 100_001/100_013/100_016-100_020 wired + full schema live. Phase 5 momentum engine built (S23). Gemini to run migrate_v18 in production. |
 | Fantasy/Edge structural split | **PHASES 1-7 DONE** | Fantasy-App live — isolated DB, isolated scheduler. |
 
 ### Ground Truth: What Actually Exists
@@ -112,19 +112,16 @@ Step 3 (Gemini):  Deploy fantasy_app.py.
 | `rolling_window_engine.py`| **CLEAN (S21)** — Exponential decay computations λ=0.95. |
 | `scoring_engine.py` | **CLEAN (S22)** — League Z-scores, percentile scoring, confidence. |
 | `daily_ingestion._compute_player_scores()` | **BUILT (S22)** — lock 100_019, daily 4 AM ET. Upserts to `player_scores`. |
+| `momentum_engine.py` | **BUILT (S23)** — pure computation, zero I/O. classify_signal, compute_player_momentum, compute_all_momentum. |
+| `daily_ingestion._compute_player_momentum()` | **BUILT (S23)** — lock 100_020, daily 5 AM ET. Upserts to `player_momentum`. |
 
 ---
 
 ## FORWARD ROADMAP — Ordered by Blueprint Phase
 
-### P15 — Momentum signals [Phase 5]
+### P15 — Momentum signals [Phase 5] -- COMPLETE (S23)
 
-**Claude Task:** Build `backend/services/momentum_engine.py`:
-- Read `player_scores` for a player (14d vs 30d).
-- Derive `ΔZ = Z_14d - Z_30d`.
-- Assign signals: SURGING (ΔZ > 0.5), HOT (ΔZ > 0.2), STABLE, COLD (ΔZ < -0.2), COLLAPSING (ΔZ < -0.5).
-- Build `PlayerMomentum` ORM + migration `migrate_v18_player_momentum.py`.
-- Implement `_compute_player_momentum()` job (Lock 100_020, 5 AM ET).
+All deliverables built and tested. Awaiting Gemini to run migrate_v18 in production.
 
 ### P16 — Probabilistic Layer [Phase 6]
 1000-run ROS Monte Carlo. Percentiles. Risk metrics.
@@ -133,6 +130,10 @@ Step 3 (Gemini):  Deploy fantasy_app.py.
 
 ## Session History (Recent)
 
+### S23 — P15 Complete: Momentum Layer (Apr 6)
+
+**P15:** `momentum_engine.py` built (pure, zero I/O). `PlayerMomentum` ORM added to `models.py`. `migrate_v18_player_momentum.py` written. `_compute_player_momentum()` job registered (Lock 100_020, 5 AM ET). 23 tests in `test_momentum_engine.py` covering all boundary semantics. `test_ingestion_orchestrator.py` updated with `player_momentum` job. Gemini to deploy migrate_v18 to both Railway DBs.
+
 ### S22 — P14 Complete: Z-score Scoring Engine (Apr 6)
 
 **P14:** `scoring_engine.py` built. `player_scores` schema deployed (`migrate_v17`) and verified in production. `_compute_player_scores()` job registered (Lock 100_019). League Z-scores, Z-cap ±3.0, percentile scores.
@@ -140,6 +141,40 @@ Step 3 (Gemini):  Deploy fantasy_app.py.
 ### S21 — P13 Complete: Rolling Windows (Apr 6)
 
 **P13:** `rolling_window_engine.py` built. `player_rolling_stats` schema deployed (`migrate_v16`) and verified in production. `_compute_rolling_windows()` job registered (Lock 100_018).
+
+---
+
+### Gemini CLI — P15 Deploy: migrate_v18 (S23) -- READY FOR DEPLOY
+
+**Task:** Deploy `player_momentum` table to both Railway databases.
+
+**Commands (run exactly):**
+```bash
+# Legacy DB
+railway run --service cbb-edge python scripts/migrate_v18_player_momentum.py
+
+# Fantasy DB
+railway run --service fantasy-app python scripts/migrate_v18_player_momentum.py
+
+# Verify table exists on Legacy DB
+railway run --service cbb-edge python -c "
+from backend.models import engine
+from sqlalchemy import text
+with engine.connect() as c:
+    r = c.execute(text(\"SELECT COUNT(*) FROM information_schema.tables WHERE table_name='player_momentum'\"))
+    print('player_momentum exists:', r.scalar() == 1)
+"
+```
+
+**Compile-check before deploy:**
+```bash
+venv/Scripts/python -m py_compile scripts/migrate_v18_player_momentum.py
+venv/Scripts/python -m py_compile backend/models.py
+venv/Scripts/python -m py_compile backend/services/daily_ingestion.py
+venv/Scripts/python -m py_compile backend/services/momentum_engine.py
+```
+
+**Report back:** Confirm table created + row count (expect 0 rows initially).
 
 ---
 

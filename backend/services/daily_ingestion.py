@@ -39,6 +39,7 @@ from backend.models import (
     MLBPlayerStats,
     PlayerRollingStats,
     PlayerScore,
+    PlayerMomentum,
     engine,
 )
 from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
@@ -78,6 +79,7 @@ LOCK_IDS = {
     "mlb_box_stats":        100_017,
     "rolling_windows":      100_018,
     "player_scores":        100_019,
+    "player_momentum":      100_020,
 }
 
 
@@ -301,6 +303,16 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Player momentum signals: daily 5 AM ET (after player_scores at 4 AM)
+        # Computes delta-Z = Z_14d - Z_30d and assigns SURGING/HOT/STABLE/COLD/COLLAPSING.
+        self._scheduler.add_job(
+            self._compute_player_momentum,
+            CronTrigger(hour=5, minute=0, timezone=tz),
+            id="player_momentum",
+            name="Player Momentum Signal Computation",
+            replace_existing=True,
+        )
+
         # MLB odds polling: every 5 min, restricted to 10 AM - 11 PM ET
         self._scheduler.add_job(
             self._poll_mlb_odds,
@@ -396,6 +408,7 @@ class DailyIngestionOrchestrator:
 
         # Initialise status dict so get_status() never returns missing keys
         _all_job_ids = ["mlb_game_log", "mlb_box_stats", "rolling_windows", "player_scores",
+                        "player_momentum",
                         "mlb_odds", "statcast",
                         "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
                         "ensemble_update", "projection_freshness"]
@@ -1246,6 +1259,149 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["player_scores"], _run)
+
+    async def _compute_player_momentum(self) -> dict:
+        """
+        Daily momentum signal computation (lock 100_020, 5 AM ET).
+
+        Runs after _compute_player_scores (4 AM) so player_scores is current.
+
+        Algorithm:
+          1. Query player_scores WHERE as_of_date = yesterday AND window_days = 14
+          2. Query player_scores WHERE as_of_date = yesterday AND window_days = 30
+          3. compute_all_momentum(scores_14d, scores_30d)
+          4. Upsert each MomentumResult to player_momentum ON CONFLICT (_pm_player_date_uc)
+          5. WARN if 0 results (off-day or scoring pipeline missing)
+          6. WARN if any single signal exceeds 60% of total (indicates potential data issue)
+          7. Return {"as_of_date": str(yesterday), "total": n, "signals": {signal: count}}
+
+        ADR-004: Never import betting_model or analysis here.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from collections import Counter
+            from backend.services.momentum_engine import compute_all_momentum
+
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+
+            db = SessionLocal()
+            results = []
+            try:
+                now = datetime.now(ZoneInfo("America/New_York"))
+
+                try:
+                    scores_14d = (
+                        db.query(PlayerScore)
+                        .filter(
+                            PlayerScore.as_of_date == as_of_date,
+                            PlayerScore.window_days == 14,
+                        )
+                        .all()
+                    )
+                    scores_30d = (
+                        db.query(PlayerScore)
+                        .filter(
+                            PlayerScore.as_of_date == as_of_date,
+                            PlayerScore.window_days == 30,
+                        )
+                        .all()
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "player_momentum: DB query failed for as_of_date=%s: %s",
+                        as_of_date, exc,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("player_momentum", "failed")
+                    return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+
+                results = compute_all_momentum(scores_14d, scores_30d)
+
+                if not results:
+                    logger.warning(
+                        "player_momentum: 0 players computed for as_of_date=%s -- "
+                        "off-day or player_scores pipeline missing",
+                        as_of_date,
+                    )
+
+                # Anomaly: warn if any single signal dominates (>60% of total)
+                if results:
+                    signal_counts: dict = Counter(r.signal for r in results)
+                    total_check = len(results)
+                    for sig, cnt in signal_counts.items():
+                        if cnt / total_check > 0.60:
+                            logger.warning(
+                                "player_momentum: signal '%s' is %.1f%% of total (%d/%d) "
+                                "for as_of_date=%s -- possible data issue",
+                                sig, cnt / total_check * 100, cnt, total_check, as_of_date,
+                            )
+
+                try:
+                    for res in results:
+                        stmt = pg_insert(PlayerMomentum.__table__).values(
+                            bdl_player_id=res.bdl_player_id,
+                            as_of_date=res.as_of_date,
+                            player_type=res.player_type,
+                            delta_z=res.delta_z,
+                            signal=res.signal,
+                            composite_z_14d=res.composite_z_14d,
+                            composite_z_30d=res.composite_z_30d,
+                            score_14d=res.score_14d,
+                            score_30d=res.score_30d,
+                            confidence_14d=res.confidence_14d,
+                            confidence_30d=res.confidence_30d,
+                            confidence=res.confidence,
+                            computed_at=now,
+                        ).on_conflict_do_update(
+                            constraint="_pm_player_date_uc",
+                            set_=dict(
+                                player_type=res.player_type,
+                                delta_z=res.delta_z,
+                                signal=res.signal,
+                                composite_z_14d=res.composite_z_14d,
+                                composite_z_30d=res.composite_z_30d,
+                                score_14d=res.score_14d,
+                                score_30d=res.score_30d,
+                                confidence_14d=res.confidence_14d,
+                                confidence_30d=res.confidence_30d,
+                                confidence=res.confidence,
+                                computed_at=now,
+                            ),
+                        )
+                        db.execute(stmt)
+
+                    db.commit()
+                except Exception as exc:
+                    db.rollback()
+                    logger.error(
+                        "player_momentum: DB write failed for as_of_date=%s: %s",
+                        as_of_date, exc,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("player_momentum", "failed")
+                    return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            total = len(results)
+            signal_counts = Counter(r.signal for r in results)
+            self._record_job_run("player_momentum", "success", total)
+            logger.info(
+                "player_momentum: %d players computed for as_of_date=%s signals=%s",
+                total, as_of_date, dict(signal_counts),
+            )
+            return {
+                "status": "success",
+                "as_of_date": str(as_of_date),
+                "total": total,
+                "signals": dict(signal_counts),
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["player_momentum"], _run)
 
     async def _update_statcast(self) -> dict:
         """Daily Statcast enrichment — fetches yesterday's data and runs Bayesian projection updates."""      
