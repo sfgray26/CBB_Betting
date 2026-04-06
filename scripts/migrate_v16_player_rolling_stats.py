@@ -88,7 +88,7 @@ COMMENT ON TABLE player_rolling_stats IS
     'Computed daily by _compute_rolling_windows() (lock 100_018, 3 AM ET). '
     'Exponential decay: weight = 0.95 ** days_back where days_back = (as_of_date - game_date).days. '
     'Window sizes: 7, 14, 30 days. '
-    'Batting fields NULL for pitchers with no AB; pitching fields NULL for hitters with no IP. '
+    'Batting fields NULL for pitchers with no AB -- pitching fields NULL for hitters with no IP. '
     'w_ip is decimal innings (6.667 = 6 innings 2 outs), not the BDL string "6.2". '
     'Downstream: P14 Z-score engine reads this table to compute league/position Z-scores.'
 """

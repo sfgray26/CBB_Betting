@@ -38,6 +38,7 @@ from backend.models import (
     MLBOddsSnapshot,
     MLBPlayerStats,
     PlayerRollingStats,
+    PlayerScore,
     engine,
 )
 from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
@@ -76,6 +77,7 @@ LOCK_IDS = {
     "mlb_game_log":         100_016,
     "mlb_box_stats":        100_017,
     "rolling_windows":      100_018,
+    "player_scores":        100_019,
 }
 
 
@@ -289,6 +291,16 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Player Z-score scoring: daily 4 AM ET (after rolling windows at 3 AM)
+        # Computes league Z-scores + 0-100 percentile ranks per player per window.
+        self._scheduler.add_job(
+            self._compute_player_scores,
+            CronTrigger(hour=4, minute=0, timezone=tz),
+            id="player_scores",
+            name="Player Z-Score Scoring",
+            replace_existing=True,
+        )
+
         # MLB odds polling: every 5 min, restricted to 10 AM - 11 PM ET
         self._scheduler.add_job(
             self._poll_mlb_odds,
@@ -383,7 +395,8 @@ class DailyIngestionOrchestrator:
         )
 
         # Initialise status dict so get_status() never returns missing keys
-        _all_job_ids = ["mlb_game_log", "mlb_box_stats", "rolling_windows", "mlb_odds", "statcast",
+        _all_job_ids = ["mlb_game_log", "mlb_box_stats", "rolling_windows", "player_scores",
+                        "mlb_odds", "statcast",
                         "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
                         "ensemble_update", "projection_freshness"]
         if _fantasy_leagues:
@@ -1086,6 +1099,153 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["rolling_windows"], _run)
+
+    async def _compute_player_scores(self) -> dict:
+        """
+        Daily Z-score scoring computation (lock 100_019, 4 AM ET).
+
+        Runs after _compute_rolling_windows (3 AM) so player_rolling_stats is current.
+
+        Algorithm:
+          1. For each window_days in [7, 14, 30]:
+             a. Query all player_rolling_stats WHERE as_of_date = yesterday AND window_days = N
+             b. Call compute_league_zscores(rows, yesterday, N)
+             c. Upsert each PlayerScoreResult to player_scores table
+          2. Anomaly: WARN if 0 players scored for any window
+          3. Return scored counts per window
+
+        ADR-004: Never import betting_model or analysis here.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.services.scoring_engine import compute_league_zscores
+
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+
+            scored_7d = 0
+            scored_14d = 0
+            scored_30d = 0
+
+            db = SessionLocal()
+            try:
+                now = datetime.now(ZoneInfo("America/New_York"))
+
+                for window_days in [7, 14, 30]:
+                    try:
+                        rows = (
+                            db.query(PlayerRollingStats)
+                            .filter(
+                                PlayerRollingStats.as_of_date == as_of_date,
+                                PlayerRollingStats.window_days == window_days,
+                            )
+                            .all()
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "player_scores: DB query failed for window_days=%d: %s",
+                            window_days, exc,
+                        )
+                        elapsed = int((time.monotonic() - t0) * 1000)
+                        self._record_job_run("player_scores", "failed")
+                        return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+
+                    if not rows:
+                        logger.warning(
+                            "player_scores: 0 rolling_stats rows found for as_of_date=%s "
+                            "window_days=%d -- off-day or rolling windows missing",
+                            as_of_date, window_days,
+                        )
+
+                    score_results = compute_league_zscores(rows, as_of_date, window_days)
+
+                    if not score_results:
+                        logger.warning(
+                            "player_scores: 0 players scored for as_of_date=%s window_days=%d",
+                            as_of_date, window_days,
+                        )
+
+                    try:
+                        for res in score_results:
+                            stmt = pg_insert(PlayerScore.__table__).values(
+                                bdl_player_id=res.bdl_player_id,
+                                as_of_date=res.as_of_date,
+                                window_days=res.window_days,
+                                player_type=res.player_type,
+                                games_in_window=res.games_in_window,
+                                z_hr=res.z_hr,
+                                z_rbi=res.z_rbi,
+                                z_sb=res.z_sb,
+                                z_avg=res.z_avg,
+                                z_obp=res.z_obp,
+                                z_era=res.z_era,
+                                z_whip=res.z_whip,
+                                z_k_per_9=res.z_k_per_9,
+                                composite_z=res.composite_z,
+                                score_0_100=res.score_0_100,
+                                confidence=res.confidence,
+                                computed_at=now,
+                            ).on_conflict_do_update(
+                                constraint="_ps_player_date_window_uc",
+                                set_=dict(
+                                    player_type=res.player_type,
+                                    games_in_window=res.games_in_window,
+                                    z_hr=res.z_hr,
+                                    z_rbi=res.z_rbi,
+                                    z_sb=res.z_sb,
+                                    z_avg=res.z_avg,
+                                    z_obp=res.z_obp,
+                                    z_era=res.z_era,
+                                    z_whip=res.z_whip,
+                                    z_k_per_9=res.z_k_per_9,
+                                    composite_z=res.composite_z,
+                                    score_0_100=res.score_0_100,
+                                    confidence=res.confidence,
+                                    computed_at=now,
+                                ),
+                            )
+                            db.execute(stmt)
+
+                        db.commit()
+                    except Exception as exc:
+                        db.rollback()
+                        logger.error(
+                            "player_scores: DB write failed for window_days=%d: %s",
+                            window_days, exc,
+                        )
+                        elapsed = int((time.monotonic() - t0) * 1000)
+                        self._record_job_run("player_scores", "failed")
+                        return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+
+                    count = len(score_results)
+                    if window_days == 7:
+                        scored_7d = count
+                    elif window_days == 14:
+                        scored_14d = count
+                    else:
+                        scored_30d = count
+
+                    logger.info(
+                        "player_scores: %d players scored for as_of_date=%s window_days=%d",
+                        count, as_of_date, window_days,
+                    )
+
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            total = scored_7d + scored_14d + scored_30d
+            self._record_job_run("player_scores", "success", total)
+            return {
+                "status": "success",
+                "as_of_date": str(as_of_date),
+                "scored_7d": scored_7d,
+                "scored_14d": scored_14d,
+                "scored_30d": scored_30d,
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["player_scores"], _run)
 
     async def _update_statcast(self) -> dict:
         """Daily Statcast enrichment — fetches yesterday's data and runs Bayesian projection updates."""      

@@ -1199,3 +1199,63 @@ class PlayerRollingStats(Base):
         Index("idx_prs_player_date", "bdl_player_id", "as_of_date"),
         Index("idx_prs_date_window", "as_of_date", "window_days"),
     )
+
+
+class PlayerScore(Base):
+    """
+    P14 League Z-scores + composite score per player per date per window size.
+
+    Computed daily by _compute_player_scores() (lock 100_019, 4 AM ET).
+    Input: player_rolling_stats. Output: league Z-scores + 0-100 percentile rank.
+
+    Z-score methodology:
+      - Population std (ddof=0) across all players with non-null value.
+      - MIN_SAMPLE = 5 players required before computing Z for a category.
+      - Lower-is-better categories (ERA, WHIP): Z is negated so higher Z = better.
+      - Z capped at +/-3.0 to reduce outlier distortion.
+      - composite_z = mean of all applicable non-None per-category Z-scores.
+      - score_0_100 = percentile rank (0-100) within player_type cohort.
+
+    Hitter categories: z_hr, z_rbi, z_sb, z_avg, z_obp.
+    Pitcher categories: z_era, z_whip, z_k_per_9.
+    Two-way players: all categories (Ohtani-style).
+    """
+
+    __tablename__ = "player_scores"
+
+    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    bdl_player_id   = Column(Integer, nullable=False)
+    as_of_date      = Column(Date, nullable=False)
+    window_days     = Column(Integer, nullable=False)     # 7, 14, or 30
+    player_type     = Column(String(10), nullable=False)  # "hitter" | "pitcher" | "two_way"
+    games_in_window = Column(Integer, nullable=False)
+
+    # Per-category Z-scores (NULL if not applicable or < MIN_SAMPLE)
+    z_hr        = Column(Float, nullable=True)
+    z_rbi       = Column(Float, nullable=True)
+    z_sb        = Column(Float, nullable=True)
+    z_avg       = Column(Float, nullable=True)
+    z_obp       = Column(Float, nullable=True)
+    z_era       = Column(Float, nullable=True)
+    z_whip      = Column(Float, nullable=True)
+    z_k_per_9   = Column(Float, nullable=True)
+
+    composite_z = Column(Float, nullable=False, default=0.0)
+    score_0_100 = Column(Float, nullable=False, default=50.0)
+    confidence  = Column(Float, nullable=False, default=0.0)
+
+    computed_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "bdl_player_id", "as_of_date", "window_days",
+            name="_ps_player_date_window_uc",
+        ),
+        Index("idx_ps_date_window", "as_of_date", "window_days"),
+        Index("idx_ps_player_date", "bdl_player_id", "as_of_date"),
+        Index("idx_ps_score", "as_of_date", "window_days", "score_0_100"),
+    )
