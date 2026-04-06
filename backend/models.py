@@ -1305,3 +1305,99 @@ class PlayerMomentum(Base):
         Index("idx_pm_date_signal", "as_of_date", "signal"),
         Index("idx_pm_player_date", "bdl_player_id", "as_of_date"),
     )
+
+
+class SimulationResult(Base):
+    """
+    P16 Rest-of-Season Monte Carlo simulation results per player per date.
+
+    Computed daily by _run_ros_simulation() (lock 100_021, 6 AM ET).
+    Input: player_rolling_stats (14d window -- current form baseline).
+    Algorithm: N=1000 simulations, CV=0.35 game-to-game variation,
+               remaining_games=130 (mid-April 2026 default).
+
+    Hitter percentiles: proj_hr, proj_rbi, proj_sb, proj_avg (P10/25/50/75/90).
+    Pitcher percentiles: proj_k, proj_era, proj_whip (P10/25/50/75/90).
+    Two-way players: all fields populated (Ohtani-style).
+
+    Risk metrics require league_means/league_stds from player_scores.
+    If player_scores unavailable for the date, risk fields are NULL.
+
+    Natural key: (bdl_player_id, as_of_date) -- one simulation snapshot per player per day.
+    Downstream: P17 lineup/waiver decision engines.
+    """
+
+    __tablename__ = "simulation_results"
+
+    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    bdl_player_id   = Column(Integer, nullable=False)
+    as_of_date      = Column(Date, nullable=False)
+    window_days     = Column(Integer, nullable=False, default=14)
+    remaining_games = Column(Integer, nullable=False)
+    n_simulations   = Column(Integer, nullable=False)
+    player_type     = Column(String(10), nullable=False)
+
+    # Hitter projection percentiles (NULL for pure pitchers)
+    proj_hr_p10  = Column(Float, nullable=True)
+    proj_hr_p25  = Column(Float, nullable=True)
+    proj_hr_p50  = Column(Float, nullable=True)
+    proj_hr_p75  = Column(Float, nullable=True)
+    proj_hr_p90  = Column(Float, nullable=True)
+
+    proj_rbi_p10 = Column(Float, nullable=True)
+    proj_rbi_p25 = Column(Float, nullable=True)
+    proj_rbi_p50 = Column(Float, nullable=True)
+    proj_rbi_p75 = Column(Float, nullable=True)
+    proj_rbi_p90 = Column(Float, nullable=True)
+
+    proj_sb_p10  = Column(Float, nullable=True)
+    proj_sb_p25  = Column(Float, nullable=True)
+    proj_sb_p50  = Column(Float, nullable=True)
+    proj_sb_p75  = Column(Float, nullable=True)
+    proj_sb_p90  = Column(Float, nullable=True)
+
+    proj_avg_p10 = Column(Float, nullable=True)
+    proj_avg_p25 = Column(Float, nullable=True)
+    proj_avg_p50 = Column(Float, nullable=True)
+    proj_avg_p75 = Column(Float, nullable=True)
+    proj_avg_p90 = Column(Float, nullable=True)
+
+    # Pitcher projection percentiles (NULL for pure hitters)
+    proj_k_p10   = Column(Float, nullable=True)
+    proj_k_p25   = Column(Float, nullable=True)
+    proj_k_p50   = Column(Float, nullable=True)
+    proj_k_p75   = Column(Float, nullable=True)
+    proj_k_p90   = Column(Float, nullable=True)
+
+    proj_era_p10  = Column(Float, nullable=True)
+    proj_era_p25  = Column(Float, nullable=True)
+    proj_era_p50  = Column(Float, nullable=True)
+    proj_era_p75  = Column(Float, nullable=True)
+    proj_era_p90  = Column(Float, nullable=True)
+
+    proj_whip_p10 = Column(Float, nullable=True)
+    proj_whip_p25 = Column(Float, nullable=True)
+    proj_whip_p50 = Column(Float, nullable=True)
+    proj_whip_p75 = Column(Float, nullable=True)
+    proj_whip_p90 = Column(Float, nullable=True)
+
+    # Risk metrics (NULL when league_means/stds unavailable for the date)
+    composite_variance  = Column(Float, nullable=True)
+    downside_p25        = Column(Float, nullable=True)
+    upside_p75          = Column(Float, nullable=True)
+    prob_above_median   = Column(Float, nullable=True)
+
+    computed_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "bdl_player_id", "as_of_date",
+            name="_sr_player_date_uc",
+        ),
+        Index("idx_sr_date", "as_of_date"),
+        Index("idx_sr_player_date", "bdl_player_id", "as_of_date"),
+    )

@@ -91,7 +91,8 @@
       "Bash(venv/Scripts/python:*)",
       "Bash(DATABASE_URL=postgresql://x venv/Scripts/python:*)",
       "Bash(DATABASE_URL=postgresql://placeholder venv/Scripts/python scripts/migrate_v16_player_rolling_stats.py --dry-run)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(venv/Scripts/flake8 backend/ --select=F --extend-ignore=F401 --count)"
     ]
   }
 }

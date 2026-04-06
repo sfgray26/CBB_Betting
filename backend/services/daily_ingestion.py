@@ -40,8 +40,10 @@ from backend.models import (
     PlayerRollingStats,
     PlayerScore,
     PlayerMomentum,
+    SimulationResult as SimulationResultORM,
     engine,
 )
+from backend.services.simulation_engine import simulate_all_players, REMAINING_GAMES_DEFAULT
 from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
 from backend.utils.time_utils import now_et, today_et
 
@@ -80,6 +82,7 @@ LOCK_IDS = {
     "rolling_windows":      100_018,
     "player_scores":        100_019,
     "player_momentum":      100_020,
+    "ros_simulation":       100_021,
 }
 
 
@@ -313,6 +316,16 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # RoS Monte Carlo simulation: daily 6 AM ET (after player_momentum at 5 AM)
+        # Runs 1000-sim ROS projection per player from 14d rolling window.
+        self._scheduler.add_job(
+            self._run_ros_simulation,
+            CronTrigger(hour=6, minute=0, timezone=tz),
+            id="ros_simulation",
+            name="RoS Monte Carlo Simulation",
+            replace_existing=True,
+        )
+
         # MLB odds polling: every 5 min, restricted to 10 AM - 11 PM ET
         self._scheduler.add_job(
             self._poll_mlb_odds,
@@ -408,7 +421,7 @@ class DailyIngestionOrchestrator:
 
         # Initialise status dict so get_status() never returns missing keys
         _all_job_ids = ["mlb_game_log", "mlb_box_stats", "rolling_windows", "player_scores",
-                        "player_momentum",
+                        "player_momentum", "ros_simulation",
                         "mlb_odds", "statcast",
                         "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
                         "ensemble_update", "projection_freshness"]
@@ -1402,6 +1415,197 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["player_momentum"], _run)
+
+    async def _run_ros_simulation(self) -> dict:
+        """
+        Daily Rest-of-Season Monte Carlo simulation (lock 100_021, 6 AM ET).
+
+        Runs after _compute_player_momentum (5 AM) so momentum layer is current.
+
+        Algorithm:
+          1. Query player_rolling_stats WHERE as_of_date = yesterday AND window_days = 14
+          2. simulate_all_players(rows, remaining_games=REMAINING_GAMES_DEFAULT)
+             -> list[SimulationResult dataclass]
+          3. Upsert each result to simulation_results ON CONFLICT (_sr_player_date_uc)
+          4. WARN if 0 players simulated (off-day or rolling_windows pipeline missing)
+          5. Return {"as_of_date": str(yesterday), "players_simulated": n}
+
+        ADR-004: Never import betting_model or analysis here.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            now = datetime.now(ZoneInfo("America/New_York"))
+
+            db = SessionLocal()
+            try:
+                # Step 1: fetch 14d rolling window rows
+                try:
+                    rolling_rows = (
+                        db.query(PlayerRollingStats)
+                        .filter(
+                            PlayerRollingStats.as_of_date == as_of_date,
+                            PlayerRollingStats.window_days == 14,
+                        )
+                        .all()
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "ros_simulation: DB query failed for as_of_date=%s: %s",
+                        as_of_date, exc,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("ros_simulation", "failed")
+                    return {"status": "failed", "players_simulated": 0, "elapsed_ms": elapsed}
+
+                # Step 2: run simulations (CPU-bound -- offload to thread pool)
+                sim_results = await asyncio.to_thread(
+                    simulate_all_players,
+                    rolling_rows,
+                    REMAINING_GAMES_DEFAULT,
+                    1000,
+                )
+
+                if not sim_results:
+                    logger.warning(
+                        "ros_simulation: 0 players simulated for as_of_date=%s -- "
+                        "off-day or rolling_windows pipeline missing",
+                        as_of_date,
+                    )
+
+                # Step 3: upsert results
+                try:
+                    for res in sim_results:
+                        stmt = pg_insert(SimulationResultORM.__table__).values(
+                            bdl_player_id=res.bdl_player_id,
+                            as_of_date=res.as_of_date,
+                            window_days=res.window_days,
+                            remaining_games=res.remaining_games,
+                            n_simulations=res.n_simulations,
+                            player_type=res.player_type,
+                            proj_hr_p10=res.proj_hr_p10,
+                            proj_hr_p25=res.proj_hr_p25,
+                            proj_hr_p50=res.proj_hr_p50,
+                            proj_hr_p75=res.proj_hr_p75,
+                            proj_hr_p90=res.proj_hr_p90,
+                            proj_rbi_p10=res.proj_rbi_p10,
+                            proj_rbi_p25=res.proj_rbi_p25,
+                            proj_rbi_p50=res.proj_rbi_p50,
+                            proj_rbi_p75=res.proj_rbi_p75,
+                            proj_rbi_p90=res.proj_rbi_p90,
+                            proj_sb_p10=res.proj_sb_p10,
+                            proj_sb_p25=res.proj_sb_p25,
+                            proj_sb_p50=res.proj_sb_p50,
+                            proj_sb_p75=res.proj_sb_p75,
+                            proj_sb_p90=res.proj_sb_p90,
+                            proj_avg_p10=res.proj_avg_p10,
+                            proj_avg_p25=res.proj_avg_p25,
+                            proj_avg_p50=res.proj_avg_p50,
+                            proj_avg_p75=res.proj_avg_p75,
+                            proj_avg_p90=res.proj_avg_p90,
+                            proj_k_p10=res.proj_k_p10,
+                            proj_k_p25=res.proj_k_p25,
+                            proj_k_p50=res.proj_k_p50,
+                            proj_k_p75=res.proj_k_p75,
+                            proj_k_p90=res.proj_k_p90,
+                            proj_era_p10=res.proj_era_p10,
+                            proj_era_p25=res.proj_era_p25,
+                            proj_era_p50=res.proj_era_p50,
+                            proj_era_p75=res.proj_era_p75,
+                            proj_era_p90=res.proj_era_p90,
+                            proj_whip_p10=res.proj_whip_p10,
+                            proj_whip_p25=res.proj_whip_p25,
+                            proj_whip_p50=res.proj_whip_p50,
+                            proj_whip_p75=res.proj_whip_p75,
+                            proj_whip_p90=res.proj_whip_p90,
+                            composite_variance=res.composite_variance,
+                            downside_p25=res.downside_p25,
+                            upside_p75=res.upside_p75,
+                            prob_above_median=res.prob_above_median,
+                            computed_at=now,
+                        ).on_conflict_do_update(
+                            constraint="_sr_player_date_uc",
+                            set_=dict(
+                                window_days=res.window_days,
+                                remaining_games=res.remaining_games,
+                                n_simulations=res.n_simulations,
+                                player_type=res.player_type,
+                                proj_hr_p10=res.proj_hr_p10,
+                                proj_hr_p25=res.proj_hr_p25,
+                                proj_hr_p50=res.proj_hr_p50,
+                                proj_hr_p75=res.proj_hr_p75,
+                                proj_hr_p90=res.proj_hr_p90,
+                                proj_rbi_p10=res.proj_rbi_p10,
+                                proj_rbi_p25=res.proj_rbi_p25,
+                                proj_rbi_p50=res.proj_rbi_p50,
+                                proj_rbi_p75=res.proj_rbi_p75,
+                                proj_rbi_p90=res.proj_rbi_p90,
+                                proj_sb_p10=res.proj_sb_p10,
+                                proj_sb_p25=res.proj_sb_p25,
+                                proj_sb_p50=res.proj_sb_p50,
+                                proj_sb_p75=res.proj_sb_p75,
+                                proj_sb_p90=res.proj_sb_p90,
+                                proj_avg_p10=res.proj_avg_p10,
+                                proj_avg_p25=res.proj_avg_p25,
+                                proj_avg_p50=res.proj_avg_p50,
+                                proj_avg_p75=res.proj_avg_p75,
+                                proj_avg_p90=res.proj_avg_p90,
+                                proj_k_p10=res.proj_k_p10,
+                                proj_k_p25=res.proj_k_p25,
+                                proj_k_p50=res.proj_k_p50,
+                                proj_k_p75=res.proj_k_p75,
+                                proj_k_p90=res.proj_k_p90,
+                                proj_era_p10=res.proj_era_p10,
+                                proj_era_p25=res.proj_era_p25,
+                                proj_era_p50=res.proj_era_p50,
+                                proj_era_p75=res.proj_era_p75,
+                                proj_era_p90=res.proj_era_p90,
+                                proj_whip_p10=res.proj_whip_p10,
+                                proj_whip_p25=res.proj_whip_p25,
+                                proj_whip_p50=res.proj_whip_p50,
+                                proj_whip_p75=res.proj_whip_p75,
+                                proj_whip_p90=res.proj_whip_p90,
+                                composite_variance=res.composite_variance,
+                                downside_p25=res.downside_p25,
+                                upside_p75=res.upside_p75,
+                                prob_above_median=res.prob_above_median,
+                                computed_at=now,
+                            ),
+                        )
+                        db.execute(stmt)
+
+                    db.commit()
+                except Exception as exc:
+                    db.rollback()
+                    logger.error(
+                        "ros_simulation: DB write failed for as_of_date=%s: %s",
+                        as_of_date, exc,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("ros_simulation", "failed")
+                    return {"status": "failed", "players_simulated": 0, "elapsed_ms": elapsed}
+
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            n = len(sim_results)
+            self._record_job_run("ros_simulation", "success", n)
+            logger.info(
+                "ros_simulation: %d players simulated for as_of_date=%s "
+                "remaining_games=%d elapsed_ms=%d",
+                n, as_of_date, REMAINING_GAMES_DEFAULT, elapsed,
+            )
+            return {
+                "status": "success",
+                "as_of_date": str(as_of_date),
+                "players_simulated": n,
+                "remaining_games": REMAINING_GAMES_DEFAULT,
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["ros_simulation"], _run)
 
     async def _update_statcast(self) -> dict:
         """Daily Statcast enrichment — fetches yesterday's data and runs Bayesian projection updates."""      
