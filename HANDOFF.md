@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Master Plan (In-Season 2026)
 
-> **Date:** April 6, 2026 (updated Session S20) | **Author:** Claude Code (Master Architect)
-> **Risk Level:** LOW-MODERATE — P1-P12 certified. Fantasy-App live. Phase 2 complete. Next: Gemini deploy migrate_v15, then P13 (rolling windows).
+> **Date:** April 6, 2026 (updated Session S21) | **Author:** Claude Code (Master Architect)
+> **Risk Level:** LOW-MODERATE — P1-P13 certified. Phase 2 complete, Phase 3 rolling windows built. Next: Gemini deploy migrate_v16, then P14 (Z-score scoring engine).
 
 ---
 
@@ -38,9 +38,9 @@ This is the north star. Every session's work maps to one of these phases. Never 
 | Phase | Goal | Status |
 |-------|------|--------|
 | **1 — Layered Architecture** | Separate side effects (bottom) from pure functions (top). Contracts before plumbing. | ✅ DONE — layer model established, Pydantic contracts in place |
-| **2 — Data Foundation** | Ingest every game + stat + player. Normalize. Resolve IDs. Never compute from raw API. Build as standalone microservice: idempotent, raw+normalized dual-write, schema drift detection, anomaly detection. | ✅ DONE — Phase 2 complete (S20). Game logs + odds snapshots + player box stats + identity resolution all built. Pending: Gemini deploy migrate_v15. |
-| **3 — Derived Stats** | 30/14/7-day rolling windows. Exponential decay λ=0.95. Per-game aggregation. Hitter + pitcher parity. | ⏳ BLOCKED on migrate_v15 deploy |
-| **4 — Scoring Engine** | League Z-scores + position Z-scores. Z_adj = 0.7·Z_league + 0.3·Z_position. Confidence regression. 0–100 output. | ⏳ BLOCKED on Phase 3 |
+| **2 — Data Foundation** | Ingest every game + stat + player. Normalize. Resolve IDs. Never compute from raw API. Build as standalone microservice: idempotent, raw+normalized dual-write, schema drift detection, anomaly detection. | ✅ DONE — Phase 2 complete (S20). All tables live and verified in production. |
+| **3 — Derived Stats** | 30/14/7-day rolling windows. Exponential decay λ=0.95. Per-game aggregation. Hitter + pitcher parity. | ✅ DONE — `rolling_window_engine.py` built, `player_rolling_stats` schema ready. Pending: Gemini deploy migrate_v16. |
+| **4 — Scoring Engine** | League Z-scores + position Z-scores. Z_adj = 0.7·Z_league + 0.3·Z_position. Confidence regression. 0–100 output. | ⏳ BLOCKED on migrate_v16 deploy |
 | **5 — Momentum Layer** | ΔZ = Z_14d − Z_30d. Signals: Surging / Hot / Cold / Collapsing / Breakout / Collapse. | ⏳ BLOCKED on Phase 4 |
 | **6 — Probabilistic Layer** | 1000-run ROS Monte Carlo. Percentiles (P10/25/50/75/90). Risk metrics. P(top-10/25/50). | ⏳ BLOCKED on Phase 5 |
 | **7 — Decision Engines** | Lineup optimizer, waiver optimizer, trade evaluator. World-with vs world-without sim. | **HARD EMBARGO** — do not touch |
@@ -182,8 +182,53 @@ Tests: `tests/test_mlb_player_stats_contract.py` — 7/7 pass.
 - Persists successful lookups (`source='pybaseball'`, `resolution_confidence=1.0`)
 Tests: `tests/test_player_id_resolver.py` — 7/7 pass.
 
-### P13 — Derived stats: rolling windows + decay [Phase 3]
-30/14/7-day rolling windows per player. Exponential decay λ=0.95. Per-game aggregation. Hitters and pitchers. Blueprint: Phase 3. **Do not start until P11 (player stats DB) + P12 (identity resolution) are complete.**
+### P13 — Derived stats: rolling windows + decay ✅ COMPLETE (S21)
+
+`backend/services/rolling_window_engine.py` — pure computation: `parse_ip()`, `RollingWindowResult`, `compute_rolling_window()`, `compute_all_rolling_windows()`.
+`backend/models.py` — `PlayerRollingStats` ORM. Natural key `(bdl_player_id, as_of_date, window_days)`.
+`scripts/migrate_v16_player_rolling_stats.py` — dry-run verified.
+`backend/services/daily_ingestion.py` — `_compute_rolling_windows()` lock 100_018, 3 AM ET.
+Tests: `tests/test_rolling_window_engine.py` — 23/23 pass. 1377/1381 full suite.
+
+Critical correctness: `parse_ip("6.2")` → 6.667 (BDL ".2" = 2 outs = 2/3 inning, NOT 0.2).
+Window boundary: `0 <= days_back < window_days` (7d window = today-6 through today).
+
+**Pending: Gemini deploy migrate_v16 to both services.**
+
+### P14 — Scoring engine: Z-scores + confidence [Phase 4]
+League Z-scores + position Z-scores. Z_adj = 0.7·Z_league + 0.3·Z_position. Confidence regression. 0–100 output. Blueprint: Phase 4. **Do not start until migrate_v16 is deployed and player_rolling_stats is live.**
+
+---
+
+### Gemini CLI — P13 Deploy: migrate_v16 (S21) ← NEXT GEMINI TASK
+
+**Context:** Session S21 built `player_rolling_stats` schema (P13). Deploy to both services before Claude begins P14.
+
+**Task 1 — Deploy migrate_v16 to both services:**
+
+```bash
+railway run python scripts/migrate_v16_player_rolling_stats.py
+railway run --service fantasy-app python scripts/migrate_v16_player_rolling_stats.py
+```
+
+Expected: `SUCCESS: player_rolling_stats created`.
+
+**Task 2 — Verify table live + job registered:**
+
+```bash
+railway run python -c "
+from backend.models import SessionLocal
+from sqlalchemy import text
+db = SessionLocal()
+exists = db.execute(text(\"SELECT COUNT(*) FROM information_schema.tables WHERE table_name='player_rolling_stats'\")).scalar()
+print('player_rolling_stats exists:', exists == 1)
+db.close()
+"
+
+railway run python -c "from backend.services.daily_ingestion import DailyIngestionOrchestrator; print(DailyIngestionOrchestrator.LOCK_IDS)"
+```
+
+Expected: `rolling_windows: 100018` in LOCK_IDS output. Report back.
 
 ---
 
@@ -242,6 +287,16 @@ Report back row counts and any errors.
 ---
 
 ## Session History (Recent)
+
+### S21 — P13 Complete (Apr 6)
+
+**P13:** `rolling_window_engine.py` — `parse_ip()`, `RollingWindowResult`, `compute_rolling_window()`, `compute_all_rolling_windows()`. Exponential decay λ=0.95 per day. 7/14/30-day windows. Hitter + pitcher rate derivation from weighted sums. `parse_ip("6.2")=6.667` correctness enforced.
+**Schema:** `player_rolling_stats` ORM + `migrate_v16`.
+**Job:** `_compute_rolling_windows()` lock 100_018, 3 AM ET.
+**Suite:** 1377/1381 pass (26 new tests, 4 pre-existing failures unchanged).
+**Next:** Gemini deploy migrate_v16 → P14 Z-score scoring engine.
+
+---
 
 ### S20 — P11 + P12 Complete (Apr 6)
 

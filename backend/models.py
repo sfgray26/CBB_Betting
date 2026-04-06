@@ -1127,3 +1127,75 @@ class PlayerIDMapping(Base):
         Index("idx_pim_normalized",  "normalized_name"),
         Index("idx_pim_yahoo_id",    "yahoo_id"),
     )
+
+
+class PlayerRollingStats(Base):
+    """
+    Decay-weighted rolling window metrics per player per date per window size (P13).
+
+    Computed daily by _compute_rolling_windows() (lock 100_018, 3 AM ET).
+    Exponential decay: weight = 0.95 ** days_back.
+    Window sizes: 7, 14, 30 days.
+
+    Batting fields are NULL for pure pitchers (no at-bats in window).
+    Pitching fields are NULL for pure hitters (no innings pitched in window).
+    Two-way players (e.g. Ohtani) have both batting and pitching fields populated.
+
+    w_ip stores decimal innings (e.g. 6.667 for "6.2" BDL notation), not the raw string.
+    Derived rates (w_avg, w_era, etc.) are recomputed from weighted sums -- not stored
+    from the per-game rate stats which have no decay weighting.
+
+    Natural key: (bdl_player_id, as_of_date, window_days).
+    """
+
+    __tablename__ = "player_rolling_stats"
+
+    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    bdl_player_id   = Column(Integer, nullable=False)
+    as_of_date      = Column(Date, nullable=False)
+    window_days     = Column(Integer, nullable=False)    # 7, 14, or 30
+    games_in_window = Column(Integer, nullable=False)
+
+    # Batting weighted sums
+    w_ab            = Column(Float, nullable=True)
+    w_hits          = Column(Float, nullable=True)
+    w_doubles       = Column(Float, nullable=True)
+    w_triples       = Column(Float, nullable=True)
+    w_home_runs     = Column(Float, nullable=True)
+    w_rbi           = Column(Float, nullable=True)
+    w_walks         = Column(Float, nullable=True)
+    w_strikeouts_bat = Column(Float, nullable=True)
+    w_stolen_bases  = Column(Float, nullable=True)
+
+    # Batting derived rates (computed from weighted sums)
+    w_avg           = Column(Float, nullable=True)   # w_hits / w_ab
+    w_obp           = Column(Float, nullable=True)   # (w_hits + w_walks) / (w_ab + w_walks)
+    w_slg           = Column(Float, nullable=True)   # weighted TB / w_ab
+    w_ops           = Column(Float, nullable=True)   # w_obp + w_slg
+
+    # Pitching weighted sums
+    w_ip            = Column(Float, nullable=True)   # decimal IP (not "6.2" string)
+    w_earned_runs   = Column(Float, nullable=True)
+    w_hits_allowed  = Column(Float, nullable=True)
+    w_walks_allowed = Column(Float, nullable=True)
+    w_strikeouts_pit = Column(Float, nullable=True)
+
+    # Pitching derived rates
+    w_era           = Column(Float, nullable=True)   # 9 * w_earned_runs / w_ip
+    w_whip          = Column(Float, nullable=True)   # (w_hits_allowed + w_walks_allowed) / w_ip
+    w_k_per_9       = Column(Float, nullable=True)   # 9 * w_strikeouts_pit / w_ip
+
+    computed_at     = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "bdl_player_id", "as_of_date", "window_days",
+            name="_prs_player_date_window_uc",
+        ),
+        Index("idx_prs_player_date", "bdl_player_id", "as_of_date"),
+        Index("idx_prs_date_window", "as_of_date", "window_days"),
+    )

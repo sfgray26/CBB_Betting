@@ -37,6 +37,7 @@ from backend.models import (
     MLBGameLog,
     MLBOddsSnapshot,
     MLBPlayerStats,
+    PlayerRollingStats,
     engine,
 )
 from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
@@ -74,6 +75,7 @@ LOCK_IDS = {
     "projection_freshness": 100_015,
     "mlb_game_log":         100_016,
     "mlb_box_stats":        100_017,
+    "rolling_windows":      100_018,
 }
 
 
@@ -277,6 +279,16 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Rolling window computation: daily 3 AM ET (after box stats at 2 AM)
+        # Computes 7/14/30-day decay-weighted windows per player. Runs before Z-score calc (4 AM).
+        self._scheduler.add_job(
+            self._compute_rolling_windows,
+            CronTrigger(hour=3, minute=0, timezone=tz),
+            id="rolling_windows",
+            name="Player Rolling Window Computation",
+            replace_existing=True,
+        )
+
         # MLB odds polling: every 5 min, restricted to 10 AM - 11 PM ET
         self._scheduler.add_job(
             self._poll_mlb_odds,
@@ -371,9 +383,9 @@ class DailyIngestionOrchestrator:
         )
 
         # Initialise status dict so get_status() never returns missing keys
-        _all_job_ids = ["mlb_game_log", "mlb_box_stats", "mlb_odds", "statcast", "rolling_z",
-                        "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury", "ensemble_update",
-                        "projection_freshness"]
+        _all_job_ids = ["mlb_game_log", "mlb_box_stats", "rolling_windows", "mlb_odds", "statcast",
+                        "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
+                        "ensemble_update", "projection_freshness"]
         if _fantasy_leagues:
             _all_job_ids.append("valuation_cache")
         for job_id in _all_job_ids:
@@ -918,6 +930,162 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["mlb_box_stats"], _run)
+
+    async def _compute_rolling_windows(self) -> dict:
+        """
+        Daily rolling window computation (lock 100_018, 3 AM ET).
+
+        Runs after _ingest_mlb_box_stats (2 AM) so today's box stats are present.
+
+        Algorithm:
+          1. Query all mlb_player_stats rows for the past 30 days (max window)
+          2. Compute 7/14/30-day decay-weighted windows for every player with data
+          3. Upsert to player_rolling_stats on (bdl_player_id, as_of_date, window_days)
+
+        Anomaly: logs WARNING if 0 players processed (likely off-day or box stats missing).
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.services.rolling_window_engine import compute_all_rolling_windows
+
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            lookback_start = as_of_date - timedelta(days=30)
+
+            db = SessionLocal()
+            try:
+                rows = (
+                    db.query(MLBPlayerStats)
+                    .filter(
+                        MLBPlayerStats.game_date >= lookback_start,
+                        MLBPlayerStats.game_date <= as_of_date,
+                    )
+                    .all()
+                )
+            except Exception as exc:
+                db.close()
+                logger.error("rolling_windows: DB query failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("rolling_windows", "failed")
+                return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+
+            if not rows:
+                logger.warning(
+                    "rolling_windows: 0 stat rows found for window %s..%s -- off-day or box stats missing",
+                    lookback_start, as_of_date,
+                )
+                db.close()
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("rolling_windows", "success", 0)
+                return {
+                    "status": "success",
+                    "as_of_date": str(as_of_date),
+                    "players_processed": 0,
+                    "rows_upserted": 0,
+                    "elapsed_ms": elapsed,
+                }
+
+            results = compute_all_rolling_windows(
+                rows,
+                as_of_date=as_of_date,
+                window_sizes=[7, 14, 30],
+            )
+
+            players_processed = len({r.bdl_player_id for r in results})
+
+            if players_processed == 0:
+                logger.warning(
+                    "rolling_windows: compute_all_rolling_windows returned 0 results for as_of_date=%s",
+                    as_of_date,
+                )
+
+            now = datetime.now(ZoneInfo("America/New_York"))
+            rows_upserted = 0
+            try:
+                for res in results:
+                    stmt = pg_insert(PlayerRollingStats.__table__).values(
+                        bdl_player_id=res.bdl_player_id,
+                        as_of_date=res.as_of_date,
+                        window_days=res.window_days,
+                        games_in_window=res.games_in_window,
+                        w_ab=res.w_ab,
+                        w_hits=res.w_hits,
+                        w_doubles=res.w_doubles,
+                        w_triples=res.w_triples,
+                        w_home_runs=res.w_home_runs,
+                        w_rbi=res.w_rbi,
+                        w_walks=res.w_walks,
+                        w_strikeouts_bat=res.w_strikeouts_bat,
+                        w_stolen_bases=res.w_stolen_bases,
+                        w_avg=res.w_avg,
+                        w_obp=res.w_obp,
+                        w_slg=res.w_slg,
+                        w_ops=res.w_ops,
+                        w_ip=res.w_ip,
+                        w_earned_runs=res.w_earned_runs,
+                        w_hits_allowed=res.w_hits_allowed,
+                        w_walks_allowed=res.w_walks_allowed,
+                        w_strikeouts_pit=res.w_strikeouts_pit,
+                        w_era=res.w_era,
+                        w_whip=res.w_whip,
+                        w_k_per_9=res.w_k_per_9,
+                        computed_at=now,
+                    ).on_conflict_do_update(
+                        constraint="_prs_player_date_window_uc",
+                        set_=dict(
+                            games_in_window=res.games_in_window,
+                            w_ab=res.w_ab,
+                            w_hits=res.w_hits,
+                            w_doubles=res.w_doubles,
+                            w_triples=res.w_triples,
+                            w_home_runs=res.w_home_runs,
+                            w_rbi=res.w_rbi,
+                            w_walks=res.w_walks,
+                            w_strikeouts_bat=res.w_strikeouts_bat,
+                            w_stolen_bases=res.w_stolen_bases,
+                            w_avg=res.w_avg,
+                            w_obp=res.w_obp,
+                            w_slg=res.w_slg,
+                            w_ops=res.w_ops,
+                            w_ip=res.w_ip,
+                            w_earned_runs=res.w_earned_runs,
+                            w_hits_allowed=res.w_hits_allowed,
+                            w_walks_allowed=res.w_walks_allowed,
+                            w_strikeouts_pit=res.w_strikeouts_pit,
+                            w_era=res.w_era,
+                            w_whip=res.w_whip,
+                            w_k_per_9=res.w_k_per_9,
+                            computed_at=now,
+                        ),
+                    )
+                    db.execute(stmt)
+                    rows_upserted += 1
+
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                logger.error("rolling_windows: DB write failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("rolling_windows", "failed")
+                return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.info(
+                "rolling_windows: %d rows upserted for %d players, as_of_date=%s in %dms",
+                rows_upserted, players_processed, as_of_date, elapsed,
+            )
+            self._record_job_run("rolling_windows", "success", rows_upserted)
+            return {
+                "status": "success",
+                "as_of_date": str(as_of_date),
+                "players_processed": players_processed,
+                "rows_upserted": rows_upserted,
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["rolling_windows"], _run)
 
     async def _update_statcast(self) -> dict:
         """Daily Statcast enrichment — fetches yesterday's data and runs Bayesian projection updates."""      
