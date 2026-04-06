@@ -33,6 +33,9 @@ from backend.models import (
     ProjectionSnapshot,
     PlayerValuationCache,
     ProjectionCacheEntry,
+    MLBTeam,
+    MLBGameLog,
+    MLBOddsSnapshot,
     engine,
 )
 from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
@@ -68,6 +71,7 @@ LOCK_IDS = {
     "yahoo_adp_injury": 100_013,
     "ensemble_update": 100_014,
     "projection_freshness": 100_015,
+    "mlb_game_log":         100_016,
 }
 
 
@@ -251,6 +255,16 @@ class DailyIngestionOrchestrator:
         """Register all jobs and start the scheduler. Called once from lifespan()."""
         tz = os.getenv("NIGHTLY_CRON_TIMEZONE", "America/New_York")
 
+        # MLB game log ingestion: daily 1 AM ET
+        # Fetches yesterday (final scores) + today (schedule). Runs before rolling_z (3 AM).
+        self._scheduler.add_job(
+            self._ingest_mlb_game_log,
+            CronTrigger(hour=1, minute=0, timezone=tz),
+            id="mlb_game_log",
+            name="MLB Game Log Ingestion",
+            replace_existing=True,
+        )
+
         # MLB odds polling: every 5 min, restricted to 10 AM - 11 PM ET
         self._scheduler.add_job(
             self._poll_mlb_odds,
@@ -345,7 +359,7 @@ class DailyIngestionOrchestrator:
         )
 
         # Initialise status dict so get_status() never returns missing keys
-        _all_job_ids = ["mlb_odds", "statcast", "rolling_z", "clv", "cleanup",
+        _all_job_ids = ["mlb_game_log", "mlb_odds", "statcast", "rolling_z", "clv", "cleanup",
                         "fangraphs_ros", "yahoo_adp_injury", "ensemble_update",
                         "projection_freshness"]
         if _fantasy_leagues:
@@ -402,50 +416,348 @@ class DailyIngestionOrchestrator:
 
     async def _poll_mlb_odds(self) -> dict:
         """
-        Fetch MLB spread odds from The Odds API and return a count.
-        Does NOT persist to DB (EPIC-3 will consume).
-        Skips outside the MLB season window or when API key is absent.
+        Fetch MLB spread odds via BallDontLie GOAT client (lock 100_001).
+
+        Every poll (every 5 min):
+          1. get_mlb_games(today) -> list[MLBGame]
+          2. For each game: ensure mlb_team + mlb_game_log rows exist (idempotent upsert)
+          3. For each game: get_mlb_odds(game_id) -> list[MLBBettingOdd]
+          4. Upsert each odd into mlb_odds_snapshot on (game_id, vendor, snapshot_window)
+
+        snapshot_window = now_et() rounded DOWN to the 30-min bucket.
+        This makes each poll idempotent — re-running within the same 30-min window
+        updates the row rather than inserting a duplicate.
+
+        All data is Pydantic-validated. Typed attribute access only. No dict.get().
+        raw_payload = odd.model_dump() on every upsert (dual-write).
         """
         t0 = time.monotonic()
 
         async def _run():
-            api_key = os.getenv("THE_ODDS_API_KEY")
-            if not api_key:
-                logger.info("_poll_mlb_odds: THE_ODDS_API_KEY not set, skipping")
+            from backend.services.balldontlie import BallDontLieClient
+            try:
+                bdl = BallDontLieClient()
+            except ValueError as exc:
+                logger.error("_poll_mlb_odds: BDL init failed -- %s", exc)
                 self._record_job_run("mlb_odds", "skipped")
                 return {"status": "skipped", "records": 0, "elapsed_ms": 0}
 
-            url = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
-            params = {
-                "apiKey": api_key,
-                "regions": os.getenv("ODDS_API_REGIONS", "us,eu").strip().replace("=", ""),
-                "markets": "spreads",
-                "oddsFormat": "american",
-            }
+            date_str = today_et().isoformat()
+            games = await asyncio.to_thread(bdl.get_mlb_games, date_str)
+
+            if not games:
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.info("_poll_mlb_odds: 0 games on %s (BDL)", date_str)
+                self._record_job_run("mlb_odds", "success", 0)
+                return {"status": "success", "records": 0, "elapsed_ms": elapsed}
+
+            # snapshot_window: round current time DOWN to 30-min bucket (idempotent key)
+            now = now_et()
+            snapshot_window = now.replace(
+                minute=(now.minute // 30) * 30, second=0, microsecond=0
+            )
+
+            total_odds = 0
+            games_with_odds = 0
+            db = SessionLocal()
             try:
-                resp = requests.get(url, params=params, timeout=10)
-                resp.raise_for_status()
-                games = resp.json()
-                n = len(games) if isinstance(games, list) else 0
-                elapsed = int((time.monotonic() - t0) * 1000)
-                if n == 0:
-                    logger.info(
-                        "_poll_mlb_odds: API returned 0 games — The Odds API typically "
-                        "only publishes lines 1-3 days out; future dates may not have "
-                        "odds yet. This is expected and not an error."
+                for game in games:
+                    # Step 1: ensure dimension + fact rows exist before odds FK write
+                    for team in (game.home_team, game.away_team):
+                        stmt = pg_insert(MLBTeam.__table__).values(
+                            team_id=team.id,
+                            abbreviation=team.abbreviation,
+                            name=team.name,
+                            display_name=team.display_name,
+                            short_name=team.short_display_name,
+                            location=team.location,
+                            slug=team.slug,
+                            league=team.league,
+                            division=team.division,
+                            ingested_at=now,
+                        ).on_conflict_do_update(
+                            index_elements=["team_id"],
+                            set_=dict(
+                                abbreviation=team.abbreviation,
+                                name=team.name,
+                                display_name=team.display_name,
+                                short_name=team.short_display_name,
+                                location=team.location,
+                                slug=team.slug,
+                                league=team.league,
+                                division=team.division,
+                            ),
+                        )
+                        db.execute(stmt)
+
+                    dt_utc = datetime.fromisoformat(game.date.replace("Z", "+00:00"))
+                    game_date_et = dt_utc.astimezone(ZoneInfo("America/New_York")).date()
+                    is_active = game.status in {"STATUS_FINAL", "STATUS_IN_PROGRESS"}
+
+                    game_stmt = pg_insert(MLBGameLog.__table__).values(
+                        game_id=game.id,
+                        game_date=game_date_et,
+                        season=game.season,
+                        season_type=game.season_type,
+                        status=game.status,
+                        home_team_id=game.home_team.id,
+                        away_team_id=game.away_team.id,
+                        home_runs=game.home_team_data.runs if is_active else None,
+                        away_runs=game.away_team_data.runs if is_active else None,
+                        home_hits=game.home_team_data.hits if is_active else None,
+                        away_hits=game.away_team_data.hits if is_active else None,
+                        home_errors=game.home_team_data.errors if is_active else None,
+                        away_errors=game.away_team_data.errors if is_active else None,
+                        venue=game.venue,
+                        attendance=(game.attendance or None) if is_active else None,
+                        period=game.period,
+                        raw_payload=game.model_dump(),
+                        ingested_at=now,
+                        updated_at=now,
+                    ).on_conflict_do_update(
+                        index_elements=["game_id"],
+                        set_=dict(
+                            status=game.status,
+                            home_runs=game.home_team_data.runs if is_active else None,
+                            away_runs=game.away_team_data.runs if is_active else None,
+                            home_hits=game.home_team_data.hits if is_active else None,
+                            away_hits=game.away_team_data.hits if is_active else None,
+                            home_errors=game.home_team_data.errors if is_active else None,
+                            away_errors=game.away_team_data.errors if is_active else None,
+                            attendance=(game.attendance or None) if is_active else None,
+                            period=game.period,
+                            raw_payload=game.model_dump(),
+                            updated_at=now,
+                        ),
                     )
-                    self._record_job_run("mlb_odds", "skipped")
-                    return {"status": "skipped", "records": 0, "elapsed_ms": elapsed}
-                logger.info("_poll_mlb_odds: fetched %d MLB games", n)
-                self._record_job_run("mlb_odds", "success", n)
-                return {"status": "success", "records": n, "elapsed_ms": elapsed}
+                    db.execute(game_stmt)
+
+                    # Step 2: fetch and persist odds
+                    odds = await asyncio.to_thread(bdl.get_mlb_odds, game.id)
+                    if not odds:
+                        continue
+
+                    games_with_odds += 1
+                    for odd in odds:
+                        payload = odd.model_dump()
+                        stmt = pg_insert(MLBOddsSnapshot.__table__).values(
+                            odds_id=odd.id,
+                            game_id=odd.game_id,
+                            vendor=odd.vendor,
+                            snapshot_window=snapshot_window,
+                            spread_home=odd.spread_home_value,
+                            spread_away=odd.spread_away_value,
+                            spread_home_odds=odd.spread_home_odds,
+                            spread_away_odds=odd.spread_away_odds,
+                            ml_home_odds=odd.moneyline_home_odds,
+                            ml_away_odds=odd.moneyline_away_odds,
+                            total=odd.total_value,
+                            total_over_odds=odd.total_over_odds,
+                            total_under_odds=odd.total_under_odds,
+                            raw_payload=payload,
+                        ).on_conflict_do_update(
+                            index_elements=["game_id", "vendor", "snapshot_window"],
+                            set_=dict(
+                                odds_id=odd.id,
+                                spread_home=odd.spread_home_value,
+                                spread_away=odd.spread_away_value,
+                                spread_home_odds=odd.spread_home_odds,
+                                spread_away_odds=odd.spread_away_odds,
+                                ml_home_odds=odd.moneyline_home_odds,
+                                ml_away_odds=odd.moneyline_away_odds,
+                                total=odd.total_value,
+                                total_over_odds=odd.total_over_odds,
+                                total_under_odds=odd.total_under_odds,
+                                raw_payload=payload,
+                            ),
+                        )
+                        db.execute(stmt)
+                        total_odds += 1
+
+                db.commit()
             except Exception as exc:
+                db.rollback()
+                logger.error("_poll_mlb_odds DB write failed: %s", exc)
                 elapsed = int((time.monotonic() - t0) * 1000)
-                logger.error("_poll_mlb_odds error: %s", exc)
                 self._record_job_run("mlb_odds", "failed")
                 return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.info(
+                "_poll_mlb_odds: %d games, %d with odds, %d snapshots in %dms (window=%s)",
+                len(games), games_with_odds, total_odds, elapsed,
+                snapshot_window.strftime("%H:%M"),
+            )
+            self._record_job_run("mlb_odds", "success", total_odds)
+            return {
+                "status": "success",
+                "records": total_odds,
+                "games": len(games),
+                "games_with_odds": games_with_odds,
+                "snapshot_window": snapshot_window.isoformat(),
+                "elapsed_ms": elapsed,
+            }
 
         return await _with_advisory_lock(LOCK_IDS["mlb_odds"], _run)
+
+    async def _ingest_mlb_game_log(self) -> dict:
+        """
+        Daily MLB game-log ingestion (lock 100_016).
+
+        Fetches two dates per run:
+          - yesterday_et(): finalize scores for games that finished overnight
+          - today_et():     seed today's scheduled games
+
+        For each game:
+          1. Upsert mlb_team (home + away) -- dimension before fact, FK dependency
+          2. Upsert mlb_game_log on game_id:
+             - Immutable: game_date, season, team_ids, venue, ingested_at
+             - Updated:   status, scores, attendance, period, raw_payload, updated_at
+
+        Scores (home_runs, away_runs, hits, errors) written only when game has started
+        (STATUS_IN_PROGRESS or STATUS_FINAL). Pre-game rows store NULL for score fields.
+
+        Anomaly check: logs WARNING if BDL returns 0 games for a date.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.services.balldontlie import BallDontLieClient
+            try:
+                bdl = BallDontLieClient()
+            except ValueError as exc:
+                logger.error("mlb_game_log: BDL init failed -- %s", exc)
+                self._record_job_run("mlb_game_log", "skipped")
+                return {"status": "skipped", "records": 0, "elapsed_ms": 0}
+
+            today = today_et()
+            yesterday = today - timedelta(days=1)
+            dates = [yesterday.isoformat(), today.isoformat()]
+
+            total_games = 0
+            db = SessionLocal()
+            try:
+                for date_str in dates:
+                    games = await asyncio.to_thread(bdl.get_mlb_games, date_str)
+
+                    if not games:
+                        logger.warning(
+                            "mlb_game_log: 0 games returned for %s -- off-day or BDL error",
+                            date_str,
+                        )
+                        continue
+
+                    for game in games:
+                        # Step 1: upsert both teams (dimension before fact -- FK dependency)
+                        for team in (game.home_team, game.away_team):
+                            stmt = pg_insert(MLBTeam.__table__).values(
+                                team_id=team.id,
+                                abbreviation=team.abbreviation,
+                                name=team.name,
+                                display_name=team.display_name,
+                                short_name=team.short_display_name,
+                                location=team.location,
+                                slug=team.slug,
+                                league=team.league,
+                                division=team.division,
+                                ingested_at=now_et(),
+                            ).on_conflict_do_update(
+                                index_elements=["team_id"],
+                                set_=dict(
+                                    abbreviation=team.abbreviation,
+                                    name=team.name,
+                                    display_name=team.display_name,
+                                    short_name=team.short_display_name,
+                                    location=team.location,
+                                    slug=team.slug,
+                                    league=team.league,
+                                    division=team.division,
+                                ),
+                            )
+                            db.execute(stmt)
+
+                        # Step 2: convert UTC ISO 8601 game timestamp to ET date
+                        dt_utc = datetime.fromisoformat(game.date.replace("Z", "+00:00"))
+                        game_date_et = dt_utc.astimezone(ZoneInfo("America/New_York")).date()
+
+                        # Scores are meaningful only when game has started
+                        is_active = game.status in {"STATUS_FINAL", "STATUS_IN_PROGRESS"}
+                        home_runs   = game.home_team_data.runs   if is_active else None
+                        away_runs   = game.away_team_data.runs   if is_active else None
+                        home_hits   = game.home_team_data.hits   if is_active else None
+                        away_hits   = game.away_team_data.hits   if is_active else None
+                        home_errors = game.home_team_data.errors if is_active else None
+                        away_errors = game.away_team_data.errors if is_active else None
+                        attendance  = (game.attendance or None)  if is_active else None
+
+                        # Step 3: upsert game log -- idempotent on game_id
+                        now = now_et()
+                        payload = game.model_dump()
+                        stmt = pg_insert(MLBGameLog.__table__).values(
+                            game_id=game.id,
+                            game_date=game_date_et,
+                            season=game.season,
+                            season_type=game.season_type,
+                            status=game.status,
+                            home_team_id=game.home_team.id,
+                            away_team_id=game.away_team.id,
+                            home_runs=home_runs,
+                            away_runs=away_runs,
+                            home_hits=home_hits,
+                            away_hits=away_hits,
+                            home_errors=home_errors,
+                            away_errors=away_errors,
+                            venue=game.venue,
+                            attendance=attendance,
+                            period=game.period,
+                            raw_payload=payload,
+                            ingested_at=now,
+                            updated_at=now,
+                        ).on_conflict_do_update(
+                            index_elements=["game_id"],
+                            set_=dict(
+                                status=game.status,
+                                home_runs=home_runs,
+                                away_runs=away_runs,
+                                home_hits=home_hits,
+                                away_hits=away_hits,
+                                home_errors=home_errors,
+                                away_errors=away_errors,
+                                attendance=attendance,
+                                period=game.period,
+                                raw_payload=payload,
+                                updated_at=now,
+                            ),
+                        )
+                        db.execute(stmt)
+                        total_games += 1
+
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                logger.error("mlb_game_log DB write failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("mlb_game_log", "failed")
+                return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.info(
+                "mlb_game_log: %d games upserted across %s in %dms",
+                total_games, dates, elapsed,
+            )
+            self._record_job_run("mlb_game_log", "success", total_games)
+            return {
+                "status": "success",
+                "records": total_games,
+                "dates": dates,
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["mlb_game_log"], _run)
 
     async def _update_statcast(self) -> dict:
         """Daily Statcast enrichment — fetches yesterday's data and runs Bayesian projection updates."""      
@@ -663,6 +975,7 @@ class DailyIngestionOrchestrator:
             from backend.fantasy_baseball.yahoo_client_resilient import (
                 YahooFantasyClient, YahooAuthError, YahooAPIError,
             )
+            from backend.services.yahoo_ingestion import get_validated_adp_feed
             try:
                 client = YahooFantasyClient()
             except YahooAuthError as exc:
@@ -671,7 +984,7 @@ class DailyIngestionOrchestrator:
                 return {"status": "failed", "records": 0}
 
             try:
-                players = client.get_adp_and_injury_feed(pages=4, count_per_page=25)
+                players = get_validated_adp_feed(client)
             except (YahooAuthError, YahooAPIError) as exc:
                 logger.error("yahoo_adp_injury: API error — %s", exc)
                 self._record_job_run("yahoo_adp_injury", "failed")
@@ -688,20 +1001,13 @@ class DailyIngestionOrchestrator:
             injury_flags = 0
             try:
                 for p in players:
-                    pid = p.get("player_key") or ""
-                    if not pid:
-                        continue
-                    status_val = p.get("status") or None
-                    injury_note = p.get("injury_note") or None
-                    owned_pct = p.get("percent_owned", 0.0) or 0.0
-
-                    if injury_note:
+                    if p.is_injured:
                         injury_flags += 1
 
                     existing = (
                         db.query(PlayerDailyMetric)
                         .filter(
-                            PlayerDailyMetric.player_id == pid,
+                            PlayerDailyMetric.player_id == p.player_key,
                             PlayerDailyMetric.metric_date == today,
                             PlayerDailyMetric.sport == "mlb",
                         )
@@ -711,21 +1017,21 @@ class DailyIngestionOrchestrator:
                         # Patch injury / ownership fields on existing row
                         existing.rolling_window = {
                             **(existing.rolling_window or {}),
-                            "status": status_val,
-                            "injury_note": injury_note,
-                            "percent_owned": owned_pct,
+                            "status": p.status,
+                            "injury_note": p.injury_note,
+                            "percent_owned": p.percent_owned,
                             "adp_updated_at": datetime.now(ZoneInfo("America/New_York")).isoformat(),
                         }
                     else:
                         db.add(PlayerDailyMetric(
-                            player_id=pid,
-                            player_name=p.get("name", pid),
+                            player_id=p.player_key,
+                            player_name=p.name,
                             metric_date=today,
                             sport="mlb",
                             rolling_window={
-                                "status": status_val,
-                                "injury_note": injury_note,
-                                "percent_owned": owned_pct,
+                                "status": p.status,
+                                "injury_note": p.injury_note,
+                                "percent_owned": p.percent_owned,
                                 "adp_updated_at": datetime.now(ZoneInfo("America/New_York")).isoformat(),
                             },
                             data_source="yahoo_adp_injury",

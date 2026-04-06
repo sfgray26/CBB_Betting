@@ -7,6 +7,7 @@ from sqlalchemy import (
     create_engine,
     Column,
     Integer,
+    BigInteger,
     String,
     Float,
     DateTime,
@@ -16,6 +17,7 @@ from sqlalchemy import (
     ForeignKey,
     Date,
     UniqueConstraint,
+    Index,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -886,7 +888,124 @@ class UserPreferences(Base):
         "hide_injured": True,
         "streamer_threshold": 0.3,  # z-score threshold for streamer suggestions
     })
-    
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# MLB Phase 2 — Game Log Ingestion (P7)
+# Three-table schema: dimension (mlb_team) -> fact (mlb_game_log) -> snapshot (mlb_odds_snapshot)
+# All tables use natural-key upserts (idempotent), dual-write raw_payload JSONB.
+# ---------------------------------------------------------------------------
+
+class MLBTeam(Base):
+    """
+    MLB team dimension table. Seeded from MLBTeam objects embedded in every
+    BDL game response. Upserted on team_id before mlb_game_log writes.
+
+    Contract source: backend/data_contracts/mlb_team.py
+    All fields observed non-null across 19-game live sample (2026-04-05).
+    """
+
+    __tablename__ = "mlb_team"
+
+    team_id      = Column(Integer, primary_key=True)          # BDL MLBTeam.id
+    abbreviation = Column(String(10), nullable=False)         # "LAA", "NYY"
+    name         = Column(String(100), nullable=False)        # "Angels"
+    display_name = Column(String(150), nullable=False)        # "Los Angeles Angels"
+    short_name   = Column(String(50), nullable=False)         # "Angels"
+    location     = Column(String(100), nullable=False)        # "Los Angeles"
+    slug         = Column(String(50), nullable=False)         # "los-angeles-angels"
+    league       = Column(String(10), nullable=False)         # "National" | "American"
+    division     = Column(String(10), nullable=False)         # "East" | "Central" | "West"
+    ingested_at  = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    # Relationships
+    home_games = relationship("MLBGameLog", foreign_keys="MLBGameLog.home_team_id", back_populates="home_team_obj")
+    away_games = relationship("MLBGameLog", foreign_keys="MLBGameLog.away_team_id", back_populates="away_team_obj")
+
+
+class MLBGameLog(Base):
+    """
+    MLB game fact table. One row per game (BDL game_id is stable and unique).
+    Upserted on game_id -- status/scores updated as game progresses through
+    STATUS_SCHEDULED -> STATUS_IN_PROGRESS -> STATUS_FINAL.
+
+    Scores come from MLBTeamGameData.runs (not a flat score field).
+    game_date stored as ET date (converted from MLBGame.date UTC ISO 8601 timestamp).
+
+    Contract source: backend/data_contracts/mlb_game.py
+    """
+
+    __tablename__ = "mlb_game_log"
+
+    game_id      = Column(Integer, primary_key=True)          # BDL MLBGame.id
+    game_date    = Column(Date, nullable=False, index=True)   # ET date
+    season       = Column(Integer, nullable=False)            # e.g. 2026
+    season_type  = Column(String(20), nullable=False)         # "regular" | "postseason" | "preseason"
+    status       = Column(String(30), nullable=False, index=True)  # STATUS_FINAL etc.
+    home_team_id = Column(Integer, ForeignKey("mlb_team.team_id"), nullable=False)
+    away_team_id = Column(Integer, ForeignKey("mlb_team.team_id"), nullable=False)
+    home_runs    = Column(Integer)                            # NULL pre-game; MLBTeamGameData.runs
+    away_runs    = Column(Integer)
+    home_hits    = Column(Integer)                            # MLBTeamGameData.hits
+    away_hits    = Column(Integer)
+    home_errors  = Column(Integer)                            # MLBTeamGameData.errors
+    away_errors  = Column(Integer)
+    venue        = Column(String(200))
+    attendance   = Column(Integer)                            # NULL pre-game; 0 in API pre-game
+    period       = Column(Integer)                            # Current/final inning
+    raw_payload  = Column(JSONB, nullable=False)              # Full BDL MLBGame dict (dual-write)
+    ingested_at  = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at   = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow,
+                          onupdate=datetime.utcnow)
+
+    # Relationships
+    home_team_obj  = relationship("MLBTeam", foreign_keys=[home_team_id], back_populates="home_games")
+    away_team_obj  = relationship("MLBTeam", foreign_keys=[away_team_id], back_populates="away_games")
+    odds_snapshots = relationship("MLBOddsSnapshot", back_populates="game")
+
+    __table_args__ = (
+        Index("idx_mlb_game_log_season_date", "season", "game_date"),
+    )
+
+
+class MLBOddsSnapshot(Base):
+    """
+    MLB odds line-movement history. One row per (game_id, vendor, snapshot_window).
+    snapshot_window is the poll timestamp rounded to the 30-minute bucket -- matches
+    the _poll_mlb_odds job cadence and makes upserts idempotent.
+
+    spread/total values stored as VARCHAR strings to match the BDL API contract
+    (MLBBettingOdd.spread_home_value etc. -- the API sends strings, not floats).
+
+    Contract source: backend/data_contracts/mlb_odds.py
+    """
+
+    __tablename__ = "mlb_odds_snapshot"
+
+    id               = Column(BigInteger, primary_key=True, autoincrement=True)
+    odds_id          = Column(Integer, nullable=False)         # BDL MLBBettingOdd.id
+    game_id          = Column(Integer, ForeignKey("mlb_game_log.game_id"), nullable=False, index=True)
+    vendor           = Column(String(50), nullable=False)      # "draftkings", "fanduel", etc.
+    snapshot_window  = Column(DateTime(timezone=True), nullable=False)  # rounded to 30-min bucket
+    spread_home      = Column(String(10), nullable=False)      # str per contract e.g. "1.5"
+    spread_away      = Column(String(10), nullable=False)      # str per contract e.g. "-1.5"
+    spread_home_odds = Column(Integer, nullable=False)
+    spread_away_odds = Column(Integer, nullable=False)
+    ml_home_odds     = Column(Integer, nullable=False)
+    ml_away_odds     = Column(Integer, nullable=False)
+    total            = Column(String(10), nullable=False)      # str per contract e.g. "8.5"
+    total_over_odds  = Column(Integer, nullable=False)
+    total_under_odds = Column(Integer, nullable=False)
+    raw_payload      = Column(JSONB, nullable=False)           # Full MLBBettingOdd dict (dual-write)
+
+    # Relationship
+    game = relationship("MLBGameLog", back_populates="odds_snapshots")
+
+    __table_args__ = (
+        UniqueConstraint("game_id", "vendor", "snapshot_window", name="_mlb_odds_game_vendor_window_uc"),
+        Index("idx_mlb_odds_vendor_window", "vendor", "snapshot_window"),
+    )
