@@ -3007,6 +3007,32 @@ async def ingestion_run_pipeline(
     return {"pipeline": _PIPELINE_JOB_ORDER, "results": results}
 
 
+@app.get("/admin/explanations/{decision_id}")
+async def get_explanation(decision_id: int, db: Session = Depends(get_db)):
+    """
+    Return the stored explanation for a specific decision_results row.
+    Returns 404 if no explanation exists for that decision_id.
+    """
+    from backend.models import DecisionExplanation as _DecisionExplanation
+    row = db.query(_DecisionExplanation).filter(
+        _DecisionExplanation.decision_id == decision_id
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No explanation for decision_id={}".format(decision_id))
+    return {
+        "decision_id": row.decision_id,
+        "bdl_player_id": row.bdl_player_id,
+        "as_of_date": str(row.as_of_date),
+        "decision_type": row.decision_type,
+        "summary": row.summary,
+        "factors": row.factors_json,
+        "confidence_narrative": row.confidence_narrative,
+        "risk_narrative": row.risk_narrative,
+        "track_record_narrative": row.track_record_narrative,
+        "computed_at": row.computed_at.isoformat() if row.computed_at else None,
+    }
+
+
 @app.get("/admin/portfolio/status")
 async def get_portfolio_status(
     user: str = Depends(verify_api_key),

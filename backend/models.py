@@ -1490,3 +1490,40 @@ class BacktestResult(Base):
         Index("idx_br_date", "as_of_date"),
         Index("idx_br_player_date", "bdl_player_id", "as_of_date"),
     )
+
+
+class DecisionExplanation(Base):
+    """
+    P19 Explainability Layer -- human-readable decision traces.
+
+    Computed daily by _run_explainability() (lock 100_024, 9 AM ET).
+    Input: decision_results (P17) + player_scores (P14) + player_momentum (P15)
+           + simulation_results (P16) + backtest_results (P18).
+    One row per decision_results row (1:1 relationship).
+
+    Natural key: (decision_id,) -- one explanation per decision.
+    Downstream: P20 Integration (UI display, API endpoint /admin/explanations/{id}).
+    """
+
+    __tablename__ = "decision_explanations"
+
+    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    decision_id     = Column(BigInteger, nullable=False, unique=True)  # FK to decision_results.id
+    bdl_player_id   = Column(Integer, nullable=False)
+    as_of_date      = Column(Date, nullable=False)
+    decision_type   = Column(String(10), nullable=False)
+
+    summary         = Column(String(500), nullable=False)
+    # factors stored as JSON array: [{name, value, label, weight, narrative}, ...]
+    factors_json    = Column(JSON, nullable=False)
+    confidence_narrative  = Column(String(200), nullable=True)
+    risk_narrative        = Column(String(200), nullable=True)
+    track_record_narrative = Column(String(200), nullable=True)
+
+    computed_at     = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_de_date", "as_of_date"),
+        Index("idx_de_player_date", "bdl_player_id", "as_of_date"),
+        Index("idx_de_decision_id", "decision_id"),
+    )

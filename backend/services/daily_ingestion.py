@@ -40,11 +40,14 @@ from backend.models import (
     PlayerRollingStats,
     PlayerScore,
     PlayerMomentum,
+    PlayerIDMapping,
     SimulationResult as SimulationResultORM,
     DecisionResult as DecisionResultORM,
     BacktestResult as BacktestResultORM,
+    DecisionExplanation as DecisionExplanationORM,
     engine,
 )
+from backend.services.explainability_layer import ExplanationInput, explain_batch
 from backend.services.backtesting_harness import (
     BacktestInput,
     evaluate_cohort,
@@ -100,6 +103,7 @@ LOCK_IDS = {
     "ros_simulation":       100_021,
     "decision_optimization": 100_022,
     "backtesting":           100_023,
+    "explainability":        100_024,
 }
 
 
@@ -363,6 +367,16 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Explainability: daily 9 AM ET (after backtesting at 8 AM)
+        # Generates human-readable decision traces from all P14-P18 signals.
+        self._scheduler.add_job(
+            self._run_explainability,
+            CronTrigger(hour=9, minute=0, timezone=tz),
+            id="explainability",
+            name="Explainability Engine",
+            replace_existing=True,
+        )
+
         # MLB odds polling: every 5 min, restricted to 10 AM - 11 PM ET
         self._scheduler.add_job(
             self._poll_mlb_odds,
@@ -459,7 +473,7 @@ class DailyIngestionOrchestrator:
         # Initialise status dict so get_status() never returns missing keys
         _all_job_ids = ["mlb_game_log", "mlb_box_stats", "rolling_windows", "player_scores",
                         "player_momentum", "ros_simulation", "decision_optimization",
-                        "backtesting",
+                        "backtesting", "explainability",
                         "mlb_odds", "statcast",
                         "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
                         "ensemble_update", "projection_freshness"]
@@ -506,6 +520,7 @@ class DailyIngestionOrchestrator:
             "ros_simulation":        self._run_ros_simulation,
             "decision_optimization": self._run_decision_optimization,
             "backtesting":           self._run_backtesting,
+            "explainability":        self._run_explainability,
         }
         handler = _handlers.get(job_id)
         if handler is None:
@@ -2150,6 +2165,285 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["backtesting"], _run)
+
+    async def _run_explainability(self) -> dict:
+        """
+        Daily Explainability Engine (lock 100_024, 9 AM ET).
+
+        Runs after _run_backtesting (8 AM) so all P14-P18 signals are current.
+
+        Algorithm:
+          1. Query decision_results WHERE as_of_date = yesterday
+          2. For each decision, join player_scores (14d), player_momentum,
+             simulation_results, backtest_results, and PlayerIDMapping for names
+          3. Build ExplanationInput dataclasses; skip if player_scores row missing
+          4. Call explain_batch(inputs) via asyncio.to_thread (CPU-bound)
+          5. Upsert DecisionExplanationORM rows ON CONFLICT _de_decision_id_uc DO UPDATE
+          6. Return summary dict with n_explained, n_skipped, elapsed_ms
+
+        ADR-004: Never import betting_model or analysis here.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            now = datetime.now(ZoneInfo("America/New_York"))
+
+            db = SessionLocal()
+            try:
+                # Step 1: fetch all decision_results for yesterday
+                try:
+                    decision_rows = (
+                        db.query(DecisionResultORM)
+                        .filter(DecisionResultORM.as_of_date == as_of_date)
+                        .all()
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "explainability: decision_results query failed for %s: %s",
+                        as_of_date, exc,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("explainability", "failed")
+                    return {"status": "failed", "n_explained": 0, "n_skipped": 0, "elapsed_ms": elapsed}
+
+                if not decision_rows:
+                    logger.warning(
+                        "explainability: 0 decision_results rows for as_of_date=%s -- "
+                        "decision_optimization pipeline may not have run",
+                        as_of_date,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("explainability", "success", 0)
+                    return {
+                        "status": "success",
+                        "as_of_date": str(as_of_date),
+                        "n_explained": 0,
+                        "n_skipped": 0,
+                        "elapsed_ms": elapsed,
+                    }
+
+                # Step 2: bulk-fetch supporting tables into dicts keyed by bdl_player_id
+                try:
+                    score_map = {
+                        row.bdl_player_id: row
+                        for row in db.query(PlayerScore).filter(
+                            PlayerScore.as_of_date == as_of_date,
+                            PlayerScore.window_days == 14,
+                        ).all()
+                    }
+                except Exception as exc:
+                    logger.error(
+                        "explainability: player_scores query failed for %s: %s",
+                        as_of_date, exc,
+                    )
+                    score_map = {}
+
+                try:
+                    momentum_map = {
+                        row.bdl_player_id: row
+                        for row in db.query(PlayerMomentum).filter(
+                            PlayerMomentum.as_of_date == as_of_date,
+                        ).all()
+                    }
+                except Exception as exc:
+                    logger.warning(
+                        "explainability: player_momentum query failed for %s: %s",
+                        as_of_date, exc,
+                    )
+                    momentum_map = {}
+
+                try:
+                    sim_map = {
+                        row.bdl_player_id: row
+                        for row in db.query(SimulationResultORM).filter(
+                            SimulationResultORM.as_of_date == as_of_date,
+                        ).all()
+                    }
+                except Exception as exc:
+                    logger.warning(
+                        "explainability: simulation_results query failed for %s: %s",
+                        as_of_date, exc,
+                    )
+                    sim_map = {}
+
+                try:
+                    backtest_map = {
+                        row.bdl_player_id: row
+                        for row in db.query(BacktestResultORM).filter(
+                            BacktestResultORM.as_of_date == as_of_date,
+                        ).all()
+                    }
+                except Exception as exc:
+                    logger.warning(
+                        "explainability: backtest_results query failed for %s: %s",
+                        as_of_date, exc,
+                    )
+                    backtest_map = {}
+
+                # Build a name-lookup dict from PlayerIDMapping (bdl_id -> full_name)
+                try:
+                    all_pids = set(d.bdl_player_id for d in decision_rows)
+                    if decision_rows:
+                        # also include drop_player_ids
+                        for d in decision_rows:
+                            if d.drop_player_id is not None:
+                                all_pids.add(d.drop_player_id)
+                    name_map = {
+                        row.bdl_id: row.full_name
+                        for row in db.query(PlayerIDMapping).filter(
+                            PlayerIDMapping.bdl_id.in_(list(all_pids)),
+                        ).all()
+                        if row.bdl_id is not None
+                    }
+                except Exception as exc:
+                    logger.warning(
+                        "explainability: PlayerIDMapping query failed: %s", exc,
+                    )
+                    name_map = {}
+
+                # Step 3: build ExplanationInput list
+                inputs = []
+                n_skipped = 0
+                for dec in decision_rows:
+                    pid = dec.bdl_player_id
+                    score_row = score_map.get(pid)
+                    if score_row is None:
+                        # Cannot explain without Z-scores
+                        n_skipped += 1
+                        continue
+
+                    momentum_row = momentum_map.get(pid)
+                    sim_row = sim_map.get(pid)
+                    bt_row = backtest_map.get(pid)
+
+                    player_name = name_map.get(pid, "Player {}".format(pid))
+                    drop_name = None
+                    if dec.drop_player_id is not None:
+                        drop_name = name_map.get(dec.drop_player_id, "Player {}".format(dec.drop_player_id))
+
+                    inputs.append(ExplanationInput(
+                        decision_id=dec.id,
+                        as_of_date=as_of_date,
+                        decision_type=dec.decision_type,
+                        bdl_player_id=pid,
+                        player_name=player_name,
+                        target_slot=dec.target_slot,
+                        drop_player_id=dec.drop_player_id,
+                        drop_player_name=drop_name,
+                        lineup_score=dec.lineup_score,
+                        value_gain=dec.value_gain,
+                        decision_confidence=dec.confidence if dec.confidence is not None else 0.0,
+                        player_type=score_row.player_type,
+                        score_0_100=score_row.score_0_100 if score_row.score_0_100 is not None else 0.0,
+                        composite_z=score_row.composite_z if score_row.composite_z is not None else 0.0,
+                        z_hr=score_row.z_hr,
+                        z_rbi=score_row.z_rbi,
+                        z_sb=score_row.z_sb,
+                        z_avg=score_row.z_avg,
+                        z_obp=score_row.z_obp,
+                        z_era=score_row.z_era,
+                        z_whip=score_row.z_whip,
+                        z_k_per_9=score_row.z_k_per_9,
+                        score_confidence=score_row.confidence if score_row.confidence is not None else 0.0,
+                        games_in_window=score_row.games_in_window if score_row.games_in_window is not None else 0,
+                        signal=momentum_row.signal if momentum_row else "STABLE",
+                        delta_z=momentum_row.delta_z if momentum_row and momentum_row.delta_z is not None else 0.0,
+                        proj_hr_p50=sim_row.proj_hr_p50 if sim_row else None,
+                        proj_rbi_p50=sim_row.proj_rbi_p50 if sim_row else None,
+                        proj_sb_p50=sim_row.proj_sb_p50 if sim_row else None,
+                        proj_avg_p50=sim_row.proj_avg_p50 if sim_row else None,
+                        proj_k_p50=sim_row.proj_k_p50 if sim_row else None,
+                        proj_era_p50=sim_row.proj_era_p50 if sim_row else None,
+                        proj_whip_p50=sim_row.proj_whip_p50 if sim_row else None,
+                        prob_above_median=sim_row.prob_above_median if sim_row else None,
+                        downside_p25=sim_row.downside_p25 if sim_row else None,
+                        upside_p75=sim_row.upside_p75 if sim_row else None,
+                        backtest_composite_mae=bt_row.composite_mae if bt_row else None,
+                        backtest_games=bt_row.games_played if bt_row else None,
+                    ))
+
+                # Step 4: generate explanations (CPU-bound -- offload to thread pool)
+                explanation_results = await asyncio.to_thread(explain_batch, inputs)
+
+                if not explanation_results:
+                    logger.warning(
+                        "explainability: 0 explanations generated for as_of_date=%s "
+                        "(inputs=%d, skipped=%d)",
+                        as_of_date, len(inputs), n_skipped,
+                    )
+
+                # Step 5: upsert DecisionExplanationORM rows
+                try:
+                    for res in explanation_results:
+                        factors_data = [
+                            {
+                                "name": f.name,
+                                "value": f.value,
+                                "label": f.label,
+                                "weight": f.weight,
+                                "narrative": f.narrative,
+                            }
+                            for f in res.factors
+                        ]
+                        stmt = pg_insert(DecisionExplanationORM.__table__).values(
+                            decision_id=res.decision_id,
+                            bdl_player_id=res.bdl_player_id,
+                            as_of_date=res.as_of_date,
+                            decision_type=res.decision_type,
+                            summary=res.summary,
+                            factors_json=factors_data,
+                            confidence_narrative=res.confidence_narrative,
+                            risk_narrative=res.risk_narrative,
+                            track_record_narrative=res.track_record_narrative,
+                            computed_at=now,
+                        ).on_conflict_do_update(
+                            constraint="_de_decision_id_uc",
+                            set_=dict(
+                                bdl_player_id=res.bdl_player_id,
+                                as_of_date=res.as_of_date,
+                                decision_type=res.decision_type,
+                                summary=res.summary,
+                                factors_json=factors_data,
+                                confidence_narrative=res.confidence_narrative,
+                                risk_narrative=res.risk_narrative,
+                                track_record_narrative=res.track_record_narrative,
+                                computed_at=now,
+                            ),
+                        )
+                        db.execute(stmt)
+
+                    db.commit()
+                except Exception as exc:
+                    db.rollback()
+                    logger.error(
+                        "explainability: DB write failed for as_of_date=%s: %s",
+                        as_of_date, exc,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("explainability", "failed")
+                    return {"status": "failed", "n_explained": 0, "n_skipped": n_skipped, "elapsed_ms": elapsed}
+
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            n_explained = len(explanation_results)
+            self._record_job_run("explainability", "success", n_explained)
+            logger.info(
+                "explainability: %d decisions explained for as_of_date=%s "
+                "skipped=%d elapsed_ms=%d",
+                n_explained, as_of_date, n_skipped, elapsed,
+            )
+            return {
+                "status": "success",
+                "as_of_date": str(as_of_date),
+                "n_explained": n_explained,
+                "n_skipped": n_skipped,
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["explainability"], _run)
 
     async def _update_statcast(self) -> dict:
         """Daily Statcast enrichment — fetches yesterday's data and runs Bayesian projection updates."""      
