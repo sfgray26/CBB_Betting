@@ -290,9 +290,9 @@ class StatcastIngestionAgent:
             'stadium': '',  # All stadiums
             'hfBBL': '',  # Barrel (all)
             'hfNewZones': '0',
-            'hfGT': 'R%7C',  # Game type: Regular season
+            'hfGT': 'R|',  # Game type: Regular season
             'hfC': '',  # Count (all)
-            'hfSea': f'{target_date.year}%7C',  # Season
+            'hfSea': f'{target_date.year}|',  # Season
             'hfSit': '',  # Situation (all)
             'player_type': 'batter',  # Batter perspective
             'hfOuts': '',  # Outs (all)
@@ -326,6 +326,9 @@ class StatcastIngestionAgent:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
             
+            logger.info("Statcast Request URL: %s", self.base_url)
+            logger.info("Statcast Request Params: %s", params)
+
             response = requests.get(
                 self.base_url,
                 params=params,
@@ -339,9 +342,10 @@ class StatcastIngestionAgent:
             
             # Parse CSV response
             from io import StringIO
-            df = pd.read_csv(StringIO(response.text))
+            text_content = response.text
+            df = pd.read_csv(StringIO(text_content))
             
-            logger.info(f"Successfully fetched {len(df)} records from Statcast")
+            logger.info("Successfully fetched %d records from Statcast (raw size: %d bytes)", len(df), len(text_content))
             return df
             
         except Exception as e:
