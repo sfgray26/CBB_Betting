@@ -16,7 +16,7 @@ ConfigDict(populate_by_name=True) -- NOT strict (nullable fields, graceful handl
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Union
 
 from pydantic import BaseModel, ConfigDict
 
@@ -29,8 +29,8 @@ class MLBPlayerStats(BaseModel):
 
     # Top-level identifiers
     id: Optional[int] = None          # BDL stats record id (may or may not be present)
-    player: MLBPlayer                  # Nested player object (always present per probe)
-    team: MLBTeam                      # Nested team object (always present per probe)
+    player: Optional[MLBPlayer] = None # Nested player object
+    team: Optional[MLBTeam] = None     # Nested team object
 
     # game_id: flat field OR extracted from nested game object
     # The BDL /mlb/v1/stats endpoint may return either {"game_id": 123} or
@@ -62,7 +62,9 @@ class MLBPlayerStats(BaseModel):
     # ------------------------------------------------------------------
     # Pitching stats (null for pure hitters)
     # ------------------------------------------------------------------
-    ip: Optional[str] = None          # e.g. "6.2" -- stored as string
+    # ip: observed as "6.2" (str) or 7 (int) or 0.2 (float) in live responses.
+    # Accept Union[str, float] to prevent validation crashes.
+    ip: Optional[Union[str, float]] = None 
     h_allowed: Optional[int] = None
     r_allowed: Optional[int] = None
     er: Optional[int] = None
