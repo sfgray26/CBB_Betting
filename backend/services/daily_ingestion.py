@@ -42,7 +42,16 @@ from backend.models import (
     PlayerMomentum,
     SimulationResult as SimulationResultORM,
     DecisionResult as DecisionResultORM,
+    BacktestResult as BacktestResultORM,
     engine,
+)
+from backend.services.backtesting_harness import (
+    BacktestInput,
+    evaluate_cohort,
+    summarize,
+    load_golden_baseline,
+    save_golden_baseline,
+    BASELINE_PATH,
 )
 from backend.services.simulation_engine import simulate_all_players, REMAINING_GAMES_DEFAULT
 from backend.services.decision_engine import (
@@ -90,6 +99,7 @@ LOCK_IDS = {
     "player_momentum":      100_020,
     "ros_simulation":       100_021,
     "decision_optimization": 100_022,
+    "backtesting":           100_023,
 }
 
 
@@ -343,6 +353,16 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Backtesting harness: daily 8 AM ET (after decision_optimization at 7 AM)
+        # Evaluates P16 simulation projections vs actual mlb_player_stats outcomes.
+        self._scheduler.add_job(
+            self._run_backtesting,
+            CronTrigger(hour=8, minute=0, timezone=tz),
+            id="backtesting",
+            name="Backtesting Harness",
+            replace_existing=True,
+        )
+
         # MLB odds polling: every 5 min, restricted to 10 AM - 11 PM ET
         self._scheduler.add_job(
             self._poll_mlb_odds,
@@ -439,6 +459,7 @@ class DailyIngestionOrchestrator:
         # Initialise status dict so get_status() never returns missing keys
         _all_job_ids = ["mlb_game_log", "mlb_box_stats", "rolling_windows", "player_scores",
                         "player_momentum", "ros_simulation", "decision_optimization",
+                        "backtesting",
                         "mlb_odds", "statcast",
                         "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
                         "ensemble_update", "projection_freshness"]
@@ -484,6 +505,7 @@ class DailyIngestionOrchestrator:
             "player_momentum": self._compute_player_momentum,
             "ros_simulation":        self._run_ros_simulation,
             "decision_optimization": self._run_decision_optimization,
+            "backtesting":           self._run_backtesting,
         }
         handler = _handlers.get(job_id)
         if handler is None:
@@ -1855,6 +1877,279 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["decision_optimization"], _run)
+
+    async def _run_backtesting(self) -> dict:
+        """
+        Daily Backtesting Harness (lock 100_023, 8 AM ET).
+
+        Runs after _run_decision_optimization (7 AM) so the full pipeline is current.
+
+        Algorithm:
+          1. Compute as_of_date = yesterday
+          2. Query simulation_results WHERE as_of_date = yesterday AND window_days = 14
+          3. For each sim_row, query mlb_player_stats for the 14-day actuals window
+          4. Aggregate actuals: sum HR/RBI/SB/K, mean AVG, IP-weighted ERA/WHIP
+          5. Build BacktestInput list and call evaluate_cohort via asyncio.to_thread
+          6. Call summarize() with golden baseline loaded from BASELINE_PATH
+          7. Save new golden baseline if no regression detected
+          8. Upsert BacktestResultORM rows ON CONFLICT _br_player_date_uc DO UPDATE
+          9. Return summary dict
+
+        ADR-004: Never import betting_model or analysis here.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            window_start = as_of_date - timedelta(days=14)
+            now = datetime.now(ZoneInfo("America/New_York"))
+
+            results = []   # populated after evaluate_cohort; guard for finally path
+            summary = None  # populated after summarize(); guard for finally path
+
+            db = SessionLocal()
+            try:
+                # Step 1: fetch simulation_results for yesterday (14d window)
+                try:
+                    sim_rows = (
+                        db.query(SimulationResultORM)
+                        .filter(
+                            SimulationResultORM.as_of_date == as_of_date,
+                            SimulationResultORM.window_days == 14,
+                        )
+                        .all()
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "backtesting: simulation_results query failed for %s: %s",
+                        as_of_date, exc,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("backtesting", "failed")
+                    return {"status": "failed", "n_players": 0, "elapsed_ms": elapsed}
+
+                if not sim_rows:
+                    logger.warning(
+                        "backtesting: 0 simulation_results rows for as_of_date=%s -- "
+                        "ros_simulation pipeline may not have run",
+                        as_of_date,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("backtesting", "success", 0)
+                    return {
+                        "status": "success",
+                        "as_of_date": str(as_of_date),
+                        "n_players": 0,
+                        "mean_composite_mae": None,
+                        "regression_detected": False,
+                        "elapsed_ms": elapsed,
+                    }
+
+                # Step 2: for each player, fetch actual stats from the 14-day window
+                inputs = []
+                for sim in sim_rows:
+                    pid = sim.bdl_player_id
+                    try:
+                        stat_rows = (
+                            db.query(MLBPlayerStats)
+                            .filter(
+                                MLBPlayerStats.bdl_player_id == pid,
+                                MLBPlayerStats.game_date >= window_start,
+                                MLBPlayerStats.game_date <= as_of_date,
+                            )
+                            .all()
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "backtesting: stats query failed for player %d: %s",
+                            pid, exc,
+                        )
+                        stat_rows = []
+
+                    games_played = len(stat_rows)
+
+                    # Aggregate batting totals
+                    actual_hr  = None
+                    actual_rbi = None
+                    actual_sb  = None
+                    actual_avg = None
+                    actual_k   = None
+                    actual_era = None
+                    actual_whip = None
+
+                    if stat_rows:
+                        hr_vals  = [r.home_runs    for r in stat_rows if r.home_runs    is not None]
+                        rbi_vals = [r.rbi           for r in stat_rows if r.rbi          is not None]
+                        sb_vals  = [r.stolen_bases  for r in stat_rows if r.stolen_bases is not None]
+                        avg_vals = [r.avg            for r in stat_rows if r.avg          is not None]
+                        k_vals   = [r.strikeouts_pit for r in stat_rows if r.strikeouts_pit is not None]
+
+                        actual_hr  = float(sum(hr_vals))  if hr_vals  else None
+                        actual_rbi = float(sum(rbi_vals)) if rbi_vals else None
+                        actual_sb  = float(sum(sb_vals))  if sb_vals  else None
+                        actual_avg = sum(avg_vals) / len(avg_vals) if avg_vals else None
+                        actual_k   = float(sum(k_vals))   if k_vals   else None
+
+                        # IP-weighted ERA and WHIP aggregation
+                        # innings_pitched stored as string e.g. "6.2" meaning 6 and 2/3
+                        total_ip = 0.0
+                        era_sum  = 0.0
+                        whip_sum = 0.0
+                        for r in stat_rows:
+                            ip_str = r.innings_pitched
+                            if ip_str is None:
+                                continue
+                            try:
+                                parts = str(ip_str).split(".")
+                                whole = int(parts[0])
+                                frac  = int(parts[1]) if len(parts) > 1 else 0
+                                ip_dec = whole + frac / 3.0
+                            except (ValueError, IndexError):
+                                ip_dec = 0.0
+                            if ip_dec <= 0.0:
+                                continue
+                            total_ip += ip_dec
+                            if r.era is not None:
+                                era_sum += r.era * ip_dec
+                            if r.whip is not None:
+                                whip_sum += r.whip * ip_dec
+
+                        if total_ip > 0.0:
+                            actual_era  = era_sum  / total_ip
+                            actual_whip = whip_sum / total_ip
+
+                    inputs.append(BacktestInput(
+                        bdl_player_id=pid,
+                        as_of_date=as_of_date,
+                        player_type=sim.player_type,
+                        proj_hr_p50=sim.proj_hr_p50,
+                        proj_rbi_p50=sim.proj_rbi_p50,
+                        proj_sb_p50=sim.proj_sb_p50,
+                        proj_avg_p50=sim.proj_avg_p50,
+                        proj_k_p50=sim.proj_k_p50,
+                        proj_era_p50=sim.proj_era_p50,
+                        proj_whip_p50=sim.proj_whip_p50,
+                        actual_hr=actual_hr,
+                        actual_rbi=actual_rbi,
+                        actual_sb=actual_sb,
+                        actual_avg=actual_avg,
+                        actual_k=actual_k,
+                        actual_era=actual_era,
+                        actual_whip=actual_whip,
+                        games_played=games_played,
+                    ))
+
+                # Step 3: evaluate cohort (CPU-bound -- offload to thread pool)
+                results = await asyncio.to_thread(evaluate_cohort, inputs)
+
+                # Step 4: summarize with golden baseline
+                baseline_data = load_golden_baseline(BASELINE_PATH)
+                baseline_mae = baseline_data.get("mean_composite_mae")
+                summary = summarize(results, window_start, as_of_date, baseline_mae)
+
+                # Step 5: persist new baseline if no regression
+                if not summary.regression_detected:
+                    try:
+                        save_golden_baseline(summary, BASELINE_PATH)
+                    except Exception as exc:
+                        logger.warning(
+                            "backtesting: could not save golden baseline: %s", exc
+                        )
+
+                if summary.regression_detected:
+                    logger.warning(
+                        "backtesting: REGRESSION DETECTED as_of_date=%s "
+                        "mean_composite_mae=%.4f baseline=%.4f delta=%.4f",
+                        as_of_date,
+                        summary.mean_composite_mae or 0.0,
+                        baseline_mae or 0.0,
+                        summary.regression_delta or 0.0,
+                    )
+
+                # Step 6: upsert BacktestResultORM rows
+                try:
+                    for res in results:
+                        stmt = pg_insert(BacktestResultORM.__table__).values(
+                            bdl_player_id=res.bdl_player_id,
+                            as_of_date=res.as_of_date,
+                            player_type=res.player_type,
+                            games_played=res.games_played,
+                            mae_hr=res.mae_hr,
+                            rmse_hr=res.rmse_hr,
+                            mae_rbi=res.mae_rbi,
+                            rmse_rbi=res.rmse_rbi,
+                            mae_sb=res.mae_sb,
+                            rmse_sb=res.rmse_sb,
+                            mae_avg=res.mae_avg,
+                            rmse_avg=res.rmse_avg,
+                            mae_k=res.mae_k,
+                            rmse_k=res.rmse_k,
+                            mae_era=res.mae_era,
+                            rmse_era=res.rmse_era,
+                            mae_whip=res.mae_whip,
+                            rmse_whip=res.rmse_whip,
+                            composite_mae=res.composite_mae,
+                            direction_correct=res.direction_correct,
+                            computed_at=now,
+                        ).on_conflict_do_update(
+                            constraint="_br_player_date_uc",
+                            set_=dict(
+                                player_type=res.player_type,
+                                games_played=res.games_played,
+                                mae_hr=res.mae_hr,
+                                rmse_hr=res.rmse_hr,
+                                mae_rbi=res.mae_rbi,
+                                rmse_rbi=res.rmse_rbi,
+                                mae_sb=res.mae_sb,
+                                rmse_sb=res.rmse_sb,
+                                mae_avg=res.mae_avg,
+                                rmse_avg=res.rmse_avg,
+                                mae_k=res.mae_k,
+                                rmse_k=res.rmse_k,
+                                mae_era=res.mae_era,
+                                rmse_era=res.rmse_era,
+                                mae_whip=res.mae_whip,
+                                rmse_whip=res.rmse_whip,
+                                composite_mae=res.composite_mae,
+                                direction_correct=res.direction_correct,
+                                computed_at=now,
+                            ),
+                        )
+                        db.execute(stmt)
+
+                    db.commit()
+                except Exception as exc:
+                    db.rollback()
+                    logger.error(
+                        "backtesting: DB write failed for as_of_date=%s: %s",
+                        as_of_date, exc,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("backtesting", "failed")
+                    return {"status": "failed", "n_players": len(results), "elapsed_ms": elapsed}
+
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            n = len(results)
+            self._record_job_run("backtesting", "success", n)
+            logger.info(
+                "backtesting: %d players evaluated for as_of_date=%s "
+                "mean_composite_mae=%s regression=%s elapsed_ms=%d",
+                n, as_of_date, summary.mean_composite_mae,
+                summary.regression_detected, elapsed,
+            )
+            return {
+                "status": "success",
+                "as_of_date": str(as_of_date),
+                "n_players": n,
+                "mean_composite_mae": summary.mean_composite_mae,
+                "regression_detected": summary.regression_detected,
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["backtesting"], _run)
 
     async def _update_statcast(self) -> dict:
         """Daily Statcast enrichment — fetches yesterday's data and runs Bayesian projection updates."""      

@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Master Plan (In-Season 2026)
 
-> **Date:** April 6, 2026 (updated Session S23) | **Author:** Claude Code (Master Architect)
-> **Risk Level:** LOW-MODERATE — P1-P17 certified. Phases 2-7 complete. Next: P18 (Backtesting Harness).
+> **Date:** April 6, 2026 (updated Session S24) | **Author:** Claude Code (Master Architect)
+> **Risk Level:** LOW-MODERATE — P1-P18 certified. Phases 2-8 complete. Next: P19 (Explainability Layer).
 
 ---
 
@@ -44,8 +44,8 @@ This is the north star. Every session's work maps to one of these phases. Never 
 | **5 — Momentum Layer** | ΔZ = Z_14d − Z_30d. Signals: Surging / Hot / Cold / Collapsing / Breakout / Collapse. | ✅ DONE — Phase 5 complete (S22). `player_momentum` verified live in production. |
 | **6 — Probabilistic Layer** | 1000-run ROS Monte Carlo. Percentiles (P10/25/50/75/90). Risk metrics. P(top-10/25/50). | ✅ DONE — Phase 6 complete (S23). `simulation_results` verified live in production. |
 | **7 — Decision Engines** | Lineup optimizer, waiver optimizer, trade evaluator. World-with vs world-without sim. | ✅ DONE — Phase 7 complete (S23). `decision_results` verified live in production. |
-| **8 — Backtesting Harness** | Historical loader, simulation engine, baselines, golden regression detector. | 🔄 IN PROGRESS — unblocked by Phase 7 (S23) |
-| **9 — Explainability** | Decision traces. "Why this player over that one?" Human-readable explanations for every action. | **EMBARGO** — after Phase 8 |
+| **8 — Backtesting Harness** | Historical loader, simulation engine, baselines, golden regression detector. | ✅ DONE — Phase 8 complete (S24). `backtest_results` verified live in production. |
+| **9 — Explainability** | Decision traces. "Why this player over that one?" Human-readable explanations for every action. | 🔄 IN PROGRESS — unblocked by Phase 8 (S24) |
 | **10 — Integration & Automation** | Snapshot system, daily sim harness, configurable weights, risk modes, UI/API. | **EMBARGO** — last |
 
 ### Core Tenets (non-negotiable)
@@ -76,7 +76,7 @@ This is the north star. Every session's work maps to one of these phases. Never 
 | System | State | Notes |
 |--------|-------|-------|
 | CBB Season | **CLOSED** | Permanently archived. |
-| MLB Data Pipeline | **P1-P17 CERTIFIED** | All contracts + BDL/Yahoo clients + jobs 100_001/100_013/100_016-100_022 wired + full schema live. Phase 7 Decision Engine verified in production (S23). P18 Backtesting Harness next. |
+| MLB Data Pipeline | **P1-P18 CERTIFIED** | All contracts + BDL/Yahoo clients + jobs 100_001/100_013/100_016-100_023 wired + full schema live. Phase 8 Backtesting Harness verified in production (S24). P19 Explainability next. |
 | Fantasy/Edge structural split | **PHASES 1-7 DONE** | Fantasy-App live — isolated DB, isolated scheduler. |
 
 ### Ground Truth: What Actually Exists
@@ -91,25 +91,32 @@ This is the north star. Every session's work maps to one of these phases. Never 
 | `simulation_engine.py` | **CLEAN (S23)** — 1000-run ROS Monte Carlo, risk metrics. |
 | `decision_engine.py` | **CLEAN (S23)** — Greedy lineup optimization, waiver world-with/without simulation. |
 | `daily_ingestion._run_decision_optimization()` | **BUILT (S23)** — lock 100_022, daily 7 AM ET. Upserts to `decision_results`. |
+| `backtesting_harness.py` | **CLEAN (S24)** — proj vs actual MAE/RMSE, composite accuracy, golden baseline regression detector. |
+| `daily_ingestion._run_backtesting()` | **BUILT (S24)** — lock 100_023, daily 8 AM ET. Upserts to `backtest_results`. |
 
 ---
 
 ## FORWARD ROADMAP — Ordered by Blueprint Phase
 
-### P18 — Backtesting Harness [Phase 8]
-
-**Claude Task:** Build `backend/services/backtesting_harness.py`:
-- Historical data loader for `mlb_player_stats` and `mlb_odds_snapshot`.
-- Simulation runner over arbitrary date ranges.
-- Performance metrics: RMSE, MAE, decision accuracy (real vs. projected).
-- Regression detection against golden baseline.
-
 ### P19 — Explainability Layer [Phase 9]
-Decision traces. Natural language reasoning.
+
+**Claude Task:** Build `backend/services/explainability_engine.py`:
+- Decision traces: for every `decision_results` row, generate a human-readable "Why this player?" explanation.
+- Inputs: `player_scores` (Z-score breakdown), `player_momentum` (signal + delta_z), `simulation_results` (percentile context), `backtest_results` (track record).
+- Output: `ExplanationResult` dataclass with `summary` (one-sentence), `factors` (list of ranked contributing factors), `confidence_narrative`.
+- Build `ExplanationResult` ORM + migration `migrate_v22_explanation_results.py`.
+- Implement `_run_explainability()` job (Lock 100_024, 9 AM ET).
+
+### P20 — Integration & Automation [Phase 10]
+Snapshot system, daily sim harness, UI/API endpoints.
 
 ---
 
 ## Session History (Recent)
+
+### S24 — P18 Complete: Backtesting Harness (Apr 6)
+
+**P18:** `backtesting_harness.py` built. `backtest_results` schema deployed (`migrate_v21`) and verified in production. `_run_backtesting()` job registered (Lock 100_023, 8 AM ET). Compares P16 simulation proj_p50 against actual `mlb_player_stats` over 14-day window. Golden baseline regression detector (threshold: 20% above baseline). 18/18 tests pass.
 
 ### S23 — P17 Complete: Decision Engines (Apr 6)
 
@@ -120,6 +127,14 @@ Decision traces. Natural language reasoning.
 **P16:** `simulation_engine.py` built. `simulation_results` schema deployed (`migrate_v19`) and verified in production. `_run_ros_simulation()` job registered (Lock 100_021).
 
 ---
+
+### Gemini CLI — P18 Deploy: migrate_v21 (S24)
+
+**Tasks:**
+1. `railway run python scripts/migrate_v21_backtest_results.py --dry-run` — verify SQL
+2. `railway run python scripts/migrate_v21_backtest_results.py` — apply to both DBs
+3. Verify `backtest_results` table live: `railway run python -c "from backend.models import BacktestResult; print('OK')"`
+4. Smoke test: `POST /admin/ingestion/run/backtesting`
 
 ### Gemini CLI — P17 Deploy: migrate_v20 (S23) ✅ COMPLETE
 

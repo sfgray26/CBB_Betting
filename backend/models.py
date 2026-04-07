@@ -1441,3 +1441,52 @@ class DecisionResult(Base):
         Index("idx_dr_date_type",    "as_of_date", "decision_type"),
         Index("idx_dr_player_date",  "bdl_player_id", "as_of_date"),
     )
+
+
+class BacktestResult(Base):
+    """
+    P18 Backtesting Harness results -- per-player forecast accuracy metrics.
+
+    Computed daily by _run_backtesting() (lock 100_023, 8 AM ET).
+    Input: simulation_results (P16 projections) vs mlb_player_stats (actuals).
+    Compares proj_p50 against actual stats over a rolling 14-day window.
+
+    Natural key: (bdl_player_id, as_of_date).
+    Downstream: P19 Explainability Layer.
+    """
+
+    __tablename__ = "backtest_results"
+
+    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    bdl_player_id   = Column(Integer, nullable=False)
+    as_of_date      = Column(Date, nullable=False)
+    player_type     = Column(String(10), nullable=False)
+    games_played    = Column(Integer, nullable=False)
+
+    # Per-stat MAE (None when projection or actual unavailable)
+    mae_hr          = Column(Float, nullable=True)
+    rmse_hr         = Column(Float, nullable=True)
+    mae_rbi         = Column(Float, nullable=True)
+    rmse_rbi        = Column(Float, nullable=True)
+    mae_sb          = Column(Float, nullable=True)
+    rmse_sb         = Column(Float, nullable=True)
+    mae_avg         = Column(Float, nullable=True)
+    rmse_avg        = Column(Float, nullable=True)
+    mae_k           = Column(Float, nullable=True)
+    rmse_k          = Column(Float, nullable=True)
+    mae_era         = Column(Float, nullable=True)
+    rmse_era        = Column(Float, nullable=True)
+    mae_whip        = Column(Float, nullable=True)
+    rmse_whip       = Column(Float, nullable=True)
+
+    composite_mae     = Column(Float, nullable=True)
+    direction_correct = Column(Boolean, nullable=True)
+
+    computed_at     = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("bdl_player_id", "as_of_date",
+                         name="_br_player_date_uc"),
+        Index("idx_br_date", "as_of_date"),
+        Index("idx_br_player_date", "bdl_player_id", "as_of_date"),
+    )
