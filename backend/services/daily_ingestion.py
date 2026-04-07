@@ -888,13 +888,12 @@ class DailyIngestionOrchestrator:
                 (yesterday.isoformat(), yesterday),
                 (today.isoformat(), today),
             ]
+            date_strs = [d for d, _ in date_batches]
             stats_by_date: list[tuple] = []  # (MLBPlayerStats, date)
             for date_str, game_date in date_batches:
                 batch = await asyncio.to_thread(bdl.get_mlb_stats, [date_str])
                 for s in batch:
                     stats_by_date.append((s, game_date))
-
-            date_strs = [yesterday.isoformat(), today.isoformat()]
 
             if not stats_by_date:
                 logger.warning(
@@ -2215,13 +2214,14 @@ class DailyIngestionOrchestrator:
                     logger.warning("PROJECTION FRESHNESS: %s", msg)
                     violations.append(msg)
                 else:
-                    # MAX(metric_date) returns a date; convert to aware datetime for subtraction
-                    if hasattr(latest_ensemble, "date"):
-                        # already a datetime — ensure tz-aware
+                    # MAX(metric_date) returns a date object (not datetime).
+                    # Use isinstance to reliably distinguish the two types.
+                    if isinstance(latest_ensemble, datetime):
+                        # datetime — ensure tz-aware
                         if latest_ensemble.tzinfo is None:
                             latest_ensemble = latest_ensemble.replace(tzinfo=ZoneInfo("America/New_York"))
                     else:
-                        # date object — convert to midnight ET
+                        # plain date — convert to midnight ET datetime
                         latest_ensemble = datetime.combine(
                             latest_ensemble, datetime.min.time()
                         ).replace(tzinfo=ZoneInfo("America/New_York"))
@@ -2246,7 +2246,7 @@ class DailyIngestionOrchestrator:
                     logger.warning("PROJECTION FRESHNESS: %s", msg)
                     violations.append(msg)
                 else:
-                    if hasattr(latest_statcast, "date"):
+                    if isinstance(latest_statcast, datetime):
                         if latest_statcast.tzinfo is None:
                             latest_statcast = latest_statcast.replace(tzinfo=ZoneInfo("America/New_York"))
                     else:

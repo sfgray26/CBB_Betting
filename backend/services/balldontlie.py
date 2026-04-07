@@ -419,7 +419,7 @@ class BallDontLieClient:
             if cursor is not None:
                 params["cursor"] = cursor
             try:
-                raw = self._mlb_get("/player_injuries", params=params if params else None)
+                raw = self._mlb_get("/player_injuries", params=params)
                 resp = BDLResponse[MLBInjury].model_validate(raw)
                 injuries.extend(resp.data)
                 cursor = resp.meta.next_cursor
