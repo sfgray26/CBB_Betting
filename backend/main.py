@@ -2942,10 +2942,15 @@ async def ingestion_status(user: str = Depends(verify_api_key)):
 _PIPELINE_JOB_ORDER = [
     "mlb_game_log",
     "mlb_box_stats",
+    "statcast",
     "rolling_windows",
     "player_scores",
     "player_momentum",
     "ros_simulation",
+    "decision_optimization",
+    "backtesting",
+    "explainability",
+    "snapshot",
 ]
 
 
