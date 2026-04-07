@@ -279,6 +279,7 @@ class StatcastIngestionAgent:
         logger.info(f"Fetching Statcast data for {target_date}")
         
         # Build query parameters
+        from datetime import timedelta
         params = {
             'all': 'true',
             'hfPT': '',  # Pitch types (all)
@@ -291,7 +292,7 @@ class StatcastIngestionAgent:
             'hfNewZones': '0',
             'hfGT': 'R%7C',  # Game type: Regular season
             'hfC': '',  # Count (all)
-            'hfSea': '2026%7C',  # Season: 2026
+            'hfSea': f'{target_date.year}%7C',  # Season
             'hfSit': '',  # Situation (all)
             'player_type': 'batter',  # Batter perspective
             'hfOuts': '',  # Outs (all)
@@ -299,8 +300,8 @@ class StatcastIngestionAgent:
             'pitcher_throws': '',  # L/R (all)
             'batter_stands': '',  # L/R (all)
             'hfSA': '',  # Sacrifice (all)
-            'game_date_gt': target_date.isoformat(),
-            'game_date_lt': target_date.isoformat(),
+            'game_date_gt': (target_date - timedelta(days=1)).isoformat(),
+            'game_date_lt': (target_date + timedelta(days=1)).isoformat(),
             'hfInfield': '',  # Infield (all)
             'team': '',  # All teams
             'position': '',  # All positions
