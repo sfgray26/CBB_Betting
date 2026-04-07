@@ -41,9 +41,15 @@ from backend.models import (
     PlayerScore,
     PlayerMomentum,
     SimulationResult as SimulationResultORM,
+    DecisionResult as DecisionResultORM,
     engine,
 )
 from backend.services.simulation_engine import simulate_all_players, REMAINING_GAMES_DEFAULT
+from backend.services.decision_engine import (
+    PlayerDecisionInput,
+    optimize_lineup,
+    optimize_waivers,
+)
 from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
 from backend.utils.time_utils import now_et, today_et
 
@@ -83,6 +89,7 @@ LOCK_IDS = {
     "player_scores":        100_019,
     "player_momentum":      100_020,
     "ros_simulation":       100_021,
+    "decision_optimization": 100_022,
 }
 
 
@@ -326,6 +333,16 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Decision optimization: daily 7 AM ET (after ros_simulation at 6 AM)
+        # Runs greedy lineup + waiver analysis from player_scores + simulation_results.
+        self._scheduler.add_job(
+            self._run_decision_optimization,
+            CronTrigger(hour=7, minute=0, timezone=tz),
+            id="decision_optimization",
+            name="Decision Engine Optimization",
+            replace_existing=True,
+        )
+
         # MLB odds polling: every 5 min, restricted to 10 AM - 11 PM ET
         self._scheduler.add_job(
             self._poll_mlb_odds,
@@ -421,7 +438,7 @@ class DailyIngestionOrchestrator:
 
         # Initialise status dict so get_status() never returns missing keys
         _all_job_ids = ["mlb_game_log", "mlb_box_stats", "rolling_windows", "player_scores",
-                        "player_momentum", "ros_simulation",
+                        "player_momentum", "ros_simulation", "decision_optimization",
                         "mlb_odds", "statcast",
                         "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
                         "ensemble_update", "projection_freshness"]
@@ -455,7 +472,7 @@ class DailyIngestionOrchestrator:
 
         Supported IDs (pipeline order):
           mlb_game_log -> mlb_box_stats -> rolling_windows -> player_scores
-          -> player_momentum -> ros_simulation
+          -> player_momentum -> ros_simulation -> decision_optimization
 
         Returns the job's result dict.  Raises ValueError for unknown job_id.
         """
@@ -465,7 +482,8 @@ class DailyIngestionOrchestrator:
             "rolling_windows": self._compute_rolling_windows,
             "player_scores":   self._compute_player_scores,
             "player_momentum": self._compute_player_momentum,
-            "ros_simulation":  self._run_ros_simulation,
+            "ros_simulation":        self._run_ros_simulation,
+            "decision_optimization": self._run_decision_optimization,
         }
         handler = _handlers.get(job_id)
         if handler is None:
@@ -1629,6 +1647,214 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["ros_simulation"], _run)
+
+    async def _run_decision_optimization(self) -> dict:
+        """
+        Daily Decision Engine optimization (lock 100_022, 7 AM ET).
+
+        Runs after _run_ros_simulation (6 AM) so simulation_results is current.
+
+        Algorithm:
+          1. Query player_scores WHERE as_of_date = yesterday AND window_days = 14
+          2. Query player_momentum WHERE as_of_date = yesterday (join on bdl_player_id)
+          3. Query simulation_results WHERE as_of_date = yesterday (join on bdl_player_id)
+          4. Build PlayerDecisionInput list from joined data
+          5. Call optimize_lineup(players) and optimize_waivers(players, waiver_pool=[])
+          6. Upsert DecisionResult ORM rows ON CONFLICT _dr_date_type_player_uc DO UPDATE
+          7. Return summary dict
+
+        ADR-004: Never import betting_model or analysis here.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            now = datetime.now(ZoneInfo("America/New_York"))
+
+            db = SessionLocal()
+            try:
+                # Step 1: fetch player_scores (14d window)
+                try:
+                    score_rows = (
+                        db.query(PlayerScore)
+                        .filter(
+                            PlayerScore.as_of_date == as_of_date,
+                            PlayerScore.window_days == 14,
+                        )
+                        .all()
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "decision_optimization: player_scores query failed for %s: %s",
+                        as_of_date, exc,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("decision_optimization", "failed")
+                    return {"status": "failed", "lineup_decisions": 0, "waiver_decisions": 0, "elapsed_ms": elapsed}
+
+                # Step 2: fetch player_momentum
+                try:
+                    momentum_rows = (
+                        db.query(PlayerMomentum)
+                        .filter(PlayerMomentum.as_of_date == as_of_date)
+                        .all()
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "decision_optimization: player_momentum query failed for %s: %s",
+                        as_of_date, exc,
+                    )
+                    momentum_rows = []
+
+                # Step 3: fetch simulation_results
+                try:
+                    sim_rows = (
+                        db.query(SimulationResultORM)
+                        .filter(SimulationResultORM.as_of_date == as_of_date)
+                        .all()
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "decision_optimization: simulation_results query failed for %s: %s",
+                        as_of_date, exc,
+                    )
+                    sim_rows = []
+
+                if not score_rows:
+                    logger.warning(
+                        "decision_optimization: 0 player_scores rows for %s -- "
+                        "player_scores pipeline may not have run",
+                        as_of_date,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("decision_optimization", "success", 0)
+                    return {
+                        "status": "success",
+                        "as_of_date": str(as_of_date),
+                        "lineup_decisions": 0,
+                        "waiver_decisions": 0,
+                        "elapsed_ms": elapsed,
+                    }
+
+                # Step 4: build lookup dicts for join
+                momentum_by_id = {r.bdl_player_id: r for r in momentum_rows}
+                sim_by_id      = {r.bdl_player_id: r for r in sim_rows}
+
+                players = []
+                for score in score_rows:
+                    pid = score.bdl_player_id
+                    mom  = momentum_by_id.get(pid)
+                    sim  = sim_by_id.get(pid)
+
+                    # Derive eligible_positions from player_type heuristic
+                    # (full position eligibility requires Yahoo roster data -- stubbed here)
+                    # Prefer simulation player_type; fall back to player_scores player_type
+                    pt = (sim.player_type if sim else None) or score.player_type or "unknown"
+                    if pt == "hitter":
+                        eligible = ["Util"]
+                    elif pt == "pitcher":
+                        eligible = ["P"]
+                    elif pt == "two_way":
+                        eligible = ["Util", "P"]
+                    else:
+                        eligible = []
+
+                    players.append(PlayerDecisionInput(
+                        bdl_player_id=pid,
+                        name=getattr(score, "player_name", str(pid)),
+                        player_type=pt,
+                        eligible_positions=eligible,
+                        score_0_100=score.score_0_100 or 0.0,
+                        composite_z=score.composite_z or 0.0,
+                        momentum_signal=mom.signal if mom else "STABLE",
+                        delta_z=mom.delta_z if mom else 0.0,
+                        proj_hr_p50=sim.proj_hr_p50    if sim else None,
+                        proj_rbi_p50=sim.proj_rbi_p50  if sim else None,
+                        proj_sb_p50=sim.proj_sb_p50    if sim else None,
+                        proj_avg_p50=sim.proj_avg_p50  if sim else None,
+                        proj_k_p50=sim.proj_k_p50      if sim else None,
+                        proj_era_p50=sim.proj_era_p50  if sim else None,
+                        proj_whip_p50=sim.proj_whip_p50 if sim else None,
+                        downside_p25=sim.downside_p25  if sim else None,
+                        upside_p75=sim.upside_p75      if sim else None,
+                    ))
+
+                # Step 5: run decision engine (CPU-bound -- offload to thread pool)
+                lineup_decision, lineup_results = await asyncio.to_thread(
+                    optimize_lineup, players, as_of_date
+                )
+                # Waiver pool is empty for now -- no waiver pool query yet (stub)
+                _waiver_decision, waiver_results = await asyncio.to_thread(
+                    optimize_waivers, players, [], as_of_date
+                )
+
+                all_results = lineup_results + waiver_results
+
+                # Step 6: upsert DecisionResult rows
+                try:
+                    for res in all_results:
+                        stmt = pg_insert(DecisionResultORM.__table__).values(
+                            as_of_date=res.as_of_date,
+                            decision_type=res.decision_type,
+                            bdl_player_id=res.bdl_player_id,
+                            target_slot=res.target_slot,
+                            drop_player_id=res.drop_player_id,
+                            lineup_score=res.lineup_score,
+                            value_gain=res.value_gain,
+                            confidence=res.confidence,
+                            reasoning=res.reasoning,
+                            computed_at=now,
+                        ).on_conflict_do_update(
+                            constraint="_dr_date_type_player_uc",
+                            set_=dict(
+                                target_slot=res.target_slot,
+                                drop_player_id=res.drop_player_id,
+                                lineup_score=res.lineup_score,
+                                value_gain=res.value_gain,
+                                confidence=res.confidence,
+                                reasoning=res.reasoning,
+                                computed_at=now,
+                            ),
+                        )
+                        db.execute(stmt)
+
+                    db.commit()
+                except Exception as exc:
+                    db.rollback()
+                    logger.error(
+                        "decision_optimization: DB write failed for as_of_date=%s: %s",
+                        as_of_date, exc,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("decision_optimization", "failed")
+                    return {
+                        "status": "failed",
+                        "lineup_decisions": 0,
+                        "waiver_decisions": 0,
+                        "elapsed_ms": elapsed,
+                    }
+
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            n_lineup = len(lineup_results)
+            n_waiver = len(waiver_results)
+            self._record_job_run("decision_optimization", "success", n_lineup + n_waiver)
+            logger.info(
+                "decision_optimization: %d lineup + %d waiver decisions for as_of_date=%s "
+                "elapsed_ms=%d",
+                n_lineup, n_waiver, as_of_date, elapsed,
+            )
+            return {
+                "status": "success",
+                "as_of_date": str(as_of_date),
+                "lineup_decisions": n_lineup,
+                "waiver_decisions": n_waiver,
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["decision_optimization"], _run)
 
     async def _update_statcast(self) -> dict:
         """Daily Statcast enrichment — fetches yesterday's data and runs Bayesian projection updates."""      

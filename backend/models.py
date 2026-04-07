@@ -20,6 +20,7 @@ from sqlalchemy import (
     Index,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.sql import func
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
@@ -1400,4 +1401,43 @@ class SimulationResult(Base):
         ),
         Index("idx_sr_date", "as_of_date"),
         Index("idx_sr_player_date", "bdl_player_id", "as_of_date"),
+    )
+
+
+class DecisionResult(Base):
+    """
+    P17 Decision Engine results -- lineup and waiver optimization outputs.
+
+    Computed daily by _run_decision_optimization() (lock 100_022, 7 AM ET).
+    Input: player_scores (P14) + player_momentum (P15) + simulation_results (P16).
+    Decision types: "lineup" (slot assignment) | "waiver" (add/drop recommendation).
+
+    Natural key: (as_of_date, decision_type, bdl_player_id).
+    """
+
+    __tablename__ = "decision_results"
+
+    id             = Column(BigInteger, primary_key=True, autoincrement=True)
+    as_of_date     = Column(Date, nullable=False)
+    decision_type  = Column(String(10), nullable=False)   # "lineup" | "waiver"
+    bdl_player_id  = Column(Integer, nullable=False)
+    target_slot    = Column(String(10), nullable=True)    # e.g. "OF", "SP"
+    drop_player_id = Column(Integer, nullable=True)       # waiver drop target
+    lineup_score   = Column(Float, nullable=True)
+    value_gain     = Column(Float, nullable=True)
+    confidence     = Column(Float, nullable=False)
+    reasoning      = Column(String(500), nullable=True)
+    computed_at    = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "as_of_date", "decision_type", "bdl_player_id",
+            name="_dr_date_type_player_uc",
+        ),
+        Index("idx_dr_date_type",    "as_of_date", "decision_type"),
+        Index("idx_dr_player_date",  "bdl_player_id", "as_of_date"),
     )
