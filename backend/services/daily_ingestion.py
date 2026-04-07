@@ -961,6 +961,11 @@ class DailyIngestionOrchestrator:
             db = SessionLocal()
             try:
                 for stat in stats:
+                    # Skip rows with no player identity -- bdl_player_id is NOT NULL in schema.
+                    if stat.bdl_player_id is None:
+                        logger.warning("mlb_box_stats: skipping stat row with no player object")
+                        continue
+
                     # game_date: prefer fetching from game_id FK's game_date; fall back
                     # to today if unknown (stats always belong to current polling window)
                     # We do a best-effort date: since we queried by date, use today as fallback.
@@ -1034,8 +1039,22 @@ class DailyIngestionOrchestrator:
                             raw_payload=payload,
                         ),
                     )
-                    db.execute(stmt)
-                    rows_upserted += 1
+                    try:
+                        with db.begin_nested():
+                            db.execute(stmt)
+                            rows_upserted += 1
+                    except Exception as exc:
+                        if "violates foreign key constraint" in str(exc).lower():
+                            logger.warning(
+                                "mlb_box_stats: skipping stat row for player_id=%d game_id=%s -- game not in log",
+                                stat.bdl_player_id, stat.game_id
+                            )
+                        else:
+                            logger.error(
+                                "mlb_box_stats: failed to upsert row for player_id=%d game_id=%s: %s",
+                                stat.bdl_player_id, stat.game_id, exc
+                            )
+                        continue
 
                 db.commit()
             except Exception as exc:
