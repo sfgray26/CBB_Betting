@@ -131,14 +131,14 @@ def test_manual_override_takes_precedence():
 
 
 # ===========================================================================
-# Test 5: pybaseball result with multiple rows -- takes last valid mlbam row
+# Test 5: pybaseball result with multiple rows -- sorts by mlb_played_last
 # ===========================================================================
 
 def test_pybaseball_multiple_results_takes_last_valid():
     """
     When pybaseball returns multiple rows, _pybaseball_lookup must:
     - Filter to rows where key_mlbam is not null
-    - Take the last row (most recent player with this name)
+    - Sort by mlb_played_last descending and take the most recently active player
     """
     resolver = PlayerIDResolver(db_session=MagicMock())
 
@@ -146,15 +146,15 @@ def test_pybaseball_multiple_results_takes_last_valid():
     import pandas as pd
 
     rows = pd.DataFrame([
-        {"name_last": "Garcia", "name_first": "Adolis", "key_mlbam": None},
-        {"name_last": "Garcia", "name_first": "Adolis", "key_mlbam": 671221},
-        {"name_last": "Garcia", "name_first": "Adolis", "key_mlbam": 690013},
+        {"name_last": "Garcia", "name_first": "Adolis", "key_mlbam": None, "mlb_played_last": None},
+        {"name_last": "Garcia", "name_first": "Adolis", "key_mlbam": 671221, "mlb_played_last": 2018},
+        {"name_last": "Garcia", "name_first": "Adolis", "key_mlbam": 690013, "mlb_played_last": 2024},
     ])
 
     with patch("pybaseball.playerid_lookup", return_value=rows):
         result = resolver._pybaseball_lookup("Adolis Garcia")
 
-    # Should take the last valid row: key_mlbam=690013
+    # Should take the row with the highest mlb_played_last: key_mlbam=690013
     assert result == 690013
 
 

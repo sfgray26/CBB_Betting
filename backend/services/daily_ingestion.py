@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 import math
 from datetime import datetime, date, timedelta
@@ -43,7 +44,7 @@ from backend.models import (
     SimulationResult as SimulationResultORM,
     engine,
 )
-from backend.services.simulation_engine import simulate_all_players, REMAINING_GAMES_DEFAULT
+from backend.services.simulation_engine import simulate_all_players, get_remaining_games
 from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
 from backend.utils.time_utils import now_et, today_et
 
@@ -53,8 +54,10 @@ logger = logging.getLogger(__name__)
 # Module-level mirror: RoS projections fetched by fangraphs_ros (100_012)
 # and also persisted to projection_cache_entries for cross-process durability.
 _ROS_CACHE: dict = {}
+_ROS_CACHE_LOCK = threading.Lock()
 _ROS_CACHE_KEY = "fangraphs_ros"
 _ROS_CACHE_TABLE_READY = False
+_ROS_CACHE_TABLE_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -91,8 +94,11 @@ def _ensure_projection_cache_table() -> None:
     global _ROS_CACHE_TABLE_READY
     if _ROS_CACHE_TABLE_READY:
         return
-    ProjectionCacheEntry.__table__.create(bind=engine, checkfirst=True)
-    _ROS_CACHE_TABLE_READY = True
+    with _ROS_CACHE_TABLE_LOCK:
+        if _ROS_CACHE_TABLE_READY:
+            return
+        ProjectionCacheEntry.__table__.create(bind=engine, checkfirst=True)
+        _ROS_CACHE_TABLE_READY = True
 
 
 def _serialize_ros_frames(frames: Optional[dict]) -> dict[str, list[dict[str, Any]]]:
@@ -329,7 +335,7 @@ class DailyIngestionOrchestrator:
         # MLB odds polling: every 5 min, restricted to 10 AM - 11 PM ET
         self._scheduler.add_job(
             self._poll_mlb_odds,
-            IntervalTrigger(minutes=5, timezone=tz),
+            CronTrigger(hour="10-22", minute="*/5", timezone=tz),
             id="mlb_odds",
             name="MLB Odds Poll",
             replace_existing=True,
@@ -874,11 +880,23 @@ class DailyIngestionOrchestrator:
 
             today = today_et()
             yesterday = today - timedelta(days=1)
+
+            # Fetch each date separately so we can assign the correct game_date
+            # to each batch.  Combining dates in a single call would require a
+            # join against mlb_game_log to resolve the date per row.
+            date_batches = [
+                (yesterday.isoformat(), yesterday),
+                (today.isoformat(), today),
+            ]
+            stats_by_date: list[tuple] = []  # (MLBPlayerStats, date)
+            for date_str, game_date in date_batches:
+                batch = await asyncio.to_thread(bdl.get_mlb_stats, [date_str])
+                for s in batch:
+                    stats_by_date.append((s, game_date))
+
             date_strs = [yesterday.isoformat(), today.isoformat()]
 
-            stats = await asyncio.to_thread(bdl.get_mlb_stats, date_strs)
-
-            if not stats:
+            if not stats_by_date:
                 logger.warning(
                     "mlb_box_stats: 0 stat rows returned for dates=%s -- off-day or BDL error",
                     date_strs,
@@ -891,14 +909,7 @@ class DailyIngestionOrchestrator:
             rows_upserted = 0
             db = SessionLocal()
             try:
-                for stat in stats:
-                    # game_date: prefer fetching from game_id FK's game_date; fall back
-                    # to today if unknown (stats always belong to current polling window)
-                    # We do a best-effort date: since we queried by date, use today as fallback.
-                    # The migration note: game_date is NOT NULL -- we must supply a value.
-                    # Use today as the safe fallback when stat has no date context.
-                    game_date = today
-
+                for stat, game_date in stats_by_date:
                     payload = stat.model_dump()
                     stmt = pg_insert(MLBPlayerStats.__table__).values(
                         bdl_stat_id=stat.id,
@@ -1016,85 +1027,59 @@ class DailyIngestionOrchestrator:
 
             db = SessionLocal()
             try:
-                rows = (
-                    db.query(MLBPlayerStats)
-                    .filter(
-                        MLBPlayerStats.game_date >= lookback_start,
-                        MLBPlayerStats.game_date <= as_of_date,
+                try:
+                    rows = (
+                        db.query(MLBPlayerStats)
+                        .filter(
+                            MLBPlayerStats.game_date >= lookback_start,
+                            MLBPlayerStats.game_date <= as_of_date,
+                        )
+                        .all()
                     )
-                    .all()
-                )
-            except Exception as exc:
-                db.close()
-                logger.error("rolling_windows: DB query failed: %s", exc)
-                elapsed = int((time.monotonic() - t0) * 1000)
-                self._record_job_run("rolling_windows", "failed")
-                return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+                except Exception as exc:
+                    logger.error("rolling_windows: DB query failed: %s", exc)
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("rolling_windows", "failed")
+                    return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
 
-            if not rows:
-                logger.warning(
-                    "rolling_windows: 0 stat rows found for window %s..%s -- off-day or box stats missing",
-                    lookback_start, as_of_date,
-                )
-                db.close()
-                elapsed = int((time.monotonic() - t0) * 1000)
-                self._record_job_run("rolling_windows", "success", 0)
-                return {
-                    "status": "success",
-                    "as_of_date": str(as_of_date),
-                    "players_processed": 0,
-                    "rows_upserted": 0,
-                    "elapsed_ms": elapsed,
-                }
+                if not rows:
+                    logger.warning(
+                        "rolling_windows: 0 stat rows found for window %s..%s -- off-day or box stats missing",
+                        lookback_start, as_of_date,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("rolling_windows", "success", 0)
+                    return {
+                        "status": "success",
+                        "as_of_date": str(as_of_date),
+                        "players_processed": 0,
+                        "rows_upserted": 0,
+                        "elapsed_ms": elapsed,
+                    }
 
-            results = compute_all_rolling_windows(
-                rows,
-                as_of_date=as_of_date,
-                window_sizes=[7, 14, 30],
-            )
-
-            players_processed = len({r.bdl_player_id for r in results})
-
-            if players_processed == 0:
-                logger.warning(
-                    "rolling_windows: compute_all_rolling_windows returned 0 results for as_of_date=%s",
-                    as_of_date,
+                # CPU-bound: safe to call in-thread (compute_all_rolling_windows is pure)
+                results = compute_all_rolling_windows(
+                    rows,
+                    as_of_date=as_of_date,
+                    window_sizes=[7, 14, 30],
                 )
 
-            now = datetime.now(ZoneInfo("America/New_York"))
-            rows_upserted = 0
-            try:
-                for res in results:
-                    stmt = pg_insert(PlayerRollingStats.__table__).values(
-                        bdl_player_id=res.bdl_player_id,
-                        as_of_date=res.as_of_date,
-                        window_days=res.window_days,
-                        games_in_window=res.games_in_window,
-                        w_ab=res.w_ab,
-                        w_hits=res.w_hits,
-                        w_doubles=res.w_doubles,
-                        w_triples=res.w_triples,
-                        w_home_runs=res.w_home_runs,
-                        w_rbi=res.w_rbi,
-                        w_walks=res.w_walks,
-                        w_strikeouts_bat=res.w_strikeouts_bat,
-                        w_stolen_bases=res.w_stolen_bases,
-                        w_avg=res.w_avg,
-                        w_obp=res.w_obp,
-                        w_slg=res.w_slg,
-                        w_ops=res.w_ops,
-                        w_ip=res.w_ip,
-                        w_earned_runs=res.w_earned_runs,
-                        w_hits_allowed=res.w_hits_allowed,
-                        w_walks_allowed=res.w_walks_allowed,
-                        w_strikeouts_pit=res.w_strikeouts_pit,
-                        w_era=res.w_era,
-                        w_whip=res.w_whip,
-                        w_k_per_9=res.w_k_per_9,
-                        computed_at=now,
-                    ).on_conflict_do_update(
-                        constraint="_prs_player_date_window_uc",
-                        set_=dict(
+                players_processed = len({r.bdl_player_id for r in results})
+
+                if players_processed == 0:
+                    logger.warning(
+                        "rolling_windows: compute_all_rolling_windows returned 0 results for as_of_date=%s",
+                        as_of_date,
+                    )
+
+                now = datetime.now(ZoneInfo("America/New_York"))
+                rows_upserted = 0
+                try:
+                    for res in results:
+                        stmt = pg_insert(PlayerRollingStats.__table__).values(
+                            bdl_player_id=res.bdl_player_id,
+                            as_of_date=res.as_of_date,
+                            window_days=res.window_days,
                             games_in_window=res.games_in_window,
                             w_ab=res.w_ab,
                             w_hits=res.w_hits,
@@ -1118,18 +1103,45 @@ class DailyIngestionOrchestrator:
                             w_whip=res.w_whip,
                             w_k_per_9=res.w_k_per_9,
                             computed_at=now,
-                        ),
-                    )
-                    db.execute(stmt)
-                    rows_upserted += 1
+                        ).on_conflict_do_update(
+                            constraint="_prs_player_date_window_uc",
+                            set_=dict(
+                                games_in_window=res.games_in_window,
+                                w_ab=res.w_ab,
+                                w_hits=res.w_hits,
+                                w_doubles=res.w_doubles,
+                                w_triples=res.w_triples,
+                                w_home_runs=res.w_home_runs,
+                                w_rbi=res.w_rbi,
+                                w_walks=res.w_walks,
+                                w_strikeouts_bat=res.w_strikeouts_bat,
+                                w_stolen_bases=res.w_stolen_bases,
+                                w_avg=res.w_avg,
+                                w_obp=res.w_obp,
+                                w_slg=res.w_slg,
+                                w_ops=res.w_ops,
+                                w_ip=res.w_ip,
+                                w_earned_runs=res.w_earned_runs,
+                                w_hits_allowed=res.w_hits_allowed,
+                                w_walks_allowed=res.w_walks_allowed,
+                                w_strikeouts_pit=res.w_strikeouts_pit,
+                                w_era=res.w_era,
+                                w_whip=res.w_whip,
+                                w_k_per_9=res.w_k_per_9,
+                                computed_at=now,
+                            ),
+                        )
+                        db.execute(stmt)
+                        rows_upserted += 1
 
-                db.commit()
-            except Exception as exc:
-                db.rollback()
-                logger.error("rolling_windows: DB write failed: %s", exc)
-                elapsed = int((time.monotonic() - t0) * 1000)
-                self._record_job_run("rolling_windows", "failed")
-                return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+                    db.commit()
+                except Exception as exc:
+                    db.rollback()
+                    logger.error("rolling_windows: DB write failed: %s", exc)
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("rolling_windows", "failed")
+                    return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+
             finally:
                 db.close()
 
@@ -1447,7 +1459,7 @@ class DailyIngestionOrchestrator:
 
         Algorithm:
           1. Query player_rolling_stats WHERE as_of_date = yesterday AND window_days = 14
-          2. simulate_all_players(rows, remaining_games=REMAINING_GAMES_DEFAULT)
+          2. simulate_all_players(rows, remaining_games=get_remaining_games(as_of_date))
              -> list[SimulationResult dataclass]
           3. Upsert each result to simulation_results ON CONFLICT (_sr_player_date_uc)
           4. WARN if 0 players simulated (off-day or rolling_windows pipeline missing)
@@ -1483,12 +1495,22 @@ class DailyIngestionOrchestrator:
                     return {"status": "failed", "players_simulated": 0, "elapsed_ms": elapsed}
 
                 # Step 2: run simulations (CPU-bound -- offload to thread pool)
-                sim_results = await asyncio.to_thread(
-                    simulate_all_players,
-                    rolling_rows,
-                    REMAINING_GAMES_DEFAULT,
-                    1000,
-                )
+                remaining_games = get_remaining_games(as_of_date)
+                try:
+                    sim_results = await asyncio.to_thread(
+                        simulate_all_players,
+                        rolling_rows,
+                        remaining_games,
+                        1000,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "ros_simulation: simulate_all_players crashed for as_of_date=%s: %s",
+                        as_of_date, exc,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("ros_simulation", "failed")
+                    return {"status": "failed", "players_simulated": 0, "elapsed_ms": elapsed}
 
                 if not sim_results:
                     logger.warning(
@@ -1618,13 +1640,13 @@ class DailyIngestionOrchestrator:
             logger.info(
                 "ros_simulation: %d players simulated for as_of_date=%s "
                 "remaining_games=%d elapsed_ms=%d",
-                n, as_of_date, REMAINING_GAMES_DEFAULT, elapsed,
+                n, as_of_date, remaining_games, elapsed,
             )
             return {
                 "status": "success",
                 "as_of_date": str(as_of_date),
                 "players_simulated": n,
-                "remaining_games": REMAINING_GAMES_DEFAULT,
+                "remaining_games": remaining_games,
                 "elapsed_ms": elapsed,
             }
 
@@ -1956,9 +1978,9 @@ class DailyIngestionOrchestrator:
             pit_count = sum(len(df) for df in pit_raw.values()) if pit_raw else 0
 
             # Mirror in memory for same-process handoff and persist for cross-process durability.
-            _ROS_CACHE["bat"] = bat_raw
-            _ROS_CACHE["pit"] = pit_raw
-            _ROS_CACHE["fetched_at"] = fetched_at
+            # Use atomic dict replacement to avoid TOCTOU races with concurrent readers.
+            with _ROS_CACHE_LOCK:
+                _ROS_CACHE.update({"bat": bat_raw, "pit": pit_raw, "fetched_at": fetched_at})
 
             try:
                 _store_persisted_ros_cache(bat_raw, pit_raw, fetched_at)
@@ -2006,12 +2028,13 @@ class DailyIngestionOrchestrator:
             # Use cached RoS data if fresh (< 4 hours); otherwise re-fetch
             bat_raw = None
             pit_raw = None
-            cached_at = _ROS_CACHE.get("fetched_at")
-            if cached_at:
-                age_h = (now_et() - cached_at).total_seconds() / 3600
-                if age_h < 4:
-                    bat_raw = _ROS_CACHE.get("bat")
-                    pit_raw = _ROS_CACHE.get("pit")
+            with _ROS_CACHE_LOCK:
+                cached_at = _ROS_CACHE.get("fetched_at")
+                if cached_at:
+                    age_h = (now_et() - cached_at).total_seconds() / 3600
+                    if age_h < 4:
+                        bat_raw = _ROS_CACHE.get("bat")
+                        pit_raw = _ROS_CACHE.get("pit")
 
             if not bat_raw and not pit_raw:
                 persisted_bat, persisted_pit, persisted_at = _load_persisted_ros_cache()
@@ -2021,9 +2044,8 @@ class DailyIngestionOrchestrator:
                         bat_raw = persisted_bat
                         pit_raw = persisted_pit
                         cached_at = persisted_at
-                        _ROS_CACHE["bat"] = bat_raw
-                        _ROS_CACHE["pit"] = pit_raw
-                        _ROS_CACHE["fetched_at"] = persisted_at
+                        with _ROS_CACHE_LOCK:
+                            _ROS_CACHE.update({"bat": bat_raw, "pit": pit_raw, "fetched_at": persisted_at})
 
             if not bat_raw and not pit_raw:
                 logger.info("ensemble_update: cache miss — re-fetching FanGraphs RoS")
@@ -2031,9 +2053,8 @@ class DailyIngestionOrchestrator:
                 pit_raw = fetch_all_ros("pit", delay_seconds=3.0)
                 if bat_raw or pit_raw:
                     fetched_at = now_et()
-                    _ROS_CACHE["bat"] = bat_raw
-                    _ROS_CACHE["pit"] = pit_raw
-                    _ROS_CACHE["fetched_at"] = fetched_at
+                    with _ROS_CACHE_LOCK:
+                        _ROS_CACHE.update({"bat": bat_raw, "pit": pit_raw, "fetched_at": fetched_at})
                     _store_persisted_ros_cache(bat_raw, pit_raw, fetched_at)
 
             if not bat_raw and not pit_raw:
@@ -2184,7 +2205,7 @@ class DailyIngestionOrchestrator:
                 SLA_ENSEMBLE_H = 12
                 result = db.execute(
                     text(
-                        "SELECT MAX(date) FROM player_daily_metrics "
+                        "SELECT MAX(metric_date) FROM player_daily_metrics "
                         "WHERE data_source = 'ensemble_blend'"
                     )
                 )
@@ -2194,8 +2215,16 @@ class DailyIngestionOrchestrator:
                     logger.warning("PROJECTION FRESHNESS: %s", msg)
                     violations.append(msg)
                 else:
-                    if hasattr(latest_ensemble, "tzinfo") and latest_ensemble.tzinfo is None:
-                        latest_ensemble = latest_ensemble.replace(tzinfo=ZoneInfo("America/New_York"))
+                    # MAX(metric_date) returns a date; convert to aware datetime for subtraction
+                    if hasattr(latest_ensemble, "date"):
+                        # already a datetime — ensure tz-aware
+                        if latest_ensemble.tzinfo is None:
+                            latest_ensemble = latest_ensemble.replace(tzinfo=ZoneInfo("America/New_York"))
+                    else:
+                        # date object — convert to midnight ET
+                        latest_ensemble = datetime.combine(
+                            latest_ensemble, datetime.min.time()
+                        ).replace(tzinfo=ZoneInfo("America/New_York"))
                     age_h = (now - latest_ensemble).total_seconds() / 3600
                     report["ensemble_blend_age_h"] = round(age_h, 1)
                     if age_h > SLA_ENSEMBLE_H:
@@ -2207,7 +2236,7 @@ class DailyIngestionOrchestrator:
                 SLA_STATCAST_H = 6
                 result = db.execute(
                     text(
-                        "SELECT MAX(date) FROM player_daily_metrics "
+                        "SELECT MAX(metric_date) FROM player_daily_metrics "
                         "WHERE data_source = 'statcast'"
                     )
                 )
@@ -2217,8 +2246,13 @@ class DailyIngestionOrchestrator:
                     logger.warning("PROJECTION FRESHNESS: %s", msg)
                     violations.append(msg)
                 else:
-                    if hasattr(latest_statcast, "tzinfo") and latest_statcast.tzinfo is None:
-                        latest_statcast = latest_statcast.replace(tzinfo=ZoneInfo("America/New_York"))
+                    if hasattr(latest_statcast, "date"):
+                        if latest_statcast.tzinfo is None:
+                            latest_statcast = latest_statcast.replace(tzinfo=ZoneInfo("America/New_York"))
+                    else:
+                        latest_statcast = datetime.combine(
+                            latest_statcast, datetime.min.time()
+                        ).replace(tzinfo=ZoneInfo("America/New_York"))
                     age_h = (now - latest_statcast).total_seconds() / 3600
                     report["statcast_age_h"] = round(age_h, 1)
                     if age_h > SLA_STATCAST_H:

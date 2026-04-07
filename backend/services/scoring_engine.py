@@ -23,10 +23,13 @@ Hard stops
 - No datetime.utcnow() usage.
 """
 
+import logging
 import math
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +241,17 @@ def compute_league_zscores(
             for k in applicable_keys
             if getattr(result, k) is not None
         ]
-        result.composite_z = sum(non_none) / len(non_none) if non_none else 0.0
+        if non_none:
+            result.composite_z = sum(non_none) / len(non_none)
+        else:
+            # No category had enough peers — insufficient data for this player.
+            # composite_z stays 0.0; log so operators can detect this at startup/season.
+            result.composite_z = 0.0
+            logger.debug(
+                "scoring_engine: bdl_player_id=%s has no scoreable categories "
+                "(window=%dd, games=%d) — composite_z defaults to 0.0",
+                pid, window_days, row.games_in_window,
+            )
 
         # Step 4: confidence = min(1.0, games_in_window / window_days)
         result.confidence = min(1.0, row.games_in_window / window_days)

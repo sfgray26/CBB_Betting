@@ -15,9 +15,12 @@ Innings pitched parsing:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +56,12 @@ def parse_ip(ip_str: Optional[str]) -> Optional[float]:
             parts = ip_str.split(".", 1)
             innings = int(parts[0])
             outs = int(parts[1])
+            if outs not in (0, 1, 2):
+                logger.warning(
+                    "parse_ip: unexpected outs value %d in %r -- expected 0, 1, or 2",
+                    outs, ip_str,
+                )
+                return None
             # outs must be 0, 1, or 2 in baseball notation
             return innings + outs / 3.0
         else:
@@ -315,7 +324,7 @@ def compute_rolling_window(
 def compute_all_rolling_windows(
     all_stat_rows: list,
     as_of_date: date,
-    window_sizes: list = None,
+    window_sizes: Optional[list] = None,
     decay_lambda: float = 0.95,
 ) -> list:
     """
