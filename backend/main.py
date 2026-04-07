@@ -2939,6 +2939,149 @@ async def ingestion_status(user: str = Depends(verify_api_key)):
     return {"enabled": True, "jobs": _ingestion_orchestrator.get_status()}
 
 
+_PIPELINE_JOB_ORDER = [
+    "mlb_game_log",
+    "mlb_box_stats",
+    "rolling_windows",
+    "player_scores",
+    "player_momentum",
+    "ros_simulation",
+]
+
+
+@app.post("/admin/ingestion/run/{job_id}")
+async def ingestion_run_job(
+    job_id: str,
+    user: str = Depends(verify_admin_api_key),
+):
+    """
+    Manually trigger a single ingestion pipeline job.
+
+    Valid job_id values (must be run in this order for data to flow):
+      mlb_game_log -> mlb_box_stats -> rolling_windows ->
+      player_scores -> player_momentum -> ros_simulation
+
+    Returns the job result dict with status, records, elapsed_ms.
+    Use /admin/ingestion/run-pipeline to run all six in sequence.
+    """
+    if _ingestion_orchestrator is None:
+        raise HTTPException(
+            status_code=503,
+            detail="DailyIngestionOrchestrator is disabled (ENABLE_INGESTION_ORCHESTRATOR=false)",
+        )
+    try:
+        result = await _ingestion_orchestrator.run_job(job_id)
+        return {"job_id": job_id, "result": result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("Manual job trigger failed for %s: %s", job_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/admin/ingestion/run-pipeline")
+async def ingestion_run_pipeline(
+    user: str = Depends(verify_admin_api_key),
+):
+    """
+    Manually run the full MLB intelligence pipeline in order:
+      mlb_game_log -> mlb_box_stats -> rolling_windows ->
+      player_scores -> player_momentum -> ros_simulation
+
+    Runs each job sequentially so downstream jobs see upstream data.
+    Returns per-job results. Any job failure is recorded but does not abort
+    subsequent jobs (pipeline degrades gracefully).
+    """
+    if _ingestion_orchestrator is None:
+        raise HTTPException(
+            status_code=503,
+            detail="DailyIngestionOrchestrator is disabled (ENABLE_INGESTION_ORCHESTRATOR=false)",
+        )
+    results = {}
+    for job_id in _PIPELINE_JOB_ORDER:
+        try:
+            results[job_id] = await _ingestion_orchestrator.run_job(job_id)
+        except Exception as exc:
+            logger.error("Pipeline run: job %s failed: %s", job_id, exc, exc_info=True)
+            results[job_id] = {"status": "failed", "error": str(exc)}
+    return {"pipeline": _PIPELINE_JOB_ORDER, "results": results}
+
+
+@app.get("/admin/explanations/{decision_id}")
+async def get_explanation(decision_id: int, db: Session = Depends(get_db)):
+    """
+    Return the stored explanation for a specific decision_results row.
+    Returns 404 if no explanation exists for that decision_id.
+    """
+    from backend.models import DecisionExplanation as _DecisionExplanation
+    row = db.query(_DecisionExplanation).filter(
+        _DecisionExplanation.decision_id == decision_id
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No explanation for decision_id={}".format(decision_id))
+    return {
+        "decision_id": row.decision_id,
+        "bdl_player_id": row.bdl_player_id,
+        "as_of_date": str(row.as_of_date),
+        "decision_type": row.decision_type,
+        "summary": row.summary,
+        "factors": row.factors_json,
+        "confidence_narrative": row.confidence_narrative,
+        "risk_narrative": row.risk_narrative,
+        "track_record_narrative": row.track_record_narrative,
+        "computed_at": row.computed_at.isoformat() if row.computed_at else None,
+    }
+
+
+def _snapshot_to_dict(row) -> dict:
+    return {
+        "as_of_date": str(row.as_of_date),
+        "n_players_scored": row.n_players_scored,
+        "n_momentum_records": row.n_momentum_records,
+        "n_simulation_records": row.n_simulation_records,
+        "n_decisions": row.n_decisions,
+        "n_explanations": row.n_explanations,
+        "n_backtest_records": row.n_backtest_records,
+        "mean_composite_mae": row.mean_composite_mae,
+        "regression_detected": row.regression_detected,
+        "top_lineup_player_ids": row.top_lineup_player_ids,
+        "top_waiver_player_ids": row.top_waiver_player_ids,
+        "pipeline_jobs_run": row.pipeline_jobs_run,
+        "pipeline_health": row.pipeline_health,
+        "health_reasons": row.health_reasons,
+        "summary": row.summary,
+        "computed_at": row.computed_at.isoformat() if row.computed_at else None,
+    }
+
+
+@app.get("/admin/snapshot/latest")
+async def get_latest_snapshot(db: Session = Depends(get_db)):
+    """Return the most recent DailySnapshot row."""
+    from backend.models import DailySnapshot as _DailySnapshot
+    row = db.query(_DailySnapshot).order_by(_DailySnapshot.as_of_date.desc()).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No snapshots available yet")
+    return _snapshot_to_dict(row)
+
+
+@app.get("/admin/snapshot/{snapshot_date}")
+async def get_snapshot_by_date(snapshot_date: str, db: Session = Depends(get_db)):
+    """
+    Return the DailySnapshot for a specific date (YYYY-MM-DD).
+    Returns 404 if no snapshot exists for that date.
+    """
+    from datetime import date as _date_type
+    try:
+        d = _date_type.fromisoformat(snapshot_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+    from backend.models import DailySnapshot as _DailySnapshot
+    row = db.query(_DailySnapshot).filter(_DailySnapshot.as_of_date == d).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No snapshot for {}".format(snapshot_date))
+    return _snapshot_to_dict(row)
+
+
 @app.get("/admin/portfolio/status")
 async def get_portfolio_status(
     user: str = Depends(verify_api_key),

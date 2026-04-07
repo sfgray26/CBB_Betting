@@ -20,6 +20,7 @@ from sqlalchemy import (
     Index,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.sql import func
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
@@ -1008,4 +1009,563 @@ class MLBOddsSnapshot(Base):
     __table_args__ = (
         UniqueConstraint("game_id", "vendor", "snapshot_window", name="_mlb_odds_game_vendor_window_uc"),
         Index("idx_mlb_odds_vendor_window", "vendor", "snapshot_window"),
+    )
+
+
+class MLBPlayerStats(Base):
+    """
+    MLB per-player per-game box stats (P11 -- Phase 2 stats ingestion).
+
+    Natural key: (bdl_player_id, game_id) -- unique constraint enforces idempotent upserts.
+    Dual-write: raw_payload stores the full BDL API dict alongside normalized columns.
+
+    Column name mapping (API -> DB):
+      r          -> runs          (avoids Python keyword clash)
+      h          -> hits          (avoids ambiguity with home_hits in game_log)
+      double     -> doubles       (avoids Python builtin keyword)
+      hr         -> home_runs
+      bb         -> walks
+      so         -> strikeouts_bat
+      sb         -> stolen_bases
+      cs         -> caught_stealing
+      h_allowed  -> hits_allowed
+      r_allowed  -> runs_allowed
+      er         -> earned_runs
+      bb_allowed -> walks_allowed
+      k          -> strikeouts_pit
+      ip         -> innings_pitched  (string, e.g. "6.2")
+
+    Contract source: backend/data_contracts/mlb_player_stats.py
+    """
+
+    __tablename__ = "mlb_player_stats"
+
+    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    bdl_stat_id     = Column(Integer, nullable=True)           # BDL stats record id
+    bdl_player_id   = Column(Integer, nullable=False)          # player.id from BDL
+    game_id         = Column(Integer, ForeignKey("mlb_game_log.game_id"), nullable=True)
+    game_date       = Column(Date, nullable=False)
+    season          = Column(Integer, nullable=False, default=2026)
+
+    # Batting stats (null for pure pitchers)
+    ab              = Column(Integer, nullable=True)
+    runs            = Column(Integer, nullable=True)           # 'r' from API
+    hits            = Column(Integer, nullable=True)           # 'h' from API
+    doubles         = Column(Integer, nullable=True)           # 'double' from API
+    triples         = Column(Integer, nullable=True)
+    home_runs       = Column(Integer, nullable=True)           # 'hr' from API
+    rbi             = Column(Integer, nullable=True)
+    walks           = Column(Integer, nullable=True)           # 'bb' from API
+    strikeouts_bat  = Column(Integer, nullable=True)           # 'so' from API
+    stolen_bases    = Column(Integer, nullable=True)           # 'sb' from API
+    caught_stealing = Column(Integer, nullable=True)           # 'cs' from API
+    avg             = Column(Float, nullable=True)
+    obp             = Column(Float, nullable=True)
+    slg             = Column(Float, nullable=True)
+    ops             = Column(Float, nullable=True)
+
+    # Pitching stats (null for pure hitters)
+    innings_pitched = Column(String(10), nullable=True)        # 'ip' e.g. "6.2"
+    hits_allowed    = Column(Integer, nullable=True)           # 'h_allowed' from API
+    runs_allowed    = Column(Integer, nullable=True)           # 'r_allowed' from API
+    earned_runs     = Column(Integer, nullable=True)           # 'er' from API
+    walks_allowed   = Column(Integer, nullable=True)           # 'bb_allowed' from API
+    strikeouts_pit  = Column(Integer, nullable=True)           # 'k' from API
+    whip            = Column(Float, nullable=True)
+    era             = Column(Float, nullable=True)
+
+    # Audit columns
+    raw_payload     = Column(JSON, nullable=False)             # Full BDL dict (dual-write)
+    ingested_at     = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("bdl_player_id", "game_id", name="_mps_player_game_uc"),
+        Index("idx_mps_player_date", "bdl_player_id", "game_date"),
+        Index("idx_mps_game", "game_id"),
+        Index("idx_mps_date", "game_date"),
+    )
+
+
+class PlayerIDMapping(Base):
+    """
+    Cross-system player identity mapping table (P10 — Phase 2 identity resolution).
+
+    Maps Yahoo player keys, BDL player IDs, and mlbam IDs to a single canonical
+    row per player. Seeded via pybaseball.playerid_lookup() + manual overrides.
+
+    Resolution priority:
+      1. Cache hit on yahoo_key or bdl_id -> return mlbam_id immediately
+      2. pybaseball name lookup -> cache result (source='pybaseball')
+      3. Manual override (source='manual') takes precedence in conflicts
+
+    Key design decisions (from K-B spec):
+      - yahoo_key is "469.p.7590" format — game_id.p.yahoo_id
+      - yahoo_id "7590" is proprietary — NOT mlbam_id
+      - bdl_id is BDL internal integer — NOT mlbam_id
+      - mlbam_id is the canonical cross-platform identifier
+      - normalized_name enables fuzzy matching across systems (Unicode-normalized)
+    """
+
+    __tablename__ = "player_id_mapping"
+
+    id                   = Column(Integer, primary_key=True, autoincrement=True)
+    yahoo_key            = Column(String(50), nullable=True)    # "469.p.7590" — unique per player
+    yahoo_id             = Column(String(20), nullable=True)    # "7590" — proprietary Yahoo ID
+    mlbam_id             = Column(Integer, nullable=True)       # MLB Advanced Media canonical ID
+    bdl_id               = Column(Integer, nullable=True)       # BDL player.id internal
+    full_name            = Column(String(150), nullable=False)
+    normalized_name      = Column(String(150), nullable=False)  # lowercase, no accents
+    source               = Column(String(20), nullable=False, default="manual")  # pybaseball|manual|api
+    resolution_confidence = Column(Float, nullable=True)        # 0.0-1.0 for fuzzy matches
+    created_at           = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    last_verified        = Column(Date, nullable=True)
+
+    __table_args__ = (
+        # Partial unique indexes — each external ID is unique where present
+        UniqueConstraint("yahoo_key", name="_pim_yahoo_key_uc"),
+        Index("idx_pim_mlbam",       "mlbam_id"),
+        Index("idx_pim_bdl",         "bdl_id"),
+        Index("idx_pim_normalized",  "normalized_name"),
+        Index("idx_pim_yahoo_id",    "yahoo_id"),
+    )
+
+
+class PlayerRollingStats(Base):
+    """
+    Decay-weighted rolling window metrics per player per date per window size (P13).
+
+    Computed daily by _compute_rolling_windows() (lock 100_018, 3 AM ET).
+    Exponential decay: weight = 0.95 ** days_back.
+    Window sizes: 7, 14, 30 days.
+
+    Batting fields are NULL for pure pitchers (no at-bats in window).
+    Pitching fields are NULL for pure hitters (no innings pitched in window).
+    Two-way players (e.g. Ohtani) have both batting and pitching fields populated.
+
+    w_ip stores decimal innings (e.g. 6.667 for "6.2" BDL notation), not the raw string.
+    Derived rates (w_avg, w_era, etc.) are recomputed from weighted sums -- not stored
+    from the per-game rate stats which have no decay weighting.
+
+    Natural key: (bdl_player_id, as_of_date, window_days).
+    """
+
+    __tablename__ = "player_rolling_stats"
+
+    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    bdl_player_id   = Column(Integer, nullable=False)
+    as_of_date      = Column(Date, nullable=False)
+    window_days     = Column(Integer, nullable=False)    # 7, 14, or 30
+    games_in_window = Column(Integer, nullable=False)
+
+    # Batting weighted sums
+    w_ab            = Column(Float, nullable=True)
+    w_hits          = Column(Float, nullable=True)
+    w_doubles       = Column(Float, nullable=True)
+    w_triples       = Column(Float, nullable=True)
+    w_home_runs     = Column(Float, nullable=True)
+    w_rbi           = Column(Float, nullable=True)
+    w_walks         = Column(Float, nullable=True)
+    w_strikeouts_bat = Column(Float, nullable=True)
+    w_stolen_bases  = Column(Float, nullable=True)
+
+    # Batting derived rates (computed from weighted sums)
+    w_avg           = Column(Float, nullable=True)   # w_hits / w_ab
+    w_obp           = Column(Float, nullable=True)   # (w_hits + w_walks) / (w_ab + w_walks)
+    w_slg           = Column(Float, nullable=True)   # weighted TB / w_ab
+    w_ops           = Column(Float, nullable=True)   # w_obp + w_slg
+
+    # Pitching weighted sums
+    w_ip            = Column(Float, nullable=True)   # decimal IP (not "6.2" string)
+    w_earned_runs   = Column(Float, nullable=True)
+    w_hits_allowed  = Column(Float, nullable=True)
+    w_walks_allowed = Column(Float, nullable=True)
+    w_strikeouts_pit = Column(Float, nullable=True)
+
+    # Pitching derived rates
+    w_era           = Column(Float, nullable=True)   # 9 * w_earned_runs / w_ip
+    w_whip          = Column(Float, nullable=True)   # (w_hits_allowed + w_walks_allowed) / w_ip
+    w_k_per_9       = Column(Float, nullable=True)   # 9 * w_strikeouts_pit / w_ip
+
+    computed_at     = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "bdl_player_id", "as_of_date", "window_days",
+            name="_prs_player_date_window_uc",
+        ),
+        Index("idx_prs_player_date", "bdl_player_id", "as_of_date"),
+        Index("idx_prs_date_window", "as_of_date", "window_days"),
+    )
+
+
+class PlayerScore(Base):
+    """
+    P14 League Z-scores + composite score per player per date per window size.
+
+    Computed daily by _compute_player_scores() (lock 100_019, 4 AM ET).
+    Input: player_rolling_stats. Output: league Z-scores + 0-100 percentile rank.
+
+    Z-score methodology:
+      - Population std (ddof=0) across all players with non-null value.
+      - MIN_SAMPLE = 5 players required before computing Z for a category.
+      - Lower-is-better categories (ERA, WHIP): Z is negated so higher Z = better.
+      - Z capped at +/-3.0 to reduce outlier distortion.
+      - composite_z = mean of all applicable non-None per-category Z-scores.
+      - score_0_100 = percentile rank (0-100) within player_type cohort.
+
+    Hitter categories: z_hr, z_rbi, z_sb, z_avg, z_obp.
+    Pitcher categories: z_era, z_whip, z_k_per_9.
+    Two-way players: all categories (Ohtani-style).
+    """
+
+    __tablename__ = "player_scores"
+
+    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    bdl_player_id   = Column(Integer, nullable=False)
+    as_of_date      = Column(Date, nullable=False)
+    window_days     = Column(Integer, nullable=False)     # 7, 14, or 30
+    player_type     = Column(String(10), nullable=False)  # "hitter" | "pitcher" | "two_way"
+    games_in_window = Column(Integer, nullable=False)
+
+    # Per-category Z-scores (NULL if not applicable or < MIN_SAMPLE)
+    z_hr        = Column(Float, nullable=True)
+    z_rbi       = Column(Float, nullable=True)
+    z_sb        = Column(Float, nullable=True)
+    z_avg       = Column(Float, nullable=True)
+    z_obp       = Column(Float, nullable=True)
+    z_era       = Column(Float, nullable=True)
+    z_whip      = Column(Float, nullable=True)
+    z_k_per_9   = Column(Float, nullable=True)
+
+    composite_z = Column(Float, nullable=False, default=0.0)
+    score_0_100 = Column(Float, nullable=False, default=50.0)
+    confidence  = Column(Float, nullable=False, default=0.0)
+
+    computed_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "bdl_player_id", "as_of_date", "window_days",
+            name="_ps_player_date_window_uc",
+        ),
+        Index("idx_ps_date_window", "as_of_date", "window_days"),
+        Index("idx_ps_player_date", "bdl_player_id", "as_of_date"),
+        Index("idx_ps_score", "as_of_date", "window_days", "score_0_100"),
+    )
+
+
+class PlayerMomentum(Base):
+    """
+    P15 Momentum layer -- delta-Z signals derived from 14d vs 30d player_scores.
+
+    Computed daily by _compute_player_momentum() (lock 100_020, 5 AM ET).
+    Input: player_scores (P14). Output: SURGING / HOT / STABLE / COLD / COLLAPSING.
+
+    Signal thresholds:
+      delta_z >  0.5  -> SURGING
+      delta_z >= 0.2  -> HOT
+      delta_z >  -0.2 -> STABLE
+      delta_z >= -0.5 -> COLD
+      else            -> COLLAPSING
+    """
+
+    __tablename__ = "player_momentum"
+
+    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    bdl_player_id   = Column(Integer, nullable=False)
+    as_of_date      = Column(Date, nullable=False)
+    player_type     = Column(String(10), nullable=False)
+    delta_z         = Column(Float, nullable=False)
+    signal          = Column(String(12), nullable=False)
+    composite_z_14d = Column(Float, nullable=False)
+    composite_z_30d = Column(Float, nullable=False)
+    score_14d       = Column(Float, nullable=False)
+    score_30d       = Column(Float, nullable=False)
+    confidence_14d  = Column(Float, nullable=False)
+    confidence_30d  = Column(Float, nullable=False)
+    confidence      = Column(Float, nullable=False)
+    computed_at     = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "bdl_player_id", "as_of_date",
+            name="_pm_player_date_uc",
+        ),
+        Index("idx_pm_date_signal", "as_of_date", "signal"),
+        Index("idx_pm_player_date", "bdl_player_id", "as_of_date"),
+    )
+
+
+class SimulationResult(Base):
+    """
+    P16 Rest-of-Season Monte Carlo simulation results per player per date.
+
+    Computed daily by _run_ros_simulation() (lock 100_021, 6 AM ET).
+    Input: player_rolling_stats (14d window -- current form baseline).
+    Algorithm: N=1000 simulations, CV=0.35 game-to-game variation,
+               remaining_games=130 (mid-April 2026 default).
+
+    Hitter percentiles: proj_hr, proj_rbi, proj_sb, proj_avg (P10/25/50/75/90).
+    Pitcher percentiles: proj_k, proj_era, proj_whip (P10/25/50/75/90).
+    Two-way players: all fields populated (Ohtani-style).
+
+    Risk metrics require league_means/league_stds from player_scores.
+    If player_scores unavailable for the date, risk fields are NULL.
+
+    Natural key: (bdl_player_id, as_of_date) -- one simulation snapshot per player per day.
+    Downstream: P17 lineup/waiver decision engines.
+    """
+
+    __tablename__ = "simulation_results"
+
+    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    bdl_player_id   = Column(Integer, nullable=False)
+    as_of_date      = Column(Date, nullable=False)
+    window_days     = Column(Integer, nullable=False, default=14)
+    remaining_games = Column(Integer, nullable=False)
+    n_simulations   = Column(Integer, nullable=False)
+    player_type     = Column(String(10), nullable=False)
+
+    # Hitter projection percentiles (NULL for pure pitchers)
+    proj_hr_p10  = Column(Float, nullable=True)
+    proj_hr_p25  = Column(Float, nullable=True)
+    proj_hr_p50  = Column(Float, nullable=True)
+    proj_hr_p75  = Column(Float, nullable=True)
+    proj_hr_p90  = Column(Float, nullable=True)
+
+    proj_rbi_p10 = Column(Float, nullable=True)
+    proj_rbi_p25 = Column(Float, nullable=True)
+    proj_rbi_p50 = Column(Float, nullable=True)
+    proj_rbi_p75 = Column(Float, nullable=True)
+    proj_rbi_p90 = Column(Float, nullable=True)
+
+    proj_sb_p10  = Column(Float, nullable=True)
+    proj_sb_p25  = Column(Float, nullable=True)
+    proj_sb_p50  = Column(Float, nullable=True)
+    proj_sb_p75  = Column(Float, nullable=True)
+    proj_sb_p90  = Column(Float, nullable=True)
+
+    proj_avg_p10 = Column(Float, nullable=True)
+    proj_avg_p25 = Column(Float, nullable=True)
+    proj_avg_p50 = Column(Float, nullable=True)
+    proj_avg_p75 = Column(Float, nullable=True)
+    proj_avg_p90 = Column(Float, nullable=True)
+
+    # Pitcher projection percentiles (NULL for pure hitters)
+    proj_k_p10   = Column(Float, nullable=True)
+    proj_k_p25   = Column(Float, nullable=True)
+    proj_k_p50   = Column(Float, nullable=True)
+    proj_k_p75   = Column(Float, nullable=True)
+    proj_k_p90   = Column(Float, nullable=True)
+
+    proj_era_p10  = Column(Float, nullable=True)
+    proj_era_p25  = Column(Float, nullable=True)
+    proj_era_p50  = Column(Float, nullable=True)
+    proj_era_p75  = Column(Float, nullable=True)
+    proj_era_p90  = Column(Float, nullable=True)
+
+    proj_whip_p10 = Column(Float, nullable=True)
+    proj_whip_p25 = Column(Float, nullable=True)
+    proj_whip_p50 = Column(Float, nullable=True)
+    proj_whip_p75 = Column(Float, nullable=True)
+    proj_whip_p90 = Column(Float, nullable=True)
+
+    # Risk metrics (NULL when league_means/stds unavailable for the date)
+    composite_variance  = Column(Float, nullable=True)
+    downside_p25        = Column(Float, nullable=True)
+    upside_p75          = Column(Float, nullable=True)
+    prob_above_median   = Column(Float, nullable=True)
+
+    computed_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "bdl_player_id", "as_of_date",
+            name="_sr_player_date_uc",
+        ),
+        Index("idx_sr_date", "as_of_date"),
+        Index("idx_sr_player_date", "bdl_player_id", "as_of_date"),
+    )
+
+
+class DecisionResult(Base):
+    """
+    P17 Decision Engine results -- lineup and waiver optimization outputs.
+
+    Computed daily by _run_decision_optimization() (lock 100_022, 7 AM ET).
+    Input: player_scores (P14) + player_momentum (P15) + simulation_results (P16).
+    Decision types: "lineup" (slot assignment) | "waiver" (add/drop recommendation).
+
+    Natural key: (as_of_date, decision_type, bdl_player_id).
+    """
+
+    __tablename__ = "decision_results"
+
+    id             = Column(BigInteger, primary_key=True, autoincrement=True)
+    as_of_date     = Column(Date, nullable=False)
+    decision_type  = Column(String(10), nullable=False)   # "lineup" | "waiver"
+    bdl_player_id  = Column(Integer, nullable=False)
+    target_slot    = Column(String(10), nullable=True)    # e.g. "OF", "SP"
+    drop_player_id = Column(Integer, nullable=True)       # waiver drop target
+    lineup_score   = Column(Float, nullable=True)
+    value_gain     = Column(Float, nullable=True)
+    confidence     = Column(Float, nullable=False)
+    reasoning      = Column(String(500), nullable=True)
+    computed_at    = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "as_of_date", "decision_type", "bdl_player_id",
+            name="_dr_date_type_player_uc",
+        ),
+        Index("idx_dr_date_type",    "as_of_date", "decision_type"),
+        Index("idx_dr_player_date",  "bdl_player_id", "as_of_date"),
+    )
+
+
+class BacktestResult(Base):
+    """
+    P18 Backtesting Harness results -- per-player forecast accuracy metrics.
+
+    Computed daily by _run_backtesting() (lock 100_023, 8 AM ET).
+    Input: simulation_results (P16 projections) vs mlb_player_stats (actuals).
+    Compares proj_p50 against actual stats over a rolling 14-day window.
+
+    Natural key: (bdl_player_id, as_of_date).
+    Downstream: P19 Explainability Layer.
+    """
+
+    __tablename__ = "backtest_results"
+
+    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    bdl_player_id   = Column(Integer, nullable=False)
+    as_of_date      = Column(Date, nullable=False)
+    player_type     = Column(String(10), nullable=False)
+    games_played    = Column(Integer, nullable=False)
+
+    # Per-stat MAE (None when projection or actual unavailable)
+    mae_hr          = Column(Float, nullable=True)
+    rmse_hr         = Column(Float, nullable=True)
+    mae_rbi         = Column(Float, nullable=True)
+    rmse_rbi        = Column(Float, nullable=True)
+    mae_sb          = Column(Float, nullable=True)
+    rmse_sb         = Column(Float, nullable=True)
+    mae_avg         = Column(Float, nullable=True)
+    rmse_avg        = Column(Float, nullable=True)
+    mae_k           = Column(Float, nullable=True)
+    rmse_k          = Column(Float, nullable=True)
+    mae_era         = Column(Float, nullable=True)
+    rmse_era        = Column(Float, nullable=True)
+    mae_whip        = Column(Float, nullable=True)
+    rmse_whip       = Column(Float, nullable=True)
+
+    composite_mae     = Column(Float, nullable=True)
+    direction_correct = Column(Boolean, nullable=True)
+
+    computed_at     = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("bdl_player_id", "as_of_date",
+                         name="_br_player_date_uc"),
+        Index("idx_br_date", "as_of_date"),
+        Index("idx_br_player_date", "bdl_player_id", "as_of_date"),
+    )
+
+
+class DecisionExplanation(Base):
+    """
+    P19 Explainability Layer -- human-readable decision traces.
+
+    Computed daily by _run_explainability() (lock 100_024, 9 AM ET).
+    Input: decision_results (P17) + player_scores (P14) + player_momentum (P15)
+           + simulation_results (P16) + backtest_results (P18).
+    One row per decision_results row (1:1 relationship).
+
+    Natural key: (decision_id,) -- one explanation per decision.
+    Downstream: P20 Integration (UI display, API endpoint /admin/explanations/{id}).
+    """
+
+    __tablename__ = "decision_explanations"
+
+    id              = Column(BigInteger, primary_key=True, autoincrement=True)
+    decision_id     = Column(BigInteger, nullable=False, unique=True)  # FK to decision_results.id
+    bdl_player_id   = Column(Integer, nullable=False)
+    as_of_date      = Column(Date, nullable=False)
+    decision_type   = Column(String(10), nullable=False)
+
+    summary         = Column(String(500), nullable=False)
+    # factors stored as JSON array: [{name, value, label, weight, narrative}, ...]
+    factors_json    = Column(JSON, nullable=False)
+    confidence_narrative  = Column(String(200), nullable=True)
+    risk_narrative        = Column(String(200), nullable=True)
+    track_record_narrative = Column(String(200), nullable=True)
+
+    computed_at     = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_de_date", "as_of_date"),
+        Index("idx_de_player_date", "bdl_player_id", "as_of_date"),
+        Index("idx_de_decision_id", "decision_id"),
+    )
+
+
+class DailySnapshot(Base):
+    """
+    P20 Daily Snapshot -- end-of-pipeline state capture.
+
+    Computed daily by _run_snapshot() (lock 100_025, 10 AM ET).
+    Runs after all 9 prior phases complete. One row per day.
+    Captures counts, health status, top players, regression flag.
+
+    Natural key: (as_of_date,) -- one snapshot per calendar day.
+    Downstream: GET /admin/snapshot/latest and GET /admin/snapshot/{date} API endpoints.
+    """
+
+    __tablename__ = "daily_snapshots"
+
+    id                    = Column(BigInteger, primary_key=True, autoincrement=True)
+    as_of_date            = Column(Date, nullable=False, unique=True)
+
+    n_players_scored      = Column(Integer, nullable=False, default=0)
+    n_momentum_records    = Column(Integer, nullable=False, default=0)
+    n_simulation_records  = Column(Integer, nullable=False, default=0)
+    n_decisions           = Column(Integer, nullable=False, default=0)
+    n_explanations        = Column(Integer, nullable=False, default=0)
+    n_backtest_records    = Column(Integer, nullable=False, default=0)
+
+    mean_composite_mae    = Column(Float, nullable=True)
+    regression_detected   = Column(Boolean, nullable=False, default=False)
+
+    top_lineup_player_ids = Column(JSON, nullable=True)   # list of up to 5 bdl_player_ids
+    top_waiver_player_ids = Column(JSON, nullable=True)   # list of up to 3 bdl_player_ids
+    pipeline_jobs_run     = Column(JSON, nullable=True)   # list of job name strings
+
+    pipeline_health       = Column(String(10), nullable=False, default="UNKNOWN")  # HEALTHY/DEGRADED/FAILED
+    health_reasons        = Column(JSON, nullable=True)   # list of reason strings
+    summary               = Column(String(500), nullable=True)
+
+    computed_at           = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_ds_date", "as_of_date"),
     )

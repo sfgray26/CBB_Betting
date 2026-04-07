@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from backend.data_contracts import MLBBettingOdd, MLBGame, MLBInjury, MLBPlayer, BDLResponse
+from backend.data_contracts import MLBBettingOdd, MLBGame, MLBInjury, MLBPlayer, MLBPlayerStats, BDLResponse
 
 logger = logging.getLogger(__name__)
 
@@ -454,6 +454,76 @@ class BallDontLieClient:
                 logger.error("search_mlb_players(%r) page=%d failed: %s", query, page, exc)
                 break
         return players
+
+    # ------------------------------------------------------------------
+    # MLB Player Box Stats -- Priority P11
+    # ------------------------------------------------------------------
+
+    def get_mlb_stats(
+        self,
+        dates: Optional[List[str]] = None,
+        player_ids: Optional[List[int]] = None,
+        per_page: int = 100,
+    ) -> List[MLBPlayerStats]:
+        """
+        Fetch per-player per-game box stats from BDL /mlb/v1/stats.
+
+        Natural key: (player.id, game_id).
+        Rate stats (avg, obp, slg, era, whip) are floats per live probe.
+        Pitching fields are null for hitters; batting fields are null for pitchers.
+
+        Args:
+            dates:      List of YYYY-MM-DD strings to filter by game date.
+            player_ids: BDL player IDs to filter to specific players.
+            per_page:   Page size (max 100 per BDL convention).
+
+        Returns:
+            list[MLBPlayerStats] -- Pydantic-validated. Rows that fail validation
+            are logged at WARNING and skipped (never raises).
+        """
+        params: Dict[str, Any] = {"per_page": per_page}
+        if dates:
+            params["dates[]"] = dates
+        if player_ids:
+            params["player_ids[]"] = player_ids
+
+        results: List[MLBPlayerStats] = []
+        cursor: Optional[int] = None
+        page = 0
+        max_pages = 50  # generous ceiling -- daily pull is bounded
+
+        while page < max_pages:
+            if cursor is not None:
+                params["cursor"] = cursor
+            try:
+                raw = self._mlb_get("/stats", params=params)
+            except Exception as exc:
+                logger.error("get_mlb_stats() page=%d HTTP error: %s", page, exc)
+                break
+
+            rows = raw.get("data", [])
+            meta = raw.get("meta", {})
+
+            for raw_row in rows:
+                try:
+                    stat = MLBPlayerStats.model_validate(raw_row)
+                    results.append(stat)
+                except Exception as exc:
+                    logger.warning(
+                        "get_mlb_stats(): validation failed for row player_id=%s game_id=%s -- %s",
+                        raw_row.get("player", {}).get("id") if isinstance(raw_row, dict) else "?",
+                        raw_row.get("game_id") if isinstance(raw_row, dict) else "?",
+                        exc,
+                    )
+
+            next_cursor = meta.get("next_cursor") if isinstance(meta, dict) else None
+            if not next_cursor:
+                break
+            cursor = next_cursor
+            page += 1
+            time.sleep(0.1)
+
+        return results
 
     # ------------------------------------------------------------------
     # Player season stats (for tournament_exp field)

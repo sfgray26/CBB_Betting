@@ -29,18 +29,18 @@ class MLBPlayer(BaseModel):
     last_name: str
     full_name: str
     debut_year: Optional[int] = None
-    jersey: str
+    jersey: Optional[str] = None
     college: Optional[str] = None
     position: str
     active: bool
-    birth_place: str
+    birth_place: Optional[str] = None
     dob: Optional[str] = None           # "D/M/YYYY" format — NOT ISO 8601
     age: Optional[int] = None
-    height: str
-    weight: str
+    height: Optional[str] = None
+    weight: Optional[str] = None
     draft: Optional[str] = None         # null for international/undrafted
-    bats_throws: str
-    team: MLBTeam
+    bats_throws: Optional[str] = None
+    team: Optional[MLBTeam] = None
 
     @field_validator("dob", mode="before")
     @classmethod
