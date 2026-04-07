@@ -449,6 +449,29 @@ class DailyIngestionOrchestrator:
             self._job_status[job_id]["next_run"] = self._get_next_run(job_id)
         return dict(self._job_status)
 
+    async def run_job(self, job_id: str) -> dict:
+        """
+        Manually execute a single ingestion job by ID.
+
+        Supported IDs (pipeline order):
+          mlb_game_log -> mlb_box_stats -> rolling_windows -> player_scores
+          -> player_momentum -> ros_simulation
+
+        Returns the job's result dict.  Raises ValueError for unknown job_id.
+        """
+        _handlers = {
+            "mlb_game_log":    self._ingest_mlb_game_log,
+            "mlb_box_stats":   self._ingest_mlb_box_stats,
+            "rolling_windows": self._compute_rolling_windows,
+            "player_scores":   self._compute_player_scores,
+            "player_momentum": self._compute_player_momentum,
+            "ros_simulation":  self._run_ros_simulation,
+        }
+        handler = _handlers.get(job_id)
+        if handler is None:
+            raise ValueError(f"Unknown job_id: {job_id!r}. Valid: {sorted(_handlers)}")
+        return await handler()
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------

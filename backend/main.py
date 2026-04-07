@@ -2939,6 +2939,74 @@ async def ingestion_status(user: str = Depends(verify_api_key)):
     return {"enabled": True, "jobs": _ingestion_orchestrator.get_status()}
 
 
+_PIPELINE_JOB_ORDER = [
+    "mlb_game_log",
+    "mlb_box_stats",
+    "rolling_windows",
+    "player_scores",
+    "player_momentum",
+    "ros_simulation",
+]
+
+
+@app.post("/admin/ingestion/run/{job_id}")
+async def ingestion_run_job(
+    job_id: str,
+    user: str = Depends(verify_admin_api_key),
+):
+    """
+    Manually trigger a single ingestion pipeline job.
+
+    Valid job_id values (must be run in this order for data to flow):
+      mlb_game_log -> mlb_box_stats -> rolling_windows ->
+      player_scores -> player_momentum -> ros_simulation
+
+    Returns the job result dict with status, records, elapsed_ms.
+    Use /admin/ingestion/run-pipeline to run all six in sequence.
+    """
+    if _ingestion_orchestrator is None:
+        raise HTTPException(
+            status_code=503,
+            detail="DailyIngestionOrchestrator is disabled (ENABLE_INGESTION_ORCHESTRATOR=false)",
+        )
+    try:
+        result = await _ingestion_orchestrator.run_job(job_id)
+        return {"job_id": job_id, "result": result}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error("Manual job trigger failed for %s: %s", job_id, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/admin/ingestion/run-pipeline")
+async def ingestion_run_pipeline(
+    user: str = Depends(verify_admin_api_key),
+):
+    """
+    Manually run the full MLB intelligence pipeline in order:
+      mlb_game_log -> mlb_box_stats -> rolling_windows ->
+      player_scores -> player_momentum -> ros_simulation
+
+    Runs each job sequentially so downstream jobs see upstream data.
+    Returns per-job results. Any job failure is recorded but does not abort
+    subsequent jobs (pipeline degrades gracefully).
+    """
+    if _ingestion_orchestrator is None:
+        raise HTTPException(
+            status_code=503,
+            detail="DailyIngestionOrchestrator is disabled (ENABLE_INGESTION_ORCHESTRATOR=false)",
+        )
+    results = {}
+    for job_id in _PIPELINE_JOB_ORDER:
+        try:
+            results[job_id] = await _ingestion_orchestrator.run_job(job_id)
+        except Exception as exc:
+            logger.error("Pipeline run: job %s failed: %s", job_id, exc, exc_info=True)
+            results[job_id] = {"status": "failed", "error": str(exc)}
+    return {"pipeline": _PIPELINE_JOB_ORDER, "results": results}
+
+
 @app.get("/admin/portfolio/status")
 async def get_portfolio_status(
     user: str = Depends(verify_api_key),

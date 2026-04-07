@@ -116,7 +116,7 @@ COMMENT ON TABLE simulation_results IS
     'Algorithm: N=1000 simulations, CV=0.35 game-to-game variation, '
     'remaining_games=130 (mid-April 2026 default). '
     'Risk metrics (composite_variance, downside_p25, upside_p75, prob_above_median) '
-    'require league_means/stds from player_scores; NULL if unavailable. '
+    'require league_means/stds from player_scores -- NULL if unavailable. '
     'Downstream: P17 lineup/waiver decision engines.'
 """
 
