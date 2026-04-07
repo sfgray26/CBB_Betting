@@ -3033,6 +3033,55 @@ async def get_explanation(decision_id: int, db: Session = Depends(get_db)):
     }
 
 
+def _snapshot_to_dict(row) -> dict:
+    return {
+        "as_of_date": str(row.as_of_date),
+        "n_players_scored": row.n_players_scored,
+        "n_momentum_records": row.n_momentum_records,
+        "n_simulation_records": row.n_simulation_records,
+        "n_decisions": row.n_decisions,
+        "n_explanations": row.n_explanations,
+        "n_backtest_records": row.n_backtest_records,
+        "mean_composite_mae": row.mean_composite_mae,
+        "regression_detected": row.regression_detected,
+        "top_lineup_player_ids": row.top_lineup_player_ids,
+        "top_waiver_player_ids": row.top_waiver_player_ids,
+        "pipeline_jobs_run": row.pipeline_jobs_run,
+        "pipeline_health": row.pipeline_health,
+        "health_reasons": row.health_reasons,
+        "summary": row.summary,
+        "computed_at": row.computed_at.isoformat() if row.computed_at else None,
+    }
+
+
+@app.get("/admin/snapshot/latest")
+async def get_latest_snapshot(db: Session = Depends(get_db)):
+    """Return the most recent DailySnapshot row."""
+    from backend.models import DailySnapshot as _DailySnapshot
+    row = db.query(_DailySnapshot).order_by(_DailySnapshot.as_of_date.desc()).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No snapshots available yet")
+    return _snapshot_to_dict(row)
+
+
+@app.get("/admin/snapshot/{snapshot_date}")
+async def get_snapshot_by_date(snapshot_date: str, db: Session = Depends(get_db)):
+    """
+    Return the DailySnapshot for a specific date (YYYY-MM-DD).
+    Returns 404 if no snapshot exists for that date.
+    """
+    from datetime import date as _date_type
+    try:
+        d = _date_type.fromisoformat(snapshot_date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+    from backend.models import DailySnapshot as _DailySnapshot
+    row = db.query(_DailySnapshot).filter(_DailySnapshot.as_of_date == d).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No snapshot for {}".format(snapshot_date))
+    return _snapshot_to_dict(row)
+
+
 @app.get("/admin/portfolio/status")
 async def get_portfolio_status(
     user: str = Depends(verify_api_key),

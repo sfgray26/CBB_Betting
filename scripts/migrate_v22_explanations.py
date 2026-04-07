@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS decision_explanations (
 -- Natural key: one explanation per decision row
 -- Named to match SQLAlchemy ORM unique=True so ON CONFLICT targets work.
 ALTER TABLE decision_explanations
-    ADD CONSTRAINT IF NOT EXISTS _de_decision_id_uc
+    ADD CONSTRAINT _de_decision_id_uc
     UNIQUE (decision_id);
 
 -- Primary access pattern: lookup by decision_id

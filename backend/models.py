@@ -1527,3 +1527,45 @@ class DecisionExplanation(Base):
         Index("idx_de_player_date", "bdl_player_id", "as_of_date"),
         Index("idx_de_decision_id", "decision_id"),
     )
+
+
+class DailySnapshot(Base):
+    """
+    P20 Daily Snapshot -- end-of-pipeline state capture.
+
+    Computed daily by _run_snapshot() (lock 100_025, 10 AM ET).
+    Runs after all 9 prior phases complete. One row per day.
+    Captures counts, health status, top players, regression flag.
+
+    Natural key: (as_of_date,) -- one snapshot per calendar day.
+    Downstream: GET /admin/snapshot/latest and GET /admin/snapshot/{date} API endpoints.
+    """
+
+    __tablename__ = "daily_snapshots"
+
+    id                    = Column(BigInteger, primary_key=True, autoincrement=True)
+    as_of_date            = Column(Date, nullable=False, unique=True)
+
+    n_players_scored      = Column(Integer, nullable=False, default=0)
+    n_momentum_records    = Column(Integer, nullable=False, default=0)
+    n_simulation_records  = Column(Integer, nullable=False, default=0)
+    n_decisions           = Column(Integer, nullable=False, default=0)
+    n_explanations        = Column(Integer, nullable=False, default=0)
+    n_backtest_records    = Column(Integer, nullable=False, default=0)
+
+    mean_composite_mae    = Column(Float, nullable=True)
+    regression_detected   = Column(Boolean, nullable=False, default=False)
+
+    top_lineup_player_ids = Column(JSON, nullable=True)   # list of up to 5 bdl_player_ids
+    top_waiver_player_ids = Column(JSON, nullable=True)   # list of up to 3 bdl_player_ids
+    pipeline_jobs_run     = Column(JSON, nullable=True)   # list of job name strings
+
+    pipeline_health       = Column(String(10), nullable=False, default="UNKNOWN")  # HEALTHY/DEGRADED/FAILED
+    health_reasons        = Column(JSON, nullable=True)   # list of reason strings
+    summary               = Column(String(500), nullable=True)
+
+    computed_at           = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_ds_date", "as_of_date"),
+    )

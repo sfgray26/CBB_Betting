@@ -20,7 +20,7 @@ from typing import Optional, Any
 from zoneinfo import ZoneInfo
 
 import requests
-from sqlalchemy import text
+from sqlalchemy import text, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -45,9 +45,11 @@ from backend.models import (
     DecisionResult as DecisionResultORM,
     BacktestResult as BacktestResultORM,
     DecisionExplanation as DecisionExplanationORM,
+    DailySnapshot as DailySnapshotORM,
     engine,
 )
 from backend.services.explainability_layer import ExplanationInput, explain_batch
+from backend.services.snapshot_engine import SnapshotInput, build_snapshot
 from backend.services.backtesting_harness import (
     BacktestInput,
     evaluate_cohort,
@@ -104,6 +106,7 @@ LOCK_IDS = {
     "decision_optimization": 100_022,
     "backtesting":           100_023,
     "explainability":        100_024,
+    "snapshot":              100_025,
 }
 
 
@@ -377,6 +380,16 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Snapshot: daily 10 AM ET (after explainability at 9 AM -- final pipeline stage)
+        # Captures complete daily state: counts, health status, top players, regression flag.
+        self._scheduler.add_job(
+            self._run_snapshot,
+            CronTrigger(hour=10, minute=0, timezone=tz),
+            id="snapshot",
+            name="Daily Snapshot",
+            replace_existing=True,
+        )
+
         # MLB odds polling: every 5 min, restricted to 10 AM - 11 PM ET
         self._scheduler.add_job(
             self._poll_mlb_odds,
@@ -473,7 +486,7 @@ class DailyIngestionOrchestrator:
         # Initialise status dict so get_status() never returns missing keys
         _all_job_ids = ["mlb_game_log", "mlb_box_stats", "rolling_windows", "player_scores",
                         "player_momentum", "ros_simulation", "decision_optimization",
-                        "backtesting", "explainability",
+                        "backtesting", "explainability", "snapshot",
                         "mlb_odds", "statcast",
                         "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
                         "ensemble_update", "projection_freshness"]
@@ -521,6 +534,7 @@ class DailyIngestionOrchestrator:
             "decision_optimization": self._run_decision_optimization,
             "backtesting":           self._run_backtesting,
             "explainability":        self._run_explainability,
+            "snapshot":              self._run_snapshot,
         }
         handler = _handlers.get(job_id)
         if handler is None:
@@ -2444,6 +2458,217 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["explainability"], _run)
+
+    async def _run_snapshot(self) -> dict:
+        """
+        Daily Snapshot Engine (lock 100_025, 10 AM ET).
+
+        Runs after _run_explainability (9 AM) -- final stage of the daily pipeline.
+
+        Algorithm:
+          1. Compute as_of_date = yesterday
+          2. Query count metrics from all 6 phase tables for that date
+          3. Compute regression detection vs. historical average composite_mae
+          4. Fetch top 5 lineup + top 3 waiver player IDs from decision_results
+          5. Build SnapshotInput; call build_snapshot() via asyncio.to_thread
+          6. Upsert DailySnapshotORM ON CONFLICT _ds_date_uc DO UPDATE all columns
+          7. Return summary dict with health, counts, elapsed_ms
+
+        ADR-004: Never import betting_model or analysis here.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            now = datetime.now(ZoneInfo("America/New_York"))
+
+            db = SessionLocal()
+            try:
+                # Step 2: query count metrics from all phase tables
+                n_players_scored = (
+                    db.query(func.count(PlayerScore.id))
+                    .filter(
+                        PlayerScore.as_of_date == as_of_date,
+                        PlayerScore.window_days == 14,
+                    )
+                    .scalar() or 0
+                )
+
+                n_momentum_records = (
+                    db.query(func.count(PlayerMomentum.id))
+                    .filter(PlayerMomentum.as_of_date == as_of_date)
+                    .scalar() or 0
+                )
+
+                n_simulation_records = (
+                    db.query(func.count(SimulationResultORM.id))
+                    .filter(SimulationResultORM.as_of_date == as_of_date)
+                    .scalar() or 0
+                )
+
+                n_decisions = (
+                    db.query(func.count(DecisionResultORM.id))
+                    .filter(DecisionResultORM.as_of_date == as_of_date)
+                    .scalar() or 0
+                )
+
+                n_explanations = (
+                    db.query(func.count(DecisionExplanationORM.id))
+                    .filter(DecisionExplanationORM.as_of_date == as_of_date)
+                    .scalar() or 0
+                )
+
+                n_backtest_records = (
+                    db.query(func.count(BacktestResultORM.id))
+                    .filter(BacktestResultORM.as_of_date == as_of_date)
+                    .scalar() or 0
+                )
+
+                mean_mae = (
+                    db.query(func.avg(BacktestResultORM.composite_mae))
+                    .filter(BacktestResultORM.as_of_date == as_of_date)
+                    .scalar()
+                )  # may be None
+
+                # Step 3: regression detection vs. historical baseline
+                prev_avg = (
+                    db.query(func.avg(BacktestResultORM.composite_mae))
+                    .filter(
+                        BacktestResultORM.as_of_date < as_of_date,
+                        BacktestResultORM.composite_mae.isnot(None),
+                    )
+                    .scalar()
+                )
+                regression_detected = (
+                    mean_mae is not None
+                    and prev_avg is not None
+                    and mean_mae > prev_avg * 1.20
+                )
+
+                # Step 4: top lineup and waiver player IDs
+                top_lineup = [
+                    r.bdl_player_id
+                    for r in db.query(DecisionResultORM.bdl_player_id)
+                    .filter(
+                        DecisionResultORM.as_of_date == as_of_date,
+                        DecisionResultORM.decision_type == "lineup",
+                    )
+                    .order_by(DecisionResultORM.lineup_score.desc())
+                    .limit(5)
+                    .all()
+                ]
+
+                top_waiver = [
+                    r.bdl_player_id
+                    for r in db.query(DecisionResultORM.bdl_player_id)
+                    .filter(
+                        DecisionResultORM.as_of_date == as_of_date,
+                        DecisionResultORM.decision_type == "waiver",
+                    )
+                    .order_by(DecisionResultORM.value_gain.desc())
+                    .limit(3)
+                    .all()
+                ]
+
+                # Step 5: build SnapshotInput and compute result
+                inp = SnapshotInput(
+                    as_of_date=as_of_date,
+                    n_players_scored=n_players_scored,
+                    n_momentum_records=n_momentum_records,
+                    n_simulation_records=n_simulation_records,
+                    n_decisions=n_decisions,
+                    n_explanations=n_explanations,
+                    n_backtest_records=n_backtest_records,
+                    mean_composite_mae=mean_mae,
+                    regression_detected=regression_detected,
+                    top_lineup_player_ids=top_lineup,
+                    top_waiver_player_ids=top_waiver,
+                    pipeline_jobs_run=[
+                        "rolling_windows", "player_scores", "player_momentum",
+                        "ros_simulation", "decision_optimization",
+                        "backtesting", "explainability",
+                    ],
+                )
+
+                result = await asyncio.to_thread(build_snapshot, inp)
+
+                # Step 6: upsert DailySnapshotORM ON CONFLICT _ds_date_uc DO UPDATE
+                try:
+                    stmt = pg_insert(DailySnapshotORM.__table__).values(
+                        as_of_date=result.as_of_date,
+                        n_players_scored=result.n_players_scored,
+                        n_momentum_records=result.n_momentum_records,
+                        n_simulation_records=result.n_simulation_records,
+                        n_decisions=result.n_decisions,
+                        n_explanations=result.n_explanations,
+                        n_backtest_records=result.n_backtest_records,
+                        mean_composite_mae=result.mean_composite_mae,
+                        regression_detected=result.regression_detected,
+                        top_lineup_player_ids=result.top_lineup_player_ids,
+                        top_waiver_player_ids=result.top_waiver_player_ids,
+                        pipeline_jobs_run=result.pipeline_jobs_run,
+                        pipeline_health=result.pipeline_health,
+                        health_reasons=result.health_reasons,
+                        summary=result.summary,
+                        computed_at=now,
+                    ).on_conflict_do_update(
+                        constraint="_ds_date_uc",
+                        set_=dict(
+                            n_players_scored=result.n_players_scored,
+                            n_momentum_records=result.n_momentum_records,
+                            n_simulation_records=result.n_simulation_records,
+                            n_decisions=result.n_decisions,
+                            n_explanations=result.n_explanations,
+                            n_backtest_records=result.n_backtest_records,
+                            mean_composite_mae=result.mean_composite_mae,
+                            regression_detected=result.regression_detected,
+                            top_lineup_player_ids=result.top_lineup_player_ids,
+                            top_waiver_player_ids=result.top_waiver_player_ids,
+                            pipeline_jobs_run=result.pipeline_jobs_run,
+                            pipeline_health=result.pipeline_health,
+                            health_reasons=result.health_reasons,
+                            summary=result.summary,
+                            computed_at=now,
+                        ),
+                    )
+                    db.execute(stmt)
+                    db.commit()
+                except Exception as exc:
+                    db.rollback()
+                    logger.error(
+                        "snapshot: DB write failed for as_of_date=%s: %s",
+                        as_of_date, exc,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("snapshot", "failed")
+                    return {
+                        "status": "failed",
+                        "as_of_date": str(as_of_date),
+                        "pipeline_health": "FAILED",
+                        "n_players_scored": n_players_scored,
+                        "n_decisions": n_decisions,
+                        "elapsed_ms": elapsed,
+                    }
+
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            self._record_job_run("snapshot", "success", n_players_scored)
+            logger.info(
+                "snapshot: pipeline_health=%s n_players_scored=%d n_decisions=%d "
+                "as_of_date=%s elapsed_ms=%d",
+                result.pipeline_health, n_players_scored, n_decisions, as_of_date, elapsed,
+            )
+            return {
+                "as_of_date": str(as_of_date),
+                "pipeline_health": result.pipeline_health,
+                "n_players_scored": n_players_scored,
+                "n_decisions": n_decisions,
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["snapshot"], _run)
 
     async def _update_statcast(self) -> dict:
         """Daily Statcast enrichment — fetches yesterday's data and runs Bayesian projection updates."""      
