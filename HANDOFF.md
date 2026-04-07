@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Master Plan (In-Season 2026)
 
 > **Date:** April 6, 2026 (updated Session S23) | **Author:** Claude Code (Master Architect)
-> **Risk Level:** LOW-MODERATE — P1-P16 certified. Phases 2-6 complete. Next: P17 (Decision Engines — Phase 7).
+> **Risk Level:** LOW-MODERATE — P1-P17 certified. Phases 2-7 complete. Next: P18 (Backtesting Harness).
 
 ---
 
@@ -43,8 +43,8 @@ This is the north star. Every session's work maps to one of these phases. Never 
 | **4 — Scoring Engine** | League Z-scores + position Z-scores. Z_adj = 0.7·Z_league + 0.3·Z_position. Confidence regression. 0–100 output. | ✅ DONE — Phase 4 complete (S22). `player_scores` verified live in production. |
 | **5 — Momentum Layer** | ΔZ = Z_14d − Z_30d. Signals: Surging / Hot / Cold / Collapsing / Breakout / Collapse. | ✅ DONE — Phase 5 complete (S22). `player_momentum` verified live in production. |
 | **6 — Probabilistic Layer** | 1000-run ROS Monte Carlo. Percentiles (P10/25/50/75/90). Risk metrics. P(top-10/25/50). | ✅ DONE — Phase 6 complete (S23). `simulation_results` verified live in production. |
-| **7 — Decision Engines** | Lineup optimizer, waiver optimizer, trade evaluator. World-with vs world-without sim. | 🔄 IN PROGRESS — unblocked by Phase 6 (S23) |
-| **8 — Backtesting Harness** | Historical loader, simulation engine, baselines, golden regression detector. | **EMBARGO** — after Phase 7 |
+| **7 — Decision Engines** | Lineup optimizer, waiver optimizer, trade evaluator. World-with vs world-without sim. | ✅ DONE — Phase 7 complete (S23). `decision_results` verified live in production. |
+| **8 — Backtesting Harness** | Historical loader, simulation engine, baselines, golden regression detector. | 🔄 IN PROGRESS — unblocked by Phase 7 (S23) |
 | **9 — Explainability** | Decision traces. "Why this player over that one?" Human-readable explanations for every action. | **EMBARGO** — after Phase 8 |
 | **10 — Integration & Automation** | Snapshot system, daily sim harness, configurable weights, risk modes, UI/API. | **EMBARGO** — last |
 
@@ -63,7 +63,6 @@ This is the north star. Every session's work maps to one of these phases. Never 
 ### DIRECTIVE 1 — Data-First Mandate (STRICT EMBARGO)
 
 **HARD EMBARGO — do not lift without explicit human instruction:**
-- Lineup optimization (Phase 7)
 - Projection blending / ensemble update (job 100_014)
 - FanGraphs RoS ingestion (job 100_012)
 - Any new UI surface
@@ -77,7 +76,7 @@ This is the north star. Every session's work maps to one of these phases. Never 
 | System | State | Notes |
 |--------|-------|-------|
 | CBB Season | **CLOSED** | Permanently archived. |
-| MLB Data Pipeline | **P1-P16 CERTIFIED** | All contracts + BDL/Yahoo clients + jobs 100_001/100_013/100_016-100_021 wired + full schema live. Phase 6 Monte Carlo simulation verified in production (S23). P17 Decision Engines next. |
+| MLB Data Pipeline | **P1-P17 CERTIFIED** | All contracts + BDL/Yahoo clients + jobs 100_001/100_013/100_016-100_022 wired + full schema live. Phase 7 Decision Engine verified in production (S23). P18 Backtesting Harness next. |
 | Fantasy/Edge structural split | **PHASES 1-7 DONE** | Fantasy-App live — isolated DB, isolated scheduler. |
 
 ### Ground Truth: What Actually Exists
@@ -90,36 +89,44 @@ This is the north star. Every session's work maps to one of these phases. Never 
 | `scoring_engine.py` | **CLEAN (S22)** — League Z-scores, percentile scoring, confidence. |
 | `momentum_engine.py` | **CLEAN (S22)** — Delta Z derivation (14d vs 30d), momentum signals. |
 | `simulation_engine.py` | **CLEAN (S23)** — 1000-run ROS Monte Carlo, risk metrics. |
-| `daily_ingestion._run_ros_simulation()` | **BUILT (S23)** — lock 100_021, daily 6 AM ET. Upserts to `simulation_results`. |
+| `decision_engine.py` | **CLEAN (S23)** — Greedy lineup optimization, waiver world-with/without simulation. |
+| `daily_ingestion._run_decision_optimization()` | **BUILT (S23)** — lock 100_022, daily 7 AM ET. Upserts to `decision_results`. |
 
 ---
 
 ## FORWARD ROADMAP — Ordered by Blueprint Phase
 
-### P17 — Decision Engines [Phase 7]
-
-**Claude Task:** Build `backend/services/decision_engine.py`:
-- Lineup optimizer: greedy search vs ILP for daily roster slots.
-- Waiver intelligence: world-with vs world-without simulation.
-- Build `DecisionResult` ORM + migration `migrate_v20_decision_results.py`.
-- Implement `_run_decision_optimization()` job (Lock 100_022, 7 AM ET).
-
 ### P18 — Backtesting Harness [Phase 8]
-Historical loader, simulation engine, baselines.
+
+**Claude Task:** Build `backend/services/backtesting_harness.py`:
+- Historical data loader for `mlb_player_stats` and `mlb_odds_snapshot`.
+- Simulation runner over arbitrary date ranges.
+- Performance metrics: RMSE, MAE, decision accuracy (real vs. projected).
+- Regression detection against golden baseline.
+
+### P19 — Explainability Layer [Phase 9]
+Decision traces. Natural language reasoning.
 
 ---
 
 ## Session History (Recent)
 
+### S23 — P17 Complete: Decision Engines (Apr 6)
+
+**P17:** `decision_engine.py` built. `decision_results` schema deployed (`migrate_v20`) and verified in production. `_run_decision_optimization()` job registered (Lock 100_022). Greedy lineup optimization + waiver simulation.
+
 ### S23 — P16 Complete: Monte Carlo Probabilistic Layer (Apr 6)
 
-**P16:** `simulation_engine.py` built. `simulation_results` schema deployed (`migrate_v19`) and verified in production. `_run_ros_simulation()` job registered (Lock 100_021). 1000-run Monte Carlo, percentile projections, risk metrics.
-
-### S22 — P15 Complete: Momentum Signals (Apr 6)
-
-**P15:** `momentum_engine.py` built. `player_momentum` schema deployed (`migrate_v18`) and verified in production. `_compute_player_momentum()` job registered (Lock 100_020).
+**P16:** `simulation_engine.py` built. `simulation_results` schema deployed (`migrate_v19`) and verified in production. `_run_ros_simulation()` job registered (Lock 100_021).
 
 ---
+
+### Gemini CLI — P17 Deploy: migrate_v20 (S23) ✅ COMPLETE
+
+**Status:**
+- `migrate_v20` deployed to Legacy and Fantasy DBs.
+- `decision_results` table verified live.
+- `decision_optimization` job registered (Lock 100_022).
 
 ### Gemini CLI — P16 Deploy: migrate_v19 (S23) ✅ COMPLETE
 
@@ -127,11 +134,3 @@ Historical loader, simulation engine, baselines.
 - `migrate_v19` deployed to Legacy and Fantasy DBs.
 - `simulation_results` table verified live.
 - `ros_simulation` job registered (Lock 100_021).
-- Full suite verified: 1443 pass (only expected failures remaining).
-
-### Gemini CLI — P15 Deploy: migrate_v18 (S22) ✅ COMPLETE
-
-**Status:**
-- `migrate_v18` deployed to Legacy and Fantasy DBs.
-- `player_momentum` table verified live.
-- `player_momentum` job registered (Lock 100_020).

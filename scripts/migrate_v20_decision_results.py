@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS decision_results (
 );
 
 ALTER TABLE decision_results
-    ADD CONSTRAINT IF NOT EXISTS _dr_date_type_player_uc
+    ADD CONSTRAINT _dr_date_type_player_uc
     UNIQUE (as_of_date, decision_type, bdl_player_id);
 
 CREATE INDEX IF NOT EXISTS idx_dr_date_type
