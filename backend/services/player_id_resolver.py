@@ -185,8 +185,10 @@ class PlayerIDResolver:
             valid = df[df["key_mlbam"].notna()]
             if valid.empty:
                 return None
-            # Multiple results: take the last row (most recent player for this name)
-            last_row = valid.iloc[-1]
+            # Multiple results: prefer the most recently active player.
+            if "mlb_played_last" in valid.columns:
+                valid = valid.sort_values("mlb_played_last", ascending=False, na_position="last")
+            last_row = valid.iloc[0]
             raw_val = last_row["key_mlbam"]
             # Guard against pd.NA, np.nan, and other non-int values
             if pd.isna(raw_val):

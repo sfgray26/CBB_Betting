@@ -23,6 +23,7 @@ Each method returns validated Pydantic objects. Never raw dicts.
 
 import os
 import logging
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
@@ -66,9 +67,23 @@ class BallDontLieClient:
 
     def _get(self, path: str, params: Optional[Dict] = None) -> Dict:
         url = BASE_URL + NCAAB_PREFIX + path
-        resp = self.session.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
+        last_exc: Exception = RuntimeError("no attempts made")
+        for attempt in range(3):
+            try:
+                resp = self.session.get(url, params=params, timeout=15)
+                resp.raise_for_status()
+                return resp.json()
+            except requests.HTTPError as exc:
+                last_exc = exc
+                if exc.response is not None and exc.response.status_code not in (429, 500, 502, 503, 504):
+                    raise
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+            except requests.RequestException as exc:
+                last_exc = exc
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+        raise last_exc
 
     def _paginate(
         self,
@@ -90,6 +105,11 @@ class BallDontLieClient:
             params["cursor"] = next_cursor
             page += 1
             time.sleep(0.1)   # be polite
+        else:
+            logger.warning(
+                "_paginate(%s): reached max_pages=%d -- result set may be truncated",
+                path, max_pages,
+            )
         return results
 
     # ------------------------------------------------------------------
@@ -281,11 +301,25 @@ class BallDontLieClient:
     # ------------------------------------------------------------------
 
     def _mlb_get(self, path: str, params: Optional[Dict] = None) -> Dict:
-        """Single GET against the BDL MLB API. Raises on non-2xx."""
+        """Single GET against the BDL MLB API. Retries on transient errors."""
         url = BASE_URL + MLB_PREFIX + path
-        resp = self.session.get(url, params=params, timeout=15)
-        resp.raise_for_status()
-        return resp.json()
+        last_exc: Exception = RuntimeError("no attempts made")
+        for attempt in range(3):
+            try:
+                resp = self.session.get(url, params=params, timeout=15)
+                resp.raise_for_status()
+                return resp.json()
+            except requests.HTTPError as exc:
+                last_exc = exc
+                if exc.response is not None and exc.response.status_code not in (429, 500, 502, 503, 504):
+                    raise
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+            except requests.RequestException as exc:
+                last_exc = exc
+                if attempt < 2:
+                    time.sleep(2 ** attempt)
+        raise last_exc
 
     # ------------------------------------------------------------------
     # MLB Games — Priority 3a ✅
@@ -385,7 +419,7 @@ class BallDontLieClient:
             if cursor is not None:
                 params["cursor"] = cursor
             try:
-                raw = self._mlb_get("/player_injuries", params=params or None)
+                raw = self._mlb_get("/player_injuries", params=params)
                 resp = BDLResponse[MLBInjury].model_validate(raw)
                 injuries.extend(resp.data)
                 cursor = resp.meta.next_cursor
@@ -549,11 +583,14 @@ class BallDontLieClient:
 # ---------------------------------------------------------------------------
 
 _client: Optional[BallDontLieClient] = None
+_client_lock = threading.Lock()
 
 
 def get_bdl_client() -> BallDontLieClient:
-    """Return the shared BallDontLie client (lazy-init)."""
+    """Return the shared BallDontLie client (lazy-init, thread-safe)."""
     global _client
     if _client is None:
-        _client = BallDontLieClient()
+        with _client_lock:
+            if _client is None:
+                _client = BallDontLieClient()
     return _client

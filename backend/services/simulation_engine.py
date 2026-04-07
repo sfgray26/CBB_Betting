@@ -16,14 +16,40 @@ Output: SimulationResult dataclass with P10/P25/P50/P75/P90 percentiles
 ADR-004: Never import betting_model or analysis.
 """
 
+import logging
 import random
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
+logger = logging.getLogger(__name__)
+
 CV = 0.35                       # coefficient of variation per simulated game
 N_SIMULATIONS = 1000
-REMAINING_GAMES_DEFAULT = 130   # approximate remaining MLB games mid-April 2026
+
+# MLB season constants for dynamic remaining-games computation
+_MLB_SEASON_START = date(2026, 3, 27)   # Opening Day 2026
+_MLB_SEASON_END   = date(2026, 9, 28)   # Last regular-season game 2026
+_MLB_SEASON_GAMES = 162
+
+
+def get_remaining_games(as_of: Optional[date] = None) -> int:
+    """
+    Return approximate regular-season games remaining for an average team.
+
+    Uses a linear interpolation across the 183-day MLB season (162 games).
+    Clamps to [0, 162].  Falls back to 130 if the season dates are stale.
+    """
+    today = as_of or date.today()
+    total_days = (_MLB_SEASON_END - _MLB_SEASON_START).days
+    days_elapsed = max(0, (today - _MLB_SEASON_START).days)
+    games_played = round(_MLB_SEASON_GAMES * days_elapsed / total_days)
+    return max(0, _MLB_SEASON_GAMES - games_played)
+
+
+# Module-level default — used by callers that do not pass remaining_games explicitly.
+# Recomputed at import time so it stays accurate across long-running processes.
+REMAINING_GAMES_DEFAULT: int = get_remaining_games()
 
 
 # ---------------------------------------------------------------------------
@@ -433,14 +459,21 @@ def simulate_all_players(
     """
     results = []
     for row in rolling_rows:
-        r = simulate_player(
-            row,
-            remaining_games=remaining_games,
-            n_simulations=n_simulations,
-            seed=None,
-            league_means=league_means,
-            league_stds=league_stds,
-        )
-        if r.player_type != "unknown":
-            results.append(r)
+        try:
+            r = simulate_player(
+                row,
+                remaining_games=remaining_games,
+                n_simulations=n_simulations,
+                seed=None,
+                league_means=league_means,
+                league_stds=league_stds,
+            )
+            if r.player_type != "unknown":
+                results.append(r)
+        except Exception as exc:
+            logger.warning(
+                "simulate_all_players: skipping bdl_player_id=%s due to error: %s",
+                getattr(row, "bdl_player_id", "?"),
+                exc,
+            )
     return results

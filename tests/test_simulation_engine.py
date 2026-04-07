@@ -20,6 +20,7 @@ from backend.services.simulation_engine import (
     CV,
     N_SIMULATIONS,
     REMAINING_GAMES_DEFAULT,
+    get_remaining_games,
 )
 
 
@@ -414,4 +415,8 @@ def test_constants_have_expected_values():
     """CV, N_SIMULATIONS, REMAINING_GAMES_DEFAULT must match spec."""
     assert CV == 0.35
     assert N_SIMULATIONS == 1000
-    assert REMAINING_GAMES_DEFAULT == 130
+    # REMAINING_GAMES_DEFAULT is now dynamic (computed from today's date).
+    # Verify it stays within the valid MLB-season range [0, 162].
+    assert 0 <= REMAINING_GAMES_DEFAULT <= 162
+    # get_remaining_games() must produce the same value as the module constant.
+    assert get_remaining_games() == REMAINING_GAMES_DEFAULT

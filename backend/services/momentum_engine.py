@@ -122,6 +122,11 @@ def compute_player_momentum(score_14d, score_30d) -> MomentumResult:
     -------
     MomentumResult with delta_z, signal, and blended confidence.
     """
+    if score_14d.bdl_player_id != score_30d.bdl_player_id:
+        raise ValueError(
+            f"compute_player_momentum: mismatched player IDs "
+            f"{score_14d.bdl_player_id} (14d) vs {score_30d.bdl_player_id} (30d)"
+        )
     delta_z = score_14d.composite_z - score_30d.composite_z
     signal  = classify_signal(delta_z)
     conf    = min(score_14d.confidence, score_30d.confidence)
