@@ -527,6 +527,7 @@ class DailyIngestionOrchestrator:
         _handlers = {
             "mlb_game_log":    self._ingest_mlb_game_log,
             "mlb_box_stats":   self._ingest_mlb_box_stats,
+            "statcast":        self._update_statcast,
             "rolling_windows": self._compute_rolling_windows,
             "player_scores":   self._compute_player_scores,
             "player_momentum": self._compute_player_momentum,
@@ -945,12 +946,31 @@ class DailyIngestionOrchestrator:
             yesterday = today - timedelta(days=1)
             date_strs = [yesterday.isoformat(), today.isoformat()]
 
-            stats = await asyncio.to_thread(bdl.get_mlb_stats, date_strs)
+            # Fetch game IDs from our log for these dates. BDL /stats dates filter
+            # is unreliable (returns historical data), so we filter by specific game IDs.
+            db = SessionLocal()
+            try:
+                game_ids = [
+                    r[0] for r in db.query(MLBGameLog.game_id).filter(
+                        MLBGameLog.game_date.in_([yesterday, today])
+                    ).all()
+                ]
+            finally:
+                db.close()
+
+            if not game_ids:
+                logger.info("mlb_box_stats: no games in log for %s -- skipping stats", date_strs)
+                self._record_job_run("mlb_box_stats", "success", 0)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                return {"status": "success", "records": 0, "dates": date_strs, "elapsed_ms": elapsed}
+
+            # Fetch stats for these specific games
+            stats = await asyncio.to_thread(bdl.get_mlb_stats, game_ids=game_ids)
 
             if not stats:
                 logger.warning(
-                    "mlb_box_stats: 0 stat rows returned for dates=%s -- off-day or BDL error",
-                    date_strs,
+                    "mlb_box_stats: 0 stat rows returned for %d games on %s",
+                    len(game_ids), date_strs,
                 )
                 self._record_job_run("mlb_box_stats", "success", 0)
                 elapsed = int((time.monotonic() - t0) * 1000)
@@ -960,18 +980,19 @@ class DailyIngestionOrchestrator:
             rows_upserted = 0
             db = SessionLocal()
             try:
+                # Group stats by game for date lookup
+                game_date_map = {
+                    g.game_id: g.game_date 
+                    for g in db.query(MLBGameLog).filter(MLBGameLog.game_id.in_(game_ids)).all()
+                }
+
                 for stat in stats:
                     # Skip rows with no player identity -- bdl_player_id is NOT NULL in schema.
                     if stat.bdl_player_id is None:
                         logger.warning("mlb_box_stats: skipping stat row with no player object")
                         continue
 
-                    # game_date: prefer fetching from game_id FK's game_date; fall back
-                    # to today if unknown (stats always belong to current polling window)
-                    # We do a best-effort date: since we queried by date, use today as fallback.
-                    # The migration note: game_date is NOT NULL -- we must supply a value.
-                    # Use today as the safe fallback when stat has no date context.
-                    game_date = today
+                    game_date = game_date_map.get(stat.game_id, today)
 
                     payload = stat.model_dump()
                     stmt = pg_insert(MLBPlayerStats.__table__).values(

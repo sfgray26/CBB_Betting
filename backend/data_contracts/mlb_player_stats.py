@@ -78,6 +78,8 @@ class MLBPlayerStats(BaseModel):
     # ------------------------------------------------------------------
 
     @property
-    def bdl_player_id(self) -> int:
-        """BDL player.id for use as the ingestion natural key."""
+    def bdl_player_id(self) -> Optional[int]:
+        """BDL player.id for use as the ingestion natural key. None if player object absent."""
+        if self.player is None:
+            return None
         return self.player.id
