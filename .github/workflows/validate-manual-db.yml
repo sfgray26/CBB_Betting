@@ -1,0 +1,187 @@
+name: Manual DB Validation
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Purpose
+#   Connects to a real PostgreSQL database (production read-only replica or
+#   staging environment) and runs full pipeline layer validation, writing
+#   structured JSON artifacts for human review.
+#
+# This workflow is intentionally SEPARATE from the standard CI workflow and is
+# NEVER triggered on push or pull_request, keeping normal CI secretless.
+#
+# Required secrets (set in GitHub → Settings → Secrets and variables → Actions):
+#   DATABASE_URL  — PostgreSQL connection string (must be externally reachable)
+#                   e.g. postgresql://user:pass@host:5432/dbname?sslmode=require
+#
+#   IMPORTANT: Railway-internal hostnames (*.railway.internal) are NOT
+#   reachable from GitHub Actions runners. Use the public Railway URL or a
+#   read-only replica with an external hostname.
+#
+# Optional inputs (set via workflow_dispatch inputs):
+#   season        — CBB/MLB season year (default: current year)
+#   sample_size   — rows to sample per layer (default: 50)
+#   max_rows      — max rows per artifact file (default: 500)
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      season:
+        description: 'Season year (e.g. 2026). Leave blank for current year.'
+        required: false
+        default: ''
+        type: string
+      sample_size:
+        description: 'Rows to sample per validation layer (e.g. 50)'
+        required: false
+        default: '50'
+        type: string
+      max_rows:
+        description: 'Max rows per artifact file (e.g. 500)'
+        required: false
+        default: '500'
+        type: string
+      environment:
+        description: 'DB environment label (informational only)'
+        required: false
+        default: 'production-read-only-replica'
+        type: choice
+        options:
+          - production-read-only-replica
+          - staging
+          - local
+
+concurrency:
+  group: manual-db-validation
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: DB Validation — ${{ github.event.inputs.environment || 'production-read-only-replica' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    # ── Service containers ───────────────────────────────────────────────────
+    # Redis is included so that any Redis-backed code paths (e.g. cache
+    # lookups) work correctly during validation without ECONNREFUSED errors.
+    # PostgreSQL is provided as a local fallback; scripts should prefer the
+    # DATABASE_URL secret which points to the real read-only replica.
+    services:
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      # ── Source ──────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Toolchain ───────────────────────────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ── Guard: fail early if DATABASE_URL is missing or inaccessible ────────
+      - name: Verify DATABASE_URL is set and externally reachable
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "❌ DATABASE_URL secret is not configured."
+            echo ""
+            echo "To run this workflow you must set the DATABASE_URL secret in:"
+            echo "  GitHub → Settings → Secrets and variables → Actions → New repository secret"
+            echo ""
+            echo "The value must be a PostgreSQL connection string for an externally"
+            echo "reachable host. Example:"
+            echo "  postgresql://user:pass@host:5432/dbname?sslmode=require"
+            exit 1
+          fi
+
+          # Reject Railway-internal hostnames — they are not reachable from
+          # GitHub Actions runners (private Railway network only).
+          # Parse only the *hostname* component of the URL so that a password
+          # or database-name containing the literal string ".railway.internal"
+          # does not cause a false positive.
+          _db_host=$(python3 - <<'PYEOF'
+import os, sys
+try:
+    from urllib.parse import urlparse
+    url = os.environ.get("DATABASE_URL", "")
+    host = urlparse(url).hostname or ""
+    print(host)
+except (ImportError, ValueError) as e:
+    # If urlparse is unavailable or the URL is malformed we cannot determine
+    # the hostname, so fall back to checking the raw URL string conservatively.
+    sys.stderr.write(f"warning: URL parsing failed ({e}); falling back to raw string check\n")
+    print("__PARSE_FAILED__")
+PYEOF
+)
+          if [ "$_db_host" = "__PARSE_FAILED__" ]; then
+            # Fallback: check raw URL string when hostname extraction fails
+            if echo "$DATABASE_URL" | grep -qE "\.railway\.internal"; then
+              echo "❌ DATABASE_URL appears to contain a Railway-internal hostname."
+              exit 1
+            fi
+          elif echo "$_db_host" | grep -qE "\.railway\.internal$"; then
+            echo "❌ DATABASE_URL hostname '$_db_host' is a Railway-internal address."
+            echo ""
+            echo "Railway-internal hostnames are only accessible from within the Railway"
+            echo "private network and cannot be reached from GitHub Actions runners."
+            echo ""
+            echo "Fix: replace the DATABASE_URL secret with a publicly reachable URL:"
+            echo "  • Railway public domain:  postgresql://user:pass@<app>.railway.app:5432/db"
+            echo "  • External read-replica:  postgresql://user:pass@<host>:5432/db?sslmode=require"
+            exit 1
+          fi
+
+          echo "✅ DATABASE_URL is set and does not use a Railway-internal hostname."
+          echo "   Length: ${#DATABASE_URL} characters."
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      # ── Run validation ───────────────────────────────────────────────────────
+      - name: Run manual DB validation
+        run: python scripts/validate_manual_db.py
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: redis://localhost:6379
+          ARTIFACTS_ENABLED: 'true'
+          ARTIFACT_DIR: artifacts
+          MAX_ARTIFACT_ROWS: ${{ github.event.inputs.max_rows || '500' }}
+          # Empty string is handled by the script — defaults to current year.
+          VALIDATION_SEASON: ${{ github.event.inputs.season }}
+          VALIDATION_SAMPLE: ${{ github.event.inputs.sample_size || '50' }}
+
+      # ── Upload artifacts ─────────────────────────────────────────────────────
+      - name: Upload validation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-validation-artifacts-${{ github.run_number }}
+          path: artifacts/
+          retention-days: 30
+
+      - name: Print artifact summary
+        if: always()
+        run: |
+          echo ""
+          echo "=== Artifact files written ==="
+          find artifacts/ -type f -name "*.json" 2>/dev/null | sort | while read f; do
+            size=$(wc -c < "$f")
+            echo "  $f  (${size} bytes)"
+          done || echo "  (no artifacts found)"
+          echo ""
+          echo "Download the artifact zip from the Actions run summary page."
