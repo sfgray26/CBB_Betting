@@ -335,8 +335,13 @@ class StatcastIngestionAgent:
         
         for _, row in df.iterrows():
             try:
+                # Basic validation: must have an ID and a name
+                pid = row.get('player_id')
+                if pid is None or str(pid).strip() == "" or str(pid).strip().lower() == "nan":
+                    continue
+                
                 perf = PlayerDailyPerformance(
-                    player_id=str(row.get('player_id', '')),
+                    player_id=str(pid),
                     player_name=str(row.get('player_name', '')),
                     team=str(row.get('team', '')),
                     game_date=pd.to_datetime(row.get('game_date')).date(),
