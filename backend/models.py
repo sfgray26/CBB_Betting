@@ -1156,6 +1156,7 @@ class PlayerRollingStats(Base):
     as_of_date      = Column(Date, nullable=False)
     window_days     = Column(Integer, nullable=False)    # 7, 14, or 30
     games_in_window = Column(Integer, nullable=False)
+    w_games         = Column(Float, nullable=True)       # M3: sum of decay weights
 
     # Batting weighted sums
     w_ab            = Column(Float, nullable=True)

@@ -281,6 +281,10 @@ class DailyIngestionOrchestrator:
         self._scheduler = AsyncIOScheduler()
         self._job_status: dict[str, dict] = {}
         self._openclaw: Optional[Any] = None
+        # H2 fix: league params computed by _compute_player_scores (14d window),
+        # consumed by _run_ros_simulation to enable composite risk metrics.
+        self._league_means: Optional[dict] = None
+        self._league_stds: Optional[dict] = None
 
     # ------------------------------------------------------------------
     # Public interface
@@ -1179,6 +1183,7 @@ class DailyIngestionOrchestrator:
                         as_of_date=res.as_of_date,
                         window_days=res.window_days,
                         games_in_window=res.games_in_window,
+                        w_games=res.w_games,
                         w_ab=res.w_ab,
                         w_hits=res.w_hits,
                         w_doubles=res.w_doubles,
@@ -1205,6 +1210,7 @@ class DailyIngestionOrchestrator:
                         constraint="_prs_player_date_window_uc",
                         set_=dict(
                             games_in_window=res.games_in_window,
+                            w_games=res.w_games,
                             w_ab=res.w_ab,
                             w_hits=res.w_hits,
                             w_doubles=res.w_doubles,
@@ -1277,7 +1283,7 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            from backend.services.scoring_engine import compute_league_zscores
+            from backend.services.scoring_engine import compute_league_zscores, compute_league_params
 
             as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
 
@@ -1316,6 +1322,11 @@ class DailyIngestionOrchestrator:
                         )
 
                     score_results = compute_league_zscores(rows, as_of_date, window_days)
+
+                    # H2 fix: capture league-level means/stds from the 14d window
+                    # for downstream simulation composite risk metrics.
+                    if window_days == 14 and rows:
+                        self._league_means, self._league_stds = compute_league_params(rows)
 
                     if not score_results:
                         logger.warning(
@@ -1597,6 +1608,8 @@ class DailyIngestionOrchestrator:
                     rolling_rows,
                     REMAINING_GAMES_DEFAULT,
                     1000,
+                    self._league_means,
+                    self._league_stds,
                 )
 
                 if not sim_results:
@@ -1831,24 +1844,67 @@ class DailyIngestionOrchestrator:
                 momentum_by_id = {r.bdl_player_id: r for r in momentum_rows}
                 sim_by_id      = {r.bdl_player_id: r for r in sim_rows}
 
+                # H1 fix: fetch real position eligibility from Yahoo roster
+                # via the PlayerIDMapping cross-reference table.
+                yahoo_positions_by_bdl: dict[int, list[str]] = {}
+                try:
+                    from backend.fantasy_baseball.yahoo_client_resilient import (
+                        YahooFantasyClient, YahooAuthError, YahooAPIError,
+                    )
+                    client = YahooFantasyClient()
+                    roster = client.get_roster()
+
+                    # Build yahoo_key -> positions map from roster
+                    yahoo_key_to_pos = {
+                        p["player_key"]: p.get("positions", [])
+                        for p in roster if p.get("player_key")
+                    }
+
+                    # Resolve yahoo_key -> bdl_id via PlayerIDMapping
+                    if yahoo_key_to_pos:
+                        mappings = (
+                            db.query(PlayerIDMapping.yahoo_key, PlayerIDMapping.bdl_id)
+                            .filter(
+                                PlayerIDMapping.yahoo_key.in_(list(yahoo_key_to_pos.keys())),
+                                PlayerIDMapping.bdl_id.isnot(None),
+                            )
+                            .all()
+                        )
+                        for ykey, bdl_id in mappings:
+                            positions = yahoo_key_to_pos.get(ykey, [])
+                            if positions:
+                                yahoo_positions_by_bdl[bdl_id] = positions
+
+                    logger.info(
+                        "decision_optimization: resolved %d/%d roster players to BDL IDs",
+                        len(yahoo_positions_by_bdl), len(roster),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "decision_optimization: Yahoo roster fetch failed (%s) — "
+                        "falling back to player_type heuristic for positions",
+                        exc,
+                    )
+
                 players = []
                 for score in score_rows:
                     pid = score.bdl_player_id
                     mom  = momentum_by_id.get(pid)
                     sim  = sim_by_id.get(pid)
 
-                    # Derive eligible_positions from player_type heuristic
-                    # (full position eligibility requires Yahoo roster data -- stubbed here)
-                    # Prefer simulation player_type; fall back to player_scores player_type
                     pt = (sim.player_type if sim else None) or score.player_type or "unknown"
-                    if pt == "hitter":
-                        eligible = ["Util"]
-                    elif pt == "pitcher":
-                        eligible = ["P"]
-                    elif pt == "two_way":
-                        eligible = ["Util", "P"]
-                    else:
-                        eligible = []
+
+                    # Use real Yahoo positions when available; fall back to type heuristic
+                    eligible = yahoo_positions_by_bdl.get(pid)
+                    if not eligible:
+                        if pt == "hitter":
+                            eligible = ["Util"]
+                        elif pt == "pitcher":
+                            eligible = ["P"]
+                        elif pt == "two_way":
+                            eligible = ["Util", "P"]
+                        else:
+                            eligible = []
 
                     players.append(PlayerDecisionInput(
                         bdl_player_id=pid,
@@ -1874,9 +1930,70 @@ class DailyIngestionOrchestrator:
                 lineup_decision, lineup_results = await asyncio.to_thread(
                     optimize_lineup, players, as_of_date
                 )
-                # Waiver pool is empty for now -- no waiver pool query yet (stub)
+
+                # M1 fix: fetch waiver pool from Yahoo free agents
+                waiver_pool: list = []
+                try:
+                    if "client" not in dir():
+                        from backend.fantasy_baseball.yahoo_client_resilient import (
+                            YahooFantasyClient,
+                        )
+                        client = YahooFantasyClient()
+                    free_agents = client.get_free_agents(count=25)
+
+                    # Resolve yahoo_key -> bdl_id for free agents
+                    fa_keys = [p["player_key"] for p in free_agents if p.get("player_key")]
+                    fa_bdl_map: dict[str, int] = {}
+                    if fa_keys:
+                        fa_mappings = (
+                            db.query(PlayerIDMapping.yahoo_key, PlayerIDMapping.bdl_id)
+                            .filter(
+                                PlayerIDMapping.yahoo_key.in_(fa_keys),
+                                PlayerIDMapping.bdl_id.isnot(None),
+                            )
+                            .all()
+                        )
+                        fa_bdl_map = {ykey: bdl_id for ykey, bdl_id in fa_mappings}
+
+                    for fa in free_agents:
+                        fa_bdl_id = fa_bdl_map.get(fa.get("player_key"))
+                        if fa_bdl_id is None:
+                            continue  # Can't cross-reference — skip
+                        fa_positions = fa.get("positions", [])
+                        if not fa_positions:
+                            fa_positions = ["Util"]
+                        # Determine player type from positions
+                        fa_type = "hitter"
+                        pitcher_pos = {"SP", "RP", "P"}
+                        if all(p in pitcher_pos for p in fa_positions):
+                            fa_type = "pitcher"
+                        elif any(p in pitcher_pos for p in fa_positions) and any(
+                            p not in pitcher_pos for p in fa_positions
+                        ):
+                            fa_type = "two_way"
+                        waiver_pool.append(PlayerDecisionInput(
+                            bdl_player_id=fa_bdl_id,
+                            name=fa.get("name", str(fa_bdl_id)),
+                            player_type=fa_type,
+                            eligible_positions=fa_positions,
+                            score_0_100=0.0,
+                            composite_z=0.0,
+                            momentum_signal="STABLE",
+                            delta_z=0.0,
+                        ))
+                    logger.info(
+                        "decision_optimization: built waiver pool with %d candidates",
+                        len(waiver_pool),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "decision_optimization: waiver pool fetch failed (%s) — "
+                        "proceeding with empty pool",
+                        exc,
+                    )
+
                 _waiver_decision, waiver_results = await asyncio.to_thread(
-                    optimize_waivers, players, [], as_of_date
+                    optimize_waivers, players, waiver_pool, as_of_date
                 )
 
                 all_results = lineup_results + waiver_results
@@ -2050,14 +2167,20 @@ class DailyIngestionOrchestrator:
                         hr_vals  = [r.home_runs    for r in stat_rows if r.home_runs    is not None]
                         rbi_vals = [r.rbi           for r in stat_rows if r.rbi          is not None]
                         sb_vals  = [r.stolen_bases  for r in stat_rows if r.stolen_bases is not None]
-                        avg_vals = [r.avg            for r in stat_rows if r.avg          is not None]
                         k_vals   = [r.strikeouts_pit for r in stat_rows if r.strikeouts_pit is not None]
 
                         actual_hr  = float(sum(hr_vals))  if hr_vals  else None
                         actual_rbi = float(sum(rbi_vals)) if rbi_vals else None
                         actual_sb  = float(sum(sb_vals))  if sb_vals  else None
-                        actual_avg = sum(avg_vals) / len(avg_vals) if avg_vals else None
                         actual_k   = float(sum(k_vals))   if k_vals   else None
+
+                        # M4 fix: compute AVG as total_hits/total_ab (AB-weighted),
+                        # not arithmetic mean of per-game AVG.
+                        hit_vals = [r.hits for r in stat_rows if r.hits is not None]
+                        ab_vals  = [r.ab   for r in stat_rows if r.ab   is not None]
+                        total_hits = sum(hit_vals)
+                        total_ab   = sum(ab_vals)
+                        actual_avg = total_hits / total_ab if total_ab > 0 else None
 
                         # IP-weighted ERA and WHIP aggregation
                         # innings_pitched stored as string e.g. "6.2" meaning 6 and 2/3
@@ -2087,17 +2210,26 @@ class DailyIngestionOrchestrator:
                             actual_era  = era_sum  / total_ip
                             actual_whip = whip_sum / total_ip
 
+                    # H3 fix: scale ROS projections (130-game totals) down to
+                    # match the 14-day actual window. Without this, MAE compares
+                    # season totals to ~10-game sums and produces garbage values.
+                    remaining = sim.remaining_games or REMAINING_GAMES_DEFAULT
+                    scale = games_played / remaining if remaining > 0 and games_played > 0 else 0.0
+
+                    def _scale(val):
+                        return val * scale if val is not None else None
+
                     inputs.append(BacktestInput(
                         bdl_player_id=pid,
                         as_of_date=as_of_date,
                         player_type=sim.player_type,
-                        proj_hr_p50=sim.proj_hr_p50,
-                        proj_rbi_p50=sim.proj_rbi_p50,
-                        proj_sb_p50=sim.proj_sb_p50,
-                        proj_avg_p50=sim.proj_avg_p50,
-                        proj_k_p50=sim.proj_k_p50,
-                        proj_era_p50=sim.proj_era_p50,
-                        proj_whip_p50=sim.proj_whip_p50,
+                        proj_hr_p50=_scale(sim.proj_hr_p50),
+                        proj_rbi_p50=_scale(sim.proj_rbi_p50),
+                        proj_sb_p50=_scale(sim.proj_sb_p50),
+                        proj_avg_p50=sim.proj_avg_p50,       # AVG is a rate — don't scale
+                        proj_k_p50=_scale(sim.proj_k_p50),
+                        proj_era_p50=sim.proj_era_p50,       # ERA is a rate — don't scale
+                        proj_whip_p50=sim.proj_whip_p50,     # WHIP is a rate — don't scale
                         actual_hr=actual_hr,
                         actual_rbi=actual_rbi,
                         actual_sb=actual_sb,
@@ -2624,9 +2756,9 @@ class DailyIngestionOrchestrator:
                     top_lineup_player_ids=top_lineup,
                     top_waiver_player_ids=top_waiver,
                     pipeline_jobs_run=[
-                        "rolling_windows", "player_scores", "player_momentum",
-                        "ros_simulation", "decision_optimization",
-                        "backtesting", "explainability",
+                        job_id
+                        for job_id, info in self._job_status.items()
+                        if info.get("last_status") == "success"
                     ],
                 )
 

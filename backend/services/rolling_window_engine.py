@@ -78,6 +78,7 @@ class RollingWindowResult:
     as_of_date: date
     window_days: int
     games_in_window: int
+    w_games: float = 0.0  # M3 fix: sum of decay weights (effective weighted game count)
 
     # Batting -- decay-weighted sums
     w_ab: Optional[float] = None
@@ -193,8 +194,12 @@ def compute_rolling_window(
 
     games_in_window = len(window_rows)
 
+    # M3 fix: sum of decay weights for consistent rate computation
+    sum_weights = 0.0
+
     for days_back, row in window_rows:
         w = decay_lambda ** days_back
+        sum_weights += w
 
         # Batting
         ab = row.ab
@@ -264,6 +269,7 @@ def compute_rolling_window(
         as_of_date=as_of_date,
         window_days=window_days,
         games_in_window=games_in_window,
+        w_games=sum_weights,
     )
 
     # Batting weighted sums

@@ -1,9 +1,14 @@
 """
-P18 -- Backtesting Harness.
+P18 -- Backtesting Harness (Pipeline-Level Projection Accuracy).
 
 Pure-computation module (no DB imports, no side effects).
 Compares P16 simulation projections (proj_p50) against actual mlb_player_stats
 outcomes over a rolling 14-day window to measure forecast accuracy.
+
+NOTE: This detects PIPELINE-LEVEL forecast regression (are our projections
+getting less accurate over time?). NOT related to the PLAYER-LEVEL
+Statcast regression-to-mean analysis in advanced_metrics.py which
+identifies buy-low/sell-high candidates via xwOBA/xERA gaps.
 
 Metrics:
   - Per-stat MAE and RMSE (single projection/actual pair, so RMSE == MAE)

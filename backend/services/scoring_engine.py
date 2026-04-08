@@ -177,13 +177,28 @@ def compute_league_zscores(
     # ------------------------------------------------------------------
     # Step 1: Compute league-level stats per category
     # ------------------------------------------------------------------
-    # category_z_lookup[z_key][bdl_player_id] = raw Z-score (pre-cap)
+    # M2 fix: compute Z-scores using type-appropriate pools only.
+    # Hitter categories use hitter+two_way rows; pitcher categories use
+    # pitcher+two_way rows. This prevents pitcher batting nulls from
+    # diluting hitter pools (and vice versa).
     category_z_lookup: dict[str, dict[int, float]] = {k: {} for k in _ALL_CATEGORIES}
 
+    # Pre-classify rows by player type for pool filtering
+    _row_types: dict[int, str] = {}
+    for row in rolling_rows:
+        _row_types[row.bdl_player_id] = _detect_player_type(row)
+
     for z_key, (col_name, is_lower_better) in _ALL_CATEGORIES.items():
-        # Collect (player_id, value) pairs where value is non-None
+        is_hitter_cat = z_key in HITTER_CATEGORIES
+        # Collect (player_id, value) pairs from the type-appropriate pool
         pairs: list[tuple[int, float]] = []
         for row in rolling_rows:
+            pt = _row_types.get(row.bdl_player_id, "unknown")
+            # Skip rows that don't belong in this category's pool
+            if is_hitter_cat and pt == "pitcher":
+                continue
+            if not is_hitter_cat and pt == "hitter":
+                continue
             val = getattr(row, col_name, None)
             if val is not None:
                 pairs.append((row.bdl_player_id, float(val)))
@@ -258,3 +273,47 @@ def compute_league_zscores(
         res.score_0_100 = _percentile_rank(res.composite_z, cohort)
 
     return results
+
+
+def compute_league_params(
+    rolling_rows: list,
+) -> tuple[dict[str, float], dict[str, float]]:
+    """
+    Extract league-level mean and std for each scoring category.
+
+    Returns (league_means, league_stds) keyed by short stat name
+    (e.g. "hr", "rbi", "era") matching the keys expected by
+    simulation_engine.simulate_player().
+
+    Categories with fewer than MIN_SAMPLE non-null values are omitted.
+    """
+    # Map z_key -> short key used by simulation_engine
+    _Z_TO_SHORT = {
+        "z_hr": "hr", "z_rbi": "rbi", "z_sb": "sb",
+        "z_avg": "avg", "z_obp": "obp",
+        "z_era": "era", "z_whip": "whip", "z_k_per_9": "k",
+    }
+
+    league_means: dict[str, float] = {}
+    league_stds: dict[str, float] = {}
+
+    for z_key, (col_name, _is_lower_better) in _ALL_CATEGORIES.items():
+        values: list[float] = []
+        for row in rolling_rows:
+            val = getattr(row, col_name, None)
+            if val is not None:
+                values.append(float(val))
+
+        if len(values) < MIN_SAMPLE:
+            continue
+
+        mean = sum(values) / len(values)
+        std = _population_std(values)
+        if std == 0.0:
+            continue
+
+        short = _Z_TO_SHORT.get(z_key, z_key)
+        league_means[short] = mean
+        league_stds[short] = std
+
+    return league_means, league_stds

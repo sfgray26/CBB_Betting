@@ -207,7 +207,10 @@ def simulate_player(
     SimulationResult dataclass with all applicable percentile fields populated.
     """
     rng = random.Random(seed)
-    g = rolling_row.games_in_window or 1     # guard against 0
+    # M3 fix: use decay-weighted game count for consistent rate derivation.
+    # Fall back to raw games_in_window for rows computed before w_games was added.
+    _wg = getattr(rolling_row, 'w_games', None)
+    g = _wg if isinstance(_wg, (int, float)) and _wg > 0 else (rolling_row.games_in_window or 1)
 
     has_batting = rolling_row.w_ab is not None
     has_pitching = rolling_row.w_ip is not None

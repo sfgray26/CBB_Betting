@@ -387,8 +387,12 @@ def calculate_injury_risk_score(metrics: StatcastPitcher) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Regression Analysis Functions
+# Statcast Regression-to-Mean Analysis (Player-Level)
 # ---------------------------------------------------------------------------
+# NOTE: This is PLAYER-LEVEL regression-to-mean detection (xwOBA vs wOBA,
+# xERA vs ERA) — identifies buy-low/sell-high candidates based on Statcast
+# expected metrics.  NOT related to the PIPELINE-LEVEL MAE regression
+# detector in backtesting_harness.py which monitors projection accuracy.
 
 def analyze_batter_regression(metrics: StatcastBatter) -> Tuple[str, float]:
     """
