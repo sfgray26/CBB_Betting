@@ -463,6 +463,7 @@ class BallDontLieClient:
         self,
         dates: Optional[List[str]] = None,
         player_ids: Optional[List[int]] = None,
+        game_ids: Optional[List[int]] = None,
         per_page: int = 100,
     ) -> List[MLBPlayerStats]:
         """
@@ -486,6 +487,8 @@ class BallDontLieClient:
             params["dates[]"] = dates
         if player_ids:
             params["player_ids[]"] = player_ids
+        if game_ids:
+            params["game_ids[]"] = game_ids
 
         results: List[MLBPlayerStats] = []
         cursor: Optional[int] = None

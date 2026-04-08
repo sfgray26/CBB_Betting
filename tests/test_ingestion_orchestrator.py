@@ -175,6 +175,7 @@ def test_orchestrator_get_status_returns_all_jobs():
     expected_jobs = {
         "mlb_game_log", "mlb_box_stats", "rolling_windows", "player_scores",
         "player_momentum", "ros_simulation",
+        "decision_optimization", "backtesting", "explainability", "snapshot",
         "mlb_odds", "statcast",
         "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
         "ensemble_update", "projection_freshness",
