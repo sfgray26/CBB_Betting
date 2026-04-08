@@ -115,20 +115,7 @@ jobs:
           # Parse only the *hostname* component of the URL so that a password
           # or database-name containing the literal string ".railway.internal"
           # does not cause a false positive.
-          _db_host=$(python3 - <<'PYEOF'
-import os, sys
-try:
-    from urllib.parse import urlparse
-    url = os.environ.get("DATABASE_URL", "")
-    host = urlparse(url).hostname or ""
-    print(host)
-except (ImportError, ValueError) as e:
-    # If urlparse is unavailable or the URL is malformed we cannot determine
-    # the hostname, so fall back to checking the raw URL string conservatively.
-    sys.stderr.write(f"warning: URL parsing failed ({e}); falling back to raw string check\n")
-    print("__PARSE_FAILED__")
-PYEOF
-)
+          _db_host=$(python3 -c "import os,sys;from urllib.parse import urlparse;u=os.environ.get('DATABASE_URL','');print((urlparse(u).hostname or '') if u else '')" 2>/dev/null || echo "__PARSE_FAILED__")
           if [ "$_db_host" = "__PARSE_FAILED__" ]; then
             # Fallback: check raw URL string when hostname extraction fails
             if echo "$DATABASE_URL" | grep -qE "\.railway\.internal"; then
