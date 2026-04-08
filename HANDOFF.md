@@ -60,7 +60,8 @@ Incoming payloads MUST pass strict Pydantic V2 validation. No `dict.get()` defau
 | `mlb_player_stats` | **POPULATED (S26)** | 646 rows verified live in Fantasy-App DB. |
 | `statcast_performances`| **PENDING** | Agent built but fetches 0 records for 2026-04-06 (off-day or lag). |
 | Ingestion Orchestrator | **HARDENED (S26)** | All 11 jobs (including statcast/snapshot) registered and manual-triggerable via `/admin/ingestion/run-pipeline`. |
-| **H2H One Win UI Data Layer** | **BLOCKED — Phase 1 Required** | Kimi research complete (2026-04-08); technical roadmap issued. CF/LF/RF granularity, NSB/QS/K/9 data gaps identified. See Directive 2. |
+| `position_eligibility` (P25) | **MIGRATION READY (S28)** | Model + migration script created. Railway deployment pending. |
+| **H2H One Win UI Data Layer** | **IN PROGRESS — Phase 1** | P25 migration created. NSB verification pending. H2HOneWinSimulator not started. |
 
 ### Ground Truth: What Actually Exists
 
@@ -143,3 +144,94 @@ Incoming payloads MUST pass strict Pydantic V2 validation. No `dict.get()` defau
 2. Verify Yahoo API returns NSB (stat_id 5070) or identify fallback
 3. Build H2HOneWinSimulator prototype
 4. Implement validation suite (`tests/test_fantasy_h2h_validations.py`)
+
+---
+
+### S28 — Phase 1 Data Layer Hardening: Model + Migration (Apr 8)
+
+**Completed:**
+- `models.py`: Added PositionEligibility table with LF/CF/RF granularity (P25)
+- `scripts/migrate_v25_position_eligibility.py`: Migration script created, syntax-verified
+  - Natural key: (bdl_player_id,) with unique constraint _pe_player_uc
+  - 11 position booleans (C/1B/2B/3B/SS/LF/CF/RF/OF/DH/UTIL)
+  - Scarcity metrics: scarcity_rank, league_rostered_pct, multi_eligibility_count
+  - Indexes: player lookup, primary_position filter, multi_eligible filter
+
+**Pending (Delegation):**
+- Gemini CLI: Run migration on Railway (railway run python scripts/migrate_v25_position_eligibility.py)
+- Kimi CLI: Yahoo API NSB verification audit (stat_id 5070)
+
+---
+
+## HANDOFF PROMPTS — Agent Delegation Bundles
+
+### Gemini CLI (DevOps Strike Lead) — G-???: Position Eligibility Migration Deployment
+
+**Mission:** Deploy the P25 position_eligibility table migration to Railway production.
+
+**Context:**
+- Phase 1 Data Layer Hardening (see `reports/2026-04-08-fantasy-baseball-ui-roadmap.md` Section 1.1)
+- Model already added to `backend/models.py` (PositionEligibility class)
+- Migration script created at `scripts/migrate_v25_position_eligibility.py`
+- Python syntax verified: `venv/Scripts/python -m py_compile` passed
+
+**Tasks:**
+1. Navigate to project root: `cd C:\Users\sfgra\repos\Fixed\cbb-edge`
+2. Run migration on Railway in dry-run mode first:
+   ```
+   railway run python scripts/migrate_v25_position_eligibility.py --dry-run
+   ```
+3. If dry-run SQL looks correct, execute actual migration:
+   ```
+   railway run python scripts/migrate_v25_position_eligibility.py
+   ```
+4. Verify table creation:
+   ```
+   railway run python -c "from backend.models import PositionEligibility; print('PositionEligibility table OK')"
+   ```
+
+**Success Criteria:**
+- Migration executes without errors
+- position_eligibility table exists in Railway PostgreSQL
+- PositionEligibility model imports successfully
+
+**Escalation:** If DATABASE_URL not set or migration fails with "already exists", verify the table state and report back. Do NOT force downgrade unless explicitly instructed.
+
+**Report Format:** Reply with "G-??? Complete:" followed by execution output and table verification result.
+
+---
+
+### Kimi CLI (Deep Intelligence Unit) — K-???: Yahoo API NSB Verification Audit
+
+**Mission:** Determine if Yahoo Fantasy API exposes NSB (Net Stolen Bases, stat_id 5070) and identify fallback data sources if not.
+
+**Context:**
+- Phase 1 Data Layer Hardening (see `reports/2026-04-08-fantasy-baseball-ui-roadmap.md` Section 1.2)
+- H2H One Win format requires NSB = SB - CS (NOT raw SB)
+- Research doc claims NSB is stat_id 5070, but Yahoo Fantasy API documentation is sparse
+- Current client: `backend/fantasy_baseball/yahoo_client_resilient.py`
+
+**Tasks:**
+1. Read `backend/fantasy_baseball/yahoo_client_resilient.py` (1684 lines)
+   - Focus on: `get_players_stats_batch()` method and `stat_id` handling
+   - Check: Does current implementation request stat_id "5070"?
+2. Search codebase for any existing NSB/CS handling:
+   ```
+   grep -r "5070\|NSB\|net.*steal\|caught.*stealing" backend/ --include="*.py"
+   ```
+3. Research Yahoo Fantasy API documentation (outside codebase):
+   - Confirm: Is stat_id 5070 exposed via Fantasy Games API?
+   - Alternative: Does `player_stats` endpoint include CS (Caught Stealing, stat_id 7)?
+4. Identify Statcast fallback if Yahoo API fails:
+   - Check `backend/services/statcast_scraper.py` for CS availability
+   - Statcast field: `CS` (caught stealing)
+
+**Deliverable:** Report to `reports/2026-04-08-yahoo-nsb-audit.md` with:
+1. Yahoo API NSB verdict: YES/NO/PARTIAL
+2. If YES: Exact endpoint + parameters to fetch NSB
+3. If NO: Recommended Statcast fallback strategy
+4. Code snippet for implementing the fix
+
+**Escalation:** If NSB is confirmed unavailable via Yahoo AND Statcast, propose third data source (Baseball Reference, FanGraphs).
+
+**Report Format:** K-??? Complete: [Verdict] + [Fallback Strategy] + [Implementation Snippet]

@@ -155,5 +155,7 @@ railway run python -c "from backend.fantasy_baseball.yahoo_client_resilient impo
 100_001 mlb_odds | 100_002 statcast | 100_003 rolling_z | 100_004 cbb_ratings
 100_005 clv      | 100_006 cleanup  | 100_007 waiver_scan | 100_008 mlb_brief
 100_009 openclaw_perf | 100_010 openclaw_sweep
-Next available: 100_011 (mlb_injuries), 100_012 (mlb_box_scores)
+100_011 scarcity_index_recalc | 100_012 two_start_sp_identification
+100_013 projection_model_update | 100_014 probable_pitcher_sync | 100_015 waiver_priority_snapshot
+Next available: 100_016
 ```
