@@ -329,6 +329,9 @@ def backfill_statsapi(start: date, end: date):
             game_pk = game_info.get("game_id")
             if not game_pk:
                 continue
+            status = game_info.get("status", "")
+            if status not in ("Final", "Game Over", "Completed Early"):
+                continue
             try:
                 box = statsapi.boxscore_data(game_pk)
             except Exception as e:
@@ -337,13 +340,12 @@ def backfill_statsapi(start: date, end: date):
 
             player_info = box.get("playerInfo", {})
 
-            # Process batters
-            for side in ("awayBatters", "homeBatters"):
-                for pid_key in box.get(side, []):
-                    if isinstance(pid_key, str) and pid_key.startswith("ID"):
+            # Process batters (list of dicts with personId, ab, r, h, etc.)
+            for side in ("away", "home"):
+                for batter in box.get(f"{side}Batters", []):
+                    person_id = batter.get("personId")
+                    if not person_id:
                         continue
-                    batter = box[side].get(pid_key, {})
-                    person_id = batter.get("personId", pid_key)
                     info = player_info.get(f"ID{person_id}", {})
                     full_name = info.get("fullName", "")
                     if not full_name:
@@ -355,41 +357,30 @@ def backfill_statsapi(start: date, end: date):
                     if is_pitcher:
                         continue
                     try:
-                        updates = {
-                            "ab": int(batter.get("ab", 0)),
-                            "runs": int(batter.get("r", 0)),
-                            "hits": int(batter.get("h", 0)),
-                            "doubles": int(batter.get("doubles", 0)),
-                            "triples": int(batter.get("triples", 0)),
-                            "home_runs": int(batter.get("hr", 0)),
-                            "rbi": int(batter.get("rbi", 0)),
-                            "walks": int(batter.get("bb", 0)),
-                            "strikeouts_bat": int(batter.get("k", 0)),
-                            "stolen_bases": int(batter.get("sb", 0)),
-                        }
                         cur.execute("""
                             UPDATE mlb_player_stats SET
                                 ab=%s, runs=%s, hits=%s, doubles=%s, triples=%s,
                                 home_runs=%s, rbi=%s, walks=%s, strikeouts_bat=%s, stolen_bases=%s
                             WHERE id=%s
                         """, (
-                            updates["ab"], updates["runs"], updates["hits"],
-                            updates["doubles"], updates["triples"], updates["home_runs"],
-                            updates["rbi"], updates["walks"], updates["strikeouts_bat"],
-                            updates["stolen_bases"], row_id,
+                            int(batter.get("ab", 0)), int(batter.get("r", 0)),
+                            int(batter.get("h", 0)), int(batter.get("doubles", 0)),
+                            int(batter.get("triples", 0)), int(batter.get("hr", 0)),
+                            int(batter.get("rbi", 0)), int(batter.get("bb", 0)),
+                            int(batter.get("k", 0)), int(batter.get("sb", 0)),
+                            row_id,
                         ))
                         day_patched += 1
                         del name_lookup[key]
                     except (ValueError, TypeError):
                         pass
 
-            # Process pitchers
-            for side in ("awayPitchers", "homePitchers"):
-                for pid_key in box.get(side, []):
-                    if isinstance(pid_key, str) and pid_key.startswith("ID"):
+            # Process pitchers (list of dicts with personId, ip, h, er, etc.)
+            for side in ("away", "home"):
+                for pitcher in box.get(f"{side}Pitchers", []):
+                    person_id = pitcher.get("personId")
+                    if not person_id:
                         continue
-                    pitcher = box[side].get(pid_key, {})
-                    person_id = pitcher.get("personId", pid_key)
                     info = player_info.get(f"ID{person_id}", {})
                     full_name = info.get("fullName", "")
                     if not full_name:
@@ -401,18 +392,16 @@ def backfill_statsapi(start: date, end: date):
                     if not is_pitcher:
                         continue
                     try:
-                        ip_str = pitcher.get("ip", "0")
-                        h_a = int(pitcher.get("h", 0))
-                        er = int(pitcher.get("er", 0))
-                        bb_a = int(pitcher.get("bb", 0))
-                        k_pit = int(pitcher.get("k", 0))
-                        r_a = int(pitcher.get("r", 0))
                         cur.execute("""
                             UPDATE mlb_player_stats SET
                                 hits_allowed=%s, earned_runs=%s, walks_allowed=%s,
                                 strikeouts_pit=%s, runs_allowed=%s
                             WHERE id=%s AND (hits_allowed IS NULL OR strikeouts_pit IS NULL)
-                        """, (h_a, er, bb_a, k_pit, r_a, row_id))
+                        """, (
+                            int(pitcher.get("h", 0)), int(pitcher.get("er", 0)),
+                            int(pitcher.get("bb", 0)), int(pitcher.get("k", 0)),
+                            int(pitcher.get("r", 0)), row_id,
+                        ))
                         day_patched += 1
                         del name_lookup[key]
                     except (ValueError, TypeError):
@@ -434,11 +423,10 @@ def backfill_statsapi(start: date, end: date):
 # ---------------------------------------------------------------------------
 def run_pipeline(start: date, end: date):
     """Run rolling windows + downstream for each date with data."""
-    # Import here to avoid circular / heavy imports at top level
-    from backend.services.daily_ingestion import DailyIngestionOrchestrator
+    from unittest.mock import patch
+    from zoneinfo import ZoneInfo
 
     os.environ.setdefault("ENABLE_INGESTION_ORCHESTRATOR", "true")
-    orchestrator = DailyIngestionOrchestrator()
 
     conn = get_conn()
     cur = conn.cursor()
@@ -459,71 +447,65 @@ def run_pipeline(start: date, end: date):
 
     print(f"  Pipeline dates: {stat_dates[0]} to {stat_dates[-1]} ({len(stat_dates)} days)")
 
-    # The pipeline methods use "yesterday" as default date. We need to override.
-    # We'll call the methods that accept as_of_date parameter, or monkey-patch.
-    # Let me check if _compute_rolling_windows can accept a date...
-    # Since the methods hardcode yesterday, we need a different approach:
-    # Run the pipeline for each date by temporarily overriding today_et().
+    # Pipeline methods compute: datetime.now(tz).date() - timedelta(days=1)
+    # So we need datetime.now() to return (target_date + 1 day) to get target_date as "yesterday"
+    from datetime import datetime as real_datetime
 
-    async def run_for_date(target_date: date):
-        """Override the date functions and run the pipeline for a specific date."""
-        import backend.services.daily_ingestion as di_module
-
-        # The pipeline computes for "yesterday" relative to today_et()
-        # So we set today_et to return target_date + 1 day
-        fake_today = target_date + timedelta(days=1)
-
-        original_today = di_module.today_et
-        original_now = di_module.now_et
-
-        def patched_today():
-            return fake_today
-
-        def patched_now():
-            from zoneinfo import ZoneInfo
-            return datetime.now(ZoneInfo("America/New_York"))
-
-        di_module.today_et = patched_today
-        di_module.now_et = patched_now
-
-        try:
-            stages = [
-                ("rolling_windows", orchestrator._compute_rolling_windows),
-                ("player_scores", orchestrator._compute_player_scores),
-                ("player_momentum", orchestrator._compute_player_momentum),
-                ("ros_simulation", orchestrator._run_ros_simulation),
-                ("decision_optimization", orchestrator._run_decision_optimization),
-                ("backtesting", orchestrator._run_backtesting),
-                ("explainability", orchestrator._run_explainability),
-                ("snapshot", orchestrator._run_snapshot),
-            ]
-            results = {}
-            for name, method in stages:
-                try:
-                    result = await method()
-                    status = result.get("status", "?") if isinstance(result, dict) else "?"
-                    results[name] = status
-                except Exception as e:
-                    results[name] = f"ERROR: {e}"
-
-            return results
-        finally:
-            di_module.today_et = original_today
-            di_module.now_et = original_now
-
-    for d in stat_dates:
-        print(f"  pipeline {d} ... ", end="", flush=True)
+    for target_date in stat_dates:
+        print(f"  pipeline {target_date} ... ", end="", flush=True)
         t0 = time.time()
-        results = asyncio.run(run_for_date(d))
-        elapsed = time.time() - t0
 
-        # Summarize
-        statuses = [f"{k}={v}" for k, v in results.items()
-                    if v not in ("success", "?")]
-        if statuses:
-            print(f"{elapsed:.0f}s  issues: {', '.join(statuses)}")
+        # Make datetime.now() return a fake "today" so yesterday = target_date
+        fake_now = datetime.combine(
+            target_date + timedelta(days=1),
+            datetime.min.time(),
+            tzinfo=ZoneInfo("America/New_York"),
+        ).replace(hour=12)  # noon so we're safely in the right date
+
+        class FakeDatetime(real_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                if tz:
+                    return fake_now.astimezone(tz)
+                return fake_now.replace(tzinfo=None)
+
+        # We need to patch datetime in the daily_ingestion module
+        # AND in backend.utils.time_utils (which today_et/now_et use)
+        with patch("backend.services.daily_ingestion.datetime", FakeDatetime), \
+             patch("backend.utils.time_utils.datetime", FakeDatetime):
+
+            # Re-import after patching so the module sees the patched datetime
+            from backend.services.daily_ingestion import DailyIngestionOrchestrator
+            orch = DailyIngestionOrchestrator()
+
+            async def _run_stages():
+                stages = [
+                    ("rolling_windows", orch._compute_rolling_windows),
+                    ("player_scores", orch._compute_player_scores),
+                    ("player_momentum", orch._compute_player_momentum),
+                    ("ros_simulation", orch._run_ros_simulation),
+                    ("decision_optimization", orch._run_decision_optimization),
+                    ("backtesting", orch._run_backtesting),
+                    ("explainability", orch._run_explainability),
+                    ("snapshot", orch._run_snapshot),
+                ]
+                results = {}
+                for name, method in stages:
+                    try:
+                        result = await method()
+                        status = result.get("status", "?") if isinstance(result, dict) else "?"
+                        results[name] = status
+                    except Exception as e:
+                        results[name] = f"ERROR: {e}"
+                return results
+
+            results = asyncio.run(_run_stages())
+
+        elapsed = time.time() - t0
+        issues = [f"{k}={v}" for k, v in results.items() if v not in ("success",)]
+        if issues:
+            print(f"{elapsed:.0f}s  issues: {', '.join(issues)}")
         else:
-            rw = results.get("rolling_windows", "?")
             print(f"{elapsed:.0f}s  OK")
 
 

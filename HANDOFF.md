@@ -1,6 +1,6 @@
 # HANDOFF.md — MLB Platform Master Plan (In-Season 2026)
 
-> **Date:** April 7, 2026 (updated Session S26) | **Author:** Claude Code (Master Architect)
+> **Date:** April 8, 2026 (updated Session S28) | **Author:** Claude Code (Master Architect)
 > **Risk Level:** LOW — P1-P20 CERTIFIED. Phases 2-10 complete. Full pipeline operational.
 
 ---
@@ -60,8 +60,9 @@ Incoming payloads MUST pass strict Pydantic V2 validation. No `dict.get()` defau
 | `mlb_player_stats` | **POPULATED (S26)** | 646 rows verified live in Fantasy-App DB. |
 | `statcast_performances`| **PENDING** | Agent built but fetches 0 records for 2026-04-06 (off-day or lag). |
 | Ingestion Orchestrator | **HARDENED (S26)** | All 11 jobs (including statcast/snapshot) registered and manual-triggerable via `/admin/ingestion/run-pipeline`. |
-| `position_eligibility` (P25) | **MIGRATION READY (S28)** | Model + migration script created. Railway deployment pending. |
-| **H2H One Win UI Data Layer** | **IN PROGRESS — Phase 1** | P25 migration created. NSB verification pending. H2HOneWinSimulator not started. |
+| `position_eligibility` (P25) | **LIVE (S28)** | Model + migration deployed to both DBs. Verified live. |
+| `probable_pitchers` (P26) | **LIVE (S28)** | Model + migration script deployed to both DBs. Verified live. |
+| **H2H One Win UI Data Layer** | **IN PROGRESS — Phase 2** | P25/P26 live. NSB bug fixed. H2HOneWinSimulator complete (Phase 2.1). API endpoints pending. |
 
 ### Ground Truth: What Actually Exists
 
@@ -69,169 +70,110 @@ Incoming payloads MUST pass strict Pydantic V2 validation. No `dict.get()` defau
 |-----------|---------|
 | `mlb_player_stats` | **LIVE.** Pydantic validation relaxed for partial BDL objects. FK integrity enforced via game-ID-first fetch. |
 | `daily_snapshots` | **LIVE.** `_ds_date_uc` constraint added. End-to-end pipeline health tracking operational. |
+| `position_eligibility` | **LIVE (S28).** Table exists in both DBs. Tracks LF/CF/RF granularity. |
+| `probable_pitchers` | **LIVE (S28).** Table exists in both DBs. Tracks daily probables from MLB Stats API. |
 | Ingestion Pipeline | `run-pipeline` endpoint expanded to 11 jobs. Sequential execution verified. |
 
 ---
 
 ## Session History (Recent)
 
-### S26 — Pipeline Hardening & Phase 10 Complete (Apr 7)
-
-**Hardening:**
-- `mlb_player_stats`: Relaxed validation for `jersey`, `birth_place`, `height`, etc. to handle incomplete BDL responses.
-- `mlb_box_stats`: Refactored to fetch `game_ids` from DB first, ensuring FK integrity. Added `begin_nested` savepoints for row-level robustness.
-- `statcast`: Fixed date range (Baseball Savant uses strict inequalities) and parameter encoding (removed manual `%7C` which was double-encoded).
-- `daily_snapshots`: Added missing `_ds_date_uc` unique constraint to both DBs.
-- `run-pipeline`: Expanded to all 11 jobs. Fixed `statcast` job registration.
-
-**Verification:**
-- `mlb_player_stats`: **646 rows** successfully upserted and verified in production.
-- Pipeline: End-to-end manual trigger success (returning results for all 11 jobs).
-
----
-
-### Gemini CLI — Ingestion Audit & Fix (S26) ✅ COMPLETE
-
-**Status:**
-- Root cause for 0-record ingestion identified (Strict validation + FK violations).
-- Models patched and deployed.
-- DB Constraints manually added to Legacy/Fantasy DBs.
-- Pipeline manual trigger expanded and verified.
-- `mlb_player_stats` count: 646.
-
----
-
-### S27 — Fantasy Baseball UI Roadmap Analysis (Apr 8) ✅ COMPLETE
-
-**Kimi Research Review:**
-- Reviewed `reports/2026-04-08-fantasy-baseball-ui-ux-research.md` (Kimi's H2H One Win UI/UX research)
-- 8 UI features identified: Weekly Compass, Position Scarcity, Two-Start Command Center, NSB Efficiency, IP Bank, Waiver Priority, IL Shuffle, Matchup Difficulty
-- 7 UI-optimized view models specified (Section 2.2 of research doc)
-- Validation checklist defined (Section 4.5)
-
-**Current State Audit:**
-- `models.py`: MLB Phase 2 tables live (P11-P20), but NO PositionEligibility table for CF/LF/RF granularity
-- `yahoo_client_resilient.py`: OAuth client robust; stat batch endpoint returns {stat_id: value} dicts; NSB (5070), QS (32), K/9 (3096) NOT confirmed in data pipeline
-- `schemas.py`: Current response models (DailyLineupResponse, WaiverWireResponse, RosterMoveRecommendation) partial; missing 7 UI-optimized view models from research
-- `dashboard_service.py`: Dashboard aggregation exists (DashboardService class), but no WeeklyCompass or IPBank models
-- `waiver_edge_detector.py`: Position group mapping exists but CF/LF/RF NOT distinguished (_POS_GROUP maps OF to ["OF","LF","CF","RF"])
-- `daily_lineup_optimizer.py`: Two-start detection exists (_fetch_probable_pitchers_for_date), ProbablePitcherInfo model in schemas but not exposed via API
-
-**Critical Gaps Identified:**
-1. **Yahoo API NSB:** stat_id 5070 may not be exposed via Fantasy API; fallback to Statcast CS required
-2. **Position Granularity:** Current system treats OF as monolithic; research requires CF/LF/RF for scarcity calculations
-3. **Monte Carlo:** P16 ROS simulation exists but optimizes for points; H2H One Win requires category-by-category win probability
-4. **WebSocket Layer:** Missing entirely for real-time updates (research specifies <400ms latency target)
-5. **Cache Layer:** No Redis; all queries hit DB directly
-
-**Deliverable Created:**
-- `reports/2026-04-08-fantasy-baseball-ui-roadmap.md` — 8-week technical implementation roadmap
-  - Phase 1: Data Layer Hardening (Weeks 1-2) — Schema extensions, models, validation suite
-  - Phase 2: Compute Layer (Weeks 3-4) — Monte Carlo H2H, two-start detection, scarcity index
-  - Phase 3: API Layer (Weeks 5-6) — 8 new REST endpoints, error contracts, caching
-  - Phase 4: Data Pipeline (Week 7) — 5 new daily jobs, Yahoo sync validation
-  - Phase 5: UI Component Specs (Week 8+) — Delegated to Kimi CLI after validation
-
-**Decision:** PROCEED to Phase 1 (Data Layer Hardening). Do NOT begin UI design until validation checklist passes.
-
-**HANDOFF.md Updates:**
-- Added Directive 2: Fantasy Baseball UI Data Layer requirements
-- Updated Platform State to track UI readiness
-- Roadmap document saved for Kimi handoff reference
-
-**Next Steps (Immediate):**
-1. Create PositionEligibility model + migration script
-2. Verify Yahoo API returns NSB (stat_id 5070) or identify fallback
-3. Build H2HOneWinSimulator prototype
-4. Implement validation suite (`tests/test_fantasy_h2h_validations.py`)
-
----
-
 ### S28 — Phase 1 Data Layer Hardening: Model + Migration (Apr 8)
 
 **Completed:**
 - `models.py`: Added PositionEligibility table with LF/CF/RF granularity (P25)
-- `scripts/migrate_v25_position_eligibility.py`: Migration script created, syntax-verified
-  - Natural key: (bdl_player_id,) with unique constraint _pe_player_uc
-  - 11 position booleans (C/1B/2B/3B/SS/LF/CF/RF/OF/DH/UTIL)
-  - Scarcity metrics: scarcity_rank, league_rostered_pct, multi_eligibility_count
-  - Indexes: player lookup, primary_position filter, multi_eligible filter
+- `scripts/migrate_v25_position_eligibility.py`: Migration script created, syntax-verified.
+- `models.py`: Added ProbablePitcherSnapshot table (P26).
+- `scripts/migrate_v26_probable_pitchers.py`: Migration script created, syntax-verified.
+- **Railway Deployment:** Migrations v25 and v26 successfully deployed to both Legacy and Fantasy production databases (Gemini S28).
+- **NSB Bug Fixed:** Changed `max(0, sb - cs)` to `sb - cs` in `projections_loader.py` line 174 (verified via K-28 audit).
+- **Validation Suite:** Created `tests/test_fantasy_h2h_validations.py` — all 6 tests passing (NSB negative values, scarcity index, IP bank, one-win probability, stat_id 60, Statcast fallback).
+- **Phase 2.1 (Compute Layer):** H2HOneWinSimulator implemented with NumPy vectorization.
+  - `backend/fantasy_baseball/h2h_monte_carlo.py` — Monte Carlo for category-by-category win probability
+  - Performance: <200ms for 10,000 simulations (target met)
+  - Returns: win_probability, locked/swing/vulnerable categories, category breakdown
+  - `tests/test_h2h_monte_carlo.py` — 7/7 tests passing (basic functionality, dominant team, even matchup, performance, negative NSB, ERA/WHIP, category probs)
+  - `backend/schemas.py`: Added H2HOneWinSimRequest, H2HOneWinSimResponse, CategoryWinProbability
 
-**Pending (Delegation):**
-- Gemini CLI: Run migration on Railway (railway run python scripts/migrate_v25_position_eligibility.py)
-- Kimi CLI: Yahoo API NSB verification audit (stat_id 5070)
+**Active Delegation:**
+- None — Phase 1 complete. Phase 2 (H2HOneWinSimulator) ready to start.
+
+---
+
+## K-28 COMPLETION SUMMARY — Yahoo API NSB Audit
+
+**Status:** ✅ COMPLETE  
+**Agent:** Kimi CLI (Deep Intelligence Unit)  
+**Report:** `reports/2026-04-08-yahoo-nsb-audit.md`
+
+### Verdict
+**YES** — NSB (Net Stolen Bases) is available via Yahoo Fantasy API as stat_id 60.
+
+### Key Findings
+1. **Yahoo API:** stat_id 60 maps to "NSB" — already configured in `frontend/lib/fantasy-stat-contract.json`
+2. **Endpoint:** `get_players_stats_batch()` in `yahoo_client_resilient.py` returns NSB when league has it configured
+3. **CS Fallback:** Statcast provides `cs` / `caught_stealing` field if needed
+
+### Critical Bug Identified
+**File:** `backend/fantasy_baseball/projections_loader.py` line 174  
+**Current (WRONG):** `nsb = max(0, sb - cs)` — clamps negative NSB to 0  
+**Should Be:** `nsb = sb - cs` — NSB can be negative (0 SB - 1 CS = -1)  
+**Impact:** H2H One Win format requires accurate NSB (can be negative). Bug must be fixed before UI phase.
+
+### H2H One Win UI Data Layer Phase 1 Status
+- **UNBLOCKED** — NSB data source confirmed
+- **PENDING** — NSB bug fix (Claude Code owner)
+- **Next:** H2HOneWinSimulator implementation after bug fix
+
+---
+
+## ACTIVE CRITICAL PATH
+
+### Completed (S28)
+- ✅ **Phase 1 Data Layer:** P25/P26 migrations LIVE, NSB bug fixed, validation suite passing
+- ✅ **Phase 2.1 Compute Layer:** H2HOneWinSimulator implemented, performance target met (<200ms for 10k sims)
+
+### Next Session (S29)
+- Phase 2.2: Two-Start Detection (expose probable_pitchers via API)
+- Phase 2.3: Scarcity Index Computation (CF/LF/RF granularity)
+- Phase 3: API Layer (8 new REST endpoints)
 
 ---
 
 ## HANDOFF PROMPTS — Agent Delegation Bundles
 
-### Gemini CLI (DevOps Strike Lead) — G-???: Position Eligibility Migration Deployment
+### Gemini CLI (DevOps Strike Lead) — G-28: Probable Pitchers Migration Deployment ✅ COMPLETE
 
-**Mission:** Deploy the P25 position_eligibility table migration to Railway production.
+**Mission:** Deploy the P26 probable_pitchers table migration to Railway production.
 
-**Context:**
-- Phase 1 Data Layer Hardening (see `reports/2026-04-08-fantasy-baseball-ui-roadmap.md` Section 1.1)
-- Model already added to `backend/models.py` (PositionEligibility class)
-- Migration script created at `scripts/migrate_v25_position_eligibility.py`
-- Python syntax verified: `venv/Scripts/python -m py_compile` passed
-
-**Tasks:**
-1. Navigate to project root: `cd C:\Users\sfgra\repos\Fixed\cbb-edge`
-2. Run migration on Railway in dry-run mode first:
-   ```
-   railway run python scripts/migrate_v25_position_eligibility.py --dry-run
-   ```
-3. If dry-run SQL looks correct, execute actual migration:
-   ```
-   railway run python scripts/migrate_v25_position_eligibility.py
-   ```
-4. Verify table creation:
-   ```
-   railway run python -c "from backend.models import PositionEligibility; print('PositionEligibility table OK')"
-   ```
-
-**Success Criteria:**
-- Migration executes without errors
-- position_eligibility table exists in Railway PostgreSQL
-- PositionEligibility model imports successfully
-
-**Escalation:** If DATABASE_URL not set or migration fails with "already exists", verify the table state and report back. Do NOT force downgrade unless explicitly instructed.
-
-**Report Format:** Reply with "G-??? Complete:" followed by execution output and table verification result.
+**Status:**
+- Migration v26 executed successfully on both DBs.
+- `probable_pitchers` table verified live.
+- `ProbablePitcherSnapshot` model confirmed mapping correctly.
 
 ---
 
-### Kimi CLI (Deep Intelligence Unit) — K-???: Yahoo API NSB Verification Audit
+### Gemini CLI (DevOps Strike Lead) — G-27: Position Eligibility Migration Deployment ✅ COMPLETE
+
+**Mission:** Deploy the P25 position_eligibility table migration to Railway production.
+
+**Status:**
+- Migration v25 executed successfully on both DBs.
+- `position_eligibility` table verified live.
+- `PositionEligibility` model confirmed mapping correctly.
+
+---
+
+### Kimi CLI (Deep Intelligence Unit) — K-28: Yahoo API NSB Verification Audit ✅ COMPLETE
 
 **Mission:** Determine if Yahoo Fantasy API exposes NSB (Net Stolen Bases, stat_id 5070) and identify fallback data sources if not.
 
-**Context:**
-- Phase 1 Data Layer Hardening (see `reports/2026-04-08-fantasy-baseball-ui-roadmap.md` Section 1.2)
-- H2H One Win format requires NSB = SB - CS (NOT raw SB)
-- Research doc claims NSB is stat_id 5070, but Yahoo Fantasy API documentation is sparse
-- Current client: `backend/fantasy_baseball/yahoo_client_resilient.py`
+**Status:**
+- **Verdict:** YES — NSB available as stat_id 60
+- **Bug Found:** `projections_loader.py` clamps NSB to 0 (must fix)
+- **Report:** `reports/2026-04-08-yahoo-nsb-audit.md`
+- **H2H UI Data Layer:** UNBLOCKED (pending bug fix)
 
-**Tasks:**
-1. Read `backend/fantasy_baseball/yahoo_client_resilient.py` (1684 lines)
-   - Focus on: `get_players_stats_batch()` method and `stat_id` handling
-   - Check: Does current implementation request stat_id "5070"?
-2. Search codebase for any existing NSB/CS handling:
-   ```
-   grep -r "5070\|NSB\|net.*steal\|caught.*stealing" backend/ --include="*.py"
-   ```
-3. Research Yahoo Fantasy API documentation (outside codebase):
-   - Confirm: Is stat_id 5070 exposed via Fantasy Games API?
-   - Alternative: Does `player_stats` endpoint include CS (Caught Stealing, stat_id 7)?
-4. Identify Statcast fallback if Yahoo API fails:
-   - Check `backend/services/statcast_scraper.py` for CS availability
-   - Statcast field: `CS` (caught stealing)
+---
 
-**Deliverable:** Report to `reports/2026-04-08-yahoo-nsb-audit.md` with:
-1. Yahoo API NSB verdict: YES/NO/PARTIAL
-2. If YES: Exact endpoint + parameters to fetch NSB
-3. If NO: Recommended Statcast fallback strategy
-4. Code snippet for implementing the fix
-
-**Escalation:** If NSB is confirmed unavailable via Yahoo AND Statcast, propose third data source (Baseball Reference, FanGraphs).
-
-**Report Format:** K-??? Complete: [Verdict] + [Fallback Strategy] + [Implementation Snippet]
+*Last Updated: April 8, 2026 — Session S28*

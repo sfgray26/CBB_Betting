@@ -1627,3 +1627,47 @@ class PositionEligibility(Base):
         UniqueConstraint("bdl_player_id", name="_pe_player_uc"),
         Index("idx_pe_primary_position", "primary_position"),
     )
+
+
+class ProbablePitcherSnapshot(Base):
+    """
+    Daily probable pitchers from MLB Stats API.
+
+    The DailyLineupOptimizer already fetches probable pitchers via MLB Stats API
+    but does not persist them. This table enables historical tracking and frontend
+    consumption for Two-Start Command Center UI.
+
+    Data source: MLB Stats API /api/v1/schedule/games endpoint (probablePitchers field).
+    Refresh cadence: Job 100_014 (6 AM ET daily) + game-day updates at 12 PM ET.
+
+    is_confirmed flag:
+      - True = Team officially announced starter (lineup card released)
+      - False = Probable per MLB.com (subject to change)
+    """
+
+    __tablename__ = "probable_pitchers"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    game_date = Column(Date, nullable=False, index=True)
+    team = Column(String(10), nullable=False)  # Team abbreviation (e.g., "NYY", "LAA")
+    opponent = Column(String(10), nullable=True)  # Opponent for matchup context
+    is_home = Column(Boolean, nullable=True)  # Home/away flag
+
+    pitcher_name = Column(String(100), nullable=True)  # Full name
+    bdl_player_id = Column(Integer, nullable=True, index=True)  # FK to player_id_mapping
+    mlbam_id = Column(Integer, nullable=True)  # MLBAM ID for cross-reference
+    is_confirmed = Column(Boolean, nullable=False, default=False)
+
+    game_time_et = Column(String(10), nullable=True)  # "7:05 PM" format
+    park_factor = Column(Float, nullable=True)  # Park factor for matchup quality
+    quality_score = Column(Float, nullable=True)  # Precomputed matchup rating (-2.0 to +2.0)
+
+    # Audit
+    fetched_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("game_date", "team", name="_pp_date_team_uc"),
+        Index("idx_pp_date", "game_date"),
+        Index("idx_pp_pitcher", "bdl_player_id"),
+    )

@@ -171,7 +171,7 @@ def load_steamer_batting(path: Path) -> list[dict]:
                 slg = float(row.get("SLG", 0) or 0)
 
                 # Compute derived stats
-                nsb = max(0, sb - cs)
+                nsb = sb - cs  # NSB can be negative for H2H One Win format (e.g., 0 SB - 1 CS = -1)
                 tb = round(h * slg / max(avg, 0.001)) if avg > 0 else 0
 
                 player = {

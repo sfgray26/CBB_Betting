@@ -571,3 +571,94 @@ class OracleFlaggedResponse(BaseModel):
     flagged_count: int
     predictions: List[OraclePredictionDetail]
 
+
+# ---------------------------------------------------------------------------
+# H2H One Win Monte Carlo (Phase 2 — Compute Layer)
+# ---------------------------------------------------------------------------
+
+
+class CategoryWinProbability(BaseModel):
+    """Win probability for a single category."""
+    category: str = Field(..., description="Category name (R, HR, RBI, SB, NSB, AVG, OPS, W, QS, K, K/9, ERA, WHIP)")
+    win_probability: float = Field(..., ge=0.0, le=1.0, description="Probability of winning this category [0.0, 1.0]")
+    status: Literal["LOCKED", "SWING", "VULNERABLE"] = Field(
+        ...,
+        description="LOCKED: >85% win, SWING: 40-60% win, VULNERABLE: <30% win"
+    )
+
+
+class H2HOneWinSimRequest(BaseModel):
+    """Request for H2H One Win Monte Carlo simulation."""
+
+    my_roster: List[dict] = Field(
+        ...,
+        min_length=1,
+        description="List of player dicts with projected stats. "
+        "Example: [{'name': 'Ohtani', 'R': 15, 'HR': 4, 'RBI': 12, ...}, ...]",
+    )
+    opponent_roster: List[dict] = Field(
+        ...,
+        min_length=1,
+        description="Opponent roster with same stat structure.",
+    )
+    n_simulations: int = Field(
+        10000,
+        ge=1000,
+        le=50000,
+        description="Number of Monte Carlo simulations (default: 10000, max: 50000)",
+    )
+
+
+class H2HOneWinSimResponse(BaseModel):
+    """Response from H2H One Win Monte Carlo simulation."""
+
+    win_probability: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Probability of winning 6+ categories [0.0, 1.0]. "
+        "6+ of 13 categories = win in H2H One Win format.",
+    )
+
+    mean_categories_won: float = Field(
+        ...,
+        ge=0.0,
+        le=13.0,
+        description="Expected number of categories won (e.g., 6.5 / 13)",
+    )
+
+    std_categories_won: float = Field(
+        ...,
+        ge=0.0,
+        description="Standard deviation of categories won (measure of matchup volatility)",
+    )
+
+    locked_categories: List[str] = Field(
+        ...,
+        description="Categories with >85% win probability (safe zones)",
+    )
+
+    swing_categories: List[str] = Field(
+        ...,
+        description="Categories with 40-60% win probability (key matchup decisions)",
+    )
+
+    vulnerable_categories: List[str] = Field(
+        ...,
+        description="Categories with <30% win probability (risk zones, consider streaming)",
+    )
+
+    category_win_probs: List[CategoryWinProbability] = Field(
+        ...,
+        description="Full breakdown of win probability per category",
+    )
+
+    n_simulations: int = Field(..., description="Number of simulations run")
+    as_of_date: date = Field(..., description="Date of simulation")
+
+    recommendation: Optional[str] = Field(
+        None,
+        description="Human-readable recommendation (e.g., 'Stream 2 SP', 'Ride out')",
+    )
+
+
