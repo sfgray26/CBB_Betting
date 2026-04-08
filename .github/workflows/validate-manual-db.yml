@@ -10,12 +10,12 @@ name: Manual DB Validation
 # NEVER triggered on push or pull_request, keeping normal CI secretless.
 #
 # Required secrets (set in GitHub → Settings → Secrets and variables → Actions):
-#   DATABASE_URL  — PostgreSQL connection string (must be externally reachable)
-#                   e.g. postgresql://user:pass@host:5432/dbname?sslmode=require
+#   DATABASE_URL_PUBLIC — PostgreSQL public connection string (must be externally reachable)
+#                         e.g. postgresql://user:pass@host:5432/dbname?sslmode=require
 #
 #   IMPORTANT: Railway-internal hostnames (*.railway.internal) are NOT
-#   reachable from GitHub Actions runners. Use the public Railway URL or a
-#   read-only replica with an external hostname.
+#   reachable from GitHub Actions runners. Use DATABASE_URL_PUBLIC which
+#   contains the public Railway URL or a read-only replica with an external hostname.
 #
 # Optional inputs (set via workflow_dispatch inputs):
 #   season        — CBB/MLB season year (default: current year)
@@ -95,13 +95,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ── Guard: fail early if DATABASE_URL is missing or inaccessible ────────
-      - name: Verify DATABASE_URL is set and externally reachable
+      # ── Guard: fail early if DATABASE_URL_PUBLIC is missing or inaccessible ──
+      - name: Verify DATABASE_URL_PUBLIC is set and externally reachable
         run: |
           if [ -z "$DATABASE_URL" ]; then
-            echo "❌ DATABASE_URL secret is not configured."
+            echo "❌ DATABASE_URL_PUBLIC secret is not configured."
             echo ""
-            echo "To run this workflow you must set the DATABASE_URL secret in:"
+            echo "To run this workflow you must set the DATABASE_URL_PUBLIC secret in:"
             echo "  GitHub → Settings → Secrets and variables → Actions → New repository secret"
             echo ""
             echo "The value must be a PostgreSQL connection string for an externally"
@@ -119,31 +119,31 @@ jobs:
           if [ "$_db_host" = "__PARSE_FAILED__" ]; then
             # Fallback: check raw URL string when hostname extraction fails
             if echo "$DATABASE_URL" | grep -qE "\.railway\.internal"; then
-              echo "❌ DATABASE_URL appears to contain a Railway-internal hostname."
+              echo "❌ DATABASE_URL_PUBLIC appears to contain a Railway-internal hostname."
               exit 1
             fi
           elif echo "$_db_host" | grep -qE "\.railway\.internal$"; then
-            echo "❌ DATABASE_URL hostname '$_db_host' is a Railway-internal address."
+            echo "❌ DATABASE_URL_PUBLIC hostname '$_db_host' is a Railway-internal address."
             echo ""
             echo "Railway-internal hostnames are only accessible from within the Railway"
             echo "private network and cannot be reached from GitHub Actions runners."
             echo ""
-            echo "Fix: replace the DATABASE_URL secret with a publicly reachable URL:"
+            echo "Fix: ensure DATABASE_URL_PUBLIC contains a publicly reachable URL:"
             echo "  • Railway public domain:  postgresql://user:pass@<app>.railway.app:5432/db"
             echo "  • External read-replica:  postgresql://user:pass@<host>:5432/db?sslmode=require"
             exit 1
           fi
 
-          echo "✅ DATABASE_URL is set and does not use a Railway-internal hostname."
+          echo "✅ DATABASE_URL_PUBLIC is set and does not use a Railway-internal hostname."
           echo "   Length: ${#DATABASE_URL} characters."
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL_PUBLIC }}
 
       # ── Run validation ───────────────────────────────────────────────────────
       - name: Run manual DB validation
         run: python scripts/validate_manual_db.py
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL_PUBLIC }}
           REDIS_URL: redis://localhost:6379
           ARTIFACTS_ENABLED: 'true'
           ARTIFACT_DIR: artifacts
