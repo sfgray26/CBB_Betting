@@ -10,6 +10,9 @@ psycopg2-binary==2.9.9
 asyncpg==0.29.0
 alembic==1.13.1
 
+# Cache / Redis
+redis>=5.0
+
 # Scientific Computing (Version 7 model)
 numpy==1.26.3
 scipy==1.11.4
