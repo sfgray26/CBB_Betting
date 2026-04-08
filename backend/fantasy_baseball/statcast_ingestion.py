@@ -282,38 +282,12 @@ class StatcastIngestionAgent:
         from datetime import timedelta
         params = {
             'all': 'true',
-            'hfPT': '',  # Pitch types (all)
-            'hfAB': '',  # Batted ball types (all)
-            'hfBBT': '',  # Batted ball trajectory (all)
-            'hfPR': '',  # Pitch result (all)
-            'hfZ': '',  # Zone (all)
-            'stadium': '',  # All stadiums
-            'hfBBL': '',  # Barrel (all)
-            'hfNewZones': '0',
             'hfGT': 'R|',  # Game type: Regular season
-            'hfC': '',  # Count (all)
             'hfSea': f'{target_date.year}|',  # Season
-            'hfSit': '',  # Situation (all)
             'player_type': 'batter',  # Batter perspective
-            'hfOuts': '',  # Outs (all)
-            'opponent': '',  # All opponents
-            'pitcher_throws': '',  # L/R (all)
-            'batter_stands': '',  # L/R (all)
-            'hfSA': '',  # Sacrifice (all)
             'game_date_gt': (target_date - timedelta(days=1)).isoformat(),
             'game_date_lt': (target_date + timedelta(days=1)).isoformat(),
-            'hfInfield': '',  # Infield (all)
-            'team': '',  # All teams
-            'position': '',  # All positions
-            'hfOutfield': '',  # Outfield (all)
-            'hfRO': '',  # Runner on (all)
-            'home_road': '',  # Home/Road (all)
-            'hfFlag': '',  # Flag (all)
-            'metric_1': '',
             'group_by': 'name-date',  # Group by player and date
-            'min_pitches': '0',
-            'min_results': '0',
-            'min_pas': '0',
             'sort_col': 'pitches',
             'player_event_sort': 'api_p_release_speed',
             'sort_order': 'desc',
@@ -327,6 +301,7 @@ class StatcastIngestionAgent:
             }
             
             logger.info("Statcast Request URL: %s", self.base_url)
+            # Log only essential params to avoid clutter
             logger.info("Statcast Request Params: %s", params)
 
             response = requests.get(
