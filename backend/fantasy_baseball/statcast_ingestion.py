@@ -26,6 +26,7 @@ import requests
 import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from backend.models import SessionLocal, PlayerProjection, StatcastPerformance
 from backend.fantasy_baseball.player_board import get_or_create_projection
@@ -270,138 +271,235 @@ class StatcastIngestionAgent:
         self.quality_checker = DataQualityChecker()
         self.db = SessionLocal()
     
-    def fetch_statcast_day(self, target_date: date) -> Optional[pd.DataFrame]:
+    def _fetch_by_player_type(self, target_date: date, player_type: str) -> Optional[pd.DataFrame]:
         """
-        Fetch Statcast data for a specific date.
-        
-        Uses Baseball Savant CSV export API.
+        Fetch Statcast data for a specific date and player type ('batter' or 'pitcher').
+
+        Uses Baseball Savant CSV export API with strict-inequality date range
+        (Baseball Savant treats game_date_gt/lt as exclusive bounds).
         """
-        logger.info(f"Fetching Statcast data for {target_date}")
-        
-        # Build query parameters
-        from datetime import timedelta
+        logger.info("Fetching Statcast %s data for %s", player_type, target_date)
+
         params = {
             'all': 'true',
-            'hfGT': 'R|',  # Game type: Regular season
-            'hfSea': f'{target_date.year}|',  # Season
-            'player_type': 'batter',  # Batter perspective
+            'hfGT': 'R|',
+            'hfSea': f'{target_date.year}|',
+            'player_type': player_type,
             'game_date_gt': (target_date - timedelta(days=1)).isoformat(),
             'game_date_lt': (target_date + timedelta(days=1)).isoformat(),
-            'group_by': 'name-date',  # Group by player and date
+            'group_by': 'name-date',
             'sort_col': 'pitches',
             'player_event_sort': 'api_p_release_speed',
             'sort_order': 'desc',
-            'type': 'details'
+            'type': 'details',
         }
-        
+
         try:
-            # Note: Baseball Savant requires proper headers
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
-            
-            logger.info("Statcast Request URL: %s", self.base_url)
-            # Log only essential params to avoid clutter
-            logger.info("Statcast Request Params: %s", params)
-
             response = requests.get(
                 self.base_url,
                 params=params,
                 headers=headers,
-                timeout=60
+                timeout=60,
             )
-            
+
             if response.status_code != 200:
-                logger.error(f"Statcast API returned {response.status_code}")
+                logger.error("Statcast API returned %d for player_type=%s", response.status_code, player_type)
                 return None
-            
-            # Parse CSV response
+
             from io import StringIO
             text_content = response.text
             df = pd.read_csv(StringIO(text_content))
-            
-            logger.info("Successfully fetched %d records from Statcast (raw size: %d bytes)", len(df), len(text_content))
+
+            # Bug 4 fix: log actual columns on first real data so mapping issues surface early
+            if len(df) > 0:
+                logger.info(
+                    "Statcast %s columns present: %s",
+                    player_type, sorted(df.columns.tolist()),
+                )
+
+            logger.info(
+                "Statcast %s: %d rows fetched (%d bytes)",
+                player_type, len(df), len(text_content),
+            )
             return df
-            
+
         except Exception as e:
-            logger.exception(f"Failed to fetch Statcast data: {e}")
+            logger.exception("Failed to fetch Statcast %s data: %s", player_type, e)
             return None
+
+    def fetch_statcast_day(self, target_date: date) -> Optional[pd.DataFrame]:
+        """
+        Fetch Statcast data for a specific date — both batters AND pitchers.
+
+        Returns a combined DataFrame with a '_statcast_player_type' column
+        ('batter' or 'pitcher') so transform_to_performance can route fields
+        correctly. Returns None if both fetches fail or return empty results.
+        """
+        batter_df = self._fetch_by_player_type(target_date, 'batter')
+        pitcher_df = self._fetch_by_player_type(target_date, 'pitcher')
+
+        frames = []
+        n_batters = 0
+        n_pitchers = 0
+
+        if batter_df is not None and len(batter_df) > 0:
+            batter_df = batter_df.copy()
+            batter_df['_statcast_player_type'] = 'batter'
+            frames.append(batter_df)
+            n_batters = len(batter_df)
+
+        if pitcher_df is not None and len(pitcher_df) > 0:
+            pitcher_df = pitcher_df.copy()
+            pitcher_df['_statcast_player_type'] = 'pitcher'
+            frames.append(pitcher_df)
+            n_pitchers = len(pitcher_df)
+
+        if not frames:
+            logger.warning("Statcast: both batter and pitcher fetches returned no data for %s", target_date)
+            return None
+
+        combined = pd.concat(frames, ignore_index=True)
+        logger.info(
+            "Statcast combined: %d batters + %d pitchers = %d total rows for %s",
+            n_batters, n_pitchers, len(combined), target_date,
+        )
+        return combined
     
+    @staticmethod
+    def _icol(row: pd.Series, *names: str, default: int = 0) -> int:
+        """Return first non-null int found among candidate column names."""
+        for name in names:
+            v = row.get(name)
+            if v is not None and str(v).strip() not in ('', 'nan', 'NaN'):
+                try:
+                    return int(float(v))
+                except (ValueError, TypeError):
+                    continue
+        return default
+
+    @staticmethod
+    def _fcol(row: pd.Series, *names: str, default: float = 0.0) -> float:
+        """Return first non-null float found among candidate column names."""
+        for name in names:
+            v = row.get(name)
+            if v is not None and str(v).strip() not in ('', 'nan', 'NaN'):
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    continue
+        return default
+
     def transform_to_performance(self, df: pd.DataFrame) -> List[PlayerDailyPerformance]:
         """
         Transform Statcast DataFrame to PlayerDailyPerformance objects.
+
+        Handles both batter rows and pitcher rows (from the two-pass fetch).
+        For pitcher rows (_statcast_player_type == 'pitcher'):
+          - Batting counting stats (pa, ab, h, hr, bb, so, ...) are set to 0.
+          - k_pit / bb_pit / pitches come from the pitcher-perspective event counts.
+          - Statcast quality metrics (exit velocity, xwOBA, etc.) represent
+            pitch outcomes against this pitcher and are stored as-is.
         """
         performances = []
-        
+
         for _, row in df.iterrows():
             try:
-                # Basic validation: must have an ID and a name
                 pid = row.get('player_id')
-                if pid is None or str(pid).strip() == "" or str(pid).strip().lower() == "nan":
+                if pid is None or str(pid).strip() in ('', 'nan', 'NaN'):
                     continue
-                
-                perf = PlayerDailyPerformance(
-                    player_id=str(pid),
-                    player_name=str(row.get('player_name', '')),
-                    team=str(row.get('team', '')),
-                    game_date=pd.to_datetime(row.get('game_date')).date(),
-                    
-                    pa=int(row.get('pa', 0)),
-                    ab=int(row.get('ab', 0)),
-                    h=int(row.get('hit', 0)),
-                    doubles=int(row.get('double', 0)),
-                    triples=int(row.get('triple', 0)),
-                    hr=int(row.get('home_run', 0)),
-                    r=int(row.get('run', 0)),
-                    rbi=int(row.get('rbi', 0)),
-                    bb=int(row.get('walk', 0)),
-                    so=int(row.get('strikeout', 0)),
-                    hbp=int(row.get('hbp', 0)),
-                    sb=int(row.get('sb', 0)),
-                    cs=int(row.get('cs', 0)),
-                    
-                    exit_velocity_avg=float(row.get('exit_velocity_avg', 0) or 0),
-                    launch_angle_avg=float(row.get('launch_angle_avg', 0) or 0),
-                    hard_hit_pct=float(row.get('hard_hit_percent', 0) or 0) / 100,
-                    barrel_pct=float(row.get('barrel_batted_rate', 0) or 0) / 100,
-                    xba=float(row.get('xba', 0) or 0),
-                    xslg=float(row.get('xslg', 0) or 0),
-                    xwoba=float(row.get('xwoba', 0) or 0),
-                    
-                    ip=float(row.get('ip', 0) or 0),
-                    er=int(row.get('er', 0) or 0),
-                    k_pit=int(row.get('k', 0) or 0),
-                    bb_pit=int(row.get('bb', 0) or 0),
-                    pitches=int(row.get('pitches', 0) or 0)
-                )
+
+                is_pitcher = str(row.get('_statcast_player_type', 'batter')) == 'pitcher'
+
+                if is_pitcher:
+                    # Pitcher row: batting stats are zeroed; Ks/BBs come from
+                    # the event counts which represent outcomes against this pitcher.
+                    perf = PlayerDailyPerformance(
+                        player_id=str(pid),
+                        player_name=str(row.get('player_name', '')),
+                        team=str(row.get('team', '')),
+                        game_date=pd.to_datetime(row.get('game_date')).date(),
+                        pa=0, ab=0, h=0, doubles=0, triples=0,
+                        hr=0, r=0, rbi=0, bb=0, so=0, hbp=0, sb=0, cs=0,
+                        exit_velocity_avg=self._fcol(row, 'exit_velocity_avg'),
+                        launch_angle_avg=self._fcol(row, 'launch_angle_avg'),
+                        hard_hit_pct=self._fcol(row, 'hard_hit_percent') / 100,
+                        barrel_pct=self._fcol(row, 'barrel_batted_rate') / 100,
+                        xba=self._fcol(row, 'xba'),
+                        xslg=self._fcol(row, 'xslg'),
+                        xwoba=self._fcol(row, 'xwoba'),
+                        ip=self._fcol(row, 'ip'),
+                        er=self._icol(row, 'er'),
+                        # strikeout / walk columns = pitcher Ks / BBs in pitcher-type fetch
+                        k_pit=self._icol(row, 'strikeout', 'k', 'so'),
+                        bb_pit=self._icol(row, 'walk', 'bb'),
+                        pitches=self._icol(row, 'pitches'),
+                    )
+                else:
+                    # Bug 4 fix: accept alternate column names Baseball Savant may return.
+                    # Primary names come from the grouped name-date CSV; alternatives handle
+                    # any Baseball Savant endpoint variation.
+                    perf = PlayerDailyPerformance(
+                        player_id=str(pid),
+                        player_name=str(row.get('player_name', '')),
+                        team=str(row.get('team', '')),
+                        game_date=pd.to_datetime(row.get('game_date')).date(),
+                        pa=self._icol(row, 'pa'),
+                        ab=self._icol(row, 'ab'),
+                        h=self._icol(row, 'hit', 'hits', 'h'),
+                        doubles=self._icol(row, 'double', 'doubles'),
+                        triples=self._icol(row, 'triple', 'triples'),
+                        hr=self._icol(row, 'home_run', 'home_runs', 'hr'),
+                        r=self._icol(row, 'run', 'runs', 'r'),
+                        rbi=self._icol(row, 'rbi'),
+                        bb=self._icol(row, 'walk', 'walks', 'bb'),
+                        so=self._icol(row, 'strikeout', 'strikeouts', 'so'),
+                        hbp=self._icol(row, 'hbp', 'hit_by_pitch'),
+                        sb=self._icol(row, 'sb', 'stolen_base', 'stolen_bases'),
+                        cs=self._icol(row, 'cs', 'caught_stealing'),
+                        exit_velocity_avg=self._fcol(row, 'exit_velocity_avg'),
+                        launch_angle_avg=self._fcol(row, 'launch_angle_avg'),
+                        hard_hit_pct=self._fcol(row, 'hard_hit_percent') / 100,
+                        barrel_pct=self._fcol(row, 'barrel_batted_rate') / 100,
+                        xba=self._fcol(row, 'xba'),
+                        xslg=self._fcol(row, 'xslg'),
+                        xwoba=self._fcol(row, 'xwoba'),
+                        ip=0.0, er=0, k_pit=0, bb_pit=0,
+                        pitches=self._icol(row, 'pitches'),
+                    )
+
                 performances.append(perf)
             except Exception as e:
-                logger.warning(f"Failed to parse row for {row.get('player_name', 'unknown')}: {e}")
+                logger.warning(
+                    "Failed to parse row for %s: %s",
+                    row.get('player_name', 'unknown'), e,
+                )
                 continue
-        
+
         return performances
     
-    def store_performances(self, performances: List[PlayerDailyPerformance]):
-        """Store daily performances in database."""
+    def store_performances(self, performances: List[PlayerDailyPerformance]) -> int:
+        """
+        Upsert daily performances to statcast_performances.
+
+        Uses INSERT ON CONFLICT DO UPDATE (constraint uq_player_date) so that
+        re-running the pipeline corrects previously-stored bad data rather than
+        silently skipping rows.
+
+        Returns the number of rows upserted.
+        """
+        rows_upserted = 0
+        now = datetime.now(ZoneInfo("America/New_York"))
+
         for perf in performances:
             try:
-                # Check if already exists
-                existing = self.db.query(StatcastPerformance).filter(
-                    StatcastPerformance.player_id == perf.player_id,
-                    StatcastPerformance.game_date == perf.game_date
-                ).first()
-                
-                if existing:
-                    logger.debug(f"Performance already exists for {perf.player_name} on {perf.game_date}")
-                    continue
-                
-                # Create new record
-                record = StatcastPerformance(
+                stmt = pg_insert(StatcastPerformance.__table__).values(
                     player_id=perf.player_id,
                     player_name=perf.player_name,
                     team=perf.team,
                     game_date=perf.game_date,
-                    
                     pa=perf.pa,
                     ab=perf.ab,
                     h=perf.h,
@@ -415,7 +513,6 @@ class StatcastIngestionAgent:
                     hbp=perf.hbp,
                     sb=perf.sb,
                     cs=perf.cs,
-                    
                     exit_velocity_avg=perf.exit_velocity_avg,
                     launch_angle_avg=perf.launch_angle_avg,
                     hard_hit_pct=perf.hard_hit_pct,
@@ -423,24 +520,63 @@ class StatcastIngestionAgent:
                     xba=perf.xba,
                     xslg=perf.xslg,
                     xwoba=perf.xwoba,
-                    
                     woba=perf.woba,
                     avg=perf.avg,
                     obp=perf.obp,
                     slg=perf.slg,
                     ops=perf.ops,
-                    
-                    created_at=datetime.now(ZoneInfo("America/New_York"))
+                    ip=perf.ip,
+                    er=perf.er,
+                    k_pit=perf.k_pit,
+                    bb_pit=perf.bb_pit,
+                    pitches=perf.pitches,
+                    created_at=now,
+                ).on_conflict_do_update(
+                    constraint='uq_player_date',
+                    set_=dict(
+                        player_name=perf.player_name,
+                        team=perf.team,
+                        pa=perf.pa,
+                        ab=perf.ab,
+                        h=perf.h,
+                        doubles=perf.doubles,
+                        triples=perf.triples,
+                        hr=perf.hr,
+                        r=perf.r,
+                        rbi=perf.rbi,
+                        bb=perf.bb,
+                        so=perf.so,
+                        hbp=perf.hbp,
+                        sb=perf.sb,
+                        cs=perf.cs,
+                        exit_velocity_avg=perf.exit_velocity_avg,
+                        launch_angle_avg=perf.launch_angle_avg,
+                        hard_hit_pct=perf.hard_hit_pct,
+                        barrel_pct=perf.barrel_pct,
+                        xba=perf.xba,
+                        xslg=perf.xslg,
+                        xwoba=perf.xwoba,
+                        woba=perf.woba,
+                        avg=perf.avg,
+                        obp=perf.obp,
+                        slg=perf.slg,
+                        ops=perf.ops,
+                        ip=perf.ip,
+                        er=perf.er,
+                        k_pit=perf.k_pit,
+                        bb_pit=perf.bb_pit,
+                        pitches=perf.pitches,
+                    ),
                 )
-                
-                self.db.add(record)
-                
+                self.db.execute(stmt)
+                rows_upserted += 1
             except Exception as e:
-                logger.warning(f"Failed to store performance for {perf.player_name}: {e}")
+                logger.warning("Failed to upsert performance for %s on %s: %s", perf.player_name, perf.game_date, e)
                 continue
-        
+
         self.db.commit()
-        logger.info(f"Stored {len(performances)} daily performances")
+        logger.info("Statcast: %d rows upserted for %s", rows_upserted, performances[0].game_date if performances else 'n/a')
+        return rows_upserted
 
 
 class BayesianProjectionUpdater:
@@ -740,31 +876,37 @@ def run_daily_ingestion(target_date: Optional[date] = None):
         for error in validation_report['errors']:
             logger.error(f"  - {error['type']}: {error['message']}")
     
-    # Step 3: Transform and store
+    # Step 3: Transform and store — close agent DB session when done
     performances = agent.transform_to_performance(df)
-    agent.store_performances(performances)
-    
-    # Step 4: Run Bayesian updates
+    try:
+        rows_stored = agent.store_performances(performances)
+    finally:
+        agent.db.close()
+
+    # Step 4: Run Bayesian updates — close updater DB session when done
     updater = BayesianProjectionUpdater()
-    updated_projections = updater.update_all_projections(min_pa=20)
-    
+    try:
+        updated_projections = updater.update_all_projections(min_pa=20)
+    finally:
+        updater.db.close()
+
     # Step 5: Generate summary
     high_confidence = [p for p in updated_projections if p.data_quality_score > 0.5]
-    big_movers = [p for p in updated_projections 
+    big_movers = [p for p in updated_projections
                   if abs(p.posterior_woba - p.prior_woba) > 0.020]
-    
+
     logger.info("=" * 60)
-    logger.info(f"Daily ingestion complete for {target_date}")
-    logger.info(f"  Records processed: {len(performances)}")
-    logger.info(f"  Projections updated: {len(updated_projections)}")
-    logger.info(f"  High confidence (>50% quality): {len(high_confidence)}")
-    logger.info(f"  Big movers (>20 wOBA points): {len(big_movers)}")
+    logger.info("Daily ingestion complete for %s", target_date)
+    logger.info("  Records processed: %d", rows_stored)
+    logger.info("  Projections updated: %d", len(updated_projections))
+    logger.info("  High confidence (>50% quality): %d", len(high_confidence))
+    logger.info("  Big movers (>20 wOBA points): %d", len(big_movers))
     logger.info("=" * 60)
-    
+
     return {
         'success': True,
         'date': target_date.isoformat(),
-        'records_processed': len(performances),
+        'records_processed': rows_stored,
         'projections_updated': len(updated_projections),
         'high_confidence_updates': len(high_confidence),
         'big_movers': len(big_movers),
@@ -775,10 +917,10 @@ def run_daily_ingestion(target_date: Optional[date] = None):
                 'prior': round(p.prior_woba, 3),
                 'posterior': round(p.posterior_woba, 3),
                 'delta': round(p.posterior_woba - p.prior_woba, 3),
-                'shrinkage': round(p.shrinkage, 3)
+                'shrinkage': round(p.shrinkage, 3),
             }
-            for p in big_movers[:10]  # Top 10
-        ]
+            for p in big_movers[:10]
+        ],
     }
 
 
