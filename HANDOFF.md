@@ -33,9 +33,26 @@ We are building this system like a quantitative trading desk. The data pipeline 
 ### DIRECTIVE 1 — Data-First Mandate
 Incoming payloads MUST pass strict Pydantic V2 validation. No `dict.get()` defaults.
 
+### DIRECTIVE 2 — Fantasy Baseball UI Data Layer (NEW: April 8, 2026)
+**CRITICAL:** Do NOT begin UI design for H2H One Win format until Phase 1-2 validation passes.
+
+**Required Before UI Phase:**
+1. **Schema Extension:** PositionEligibility table created with CF/LF/RF breakdown (not generic "OF")
+2. **Yahoo API Validation:** NSB (stat_id 5070), QS (stat_id 32), K/9 (stat_id 3096) confirmed in data pipeline
+3. **Monte Carlo H2H:** H2HOneWinSimulator implemented and benchmarked <200ms for 10k sims
+4. **API Endpoints:** All 8 endpoints (Weekly Compass, Scarcity, Two-Start, NSB, IP Bank, Waiver Budget, IL Shuffle, Matchup Difficulty) return valid payloads
+5. **Cache Layer:** Redis or in-memory cache hitting >85% on hot paths
+6. **Validation Suite:** `tests/test_fantasy_h2h_validations.py` passing (see roadmap doc)
+
+**Root Cause:** H2H One Win format (position-specific OF, NSB not raw SB, 18 IP minimum) requires data granularity not present in current pipeline.
+
+**Reference:** `reports/2026-04-08-fantasy-baseball-ui-roadmap.md` — full technical breakdown.
+
+**Kimi Handoff:** When validation checklist passes, hand off to Kimi CLI for UI component specs (see roadmap Phase 5.2).
+
 ---
 
-## Platform State — April 7, 2026
+## Platform State — April 8, 2026
 
 | System | State | Notes |
 |--------|-------|-------|
@@ -43,6 +60,7 @@ Incoming payloads MUST pass strict Pydantic V2 validation. No `dict.get()` defau
 | `mlb_player_stats` | **POPULATED (S26)** | 646 rows verified live in Fantasy-App DB. |
 | `statcast_performances`| **PENDING** | Agent built but fetches 0 records for 2026-04-06 (off-day or lag). |
 | Ingestion Orchestrator | **HARDENED (S26)** | All 11 jobs (including statcast/snapshot) registered and manual-triggerable via `/admin/ingestion/run-pipeline`. |
+| **H2H One Win UI Data Layer** | **BLOCKED — Phase 1 Required** | Kimi research complete (2026-04-08); technical roadmap issued. CF/LF/RF granularity, NSB/QS/K/9 data gaps identified. See Directive 2. |
 
 ### Ground Truth: What Actually Exists
 
@@ -79,3 +97,49 @@ Incoming payloads MUST pass strict Pydantic V2 validation. No `dict.get()` defau
 - DB Constraints manually added to Legacy/Fantasy DBs.
 - Pipeline manual trigger expanded and verified.
 - `mlb_player_stats` count: 646.
+
+---
+
+### S27 — Fantasy Baseball UI Roadmap Analysis (Apr 8) ✅ COMPLETE
+
+**Kimi Research Review:**
+- Reviewed `reports/2026-04-08-fantasy-baseball-ui-ux-research.md` (Kimi's H2H One Win UI/UX research)
+- 8 UI features identified: Weekly Compass, Position Scarcity, Two-Start Command Center, NSB Efficiency, IP Bank, Waiver Priority, IL Shuffle, Matchup Difficulty
+- 7 UI-optimized view models specified (Section 2.2 of research doc)
+- Validation checklist defined (Section 4.5)
+
+**Current State Audit:**
+- `models.py`: MLB Phase 2 tables live (P11-P20), but NO PositionEligibility table for CF/LF/RF granularity
+- `yahoo_client_resilient.py`: OAuth client robust; stat batch endpoint returns {stat_id: value} dicts; NSB (5070), QS (32), K/9 (3096) NOT confirmed in data pipeline
+- `schemas.py`: Current response models (DailyLineupResponse, WaiverWireResponse, RosterMoveRecommendation) partial; missing 7 UI-optimized view models from research
+- `dashboard_service.py`: Dashboard aggregation exists (DashboardService class), but no WeeklyCompass or IPBank models
+- `waiver_edge_detector.py`: Position group mapping exists but CF/LF/RF NOT distinguished (_POS_GROUP maps OF to ["OF","LF","CF","RF"])
+- `daily_lineup_optimizer.py`: Two-start detection exists (_fetch_probable_pitchers_for_date), ProbablePitcherInfo model in schemas but not exposed via API
+
+**Critical Gaps Identified:**
+1. **Yahoo API NSB:** stat_id 5070 may not be exposed via Fantasy API; fallback to Statcast CS required
+2. **Position Granularity:** Current system treats OF as monolithic; research requires CF/LF/RF for scarcity calculations
+3. **Monte Carlo:** P16 ROS simulation exists but optimizes for points; H2H One Win requires category-by-category win probability
+4. **WebSocket Layer:** Missing entirely for real-time updates (research specifies <400ms latency target)
+5. **Cache Layer:** No Redis; all queries hit DB directly
+
+**Deliverable Created:**
+- `reports/2026-04-08-fantasy-baseball-ui-roadmap.md` — 8-week technical implementation roadmap
+  - Phase 1: Data Layer Hardening (Weeks 1-2) — Schema extensions, models, validation suite
+  - Phase 2: Compute Layer (Weeks 3-4) — Monte Carlo H2H, two-start detection, scarcity index
+  - Phase 3: API Layer (Weeks 5-6) — 8 new REST endpoints, error contracts, caching
+  - Phase 4: Data Pipeline (Week 7) — 5 new daily jobs, Yahoo sync validation
+  - Phase 5: UI Component Specs (Week 8+) — Delegated to Kimi CLI after validation
+
+**Decision:** PROCEED to Phase 1 (Data Layer Hardening). Do NOT begin UI design until validation checklist passes.
+
+**HANDOFF.md Updates:**
+- Added Directive 2: Fantasy Baseball UI Data Layer requirements
+- Updated Platform State to track UI readiness
+- Roadmap document saved for Kimi handoff reference
+
+**Next Steps (Immediate):**
+1. Create PositionEligibility model + migration script
+2. Verify Yahoo API returns NSB (stat_id 5070) or identify fallback
+3. Build H2HOneWinSimulator prototype
+4. Implement validation suite (`tests/test_fantasy_h2h_validations.py`)

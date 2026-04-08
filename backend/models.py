@@ -1570,3 +1570,60 @@ class DailySnapshot(Base):
     __table_args__ = (
         Index("idx_ds_date", "as_of_date"),
     )
+
+
+# ═════════════════════════════════════════════════════════════════════════════════════════════
+# H2H ONE WIN UI DATA LAYER (Phase 1 — S27, Apr 8, 2026)
+# ════════════════════════════════════════════════════════════════════════════════════════════════════
+# Note: PositionEligibility table requires separate ingestion from Yahoo Fantasy API.
+# The 'eligible_positions' field in Yahoo responses includes LF/CF/RF but needs
+# explicit parsing and persistence for scarcity calculations.
+# ════════════════════════════════════════════════════════════════════════════════════════════════════
+
+
+class PositionEligibility(Base):
+    """
+    H2H One Win position-specific OF eligibility (LF/CF/RF granularity).
+
+    The generic "OF" position is insufficient for H2H One Win formats where
+    CF is significantly scarcer than LF/RF. This table tracks which players can
+    play each OF slot, enabling scarcity index calculations.
+
+    Seeded from Yahoo Fantasy API 'eligible_positions' field.
+    """
+
+    __tablename__ = "position_eligibility"
+
+    id = Column(Integer, primary_key=True, index=True)
+    bdl_player_id = Column(Integer, nullable=False, index=True)  # FK to MLBPlayerStats.bdl_player_id
+
+    # Position-specific flags (Yahoo Fantasy API provides these)
+    can_play_c = Column(Boolean, nullable=False, default=False)
+    can_play_1b = Column(Boolean, nullable=False, default=False)
+    can_play_2b = Column(Boolean, nullable=False, default=False)
+    can_play_3b = Column(Boolean, nullable=False, default=False)
+    can_play_ss = Column(Boolean, nullable=False, default=False)
+    can_play_lf = Column(Boolean, nullable=False, default=False)
+    can_play_cf = Column(Boolean, nullable=False, default=False)
+    can_play_rf = Column(Boolean, nullable=False, default=False)
+    can_play_of = Column(Boolean, nullable=False, default=False)  # Generic OF always true
+    can_play_dh = Column(Boolean, nullable=False, default=False)
+    can_play_util = Column(Boolean, nullable=False, default=False)
+
+    # Primary position for categorization (pitchers excluded)
+    primary_position = Column(String(10))  # "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "OF", "DH", "UTIL"
+    player_type = Column(String(10), nullable=False)  # "batter" | "pitcher" | "two_way"
+
+    # Scarcity metrics (computed daily)
+    scarcity_rank = Column(Integer)  # 1-100 within position group (1 = most scarce)
+    league_rostered_pct = Column(Float)  # % of 10-team leagues rostering this player
+    multi_eligibility_count = Column(Integer, nullable=False, default=0)  # Count of positions eligible
+
+    # Audit
+    fetched_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("bdl_player_id", name="_pe_player_uc"),
+        Index("idx_pe_primary_position", "primary_position"),
+    )

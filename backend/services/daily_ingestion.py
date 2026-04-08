@@ -15,6 +15,7 @@ import logging
 import os
 import time
 import math
+import unicodedata
 from datetime import datetime, date, timedelta
 from typing import Optional, Any
 from zoneinfo import ZoneInfo
@@ -107,6 +108,7 @@ LOCK_IDS = {
     "backtesting":           100_023,
     "explainability":        100_024,
     "snapshot":              100_025,
+    "statsapi_supplement":   100_026,
 }
 
 
@@ -311,6 +313,17 @@ class DailyIngestionOrchestrator:
             CronTrigger(hour=2, minute=0, timezone=tz),
             id="mlb_box_stats",
             name="MLB Box Stats Ingestion",
+            replace_existing=True,
+        )
+
+        # Supplement BDL counting stats with MLB Stats API: daily 2:30 AM ET
+        # Fills NULL ab/h/r/doubles/triples/so/sb/cs from statsapi.boxscore_data().
+        # Runs after mlb_box_stats (2 AM) and before rolling_windows (3 AM).
+        self._scheduler.add_job(
+            self._supplement_statsapi_counting_stats,
+            CronTrigger(hour=2, minute=30, timezone=tz),
+            id="statsapi_supplement",
+            name="StatsAPI Counting Stats Supplement",
             replace_existing=True,
         )
 
@@ -1105,6 +1118,227 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["mlb_box_stats"], _run)
+
+    async def _supplement_statsapi_counting_stats(self) -> dict:
+        """
+        Supplement BDL per-game stats with counting stats from MLB Stats API
+        (lock 100_026, 2:30 AM ET).
+
+        BDL /mlb/v1/stats returns NULL for critical batting counting stats
+        (ab, h, r, doubles, triples, so, sb, cs) while rate stats (avg, obp,
+        slg) are populated. This job fills the gaps using statsapi.boxscore_data()
+        which returns complete per-player box scores from the MLB Stats API.
+
+        Matching strategy:
+          1. Find mlb_player_stats rows for yesterday+today where ab IS NULL
+          2. For each date, get MLB schedule (statsapi.schedule)
+          3. For each game, get box score (statsapi.boxscore_data)
+          4. Match players by full_name (BDL raw_payload) -> fullName (playerInfo)
+          5. UPDATE counting stats where currently NULL
+
+        The match is done within a single game_date, so name collisions are
+        extremely unlikely (no two players with same full name play in the
+        same MLB game).
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            try:
+                import statsapi
+            except ImportError:
+                logger.error("statsapi_supplement: MLB-StatsAPI not installed")
+                self._record_job_run("statsapi_supplement", "skipped")
+                return {"status": "skipped", "records": 0, "elapsed_ms": 0}
+
+            today = today_et()
+            yesterday = today - timedelta(days=1)
+            target_dates = [yesterday, today]
+
+            db = SessionLocal()
+            try:
+                # Find rows needing supplementation (ab IS NULL = BDL didn't provide counting stats)
+                rows_needing_fill = (
+                    db.query(MLBPlayerStats)
+                    .filter(
+                        MLBPlayerStats.game_date.in_(target_dates),
+                        MLBPlayerStats.ab.is_(None),
+                    )
+                    .all()
+                )
+
+                if not rows_needing_fill:
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    logger.info("statsapi_supplement: no rows needing fill for %s", target_dates)
+                    self._record_job_run("statsapi_supplement", "success", 0)
+                    return {"status": "success", "records": 0, "elapsed_ms": elapsed}
+
+                # Build lookup: (game_date, normalized_name) -> list of DB rows
+                # Strip diacriticals so "José Ramírez" (statsapi) matches "Jose Ramirez" (BDL)
+                def _norm(name: str) -> str:
+                    s = unicodedata.normalize("NFD", name)
+                    return "".join(c for c in s if unicodedata.category(c) != "Mn").strip().lower()
+
+                name_lookup: dict[tuple, list] = {}
+                for row in rows_needing_fill:
+                    payload = row.raw_payload if isinstance(row.raw_payload, dict) else {}
+                    player_obj = payload.get("player", {})
+                    full_name = _norm(player_obj.get("full_name") or "")
+                    if full_name:
+                        key = (row.game_date, full_name)
+                        name_lookup.setdefault(key, []).append(row)
+
+                rows_patched = 0
+
+                for target_date in target_dates:
+                    date_str = target_date.strftime("%m/%d/%Y")
+                    try:
+                        games = await asyncio.to_thread(
+                            statsapi.schedule, sportId=1, date=date_str
+                        )
+                    except Exception as exc:
+                        logger.warning("statsapi_supplement: schedule fetch failed for %s: %s", date_str, exc)
+                        continue
+
+                    for game in games:
+                        game_pk = game.get("game_id")
+                        if not game_pk:
+                            continue
+                        game_status = game.get("status", "")
+                        if game_status not in ("Final", "Game Over", "Completed Early"):
+                            continue
+
+                        try:
+                            box = await asyncio.to_thread(statsapi.boxscore_data, game_pk)
+                        except Exception as exc:
+                            logger.warning(
+                                "statsapi_supplement: boxscore_data(%s) failed: %s", game_pk, exc
+                            )
+                            continue
+
+                        player_info = box.get("playerInfo", {})
+
+                        # Process batters and pitchers from both sides
+                        for side in ("away", "home"):
+                            batter_list = box.get(f"{side}Batters", [])
+                            pitcher_list = box.get(f"{side}Pitchers", [])
+
+                            for batter in batter_list:
+                                person_id = batter.get("personId")
+                                if not person_id:
+                                    continue
+                                info = player_info.get(f"ID{person_id}", {})
+                                statsapi_name = _norm(info.get("fullName") or "")
+                                if not statsapi_name:
+                                    continue
+
+                                key = (target_date, statsapi_name)
+                                matching_rows = name_lookup.get(key, [])
+                                for db_row in matching_rows:
+                                    patched = self._patch_counting_stats_batter(db_row, batter)
+                                    if patched:
+                                        rows_patched += 1
+
+                            for pitcher in pitcher_list:
+                                person_id = pitcher.get("personId")
+                                if not person_id:
+                                    continue
+                                info = player_info.get(f"ID{person_id}", {})
+                                statsapi_name = _norm(info.get("fullName") or "")
+                                if not statsapi_name:
+                                    continue
+
+                                key = (target_date, statsapi_name)
+                                matching_rows = name_lookup.get(key, [])
+                                for db_row in matching_rows:
+                                    patched = self._patch_counting_stats_pitcher(db_row, pitcher)
+                                    if patched:
+                                        rows_patched += 1
+
+                        # Rate limit: be polite to MLB Stats API
+                        await asyncio.sleep(0.15)
+
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                logger.error("statsapi_supplement DB write failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("statsapi_supplement", "failed")
+                return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.info(
+                "statsapi_supplement: %d rows patched for dates=%s in %dms",
+                rows_patched, [d.isoformat() for d in target_dates], elapsed,
+            )
+            self._record_job_run("statsapi_supplement", "success", rows_patched)
+            return {
+                "status": "success",
+                "records": rows_patched,
+                "dates": [d.isoformat() for d in target_dates],
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["statsapi_supplement"], _run)
+
+    @staticmethod
+    def _patch_counting_stats_batter(db_row, batter: dict) -> bool:
+        """Patch NULL batting counting stats from statsapi box score.
+        Returns True if any field was updated."""
+        patched = False
+        field_map = {
+            "ab": "ab",
+            "runs": "r",
+            "hits": "h",
+            "doubles": "doubles",
+            "triples": "triples",
+            "home_runs": "hr",
+            "rbi": "rbi",
+            "walks": "bb",
+            "strikeouts_bat": "k",
+            "stolen_bases": "sb",
+            "caught_stealing": "cs",
+        }
+        for db_col, box_key in field_map.items():
+            if getattr(db_row, db_col) is None:
+                raw_val = batter.get(box_key)
+                if raw_val is not None:
+                    try:
+                        setattr(db_row, db_col, int(raw_val))
+                        patched = True
+                    except (ValueError, TypeError):
+                        pass
+        return patched
+
+    @staticmethod
+    def _patch_counting_stats_pitcher(db_row, pitcher: dict) -> bool:
+        """Patch NULL pitching counting stats from statsapi box score.
+        Returns True if any field was updated."""
+        patched = False
+        field_map = {
+            "hits_allowed": "h",
+            "earned_runs": "er",
+            "walks_allowed": "bb",
+            "strikeouts_pit": "k",
+            "runs_allowed": "r",
+        }
+        for db_col, box_key in field_map.items():
+            if getattr(db_row, db_col) is None:
+                raw_val = pitcher.get(box_key)
+                if raw_val is not None:
+                    try:
+                        setattr(db_row, db_col, int(raw_val))
+                        patched = True
+                    except (ValueError, TypeError):
+                        pass
+        # IP special handling — statsapi returns "5.2" as string
+        if db_row.innings_pitched is None:
+            ip_val = pitcher.get("ip")
+            if ip_val is not None:
+                db_row.innings_pitched = str(ip_val)
+                patched = True
+        return patched
 
     async def _compute_rolling_windows(self) -> dict:
         """
