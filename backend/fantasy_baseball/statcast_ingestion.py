@@ -878,6 +878,7 @@ def run_daily_ingestion(target_date: Optional[date] = None):
     
     # Step 3: Transform and store — close agent DB session when done
     performances = agent.transform_to_performance(df)
+    rows_stored = 0
     try:
         rows_stored = agent.store_performances(performances)
     finally:
