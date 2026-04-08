@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS mlb_player_stats (
 -- for the rare case of stats arriving without a game reference.
 -- Named to match SQLAlchemy ORM UniqueConstraint name so ON CONFLICT targets work.
 ALTER TABLE mlb_player_stats
-    ADD CONSTRAINT IF NOT EXISTS _mps_player_game_uc
+    ADD CONSTRAINT _mps_player_game_uc
     UNIQUE (bdl_player_id, game_id);
 
 CREATE INDEX IF NOT EXISTS idx_mps_player_date
