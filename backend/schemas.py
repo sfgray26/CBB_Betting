@@ -662,3 +662,100 @@ class H2HOneWinSimResponse(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# Two-Start Pitcher Detection (Phase 2.2)
+# ---------------------------------------------------------------------------
+
+
+class MatchupRatingSchema(BaseModel):
+    """Quality rating for a single matchup (API schema)."""
+
+    opponent: str = Field(..., description="Opponent team abbreviation")
+    park_factor: float = Field(..., description="1.0 = neutral, >1.0 = hitter-friendly, <1.0 = pitcher-friendly")
+    quality_score: float = Field(..., ge=-2.0, le=2.0, description="+2.0 (great) to -2.0 (terrible)")
+    game_date: date = Field(..., description="Date of game")
+    is_home: bool = Field(..., description="True if home team")
+
+
+class TwoStartOpportunitySchema(BaseModel):
+    """
+    A pitcher with two starts in the next 7 days (API schema).
+
+    From research doc Section 2.2 — Two-Start Command Center data contract.
+    """
+
+    player_id: str = Field(..., description="BDL player ID")
+    name: str = Field(..., description="Pitcher name")
+    team: str = Field(..., description="Team abbreviation")
+    week: int = Field(..., description="Fantasy scoring week")
+
+    game_1: MatchupRatingSchema = Field(..., description="First matchup")
+    game_2: Optional[MatchupRatingSchema] = Field(None, description="Second matchup (may be unconfirmed)")
+
+    total_ip_projection: float = Field(..., description="Expected innings (5-6 IP per start)")
+    categories_addressed: List[str] = Field(
+        ...,
+        description="Categories this starter addresses: W, QS, K, K/9",
+    )
+
+    acquisition_method: Literal["ROSTERED", "WAIVER", "FREE_AGENT"] = Field(
+        ...,
+        description="How to acquire this pitcher",
+    )
+    waiver_priority_cost: Optional[int] = Field(
+        None,
+        description="If WAIVER, priority number required",
+    )
+    faab_cost_estimate: Optional[int] = Field(
+        None,
+        description="If FREE_AGENT, estimated FAAB bid ($0-$100)",
+    )
+
+    average_quality_score: float = Field(..., description="Mean of matchup quality scores")
+    streamer_rating: Literal["EXCELLENT", "GOOD", "AVOID"] = Field(
+        ...,
+        description="Streaming recommendation",
+    )
+
+    # UAT validation flags
+    data_freshness: Literal["FRESH", "STALE", "MISSING"] = Field(
+        ...,
+        description="Is probable_pitchers data current (<24h)?",
+    )
+    player_name_confidence: Literal["HIGH", "MEDIUM", "LOW"] = Field(
+        ...,
+        description="Confidence in player name match",
+    )
+
+
+class TwoStartDetectionRequest(BaseModel):
+    """Request for two-start pitcher detection."""
+
+    start_date: date = Field(..., description="Start of search window")
+    end_date: date = Field(..., description="End of search window (typically start + 7 days)")
+    league_rosters: Optional[List[List[dict]]] = Field(
+        None,
+        description="List of 10 team rosters for acquisition method classification. "
+        "If None, all pitchers marked as FREE_AGENT.",
+    )
+
+
+class TwoStartDetectionResponse(BaseModel):
+    """Response from two-start pitcher detection."""
+
+    opportunities: List[TwoStartOpportunitySchema] = Field(
+        ...,
+        description="All pitchers with 2+ starts in window, sorted by quality",
+    )
+
+    total_count: int = Field(..., description="Number of two-start pitchers found")
+    window_start_date: date = Field(..., description="Search window start")
+    window_end_date: date = Field(..., description="Search window end")
+
+    # UAT metadata
+    data_validation: dict = Field(
+        ...,
+        description="Validation metrics: probable_pitchers_row_count, latest_game_date, data_age_hours",
+    )
+
+

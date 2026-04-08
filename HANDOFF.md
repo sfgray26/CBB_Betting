@@ -134,6 +134,7 @@ Incoming payloads MUST pass strict Pydantic V2 validation. No `dict.get()` defau
 - ✅ **Phase 2.1 Compute Layer:** H2HOneWinSimulator implemented, performance target met (<200ms for 10k sims)
 
 ### Next Session (S29)
+- **Review:** K-29 Weather & Park Factors Integration Spec (Claude Code decision required)
 - Phase 2.2: Two-Start Detection (expose probable_pitchers via API)
 - Phase 2.3: Scarcity Index Computation (CF/LF/RF granularity)
 - Phase 3: API Layer (8 new REST endpoints)
@@ -161,6 +162,30 @@ Incoming payloads MUST pass strict Pydantic V2 validation. No `dict.get()` defau
 - Migration v25 executed successfully on both DBs.
 - `position_eligibility` table verified live.
 - `PositionEligibility` model confirmed mapping correctly.
+
+---
+
+### Kimi CLI (Deep Intelligence Unit) — K-29: Weather & Park Factors Integration Spec [ACTIVE]
+
+**Mission:** Synthesize academic research on weather/park factors into technical integration spec for H2H One Win app.
+
+**Status:**
+- **Research Complete:** Physics models (Dr. Alan Nathan), climate data, park factors analyzed
+- **Spec Written:** `reports/2026-04-08-weather-park-factors-integration-spec.md`
+- **Decision Required:** Claude Code to review and select implementation option (A/B/C)
+
+**Key Findings:**
+- Park factors create **15-30% variance** in outcomes—largest exploitable edge
+- Coors Field: **+28% runs, +32% HR** vs league average
+- Temperature: **+3-4 ft per 10°F** (1°F ≈ 1% HR probability)
+- Climate change: **+500 HR since 2010** due to warming
+
+**Implementation Options:**
+- **Option A:** Full integration (park + weather + physics) — 4 weeks
+- **Option B:** Park factors only (MVP) — 1-2 weeks ← **Recommended**
+- **Option C:** Post-MVP feature — defer to Phase 2
+
+**Action Required:** Claude Code to review spec and decide integration scope for MVP.
 
 ---
 
