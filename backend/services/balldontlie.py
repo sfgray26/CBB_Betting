@@ -439,9 +439,22 @@ class BallDontLieClient:
                 params["cursor"] = cursor
             try:
                 raw = self._mlb_get("/players", params=params)
-                resp = BDLResponse[MLBPlayer].model_validate(raw)
-                players.extend(resp.data)
-                cursor = resp.meta.next_cursor
+                
+                # Extract data and meta manually to allow per-row validation
+                rows = raw.get("data", [])
+                meta = raw.get("meta", {})
+                
+                for raw_player in rows:
+                    try:
+                        p = MLBPlayer.model_validate(raw_player)
+                        players.append(p)
+                    except Exception as exc:
+                        logger.warning(
+                            "get_all_mlb_players(): validation failed for player_id=%s -- %s",
+                            raw_player.get("id"), exc
+                        )
+                
+                cursor = meta.get("next_cursor")
                 if cursor is None:
                     break
                 page += 1
@@ -455,25 +468,33 @@ class BallDontLieClient:
         """
         Search MLB players by name fragment.
 
-        Returns list (may be empty). Handles pagination — a common name
-        like "Smith" may span multiple pages.
-
-        Returns:
-            list[MLBPlayer] — Pydantic-validated. Never raw dicts.
+        Returns list (may be empty). Handles pagination.
         """
         players: List[MLBPlayer] = []
         cursor: Optional[int] = None
         page = 0
         max_pages = 10
         while page < max_pages:
-            params: Dict[str, Any] = {"search": query}
+            params: Dict[str, Any] = {"search": query, "per_page": 100}
             if cursor is not None:
                 params["cursor"] = cursor
             try:
                 raw = self._mlb_get("/players", params=params)
-                resp = BDLResponse[MLBPlayer].model_validate(raw)
-                players.extend(resp.data)
-                cursor = resp.meta.next_cursor
+                
+                rows = raw.get("data", [])
+                meta = raw.get("meta", {})
+                
+                for raw_player in rows:
+                    try:
+                        p = MLBPlayer.model_validate(raw_player)
+                        players.append(p)
+                    except Exception as exc:
+                        logger.warning(
+                            "search_mlb_players(%r): validation failed for player_id=%s -- %s",
+                            query, raw_player.get("id"), exc
+                        )
+                
+                cursor = meta.get("next_cursor")
                 if cursor is None:
                     break
                 page += 1
