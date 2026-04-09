@@ -21,7 +21,7 @@ def _empty_to_none(value: Any) -> Any:
 
 
 class MLBTeam(BaseModel):
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=False)
 
     id: int
     slug: str

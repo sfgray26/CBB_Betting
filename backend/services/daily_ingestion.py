@@ -4227,9 +4227,7 @@ class DailyIngestionOrchestrator:
 
                         # Get full name
                         full_name = player.full_name
-
-                        # Primary position
-                        position_abbrev = player.position
+                        normalized_name = full_name.lower()
 
                         # Create/update mapping record
                         # We'll store both BDL and Yahoo mappings, plus MLBAM
@@ -4238,10 +4236,9 @@ class DailyIngestionOrchestrator:
                             yahoo_key=None,  # Will be populated by Yahoo sync
                             mlbam_id=mlbam_id,
                             full_name=full_name,
-                            primary_position=position_abbrev,
-                            team_abbrev=player.team.abbreviation if player.team else None,
-                            fetched_at=now_et(),
-                            updated_at=now_et(),
+                            normalized_name=normalized_name,
+                            source='api',
+                            resolution_confidence=1.0,  # Direct from BDL API
                         )
 
                         db.merge(mapping)
