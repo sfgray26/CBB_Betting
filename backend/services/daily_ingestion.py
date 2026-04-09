@@ -3932,9 +3932,9 @@ class DailyIngestionOrchestrator:
                 self._record_job_run("position_eligibility", "skipped")
                 return {"status": "skipped", "records": 0, "elapsed_ms": 0}
 
-            league_key = os.getenv("YAHOO_LEAGUE_ID")
+            league_key = yahoo.league_key  # Use full league key (469.l.{league_id}) not just league_id
             if not league_key:
-                logger.warning("_sync_position_eligibility: YAHOO_LEAGUE_ID not set -- skipping")
+                logger.warning("_sync_position_eligibility: Yahoo client league_key not set -- skipping")
                 self._record_job_run("position_eligibility", "skipped")
                 return {"status": "skipped", "records": 0, "elapsed_ms": 0}
 
