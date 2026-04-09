@@ -22,5 +22,5 @@ class MLBTeam(BaseModel):
     short_display_name: str
     name: str
     location: str
-    league: Literal["National", "American"]
-    division: Literal["East", "Central", "West"]
+    league: Optional[Literal["National", "American"]] = None
+    division: Optional[Literal["East", "Central", "West"]] = None

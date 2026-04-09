@@ -7,7 +7,7 @@ Do NOT import from other backend.routers modules here.
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import text, func, inspect
+from sqlalchemy import text, func, inspect, create_engine
 from typing import Optional
 import logging
 import os
@@ -767,6 +767,84 @@ async def audit_tables(user: str = Depends(verify_api_key)):
         'empty_tables': empty,
         'populated_tables': populated,
         'errors': errors
+    }
+
+
+@router.get("/admin/check-databases")
+async def check_databases(user: str = Depends(verify_api_key)):
+    """Check for multiple databases in PostgreSQL and locate migration tables."""
+    from urllib.parse import urlparse
+    import os
+
+    db_url = os.environ.get('DATABASE_URL')
+    if not db_url:
+        return {"error": "DATABASE_URL not found"}
+
+    parsed = urlparse(db_url)
+
+    # Connect to postgres database to list all databases
+    admin_url = f"postgresql+psycopg2://{parsed.username}:{parsed.password}@{parsed.hostname}:{parsed.port}/postgres"
+    admin_engine = create_engine(admin_url)
+
+    databases_info = []
+
+    with admin_engine.connect() as conn:
+        # List all databases
+        result = conn.execute(text("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname"))
+        databases = [row[0] for row in result]
+
+        for db_name in databases:
+            if db_name in ['postgres', 'template0', 'template1']:
+                continue
+
+            try:
+                db_url_specific = f"postgresql+psycopg2://{parsed.username}:{parsed.password}@{parsed.hostname}:{parsed.port}/{db_name}"
+                engine_db = create_engine(db_url_specific)
+
+                with engine_db.connect() as conn_db:
+                    # Get table count
+                    result = conn_db.execute(text("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'"))
+                    table_count = result.scalar()
+
+                    # Check for migration tables
+                    target_tables = ['position_eligibility', 'probable_pitchers']
+                    found_tables = []
+                    table_details = []
+
+                    for target in target_tables:
+                        try:
+                            result = conn_db.execute(text(f"SELECT COUNT(*) FROM {target}"))
+                            count = result.scalar()
+                            found_tables.append(target)
+                            table_details.append({
+                                'table': target,
+                                'count': count,
+                                'exists': True
+                            })
+                        except Exception:
+                            table_details.append({
+                                'table': target,
+                                'count': 0,
+                                'exists': False
+                            })
+
+                    databases_info.append({
+                        'database': db_name,
+                        'table_count': table_count,
+                        'has_target_tables': len(found_tables) > 0,
+                        'target_tables': table_details
+                    })
+
+            except Exception as e:
+                databases_info.append({
+                    'database': db_name,
+                    'error': str(e)[:100]
+                })
+
+    return {
+        'current_database': parsed.path[1:],
+        'current_host': parsed.hostname,
+        'databases': databases_info
     }
 
 

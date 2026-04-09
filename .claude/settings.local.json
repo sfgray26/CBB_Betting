@@ -93,7 +93,11 @@
       "Bash(DATABASE_URL=postgresql://placeholder venv/Scripts/python scripts/migrate_v16_player_rolling_stats.py --dry-run)",
       "Bash(git push:*)",
       "Bash(venv/Scripts/flake8 backend/ --select=F --extend-ignore=F401 --count)",
-      "Bash(railway run:*)"
+      "Bash(railway run:*)",
+      "Bash(railway variables:*)",
+      "Bash(railway up:*)",
+      "Bash(set PYTHONPATH=C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge)",
+      "Bash(railway status:*)"
     ]
   }
 }
