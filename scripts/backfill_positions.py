@@ -107,7 +107,7 @@ def backfill_position_eligibility() -> dict:
         teams_processed = 0
 
         # Get all team rosters from the league
-        all_rosters = yahoo_client.get_league_rosters()
+        all_rosters = yahoo_client.get_league_rosters(yahoo_client.league_key)
         if not all_rosters:
             logger.error("Failed to fetch league rosters")
             return {
