@@ -58,6 +58,9 @@ from backend.admin_db_verify import router as _db_verify_router
 # YAHOO API DEBUG ENDPOINTS - REMOVE AFTER DEBUGGING
 from backend.admin_yahoo_debug import router as _yahoo_debug_router
 # END YAHOO API DEBUG ENDPOINTS
+# YAHOO TOKEN REFRESH ENDPOINTS - REMOVE AFTER TOKEN IS SET
+from backend.admin_yahoo_token_refresh import router as _yahoo_token_router
+# END YAHOO TOKEN REFRESH ENDPOINTS
 from backend.services.recalibration import compute_dynamic_weights
 from backend.services.discord_notifier import send_todays_bets
 from backend.services.sentinel import run_nightly_health_check
@@ -580,6 +583,9 @@ app.include_router(_db_verify_router, prefix="/test", tags=["db-verify"])
 # YAHOO API DEBUG ENDPOINTS - REMOVE AFTER DEBUGGING
 app.include_router(_yahoo_debug_router, prefix="/test", tags=["yahoo-debug"])
 # END YAHOO API DEBUG ENDPOINTS
+# YAHOO TOKEN REFRESH ENDPOINTS - REMOVE AFTER TOKEN IS SET
+app.include_router(_yahoo_token_router, prefix="/test", tags=["yahoo-token"])
+# END YAHOO TOKEN REFRESH ENDPOINTS
 
 # --- end strangler-fig mounts ---
 
