@@ -68,7 +68,7 @@ _token_lock = threading.Lock()
 YAHOO_AUTH_URL = "https://api.login.yahoo.com/oauth2/request_auth"
 YAHOO_TOKEN_URL = "https://api.login.yahoo.com/oauth2/get_token"
 YAHOO_API_BASE = "https://fantasysports.yahooapis.com/fantasy/v2"
-YAHOO_SPORT = "mlb"
+YAHOO_SPORT = "469"  # 2026 MLB season game ID
 
 ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
 
