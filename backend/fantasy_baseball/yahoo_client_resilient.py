@@ -352,6 +352,33 @@ class YahooFantasyClient:
         teams_raw = self._league_section(data, 1).get("teams", {})
         return [self._parse_team(team_data) for team_data in self._iter_block(teams_raw, "team")]
 
+    def get_league_rosters(self, league_key: str, include_team_key: bool = True) -> list[dict]:
+        """Fetch all rosters for all teams in a league."""
+        url = f"league/{league_key}/teams/roster"
+        data = self._get(url)
+        try:
+            sec = self._league_section(data, 1)
+            teams_raw = sec.get("teams", {})
+            all_players = []
+            for team_data in self._iter_block(teams_raw, "team"):
+                team_meta = team_data[0] if len(team_data) > 0 else {}
+                team_key = team_meta.get("team_key")
+                roster_wrapper = {}
+                for node in team_data:
+                    if isinstance(node, dict) and "roster" in node:
+                        roster_wrapper = node["roster"]
+                        break
+                players_raw = roster_wrapper.get("players", {})
+                for player_list in self._iter_block(players_raw, "player"):
+                    player_dict = self._parse_player(player_list)
+                    if include_team_key:
+                        player_dict["team_key"] = team_key
+                    all_players.append(player_dict)
+            return all_players
+        except Exception as exc:
+            logger.error("get_league_rosters failed: %s", exc)
+            return []
+
     def get_my_team_key(self) -> str:
         """Return the team key for the authenticated user's team."""
         data = self._get(f"league/{self.league_key}/teams")
@@ -1128,7 +1155,7 @@ class WaiverResponse:
     def __post_init__(self):
         if self.metadata is None:
             self.metadata = {}
-        if self.errors is None:
+        if self.errors is [] or self.errors is None:
             self.errors = []
 
 

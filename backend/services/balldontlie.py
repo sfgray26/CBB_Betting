@@ -423,6 +423,34 @@ class BallDontLieClient:
             logger.error("get_mlb_player(player_id=%d) failed: %s", player_id, exc)
             return None
 
+    def get_all_mlb_players(self) -> List[MLBPlayer]:
+        """
+        Fetch ALL MLB players using cursor pagination.
+        Returns list of Pydantic-validated MLBPlayer objects.
+        """
+        players: List[MLBPlayer] = []
+        cursor: Optional[int] = None
+        page = 0
+        max_pages = 100  # generous ceiling for all MLB players
+
+        while page < max_pages:
+            params: Dict[str, Any] = {"per_page": 100}
+            if cursor is not None:
+                params["cursor"] = cursor
+            try:
+                raw = self._mlb_get("/players", params=params)
+                resp = BDLResponse[MLBPlayer].model_validate(raw)
+                players.extend(resp.data)
+                cursor = resp.meta.next_cursor
+                if cursor is None:
+                    break
+                page += 1
+                time.sleep(0.1)
+            except Exception as exc:
+                logger.error("get_all_mlb_players() page=%d failed: %s", page, exc)
+                break
+        return players
+
     def search_mlb_players(self, query: str) -> List[MLBPlayer]:
         """
         Search MLB players by name fragment.
