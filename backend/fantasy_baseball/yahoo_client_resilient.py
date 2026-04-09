@@ -390,7 +390,24 @@ class YahooFantasyClient:
 
             all_players = []
             for team_data in self._iter_block(teams_raw, "team"):
-                team_meta = team_data[0] if len(team_data) > 0 else {}
+                # Handle Yahoo API structure changes - team_data[0] might be list or dict
+                if len(team_data) > 0:
+                    first_element = team_data[0]
+                    if isinstance(first_element, list):
+                        # Newer format: team_data[0] is a list, look for dict with team_key
+                        team_meta = {}
+                        for item in first_element:
+                            if isinstance(item, dict) and "team_key" in item:
+                                team_meta = item
+                                break
+                    elif isinstance(first_element, dict):
+                        # Older format: team_data[0] is directly the metadata dict
+                        team_meta = first_element
+                    else:
+                        team_meta = {}
+                else:
+                    team_meta = {}
+
                 team_key = team_meta.get("team_key")
                 logger.debug("get_league_rosters: Processing team=%s", team_key)
 
