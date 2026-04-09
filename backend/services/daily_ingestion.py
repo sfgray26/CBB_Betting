@@ -3909,18 +3909,19 @@ class DailyIngestionOrchestrator:
         Sync position eligibility from Yahoo Fantasy API (lock 100_027).
 
         Every sync (daily 8:00 AM ET):
-          1. Fetch all rosters from Yahoo Fantasy API (30 teams × ~25 players)
-          2. Parse position eligibility: C, 1B, 2B, 3B, SS, LF, CF, RF, OF, DH, UTIL
-          3. Map to BDL player IDs via PlayerIDMapping
-          4. Upsert to position_eligibility table (one record per bdl_player_id)
+          1. Fetch all rosters via get_league_rosters() — flat list of player dicts
+          2. Build boolean position flags from positions list
+          3. Upsert ONE ROW PER PLAYER keyed on yahoo_player_key
 
-        Natural key: (bdl_player_id). Multi-eligibility (e.g., Bellinger CF/LF/RF) counts
-        as separate entries with can_play_* flags.
-
+        Natural key: yahoo_player_key (unique constraint _pe_yahoo_uc).
         Critical for H2H One Win UI — CF scarcity calculations depend on this data.
         """
         logger.info("SYNC JOB ENTRY: _sync_position_eligibility - Starting position eligibility sync")
         t0 = time.monotonic()
+
+        # Position scarcity priority for primary_position selection
+        _POSITION_PRIORITY = ["C", "SS", "2B", "CF", "3B", "RF", "LF", "1B", "OF", "DH", "SP", "RP", "Util"]
+        _BATTER_POS = {"C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "OF", "DH"}
 
         async def _run():
             from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
@@ -3932,15 +3933,14 @@ class DailyIngestionOrchestrator:
                 self._record_job_run("position_eligibility", "skipped")
                 return {"status": "skipped", "records": 0, "elapsed_ms": 0}
 
-            league_key = yahoo.league_key  # Use full league key (469.l.{league_id}) not just league_id
+            league_key = yahoo.league_key
             if not league_key:
                 logger.warning("_sync_position_eligibility: Yahoo client league_key not set -- skipping")
                 self._record_job_run("position_eligibility", "skipped")
                 return {"status": "skipped", "records": 0, "elapsed_ms": 0}
 
             try:
-                # Fetch all rosters from Yahoo
-                rosters_data = await asyncio.to_thread(
+                all_players = await asyncio.to_thread(
                     yahoo.get_league_rosters,
                     league_key=league_key,
                     include_team_key=True
@@ -3952,78 +3952,87 @@ class DailyIngestionOrchestrator:
 
             db = SessionLocal()
             records_processed = 0
+            seen_keys = set()
 
             try:
-                for roster_entry in rosters_data:
+                now = now_et()
+                for player_data in all_players:
                     try:
-                        # Extract position eligibility from roster_entry
-                        player_data = roster_entry.get("player", {})
+                        player_key = player_data.get("player_key")
+                        if not player_key or player_key in seen_keys:
+                            continue
+                        seen_keys.add(player_key)
 
-                        # Get BDL player ID from PlayerIDMapping
-                        bdl_id = None
-                        yahoo_key = str(player_data.get("player_id"))
-                        if yahoo_key:
-                            mapping = db.query(PlayerIDMapping).filter(
-                                PlayerIDMapping.yahoo_key == yahoo_key
-                            ).first()
-                            if mapping:
-                                bdl_id = mapping.bdl_id
+                        name = player_data.get("name", "Unknown")
+                        positions = player_data.get("positions", [])
+                        if not positions:
+                            continue
 
-                        if not bdl_id:
-                            continue  # Skip players not in our player mapping
-
-                        # Parse position eligibility (1=true, 0=false)
-                        position_data = player_data.get("position_types", {})
-                        can_play = {
-                            'C': position_data.get('C', 0) == 1,
-                            '1B': position_data.get('1B', 0) == 1,
-                            '2B': position_data.get('2B', 0) == 1,
-                            '3B': position_data.get('3B', 0) == 1,
-                            'SS': position_data.get('SS', 0) == 1,
-                            'LF': position_data.get('LF', 0) == 1,
-                            'CF': position_data.get('CF', 0) == 1,
-                            'RF': position_data.get('RF', 0) == 1,
-                            'OF': position_data.get('OF', 0) == 1,
-                            'DH': position_data.get('DH', 0) == 1,
-                            'UTIL': position_data.get('UTIL', 0) == 1,
+                        # Build boolean flags from positions list
+                        pos_set = {p.upper() for p in positions if p}
+                        flags = {
+                            "can_play_c": "C" in pos_set,
+                            "can_play_1b": "1B" in pos_set,
+                            "can_play_2b": "2B" in pos_set,
+                            "can_play_3b": "3B" in pos_set,
+                            "can_play_ss": "SS" in pos_set,
+                            "can_play_lf": "LF" in pos_set,
+                            "can_play_cf": "CF" in pos_set,
+                            "can_play_rf": "RF" in pos_set,
+                            "can_play_of": "OF" in pos_set or bool(pos_set & {"LF", "CF", "RF"}),
+                            "can_play_dh": "DH" in pos_set,
+                            "can_play_util": "UTIL" in pos_set or "Util" in {p for p in positions if p},
+                            "can_play_sp": "SP" in pos_set,
+                            "can_play_rp": "RP" in pos_set,
                         }
 
-                        # Determine primary position
-                        primary_position_data = player_data.get("primary_position")
-                        primary_position = primary_position_data.get("abbreviation") if primary_position_data else None
+                        # Primary position by scarcity
+                        pos_upper = [p.upper() for p in positions if p]
+                        primary = next((pr for pr in _POSITION_PRIORITY if pr.upper() in pos_upper), positions[0] if positions else "DH")
 
-                        # Player type
-                        player_type = 'B' if can_play.get('C') or can_play.get('1B') or can_play.get('2B') or can_play.get('3B') or can_play.get('SS') or can_play.get('OF') else 'P'
+                        # Player type classification
+                        has_pitcher = bool(pos_set & {"SP", "RP", "P"})
+                        has_batter = bool(pos_set & _BATTER_POS)
+                        if has_pitcher and has_batter:
+                            ptype = "two_way"
+                        elif has_pitcher:
+                            ptype = "pitcher"
+                        else:
+                            ptype = "batter"
 
-                        # Multi-eligibility count
-                        multi_count = sum(1 for v in can_play.values() if v)
+                        # Multi-eligibility count (exclude Util)
+                        multi_count = len([p for p in positions if p.upper() != "UTIL"])
 
-                        # Upsert to position_eligibility
-                        eligibility = PositionEligibility(
-                            bdl_player_id=bdl_id,
-                            can_play_c=can_play['C'],
-                            can_play_1b=can_play['1B'],
-                            can_play_2b=can_play['2B'],
-                            can_play_3b=can_play['3B'],
-                            can_play_ss=can_play['SS'],
-                            can_play_lf=can_play['LF'],
-                            can_play_cf=can_play['CF'],
-                            can_play_rf=can_play['RF'],
-                            can_play_of=can_play['OF'],
-                            can_play_dh=can_play['DH'],
-                            can_play_util=can_play['UTIL'],
-                            primary_position=primary_position,
-                            player_type=player_type,
+                        # Upsert: ON CONFLICT (yahoo_player_key) DO UPDATE
+                        stmt = pg_insert(PositionEligibility.__table__).values(
+                            yahoo_player_key=player_key,
+                            bdl_player_id=None,
+                            player_name=name,
+                            first_name="",
+                            last_name="",
+                            primary_position=primary,
+                            player_type=ptype,
                             multi_eligibility_count=multi_count,
-                            fetched_at=now_et(),
-                            updated_at=now_et(),
+                            fetched_at=now,
+                            updated_at=now,
+                            **flags,
+                        ).on_conflict_do_update(
+                            constraint="_pe_yahoo_uc",
+                            set_={
+                                "player_name": name,
+                                "primary_position": primary,
+                                "player_type": ptype,
+                                "multi_eligibility_count": multi_count,
+                                "updated_at": now,
+                                **flags,
+                            },
                         )
-
-                        db.merge(eligibility)
+                        db.execute(stmt)
                         records_processed += 1
 
                     except Exception as exc:
-                        logger.error("_sync_position_eligibility: Failed to process player %s (%s)", roster_entry, exc)
+                        logger.error("_sync_position_eligibility: Failed to process player %s (%s)",
+                                     player_data.get("player_key", "?"), exc)
                         continue
 
                 db.commit()

@@ -1,323 +1,241 @@
 """
 Backfill Script: Position Eligibility (Current Snapshot)
 
-Fetches CURRENT position eligibility from Yahoo Fantasy API for all 30 MLB teams.
-This creates a baseline snapshot of position data (CF/LF/RF granularity).
+Fetches CURRENT position eligibility from Yahoo Fantasy API for all rostered players.
+Creates ONE ROW PER PLAYER with boolean flags for ALL eligible positions.
 
-Note: Yahoo API does NOT expose historical position data — only current snapshot.
-Ongoing updates will track changes over time via daily_ingestion.py
+Note: Yahoo API only exposes current snapshot — no historical position data.
+Ongoing updates tracked via _sync_position_eligibility() in daily_ingestion.py.
 
 Usage:
     python scripts/backfill_positions.py
-
-Expected Output:
-    ~750 rows in position_eligibility table (30 teams × ~25 players with multi-eligibility)
+    python scripts/backfill_positions.py --dry-run
 """
+import argparse
 import logging
+import os
 import sys
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy.orm import Session
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 from backend.models import SessionLocal, PositionEligibility
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
+# Position scarcity priority — used to pick primary_position (most scarce first)
+POSITION_PRIORITY = ["C", "SS", "2B", "CF", "3B", "RF", "LF", "1B", "OF", "DH", "SP", "RP", "Util"]
 
-# All 30 MLB team league keys (will be resolved dynamically)
-MLB_TEAMS = [
-    'lal',  # Los Angeles Angels
-    'bal',  # Baltimore Orioles
-    'bos',  # Boston Red Sox
-    'cws',  # Chicago White Sox
-    'cle',  # Cleveland Guardians
-    'det',  # Detroit Tigers
-    'hou',  # Houston Astros
-    'kc',   # Kansas City Royals
-    'laa',  # Los Angeles Angels (alternate)
-    'mia',  # Miami Marlins
-    'mil',  # Milwaukee Brewers
-    'min',  # Minnesota Twins
-    'nyy',  # New York Yankees
-    'oak',  # Oakland Athletics
-    'sea',  # Seattle Mariners
-    'tbr',  # Tampa Bay Rays
-    'tex',  # Texas Rangers
-    'tor',  # Toronto Blue Jays
-    'ari',  # Arizona Diamondbacks
-    'atl',  # Atlanta Braves
-    'chc',  # Chicago Cubs
-    'cin',  # Cincinnati Reds
-    'col',  # Colorado Rockies
-    'lad',  # Los Angeles Dodgers
-    'nym',  # New York Mets
-    'phi',  # Philadelphia Phillies
-    'pit',  # Pittsburgh Pirates
-    'sd',   # San Diego Padres
-    'sfg',  # San Francisco Giants
-    'stl',  # St. Louis Cardinals
-    'was',  # Washington Nationals
-]
+BATTER_POSITIONS = {"C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "OF", "DH"}
+PITCHER_POSITIONS = {"SP", "RP", "P"}
 
 
-def backfill_position_eligibility() -> dict:
+def build_position_flags(positions: list[str]) -> dict:
     """
-    Fetch current position eligibility from Yahoo Fantasy API for all MLB teams.
+    Build can_play_* boolean flags from a list of Yahoo position strings.
 
-    Returns:
-        dict with status, records_processed, elapsed_ms
+    One dict per player — ALL eligible positions merged into a single set of flags.
+    OF is auto-set if any of LF/CF/RF is present.
     """
-    t0 = datetime.now(ZoneInfo("America/New_York"))
-    logger.info("=" * 60)
-    logger.info("Starting position eligibility backfill (current snapshot)")
-    logger.info("=" * 60)
+    pos_set = {p.upper() for p in positions if p}
 
-    try:
-        yahoo_client = YahooFantasyClient()
-        db = SessionLocal()
-
-        # Get user's league to find team keys
-        # Note: This assumes the user has access to at least one fantasy baseball league
-        logger.info("Fetching user's fantasy leagues...")
-
-        # Get the user's team key from their configured league
-        team_key = yahoo_client.get_my_team_key()
-        if not team_key:
-            logger.error("Could not determine user's team key")
-            logger.error("This script requires at least one Yahoo Fantasy Baseball league")
-            return {
-                'status': 'failed',
-                'records_processed': 0,
-                'error': 'No Yahoo Fantasy team key found',
-                'elapsed_ms': int((datetime.now(ZoneInfo("America/New_York")) - t0).total_seconds() * 1000)
-            }
-
-        # Fetch teams list first, then get rosters per-team
-        logger.info(f"Fetching teams from league {yahoo_client.league_key}...")
-
-        records_processed = 0
-        records_created = 0
-        records_updated = 0
-        teams_processed = 0
-
-        # Get all teams from league
-        teams_data = yahoo_client._get(f"league/{yahoo_client.league_key}/teams")
-        teams_raw = yahoo_client._league_section(teams_data, 1).get("teams", {})
-
-        if not teams_raw:
-            logger.error("Failed to fetch teams from league")
-            return {
-                'status': 'failed',
-                'records_processed': 0,
-                'error': 'Failed to fetch teams',
-                'elapsed_ms': int((datetime.now(ZoneInfo("America/New_York")) - t0).total_seconds() * 1000)
-            }
-
-        # Process each team
-        for team_list in yahoo_client._iter_block(teams_raw, "team"):
-            try:
-                team_dict = yahoo_client._parse_team(team_list)
-                team_key = team_dict.get("team_key")
-                team_name = team_dict.get("name", "Unknown")
-
-                if not team_key:
-                    logger.warning(f"Skipping team with no team_key: {team_dict}")
-                    continue
-
-                logger.info(f"Processing {team_name} ({team_key})...")
-
-                # Fetch full roster for this team
-                roster = yahoo_client.get_roster(team_key)
-                if not roster or not isinstance(roster, list):
-                    logger.warning(f"No valid roster data for {team_name}")
-                    continue
-
-                # Process players from roster list
-                players_count = 0
-                for player_data in roster:
-
-                    try:
-                        # Extract player key
-                        player_key = player_data.get("player_key")
-                        if not player_key:
-                            continue
-
-                        # Extract player name - handle both string and dict formats
-                        name_obj = player_data.get("name")
-                        if isinstance(name_obj, dict):
-                            name = name_obj.get("full", "")
-                            first_name = name_obj.get("first", "")
-                            last_name = name_obj.get("last", "")
-                        elif isinstance(name_obj, str):
-                            name = name_obj
-                            first_name = ""
-                            last_name = ""
-                        else:
-                            name = ""
-                            first_name = ""
-                            last_name = ""
-
-                        # Extract position eligibility - get_roster() returns parsed player data
-                        # with 'positions' field (list of position strings), not 'eligible_positions'
-                        positions = player_data.get("positions", [])
-
-                        if not positions:
-                            logger.debug(f"No position data for {name}")
-                            continue
-
-                        # Process each position
-                        for pos_type in positions:
-                            # Map Yahoo position to database columns
-                            can_play_flags = _map_position_to_flags(pos_type)
-
-                            # Check if record exists
-                            existing = db.query(PositionEligibility).filter(
-                                PositionEligibility.yahoo_player_key == player_key,
-                                PositionEligibility.position_type == pos_type
-                            ).first()
-
-                            now = datetime.now(ZoneInfo("America/New_York"))
-
-                            if existing:
-                                existing.player_name = name
-                                existing.first_name = first_name
-                                existing.last_name = last_name
-                                existing.updated_at = now
-                                records_updated += 1
-                            else:
-                                record = PositionEligibility(
-                                    yahoo_player_key=player_key,
-                                    bdl_player_id=None,  # Will be populated via player_id_mapping
-                                    player_name=name,
-                                    first_name=first_name,
-                                    last_name=last_name,
-                                    position_type=pos_type,
-                                    **can_play_flags,
-                                    created_at=now,
-                                    updated_at=now
-                                )
-                                db.add(record)
-                                records_created += 1
-
-                            records_processed += 1
-
-                    except Exception as e:
-                        logger.warning(f"Failed to process player: {e}")
-                        continue
-
-                # Commit after each team
-                db.commit()
-                teams_processed += 1
-                logger.info(f"✅ Processed {team_name}: {players_count} players")
-
-            except Exception as e:
-                logger.error(f"Failed to process team: {e}")
-                continue
-
-        elapsed = int((datetime.now(ZoneInfo("America/New_York")) - t0).total_seconds() * 1000)
-
-        logger.info("=" * 60)
-        logger.info("Position eligibility backfill complete")
-        logger.info(f"  Teams processed: {teams_processed}")
-        logger.info(f"  Records processed: {records_processed}")
-        logger.info(f"  Records created: {records_created}")
-        logger.info(f"  Records updated: {records_updated}")
-        logger.info(f"  Elapsed: {elapsed}ms")
-        logger.info("=" * 60)
-
-        # Verify table count
-        table_count = db.query(PositionEligibility).count()
-        logger.info(f"Total rows in position_eligibility table: {table_count}")
-
-        db.close()
-
-        return {
-            'status': 'success',
-            'records_processed': records_processed,
-            'records_created': records_created,
-            'records_updated': records_updated,
-            'teams_processed': teams_processed,
-            'table_count': table_count,
-            'elapsed_ms': elapsed
-        }
-
-    except Exception as e:
-        logger.exception("Position eligibility backfill failed: %s", e)
-        return {
-            'status': 'failed',
-            'records_processed': 0,
-            'error': str(e),
-            'elapsed_ms': int((datetime.now(ZoneInfo("America/New_York")) - t0).total_seconds() * 1000)
-        }
-
-
-def _map_position_to_flags(position: str) -> dict:
-    """
-    Map Yahoo position abbreviation to can_play_* flags.
-
-    Yahoo positions:
-    - C, 1B, 2B, 3B, SS, LF, CF, RF, OF, DH, UTIL
-
-    Returns dict with can_play_* flags set to True.
-    """
     flags = {
-        'can_play_c': False,
-        'can_play_1b': False,
-        'can_play_2b': False,
-        'can_play_3b': False,
-        'can_play_ss': False,
-        'can_play_lf': False,
-        'can_play_cf': False,
-        'can_play_rf': False,
-        'can_play_of': False,
-        'can_play_dh': False,
-        'can_play_util': False,
+        "can_play_c": "C" in pos_set,
+        "can_play_1b": "1B" in pos_set,
+        "can_play_2b": "2B" in pos_set,
+        "can_play_3b": "3B" in pos_set,
+        "can_play_ss": "SS" in pos_set,
+        "can_play_lf": "LF" in pos_set,
+        "can_play_cf": "CF" in pos_set,
+        "can_play_rf": "RF" in pos_set,
+        "can_play_of": "OF" in pos_set or bool(pos_set & {"LF", "CF", "RF"}),
+        "can_play_dh": "DH" in pos_set,
+        "can_play_util": "UTIL" in pos_set or "Util" in {p for p in positions if p},
+        "can_play_sp": "SP" in pos_set,
+        "can_play_rp": "RP" in pos_set,
     }
-
-    position_upper = position.upper()
-
-    if position_upper == 'C':
-        flags['can_play_c'] = True
-    elif position_upper == '1B':
-        flags['can_play_1b'] = True
-    elif position_upper == '2B':
-        flags['can_play_2b'] = True
-    elif position_upper == '3B':
-        flags['can_play_3b'] = True
-    elif position_upper == 'SS':
-        flags['can_play_ss'] = True
-    elif position_upper == 'LF':
-        flags['can_play_lf'] = True
-        flags['can_play_of'] = True
-    elif position_upper == 'CF':
-        flags['can_play_cf'] = True
-        flags['can_play_of'] = True
-    elif position_upper == 'RF':
-        flags['can_play_rf'] = True
-        flags['can_play_of'] = True
-    elif position_upper == 'OF':
-        flags['can_play_of'] = True
-    elif position_upper == 'DH':
-        flags['can_play_dh'] = True
-    elif position_upper == 'UTIL':
-        flags['can_play_util'] = True
-
     return flags
 
 
-if __name__ == "__main__":
-    result = backfill_position_eligibility()
+def determine_primary_position(positions: list[str]) -> str:
+    """Pick primary position using scarcity priority (most scarce wins)."""
+    pos_upper = [p.upper() for p in positions if p]
+    for priority in POSITION_PRIORITY:
+        if priority.upper() in pos_upper:
+            return priority
+    return positions[0] if positions else "DH"
 
-    if result['status'] == 'success':
-        logger.info(f"✅ Backfill successful: {result['records_processed']} records")
-        logger.info(f"   Teams processed: {result['teams_processed']}")
-        sys.exit(0)
+
+def determine_player_type(positions: list[str]) -> str:
+    """Classify as batter, pitcher, or two_way."""
+    pos_set = {p.upper() for p in positions if p}
+    has_pitcher = bool(pos_set & {"SP", "RP", "P"})
+    has_batter = bool(pos_set & BATTER_POSITIONS)
+
+    if has_pitcher and has_batter:
+        return "two_way"
+    elif has_pitcher:
+        return "pitcher"
+    return "batter"
+
+
+def backfill_position_eligibility(dry_run: bool = False) -> dict:
+    """
+    Fetch position eligibility from Yahoo Fantasy API and upsert to DB.
+
+    ONE ROW PER PLAYER with ALL eligible positions as boolean flags.
+    """
+    t0 = datetime.now(ZoneInfo("America/New_York"))
+    logger.info("=" * 60)
+    logger.info("Position eligibility backfill (one row per player)")
+    logger.info("=" * 60)
+
+    try:
+        yahoo = YahooFantasyClient()
+        league_key = yahoo.league_key
+        if not league_key:
+            logger.error("No league_key configured — cannot fetch rosters")
+            return {"status": "failed", "error": "No league_key"}
+
+        logger.info("Fetching all rosters from league %s ...", league_key)
+        all_players = yahoo.get_league_rosters(league_key=league_key, include_team_key=True)
+        logger.info("Fetched %d players across all teams", len(all_players))
+
+        if not all_players:
+            logger.error("No players returned from Yahoo API")
+            return {"status": "failed", "error": "Empty roster response"}
+
+        db = SessionLocal()
+        now = datetime.now(ZoneInfo("America/New_York"))
+        created = 0
+        skipped = 0
+
+        # Deduplicate: same player may appear on multiple fantasy teams' rosters
+        # (shouldn't happen in a well-formed league, but defensive)
+        seen_keys = set()
+
+        for player_data in all_players:
+            player_key = player_data.get("player_key")
+            if not player_key or player_key in seen_keys:
+                skipped += 1
+                continue
+            seen_keys.add(player_key)
+
+            name = player_data.get("name", "Unknown")
+            positions = player_data.get("positions", [])
+
+            if not positions:
+                logger.debug("No positions for %s (%s) — skipping", name, player_key)
+                skipped += 1
+                continue
+
+            # Build flags for ALL positions in one dict
+            flags = build_position_flags(positions)
+            primary = determine_primary_position(positions)
+            ptype = determine_player_type(positions)
+
+            # Count meaningful positions (exclude Util)
+            meaningful = [p for p in positions if p.upper() not in ("UTIL",)]
+            multi_count = len(meaningful)
+
+            if dry_run:
+                flag_str = ", ".join(k.replace("can_play_", "").upper()
+                                     for k, v in flags.items() if v)
+                logger.info("[DRY-RUN] %s (%s): %s | primary=%s type=%s count=%d",
+                            name, player_key, flag_str, primary, ptype, multi_count)
+                created += 1
+                continue
+
+            # Upsert: ON CONFLICT (yahoo_player_key) DO UPDATE
+            stmt = pg_insert(PositionEligibility.__table__).values(
+                yahoo_player_key=player_key,
+                bdl_player_id=None,
+                player_name=name,
+                first_name="",
+                last_name="",
+                primary_position=primary,
+                player_type=ptype,
+                multi_eligibility_count=multi_count,
+                fetched_at=now,
+                updated_at=now,
+                **flags,
+            ).on_conflict_do_update(
+                constraint="_pe_yahoo_uc",
+                set_={
+                    "player_name": name,
+                    "primary_position": primary,
+                    "player_type": ptype,
+                    "multi_eligibility_count": multi_count,
+                    "updated_at": now,
+                    **flags,
+                },
+            )
+            db.execute(stmt)
+            created += 1
+
+        if not dry_run:
+            db.commit()
+
+        elapsed = int((datetime.now(ZoneInfo("America/New_York")) - t0).total_seconds() * 1000)
+        table_count = db.query(PositionEligibility).count() if not dry_run else 0
+        db.close()
+
+        logger.info("=" * 60)
+        logger.info("Backfill complete")
+        logger.info("  Players processed: %d", created)
+        logger.info("  Skipped (no key/positions): %d", skipped)
+        logger.info("  Table total: %d rows", table_count)
+        logger.info("  Elapsed: %dms", elapsed)
+        logger.info("=" * 60)
+
+        # Spot-check: show multi-eligible players
+        if not dry_run:
+            db2 = SessionLocal()
+            multi = db2.query(PositionEligibility).filter(
+                PositionEligibility.multi_eligibility_count >= 3
+            ).order_by(PositionEligibility.multi_eligibility_count.desc()).limit(10).all()
+            if multi:
+                logger.info("Top multi-eligible players:")
+                for p in multi:
+                    flags_str = []
+                    for pos in ["c", "1b", "2b", "3b", "ss", "lf", "cf", "rf", "of", "dh", "sp", "rp"]:
+                        if getattr(p, f"can_play_{pos}", False):
+                            flags_str.append(pos.upper())
+                    logger.info("  %s: %s (primary=%s, count=%d)",
+                                p.player_name, "/".join(flags_str), p.primary_position, p.multi_eligibility_count)
+            db2.close()
+
+        return {
+            "status": "success",
+            "records_processed": created,
+            "skipped": skipped,
+            "table_count": table_count,
+            "elapsed_ms": elapsed,
+        }
+
+    except Exception as e:
+        logger.exception("Backfill failed: %s", e)
+        return {
+            "status": "failed",
+            "error": str(e),
+            "elapsed_ms": int((datetime.now(ZoneInfo("America/New_York")) - t0).total_seconds() * 1000),
+        }
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dry-run", action="store_true", help="Preview without writing")
+    args = parser.parse_args()
+
+    result = backfill_position_eligibility(dry_run=args.dry_run)
+    if result["status"] == "success":
+        logger.info("Done: %d records", result["records_processed"])
     else:
-        logger.error(f"❌ Backfill failed: {result.get('error', 'Unknown error')}")
+        logger.error("Failed: %s", result.get("error", "unknown"))
         sys.exit(1)
