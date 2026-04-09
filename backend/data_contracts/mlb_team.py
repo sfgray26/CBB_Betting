@@ -6,9 +6,18 @@ All fields observed non-null across 19 game sample.
 NOTE: league and division can be empty for free agents/retired players.
 """
 
-from typing import Optional, Literal, Any
+from typing import Optional, Literal, Union, Any
 
 from pydantic import BaseModel, ConfigDict, field_validator
+from typing_extensions import Annotated
+from pydantic.functional_validators import BeforeValidator
+
+
+def _empty_to_none(value: Any) -> Any:
+    """Convert empty strings to None before validation."""
+    if value == "" or value is None:
+        return None
+    return value
 
 
 class MLBTeam(BaseModel):
@@ -21,16 +30,8 @@ class MLBTeam(BaseModel):
     short_display_name: str
     name: str
     location: str
-    league: Optional[Literal["National", "American"]] = None
-    division: Optional[Literal["East", "Central", "West"]] = None
-
-    @field_validator("league", "division", mode="before")
-    @classmethod
-    def empty_string_to_none(cls, v: Any) -> Optional[str]:
-        """Convert empty strings to None for league and division fields."""
-        if v == "" or v is None:
-            return None
-        return v
+    league: Annotated[Optional[Literal["National", "American"]], BeforeValidator(_empty_to_none)] = None
+    division: Annotated[Optional[Literal["East", "Central", "West"]], BeforeValidator(_empty_to_none)] = None
 
 
 # Rebuild model to handle forward references correctly
