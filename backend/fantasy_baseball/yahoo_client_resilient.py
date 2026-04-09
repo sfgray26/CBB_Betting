@@ -417,11 +417,12 @@ class YahooFantasyClient:
                         roster_wrapper = node["roster"]
                         break
 
-                logger.info("get_league_rosters: roster_wrapper type=%s", type(roster_wrapper).__name__)
+                logger.info("get_league_rosters: roster_wrapper type=%s, keys=%s",
+                           type(roster_wrapper).__name__, list(roster_wrapper.keys()) if isinstance(roster_wrapper, dict) else "N/A")
 
                 players_raw = roster_wrapper.get("players", {}) if isinstance(roster_wrapper, dict) else {}
-                logger.info("get_league_rosters: players_raw type=%s, has_players=%s",
-                           type(players_raw).__name__, "players" in players_raw if isinstance(players_raw, dict) else "N/A")
+                logger.info("get_league_rosters: players_raw type=%s, keys=%s",
+                           type(players_raw).__name__, list(players_raw.keys()) if isinstance(players_raw, dict) else "N/A")
 
                 # Handle case where players is directly a list
                 if isinstance(players_raw, list):
