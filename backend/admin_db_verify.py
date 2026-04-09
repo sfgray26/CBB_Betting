@@ -28,9 +28,9 @@ async def verify_database_state():
 
         # POSITION ELIGIBILITY
         position_total = db.query(PositionEligibility).count()
-        position_with_cf = db.query(PositionEligibility).filter(PositionEligibility.can_play_CF == True).count()
-        position_with_lf = db.query(PositionEligibility).filter(PositionEligibility.can_play_LF == True).count()
-        position_with_rf = db.query(PositionEligibility).filter(PositionEligibility.can_play_RF == True).count()
+        position_with_cf = db.query(PositionEligibility).filter(PositionEligibility.can_play_cf == True).count()
+        position_with_lf = db.query(PositionEligibility).filter(PositionEligibility.can_play_lf == True).count()
+        position_with_rf = db.query(PositionEligibility).filter(PositionEligibility.can_play_rf == True).count()
 
         # PROBABLE PITCHERS
         pitchers_total = db.query(ProbablePitcherSnapshot).count()
