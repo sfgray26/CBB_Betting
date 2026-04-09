@@ -456,8 +456,9 @@ class YahooFantasyClient:
                     for key, value in roster_wrapper.items():
                         if key.isdigit() and isinstance(value, dict):
                             player_entries.append(value)
-                    players_raw = {"player": player_entries}
                     logger.info("get_league_rosters: Using new Yahoo API format - found %d players under numeric keys", len(player_entries))
+                    # Use player_entries list directly with _iter_block
+                    players_raw = player_entries
                 else:
                     logger.info("get_league_rosters: players_raw type=%s, keys=%s",
                                type(players_raw).__name__, list(players_raw.keys()) if isinstance(players_raw, dict) else "N/A")
