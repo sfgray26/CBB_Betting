@@ -1,11 +1,204 @@
 # HANDOFF.md — MLB Platform Master Plan (In-Season 2026)
 
-> **Date:** April 8, 2026 (updated Session S29) | **Author:** Claude Code (Master Architect)
-> **Risk Level:** LOW — P1-P20 CERTIFIED. Phases 2-10 complete. Full pipeline operational.
+> **Date:** April 9, 2026 (CRITICAL DATA PIPELINE CRISIS) | **Author:** Claude Code (Master Architect)
+> **Risk Level:** **CRITICAL** — Silent job failures preventing data flow. IMMEDIATE ACTION REQUIRED.
 
 ---
 
-## CORE PHILOSOPHY — Data-First, Contracts Before Plumbing
+## 🚨 ACTIVE CRISIS: Data Pipeline Silent Failures (April 9, 2026)
+
+**CRITICAL ISSUE**: Sync jobs are scheduled but NOT executing or failing silently. We have ZERO visibility into actual execution.
+
+### CRISIS SUMMARY
+- ✅ **Observability Enhanced**: Comprehensive logging deployed (commit 6a0bf25)
+- ✅ **Infrastructure Healthy**: Scheduler running, 5 jobs registered
+- ❌ **Jobs Not Executing**: Sync jobs scheduled for 7-8 AM ET - haven't run since deployment
+- ❌ **Tables Empty**: player_id_mapping, position_eligibility, probable_pitchers all EMPTY
+
+### IMMEDIATE ACTION REQUIRED (DO NOT WAIT)
+
+**User Mandate**: "DO NOT tell me 'jobs will run tomorrow morning.' Execute them NOW. We need to know TODAY if this system works."
+
+### EXECUTION ATTEMPTS SO FAR:
+1. ❌ **Railway run (standalone)**: Failed - missing dependencies in standalone mode
+2. ❌ **Admin API endpoints**: Failed - API key authentication issues (401 errors)
+3. ❌ **Test endpoints**: Failed - 404 errors, deployment timing issues
+4. ✅ **Observability**: DEPLOYED and ACTIVE - capturing all job executions
+
+### PROPOSED SOLUTION (Choose ONE):
+
+**Option A**: **Temporary Schedule Change** (RECOMMENDED)
+- Modify `backend/services/daily_ingestion.py` lines 401, 533: Change `hour=7` to `hour=10` + `minute=16`
+- Commit, push, wait for Railway deployment
+- Jobs execute at 10:16 AM ET with full logging
+- Verify data flow → Revert schedules back to 7 AM
+
+**Option B**: **Direct Script Execution**
+- Bypass FastAPI/app layer entirely
+- Create standalone Python script that directly calls orchestrator methods
+- Execute via Railway with proper Python environment
+
+**Option C**: **Fix Test Endpoints**
+- Debug why `/test/sync/*` returns 404
+- Fix router inclusion issues
+- Trigger jobs via curl
+
+---
+
+## 📋 KIMI DELEGATION TASKS (Execute in Parallel)
+
+**OBJECTIVE**: Answer fundamental questions about why jobs aren't working.
+
+### TASK 1: Historical Job Execution Analysis
+
+**CRITICAL QUESTION**: Have these jobs EVER worked successfully?
+
+**Investigation Commands**:
+```bash
+# Search Railway logs for evidence of past executions
+railway logs --since 24h --service Fantasy-App | grep -E "player_id_mapping|position_eligibility|probable_pitchers"
+
+# Search for observability logs (should be present if deployment worked)
+railway logs --since 1h --service Fantasy-App | grep -E "JOB START|SYNC JOB ENTRY"
+
+# Check git history for when sync jobs were last modified
+git log --oneline backend/services/daily_ingestion.py | head -10
+```
+
+**Questions to Answer**:
+1. Have these jobs EVER executed successfully?
+2. When was the last successful run (if ever)?
+3. Have they NEVER worked, or did they break recently?
+4. Any patterns in failures (same error each time)?
+
+**Deliverable**: `reports/2026-04-09-job-execution-audit.md`
+
+---
+
+### TASK 2: Job Trigger Mechanisms Audit
+
+**OBJECTIVE**: Map ALL ways to manually trigger sync jobs.
+
+**Investigation Areas**:
+1. **CLI Commands**: Any scripts in `scripts/` that trigger jobs?
+2. **API Endpoints**: Document ALL admin endpoints for job triggers
+3. **Scheduler Overrides**: How to manually trigger APScheduler jobs?
+4. **Direct Python Calls**: How to call orchestrator methods directly?
+
+**Deliverable**: Update HANDOFF.md with trigger mechanism table:
+```markdown
+| Job Name | CLI Command | API Endpoint | Direct Python | Scheduler Override |
+|----------|-------------|--------------|---------------|-------------------|
+| player_id_mapping | ??? | /admin/backfill/player-id-mapping | orchestrator._sync_player_id_mapping() | ??? |
+```
+
+---
+
+### TASK 3: Data Source Validation
+
+**OBJECTIVE**: Verify upstream data sources are accessible and functional.
+
+**For Each Data Source**:
+
+**BallDontLie API**:
+```bash
+# Test API connectivity from Railway
+railway run --service Fantasy-App -- python -c "
+import requests, os
+r = requests.get('https://api.balldontlie.io/v1/mlb/players?page=0&per_page=5',
+                headers={'Authorization': os.getenv('BALDONTLIE_API_KEY')})
+print(f'Status: {r.status_code}')
+print(f'Response preview: {r.text[:200]}')
+"
+```
+
+**Yahoo Fantasy API**:
+- Check OAuth credentials: `YAHOO_CLIENT_ID`, `YAHOO_CLIENT_SECRET`, `YAHOO_REFRESH_TOKEN`
+- Test token refresh mechanism
+- Verify league access: `get_my_leagues()`
+
+**Questions**:
+1. Are API keys valid and current?
+2. Any recent API changes/deprecations?
+3. Rate limits being hit?
+4. OAuth tokens expired?
+
+---
+
+### TASK 4: Database Write Path Analysis
+
+**OBJECTIVE**: Trace data flow from job function → database INSERT.
+
+**Code Tracing**:
+```bash
+# Follow the execution path:
+1. orchestrator._sync_player_id_mapping()
+2. → Fetch from BDL API (balldontlie.py)
+3. → Validate/clean data (pydantic models)
+4. → Database write (SQLAlchemy ORM)
+5. → Commit transaction
+```
+
+**Critical Checks**:
+1. **Transaction Management**: Are `db.commit()` calls present?
+2. **Dry Run Modes**: Any `dry_run=True` flags preventing writes?
+3. **Error Handling**: Do exceptions roll back transactions?
+4. **Validation Filters**: Are records being filtered out before INSERT?
+5. **ORM vs Raw SQL**: Which path do the jobs use?
+
+**Specific Commands**:
+```bash
+# Find database commit points in sync jobs
+grep -n "commit\|rollback\|flush" backend/services/daily_ingestion.py
+
+# Check for dry-run flags
+grep -n "dry_run\|DRY_RUN" backend/services/daily_ingestion.py
+
+# Find INSERT/UPDATE operations
+grep -n "add\|merge\|bulk_insert" backend/services/daily_ingestion.py
+```
+
+**Deliverable**: `reports/2026-04-09-database-write-path-analysis.md`
+
+---
+
+## 📊 EXECUTION RESULTS TABLE (TO BE COMPLETED)
+
+| Job Name | Status | Rows Before | Rows After | NULL % Before | NULL % After | Error (if any) |
+|----------|--------|-------------|------------|--------------|-------------|----------------|
+| player_id_mapping | ??? | ??? | ??? | 100% | ??? | ??? |
+| position_eligibility | ??? | 0 | ??? | N/A | ??? | ??? |
+| probable_pitchers | ??? | 0 | ??? | N/A | ??? | ??? |
+
+---
+
+## 🔄 NEXT ACTIONS
+
+**After Immediate Execution**:
+1. **IF SUCCESS**: Document which jobs work, focus on fixing broken ones
+2. **IF FAILURE**: Use Kimi's research to identify root cause (API issues? Database issues?)
+3. **IF PARTIAL**: Fix specific errors found in logs, re-run affected jobs
+
+**After Kimi Research**:
+1. Update HANDOFF.md with findings
+2. Create action items for each identified issue
+3. Recommend priority fixes based on impact
+
+---
+
+## 🚦 URGENT REMINDER
+
+**DO NOT**: Tell user "jobs will run tomorrow morning"
+**DO**: Execute jobs NOW and provide actual results
+**DO**: Use real data, not speculation
+
+The user needs IMMEDIATE visibility into whether this pipeline works. Today. Not tomorrow.
+
+---
+
+*Last Updated: April 9, 2026 10:20 AM ET*
+*Session Context: Data Pipeline Crisis - Silent Job Failures*
+*Priority: CRITICAL - User waiting for execution results*
 
 We are building this system like a quantitative trading desk. The data pipeline IS the product. Everything else — UI, optimization, automation — is a window into it that does not exist until the data is pristine.
 
