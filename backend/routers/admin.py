@@ -724,7 +724,6 @@ async def get_portfolio_status(
 @router.get("/admin/audit-tables")
 async def audit_tables(user: str = Depends(verify_api_key)):
     """Audit all database tables - returns row counts for each table."""
-    from sqlalchemy import inspect
     from backend.models import engine
 
     inspector = inspect(engine)
@@ -774,7 +773,6 @@ async def audit_tables(user: str = Depends(verify_api_key)):
 async def check_databases(user: str = Depends(verify_api_key)):
     """Check for multiple databases in PostgreSQL and locate migration tables."""
     from urllib.parse import urlparse
-    import os
 
     db_url = os.environ.get('DATABASE_URL')
     if not db_url:

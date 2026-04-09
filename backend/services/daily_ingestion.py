@@ -3958,8 +3958,6 @@ class DailyIngestionOrchestrator:
                     try:
                         # Extract position eligibility from roster_entry
                         player_data = roster_entry.get("player", {})
-                        coverage_data = roster_entry.get("coverage", {})
-                        coverage_type = coverage_data.get("type", "")
 
                         # Get BDL player ID from PlayerIDMapping
                         bdl_id = None
