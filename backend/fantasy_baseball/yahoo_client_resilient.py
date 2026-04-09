@@ -427,6 +427,9 @@ class YahooFantasyClient:
                 else:
                     team_meta = {}
 
+                # Flag to track if players were already parsed (for new format)
+                players_already_parsed = False
+
                 team_key = team_meta.get("team_key")
                 logger.debug("get_league_rosters: Processing team=%s", team_key)
 
@@ -452,13 +455,24 @@ class YahooFantasyClient:
 
                 if not has_players_key or not players_raw_has_data:
                     # New format: players are directly under numeric keys
+                    # Each roster_wrapper["0"], roster_wrapper["1"], etc. is a player dict
+                    # _parse_player expects a list, so wrap each dict: [player_dict]
                     player_entries = []
                     for key, value in roster_wrapper.items():
                         if key.isdigit() and isinstance(value, dict):
-                            player_entries.append(value)
+                            player_entries.append([value])  # Wrap in list for _parse_player
                     logger.info("get_league_rosters: Using new Yahoo API format - found %d players under numeric keys", len(player_entries))
-                    # Use player_entries list directly with _iter_block
-                    players_raw = player_entries
+
+                    # Parse player entries directly (skip _iter_block since we already have the right format)
+                    for player_list in player_entries:
+                        player_dict = self._parse_player(player_list)
+                        if include_team_key:
+                            player_dict["team_key"] = team_key
+                        all_players.append(player_dict)
+                        players_processed += 1
+
+                    logger.debug("get_league_rosters: Team %s processed %d players", team_key, players_processed)
+                    players_already_parsed = True  # Mark as parsed to skip old format logic
                 else:
                     logger.info("get_league_rosters: players_raw type=%s, keys=%s",
                                type(players_raw).__name__, list(players_raw.keys()) if isinstance(players_raw, dict) else "N/A")
@@ -468,15 +482,17 @@ class YahooFantasyClient:
                         logger.info("get_league_rosters: players_raw is list with %d elements", len(players_raw))
                         players_raw = {"player": players_raw}
 
-                players_processed = 0
-                for player_list in self._iter_block(players_raw, "player"):
-                    player_dict = self._parse_player(player_list)
-                    if include_team_key:
-                        player_dict["team_key"] = team_key
-                    all_players.append(player_dict)
-                    players_processed += 1
+                # Skip old format parsing if players were already parsed in new format path
+                if not players_already_parsed:
+                    players_processed = 0
+                    for player_list in self._iter_block(players_raw, "player"):
+                        player_dict = self._parse_player(player_list)
+                        if include_team_key:
+                            player_dict["team_key"] = team_key
+                        all_players.append(player_dict)
+                        players_processed += 1
 
-                logger.debug("get_league_rosters: Team %s processed %d players", team_key, players_processed)
+                    logger.debug("get_league_rosters: Team %s processed %d players", team_key, players_processed)
 
             logger.info("get_league_rosters: Returning %d total players", len(all_players))
             return all_players
