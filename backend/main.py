@@ -55,6 +55,9 @@ from backend.test_sync_jobs import router as _test_router
 # DB VERIFICATION ENDPOINTS - REMOVE AFTER DATABASE VERIFICATION
 from backend.admin_db_verify import router as _db_verify_router
 # END DB VERIFICATION ENDPOINTS
+# YAHOO API DEBUG ENDPOINTS - REMOVE AFTER DEBUGGING
+from backend.admin_yahoo_debug import router as _yahoo_debug_router
+# END YAHOO API DEBUG ENDPOINTS
 from backend.services.recalibration import compute_dynamic_weights
 from backend.services.discord_notifier import send_todays_bets
 from backend.services.sentinel import run_nightly_health_check
@@ -574,6 +577,9 @@ app.include_router(_test_router, prefix="/test", tags=["test"])
 # DB VERIFICATION ENDPOINTS - REMOVE AFTER DATABASE VERIFICATION
 app.include_router(_db_verify_router, prefix="/test", tags=["db-verify"])
 # END DB VERIFICATION ENDPOINTS
+# YAHOO API DEBUG ENDPOINTS - REMOVE AFTER DEBUGGING
+app.include_router(_yahoo_debug_router, prefix="/test", tags=["yahoo-debug"])
+# END YAHOO API DEBUG ENDPOINTS
 
 # --- end strangler-fig mounts ---
 
