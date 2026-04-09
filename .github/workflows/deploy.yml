@@ -52,6 +52,19 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
+
+      # Redis is required by the Python backend's redis_client.py for caching.
+      # Tests that exercise Redis-dependent code paths need this service to be
+      # running; tests that mock Redis are not affected.
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
     
     steps:
     - uses: actions/checkout@v4
@@ -95,6 +108,7 @@ jobs:
         DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_cbb_edge
         API_KEY_USER1: test_key_12345678901234567890
         ENVIRONMENT: development
+        REDIS_URL: redis://localhost:6379
       run: |
         pytest tests/ -v --tb=short --cov=backend --cov-report=term-missing --cov-fail-under=40
 
