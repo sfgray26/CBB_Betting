@@ -148,11 +148,20 @@ def backfill_position_eligibility() -> dict:
                         if not player_key:
                             continue
 
-                        # Extract player name
-                        name_data = player_data.get("name", {})
-                        name = name_data.get("full", "")
-                        first_name = name_data.get("first", "")
-                        last_name = name_data.get("last", "")
+                        # Extract player name - handle both string and dict formats
+                        name_obj = player_data.get("name")
+                        if isinstance(name_obj, dict):
+                            name = name_obj.get("full", "")
+                            first_name = name_obj.get("first", "")
+                            last_name = name_obj.get("last", "")
+                        elif isinstance(name_obj, str):
+                            name = name_obj
+                            first_name = ""
+                            last_name = ""
+                        else:
+                            name = ""
+                            first_name = ""
+                            last_name = ""
 
                         # Extract position eligibility
                         eligible_positions = player_data.get("eligible_positions", [])
