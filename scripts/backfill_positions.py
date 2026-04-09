@@ -98,95 +98,88 @@ def backfill_position_eligibility() -> dict:
                 'elapsed_ms': int((datetime.now(ZoneInfo("America/New_York")) - t0).total_seconds() * 1000)
             }
 
-        # Fetch all rosters from the league (all 30 teams)
-        logger.info(f"Fetching all team rosters from league {yahoo_client.league_key}...")
+        # Fetch teams list first, then get rosters per-team
+        logger.info(f"Fetching teams from league {yahoo_client.league_key}...")
 
         records_processed = 0
         records_created = 0
         records_updated = 0
         teams_processed = 0
 
-        # Get all team rosters from the league
-        all_rosters = yahoo_client.get_league_rosters(yahoo_client.league_key)
-        if not all_rosters:
-            logger.error("Failed to fetch league rosters")
+        # Get all teams from league
+        teams_data = yahoo_client._get(f"league/{yahoo_client.league_key}/teams")
+        teams_raw = yahoo_client._league_section(teams_data, 1).get("teams", {})
+
+        if not teams_raw:
+            logger.error("Failed to fetch teams from league")
             return {
                 'status': 'failed',
                 'records_processed': 0,
-                'error': 'Failed to fetch league rosters',
+                'error': 'Failed to fetch teams',
                 'elapsed_ms': int((datetime.now(ZoneInfo("America/New_York")) - t0).total_seconds() * 1000)
             }
 
-        # Process each team roster
-        for roster_entry in all_rosters:
+        # Process each team
+        for team_list in yahoo_client._iter_block(teams_raw, "team"):
             try:
-                team_key = roster_entry.get('team_key')
-                team_name = roster_entry.get('name', 'Unknown')
+                team_dict = yahoo_client._parse_team(team_list)
+                team_key = team_dict.get("team_key")
+                team_name = team_dict.get("name", "Unknown")
 
                 if not team_key:
+                    logger.warning(f"Skipping team with no team_key: {team_dict}")
                     continue
 
                 logger.info(f"Processing {team_name} ({team_key})...")
 
-                # Get roster for this team
+                # Fetch full roster for this team
                 roster = yahoo_client.get_roster(team_key)
-                if not roster:
-                    logger.warning(f"No roster data for {team_name}")
+                if not roster or not isinstance(roster, dict):
+                    logger.warning(f"No valid roster data for {team_name}")
                     continue
 
-                # Process each player on roster
-                players_data = roster.get('players', {}).get('player', [])
-                if not players_data:
-                    logger.warning(f"No players on {team_name} roster")
-                    continue
+                # Parse roster - structure: {'0': {player_data}, '1': {player_data}, ...}
+                players_count = 0
+                for key, player_data in roster.items():
+                    if not key.isdigit() or not isinstance(player_data, dict):
+                        continue
 
-                logger.info(f"Found {len(players_data)} players on {team_name} roster")
-
-                for player_data in players_data:
                     try:
-                        # Extract player info
-                        player_info = player_data if isinstance(player_data, dict) else {}
-                        player_key = player_info.get('player_key', '')
-
+                        # Extract player key
+                        player_key = player_data.get("player_key")
                         if not player_key:
                             continue
 
                         # Extract player name
-                        name = player_info.get('name', {}).get('full', '')
-                        first_name = player_info.get('name', {}).get('first', '')
-                        last_name = player_info.get('name', {}).get('last', '')
+                        name_data = player_data.get("name", {})
+                        name = name_data.get("full", "")
+                        first_name = name_data.get("first", "")
+                        last_name = name_data.get("last", "")
 
                         # Extract position eligibility
-                        # Yahoo returns position data as: {'position': 'C'}, {'position': '1B'}, etc.
-                        # OR in eligible_positions array
-                        positions = player_info.get('eligible_positions', [])
-                        if not positions:
-                            # Try alternate format
-                            position_data = player_info.get('position', {})
-                            if position_data:
-                                positions = [position_data]
+                        eligible_positions = player_data.get("eligible_positions", [])
+                        positions = []
+
+                        if eligible_positions:
+                            # Parse position array
+                            for pos_entry in eligible_positions:
+                                if isinstance(pos_entry, dict):
+                                    pos = pos_entry.get("position")
+                                    if pos:
+                                        positions.append(pos)
+                                elif isinstance(pos_entry, str):
+                                    positions.append(pos_entry)
 
                         if not positions:
                             logger.debug(f"No position data for {name}")
                             continue
 
                         # Process each position
-                        for pos_data in positions:
-                            if isinstance(pos_data, dict):
-                                pos_type = pos_data.get('position', '')
-                            elif isinstance(pos_data, str):
-                                pos_type = pos_data
-                            else:
-                                continue
-
-                            if not pos_type:
-                                continue
-
+                        for pos_type in positions:
                             # Map Yahoo position to database columns
                             can_play_flags = _map_position_to_flags(pos_type)
 
                             # Check if record exists
-                            # Note: We don't have BDL player ID yet — will be updated later
                             existing = db.query(PositionEligibility).filter(
                                 PositionEligibility.yahoo_player_key == player_key,
                                 PositionEligibility.position_type == pos_type
@@ -224,7 +217,7 @@ def backfill_position_eligibility() -> dict:
                 # Commit after each team
                 db.commit()
                 teams_processed += 1
-                logger.info(f"✅ Processed {team_name}: {len(players_data)} players")
+                logger.info(f"✅ Processed {team_name}: {players_count} players")
 
             except Exception as e:
                 logger.error(f"Failed to process team: {e}")
