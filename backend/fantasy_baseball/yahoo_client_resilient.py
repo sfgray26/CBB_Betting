@@ -373,28 +373,48 @@ class YahooFantasyClient:
     def get_league_rosters(self, league_key: str, include_team_key: bool = True) -> list[dict]:
         """Fetch all rosters for all teams in a league."""
         url = f"league/{league_key}/teams/roster"
+        logger.info("get_league_rosters: Fetching from URL=%s", url)
         data = self._get(url)
+        logger.info("get_league_rosters: Raw response type=%s, keys=%s", type(data).__name__, list(data.keys()) if isinstance(data, dict) else "N/A")
         try:
             sec = self._league_section(data, 1)
+            logger.info("get_league_rosters: League section type=%s, keys=%s", type(sec).__name__, list(sec.keys()) if isinstance(sec, dict) else "N/A")
+
             teams_raw = sec.get("teams", {})
+            logger.info("get_league_rosters: teams_raw type=%s", type(teams_raw).__name__)
+
+            # Handle case where teams is already a list (newer Yahoo API format)
+            if isinstance(teams_raw, list):
+                logger.info("get_league_rosters: teams_raw is list with %d elements", len(teams_raw))
+                teams_raw = {"team": teams_raw}
+
             all_players = []
             for team_data in self._iter_block(teams_raw, "team"):
                 team_meta = team_data[0] if len(team_data) > 0 else {}
                 team_key = team_meta.get("team_key")
+                logger.debug("get_league_rosters: Processing team=%s", team_key)
+
                 roster_wrapper = {}
                 for node in team_data:
                     if isinstance(node, dict) and "roster" in node:
                         roster_wrapper = node["roster"]
                         break
+
                 players_raw = roster_wrapper.get("players", {})
+                players_processed = 0
                 for player_list in self._iter_block(players_raw, "player"):
                     player_dict = self._parse_player(player_list)
                     if include_team_key:
                         player_dict["team_key"] = team_key
                     all_players.append(player_dict)
+                    players_processed += 1
+
+                logger.debug("get_league_rosters: Team %s processed %d players", team_key, players_processed)
+
+            logger.info("get_league_rosters: Returning %d total players", len(all_players))
             return all_players
         except Exception as exc:
-            logger.error("get_league_rosters failed: %s", exc)
+            logger.error("get_league_rosters failed: %s", exc, exc_info=True)
             return []
 
     def get_my_team_key(self) -> str:
