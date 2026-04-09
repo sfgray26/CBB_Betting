@@ -134,15 +134,13 @@ def backfill_position_eligibility() -> dict:
 
                 # Fetch full roster for this team
                 roster = yahoo_client.get_roster(team_key)
-                if not roster or not isinstance(roster, dict):
+                if not roster or not isinstance(roster, list):
                     logger.warning(f"No valid roster data for {team_name}")
                     continue
 
-                # Parse roster - structure: {'0': {player_data}, '1': {player_data}, ...}
+                # Process players from roster list
                 players_count = 0
-                for key, player_data in roster.items():
-                    if not key.isdigit() or not isinstance(player_data, dict):
-                        continue
+                for player_data in roster:
 
                     try:
                         # Extract player key
