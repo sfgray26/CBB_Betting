@@ -4075,8 +4075,8 @@ class DailyIngestionOrchestrator:
                         try:
                             # Extract probable pitcher info from game data
                             # BDL format: {'home_probable': 'Name', 'away_probable': 'Name'}
-                            home_probable = game.get('home_probable')
-                            away_probable = game.get('away_probable')
+                            home_probable = getattr(game, 'home_probable', None)
+                            away_probable = getattr(game, 'away_probable', None)
 
                             # Process home team probable
                             if home_probable:
@@ -4086,12 +4086,12 @@ class DailyIngestionOrchestrator:
                                 )
                                 if bdl_id:
                                     # Get game time in ET
-                                    game_time_et = game.get('game_time', '').replace('Z', '')  # Remove UTC
+                                    game_time_et = getattr(game, 'game_time', '').replace('Z', '')  # Remove UTC
 
                                     probable = ProbablePitcherSnapshot(
                                         game_date=game_date.date(),
-                                        team=game.home_team.upper(),
-                                        opponent=game.away_team.upper(),
+                                        team=game.home_team.abbreviation.upper() if game.home_team else "",
+                                        opponent=game.away_team.abbreviation.upper() if game.away_team else "",
                                         is_home=True,
                                         pitcher_name=home_probable,
                                         bdl_player_id=bdl_id,
@@ -4114,12 +4114,12 @@ class DailyIngestionOrchestrator:
                                 )
                                 if bdl_id:
                                     # Get game time in ET
-                                    game_time_et = game.get('game_time', '').replace('Z', '')
+                                    game_time_et = getattr(game, 'game_time', '').replace('Z', '')
 
                                     probable = ProbablePitcherSnapshot(
                                         game_date=game_date.date(),
-                                        team=game.away_team.upper(),
-                                        opponent=game.home_team.upper(),
+                                        team=game.away_team.abbreviation.upper() if game.away_team else "",
+                                        opponent=game.home_team.abbreviation.upper() if game.home_team else "",
                                         is_home=False,
                                         pitcher_name=away_probable,
                                         bdl_player_id=bdl_id,
@@ -4198,7 +4198,7 @@ class DailyIngestionOrchestrator:
         async def _run():
             from backend.services.balldontlie import BallDontLieClient
             try:
-                bdl = BallDontlieClient()
+                bdl = BallDontLieClient()
             except ValueError as exc:
                 logger.error("_sync_player_id_mapping: BDL init failed -- %s", exc)
                 self._record_job_run("player_id_mapping", "skipped")
@@ -4218,19 +4218,18 @@ class DailyIngestionOrchestrator:
             try:
                 for player in players:
                     try:
-                        bdl_id = player.get('id')
+                        bdl_id = player.id
                         if not bdl_id:
                             continue
 
                         # Get MLBAM ID from player data
-                        mlbam_id = player.get('mlbam_id')
+                        mlbam_id = getattr(player, 'mlbam_id', None)
 
                         # Get full name
-                        full_name = f"{player.get('first_name', '')} {player.get('last_name', '')}".strip()
+                        full_name = player.full_name
 
                         # Primary position
-                        primary_position = player.get('primary_position')
-                        position_abbrev = primary_position.get('abbreviation') if primary_position else None
+                        position_abbrev = player.position
 
                         # Create/update mapping record
                         # We'll store both BDL and Yahoo mappings, plus MLBAM
@@ -4240,7 +4239,7 @@ class DailyIngestionOrchestrator:
                             mlbam_id=mlbam_id,
                             full_name=full_name,
                             primary_position=position_abbrev,
-                            team_abbrev=player.get('team', {}).get('abbreviation'),
+                            team_abbrev=player.team.abbreviation if player.team else None,
                             fetched_at=now_et(),
                             updated_at=now_et(),
                         )
