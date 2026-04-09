@@ -86,37 +86,47 @@ def backfill_position_eligibility() -> dict:
         # Note: This assumes the user has access to at least one fantasy baseball league
         logger.info("Fetching user's fantasy leagues...")
 
-        # Try to get user's teams
-        user_teams = yahoo_client.get_my_teams()
-        if not user_teams or len(user_teams) == 0:
-            logger.error("No fantasy teams found for user")
+        # Get the user's team key from their configured league
+        team_key = yahoo_client.get_my_team_key()
+        if not team_key:
+            logger.error("Could not determine user's team key")
             logger.error("This script requires at least one Yahoo Fantasy Baseball league")
             return {
                 'status': 'failed',
                 'records_processed': 0,
-                'error': 'No Yahoo Fantasy teams found',
+                'error': 'No Yahoo Fantasy team key found',
                 'elapsed_ms': int((datetime.now(ZoneInfo("America/New_York")) - t0).total_seconds() * 1000)
             }
 
-        # Use the first league/team to fetch all MLB rosters
-        # We'll fetch rosters for all 30 teams using team keys
-        logger.info(f"Found {len(user_teams)} teams")
+        # Fetch all rosters from the league (all 30 teams)
+        logger.info(f"Fetching all team rosters from league {yahoo_client.league_key}...")
 
         records_processed = 0
         records_created = 0
         records_updated = 0
         teams_processed = 0
 
-        # Process each team
-        for team in user_teams:
+        # Get all team rosters from the league
+        all_rosters = yahoo_client.get_league_rosters()
+        if not all_rosters:
+            logger.error("Failed to fetch league rosters")
+            return {
+                'status': 'failed',
+                'records_processed': 0,
+                'error': 'Failed to fetch league rosters',
+                'elapsed_ms': int((datetime.now(ZoneInfo("America/New_York")) - t0).total_seconds() * 1000)
+            }
+
+        # Process each team roster
+        for roster_entry in all_rosters:
             try:
-                team_key = team.get('team_key')
-                team_name = team.get('name', 'Unknown')
+                team_key = roster_entry.get('team_key')
+                team_name = roster_entry.get('name', 'Unknown')
 
                 if not team_key:
                     continue
 
-                logger.info(f"Fetching roster for {team_name} ({team_key})...")
+                logger.info(f"Processing {team_name} ({team_key})...")
 
                 # Get roster for this team
                 roster = yahoo_client.get_team_roster(team_key)
