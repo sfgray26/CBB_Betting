@@ -129,7 +129,7 @@ def backfill_position_eligibility() -> dict:
                 logger.info(f"Processing {team_name} ({team_key})...")
 
                 # Get roster for this team
-                roster = yahoo_client.get_team_roster(team_key)
+                roster = yahoo_client.get_roster(team_key)
                 if not roster:
                     logger.warning(f"No roster data for {team_name}")
                     continue
