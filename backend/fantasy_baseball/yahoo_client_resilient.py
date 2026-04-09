@@ -68,7 +68,7 @@ _token_lock = threading.Lock()
 YAHOO_AUTH_URL = "https://api.login.yahoo.com/oauth2/request_auth"
 YAHOO_TOKEN_URL = "https://api.login.yahoo.com/oauth2/get_token"
 YAHOO_API_BASE = "https://fantasysports.yahooapis.com/fantasy/v2"
-YAHOO_SPORT = "mlb"
+YAHOO_SPORT = "469"  # 2026 MLB season game ID
 
 ENV_PATH = Path(__file__).resolve().parents[3] / ".env"
 
@@ -102,6 +102,10 @@ class YahooFantasyClient:
     """
 
     def __init__(self):
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("API CLIENT INIT: YahooFantasyClient - Initializing...")
+
         self.client_id = os.getenv("YAHOO_CLIENT_ID", "")
         self.client_secret = os.getenv("YAHOO_CLIENT_SECRET", "")
         self.league_id = os.getenv("YAHOO_LEAGUE_ID", "72586")
@@ -112,10 +116,24 @@ class YahooFantasyClient:
         self._session = requests.Session()
         self._cb = _CoreCircuitBreaker(failure_threshold=3, recovery_timeout=60, window_seconds=300)
 
+        # Log credential status (masked)
+        client_id_status = f"{self.client_id[:10]}..." if len(self.client_id) > 10 else "NOT_SET"
+        client_secret_status = f"{self.client_secret[:5]}..." if len(self.client_secret) > 5 else "NOT_SET"
+        refresh_token_status = f"{self._refresh_token[:10]}..." if len(self._refresh_token) > 10 else "NOT_SET"
+
+        logger.info("API CLIENT INIT: YahooFantasyClient - client_id=%s, client_secret=%s, refresh_token=%s",
+                   client_id_status, client_secret_status, refresh_token_status)
+        logger.info("API CLIENT INIT: YahooFantasyClient - league_id=%s, league_key=%s",
+                   self.league_id, self.league_key)
+
         if not self.client_id or not self.client_secret:
+            logger.error("API CLIENT INIT FAILED: YahooFantasyClient - Missing credentials (client_id=%s, client_secret=%s)",
+                        client_id_status, client_secret_status)
             raise YahooAuthError(
                 "YAHOO_CLIENT_ID and YAHOO_CLIENT_SECRET must be set in .env"
             )
+
+        logger.info("API CLIENT INIT SUCCESS: YahooFantasyClient - Initialization complete")
 
     # ------------------------------------------------------------------
     # OAuth 2.0 — Authorization Code Flow
@@ -324,6 +342,7 @@ class YahooFantasyClient:
 
         Yahoo 2025 format: {"count": N, "0": {item_key: ...}, "1": {item_key: ...}}
         Yahoo 2026 format: [{item_key: ...}, {item_key: ...}]
+        Yahoo 2026 roster format: {"0": {item_key: [...]}, "1": {item_key: [...]}} (no "count" key)
         """
         if isinstance(block, list):
             for item in block:
@@ -331,10 +350,28 @@ class YahooFantasyClient:
                     yield item[item_key]
         elif isinstance(block, dict):
             count = int(block.get("count", 0))
-            for i in range(count):
-                entry = block.get(str(i), {})
-                if isinstance(entry, dict) and item_key in entry:
-                    yield entry[item_key]
+
+            # If we have a count, use it
+            if count > 0:
+                for i in range(count):
+                    entry = block.get(str(i), {})
+                    if isinstance(entry, dict) and item_key in entry:
+                        yield entry[item_key]
+            else:
+                # New Yahoo API format: numeric keys without "count"
+                # Iterate through all numeric keys in sorted order
+                numeric_keys = sorted([k for k in block.keys() if k.isdigit()])
+                for key in numeric_keys:
+                    entry = block.get(key, {})
+                    if isinstance(entry, dict):
+                        # For numeric key entries, the item_key value might be directly the data
+                        # or nested under item_key
+                        if item_key in entry:
+                            yield entry[item_key]
+                        elif len(entry) == 1 and item_key in str(entry):
+                            # Entry might be like {"team": [...]} directly
+                            if isinstance(list(entry.values())[0], list):
+                                yield list(entry.values())[0]
 
     def get_standings(self) -> list[dict]:
         data = self._get(f"league/{self.league_key}/standings")
@@ -355,28 +392,114 @@ class YahooFantasyClient:
     def get_league_rosters(self, league_key: str, include_team_key: bool = True) -> list[dict]:
         """Fetch all rosters for all teams in a league."""
         url = f"league/{league_key}/teams/roster"
+        logger.info("get_league_rosters: Fetching from URL=%s", url)
         data = self._get(url)
+        logger.info("get_league_rosters: Raw response type=%s, keys=%s", type(data).__name__, list(data.keys()) if isinstance(data, dict) else "N/A")
         try:
             sec = self._league_section(data, 1)
+            logger.info("get_league_rosters: League section type=%s, keys=%s", type(sec).__name__, list(sec.keys()) if isinstance(sec, dict) else "N/A")
+
             teams_raw = sec.get("teams", {})
+            logger.info("get_league_rosters: teams_raw type=%s", type(teams_raw).__name__)
+
+            # Handle case where teams is already a list (newer Yahoo API format)
+            if isinstance(teams_raw, list):
+                logger.info("get_league_rosters: teams_raw is list with %d elements", len(teams_raw))
+                teams_raw = {"team": teams_raw}
+
             all_players = []
             for team_data in self._iter_block(teams_raw, "team"):
-                team_meta = team_data[0] if len(team_data) > 0 else {}
+                # Handle Yahoo API structure changes - team_data[0] might be list or dict
+                if len(team_data) > 0:
+                    first_element = team_data[0]
+                    if isinstance(first_element, list):
+                        # Newer format: team_data[0] is a list, look for dict with team_key
+                        team_meta = {}
+                        for item in first_element:
+                            if isinstance(item, dict) and "team_key" in item:
+                                team_meta = item
+                                break
+                    elif isinstance(first_element, dict):
+                        # Older format: team_data[0] is directly the metadata dict
+                        team_meta = first_element
+                    else:
+                        team_meta = {}
+                else:
+                    team_meta = {}
+
+                # Flag to track if players were already parsed (for new format)
+                players_already_parsed = False
+
                 team_key = team_meta.get("team_key")
+                logger.debug("get_league_rosters: Processing team=%s", team_key)
+
                 roster_wrapper = {}
                 for node in team_data:
                     if isinstance(node, dict) and "roster" in node:
                         roster_wrapper = node["roster"]
                         break
-                players_raw = roster_wrapper.get("players", {})
-                for player_list in self._iter_block(players_raw, "player"):
-                    player_dict = self._parse_player(player_list)
-                    if include_team_key:
-                        player_dict["team_key"] = team_key
-                    all_players.append(player_dict)
+
+                logger.info("get_league_rosters: roster_wrapper type=%s, keys=%s",
+                           type(roster_wrapper).__name__, list(roster_wrapper.keys()) if isinstance(roster_wrapper, dict) else "N/A")
+
+                players_processed = 0  # Initialize for both format paths
+
+                # Yahoo API structure changed - players are now directly under numeric keys in roster_wrapper
+                # Old format: roster_wrapper["players"]["player"] = [...]
+                # New format: roster_wrapper["0"] = {player_data}, roster_wrapper["1"] = {player_data}, ...
+                players_raw = roster_wrapper.get("players", {}) if isinstance(roster_wrapper, dict) else {}
+
+                # Check if we're using the new format (numeric keys without "players" wrapper)
+                has_players_key = "players" in roster_wrapper if isinstance(roster_wrapper, dict) else False
+                players_raw_has_data = len(players_raw) > 0 if isinstance(players_raw, dict) else False
+
+                logger.info("get_league_rosters: has_players_key=%s, players_raw_has_data=%s", has_players_key, players_raw_has_data)
+
+                if not has_players_key or not players_raw_has_data:
+                    # New format: players are directly under numeric keys
+                    # Each roster_wrapper["0"], roster_wrapper["1"], etc. is a player dict
+                    # _parse_player expects a list, so wrap each dict: [player_dict]
+                    player_entries = []
+                    for key, value in roster_wrapper.items():
+                        if key.isdigit() and isinstance(value, dict):
+                            player_entries.append([value])  # Wrap in list for _parse_player
+                    logger.info("get_league_rosters: Using new Yahoo API format - found %d players under numeric keys", len(player_entries))
+
+                    # Parse player entries directly (skip _iter_block since we already have the right format)
+                    for player_list in player_entries:
+                        player_dict = self._parse_player(player_list)
+                        if include_team_key:
+                            player_dict["team_key"] = team_key
+                        all_players.append(player_dict)
+                        players_processed += 1
+
+                    logger.debug("get_league_rosters: Team %s processed %d players", team_key, players_processed)
+                    players_already_parsed = True  # Mark as parsed to skip old format logic
+                else:
+                    logger.info("get_league_rosters: players_raw type=%s, keys=%s",
+                               type(players_raw).__name__, list(players_raw.keys()) if isinstance(players_raw, dict) else "N/A")
+
+                    # Handle case where players is directly a list
+                    if isinstance(players_raw, list):
+                        logger.info("get_league_rosters: players_raw is list with %d elements", len(players_raw))
+                        players_raw = {"player": players_raw}
+
+                # Skip old format parsing if players were already parsed in new format path
+                if not players_already_parsed:
+                    players_processed = 0
+                    for player_list in self._iter_block(players_raw, "player"):
+                        player_dict = self._parse_player(player_list)
+                        if include_team_key:
+                            player_dict["team_key"] = team_key
+                        all_players.append(player_dict)
+                        players_processed += 1
+
+                    logger.debug("get_league_rosters: Team %s processed %d players", team_key, players_processed)
+
+            logger.info("get_league_rosters: Returning %d total players", len(all_players))
             return all_players
         except Exception as exc:
-            logger.error("get_league_rosters failed: %s", exc)
+            logger.error("get_league_rosters failed: %s", exc, exc_info=True)
             return []
 
     def get_my_team_key(self) -> str:

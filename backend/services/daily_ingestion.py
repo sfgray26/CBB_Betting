@@ -250,21 +250,43 @@ def _extract_blend_rows(blend_df: Any, metric_map: dict[str, str]) -> tuple[list
 # Advisory lock helper
 # ---------------------------------------------------------------------------
 
-async def _with_advisory_lock(lock_id: int, coro):
+async def _with_advisory_lock(lock_id: int, job_name: str, coro):
     """
     Acquire a session-level PostgreSQL advisory lock, run coro(), then release.
     If the lock is already held (another replica running the same job), skip
     execution and return None.
+
+    Enhanced with comprehensive execution logging for observability.
     """
+    job_start = time.monotonic()
+    logger.info("JOB START: %s (lock %d) at %s", job_name, lock_id, datetime.now(ZoneInfo("America/New_York")).isoformat())
+
     db = SessionLocal()
     try:
         result = db.execute(
             text("SELECT pg_try_advisory_lock(:lid)"), {"lid": lock_id}
         ).scalar()
         if not result:
-            logger.info("SKIPPED -- advisory lock %d held by another worker", lock_id)
+            logger.warning("JOB SKIPPED: %s (lock %d) - advisory lock held by another worker", job_name, lock_id)
             return None
-        return await coro()
+
+        logger.info("JOB LOCK ACQUIRED: %s (lock %d)", job_name, lock_id)
+
+        try:
+            result = await coro()
+            job_end = time.monotonic()
+            elapsed_ms = int((job_end - job_start) * 1000)
+            logger.info("JOB COMPLETE: %s (lock %d) - status=%s, elapsed_ms=%d",
+                       job_name, lock_id, result.get("status", "unknown"), elapsed_ms)
+            return result
+
+        except Exception as exc:
+            job_end = time.monotonic()
+            elapsed_ms = int((job_end - job_start) * 1000)
+            logger.error("JOB FAILED: %s (lock %d) - exception=%s, elapsed_ms=%d",
+                        job_name, lock_id, str(exc), elapsed_ms, exc_info=True)
+            raise
+
     finally:
         try:
             db.execute(text("SELECT pg_advisory_unlock(:lid)"), {"lid": lock_id})
@@ -505,42 +527,42 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
-        # Player ID mapping sync: daily 7:00 AM ET (before position eligibility sync)
+        # Player ID mapping sync: TEMPORARY - running NOW for testing (normally 7:00 AM ET)
         self._scheduler.add_job(
             self._sync_player_id_mapping,
-            CronTrigger(hour=7, minute=0, timezone=tz),
+            CronTrigger(hour=10, minute=32, timezone=tz),  # TEMPORARY: Immediate execution test (10:32 AM)
             id="player_id_mapping",
             name="Player ID Mapping Sync",
             replace_existing=True,
         )
 
-        # Position eligibility sync: daily 8:00 AM ET (after player_id_mapping)
+        # Position eligibility sync: TEMPORARY - running NOW for testing (normally 8:00 AM ET)
         self._scheduler.add_job(
             self._sync_position_eligibility,
-            CronTrigger(hour=8, minute=0, timezone=tz),
+            CronTrigger(hour=10, minute=32, timezone=tz),  # TEMPORARY: Immediate execution test (10:32 AM)
             id="position_eligibility",
             name="Position Eligibility Sync",
             replace_existing=True,
         )
 
-        # Probable pitchers sync: daily 8:30 AM, 4:00 PM, 8:00 PM ET
+        # Probable pitchers sync: TEMPORARY - running NOW for testing (normally 8:30 AM, 4:00 PM, 8:00 PM ET)
         self._scheduler.add_job(
             self._sync_probable_pitchers,
-            CronTrigger(hour=8, minute=30, timezone=tz),
+            CronTrigger(hour=10, minute=32, timezone=tz),  # TEMPORARY: Immediate execution test (10:32 AM)
             id="probable_pitchers_morning",
             name="Probable Pitchers Sync (Morning)",
             replace_existing=True,
         )
         self._scheduler.add_job(
             self._sync_probable_pitchers,
-            CronTrigger(hour=16, minute=0, timezone=tz),
+            CronTrigger(hour=10, minute=33, timezone=tz),  # TEMPORARY: Stagger execution by 1 minute
             id="probable_pitchers_afternoon",
             name="Probable Pitchers Sync (Afternoon)",
             replace_existing=True,
         )
         self._scheduler.add_job(
             self._sync_probable_pitchers,
-            CronTrigger(hour=20, minute=0, timezone=tz),
+            CronTrigger(hour=10, minute=34, timezone=tz),  # TEMPORARY: Stagger execution by 1 minute
             id="probable_pitchers_evening",
             name="Probable Pitchers Sync (Evening)",
             replace_existing=True,
@@ -826,7 +848,7 @@ class DailyIngestionOrchestrator:
                 "elapsed_ms": elapsed,
             }
 
-        return await _with_advisory_lock(LOCK_IDS["mlb_odds"], _run)
+        return await _with_advisory_lock(LOCK_IDS["mlb_odds"], "mlb_odds", _run)
 
     async def _ingest_mlb_game_log(self) -> dict:
         """
@@ -983,7 +1005,7 @@ class DailyIngestionOrchestrator:
                 "elapsed_ms": elapsed,
             }
 
-        return await _with_advisory_lock(LOCK_IDS["mlb_game_log"], _run)
+        return await _with_advisory_lock(LOCK_IDS["mlb_game_log"], "mlb_game_log", _run)
 
     async def _ingest_mlb_box_stats(self) -> dict:
         """
@@ -1170,7 +1192,7 @@ class DailyIngestionOrchestrator:
                 "elapsed_ms": elapsed,
             }
 
-        return await _with_advisory_lock(LOCK_IDS["mlb_box_stats"], _run)
+        return await _with_advisory_lock(LOCK_IDS["mlb_box_stats"], "mlb_box_stats", _run)
 
     async def _supplement_statsapi_counting_stats(self) -> dict:
         """
@@ -1333,7 +1355,7 @@ class DailyIngestionOrchestrator:
                 "elapsed_ms": elapsed,
             }
 
-        return await _with_advisory_lock(LOCK_IDS["statsapi_supplement"], _run)
+        return await _with_advisory_lock(LOCK_IDS["statsapi_supplement"], "statsapi_supplement", _run)
 
     @staticmethod
     def _patch_counting_stats_batter(db_row, batter: dict) -> bool:
@@ -1549,7 +1571,7 @@ class DailyIngestionOrchestrator:
                 "elapsed_ms": elapsed,
             }
 
-        return await _with_advisory_lock(LOCK_IDS["rolling_windows"], _run)
+        return await _with_advisory_lock(LOCK_IDS["rolling_windows"], "rolling_windows", _run)
 
     async def _compute_player_scores(self) -> dict:
         """
@@ -1701,7 +1723,7 @@ class DailyIngestionOrchestrator:
                 "elapsed_ms": elapsed,
             }
 
-        return await _with_advisory_lock(LOCK_IDS["player_scores"], _run)
+        return await _with_advisory_lock(LOCK_IDS["player_scores"], "player_scores", _run)
 
     async def _compute_player_momentum(self) -> dict:
         """
@@ -1844,7 +1866,7 @@ class DailyIngestionOrchestrator:
                 "elapsed_ms": elapsed,
             }
 
-        return await _with_advisory_lock(LOCK_IDS["player_momentum"], _run)
+        return await _with_advisory_lock(LOCK_IDS["player_momentum"], "player_momentum", _run)
 
     async def _run_ros_simulation(self) -> dict:
         """
@@ -2037,7 +2059,7 @@ class DailyIngestionOrchestrator:
                 "elapsed_ms": elapsed,
             }
 
-        return await _with_advisory_lock(LOCK_IDS["ros_simulation"], _run)
+        return await _with_advisory_lock(LOCK_IDS["ros_simulation"], "ros_simulation", _run)
 
     async def _run_decision_optimization(self) -> dict:
         """
@@ -2349,7 +2371,7 @@ class DailyIngestionOrchestrator:
                 "elapsed_ms": elapsed,
             }
 
-        return await _with_advisory_lock(LOCK_IDS["decision_optimization"], _run)
+        return await _with_advisory_lock(LOCK_IDS["decision_optimization"], "decision_optimization", _run)
 
     async def _run_backtesting(self) -> dict:
         """
@@ -2637,7 +2659,7 @@ class DailyIngestionOrchestrator:
                 "elapsed_ms": elapsed,
             }
 
-        return await _with_advisory_lock(LOCK_IDS["backtesting"], _run)
+        return await _with_advisory_lock(LOCK_IDS["backtesting"], "backtesting", _run)
 
     async def _run_explainability(self) -> dict:
         """
@@ -2916,7 +2938,7 @@ class DailyIngestionOrchestrator:
                 "elapsed_ms": elapsed,
             }
 
-        return await _with_advisory_lock(LOCK_IDS["explainability"], _run)
+        return await _with_advisory_lock(LOCK_IDS["explainability"], "explainability", _run)
 
     async def _run_snapshot(self) -> dict:
         """
@@ -3127,7 +3149,7 @@ class DailyIngestionOrchestrator:
                 "elapsed_ms": elapsed,
             }
 
-        return await _with_advisory_lock(LOCK_IDS["snapshot"], _run)
+        return await _with_advisory_lock(LOCK_IDS["snapshot"], "snapshot", _run)
 
     async def _update_statcast(self) -> dict:
         """Daily Statcast enrichment — fetches yesterday's data and runs Bayesian projection updates."""      
@@ -3160,7 +3182,7 @@ class DailyIngestionOrchestrator:
                 self._record_job_run("statcast", "failed")
                 return {"status": "failed", "records": 0, "error": str(exc), "elapsed_ms": elapsed}
 
-        return await _with_advisory_lock(LOCK_IDS["statcast"], _run)
+        return await _with_advisory_lock(LOCK_IDS["statcast"], "statcast", _run)
 
     async def _calc_rolling_zscores(self) -> dict:
         """
@@ -3327,7 +3349,7 @@ class DailyIngestionOrchestrator:
             self._record_job_run("rolling_z", "success", records_updated)
             return {"status": "success", "records": records_updated, "elapsed_ms": elapsed}
 
-        return await _with_advisory_lock(LOCK_IDS["rolling_z"], _run)
+        return await _with_advisory_lock(LOCK_IDS["rolling_z"], "rolling_z", _run)
 
     async def _poll_yahoo_adp_injury(self) -> dict:
         """Fetch Yahoo ADP + injury status snapshot every 4 hours (lock 100_013).
@@ -3431,7 +3453,7 @@ class DailyIngestionOrchestrator:
                 "elapsed_ms": elapsed,
             }
 
-        return await _with_advisory_lock(LOCK_IDS["yahoo_adp_injury"], _run)
+        return await _with_advisory_lock(LOCK_IDS["yahoo_adp_injury"], "yahoo_adp_injury", _run)
 
     async def _fetch_fangraphs_ros(self) -> dict:
         """Fetch daily Rest-of-Season projections from FanGraphs (lock 100_012).
@@ -3486,7 +3508,7 @@ class DailyIngestionOrchestrator:
             self._record_job_run("fangraphs_ros", status, bat_count + pit_count)
             return {"status": status, "bat_rows": bat_count, "pit_rows": pit_count, "elapsed_ms": elapsed}
 
-        return await _with_advisory_lock(LOCK_IDS["fangraphs_ros"], _run)
+        return await _with_advisory_lock(LOCK_IDS["fangraphs_ros"], "fangraphs_ros", _run)
 
     async def _update_ensemble_blend(self) -> dict:
         """Compute weighted ensemble blend and persist to PlayerDailyMetric (lock 100_014).
@@ -3659,7 +3681,7 @@ class DailyIngestionOrchestrator:
                 "errors": errors,
             }
 
-        return await _with_advisory_lock(LOCK_IDS["ensemble_update"], _run)
+        return await _with_advisory_lock(LOCK_IDS["ensemble_update"], "ensemble_update", _run)
 
     async def _check_projection_freshness(self) -> dict:
         """
@@ -3754,7 +3776,7 @@ class DailyIngestionOrchestrator:
             self._job_status["projection_freshness"] = report
             return {"status": "success", **report}
 
-        return await _with_advisory_lock(LOCK_IDS["projection_freshness"], _run)
+        return await _with_advisory_lock(LOCK_IDS["projection_freshness"], "projection_freshness", _run)
 
     async def _compute_clv(self) -> dict:
         """
@@ -3806,7 +3828,7 @@ class DailyIngestionOrchestrator:
             result["elapsed_ms"] = elapsed
             return result
 
-        return await _with_advisory_lock(LOCK_IDS["clv"], _run)
+        return await _with_advisory_lock(LOCK_IDS["clv"], "clv", _run)
 
     async def _cleanup_old_metrics(self) -> dict:
         """
@@ -3840,7 +3862,7 @@ class DailyIngestionOrchestrator:
             self._record_job_run("cleanup", "success", deleted)
             return {"status": "success", "records": deleted, "elapsed_ms": elapsed}
 
-        return await _with_advisory_lock(LOCK_IDS["cleanup"], _run)
+        return await _with_advisory_lock(LOCK_IDS["cleanup"], "cleanup", _run)
 
     async def _refresh_valuation_cache(self) -> None:
         """
@@ -3887,36 +3909,38 @@ class DailyIngestionOrchestrator:
         Sync position eligibility from Yahoo Fantasy API (lock 100_027).
 
         Every sync (daily 8:00 AM ET):
-          1. Fetch all rosters from Yahoo Fantasy API (30 teams × ~25 players)
-          2. Parse position eligibility: C, 1B, 2B, 3B, SS, LF, CF, RF, OF, DH, UTIL
-          3. Map to BDL player IDs via PlayerIDMapping
-          4. Upsert to position_eligibility table (one record per bdl_player_id)
+          1. Fetch all rosters via get_league_rosters() — flat list of player dicts
+          2. Build boolean position flags from positions list
+          3. Upsert ONE ROW PER PLAYER keyed on yahoo_player_key
 
-        Natural key: (bdl_player_id). Multi-eligibility (e.g., Bellinger CF/LF/RF) counts
-        as separate entries with can_play_* flags.
-
+        Natural key: yahoo_player_key (unique constraint _pe_yahoo_uc).
         Critical for H2H One Win UI — CF scarcity calculations depend on this data.
         """
+        logger.info("SYNC JOB ENTRY: _sync_position_eligibility - Starting position eligibility sync")
         t0 = time.monotonic()
+
+        # Position scarcity priority for primary_position selection
+        _POSITION_PRIORITY = ["C", "SS", "2B", "CF", "3B", "RF", "LF", "1B", "OF", "DH", "SP", "RP", "Util"]
+        _BATTER_POS = {"C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "OF", "DH"}
 
         async def _run():
             from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
             try:
+                logger.info("SYNC JOB PROGRESS: _sync_position_eligibility - Initializing Yahoo client")
                 yahoo = YahooFantasyClient()
             except Exception as exc:
-                logger.error("_sync_position_eligibility: Yahoo client init failed -- %s", exc)
+                logger.error("SYNC JOB ERROR: _sync_position_eligibility - Yahoo client init failed: %s", exc)
                 self._record_job_run("position_eligibility", "skipped")
                 return {"status": "skipped", "records": 0, "elapsed_ms": 0}
 
-            league_key = os.getenv("YAHOO_LEAGUE_ID")
+            league_key = yahoo.league_key
             if not league_key:
-                logger.warning("_sync_position_eligibility: YAHOO_LEAGUE_ID not set -- skipping")
+                logger.warning("_sync_position_eligibility: Yahoo client league_key not set -- skipping")
                 self._record_job_run("position_eligibility", "skipped")
                 return {"status": "skipped", "records": 0, "elapsed_ms": 0}
 
             try:
-                # Fetch all rosters from Yahoo
-                rosters_data = await asyncio.to_thread(
+                all_players = await asyncio.to_thread(
                     yahoo.get_league_rosters,
                     league_key=league_key,
                     include_team_key=True
@@ -3928,85 +3952,93 @@ class DailyIngestionOrchestrator:
 
             db = SessionLocal()
             records_processed = 0
+            seen_keys = set()
 
             try:
-                for roster_entry in rosters_data:
+                now = now_et()
+                for player_data in all_players:
                     try:
-                        # Extract position eligibility from roster_entry
-                        player_data = roster_entry.get("player", {})
-                        coverage_data = roster_entry.get("coverage", {})
-                        coverage_type = coverage_data.get("type", "")
+                        player_key = player_data.get("player_key")
+                        if not player_key or player_key in seen_keys:
+                            continue
+                        seen_keys.add(player_key)
 
-                        # Get BDL player ID from PlayerIDMapping
-                        bdl_id = None
-                        yahoo_key = str(player_data.get("player_id"))
-                        if yahoo_key:
-                            mapping = db.query(PlayerIDMapping).filter(
-                                PlayerIDMapping.yahoo_key == yahoo_key
-                            ).first()
-                            if mapping:
-                                bdl_id = mapping.bdl_id
+                        name = player_data.get("name", "Unknown")
+                        positions = player_data.get("positions", [])
+                        if not positions:
+                            continue
 
-                        if not bdl_id:
-                            continue  # Skip players not in our player mapping
-
-                        # Parse position eligibility (1=true, 0=false)
-                        position_data = player_data.get("position_types", {})
-                        can_play = {
-                            'C': position_data.get('C', 0) == 1,
-                            '1B': position_data.get('1B', 0) == 1,
-                            '2B': position_data.get('2B', 0) == 1,
-                            '3B': position_data.get('3B', 0) == 1,
-                            'SS': position_data.get('SS', 0) == 1,
-                            'LF': position_data.get('LF', 0) == 1,
-                            'CF': position_data.get('CF', 0) == 1,
-                            'RF': position_data.get('RF', 0) == 1,
-                            'OF': position_data.get('OF', 0) == 1,
-                            'DH': position_data.get('DH', 0) == 1,
-                            'UTIL': position_data.get('UTIL', 0) == 1,
+                        # Build boolean flags from positions list
+                        pos_set = {p.upper() for p in positions if p}
+                        flags = {
+                            "can_play_c": "C" in pos_set,
+                            "can_play_1b": "1B" in pos_set,
+                            "can_play_2b": "2B" in pos_set,
+                            "can_play_3b": "3B" in pos_set,
+                            "can_play_ss": "SS" in pos_set,
+                            "can_play_lf": "LF" in pos_set,
+                            "can_play_cf": "CF" in pos_set,
+                            "can_play_rf": "RF" in pos_set,
+                            "can_play_of": "OF" in pos_set or bool(pos_set & {"LF", "CF", "RF"}),
+                            "can_play_dh": "DH" in pos_set,
+                            "can_play_util": "UTIL" in pos_set or "Util" in {p for p in positions if p},
+                            "can_play_sp": "SP" in pos_set,
+                            "can_play_rp": "RP" in pos_set,
                         }
 
-                        # Determine primary position
-                        primary_position_data = player_data.get("primary_position")
-                        primary_position = primary_position_data.get("abbreviation") if primary_position_data else None
+                        # Primary position by scarcity
+                        pos_upper = [p.upper() for p in positions if p]
+                        primary = next((pr for pr in _POSITION_PRIORITY if pr.upper() in pos_upper), positions[0] if positions else "DH")
 
-                        # Player type
-                        player_type = 'B' if can_play.get('C') or can_play.get('1B') or can_play.get('2B') or can_play.get('3B') or can_play.get('SS') or can_play.get('OF') else 'P'
+                        # Player type classification
+                        has_pitcher = bool(pos_set & {"SP", "RP", "P"})
+                        has_batter = bool(pos_set & _BATTER_POS)
+                        if has_pitcher and has_batter:
+                            ptype = "two_way"
+                        elif has_pitcher:
+                            ptype = "pitcher"
+                        else:
+                            ptype = "batter"
 
-                        # Multi-eligibility count
-                        multi_count = sum(1 for v in can_play.values() if v)
+                        # Multi-eligibility count (exclude Util)
+                        multi_count = len([p for p in positions if p.upper() != "UTIL"])
 
-                        # Upsert to position_eligibility
-                        eligibility = PositionEligibility(
-                            bdl_player_id=bdl_id,
-                            can_play_c=can_play['C'],
-                            can_play_1b=can_play['1B'],
-                            can_play_2b=can_play['2B'],
-                            can_play_3b=can_play['3B'],
-                            can_play_ss=can_play['SS'],
-                            can_play_lf=can_play['LF'],
-                            can_play_cf=can_play['CF'],
-                            can_play_rf=can_play['RF'],
-                            can_play_of=can_play['OF'],
-                            can_play_dh=can_play['DH'],
-                            can_play_util=can_play['UTIL'],
-                            primary_position=primary_position,
-                            player_type=player_type,
+                        # Upsert: ON CONFLICT (yahoo_player_key) DO UPDATE
+                        stmt = pg_insert(PositionEligibility.__table__).values(
+                            yahoo_player_key=player_key,
+                            bdl_player_id=None,
+                            player_name=name,
+                            first_name="",
+                            last_name="",
+                            primary_position=primary,
+                            player_type=ptype,
                             multi_eligibility_count=multi_count,
-                            fetched_at=now_et(),
-                            updated_at=now_et(),
+                            fetched_at=now,
+                            updated_at=now,
+                            **flags,
+                        ).on_conflict_do_update(
+                            constraint="_pe_yahoo_uc",
+                            set_={
+                                "player_name": name,
+                                "primary_position": primary,
+                                "player_type": ptype,
+                                "multi_eligibility_count": multi_count,
+                                "updated_at": now,
+                                **flags,
+                            },
                         )
-
-                        db.merge(eligibility)
+                        db.execute(stmt)
                         records_processed += 1
 
                     except Exception as exc:
-                        logger.error("_sync_position_eligibility: Failed to process player %s (%s)", roster_entry, exc)
+                        logger.error("_sync_position_eligibility: Failed to process player %s (%s)",
+                                     player_data.get("player_key", "?"), exc)
                         continue
 
                 db.commit()
                 elapsed = int((time.monotonic() - t0) * 1000)
-                logger.info("_sync_position_eligibility: Processed %d records in %d ms", records_processed, elapsed)
+                logger.info("SYNC JOB SUCCESS: _sync_position_eligibility - Processed %d records in %d ms", records_processed, elapsed)
+                logger.info("SYNC JOB EXIT: _sync_position_eligibility - Completed successfully")
                 self._record_job_run("position_eligibility", "success", records_processed)
                 return {"status": "success", "records": records_processed, "elapsed_ms": elapsed}
 
@@ -4019,7 +4051,7 @@ class DailyIngestionOrchestrator:
                 db.close()
 
         try:
-            return await _with_advisory_lock(LOCK_IDS["position_eligibility"], _run)
+            return await _with_advisory_lock(LOCK_IDS["position_eligibility"], "position_eligibility", _run)
         except Exception as exc:
             logger.error("_sync_position_eligibility: Job failed (%s)", exc)
             self._record_job_run("position_eligibility", "error", 0)
@@ -4040,10 +4072,16 @@ class DailyIngestionOrchestrator:
 
         Natural key: (game_date, team). One probable pitcher per team per date.
         """
+        logger.info("SYNC JOB ENTRY: _sync_probable_pitchers - Starting probable pitchers sync")
         t0 = time.monotonic()
 
         async def _run():
             from backend.services.balldontlie import BallDontLieClient
+            try:
+                logger.info("SYNC JOB PROGRESS: _sync_probable_pitchers - Initializing BDL client")
+                bdl = BallDontLieClient()
+            except ValueError as exc:
+                logger.error("SYNC JOB ERROR: _sync_probable_pitchers - BDL client initialization failed: %s", exc)
             try:
                 bdl = BallDontLieClient()
             except ValueError as exc:
@@ -4140,7 +4178,8 @@ class DailyIngestionOrchestrator:
 
                 db.commit()
                 elapsed = int((time.monotonic() - t0) * 1000)
-                logger.info("_sync_probable_pitchers: Processed %d records in %d ms", records_processed, elapsed)
+                logger.info("SYNC JOB SUCCESS: _sync_probable_pitchers - Processed %d records in %d ms", records_processed, elapsed)
+                logger.info("SYNC JOB EXIT: _sync_probable_pitchers - Completed successfully")
                 self._record_job_run("probable_pitchers", "success", records_processed)
                 return {"status": "success", "records": records_processed, "elapsed_ms": elapsed}
 
@@ -4153,7 +4192,7 @@ class DailyIngestionOrchestrator:
                 db.close()
 
         try:
-            return await _with_advisory_lock(LOCK_IDS["probable_pitchers"], _run)
+            return await _with_advisory_lock(LOCK_IDS["probable_pitchers"], "probable_pitchers", _run)
         except Exception as exc:
             logger.error("_sync_probable_pitchers: Job failed (%s)", exc)
             self._record_job_run("probable_pitchers", "error", 0)
@@ -4193,6 +4232,7 @@ class DailyIngestionOrchestrator:
         Critical for data integration — connects BDL, MLB Stats, and Yahoo namespaces.
         Natural key: (source_system, source_id).
         """
+        logger.info("SYNC JOB ENTRY: _sync_player_id_mapping - Starting player ID mapping sync")
         t0 = time.monotonic()
 
         async def _run():
@@ -4200,7 +4240,7 @@ class DailyIngestionOrchestrator:
             try:
                 bdl = BallDontLieClient()
             except ValueError as exc:
-                logger.error("_sync_player_id_mapping: BDL init failed -- %s", exc)
+                logger.error("SYNC JOB ERROR: _sync_player_id_mapping - BDL client initialization failed: %s", exc)
                 self._record_job_run("player_id_mapping", "skipped")
                 return {"status": "skipped", "records": 0, "elapsed_ms": 0}
 
@@ -4250,7 +4290,8 @@ class DailyIngestionOrchestrator:
 
                 db.commit()
                 elapsed = int((time.monotonic() - t0) * 1000)
-                logger.info("_sync_player_id_mapping: Processed %d records in %d ms", records_processed, elapsed)
+                logger.info("SYNC JOB SUCCESS: _sync_player_id_mapping - Processed %d records in %d ms", records_processed, elapsed)
+                logger.info("SYNC JOB EXIT: _sync_player_id_mapping - Completed successfully")
                 self._record_job_run("player_id_mapping", "success", records_processed)
                 return {"status": "success", "records": records_processed, "elapsed_ms": elapsed}
 
@@ -4263,7 +4304,7 @@ class DailyIngestionOrchestrator:
                 db.close()
 
         try:
-            return await _with_advisory_lock(LOCK_IDS["player_id_mapping"], _run)
+            return await _with_advisory_lock(LOCK_IDS["player_id_mapping"], "player_id_mapping", _run)
         except Exception as exc:
             logger.error("_sync_player_id_mapping: Job failed (%s)", exc)
             self._record_job_run("player_id_mapping", "error", 0)

@@ -48,6 +48,27 @@ from backend.services.performance import (
     calculate_financial_metrics,
 )
 from backend.services.alerts import check_performance_alerts, persist_alerts, run_alert_check
+
+# TEST ENDPOINTS - REMOVE AFTER SYNC JOB TESTING
+from backend.test_sync_jobs import router as _test_router
+# END TEST ENDPOINTS
+# DB VERIFICATION ENDPOINTS - REMOVE AFTER DATABASE VERIFICATION
+from backend.admin_db_verify import router as _db_verify_router
+# END DB VERIFICATION ENDPOINTS
+# YAHOO API DEBUG ENDPOINTS - REMOVE AFTER DEBUGGING
+from backend.admin_yahoo_debug import router as _yahoo_debug_router
+# END YAHOO API DEBUG ENDPOINTS
+# YAHOO TOKEN REFRESH ENDPOINTS - REMOVE AFTER TOKEN IS SET
+from backend.admin_yahoo_token_refresh import router as _yahoo_token_router
+# END YAHOO TOKEN REFRESH ENDPOINTS
+
+# YAHOO PARSING TEST ENDPOINT - REMOVE AFTER YAHOO API DEBUGGING
+from backend.admin_test_yahoo_parsing import router as _yahoo_parsing_test_router
+# END YAHOO PARSING TEST ENDPOINT
+
+# YAHOO STRUCTURE DUMP ENDPOINT - REMOVE AFTER YAHOO API DEBUGGING
+from backend.admin_yahoo_structure_dump import router as _yahoo_structure_dump_router
+# END YAHOO STRUCTURE DUMP ENDPOINT
 from backend.services.recalibration import compute_dynamic_weights
 from backend.services.discord_notifier import send_todays_bets
 from backend.services.sentinel import run_nightly_health_check
@@ -560,6 +581,22 @@ from backend.routers.admin import router as _admin_router  # noqa: E402
 app.include_router(_edge_router)
 app.include_router(_fantasy_router)
 app.include_router(_admin_router)
+
+# TEST ENDPOINTS - REMOVE AFTER SYNC JOB TESTING
+app.include_router(_test_router, prefix="/test", tags=["test"])
+# END TEST ENDPOINTS
+# DB VERIFICATION ENDPOINTS - REMOVE AFTER DATABASE VERIFICATION
+app.include_router(_db_verify_router, prefix="/test", tags=["db-verify"])
+# END DB VERIFICATION ENDPOINTS
+# YAHOO API DEBUG ENDPOINTS - REMOVE AFTER DEBUGGING
+app.include_router(_yahoo_debug_router, prefix="/test", tags=["yahoo-debug"])
+# END YAHOO API DEBUG ENDPOINTS
+# YAHOO TOKEN REFRESH ENDPOINTS - REMOVE AFTER TOKEN IS SET
+app.include_router(_yahoo_token_router, prefix="/test", tags=["yahoo-token"])
+app.include_router(_yahoo_parsing_test_router, prefix="/test", tags=["yahoo-parsing-test"])
+app.include_router(_yahoo_structure_dump_router, prefix="/test", tags=["yahoo-structure-dump"])
+# END YAHOO TOKEN REFRESH ENDPOINTS
+
 # --- end strangler-fig mounts ---
 
 # CORS - reads ALLOWED_ORIGINS env var (comma-separated) or falls back to wildcard.

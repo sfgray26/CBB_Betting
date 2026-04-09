@@ -206,7 +206,6 @@ class H2HOneWinSimulator:
         Swing: 40-60% win (key matchups)
         Vulnerable: <30% win (risk zones)
         """
-        categories = self.HITTING_CATS + self.PITCHING_CATS
         locked = []
         swing = []
         vulnerable = []
