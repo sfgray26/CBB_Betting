@@ -101,7 +101,11 @@
       "Bash(railway domain:*)",
       "Bash(timeout 120s bash -c 'while true; do railway logs --service Fantasy-App --lines 30 2>&1 | grep -E \"JOB START|JOB LOCK ACQUIRED|JOB COMPLETE|JOB FAILED|SYNC JOB|API CLIENT INIT|ERROR|Exception\" && sleep 5; done')",
       "Bash(railway --help)",
-      "Bash(railway redeploy:*)"
+      "Bash(railway redeploy:*)",
+      "Bash(railway domains:*)",
+      "Bash(railway services:*)",
+      "Bash(railway deployment:*)",
+      "Bash(railway service:*)"
     ]
   }
 }
