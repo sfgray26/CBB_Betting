@@ -427,9 +427,6 @@ class YahooFantasyClient:
                 else:
                     team_meta = {}
 
-                # Flag to track if players were already parsed (for new format)
-                players_already_parsed = False
-
                 team_key = team_meta.get("team_key")
                 logger.debug("get_league_rosters: Processing team=%s", team_key)
 
@@ -444,57 +441,38 @@ class YahooFantasyClient:
 
                 players_processed = 0  # Initialize for both format paths
 
-                # Yahoo API structure changed - players are now directly under numeric keys in roster_wrapper
-                # Old format: roster_wrapper["players"]["player"] = [...]
-                # New format: roster_wrapper["0"] = {player_data}, roster_wrapper["1"] = {player_data}, ...
-                players_raw = roster_wrapper.get("players", {}) if isinstance(roster_wrapper, dict) else {}
+                # Resolve players_raw from roster_wrapper.
+                # Format A (old): roster_wrapper["players"] = {"0": {"player": [...]}, ...}
+                # Format B (2026): roster_wrapper["0"]["players"] = {"0": {"player": [...]}, ...}
+                #   i.e. a single numeric key wraps the players dict.
+                players_raw = {}
+                if isinstance(roster_wrapper, dict):
+                    players_raw = roster_wrapper.get("players", {})
+                    if not players_raw:
+                        # Format B: look for a numeric key containing "players"
+                        for rk, rv in roster_wrapper.items():
+                            if rk.isdigit() and isinstance(rv, dict) and "players" in rv:
+                                players_raw = rv["players"]
+                                break
 
-                # Check if we're using the new format (numeric keys without "players" wrapper)
-                has_players_key = "players" in roster_wrapper if isinstance(roster_wrapper, dict) else False
-                players_raw_has_data = len(players_raw) > 0 if isinstance(players_raw, dict) else False
+                if isinstance(players_raw, list):
+                    players_raw = {"player": players_raw}
 
-                logger.info("get_league_rosters: has_players_key=%s, players_raw_has_data=%s", has_players_key, players_raw_has_data)
+                logger.info("get_league_rosters: players_raw type=%s, n_keys=%s",
+                            type(players_raw).__name__,
+                            len(players_raw) if isinstance(players_raw, dict) else "N/A")
 
-                if not has_players_key or not players_raw_has_data:
-                    # New format: players are directly under numeric keys
-                    # Each roster_wrapper["0"], roster_wrapper["1"], etc. is a player dict
-                    # _parse_player expects a list, so wrap each dict: [player_dict]
-                    player_entries = []
-                    for key, value in roster_wrapper.items():
-                        if key.isdigit() and isinstance(value, dict):
-                            player_entries.append([value])  # Wrap in list for _parse_player
-                    logger.info("get_league_rosters: Using new Yahoo API format - found %d players under numeric keys", len(player_entries))
+                # _iter_block handles both {"count": N, "0": {"player": ...}} and
+                # plain numeric-key dicts without a count.
+                players_processed = 0
+                for player_list in self._iter_block(players_raw, "player"):
+                    player_dict = self._parse_player(player_list)
+                    if include_team_key:
+                        player_dict["team_key"] = team_key
+                    all_players.append(player_dict)
+                    players_processed += 1
 
-                    # Parse player entries directly (skip _iter_block since we already have the right format)
-                    for player_list in player_entries:
-                        player_dict = self._parse_player(player_list)
-                        if include_team_key:
-                            player_dict["team_key"] = team_key
-                        all_players.append(player_dict)
-                        players_processed += 1
-
-                    logger.debug("get_league_rosters: Team %s processed %d players", team_key, players_processed)
-                    players_already_parsed = True  # Mark as parsed to skip old format logic
-                else:
-                    logger.info("get_league_rosters: players_raw type=%s, keys=%s",
-                               type(players_raw).__name__, list(players_raw.keys()) if isinstance(players_raw, dict) else "N/A")
-
-                    # Handle case where players is directly a list
-                    if isinstance(players_raw, list):
-                        logger.info("get_league_rosters: players_raw is list with %d elements", len(players_raw))
-                        players_raw = {"player": players_raw}
-
-                # Skip old format parsing if players were already parsed in new format path
-                if not players_already_parsed:
-                    players_processed = 0
-                    for player_list in self._iter_block(players_raw, "player"):
-                        player_dict = self._parse_player(player_list)
-                        if include_team_key:
-                            player_dict["team_key"] = team_key
-                        all_players.append(player_dict)
-                        players_processed += 1
-
-                    logger.debug("get_league_rosters: Team %s processed %d players", team_key, players_processed)
+                logger.debug("get_league_rosters: Team %s processed %d players", team_key, players_processed)
 
             logger.info("get_league_rosters: Returning %d total players", len(all_players))
             return all_players
