@@ -12,7 +12,7 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-@router.post("/test/sync/player-id-mapping")
+@router.post("/sync/player-id-mapping")
 async def test_sync_player_id_mapping():
     """
     Test endpoint to trigger player_id_mapping sync without auth.
@@ -28,7 +28,7 @@ async def test_sync_player_id_mapping():
         logger.exception("TEST: player_id_mapping failed")
         return {"status": "error", "error": str(e)}
 
-@router.post("/test/sync/position-eligibility")
+@router.post("/sync/position-eligibility")
 async def test_sync_position_eligibility():
     """Test endpoint to trigger position_eligibility sync without auth."""
     try:
@@ -41,7 +41,7 @@ async def test_sync_position_eligibility():
         logger.exception("TEST: position_eligibility failed")
         return {"status": "error", "error": str(e)}
 
-@router.post("/test/sync/probable-pitchers")
+@router.post("/sync/probable-pitchers")
 async def test_sync_probable_pitchers():
     """Test endpoint to trigger probable_pitchers sync without auth."""
     try:
@@ -54,7 +54,7 @@ async def test_sync_probable_pitchers():
         logger.exception("TEST: probable_pitchers failed")
         return {"status": "error", "error": str(e)}
 
-@router.post("/test/sync/all")
+@router.post("/sync/all")
 async def test_sync_all():
     """Test endpoint to trigger all sync jobs without auth."""
     try:
