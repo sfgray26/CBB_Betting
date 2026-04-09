@@ -163,19 +163,9 @@ def backfill_position_eligibility() -> dict:
                             first_name = ""
                             last_name = ""
 
-                        # Extract position eligibility
-                        eligible_positions = player_data.get("eligible_positions", [])
-                        positions = []
-
-                        if eligible_positions:
-                            # Parse position array
-                            for pos_entry in eligible_positions:
-                                if isinstance(pos_entry, dict):
-                                    pos = pos_entry.get("position")
-                                    if pos:
-                                        positions.append(pos)
-                                elif isinstance(pos_entry, str):
-                                    positions.append(pos_entry)
+                        # Extract position eligibility - get_roster() returns parsed player data
+                        # with 'positions' field (list of position strings), not 'eligible_positions'
+                        positions = player_data.get("positions", [])
 
                         if not positions:
                             logger.debug(f"No position data for {name}")
