@@ -12,8 +12,6 @@ Verified nullable fields from 25-item live sample:
 CRITICAL: dob uses "D/M/YYYY" format, not ISO 8601. Custom validator required.
 """
 
-from __future__ import annotations
-
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -55,3 +53,7 @@ class MLBPlayer(BaseModel):
         if not isinstance(v, str):
             raise ValueError(f"dob must be str or None, got {type(v).__name__}: {v!r}")
         return v
+
+
+# Rebuild model to handle forward references correctly
+MLBPlayer.model_rebuild()

@@ -4,7 +4,6 @@ BDL pagination envelope — generic wrapper for all BDL responses.
 Ground truth: reports/SCHEMA_DISCOVERY.md
 """
 
-from __future__ import annotations
 
 from typing import Generic, Optional, TypeVar
 
@@ -34,3 +33,7 @@ class BDLResponse(BaseModel, Generic[T]):
 
     data: list[T]
     meta: BDLMeta
+
+# Rebuild models to handle forward references correctly
+BDLResponse.model_rebuild()
+BDLMeta.model_rebuild()
