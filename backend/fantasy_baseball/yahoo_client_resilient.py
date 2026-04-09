@@ -442,6 +442,8 @@ class YahooFantasyClient:
                 logger.info("get_league_rosters: roster_wrapper type=%s, keys=%s",
                            type(roster_wrapper).__name__, list(roster_wrapper.keys()) if isinstance(roster_wrapper, dict) else "N/A")
 
+                players_processed = 0  # Initialize for both format paths
+
                 # Yahoo API structure changed - players are now directly under numeric keys in roster_wrapper
                 # Old format: roster_wrapper["players"]["player"] = [...]
                 # New format: roster_wrapper["0"] = {player_data}, roster_wrapper["1"] = {player_data}, ...
