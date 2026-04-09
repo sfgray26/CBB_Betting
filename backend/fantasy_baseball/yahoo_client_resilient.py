@@ -342,6 +342,7 @@ class YahooFantasyClient:
 
         Yahoo 2025 format: {"count": N, "0": {item_key: ...}, "1": {item_key: ...}}
         Yahoo 2026 format: [{item_key: ...}, {item_key: ...}]
+        Yahoo 2026 roster format: {"0": {item_key: [...]}, "1": {item_key: [...]}} (no "count" key)
         """
         if isinstance(block, list):
             for item in block:
@@ -349,10 +350,28 @@ class YahooFantasyClient:
                     yield item[item_key]
         elif isinstance(block, dict):
             count = int(block.get("count", 0))
-            for i in range(count):
-                entry = block.get(str(i), {})
-                if isinstance(entry, dict) and item_key in entry:
-                    yield entry[item_key]
+
+            # If we have a count, use it
+            if count > 0:
+                for i in range(count):
+                    entry = block.get(str(i), {})
+                    if isinstance(entry, dict) and item_key in entry:
+                        yield entry[item_key]
+            else:
+                # New Yahoo API format: numeric keys without "count"
+                # Iterate through all numeric keys in sorted order
+                numeric_keys = sorted([k for k in block.keys() if k.isdigit()])
+                for key in numeric_keys:
+                    entry = block.get(key, {})
+                    if isinstance(entry, dict):
+                        # For numeric key entries, the item_key value might be directly the data
+                        # or nested under item_key
+                        if item_key in entry:
+                            yield entry[item_key]
+                        elif len(entry) == 1 and item_key in str(entry):
+                            # Entry might be like {"team": [...]} directly
+                            if isinstance(list(entry.values())[0], list):
+                                yield list(entry.values())[0]
 
     def get_standings(self) -> list[dict]:
         data = self._get(f"league/{self.league_key}/standings")
