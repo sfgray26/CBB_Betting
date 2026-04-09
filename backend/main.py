@@ -3012,6 +3012,133 @@ async def ingestion_run_pipeline(
     return {"pipeline": _PIPELINE_JOB_ORDER, "results": results}
 
 
+@app.post("/admin/backfill/player-id-mapping")
+async def backfill_player_id_mapping(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually trigger player ID mapping backfill from BDL API.
+
+    Fetches all MLB players from BallDon'tLie and stores cross-reference
+    mapping (BDL ID, MLBAM ID, Yahoo ID, full name, normalized name).
+
+    Returns: dict with status, records_processed, elapsed_ms, table_count
+    """
+    from scripts.backfill_player_id_mapping import backfill_player_id_mapping
+
+    try:
+        result = backfill_player_id_mapping()
+        return result
+    except Exception as exc:
+        logger.error("Player ID mapping backfill failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/admin/backfill/positions")
+async def backfill_positions(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually trigger position eligibility backfill from Yahoo Fantasy API.
+
+    Fetches current position eligibility snapshot for all 30 MLB teams.
+
+    Returns: dict with status, records_processed, teams_processed, elapsed_ms
+    """
+    from scripts.backfill_positions import backfill_position_eligibility
+
+    try:
+        result = backfill_position_eligibility()
+        return result
+    except Exception as exc:
+        logger.error("Position eligibility backfill failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/admin/backfill/probable-pitchers")
+async def backfill_probable_pitchers(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually trigger probable pitchers backfill from BDL Games API.
+
+    Fetches historical probable pitchers (March 20 - April 8, 2026).
+
+    Returns: dict with status, records_processed, dates_processed, elapsed_ms
+    """
+    from scripts.backfill_probable_pitchers import backfill_probable_pitchers
+
+    try:
+        result = backfill_probable_pitchers()
+        return result
+    except Exception as exc:
+        logger.error("Probable pitchers backfill failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/admin/backfill/statcast")
+async def backfill_statcast(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually trigger Statcast backfill from Baseball Savant CSV API.
+
+    Fetches historical Statcast data (March 20 - April 8, 2026).
+    WARNING: This can take 10-20 minutes due to API rate limits.
+
+    Returns: dict with status, records_processed, dates_processed, elapsed_ms
+    """
+    from scripts.backfill_statcast import backfill_statcast
+
+    try:
+        result = backfill_statcast()
+        return result
+    except Exception as exc:
+        logger.error("Statcast backfill failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/admin/backfill/all")
+async def backfill_all(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Run all backfill scripts in dependency order via HTTP request.
+
+    Executes: player_id_mapping -> positions -> probable_pitchers -> statcast
+    Stops on critical failures. Provides progress summary.
+
+    Returns: dict with overall success status and per-script results
+    """
+    import subprocess
+    import sys
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "scripts.backfill_all_data"],
+            capture_output=True,
+            text=True,
+            timeout=1800,  # 30 minutes
+        )
+
+        return {
+            "success": result.returncode == 0,
+            "stdout": result.stdout[-2000:],  # Last 2000 chars
+            "stderr": result.stderr[-2000:] if result.stderr else None,
+            "returncode": result.returncode,
+        }
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Backfill timeout (exceeded 30 minutes)")
+    except Exception as exc:
+        logger.error("Master backfill orchestration failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.get("/admin/explanations/{decision_id}")
 async def get_explanation(decision_id: int, db: Session = Depends(get_db)):
     """
