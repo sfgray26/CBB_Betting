@@ -48,6 +48,10 @@ from backend.services.performance import (
     calculate_financial_metrics,
 )
 from backend.services.alerts import check_performance_alerts, persist_alerts, run_alert_check
+
+# TEST ENDPOINTS - REMOVE AFTER SYNC JOB TESTING
+from backend.test_sync_jobs import router as _test_router
+# END TEST ENDPOINTS
 from backend.services.recalibration import compute_dynamic_weights
 from backend.services.discord_notifier import send_todays_bets
 from backend.services.sentinel import run_nightly_health_check
@@ -560,6 +564,11 @@ from backend.routers.admin import router as _admin_router  # noqa: E402
 app.include_router(_edge_router)
 app.include_router(_fantasy_router)
 app.include_router(_admin_router)
+
+# TEST ENDPOINTS - REMOVE AFTER SYNC JOB TESTING
+app.include_router(_test_router, prefix="/test", tags=["test"])
+# END TEST ENDPOINTS
+
 # --- end strangler-fig mounts ---
 
 # CORS - reads ALLOWED_ORIGINS env var (comma-separated) or falls back to wildcard.
