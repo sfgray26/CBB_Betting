@@ -3139,6 +3139,35 @@ async def backfill_statcast(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.post("/admin/backfill/yahoo-keys")
+async def backfill_yahoo_keys_endpoint(
+    dry_run: bool = False,
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Manually trigger yahoo_key backfill from position_eligibility to player_id_mapping.
+
+    Cross-references position_eligibility.yahoo_player_key with player_id_mapping
+    by matching on normalized player names.
+
+    This bridges the Yahoo Fantasy namespace to the BDL namespace.
+
+    Query params:
+        dry_run: If true, preview without writing to database
+
+    Returns: dict with status, updated_count, skipped_count, errors, yahoo_key_count
+    """
+    from scripts.backfill_yahoo_keys import backfill_yahoo_keys
+
+    try:
+        result = backfill_yahoo_keys(db, dry_run=dry_run)
+        return result
+    except Exception as exc:
+        logger.error("Yahoo keys backfill failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.post("/admin/backfill/all")
 async def backfill_all(
     user: str = Depends(verify_admin_api_key),
