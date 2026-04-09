@@ -60,6 +60,10 @@ gunicorn==21.2.0
 duckduckgo-search>=5.0
 rapidfuzz==3.6.1
 
+# Caching (Railway Redis - K-31)
+redis>=5.0.0
+msgpack>=1.0.0
+
 # Fantasy Baseball — Yahoo API + Statcast enrichment
 pybaseball>=2.2.5
 MLB-StatsAPI>=1.7.0

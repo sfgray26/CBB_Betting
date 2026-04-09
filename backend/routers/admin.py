@@ -7,7 +7,7 @@ Do NOT import from other backend.routers modules here.
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import text, func
+from sqlalchemy import text, func, inspect
 from typing import Optional
 import logging
 import os
@@ -718,6 +718,55 @@ async def get_portfolio_status(
         "is_halted": state.is_halted,
         "halt_reason": state.halt_reason,
         "pending_positions": len(state.positions),
+    }
+
+
+@router.get("/admin/audit-tables")
+async def audit_tables(user: str = Depends(verify_api_key)):
+    """Audit all database tables - returns row counts for each table."""
+    from sqlalchemy import inspect
+    from backend.models import engine
+
+    inspector = inspect(engine)
+    tables = sorted(inspector.get_table_names())
+
+    results = []
+    db = SessionLocal()
+    try:
+        for table in tables:
+            try:
+                result = db.execute(text(f'SELECT COUNT(*) FROM "{table}"'))
+                count = result.scalar()
+                results.append({
+                    'table': table,
+                    'count': count,
+                    'empty': count == 0
+                })
+            except Exception as e:
+                results.append({
+                    'table': table,
+                    'count': 0,
+                    'empty': False,
+                    'error': str(e)[:100]
+                })
+    finally:
+        db.close()
+
+    # Categorize results
+    empty = [r for r in results if r.get('empty') and not r.get('error')]
+    populated = [r for r in results if not r.get('empty')]
+    errors = [r for r in results if r.get('error')]
+
+    return {
+        'summary': {
+            'total_tables': len(tables),
+            'empty_tables': len(empty),
+            'populated_tables': len(populated),
+            'errors': len(errors)
+        },
+        'empty_tables': empty,
+        'populated_tables': populated,
+        'errors': errors
     }
 
 

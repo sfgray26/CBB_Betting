@@ -1,6 +1,6 @@
 {
-  "mean_composite_mae": 0.7980826889907618,
-  "window_start": "2026-03-24",
-  "window_end": "2026-04-07",
-  "n_players": 579
+  "mean_composite_mae": 0.1345454776468428,
+  "window_start": "2026-03-13",
+  "window_end": "2026-03-27",
+  "n_players": 229
 }

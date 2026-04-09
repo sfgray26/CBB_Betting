@@ -1,0 +1,8 @@
+Collecting redis
+  Downloading redis-7.4.0-py3-none-any.whl (409 kB)
+     -------------------------------------- 409.8/409.8 kB 3.6 MB/s eta 0:00:00
+Collecting msgpack
+  Downloading msgpack-1.1.2-cp311-cp311-win_amd64.whl (71 kB)
+     ---------------------------------------- 71.6/71.6 kB 3.8 MB/s eta 0:00:00
+Installing collected packages: redis, msgpack
+Successfully installed msgpack-1.1.2 redis-7.4.0

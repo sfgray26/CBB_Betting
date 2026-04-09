@@ -19,6 +19,7 @@ import json
 import requests
 
 from backend.fantasy_baseball.elite_context import WeatherContext
+from backend.services.cache_service import get_cache_service
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +105,9 @@ TEAM_VENUES = {
     "SF": "Oracle Park",
 }
 
+# Reverse mapping: venue name to team abbreviation (for cache keys)
+VENUE_TO_TEAM = {venue: team for team, venue in TEAM_VENUES.items()}
+
 # Stadium characteristics
 STADIUM_PROFILES = {
     "Coors Field": {"elevation": 5183, "park_factor": 1.35, "dome": False},
@@ -186,6 +190,7 @@ class WeatherFetcher:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._session = requests.Session()
         self._api_key_failed = False  # Circuit breaker: skip API calls after auth failure
+        self._cache_service = get_cache_service()  # Redis caching layer
         
         # Try to get API key from environment
         if not self.api_key:
@@ -229,8 +234,18 @@ class WeatherFetcher:
                 )
         
         cache_key = f"{venue}_{game_time.strftime('%Y%m%d_%H%M')}"
-        
-        # Check cache
+
+        # Check Redis cache first (faster than filesystem)
+        team_abbr_upper = team_abbr.upper() if team_abbr else None
+        if team_abbr_upper and team_abbr_upper in TEAM_VENUES:
+            game_date = game_time.strftime('%Y-%m-%d')
+            redis_cached = self._cache_service.get_weather(team_abbr_upper, game_date)
+            if redis_cached:
+                logger.debug(f"Redis cache hit for {venue} on {game_date}")
+                # Convert cached dict back to GameWeather object
+                return GameWeather(**redis_cached)
+
+        # Fall back to filesystem cache
         cached = self._load_cache(cache_key)
         if cached:
             return cached
@@ -247,11 +262,37 @@ class WeatherFetcher:
                 hr_factor=stadium_profile.get("park_factor", 1.0),
             )
             self._save_cache(cache_key, weather)
+            # Also save to Redis if we have a team abbreviation
+            if team_abbr and team_abbr.upper() in TEAM_VENUES:
+                game_date = game_time.strftime('%Y-%m-%d')
+                weather_dict = {
+                    'venue': weather.venue,
+                    'game_time': weather.game_time.isoformat(),
+                    'temperature': weather.temperature,
+                    'is_dome': weather.is_dome,
+                    'elevation': weather.elevation,
+                    'hitter_friendly_score': weather.hitter_friendly_score,
+                    'hr_factor': weather.hr_factor,
+                }
+                self._cache_service.set_weather(team_abbr.upper(), game_date, weather_dict)
             return weather
-        
+
         # Fetch real weather
         weather = self._fetch_weather(venue, game_time, stadium_profile)
         self._save_cache(cache_key, weather)
+        # Also save to Redis if we have a team abbreviation
+        if team_abbr and team_abbr.upper() in TEAM_VENUES:
+            game_date = game_time.strftime('%Y-%m-%d')
+            weather_dict = {
+                'venue': weather.venue,
+                'game_time': weather.game_time.isoformat(),
+                'temperature': weather.temperature,
+                'is_dome': weather.is_dome,
+                'elevation': weather.elevation,
+                'hitter_friendly_score': weather.hitter_friendly_score,
+                'hr_factor': weather.hr_factor,
+            }
+            self._cache_service.set_weather(team_abbr.upper(), game_date, weather_dict)
         return weather
     
     def get_weather_for_games(

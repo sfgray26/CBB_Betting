@@ -493,7 +493,10 @@ def run_pipeline(start: date, end: date):
                 for name, method in stages:
                     try:
                         result = await method()
-                        status = result.get("status", "?") if isinstance(result, dict) else "?"
+                        if isinstance(result, dict):
+                            status = result.get("status") or result.get("pipeline_health", "?")
+                        else:
+                            status = "?"
                         results[name] = status
                     except Exception as e:
                         results[name] = f"ERROR: {e}"
