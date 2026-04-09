@@ -445,7 +445,12 @@ class YahooFantasyClient:
                 players_raw = roster_wrapper.get("players", {}) if isinstance(roster_wrapper, dict) else {}
 
                 # Check if we're using the new format (numeric keys without "players" wrapper)
-                if not players_raw or (isinstance(players_raw, dict) and len(players_raw) == 0):
+                has_players_key = "players" in roster_wrapper if isinstance(roster_wrapper, dict) else False
+                players_raw_has_data = len(players_raw) > 0 if isinstance(players_raw, dict) else False
+
+                logger.info("get_league_rosters: has_players_key=%s, players_raw_has_data=%s", has_players_key, players_raw_has_data)
+
+                if not has_players_key or not players_raw_has_data:
                     # New format: players are directly under numeric keys
                     player_entries = []
                     for key, value in roster_wrapper.items():
