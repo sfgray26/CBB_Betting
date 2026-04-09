@@ -51,14 +51,18 @@ class BallDontLieClient:
     """
 
     def __init__(self, api_key: Optional[str] = None):
+        logger.info("API CLIENT INIT: BallDontLieClient - Initializing...")
         self.api_key = api_key or os.getenv("BALLDONTLIE_API_KEY", "")
         if not self.api_key:
+            logger.error("API CLIENT INIT FAILED: BallDontLieClient - BALLDONTLIE_API_KEY not set")
             raise ValueError(
                 "BALLDONTLIE_API_KEY not set. "
                 "Add it to .env or pass api_key= explicitly."
             )
+        logger.info("API CLIENT INIT: BallDontLieClient - API key present (masked: %s...)", self.api_key[:10] if len(self.api_key) > 10 else "TOO_SHORT")
         self.session = requests.Session()
         self.session.headers.update({"Authorization": self.api_key})
+        logger.info("API CLIENT INIT SUCCESS: BallDontLieClient - Session created, headers configured")
 
     # ------------------------------------------------------------------
     # Internal helpers

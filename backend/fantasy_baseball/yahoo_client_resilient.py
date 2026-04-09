@@ -102,6 +102,10 @@ class YahooFantasyClient:
     """
 
     def __init__(self):
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info("API CLIENT INIT: YahooFantasyClient - Initializing...")
+
         self.client_id = os.getenv("YAHOO_CLIENT_ID", "")
         self.client_secret = os.getenv("YAHOO_CLIENT_SECRET", "")
         self.league_id = os.getenv("YAHOO_LEAGUE_ID", "72586")
@@ -112,10 +116,24 @@ class YahooFantasyClient:
         self._session = requests.Session()
         self._cb = _CoreCircuitBreaker(failure_threshold=3, recovery_timeout=60, window_seconds=300)
 
+        # Log credential status (masked)
+        client_id_status = f"{self.client_id[:10]}..." if len(self.client_id) > 10 else "NOT_SET"
+        client_secret_status = f"{self.client_secret[:5]}..." if len(self.client_secret) > 5 else "NOT_SET"
+        refresh_token_status = f"{self._refresh_token[:10]}..." if len(self._refresh_token) > 10 else "NOT_SET"
+
+        logger.info("API CLIENT INIT: YahooFantasyClient - client_id=%s, client_secret=%s, refresh_token=%s",
+                   client_id_status, client_secret_status, refresh_token_status)
+        logger.info("API CLIENT INIT: YahooFantasyClient - league_id=%s, league_key=%s",
+                   self.league_id, self.league_key)
+
         if not self.client_id or not self.client_secret:
+            logger.error("API CLIENT INIT FAILED: YahooFantasyClient - Missing credentials (client_id=%s, client_secret=%s)",
+                        client_id_status, client_secret_status)
             raise YahooAuthError(
                 "YAHOO_CLIENT_ID and YAHOO_CLIENT_SECRET must be set in .env"
             )
+
+        logger.info("API CLIENT INIT SUCCESS: YahooFantasyClient - Initialization complete")
 
     # ------------------------------------------------------------------
     # OAuth 2.0 — Authorization Code Flow
