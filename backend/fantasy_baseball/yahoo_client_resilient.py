@@ -420,14 +420,28 @@ class YahooFantasyClient:
                 logger.info("get_league_rosters: roster_wrapper type=%s, keys=%s",
                            type(roster_wrapper).__name__, list(roster_wrapper.keys()) if isinstance(roster_wrapper, dict) else "N/A")
 
+                # Yahoo API structure changed - players are now directly under numeric keys in roster_wrapper
+                # Old format: roster_wrapper["players"]["player"] = [...]
+                # New format: roster_wrapper["0"] = {player_data}, roster_wrapper["1"] = {player_data}, ...
                 players_raw = roster_wrapper.get("players", {}) if isinstance(roster_wrapper, dict) else {}
-                logger.info("get_league_rosters: players_raw type=%s, keys=%s",
-                           type(players_raw).__name__, list(players_raw.keys()) if isinstance(players_raw, dict) else "N/A")
 
-                # Handle case where players is directly a list
-                if isinstance(players_raw, list):
-                    logger.info("get_league_rosters: players_raw is list with %d elements", len(players_raw))
-                    players_raw = {"player": players_raw}
+                # Check if we're using the new format (numeric keys without "players" wrapper)
+                if not players_raw or (isinstance(players_raw, dict) and len(players_raw) == 0):
+                    # New format: players are directly under numeric keys
+                    player_entries = []
+                    for key, value in roster_wrapper.items():
+                        if key.isdigit() and isinstance(value, dict):
+                            player_entries.append(value)
+                    players_raw = {"player": player_entries}
+                    logger.info("get_league_rosters: Using new Yahoo API format - found %d players under numeric keys", len(player_entries))
+                else:
+                    logger.info("get_league_rosters: players_raw type=%s, keys=%s",
+                               type(players_raw).__name__, list(players_raw.keys()) if isinstance(players_raw, dict) else "N/A")
+
+                    # Handle case where players is directly a list
+                    if isinstance(players_raw, list):
+                        logger.info("get_league_rosters: players_raw is list with %d elements", len(players_raw))
+                        players_raw = {"player": players_raw}
 
                 players_processed = 0
                 for player_list in self._iter_block(players_raw, "player"):

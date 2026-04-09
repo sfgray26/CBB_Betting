@@ -5,14 +5,19 @@ This script will manually trigger one sync job (player_id_mapping) and capture
 every log line to identify exactly where it fails.
 
 Usage:
+    python scripts/test_sync_job_observability.py
     railway run --service Fantasy-App -- python scripts/test_sync_job_observability.py
 """
 
 import asyncio
 import logging
 import sys
+import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
+# Add current directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Configure maximum verbosity logging
 logging.basicConfig(
@@ -39,13 +44,13 @@ async def test_player_id_mapping_sync():
 
     try:
         # Import the ingestion scheduler
-        from backend.services.daily_ingestion import DailyIngestionScheduler
-        logger.info("✓ Successfully imported DailyIngestionScheduler")
+        from backend.services.daily_ingestion import DailyIngestionOrchestrator
+        logger.info("✓ Successfully imported DailyIngestionOrchestrator")
 
         # Create scheduler instance
-        logger.info("→ Creating DailyIngestionScheduler instance...")
-        scheduler = DailyIngestionScheduler()
-        logger.info("✓ Successfully created DailyIngestionScheduler")
+        logger.info("→ Creating DailyIngestionOrchestrator instance...")
+        scheduler = DailyIngestionOrchestrator()
+        logger.info("✓ Successfully created DailyIngestionOrchestrator")
 
         # Trigger the sync job manually
         logger.info("→ Triggering _sync_player_id_mapping job...")

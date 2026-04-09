@@ -97,7 +97,9 @@
       "Bash(railway variables:*)",
       "Bash(railway up:*)",
       "Bash(set PYTHONPATH=C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge)",
-      "Bash(railway status:*)"
+      "Bash(railway status:*)",
+      "Bash(railway domain:*)",
+      "Bash(timeout 120s bash -c 'while true; do railway logs --service Fantasy-App --lines 30 2>&1 | grep -E \"JOB START|JOB LOCK ACQUIRED|JOB COMPLETE|JOB FAILED|SYNC JOB|API CLIENT INIT|ERROR|Exception\" && sleep 5; done')"
     ]
   }
 }
