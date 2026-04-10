@@ -139,16 +139,6 @@ def _serialize_ros_frames(frames: Optional[dict]) -> dict[str, list[dict[str, An
     return serialized
 
 
-def _deserialize_ros_frames(payload: Optional[dict]) -> dict[str, Any]:
-    """Rebuild pandas DataFrames from persisted RoS row payloads."""
-    if not payload:
-        return {}
-
-    import pandas as pd
-
-    restored: dict[str, Any] = {}
-
-
 def _parse_innings_pitched(ip: Optional[Any]) -> Optional[float]:
     """
     Convert BDL innings pitched format to decimal.
@@ -188,6 +178,16 @@ def _parse_innings_pitched(ip: Optional[Any]) -> Optional[float]:
             return None
 
     return None
+
+
+def _deserialize_ros_frames(payload: Optional[dict]) -> dict[str, Any]:
+    """Rebuild pandas DataFrames from persisted RoS row payloads."""
+    if not payload:
+        return {}
+
+    import pandas as pd
+
+    restored: dict[str, Any] = {}
     for system_key, rows in payload.items():
         restored[system_key] = pd.DataFrame(rows or [])
     return restored
