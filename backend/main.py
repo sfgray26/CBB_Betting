@@ -3192,6 +3192,37 @@ async def backfill_yahoo_keys_endpoint(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.post("/admin/link-orphans")
+async def link_orphaned_eligibility(
+    dry_run: bool = Query(default=True, description="If true, preview without writing to database"),
+    verbose: bool = Query(default=False, description="Enable verbose logging"),
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Link orphaned position_eligibility records via fuzzy name matching.
+
+    Task 21: Links orphaned position_eligibility records to player_id_mapping
+    using difflib.SequenceMatcher with 85% similarity threshold.
+
+    Target: Reduce orphans from ~477 to <50.
+
+    Query params:
+        dry_run: If true, preview without writing to database (default: True)
+        verbose: Enable detailed logging of match attempts
+
+    Returns: dict with status, linked_count, remaining_count, success_rate, elapsed_ms
+    """
+    from backend.fantasy_baseball.orphan_linker import link_orphaned_records
+
+    try:
+        result = link_orphaned_records(db, dry_run=dry_run, verbose=verbose)
+        return result
+    except Exception as exc:
+        logger.error("Orphan linking failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.post("/admin/backfill/all")
 async def backfill_all(
     user: str = Depends(verify_admin_api_key),
