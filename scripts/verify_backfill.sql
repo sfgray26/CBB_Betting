@@ -23,7 +23,7 @@ FROM mlb_player_stats;
 SELECT
     player_name,
     obp, slg, ops,
-    bb_allowed, h_allowed, innings_pitched, whip
+    walks_allowed, hits_allowed, innings_pitched, whip
 FROM mlb_player_stats
 WHERE ops IS NOT NULL OR whip IS NOT NULL
 ORDER BY updated_at DESC

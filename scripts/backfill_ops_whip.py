@@ -57,15 +57,15 @@ def backfill_whip():
     # SQL to convert "6.2" format to decimal: 6 + 2/3 = 6.667
     sql = text("""
         UPDATE mlb_player_stats
-        SET whip = (bb_allowed + h_allowed)::numeric /
+        SET whip = (walks_allowed + hits_allowed)::numeric /
                   NULLIF(
                       CAST(SPLIT_PART(innings_pitched, '.', 1) AS NUMERIC) +
                       CAST(SPLIT_PART(innings_pitched, '.', 2) AS NUMERIC) / 3.0,
                       0
                   )
         WHERE whip IS NULL
-          AND bb_allowed IS NOT NULL
-          AND h_allowed IS NOT NULL
+          AND walks_allowed IS NOT NULL
+          AND hits_allowed IS NOT NULL
           AND innings_pitched IS NOT NULL
           AND innings_pitched != ''
     """)

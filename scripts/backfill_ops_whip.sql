@@ -8,17 +8,17 @@ WHERE ops IS NULL
   AND obp IS NOT NULL
   AND slg IS NOT NULL;
 
--- Backfill whip = (bb_allowed + h_allowed) / innings_pitched
+-- Backfill whip = (walks_allowed + hits_allowed) / innings_pitched
 -- Handles innings_pitched string format "6.2" -> 6.667 decimal
 UPDATE mlb_player_stats
-SET whip = (bb_allowed + h_allowed)::numeric /
+SET whip = (walks_allowed + hits_allowed)::numeric /
           NULLIF(
               CAST(SPLIT_PART(innings_pitched, '.', 1) AS NUMERIC) +
               CAST(SPLIT_PART(innings_pitched, '.', 2) AS NUMERIC) / 3.0,
               0
           )
 WHERE whip IS NULL
-  AND bb_allowed IS NOT NULL
-  AND h_allowed IS NOT NULL
+  AND walks_allowed IS NOT NULL
+  AND hits_allowed IS NOT NULL
   AND innings_pitched IS NOT NULL
   AND innings_pitched != '';
