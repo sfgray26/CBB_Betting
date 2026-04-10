@@ -7,12 +7,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from backend.models import get_db
-from typing import Dict
 
 router = APIRouter()
 
 @router.post("/admin/backfill-ops-whip")
-def backfill_ops_whip(db: Session = Depends(get_db)) -> Dict[str, any]:
+def backfill_ops_whip(db: Session = Depends(get_db)):
     """
     Backfill ops and whip data for mlb_player_stats.
     POST /admin/backfill-ops-whip
