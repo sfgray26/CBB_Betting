@@ -78,6 +78,10 @@ from backend.admin_endpoints_era import router as _era_diagnostic_router
 from backend.admin_endpoints_validation import router as _validation_audit_router
 # END VALIDATION AUDIT ENDPOINT
 
+# OPS/WHIP BACKFILL ENDPOINT - REMOVE AFTER TASK 26 COMPLETE
+from backend.admin_backfill_ops_whip import router as _backfill_ops_whip_router
+# END OPS/WHIP BACKFILL ENDPOINT
+
 from backend.services.recalibration import compute_dynamic_weights
 from backend.services.discord_notifier import send_todays_bets
 from backend.services.sentinel import run_nightly_health_check
@@ -613,6 +617,9 @@ app.include_router(_era_diagnostic_router, prefix="/admin", tags=["admin"])
 # VALIDATION AUDIT ENDPOINT - REMOVE AFTER TASK 11 COMPLETE
 app.include_router(_validation_audit_router, prefix="/admin", tags=["admin"])
 # END VALIDATION AUDIT ENDPOINT
+# OPS/WHIP BACKFILL ENDPOINT - REMOVE AFTER TASK 26 COMPLETE
+app.include_router(_backfill_ops_whip_router, tags=["admin"])
+# END OPS/WHIP BACKFILL ENDPOINT
 
 # --- end strangler-fig mounts ---
 
