@@ -1131,15 +1131,24 @@ class DailyIngestionOrchestrator:
                     computed_ops = None
                     if stat.obp is not None and stat.slg is not None:
                         computed_ops = stat.obp + stat.slg
+                        logger.debug(
+                            "mlb_box_stats: computed OPS for player %d in game %d: %.3f = %.3f + %.3f",
+                            stat.bdl_player_id, stat.game_id, computed_ops, stat.obp, stat.slg
+                        )
 
                     # Compute WHIP from (BB + H) / IP (BDL doesn't provide it)
                     computed_whip = None
-                    if (stat.walks_allowed is not None and
-                        stat.hits_allowed is not None and
+                    if (stat.bb_allowed is not None and
+                        stat.h_allowed is not None and
                         stat.ip is not None):
                         ip_decimal = _parse_innings_pitched(stat.ip)
                         if ip_decimal is not None and ip_decimal > 0:
-                            computed_whip = (stat.walks_allowed + stat.hits_allowed) / ip_decimal
+                            computed_whip = (stat.bb_allowed + stat.h_allowed) / ip_decimal
+                            logger.debug(
+                                "mlb_box_stats: computed WHIP for player %d in game %d: %.3f = (%d + %d) / %.1f",
+                                stat.bdl_player_id, stat.game_id, computed_whip,
+                                stat.bb_allowed, stat.h_allowed, ip_decimal
+                            )
 
                     # Default caught_stealing to 0 when BDL doesn't provide it
                     computed_cs = stat.cs if stat.cs is not None else 0
