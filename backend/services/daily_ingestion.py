@@ -1153,6 +1153,15 @@ class DailyIngestionOrchestrator:
                     # Default caught_stealing to 0 when BDL doesn't provide it
                     computed_cs = stat.cs if stat.cs is not None else 0
 
+                    # Validate ERA is within reasonable range (0-100)
+                    validated_era = stat.era
+                    if validated_era is not None and (validated_era < 0 or validated_era > 100):
+                        logger.warning(
+                            "mlb_box_stats: Impossible ERA %s for player %s (ER=%s, IP=%s) - skipping ERA",
+                            validated_era, stat.bdl_player_id, stat.er, stat.ip
+                        )
+                        validated_era = None  # Don't store impossible values
+
                     payload = stat.model_dump()
                     stmt = pg_insert(MLBPlayerStats.__table__).values(
                         bdl_stat_id=stat.id,
@@ -1184,7 +1193,7 @@ class DailyIngestionOrchestrator:
                         walks_allowed=stat.bb_allowed,
                         strikeouts_pit=stat.k,
                         whip=computed_whip,
-                        era=stat.era,
+                        era=validated_era,
                         # Audit
                         raw_payload=payload,
                         ingested_at=now,
@@ -1215,7 +1224,7 @@ class DailyIngestionOrchestrator:
                             walks_allowed=stat.bb_allowed,
                             strikeouts_pit=stat.k,
                             whip=computed_whip,
-                            era=stat.era,
+                            era=validated_era,
                             raw_payload=payload,
                         ),
                     )
