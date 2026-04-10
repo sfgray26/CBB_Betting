@@ -97,8 +97,17 @@ Key deliverables:
 
 ---
 
-### 3. EPIC-3+: Edge Engine, Waiver Detector, Discord Router
-**Spec:** `HANDOFF.md §4–6` | Sequential, each blocked on prior EPIC
+### 3. Task 3: Verify Cross-System Joins (BLOCKED)
+**Spec:** Execute two verification queries to confirm position_eligibility, player_id_mapping, and mlb_player_stats joins work
+
+**BLOCKER**: Environment access constraints prevent query execution:
+- Local PostgreSQL: No local DB instance
+- `railway run`: Cannot resolve Railway internal DNS (postgres-ygnv.railway.internal)
+- `railway shell`: Interactive only, not scriptable
+
+**REQUIRED**: Temporary verification endpoint `/admin/debug-verify-joins` in backend/main.py → execute via curl → capture results → remove endpoint
+
+**DELEGATION BUNDLE**: Gemini CLI to create endpoint, execute queries, report results
 
 ---
 

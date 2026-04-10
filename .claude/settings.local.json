@@ -105,7 +105,10 @@
       "Bash(railway domains:*)",
       "Bash(railway services:*)",
       "Bash(railway deployment:*)",
-      "Bash(railway service:*)"
+      "Bash(railway service:*)",
+      "Bash(railway proxy:*)",
+      "Bash(kill %1)",
+      "Bash(railway ssh:*)"
     ]
   }
 }
