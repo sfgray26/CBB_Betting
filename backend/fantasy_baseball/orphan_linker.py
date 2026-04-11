@@ -75,55 +75,90 @@ def calculate_similarity(name1: str, name2: str) -> float:
     return SequenceMatcher(None, norm1, norm2).ratio()
 
 
+def _build_last_name_index(candidates: List[PlayerIDMapping]) -> dict:
+    """Build a dict mapping normalized last name -> list of candidates for fast filtering."""
+    index: dict[str, list[PlayerIDMapping]] = {}
+    for c in candidates:
+        if not c.full_name:
+            continue
+        last = normalize_name_for_matching(c.full_name.split()[-1]) if c.full_name.strip() else ""
+        if last:
+            index.setdefault(last, []).append(c)
+    return index
+
+
 def find_best_match(
     orphan: PositionEligibility,
     mapping_candidates: List[PlayerIDMapping],
-    verbose: bool = False
+    verbose: bool = False,
+    last_name_index: Optional[dict] = None,
 ) -> Tuple[Optional[PlayerIDMapping], float]:
     """
     Find best matching player_id_mapping record for an orphaned position_eligibility.
 
+    Uses a two-pass strategy:
+      1. Narrow search to candidates sharing the same last name (fast).
+      2. Fall back to full scan only if narrow search finds nothing above threshold.
+
     Args:
         orphan: Orphaned PositionEligibility record
-        mapping_candidates: List of PlayerIDMapping candidates
+        mapping_candidates: List of PlayerIDMapping candidates (fallback pool)
         verbose: Enable verbose logging
+        last_name_index: Pre-built {last_name: [candidates]} index for fast lookup
 
     Returns:
         Tuple of (best matching PlayerIDMapping or None, similarity score)
     """
-    best_match = None
-    best_score = 0.0
-
     orphan_name = orphan.player_name or ""
     orphan_last = orphan.last_name or ""
 
-    for candidate in mapping_candidates:
-        # Calculate similarity scores
-        full_name_score = calculate_similarity(orphan_name, candidate.full_name)
+    # Determine narrow candidate pool via last-name index
+    narrow_pool = None
+    if last_name_index and orphan_name:
+        orphan_last_norm = normalize_name_for_matching(
+            orphan_name.split()[-1] if orphan_name.strip() else ""
+        )
+        if orphan_last_norm:
+            narrow_pool = last_name_index.get(orphan_last_norm)
 
-        # Also try matching just last names
-        last_name_score = 0.0
-        if orphan_last:
-            candidate_last = candidate.full_name.split()[-1] if candidate.full_name else ""
-            last_name_score = calculate_similarity(orphan_last, candidate_last)
+    def _score_pool(pool: List[PlayerIDMapping]) -> Tuple[Optional[PlayerIDMapping], float]:
+        best_match = None
+        best_score = 0.0
+        for candidate in pool:
+            full_name_score = calculate_similarity(orphan_name, candidate.full_name)
+            last_name_score = 0.0
+            if orphan_last:
+                candidate_last = candidate.full_name.split()[-1] if candidate.full_name else ""
+                last_name_score = calculate_similarity(orphan_last, candidate_last)
+            score = max(full_name_score, last_name_score)
+            if score > best_score:
+                best_score = score
+                best_match = candidate
+            if verbose and score > 0.7:
+                logger.info(
+                    f"  Similarity: {orphan_name} vs {candidate.full_name} = "
+                    f"{score:.3f} (full: {full_name_score:.3f}, last: {last_name_score:.3f})"
+                )
+        return best_match, best_score
 
-        # Use the higher score
-        score = max(full_name_score, last_name_score)
+    # Pass 1: narrow pool (same last name)
+    if narrow_pool:
+        best_match, best_score = _score_pool(narrow_pool)
+        if best_score >= SIMILARITY_THRESHOLD:
+            if verbose:
+                logger.info(
+                    f"  MATCH FOUND (narrow): {orphan_name} -> {best_match.full_name} "
+                    f"(score: {best_score:.3f})"
+                )
+            return best_match, best_score
 
-        if score > best_score:
-            best_score = score
-            best_match = candidate
-
-        if verbose and score > 0.7:
-            logger.info(
-                f"  Similarity: {orphan_name} vs {candidate.full_name} = "
-                f"{score:.3f} (full: {full_name_score:.3f}, last: {last_name_score:.3f})"
-            )
+    # Pass 2: full scan fallback
+    best_match, best_score = _score_pool(mapping_candidates)
 
     if best_score >= SIMILARITY_THRESHOLD:
         if verbose:
             logger.info(
-                f"  MATCH FOUND: {orphan_name} -> {best_match.full_name} "
+                f"  MATCH FOUND (full): {orphan_name} -> {best_match.full_name} "
                 f"(score: {best_score:.3f})"
             )
         return best_match, best_score
@@ -184,6 +219,10 @@ def link_orphaned_records(
         all_candidates = db.query(PlayerIDMapping).all()
         logger.info(f"Loaded {len(all_candidates)} candidates")
 
+        # Build last-name index for fast narrow-pass matching
+        ln_index = _build_last_name_index(all_candidates)
+        logger.info(f"Built last-name index with {len(ln_index)} unique last names")
+
         # Fetch orphaned records (where bdl_player_id IS NULL)
         logger.info("Fetching orphaned position_eligibility records...")
         orphans = db.query(PositionEligibility).filter(
@@ -201,7 +240,7 @@ def link_orphaned_records(
             if verbose:
                 logger.info(f"\n[{i}/{len(orphans)}] Processing: {orphan.player_name}")
 
-            best_match, score = find_best_match(orphan, all_candidates, verbose)
+            best_match, score = find_best_match(orphan, all_candidates, verbose, last_name_index=ln_index)
 
             if best_match:
                 # Update the orphan record
