@@ -200,7 +200,7 @@ async def test_update_statcast_calls_run_daily_ingestion():
         "projections_updated": 10,
     }
 
-    async def passthrough_lock(lock_id, coro):
+    async def passthrough_lock(lock_id, job_name, coro):
         return await coro()
 
     with patch.object(di_mod, "_with_advisory_lock", side_effect=passthrough_lock):
@@ -222,7 +222,7 @@ async def test_update_statcast_records_failed_on_exception():
     """_update_statcast must record 'failed' status if run_daily_ingestion raises."""
     import backend.services.daily_ingestion as di_mod
 
-    async def passthrough_lock(lock_id, coro):
+    async def passthrough_lock(lock_id, job_name, coro):
         return await coro()
 
     with patch.object(di_mod, "_with_advisory_lock", side_effect=passthrough_lock):

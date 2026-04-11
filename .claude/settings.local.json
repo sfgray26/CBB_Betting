@@ -108,7 +108,8 @@
       "Bash(railway service:*)",
       "Bash(railway proxy:*)",
       "Bash(kill %1)",
-      "Bash(railway ssh:*)"
+      "Bash(railway ssh:*)",
+      "Bash(railway help:*)"
     ]
   }
 }
