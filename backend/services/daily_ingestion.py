@@ -180,6 +180,48 @@ def _parse_innings_pitched(ip: Optional[Any]) -> Optional[float]:
     return None
 
 
+def _validate_mlb_stats(stat) -> bool:
+    """
+    Validate MLB stat row before database insertion.
+
+    Prevents data quality issues by rejecting rows with impossible values.
+    Logs warnings for rejected rows to aid in debugging.
+
+    Args:
+        stat: MLBPlayerStats object from BDL API
+
+    Returns:
+        True if stat row is valid, False otherwise
+    """
+    errors = []
+
+    # Check ERA range (0-100)
+    if stat.era is not None and (stat.era < 0 or stat.era > 100):
+        errors.append(f"Invalid ERA: {stat.era}")
+
+    # Check AVG range (0-1.0)
+    if stat.avg is not None and (stat.avg < 0 or stat.avg > 1.0):
+        errors.append(f"Invalid AVG: {stat.avg}")
+
+    # Validate innings_pitched format
+    if stat.ip is not None:
+        try:
+            ip_decimal = _parse_innings_pitched(stat.ip)
+            if ip_decimal is None:
+                errors.append(f"Invalid IP format: {stat.ip}")
+        except Exception as e:
+            errors.append(f"Invalid IP format: {stat.ip}")
+
+    if errors:
+        logger.warning(
+            "mlb_box_stats: Validation failed for player %d: %s",
+            stat.bdl_player_id, ", ".join(errors)
+        )
+        return False
+
+    return True
+
+
 def _deserialize_ros_frames(payload: Optional[dict]) -> dict[str, Any]:
     """Rebuild pandas DataFrames from persisted RoS row payloads."""
     if not payload:
@@ -1124,6 +1166,10 @@ class DailyIngestionOrchestrator:
                     if stat.bdl_player_id is None:
                         logger.warning("mlb_box_stats: skipping stat row with no player object")
                         continue
+
+                    # Validate stat row before insertion
+                    if not _validate_mlb_stats(stat):
+                        continue  # Skip this row
 
                     game_date = game_date_map.get(stat.game_id, today)
 
