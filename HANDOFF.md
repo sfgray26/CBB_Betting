@@ -291,6 +291,62 @@ Sample confirms these are retired/prospect/minor-league Yahoo players (`469.p.65
 
 ---
 
+## 📊 DATABASE HEALTH & EXCELLENCE ROADMAP
+
+### Current Health Assessment (April 11, 2026)
+
+**Full report:** `reports/2026-04-11-comprehensive-database-health-report.md`
+
+| Metric | Score | Grade | Status |
+|--------|-------|-------|--------|
+| **Overall Health** | 76.9% | C+ | Improving |
+| **Data Completeness** | 75% | C | 1,639 NULL ops/whip |
+| **Cross-System Linkage** | 80% | B- | 362 orphans remaining |
+| **Computed Fields** | 68% | D+ | Backfill pending |
+| **Pipeline Freshness** | 75% | C | Statcast empty |
+| **Data Quality** | 95% | A | ERA fixed |
+
+### A+ Excellence Target (6-Week Roadmap)
+
+**Full roadmap:** `reports/2026-04-11-database-excellence-roadmap.md`
+
+**Target State:** 95%+ health (A+ Excellent)
+**Investment:** ~62 hours over 6 weeks
+
+#### The 5 Pillars of Excellence
+
+| Pillar | Current | A+ Target | Gap |
+|--------|---------|-----------|-----|
+| **COMPLETE** Data | 75% | ≥98% | +23% |
+| **CORRECT** Data | 95% | ≥99.9% | +4.9% |
+| **CURRENT** Data | 75% | 100% | +25% |
+| **CONNECTED** Data | 80% | ≥99% | +19% |
+| **COMPLIANT** Operation | 60% | 100% | +40% |
+
+#### Phase Roadmap
+
+| Phase | Duration | Focus | Deliverable | Effort |
+|-------|----------|-------|-------------|--------|
+| **1. Foundation** | Week 1 | Complete current fixes | B+ (85%) | 8 hrs |
+| **2. Hardening** | Weeks 2-3 | Reliability engineering | Self-healing pipeline | 24 hrs |
+| **3. Optimization** | Week 4 | Query performance | <200ms queries | 12 hrs |
+| **4. Observability** | Week 5 | Monitoring/alerting | MTTD < 5 min | 10 hrs |
+| **5. Governance** | Week 6 | Processes/docs | Sustainable A+ | 8 hrs |
+
+#### Immediate Quick Wins (This Week)
+
+| Task | Effort | Impact | Owner |
+|------|--------|--------|-------|
+| Execute ops/whip backfill | 15 min | +8% health | Claude/Gemini |
+| Test Statcast retry logic | 30 min | +5% health | Claude |
+| Investigate 362 orphans | 2 hrs | +7% health | Kimi |
+| Build daily health check | 2 hrs | Visibility | Claude |
+| Create monitoring dashboard | 2 hrs | Proactive | Claude |
+
+**Result after Quick Wins: B+ (85%)**
+
+---
+
 ## 📈 DATABASE STATE (April 10, 2026)
 
 | Table | Expected | Actual | Status |
@@ -305,6 +361,16 @@ Sample confirms these are retired/prospect/minor-league Yahoo players (`469.p.65
 ---
 
 ## 🚀 NEXT STEPS (Priority Order — updated 2026-04-11)
+
+### Strategic Context
+
+**Current State:** Database at C+ (76.9%) with 3 high-priority issues identified
+**Target State:** A+ (95%+) via 6-week excellence roadmap
+**Immediate Goal:** B+ (85%) this week via quick wins
+
+**See:** `reports/2026-04-11-database-excellence-roadmap.md` for complete 6-week plan
+
+---
 
 ### UNBLOCKED: Research bundle K-34..K-38 → Feature work
 
