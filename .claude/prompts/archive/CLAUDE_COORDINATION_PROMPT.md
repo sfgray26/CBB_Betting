@@ -1,11 +1,17 @@
-# ⚠️ DEPRECATED — See CLAUDE_TEAM_COORDINATION_PROMPT.md
+# ⚠️ ARCHIVED — See CLAUDE_TEAM_COORDINATION_PROMPT.md
 
-> **Status:** SUPERCEDED (March 28, 2026)
+> **Status:** ARCHIVED (April 11, 2026)  
+> **Original Location:** `CLAUDE_COORDINATION_PROMPT.md` (root)  
+> **Archive Reason:** Superseded by CLAUDE_TEAM_COORDINATION_PROMPT.md  
 > 
-> This document has been consolidated into `CLAUDE_TEAM_COORDINATION_PROMPT.md`,
+> This document has been archived as part of repository documentation cleanup.
+> It has been consolidated into `CLAUDE_TEAM_COORDINATION_PROMPT.md`,
 > which contains the same P0 gap analysis with more detailed workstream assignments.
 > 
-> **Use this instead:** `CLAUDE_TEAM_COORDINATION_PROMPT.md`
+> **Use this instead:** `CLAUDE_TEAM_COORDINATION_PROMPT.md` (now in root)
+> 
+> ---
+> *Original content preserved below for historical reference.*
 
 ---
 

@@ -15,21 +15,28 @@ All 11 tasks from the comprehensive data quality validation plan have been execu
 
 ## 🆕 PROACTIVE INITIATIVES IN PROGRESS
 
-### Data Quality Research (K-34 to K-38) — ⏳ PENDING EXECUTION
+### Data Quality Research (K-34 to K-38) — ✅ COMPLETE
 
 **Foundation research tasks that block implementation work:**
 
-| Task | Research Topic | Status | Blocks |
-|------|---------------|--------|--------|
-| **K-34** | BDL API Capabilities | ⏳ PENDING | Task 7 (derived stats) |
-| **K-35** | Z-Score Best Practices | ⏳ PENDING | Task 9 (VORP/z-score) |
-| **K-36** | Fantasy Scoring Systems | ⏳ PENDING | Tasks 7-9 |
-| **K-37** | MLB API Comparison | ⏳ PENDING | Tasks 4-5 (empty tables) |
-| **K-38** | VORP Implementation | ⏳ PENDING | Task 9 (VORP/z-score) |
+| Task | Research Topic | Status | Blocks | Deliverable |
+|------|---------------|--------|--------|-------------|
+| **K-34** | BDL API Capabilities | ✅ COMPLETE | Task 7 (derived stats) | `reports/2026-04-10-bdl-api-capabilities.md` (24KB) |
+| **K-35** | Z-Score Best Practices | ✅ COMPLETE | Task 9 (VORP/z-score) | `reports/2026-04-10-zscore-best-practices.md` (22KB) |
+| **K-36** | Fantasy Scoring Systems | ✅ COMPLETE | Tasks 7-9 | `reports/2026-04-10-h2h-scoring-systems.md` (18KB) |
+| **K-37** | MLB API Comparison | ✅ COMPLETE | Tasks 4-5 (empty tables) | `reports/2026-04-10-mlb-api-comparison.md` (22KB) |
+| **K-38** | VORP Implementation | ✅ COMPLETE | Task 9 (VORP/z-score) | `reports/2026-04-09-vorp-implementation-guide.md` (19KB) |
 
 **Delegation:** `CLAUDE_K34_K38_KIMI_DELEGATION.md`  
-**Status:** ✅ Documented, ⏳ Awaiting Kimi execution  
-**Priority:** HIGH - Unblocks critical implementation tasks
+**Status:** ✅ **ALL 5 TASKS COMPLETE**  
+**Research Bundle:** Complete and ready for Claude implementation
+
+**Key Findings Summary:**
+- **K-34:** BDL API rate limits (600/60/5 req/min), NO probable pitcher endpoint - platform's hybrid approach confirmed optimal
+- **K-35:** Winsorization at 5th/95th percentiles for outliers; MAD-based robust Z-scores available; sample size stabilization documented
+- **K-36:** H2H One Win (5x5): NSB=SB-CS, NSV=SV-BS formulas documented; position eligibility rules (5 GS/10 GP batters, 3 starts SP, 5 apps RP)
+- **K-37:** MLB Stats API confirmed ONLY source for probable pitchers; Statcast for xwOBA; BDL for games/stats/injuries
+- **K-38:** VORP formula = Player_Z - Replacement_Z; Replacement levels: C=-5.5, 1B=-3.0, 2B/SS=-4.0, 3B=-3.5, OF=-2.5; multi-eligible use scarcest position
 
 ---
 

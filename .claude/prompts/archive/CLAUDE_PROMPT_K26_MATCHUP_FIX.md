@@ -1,3 +1,19 @@
+# ⚠️ ARCHIVED — K-26 Matchup Category Alignment Fix
+
+> **Status:** ARCHIVED (April 11, 2026)  
+> **Original Location:** `CLAUDE_PROMPT_K26_MATCHUP_FIX.md` (root)  
+> **Archive Reason:** Task completed (K-26 implemented)  
+> 
+> This document has been archived as part of repository documentation cleanup.
+> The matchup category alignment fix has been implemented and deployed.
+> 
+> **See Also:** 
+> - `CLAUDE_PROMPTS_INDEX.md` for all active prompts
+> - `reports/2026-04-01-matchup-category-alignment.md` for implementation details
+> 
+> ---
+> *Original content preserved below for historical reference.*
+
 # Claude Handoff Prompt: K-26 Matchup Category Alignment Fix
 
 **Priority:** CRITICAL — Matchup scores are currently wrong  

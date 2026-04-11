@@ -109,7 +109,21 @@
       "Bash(railway proxy:*)",
       "Bash(kill %1)",
       "Bash(railway ssh:*)",
-      "Bash(railway help:*)"
+      "Bash(railway help:*)",
+      "Bash(export ADMIN_API_KEY=\"j01F3n2sSzbhi-jNAEULNkgzFqRXgOl2FuIDgKRoyfg\")",
+      "Bash(export BASE_URL=\"https://fantasy-app-production-5079.up.railway.app\")",
+      "Bash(mkdir -p reports)",
+      "Bash(PYTHONPATH=. railway run:*)",
+      "Bash(railway list:*)",
+      "Bash(railway link:*)",
+      "Bash(export DATABASE_URL=\"postgresql://postgres:oViPPSTbGvkNGzGjrYoxsLVvibJvJZAB@junction.proxy.rlwy.net:45402/railway\")",
+      "Bash(export PYTHONPATH=.)",
+      "Bash(\"venv/Scripts/python.exe\" scripts/_p2_identify_era.py)",
+      "Bash(tee reports/2026-04-11-backfill-ops-whip-response.json)",
+      "Bash(\"venv/Scripts/python.exe\" scripts/_p1_diagnose.py)",
+      "Bash(\"venv/Scripts/python.exe\" scripts/_p1_inspect_stuck.py)",
+      "Bash(\"venv/Scripts/python.exe\" scripts/_p4_statcast_baseline.py)",
+      "Bash(\"venv/Scripts/python.exe\" scripts/_p3_investigate.py)"
     ]
   }
 }
