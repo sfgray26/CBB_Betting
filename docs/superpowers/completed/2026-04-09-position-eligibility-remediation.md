@@ -1,3 +1,12 @@
+# ? COMPLETED — COMPLETE
+
+> **Status:** COMPLETED (April 11, 2026)
+> **Original Location:** docs/superpowers/plans/2026-04-09-position-eligibility-remediation.md
+> **Moved To:** docs/superpowers/completed/2026-04-09-position-eligibility-remediation.md
+> **Archive Reason:** All tasks in this plan have been successfully executed
+
+---
+
 # Position Eligibility Data Quality Remediation Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
@@ -1234,3 +1243,4 @@ After completing all tasks, verify these criteria:
 2. Add bdl_player_id mapping via player_id_mapping table
 3. Calculate scarcity_rank based on league roster percentages
 4. Create frontend endpoints for position eligibility queries
+
