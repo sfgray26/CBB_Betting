@@ -22,6 +22,8 @@ import unicodedata
 from pathlib import Path
 from typing import Optional
 
+from backend.services.retry_logic import sync_retry
+
 logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path(__file__).resolve().parents[2] / "data" / "cache"
@@ -192,14 +194,38 @@ def _write_json_cache(path: Path, data: dict, fetched_at: float) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Retry-protected pybaseball fetch functions
+# ---------------------------------------------------------------------------
+
+@sync_retry(max_retries=3, base_delay=2.0, max_delay=30.0)
+def _fetch_batting_stats_with_retry(year: int, qual: int = 50):
+    """Fetch batting stats from pybaseball with retry on 502 errors."""
+    import pybaseball
+    return pybaseball.batting_stats(year, qual=qual)
+
+
+@sync_retry(max_retries=3, base_delay=2.0, max_delay=30.0)
+def _fetch_pitching_stats_with_retry(year: int, qual: int = 25):
+    """Fetch pitching stats from pybaseball with retry on 502 errors."""
+    import pybaseball
+    return pybaseball.pitching_stats(year, qual=qual)
+
+
+@sync_retry(max_retries=3, base_delay=2.0, max_delay=30.0)
+def _fetch_sprint_speed_with_retry(year: int):
+    """Fetch sprint speed from pybaseball with retry on 502 errors."""
+    import pybaseball
+    return pybaseball.statcast_sprint_speed(year)
+
+
+# ---------------------------------------------------------------------------
 # Optional sprint speed enrichment
 # ---------------------------------------------------------------------------
 
 def _maybe_enrich_sprint_speed(year: int, batter_path: Path, now: float) -> None:
     """Attempt to add sprint speed from Statcast; silently skipped on any failure."""
     try:
-        import pybaseball
-        df_speed = pybaseball.statcast_sprint_speed(year)
+        df_speed = _fetch_sprint_speed_with_retry(year)
         time.sleep(_RATE_LIMIT_SLEEP)
 
         if batter_path.exists():
@@ -250,23 +276,23 @@ def fetch_all_statcast_leaderboards(year: int = 2025, force_refresh: bool = Fals
 
     if force_refresh or not _cache_is_fresh(batter_path, now):
         try:
-            df = pybaseball.batting_stats(year, qual=50)
+            df = _fetch_batting_stats_with_retry(year, qual=50)
             time.sleep(_RATE_LIMIT_SLEEP)
             data = _df_to_batter_dict(df)
             _write_json_cache(batter_path, data, now)
             logger.info("pybaseball: cached %d batters for %d", len(data), year)
         except Exception as e:
-            logger.error("pybaseball batting fetch failed: %s", e)
+            logger.error("pybaseball batting fetch failed after retries: %s", e)
 
     if force_refresh or not _cache_is_fresh(pitcher_path, now):
         try:
-            df = pybaseball.pitching_stats(year, qual=25)
+            df = _fetch_pitching_stats_with_retry(year, qual=25)
             time.sleep(_RATE_LIMIT_SLEEP)
             data = _df_to_pitcher_dict(df)
             _write_json_cache(pitcher_path, data, now)
             logger.info("pybaseball: cached %d pitchers for %d", len(data), year)
         except Exception as e:
-            logger.error("pybaseball pitching fetch failed: %s", e)
+            logger.error("pybaseball pitching fetch failed after retries: %s", e)
 
     _maybe_enrich_sprint_speed(year, batter_path, now)
 
