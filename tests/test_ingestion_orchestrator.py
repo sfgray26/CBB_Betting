@@ -136,7 +136,7 @@ def test_advisory_lock_prevents_double_execution():
         return {"status": "success"}
 
     with patch("backend.services.daily_ingestion.SessionLocal", return_value=db_mock):
-        result = _run(_with_advisory_lock(LOCK_IDS["mlb_odds"], _inner))
+        result = _run(_with_advisory_lock(LOCK_IDS["mlb_odds"], "mlb_odds", _inner))
 
     assert result is None
     assert inner_called == [], "Inner coroutine must NOT be called when lock is held"
@@ -155,7 +155,7 @@ def test_advisory_lock_releases_on_exception():
 
     with patch("backend.services.daily_ingestion.SessionLocal", return_value=db_mock):
         with pytest.raises(RuntimeError, match="simulated failure"):
-            _run(_with_advisory_lock(LOCK_IDS["mlb_odds"], _raises))
+            _run(_with_advisory_lock(LOCK_IDS["mlb_odds"], "mlb_odds", _raises))
 
     # pg_advisory_unlock must have been called (2nd execute call in finally block)
     # Note: SQLAlchemy TextClause repr does not include the SQL text, so we
@@ -179,6 +179,8 @@ def test_orchestrator_get_status_returns_all_jobs():
         "mlb_odds", "statcast",
         "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
         "ensemble_update", "projection_freshness",
+        "player_id_mapping", "position_eligibility",
+        "probable_pitchers_morning", "probable_pitchers_afternoon", "probable_pitchers_evening",
     }
     assert expected_jobs == set(status.keys())
     for job_id, info in status.items():
