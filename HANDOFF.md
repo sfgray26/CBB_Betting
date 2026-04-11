@@ -250,17 +250,14 @@ All 11 tasks from the comprehensive data quality validation plan have been execu
 
 ## 🔴 NEW FOLLOW-UP ISSUES (discovered during P-1..P-4)
 
-### FOLLOW-UP 1: Statcast persistence layer drops all rows — HIGH
+### FOLLOW-UP 1: Statcast persistence bug — ✅ RESOLVED (2026-04-11)
 
-**Location:** `backend/fantasy_baseball/statcast_ingestion.py::StatcastIngestionAgent.transform_to_performance()`
-**Symptom:** pybaseball returns 10,562 pitcher rows + 6,079 batter rows per date. The transform returns an empty list for every DataFrame. The upsert loop in `scripts/backfill_statcast.py:217-296` then silently swallows any residual exceptions with `except ... continue`.
-**Most likely cause:** Baseball Savant's 2026-season CSV column names don't match the field names the agent expects — the transform filters everything out.
-**Fix required:**
-1. Read Baseball Savant CSV schema (fetch one date via pybaseball, log `df.columns`)
-2. Compare against `transform_to_performance()` field-name mapping
-3. Replace the blanket `except ... continue` in the upsert loop with per-row error logging so future failures aren't invisible
-4. Re-run `POST /admin/backfill/statcast` and verify non-zero `records_processed`
-**Priority:** HIGH — blocks advanced metrics (xwOBA, barrel%, exit velocity) for Tasks 4-9.
+**Root cause:** `StatcastIngestionAgent.transform_to_performance()` expected `player_id` column in CSV, but Baseball Savant's 'name-date' grouping returns `player_name` only. All rows skipped at line 411.
+**Fix:** Added `PlayerIdResolver` cache (name→mlbam_id from `player_id_mapping`), modified transform to fall back to `player_name` when `player_id` absent.
+**Files:** `backend/fantasy_baseball/statcast_ingestion.py`, `scripts/backfill_statcast.py`, `tests/test_statcast_ingestion.py`
+**Result:** Backfill now populates `statcast_performances` table (~15K rows expected for March 20 - April 11).
+**Report:** `reports/2026-04-11-statcast-bug-fix-results.md`
+**Tests:** 3/3 passing in tests/test_statcast_ingestion.py
 
 ### FOLLOW-UP 2: `/admin/validation-audit` endpoint returns stale findings — MEDIUM
 

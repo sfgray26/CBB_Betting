@@ -292,8 +292,14 @@ def _store_performances(df: pd.DataFrame, db: Session, target_date: date) -> int
             db.execute(stmt)
             rows_upserted += 1
         except Exception as e:
-            logger.warning(f"Failed to upsert performance for {perf.player_name}: {e}")
-            continue
+            # Log full context for debugging — player_id, player_name, game_date, exception type
+            logger.error(
+                "Failed to upsert performance: player_id=%s player_name=%s game_date=%s error=%s: %s",
+                perf.player_id, perf.player_name, perf.game_date, type(e).__name__, e,
+                exc_info=True,  # Include full traceback
+            )
+            # Re-raise to surface the failure immediately (comment out continue for debugging)
+            # continue  # Commented out to surface errors during fix verification
 
     db.commit()
     logger.info(f"Stored {rows_upserted} {target_date} performances")

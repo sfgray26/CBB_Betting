@@ -34,6 +34,59 @@ from backend.fantasy_baseball.player_board import get_or_create_projection
 logger = logging.getLogger(__name__)
 
 
+class PlayerIdResolver:
+    """
+    Cache-based player name → MLBAM ID resolver.
+
+    Loads player_id_mapping table at import time and provides
+    fast name-to-ID lookups for Statcast CSV rows that lack player_id.
+    """
+    def __init__(self):
+        self._by_name: Dict[str, int] = {}  # full_name → mlbam_id
+        self._by_normalized: Dict[str, int] = {}  # normalized_name → mlbam_id
+        self._loaded = False
+
+    def load(self, db: Session) -> None:
+        """Load player_id_mapping into memory caches."""
+        if self._loaded:
+            return
+
+        from backend.models import PlayerIDMapping
+
+        mappings = db.query(PlayerIDMapping).all()
+        for m in mappings:
+            if m.mlbam_id:
+                self._by_name[m.full_name.lower()] = m.mlbam_id
+                if m.normalized_name:
+                    self._by_normalized[m.normalized_name] = m.mlbam_id
+
+        self._loaded = True
+        logger.info("PlayerIdResolver loaded %d name→mlbam_id mappings", len(self._by_name))
+
+    def resolve(self, player_name: str) -> str:
+        """
+        Resolve player_name to an ID string for StatcastPerformance.player_id.
+
+        Returns mlbam_id as string if found in player_id_mapping,
+        otherwise returns player_name as-is (fallback identifier).
+        """
+        if not player_name:
+            return "unknown"
+
+        # Try exact full_name match (case-insensitive)
+        mlbam_id = self._by_name.get(player_name.lower())
+        if mlbam_id:
+            return str(mlbam_id)
+
+        # Fallback: return player_name as identifier
+        # Note: StatcastPerformance.player_id is String(50), not an FK, so names work
+        return player_name
+
+
+# Module-level resolver singleton (will be loaded on first agent use)
+_player_id_resolver = PlayerIdResolver()
+
+
 @dataclass
 class PlayerDailyPerformance:
     """Single day performance from Statcast."""
@@ -270,6 +323,9 @@ class StatcastIngestionAgent:
         self.base_url = "https://baseballsavant.mlb.com/statcast_search/csv"
         self.quality_checker = DataQualityChecker()
         self.db = SessionLocal()
+
+        # Load player_id_mapping cache for name→ID resolution
+        _player_id_resolver.load(self.db)
     
     def _fetch_by_player_type(self, target_date: date, player_type: str) -> Optional[pd.DataFrame]:
         """
@@ -407,9 +463,27 @@ class StatcastIngestionAgent:
 
         for _, row in df.iterrows():
             try:
-                pid = row.get('player_id')
-                if pid is None or str(pid).strip() in ('', 'nan', 'NaN'):
-                    continue
+                # Log first row structure for diagnostics (only once per call)
+                if not hasattr(self, '_diag_logged'):
+                    self._diag_logged = True
+                    logger.info(
+                        "transform_to_performance: DataFrame has %d rows, columns: %s. player_id column present: %s",
+                        len(df),
+                        sorted(df.columns),
+                        'player_id' in df.columns,
+                    )
+
+                # Statcast CSV with group_by='name-date' does NOT include player_id column.
+                # Extract identifier: prefer player_id column if present, otherwise resolve player_name.
+                pid_col = row.get('player_id')
+                if pid_col is not None and str(pid_col).strip() not in ('', 'nan', 'NaN'):
+                    player_id = str(pid_col)
+                else:
+                    # Fallback: resolve player_name to mlbam_id via player_id_mapping cache
+                    player_name_raw = row.get('player_name', '')
+                    if not player_name_raw or str(player_name_raw).strip() in ('', 'nan', 'NaN'):
+                        continue  # Skip rows with no identifiable player
+                    player_id = _player_id_resolver.resolve(str(player_name_raw))
 
                 is_pitcher = str(row.get('_statcast_player_type', 'batter')) == 'pitcher'
 
@@ -417,7 +491,7 @@ class StatcastIngestionAgent:
                     # Pitcher row: batting stats are zeroed; Ks/BBs come from
                     # the event counts which represent outcomes against this pitcher.
                     perf = PlayerDailyPerformance(
-                        player_id=str(pid),
+                        player_id=player_id,
                         player_name=str(row.get('player_name', '')),
                         team=str(row.get('team', '')),
                         game_date=pd.to_datetime(row.get('game_date')).date(),
@@ -442,7 +516,7 @@ class StatcastIngestionAgent:
                     # Primary names come from the grouped name-date CSV; alternatives handle
                     # any Baseball Savant endpoint variation.
                     perf = PlayerDailyPerformance(
-                        player_id=str(pid),
+                        player_id=player_id,
                         player_name=str(row.get('player_name', '')),
                         team=str(row.get('team', '')),
                         game_date=pd.to_datetime(row.get('game_date')).date(),

@@ -218,10 +218,26 @@ async def validation_audit():
                         "Use MLB Stats API instead or mark as intentionally empty.",
                         None)
                 elif table_name == "statcast_performances":
-                    add_finding("high", "Empty Tables", "statcast_performances",
-                        "EMPTY but should have data: Statcast ingestion failing due to 502 errors (Task 5).",
-                        "Implement retry logic with exponential backoff (1-2 hours work).",
-                        None)
+                    # Statcast table validation with row count checks
+                    if row_count == 0:
+                        add_finding("high", "Empty Tables", "statcast_performances",
+                            "statcast_performances table is empty",
+                            "Trigger backfill endpoint; if rows returned but table still empty, check transform_to_performance() for column name mismatches.",
+                            None)
+                    elif row_count < 5000:
+                        add_finding("medium", "Empty Tables", "statcast_performances",
+                            f"statcast_performances has only {row_count} rows",
+                            "Re-run POST /admin/backfill/statcast to fill missing dates.",
+                            None)
+                    # Store row count for summary if validation passes
+                    else:
+                        findings["info"].append({
+                            "category": "Data Volume",
+                            "table": "statcast_performances",
+                            "issue": f"Statcast data populated: {row_count} rows",
+                            "recommendation": "No action needed.",
+                            "sql_check": None
+                        })
                 elif table_name == "data_ingestion_logs":
                     add_finding("info", "Empty Tables", "data_ingestion_logs",
                         "Empty by design: Infrastructure exists but logging not implemented (Task 6).",
