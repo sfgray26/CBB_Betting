@@ -124,7 +124,9 @@
       "Bash(\"venv/Scripts/python.exe\" scripts/_p1_inspect_stuck.py)",
       "Bash(\"venv/Scripts/python.exe\" scripts/_p4_statcast_baseline.py)",
       "Bash(\"venv/Scripts/python.exe\" scripts/_p3_investigate.py)",
-      "Bash(\"venv/Scripts/python.exe\" scripts/_p3_investigate2.py)"
+      "Bash(\"venv/Scripts/python.exe\" scripts/_p3_investigate2.py)",
+      "Bash(\"venv/Scripts/python.exe\" scripts/_p3_manual_override.py)",
+      "Bash(\"venv/Scripts/python.exe\" scripts/_p3_export_unmatchable.py)"
     ]
   }
 }

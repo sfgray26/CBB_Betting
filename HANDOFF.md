@@ -1,7 +1,9 @@
 # HANDOFF.md — MLB Platform Master Plan (In-Season 2026)
 
-> **Date:** April 10, 2026 10:45 AM EDT | **Author:** Claude Code (Master Architect)
-> **Status:** ✅ **DATA QUALITY REMEDIATION PHASE 1 COMPLETE - TASKS 1-11 FINISHED**
+> **Date:** April 11, 2026 | **Author:** Claude Code (Master Architect)
+> **Status:** ✅ **PRODUCTION DEPLOYMENT FIX PHASE COMPLETE (P-1..P-4) — DATA LAYER AT MATHEMATICAL FLOOR**
+>
+> **Latest session:** Executed P-1 through P-4 against production DB via Railway public proxy. Results: `reports/2026-04-11-production-deployment-results.md`. Three new follow-ups discovered (Statcast persistence bug, stale audit endpoint, player_id_mapping duplicates) — see §PRODUCTION DEPLOYMENT RESULTS below. Research bundle K-34..K-38 is UNBLOCKED for Tasks 4-9 feature work.
 
 ---
 
@@ -123,29 +125,31 @@ All 11 tasks from the comprehensive data quality validation plan have been execu
 
 ---
 
-## 📊 FINAL STATUS REPORT (April 10, 2026 - UPDATED 14:30)
+## 📊 FINAL STATUS REPORT (April 11, 2026 - POST P-1..P-4)
 
 ### Validation Audit Results
 
-**Overall Assessment:** ⚠️ **FAIR - 4 issues found (DOWN from 5)**
+**Overall Assessment:** ✅ **GOOD — data layer at mathematical floor, 1 new persistence bug surfaced**
 
-| Severity | Before | After | Change |
-|----------|--------|-------|--------|
-| 🔴 CRITICAL | 3 | 1 | ✅ -67% |
-| 🟠 HIGH | 2 | 3 | ⚠️ +1 (better detection) |
+| Severity | 2026-04-10 Start | 2026-04-11 Post-Deploy | Change |
+|----------|------------------|------------------------|--------|
+| 🔴 CRITICAL | 1 (legacy ERA) | 0 | ✅ -100% |
+| 🟠 HIGH | 3 | 3 (all now FOLLOW-UPs, not original issues) | ➡️ Different issues |
 | 🟡 MEDIUM | 0 | 0 | ✅ None |
 | 🟢 LOW | 0 | 0 | ✅ None |
-| ℹ️ INFO | 2 | 2 | ➡️ No change |
 
-**Key Improvements:**
-- ✅ ops/whip computation: Field names fixed, 5,175 records backfilled
-- ✅ ERA validation: 0-100 range check implemented
-- ✅ Orphan linking: Fuzzy matching infrastructure deployed
-- ⚠️ 1639 NULL ops remaining (needs re-run of backfill)
-- ⚠️ 477 orphaned position_eligibility records (needs linking script)
-- ⚠️ 1 impossible ERA value (legacy data)
+> **Note:** The `/admin/validation-audit` endpoint still reports stale "1639 NULL ops"/"477 orphans"/"Statcast 502 errors" findings — see FOLLOW-UP 2 below. Those findings are NOT accurate against current DB state.
 
-**Detailed Report:** `reports/data-quality-fixes-validation.md`
+**Key outcomes (2026-04-11 session):**
+- ✅ Legacy ERA row (id=8683, era=162.0) NULL'd
+- ✅ OPS backfill at mathematical floor — all 1,639 residual NULL ops have NULL obp or slg (cannot be computed without fabricating data)
+- ✅ WHIP backfill at mathematical floor — 137 rows populated; 8 remaining stuck rows have `innings_pitched='0.0'`
+- ✅ Ohtani + Lorenzen two-way splits manually linked (366 → 362 orphans)
+- ✅ 362 permanent unmatchable orphans exported to CSV and documented
+- ⚠️ NEW: Statcast persistence layer drops all rows (FOLLOW-UP 1) — blocks xwOBA/barrel%/exit velocity
+- ⚠️ NEW: Validation-audit endpoint queries are stale (FOLLOW-UP 2)
+
+**Full session report:** `reports/2026-04-11-production-deployment-results.md`
 
 ---
 
@@ -223,69 +227,70 @@ All 11 tasks from the comprehensive data quality validation plan have been execu
 
 ---
 
-## 🔴 REMAINING CRITICAL ISSUES (3)
+## ✅ 2026-04-11 PRODUCTION DEPLOYMENT RESULTS (P-1..P-4)
 
-### 1. ops (On-Base Plus Slugging) - CRITICAL
-**Table:** `mlb_player_stats`
-**Issue:** 100% NULL despite having obp+slg components
-**Impact:** Players' OPS statistic unavailable
-**Fix:**
-```sql
--- Immediate backfill
-UPDATE mlb_player_stats SET ops = (obp + slg) WHERE ops IS NULL AND obp IS NOT NULL AND slg IS NOT NULL;
+**Full report:** `reports/2026-04-11-production-deployment-results.md`
+**Plan:** `PRODUCTION_DEPLOYMENT_PLAN.md`
+**DB access method:** `DATABASE_PUBLIC_URL` via `junction.proxy.rlwy.net:45402` (scripts/_pN_*.py)
 
--- Fix ingestion
--- Ensure _ingest_mlb_box_stats() calculates ops = obp + slg
-```
+| Task | Before | After | Status | Notes |
+|------|--------|-------|--------|-------|
+| **P-2** Legacy ERA cleanup | 1 row `era>100` (id=8683, 162.0) | 0 | ✅ COMPLETE | NULL'd via direct UPDATE |
+| **P-1** OPS backfill | 1,639 NULL ops | 1,639 NULL ops | ✅ AT MATHEMATICAL FLOOR | All residuals have NULL obp or slg — structurally unbackfillable |
+| **P-1** WHIP backfill | 4,154 NULL whip | 4,025 NULL whip | ✅ AT MATHEMATICAL FLOOR | 137 populated; 8 stuck rows have `innings_pitched='0.0'` (math undefined) |
+| **P-4** Statcast retry | 0 rows | 0 rows | ⚠️ RETRY VERIFIED, PERSISTENCE BUG | pybaseball fetches 10K+ rows/date; transform drops them all |
+| **P-3** Orphan linking | 366 orphans | 362 orphans | ✅ COMPLETE (OHTANI+LORENZEN) | 362 remaining exported to CSV — permanently unmatchable prospects |
 
-### 2. whip (Walks + Hits Per Inning Pitched) - CRITICAL
-**Table:** `mlb_player_stats`
-**Issue:** 100% NULL despite having components
-**Impact:** Pitchers' WHIP unavailable
-**Root Cause:** innings_pitched stored as string "6.2" (not decimal)
-**Fix:**
-```sql
--- Immediate backfill (parse "6.2" format)
-UPDATE mlb_player_stats
-SET whip = (walks_allowed + hits_allowed)::numeric /
-           NULLIF(CAST(SPLIT_PART(innings_pitched, '.', 1) AS INT) / 10.0 +
-                 CAST(SPLIT_PART(innings_pitched, '.', 2) AS INT), 0)
-WHERE whip IS NULL AND walks_allowed IS NOT NULL;
-
--- Fix ingestion
--- Implement innings_pitched parsing: "6.2" → 6.667 (6 innings + 2 outs)
-```
-
-### 3. Impossible ERA Value - CRITICAL
-**Table:** `mlb_player_stats`
-**Issue:** 1 row with ERA > 100 (impossible)
-**Impact:** Skews ERA analysis
-**Fix:**
-```sql
--- Investigate first
-SELECT bdl_player_id, era, earned_runs, innings_pitched, game_date
-FROM mlb_player_stats
-WHERE era > 100;
-
--- Fix: NULL out impossible values
-UPDATE mlb_player_stats SET era = NULL WHERE era > 100 OR era < 0;
-```
+**Scripts executed:**
+- `scripts/_p2_fix_era.py`, `_p1_diagnose.py`, `_p3_investigate.py`, `_p3_investigate2.py`, `_p3_manual_override.py`, `_p3_export_unmatchable.py`
+- Unmatchable orphan export: `reports/2026-04-11-unmatchable-orphans.csv` (162 batters, 200 pitchers)
+- Baseline/final audits: `reports/2026-04-11-baseline-validation-audit.json`, `reports/2026-04-11-final-validation-audit.json`
 
 ---
 
-## 🟠 REMAINING HIGH PRIORITY ISSUES (2)
+## 🔴 NEW FOLLOW-UP ISSUES (discovered during P-1..P-4)
 
-### 4. statcast_performances Empty - HIGH
-**Table:** `statcast_performances`
-**Issue:** Empty due to 502 errors from Statcast API
-**Impact:** Advanced metrics (xwOBA, barrel%, exit velocity) unavailable
-**Fix:** Implement retry logic with exponential backoff (1-2 hours work)
+### FOLLOW-UP 1: Statcast persistence layer drops all rows — HIGH
 
-### 5. Orphaned position_eligibility Records - HIGH
-**Table:** `position_eligibility`
-**Issue:** 477 rows with no matching yahoo_key in player_id_mapping
-**Impact:** Can't link these players to Yahoo Fantasy rosters
-**Fix:** Run fuzzy name matching to link orphaned records (~1 hour work)
+**Location:** `backend/fantasy_baseball/statcast_ingestion.py::StatcastIngestionAgent.transform_to_performance()`
+**Symptom:** pybaseball returns 10,562 pitcher rows + 6,079 batter rows per date. The transform returns an empty list for every DataFrame. The upsert loop in `scripts/backfill_statcast.py:217-296` then silently swallows any residual exceptions with `except ... continue`.
+**Most likely cause:** Baseball Savant's 2026-season CSV column names don't match the field names the agent expects — the transform filters everything out.
+**Fix required:**
+1. Read Baseball Savant CSV schema (fetch one date via pybaseball, log `df.columns`)
+2. Compare against `transform_to_performance()` field-name mapping
+3. Replace the blanket `except ... continue` in the upsert loop with per-row error logging so future failures aren't invisible
+4. Re-run `POST /admin/backfill/statcast` and verify non-zero `records_processed`
+**Priority:** HIGH — blocks advanced metrics (xwOBA, barrel%, exit velocity) for Tasks 4-9.
+
+### FOLLOW-UP 2: `/admin/validation-audit` endpoint returns stale findings — MEDIUM
+
+**Location:** `backend/admin_endpoints_validation.py`
+**Symptom:** After P-1..P-4 the audit still reports "1639 NULL ops despite obp+slg", "477 orphaned position_eligibility", "Statcast 502 errors" — all false against current DB state (0 backfillable NULL ops, 362 orphans, no 502 errors this session).
+**Fix required:** Update the audit's SQL to re-evaluate against live tables instead of re-emitting hardcoded issue descriptions. Specifically:
+- NULL ops count should filter `obp IS NOT NULL AND slg IS NOT NULL` (backfillable subset only)
+- Orphan count should join against `player_id_mapping` and report current value, not 477
+- Statcast finding should check `statcast_performances` row count, not assume API errors
+**Priority:** MEDIUM — audit is advisory, not blocking, but its staleness will mislead future sessions.
+
+### FOLLOW-UP 3: `player_id_mapping` duplicate rows — LOW (non-blocking)
+
+**Symptom:** Both Ohtani and Lorenzen have 4 identical rows at ids (X, X+10000, X+20000, X+30000), all with the same `bdl_id`/`mlbam_id`. The `yahoo_key` column is populated on only one of the 4 rows for Lorenzen, and none for Ohtani.
+**Most likely cause:** Upstream mapping-seed job re-inserts instead of upserting.
+**Fix required:** Investigate which job writes to `player_id_mapping` and add an ON CONFLICT clause keyed on `(bdl_id, mlbam_id)` or similar natural key. Then dedupe existing rows.
+**Priority:** LOW — doesn't affect joins because `position_eligibility.bdl_player_id` links directly to `bdl_id`. Non-blocking, flagged for future housekeeping.
+
+### FOLLOW-UP 4: `/admin/backfill-ops-whip` over-counts rowcount — LOW
+
+**Location:** `backend/admin_backfill_ops_whip.py`
+**Symptom:** Reports "8 whip_updated" on every call, but those rows are NULL→NULL no-ops (innings_pitched='0.0' makes WHIP mathematically undefined).
+**Fix required:** Add `AND innings_pitched <> '0.0'` to the diagnostic filter so the rowcount reflects reality.
+**Priority:** LOW — cosmetic, not a correctness issue.
+
+---
+
+## 📁 P-3 362 UNMATCHABLE ORPHANS — ACCEPTED AS PERMANENT STATE
+
+Sample confirms these are retired/prospect/minor-league Yahoo players (`469.p.65xxx`, `469.p.66xxx` ID range) with no corresponding MLB/BDL entry because they have not yet appeared in an MLB game. Do NOT re-run `backend/scripts/link_orphans.py` against current data — it will burn ~7 minutes and return 0% every time. If surfacing these in UI is needed (e.g., draft prep), use `yahoo_player_key` directly without joining `player_id_mapping`.
 
 ---
 
@@ -302,36 +307,30 @@ UPDATE mlb_player_stats SET era = NULL WHERE era > 100 OR era < 0;
 
 ---
 
-## 🚀 NEXT STEPS (Priority Order)
+## 🚀 NEXT STEPS (Priority Order — updated 2026-04-11)
 
-### IMMEDIATE (Before Next Development Phase)
+### UNBLOCKED: Research bundle K-34..K-38 → Feature work
 
-1. **Fix ops computation** (CRITICAL) - 30 minutes
-   ```sql
-   UPDATE mlb_player_stats SET ops = (obp + slg) WHERE ops IS NULL;
-   ```
+With data layer at mathematical floor, Tasks 4-9 (derived stats, VORP/z-score, H2H scoring, probable pitchers, empty-table remediation) can begin. All 5 research deliverables exist under `reports/2026-04-10-*.md`.
 
-2. **Fix whip computation** (CRITICAL) - 1 hour
-   - Implement innings_pitched string parsing
-   - Backfill WHIP for all pitchers
+### IMMEDIATE (before Tasks 4-9 feature work)
 
-3. **Fix impossible ERA** (CRITICAL) - 30 minutes
-   - Investigate and fix the row with ERA > 100
+1. **FOLLOW-UP 1: Fix Statcast persistence bug** (HIGH) — blocks xwOBA/barrel%/exit velocity
+   - File: `backend/fantasy_baseball/statcast_ingestion.py::transform_to_performance()`
+   - Step 1: Log `df.columns` from one successful pybaseball fetch
+   - Step 2: Diff against agent's expected field names
+   - Step 3: Replace blanket `except ... continue` in `scripts/backfill_statcast.py:217-296` with per-row error logging
+   - Step 4: Re-run `POST /admin/backfill/statcast`, verify non-zero `records_processed`
 
-### HIGH PRIORITY (This Week)
+2. **FOLLOW-UP 2: Refresh `/admin/validation-audit` queries** (MEDIUM)
+   - File: `backend/admin_endpoints_validation.py`
+   - Update hardcoded NULL-ops / orphan / Statcast findings to re-count from live tables
 
-4. **Link orphaned position_eligibility** - 1 hour
-   - Run fuzzy name matching for 477 orphaned records
+### LOW PRIORITY (housekeeping)
 
-5. **Implement Statcast retry logic** - 2 hours
-   - Add exponential backoff for 502 errors
-   - Retry failed Statcast fetches automatically
-
-### MEDIUM PRIORITY (Future Enhancement)
-
-6. **Implement data_ingestion_logs** - 4 hours
-   - Add comprehensive audit logging
-   - Track job success/failure, timing, row counts
+3. **FOLLOW-UP 3: Dedupe `player_id_mapping`** — Ohtani/Lorenzen have 4 rows each; upstream seed job re-inserts instead of upserting
+4. **FOLLOW-UP 4: Fix `/admin/backfill-ops-whip` rowcount over-count** — cosmetic; exclude `innings_pitched='0.0'` from diagnostic filter
+5. **Implement `data_ingestion_logs`** — comprehensive audit logging (4 hours, deferred from original Task 6)
 
 ---
 
@@ -452,10 +451,10 @@ UPDATE mlb_player_stats SET era = NULL WHERE era > 100 OR era < 0;
 
 ---
 
-**Last Updated:** April 10, 2026 10:45 AM EDT
-**Session Context:** Data Quality Remediation Phase 1 Complete
-**Next Phase:** Fix remaining critical issues (ops, whip, ERA)
-**Priority:** CRITICAL - Fix 3 remaining data quality bugs before feature development
+**Last Updated:** April 11, 2026 (post P-1..P-4 production deployment)
+**Session Context:** Production Deployment Fix Phase complete — data layer at mathematical floor
+**Next Phase:** FOLLOW-UP 1 (Statcast persistence bug), then Tasks 4-9 feature work using K-34..K-38 research
+**Priority:** HIGH — fix Statcast persistence bug to unblock xwOBA/barrel%/exit velocity; audit endpoint refresh is secondary
 
 ---
 
