@@ -1,3 +1,12 @@
+# ?? ARCHIVED — Research Complete
+
+> **Status:** ARCHIVED (April 11, 2026)
+> **Original Location:** reports/EXECUTION_PLAN_K35.md
+> **Archive Reason:** K-K35 research completed and delivered
+> **Deliverables:** See reports/YYYY-MM-DD-*.md files for K-K35 output
+
+---
+
 # K-35 Execution Plan: Z-Score Best Practices Research
 
 ## Research Methodology
@@ -187,3 +196,4 @@ Write comprehensive guide.
 - [ ] 3+ common mistakes documented
 
 *Ready to execute*
+

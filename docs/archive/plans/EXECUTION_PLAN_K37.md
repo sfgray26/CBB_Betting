@@ -1,3 +1,12 @@
+# ?? ARCHIVED — Research Complete
+
+> **Status:** ARCHIVED (April 11, 2026)
+> **Original Location:** reports/EXECUTION_PLAN_K37.md
+> **Archive Reason:** K-K37 research completed and delivered
+> **Deliverables:** See reports/YYYY-MM-DD-*.md files for K-K37 output
+
+---
+
 # K-37 Execution Plan: MLB API Comparison Research
 
 ## Research Methodology
@@ -172,3 +181,4 @@ Write the report with clear recommendations.
 - [ ] Cost analysis included
 
 *Ready to execute*
+

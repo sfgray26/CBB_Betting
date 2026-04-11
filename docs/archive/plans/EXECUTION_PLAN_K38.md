@@ -1,3 +1,12 @@
+# ?? ARCHIVED — Research Complete
+
+> **Status:** ARCHIVED (April 11, 2026)
+> **Original Location:** reports/EXECUTION_PLAN_K38.md
+> **Archive Reason:** K-K38 research completed and delivered
+> **Deliverables:** See reports/YYYY-MM-DD-*.md files for K-K38 output
+
+---
+
 # K-38 Execution Plan: VORP Implementation Guide Research
 
 ## Research Methodology
@@ -238,3 +247,4 @@ Write comprehensive guide.
 - [ ] 3+ situations where VORP should NOT be used
 
 *Ready to execute*
+

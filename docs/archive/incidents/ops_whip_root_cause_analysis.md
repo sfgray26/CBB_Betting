@@ -1,3 +1,11 @@
+# ?? ARCHIVED — Consolidated into Incident Report
+
+> **Status:** ARCHIVED (April 11, 2026)
+> **Original:** docs/ops_whip_root_cause_analysis.md
+> **Consolidated Into:** docs/incidents/2026-04-10-ops-whip-root-cause.md`n> **Reason:** Version chain consolidated into single authoritative incident report
+
+---
+
 # Root Cause Analysis: ops/whip NULL Issues
 
 **Investigation Date:** 2026-04-10

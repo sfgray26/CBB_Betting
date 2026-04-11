@@ -1,3 +1,12 @@
+# ?? ARCHIVED — Research Complete
+
+> **Status:** ARCHIVED (April 11, 2026)
+> **Original Location:** reports/EXECUTION_PLAN_K36.md
+> **Archive Reason:** K-K36 research completed and delivered
+> **Deliverables:** See reports/YYYY-MM-DD-*.md files for K-K36 output
+
+---
+
 # K-36 Execution Plan: H2H Scoring Systems Research
 
 ## Research Methodology
@@ -143,3 +152,4 @@ Write comprehensive report.
 - [ ] Glossary of terms provided
 
 *Ready to execute*
+

@@ -1,3 +1,11 @@
+# ?? ARCHIVED — Consolidated into Incident Report
+
+> **Status:** ARCHIVED (April 11, 2026)
+> **Original:** docs/ops_whip_root_cause_analysis_CORRECTED.md
+> **Consolidated Into:** docs/incidents/2026-04-10-ops-whip-root-cause.md`n> **Reason:** Version chain consolidated into single authoritative incident report
+
+---
+
 # CORRECTED Root Cause Analysis: ops/whip NULL Issues
 
 **Investigation Date:** 2026-04-10
@@ -234,3 +242,4 @@ if stats:
 The initial analysis claimed "computation code exists but values are never persisted." This was **INCORRECT**. The code review shows that `ops=computed_ops` and `whip=computed_whip` are correctly included in both INSERT and UPDATE clauses.
 
 The real issue is elsewhere - likely in the conditional logic, BDL API response handling, or code execution flow.
+

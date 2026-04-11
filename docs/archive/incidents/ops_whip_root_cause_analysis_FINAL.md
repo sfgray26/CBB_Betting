@@ -1,3 +1,11 @@
+# ?? ARCHIVED — Consolidated into Incident Report
+
+> **Status:** ARCHIVED (April 11, 2026)
+> **Original:** docs/ops_whip_root_cause_analysis_FINAL.md
+> **Consolidated Into:** docs/incidents/2026-04-10-ops-whip-root-cause.md`n> **Reason:** Version chain consolidated into single authoritative incident report
+
+---
+
 # CORRECTED Root Cause Analysis: ops/whip NULL Issues
 
 **Investigation Date:** 2026-04-10
@@ -257,3 +265,4 @@ if computed_ops is not None and stat.obp is not None and stat.slg is not None:
 **REVISED:** Initial analysis claimed "computation code exists but values are never persisted" - **INCORRECT**. The code review shows both computation and persistence are correctly implemented.
 
 **CURRENT:** The issue is more subtle - likely a data flow or precedence issue where BDL null values are overriding our computed values, or an edge case in the conditional logic.
+
