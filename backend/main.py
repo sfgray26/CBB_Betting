@@ -69,6 +69,19 @@ from backend.admin_test_yahoo_parsing import router as _yahoo_parsing_test_route
 # YAHOO STRUCTURE DUMP ENDPOINT - REMOVE AFTER YAHOO API DEBUGGING
 from backend.admin_yahoo_structure_dump import router as _yahoo_structure_dump_router
 # END YAHOO STRUCTURE DUMP ENDPOINT
+
+# ERA DIAGNOSTIC ENDPOINT - REMOVE AFTER TASK 10 COMPLETE
+from backend.admin_endpoints_era import router as _era_diagnostic_router
+# END ERA DIAGNOSTIC ENDPOINT
+
+# VALIDATION AUDIT ENDPOINT - REMOVE AFTER TASK 11 COMPLETE
+from backend.admin_endpoints_validation import router as _validation_audit_router
+# END VALIDATION AUDIT ENDPOINT
+
+# OPS/WHIP BACKFILL ENDPOINT - REMOVE AFTER TASK 26 COMPLETE
+from backend.admin_backfill_ops_whip import router as _backfill_ops_whip_router
+# END OPS/WHIP BACKFILL ENDPOINT
+
 from backend.services.recalibration import compute_dynamic_weights
 from backend.services.discord_notifier import send_todays_bets
 from backend.services.sentinel import run_nightly_health_check
@@ -570,6 +583,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# END G-31 TEMPORARY VERIFICATION ENDPOINT
+
 # --- Strangler-fig router mounts (Phase 3) ---
 # These routers duplicate the routes already inline in this file.
 # FastAPI routes are matched in registration order; the inline routes
@@ -596,6 +611,15 @@ app.include_router(_yahoo_token_router, prefix="/test", tags=["yahoo-token"])
 app.include_router(_yahoo_parsing_test_router, prefix="/test", tags=["yahoo-parsing-test"])
 app.include_router(_yahoo_structure_dump_router, prefix="/test", tags=["yahoo-structure-dump"])
 # END YAHOO TOKEN REFRESH ENDPOINTS
+# ERA DIAGNOSTIC ENDPOINT - REMOVE AFTER TASK 10 COMPLETE
+app.include_router(_era_diagnostic_router, prefix="/admin", tags=["admin"])
+# END ERA DIAGNOSTIC ENDPOINT
+# VALIDATION AUDIT ENDPOINT - REMOVE AFTER TASK 11 COMPLETE
+app.include_router(_validation_audit_router, prefix="/admin", tags=["admin"])
+# END VALIDATION AUDIT ENDPOINT
+# OPS/WHIP BACKFILL ENDPOINT - REMOVE AFTER TASK 26 COMPLETE
+app.include_router(_backfill_ops_whip_router, tags=["admin"])
+# END OPS/WHIP BACKFILL ENDPOINT
 
 # --- end strangler-fig mounts ---
 
@@ -3165,6 +3189,37 @@ async def backfill_yahoo_keys_endpoint(
         return result
     except Exception as exc:
         logger.error("Yahoo keys backfill failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/admin/link-orphans")
+async def link_orphaned_eligibility(
+    dry_run: bool = Query(default=True, description="If true, preview without writing to database"),
+    verbose: bool = Query(default=False, description="Enable verbose logging"),
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Link orphaned position_eligibility records via fuzzy name matching.
+
+    Task 21: Links orphaned position_eligibility records to player_id_mapping
+    using difflib.SequenceMatcher with 85% similarity threshold.
+
+    Target: Reduce orphans from ~477 to <50.
+
+    Query params:
+        dry_run: If true, preview without writing to database (default: True)
+        verbose: Enable detailed logging of match attempts
+
+    Returns: dict with status, linked_count, remaining_count, success_rate, elapsed_ms
+    """
+    from backend.fantasy_baseball.orphan_linker import link_orphaned_records
+
+    try:
+        result = link_orphaned_records(db, dry_run=dry_run, verbose=verbose)
+        return result
+    except Exception as exc:
+        logger.error("Orphan linking failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc))
 
 
@@ -6989,6 +7044,122 @@ async def yahoo_roster(user: str = Depends(verify_admin_api_key)):
         client = get_yahoo_client()
         roster = client.get_roster()
         return {"count": len(roster), "players": roster}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/admin/investigate/ops-whip")
+async def investigate_ops_whip_root_cause():
+    """
+    Temporary endpoint to investigate why ops/whip fields are NULL.
+    Runs 6 diagnostic queries and returns comprehensive analysis.
+    """
+    try:
+        db = SessionLocal()
+        results = {}
+
+        # Investigation 1: Check if obp/slg data exists
+        inv1 = db.execute(text("""
+            SELECT
+                COUNT(*) as total_rows,
+                COUNT(obp) as has_obp,
+                COUNT(slg) as has_slg,
+                COUNT(ops) as has_ops,
+                COUNT(*) FILTER (WHERE obp IS NOT NULL AND slg IS NOT NULL) as has_both
+            FROM mlb_player_stats
+        """)).fetchone()
+        results["investigation_1_source_data"] = {
+            "total_rows": inv1.total_rows,
+            "has_obp": inv1.has_obp,
+            "has_slg": inv1.has_slg,
+            "has_ops": inv1.has_ops,
+            "has_both_obp_slg": inv1.has_both
+        }
+
+        # Investigation 2: Sample rows with obp/slg to see actual values
+        inv2 = db.execute(text("""
+            SELECT bdl_player_id, obp, slg, ops, game_date
+            FROM mlb_player_stats
+            WHERE obp IS NOT NULL OR slg IS NOT NULL
+            ORDER BY game_date DESC
+            LIMIT 5
+        """)).fetchall()
+        results["investigation_2_sample_rows"] = [
+            {
+                "bdl_player_id": row.bdl_player_id,
+                "obp": float(row.obp) if row.obp else None,
+                "slg": float(row.slg) if row.slg else None,
+                "ops": float(row.ops) if row.ops else None,
+                "game_date": row.game_date.isoformat() if row.game_date else None
+            }
+            for row in inv2
+        ]
+
+        # Investigation 3: Check if raw_payload has the data
+        inv3 = db.execute(text("""
+            SELECT
+                COUNT(*) FILTER (WHERE raw_payload::text LIKE '%obp%') as has_obp_payload,
+                COUNT(*) FILTER (WHERE raw_payload::text LIKE '%slg%') as has_slg_payload,
+                COUNT(*) FILTER (WHERE raw_payload::text LIKE '%ops%') as has_ops_payload
+            FROM mlb_player_stats
+        """)).fetchone()
+        results["investigation_3_raw_payload"] = {
+            "has_obp_in_payload": inv3.has_obp_payload,
+            "has_slg_in_payload": inv3.has_slg_payload,
+            "has_ops_in_payload": inv3.has_ops_payload
+        }
+
+        # Investigation 4: Check whip components
+        inv4 = db.execute(text("""
+            SELECT
+                COUNT(*) as total_rows,
+                COUNT(walks_allowed) as has_bb,
+                COUNT(hits_allowed) as has_h,
+                COUNT(whip) as has_whip,
+                COUNT(*) FILTER (WHERE walks_allowed IS NOT NULL AND hits_allowed IS NOT NULL) as has_components
+            FROM mlb_player_stats
+        """)).fetchone()
+        results["investigation_4_whip_components"] = {
+            "total_rows": inv4.total_rows,
+            "has_walks_allowed": inv4.has_bb,
+            "has_hits_allowed": inv4.has_h,
+            "has_whip": inv4.has_whip,
+            "has_both_components": inv4.has_components
+        }
+
+        # Investigation 5: Check ERA anomaly
+        inv5 = db.execute(text("""
+            SELECT bdl_player_id, era, earned_runs, innings_pitched, game_date
+            FROM mlb_player_stats
+            WHERE era > 100
+            ORDER BY era DESC
+            LIMIT 1
+        """)).fetchone()
+        results["investigation_5_era_anomaly"] = {
+            "found": inv5 is not None,
+            "data": {
+                "bdl_player_id": inv5.bdl_player_id,
+                "era": float(inv5.era) if inv5 and inv5.era else None,
+                "earned_runs": float(inv5.earned_runs) if inv5 and inv5.earned_runs else None,
+                "innings_pitched": float(inv5.innings_pitched) if inv5 and inv5.innings_pitched else None,
+                "game_date": inv5.game_date.isoformat() if inv5 and inv5.game_date else None
+            } if inv5 else None
+        }
+
+        # Investigation 6: Orphaned position_eligibility
+        inv6 = db.execute(text("""
+            SELECT COUNT(*) as orphaned
+            FROM position_eligibility pe
+            LEFT JOIN player_id_mapping pim ON pe.yahoo_player_key = pim.yahoo_key
+            WHERE pe.yahoo_player_key IS NOT NULL AND pim.yahoo_key IS NULL
+        """)).fetchone()
+        results["investigation_6_orphaned_positions"] = {
+            "orphaned_records": inv6.orphaned
+        }
+
+        db.close()
+        return results
+
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

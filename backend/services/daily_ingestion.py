@@ -139,6 +139,47 @@ def _serialize_ros_frames(frames: Optional[dict]) -> dict[str, list[dict[str, An
     return serialized
 
 
+def _parse_innings_pitched(ip: Optional[Any]) -> Optional[float]:
+    """
+    Convert BDL innings pitched format to decimal.
+
+    BDL returns IP as "6.2" (6 innings + 2 outs) or "7" (7 innings) or 0.2 (2 outs).
+    Convert to decimal: 6.2 → 6.667, 7 → 7.0, 0.2 → 0.667.
+
+    Args:
+        ip: Innings pitched from BDL API (str like "6.2", float, int, or None)
+
+    Returns:
+        Decimal innings pitched (6.2 → 6.667) or None if input is None/invalid
+
+    Examples:
+        >>> _parse_innings_pitched("6.2")
+        6.667
+        >>> _parse_innings_pitched(7)
+        7.0
+        >>> _parse_innings_pitched(None)
+        None
+    """
+    if ip is None:
+        return None
+
+    # If already a number, return as float
+    if isinstance(ip, (int, float)):
+        return float(ip)
+
+    # Parse "6.2" format: 6 innings + 2 outs
+    if isinstance(ip, str):
+        parts = ip.split(".")
+        try:
+            innings = int(parts[0])
+            outs = int(parts[1]) if len(parts) > 1 else 0
+            return innings + (outs / 3.0)
+        except (ValueError, IndexError):
+            return None
+
+    return None
+
+
 def _deserialize_ros_frames(payload: Optional[dict]) -> dict[str, Any]:
     """Rebuild pandas DataFrames from persisted RoS row payloads."""
     if not payload:
@@ -1086,6 +1127,41 @@ class DailyIngestionOrchestrator:
 
                     game_date = game_date_map.get(stat.game_id, today)
 
+                    # Compute OPS from OBP + SLG (BDL doesn't provide it)
+                    computed_ops = None
+                    if stat.obp is not None and stat.slg is not None:
+                        computed_ops = stat.obp + stat.slg
+                        logger.debug(
+                            "mlb_box_stats: computed OPS for player %d in game %d: %.3f = %.3f + %.3f",
+                            stat.bdl_player_id, stat.game_id, computed_ops, stat.obp, stat.slg
+                        )
+
+                    # Compute WHIP from (BB + H) / IP (BDL doesn't provide it)
+                    computed_whip = None
+                    if (stat.bb_allowed is not None and
+                        stat.h_allowed is not None and
+                        stat.ip is not None):
+                        ip_decimal = _parse_innings_pitched(stat.ip)
+                        if ip_decimal is not None and ip_decimal > 0:
+                            computed_whip = (stat.bb_allowed + stat.h_allowed) / ip_decimal
+                            logger.debug(
+                                "mlb_box_stats: computed WHIP for player %d in game %d: %.3f = (%d + %d) / %.1f",
+                                stat.bdl_player_id, stat.game_id, computed_whip,
+                                stat.bb_allowed, stat.h_allowed, ip_decimal
+                            )
+
+                    # Default caught_stealing to 0 when BDL doesn't provide it
+                    computed_cs = stat.cs if stat.cs is not None else 0
+
+                    # Validate ERA is within reasonable range (0-100)
+                    validated_era = stat.era
+                    if validated_era is not None and (validated_era < 0 or validated_era > 100):
+                        logger.warning(
+                            "mlb_box_stats: Impossible ERA %s for player %s (ER=%s, IP=%s) - skipping ERA",
+                            validated_era, stat.bdl_player_id, stat.er, stat.ip
+                        )
+                        validated_era = None  # Don't store impossible values
+
                     payload = stat.model_dump()
                     stmt = pg_insert(MLBPlayerStats.__table__).values(
                         bdl_stat_id=stat.id,
@@ -1104,11 +1180,11 @@ class DailyIngestionOrchestrator:
                         walks=stat.bb,
                         strikeouts_bat=stat.so,
                         stolen_bases=stat.sb,
-                        caught_stealing=stat.cs,
+                        caught_stealing=computed_cs,
                         avg=stat.avg,
                         obp=stat.obp,
                         slg=stat.slg,
-                        ops=stat.ops,
+                        ops=computed_ops,
                         # Pitching
                         innings_pitched=stat.ip,
                         hits_allowed=stat.h_allowed,
@@ -1116,8 +1192,8 @@ class DailyIngestionOrchestrator:
                         earned_runs=stat.er,
                         walks_allowed=stat.bb_allowed,
                         strikeouts_pit=stat.k,
-                        whip=stat.whip,
-                        era=stat.era,
+                        whip=computed_whip,
+                        era=validated_era,
                         # Audit
                         raw_payload=payload,
                         ingested_at=now,
@@ -1136,19 +1212,19 @@ class DailyIngestionOrchestrator:
                             walks=stat.bb,
                             strikeouts_bat=stat.so,
                             stolen_bases=stat.sb,
-                            caught_stealing=stat.cs,
+                            caught_stealing=computed_cs,
                             avg=stat.avg,
                             obp=stat.obp,
                             slg=stat.slg,
-                            ops=stat.ops,
+                            ops=computed_ops,
                             innings_pitched=stat.ip,
                             hits_allowed=stat.h_allowed,
                             runs_allowed=stat.r_allowed,
                             earned_runs=stat.er,
                             walks_allowed=stat.bb_allowed,
                             strikeouts_pit=stat.k,
-                            whip=stat.whip,
-                            era=stat.era,
+                            whip=computed_whip,
+                            era=validated_era,
                             raw_payload=payload,
                         ),
                     )
