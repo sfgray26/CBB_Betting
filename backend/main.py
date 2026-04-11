@@ -31,6 +31,7 @@ from backend.models import (
     ModelParameter,
     DBAlert,
     SessionLocal,
+    PositionEligibility,
 )
 from backend.auth import verify_api_key, verify_admin_api_key
 from backend.betting_model import CBBEdgeModel
