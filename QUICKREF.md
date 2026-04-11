@@ -406,7 +406,7 @@ railway variables set DATABASE_URL=new_url
    • Frontend Migration: Streamlit → Next.js 15 (port 3000)
    • Current Phase: Phase 1 — Core Analytics Pages (5 pages)
    • Backend: FastAPI on Railway (production API)
-   • Your Source of Truth: reports/api_ground_truth.md (22KB spec produced by Kimi)
+   • Your Source of Truth: reports/2026-03-12-api-ground-truth.md (22KB spec produced by Kimi)
                                                                                                                                   
                                                                                                                                   
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
@@ -436,7 +436,7 @@ railway variables set DATABASE_URL=new_url
                                                                                                                                   
    Step 1: Read the API Spec
                                                                                                                                   
-   cat reports/api_ground_truth.md
+   cat reports/2026-03-12-api-ground-truth.md
                                                                                                                                   
    Focus on:
                                                                                                                                   
@@ -525,7 +525,7 @@ railway variables set DATABASE_URL=new_url
      };
    }
                                                                                                                                   
-   Verify against reports/api_ground_truth.md exact field names.
+   Verify against reports/2026-03-12-api-ground-truth.md exact field names.
                                                                                                                                   
                                                                                                                                   
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── 
@@ -600,7 +600,7 @@ railway variables set DATABASE_URL=new_url
                                                                                                                                   
    Validate the CLV Analysis page (frontend/app/clv/page.tsx):
                                                                                                                                   
- 1. Read reports/api_ground_truth.md — search for "GET /api/performance/clv-analysis"
+ 1. Read reports/2026-03-12-api-ground-truth.md — search for "GET /api/performance/clv-analysis"
  2. Read frontend/app/clv/page.tsx
  3. Check against the 7-point checklist
  4. Report findings as a numbered list with line numbers
@@ -618,7 +618,7 @@ railway variables set DATABASE_URL=new_url
                                                                                                                                   
     File                          Purpose
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    reports/api_ground_truth.md   API shapes — your bible
+    reports/2026-03-12-api-ground-truth.md   API shapes — your bible
     FRONTEND_MIGRATION.md         Workstream status and context
     frontend/lib/types.ts         TypeScript interfaces (should match ground truth)
     tasks/todo.md                 Phase checklist — see what's in progress
@@ -630,7 +630,7 @@ railway variables set DATABASE_URL=new_url
    If something is unclear:
                                                                                                                                   
  1. Check FRONTEND_MIGRATION.md — it has design system colors and architectural decisions
- 2. Check reports/api_ground_truth.md — it has exact API shapes
+ 2. Check reports/2026-03-12-api-ground-truth.md — it has exact API shapes
  3. Ask Claude Code (they own the architecture)
  4. Do NOT guess — ask for clarification
                                                                                                                                   

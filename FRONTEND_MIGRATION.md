@@ -20,11 +20,11 @@
 
 | Doc | Purpose |
 |-----|---------|
-| `reports/api_ground_truth.md` | Exact JSON shapes for every API endpoint (produced by Kimi) |
+| `reports/2026-03-12-api-ground-truth.md` | Exact JSON shapes for every API endpoint (produced by Kimi) |
 | `frontend/lib/types.ts` | TypeScript interfaces — derived from ground truth, never guessed |
 | `tasks/todo.md` | Phase checklist with per-task status |
 
-**Rule:** `lib/types.ts` is only updated from `api_ground_truth.md`. Never from browser error messages or assumptions.
+**Rule:** `lib/types.ts` is only updated from `2026-03-12-api-ground-truth.md`. Never from browser error messages or assumptions.
 
 ---
 
@@ -48,7 +48,7 @@
 - [x] Calibration page (`/calibration`) — fixed against ground truth spec
 - [x] Alerts page (`/alerts`) — fixed against ground truth spec
 
-**Source of truth:** `reports/api_ground_truth.md` (produced by Kimi CLI, 2026-03-12)
+**Source of truth:** `reports/2026-03-12-api-ground-truth.md` (produced by Kimi CLI, 2026-03-12)
 
 ### Phase 2 — Live Slate & Odds Monitor ✅ DONE
 - [x] Today page (`/today`)
@@ -120,7 +120,7 @@ Copy-paste to Kimi CLI session:
 
 ```
 MISSION: Read the CBB Edge backend Python source and produce a definitive API shape document.
-Save output to: reports/api_ground_truth.md
+Save output to: reports/2026-03-12-api-ground-truth.md
 
 Files to read completely:
 - backend/services/performance.py
