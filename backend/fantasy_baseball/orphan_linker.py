@@ -153,15 +153,19 @@ def link_orphaned_records(
     logger.info("=" * 60)
 
     try:
-        # Count orphaned records
+        # Count orphaned records properly using LEFT JOIN
         total_elig = db.query(func.count(PositionEligibility.id)).scalar()
-        linked = db.query(func.count(PositionEligibility.id)).join(
-            PlayerIDMapping, PositionEligibility.bdl_player_id == PlayerIDMapping.bdl_id
+
+        # Count properly linked records (where bdl_player_id IS NOT NULL)
+        properly_linked = db.query(func.count(PositionEligibility.id)).filter(
+            PositionEligibility.bdl_player_id.isnot(None)
         ).scalar()
-        orphan_count = total_elig - linked
+
+        # Orphans are records where bdl_player_id IS NULL
+        orphan_count = total_elig - properly_linked
 
         logger.info(f"Total position_eligibility records: {total_elig}")
-        logger.info(f"Linked to player_id_mapping: {linked}")
+        logger.info(f"Properly linked (bdl_player_id IS NOT NULL): {properly_linked}")
         logger.info(f"Orphaned records: {orphan_count}")
 
         if orphan_count == 0:
@@ -180,11 +184,11 @@ def link_orphaned_records(
         all_candidates = db.query(PlayerIDMapping).all()
         logger.info(f"Loaded {len(all_candidates)} candidates")
 
-        # Fetch orphaned records
+        # Fetch orphaned records (where bdl_player_id IS NULL)
         logger.info("Fetching orphaned position_eligibility records...")
-        orphans = db.query(PositionEligibility).outerjoin(
-            PlayerIDMapping, PositionEligibility.bdl_player_id == PlayerIDMapping.bdl_id
-        ).filter(PlayerIDMapping.bdl_id.is_(None)).all()
+        orphans = db.query(PositionEligibility).filter(
+            PositionEligibility.bdl_player_id.is_(None)
+        ).all()
 
         logger.info(f"Processing {len(orphans)} orphaned records...")
 
