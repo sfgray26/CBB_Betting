@@ -3270,6 +3270,42 @@ async def backfill_all(
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.post("/admin/export-projections", dependencies=[Depends(verify_admin_api_key)])
+async def admin_export_projections():
+    """
+    Export FanGraphs RoS cache to Steamer CSV format.
+    Bridges the FanGraphs daily fetch (3 AM) with load_full_board().
+    Run this after fangraphs_ros job has completed at least once.
+    """
+    from backend.fantasy_baseball.projections_loader import export_ros_to_steamer_csvs
+    from backend.services.daily_ingestion import _ROS_CACHE, _load_persisted_ros_cache
+
+    # Try in-memory cache first, then persisted cache
+    bat_raw = _ROS_CACHE.get("bat")
+    pit_raw = _ROS_CACHE.get("pit")
+
+    if not bat_raw and not pit_raw:
+        bat_raw, pit_raw, cached_at = _load_persisted_ros_cache()
+        if cached_at is None:
+            return {
+                "success": False,
+                "error": "No FanGraphs RoS cache available. Run fangraphs_ros job first.",
+            }
+
+    result = export_ros_to_steamer_csvs(bat_raw or {}, pit_raw or {})
+
+    # Clear the lru_cache so load_full_board() picks up new CSVs
+    from backend.fantasy_baseball.projections_loader import load_full_board
+    load_full_board.cache_clear()
+
+    return {
+        "success": True,
+        "batting_rows": result["batting_rows"],
+        "pitching_rows": result["pitching_rows"],
+        "message": "Projections exported. load_full_board() cache cleared.",
+    }
+
+
 @app.get("/admin/explanations/{decision_id}")
 async def get_explanation(decision_id: int, db: Session = Depends(get_db)):
     """
