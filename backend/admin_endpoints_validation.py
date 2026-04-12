@@ -11,7 +11,12 @@ Date: April 10, 2026
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import text
 from backend.models import SessionLocal
-from collections import defaultdict
+
+# Constants for validation thresholds
+ORPHAN_BASELINE = 362  # Expected orphan count after P-3 (permanently unmatchable prospects)
+ORPHAN_TOLERANCE = 50  # Allow this many new orphans before alerting
+STATCAST_MIN_ROWS = 5000  # Minimum expected rows for populated Statcast table
+STATCAST_EXPECTED_ROWS = 15000  # Expected rows for March 20 - April 11 date range
 
 router = APIRouter()
 
@@ -34,6 +39,9 @@ async def validation_audit():
             "low": [],
             "info": []
         }
+
+        # Store validation results for summary
+        validation_results = {}
 
         def add_finding(severity, category, table, issue, recommendation, sql_check=None):
             """Add a finding to the appropriate severity bucket."""
@@ -111,20 +119,24 @@ async def validation_audit():
                 COUNT(*) as total_rows,
                 COUNT(ops) as ops_populated,
                 COUNT(*) - COUNT(ops) as ops_null,
-                COUNT(*) FILTER (WHERE obp IS NOT NULL AND slg IS NOT NULL) as has_components
+                COUNT(*) FILTER (WHERE obp IS NOT NULL AND slg IS NOT NULL AND ops IS NULL) as backfillable_ops
             FROM mlb_player_stats
         """)).fetchone()
 
-        if result.ops_populated == 0:
-            add_finding("critical", "Computed Fields", "mlb_player_stats",
-                "CRITICAL: ops is 100% NULL despite having obp+slg components.",
-                "Verify Task 7 implementation: _ingest_mlb_box_stats() should compute ops.",
-                "SELECT COUNT(*) FROM mlb_player_stats WHERE obp IS NOT NULL AND slg IS NOT NULL AND ops IS NULL")
-        elif result.ops_null > result.has_components * 0.1:  # Allow 10% error margin
+        # Only report if backfillable rows exist (have obp+slg but missing ops)
+        if result.backfillable_ops > 0:
             add_finding("high", "Computed Fields", "mlb_player_stats",
-                f"{result.ops_null} rows have NULL ops despite having obp+slg components ({result.has_components} rows).",
-                "Backfill ops for rows with obp+slg available.",
+                f"{result.backfillable_ops} rows have NULL ops despite having obp+slg components.",
+                "Run POST /admin/backfill-ops-whip to populate computed fields.",
                 "SELECT COUNT(*) FROM mlb_player_stats WHERE obp IS NOT NULL AND slg IS NOT NULL AND ops IS NULL")
+        elif result.ops_null > 0 and result.ops_null == result.backfillable_ops:
+            # All NULL ops are structural (missing components), this is expected
+            findings["info"].append({
+                "category": "Computed Fields",
+                "issue": f"ops has {result.ops_null} NULL rows (all structurally unbackfillable - missing obp or slg)",
+                "recommendation": "No action needed. These rows lack required components.",
+                "sql_check": None
+            })
 
         # Check 2.2: whip (Walks + Hits Per Inning Pitched)
         # Note: innings_pitched is stored as string (e.g., "6.2"), skip numeric check
@@ -218,15 +230,40 @@ async def validation_audit():
                         "Use MLB Stats API instead or mark as intentionally empty.",
                         None)
                 elif table_name == "statcast_performances":
-                    add_finding("high", "Empty Tables", "statcast_performances",
-                        "EMPTY but should have data: Statcast ingestion failing due to 502 errors (Task 5).",
-                        "Implement retry logic with exponential backoff (1-2 hours work).",
-                        None)
+                    # Statcast table validation with row count checks
+                    statcast_count = db.execute(text("SELECT COUNT(*) FROM statcast_performances")).scalar()
+                    if statcast_count == 0:
+                        add_finding("high", "Empty Tables", "statcast_performances",
+                            "statcast_performances table is empty",
+                            "Run POST /admin/backfill/statcast to populate. If rows processed but table empty, check transform_to_performance() for column name mismatches.",
+                            "SELECT COUNT(*) FROM statcast_performances")
+                    elif statcast_count < STATCAST_MIN_ROWS:
+                        add_finding("medium", "Empty Tables", "statcast_performances",
+                            f"statcast_performances has only {statcast_count} rows (expected {STATCAST_EXPECTED_ROWS}+ for March 20 - April 11)",
+                            "Re-run POST /admin/backfill/statcast to fill missing dates.",
+                            "SELECT COUNT(*) FROM statcast_performances")
+                    else:
+                        findings["info"].append({
+                            "category": "Data Volume",
+                            "table": "statcast_performances",
+                            "issue": f"Statcast data populated: {statcast_count} rows",
+                            "recommendation": "No action needed.",
+                            "sql_check": None
+                        })
+                        # Store row count for summary
+                        validation_results["statcast_row_count"] = statcast_count
                 elif table_name == "data_ingestion_logs":
                     add_finding("info", "Empty Tables", "data_ingestion_logs",
                         "Empty by design: Infrastructure exists but logging not implemented (Task 6).",
                         "Implement full audit logging (4 hours, medium priority).",
                         None)
+            else:
+                # Table has rows, check statcast specifically for minimum threshold
+                if table_name == "statcast_performances" and row_count < STATCAST_MIN_ROWS:
+                    add_finding("medium", "Empty Tables", "statcast_performances",
+                        f"statcast_performances has only {row_count} rows (expected {STATCAST_EXPECTED_ROWS}+ for March 20 - April 11)",
+                        "Re-run POST /admin/backfill/statcast to fill missing dates.",
+                        "SELECT COUNT(*) FROM statcast_performances")
 
         # ========================================================================
         # SECTION 5: FOREIGN KEY INTEGRITY
@@ -240,11 +277,20 @@ async def validation_audit():
               AND pim.yahoo_key IS NULL
         """)).fetchone()
 
-        if result.orphaned_count > 100:
-            add_finding("high", "Foreign Keys", "position_eligibility",
-                f"{result.orphaned_count} orphaned position_eligibility rows (no yahoo_key match).",
-                "Run fuzzy name matching to link these records to player_id_mapping.",
+        # Dynamic threshold: warn if orphan count grew significantly
+        # Current baseline after P-3 is ORPHAN_BASELINE (permanently unmatchable prospects)
+        if result.orphaned_count > ORPHAN_BASELINE + ORPHAN_TOLERANCE:
+            add_finding("medium", "Foreign Keys", "position_eligibility",
+                f"{result.orphaned_count} orphaned position_eligibility rows (baseline: {ORPHAN_BASELINE}).",
+                f"{result.orphaned_count - ORPHAN_BASELINE} new orphans detected. Consider re-running fuzzy linker.",
                 "SELECT COUNT(*) FROM position_eligibility pe LEFT JOIN player_id_mapping pim ON pe.yahoo_player_key = pim.yahoo_key WHERE pim.yahoo_key IS NULL")
+        elif result.orphaned_count > 0:
+            findings["info"].append({
+                "category": "Foreign Keys",
+                "issue": f"{result.orphaned_count} orphaned position_eligibility rows (at expected baseline)",
+                "recommendation": "These are primarily minor-league prospects with no MLB/BDL entry. No action needed.",
+                "sql_check": None
+            })
 
         # ========================================================================
         # SECTION 6: DATA FRESHNESS

@@ -2,7 +2,7 @@
 
 > **Navigation Hub:** Find the right document for your role and task.
 > 
-> **Last Updated:** March 28, 2026
+> **Last Updated:** April 11, 2026
 
 ---
 
@@ -42,11 +42,13 @@
 
 ## 🎯 Claude Code Prompts (Lead Architect)
 
+> **Master Index:** [CLAUDE_PROMPTS_INDEX.md](CLAUDE_PROMPTS_INDEX.md) — Complete index of all prompts
+
 ### Active Work Coordination
 | Document | Purpose | Status |
 |----------|---------|--------|
 | **[CLAUDE_TEAM_COORDINATION_PROMPT.md](CLAUDE_TEAM_COORDINATION_PROMPT.md)** | Assign P0 gaps to Kimi/Gemini | ✅ **Authoritative** |
-| ~~[CLAUDE_COORDINATION_PROMPT.md](CLAUDE_COORDINATION_PROMPT.md)~~ | *Deprecated — see above* | ⚠️ Superseded |
+| ~~[CLAUDE_COORDINATION_PROMPT.md](.claude/prompts/archive/CLAUDE_COORDINATION_PROMPT.md)~~ | *Deprecated — see above* | ⚠️ Superseded |
 
 ### Return Briefings
 | Document | Purpose | When to Use |
@@ -94,13 +96,17 @@
 
 ---
 
-## 🗂️ Archive (Historical)
+## 🗂️ Archive Structure
 
-| Location | Contents |
-|----------|----------|
-| `docs/archive/` | Deprecated documentation |
-| `memory/` | Daily session logs |
-| `.agent_tasks/done/` | Completed phase tasks |
+| Location | Contents | Access |
+|----------|----------|--------|
+| `docs/archive/` | Superseded operational docs | Read-only |
+| `docs/archive/incidents/` | Historical incident investigations | Read-only |
+| `docs/archive/plans/` | Superseded execution plans | Read-only |
+| `docs/superpowers/completed/` | Successfully executed plans | Reference |
+| `.claude/prompts/archive/` | Historical prompts | Rarely needed |
+| `memory/` | Daily session logs | Reference |
+| `.agent_tasks/done/` | Completed phase tasks | Reference |
 
 ---
 
@@ -150,5 +156,27 @@
 
 ---
 
-*This index maintained by Documentation Refactoring Agent.*
-*Last refactored: March 28, 2026*
+## 📋 Documentation Maintenance Policy
+
+### Naming Conventions
+| Document Type | Format | Example |
+|---------------|--------|---------|
+| **Reports** | `YYYY-MM-DD-descriptive-name.md` | `2026-04-10-bdl-api-capabilities.md` |
+| **Plans** | `YYYY-MM-DD-brief-description.md` | `2026-04-10-data-quality-fixes.md` |
+| **Incidents** | `YYYY-MM-DD-incident-name.md` | `2026-04-10-ops-whip-root-cause.md` |
+
+### Archive Rules
+1. **Completed plans** → Move to `docs/superpowers/completed/`
+2. **Superseded docs** → Add header, move to appropriate `archive/`
+3. **Version chains** → Consolidate to single authoritative doc
+4. **Cleanup** → End of each sprint, per DOCUMENTATION_CLEANUP_PLAN.md
+
+### Responsibilities
+- **Claude:** Maintain MASTER_DOCUMENT_INDEX.md, archive old docs
+- **Kimi:** Archive completed research plans, follow naming convention
+- **All agents:** Use dated naming for new documents
+
+---
+
+*This index maintained by Claude Code.*
+*Last refactored: April 11, 2026 (Documentation Cleanup)*

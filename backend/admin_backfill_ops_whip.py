@@ -21,6 +21,7 @@ def backfill_ops_whip(db: Session = Depends(get_db)):
         "status": "success",
         "ops_updated": 0,
         "whip_updated": 0,
+        "whip_skipped_zero_ip": 0,  # NEW: count rows skipped due to IP=0
         "initial_ops_null": 0,
         "initial_whip_null": 0,
         "final_ops_null": 0,
@@ -66,8 +67,18 @@ def backfill_ops_whip(db: Session = Depends(get_db)):
               AND hits_allowed IS NOT NULL
               AND innings_pitched IS NOT NULL
               AND innings_pitched != ''
+              AND innings_pitched NOT IN ('0.0', '0', '0.00')
         """))
         result["whip_updated"] = whip_result.rowcount
+
+        # Count zero-IP rows that were skipped (diagnostic only)
+        result["whip_skipped_zero_ip"] = db.execute(text("""
+            SELECT COUNT(*) FROM mlb_player_stats
+            WHERE whip IS NULL
+              AND walks_allowed IS NOT NULL
+              AND hits_allowed IS NOT NULL
+              AND innings_pitched IN ('0.0', '0', '0.00')
+        """)).scalar()
 
         db.commit()
 
