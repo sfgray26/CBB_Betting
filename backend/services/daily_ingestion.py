@@ -114,6 +114,7 @@ LOCK_IDS = {
     "position_eligibility": 100_027,
     "probable_pitchers":     100_028,
     "player_id_mapping":     100_029,
+    "vorp":                  100_030,
 }
 
 
@@ -457,6 +458,16 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # VORP computation: daily 4:30 AM ET (after player_scores at 4 AM)
+        # Computes VORP = composite_z - replacement_z(scarcest_position) per player.
+        self._scheduler.add_job(
+            self._compute_vorp,
+            CronTrigger(hour=4, minute=30, timezone=tz),
+            id="vorp",
+            name="VORP Computation",
+            replace_existing=True,
+        )
+
         # Player momentum signals: daily 5 AM ET (after player_scores at 4 AM)
         # Computes delta-Z = Z_14d - Z_30d and assigns SURGING/HOT/STABLE/COLD/COLLAPSING.
         self._scheduler.add_job(
@@ -653,7 +664,7 @@ class DailyIngestionOrchestrator:
 
         # Initialise status dict so get_status() never returns missing keys
         _all_job_ids = ["mlb_game_log", "mlb_box_stats", "rolling_windows", "player_scores",
-                        "player_momentum", "ros_simulation", "decision_optimization",
+                        "vorp", "player_momentum", "ros_simulation", "decision_optimization",
                         "backtesting", "explainability", "snapshot",
                         "mlb_odds", "statcast",
                         "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
@@ -700,6 +711,7 @@ class DailyIngestionOrchestrator:
             "statcast":        self._update_statcast,
             "rolling_windows": self._compute_rolling_windows,
             "player_scores":   self._compute_player_scores,
+            "vorp":            self._compute_vorp,
             "player_momentum": self._compute_player_momentum,
             "ros_simulation":        self._run_ros_simulation,
             "decision_optimization": self._run_decision_optimization,
@@ -1846,6 +1858,113 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["player_scores"], "player_scores", _run)
+
+    async def _compute_vorp(self) -> dict:
+        """
+        Daily VORP computation (lock 100_030, 4:30 AM ET).
+
+        Runs after _compute_player_scores (4 AM) so player_scores rows are current.
+
+        Algorithm:
+          1. Query player_scores for 7d and 30d windows (yesterday's date)
+          2. Query position_eligibility to build bdl_player_id -> positions map
+          3. Compute VORP = composite_z - replacement_z(scarcest_position)
+          4. Upsert vorp_7d/vorp_30d into player_daily_metrics
+        """
+        logger.info("SYNC JOB ENTRY: _compute_vorp - Starting VORP computation")
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.services.vorp_engine import (
+                compute_vorp_batch,
+                get_eligible_positions,
+            )
+
+            as_of_date = today_et() - timedelta(days=1)
+            db = SessionLocal()
+            vorp_count = 0
+
+            try:
+                # Build position map: bdl_player_id -> [positions]
+                # and name map: bdl_player_id -> player_name
+                pos_rows = db.query(PositionEligibility).filter(
+                    PositionEligibility.bdl_player_id.isnot(None)
+                ).all()
+                position_map: dict[int, list[str]] = {}
+                name_map: dict[int, str] = {}
+                for pr in pos_rows:
+                    position_map[pr.bdl_player_id] = get_eligible_positions(pr)
+                    if pr.player_name:
+                        name_map[pr.bdl_player_id] = pr.player_name
+
+                logger.info("_compute_vorp: %d players with position data", len(position_map))
+
+                if not position_map:
+                    logger.warning("_compute_vorp: No position data found, skipping")
+                    self._record_job_run("vorp", "skipped")
+                    return {"status": "skipped", "reason": "no_position_data", "elapsed_ms": 0}
+
+                # Process 7d and 30d windows
+                for window_days, vorp_col in [(7, "vorp_7d"), (30, "vorp_30d")]:
+                    scores = db.query(PlayerScore).filter(
+                        PlayerScore.as_of_date == as_of_date,
+                        PlayerScore.window_days == window_days,
+                    ).all()
+
+                    if not scores:
+                        logger.warning(
+                            "_compute_vorp: No player_scores for %s window=%dd",
+                            as_of_date, window_days,
+                        )
+                        continue
+
+                    vorp_results = compute_vorp_batch(scores, position_map)
+                    logger.info(
+                        "_compute_vorp: Computed %d VORP values for %dd window",
+                        len(vorp_results), window_days,
+                    )
+
+                    # Upsert into player_daily_metrics
+                    for bdl_id, vorp_val in vorp_results.items():
+                        player_name = name_map.get(bdl_id, f"player_{bdl_id}")
+
+                        stmt = pg_insert(PlayerDailyMetric).values(
+                            player_id=str(bdl_id),
+                            player_name=player_name,
+                            metric_date=as_of_date,
+                            sport="mlb",
+                            **{vorp_col: vorp_val},
+                        )
+                        stmt = stmt.on_conflict_do_update(
+                            constraint="_pdm_player_date_sport_uc",
+                            set_={vorp_col: vorp_val},
+                        )
+                        db.execute(stmt)
+                        vorp_count += 1
+
+                db.commit()
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.info(
+                    "SYNC JOB SUCCESS: _compute_vorp - %d VORP values in %d ms",
+                    vorp_count, elapsed,
+                )
+                self._record_job_run("vorp", "success", vorp_count)
+                return {"status": "success", "records": vorp_count, "elapsed_ms": elapsed}
+
+            except Exception as exc:
+                db.rollback()
+                logger.error("_compute_vorp: Failed (%s)", exc)
+                self._record_job_run("vorp", "error", 0)
+                return {"status": "error", "records": 0, "elapsed_ms": 0}
+            finally:
+                db.close()
+
+        try:
+            return await _with_advisory_lock(LOCK_IDS["vorp"], "vorp", _run)
+        except Exception as exc:
+            logger.error("_compute_vorp: Job failed (%s)", exc)
+            self._record_job_run("vorp", "error", 0)
+            return {"status": "error", "records": 0, "elapsed_ms": 0}
 
     async def _compute_player_momentum(self) -> dict:
         """
@@ -4184,13 +4303,13 @@ class DailyIngestionOrchestrator:
         Sync probable pitchers from MLB Stats API (lock 100_028).
 
         Every sync (daily 8:30 AM ET, 4:00 PM ET, 8:00 PM ET):
-          1. Fetch schedule from MLB Stats API for next 7 days
-          2. Extract probable pitchers for each game
-          3. Map to BDL player IDs via PlayerIDMapping
+          1. Fetch schedule from MLB Stats API for next 7 days with probablePitcher hydration
+          2. Extract pitcher name + MLBAM ID directly from API response
+          3. Resolve BDL player ID via PlayerIDMapping (mlbam_id lookup)
           4. Upsert to probable_pitchers table on (game_date, team)
 
-        Critical for Two-Start Command Center — relies on this data to identify
-        two-start opportunities over 7-day windows.
+        Uses MLB Stats API because BDL does not expose probable pitcher data (K-37 confirmed).
+        Pattern proven in daily_lineup_optimizer.py._fetch_probable_pitchers_for_date().
 
         Natural key: (game_date, team). One probable pitcher per team per date.
         """
@@ -4198,110 +4317,152 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            from backend.services.balldontlie import BallDontLieClient
-            try:
-                logger.info("SYNC JOB PROGRESS: _sync_probable_pitchers - Initializing BDL client")
-                bdl = BallDontLieClient()
-            except ValueError as exc:
-                logger.error("SYNC JOB ERROR: _sync_probable_pitchers - BDL client initialization failed: %s", exc)
-            try:
-                bdl = BallDontLieClient()
-            except ValueError as exc:
-                logger.error("_sync_probable_pitchers: BDL init failed -- %s", exc)
-                self._record_job_run("probable_pitchers", "skipped")
-                return {"status": "skipped", "records": 0, "elapsed_ms": 0}
+            from backend.fantasy_baseball.ballpark_factors import get_park_factor
 
-            # Fetch schedule for next 7 days
+            # Team abbreviation aliases (MLB Stats API -> our standard)
+            abbr_aliases = {
+                "TBR": "TB", "KCR": "KC", "SFG": "SF", "SDP": "SD",
+                "WSN": "WSH", "AZ": "ARI", "CHW": "CWS",
+            }
+
+            def _normalize_abbr(abbr: str) -> str:
+                if not abbr:
+                    return ""
+                up = abbr.upper()
+                return abbr_aliases.get(up, up)
+
             today = today_et()
-            games_by_date = {}
-
-            for days_ahead in range(7):
-                target_date = today + timedelta(days=days_ahead)
-                date_str = target_date.strftime('%Y-%m-%d')
-
-                try:
-                    games = await asyncio.to_thread(bdl.get_mlb_games, date_str)
-                    games_by_date[target_date] = games
-                except Exception as exc:
-                    logger.error("_sync_probable_pitchers: Failed to fetch games for %s (%s)", date_str, exc)
-                    continue
+            records_processed = 0
+            api_errors = 0
 
             db = SessionLocal()
-            records_processed = 0
-
             try:
-                for game_date, games in games_by_date.items():
-                    for game in games:
-                        try:
-                            # Extract probable pitcher info from game data
-                            # BDL format: {'home_probable': 'Name', 'away_probable': 'Name'}
-                            home_probable = getattr(game, 'home_probable', None)
-                            away_probable = getattr(game, 'away_probable', None)
+                # Pre-load MLBAM -> BDL ID mapping for fast lookups
+                mlbam_to_bdl = {}
+                mappings = db.query(
+                    PlayerIDMapping.mlbam_id, PlayerIDMapping.bdl_id
+                ).filter(
+                    PlayerIDMapping.mlbam_id.isnot(None),
+                    PlayerIDMapping.bdl_id.isnot(None),
+                ).all()
+                for m in mappings:
+                    mlbam_to_bdl[m.mlbam_id] = m.bdl_id
+                logger.info("_sync_probable_pitchers: Loaded %d MLBAM->BDL mappings", len(mlbam_to_bdl))
 
-                            # Process home team probable
-                            if home_probable:
-                                bdl_id = await asyncio.to_thread(
-                                    self._resolve_player_name_to_bdl_id,
-                                    db, home_probable
+                # Fetch schedule for next 7 days from MLB Stats API
+                for days_ahead in range(7):
+                    target_date = today + timedelta(days=days_ahead)
+                    date_str = target_date.strftime("%Y-%m-%d")
+
+                    try:
+                        resp = await asyncio.to_thread(
+                            requests.get,
+                            "https://statsapi.mlb.com/api/v1/schedule",
+                            params={"sportId": 1, "date": date_str, "hydrate": "probablePitcher"},
+                            timeout=30,
+                        )
+                        resp.raise_for_status()
+                        data = resp.json()
+                    except Exception as exc:
+                        logger.error("_sync_probable_pitchers: MLB Stats API failed for %s (%s)", date_str, exc)
+                        api_errors += 1
+                        continue
+
+                    for date_info in data.get("dates", []):
+                        for game in date_info.get("games", []):
+                            teams_data = game.get("teams", {})
+
+                            # Extract game time -- gameDate is ISO8601 UTC
+                            game_datetime_str = game.get("gameDate", "")
+                            game_time_et_str = None
+                            if game_datetime_str:
+                                try:
+                                    utc_dt = datetime.fromisoformat(game_datetime_str.replace("Z", "+00:00"))
+                                    et_dt = utc_dt.astimezone(ZoneInfo("America/New_York"))
+                                    game_time_et_str = et_dt.strftime("%-I:%M %p")
+                                except (ValueError, OSError):
+                                    # Windows strftime doesn't support %-I
+                                    try:
+                                        utc_dt = datetime.fromisoformat(game_datetime_str.replace("Z", "+00:00"))
+                                        et_dt = utc_dt.astimezone(ZoneInfo("America/New_York"))
+                                        game_time_et_str = et_dt.strftime("%I:%M %p").lstrip("0")
+                                    except Exception:
+                                        pass
+
+                            # Process both sides (home and away)
+                            for side, is_home in [("home", True), ("away", False)]:
+                                opp_side = "away" if is_home else "home"
+                                side_data = teams_data.get(side, {})
+                                opp_data = teams_data.get(opp_side, {})
+
+                                pitcher_data = side_data.get("probablePitcher", {})
+                                if not pitcher_data:
+                                    continue
+
+                                pitcher_name = pitcher_data.get("fullName", "")
+                                mlbam_id = pitcher_data.get("id")
+
+                                team_abbr = _normalize_abbr(
+                                    side_data.get("team", {}).get("abbreviation", "")
                                 )
-                                if bdl_id:
-                                    # Get game time in ET
-                                    game_time_et = getattr(game, 'game_time', '').replace('Z', '')  # Remove UTC
-
-                                    probable = ProbablePitcherSnapshot(
-                                        game_date=game_date.date(),
-                                        team=game.home_team.abbreviation.upper() if game.home_team else "",
-                                        opponent=game.away_team.abbreviation.upper() if game.away_team else "",
-                                        is_home=True,
-                                        pitcher_name=home_probable,
-                                        bdl_player_id=bdl_id,
-                                        mlbam_id=None,  # TODO: Map MLBAM ID if available
-                                        is_confirmed=False,  # BDL data is "probable" not official
-                                        game_time_et=game_time_et,
-                                        park_factor=None,  # TODO: Compute from venue
-                                        quality_score=None,  # TODO: Compute from pitcher quality
-                                        fetched_at=now_et(),
-                                        updated_at=now_et(),
-                                    )
-                                    db.merge(probable)
-                                    records_processed += 1
-
-                            # Process away team probable
-                            if away_probable:
-                                bdl_id = await asyncio.to_thread(
-                                    self._resolve_player_name_to_bdl_id,
-                                    db, away_probable
+                                opp_abbr = _normalize_abbr(
+                                    opp_data.get("team", {}).get("abbreviation", "")
                                 )
-                                if bdl_id:
-                                    # Get game time in ET
-                                    game_time_et = getattr(game, 'game_time', '').replace('Z', '')
 
-                                    probable = ProbablePitcherSnapshot(
-                                        game_date=game_date.date(),
-                                        team=game.away_team.abbreviation.upper() if game.away_team else "",
-                                        opponent=game.home_team.abbreviation.upper() if game.home_team else "",
-                                        is_home=False,
-                                        pitcher_name=away_probable,
+                                if not team_abbr:
+                                    continue
+
+                                # Resolve BDL ID via MLBAM mapping
+                                bdl_id = mlbam_to_bdl.get(mlbam_id) if mlbam_id else None
+
+                                # Park factor: home team's park
+                                home_abbr = team_abbr if is_home else opp_abbr
+                                pf = get_park_factor(home_abbr, "era")
+
+                                try:
+                                    stmt = pg_insert(ProbablePitcherSnapshot).values(
+                                        game_date=target_date,
+                                        team=team_abbr,
+                                        opponent=opp_abbr,
+                                        is_home=is_home,
+                                        pitcher_name=pitcher_name,
                                         bdl_player_id=bdl_id,
-                                        mlbam_id=None,
+                                        mlbam_id=mlbam_id,
                                         is_confirmed=False,
-                                        game_time_et=game_time_et,
-                                        park_factor=None,
+                                        game_time_et=game_time_et_str,
+                                        park_factor=pf,
                                         quality_score=None,
                                         fetched_at=now_et(),
                                         updated_at=now_et(),
                                     )
-                                    db.merge(probable)
+                                    stmt = stmt.on_conflict_do_update(
+                                        constraint="_pp_date_team_uc",
+                                        set_={
+                                            "opponent": stmt.excluded.opponent,
+                                            "is_home": stmt.excluded.is_home,
+                                            "pitcher_name": stmt.excluded.pitcher_name,
+                                            "bdl_player_id": stmt.excluded.bdl_player_id,
+                                            "mlbam_id": stmt.excluded.mlbam_id,
+                                            "game_time_et": stmt.excluded.game_time_et,
+                                            "park_factor": stmt.excluded.park_factor,
+                                            "updated_at": stmt.excluded.updated_at,
+                                        },
+                                    )
+                                    db.execute(stmt)
                                     records_processed += 1
-
-                        except Exception as exc:
-                            logger.error("_sync_probable_pitchers: Failed to process game %s (%s)", game, exc)
-                            continue
+                                except Exception as exc:
+                                    logger.error(
+                                        "_sync_probable_pitchers: Failed to upsert %s %s (%s)",
+                                        team_abbr, date_str, exc,
+                                    )
+                                    continue
 
                 db.commit()
                 elapsed = int((time.monotonic() - t0) * 1000)
-                logger.info("SYNC JOB SUCCESS: _sync_probable_pitchers - Processed %d records in %d ms", records_processed, elapsed)
-                logger.info("SYNC JOB EXIT: _sync_probable_pitchers - Completed successfully")
+                logger.info(
+                    "SYNC JOB SUCCESS: _sync_probable_pitchers - %d records, %d API errors, %d ms",
+                    records_processed, api_errors, elapsed,
+                )
                 self._record_job_run("probable_pitchers", "success", records_processed)
                 return {"status": "success", "records": records_processed, "elapsed_ms": elapsed}
 
@@ -4319,28 +4480,6 @@ class DailyIngestionOrchestrator:
             logger.error("_sync_probable_pitchers: Job failed (%s)", exc)
             self._record_job_run("probable_pitchers", "error", 0)
             return {"status": "error", "records": 0, "elapsed_ms": 0}
-
-    def _resolve_player_name_to_bdl_id(self, db, player_name: str) -> Optional[int]:
-        """Helper: Resolve pitcher name to BDL player ID via PlayerIDMapping."""
-        # Try direct name match first
-        mapping = db.query(PlayerIDMapping).filter(
-            PlayerIDMapping.full_name.ilike(f"%{player_name}%")
-        ).first()
-
-        if mapping and mapping.bdl_id:
-            return mapping.bdl_id
-
-        # Try last name match
-        last_name = player_name.split()[-1] if player_name else ""
-        if last_name:
-            mapping = db.query(PlayerIDMapping).filter(
-                PlayerIDMapping.full_name.ilike(f"%{last_name}%")
-            ).first()
-
-            if mapping and mapping.bdl_id:
-                return mapping.bdl_id
-
-        return None
 
     async def _sync_player_id_mapping(self) -> dict:
         """

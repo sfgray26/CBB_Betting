@@ -1,24 +1,25 @@
 # HANDOFF.md -- MLB Platform Master Plan (In-Season 2026)
 
 > **Date:** April 12, 2026 | **Author:** Claude Code (Master Architect)
-> **Status:** DATA QUALITY PHASE COMPLETE -- ALL FOLLOW-UPS RESOLVED -- READY FOR FEATURE WORK
+> **Status:** TASKS 4, 8, 9 IMPLEMENTED -- PENDING DEPLOY + STATCAST BACKFILL
 >
-> **Current phase:** Tasks 4-9 feature implementation using K-34..K-38 research.
-> All 4 production follow-ups from P-1..P-4 are resolved. Database at C+ (76.9%), target B+ via quick wins.
+> **Current phase:** Tasks 4/8/9 code complete. Task 5 (Statcast backfill) delegated to Gemini.
+> Database at C+ (76.9%), targeting B+ after probable_pitchers + Statcast populate.
 
 ---
 
 ## CURRENT SESSION STATE (April 12, 2026)
 
 ### What Just Happened
-- P-1..P-4 production deployment fixes: ALL COMPLETE
-- FOLLOW-UP 1 (Statcast persistence bug): RESOLVED -- commit `6848acb`
-- FOLLOW-UP 2 (Stale validation audit): RESOLVED -- commit `c66c445`
-- FOLLOW-UP 3 (player_id_mapping dedupes): LOW priority, deferred
-- FOLLOW-UP 4 (backfill-ops-whip overcount): RESOLVED -- commit `b11c1e4`
+- **Task 4 (Probable Pitchers Pipeline): IMPLEMENTED** -- Rewrote `_sync_probable_pitchers()` in `daily_ingestion.py` to use MLB Stats API (`hydrate=probablePitcher`) instead of broken BDL calls. Gets MLBAM IDs directly from API, resolves BDL IDs via pre-loaded mapping, includes park factors from `ballpark_factors.py`, proper upsert on `(game_date, team)` constraint.
+- **Task 8 (VORP Engine): IMPLEMENTED** -- New `backend/services/vorp_engine.py` (pure computation, zero I/O). Replacement levels from K-38: C=-5.5, 1B=-3.0, 2B/SS=-4.0, 3B=-3.5, OF=-2.5, SP=-3.0, RP=-2.0. Scheduled job at 4:30 AM ET (lock 100_030) between player_scores and momentum. Populates `vorp_7d`/`vorp_30d` on `player_daily_metrics`.
+- **Task 9 (Z-Score Hardening): IMPLEMENTED** -- Added Winsorization at 5th/95th percentiles (default ON) and optional MAD-based robust Z-scores to `scoring_engine.py`. Winsorization clips outlier distribution parameters while preserving individual scores.
+- Tasks 5/6/7 triaged: Task 5 = Gemini DevOps (Statcast backfill on Railway), Task 6 = low priority, Task 7 = already complete in scoring_engine.py.
+- Test suite: 1668 passed, 3 pre-existing DB-auth failures (not our code).
 
 ### What's Next
-**Tasks 4-9: Feature implementation** -- all research (K-34..K-38) is complete and unblocked.
+- **Gemini**: Deploy to Railway and run `POST /admin/backfill/statcast` (Task 5). Then trigger `POST /admin/ingestion/run/probable_pitchers_morning` to populate probable_pitchers table.
+- **Claude**: Available for Tasks 6 (data ingestion logging), K-44 (UI/UX), or K-39..K-43 infra hardening.
 
 ---
 
@@ -95,30 +96,23 @@
 
 ## NEXT STEPS (Priority Order)
 
-### IMMEDIATE: Tasks 4-9 Feature Implementation
+### Tasks 4-9 Status
 
-All K-34..K-38 research is complete. These tasks build the production data pipeline:
+| Task | Description | Status | Notes |
+|------|-------------|--------|-------|
+| **4** | Probable pitchers pipeline | **DONE** | Rewrote to MLB Stats API. `daily_ingestion.py:_sync_probable_pitchers()` |
+| **5** | Statcast production backfill | **GEMINI** | Code fixed. Gemini to deploy + run `POST /admin/backfill/statcast` on Railway |
+| **6** | Data ingestion logging | DEFERRED | Low priority -- build audit trail for sync jobs |
+| **7** | Derived stats computation | **DONE** (pre-existing) | Already in `scoring_engine.py` -- 8 categories computed |
+| **8** | VORP implementation | **DONE** | `backend/services/vorp_engine.py` + scheduled job (4:30 AM, lock 100_030) |
+| **9** | Z-score enhancements | **DONE** | Winsorization (default ON) + MAD-based robust Z option in `scoring_engine.py` |
 
-| Task | Description | Research | Key Finding | Priority |
-|------|-------------|----------|-------------|----------|
-| **4** | Probable pitchers pipeline | K-37 | BDL lacks this data; must use MLB Stats API `hydrate=probablePitcher` | HIGH |
-| **5** | Statcast production backfill | (FU-1 fix) | Code fixed; run backfill on Railway, verify row counts | HIGH |
-| **6** | Data ingestion logging | -- | Build audit trail for all sync jobs | MEDIUM |
-| **7** | Derived stats computation | K-34, K-36 | BDL `/stats` + `/season_stats` for daily box scores; H2H scoring formulas | HIGH |
-| **8** | VORP implementation | K-38 | Formula: Player_Z - Replacement_Z by position; replacement levels documented | MEDIUM |
-| **9** | Z-score enhancements | K-35 | Winsorization at 5th/95th; MAD-based robust Z-scores; sample size stabilization | MEDIUM |
+### IMMEDIATE: Gemini Deployment Tasks
 
-**Specific implementation notes:**
-
-**Task 4 (Probable Pitchers):** The current `_sync_probable_pitchers()` in daily_ingestion.py fetches games from BDL and tries `getattr(game, 'home_probable', None)` -- but `MLBGame` has no such field. BDL does not provide probable pitcher data (K-37 confirmed). Must switch to MLB Stats API: `https://statsapi.mlb.com/api/v1/schedule?sportId=1&hydrate=probablePitcher`. The `mlb_analysis.py` already uses statsapi for schedule -- extend it for probable pitchers.
-
-**Task 5 (Statcast Backfill):** Code is fixed (commit `6848acb`). Need to deploy to Railway and run `POST /admin/backfill/statcast`. Expected: ~15K rows for March 20 - April 11.
-
-**Task 7 (Derived Stats):** BDL `/season_stats` provides pre-aggregated season data. Need to compute: NSB=SB-CS, NSV=SV-BS for H2H scoring (K-36). Position eligibility rules: 5 GS/10 GP batters, 3 starts SP, 5 apps RP.
-
-**Task 8 (VORP):** Replacement levels by position: C=-5.5, 1B=-3.0, 2B/SS=-4.0, 3B=-3.5, OF=-2.5. Multi-eligible players use scarcest position. Formula: Player Total Z-Score - Replacement Level Z-Score.
-
-**Task 9 (Z-Score Enhancements):** scoring_engine.py already computes Z-scores with Z_CAP=3.0. Enhancements: add Winsorization at 5th/95th percentiles, MAD-based robust option, sample size minimum thresholds.
+1. Deploy latest code to Railway (includes Tasks 4/8/9)
+2. Run `POST /admin/backfill/statcast` -- expected ~15K rows for March 20 - April 11
+3. Run `POST /admin/ingestion/run/probable_pitchers_morning` -- verify probable_pitchers populates
+4. Run `POST /admin/ingestion/run/vorp` -- verify VORP values populate in player_daily_metrics
 
 ### LOW PRIORITY (Housekeeping)
 
@@ -265,12 +259,12 @@ All K-34..K-38 research is complete. These tasks build the production data pipel
 100_009 openclaw_perf | 100_010 openclaw_sweep
 100_011 scarcity_index_recalc | 100_012 two_start_sp_identification
 100_013 projection_model_update | 100_014 probable_pitcher_sync | 100_015 waiver_priority_snapshot
-100_028 probable_pitchers
-Next available: 100_029
+100_028 probable_pitchers | 100_029 player_id_mapping | 100_030 vorp
+Next available: 100_031
 ```
 
 ---
 
 **Last Updated:** April 12, 2026
-**Session Context:** All follow-ups resolved. Beginning Tasks 4-9 feature implementation.
-**Priority:** HIGH -- probable pitchers pipeline (Task 4) + Statcast backfill (Task 5) first, then derived stats (Task 7).
+**Session Context:** Tasks 4/8/9 implemented. Pending Gemini deploy + Statcast backfill (Task 5).
+**Priority:** Deploy to Railway, then populate probable_pitchers + Statcast + VORP tables.

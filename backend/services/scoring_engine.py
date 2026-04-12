@@ -107,6 +107,74 @@ def _cap(z: float) -> float:
     return max(-Z_CAP, min(Z_CAP, z))
 
 
+# ---------------------------------------------------------------------------
+# Winsorization + MAD helpers (K-35 enhancements)
+# ---------------------------------------------------------------------------
+
+# Percentile bounds for Winsorization (clip raw values before Z computation)
+WINSOR_LO: float = 5.0   # 5th percentile
+WINSOR_HI: float = 95.0  # 95th percentile
+
+
+def _percentile(sorted_vals: list[float], pct: float) -> float:
+    """Linear interpolation percentile on a pre-sorted list."""
+    n = len(sorted_vals)
+    if n == 0:
+        return 0.0
+    if n == 1:
+        return sorted_vals[0]
+    k = (pct / 100.0) * (n - 1)
+    lo = int(k)
+    hi = min(lo + 1, n - 1)
+    frac = k - lo
+    return sorted_vals[lo] + frac * (sorted_vals[hi] - sorted_vals[lo])
+
+
+def _winsorize(values: list[float]) -> list[float]:
+    """
+    Clip values at WINSOR_LO/WINSOR_HI percentiles.
+
+    Winsorization replaces extreme values with the boundary value rather than
+    removing them. This preserves sample size while reducing outlier distortion.
+    Applied BEFORE Z-score computation per K-35 best practices.
+    """
+    if len(values) < 3:
+        return list(values)
+    sv = sorted(values)
+    lo = _percentile(sv, WINSOR_LO)
+    hi = _percentile(sv, WINSOR_HI)
+    return [max(lo, min(hi, v)) for v in values]
+
+
+def _median(values: list[float]) -> float:
+    """Median of a list of floats."""
+    sv = sorted(values)
+    n = len(sv)
+    if n == 0:
+        return 0.0
+    mid = n // 2
+    if n % 2 == 0:
+        return (sv[mid - 1] + sv[mid]) / 2.0
+    return sv[mid]
+
+
+def _mad(values: list[float]) -> float:
+    """
+    Median Absolute Deviation, scaled to match std dev for normal distributions.
+
+    MAD = median(|x_i - median(x)|) * 1.4826
+
+    The 1.4826 scaling factor makes MAD a consistent estimator of std dev
+    for normally distributed data. MAD is robust to outliers -- a single
+    extreme value cannot break it the way it can inflate std dev.
+    """
+    if len(values) < 2:
+        return 0.0
+    med = _median(values)
+    abs_devs = [abs(v - med) for v in values]
+    return _median(abs_devs) * 1.4826
+
+
 def _detect_player_type(row) -> str:
     """
     Determine player type from a PlayerRollingStats row.
@@ -156,6 +224,9 @@ def compute_league_zscores(
     rolling_rows: list,
     as_of_date: date,
     window_days: int,
+    *,
+    winsorize: bool = True,
+    use_mad: bool = False,
 ) -> list[PlayerScoreResult]:
     """
     Compute league Z-scores for all players in rolling_rows.
@@ -165,6 +236,10 @@ def compute_league_zscores(
     rolling_rows : list of PlayerRollingStats ORM objects for ONE window size.
     as_of_date   : the date these rolling stats represent.
     window_days  : 7, 14, or 30.
+    winsorize    : if True (default), clip raw values at 5th/95th percentiles
+                   before computing Z-scores. Reduces outlier distortion per K-35.
+    use_mad      : if True, use MAD-based robust Z (median + MAD*1.4826) instead
+                   of mean + std. More resistant to skewed distributions. Default False.
 
     Returns
     -------
@@ -208,15 +283,28 @@ def compute_league_zscores(
             continue
 
         values = [v for _, v in pairs]
-        mean = sum(values) / len(values)
-        std = _population_std(values)
 
-        if std == 0.0:
+        # Winsorize raw values at 5th/95th to dampen extreme outliers
+        if winsorize:
+            values_for_stats = _winsorize(values)
+        else:
+            values_for_stats = values
+
+        if use_mad:
+            center = _median(values_for_stats)
+            spread = _mad(values_for_stats)
+        else:
+            center = sum(values_for_stats) / len(values_for_stats)
+            spread = _population_std(values_for_stats)
+
+        if spread == 0.0:
             # Degenerate column (all identical) -- skip
             continue
 
+        # Compute Z using the pool's center/spread but each player's ORIGINAL value
+        # (Winsorization affects the distribution parameters, not individual scores)
         for player_id, val in pairs:
-            z = (val - mean) / std
+            z = (val - center) / spread
             if is_lower_better:
                 z = -z
             category_z_lookup[z_key][player_id] = _cap(z)
