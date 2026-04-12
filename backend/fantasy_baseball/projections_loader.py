@@ -691,6 +691,71 @@ def write_csv_templates(data_dir: Optional[Path] = None) -> None:
             print(f"Already exists (not overwriting): {path}")
 
 
+# ---------------------------------------------------------------------------
+# Bridge: export FanGraphs RoS cache to Steamer-format CSVs
+# ---------------------------------------------------------------------------
+
+def export_ros_to_steamer_csvs(
+    bat_raw: dict,  # {system_name: DataFrame} from fetch_all_ros("bat")
+    pit_raw: dict,  # {system_name: DataFrame} from fetch_all_ros("pit")
+    data_dir: Optional[Path] = None,
+) -> dict:
+    """Export FanGraphs RoS cache DataFrames to Steamer-format CSV files.
+
+    Prefers the 'steamer' system if available, otherwise falls back to the
+    first available system in the dict.  Writes CSVs that are directly
+    loadable by ``load_steamer_batting()`` / ``load_steamer_pitching()``.
+
+    Returns ``{"batting_rows": N, "pitching_rows": M}``.
+    """
+    if data_dir is None:
+        data_dir = DATA_DIR
+    data_dir.mkdir(parents=True, exist_ok=True)
+
+    result = {"batting_rows": 0, "pitching_rows": 0}
+
+    def _pick_df(raw: dict):
+        """Return preferred DataFrame from the system dict, or None."""
+        if not raw:
+            return None
+        if "steamer" in raw and not raw["steamer"].empty:
+            return raw["steamer"]
+        # Fallback: first non-empty system
+        for df in raw.values():
+            if not df.empty:
+                return df
+        return None
+
+    # --- Batting ---
+    bat_df = _pick_df(bat_raw)
+    if bat_df is not None and len(bat_df) > 0:
+        bat_out = bat_df.copy()
+        if "POS" not in bat_out.columns:
+            bat_out["POS"] = "DH"
+        bat_path = data_dir / "steamer_batting_2026.csv"
+        bat_out.to_csv(bat_path, index=False, encoding="utf-8-sig")
+        result["batting_rows"] = len(bat_out)
+        logger.info("Wrote %d batting rows to %s", len(bat_out), bat_path)
+
+    # --- Pitching ---
+    pit_df = _pick_df(pit_raw)
+    if pit_df is not None and len(pit_df) > 0:
+        pit_out = pit_df.copy()
+        if "POS" not in pit_out.columns:
+            if "GS" in pit_out.columns:
+                pit_out["POS"] = pit_out["GS"].apply(
+                    lambda gs: "SP" if float(gs or 0) >= 10 else "RP"
+                )
+            else:
+                pit_out["POS"] = "SP"
+        pit_path = data_dir / "steamer_pitching_2026.csv"
+        pit_out.to_csv(pit_path, index=False, encoding="utf-8-sig")
+        result["pitching_rows"] = len(pit_out)
+        logger.info("Wrote %d pitching rows to %s", len(pit_out), pit_path)
+
+    return result
+
+
 if __name__ == "__main__":
     print("Writing CSV templates to data/projections/...")
     write_csv_templates()
