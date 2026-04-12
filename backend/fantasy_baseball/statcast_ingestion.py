@@ -245,8 +245,15 @@ class DataQualityChecker:
                 })
         
         # Check 3: Critical columns present
-        required_cols = ['player_name', 'team', 'game_date', 'pa', 'xwoba']
+        # Accept either raw Savant column names or cleaned aliases
+        required_cols = ['player_name', 'team', 'game_date', 'pa']
         missing_cols = [c for c in required_cols if c not in df.columns]
+        xwoba_present = (
+            'estimated_woba_using_speedangle' in df.columns
+            or 'xwoba' in df.columns
+        )
+        if not xwoba_present:
+            missing_cols.append('xwoba (or estimated_woba_using_speedangle)')
         if missing_cols:
             self.issues.append({
                 'severity': 'ERROR',
@@ -281,8 +288,12 @@ class DataQualityChecker:
                 is_valid = False
         
         # Check 6: Reasonable xwoba range (0.000 to 0.600 is typical)
-        if 'xwoba' in df.columns:
-            outlier_xwoba = df[(df['xwoba'] < 0.000) | (df['xwoba'] > 0.700)]['xwoba'].count()
+        xwoba_col = (
+            'estimated_woba_using_speedangle' if 'estimated_woba_using_speedangle' in df.columns
+            else 'xwoba'
+        )
+        if xwoba_col in df.columns:
+            outlier_xwoba = df[(df[xwoba_col] < 0.000) | (df[xwoba_col] > 0.700)][xwoba_col].count()
             if outlier_xwoba > len(df) * 0.05:  # More than 5% outliers
                 self.issues.append({
                     'severity': 'WARNING',
@@ -497,18 +508,19 @@ class StatcastIngestionAgent:
                         game_date=pd.to_datetime(row.get('game_date')).date(),
                         pa=0, ab=0, h=0, doubles=0, triples=0,
                         hr=0, r=0, rbi=0, bb=0, so=0, hbp=0, sb=0, cs=0,
-                        exit_velocity_avg=self._fcol(row, 'exit_velocity_avg'),
-                        launch_angle_avg=self._fcol(row, 'launch_angle_avg'),
-                        hard_hit_pct=self._fcol(row, 'hard_hit_percent') / 100,
-                        barrel_pct=self._fcol(row, 'barrel_batted_rate') / 100,
-                        xba=self._fcol(row, 'xba'),
-                        xslg=self._fcol(row, 'xslg'),
-                        xwoba=self._fcol(row, 'xwoba'),
+                        # Savant column names first, then our clean aliases
+                        exit_velocity_avg=self._fcol(row, 'launch_speed', 'exit_velocity_avg'),
+                        launch_angle_avg=self._fcol(row, 'launch_angle', 'launch_angle_avg'),
+                        hard_hit_pct=self._fcol(row, 'hard_hit_percent', 'hard_hit_pct') / 100,
+                        barrel_pct=self._fcol(row, 'barrel_batted_rate', 'barrel_pct') / 100,
+                        xba=self._fcol(row, 'estimated_ba_using_speedangle', 'xba'),
+                        xslg=self._fcol(row, 'estimated_slg_using_speedangle', 'xslg'),
+                        xwoba=self._fcol(row, 'estimated_woba_using_speedangle', 'xwoba'),
                         ip=self._fcol(row, 'ip'),
                         er=self._icol(row, 'er'),
                         # strikeout / walk columns = pitcher Ks / BBs in pitcher-type fetch
-                        k_pit=self._icol(row, 'strikeout', 'k', 'so'),
-                        bb_pit=self._icol(row, 'walk', 'bb'),
+                        k_pit=self._icol(row, 'p_strikeout', 'strikeout', 'k', 'so'),
+                        bb_pit=self._icol(row, 'p_walk', 'walk', 'bb'),
                         pitches=self._icol(row, 'pitches'),
                     )
                 else:
@@ -531,15 +543,16 @@ class StatcastIngestionAgent:
                         bb=self._icol(row, 'walk', 'walks', 'bb'),
                         so=self._icol(row, 'strikeout', 'strikeouts', 'so'),
                         hbp=self._icol(row, 'hbp', 'hit_by_pitch'),
-                        sb=self._icol(row, 'sb', 'stolen_base', 'stolen_bases'),
-                        cs=self._icol(row, 'cs', 'caught_stealing'),
-                        exit_velocity_avg=self._fcol(row, 'exit_velocity_avg'),
-                        launch_angle_avg=self._fcol(row, 'launch_angle_avg'),
-                        hard_hit_pct=self._fcol(row, 'hard_hit_percent') / 100,
-                        barrel_pct=self._fcol(row, 'barrel_batted_rate') / 100,
-                        xba=self._fcol(row, 'xba'),
-                        xslg=self._fcol(row, 'xslg'),
-                        xwoba=self._fcol(row, 'xwoba'),
+                        sb=self._icol(row, 'stolen_base_2b', 'sb', 'stolen_base', 'stolen_bases'),
+                        cs=self._icol(row, 'caught_stealing_2b', 'cs', 'caught_stealing'),
+                        # Savant column names first, then our clean aliases
+                        exit_velocity_avg=self._fcol(row, 'launch_speed', 'exit_velocity_avg'),
+                        launch_angle_avg=self._fcol(row, 'launch_angle', 'launch_angle_avg'),
+                        hard_hit_pct=self._fcol(row, 'hard_hit_percent', 'hard_hit_pct') / 100,
+                        barrel_pct=self._fcol(row, 'barrel_batted_rate', 'barrel_pct') / 100,
+                        xba=self._fcol(row, 'estimated_ba_using_speedangle', 'xba'),
+                        xslg=self._fcol(row, 'estimated_slg_using_speedangle', 'xslg'),
+                        xwoba=self._fcol(row, 'estimated_woba_using_speedangle', 'xwoba'),
                         ip=0.0, er=0, k_pit=0, bb_pit=0,
                         pitches=self._icol(row, 'pitches'),
                     )
