@@ -291,6 +291,8 @@ def _store_performances(df: pd.DataFrame, db: Session, target_date: date) -> int
         try:
             db.execute(stmt)
             rows_upserted += 1
+            if rows_upserted % 100 == 0:
+                db.commit()
         except Exception as e:
             db.rollback()
             logger.error(
@@ -299,7 +301,7 @@ def _store_performances(df: pd.DataFrame, db: Session, target_date: date) -> int
             )
             continue
 
-    db.commit()
+    db.commit() # Final commit for the day
     logger.info(f"Stored {rows_upserted} {target_date} performances")
     return rows_upserted
 

@@ -638,17 +638,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/test/count-statcast")
-async def count_statcast():
-    from backend.models import SessionLocal, StatcastPerformance
-    db = SessionLocal()
-    try:
-        count = db.query(StatcastPerformance).count()
-        return {"status": "success", "count": count}
-    finally:
-        db.close()
-
-
 # ============================================================================
 # SCHEDULED JOB
 # ============================================================================
