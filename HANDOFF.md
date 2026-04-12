@@ -276,11 +276,13 @@ All 11 tasks from the comprehensive data quality validation plan have been execu
 **Fix required:** Investigate which job writes to `player_id_mapping` and add an ON CONFLICT clause keyed on `(bdl_id, mlbam_id)` or similar natural key. Then dedupe existing rows.
 **Priority:** LOW — doesn't affect joins because `position_eligibility.bdl_player_id` links directly to `bdl_id`. Non-blocking, flagged for future housekeeping.
 
-### FOLLOW-UP 4: `/admin/backfill-ops-whip` over-counts rowcount — LOW
+### FOLLOW-UP 4: `/admin/backfill-ops-whip` over-counts rowcount — ✅ RESOLVED (2026-04-12)
 
 **Location:** `backend/admin_backfill_ops_whip.py`
 **Symptom:** Reports "8 whip_updated" on every call, but those rows are NULL→NULL no-ops (innings_pitched='0.0' makes WHIP mathematically undefined).
-**Fix required:** Add `AND innings_pitched <> '0.0'` to the diagnostic filter so the rowcount reflects reality.
+**Fix applied:** Added `AND innings_pitched NOT IN ('0.0', '0', '0.00')` to WHIP UPDATE filter; added `whip_skipped_zero_ip` diagnostic field.
+**Commit:** `b11c1e4`
+**Tests:** `tests/test_admin_backfill_ops_whip.py` (7/7 passing)
 **Priority:** LOW — cosmetic, not a correctness issue.
 
 ---
@@ -392,7 +394,7 @@ With data layer at mathematical floor, Tasks 4-9 (derived stats, VORP/z-score, H
 ### LOW PRIORITY (housekeeping)
 
 3. **FOLLOW-UP 3: Dedupe `player_id_mapping`** — Ohtani/Lorenzen have 4 rows each; upstream seed job re-inserts instead of upserting
-4. **FOLLOW-UP 4: Fix `/admin/backfill-ops-whip` rowcount over-count** — cosmetic; exclude `innings_pitched='0.0'` from diagnostic filter
+4. ~~**FOLLOW-UP 4: Fix `/admin/backfill-ops-whip` rowcount over-count**~~ — ✅ RESOLVED (2026-04-12, commit `b11c1e4`)
 5. **Implement `data_ingestion_logs`** — comprehensive audit logging (4 hours, deferred from original Task 6)
 
 ---
@@ -925,3 +927,26 @@ The current frontend uses a dark zinc theme with standard rounded corners. The R
 ---
 
 *End of UI/UX Design System Implementation Section*
+
+### 16.8 OPS SATURATION AUDIT & PHASE 2 DIAGNOSIS (April 11, 2026)
+
+**Mission:** Map Phase 2 data voids and identify blockers without backend code changes.
+
+**Data Void Map (Table Counts):**
+| Table | Count | Latest Data | Status |
+|-------|-------|-------------|--------|
+| `mlb_player_stats` | 5,632 | 2026-04-10 | ? OK |
+| `player_rolling_stats` | 25,581 | N/A | ? OK |
+| `player_scores` | 25,506 | N/A | ? OK |
+| `simulation_results` | 8,523 | **2026-04-07** | ?? **STALLED** |
+| `player_projections` | 0 | N/A | ? **EMPTY** |
+| `statcast_performances`| 0 | N/A | ? **EMPTY** |
+
+**Critical Findings:**
+1. **Statcast Blocker (Task 7)**: Manually triggered `/admin/ingestion/run/statcast`. Failed with `MISSING_COLUMNS`: `['team', 'pa', 'xwoba']`. This is a hard blocker for Phase 2 enrichment.
+2. **Simulation Lag (Task 10)**: `simulation_results` has not updated in 4 days. 
+3. **Identity Resolution Health**: `player_id_mapping` is saturated (40,000 records), providing a robust foundation for fixing the joins.
+
+**DevOps Actions Taken:**
+- Expanded `/test/verify-db-state` to include Phase 2 row counts and recency checks.
+- Performed root-cause diagnosis for Statcast emptiness via manual API probe.
