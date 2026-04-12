@@ -215,12 +215,47 @@ def _store_performances(df: pd.DataFrame, db: Session, target_date: date) -> int
     now = datetime.now(ZoneInfo("America/New_York"))
 
     for perf in performances:
-        try:
-            stmt = pg_insert(StatcastPerformance.__table__).values(
-                player_id=perf.player_id,
+        stmt = pg_insert(StatcastPerformance.__table__).values(
+            player_id=perf.player_id,
+            player_name=perf.player_name,
+            team=perf.team,
+            game_date=perf.game_date,
+            pa=perf.pa,
+            ab=perf.ab,
+            h=perf.h,
+            doubles=perf.doubles,
+            triples=perf.triples,
+            hr=perf.hr,
+            r=perf.r,
+            rbi=perf.rbi,
+            bb=perf.bb,
+            so=perf.so,
+            hbp=perf.hbp,
+            sb=perf.sb,
+            cs=perf.cs,
+            exit_velocity_avg=perf.exit_velocity_avg,
+            launch_angle_avg=perf.launch_angle_avg,
+            hard_hit_pct=perf.hard_hit_pct,
+            barrel_pct=perf.barrel_pct,
+            xba=perf.xba,
+            xslg=perf.xslg,
+            xwoba=perf.xwoba,
+            woba=perf.woba,
+            avg=perf.avg,
+            obp=perf.obp,
+            slg=perf.slg,
+            ops=perf.ops,
+            ip=perf.ip,
+            er=perf.er,
+            k_pit=perf.k_pit,
+            bb_pit=perf.bb_pit,
+            pitches=perf.pitches,
+            created_at=now,
+        ).on_conflict_do_update(
+            index_elements=['player_id', 'game_date'],
+            set_=dict(
                 player_name=perf.player_name,
                 team=perf.team,
-                game_date=perf.game_date,
                 pa=perf.pa,
                 ab=perf.ab,
                 h=perf.h,
@@ -251,55 +286,18 @@ def _store_performances(df: pd.DataFrame, db: Session, target_date: date) -> int
                 k_pit=perf.k_pit,
                 bb_pit=perf.bb_pit,
                 pitches=perf.pitches,
-                created_at=now,
-            ).on_conflict_do_update(
-                constraint='uq_player_date',
-                set_=dict(
-                    player_name=perf.player_name,
-                    team=perf.team,
-                    pa=perf.pa,
-                    ab=perf.ab,
-                    h=perf.h,
-                    doubles=perf.doubles,
-                    triples=perf.triples,
-                    hr=perf.hr,
-                    r=perf.r,
-                    rbi=perf.rbi,
-                    bb=perf.bb,
-                    so=perf.so,
-                    hbp=perf.hbp,
-                    sb=perf.sb,
-                    cs=perf.cs,
-                    exit_velocity_avg=perf.exit_velocity_avg,
-                    launch_angle_avg=perf.launch_angle_avg,
-                    hard_hit_pct=perf.hard_hit_pct,
-                    barrel_pct=perf.barrel_pct,
-                    xba=perf.xba,
-                    xslg=perf.xslg,
-                    xwoba=perf.xwoba,
-                    woba=perf.woba,
-                    avg=perf.avg,
-                    obp=perf.obp,
-                    slg=perf.slg,
-                    ops=perf.ops,
-                    ip=perf.ip,
-                    er=perf.er,
-                    k_pit=perf.k_pit,
-                    bb_pit=perf.bb_pit,
-                    pitches=perf.pitches,
-                ),
-            )
+            ),
+        )
+        try:
             db.execute(stmt)
             rows_upserted += 1
         except Exception as e:
-            # Log full context for debugging — player_id, player_name, game_date, exception type
+            db.rollback()
             logger.error(
                 "Failed to upsert performance: player_id=%s player_name=%s game_date=%s error=%s: %s",
-                perf.player_id, perf.player_name, perf.game_date, type(e).__name__, e,
-                exc_info=True,  # Include full traceback
+                perf.player_id, perf.player_name, perf.game_date, type(e).__name__, e
             )
-            # Re-raise to surface the failure immediately (comment out continue for debugging)
-            # continue  # Commented out to surface errors during fix verification
+            continue
 
     db.commit()
     logger.info(f"Stored {rows_upserted} {target_date} performances")

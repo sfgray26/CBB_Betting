@@ -606,7 +606,7 @@ class StatcastIngestionAgent:
                     pitches=perf.pitches,
                     created_at=now,
                 ).on_conflict_do_update(
-                    constraint='uq_player_date',
+                    index_elements=['player_id', 'game_date'],
                     set_=dict(
                         player_name=perf.player_name,
                         team=perf.team,
