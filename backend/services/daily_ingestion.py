@@ -621,42 +621,43 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
-        # Player ID mapping sync: TEMPORARY - running NOW for testing (normally 7:00 AM ET)
+        # Player ID mapping sync: 7:00 AM ET (before probable_pitchers needs IDs)
         self._scheduler.add_job(
             self._sync_player_id_mapping,
-            CronTrigger(hour=10, minute=32, timezone=tz),  # TEMPORARY: Immediate execution test (10:32 AM)
+            CronTrigger(hour=7, minute=0, timezone=tz),
             id="player_id_mapping",
             name="Player ID Mapping Sync",
             replace_existing=True,
         )
 
-        # Position eligibility sync: TEMPORARY - running NOW for testing (normally 8:00 AM ET)
+        # Position eligibility sync: 7:15 AM ET (after player_id_mapping)
         self._scheduler.add_job(
             self._sync_position_eligibility,
-            CronTrigger(hour=10, minute=32, timezone=tz),  # TEMPORARY: Immediate execution test (10:32 AM)
+            CronTrigger(hour=7, minute=15, timezone=tz),
             id="position_eligibility",
             name="Position Eligibility Sync",
             replace_existing=True,
         )
 
-        # Probable pitchers sync: TEMPORARY - running NOW for testing (normally 8:30 AM, 4:00 PM, 8:00 PM ET)
+        # Probable pitchers sync: 8:30 AM, 4:00 PM, 8:00 PM ET
+        # Pitchers announced at varying times throughout the day
         self._scheduler.add_job(
             self._sync_probable_pitchers,
-            CronTrigger(hour=10, minute=32, timezone=tz),  # TEMPORARY: Immediate execution test (10:32 AM)
+            CronTrigger(hour=8, minute=30, timezone=tz),
             id="probable_pitchers_morning",
             name="Probable Pitchers Sync (Morning)",
             replace_existing=True,
         )
         self._scheduler.add_job(
             self._sync_probable_pitchers,
-            CronTrigger(hour=10, minute=33, timezone=tz),  # TEMPORARY: Stagger execution by 1 minute
+            CronTrigger(hour=16, minute=0, timezone=tz),
             id="probable_pitchers_afternoon",
             name="Probable Pitchers Sync (Afternoon)",
             replace_existing=True,
         )
         self._scheduler.add_job(
             self._sync_probable_pitchers,
-            CronTrigger(hour=10, minute=34, timezone=tz),  # TEMPORARY: Stagger execution by 1 minute
+            CronTrigger(hour=20, minute=0, timezone=tz),
             id="probable_pitchers_evening",
             name="Probable Pitchers Sync (Evening)",
             replace_existing=True,
