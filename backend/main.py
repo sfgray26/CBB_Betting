@@ -2992,6 +2992,20 @@ async def get_scheduler_status(user: str = Depends(verify_admin_api_key)):
     }
 
 
+@app.get("/admin/pipeline-health")
+async def admin_pipeline_health(
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_admin_api_key),
+):
+    """Check freshness and row counts for all critical fantasy tables."""
+    from backend.services.pipeline_validator import (
+        check_table_health,
+        pipeline_health_summary,
+    )
+    checks = check_table_health(db)
+    return pipeline_health_summary(checks)
+
+
 @app.get("/admin/ingestion/status")
 async def ingestion_status(user: str = Depends(verify_api_key)):
     """Return per-job status for the DailyIngestionOrchestrator, or disabled signal."""
