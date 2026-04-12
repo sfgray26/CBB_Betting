@@ -1,25 +1,53 @@
 # HANDOFF.md -- MLB Platform Master Plan (In-Season 2026)
 
 > **Date:** April 12, 2026 | **Author:** Claude Code (Master Architect)
-> **Status:** TASKS 4, 8, 9 IMPLEMENTED -- PENDING DEPLOY + STATCAST BACKFILL
+> **Status:** DATA QUALITY HARDENING COMPLETE -- PENDING GEMINI DEPLOY + BACKFILL
 >
-> **Current phase:** Tasks 4/8/9 code complete. Task 5 (Statcast backfill) delegated to Gemini.
-> Database at C+ (76.9%), targeting B+ after probable_pitchers + Statcast populate.
+> **Current phase:** All data quality fixes implemented. Gemini must deploy + run backfills.
+> Test suite: 1738 passed (70 new tests), 3 pre-existing DB-auth failures.
 
 ---
 
 ## CURRENT SESSION STATE (April 12, 2026)
 
-### What Just Happened
-- **Task 4 (Probable Pitchers Pipeline): IMPLEMENTED** -- Rewrote `_sync_probable_pitchers()` in `daily_ingestion.py` to use MLB Stats API (`hydrate=probablePitcher`) instead of broken BDL calls. Gets MLBAM IDs directly from API, resolves BDL IDs via pre-loaded mapping, includes park factors from `ballpark_factors.py`, proper upsert on `(game_date, team)` constraint.
-- **Task 8 (VORP Engine): IMPLEMENTED** -- New `backend/services/vorp_engine.py` (pure computation, zero I/O). Replacement levels from K-38: C=-5.5, 1B=-3.0, 2B/SS=-4.0, 3B=-3.5, OF=-2.5, SP=-3.0, RP=-2.0. Scheduled job at 4:30 AM ET (lock 100_030) between player_scores and momentum. Populates `vorp_7d`/`vorp_30d` on `player_daily_metrics`.
-- **Task 9 (Z-Score Hardening): IMPLEMENTED** -- Added Winsorization at 5th/95th percentiles (default ON) and optional MAD-based robust Z-scores to `scoring_engine.py`. Winsorization clips outlier distribution parameters while preserving individual scores.
-- Tasks 5/6/7 triaged: Task 5 = Gemini DevOps (Statcast backfill on Railway), Task 6 = low priority, Task 7 = already complete in scoring_engine.py.
-- Test suite: 1668 passed, 3 pre-existing DB-auth failures (not our code).
+### What Just Happened -- Data Quality Hardening Sprint
 
-### What's Next
-- **Gemini**: Deploy to Railway and run `POST /admin/backfill/statcast` (Task 5). Then trigger `POST /admin/ingestion/run/probable_pitchers_morning` to populate probable_pitchers table.
-- **Claude**: Available for Tasks 6 (data ingestion logging), K-44 (UI/UX), or K-39..K-43 infra hardening.
+**Critical Fixes:**
+- **Statcast Column Mapping (Task 0): FIXED** -- `transform_to_performance()` was looking for `exit_velocity_avg`/`xba`/`xwoba` but Baseball Savant returns `launch_speed`/`estimated_ba_using_speedangle`/`estimated_woba_using_speedangle`. This caused 6,255 shell records with all-zero quality metrics. Fixed both batter and pitcher sections. Added `stolen_base_2b`/`caught_stealing_2b` for SB/CS. 28 regression tests.
+- **Category Tracker Bug (Task 1): FIXED** -- Removed dead code on line 59 (copy-paste: both `my_stats` and `opp_stats` called `_extract_stats` which didn't even exist on the class). Lines 62-80 correctly parse both teams. 7 regression tests.
+- **Valuation Worker Logging (Task 2): FIXED** -- Replaced silent `.get(key, 0.0)` defaults with explicit `logger.warning()` calls naming the player and missing field. Added summary counter (complete vs degraded players).
+- **Production Schedules (Task 6): FIXED** -- Restored 5 jobs from temporary 10:32 AM test schedules to production times: player_id_mapping (7:00 AM), position_eligibility (7:15 AM), probable_pitchers (8:30 AM / 4:00 PM / 8:00 PM).
+
+**New Infrastructure:**
+- **FanGraphs RoS -> CSV Bridge (Task 3): IMPLEMENTED** -- `export_ros_to_steamer_csvs()` in `projections_loader.py`. Exports FanGraphs daily fetch to Steamer-format CSVs that `load_full_board()` can read. This unlocks real projections for Monte Carlo sims. 12 tests with round-trip verification.
+- **Projection Export Endpoint (Task 4): IMPLEMENTED** -- `POST /admin/export-projections` bridges FanGraphs cache to CSVs on demand. Clears `load_full_board()` LRU cache.
+- **Pipeline Freshness Validator (Task 5): IMPLEMENTED** -- `GET /admin/pipeline-health` checks row counts and staleness for 6 critical tables. Returns `overall_healthy` flag with per-table details.
+
+**Validation Tests:**
+- **E2E Pipeline Tests (Task 7):** 10 tests -- scoring Z-score bounds, simulation percentile ordering, VORP calculations.
+- **Monte Carlo Backtest (Task 8):** 12 tests -- mean convergence, variance scaling, percentile coverage, CV matching. Proves the simulation engine is statistically sound.
+
+**Test suite: 1738 passed, 3 pre-existing DB-auth failures (not our code).**
+
+### What's Next -- Gemini Deployment Tasks
+
+1. **Deploy latest code to Railway** (includes all data quality fixes)
+2. **Run `POST /admin/backfill/statcast`** -- re-run backfill with fixed column mapping. Should populate real quality metrics for ~6,255 existing shell records + new dates.
+3. **Run `POST /admin/ingestion/run/probable_pitchers_morning`** -- verify probable_pitchers populates
+4. **Run `POST /admin/ingestion/run/vorp`** -- verify VORP values populate
+5. **Run `POST /admin/export-projections`** -- bridge FanGraphs RoS to CSVs (requires fangraphs_ros job to have run at least once)
+6. **Run `GET /admin/pipeline-health`** -- validate ALL tables are fresh and populated. Must return `overall_healthy: true` before any frontend work begins.
+7. **Verify simulation_results table updates overnight** -- should populate after full pipeline runs (rolling_stats -> player_scores -> ros_simulation)
+
+### Validation Gates Before Frontend
+
+| Gate | Endpoint/Command | Passing Criteria |
+|------|------------------|-----------------|
+| Pipeline health | `GET /admin/pipeline-health` | All tables `is_healthy: true` |
+| Projection data | `POST /admin/export-projections` then verify | > 500 players with real projections |
+| Statcast populated | `statcast_performances` check | > 10,000 rows with non-zero quality metrics |
+| Simulation fresh | `simulation_results` latest date | Within 2 days of current date |
+| Test suite green | `pytest tests/ -q` | 1738+ passed, 0 new failures |
 
 ---
 
