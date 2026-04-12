@@ -126,7 +126,10 @@
       "Bash(\"venv/Scripts/python.exe\" scripts/_p3_investigate.py)",
       "Bash(\"venv/Scripts/python.exe\" scripts/_p3_investigate2.py)",
       "Bash(\"venv/Scripts/python.exe\" scripts/_p3_manual_override.py)",
-      "Bash(\"venv/Scripts/python.exe\" scripts/_p3_export_unmatchable.py)"
+      "Bash(\"venv/Scripts/python.exe\" scripts/_p3_export_unmatchable.py)",
+      "Bash(venv\\\\Scripts\\\\python.exe:*)",
+      "Bash(./venv/Scripts/python.exe:*)",
+      "Bash(venv/Scripts/python.exe:*)"
     ]
   }
 }
