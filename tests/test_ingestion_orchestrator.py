@@ -30,9 +30,10 @@ for mod_name in (
 
 if not hasattr(sys.modules["apscheduler.schedulers.asyncio"], "AsyncIOScheduler"):
     class _FakeScheduler:
-        def __init__(self):
+        def __init__(self, job_defaults=None, **kwargs):
             self._jobs = {}
             self.running = False
+            self._job_defaults = job_defaults or {}
 
         def add_job(self, func, trigger, id=None, name=None, replace_existing=False):
             self._jobs[id] = MagicMock(id=id, name=name, next_run_time=None)
@@ -501,3 +502,18 @@ def test_extract_blend_rows_skips_missing_player_id_and_empty_metrics():
     assert len(rows) == 1
     assert rows[0]["player_id"] == "player_1"
     assert rows[0]["blend_hr"] == 22
+
+
+# ===========================================================================
+# 16. test_scheduler_misfire_grace_time
+# ===========================================================================
+
+def test_scheduler_misfire_grace_time():
+    """APScheduler must tolerate delayed execution up to 5 minutes."""
+    from backend.services.daily_ingestion import DailyIngestionOrchestrator
+    orch = DailyIngestionOrchestrator()
+    config = orch._scheduler._job_defaults
+    assert config.get("misfire_grace_time", 1) >= 300, (
+        f"misfire_grace_time={config.get('misfire_grace_time', 1)}s is too low; "
+        "jobs will be silently skipped if the scheduler loop is even 1s late"
+    )

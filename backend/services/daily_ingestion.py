@@ -391,7 +391,9 @@ class DailyIngestionOrchestrator:
     """
 
     def __init__(self):
-        self._scheduler = AsyncIOScheduler()
+        self._scheduler = AsyncIOScheduler(
+            job_defaults={"misfire_grace_time": 300},
+        )
         self._job_status: dict[str, dict] = {}
         self._openclaw: Optional[Any] = None
         # H2 fix: league params computed by _compute_player_scores (14d window),
