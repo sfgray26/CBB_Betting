@@ -1551,6 +1551,9 @@ class DailyIngestionOrchestrator:
             "home_runs": "hr",
             "rbi": "rbi",
             "walks": "bb",
+            # Tuples represent fallback field names tried in order because
+            # statsapi batter strikeouts are exposed as "strikeouts" while
+            # older/internal payloads may still use "k".
             "strikeouts_bat": ("strikeouts", "k"),
             "stolen_bases": "sb",
             "caught_stealing": "cs",
@@ -1558,7 +1561,12 @@ class DailyIngestionOrchestrator:
         for db_col, box_key in field_map.items():
             if getattr(db_row, db_col) is None:
                 if isinstance(box_key, tuple):
-                    raw_val = next((batter.get(candidate) for candidate in box_key if batter.get(candidate) is not None), None)
+                    raw_val = None
+                    for candidate in box_key:
+                        candidate_value = batter.get(candidate)
+                        if candidate_value is not None:
+                            raw_val = candidate_value
+                            break
                 else:
                     raw_val = batter.get(box_key)
                 if raw_val is not None:

@@ -59,7 +59,7 @@ def test_validate_mlb_stats_rejects_invalid_counting_stat_combinations():
 
 
 @pytest.mark.asyncio
-async def test_supplement_statsapi_counting_stats_patches_batter_strikeouts(  # noqa: E501
+async def test_supplement_statsapi_handles_strikeout_field_aliases(  # noqa: E501
     monkeypatch,
 ):
     target_date = date(2026, 4, 13)
