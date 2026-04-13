@@ -517,3 +517,76 @@ def test_scheduler_misfire_grace_time():
         f"misfire_grace_time={config.get('misfire_grace_time', 1)}s is too low; "
         "jobs will be silently skipped if the scheduler loop is even 1s late"
     )
+
+
+@pytest.mark.asyncio
+async def test_probable_pitchers_hydrate_includes_team():
+    """MLB Stats API request must hydrate both probablePitcher and team."""
+    from backend.services.daily_ingestion import DailyIngestionOrchestrator
+    import requests
+
+    orch = DailyIngestionOrchestrator()
+    captured_params = {}
+
+    # Mock SessionLocal so _with_advisory_lock grants the lock without a real DB,
+    # and the inner _run() db.query() returns an empty list for the MLBAM mapping.
+    lock_db = _make_db_mock(lock_result=True)
+    inner_db = MagicMock()
+    inner_db.query.return_value.filter.return_value.all.return_value = []
+
+    def _capture_get(url, params=None, **kwargs):
+        if "statsapi.mlb.com" in url:
+            captured_params.update(params or {})
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"dates": []}
+        return mock_resp
+
+    with patch("backend.services.daily_ingestion.SessionLocal", side_effect=[lock_db, inner_db]):
+        with patch("requests.get", side_effect=_capture_get):
+            with patch.object(orch, "_record_job_run"):
+                try:
+                    await orch._sync_probable_pitchers()
+                except Exception:
+                    pass
+
+    hydrate_value = captured_params.get("hydrate", "")
+    assert "team" in hydrate_value, (
+        f"hydrate={hydrate_value!r} is missing 'team'. "
+        "MLB Stats API won't return team.abbreviation without it."
+    )
+    assert "probablePitcher" in hydrate_value, (
+        f"hydrate={hydrate_value!r} is missing 'probablePitcher'."
+    )
+
+
+# ===========================================================================
+# 18. test_probable_pitchers_status_propagates_to_variants
+# ===========================================================================
+
+def test_probable_pitchers_status_propagates_to_variants():
+    """After _record_job_run('probable_pitchers') is called, morning/afternoon/evening
+    variants must have their last_run and last_status updated to match."""
+    from backend.services.daily_ingestion import DailyIngestionOrchestrator
+
+    orch = DailyIngestionOrchestrator()
+    # Seed the status dict as start() would; include the bare key too so
+    # _record_job_run can upsert it and then propagate.
+    for jid in ["probable_pitchers", "probable_pitchers_morning",
+                "probable_pitchers_afternoon", "probable_pitchers_evening"]:
+        orch._job_status[jid] = {
+            "name": jid, "enabled": True,
+            "last_run": None, "last_status": None, "next_run": None,
+        }
+
+    orch._record_job_run("probable_pitchers", "success", 42)
+
+    for variant in ["probable_pitchers_morning", "probable_pitchers_afternoon",
+                    "probable_pitchers_evening"]:
+        assert orch._job_status[variant]["last_status"] == "success", (
+            f"{variant} status is {orch._job_status[variant]['last_status']!r}, "
+            "expected 'success' — _record_job_run must propagate to schedule variants"
+        )
+        assert orch._job_status[variant]["last_run"] is not None, (
+            f"{variant} last_run is None after probable_pitchers ran"
+        )

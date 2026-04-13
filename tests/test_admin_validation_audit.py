@@ -59,6 +59,22 @@ class TestValidationAuditQueries:
         assert 'backfillable' in source.lower(), "OPS check should identify backfillable rows"
         assert 'FILTER' in source, "OPS check should use SQL FILTER clause"
 
+    def test_validation_audit_detects_zero_quality_statcast(self):
+        """Audit source must contain checks for zero-filled statcast quality metrics.
+
+        This guards against the column-mapping bug where 6,255 statcast rows were
+        created with exit_velocity_avg=0, xwoba=0, xba=0, barrel_pct=0 and the
+        validation audit silently reported them as healthy.
+        """
+        import inspect
+        from backend import admin_endpoints_validation
+
+        source = inspect.getsource(admin_endpoints_validation.validation_audit)
+        assert "exit_velocity_avg" in source, (
+            "validation_audit does not reference exit_velocity_avg — "
+            "zero-quality statcast shell records will go undetected"
+        )
+
 
 class TestValidationAuditDBIntegration:
     """DB integration tests that verify validation output matches actual DB state."""

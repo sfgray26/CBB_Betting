@@ -748,13 +748,28 @@ class DailyIngestionOrchestrator:
 
     def _record_job_run(self, job_id: str, status: str, records: int = 0) -> None:
         """Update in-memory job status after a run."""
-        self._job_status[job_id] = {
+        run_info = {
             "name": job_id,
             "enabled": True,
             "last_run": now_et().isoformat(),
             "last_status": status,
             "next_run": self._get_next_run(job_id),
         }
+        self._job_status[job_id] = run_info
+
+        # Propagate probable_pitchers status to all schedule variants so the
+        # morning/afternoon/evening entries don't stay stale (None/None).
+        # _sync_probable_pitchers always records to "probable_pitchers" regardless
+        # of which variant triggered it; this keeps the three variant keys in sync.
+        if job_id == "probable_pitchers":
+            for variant in (
+                "probable_pitchers_morning",
+                "probable_pitchers_afternoon",
+                "probable_pitchers_evening",
+            ):
+                if variant in self._job_status:
+                    self._job_status[variant]["last_run"] = run_info["last_run"]
+                    self._job_status[variant]["last_status"] = run_info["last_status"]
 
     # ------------------------------------------------------------------
     # Job handlers
@@ -4361,7 +4376,7 @@ class DailyIngestionOrchestrator:
                         resp = await asyncio.to_thread(
                             requests.get,
                             "https://statsapi.mlb.com/api/v1/schedule",
-                            params={"sportId": 1, "date": date_str, "hydrate": "probablePitcher"},
+                            params={"sportId": 1, "date": date_str, "hydrate": "probablePitcher,team"},
                             timeout=30,
                         )
                         resp.raise_for_status()
