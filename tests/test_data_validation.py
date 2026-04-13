@@ -201,3 +201,150 @@ class TestMLBStatsValidation:
             rbi=2
         )
         assert _validate_mlb_stats(stat) is True
+
+
+class TestMLBStatsOBPValidation:
+    """Tests for OBP range validation added per PR #91 recommendations."""
+
+    def test_obp_rejects_negative_value(self):
+        """Negative OBP is impossible and must be rejected."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, obp=-0.01)
+        assert _validate_mlb_stats(stat) is False
+
+    def test_obp_rejects_value_above_one(self):
+        """OBP > 1.0 is impossible and must be rejected."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, obp=1.001)
+        assert _validate_mlb_stats(stat) is False
+
+    def test_obp_accepts_zero(self):
+        """OBP = 0.0 (no times on base) is valid."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, obp=0.0)
+        assert _validate_mlb_stats(stat) is True
+
+    def test_obp_accepts_one(self):
+        """OBP = 1.0 (reached base every PA via walk/HBP) is valid."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, obp=1.0)
+        assert _validate_mlb_stats(stat) is True
+
+    def test_obp_accepts_typical_value(self):
+        """Typical OBP around 0.350 must pass."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, obp=0.350)
+        assert _validate_mlb_stats(stat) is True
+
+    def test_obp_none_passes(self):
+        """None OBP (hitter not in box, or pitcher row) must not be rejected."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, obp=None)
+        assert _validate_mlb_stats(stat) is True
+
+
+class TestMLBStatsWHIPValidation:
+    """Tests for WHIP range validation added per PR #91 recommendations."""
+
+    def test_whip_rejects_negative_value(self):
+        """Negative WHIP is physically impossible and must be rejected."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, whip=-0.5)
+        assert _validate_mlb_stats(stat) is False
+
+    def test_whip_accepts_zero(self):
+        """WHIP = 0.0 (perfect game with no baserunners) is valid."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, whip=0.0)
+        assert _validate_mlb_stats(stat) is True
+
+    def test_whip_accepts_typical_value(self):
+        """Typical WHIP around 1.20 must pass."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, whip=1.20)
+        assert _validate_mlb_stats(stat) is True
+
+    def test_whip_accepts_high_but_possible_value(self):
+        """Very high WHIP (e.g. 8.0 for a rough outing) is still valid."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, whip=8.0)
+        assert _validate_mlb_stats(stat) is True
+
+    def test_whip_none_passes(self):
+        """None WHIP (batter row) must not be rejected."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, whip=None)
+        assert _validate_mlb_stats(stat) is True
+
+
+class TestMLBStatsNegativeCountingStats:
+    """Tests for negative counting-stat rejection added per PR #91 recommendations."""
+
+    def test_negative_ab_rejected(self):
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, ab=-1)
+        assert _validate_mlb_stats(stat) is False
+
+    def test_negative_hits_rejected(self):
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, h=-1)
+        assert _validate_mlb_stats(stat) is False
+
+    def test_negative_runs_rejected(self):
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, r=-1)
+        assert _validate_mlb_stats(stat) is False
+
+    def test_negative_hr_rejected(self):
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, hr=-1)
+        assert _validate_mlb_stats(stat) is False
+
+    def test_negative_rbi_rejected(self):
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, rbi=-1)
+        assert _validate_mlb_stats(stat) is False
+
+    def test_negative_bb_rejected(self):
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, bb=-1)
+        assert _validate_mlb_stats(stat) is False
+
+    def test_negative_so_rejected(self):
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, so=-1)
+        assert _validate_mlb_stats(stat) is False
+
+    def test_negative_sb_rejected(self):
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, sb=-1)
+        assert _validate_mlb_stats(stat) is False
+
+    def test_negative_k_pitcher_rejected(self):
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, k=-1)
+        assert _validate_mlb_stats(stat) is False
+
+    def test_negative_h_allowed_rejected(self):
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, h_allowed=-1)
+        assert _validate_mlb_stats(stat) is False
+
+    def test_zero_counting_stats_pass(self):
+        """Zero values (e.g., 0 AB for a pinch runner) must be accepted."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1,
+                              ab=0, h=0, r=0, hr=0, rbi=0, bb=0, so=0)
+        assert _validate_mlb_stats(stat) is True
+
+
+class TestMLBStatsLogicalConsistency:
+    """Tests for logical consistency checks added per PR #91 recommendations."""
+
+    def test_hits_exceeding_ab_rejected(self):
+        """More hits than at-bats is physically impossible."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, ab=3, h=4)
+        assert _validate_mlb_stats(stat) is False
+
+    def test_hits_equal_ab_passes(self):
+        """Hits == AB (hit every at-bat) is valid."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, ab=3, h=3)
+        assert _validate_mlb_stats(stat) is True
+
+    def test_hits_less_than_ab_passes(self):
+        """Normal case: fewer hits than at-bats."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, ab=4, h=1)
+        assert _validate_mlb_stats(stat) is True
+
+    def test_hits_none_ab_set_passes(self):
+        """Hits=None with AB set should not raise a consistency error."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, ab=4, h=None)
+        assert _validate_mlb_stats(stat) is True
+
+    def test_ab_none_hits_set_passes(self):
+        """AB=None with hits set should not raise a consistency error."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, ab=None, h=2)
+        assert _validate_mlb_stats(stat) is True
+
+    def test_zero_ab_zero_hits_passes(self):
+        """0 AB and 0 hits (pinch runner who never batted) is valid."""
+        stat = MLBPlayerStats(player=create_mock_player(1), game_id=1, ab=0, h=0)
+        assert _validate_mlb_stats(stat) is True

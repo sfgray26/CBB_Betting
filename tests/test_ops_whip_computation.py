@@ -292,10 +292,10 @@ class TestInningsPitchedParsing:
         assert _parse_innings_pitched(6.5) == 6.5
         assert _parse_innings_pitched(5.0) == 5.0
 
-        # When IP is a string in baseball notation ".X", it's interpreted as outs
+        # When IP is a string in baseball notation ".X", only .0/.1/.2 are valid
         # "6.1" = 6 innings + 1 out = 6.333
         # "6.2" = 6 innings + 2 outs = 6.667
-        # Note: "6.5" would be 6 innings + 5 outs = 7.667 (invalid in baseball but that's how the parser works)
+        # "6.3" and above are invalid BDL thirds and return None
         result = _parse_innings_pitched("6.1")
         assert result is not None
         assert abs(result - 6.333) < 0.001
@@ -318,6 +318,27 @@ class TestInningsPitchedParsing:
         """Test parsing invalid string input"""
         assert _parse_innings_pitched("invalid") is None
         assert _parse_innings_pitched("") is None
+
+    def test_parse_invalid_outs_digits_return_none(self):
+        """
+        Outs digits 3-9 are impossible in baseball (only .0/.1/.2 are valid
+        BDL thirds-of-an-inning).  The parser must return None for these so
+        that _validate_mlb_stats can reject the row.
+        PR #91 finding: previously '6.3' silently produced 7.0 (wrong) and
+        '6.9' produced 9.0 (impossible).
+        """
+        for outs_digit in range(3, 10):
+            val = _parse_innings_pitched(f"6.{outs_digit}")
+            assert val is None, (
+                f"Expected None for '6.{outs_digit}' (invalid outs digit {outs_digit}), "
+                f"got {val}"
+            )
+
+    def test_parse_valid_outs_digits_still_work(self):
+        """Valid outs digits 0, 1, 2 must continue to parse correctly after the fix."""
+        assert _parse_innings_pitched("6.0") == pytest.approx(6.0)
+        assert _parse_innings_pitched("6.1") == pytest.approx(6.333, abs=0.001)
+        assert _parse_innings_pitched("6.2") == pytest.approx(6.667, abs=0.001)
 
 
 class TestFieldMappingVerification:

@@ -169,11 +169,15 @@ def _parse_innings_pitched(ip: Optional[Any]) -> Optional[float]:
         return float(ip)
 
     # Parse "6.2" format: 6 innings + 2 outs
+    # Only .0, .1, .2 are valid BDL thirds-of-an-inning; .3–.9 are impossible in
+    # baseball and indicate corrupted data, so return None for those.
     if isinstance(ip, str):
         parts = ip.split(".")
         try:
             innings = int(parts[0])
             outs = int(parts[1]) if len(parts) > 1 else 0
+            if outs > 2:
+                return None
             return innings + (outs / 3.0)
         except (ValueError, IndexError):
             return None
@@ -203,6 +207,25 @@ def _validate_mlb_stats(stat) -> bool:
     # Check AVG range (0-1.0)
     if stat.avg is not None and (stat.avg < 0 or stat.avg > 1.0):
         errors.append(f"Invalid AVG: {stat.avg}")
+
+    # Check OBP range (0-1.0)
+    if stat.obp is not None and (stat.obp < 0 or stat.obp > 1.0):
+        errors.append(f"Invalid OBP: {stat.obp}")
+
+    # Check WHIP is non-negative
+    if stat.whip is not None and stat.whip < 0:
+        errors.append(f"Invalid WHIP: {stat.whip}")
+
+    # Check counting stats are non-negative
+    for field in ("ab", "h", "r", "hr", "rbi", "bb", "so", "sb", "cs",
+                  "h_allowed", "r_allowed", "er", "bb_allowed", "k"):
+        val = getattr(stat, field, None)
+        if val is not None and val < 0:
+            errors.append(f"Negative counting stat {field}: {val}")
+
+    # Logical consistency: hits cannot exceed at-bats
+    if stat.h is not None and stat.ab is not None and stat.h > stat.ab:
+        errors.append(f"Impossible hit/AB ratio: {stat.h}H in {stat.ab}AB")
 
     # Validate innings_pitched format
     if stat.ip is not None:
@@ -1505,7 +1528,7 @@ class DailyIngestionOrchestrator:
             "home_runs": "hr",
             "rbi": "rbi",
             "walks": "bb",
-            "strikeouts_bat": "k",
+            "strikeouts_bat": "strikeouts",
             "stolen_bases": "sb",
             "caught_stealing": "cs",
         }
