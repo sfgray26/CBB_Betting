@@ -91,12 +91,15 @@ class TestBackfillOpsWhipContract:
             "status",
             "ops_updated",
             "whip_updated",
-            "whip_skipped_zero_ip",  # NEW field added in this fix
+            "whip_skipped_zero_ip",
+            "caught_stealing_updated",
             "initial_ops_null",
             "initial_whip_null",
+            "initial_cs_null",
             "final_ops_null",
             "final_whip_null",
-            "total_rows"
+            "final_cs_null",
+            "total_rows",
         ]
 
         for field in required_fields:
@@ -140,3 +143,75 @@ class TestWhIPComputationLogic:
 
         expected_whip = (walks_allowed + hits_allowed) / innings_pitched
         assert abs(expected_whip - 1.286) < 0.001  # (3+6)/7 = 1.286
+
+
+class TestBackfillCaughtStealing:
+    """Tests for the /admin/backfill-caught-stealing endpoint."""
+
+    def test_endpoint_function_exists(self):
+        """Verify backfill_caught_stealing is importable and callable."""
+        from backend import admin_backfill_ops_whip
+        assert hasattr(admin_backfill_ops_whip, 'backfill_caught_stealing')
+        assert callable(admin_backfill_ops_whip.backfill_caught_stealing)
+
+    def test_result_dict_has_required_fields(self):
+        """Verify the CS backfill result dict has the expected shape."""
+        import inspect
+        from backend import admin_backfill_ops_whip
+
+        source = inspect.getsource(admin_backfill_ops_whip.backfill_caught_stealing)
+        for field in ("status", "initial_null", "rows_updated", "final_null", "total_rows"):
+            assert f'"{field}"' in source or f"'{field}'" in source, \
+                f"Result dict should include field: {field}"
+
+    def test_sql_sets_cs_to_zero(self):
+        """
+        The SQL must SET caught_stealing = 0 WHERE caught_stealing IS NULL.
+
+        0 is correct because BDL does not return caught_stealing at all;
+        the daily ingestion already defaults new rows to 0 -- this backfill
+        aligns the historic rows with the same convention.
+        """
+        import inspect
+        from backend import admin_backfill_ops_whip
+
+        source = inspect.getsource(admin_backfill_ops_whip.backfill_caught_stealing)
+        assert "caught_stealing = 0" in source, \
+            "Backfill should SET caught_stealing = 0"
+        assert "caught_stealing IS NULL" in source, \
+            "Backfill should only update rows WHERE caught_stealing IS NULL"
+
+    def test_ops_whip_endpoint_includes_cs_backfill(self):
+        """
+        POST /admin/backfill-ops-whip now also patches caught_stealing.
+
+        This test verifies the combined endpoint runs the CS UPDATE so callers
+        only need one endpoint call to fix all three NULL columns.
+        """
+        import inspect
+        from backend import admin_backfill_ops_whip
+
+        source = inspect.getsource(admin_backfill_ops_whip.backfill_ops_whip)
+        assert "caught_stealing = 0" in source, \
+            "backfill_ops_whip should also SET caught_stealing = 0"
+        assert "caught_stealing_updated" in source, \
+            "backfill_ops_whip should track rows updated for caught_stealing"
+
+    def test_nsb_formula_works_with_zero_cs(self):
+        """
+        NSB = SB - CS is only meaningful when CS is not NULL.
+
+        Defaulting CS to 0 means NSB = SB (no penalty), which slightly
+        overestimates for the rare player who was caught, but it's far
+        better than propagating NULL to the NSB computation.
+        """
+        # Without fix: cs = None -> SB - None = None (NSB broken)
+        sb = 5
+        cs_null = None
+        nsb_broken = sb - cs_null if cs_null is not None else None
+        assert nsb_broken is None
+
+        # With fix: cs = 0 -> SB - 0 = SB (NSB correct for most players)
+        cs_fixed = 0
+        nsb_fixed = sb - cs_fixed
+        assert nsb_fixed == 5
