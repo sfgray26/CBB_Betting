@@ -358,7 +358,11 @@ class StatcastIngestionAgent:
             'sort_col': 'pitches',
             'player_event_sort': 'api_p_release_speed',
             'sort_order': 'desc',
-            'type': 'details',
+            # Note: omitting 'type': 'details' returns the leaderboard-aggregated CSV
+            # (one row per player per game), which includes hardhit_percent,
+            # barrels_per_pa_percent, xwoba, xba, xslg, pa, abs, hits, hrs, etc.
+            # With 'type':'details' the API returns raw pitch events (13k+ rows/day)
+            # with none of the aggregated count/quality columns.
         }
 
         try:
@@ -511,16 +515,18 @@ class StatcastIngestionAgent:
                         # Savant column names first, then our clean aliases
                         exit_velocity_avg=self._fcol(row, 'launch_speed', 'exit_velocity_avg'),
                         launch_angle_avg=self._fcol(row, 'launch_angle', 'launch_angle_avg'),
-                        hard_hit_pct=self._fcol(row, 'hard_hit_percent', 'hard_hit_pct') / 100,
-                        barrel_pct=self._fcol(row, 'barrel_batted_rate', 'barrel_pct') / 100,
-                        xba=self._fcol(row, 'estimated_ba_using_speedangle', 'xba'),
-                        xslg=self._fcol(row, 'estimated_slg_using_speedangle', 'xslg'),
-                        xwoba=self._fcol(row, 'estimated_woba_using_speedangle', 'xwoba'),
+                        # hardhit_percent = leaderboard name; hard_hit_percent = details name
+                        hard_hit_pct=self._fcol(row, 'hardhit_percent', 'hard_hit_percent', 'hard_hit_pct') / 100,
+                        # barrels_per_pa_percent = leaderboard; barrel_batted_rate = details
+                        barrel_pct=self._fcol(row, 'barrels_per_pa_percent', 'barrels_per_bbe_percent', 'barrel_batted_rate', 'barrel_pct') / 100,
+                        xba=self._fcol(row, 'xba', 'estimated_ba_using_speedangle'),
+                        xslg=self._fcol(row, 'xslg', 'estimated_slg_using_speedangle'),
+                        xwoba=self._fcol(row, 'xwoba', 'estimated_woba_using_speedangle'),
                         ip=self._fcol(row, 'ip'),
                         er=self._icol(row, 'er'),
                         # strikeout / walk columns = pitcher Ks / BBs in pitcher-type fetch
-                        k_pit=self._icol(row, 'p_strikeout', 'strikeout', 'k', 'so'),
-                        bb_pit=self._icol(row, 'p_walk', 'walk', 'bb'),
+                        k_pit=self._icol(row, 'so', 'p_strikeout', 'strikeout', 'k'),
+                        bb_pit=self._icol(row, 'bb', 'p_walk', 'walk'),
                         pitches=self._icol(row, 'pitches'),
                     )
                 else:
@@ -533,26 +539,30 @@ class StatcastIngestionAgent:
                         team=str(row.get('team', '')),
                         game_date=pd.to_datetime(row.get('game_date')).date(),
                         pa=self._icol(row, 'pa'),
-                        ab=self._icol(row, 'ab'),
-                        h=self._icol(row, 'hit', 'hits', 'h'),
-                        doubles=self._icol(row, 'double', 'doubles'),
-                        triples=self._icol(row, 'triple', 'triples'),
-                        hr=self._icol(row, 'home_run', 'home_runs', 'hr'),
+                        # leaderboard uses 'abs' for at-bats; details uses 'ab'
+                        ab=self._icol(row, 'abs', 'ab'),
+                        h=self._icol(row, 'hits', 'hit', 'singles', 'h'),
+                        doubles=self._icol(row, 'doubles', 'double'),
+                        triples=self._icol(row, 'triples', 'triple'),
+                        # leaderboard uses 'hrs'; details uses 'home_run'
+                        hr=self._icol(row, 'hrs', 'home_run', 'home_runs', 'hr'),
                         r=self._icol(row, 'run', 'runs', 'r'),
                         rbi=self._icol(row, 'rbi'),
-                        bb=self._icol(row, 'walk', 'walks', 'bb'),
-                        so=self._icol(row, 'strikeout', 'strikeouts', 'so'),
+                        bb=self._icol(row, 'bb', 'walk', 'walks'),
+                        so=self._icol(row, 'so', 'strikeout', 'strikeouts'),
                         hbp=self._icol(row, 'hbp', 'hit_by_pitch'),
                         sb=self._icol(row, 'stolen_base_2b', 'sb', 'stolen_base', 'stolen_bases'),
                         cs=self._icol(row, 'caught_stealing_2b', 'cs', 'caught_stealing'),
-                        # Savant column names first, then our clean aliases
+                        # leaderboard / details Savant column names, then our clean aliases
                         exit_velocity_avg=self._fcol(row, 'launch_speed', 'exit_velocity_avg'),
                         launch_angle_avg=self._fcol(row, 'launch_angle', 'launch_angle_avg'),
-                        hard_hit_pct=self._fcol(row, 'hard_hit_percent', 'hard_hit_pct') / 100,
-                        barrel_pct=self._fcol(row, 'barrel_batted_rate', 'barrel_pct') / 100,
-                        xba=self._fcol(row, 'estimated_ba_using_speedangle', 'xba'),
-                        xslg=self._fcol(row, 'estimated_slg_using_speedangle', 'xslg'),
-                        xwoba=self._fcol(row, 'estimated_woba_using_speedangle', 'xwoba'),
+                        # hardhit_percent = leaderboard name; hard_hit_percent = details name
+                        hard_hit_pct=self._fcol(row, 'hardhit_percent', 'hard_hit_percent', 'hard_hit_pct') / 100,
+                        # barrels_per_pa_percent = leaderboard; barrel_batted_rate = details
+                        barrel_pct=self._fcol(row, 'barrels_per_pa_percent', 'barrels_per_bbe_percent', 'barrel_batted_rate', 'barrel_pct') / 100,
+                        xba=self._fcol(row, 'xba', 'estimated_ba_using_speedangle'),
+                        xslg=self._fcol(row, 'xslg', 'estimated_slg_using_speedangle'),
+                        xwoba=self._fcol(row, 'xwoba', 'estimated_woba_using_speedangle'),
                         ip=0.0, er=0, k_pit=0, bb_pit=0,
                         pitches=self._icol(row, 'pitches'),
                     )

@@ -418,3 +418,393 @@ class TestCombinedDataFrame:
         assert pitcher.exit_velocity_avg > 0
         assert pitcher.xwoba > 0
         assert pitcher.k_pit == 8
+
+
+# ===========================================================================
+# Leaderboard (non-details) format — the actual columns Baseball Savant returns
+# when 'type': 'details' is OMITTED from the request.
+# Verified against live API on 2026-04-13.
+# ===========================================================================
+
+def _leaderboard_batter_row(**overrides) -> pd.DataFrame:
+    """
+    1-row DataFrame matching the Baseball Savant leaderboard CSV format
+    (group_by=name-date WITHOUT type=details).
+
+    Key differences from the 'details' format:
+      - 'abs' instead of 'ab' for at-bats
+      - 'hits' instead of 'hit' for hit count
+      - 'hrs' instead of 'home_run' for home run count
+      - 'hardhit_percent' instead of 'hard_hit_percent' (no underscore between hard/hit)
+      - 'barrels_per_pa_percent' instead of 'barrel_batted_rate'
+      - 'xwoba' / 'xba' / 'xslg' directly (not prefixed with 'estimated_...')
+      - 'player_id' present as MLBAM integer (no name-lookup needed)
+    """
+    base = {
+        'player_id': 660670,
+        'player_name': 'Alvarez, Yordan',
+        'game_date': '2026-04-05',
+        '_statcast_player_type': 'batter',
+        # Counting stats
+        'pa': 6.0,
+        'abs': 4.0,
+        'hits': 1.0,
+        'hrs': 1.0,
+        'doubles': 0.0,
+        'triples': 0.0,
+        'bb': 2.0,
+        'so': 2.0,
+        # Statcast quality metrics (leaderboard column names)
+        'launch_speed': 99.5,
+        'launch_angle': 28.0,
+        'hardhit_percent': 50.0,       # 0-100 scale → stored as 0.50 after /100
+        'barrels_per_pa_percent': 16.666667,  # 0-100 scale → stored as 0.167
+        'xwoba': 0.559,                # already 0-1 decimal
+        'xba': 0.251,
+        'xslg': 0.926,
+        'woba': 0.594,                 # actual wOBA from leaderboard
+        'pitches': 24,
+    }
+    base.update(overrides)
+    return pd.DataFrame([base])
+
+
+def _leaderboard_pitcher_row(**overrides) -> pd.DataFrame:
+    """1-row leaderboard CSV pitcher format."""
+    base = {
+        'player_id': 579328,
+        'player_name': 'Cole, Gerrit',
+        'game_date': '2026-04-06',
+        '_statcast_player_type': 'pitcher',
+        'pa': 0,
+        'abs': 0,
+        'hits': 0,
+        'hrs': 0,
+        'bb': 0,
+        'so': 8.0,      # pitcher Ks
+        'hardhit_percent': 28.0,
+        'barrels_per_pa_percent': 4.0,
+        'launch_speed': 85.2,
+        'launch_angle': 10.5,
+        'xwoba': 0.260,
+        'xba': 0.210,
+        'xslg': 0.380,
+        'pitches': 95,
+    }
+    base.update(overrides)
+    return pd.DataFrame([base])
+
+
+class TestLeaderboardBatterColumns:
+    """Verify leaderboard (non-details) column names map correctly."""
+
+    def test_player_id_used_directly(self, agent):
+        """player_id from leaderboard is the MLBAM int — no name-lookup needed."""
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert len(perfs) == 1
+        assert perfs[0].player_id == '660670'
+
+    def test_ab_from_abs_column(self, agent):
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].ab == 4
+
+    def test_h_from_hits_column(self, agent):
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].h == 1
+
+    def test_hr_from_hrs_column(self, agent):
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].hr == 1
+
+    def test_bb_from_bb_column(self, agent):
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].bb == 2
+
+    def test_so_from_so_column(self, agent):
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].so == 2
+
+    def test_exit_velocity_from_launch_speed(self, agent):
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].exit_velocity_avg == pytest.approx(99.5)
+
+    def test_xwoba_from_leaderboard_xwoba(self, agent):
+        """xwoba column (0-1 scale) stored directly — no /100 applied."""
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].xwoba == pytest.approx(0.559)
+
+    def test_xba_from_leaderboard_xba(self, agent):
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].xba == pytest.approx(0.251)
+
+    def test_hard_hit_pct_from_hardhit_percent(self, agent):
+        """hardhit_percent=50.0 (0-100 scale) → stored as 0.50 after /100."""
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].hard_hit_pct == pytest.approx(0.50)
+
+    def test_barrel_pct_from_barrels_per_pa_percent(self, agent):
+        """barrels_per_pa_percent=16.67 (0-100 scale) → stored as ~0.167 after /100."""
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].barrel_pct == pytest.approx(0.1667, abs=0.001)
+
+    def test_all_quality_metrics_nonzero_leaderboard(self, agent):
+        """Core regression: leaderboard rows must NOT produce all-zero quality shells."""
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        p = perfs[0]
+        quality_metrics = [
+            p.exit_velocity_avg, p.hard_hit_pct, p.barrel_pct,
+            p.xba, p.xslg, p.xwoba,
+        ]
+        assert all(m > 0 for m in quality_metrics), (
+            f"Shell record detected from leaderboard row: {quality_metrics}"
+        )
+
+    def test_counting_stats_all_nonzero_leaderboard(self, agent):
+        """Core regression: leaderboard counting stats (ab, hr, bb) must not be zero."""
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        p = perfs[0]
+        assert p.ab == 4, f"ab={p.ab} (expected 4 from 'abs' column)"
+        assert p.hr == 1, f"hr={p.hr} (expected 1 from 'hrs' column)"
+        assert p.bb == 2, f"bb={p.bb}"
+
+
+class TestLeaderboardPitcherColumns:
+    """Verify leaderboard pitcher columns map correctly."""
+
+    def test_pitcher_hard_hit_from_hardhit_percent(self, agent):
+        df = _leaderboard_pitcher_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].hard_hit_pct == pytest.approx(0.28)
+
+    def test_pitcher_barrel_from_barrels_per_pa_percent(self, agent):
+        df = _leaderboard_pitcher_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].barrel_pct == pytest.approx(0.04)
+
+    def test_pitcher_xwoba_from_leaderboard(self, agent):
+        df = _leaderboard_pitcher_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].xwoba == pytest.approx(0.260)
+
+    def test_pitcher_ks_from_so_column(self, agent):
+        """Leaderboard pitcher rows use 'so' for strikeouts."""
+        df = _leaderboard_pitcher_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].k_pit == 8
+
+    def test_pitcher_quality_metrics_nonzero_leaderboard(self, agent):
+        df = _leaderboard_pitcher_row()
+        perfs = agent.transform_to_performance(df)
+        p = perfs[0]
+        assert p.exit_velocity_avg > 0
+        assert p.hard_hit_pct > 0
+        assert p.barrel_pct > 0
+        assert p.xwoba > 0
+
+
+# ===========================================================================
+# Leaderboard (non-details) format — the actual columns Baseball Savant returns
+# when 'type': 'details' is OMITTED from the request.
+# Verified against live API on 2026-04-13.
+# ===========================================================================
+
+def _leaderboard_batter_row(**overrides) -> pd.DataFrame:
+    """
+    1-row DataFrame matching the Baseball Savant leaderboard CSV format
+    (group_by=name-date WITHOUT type=details).
+
+    Key differences from the 'details' format:
+      - 'abs' instead of 'ab' for at-bats
+      - 'hits' instead of 'hit' for hit count
+      - 'hrs' instead of 'home_run' for home run count
+      - 'hardhit_percent' instead of 'hard_hit_percent' (no underscore between hard/hit)
+      - 'barrels_per_pa_percent' instead of 'barrel_batted_rate'
+      - 'xwoba' / 'xba' / 'xslg' directly (not prefixed with 'estimated_...')
+      - 'player_id' present as MLBAM integer (no name-lookup needed)
+    """
+    base = {
+        'player_id': 660670,
+        'player_name': 'Alvarez, Yordan',
+        'game_date': '2026-04-05',
+        '_statcast_player_type': 'batter',
+        # Counting stats
+        'pa': 6.0,
+        'abs': 4.0,
+        'hits': 1.0,
+        'hrs': 1.0,
+        'doubles': 0.0,
+        'triples': 0.0,
+        'bb': 2.0,
+        'so': 2.0,
+        # Statcast quality metrics (leaderboard column names)
+        'launch_speed': 99.5,
+        'launch_angle': 28.0,
+        'hardhit_percent': 50.0,       # 0-100 scale → stored as 0.50 after /100
+        'barrels_per_pa_percent': 16.666667,  # 0-100 scale → stored as 0.167
+        'xwoba': 0.559,                # already 0-1 decimal
+        'xba': 0.251,
+        'xslg': 0.926,
+        'woba': 0.594,                 # actual wOBA from leaderboard
+        'pitches': 24,
+    }
+    base.update(overrides)
+    return pd.DataFrame([base])
+
+
+def _leaderboard_pitcher_row(**overrides) -> pd.DataFrame:
+    """1-row leaderboard CSV pitcher format."""
+    base = {
+        'player_id': 579328,
+        'player_name': 'Cole, Gerrit',
+        'game_date': '2026-04-06',
+        '_statcast_player_type': 'pitcher',
+        'pa': 0,
+        'abs': 0,
+        'hits': 0,
+        'hrs': 0,
+        'bb': 0,
+        'so': 8.0,      # pitcher Ks
+        'hardhit_percent': 28.0,
+        'barrels_per_pa_percent': 4.0,
+        'launch_speed': 85.2,
+        'launch_angle': 10.5,
+        'xwoba': 0.260,
+        'xba': 0.210,
+        'xslg': 0.380,
+        'pitches': 95,
+    }
+    base.update(overrides)
+    return pd.DataFrame([base])
+
+
+class TestLeaderboardBatterColumns:
+    """Verify leaderboard (non-details) column names map correctly."""
+
+    def test_player_id_used_directly(self, agent):
+        """player_id from leaderboard is the MLBAM int — no name-lookup needed."""
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert len(perfs) == 1
+        assert perfs[0].player_id == '660670'
+
+    def test_ab_from_abs_column(self, agent):
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].ab == 4
+
+    def test_h_from_hits_column(self, agent):
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].h == 1
+
+    def test_hr_from_hrs_column(self, agent):
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].hr == 1
+
+    def test_bb_from_bb_column(self, agent):
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].bb == 2
+
+    def test_so_from_so_column(self, agent):
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].so == 2
+
+    def test_exit_velocity_from_launch_speed(self, agent):
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].exit_velocity_avg == pytest.approx(99.5)
+
+    def test_xwoba_from_leaderboard_xwoba(self, agent):
+        """xwoba column (0-1 scale) stored directly — no /100 applied."""
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].xwoba == pytest.approx(0.559)
+
+    def test_xba_from_leaderboard_xba(self, agent):
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].xba == pytest.approx(0.251)
+
+    def test_hard_hit_pct_from_hardhit_percent(self, agent):
+        """hardhit_percent=50.0 (0-100 scale) → stored as 0.50 after /100."""
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].hard_hit_pct == pytest.approx(0.50)
+
+    def test_barrel_pct_from_barrels_per_pa_percent(self, agent):
+        """barrels_per_pa_percent=16.67 (0-100 scale) → stored as ~0.167 after /100."""
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].barrel_pct == pytest.approx(0.1667, abs=0.001)
+
+    def test_all_quality_metrics_nonzero_leaderboard(self, agent):
+        """Core regression: leaderboard rows must NOT produce all-zero quality shells."""
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        p = perfs[0]
+        quality_metrics = [
+            p.exit_velocity_avg, p.hard_hit_pct, p.barrel_pct,
+            p.xba, p.xslg, p.xwoba,
+        ]
+        assert all(m > 0 for m in quality_metrics), (
+            f"Shell record detected from leaderboard row: {quality_metrics}"
+        )
+
+    def test_counting_stats_all_nonzero_leaderboard(self, agent):
+        """Core regression: leaderboard counting stats (ab, hr, bb) must not be zero."""
+        df = _leaderboard_batter_row()
+        perfs = agent.transform_to_performance(df)
+        p = perfs[0]
+        assert p.ab == 4, f"ab={p.ab} (expected 4 from 'abs' column)"
+        assert p.hr == 1, f"hr={p.hr} (expected 1 from 'hrs' column)"
+        assert p.bb == 2, f"bb={p.bb}"
+
+
+class TestLeaderboardPitcherColumns:
+    """Verify leaderboard pitcher columns map correctly."""
+
+    def test_pitcher_hard_hit_from_hardhit_percent(self, agent):
+        df = _leaderboard_pitcher_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].hard_hit_pct == pytest.approx(0.28)
+
+    def test_pitcher_barrel_from_barrels_per_pa_percent(self, agent):
+        df = _leaderboard_pitcher_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].barrel_pct == pytest.approx(0.04)
+
+    def test_pitcher_xwoba_from_leaderboard(self, agent):
+        df = _leaderboard_pitcher_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].xwoba == pytest.approx(0.260)
+
+    def test_pitcher_ks_from_so_column(self, agent):
+        """Leaderboard pitcher rows use 'so' for strikeouts."""
+        df = _leaderboard_pitcher_row()
+        perfs = agent.transform_to_performance(df)
+        assert perfs[0].k_pit == 8
+
+    def test_pitcher_quality_metrics_nonzero_leaderboard(self, agent):
+        df = _leaderboard_pitcher_row()
+        perfs = agent.transform_to_performance(df)
+        p = perfs[0]
+        assert p.exit_velocity_avg > 0
+        assert p.hard_hit_pct > 0
+        assert p.barrel_pct > 0
+        assert p.xwoba > 0
