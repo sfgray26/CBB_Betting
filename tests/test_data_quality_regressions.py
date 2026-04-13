@@ -59,7 +59,7 @@ def test_validate_mlb_stats_rejects_invalid_counting_stat_combinations():
 
 
 @pytest.mark.asyncio
-async def test_supplement_statsapi_handles_strikeout_field_aliases(  # noqa: E501
+async def test_supplement_statsapi_strikeout_aliases(
     monkeypatch,
 ):
     target_date = date(2026, 4, 13)
@@ -243,7 +243,7 @@ async def test_poll_mlb_odds_normalizes_vendor_before_upsert(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mlb_box_stats_upsert_uses_unique_constraint(monkeypatch):  # noqa: E501
+async def test_mlb_box_stats_unique_constraint(monkeypatch):
     target_date = date(2026, 4, 13)
     upsert_calls = []
 

@@ -1551,9 +1551,7 @@ class DailyIngestionOrchestrator:
             "home_runs": "hr",
             "rbi": "rbi",
             "walks": "bb",
-            # Tuples represent fallback field names tried in order because
-            # statsapi batter strikeouts are exposed as "strikeouts" while
-            # older/internal payloads may still use "k".
+            # Tuple values are fallback field names tried in order.
             "strikeouts_bat": ("strikeouts", "k"),
             "stolen_bases": "sb",
             "caught_stealing": "cs",
