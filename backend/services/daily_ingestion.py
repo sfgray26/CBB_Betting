@@ -217,6 +217,8 @@ def _validate_mlb_stats(stat) -> bool:
         errors.append(f"Invalid WHIP: {stat.whip}")
 
     # Check counting stats are non-negative
+    # Field names here match the Pydantic MLBPlayerStats data contract:
+    #   'so' = batter strikeouts, 'k' = pitcher strikeouts (both valid model attrs)
     for field in ("ab", "h", "r", "hr", "rbi", "bb", "so", "sb", "cs",
                   "h_allowed", "r_allowed", "er", "bb_allowed", "k"):
         val = getattr(stat, field, None)

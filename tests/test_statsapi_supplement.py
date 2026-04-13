@@ -237,7 +237,8 @@ class TestSupplementStatsApiCountingStats:
         """When the statsapi package is absent the job returns status='skipped'."""
         orch = _make_orchestrator()
 
-        # Remove statsapi from sys.modules so the import inside the job fails
+        # Remove statsapi from sys.modules so the import inside the job fails.
+        # Restore the original state (present or absent) in the finally block.
         statsapi_backup = sys.modules.pop("statsapi", None)
         try:
             async def fake_lock(lock_id, name, fn):
@@ -247,8 +248,11 @@ class TestSupplementStatsApiCountingStats:
                        side_effect=fake_lock):
                 result = self._run(orch._supplement_statsapi_counting_stats())
         finally:
+            # Always restore sys.modules to its pre-test state
             if statsapi_backup is not None:
                 sys.modules["statsapi"] = statsapi_backup
+            else:
+                sys.modules.pop("statsapi", None)  # remove if test somehow re-added it
 
         assert result["status"] == "skipped"
         assert result["records"] == 0
