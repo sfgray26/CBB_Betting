@@ -16,7 +16,7 @@ import os
 import time
 import math
 import unicodedata
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 from typing import Optional, Any
 from zoneinfo import ZoneInfo
 
@@ -32,7 +32,6 @@ from backend.models import (
     SessionLocal,
     PlayerDailyMetric,
     ProjectionSnapshot,
-    PlayerValuationCache,
     ProjectionCacheEntry,
     MLBTeam,
     MLBGameLog,
@@ -174,6 +173,8 @@ def _parse_innings_pitched(ip: Optional[Any]) -> Optional[float]:
         try:
             innings = int(parts[0])
             outs = int(parts[1]) if len(parts) > 1 else 0
+            if innings < 0 or outs < 0 or outs > 2:
+                return None
             return innings + (outs / 3.0)
         except (ValueError, IndexError):
             return None
@@ -200,9 +201,44 @@ def _validate_mlb_stats(stat) -> bool:
     if stat.era is not None and (stat.era < 0 or stat.era > 100):
         errors.append(f"Invalid ERA: {stat.era}")
 
-    # Check AVG range (0-1.0)
-    if stat.avg is not None and (stat.avg < 0 or stat.avg > 1.0):
-        errors.append(f"Invalid AVG: {stat.avg}")
+    for label, value, max_value in (
+        ("AVG", stat.avg, 1.0),
+        ("OBP", stat.obp, 1.0),
+        ("WHIP", stat.whip, 100.0),
+    ):
+        if value is not None and (value < 0 or value > max_value):
+            errors.append(f"Invalid {label}: {value}")
+
+    for label, value in (
+        ("AB", stat.ab),
+        ("R", stat.r),
+        ("H", stat.h),
+        ("2B", stat.double),
+        ("3B", stat.triple),
+        ("HR", stat.hr),
+        ("RBI", stat.rbi),
+        ("BB", stat.bb),
+        ("SO", stat.so),
+        ("SB", stat.sb),
+        ("CS", stat.cs),
+        ("H_ALLOWED", stat.h_allowed),
+        ("R_ALLOWED", stat.r_allowed),
+        ("ER", stat.er),
+        ("BB_ALLOWED", stat.bb_allowed),
+        ("K", stat.k),
+    ):
+        if value is not None and value < 0:
+            errors.append(f"Invalid {label}: {value}")
+
+    if stat.h is not None and stat.ab is not None and stat.h > stat.ab:
+        errors.append(f"Invalid batting line: hits ({stat.h}) > at_bats ({stat.ab})")
+
+    extra_base_hits = sum(value or 0 for value in (stat.double, stat.triple, stat.hr))
+    if stat.h is not None and extra_base_hits > stat.h:
+        errors.append(f"Invalid batting line: XBH ({extra_base_hits}) > hits ({stat.h})")
+
+    if stat.er is not None and stat.r_allowed is not None and stat.er > stat.r_allowed:
+        errors.append(f"Invalid pitching line: earned_runs ({stat.er}) > runs_allowed ({stat.r_allowed})")
 
     # Validate innings_pitched format
     if stat.ip is not None:
@@ -210,13 +246,13 @@ def _validate_mlb_stats(stat) -> bool:
             ip_decimal = _parse_innings_pitched(stat.ip)
             if ip_decimal is None:
                 errors.append(f"Invalid IP format: {stat.ip}")
-        except Exception as e:
+        except Exception:
             errors.append(f"Invalid IP format: {stat.ip}")
 
     if errors:
         logger.warning(
-            "mlb_box_stats: Validation failed for player %d: %s",
-            stat.bdl_player_id, ", ".join(errors)
+            "mlb_box_stats: Validation failed for player %s: %s",
+            getattr(stat, "bdl_player_id", "unknown"), ", ".join(errors)
         )
         return False
 
@@ -882,11 +918,21 @@ class DailyIngestionOrchestrator:
 
                     games_with_odds += 1
                     for odd in odds:
+                        vendor = (odd.vendor or "").strip().lower()
+                        if not vendor:
+                            logger.warning(
+                                "_poll_mlb_odds: skipping odds row with empty vendor for game_id=%s odds_id=%s",
+                                odd.game_id,
+                                odd.id,
+                            )
+                            continue
+
                         payload = odd.model_dump()
+                        payload["vendor"] = vendor
                         stmt = pg_insert(MLBOddsSnapshot.__table__).values(
                             odds_id=odd.id,
                             game_id=odd.game_id,
-                            vendor=odd.vendor,
+                            vendor=vendor,
                             snapshot_window=snapshot_window,
                             spread_home=odd.spread_home_value,
                             spread_away=odd.spread_away_value,
@@ -1505,13 +1551,16 @@ class DailyIngestionOrchestrator:
             "home_runs": "hr",
             "rbi": "rbi",
             "walks": "bb",
-            "strikeouts_bat": "k",
+            "strikeouts_bat": ("strikeouts", "k"),
             "stolen_bases": "sb",
             "caught_stealing": "cs",
         }
         for db_col, box_key in field_map.items():
             if getattr(db_row, db_col) is None:
-                raw_val = batter.get(box_key)
+                if isinstance(box_key, tuple):
+                    raw_val = next((batter.get(candidate) for candidate in box_key if batter.get(candidate) is not None), None)
+                else:
+                    raw_val = batter.get(box_key)
                 if raw_val is not None:
                     try:
                         setattr(db_row, db_col, int(raw_val))
@@ -2399,7 +2448,7 @@ class DailyIngestionOrchestrator:
                 yahoo_positions_by_bdl: dict[int, list[str]] = {}
                 try:
                     from backend.fantasy_baseball.yahoo_client_resilient import (
-                        YahooFantasyClient, YahooAuthError, YahooAPIError,
+                        YahooFantasyClient,
                     )
                     client = YahooFantasyClient()
                     roster = client.get_roster()
@@ -3707,7 +3756,7 @@ class DailyIngestionOrchestrator:
 
         async def _run():
             from backend.fantasy_baseball.fangraphs_loader import (
-                fetch_all_ros, compute_ensemble_blend,
+                fetch_all_ros,
             )
 
             bat_raw = fetch_all_ros("bat", delay_seconds=3.0)
@@ -4525,6 +4574,13 @@ class DailyIngestionOrchestrator:
 
                         # Get MLBAM ID from player data
                         mlbam_id = getattr(player, 'mlbam_id', None)
+                        if mlbam_id is None:
+                            logger.warning(
+                                "_sync_player_id_mapping: skipping bdl_id=%s (%s) with no mlbam_id",
+                                bdl_id,
+                                player.full_name,
+                            )
+                            continue
 
                         # Get full name
                         full_name = player.full_name
