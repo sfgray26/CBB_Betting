@@ -125,7 +125,10 @@ class PlayerDailyPerformance:
     k_pit: int = 0
     bb_pit: int = 0
     pitches: int = 0
-    
+
+    # Metadata for type-scoped upserts
+    is_pitcher: bool = False
+
     @property
     def avg(self) -> float:
         return self.h / self.ab if self.ab > 0 else 0.0
@@ -528,6 +531,7 @@ class StatcastIngestionAgent:
                         k_pit=self._icol(row, 'so', 'p_strikeout', 'strikeout', 'k'),
                         bb_pit=self._icol(row, 'bb', 'p_walk', 'walk'),
                         pitches=self._icol(row, 'pitches'),
+                        is_pitcher=True,
                     )
                 else:
                     # Bug 4 fix: accept alternate column names Baseball Savant may return.

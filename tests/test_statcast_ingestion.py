@@ -127,3 +127,47 @@ def test_transform_to_performance_with_pitcher_rows():
     assert perf.k_pit == 8
     assert perf.bb_pit == 2
     assert perf.pitches == 95
+
+
+def test_batter_performance_has_is_pitcher_false():
+    """Batter rows should have is_pitcher=False."""
+    agent = StatcastIngestionAgent()
+
+    df = pd.DataFrame([{
+        'player_name': 'Judge, Aaron',
+        'team': 'NYY',
+        'game_date': '2026-04-09',
+        'pa': 5, 'ab': 4, 'h': 2,
+        'doubles': 1, 'triples': 0, 'hr': 1, 'r': 2, 'rbi': 3,
+        'bb': 1, 'so': 1, 'hbp': 0, 'sb': 0, 'cs': 0,
+        'exit_velocity_avg': 95.5, 'launch_angle_avg': 15.2,
+        'hard_hit_percent': 55.0, 'barrel_batted_rate': 12.0,
+        'xba': 0.320, 'xslg': 0.650, 'xwoba': 0.400,
+        'pitches': 25,
+        '_statcast_player_type': 'batter',
+    }])
+
+    performances = agent.transform_to_performance(df)
+    assert len(performances) == 1
+    assert performances[0].is_pitcher is False
+
+
+def test_pitcher_performance_has_is_pitcher_true():
+    """Pitcher rows should have is_pitcher=True."""
+    agent = StatcastIngestionAgent()
+
+    df = pd.DataFrame([{
+        'player_name': 'Cole, Gerrit',
+        'team': 'NYY',
+        'game_date': '2026-04-09',
+        'exit_velocity_avg': 88.0, 'launch_angle_avg': 12.0,
+        'hard_hit_percent': 35.0, 'barrel_batted_rate': 5.0,
+        'xba': 0.250, 'xslg': 0.400, 'xwoba': 0.300,
+        'ip': 6.0, 'er': 2, 'strikeout': 8, 'walk': 2, 'bb': 2,
+        'pitches': 95,
+        '_statcast_player_type': 'pitcher',
+    }])
+
+    performances = agent.transform_to_performance(df)
+    assert len(performances) == 1
+    assert performances[0].is_pitcher is True
