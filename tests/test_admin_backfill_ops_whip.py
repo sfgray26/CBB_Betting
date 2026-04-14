@@ -215,3 +215,65 @@ class TestBackfillCaughtStealing:
         cs_fixed = 0
         nsb_fixed = sb - cs_fixed
         assert nsb_fixed == 5
+
+
+class TestBackfillCsFromStatcast:
+    """Tests for /admin/backfill-cs-from-statcast — Statcast-sourced CS truth."""
+
+    def test_endpoint_function_exists(self):
+        from backend import admin_backfill_ops_whip
+        assert hasattr(admin_backfill_ops_whip, 'backfill_cs_from_statcast')
+        assert callable(admin_backfill_ops_whip.backfill_cs_from_statcast)
+
+    def test_result_dict_has_required_fields(self):
+        import inspect
+        from backend import admin_backfill_ops_whip
+        source = inspect.getsource(admin_backfill_ops_whip.backfill_cs_from_statcast)
+        for field in (
+            "status",
+            "total_rows",
+            "cs_positive_before",
+            "cs_positive_after",
+            "rows_updated",
+            "statcast_cs_events",
+            "unmatched_statcast_events",
+        ):
+            assert f'"{field}"' in source or f"'{field}'" in source, \
+                f"Result dict should include field: {field}"
+
+    def test_joins_statcast_via_player_id_mapping(self):
+        """The join must go through player_id_mapping — mlbam_id (Statcast) ↔ bdl_id (MPS)."""
+        import inspect
+        from backend import admin_backfill_ops_whip
+        source = inspect.getsource(admin_backfill_ops_whip.backfill_cs_from_statcast)
+        assert "statcast_performances" in source
+        assert "player_id_mapping" in source
+        assert "mlbam_id" in source and "bdl_id" in source, \
+            "Join must traverse both mlbam_id and bdl_id columns"
+        assert "game_date" in source, "Must match on game_date"
+
+    def test_only_updates_positive_cs(self):
+        """
+        Only overwrite when Statcast recorded a real CS event (cs > 0).
+        Prior =0 default is retained for player-games with no Statcast match.
+        """
+        import inspect
+        from backend import admin_backfill_ops_whip
+        source = inspect.getsource(admin_backfill_ops_whip.backfill_cs_from_statcast)
+        assert "sp.cs > 0" in source, "Must filter to rows where Statcast cs > 0"
+
+    def test_update_is_idempotent(self):
+        """Re-running should be a no-op when caught_stealing already matches sp.cs."""
+        import inspect
+        from backend import admin_backfill_ops_whip
+        source = inspect.getsource(admin_backfill_ops_whip.backfill_cs_from_statcast)
+        assert "caught_stealing <> sp.cs" in source or "caught_stealing != sp.cs" in source, \
+            "Should skip rows where caught_stealing already equals sp.cs"
+
+    def test_mlbam_id_cast_to_text(self):
+        """statcast_performances.player_id is STRING; mapping.mlbam_id is INT — cast required."""
+        import inspect
+        from backend import admin_backfill_ops_whip
+        source = inspect.getsource(admin_backfill_ops_whip.backfill_cs_from_statcast)
+        assert "mlbam_id::text" in source, \
+            "Must cast mlbam_id to text to match statcast_performances.player_id"

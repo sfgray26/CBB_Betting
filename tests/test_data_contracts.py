@@ -138,6 +138,46 @@ class TestMLBBettingOdd:
         with pytest.raises(ValidationError):
             BDLResponse[MLBBettingOdd].model_validate(raw)
 
+    def test_none_spread_accepted(self):
+        """BDL returns None when a book has not set a spread (moneyline-only row)."""
+        raw = load("bdl_mlb_odds.json")
+        raw["data"][0]["spread_home_value"] = None
+        raw["data"][0]["spread_home_odds"] = None
+        raw["data"][0]["spread_away_value"] = None
+        raw["data"][0]["spread_away_odds"] = None
+        resp = BDLResponse[MLBBettingOdd].model_validate(raw)
+        row = resp.data[0]
+        assert row.spread_home_value is None
+        assert row.spread_home_odds is None
+        assert row.spread_home_float is None
+        assert row.has_spread is False
+        # Moneyline must still be captured for the row to exist.
+        assert isinstance(row.moneyline_home_odds, int)
+
+    def test_none_total_accepted(self):
+        raw = load("bdl_mlb_odds.json")
+        raw["data"][0]["total_value"] = None
+        raw["data"][0]["total_over_odds"] = None
+        raw["data"][0]["total_under_odds"] = None
+        resp = BDLResponse[MLBBettingOdd].model_validate(raw)
+        row = resp.data[0]
+        assert row.total_value is None
+        assert row.total_float is None
+        assert row.has_total is False
+
+    def test_has_spread_true_for_full_line(self):
+        raw = load("bdl_mlb_odds.json")
+        resp = BDLResponse[MLBBettingOdd].model_validate(raw)
+        assert all(o.has_spread for o in resp.data)
+        assert all(o.has_total for o in resp.data)
+
+    def test_missing_moneyline_still_rejected(self):
+        """Moneyline is the defining attribute of an odds row — None is invalid."""
+        raw = load("bdl_mlb_odds.json")
+        raw["data"][0]["moneyline_home_odds"] = None
+        with pytest.raises(ValidationError):
+            BDLResponse[MLBBettingOdd].model_validate(raw)
+
 
 # ---------------------------------------------------------------------------
 # MLBInjury — 25 items, cursor pagination, nullable detail/side

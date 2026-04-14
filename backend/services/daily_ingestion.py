@@ -900,6 +900,15 @@ class DailyIngestionOrchestrator:
 
                     games_with_odds += 1
                     for odd in odds:
+                        # Skip books that lack a full spread+total line.
+                        # MLBOddsSnapshot columns are NOT NULL by design; the moneyline
+                        # is still captured in raw_payload via other odds rows for the game.
+                        if not (odd.has_spread and odd.has_total):
+                            logger.debug(
+                                "skip mlb odds row: game=%s vendor=%s missing spread/total",
+                                odd.game_id, odd.vendor,
+                            )
+                            continue
                         payload = odd.model_dump()
                         stmt = pg_insert(MLBOddsSnapshot.__table__).values(
                             odds_id=odd.id,

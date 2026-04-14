@@ -638,6 +638,142 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+    finally:
+        db.close()
+
+
+@app.get("/admin/investigate/statcast-raw-columns")
+async def investigate_statcast_raw_columns(target_date: str = "2026-04-12", user: str = Depends(verify_admin_api_key)):
+    """
+    Fetch raw Statcast data for a date and return column names + first row.
+    """
+    from pybaseball import statcast
+    import pandas as pd
+    try:
+        df = await asyncio.to_thread(statcast, start_dt=target_date, end_dt=target_date)
+        if df is None or df.empty:
+            return {"status": "empty", "date": target_date}
+        
+        # Replace NaNs for JSON
+        first_row = df.head(1).replace({pd.NA: None, float('nan'): None}).to_dict(orient="records")[0]
+        
+        return {
+            "status": "success",
+            "date": target_date,
+            "columns": df.columns.tolist(),
+            "first_row_sample": first_row
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+@app.get("/admin/investigate/statcast-quality")
+async def investigate_statcast_quality(user: str = Depends(verify_admin_api_key)):
+    """
+    Investigate the rate of zero-quality metrics in statcast_performances.
+    """
+    from backend.models import SessionLocal, StatcastPerformance
+    from sqlalchemy import func
+    db = SessionLocal()
+    try:
+        total = db.query(StatcastPerformance).count()
+        with_ev = db.query(StatcastPerformance).filter(StatcastPerformance.exit_velocity_avg > 0).count()
+        with_xwoba = db.query(StatcastPerformance).filter(StatcastPerformance.xwoba > 0).count()
+        with_cs = db.query(StatcastPerformance).filter(StatcastPerformance.cs > 0).count()
+        with_pitches = db.query(StatcastPerformance).filter(StatcastPerformance.pitches > 0).count()
+        
+        # Sample of records with zero quality metrics
+        sample_zeros = db.query(StatcastPerformance).filter(
+            StatcastPerformance.exit_velocity_avg == 0,
+            StatcastPerformance.xwoba == 0
+        ).limit(10).all()
+
+        return {
+            "total_rows": total,
+            "with_exit_velocity": with_ev,
+            "with_xwoba": with_xwoba,
+            "with_cs": with_cs,
+            "with_pitches": with_pitches,
+            "zero_metric_rate": round((total - with_ev) * 100 / total, 1) if total > 0 else 0,
+            "sample_zeros": [
+                {
+                    "name": p.player_name,
+                    "date": str(p.game_date),
+                    "pa": p.pa,
+                    "pitches": p.pitches,
+                    "k_pit": p.k_pit
+                } for p in sample_zeros
+            ]
+        }
+    finally:
+        db.close()
+
+
+@app.get("/admin/investigate/statcast-raw-columns")
+async def investigate_statcast_raw_columns(target_date: str = "2026-04-12", user: str = Depends(verify_admin_api_key)):
+    """
+    Fetch raw Statcast data for a date and return column names + first row.
+    """
+    from pybaseball import statcast
+    import pandas as pd
+    try:
+        df = await asyncio.to_thread(statcast, start_dt=target_date, end_dt=target_date)
+        if df is None or df.empty:
+            return {"status": "empty", "date": target_date}
+        
+        # Replace NaNs for JSON
+        first_row = df.head(1).replace({pd.NA: None, float('nan'): None}).to_dict(orient="records")[0]
+        
+        return {
+            "status": "success",
+            "date": target_date,
+            "columns": df.columns.tolist(),
+            "first_row_sample": first_row
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+@app.get("/admin/investigate/statcast-quality")
+async def investigate_statcast_quality(user: str = Depends(verify_admin_api_key)):
+    """
+    Investigate the rate of zero-quality metrics in statcast_performances.
+    """
+    from backend.models import SessionLocal, StatcastPerformance
+    from sqlalchemy import func
+    db = SessionLocal()
+    try:
+        total = db.query(StatcastPerformance).count()
+        with_ev = db.query(StatcastPerformance).filter(StatcastPerformance.exit_velocity_avg > 0).count()
+        with_xwoba = db.query(StatcastPerformance).filter(StatcastPerformance.xwoba > 0).count()
+        with_cs = db.query(StatcastPerformance).filter(StatcastPerformance.cs > 0).count()
+        with_pitches = db.query(StatcastPerformance).filter(StatcastPerformance.pitches > 0).count()
+        
+        # Sample of records with zero quality metrics
+        sample_zeros = db.query(StatcastPerformance).filter(
+            StatcastPerformance.exit_velocity_avg == 0,
+            StatcastPerformance.xwoba == 0
+        ).limit(10).all()
+
+        return {
+            "total_rows": total,
+            "with_exit_velocity": with_ev,
+            "with_xwoba": with_xwoba,
+            "with_cs": with_cs,
+            "with_pitches": with_pitches,
+            "zero_metric_rate": round((total - with_ev) * 100 / total, 1) if total > 0 else 0,
+            "sample_zeros": [
+                {
+                    "name": p.player_name,
+                    "date": str(p.game_date),
+                    "pa": p.pa,
+                    "pitches": p.pitches,
+                    "k_pit": p.k_pit
+                } for p in sample_zeros
+            ]
+        }
+    finally:
+        db.close()
+
+
 # ============================================================================
 # SCHEDULED JOB
 # ============================================================================

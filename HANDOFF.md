@@ -1,16 +1,128 @@
 # HANDOFF.md -- MLB Platform Master Plan (In-Season 2026)
 
-> **Date:** April 12, 2026 | **Author:** Claude Code (Master Architect)
-> **Status:** DATA QUALITY HARDENING COMPLETE -- PENDING GEMINI DEPLOY + BACKFILL
+> **Date:** April 14, 2026 | **Author:** Claude Code (Master Architect)
+> **Status:** STATCAST AGGREGATION FIX COMPLETE -- PENDING GEMINI DEPLOY + RE-BACKFILL
 >
-> **Current phase:** All data quality fixes implemented. Gemini must deploy + run backfills.
-> Test suite: 1738 passed (70 new tests), 3 pre-existing DB-auth failures.
+> **Current phase:** Statcast aggregation bug FIXED (4 commits). `_aggregate_to_daily()` makes
+> pipeline resilient to per-pitch data; type-scoped upserts protect two-way players; CS
+> indicators properly SUMmed. 1838/1838 tests pass (3 pre-existing DB-auth excluded).
+> Ready for Gemini to deploy, TRUNCATE corrupted data, and re-backfill.
 
 ---
 
-## CURRENT SESSION STATE (April 12, 2026)
+## CURRENT SESSION STATE (April 14, 2026)
 
-### What Just Happened -- Data Quality Hardening Sprint
+### Gemini DevOps Report (April 14 — all requested tasks complete)
+
+| Task | Result | Verdict |
+|------|--------|---------|
+| Deploy latest code to Railway | Healthy startup, API accessible | DONE |
+| `/admin/backfill-cs-from-statcast` | **0 updates** — `statcast_performances` has zero rows with `cs > 0` | DONE (source issue) |
+| Probable pitchers ingestion | **0 records** — no games or upstream MLB API lag | DONE |
+| Statcast quality audit | **42.4% zero-metric rate** (13,653 rows) — pitch-level overwrite confirmed | DONE |
+| Fuzzy linker | **0 linked, 362 remaining** — orphans are prospects/retired (accepted) | DONE |
+| Bonus: pitcher metric probes + duplicate endpoint cleanup in main.py | Completed | DONE |
+
+### Live Production DB State (post-Gemini deploy, April 14)
+
+| Table | Rows | Latest Date | Notes |
+|-------|------|-------------|-------|
+| `mlb_player_stats` | ~6,500+ | 2026-04-13 | Growing daily via BDL |
+| `statcast_performances` | **13,653** | 2026-04-13 | **42.4% zero-metric** — pitch-level overwrite bug confirmed |
+| `probable_pitchers` | 0 | — | Upstream MLB API returned 0; not a code issue |
+| `simulation_results` | ~9,400+ | 2026-04-13 | Fresh |
+| `player_rolling_stats` | ~28,000+ | 2026-04-13 | OK |
+| `player_scores` | ~28,000+ | 2026-04-13 | OK |
+| `player_id_mapping` | 60,000 | — | **Dedup needed** (FU-3) |
+| `position_eligibility` | ~2,376 | — | 362 permanent orphans (prospects/retired — accepted) |
+| `decision_results` | 26 | — | Low; likely expected for early-season |
+
+Overall health: **Infrastructure stable.** Primary data quality blocker: Statcast aggregation.
+
+### Work Completed This Session (April 14 — Statcast Aggregation Fix)
+
+4 commits implementing a complete fix for the Statcast aggregation bug:
+
+1. **`is_pitcher` flag** (`ef80ecc`) — Added `is_pitcher: bool` to `PlayerDailyPerformance`
+   dataclass. Set to `True` in pitcher branch of `transform_to_performance()`. Prerequisite
+   for type-scoped upserts. 2 new tests.
+
+2. **`_aggregate_to_daily()` pre-aggregation** (`4c9eef5`) — Core fix. Groups per-pitch
+   rows by (player, date, type) before transform. SUMs counting stats (42 column aliases
+   including `caught_stealing_2b`), AVERAGEs quality metrics (18 aliases). Short-circuits
+   when data is already at daily granularity (leaderboard passthrough). Wired into
+   `fetch_statcast_day()` before return. 6 new tests.
+
+3. **Type-scoped upserts** (`9da1f3f`) — Pitcher rows only update pitching + quality metric
+   columns on conflict. Batting counting stats (`pa`, `ab`, `h`, `sb`, `cs`, etc.) are
+   excluded from pitcher `set_=` dict, preventing two-way player data corruption (Ohtani).
+   2 new tests.
+
+4. **End-to-end integration test** (`8fcff87`) — Simulates 5 per-pitch rows with
+   `caught_stealing_2b=1` on 2 of them. Verifies aggregation -> transform produces
+   `cs=2`. Full suite: **1838 passed**, 3 pre-existing DB-auth failures.
+
+### Architect Review Queue (needs judgment, not execution)
+
+- ~~**P0: Statcast pitch-level overwrite bug** — FIXED (commits ef80ecc..8fcff87)~~
+- ~~**P0: CS data gap** — FIXED (caught_stealing_2b now SUMmed in aggregation)~~
+- **P1: `/admin/diagnose-era` broken on prod** — `ROUND(AVG(era), 3)` needs `::numeric` cast.
+  Cosmetic; fix when touching ERA code.
+- **P2: player_id_mapping 60K rows** vs expected ~2K. FU-3 dedup deferred but join costs
+  compound. Worth re-prioritizing before NSB/xwOBA derived-stats work.
+- **P3: decision_results = 26 rows** — verify if expected early-season or silent drop.
+
+### Work Completed Prior Session (April 13)
+
+1. **MLBBettingOdd Pydantic validation** — `spread_*`, `total_*` fields now `Optional`.
+   Files: `backend/data_contracts/mlb_odds.py`, `backend/services/daily_ingestion.py`,
+   `tests/test_data_contracts.py` (+4 new tests; 46/46 pass).
+
+2. **caught_stealing backfill endpoint** — `POST /admin/backfill-cs-from-statcast`.
+   Idempotent join across `statcast_performances -> player_id_mapping -> mlb_player_stats`.
+   Files: `backend/admin_backfill_ops_whip.py`, `tests/test_admin_backfill_ops_whip.py`
+   (+6 new tests; 18/18 pass). **Result: 0 updates due to source CS gap.**
+
+3. **Partial derived stats layer** — `backend/services/derived_stats.py`. Pure null-safe
+   helpers for OPS/AVG/ISO/WHIP/ERA. 36 tests in `tests/test_derived_stats.py`.
+   Ready to ship — values come from `mlb_player_stats` (BDL), not `statcast_performances`.
+
+### Gemini Backfill Findings History (April 13-14)
+
+**April 13 findings (3 blockers identified):**
+1. Statcast backfill stalled at 13,376 rows — per-pitch rows overwriting daily aggregates.
+2. `statcast_performances.cs > 0` count is zero — `caught_stealing_2b` needs SUM aggregation.
+3. Probable pitchers + fuzzy linker returned 0 rows — tracked separately.
+
+**April 14 confirmation:** Gemini re-ran all tasks. Results consistent with April 13 findings.
+Zero-metric rate now measured at 42.4% (13,653 rows). Infrastructure is robust; blockers are
+logical aggregation gaps requiring architect-level code fixes, not ops issues.
+
+**Full diagnosis:** `reports/2026-04-13-statcast-aggregation-diagnosis.md`.
+
+**Resolution:** Fix implemented in 4 commits (ef80ecc..8fcff87). Ready for Gemini deploy + re-backfill.
+
+---
+
+## ARCHIVE — Prior Session (Derived Stats Readiness Assessment)
+
+### What Just Happened -- Derived Stats Readiness Assessment
+- Database audit requested to verify production state after Statcast fixes
+- Direct DB connection from local environment blocked (`DATABASE_PUBLIC_URL` not configured on Railway)
+- Readiness assessment completed using known state from April 11 deployment + user-reported Statcast progress
+- **Full report:** `reports/2026-04-13-derived-stats-readiness-assessment.md`
+
+**Key Finding:** Overall readiness is **72/100** — **MARGINAL** for a complete derived stats layer.
+- OPS/WHIP: 85/100 ✅ (at mathematical floor, ready to use)
+- NSB (Net Stolen Bases): 0/100 🔴 (caught_stealing is 100% NULL — hard blocker)
+- Player identity linkage: 85/100 ✅ (362 orphans accepted)
+- Statcast (xwOBA, barrel%, exit velocity): 75/100 ⚠️ (progress reported, needs confirmation)
+- Pipeline freshness: 95/100 ✅
+- Data quality: 98/100 ✅
+
+**Recommendation:** Start building a **partial derived stats layer now** (OPS, WHIP, ERA, AVG, ISO). Parallel-track the `caught_stealing` source mapping and Statcast backfill confirmation. Add NSB and advanced metrics in a follow-up phase.
+
+### Previous Session -- Data Quality Hardening Sprint (April 12)
 
 **Critical Fixes:**
 - **Statcast Column Mapping (Task 0): FIXED** -- `transform_to_performance()` was looking for `exit_velocity_avg`/`xba`/`xwoba` but Baseball Savant returns `launch_speed`/`estimated_ba_using_speedangle`/`estimated_woba_using_speedangle`. This caused 6,255 shell records with all-zero quality metrics. Fixed both batter and pitcher sections. Added `stolen_base_2b`/`caught_stealing_2b` for SB/CS. 28 regression tests.
@@ -135,12 +247,33 @@
 | **8** | VORP implementation | **DONE** | `backend/services/vorp_engine.py` + scheduled job (4:30 AM, lock 100_030) |
 | **9** | Z-score enhancements | **DONE** | Winsorization (default ON) + MAD-based robust Z option in `scoring_engine.py` |
 
-### IMMEDIATE: Gemini Deployment Tasks
+### IMMEDIATE: Gemini Deploy + Re-Backfill
 
-1. Deploy latest code to Railway (includes Tasks 4/8/9)
-2. Run `POST /admin/backfill/statcast` -- expected ~15K rows for March 20 - April 11
-3. Run `POST /admin/ingestion/run/probable_pitchers_morning` -- verify probable_pitchers populates
-4. Run `POST /admin/ingestion/run/vorp` -- verify VORP values populate in player_daily_metrics
+Statcast aggregation fix is complete (4 commits on `stable/cbb-prod`). Gemini should:
+
+1. **Deploy latest code to Railway.** Includes `_aggregate_to_daily()`, type-scoped upserts,
+   and `is_pitcher` flag. Verify healthy startup.
+2. **TRUNCATE `statcast_performances` table.** Existing 13,653 rows contain corrupted
+   per-pitch overwrites. Must start clean.
+   ```sql
+   TRUNCATE TABLE statcast_performances;
+   ```
+3. **Run `POST /admin/backfill/statcast`** — full re-backfill with fixed aggregation.
+   Expected: ~600-900 rows per game date (one per player per date), NOT 10K+.
+   Monitor logs for `"_aggregate_to_daily: X raw rows -> Y aggregated rows"`.
+4. **Run `POST /admin/backfill-cs-from-statcast`** — should now find CS events since
+   `caught_stealing_2b` is properly SUMmed during aggregation.
+5. **Run `GET /admin/pipeline-health`** and report:
+   - Total `statcast_performances` row count
+   - Zero-metric rate (should drop from 42.4% to <10%)
+   - CS backfill result (expect >0 updates now)
+
+### NEXT: Architect Tasks (after Gemini confirms backfill)
+
+1. **Ship derived stats layer** — OPS/WHIP/ERA/AVG/ISO helpers are ready (independent of Statcast).
+2. **Add NSB (Net Stolen Bases) to derived stats** once CS data is confirmed populated.
+3. **Add Statcast-sourced advanced metrics** (xwOBA, barrel%, exit velocity) to derived stats
+   once zero-metric rate is confirmed <10%.
 
 ### LOW PRIORITY (Housekeeping)
 
@@ -293,6 +426,30 @@ Next available: 100_031
 
 ---
 
-**Last Updated:** April 12, 2026
-**Session Context:** Tasks 4/8/9 implemented. Pending Gemini deploy + Statcast backfill (Task 5).
-**Priority:** Deploy to Railway, then populate probable_pitchers + Statcast + VORP tables.
+**Last Updated:** April 14, 2026
+**Session Context:** Statcast aggregation fix COMPLETE (4 commits). 1838/1838 tests pass.
+**Priority:** Gemini deploy + TRUNCATE + re-backfill. Then ship derived stats layer + NSB.
+
+---
+
+## ??? DEVOPS & PIPELINE AUDIT (April 14, 2026)
+
+**Mission:** Deploy latest fixes and execute required backfills/audits.
+
+**Status:**
+1. **Deployment**: ? **SUCCESS**
+   - Latest code (CS backfill, Pydantic odds fixes) live on Railway.
+2. **CS Backfill (`/admin/backfill-cs-from-statcast`)**: ? **COMPLETE**
+   - Result: **0 updates**.
+   - Finding: `statcast_performances` currently contains **zero** records with `cs > 0`. Upstream source/mapping for `caught_stealing_2b` is effectively empty.
+3. **Probable Pitchers Ingestion**: ? **COMPLETE**
+   - Result: **0 records** (indicates API lag or no scheduled games).
+4. **Statcast Quality Audit**: ? **COMPLETE**
+   - **Zero-Metric Rate**: **42.4%** (Total Rows: 13,653).
+   - **Critical Finding**: Pitch-level data is overwriting daily player totals due to `on_conflict_do_update` without aggregation. This is the root cause of the "shell record" issue.
+5. **Fuzzy Linker**: ? **COMPLETE**
+   - Result: **0 linked**, 362 remaining. New orphans confirmed as unmatchable prospects/retired players.
+
+**Overall Verdict**: Infrastructure is stable. The data pipeline requires a logical pivot from **overwrite** to **aggregate** for Statcast detail rows to reach required richness levels.
+
+*Last Updated: April 14, 2026 � Gemini DevOps Lead*
