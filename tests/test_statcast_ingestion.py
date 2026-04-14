@@ -406,3 +406,66 @@ class TestStorePerformancesScopedUpsert:
             assert f'{col} =' in stmt_str or f'{col}=' in stmt_str, (
                 f"Missing batting col {col} in batter SET"
             )
+
+
+# ---------------------------------------------------------------------------
+# End-to-end pipeline tests: aggregate -> transform
+# ---------------------------------------------------------------------------
+
+class TestEndToEndPipeline:
+    """End-to-end tests: aggregate -> transform pipeline."""
+
+    def test_per_pitch_data_produces_correct_daily_totals(self):
+        """
+        Simulate per-pitch data (the actual bug scenario):
+        5 pitch rows for Judge, 3 PAs, 2 with caught_stealing_2b=1.
+        Pipeline should produce ONE performance with cs=2.
+        """
+        agent = StatcastIngestionAgent()
+
+        rows = []
+        for i in range(5):
+            rows.append({
+                'player_name': 'Judge, Aaron', 'team': 'NYY',
+                'game_date': '2026-04-09', '_statcast_player_type': 'batter',
+                'pa': 1 if i < 3 else 0,
+                'ab': 1 if i < 2 else 0,
+                'hits': 1 if i == 0 else 0,
+                'hrs': 1 if i == 0 else 0,
+                'doubles': 0, 'triples': 0,
+                'bb': 1 if i == 2 else 0,
+                'so': 1 if i == 1 else 0,
+                'hbp': 0,
+                'stolen_base_2b': 1 if i == 3 else 0,
+                'caught_stealing_2b': 1 if i in (2, 4) else 0,
+                'pitches': 1,
+                'launch_speed': 95.0 if i == 0 else float('nan'),
+                'launch_angle': 25.0 if i == 0 else float('nan'),
+                'xwoba': 0.500 if i < 2 else float('nan'),
+                'xba': 0.300 if i < 2 else float('nan'),
+                'xslg': 0.700 if i < 2 else float('nan'),
+                'hardhit_percent': 50.0 if i == 0 else float('nan'),
+                'barrels_per_pa_percent': 20.0 if i == 0 else float('nan'),
+            })
+
+        df = pd.DataFrame(rows)
+
+        # Run aggregation
+        agg_df = agent._aggregate_to_daily(df)
+        assert len(agg_df) == 1
+
+        # Run transform
+        performances = agent.transform_to_performance(agg_df)
+        assert len(performances) == 1
+
+        perf = performances[0]
+        assert perf.pa == 3
+        assert perf.ab == 2
+        assert perf.h == 1
+        assert perf.hr == 1
+        assert perf.bb == 1
+        assert perf.so == 1
+        assert perf.sb == 1
+        assert perf.cs == 2  # THE critical assertion
+        assert perf.pitches == 5
+        assert perf.is_pitcher is False
