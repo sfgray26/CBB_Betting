@@ -440,6 +440,10 @@ class StatcastIngestionAgent:
             "Statcast combined: %d batters + %d pitchers = %d total rows for %s",
             n_batters, n_pitchers, len(combined), target_date,
         )
+
+        # Pre-aggregate to daily granularity (resilient to per-pitch data)
+        combined = self._aggregate_to_daily(combined)
+
         return combined
     
     @staticmethod
@@ -465,6 +469,91 @@ class StatcastIngestionAgent:
                 except (ValueError, TypeError):
                     continue
         return default
+
+    def _aggregate_to_daily(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Pre-aggregate per-pitch rows to daily granularity.
+
+        Baseball Savant sometimes returns per-pitch rows instead of daily
+        aggregates. This method groups by (player, game_date, player_type)
+        and SUMs counting stats while AVERAGEing quality metrics.
+
+        Short-circuits if max group size is 1 (leaderboard data passthrough).
+        """
+        if df is None or df.empty:
+            return df
+
+        # Determine group key columns
+        group_cols = []
+        if 'player_id' in df.columns:
+            group_cols.append('player_id')
+        elif 'player_name' in df.columns:
+            group_cols.append('player_name')
+        else:
+            return df  # Cannot group without identifier
+
+        if 'game_date' in df.columns:
+            group_cols.append('game_date')
+        if '_statcast_player_type' in df.columns:
+            group_cols.append('_statcast_player_type')
+
+        # Short-circuit: if max group size is 1, skip aggregation
+        grouped = df.groupby(group_cols, dropna=False)
+        if grouped.size().max() <= 1:
+            return df
+
+        # Columns to SUM (counting stats)
+        sum_cols = [
+            'pa', 'ab', 'abs', 'h', 'hits', 'hit', 'singles', 'single',
+            'doubles', 'double', 'triples', 'triple', 'hr', 'hrs',
+            'home_run', 'home_runs', 'r', 'run', 'runs', 'rbi',
+            'bb', 'walk', 'walks', 'so', 'strikeout', 'strikeouts',
+            'hbp', 'hit_by_pitch', 'sb', 'stolen_base', 'stolen_bases',
+            'stolen_base_2b', 'cs', 'caught_stealing', 'caught_stealing_2b',
+            'pitches', 'er', 'p_strikeout', 'p_walk', 'k', 'k_pit',
+            'bb_pit', 'ip',
+        ]
+
+        # Columns to AVERAGE (quality metrics)
+        mean_cols = [
+            'launch_speed', 'exit_velocity_avg', 'launch_angle',
+            'launch_angle_avg', 'hardhit_percent', 'hard_hit_percent',
+            'hard_hit_pct', 'barrels_per_pa_percent',
+            'barrels_per_bbe_percent', 'barrel_batted_rate', 'barrel_pct',
+            'xba', 'estimated_ba_using_speedangle', 'xslg',
+            'estimated_slg_using_speedangle', 'xwoba',
+            'estimated_woba_using_speedangle', 'woba',
+        ]
+
+        # Identity columns to take FIRST value
+        identity_cols = ['player_name', 'team', 'player_id']
+        identity_cols = [c for c in identity_cols if c in df.columns and c not in group_cols]
+
+        # Filter to columns actually present in the DataFrame
+        present_sum = [c for c in sum_cols if c in df.columns]
+        present_mean = [c for c in mean_cols if c in df.columns]
+
+        # Coerce numeric before aggregation
+        for c in present_sum + present_mean:
+            df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+
+        # Build aggregation dict
+        agg_dict = {}
+        for c in present_sum:
+            agg_dict[c] = 'sum'
+        for c in present_mean:
+            agg_dict[c] = 'mean'
+        for c in identity_cols:
+            agg_dict[c] = 'first'
+
+        result = grouped.agg(agg_dict).reset_index()
+
+        logger.info(
+            "Statcast pre-aggregation: %d rows -> %d daily rows (max group size was %d)",
+            len(df), len(result), grouped.size().max(),
+        )
+
+        return result
 
     def transform_to_performance(self, df: pd.DataFrame) -> List[PlayerDailyPerformance]:
         """

@@ -171,3 +171,147 @@ def test_pitcher_performance_has_is_pitcher_true():
     performances = agent.transform_to_performance(df)
     assert len(performances) == 1
     assert performances[0].is_pitcher is True
+
+
+# ---------------------------------------------------------------------------
+# Tests for _aggregate_to_daily
+# ---------------------------------------------------------------------------
+
+class TestAggregateToDaily:
+    """Tests for StatcastIngestionAgent._aggregate_to_daily()."""
+
+    @pytest.fixture
+    def agent(self):
+        with patch('backend.fantasy_baseball.statcast_ingestion.SessionLocal') as mock_sl, \
+             patch('backend.fantasy_baseball.statcast_ingestion._player_id_resolver') as mock_res:
+            mock_sl.return_value = MagicMock()
+            mock_res.load = MagicMock()
+            mock_res.resolve = MagicMock(return_value='12345')
+            a = StatcastIngestionAgent()
+            if hasattr(a, '_diag_logged'):
+                del a._diag_logged
+            yield a
+
+    def test_per_pitch_rows_aggregate_counting_stats(self, agent):
+        """3 per-pitch rows for same batter/date, verify counting stats are SUMmed."""
+        row = {
+            'player_name': 'Judge, Aaron', 'team': 'NYY',
+            'game_date': '2026-04-09', '_statcast_player_type': 'batter',
+            'pa': 1, 'ab': 1, 'h': 1, 'hr': 0, 'bb': 0, 'so': 0,
+            'sb': 1, 'pitches': 5,
+        }
+        df = pd.DataFrame([
+            {**row, 'hr': 1, 'h': 1, 'sb': 0, 'pitches': 6},
+            {**row, 'hr': 0, 'h': 0, 'sb': 1, 'pitches': 4},
+            {**row, 'hr': 0, 'h': 1, 'sb': 0, 'pitches': 5},
+        ])
+
+        result = agent._aggregate_to_daily(df)
+        assert len(result) == 1
+        r = result.iloc[0]
+        assert r['pa'] == 3
+        assert r['ab'] == 3
+        assert r['h'] == 2
+        assert r['hr'] == 1
+        assert r['bb'] == 0
+        assert r['so'] == 0
+        assert r['sb'] == 1
+        assert r['pitches'] == 15
+
+    def test_caught_stealing_indicators_sum_correctly(self, agent):
+        """10 per-pitch rows, 3 with caught_stealing_2b=1, verify cs/sb sums."""
+        base = {
+            'player_name': 'Acuna, Ronald', 'team': 'ATL',
+            'game_date': '2026-04-09', '_statcast_player_type': 'batter',
+            'pa': 0, 'ab': 0, 'h': 0, 'cs': 0, 'caught_stealing_2b': 0,
+            'sb': 0,
+        }
+        rows = []
+        for i in range(10):
+            r = dict(base)
+            if i < 3:
+                r['caught_stealing_2b'] = 1
+                r['cs'] = 1
+            if i < 2:
+                r['sb'] = 1
+            rows.append(r)
+
+        df = pd.DataFrame(rows)
+        result = agent._aggregate_to_daily(df)
+        assert len(result) == 1
+        assert result.iloc[0]['cs'] == 3
+        assert result.iloc[0]['caught_stealing_2b'] == 3
+        assert result.iloc[0]['sb'] == 2
+
+    def test_quality_metrics_averaged_not_summed(self, agent):
+        """2 rows with different exit_velocity/xwoba, verify they are averaged."""
+        base = {
+            'player_name': 'Soto, Juan', 'team': 'NYM',
+            'game_date': '2026-04-09', '_statcast_player_type': 'batter',
+            'pa': 1, 'ab': 1,
+        }
+        df = pd.DataFrame([
+            {**base, 'exit_velocity_avg': 90.0, 'xwoba': 0.300},
+            {**base, 'exit_velocity_avg': 100.0, 'xwoba': 0.500},
+        ])
+
+        result = agent._aggregate_to_daily(df)
+        assert len(result) == 1
+        assert result.iloc[0]['exit_velocity_avg'] == pytest.approx(95.0)
+        assert result.iloc[0]['xwoba'] == pytest.approx(0.400)
+        # Counting stats should be summed, not averaged
+        assert result.iloc[0]['pa'] == 2
+
+    def test_leaderboard_single_row_passthrough(self, agent):
+        """Single row per player passes through unchanged."""
+        df = pd.DataFrame([{
+            'player_name': 'Ohtani, Shohei', 'team': 'LAD',
+            'game_date': '2026-04-09', '_statcast_player_type': 'batter',
+            'pa': 5, 'ab': 4, 'h': 2, 'hr': 1,
+            'exit_velocity_avg': 95.0, 'xwoba': 0.450,
+        }])
+
+        result = agent._aggregate_to_daily(df)
+        assert len(result) == 1
+        assert result.iloc[0]['pa'] == 5
+        assert result.iloc[0]['hr'] == 1
+        assert result.iloc[0]['exit_velocity_avg'] == pytest.approx(95.0)
+
+    def test_multiple_players_stay_separate(self, agent):
+        """2 different players on same date produce 2 output rows."""
+        base = {
+            'game_date': '2026-04-09', '_statcast_player_type': 'batter',
+            'pa': 1, 'ab': 1, 'h': 1,
+        }
+        df = pd.DataFrame([
+            {**base, 'player_name': 'Judge, Aaron', 'team': 'NYY'},
+            {**base, 'player_name': 'Judge, Aaron', 'team': 'NYY'},
+            {**base, 'player_name': 'Soto, Juan', 'team': 'NYM'},
+            {**base, 'player_name': 'Soto, Juan', 'team': 'NYM'},
+        ])
+
+        result = agent._aggregate_to_daily(df)
+        assert len(result) == 2
+        names = set(result['player_name'].tolist())
+        assert names == {'Judge, Aaron', 'Soto, Juan'}
+        # Each should have pa=2 (summed from 2 rows)
+        for _, row in result.iterrows():
+            assert row['pa'] == 2
+
+    def test_batter_and_pitcher_rows_stay_separate(self, agent):
+        """Same player as batter AND pitcher produces 2 output rows."""
+        base = {
+            'player_name': 'Ohtani, Shohei', 'team': 'LAD',
+            'game_date': '2026-04-09', 'pa': 1, 'ab': 1, 'h': 1,
+        }
+        df = pd.DataFrame([
+            {**base, '_statcast_player_type': 'batter'},
+            {**base, '_statcast_player_type': 'batter'},
+            {**base, '_statcast_player_type': 'pitcher'},
+            {**base, '_statcast_player_type': 'pitcher'},
+        ])
+
+        result = agent._aggregate_to_daily(df)
+        assert len(result) == 2
+        types = set(result['_statcast_player_type'].tolist())
+        assert types == {'batter', 'pitcher'}
