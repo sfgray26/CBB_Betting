@@ -90,6 +90,8 @@ class RollingWindowResult:
     w_walks: Optional[float] = None
     w_strikeouts_bat: Optional[float] = None
     w_stolen_bases: Optional[float] = None
+    w_caught_stealing: Optional[float] = None       # P27 NSB support
+    w_net_stolen_bases: Optional[float] = None      # P27 w_stolen_bases - w_caught_stealing
 
     # Batting derived rates (from weighted sums)
     w_avg: Optional[float] = None       # w_hits / w_ab
@@ -179,6 +181,7 @@ def compute_rolling_window(
     sum_w_walks = 0.0
     sum_w_so_bat = 0.0
     sum_w_sb = 0.0
+    sum_w_cs = 0.0               # P27 decay-weighted caught stealing
     sum_w_tb = 0.0               # total bases (for slg)
     sum_w_obp_num = 0.0          # hits + walks (numerator)
     sum_w_obp_den = 0.0          # ab + walks (denominator)
@@ -211,6 +214,11 @@ def compute_rolling_window(
         walks = row.walks
         so_bat = row.strikeouts_bat
         sb = row.stolen_bases
+        # P27 NSB: caught_stealing may be missing on older rows; coerce None -> 0.
+        # The statcast CS backfill defaults CS to 0 for rows without CS events,
+        # so absent data is treated as "no caught stealings in window", which is
+        # correct for the BDL feed (which does populate CS when present).
+        cs = getattr(row, "caught_stealing", None)
 
         if ab is not None:
             has_batting = True
@@ -223,6 +231,7 @@ def compute_rolling_window(
             _walks = float(walks) if walks is not None else 0.0
             _so_bat = float(so_bat) if so_bat is not None else 0.0
             _sb = float(sb) if sb is not None else 0.0
+            _cs = float(cs) if cs is not None else 0.0
 
             singles = _hits - _doubles - _triples - _hr
             if singles < 0:
@@ -238,6 +247,7 @@ def compute_rolling_window(
             sum_w_walks += w * _walks
             sum_w_so_bat += w * _so_bat
             sum_w_sb += w * _sb
+            sum_w_cs += w * _cs
             sum_w_tb += w * tb
             sum_w_obp_num += w * (_hits + _walks)
             sum_w_obp_den += w * (_ab + _walks)
@@ -283,6 +293,11 @@ def compute_rolling_window(
         result.w_walks = sum_w_walks
         result.w_strikeouts_bat = sum_w_so_bat
         result.w_stolen_bases = sum_w_sb
+        # P27 NSB: always populate CS (defaults to 0 when not present) and
+        # derive w_net_stolen_bases. Both fields travel with the batter-profile
+        # half of the result so pure pitchers remain None for both.
+        result.w_caught_stealing = sum_w_cs
+        result.w_net_stolen_bases = sum_w_sb - sum_w_cs
 
         # Batting derived rates
         if sum_w_ab > 0:

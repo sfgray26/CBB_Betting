@@ -83,6 +83,10 @@ from backend.admin_endpoints_validation import router as _validation_audit_route
 from backend.admin_backfill_ops_whip import router as _backfill_ops_whip_router
 # END OPS/WHIP BACKFILL ENDPOINT
 
+# STATCAST DIAGNOSTICS ENDPOINTS - REMOVE AFTER STATCAST VALIDATION COMPLETE
+from backend.admin_statcast_diagnostics import router as _statcast_diag_router
+# END STATCAST DIAGNOSTICS ENDPOINTS
+
 from backend.services.recalibration import compute_dynamic_weights
 from backend.services.discord_notifier import send_todays_bets
 from backend.services.sentinel import run_nightly_health_check
@@ -621,6 +625,9 @@ app.include_router(_validation_audit_router, prefix="/admin", tags=["admin"])
 # OPS/WHIP BACKFILL ENDPOINT - REMOVE AFTER TASK 26 COMPLETE
 app.include_router(_backfill_ops_whip_router, tags=["admin"])
 # END OPS/WHIP BACKFILL ENDPOINT
+# STATCAST DIAGNOSTICS ENDPOINTS - REMOVE AFTER STATCAST VALIDATION COMPLETE
+app.include_router(_statcast_diag_router, prefix="/admin", tags=["admin"])
+# END STATCAST DIAGNOSTICS ENDPOINTS
 
 # --- end strangler-fig mounts ---
 
@@ -637,10 +644,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-    finally:
-        db.close()
-
 
 @app.get("/admin/investigate/statcast-raw-columns")
 async def investigate_statcast_raw_columns(target_date: str = "2026-04-12", user: str = Depends(verify_admin_api_key)):

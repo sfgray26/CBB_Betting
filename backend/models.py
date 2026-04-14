@@ -1168,6 +1168,8 @@ class PlayerRollingStats(Base):
     w_walks         = Column(Float, nullable=True)
     w_strikeouts_bat = Column(Float, nullable=True)
     w_stolen_bases  = Column(Float, nullable=True)
+    w_caught_stealing  = Column(Float, nullable=True)  # P27 NSB support
+    w_net_stolen_bases = Column(Float, nullable=True)  # P27 w_stolen_bases - w_caught_stealing
 
     # Batting derived rates (computed from weighted sums)
     w_avg           = Column(Float, nullable=True)   # w_hits / w_ab
@@ -1218,9 +1220,14 @@ class PlayerScore(Base):
       - composite_z = mean of all applicable non-None per-category Z-scores.
       - score_0_100 = percentile rank (0-100) within player_type cohort.
 
-    Hitter categories: z_hr, z_rbi, z_sb, z_avg, z_obp.
+    Hitter categories: z_hr, z_rbi, z_nsb (composite), z_sb (legacy), z_avg, z_obp.
     Pitcher categories: z_era, z_whip, z_k_per_9.
     Two-way players: all categories (Ohtani-style).
+
+    NSB (Net Stolen Bases = SB - CS) is the canonical H2H One Win basestealing
+    category. z_nsb replaces z_sb in the composite; z_sb is retained for
+    backward compatibility with explainability narratives but excluded from
+    composite_z to avoid double-counting (SB and NSB correlate >0.95).
     """
 
     __tablename__ = "player_scores"
@@ -1235,7 +1242,8 @@ class PlayerScore(Base):
     # Per-category Z-scores (NULL if not applicable or < MIN_SAMPLE)
     z_hr        = Column(Float, nullable=True)
     z_rbi       = Column(Float, nullable=True)
-    z_sb        = Column(Float, nullable=True)
+    z_sb        = Column(Float, nullable=True)   # legacy -- still computed, excluded from composite
+    z_nsb       = Column(Float, nullable=True)   # P27 Net SB (SB - CS) -- drives composite
     z_avg       = Column(Float, nullable=True)
     z_obp       = Column(Float, nullable=True)
     z_era       = Column(Float, nullable=True)
