@@ -315,3 +315,94 @@ class TestAggregateToDaily:
         assert len(result) == 2
         types = set(result['_statcast_player_type'].tolist())
         assert types == {'batter', 'pitcher'}
+
+
+# ---------------------------------------------------------------------------
+# Tests for store_performances scoped upsert (two-way player protection)
+# ---------------------------------------------------------------------------
+
+class TestStorePerformancesScopedUpsert:
+    """Tests for type-scoped upserts (two-way player protection)."""
+
+    def test_pitcher_upsert_excludes_batting_columns(self):
+        """Pitcher upserts should only update pitcher columns, not zero out batting stats."""
+        from backend.fantasy_baseball.statcast_ingestion import PlayerDailyPerformance
+
+        agent = StatcastIngestionAgent()
+        executed_stmts = []
+        mock_db = MagicMock()
+        def capture_execute(stmt):
+            executed_stmts.append(stmt)
+        mock_db.execute = capture_execute
+        mock_db.commit = MagicMock()
+        agent.db = mock_db
+
+        pitcher_perf = PlayerDailyPerformance(
+            player_id='660271', player_name='Ohtani, Shohei', team='LAD',
+            game_date=date(2026, 4, 9),
+            pa=0, ab=0, h=0, doubles=0, triples=0, hr=0, r=0, rbi=0,
+            bb=0, so=0, hbp=0, sb=0, cs=0,
+            exit_velocity_avg=0.88, launch_angle_avg=0.10,
+            hard_hit_pct=0.30, barrel_pct=0.05,
+            xba=0.220, xslg=0.350, xwoba=0.280,
+            ip=6.0, er=2, k_pit=8, bb_pit=2, pitches=95,
+            is_pitcher=True,
+        )
+
+        agent.store_performances([pitcher_perf])
+
+        assert len(executed_stmts) == 1
+        stmt_str = str(executed_stmts[0])
+
+        # Pitcher update should contain pitching columns in the SET clause
+        pitching_cols = {'ip', 'er', 'k_pit', 'bb_pit', 'pitches'}
+        for col in pitching_cols:
+            assert f'{col} =' in stmt_str or f'{col}=' in stmt_str, (
+                f"Missing pitching col {col} in SET"
+            )
+
+        # Pitcher update must NOT contain batting counting stat columns
+        # These would zero out Ohtani's batting data
+        batting_only_cols = {'pa', 'ab', 'rbi', 'avg', 'obp', 'slg', 'ops', 'woba'}
+        for col in batting_only_cols:
+            # Check the SET clause portion only (after ON CONFLICT)
+            set_clause = stmt_str.split('ON CONFLICT')[1] if 'ON CONFLICT' in stmt_str else ''
+            # The SET clause uses "column = " pattern
+            assert f' {col} =' not in set_clause and f' {col}=' not in set_clause, (
+                f"Batting col {col} should NOT be in pitcher SET clause"
+            )
+
+    def test_batter_upsert_includes_all_columns(self):
+        """Batter upserts should update all columns (full replace)."""
+        from backend.fantasy_baseball.statcast_ingestion import PlayerDailyPerformance
+
+        agent = StatcastIngestionAgent()
+        executed_stmts = []
+        mock_db = MagicMock()
+        def capture_execute(stmt):
+            executed_stmts.append(stmt)
+        mock_db.execute = capture_execute
+        mock_db.commit = MagicMock()
+        agent.db = mock_db
+
+        batter_perf = PlayerDailyPerformance(
+            player_id='660271', player_name='Ohtani, Shohei', team='LAD',
+            game_date=date(2026, 4, 9),
+            pa=4, ab=3, h=2, doubles=1, triples=0, hr=1, r=2, rbi=3,
+            bb=1, so=0, hbp=0, sb=1, cs=0,
+            exit_velocity_avg=0.95, launch_angle_avg=0.25,
+            hard_hit_pct=0.80, barrel_pct=0.30,
+            xba=0.500, xslg=1.000, xwoba=0.600,
+            ip=0.0, er=0, k_pit=0, bb_pit=0, pitches=18,
+            is_pitcher=False,
+        )
+
+        agent.store_performances([batter_perf])
+
+        assert len(executed_stmts) == 1
+        stmt_str = str(executed_stmts[0])
+        # Batter update should include batting columns
+        for col in ['pa', 'ab', 'sb', 'cs', 'avg', 'obp', 'slg', 'ops', 'woba']:
+            assert f'{col} =' in stmt_str or f'{col}=' in stmt_str, (
+                f"Missing batting col {col} in batter SET"
+            )

@@ -721,9 +721,30 @@ class StatcastIngestionAgent:
                     bb_pit=perf.bb_pit,
                     pitches=perf.pitches,
                     created_at=now,
-                ).on_conflict_do_update(
-                    index_elements=['player_id', 'game_date'],
-                    set_=dict(
+                )
+
+                # Scope the ON CONFLICT UPDATE by player type to protect
+                # two-way players (e.g. Ohtani).  Pitcher rows must NOT
+                # overwrite batting counting stats with zeros.
+                if perf.is_pitcher:
+                    update_set = dict(
+                        player_name=perf.player_name,
+                        team=perf.team,
+                        exit_velocity_avg=perf.exit_velocity_avg,
+                        launch_angle_avg=perf.launch_angle_avg,
+                        hard_hit_pct=perf.hard_hit_pct,
+                        barrel_pct=perf.barrel_pct,
+                        xba=perf.xba,
+                        xslg=perf.xslg,
+                        xwoba=perf.xwoba,
+                        ip=perf.ip,
+                        er=perf.er,
+                        k_pit=perf.k_pit,
+                        bb_pit=perf.bb_pit,
+                        pitches=perf.pitches,
+                    )
+                else:
+                    update_set = dict(
                         player_name=perf.player_name,
                         team=perf.team,
                         pa=perf.pa,
@@ -756,7 +777,11 @@ class StatcastIngestionAgent:
                         k_pit=perf.k_pit,
                         bb_pit=perf.bb_pit,
                         pitches=perf.pitches,
-                    ),
+                    )
+
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=['player_id', 'game_date'],
+                    set_=update_set,
                 )
                 self.db.execute(stmt)
                 rows_upserted += 1
