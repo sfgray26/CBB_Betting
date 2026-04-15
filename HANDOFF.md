@@ -1,14 +1,266 @@
 # HANDOFF.md -- MLB Platform Master Plan (In-Season 2026)
 
-> **Date:** April 14, 2026 | **Author:** Claude Code (Master Architect)
-> **Status:** STATCAST AGGREGATION FIX COMPLETE -- PENDING GEMINI DEPLOY + RE-BACKFILL
+> **Date:** April 15, 2026 | **Author:** Claude Code (Master Architect)
+> **Status:** NSB PIPELINE LIVE -- v27 MIGRATION DEPLOYED. TASKS C (ROLLOUT DIAGNOSTICS) + D (EXPLAINABILITY NSB) COMPLETE, AWAITING DEPLOY.
 >
-> **Current phase:** Statcast aggregation bug FIXED (4 commits). `_aggregate_to_daily()` makes
-> pipeline resilient to per-pitch data; type-scoped upserts protect two-way players; CS
-> indicators properly SUMmed. 1838/1838 tests pass (3 pre-existing DB-auth excluded).
-> Ready for Gemini to deploy, TRUNCATE corrupted data, and re-backfill.
+> **Current phase:** Application and data pipeline audit completed by Kimi CLI (April 15).
+> Live production probes confirm ALL 6 critical tables are healthy. Statcast zero-metric rate
+> collapsed from 42.4% to 5.0% post-aggregation fix. NSB pipeline is live in prod. Next focus:
+> close weather/park factor integration gap, investigate decision_results volume (26 rows),
+> and commit uncommitted v27 changes.
+>
+> **Full audit report:** `reports/2026-04-15-comprehensive-application-audit.md`
+>
+> **Prior phase (complete):** Statcast aggregation bug FIXED (4 commits). `_aggregate_to_daily()`
+> makes pipeline resilient to per-pitch data; type-scoped upserts protect two-way players;
+> CS indicators properly SUMmed. Diagnostics endpoints verified (6,971 aggregated records,
+> 5.0% zero-metric rate).
 
 ---
+
+## NSB PIPELINE (P27 -- this session's delivery)
+
+### What was wrong
+
+The H2H-One-Win category NSB (Net Stolen Bases = SB - CS) was being CONSUMED by downstream
+code (`daily_lineup_optimizer.py:386`, `draft_engine.py:58/254/286`, `schemas.py:582`, three
+main.py touch points) but never COMPUTED anywhere in the derived-stats pipeline. Scoring
+used `z_sb` based on `w_stolen_bases`, which ignores the negative value of caught stealings.
+
+### What changed
+
+| File | Change |
+|------|--------|
+| `scripts/migrate_v27_nsb.py` | **NEW.** Idempotent `ADD COLUMN IF NOT EXISTS` for `w_caught_stealing`, `w_net_stolen_bases` on `player_rolling_stats` and `z_nsb` on `player_scores`. Reversible downgrade. |
+| `backend/models.py` | Added 3 new columns on `PlayerRollingStats` and `PlayerScore`. `z_sb` retained (not dropped) for backward compat. |
+| `backend/services/rolling_window_engine.py` | Added `sum_w_cs` accumulator. Reads `row.caught_stealing` via `getattr(..., None)` so rows without the attribute (older ORM stubs) gracefully treat CS as 0. Computes `w_net_stolen_bases = sum_w_sb - sum_w_cs`. Both new fields are None for pure pitchers. |
+| `backend/services/scoring_engine.py` | `HITTER_CATEGORIES` now has `z_nsb -> w_net_stolen_bases`. Added `_COMPOSITE_EXCLUDED = {"z_sb"}` — `z_sb` is still computed and persisted for legacy consumers (explainability narratives, UAT spot check) but **excluded from composite_z** to avoid double-counting basestealing (SB and NSB correlate >0.95). `compute_league_params` now emits both `"sb"` (for simulation_engine compatibility) and `"nsb"`. |
+| `backend/services/daily_ingestion.py` | Extended both `PlayerRollingStats` and `PlayerScore` upsert write paths (insert + on-conflict) to include the new fields. |
+| `tests/test_nsb_pipeline.py` | **NEW.** 15 regression tests: null/missing CS coerced to 0, CS decay-weighted alongside SB, pure pitcher gets None NSB fields, `z_sb` excluded from composite (asserts composite == mean of `{z_hr, z_rbi, z_nsb, z_avg, z_obp}` only), `z_nsb` on `PlayerScoreResult`, migration SQL shape. |
+
+### Key quant decision: why z_sb stays alongside z_nsb
+
+Rather than rip out z_sb, `z_sb` is **still computed and persisted** but flagged in
+`_COMPOSITE_EXCLUDED`. This preserves:
+- `explainability_layer.py` narratives (inp.z_sb → "Speed factor")
+- `uat_spot_check.py` null-presence checks
+- Anything currently reading `player_scores.z_sb`
+
+...while making composite_z drive off the **correct** fantasy category (NSB). If CS data
+is ever missing (e.g. player has SB but no CS events), `w_caught_stealing=0` → NSB == SB →
+z_nsb ≈ z_sb. So the transition is seamless for the 95%+ of players where CS is zero.
+
+### Test verification
+
+- `tests/test_nsb_pipeline.py`: **15/15 pass**
+- Full suite: **1859 passed, 3 skipped** (no regressions; 1838 → 1859 = net +21 new tests this session across all recent sprints)
+
+### v27 migration -- DEPLOYED (Gemini, Apr 14)
+
+| Step | Result |
+|------|--------|
+| Apply v27 migration on Railway | SUCCESS -- columns added |
+| Remove temporary diagnostic + migration endpoints | SUCCESS -- prod re-secured |
+| Statcast aggregated foundation (6,971 records) | Verified, recency through 2026-04-13 |
+
+Gemini flagged a "CS source gap" -- this refers to `statcast_performances.cs` being zero
+across the aggregated name-date Statcast feed. **This is orthogonal to NSB scoring.**
+
+The NSB pipeline reads `caught_stealing` from `mlb_player_stats` (BDL feed), NOT from
+`statcast_performances`. BDL ingestion at `daily_ingestion.py:1239` populates
+`MLBPlayerStats.caught_stealing = stat.cs if stat.cs is not None else 0`. So the new
+`w_caught_stealing` / `w_net_stolen_bases` / `z_nsb` columns will populate from BDL data
+on the next 4 AM ET `rolling_windows` + `player_scores` job run.
+
+Post-deploy verification (Gemini to run after Apr 15 4 AM ET job):
+```sql
+SELECT COUNT(*) FILTER (WHERE w_caught_stealing IS NOT NULL) AS cs_filled,
+       COUNT(*) FILTER (WHERE w_net_stolen_bases IS NOT NULL) AS nsb_filled,
+       COUNT(*) AS total
+FROM player_rolling_stats
+WHERE as_of_date = CURRENT_DATE;
+
+SELECT COUNT(*) FILTER (WHERE z_nsb IS NOT NULL) AS z_nsb_filled,
+       COUNT(*) AS total
+FROM player_scores
+WHERE as_of_date = CURRENT_DATE;
+```
+
+### Downstream-consumer wiring status
+
+The new `z_nsb` enters `composite_z` immediately on next scoring job, which propagates to
+`score_0_100` percentiles and into the decision pipeline. No additional consumer changes
+required for the *live* scoring path.
+
+Static-projection consumers (draft_engine, player_board, keeper_engine, h2h_monte_carlo,
+mcmc_simulator) read `proj["nsb"]` from hardcoded season projection tables -- a separate
+subsystem from the live rolling-window pipeline. Those are unaffected by the v27 deploy
+and remain on their existing static projections.
+
+### Closed-out sprint summary
+
+| Sprint item | Status |
+|-------------|--------|
+| Pydantic odds validation | LIVE |
+| `/admin/backfill-cs-from-statcast` endpoint | LIVE (set CS=0 default for source-gap rows) |
+| Null-safe derived-stats helpers (OPS/WHIP/ERA/AVG/ISO) | LIVE |
+| Statcast aggregation fix (4 commits) | LIVE in prod |
+| Statcast diagnostic endpoints | Verified by Gemini, then removed (prod re-secured) |
+| **NSB pipeline (P27, this session)** | **LIVE -- columns added in prod, populates on next 4 AM ET job** |
+| **Task C: NSB scoring diagnostics (this session)** | **LIVE in code, router mounted -- deploy + exercise to verify rollout** |
+| **Task D: Explainability NSB narration (this session)** | **LIVE in code -- next decision explanations will use NSB over SB** |
+
+---
+
+## P27 FOLLOW-UP -- TASKS C + D (April 14, this session)
+
+### Task C -- NSB rollout diagnostic endpoints
+
+**Rationale:** v27 migration added columns; nothing in prod yet proves the next 4 AM ET
+rolling_windows + player_scores jobs actually populate them. Three read-only GET endpoints
+verify fill rates, distribution shape, and per-player invariants so Gemini can confirm
+healthy rollout without reading SQL directly.
+
+| File | What |
+|------|------|
+| `backend/admin_scoring_diagnostics.py` | **NEW** (~490 lines). Three endpoints + helpers + whitelists. Mirrors structure of `admin_statcast_diagnostics.py`. |
+| `backend/main.py` | Imports + mounts `_scoring_diag_router` under `/admin` prefix (two insertions bracketed by `SCORING DIAGNOSTICS ENDPOINTS` markers, matching the existing statcast diag pattern). Remove both blocks once NSB rollout is validated. |
+| `tests/test_admin_scoring_diagnostics.py` | **NEW** (18 tests). Verifies endpoint registration, GET-only, real-column usage for all 3 endpoints, whitelist rejection (bad `window_days`, bad `direction`), helper behavior (`_f`, `_i`, `_d`, `_nsb_integrity_check` ok/mismatch/partial/null), and that the router is actually mounted on `backend.main.app`. |
+
+**Endpoints (all GET, all under `/admin` prefix):**
+
+- `GET /admin/diagnose-scoring/nsb-rollout?window_days=14&as_of_date=YYYY-MM-DD`
+  - Returns verdict `healthy`/`partial`/`empty`/`no_data` based on z_nsb fill rate of hitters
+  - Fill rates on both `player_rolling_stats` (w_caught_stealing, w_net_stolen_bases) and `player_scores` (z_nsb, z_sb)
+  - z_nsb distribution: min/max/mean/std + 5-bucket histogram (POOR/WEAK/AVERAGE/STRONG/ELITE)
+  - z_nsb vs z_sb divergence (count differing >0.1 and >0.5; mean delta; max abs delta)
+  - `as_of_date` defaults to MAX(as_of_date) in player_scores for the window
+- `GET /admin/diagnose-scoring/nsb-leaders?direction=top|bottom&limit=20&window_days=14`
+  - Joins `player_scores` + `player_id_mapping` + `player_rolling_stats` so each row has
+    `player_name`, `z_sb`, `z_nsb`, `z_nsb_minus_z_sb`, and the raw CS/SB/NSB inputs
+  - `direction` is whitelisted to `{"top", "bottom"}`; `window_days` to `{7, 14, 30}`
+  - `limit` is `1..100`
+- `GET /admin/diagnose-scoring/nsb-player?bdl_player_id=X&as_of_date=YYYY-MM-DD`
+  - All-windows detail for one player with `_nsb_integrity_check` per window
+  - Integrity check returns: `ok` / `mismatch (expected X, got Y)` / `partial_source` /
+    `nsb_null` / `n/a (pure pitcher or no batting)`
+
+**Ops verification recipe (Gemini, after next 4 AM ET job):**
+
+```bash
+# 1. Gross rollout health
+curl -s $RAILWAY_URL/admin/diagnose-scoring/nsb-rollout?window_days=14 | jq '.verdict, .player_scores'
+#    Expect: verdict == "healthy" ; player_scores.z_nsb_fill_pct_of_hitters >= 80.0
+
+# 2. Eyeball leaders for plausibility
+curl -s "$RAILWAY_URL/admin/diagnose-scoring/nsb-leaders?direction=top&limit=10&window_days=14" \
+  | jq '.rows[] | {name: .player_name, z_nsb, z_sb, sb: .w_stolen_bases, cs: .w_caught_stealing}'
+#    Expect: active basestealers (De La Cruz, Chisholm, Ohtani, etc.); z_nsb <= z_sb for high-CS guys
+
+# 3. Spot-check one known basestealer
+curl -s "$RAILWAY_URL/admin/diagnose-scoring/nsb-player?bdl_player_id=<id>" \
+  | jq '.windows[] | {window: .window_days, sb: .w_stolen_bases, cs: .w_caught_stealing, nsb: .w_net_stolen_bases, check: .nsb_check}'
+#    Expect: every window has nsb_check == "ok"; nsb == sb - cs
+```
+
+**Remove after validated** (tracked in this doc + source-file header).
+
+### Task D -- explainability layer narrates NSB over SB
+
+**Rationale:** Without this, decision explanations would keep naming "Speed (SB Z-score)"
+while composite_z is driven by `z_nsb`. The narrative would diverge from the math --
+confusing for users reading explanations alongside percentile scores.
+
+| File | What |
+|------|------|
+| `backend/services/explainability_layer.py` | `ExplanationInput` dataclass now has `z_nsb`. Basestealing factor prefers `z_nsb` and labels it `"Net basestealing (NSB Z-score)"`; falls back to `z_sb` labeled `"Speed (SB Z-score)"` only when `z_nsb is None` (pre-v27 rows). Narrative always references raw `proj_sb_p50` for continuity with projection tables (simulator still projects raw SB). Both factors omit the projection line when `proj_sb_p50 is None`. |
+| `backend/services/daily_ingestion.py` | `ExplanationInput` construction at the decision-pipeline site now passes `z_nsb=score_row.z_nsb`. |
+| `tests/test_explainability_layer.py` | `_make_input` helper gains `z_nsb=0.25` default; two existing tests updated to pass `z_nsb=None` when they intentionally nil-out basestealing inputs. **7 new tests** (below). |
+
+**New test coverage (all pass):**
+
+- `test_basestealing_factor_prefers_z_nsb_when_both_present` -- z_nsb is used, labeled NSB
+- `test_basestealing_factor_falls_back_to_z_sb_when_nsb_none` -- legacy Speed label, narrative says SB
+- `test_basestealing_factor_skipped_when_both_none` -- neither factor appears
+- `test_basestealing_narrative_includes_proj_sb_when_available` -- "X.X SB ROS; NSB Z-score"
+- `test_basestealing_narrative_omits_projection_when_none` -- Z-score-only narrative
+- `test_explain_populates_nsb_factor_end_to_end` -- full `explain()` surfaces NSB factor
+- `test_explanation_input_has_z_nsb_field` -- dataclass contract
+
+### Test verification (after Tasks C + D)
+
+- `tests/test_admin_scoring_diagnostics.py`: **18/18 pass**
+- `tests/test_explainability_layer.py`: **40/40 pass** (33 existing + 7 new)
+- `tests/test_nsb_pipeline.py`: **15/15 pass** (unchanged)
+- **Full suite: 1884 passed, 3 skipped** -- zero regressions; +25 net new tests across P27 sprint
+
+### Deploy + verification sequence (Gemini)
+
+```bash
+# 1. Pull latest + railway up (mounts new diagnostic routes)
+git pull origin stable/cbb-prod
+railway up --service mlb-backend  # or current service name
+
+# 2. Confirm router is mounted (should return 200, not 404)
+curl -s -o /dev/null -w "%{http_code}\n" $RAILWAY_URL/admin/diagnose-scoring/nsb-rollout
+
+# 3. After next 4 AM ET rolling_windows + player_scores run, exercise the recipe above.
+#    Archive the three JSON responses in reports/2026-04-15-nsb-rollout-verification.md.
+
+# 4. Remove the diagnostic endpoints once verdict=="healthy" for 2 consecutive days
+#    (mirrors the statcast diagnostics lifecycle).
+```
+
+---
+
+## APRIL 15 AUDIT FINDINGS (Kimi CLI)
+
+### Live Production State (Verified via API)
+
+`GET /admin/pipeline-health` → **`overall_healthy: true`**
+
+| Table | Rows | Latest Date | Status |
+|-------|------|-------------|--------|
+| `player_rolling_stats` | **30,667** | 2026-04-13 | ✅ Healthy |
+| `player_scores` | **30,580** | 2026-04-13 | ✅ Healthy |
+| `statcast_performances` | **6,971** | 2026-04-13 | ✅ Healthy |
+| `simulation_results` | **10,236** | 2026-04-13 | ✅ Healthy |
+| `mlb_player_stats` | **6,801** | 2026-04-13 | ✅ Healthy |
+| `probable_pitchers` | **0** | — | ⚠️ Empty (upstream) |
+
+### Critical Wins
+
+1. **Statcast aggregation fix was highly effective.** Zero-metric rate dropped from 42.4% to **5.0%**.
+   - 6,623/6,971 rows have `exit_velocity` (95.0%)
+   - 6,737/6,971 rows have `xwoba` (96.6%)
+2. **NSB pipeline is live.** v27 migration deployed. `z_nsb` drives `composite_z`; `z_sb` excluded.
+3. **Scheduler is stable.** 10 jobs running. Fantasy jobs (6 AM, 7:30 AM, 8:30 AM, 11:59 PM) all active.
+4. **Tests are green on Railway.** 1859 passed. Local collection errors are environmental (missing `redis`).
+
+### Critical Gaps
+
+1. **Weather & park factors: CODE EXISTS BUT NOT INTEGRATED.**
+   - `weather_fetcher.py`, `park_weather.py`, and `ballpark_factors.py` are all implemented.
+   - **No database tables** for park factors or weather forecasts.
+   - **No ingestion pipeline** fetches or stores weather data.
+   - `scoring_engine.py` does NOT adjust player scores for park/weather.
+   - `daily_lineup_optimizer.py` uses hardcoded park factors but NOT live weather.
+2. **Probable pitchers table is empty.** Upstream MLB Stats API returned 0 rows. Not a code bug, but blocks two-start pitcher detection.
+3. **Decision results volume is suspiciously low: 26 rows.** With 30K+ player scores and 10K+ simulations, 26 decisions is abnormally low. Needs investigation.
+4. **Uncommitted changes on disk.** `scoring_engine.py`, `daily_ingestion.py`, `main.py`, `tests/test_nsb_pipeline.py` are modified/untracked and should be committed.
+5. **Data ingestion logs table is empty.** No structured audit trail for sync jobs.
+
+### Immediate Priority Actions
+
+| Priority | Action | Owner | ETA |
+|----------|--------|-------|-----|
+| P0 | Commit v27 changes (scoring_engine, daily_ingestion, main.py, test_nsb_pipeline.py) | Claude | 15 min |
+| P0 | Investigate `decision_results = 26` — trace decision optimization job | Claude | 2 hrs |
+| P1 | Integrate park factors into data pipeline (table + scoring engine + lineup optimizer) | Claude | 1 week |
+| P1 | Fix/fix probable pitchers source or implement alternative | Claude | 2-3 days |
+| P1 | Build data ingestion logging infrastructure | Claude | 2 days |
+| P2 | Dedupe `player_id_mapping` (60K → ~2K) | Claude/Gemini | 1 day |
+| P2 | Integrate live weather forecasts (requires OPENWEATHER_API_KEY) | Claude | 1 week |
 
 ## CURRENT SESSION STATE (April 14, 2026)
 
@@ -163,20 +415,20 @@ logical aggregation gaps requiring architect-level code fixes, not ops issues.
 
 ---
 
-## DATABASE STATE (April 12, 2026)
+## DATABASE STATE (April 15, 2026) — LIVE
 
 | Table | Expected | Actual | Status | Notes |
 |-------|----------|--------|--------|-------|
-| `player_id_mapping` | ~2,000 | ~20,000 (with duplicates) | POPULATED | FU-3: dedup deferred |
-| `position_eligibility` | ~750 | ~750 | OK | 362 permanent orphans (prospects) |
-| `mlb_player_stats` | ~13,500 | ~5,632 | PARTIAL | Growing daily via BDL sync |
-| `probable_pitchers` | ~30/day | 0 | EMPTY | BDL API lacks probable pitcher data (K-37 confirmed). Needs MLB Stats API source. |
-| `statcast_performances` | ~20,000 | 0 (code fixed, backfill not yet run) | FIX DEPLOYED | Run `POST /admin/backfill/statcast` on Railway to populate |
+| `player_id_mapping` | ~2,000 | **60,000** (with duplicates) | POPULATED | FU-3: dedup deferred |
+| `position_eligibility` | ~750 | **~2,376** | OK | 362 permanent orphans (prospects) |
+| `mlb_player_stats` | ~13,500 | **6,801** | OK | Growing daily via BDL sync |
+| `probable_pitchers` | ~30/day | **0** | EMPTY | MLB Stats API returned 0 (upstream lag/no games) |
+| `statcast_performances` | ~20,000 | **6,971** | ✅ OK | 5.0% zero-metric rate (was 42.4%). Aggregation fix successful. |
 | `player_projections` | varies | 0 | EMPTY | No projection pipeline built yet |
-| `player_rolling_stats` | ~25,000 | ~25,581 | OK | Populated by rolling stats job |
-| `player_scores` | ~25,000 | ~25,506 | OK | Populated by scoring engine |
-| `simulation_results` | ~8,500+ | ~8,523 | STALE | Last updated 2026-04-07 -- needs investigation |
-| `decision_results` | varies | varies | OK | Fed by simulation engine |
+| `player_rolling_stats` | ~25,000 | **30,667** | ✅ OK | Populated by rolling stats job |
+| `player_scores` | ~25,000 | **30,580** | ✅ OK | Populated by scoring engine |
+| `simulation_results` | ~8,500+ | **10,236** | ✅ OK | Fresh through 2026-04-13 |
+| `decision_results` | varies | **26** | 🔴 LOW | Suspiciously low — investigate decision optimization job |
 | `data_ingestion_logs` | should have entries | 0 | EMPTY | Logging infrastructure not implemented |
 
 ---

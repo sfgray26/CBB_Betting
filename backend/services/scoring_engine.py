@@ -34,12 +34,18 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 
 # key -> (column_name_on_PlayerRollingStats, is_lower_better)
+#
+# P27 NSB: z_sb is retained for backward compatibility (explainability
+# narratives, UAT checks, legacy consumers) but excluded from composite_z
+# via _COMPOSITE_EXCLUDED below. z_nsb (Net SB = SB - CS) is the canonical
+# H2H One Win basestealing category and drives the composite.
 HITTER_CATEGORIES: dict[str, tuple[str, bool]] = {
-    "z_hr":  ("w_home_runs",   False),
-    "z_rbi": ("w_rbi",         False),
-    "z_sb":  ("w_stolen_bases", False),
-    "z_avg": ("w_avg",         False),
-    "z_obp": ("w_obp",         False),
+    "z_hr":  ("w_home_runs",     False),
+    "z_rbi": ("w_rbi",           False),
+    "z_sb":  ("w_stolen_bases",  False),      # legacy -- excluded from composite
+    "z_nsb": ("w_net_stolen_bases", False),   # P27 canonical basestealing Z
+    "z_avg": ("w_avg",           False),
+    "z_obp": ("w_obp",           False),
 }
 
 PITCHER_CATEGORIES: dict[str, tuple[str, bool]] = {
@@ -53,6 +59,11 @@ _ALL_CATEGORIES: dict[str, tuple[str, bool]] = {
     **HITTER_CATEGORIES,
     **PITCHER_CATEGORIES,
 }
+
+# Keys computed and persisted but NOT included in composite_z.
+# z_sb correlates >0.95 with z_nsb (CS events are rare), so including both
+# would silently double-weight basestealing in the 5-category composite.
+_COMPOSITE_EXCLUDED: frozenset = frozenset({"z_sb"})
 
 # Minimum number of players with a non-null value before computing Z for a category
 MIN_SAMPLE: int = 5
@@ -76,7 +87,8 @@ class PlayerScoreResult:
     # Per-category Z-scores (None if category not applicable or < MIN_SAMPLE)
     z_hr:      Optional[float] = None
     z_rbi:     Optional[float] = None
-    z_sb:      Optional[float] = None
+    z_sb:      Optional[float] = None   # legacy -- excluded from composite_z
+    z_nsb:     Optional[float] = None   # P27 Net SB (SB - CS) -- enters composite
     z_avg:     Optional[float] = None
     z_obp:     Optional[float] = None
     z_era:     Optional[float] = None
@@ -335,11 +347,13 @@ def compute_league_zscores(
             z_val = category_z_lookup[z_key].get(pid)  # None if not computed
             setattr(result, z_key, z_val)
 
-        # Step 3: composite_z = mean of all applicable non-None Z-scores
+        # Step 3: composite_z = mean of all applicable non-None Z-scores.
+        # P27: z_sb is excluded (superseded by z_nsb) to avoid double-counting
+        # basestealing in the 5-category hitter composite.
         non_none = [
             getattr(result, k)
             for k in applicable_keys
-            if getattr(result, k) is not None
+            if k not in _COMPOSITE_EXCLUDED and getattr(result, k) is not None
         ]
         result.composite_z = sum(non_none) / len(non_none) if non_none else 0.0
 
@@ -377,7 +391,7 @@ def compute_league_params(
     """
     # Map z_key -> short key used by simulation_engine
     _Z_TO_SHORT = {
-        "z_hr": "hr", "z_rbi": "rbi", "z_sb": "sb",
+        "z_hr": "hr", "z_rbi": "rbi", "z_sb": "sb", "z_nsb": "nsb",
         "z_avg": "avg", "z_obp": "obp",
         "z_era": "era", "z_whip": "whip", "z_k_per_9": "k",
     }

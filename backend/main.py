@@ -87,6 +87,10 @@ from backend.admin_backfill_ops_whip import router as _backfill_ops_whip_router
 from backend.admin_statcast_diagnostics import router as _statcast_diag_router
 # END STATCAST DIAGNOSTICS ENDPOINTS
 
+# SCORING DIAGNOSTICS ENDPOINTS - REMOVE AFTER NSB ROLLOUT VALIDATED
+from backend.admin_scoring_diagnostics import router as _scoring_diag_router
+# END SCORING DIAGNOSTICS ENDPOINTS
+
 from backend.services.recalibration import compute_dynamic_weights
 from backend.services.discord_notifier import send_todays_bets
 from backend.services.sentinel import run_nightly_health_check
@@ -629,6 +633,10 @@ app.include_router(_backfill_ops_whip_router, tags=["admin"])
 app.include_router(_statcast_diag_router, prefix="/admin", tags=["admin"])
 # END STATCAST DIAGNOSTICS ENDPOINTS
 
+# SCORING DIAGNOSTICS ENDPOINTS - REMOVE AFTER NSB ROLLOUT VALIDATED
+app.include_router(_scoring_diag_router, prefix="/admin", tags=["admin"])
+# END SCORING DIAGNOSTICS ENDPOINTS
+
 # --- end strangler-fig mounts ---
 
 # CORS - reads ALLOWED_ORIGINS env var (comma-separated) or falls back to wildcard.
@@ -644,6 +652,97 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/admin/audit/table-counts")
+async def get_all_table_counts(user: str = Depends(verify_admin_api_key)):
+    """
+    Factual audit of all table row counts in the public schema.
+    """
+    from backend.models import SessionLocal
+    from sqlalchemy import text
+    db = SessionLocal()
+    try:
+        # Get all table names in public schema
+        sql_tables = text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+        tables = [r[0] for r in db.execute(sql_tables).fetchall()]
+        
+        results = {}
+        for table in tables:
+            try:
+                count_sql = text(f'SELECT count(*) FROM "{table}"')
+                count = db.execute(count_sql).scalar()
+                results[table] = count
+            except Exception as e:
+                results[table] = f"Error: {str(e)}"
+        
+        return {
+            "status": "success",
+            "table_counts": dict(sorted(results.items()))
+        }
+    finally:
+        db.close()
+
+
+@app.get("/admin/audit/table-counts")
+async def get_all_table_counts(user: str = Depends(verify_admin_api_key)):
+    """
+    Factual audit of all table row counts in the public schema.
+    """
+    from backend.models import SessionLocal
+    from sqlalchemy import text
+    db = SessionLocal()
+    try:
+        # Get all table names in public schema
+        sql_tables = text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+        tables = [r[0] for r in db.execute(sql_tables).fetchall()]
+        
+        results = {}
+        for table in tables:
+            try:
+                count_sql = text(f'SELECT count(*) FROM "{table}"')
+                count = db.execute(count_sql).scalar()
+                results[table] = count
+            except Exception as e:
+                results[table] = f"Error: {str(e)}"
+        
+        return {
+            "status": "success",
+            "table_counts": dict(sorted(results.items()))
+        }
+    finally:
+        db.close()
+
+
+@app.post("/admin/run-migration-v27")
+async def run_migration_v27(user: str = Depends(verify_admin_api_key)):
+    """
+    Run v27 migration (NSB Pipeline) in production.
+    """
+    import subprocess
+    import sys
+    try:
+        # Run the script as a separate process using the app's python interpreter
+        result = subprocess.run(
+            [sys.executable, "scripts/migrate_v27_nsb.py"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return {
+            "status": "success",
+            "stdout": result.stdout,
+            "stderr": result.stderr
+        }
+    except subprocess.CalledProcessError as e:
+        return {
+            "status": "error",
+            "stdout": e.stdout,
+            "stderr": e.stderr,
+            "error": str(e)
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 
 @app.get("/admin/investigate/statcast-raw-columns")
 async def investigate_statcast_raw_columns(target_date: str = "2026-04-12", user: str = Depends(verify_admin_api_key)):

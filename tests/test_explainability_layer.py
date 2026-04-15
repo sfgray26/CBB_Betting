@@ -50,6 +50,7 @@ def _make_input(**overrides) -> ExplanationInput:
         z_hr=1.8,
         z_rbi=1.1,
         z_sb=0.3,
+        z_nsb=0.25,     # NSB correlates closely with SB; slight divergence for realism
         z_avg=0.8,
         z_obp=0.9,
         z_era=None,
@@ -129,12 +130,15 @@ def test_factor_weight_partial():
 
 def test_build_hitter_factors_skips_none_z():
     """A factor with a None Z-score must NOT appear in the output list."""
-    inp = _make_input(z_sb=None)
+    # P27: both z_sb AND z_nsb must be None for the basestealing factor to be skipped,
+    # since the factor prefers z_nsb and falls back to z_sb.
+    inp = _make_input(z_sb=None, z_nsb=None)
     factors = _build_hitter_factors(inp)
     names = [f.name for f in factors]
-    assert all("SB" not in n and "Speed" not in n for n in names), (
-        "Speed factor should be skipped when z_sb is None"
-    )
+    assert all(
+        "SB" not in n and "Speed" not in n and "NSB" not in n and "basestealing" not in n.lower()
+        for n in names
+    ), "Basestealing factor should be skipped when both z_sb and z_nsb are None"
 
 
 def test_build_hitter_factors_ranked_by_weight():
@@ -300,6 +304,7 @@ def test_explain_pitcher_uses_pitcher_factors():
         z_hr=None,
         z_rbi=None,
         z_sb=None,
+        z_nsb=None,
         z_avg=None,
         z_obp=None,
         proj_era_p50=3.45,
@@ -331,6 +336,108 @@ def test_explain_batch_skips_unknown_type():
     results = explain_batch([known, unknown])
     assert len(results) == 1
     assert results[0].decision_id == 1
+
+
+# ---------------------------------------------------------------------------
+# P27 NSB basestealing factor tests
+# ---------------------------------------------------------------------------
+
+def _find_basestealing_factor(factors):
+    """Return the basestealing factor (NSB or legacy SB), or None if absent."""
+    for f in factors:
+        if "NSB" in f.name or "basestealing" in f.name.lower() or "SB" in f.name or "Speed" in f.name:
+            return f
+    return None
+
+
+def test_basestealing_factor_prefers_z_nsb_when_both_present():
+    """
+    When both z_sb and z_nsb are populated, the factor must use z_nsb
+    (the canonical H2H One Win category) and be labeled as NSB.
+    """
+    # Make z_nsb and z_sb clearly different so we can tell which was used
+    inp = _make_input(z_sb=0.10, z_nsb=1.80)   # elite NSB, weak SB
+    factors = _build_hitter_factors(inp)
+    bs = _find_basestealing_factor(factors)
+    assert bs is not None, "Expected a basestealing factor"
+    assert "NSB" in bs.name, f"Expected NSB in factor name, got: {bs.name!r}"
+    assert bs.value == pytest.approx(1.80), "Factor value must be z_nsb, not z_sb"
+    assert bs.label == "ELITE", f"Label should reflect z_nsb=1.80 (ELITE), got {bs.label}"
+    assert "NSB Z-score" in bs.narrative
+    # Weight follows z_nsb magnitude
+    expected_weight = min(1.0, 1.80 / 3.0)
+    assert bs.weight == pytest.approx(expected_weight)
+
+
+def test_basestealing_factor_falls_back_to_z_sb_when_nsb_none():
+    """
+    Transition-period handling: pre-v27 rows only have z_sb. The factor
+    must still render using z_sb (labeled 'Speed') so nothing silently
+    drops from the narrative.
+    """
+    inp = _make_input(z_sb=1.2, z_nsb=None)
+    factors = _build_hitter_factors(inp)
+    bs = _find_basestealing_factor(factors)
+    assert bs is not None, "Expected a fallback SB factor when z_nsb is None"
+    assert "NSB" not in bs.name, "Must NOT label as NSB when falling back to z_sb"
+    assert "Speed" in bs.name or "SB" in bs.name
+    assert bs.value == pytest.approx(1.2)
+    assert bs.label == "STRONG"
+    # Narrative must indicate SB (not NSB) in fallback mode
+    assert "SB Z-score" in bs.narrative
+    assert "NSB Z-score" not in bs.narrative
+
+
+def test_basestealing_factor_skipped_when_both_none():
+    """Both z_sb and z_nsb None -> no basestealing factor at all."""
+    inp = _make_input(z_sb=None, z_nsb=None)
+    factors = _build_hitter_factors(inp)
+    bs = _find_basestealing_factor(factors)
+    assert bs is None, f"Expected no basestealing factor, got {bs}"
+
+
+def test_basestealing_narrative_includes_proj_sb_when_available():
+    """
+    The simulator projects raw SB (not NSB), so even the NSB narrative
+    must reference 'Projects X.X SB ROS' for continuity with projection tables.
+    """
+    inp = _make_input(z_nsb=0.9, proj_sb_p50=18.5)
+    factors = _build_hitter_factors(inp)
+    bs = _find_basestealing_factor(factors)
+    assert bs is not None
+    assert "18.5 SB ROS" in bs.narrative
+    assert "NSB Z-score" in bs.narrative
+
+
+def test_basestealing_narrative_omits_projection_when_none():
+    """No proj_sb_p50 -> narrative falls back to Z-score-only message."""
+    inp = _make_input(z_nsb=-0.3, proj_sb_p50=None)
+    factors = _build_hitter_factors(inp)
+    bs = _find_basestealing_factor(factors)
+    assert bs is not None
+    assert "SB ROS" not in bs.narrative
+    assert "NSB Z-score" in bs.narrative
+    # z=-0.3 falls in AVERAGE band (-0.5 < z <= 0.5 per _label_z)
+    assert bs.label == "AVERAGE"
+
+
+def test_explain_populates_nsb_factor_end_to_end():
+    """Full explain() for a hitter must surface the NSB factor in the result."""
+    inp = _make_input(player_type="hitter", z_nsb=2.1, z_sb=0.3)
+    result = explain(inp)
+    names = [f.name for f in result.factors]
+    assert any("NSB" in n for n in names), f"Expected NSB factor, got: {names}"
+    # And z_sb-labeled factor must NOT appear (superseded by NSB)
+    assert not any("Speed (SB" in n for n in names), (
+        f"Speed(SB) factor must not appear when z_nsb is present, got: {names}"
+    )
+
+
+def test_explanation_input_has_z_nsb_field():
+    """Dataclass contract: z_nsb field exists."""
+    inp = _make_input()
+    assert hasattr(inp, "z_nsb")
+    assert inp.z_nsb == pytest.approx(0.25)
 
 
 def test_explain_batch_processes_all_known():

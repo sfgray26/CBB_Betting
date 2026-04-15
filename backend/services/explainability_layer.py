@@ -43,6 +43,7 @@ class ExplanationInput:
     z_hr: Optional[float]
     z_rbi: Optional[float]
     z_sb: Optional[float]
+    z_nsb: Optional[float]   # P27 Net SB (SB - CS); preferred over z_sb for basestealing narrative
     z_avg: Optional[float]
     z_obp: Optional[float]
     z_era: Optional[float]
@@ -181,22 +182,48 @@ def _build_hitter_factors(inp: ExplanationInput) -> list:
             narrative=narrative,
         ))
 
-    # SB factor
-    if inp.z_sb is not None:
-        label = _label_z(inp.z_sb)
+    # Basestealing factor.
+    # P27: Prefer z_nsb (Net SB = SB - CS) since it's the canonical H2H One Win
+    # category and drives composite_z. z_sb remains as a transition-period
+    # fallback for rows computed before the v27 deploy (or if the scoring engine
+    # omitted z_nsb due to < MIN_SAMPLE pool). Narrative still references
+    # proj_sb_p50 because the simulator projects raw SB, not NSB.
+    if inp.z_nsb is not None:
+        z_bs = inp.z_nsb
+        label = _label_z(z_bs)
+        bs_name = "Net basestealing (NSB Z-score)"
         if inp.proj_sb_p50 is not None:
             narrative = (
-                "Projects {:.1f} SB ROS; Z-score {:+.2f} ({})".format(
-                    inp.proj_sb_p50, inp.z_sb, label
+                "Projects {:.1f} SB ROS; NSB Z-score {:+.2f} ({})".format(
+                    inp.proj_sb_p50, z_bs, label
                 )
             )
         else:
-            narrative = "Z-score {:+.2f} ({})".format(inp.z_sb, label)
+            narrative = "NSB Z-score {:+.2f} ({})".format(z_bs, label)
+        candidates.append(ExplanationFactor(
+            name=bs_name,
+            value=z_bs,
+            label=label,
+            weight=_factor_weight(z_bs),
+            narrative=narrative,
+        ))
+    elif inp.z_sb is not None:
+        # Legacy fallback -- pre-v27 rows or categories with insufficient NSB pool.
+        z_bs = inp.z_sb
+        label = _label_z(z_bs)
+        if inp.proj_sb_p50 is not None:
+            narrative = (
+                "Projects {:.1f} SB ROS; SB Z-score {:+.2f} ({})".format(
+                    inp.proj_sb_p50, z_bs, label
+                )
+            )
+        else:
+            narrative = "SB Z-score {:+.2f} ({})".format(z_bs, label)
         candidates.append(ExplanationFactor(
             name="Speed (SB Z-score)",
-            value=inp.z_sb,
+            value=z_bs,
             label=label,
-            weight=_factor_weight(inp.z_sb),
+            weight=_factor_weight(z_bs),
             narrative=narrative,
         ))
 
