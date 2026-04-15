@@ -67,11 +67,15 @@ Before any `backend/` file is marked complete:
 
 ## Current Focus (April 15)
 
-1. Close weather/park factor integration gap
-2. Investigate `decision_results` volume (26 rows — suspiciously low)
-3. Commit uncommitted v27 NSB changes
+1. Redeploy production so live code matches the repo
+2. Verify `data_ingestion_logs` persists durable rows in production
+3. Verify `probable_pitchers` populates usable rows in production
+4. Remove false-green health reporting from operational interpretation
+5. Complete canonical environment snapshots as the final major Layer 2 gap
 
-**Live pipeline health:** ALL 6 critical tables healthy (`player_rolling_stats`: 30,667 rows, `player_scores`: 30,580 rows, `statcast_performances`: 6,971 rows, `simulation_results`: 10,236 rows).
+**Operating rule:** Only Layer 2 work is active. Derived stats, decision engines, simulation, Yahoo automation, and frontend work are all frozen until Layer 2 is proven complete in production.
+
+**Live pipeline truth:** critical Layer 2 tables are not yet certified live in production. Do not infer readiness from legacy or stale health summaries.
 
 ---
 

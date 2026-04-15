@@ -2,17 +2,19 @@
 
 > **Navigation Hub:** Find the right document for your role and task.
 > 
-> **Last Updated:** April 11, 2026
+> **Last Updated:** April 15, 2026
 
 ---
 
-## 🚨 EMERGENCY / ACTIVE INCIDENT
+## Active Operating Mode
 
 | Document | Purpose | When to Use |
 |----------|---------|-------------|
-| **[CLAUDE_ARCHITECT_PROMPT_MARCH28.md](CLAUDE_ARCHITECT_PROMPT_MARCH28.md)** | P0 Production Crisis Response | ⚠️ **ACTIVE EMERGENCY** — Roster 500 errors, matchup failures |
+| **[HANDOFF.md](HANDOFF.md)** | Current architectural truth and active roadmap | Always first |
+| **[tasks/todo.md](tasks/todo.md)** | Active execution board | Immediately after HANDOFF |
+| **[docs_index.md](docs_index.md)** | Minified system reference | Session startup |
 
-**Status:** This document supersedes all others during the active incident.
+**Status:** The system is under a strict Layer 2 hard gate. No downstream feature or UI work is active until data ingestion and validation are proven complete in production.
 
 ---
 
@@ -36,7 +38,7 @@
 | `memory/YYYY-MM-DD.md` | Daily raw logs | Each agent |
 | [MEMORY.md](MEMORY.md) | Curated long-term memory (main sessions only) | Claude |
 
-**Rule:** Always read HANDOFF.md first. Always update it before finishing.
+**Rule:** Always read HANDOFF.md first. Then read tasks/todo.md. Always update HANDOFF.md before finishing.
 
 ---
 
@@ -47,14 +49,13 @@
 ### Active Work Coordination
 | Document | Purpose | Status |
 |----------|---------|--------|
-| **[CLAUDE_TEAM_COORDINATION_PROMPT.md](CLAUDE_TEAM_COORDINATION_PROMPT.md)** | Assign P0 gaps to Kimi/Gemini | ✅ **Authoritative** |
+| **[CLAUDE_TEAM_COORDINATION_PROMPT.md](CLAUDE_TEAM_COORDINATION_PROMPT.md)** | Multi-agent coordination when explicitly needed | Active |
 | ~~[CLAUDE_COORDINATION_PROMPT.md](.claude/prompts/archive/CLAUDE_COORDINATION_PROMPT.md)~~ | *Deprecated — see above* | ⚠️ Superseded |
 
 ### Return Briefings
 | Document | Purpose | When to Use |
 |----------|---------|-------------|
-| **[CLAUDE_ARCHITECT_PROMPT_MARCH28.md](CLAUDE_ARCHITECT_PROMPT_MARCH28.md)** | 🚨 Emergency return (P0 crisis) | **Use now until resolved** |
-| [CLAUDE_RETURN_PROMPT.md](CLAUDE_RETURN_PROMPT.md) | Standard return briefing (March 27) | Use after crisis resolved |
+| [CLAUDE_RETURN_PROMPT.md](CLAUDE_RETURN_PROMPT.md) | Standard return briefing | Use only if HANDOFF directs it |
 
 ### Specialized Work
 | Document | Purpose |
@@ -119,14 +120,16 @@
 2. Read [HANDOFF.md](HANDOFF.md)
 3. Read [ORCHESTRATION.md](ORCHESTRATION.md)
 
-**...fix the roster/matchup errors (March 28):**
-- Use [CLAUDE_ARCHITECT_PROMPT_MARCH28.md](CLAUDE_ARCHITECT_PROMPT_MARCH28.md)
+**...understand what is active right now:**
+1. Read [HANDOFF.md](HANDOFF.md)
+2. Read [tasks/todo.md](tasks/todo.md)
+3. Confirm whether the work is inside Layer 2 only
 
 **...coordinate work between agents:**
 - Use [CLAUDE_TEAM_COORDINATION_PROMPT.md](CLAUDE_TEAM_COORDINATION_PROMPT.md)
 
-**...implement fantasy baseball features:**
-- Use [CLAUDE_FANTASY_ROADMAP_PROMPT.md](CLAUDE_FANTASY_ROADMAP_PROMPT.md)
+**...consider any optimizer, waiver, Yahoo, simulation, or UI work:**
+- Stop and confirm in [HANDOFF.md](HANDOFF.md) that Layer 2 has been explicitly signed off first
 
 **...check Railway logs or env vars:**
 - Assign to Gemini CLI per [ORCHESTRATION.md](ORCHESTRATION.md)
@@ -179,4 +182,4 @@
 ---
 
 *This index maintained by Claude Code.*
-*Last refactored: April 11, 2026 (Documentation Cleanup)*
+*Last refactored: April 15, 2026 (Layer 2 roadmap cleanup)*
