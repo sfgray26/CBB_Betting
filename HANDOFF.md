@@ -148,16 +148,23 @@ This is the largest fantasy-feature gap still blocking a championship-grade pipe
 **Goal:** give Gemini faster, safer Railway and DB access without code writes.
 
 ### Set Up
-1. Railway MCP server added to Kimi CLI config.
-2. DevOps helper scripts added in `scripts/devops/`:
+1. **Railway MCP server** added to Kimi CLI config (`~/.kimi/mcp.json`).
+2. **DevOps helper scripts** added in `scripts/devops/`:
    - `db_query.py`
    - `db_health.py`
    - `railway_logs_filter.py`
-3. `GEMINI.md` updated with approved commands.
+3. **Postgres MCP Pro** (crystaldba) implemented:
+   - MCP server configured in `~/.kimi/mcp.json` for Kimi native access.
+   - CLI wrapper `scripts/devops/postgres_mcp_cli.py` for Gemini command-line access.
+   - Connects to production DB via Railway public proxy (`junction.proxy.rlwy.net:45402`).
+   - Restricted mode by default (read-only, safe for production).
+   - Verified working: `execute_sql`, `analyze_db_health`, `list_schemas` all returned valid data.
+   - Already surfaced first finding: multiple duplicate indexes in production (e.g., `ix_alerts_id` covered by `alerts_pkey`).
+4. `GEMINI.md` updated with approved commands, `railway ssh` rules, and Postgres MCP usage.
 
 ### Remaining Infra Follow-Up
-- Enable PostgreSQL MCP once the production `DATABASE_URL` is verified.
 - Reuse the same MCP config for other agents if MCP client support becomes available.
+- Review Postgres MCP duplicate-index findings with Claude and schedule cleanup DDL.
 
 ---
 
