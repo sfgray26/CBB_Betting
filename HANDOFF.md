@@ -1,9 +1,9 @@
 # HANDOFF.md — MLB Platform Operational State
 
 > **Date:** April 15, 2026 | **Author:** Claude Code (Master Architect)
-> **Status:** Infrastructure stable. Core fantasy pipeline is live. Decision-quality pipeline remains incomplete.
+> **Status:** Infrastructure stable. Core fantasy pipeline is live. P0 observability and degraded-health semantics are now implemented in code. Decision-quality pipeline remains incomplete.
 >
-> **Current Focus:** Re-establish a reliable operator brief and move the fantasy pipeline forward on the actual blockers: observability, probable pitcher resilience, environment-factor integration, and decision-universe breadth.
+> **Current Focus:** Verify the new ingestion audit trail on the next live run, then move to probable pitcher resilience, environment-factor integration, and decision-universe breadth.
 >
 > **Full audit:** `reports/2026-04-15-comprehensive-application-audit.md`
 > **Decision forensic:** `reports/2026-04-15-decision-results-investigation.md`
@@ -20,13 +20,14 @@
 - **FA identity fallback is deployed in code.** `daily_ingestion.py` now performs best-effort normalized-name resolution for free agents when `yahoo_key` is unavailable.
 - **Scheduler is stable.** 10 core jobs are active in production.
 - **Tests are green in Railway.** HANDOFF no longer treats the v27 NSB work as uncommitted.
+- **P0 observability is implemented in code.** The advisory-lock boundary now writes durable `DataIngestionLog` rows for success, failure, and skipped runs.
+- **P0 health semantics are implemented in code.** Empty `probable_pitchers` and empty `data_ingestion_logs` are now treated as degraded conditions by the health/validation layer rather than harmless info.
 
 ### Live Risks
-1. **Data ingestion observability is missing.** `data_ingestion_logs` exists but remains empty, so job diagnosis still depends on log tailing rather than a structured audit trail.
+1. **Live observability still needs production verification.** The logging path is implemented, but the next scheduled or manual ingestion run must confirm that `data_ingestion_logs` is actually populating in production.
 2. **Environment factors are implemented but orphaned.** Weather and park modules exist, and `SmartLineupSelector` uses them at request time, but there is still no canonical environment snapshot in the DB or scoring pipeline.
 3. **Probable pitchers remain empty.** This is currently an upstream/source-resilience problem, but it materially weakens two-start SP detection, matchup quality, and streaming guidance.
 4. **Decision breadth remains too narrow.** The waiver path now resolves some FAs, but the candidate universe is still shallow and must be monitored after the next run.
-5. **Health reporting is too green.** Empty `probable_pitchers` and empty `data_ingestion_logs` are operationally meaningful degradations even if the infrastructure remains up.
 
 ### Blocked by Upstream / External Constraints
 - **Probable pitchers:** MLB Stats API has returned 0 rows during recent sync windows.
@@ -52,7 +53,7 @@
 | `simulation_results` | **10,236** | 2026-04-13 | ✅ Healthy | Simulation layer is live |
 | `mlb_player_stats` | **6,801** | 2026-04-13 | ✅ Healthy | Growing via BDL |
 | `probable_pitchers` | **0** | — | ⚠️ Degraded | Upstream/source resilience gap |
-| `data_ingestion_logs` | **0** | — | ⚠️ Degraded | Table exists but audit trail is not implemented |
+| `data_ingestion_logs` | **0** | — | ⚠️ Degraded | Logging is now implemented in code; next run must populate rows |
 
 ---
 
@@ -91,14 +92,14 @@
 
 ## PIPELINE WEAKNESSES THAT STILL MATTER
 
-### 1. Observability Gap
-This is the immediate platform blocker.
+### 1. Observability Rollout Verification
+The missing audit-trail implementation is now addressed in code. The immediate task is proving it works in the live environment.
 
-- `data_ingestion_logs` remains empty.
-- Admin validation currently acknowledges this as informational, but operationally it is a real degradation.
-- Without structured run logs, failures and partial data states still require manual Railway log review.
+- `DataIngestionLog` writes are now attached to the advisory-lock wrapper, which is the right control point for job-level auditing.
+- Success, failure, and skipped runs now produce durable log rows in code.
+- Pipeline health and validation logic now treat missing logs as degraded rather than informational.
 
-**Required outcome:** every major ingestion stage should emit a structured audit record with run ID, source, freshness date, rows read, rows written, warnings, and error class.
+**Required outcome:** verify production row creation and confirm the latest job run is visible without tailing Railway logs.
 
 ### 2. Environment-Factor Integration Gap
 This is the largest fantasy-feature gap still blocking a championship-grade pipeline.
@@ -164,8 +165,8 @@ This is the largest fantasy-feature gap still blocking a championship-grade pipe
 
 | Priority | Action | Owner | ETA | Why It Matters |
 |----------|--------|-------|-----|----------------|
-| P0 | Build structured data-ingestion logging | Claude | 2 days | Restores observability and makes pipeline debugging first-class |
-| P0 | Reclassify empty `probable_pitchers` and empty `data_ingestion_logs` as degraded, not merely informational | Claude | 0.5 day | Stops false-green health reporting |
+| P0 | Verify `data_ingestion_logs` populates on the next scheduled or manual job run | Claude + Gemini | Next run | Confirms the new audit trail is actually live in production |
+| P0 | Verify `/admin/pipeline-health` and `/admin/validation-audit` now surface empty logs / probable pitchers as degraded | Claude + Gemini | Next run | Confirms false-green health reporting is gone |
 | P1 | Implement probable-pitcher fallback/resilience path | Claude | 2-3 days | Unblocks two-start SP and matchup-quality features |
 | P1 | Monitor post-fix waiver volume and FA fuzzy-match yield | Claude | Next production run | Confirms whether the decision engine is still underfed |
 | P1 | Design and land DB-backed environment snapshots | Claude | 1 week | Moves weather/park from optional request-time logic into the canonical pipeline |
@@ -194,6 +195,7 @@ This is the largest fantasy-feature gap still blocking a championship-grade pipe
 - `_pim_bdl_id_uc` constraint was reported active.
 - Statcast aggregation quality improved materially.
 - Probable pitchers remained empty due to source lag.
+- P0 code changes now add durable ingestion audit logging and degraded-health semantics; live production verification is still required.
 
 **Use this section as a brief ops receipt, not as the canonical source of fantasy pipeline priorities.** The priority queue above is authoritative.
 

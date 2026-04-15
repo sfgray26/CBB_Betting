@@ -65,6 +65,18 @@
 
 **Checkpoint verification completed:** `py_compile` on touched backend files plus targeted pytest subset (`test_ingestion_orchestrator.py`, `test_fantasy_stat_contract.py`, `test_waiver_integration.py`, `test_weather_fetcher.py`) are green, and `frontend` passes `npx tsc --noEmit`.
 
+### 0C. P0 Observability + Health Semantics — Apr 15 (ACTIVE)
+**Spec:** `HANDOFF.md` P0 queue | **Priority:** restore durable pipeline auditing and remove false-green health signals
+
+| Task | File | Done? |
+|------|------|-------|
+| Persist durable job audit rows at the advisory-lock boundary | `backend/services/daily_ingestion.py` | [x] |
+| Reclassify empty `probable_pitchers` and `data_ingestion_logs` as degraded in health validation | `backend/services/pipeline_validator.py`, `backend/admin_endpoints_validation.py` | [x] |
+| Validate compile + targeted orchestrator / validation tests | backend + tests | [x] |
+| Verify live row creation and degraded endpoint output in production | Railway / admin endpoints | [ ] |
+
+**Review:** Code implementation is complete and targeted validation passed locally (`py_compile`, `tests/test_ingestion_orchestrator.py`, `tests/test_admin_validation_audit.py`). Remaining work is production verification after the next scheduled or manual ingestion run.
+
 ### 0B. HANDOFF Recovery — Apr 15 (ACTIVE)
 **Spec:** `HANDOFF.md` operator recovery rewrite | **Priority:** immediate documentation cleanup so pipeline work resumes from a reliable source of truth
 

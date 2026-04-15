@@ -225,9 +225,9 @@ async def validation_audit():
 
             if row_count == 0:
                 if table_name == "probable_pitchers":
-                    add_finding("info", "Empty Tables", "probable_pitchers",
-                        "Empty as expected: BDL API doesn't provide probable pitcher data (Task 4).",
-                        "Use MLB Stats API instead or mark as intentionally empty.",
+                    add_finding("medium", "Empty Tables", "probable_pitchers",
+                        "probable_pitchers is empty. This is currently an upstream/source-resilience gap, not a harmless informational state.",
+                        "Implement fallback or confidence-tiered probable-pitcher sourcing instead of treating this as expected empty state.",
                         None)
                 elif table_name == "statcast_performances":
                     # Statcast table validation with row count checks
@@ -253,9 +253,9 @@ async def validation_audit():
                         # Store row count for summary
                         validation_results["statcast_row_count"] = statcast_count
                 elif table_name == "data_ingestion_logs":
-                    add_finding("info", "Empty Tables", "data_ingestion_logs",
-                        "Empty by design: Infrastructure exists but logging not implemented (Task 6).",
-                        "Implement full audit logging (4 hours, medium priority).",
+                    add_finding("high", "Empty Tables", "data_ingestion_logs",
+                        "data_ingestion_logs is empty. The fantasy pipeline has no durable audit trail for ingestion jobs.",
+                        "Implement structured ingestion logging and treat missing logs as degraded pipeline health.",
                         None)
             else:
                 # Table has rows, check statcast specifically for minimum threshold

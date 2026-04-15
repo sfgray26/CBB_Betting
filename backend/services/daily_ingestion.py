@@ -15,6 +15,7 @@ import logging
 import os
 import time
 import math
+import traceback
 import unicodedata
 from datetime import datetime, date, timedelta
 from typing import Optional, Any
@@ -49,6 +50,7 @@ from backend.models import (
     DailySnapshot as DailySnapshotORM,
     PositionEligibility,
     ProbablePitcherSnapshot,
+    DataIngestionLog,
     engine,
 )
 from backend.services.explainability_layer import ExplanationInput, explain_batch
@@ -343,30 +345,88 @@ async def _with_advisory_lock(lock_id: int, job_name: str, coro):
     Enhanced with comprehensive execution logging for observability.
     """
     job_start = time.monotonic()
-    logger.info("JOB START: %s (lock %d) at %s", job_name, lock_id, datetime.now(ZoneInfo("America/New_York")).isoformat())
+    started_at = now_et()
+    logger.info("JOB START: %s (lock %d) at %s", job_name, lock_id, started_at.isoformat())
 
     db = SessionLocal()
+    log_row: Optional[DataIngestionLog] = None
     try:
         result = db.execute(
             text("SELECT pg_try_advisory_lock(:lid)"), {"lid": lock_id}
         ).scalar()
         if not result:
             logger.warning("JOB SKIPPED: %s (lock %d) - advisory lock held by another worker", job_name, lock_id)
+            _persist_ingestion_log(
+                db,
+                job_type=job_name,
+                target_date=today_et(),
+                status="SKIPPED",
+                started_at=started_at,
+                completed_at=now_et(),
+                processing_time_seconds=time.monotonic() - job_start,
+                summary_stats={"skip_reason": "advisory_lock_held", "lock_id": lock_id},
+                warning_details=[{"type": "advisory_lock", "message": "Lock held by another worker"}],
+            )
             return None
 
         logger.info("JOB LOCK ACQUIRED: %s (lock %d)", job_name, lock_id)
+        log_row = DataIngestionLog(
+            job_type=job_name,
+            target_date=today_et(),
+            status="RUNNING",
+            started_at=started_at,
+            summary_stats={"lock_id": lock_id},
+            error_details=[],
+            warning_details=[],
+        )
+        db.add(log_row)
+        db.commit()
 
         try:
             result = await coro()
             job_end = time.monotonic()
-            elapsed_ms = int((job_end - job_start) * 1000)
+            elapsed_seconds = job_end - job_start
+            elapsed_ms = int(elapsed_seconds * 1000)
+            _persist_ingestion_log(
+                db,
+                log_row=log_row,
+                job_type=job_name,
+                target_date=today_et(),
+                status=_normalize_ingestion_log_status(result.get("status") if isinstance(result, dict) else None),
+                started_at=started_at,
+                completed_at=now_et(),
+                records_processed=_extract_processed_records(result),
+                records_failed=_extract_failed_records(result),
+                validation_errors=_extract_validation_count(result, "validation_errors"),
+                validation_warnings=_extract_validation_count(result, "validation_warnings"),
+                processing_time_seconds=elapsed_seconds,
+                data_quality_score=_extract_data_quality_score(result),
+                error_details=_extract_error_details(result),
+                warning_details=_extract_warning_details(result),
+                summary_stats=_sanitize_for_json(result),
+                error_message=_extract_error_message(result),
+            )
             logger.info("JOB COMPLETE: %s (lock %d) - status=%s, elapsed_ms=%d",
                        job_name, lock_id, result.get("status", "unknown"), elapsed_ms)
             return result
 
         except Exception as exc:
             job_end = time.monotonic()
-            elapsed_ms = int((job_end - job_start) * 1000)
+            elapsed_seconds = job_end - job_start
+            elapsed_ms = int(elapsed_seconds * 1000)
+            _persist_ingestion_log(
+                db,
+                log_row=log_row,
+                job_type=job_name,
+                target_date=today_et(),
+                status="FAILED",
+                started_at=started_at,
+                completed_at=now_et(),
+                processing_time_seconds=elapsed_seconds,
+                error_message=str(exc),
+                error_details=[{"type": exc.__class__.__name__, "message": str(exc)}],
+                stack_trace=traceback.format_exc(),
+            )
             logger.error("JOB FAILED: %s (lock %d) - exception=%s, elapsed_ms=%d",
                         job_name, lock_id, str(exc), elapsed_ms, exc_info=True)
             raise
@@ -377,6 +437,184 @@ async def _with_advisory_lock(lock_id: int, job_name: str, coro):
         except Exception:
             pass
         db.close()
+
+
+def _sanitize_for_json(value: Any) -> Any:
+    """Convert common Python objects into JSON-safe payloads for audit logging."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _sanitize_for_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_sanitize_for_json(v) for v in value]
+    return str(value)
+
+
+def _normalize_ingestion_log_status(raw_status: Optional[str]) -> str:
+    """Map job return statuses to the durable log vocabulary."""
+    normalized = (raw_status or "SUCCESS").strip().upper()
+    if normalized in {"SUCCESS", "PARTIAL", "FAILED", "SKIPPED", "RUNNING"}:
+        return normalized
+    if normalized in {"ERROR", "FAIL", "FAILURE"}:
+        return "FAILED"
+    if normalized in {"OK", "DONE"}:
+        return "SUCCESS"
+    return normalized
+
+
+def _extract_processed_records(result: Any) -> int:
+    """Best-effort extraction of the primary processed-record count from a job result."""
+    if not isinstance(result, dict):
+        return 0
+
+    direct_keys = (
+        "records_processed",
+        "records",
+        "rows_written",
+        "rows_upserted",
+        "rows_patched",
+        "records_written",
+        "records_updated",
+        "players_simulated",
+        "n_players",
+        "n_players_scored",
+        "n_explained",
+        "bat_rows",
+        "pit_rows",
+    )
+    for key in direct_keys:
+        value = result.get(key)
+        if isinstance(value, (int, float)):
+            return int(value)
+
+    composite_keys = ("lineup_decisions", "waiver_decisions")
+    composite_total = 0
+    found_composite = False
+    for key in composite_keys:
+        value = result.get(key)
+        if isinstance(value, (int, float)):
+            composite_total += int(value)
+            found_composite = True
+    if found_composite:
+        return composite_total
+
+    return 0
+
+
+def _extract_failed_records(result: Any) -> int:
+    if not isinstance(result, dict):
+        return 0
+    value = result.get("records_failed")
+    if isinstance(value, (int, float)):
+        return int(value)
+    return 0
+
+
+def _extract_validation_count(result: Any, key: str) -> int:
+    if not isinstance(result, dict):
+        return 0
+    value = result.get(key)
+    if isinstance(value, (int, float)):
+        return int(value)
+    return 0
+
+
+def _extract_data_quality_score(result: Any) -> Optional[float]:
+    if not isinstance(result, dict):
+        return None
+    value = result.get("data_quality_score")
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _extract_error_message(result: Any) -> Optional[str]:
+    if not isinstance(result, dict):
+        return None
+    for key in ("error_message", "error", "reason"):
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _extract_error_details(result: Any) -> list[dict[str, Any]]:
+    if not isinstance(result, dict):
+        return []
+    details = result.get("error_details")
+    if isinstance(details, list):
+        return _sanitize_for_json(details)
+    message = _extract_error_message(result)
+    if message:
+        return [{"message": message}]
+    return []
+
+
+def _extract_warning_details(result: Any) -> list[dict[str, Any]]:
+    if not isinstance(result, dict):
+        return []
+    details = result.get("warning_details")
+    if isinstance(details, list):
+        return _sanitize_for_json(details)
+    warnings = result.get("warnings")
+    if isinstance(warnings, list):
+        return [{"message": str(item)} for item in _sanitize_for_json(warnings)]
+    return []
+
+
+def _persist_ingestion_log(
+    db,
+    *,
+    job_type: str,
+    target_date: date,
+    status: str,
+    started_at: datetime,
+    completed_at: Optional[datetime] = None,
+    records_processed: int = 0,
+    records_failed: int = 0,
+    processing_time_seconds: Optional[float] = None,
+    validation_errors: int = 0,
+    validation_warnings: int = 0,
+    data_quality_score: Optional[float] = None,
+    error_details: Optional[list[dict[str, Any]]] = None,
+    warning_details: Optional[list[dict[str, Any]]] = None,
+    summary_stats: Optional[Any] = None,
+    error_message: Optional[str] = None,
+    stack_trace: Optional[str] = None,
+    log_row: Optional[DataIngestionLog] = None,
+) -> None:
+    """Persist or update the durable audit row for an ingestion job without affecting job success."""
+    try:
+        if log_row is None:
+            log_row = DataIngestionLog(
+                job_type=job_type,
+                target_date=target_date,
+                status=status,
+                started_at=started_at,
+            )
+            db.add(log_row)
+
+        log_row.status = status
+        log_row.target_date = target_date
+        log_row.started_at = started_at
+        log_row.completed_at = completed_at
+        log_row.records_processed = records_processed
+        log_row.records_failed = records_failed
+        log_row.processing_time_seconds = processing_time_seconds
+        log_row.validation_errors = validation_errors
+        log_row.validation_warnings = validation_warnings
+        log_row.data_quality_score = data_quality_score
+        log_row.error_details = _sanitize_for_json(error_details or [])
+        log_row.warning_details = _sanitize_for_json(warning_details or [])
+        log_row.summary_stats = _sanitize_for_json(summary_stats or {})
+        log_row.error_message = error_message
+        log_row.stack_trace = stack_trace
+        db.commit()
+    except Exception as log_exc:
+        db.rollback()
+        logger.warning("Failed to persist DataIngestionLog for %s: %s", job_type, log_exc)
 
 
 # ---------------------------------------------------------------------------
@@ -746,7 +984,7 @@ class DailyIngestionOrchestrator:
             pass
         return None
 
-    def _record_job_run(self, job_id: str, status: str, records: int = 0) -> None:
+    def _record_job_run(self, job_id: str, status: str, records: int = 0, elapsed_ms: Optional[int] = None) -> None:
         """Update in-memory job status after a run."""
         run_info = {
             "name": job_id,
@@ -754,6 +992,8 @@ class DailyIngestionOrchestrator:
             "last_run": now_et().isoformat(),
             "last_status": status,
             "next_run": self._get_next_run(job_id),
+            "records_processed": records,
+            "last_elapsed_ms": elapsed_ms,
         }
         self._job_status[job_id] = run_info
 
