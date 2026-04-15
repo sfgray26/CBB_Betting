@@ -2538,10 +2538,64 @@ class DailyIngestionOrchestrator:
                         )
                         fa_bdl_map = {ykey: bdl_id for ykey, bdl_id in fa_mappings}
 
+                    # FA identity resolution fallback: yahoo_key is NULL for every
+                    # free agent in player_id_mapping (only roster players are
+                    # backfilled by scripts/backfill_yahoo_keys.py), so yahoo_key
+                    # lookup always misses for FAs. Best-effort fuzzy-match FA
+                    # names against player_id_mapping.normalized_name. Read-only:
+                    # never writes to player_id_mapping from here.
+                    def _norm_fa_name(name: str) -> str:
+                        if not name:
+                            return ""
+                        n = unicodedata.normalize("NFKD", name).lower().strip()
+                        for suffix in (" jr.", " sr.", " ii", " iii", " iv", " jr", " sr"):
+                            if n.endswith(suffix):
+                                n = n[: -len(suffix)].strip()
+                        n = n.replace(".", "")
+                        while "  " in n:
+                            n = n.replace("  ", " ")
+                        return n.strip()
+
+                    fa_name_map: dict[str, list[int]] = {}
+                    unresolved_fas = [
+                        fa for fa in free_agents
+                        if fa_bdl_map.get(fa.get("player_key")) is None
+                    ]
+                    if unresolved_fas:
+                        mapping_rows = (
+                            db.query(PlayerIDMapping.normalized_name, PlayerIDMapping.bdl_id)
+                            .filter(PlayerIDMapping.bdl_id.isnot(None))
+                            .all()
+                        )
+                        for norm_name, bdl_id in mapping_rows:
+                            key = _norm_fa_name(norm_name or "")
+                            if not key:
+                                continue
+                            fa_name_map.setdefault(key, []).append(bdl_id)
+
+                    fa_skipped = 0
+                    fa_fuzzy_resolved = 0
                     for fa in free_agents:
                         fa_bdl_id = fa_bdl_map.get(fa.get("player_key"))
                         if fa_bdl_id is None:
-                            continue  # Can't cross-reference — skip
+                            fa_name = fa.get("name", "")
+                            candidates = fa_name_map.get(_norm_fa_name(fa_name), [])
+                            if len(candidates) == 1:
+                                fa_bdl_id = candidates[0]
+                                fa_fuzzy_resolved += 1
+                                logger.info(
+                                    "decision_optimization: resolved FA '%s' via "
+                                    "name fallback (bdl_id=%d)",
+                                    fa_name, fa_bdl_id,
+                                )
+                            else:
+                                fa_skipped += 1
+                                logger.debug(
+                                    "decision_optimization: FA '%s' unresolved "
+                                    "(yahoo_key miss, %d name candidates)",
+                                    fa_name, len(candidates),
+                                )
+                                continue
                         fa_positions = fa.get("positions", [])
                         if not fa_positions:
                             fa_positions = ["Util"]
@@ -2565,9 +2619,18 @@ class DailyIngestionOrchestrator:
                             delta_z=0.0,
                         ))
                     logger.info(
-                        "decision_optimization: built waiver pool with %d candidates",
-                        len(waiver_pool),
+                        "decision_optimization: built waiver pool with %d candidates "
+                        "(fuzzy_resolved=%d, skipped=%d, fetched=%d)",
+                        len(waiver_pool), fa_fuzzy_resolved, fa_skipped, len(free_agents),
                     )
+                    if fa_skipped > 0 and len(free_agents) > 0:
+                        logger.warning(
+                            "decision_optimization: %d/%d free agents unresolvable to "
+                            "bdl_id (yahoo_key NULL in player_id_mapping and no unique "
+                            "normalized_name match). Fuzzy resolved %d. See "
+                            "reports/2026-04-15-decision-results-investigation.md.",
+                            fa_skipped, len(free_agents), fa_fuzzy_resolved,
+                        )
                 except Exception as exc:
                     logger.warning(
                         "decision_optimization: waiver pool fetch failed (%s) — "
@@ -4566,17 +4629,27 @@ class DailyIngestionOrchestrator:
 
                         # Create/update mapping record
                         # We'll store both BDL and Yahoo mappings, plus MLBAM
-                        mapping = PlayerIDMapping(
-                            bdl_id=bdl_id,
-                            yahoo_key=None,  # Will be populated by Yahoo sync
-                            mlbam_id=mlbam_id,
-                            full_name=full_name,
-                            normalized_name=normalized_name,
-                            source='api',
-                            resolution_confidence=1.0,  # Direct from BDL API
+                        existing = (
+                            db.query(PlayerIDMapping)
+                            .filter(PlayerIDMapping.bdl_id == bdl_id)
+                            .first()
                         )
-
-                        db.merge(mapping)
+                        if existing:
+                            existing.mlbam_id = mlbam_id
+                            existing.full_name = full_name
+                            existing.normalized_name = normalized_name
+                            existing.resolution_confidence = 1.0
+                        else:
+                            mapping = PlayerIDMapping(
+                                bdl_id=bdl_id,
+                                yahoo_key=None,  # Will be populated by Yahoo sync
+                                mlbam_id=mlbam_id,
+                                full_name=full_name,
+                                normalized_name=normalized_name,
+                                source='api',
+                                resolution_confidence=1.0,  # Direct from BDL API
+                            )
+                            db.add(mapping)
                         records_processed += 1
 
                     except Exception as exc:

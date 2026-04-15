@@ -131,7 +131,8 @@
       "Bash(./venv/Scripts/python.exe:*)",
       "Bash(venv/Scripts/python.exe:*)",
       "Bash(awk -F'@' '{print $2}')",
-      "Bash(awk -F'/' '{print $1}')"
+      "Bash(awk -F'/' '{print $1}')",
+      "Bash(git *)"
     ]
   },
   "enabledPlugins": {}

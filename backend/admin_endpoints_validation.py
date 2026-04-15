@@ -305,6 +305,78 @@ async def validation_audit():
                 )
 
         # ========================================================================
+        # SECTION 4.5: DECISION OUTPUTS (decision_results)
+        # ========================================================================
+        # decision_results is populated by _run_decision_optimization() in
+        # daily_ingestion.py. Expected volume: ~13 rows per run from lineup
+        # optimization (1 row per filled active roster slot), plus waiver
+        # results when free-agent identity resolution succeeds.
+        # See reports/2026-04-15-decision-results-investigation.md.
+        LINEUP_ROWS_PER_RUN = 13
+        try:
+            dr_result = db.execute(text("""
+                SELECT
+                    COUNT(*) AS total_rows,
+                    COUNT(*) FILTER (WHERE decision_type = 'lineup') AS lineup_rows,
+                    COUNT(*) FILTER (WHERE decision_type = 'waiver') AS waiver_rows,
+                    COUNT(DISTINCT as_of_date) AS distinct_dates,
+                    MAX(as_of_date) AS latest_date,
+                    COUNT(*) FILTER (WHERE as_of_date >= CURRENT_DATE - INTERVAL '7 days') AS last_7d,
+                    CURRENT_DATE AS today
+                FROM decision_results
+            """)).fetchone()
+        except Exception as exc:
+            dr_result = None
+            add_finding("high", "Decision Outputs", "decision_results",
+                f"Could not query decision_results table: {exc}",
+                "Verify migration ran and table exists.",
+                "SELECT COUNT(*) FROM decision_results")
+
+        if dr_result is not None:
+            if dr_result.total_rows == 0:
+                add_finding("critical", "Decision Outputs", "decision_results",
+                    "decision_results is EMPTY. Decision optimization job has never "
+                    "written a row (or all rows deleted).",
+                    "Check scheduler: _run_decision_optimization. Verify player_scores "
+                    "is populated upstream. Check Railway logs for job errors.",
+                    "SELECT COUNT(*) FROM decision_results")
+            else:
+                days_stale = (dr_result.today - dr_result.latest_date).days if dr_result.latest_date else 999
+                if days_stale > 2:
+                    add_finding("high", "Decision Outputs", "decision_results",
+                        f"decision_results is {days_stale} days stale "
+                        f"(latest: {dr_result.latest_date}).",
+                        "Decision optimization job has stopped writing. Check scheduler "
+                        "and Railway logs.",
+                        "SELECT MAX(as_of_date) FROM decision_results")
+
+                # Expected per day: >= LINEUP_ROWS_PER_RUN (13 lineup + variable waiver).
+                # Last 7 days should have ~91+ rows if job runs daily.
+                expected_7d = LINEUP_ROWS_PER_RUN * 7
+                if dr_result.last_7d > 0 and dr_result.last_7d < expected_7d * 0.5:
+                    add_finding("medium", "Decision Outputs", "decision_results",
+                        f"Only {dr_result.last_7d} rows in last 7 days "
+                        f"(expected ~{expected_7d}). Job may be skipping runs.",
+                        "Check scheduler misfire counts and advisory lock contention.",
+                        "SELECT as_of_date, COUNT(*) FROM decision_results "
+                        "WHERE as_of_date >= CURRENT_DATE - INTERVAL '7 days' "
+                        "GROUP BY as_of_date ORDER BY as_of_date DESC")
+
+                # Waiver rows: expected 0 until FA identity resolution gap closes.
+                # See reports/2026-04-15-decision-results-investigation.md.
+                if dr_result.total_rows > 0 and dr_result.waiver_rows == 0:
+                    findings["info"].append({
+                        "category": "Decision Outputs",
+                        "table": "decision_results",
+                        "issue": f"0 waiver rows out of {dr_result.total_rows} total — "
+                                 "consistent with FA identity resolution gap "
+                                 "(player_id_mapping.yahoo_key NULL for free agents).",
+                        "recommendation": "Fuzzy name fallback added in daily_ingestion.py. "
+                                          "Monitor for non-zero waiver_rows after next run.",
+                        "sql_check": None
+                    })
+
+        # ========================================================================
         # SECTION 5: FOREIGN KEY INTEGRITY
         # ========================================================================
         # Check 5.1: Orphaned position_eligibility records

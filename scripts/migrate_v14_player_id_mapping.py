@@ -37,12 +37,13 @@ CREATE TABLE IF NOT EXISTS player_id_mapping (
     yahoo_key             VARCHAR(50)  UNIQUE,           -- "469.p.7590" -- nullable until known
     yahoo_id              VARCHAR(20),                   -- "7590" -- proprietary Yahoo ID
     mlbam_id              INTEGER,                       -- MLB Advanced Media canonical ID
-    bdl_id                INTEGER,                       -- BDL player.id internal
+    bdl_id                INTEGER UNIQUE,                -- BDL player.id internal
     full_name             VARCHAR(150) NOT NULL,
     normalized_name       VARCHAR(150) NOT NULL,         -- lowercase, no accents
     source                VARCHAR(20)  NOT NULL DEFAULT 'manual', -- pybaseball|manual|api
     resolution_confidence FLOAT,                         -- 0.0-1.0 for fuzzy matches
     created_at            TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at            TIMESTAMPTZ,
     last_verified         DATE
 );
 

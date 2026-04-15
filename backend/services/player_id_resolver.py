@@ -208,8 +208,8 @@ class PlayerIDResolver:
         """
         Insert or update player_id_mapping with the resolved IDs.
 
-        Uses pg_insert().on_conflict_do_update() on bdl_id as the conflict target
-        (no UNIQUE constraint on bdl_id, so we fall back to SELECT-then-upsert).
+        bdl_id has a UNIQUE constraint, so there is at most one row per BDL player.
+        We still guard manual overrides as sacred.
 
         Sets:
           source               = 'pybaseball'
@@ -239,19 +239,19 @@ class PlayerIDResolver:
                 )
                 return
 
-            # Check if a pybaseball row already exists for this bdl_id
-            existing_pb = (
+            # bdl_id is unique -- check for any existing row
+            existing_row = (
                 self._db.query(PlayerIDMapping)
                 .filter(PlayerIDMapping.bdl_id == bdl_player_id)
-                .filter(PlayerIDMapping.source == "pybaseball")
                 .first()
             )
-            if existing_pb is not None:
+            if existing_row is not None:
                 # Update in-place -- mlbam may have been refined
-                existing_pb.mlbam_id = mlbam_id
-                existing_pb.full_name = full_name
-                existing_pb.normalized_name = normalized
-                existing_pb.resolution_confidence = 1.0
+                existing_row.mlbam_id = mlbam_id
+                existing_row.full_name = full_name
+                existing_row.normalized_name = normalized
+                existing_row.source = "pybaseball"
+                existing_row.resolution_confidence = 1.0
                 self._db.commit()
             else:
                 # New row -- no yahoo_key known yet (NULL)

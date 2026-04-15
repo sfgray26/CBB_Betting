@@ -57,6 +57,22 @@ railway variables
 railway run python scripts/migrations/apply_openclaw_migration.py
 ```
 
+## New DevOps Scripts (Pre-Approved)
+
+Gemini may run these Python wrappers for DB access and log filtering.
+They are read-only or migration-safe unless explicitly noted.
+
+```bash
+# Run arbitrary SQL query and get JSON output
+railway run python scripts/devops/db_query.py "SELECT COUNT(*) FROM player_id_mapping"
+
+# Full DB health snapshot (row counts, freshness, anomalies)
+railway run python scripts/devops/db_health.py
+
+# Tail Railway logs filtered by job name (e.g., player_id_mapping)
+railway run python scripts/devops/railway_logs_filter.py --job player_id_mapping --lines 50
+```
+
 ## Project Context
 
 - **Repository**: cbb-edge

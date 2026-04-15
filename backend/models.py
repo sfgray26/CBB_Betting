@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, date
+from zoneinfo import ZoneInfo
 import os
 import time
 
@@ -1117,12 +1118,21 @@ class PlayerIDMapping(Base):
     normalized_name      = Column(String(150), nullable=False)  # lowercase, no accents
     source               = Column(String(20), nullable=False, default="manual")  # pybaseball|manual|api
     resolution_confidence = Column(Float, nullable=True)        # 0.0-1.0 for fuzzy matches
-    created_at           = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at           = Column(
+        DateTime(timezone=True), nullable=False,
+        default=lambda: datetime.now(ZoneInfo("America/New_York"))
+    )
+    updated_at           = Column(
+        DateTime(timezone=True), nullable=True,
+        default=lambda: datetime.now(ZoneInfo("America/New_York")),
+        onupdate=lambda: datetime.now(ZoneInfo("America/New_York"))
+    )
     last_verified        = Column(Date, nullable=True)
 
     __table_args__ = (
         # Partial unique indexes — each external ID is unique where present
         UniqueConstraint("yahoo_key", name="_pim_yahoo_key_uc"),
+        UniqueConstraint("bdl_id", name="_pim_bdl_id_uc"),
         Index("idx_pim_mlbam",       "mlbam_id"),
         Index("idx_pim_bdl",         "bdl_id"),
         Index("idx_pim_normalized",  "normalized_name"),
