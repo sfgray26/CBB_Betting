@@ -274,13 +274,12 @@ Gemini should update this HANDOFF section with:
 | Verify settings | COMPLETE | April 15, 2026 |
 
 ### Migration / Audit Notes
-- Production `player_id_mapping` dedupe was reported complete.
-- `_pim_bdl_id_uc` constraint was reported active.
-- Statcast aggregation quality improved materially.
-- Probable pitchers remained empty due to source lag.
-- P0 code changes now add durable ingestion audit logging and degraded-health semantics; live production verification is still required.
-
-**Use this section as a brief ops receipt, not as the canonical source of fantasy pipeline priorities.** The priority queue above is authoritative.
+- **Database Connection**: Confirmed Junction Proxy (`junction.proxy.rlwy.net:45402`) is active; Shinkansen is stale/empty.
+- **Data Ingestion Logs**: **0 rows**. Validation FAILED. Logs are implemented in code but not persisting to DB.
+- **Probable Pitchers**: **0 rows**. Status: DEGRADED.
+- **Player ID Mapping**: **10,000 rows**. `_pim_bdl_id_uc` is active. `updated_at` is null for all rows (no recent upserts).
+- **Endpoint Status**: `/admin/pipeline-health` is active but reports "healthy" for 0-row `probable_pitchers`.
+- **Verdict**: **BLOCKED** on P0 Observability verification.
 
 ---
 
