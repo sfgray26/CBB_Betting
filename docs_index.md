@@ -1,0 +1,105 @@
+# docs_index — Minified System Reference
+
+> **Read this first.** Use `scripts/doc_retriever.py` to fetch full documents on demand.
+> **Last updated:** April 15, 2026
+
+---
+
+## What This Repo Is
+
+Two production systems sharing a FastAPI + PostgreSQL + Railway backend:
+- **CBB Edge Betting Analyzer (V9.1)** — NCAA D1 basketball positive-EV bet finder
+- **Fantasy Baseball Platform (2026 Season)** — Yahoo H2H lineup optimization, waiver intelligence
+
+---
+
+## Agent Roles & Swimlanes
+
+| Agent | Can Do | Cannot Do |
+|-------|--------|-----------|
+| **Claude Code** | Architecture, backend code, FastAPI routes, Pydantic schemas, SQLAlchemy models, tests | Infrastructure ops, frontend CSS/React without delegating |
+| **Gemini CLI** | Railway deploys, env vars, log tailing, running pre-approved DB migrations | Write `.py`, `.ts`, `.tsx`, `.js`, or CI/CD pipelines |
+| **Kimi CLI** | Research memos (`reports/`), codebase-wide audits, doc maintenance | Production backend code without explicit delegation |
+| **OpenClaw** | DDGS integrity checks, Discord alerts, morning briefs, waiver digests | Architecture changes |
+
+**Routing:**
+- Backend/algorithm work → Claude
+- Railway ops → Gemini
+- Multi-doc research (>3 docs) or whole-corpus audit → Kimi
+- CBB integrity checks → OpenClaw first; escalate to Kimi for Elite 8+ or ≥1.5u or VOLATILE
+
+---
+
+## Critical Rules (No Exceptions)
+
+1. **No ghost changes.** Every modification justified in `HANDOFF.md`.
+2. **Kimi proposes, Claude approves.** Kimi writes to `reports/` or `HANDOFF.md`; Claude implements code.
+3. **Gemini does not write code.** Not even "trivial" one-liners.
+4. **No `datetime.utcnow()` for MLB.** Always `datetime.now(ZoneInfo("America/New_York"))`.
+5. **No bool-to-string leakage** in Pydantic schemas (`status: False` is forbidden).
+6. **Single Yahoo client.** `backend/fantasy_baseball/yahoo_client_resilient.py` only. No forks.
+7. **Streamlit is dead.** Never touch `dashboard/`.
+8. **Test before marking done.** `py_compile` pass + relevant `pytest` subset green.
+
+---
+
+## Code Quality Gates
+
+Before any `backend/` file is marked complete:
+1. `venv/Scripts/python -m py_compile <file>` passes
+2. Relevant `pytest tests/` subset passes
+3. No `datetime.utcnow()` — use `America/New_York`
+4. No `status: False` or other bool-as-string leakage in schemas
+
+---
+
+## Risk Posture (CBB Betting)
+
+- **Kelly scaling:** Base Kelly × SNR Scalar × Integrity Scalar = Final Kelly
+- **SNR floor:** 0.5 (`SNR_KELLY_FLOOR`)
+- **Integrity scalars:** CONFIRMED=1.0×, CAUTION=0.75×, VOLATILE=0.50×, ABORT/RED FLAG=**0.0× HARD GATE**
+- **Circuit breakers:**
+  - Integrity Abort Gate: `"ABORT"` or `"RED FLAG"` → `kelly_frac = 0`
+  - Portfolio drawdown >15% → all new bets paused
+  - `|model_margin - market_margin| > 2.5 × effective_base_sd` → hard PASS
+
+---
+
+## Current Focus (April 15)
+
+1. Close weather/park factor integration gap
+2. Investigate `decision_results` volume (26 rows — suspiciously low)
+3. Commit uncommitted v27 NSB changes
+
+**Live pipeline health:** ALL 6 critical tables healthy (`player_rolling_stats`: 30,667 rows, `player_scores`: 30,580 rows, `statcast_performances`: 6,971 rows, `simulation_results`: 10,236 rows).
+
+---
+
+## Document Map
+
+| Need | File | Retriever Command |
+|------|------|-------------------|
+| Current operational state + task queue | `HANDOFF.md` | `python scripts/doc_retriever.py HANDOFF.md` |
+| Full agent role definitions | `AGENTS.md` | `python scripts/doc_retriever.py AGENTS.md` |
+| Swimlane routing matrix | `ORCHESTRATION.md` | `python scripts/doc_retriever.py ORCHESTRATION.md` |
+| Risk posture + circuit breakers | `IDENTITY.md` | `python scripts/doc_retriever.py IDENTITY.md` |
+| Operational loops / heartbeats | `HEARTBEAT.md` | `python scripts/doc_retriever.py HEARTBEAT.md` |
+| Historical HANDOFF context | `HANDOFF_ARCHIVE.md` | `python scripts/doc_retriever.py HANDOFF_ARCHIVE.md` |
+| Quick command reference | `QUICKREF.md` | `python scripts/doc_retriever.py QUICKREF.md` |
+| Prompt index | `CLAUDE_PROMPTS_INDEX.md` | `python scripts/doc_retriever.py CLAUDE_PROMPTS_INDEX.md` |
+| Recent audit (Apr 15) | `reports/2026-04-15-comprehensive-application-audit.md` | `python scripts/doc_retriever.py reports/2026-04-15-comprehensive-application-audit.md` |
+
+---
+
+## Retrieval Tool
+
+```bash
+# Read a full document on demand
+python scripts/doc_retriever.py <relative-path>
+
+# Example
+python scripts/doc_retriever.py IDENTITY.md
+python scripts/doc_retriever.py reports/2026-04-15-comprehensive-application-audit.md
+```
+
+**Session startup rule:** Read this file (`docs_index.md`) first. Then read `HANDOFF.md`. For deep dives into specific domains, use the retriever instead of loading all docs at once.
