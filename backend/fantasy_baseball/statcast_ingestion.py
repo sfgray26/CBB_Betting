@@ -125,7 +125,10 @@ class PlayerDailyPerformance:
     k_pit: int = 0
     bb_pit: int = 0
     pitches: int = 0
-    
+
+    # Metadata for type-scoped upserts
+    is_pitcher: bool = False
+
     @property
     def avg(self) -> float:
         return self.h / self.ab if self.ab > 0 else 0.0
@@ -245,8 +248,15 @@ class DataQualityChecker:
                 })
         
         # Check 3: Critical columns present
-        required_cols = ['player_name', 'team', 'game_date', 'pa', 'xwoba']
+        # Accept either raw Savant column names or cleaned aliases
+        required_cols = ['player_name', 'team', 'game_date', 'pa']
         missing_cols = [c for c in required_cols if c not in df.columns]
+        xwoba_present = (
+            'estimated_woba_using_speedangle' in df.columns
+            or 'xwoba' in df.columns
+        )
+        if not xwoba_present:
+            missing_cols.append('xwoba (or estimated_woba_using_speedangle)')
         if missing_cols:
             self.issues.append({
                 'severity': 'ERROR',
@@ -281,8 +291,12 @@ class DataQualityChecker:
                 is_valid = False
         
         # Check 6: Reasonable xwoba range (0.000 to 0.600 is typical)
-        if 'xwoba' in df.columns:
-            outlier_xwoba = df[(df['xwoba'] < 0.000) | (df['xwoba'] > 0.700)]['xwoba'].count()
+        xwoba_col = (
+            'estimated_woba_using_speedangle' if 'estimated_woba_using_speedangle' in df.columns
+            else 'xwoba'
+        )
+        if xwoba_col in df.columns:
+            outlier_xwoba = df[(df[xwoba_col] < 0.000) | (df[xwoba_col] > 0.700)][xwoba_col].count()
             if outlier_xwoba > len(df) * 0.05:  # More than 5% outliers
                 self.issues.append({
                     'severity': 'WARNING',
@@ -347,7 +361,11 @@ class StatcastIngestionAgent:
             'sort_col': 'pitches',
             'player_event_sort': 'api_p_release_speed',
             'sort_order': 'desc',
-            'type': 'details',
+            # Note: omitting 'type': 'details' returns the leaderboard-aggregated CSV
+            # (one row per player per game), which includes hardhit_percent,
+            # barrels_per_pa_percent, xwoba, xba, xslg, pa, abs, hits, hrs, etc.
+            # With 'type':'details' the API returns raw pitch events (13k+ rows/day)
+            # with none of the aggregated count/quality columns.
         }
 
         try:
@@ -422,6 +440,10 @@ class StatcastIngestionAgent:
             "Statcast combined: %d batters + %d pitchers = %d total rows for %s",
             n_batters, n_pitchers, len(combined), target_date,
         )
+
+        # Pre-aggregate to daily granularity (resilient to per-pitch data)
+        combined = self._aggregate_to_daily(combined)
+
         return combined
     
     @staticmethod
@@ -447,6 +469,91 @@ class StatcastIngestionAgent:
                 except (ValueError, TypeError):
                     continue
         return default
+
+    def _aggregate_to_daily(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Pre-aggregate per-pitch rows to daily granularity.
+
+        Baseball Savant sometimes returns per-pitch rows instead of daily
+        aggregates. This method groups by (player, game_date, player_type)
+        and SUMs counting stats while AVERAGEing quality metrics.
+
+        Short-circuits if max group size is 1 (leaderboard data passthrough).
+        """
+        if df is None or df.empty:
+            return df
+
+        # Determine group key columns
+        group_cols = []
+        if 'player_id' in df.columns:
+            group_cols.append('player_id')
+        elif 'player_name' in df.columns:
+            group_cols.append('player_name')
+        else:
+            return df  # Cannot group without identifier
+
+        if 'game_date' in df.columns:
+            group_cols.append('game_date')
+        if '_statcast_player_type' in df.columns:
+            group_cols.append('_statcast_player_type')
+
+        # Short-circuit: if max group size is 1, skip aggregation
+        grouped = df.groupby(group_cols, dropna=False)
+        if grouped.size().max() <= 1:
+            return df
+
+        # Columns to SUM (counting stats)
+        sum_cols = [
+            'pa', 'ab', 'abs', 'h', 'hits', 'hit', 'singles', 'single',
+            'doubles', 'double', 'triples', 'triple', 'hr', 'hrs',
+            'home_run', 'home_runs', 'r', 'run', 'runs', 'rbi',
+            'bb', 'walk', 'walks', 'so', 'strikeout', 'strikeouts',
+            'hbp', 'hit_by_pitch', 'sb', 'stolen_base', 'stolen_bases',
+            'stolen_base_2b', 'cs', 'caught_stealing', 'caught_stealing_2b',
+            'pitches', 'er', 'p_strikeout', 'p_walk', 'k', 'k_pit',
+            'bb_pit', 'ip',
+        ]
+
+        # Columns to AVERAGE (quality metrics)
+        mean_cols = [
+            'launch_speed', 'exit_velocity_avg', 'launch_angle',
+            'launch_angle_avg', 'hardhit_percent', 'hard_hit_percent',
+            'hard_hit_pct', 'barrels_per_pa_percent',
+            'barrels_per_bbe_percent', 'barrel_batted_rate', 'barrel_pct',
+            'xba', 'estimated_ba_using_speedangle', 'xslg',
+            'estimated_slg_using_speedangle', 'xwoba',
+            'estimated_woba_using_speedangle', 'woba',
+        ]
+
+        # Identity columns to take FIRST value
+        identity_cols = ['player_name', 'team', 'player_id']
+        identity_cols = [c for c in identity_cols if c in df.columns and c not in group_cols]
+
+        # Filter to columns actually present in the DataFrame
+        present_sum = [c for c in sum_cols if c in df.columns]
+        present_mean = [c for c in mean_cols if c in df.columns]
+
+        # Coerce numeric before aggregation
+        for c in present_sum + present_mean:
+            df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+
+        # Build aggregation dict
+        agg_dict = {}
+        for c in present_sum:
+            agg_dict[c] = 'sum'
+        for c in present_mean:
+            agg_dict[c] = 'mean'
+        for c in identity_cols:
+            agg_dict[c] = 'first'
+
+        result = grouped.agg(agg_dict).reset_index()
+
+        logger.info(
+            "Statcast pre-aggregation: %d rows -> %d daily rows (max group size was %d)",
+            len(df), len(result), grouped.size().max(),
+        )
+
+        return result
 
     def transform_to_performance(self, df: pd.DataFrame) -> List[PlayerDailyPerformance]:
         """
@@ -497,19 +604,23 @@ class StatcastIngestionAgent:
                         game_date=pd.to_datetime(row.get('game_date')).date(),
                         pa=0, ab=0, h=0, doubles=0, triples=0,
                         hr=0, r=0, rbi=0, bb=0, so=0, hbp=0, sb=0, cs=0,
-                        exit_velocity_avg=self._fcol(row, 'exit_velocity_avg'),
-                        launch_angle_avg=self._fcol(row, 'launch_angle_avg'),
-                        hard_hit_pct=self._fcol(row, 'hard_hit_percent') / 100,
-                        barrel_pct=self._fcol(row, 'barrel_batted_rate') / 100,
-                        xba=self._fcol(row, 'xba'),
-                        xslg=self._fcol(row, 'xslg'),
-                        xwoba=self._fcol(row, 'xwoba'),
+                        # Savant column names first, then our clean aliases
+                        exit_velocity_avg=self._fcol(row, 'launch_speed', 'exit_velocity_avg'),
+                        launch_angle_avg=self._fcol(row, 'launch_angle', 'launch_angle_avg'),
+                        # hardhit_percent = leaderboard name; hard_hit_percent = details name
+                        hard_hit_pct=self._fcol(row, 'hardhit_percent', 'hard_hit_percent', 'hard_hit_pct') / 100,
+                        # barrels_per_pa_percent = leaderboard; barrel_batted_rate = details
+                        barrel_pct=self._fcol(row, 'barrels_per_pa_percent', 'barrels_per_bbe_percent', 'barrel_batted_rate', 'barrel_pct') / 100,
+                        xba=self._fcol(row, 'xba', 'estimated_ba_using_speedangle'),
+                        xslg=self._fcol(row, 'xslg', 'estimated_slg_using_speedangle'),
+                        xwoba=self._fcol(row, 'xwoba', 'estimated_woba_using_speedangle'),
                         ip=self._fcol(row, 'ip'),
                         er=self._icol(row, 'er'),
                         # strikeout / walk columns = pitcher Ks / BBs in pitcher-type fetch
-                        k_pit=self._icol(row, 'strikeout', 'k', 'so'),
-                        bb_pit=self._icol(row, 'walk', 'bb'),
+                        k_pit=self._icol(row, 'so', 'p_strikeout', 'strikeout', 'k'),
+                        bb_pit=self._icol(row, 'bb', 'p_walk', 'walk'),
                         pitches=self._icol(row, 'pitches'),
+                        is_pitcher=True,
                     )
                 else:
                     # Bug 4 fix: accept alternate column names Baseball Savant may return.
@@ -521,25 +632,30 @@ class StatcastIngestionAgent:
                         team=str(row.get('team', '')),
                         game_date=pd.to_datetime(row.get('game_date')).date(),
                         pa=self._icol(row, 'pa'),
-                        ab=self._icol(row, 'ab'),
-                        h=self._icol(row, 'hit', 'hits', 'h'),
-                        doubles=self._icol(row, 'double', 'doubles'),
-                        triples=self._icol(row, 'triple', 'triples'),
-                        hr=self._icol(row, 'home_run', 'home_runs', 'hr'),
+                        # leaderboard uses 'abs' for at-bats; details uses 'ab'
+                        ab=self._icol(row, 'abs', 'ab'),
+                        h=self._icol(row, 'hits', 'hit', 'singles', 'h'),
+                        doubles=self._icol(row, 'doubles', 'double'),
+                        triples=self._icol(row, 'triples', 'triple'),
+                        # leaderboard uses 'hrs'; details uses 'home_run'
+                        hr=self._icol(row, 'hrs', 'home_run', 'home_runs', 'hr'),
                         r=self._icol(row, 'run', 'runs', 'r'),
                         rbi=self._icol(row, 'rbi'),
-                        bb=self._icol(row, 'walk', 'walks', 'bb'),
-                        so=self._icol(row, 'strikeout', 'strikeouts', 'so'),
+                        bb=self._icol(row, 'bb', 'walk', 'walks'),
+                        so=self._icol(row, 'so', 'strikeout', 'strikeouts'),
                         hbp=self._icol(row, 'hbp', 'hit_by_pitch'),
-                        sb=self._icol(row, 'sb', 'stolen_base', 'stolen_bases'),
-                        cs=self._icol(row, 'cs', 'caught_stealing'),
-                        exit_velocity_avg=self._fcol(row, 'exit_velocity_avg'),
-                        launch_angle_avg=self._fcol(row, 'launch_angle_avg'),
-                        hard_hit_pct=self._fcol(row, 'hard_hit_percent') / 100,
-                        barrel_pct=self._fcol(row, 'barrel_batted_rate') / 100,
-                        xba=self._fcol(row, 'xba'),
-                        xslg=self._fcol(row, 'xslg'),
-                        xwoba=self._fcol(row, 'xwoba'),
+                        sb=self._icol(row, 'stolen_base_2b', 'sb', 'stolen_base', 'stolen_bases'),
+                        cs=self._icol(row, 'caught_stealing_2b', 'cs', 'caught_stealing'),
+                        # leaderboard / details Savant column names, then our clean aliases
+                        exit_velocity_avg=self._fcol(row, 'launch_speed', 'exit_velocity_avg'),
+                        launch_angle_avg=self._fcol(row, 'launch_angle', 'launch_angle_avg'),
+                        # hardhit_percent = leaderboard name; hard_hit_percent = details name
+                        hard_hit_pct=self._fcol(row, 'hardhit_percent', 'hard_hit_percent', 'hard_hit_pct') / 100,
+                        # barrels_per_pa_percent = leaderboard; barrel_batted_rate = details
+                        barrel_pct=self._fcol(row, 'barrels_per_pa_percent', 'barrels_per_bbe_percent', 'barrel_batted_rate', 'barrel_pct') / 100,
+                        xba=self._fcol(row, 'xba', 'estimated_ba_using_speedangle'),
+                        xslg=self._fcol(row, 'xslg', 'estimated_slg_using_speedangle'),
+                        xwoba=self._fcol(row, 'xwoba', 'estimated_woba_using_speedangle'),
                         ip=0.0, er=0, k_pit=0, bb_pit=0,
                         pitches=self._icol(row, 'pitches'),
                     )
@@ -605,9 +721,30 @@ class StatcastIngestionAgent:
                     bb_pit=perf.bb_pit,
                     pitches=perf.pitches,
                     created_at=now,
-                ).on_conflict_do_update(
-                    index_elements=['player_id', 'game_date'],
-                    set_=dict(
+                )
+
+                # Scope the ON CONFLICT UPDATE by player type to protect
+                # two-way players (e.g. Ohtani).  Pitcher rows must NOT
+                # overwrite batting counting stats with zeros.
+                if perf.is_pitcher:
+                    update_set = dict(
+                        player_name=perf.player_name,
+                        team=perf.team,
+                        exit_velocity_avg=perf.exit_velocity_avg,
+                        launch_angle_avg=perf.launch_angle_avg,
+                        hard_hit_pct=perf.hard_hit_pct,
+                        barrel_pct=perf.barrel_pct,
+                        xba=perf.xba,
+                        xslg=perf.xslg,
+                        xwoba=perf.xwoba,
+                        ip=perf.ip,
+                        er=perf.er,
+                        k_pit=perf.k_pit,
+                        bb_pit=perf.bb_pit,
+                        pitches=perf.pitches,
+                    )
+                else:
+                    update_set = dict(
                         player_name=perf.player_name,
                         team=perf.team,
                         pa=perf.pa,
@@ -640,7 +777,11 @@ class StatcastIngestionAgent:
                         k_pit=perf.k_pit,
                         bb_pit=perf.bb_pit,
                         pitches=perf.pitches,
-                    ),
+                    )
+
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=['player_id', 'game_date'],
+                    set_=update_set,
                 )
                 self.db.execute(stmt)
                 rows_upserted += 1

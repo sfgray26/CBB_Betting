@@ -190,7 +190,9 @@ def _assemble_player_data(player: dict, statcast: dict) -> dict:
     All fields have safe defaults so missing data never raises.
     """
     pid = player["player_id"]
+    player_name = player.get("player_name", pid)
     sc = statcast.get(pid, {})
+    missing_fields: list = []
 
     # Build category projections from available metrics
     cat_projections = []
@@ -199,24 +201,46 @@ def _assemble_player_data(player: dict, statcast: dict) -> dict:
     for cat, key in [("AVG", "avg"), ("HR", "hr"), ("RBI", "rbi"), ("R", "r"), ("SB", "sb")]:
         val = sc.get(key, 0.0)
         if val is not None:
+            z_score = sc.get(f"{key}_z")
+            if z_score is None:
+                logger.warning(
+                    "valuation: player %s missing %s_z (z-score) -- defaulting to 0.0",
+                    player_name, key,
+                )
+                missing_fields.append(f"{key}_z")
+                z_score = 0.0
             cat_projections.append({
                 "category": cat,
                 "value": float(val),
-                "z_score": sc.get(f"{key}_z", 0.0),
+                "z_score": z_score,
             })
 
     # Pitching categories
     for cat, key in [("W", "wins"), ("ERA", "era"), ("WHIP", "whip"), ("K", "k_per_9"), ("SV", "saves")]:
         val = sc.get(key)
         if val is not None:
+            z_score = sc.get(f"{key}_z")
+            if z_score is None:
+                logger.warning(
+                    "valuation: player %s missing %s_z (z-score) -- defaulting to 0.0",
+                    player_name, key,
+                )
+                missing_fields.append(f"{key}_z")
+                z_score = 0.0
             cat_projections.append({
                 "category": cat,
                 "value": float(val),
-                "z_score": sc.get(f"{key}_z", 0.0),
+                "z_score": z_score,
             })
 
     # Composite value: average of available z-scores
     z_scores = [cp["z_score"] for cp in cat_projections if cp["z_score"] != 0.0]
+    if not z_scores:
+        logger.warning(
+            "valuation: player %s has no non-zero z-scores -- composite_z defaults to 0.0 (tier=average)",
+            player_name,
+        )
+        missing_fields.append("composite_z")
     composite_z = sum(z_scores) / len(z_scores) if z_scores else 0.0
 
     # Determine tier from composite z-score
@@ -231,6 +255,33 @@ def _assemble_player_data(player: dict, statcast: dict) -> dict:
     else:
         tier = "unknown"
 
+    matchup_quality = sc.get("matchup_quality")
+    if matchup_quality is None:
+        logger.warning(
+            "valuation: player %s missing matchup_quality -- defaulting to 0.5",
+            player_name,
+        )
+        missing_fields.append("matchup_quality")
+        matchup_quality = 0.5
+
+    start_probability = sc.get("start_probability")
+    if start_probability is None:
+        logger.warning(
+            "valuation: player %s missing start_probability -- defaulting to 1.0",
+            player_name,
+        )
+        missing_fields.append("start_probability")
+        start_probability = 1.0
+
+    recent_form_delta = sc.get("recent_form_delta")
+    if recent_form_delta is None:
+        logger.warning(
+            "valuation: player %s missing recent_form_delta -- defaulting to 0.0",
+            player_name,
+        )
+        missing_fields.append("recent_form_delta")
+        recent_form_delta = 0.0
+
     data_sources = [DataSource.PLAYER_BOARD]
     if sc:
         data_sources.append(DataSource.STATCAST)
@@ -240,13 +291,14 @@ def _assemble_player_data(player: dict, statcast: dict) -> dict:
         "category_projections": cat_projections,
         "composite_z": composite_z,
         "tier": tier,
-        "matchup_quality": sc.get("matchup_quality", 0.5),
-        "start_probability": sc.get("start_probability", 1.0),
-        "recent_form_delta": sc.get("recent_form_delta", 0.0),
+        "matchup_quality": matchup_quality,
+        "start_probability": start_probability,
+        "recent_form_delta": recent_form_delta,
         "platoon_flag": sc.get("platoon_flag"),
         "park_factor": sc.get("park_factor"),
         "data_sources": data_sources,
         "warnings": [],
+        "_missing_fields": missing_fields,
     }
 
 
@@ -280,8 +332,14 @@ async def run_valuation_worker(league_key: str) -> dict:
     # In-memory assembly
     assembled = [_assemble_player_data(p, statcast) for p in players]
 
+    total_assembled = len(assembled)
+    degraded_count = sum(1 for p in assembled if p.get("_missing_fields"))
+    complete_count = total_assembled - degraded_count
     elapsed_ms = int(datetime.now(_ET).timestamp() * 1000) - start_ms
-    logger.info("valuation_worker: assembled %d players in %dms", len(assembled), elapsed_ms)
+    logger.info(
+        "valuation_worker: assembled %d players -- %d complete, %d degraded (missing fields) in %dms",
+        total_assembled, complete_count, degraded_count, elapsed_ms,
+    )
 
     # Upsert all reports in a single transaction
     db = SessionLocal()

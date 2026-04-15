@@ -83,6 +83,10 @@ from backend.admin_endpoints_validation import router as _validation_audit_route
 from backend.admin_backfill_ops_whip import router as _backfill_ops_whip_router
 # END OPS/WHIP BACKFILL ENDPOINT
 
+# STATCAST DIAGNOSTICS ENDPOINTS - REMOVE AFTER STATCAST VALIDATION COMPLETE
+from backend.admin_statcast_diagnostics import router as _statcast_diag_router
+# END STATCAST DIAGNOSTICS ENDPOINTS
+
 from backend.services.recalibration import compute_dynamic_weights
 from backend.services.discord_notifier import send_todays_bets
 from backend.services.sentinel import run_nightly_health_check
@@ -621,6 +625,9 @@ app.include_router(_validation_audit_router, prefix="/admin", tags=["admin"])
 # OPS/WHIP BACKFILL ENDPOINT - REMOVE AFTER TASK 26 COMPLETE
 app.include_router(_backfill_ops_whip_router, tags=["admin"])
 # END OPS/WHIP BACKFILL ENDPOINT
+# STATCAST DIAGNOSTICS ENDPOINTS - REMOVE AFTER STATCAST VALIDATION COMPLETE
+app.include_router(_statcast_diag_router, prefix="/admin", tags=["admin"])
+# END STATCAST DIAGNOSTICS ENDPOINTS
 
 # --- end strangler-fig mounts ---
 
@@ -638,13 +645,134 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/test/count-statcast")
-async def count_statcast():
+@app.get("/admin/investigate/statcast-raw-columns")
+async def investigate_statcast_raw_columns(target_date: str = "2026-04-12", user: str = Depends(verify_admin_api_key)):
+    """
+    Fetch raw Statcast data for a date and return column names + first row.
+    """
+    from pybaseball import statcast
+    import pandas as pd
+    try:
+        df = await asyncio.to_thread(statcast, start_dt=target_date, end_dt=target_date)
+        if df is None or df.empty:
+            return {"status": "empty", "date": target_date}
+        
+        # Replace NaNs for JSON
+        first_row = df.head(1).replace({pd.NA: None, float('nan'): None}).to_dict(orient="records")[0]
+        
+        return {
+            "status": "success",
+            "date": target_date,
+            "columns": df.columns.tolist(),
+            "first_row_sample": first_row
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+@app.get("/admin/investigate/statcast-quality")
+async def investigate_statcast_quality(user: str = Depends(verify_admin_api_key)):
+    """
+    Investigate the rate of zero-quality metrics in statcast_performances.
+    """
     from backend.models import SessionLocal, StatcastPerformance
+    from sqlalchemy import func
     db = SessionLocal()
     try:
-        count = db.query(StatcastPerformance).count()
-        return {"status": "success", "count": count}
+        total = db.query(StatcastPerformance).count()
+        with_ev = db.query(StatcastPerformance).filter(StatcastPerformance.exit_velocity_avg > 0).count()
+        with_xwoba = db.query(StatcastPerformance).filter(StatcastPerformance.xwoba > 0).count()
+        with_cs = db.query(StatcastPerformance).filter(StatcastPerformance.cs > 0).count()
+        with_pitches = db.query(StatcastPerformance).filter(StatcastPerformance.pitches > 0).count()
+        
+        # Sample of records with zero quality metrics
+        sample_zeros = db.query(StatcastPerformance).filter(
+            StatcastPerformance.exit_velocity_avg == 0,
+            StatcastPerformance.xwoba == 0
+        ).limit(10).all()
+
+        return {
+            "total_rows": total,
+            "with_exit_velocity": with_ev,
+            "with_xwoba": with_xwoba,
+            "with_cs": with_cs,
+            "with_pitches": with_pitches,
+            "zero_metric_rate": round((total - with_ev) * 100 / total, 1) if total > 0 else 0,
+            "sample_zeros": [
+                {
+                    "name": p.player_name,
+                    "date": str(p.game_date),
+                    "pa": p.pa,
+                    "pitches": p.pitches,
+                    "k_pit": p.k_pit
+                } for p in sample_zeros
+            ]
+        }
+    finally:
+        db.close()
+
+
+@app.get("/admin/investigate/statcast-raw-columns")
+async def investigate_statcast_raw_columns(target_date: str = "2026-04-12", user: str = Depends(verify_admin_api_key)):
+    """
+    Fetch raw Statcast data for a date and return column names + first row.
+    """
+    from pybaseball import statcast
+    import pandas as pd
+    try:
+        df = await asyncio.to_thread(statcast, start_dt=target_date, end_dt=target_date)
+        if df is None or df.empty:
+            return {"status": "empty", "date": target_date}
+        
+        # Replace NaNs for JSON
+        first_row = df.head(1).replace({pd.NA: None, float('nan'): None}).to_dict(orient="records")[0]
+        
+        return {
+            "status": "success",
+            "date": target_date,
+            "columns": df.columns.tolist(),
+            "first_row_sample": first_row
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+@app.get("/admin/investigate/statcast-quality")
+async def investigate_statcast_quality(user: str = Depends(verify_admin_api_key)):
+    """
+    Investigate the rate of zero-quality metrics in statcast_performances.
+    """
+    from backend.models import SessionLocal, StatcastPerformance
+    from sqlalchemy import func
+    db = SessionLocal()
+    try:
+        total = db.query(StatcastPerformance).count()
+        with_ev = db.query(StatcastPerformance).filter(StatcastPerformance.exit_velocity_avg > 0).count()
+        with_xwoba = db.query(StatcastPerformance).filter(StatcastPerformance.xwoba > 0).count()
+        with_cs = db.query(StatcastPerformance).filter(StatcastPerformance.cs > 0).count()
+        with_pitches = db.query(StatcastPerformance).filter(StatcastPerformance.pitches > 0).count()
+        
+        # Sample of records with zero quality metrics
+        sample_zeros = db.query(StatcastPerformance).filter(
+            StatcastPerformance.exit_velocity_avg == 0,
+            StatcastPerformance.xwoba == 0
+        ).limit(10).all()
+
+        return {
+            "total_rows": total,
+            "with_exit_velocity": with_ev,
+            "with_xwoba": with_xwoba,
+            "with_cs": with_cs,
+            "with_pitches": with_pitches,
+            "zero_metric_rate": round((total - with_ev) * 100 / total, 1) if total > 0 else 0,
+            "sample_zeros": [
+                {
+                    "name": p.player_name,
+                    "date": str(p.game_date),
+                    "pa": p.pa,
+                    "pitches": p.pitches,
+                    "k_pit": p.k_pit
+                } for p in sample_zeros
+            ]
+        }
     finally:
         db.close()
 
@@ -3003,6 +3131,20 @@ async def get_scheduler_status(user: str = Depends(verify_admin_api_key)):
     }
 
 
+@app.get("/admin/pipeline-health")
+async def admin_pipeline_health(
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_admin_api_key),
+):
+    """Check freshness and row counts for all critical fantasy tables."""
+    from backend.services.pipeline_validator import (
+        check_table_health,
+        pipeline_health_summary,
+    )
+    checks = check_table_health(db)
+    return pipeline_health_summary(checks)
+
+
 @app.get("/admin/ingestion/status")
 async def ingestion_status(user: str = Depends(verify_api_key)):
     """Return per-job status for the DailyIngestionOrchestrator, or disabled signal."""
@@ -3279,6 +3421,42 @@ async def backfill_all(
     except Exception as exc:
         logger.error("Master backfill orchestration failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/admin/export-projections", dependencies=[Depends(verify_admin_api_key)])
+async def admin_export_projections():
+    """
+    Export FanGraphs RoS cache to Steamer CSV format.
+    Bridges the FanGraphs daily fetch (3 AM) with load_full_board().
+    Run this after fangraphs_ros job has completed at least once.
+    """
+    from backend.fantasy_baseball.projections_loader import export_ros_to_steamer_csvs
+    from backend.services.daily_ingestion import _ROS_CACHE, _load_persisted_ros_cache
+
+    # Try in-memory cache first, then persisted cache
+    bat_raw = _ROS_CACHE.get("bat")
+    pit_raw = _ROS_CACHE.get("pit")
+
+    if not bat_raw and not pit_raw:
+        bat_raw, pit_raw, cached_at = _load_persisted_ros_cache()
+        if cached_at is None:
+            return {
+                "success": False,
+                "error": "No FanGraphs RoS cache available. Run fangraphs_ros job first.",
+            }
+
+    result = export_ros_to_steamer_csvs(bat_raw or {}, pit_raw or {})
+
+    # Clear the lru_cache so load_full_board() picks up new CSVs
+    from backend.fantasy_baseball.projections_loader import load_full_board
+    load_full_board.cache_clear()
+
+    return {
+        "success": True,
+        "batting_rows": result["batting_rows"],
+        "pitching_rows": result["pitching_rows"],
+        "message": "Projections exported. load_full_board() cache cleared.",
+    }
 
 
 @app.get("/admin/explanations/{decision_id}")

@@ -391,7 +391,9 @@ class DailyIngestionOrchestrator:
     """
 
     def __init__(self):
-        self._scheduler = AsyncIOScheduler()
+        self._scheduler = AsyncIOScheduler(
+            job_defaults={"misfire_grace_time": 300},
+        )
         self._job_status: dict[str, dict] = {}
         self._openclaw: Optional[Any] = None
         # H2 fix: league params computed by _compute_player_scores (14d window),
@@ -621,42 +623,43 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
-        # Player ID mapping sync: TEMPORARY - running NOW for testing (normally 7:00 AM ET)
+        # Player ID mapping sync: 7:00 AM ET (before probable_pitchers needs IDs)
         self._scheduler.add_job(
             self._sync_player_id_mapping,
-            CronTrigger(hour=10, minute=32, timezone=tz),  # TEMPORARY: Immediate execution test (10:32 AM)
+            CronTrigger(hour=7, minute=0, timezone=tz),
             id="player_id_mapping",
             name="Player ID Mapping Sync",
             replace_existing=True,
         )
 
-        # Position eligibility sync: TEMPORARY - running NOW for testing (normally 8:00 AM ET)
+        # Position eligibility sync: 7:15 AM ET (after player_id_mapping)
         self._scheduler.add_job(
             self._sync_position_eligibility,
-            CronTrigger(hour=10, minute=32, timezone=tz),  # TEMPORARY: Immediate execution test (10:32 AM)
+            CronTrigger(hour=7, minute=15, timezone=tz),
             id="position_eligibility",
             name="Position Eligibility Sync",
             replace_existing=True,
         )
 
-        # Probable pitchers sync: TEMPORARY - running NOW for testing (normally 8:30 AM, 4:00 PM, 8:00 PM ET)
+        # Probable pitchers sync: 8:30 AM, 4:00 PM, 8:00 PM ET
+        # Pitchers announced at varying times throughout the day
         self._scheduler.add_job(
             self._sync_probable_pitchers,
-            CronTrigger(hour=10, minute=32, timezone=tz),  # TEMPORARY: Immediate execution test (10:32 AM)
+            CronTrigger(hour=8, minute=30, timezone=tz),
             id="probable_pitchers_morning",
             name="Probable Pitchers Sync (Morning)",
             replace_existing=True,
         )
         self._scheduler.add_job(
             self._sync_probable_pitchers,
-            CronTrigger(hour=10, minute=33, timezone=tz),  # TEMPORARY: Stagger execution by 1 minute
+            CronTrigger(hour=16, minute=0, timezone=tz),
             id="probable_pitchers_afternoon",
             name="Probable Pitchers Sync (Afternoon)",
             replace_existing=True,
         )
         self._scheduler.add_job(
             self._sync_probable_pitchers,
-            CronTrigger(hour=10, minute=34, timezone=tz),  # TEMPORARY: Stagger execution by 1 minute
+            CronTrigger(hour=20, minute=0, timezone=tz),
             id="probable_pitchers_evening",
             name="Probable Pitchers Sync (Evening)",
             replace_existing=True,
@@ -745,13 +748,28 @@ class DailyIngestionOrchestrator:
 
     def _record_job_run(self, job_id: str, status: str, records: int = 0) -> None:
         """Update in-memory job status after a run."""
-        self._job_status[job_id] = {
+        run_info = {
             "name": job_id,
             "enabled": True,
             "last_run": now_et().isoformat(),
             "last_status": status,
             "next_run": self._get_next_run(job_id),
         }
+        self._job_status[job_id] = run_info
+
+        # Propagate probable_pitchers status to all schedule variants so the
+        # morning/afternoon/evening entries don't stay stale (None/None).
+        # _sync_probable_pitchers always records to "probable_pitchers" regardless
+        # of which variant triggered it; this keeps the three variant keys in sync.
+        if job_id == "probable_pitchers":
+            for variant in (
+                "probable_pitchers_morning",
+                "probable_pitchers_afternoon",
+                "probable_pitchers_evening",
+            ):
+                if variant in self._job_status:
+                    self._job_status[variant]["last_run"] = run_info["last_run"]
+                    self._job_status[variant]["last_status"] = run_info["last_status"]
 
     # ------------------------------------------------------------------
     # Job handlers
@@ -882,6 +900,15 @@ class DailyIngestionOrchestrator:
 
                     games_with_odds += 1
                     for odd in odds:
+                        # Skip books that lack a full spread+total line.
+                        # MLBOddsSnapshot columns are NOT NULL by design; the moneyline
+                        # is still captured in raw_payload via other odds rows for the game.
+                        if not (odd.has_spread and odd.has_total):
+                            logger.debug(
+                                "skip mlb odds row: game=%s vendor=%s missing spread/total",
+                                odd.game_id, odd.vendor,
+                            )
+                            continue
                         payload = odd.model_dump()
                         stmt = pg_insert(MLBOddsSnapshot.__table__).values(
                             odds_id=odd.id,
@@ -4358,7 +4385,7 @@ class DailyIngestionOrchestrator:
                         resp = await asyncio.to_thread(
                             requests.get,
                             "https://statsapi.mlb.com/api/v1/schedule",
-                            params={"sportId": 1, "date": date_str, "hydrate": "probablePitcher"},
+                            params={"sportId": 1, "date": date_str, "hydrate": "probablePitcher,team"},
                             timeout=30,
                         )
                         resp.raise_for_status()

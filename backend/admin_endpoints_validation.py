@@ -265,6 +265,45 @@ async def validation_audit():
                         "Re-run POST /admin/backfill/statcast to fill missing dates.",
                         "SELECT COUNT(*) FROM statcast_performances")
 
+        # Check 4.2: Statcast quality metrics — detect zero-filled shell records.
+        # Catches the column-mapping bug where rows are created but
+        # exit_velocity_avg, xwoba, xba, barrel_pct are all zero.
+        statcast_quality = db.execute(text("""
+            SELECT
+                COUNT(*) AS total_rows,
+                COUNT(*) FILTER (
+                    WHERE exit_velocity_avg = 0
+                      AND xwoba = 0
+                      AND xba = 0
+                      AND xslg = 0
+                      AND hard_hit_pct = 0
+                      AND barrel_pct = 0
+                ) AS zero_quality_rows
+            FROM statcast_performances
+        """)).fetchone()
+
+        if statcast_quality and statcast_quality.total_rows > 0:
+            zero_pct = statcast_quality.zero_quality_rows / statcast_quality.total_rows * 100
+            if zero_pct > 50:
+                add_finding(
+                    "high", "Data Quality", "statcast_performances",
+                    f"{statcast_quality.zero_quality_rows}/{statcast_quality.total_rows} rows "
+                    f"({zero_pct:.0f}%) have ALL-ZERO quality metrics "
+                    "(exit_velocity_avg, xwoba, xba, barrel_pct all = 0). Likely column mapping bug.",
+                    "Run POST /admin/backfill/statcast to re-ingest with corrected column mapping.",
+                    "SELECT COUNT(*) FROM statcast_performances "
+                    "WHERE exit_velocity_avg = 0 AND xwoba = 0 AND xba = 0",
+                )
+            elif zero_pct > 20:
+                add_finding(
+                    "medium", "Data Quality", "statcast_performances",
+                    f"{statcast_quality.zero_quality_rows}/{statcast_quality.total_rows} rows "
+                    f"({zero_pct:.0f}%) have zero quality metrics.",
+                    "If above 20%, consider re-running backfill. "
+                    "Some zero rows are legitimate (e.g., pinch runners).",
+                    None,
+                )
+
         # ========================================================================
         # SECTION 5: FOREIGN KEY INTEGRITY
         # ========================================================================

@@ -55,10 +55,7 @@ class CategoryTracker:
             logger.warning("Could not fetch matchup data")
             return []
         
-        my_stats = self._extract_stats(matchup, "team_stats")
-        opp_stats = self._extract_stats(matchup, "team_stats")  # Need opponent_team_key
-        
-        # Actually need to extract both teams separately
+        # Extract both teams separately from matchup["teams"]
         teams = matchup.get("teams", {})
         team_list = []
         count = int(teams.get("count", 0)) if isinstance(teams, dict) else 0

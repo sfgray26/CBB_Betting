@@ -172,7 +172,11 @@ def _fetch_by_player_type(target_date: date, player_type: str):
         'sort_col': 'pitches',
         'player_event_sort': 'api_p_release_speed',
         'sort_order': 'desc',
-        'type': 'details',
+        # Note: omitting 'type': 'details' returns the leaderboard-aggregated CSV
+        # (one row per player per game) which includes hardhit_percent,
+        # barrels_per_pa_percent, xwoba, xba, xslg, pa, abs, hits, hrs, etc.
+        # With 'type':'details' the API returns 13k+ raw pitch events per day
+        # with none of the aggregated quality/count columns — causing all-zero rows.
     }
 
     try:
@@ -291,6 +295,8 @@ def _store_performances(df: pd.DataFrame, db: Session, target_date: date) -> int
         try:
             db.execute(stmt)
             rows_upserted += 1
+            if rows_upserted % 100 == 0:
+                db.commit()
         except Exception as e:
             db.rollback()
             logger.error(
@@ -299,7 +305,7 @@ def _store_performances(df: pd.DataFrame, db: Session, target_date: date) -> int
             )
             continue
 
-    db.commit()
+    db.commit() # Final commit for the day
     logger.info(f"Stored {rows_upserted} {target_date} performances")
     return rows_upserted
 
