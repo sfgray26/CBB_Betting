@@ -54,6 +54,10 @@ from backend.models import (
     engine,
 )
 from backend.services.explainability_layer import ExplanationInput, explain_batch
+from backend.services.probable_pitcher_fallback import (
+    build_recent_starter_candidates,
+    infer_probable_pitcher_for_team,
+)
 from backend.services.snapshot_engine import SnapshotInput, build_snapshot
 from backend.services.backtesting_harness import (
     BacktestInput,
@@ -4671,6 +4675,8 @@ class DailyIngestionOrchestrator:
             today = today_et()
             records_processed = 0
             api_errors = 0
+            inferred_records = 0
+            official_records = 0
 
             db = SessionLocal()
             try:
@@ -4685,6 +4691,12 @@ class DailyIngestionOrchestrator:
                 for m in mappings:
                     mlbam_to_bdl[m.mlbam_id] = m.bdl_id
                 logger.info("_sync_probable_pitchers: Loaded %d MLBAM->BDL mappings", len(mlbam_to_bdl))
+
+                recent_starter_candidates = build_recent_starter_candidates(db, today)
+                logger.info(
+                    "_sync_probable_pitchers: Built fallback starter candidates for %d teams",
+                    len(recent_starter_candidates),
+                )
 
                 # Fetch schedule for next 7 days from MLB Stats API
                 for days_ahead in range(7):
@@ -4732,13 +4744,6 @@ class DailyIngestionOrchestrator:
                                 side_data = teams_data.get(side, {})
                                 opp_data = teams_data.get(opp_side, {})
 
-                                pitcher_data = side_data.get("probablePitcher", {})
-                                if not pitcher_data:
-                                    continue
-
-                                pitcher_name = pitcher_data.get("fullName", "")
-                                mlbam_id = pitcher_data.get("id")
-
                                 team_abbr = _normalize_abbr(
                                     side_data.get("team", {}).get("abbreviation", "")
                                 )
@@ -4749,8 +4754,29 @@ class DailyIngestionOrchestrator:
                                 if not team_abbr:
                                     continue
 
-                                # Resolve BDL ID via MLBAM mapping
-                                bdl_id = mlbam_to_bdl.get(mlbam_id) if mlbam_id else None
+                                pitcher_data = side_data.get("probablePitcher", {})
+                                inferred_candidate = None
+                                if pitcher_data:
+                                    pitcher_name = pitcher_data.get("fullName", "")
+                                    mlbam_id = pitcher_data.get("id")
+                                    bdl_id = mlbam_to_bdl.get(mlbam_id) if mlbam_id else None
+                                    official_records += 1
+                                else:
+                                    inferred_candidate = infer_probable_pitcher_for_team(
+                                        recent_starter_candidates,
+                                        team_abbr,
+                                        target_date,
+                                    )
+                                    if inferred_candidate is None:
+                                        continue
+                                    pitcher_name = inferred_candidate.pitcher_name
+                                    mlbam_id = inferred_candidate.mlbam_id
+                                    bdl_id = inferred_candidate.bdl_player_id
+                                    inferred_records += 1
+
+                                # Resolve BDL ID via MLBAM mapping when only official MLBAM is known
+                                if bdl_id is None and mlbam_id:
+                                    bdl_id = mlbam_to_bdl.get(mlbam_id)
 
                                 # Park factor: home team's park
                                 home_abbr = team_abbr if is_home else opp_abbr
@@ -4797,11 +4823,18 @@ class DailyIngestionOrchestrator:
                 db.commit()
                 elapsed = int((time.monotonic() - t0) * 1000)
                 logger.info(
-                    "SYNC JOB SUCCESS: _sync_probable_pitchers - %d records, %d API errors, %d ms",
-                    records_processed, api_errors, elapsed,
+                    "SYNC JOB SUCCESS: _sync_probable_pitchers - %d records (%d official, %d inferred), %d API errors, %d ms",
+                    records_processed, official_records, inferred_records, api_errors, elapsed,
                 )
                 self._record_job_run("probable_pitchers", "success", records_processed)
-                return {"status": "success", "records": records_processed, "elapsed_ms": elapsed}
+                return {
+                    "status": "success",
+                    "records": records_processed,
+                    "official_records": official_records,
+                    "inferred_records": inferred_records,
+                    "api_errors": api_errors,
+                    "elapsed_ms": elapsed,
+                }
 
             except Exception as exc:
                 db.rollback()

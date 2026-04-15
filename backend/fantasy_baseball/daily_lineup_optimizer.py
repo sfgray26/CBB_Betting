@@ -26,6 +26,11 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from backend.models import SessionLocal
+from backend.services.probable_pitcher_fallback import (
+    infer_probable_pitcher_map,
+    load_probable_pitchers_from_snapshot,
+)
 from backend.utils.env_utils import get_float_env
 
 logger = logging.getLogger(__name__)
@@ -690,9 +695,33 @@ class DailyLineupOptimizer:
     
     def _fetch_probable_pitchers_for_date(self, game_date: str) -> dict:
         """
-        Fetch probable pitchers from MLB Stats API.
+        Fetch probable pitchers for a date.
+
+        Resolution order:
+          1. persisted `probable_pitchers` snapshot table
+          2. MLB Stats API live lookup
+          3. conservative 5-day rotation inference from recent pitcher stats
+
         Returns dict mapping team abbrev to pitcher name.
         """
+        try:
+            from datetime import date as date_type
+
+            parsed_date = date_type.fromisoformat(game_date)
+        except ValueError:
+            parsed_date = None
+
+        if parsed_date is not None:
+            db = SessionLocal()
+            try:
+                persisted = load_probable_pitchers_from_snapshot(db, parsed_date)
+                if persisted:
+                    return persisted
+            except Exception as exc:
+                logger.warning(f"Failed to load probable pitchers from snapshot: {exc}")
+            finally:
+                db.close()
+
         url = "https://statsapi.mlb.com/api/v1/schedule"
         params = {
             "sportId": 1,
@@ -726,8 +755,20 @@ class DailyLineupOptimizer:
                         
         except Exception as e:
             logger.warning(f"Failed to fetch probable pitchers: {e}")
-            
-        return probable
+
+        if probable or parsed_date is None:
+            return probable
+
+        db = SessionLocal()
+        try:
+            inferred = infer_probable_pitcher_map(db, parsed_date)
+            return {team: candidate.pitcher_name.lower() for team, candidate in inferred.items()}
+        except Exception as exc:
+            logger.warning(f"Failed to infer probable pitchers from recent stats: {exc}")
+            return probable
+        finally:
+            db.close()
+
     
     def _is_probable_starter(self, player_name: str, team: str, opponent: str, probable: dict) -> bool:
         """

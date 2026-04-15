@@ -1,9 +1,9 @@
 # HANDOFF.md — MLB Platform Operational State
 
 > **Date:** April 15, 2026 | **Author:** Claude Code (Master Architect)
-> **Status:** Infrastructure stable. Core fantasy pipeline is live. P0 observability and degraded-health semantics are now implemented in code. Decision-quality pipeline remains incomplete.
+> **Status:** Infrastructure stable. Core fantasy pipeline is live. P0 observability and degraded-health semantics are now implemented in code. Probable-pitcher resilience is also now implemented in code, but production verification is still pending.
 >
-> **Current Focus:** Gemini must validate the new ingestion audit trail and degraded-health behavior in production before the next implementation task begins.
+> **Current Focus:** Verify in production that the new audit trail, degraded-health semantics, and probable-pitcher fallback path are all live and populating usable rows.
 >
 > **Full audit:** `reports/2026-04-15-comprehensive-application-audit.md`
 > **Decision forensic:** `reports/2026-04-15-decision-results-investigation.md`
@@ -22,11 +22,12 @@
 - **Tests are green in Railway.** HANDOFF no longer treats the v27 NSB work as uncommitted.
 - **P0 observability is implemented in code.** The advisory-lock boundary now writes durable `DataIngestionLog` rows for success, failure, and skipped runs.
 - **P0 health semantics are implemented in code.** Empty `probable_pitchers` and empty `data_ingestion_logs` are now treated as degraded conditions by the health/validation layer rather than harmless info.
+- **Probable-pitcher fallback is implemented in code.** The sync path now infers conservative 5-day-cycle starters when official probables are missing, and lineup reads now prefer the persisted `probable_pitchers` snapshot before falling back to live/API inference.
 
 ### Live Risks
 1. **Live observability still needs production verification.** The logging path is implemented, but the next scheduled or manual ingestion run must confirm that `data_ingestion_logs` is actually populating in production.
 2. **Environment factors are implemented but orphaned.** Weather and park modules exist, and `SmartLineupSelector` uses them at request time, but there is still no canonical environment snapshot in the DB or scoring pipeline.
-3. **Probable pitchers remain empty.** This is currently an upstream/source-resilience problem, but it materially weakens two-start SP detection, matchup quality, and streaming guidance.
+3. **Probable pitchers still need live verification.** The fallback/resilience path is implemented locally, but production still has to prove that scheduled runs now populate usable `probable_pitchers` rows.
 4. **Decision breadth remains too narrow.** The waiver path now resolves some FAs, but the candidate universe is still shallow and must be monitored after the next run.
 
 ### Blocked by Upstream / External Constraints
@@ -111,10 +112,11 @@ This is the largest fantasy-feature gap still blocking a championship-grade pipe
 **Required outcome:** create a DB-backed environment layer so weather/park factors are not trapped inside request-time ranking logic.
 
 ### 3. Probable Pitcher Source Resilience
-- Current state is still `0` rows.
-- This is not just cosmetic; it weakens matchup quality, two-start pitcher detection, and streamer recommendations.
+- Current production state was `0` rows at last Gemini check.
+- Code now has a bounded fallback: persisted snapshot first, MLB Stats official probables second, and conservative 5-day rotation inference from recent pitcher starts when official probables are absent.
+- This is not just cosmetic; it affects matchup quality, two-start pitcher detection, and streamer recommendations.
 
-**Required outcome:** implement fallback logic rather than waiting on a single source to behave perfectly.
+**Required outcome:** confirm the fallback actually generates live rows and improves downstream probable-pitcher coverage in production.
 
 ### 4. Decision-Universe Breadth
 - FA fuzzy matching is an important fix, but not the endpoint.
@@ -174,7 +176,7 @@ This is the largest fantasy-feature gap still blocking a championship-grade pipe
 |----------|--------|-------|-----|----------------|
 | P0 | Verify `data_ingestion_logs` populates on the next scheduled or manual job run | Claude + Gemini | Next run | Confirms the new audit trail is actually live in production |
 | P0 | Verify `/admin/pipeline-health` and `/admin/validation-audit` now surface empty logs / probable pitchers as degraded | Claude + Gemini | Next run | Confirms false-green health reporting is gone |
-| P1 | Implement probable-pitcher fallback/resilience path | Claude | 2-3 days | Unblocks two-start SP and matchup-quality features |
+| P0 | Verify `probable_pitchers` begins populating from the new fallback/resilience path | Claude + Gemini | Next run | Confirms two-start SP and matchup-quality inputs are no longer single-source brittle |
 | P1 | Monitor post-fix waiver volume and FA fuzzy-match yield | Claude | Next production run | Confirms whether the decision engine is still underfed |
 | P1 | Design and land DB-backed environment snapshots | Claude | 1 week | Moves weather/park from optional request-time logic into the canonical pipeline |
 | P2 | Rationalize MLB provider usage service-by-service | Claude | 2-3 days | Prevents accidental source sprawl while preserving useful redundancy |
@@ -187,11 +189,11 @@ This is the largest fantasy-feature gap still blocking a championship-grade pipe
 
 ---
 
-## GEMINI VALIDATION TASKS (BLOCKING BEFORE P1)
+## GEMINI VALIDATION TASKS
 
 **Owner:** Gemini CLI  
 **Scope:** Railway ops + read-only verification only. No code edits.  
-**Goal:** prove that P0 observability and degraded-health semantics are live in production before Claude starts the next feature task.
+**Goal:** prove that P0 observability, degraded-health semantics, and the probable-pitcher fallback path are live in production.
 
 ### Validation Sequence
 
@@ -213,7 +215,13 @@ railway ssh python scripts/devops/db_query.py "SELECT job_type, status, target_d
 railway ssh python scripts/devops/db_query.py "SELECT COUNT(*) AS row_count, MAX(game_date) AS latest_game_date FROM probable_pitchers;"
 ```
 
-4. **Check pipeline-health endpoint from production**
+4. **Inspect sample probable-pitcher rows to confirm the table is usable**
+
+```bash
+railway ssh python scripts/devops/db_query.py "SELECT game_date, team, pitcher_name, bdl_player_id, mlbam_id, opponent, is_home, is_confirmed, created_at FROM probable_pitchers ORDER BY game_date ASC, team ASC LIMIT 20;"
+```
+
+5. **Check pipeline-health endpoint from production**
 
 Preferred path if `API_URL` and `API_KEY`/admin key env vars are available in Railway:
 
@@ -221,13 +229,13 @@ Preferred path if `API_URL` and `API_KEY`/admin key env vars are available in Ra
 railway ssh python -c "import json, os, requests; base=os.getenv('API_URL') or os.getenv('NEXT_PUBLIC_API_URL') or 'https://cbb-edge-production.up.railway.app'; key=os.getenv('API_KEY') or os.getenv('ADMIN_API_KEY') or os.getenv('X_API_KEY'); headers={'X-API-Key': key} if key else {}; r=requests.get(f'{base}/admin/pipeline-health', headers=headers, timeout=30); print(r.status_code); print(json.dumps(r.json(), indent=2))"
 ```
 
-5. **Check validation-audit endpoint from production**
+6. **Check validation-audit endpoint from production**
 
 ```bash
 railway ssh python -c "import json, os, requests; base=os.getenv('API_URL') or os.getenv('NEXT_PUBLIC_API_URL') or 'https://cbb-edge-production.up.railway.app'; key=os.getenv('API_KEY') or os.getenv('ADMIN_API_KEY') or os.getenv('X_API_KEY'); headers={'X-API-Key': key} if key else {}; r=requests.get(f'{base}/admin/validation-audit', headers=headers, timeout=60); print(r.status_code); data=r.json(); print(json.dumps({'critical': data.get('critical', []), 'high': data.get('high', []), 'medium': data.get('medium', []), 'low': data.get('low', []), 'info': data.get('info', [])}, indent=2))"
 ```
 
-6. **Tail Railway logs for evidence of the new audit trail**
+7. **Tail Railway logs for evidence of the new audit trail and probable-pitcher fallback**
 
 Use one or more of these after a scheduled/manual run:
 
@@ -241,6 +249,8 @@ railway run python scripts/devops/railway_logs_filter.py --job probable_pitchers
 
 - `data_ingestion_logs.row_count > 0`
 - Recent rows show real job types with `SUCCESS`, `FAILED`, or `SKIPPED` status and non-null `started_at`
+- `probable_pitchers.row_count > 0` or logs clearly show why the fallback path produced no eligible starters on that run
+- Sample `probable_pitchers` rows contain team + pitcher names usable by the fantasy stack
 - `/admin/pipeline-health` no longer gives a misleading all-green picture if `data_ingestion_logs` or `probable_pitchers` remain empty
 - `/admin/validation-audit` no longer classifies empty `data_ingestion_logs` as informational-only
 - Gemini can point to at least one concrete production row proving the new audit trail works
@@ -248,6 +258,7 @@ railway run python scripts/devops/railway_logs_filter.py --job probable_pitchers
 ### If Validation Fails
 
 - If `data_ingestion_logs` is still empty after a confirmed ingestion job run: stop and report back before any P1 work begins
+- If `probable_pitchers` is still empty after a confirmed sync run: capture the filtered logs for `probable_pitchers` and report whether the failure is deploy gap, source outage, or fallback miss-rate
 - If endpoint auth fails: report which env var/key was missing and provide the DB-query results instead
 - If the DB rows exist but the endpoints still report incorrectly: capture the endpoint payload and escalate back to Claude
 

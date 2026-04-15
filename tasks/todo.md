@@ -77,6 +77,20 @@
 
 **Review:** Code implementation is complete and targeted validation passed locally (`py_compile`, `tests/test_ingestion_orchestrator.py`, `tests/test_admin_validation_audit.py`). Remaining work is production verification after the next scheduled or manual ingestion run.
 
+### 0D. Probable Pitcher Resilience — Apr 15 (ACTIVE)
+**Spec:** `HANDOFF.md` probable-pitcher resilience section | **Priority:** restore usable starter inputs for two-start and matchup-quality features
+
+| Task | File | Done? |
+|------|------|-------|
+| Add shared conservative fallback helper for probable-pitcher inference | `backend/services/probable_pitcher_fallback.py` | [x] |
+| Use fallback inference in scheduled probable-pitcher sync when official probables are absent | `backend/services/daily_ingestion.py` | [x] |
+| Prefer persisted probable-pitcher snapshots before live API fetches in lineup reads | `backend/fantasy_baseball/daily_lineup_optimizer.py` | [x] |
+| Add regression coverage for snapshot preference and conservative 5-day-cycle inference | `tests/test_ingestion_orchestrator.py`, `tests/test_probable_pitcher_fallback.py` | [x] |
+| Validate compile + targeted probable-pitcher tests | backend + tests | [x] |
+| Verify live `probable_pitchers` population in production | Railway / admin endpoints | [ ] |
+
+**Review:** Local implementation is complete and validated (`py_compile`, `tests/test_ingestion_orchestrator.py`, `tests/test_probable_pitcher_fallback.py`). Remaining work is production verification that scheduled runs now populate usable `probable_pitchers` rows.
+
 ### 0B. HANDOFF Recovery — Apr 15 (ACTIVE)
 **Spec:** `HANDOFF.md` operator recovery rewrite | **Priority:** immediate documentation cleanup so pipeline work resumes from a reliable source of truth
 
