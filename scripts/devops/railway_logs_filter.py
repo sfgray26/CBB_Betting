@@ -9,6 +9,9 @@ Usage (Railway production):
     railway run python scripts/devops/railway_logs_filter.py --job player_id_mapping
     railway run python scripts/devops/railway_logs_filter.py --service Fantasy-App --lines 50
 
+Note: This script invokes `railway logs` locally, so `railway run` is fine here.
+DB scripts should use `railway ssh` instead.
+
 Note: This script assumes it is running INSIDE the Railway container (via railway run).
 If run locally, it reads from stdin or a provided log file.
 """

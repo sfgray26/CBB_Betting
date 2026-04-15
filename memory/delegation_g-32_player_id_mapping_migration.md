@@ -89,23 +89,18 @@ See `HANDOFF.md` section `## PLAYER_ID_MAPPING DEDUPLICATION (April 15, 2026)` f
 If you are reading this file cold, execute exactly:
 
 ```bash
+# IMPORTANT: Use `railway ssh` (runs inside the Railway container) instead of
+# `railway run` (runs locally with unresolvable internal DB hostnames).
+
 # 1. Dry run
-railway run python scripts/migrate_v28_player_id_mapping_fix.py --dry-run
+railway ssh python scripts/migrate_v28_player_id_mapping_fix.py --dry-run
 
 # 2. Execute
-railway run python scripts/migrate_v28_player_id_mapping_fix.py
+railway ssh python scripts/migrate_v28_player_id_mapping_fix.py
 
 # 3. Validate counts
-railway run python -c "
-from sqlalchemy import create_engine, text
-from backend.models import SQLALCHEMY_DATABASE_URI
-engine = create_engine(SQLALCHEMY_DATABASE_URI)
-with engine.connect() as conn:
-    total = conn.execute(text('SELECT COUNT(*) FROM player_id_mapping')).scalar()
-    dupes = conn.execute(text('SELECT COUNT(*) FROM (SELECT bdl_id FROM player_id_mapping WHERE bdl_id IS NOT NULL GROUP BY bdl_id HAVING COUNT(*) > 1) t')).scalar()
-    print(f'Total rows: {total}')
-    print(f'Duplicate bdl_ids: {dupes}')
-"
+railway ssh python scripts/devops/db_query.py "SELECT COUNT(*) FROM player_id_mapping"
+railway ssh python scripts/devops/db_health.py
 
 # 4. Monitor next sync (run manually or wait for 7 AM ET schedule)
 railway logs --follow | grep -i "player_id_mapping\|_pim_bdl_id_uc\|integrity"

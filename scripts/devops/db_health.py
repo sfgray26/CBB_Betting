@@ -6,7 +6,7 @@ Usage (local):
     python scripts/devops/db_health.py
 
 Usage (Railway production):
-    railway run python scripts/devops/db_health.py
+    railway ssh python scripts/devops/db_health.py
 
 Output: JSON health report.
 """

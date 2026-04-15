@@ -6,7 +6,7 @@ Usage (local):
     python scripts/devops/db_query.py "SELECT COUNT(*) FROM player_id_mapping"
 
 Usage (Railway production):
-    railway run python scripts/devops/db_query.py "SELECT COUNT(*) FROM player_id_mapping"
+    railway ssh python scripts/devops/db_query.py "SELECT COUNT(*) FROM player_id_mapping"
 
 Output: JSON array of objects (one per row).
 """
