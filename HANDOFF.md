@@ -3,7 +3,7 @@
 > **Date:** April 15, 2026 | **Author:** Claude Code (Master Architect)
 > **Status:** Infrastructure stable. Core fantasy pipeline is live. P0 observability and degraded-health semantics are now implemented in code. Decision-quality pipeline remains incomplete.
 >
-> **Current Focus:** Verify the new ingestion audit trail on the next live run, then move to probable pitcher resilience, environment-factor integration, and decision-universe breadth.
+> **Current Focus:** Gemini must validate the new ingestion audit trail and degraded-health behavior in production before the next implementation task begins.
 >
 > **Full audit:** `reports/2026-04-15-comprehensive-application-audit.md`
 > **Decision forensic:** `reports/2026-04-15-decision-results-investigation.md`
@@ -177,6 +177,82 @@ This is the largest fantasy-feature gap still blocking a championship-grade pipe
 - UI/UX design work
 - Broader non-fantasy infrastructure cleanup
 - Reopening already-resolved `decision_results` forensics before the next monitored run
+
+---
+
+## GEMINI VALIDATION TASKS (BLOCKING BEFORE P1)
+
+**Owner:** Gemini CLI  
+**Scope:** Railway ops + read-only verification only. No code edits.  
+**Goal:** prove that P0 observability and degraded-health semantics are live in production before Claude starts the next feature task.
+
+### Validation Sequence
+
+1. **Check whether `data_ingestion_logs` has started populating**
+
+```bash
+railway ssh python scripts/devops/db_query.py "SELECT COUNT(*) AS row_count, MAX(started_at) AS latest_started_at, MAX(completed_at) AS latest_completed_at FROM data_ingestion_logs;"
+```
+
+2. **Inspect the newest ingestion log rows**
+
+```bash
+railway ssh python scripts/devops/db_query.py "SELECT job_type, status, target_date, started_at, completed_at, records_processed, records_failed, error_message FROM data_ingestion_logs ORDER BY started_at DESC LIMIT 15;"
+```
+
+3. **Verify whether the `probable_pitchers` table is still empty**
+
+```bash
+railway ssh python scripts/devops/db_query.py "SELECT COUNT(*) AS row_count, MAX(game_date) AS latest_game_date FROM probable_pitchers;"
+```
+
+4. **Check pipeline-health endpoint from production**
+
+Preferred path if `API_URL` and `API_KEY`/admin key env vars are available in Railway:
+
+```bash
+railway ssh python -c "import json, os, requests; base=os.getenv('API_URL') or os.getenv('NEXT_PUBLIC_API_URL') or 'https://cbb-edge-production.up.railway.app'; key=os.getenv('API_KEY') or os.getenv('ADMIN_API_KEY') or os.getenv('X_API_KEY'); headers={'X-API-Key': key} if key else {}; r=requests.get(f'{base}/admin/pipeline-health', headers=headers, timeout=30); print(r.status_code); print(json.dumps(r.json(), indent=2))"
+```
+
+5. **Check validation-audit endpoint from production**
+
+```bash
+railway ssh python -c "import json, os, requests; base=os.getenv('API_URL') or os.getenv('NEXT_PUBLIC_API_URL') or 'https://cbb-edge-production.up.railway.app'; key=os.getenv('API_KEY') or os.getenv('ADMIN_API_KEY') or os.getenv('X_API_KEY'); headers={'X-API-Key': key} if key else {}; r=requests.get(f'{base}/admin/validation-audit', headers=headers, timeout=60); print(r.status_code); data=r.json(); print(json.dumps({'critical': data.get('critical', []), 'high': data.get('high', []), 'medium': data.get('medium', []), 'low': data.get('low', []), 'info': data.get('info', [])}, indent=2))"
+```
+
+6. **Tail Railway logs for evidence of the new audit trail**
+
+Use one or more of these after a scheduled/manual run:
+
+```bash
+railway run python scripts/devops/railway_logs_filter.py --job player_scores --lines 50
+railway run python scripts/devops/railway_logs_filter.py --job decision_optimization --lines 50
+railway run python scripts/devops/railway_logs_filter.py --job probable_pitchers --lines 50
+```
+
+### Success Criteria
+
+- `data_ingestion_logs.row_count > 0`
+- Recent rows show real job types with `SUCCESS`, `FAILED`, or `SKIPPED` status and non-null `started_at`
+- `/admin/pipeline-health` no longer gives a misleading all-green picture if `data_ingestion_logs` or `probable_pitchers` remain empty
+- `/admin/validation-audit` no longer classifies empty `data_ingestion_logs` as informational-only
+- Gemini can point to at least one concrete production row proving the new audit trail works
+
+### If Validation Fails
+
+- If `data_ingestion_logs` is still empty after a confirmed ingestion job run: stop and report back before any P1 work begins
+- If endpoint auth fails: report which env var/key was missing and provide the DB-query results instead
+- If the DB rows exist but the endpoints still report incorrectly: capture the endpoint payload and escalate back to Claude
+
+### Report Back Format
+
+Gemini should update this HANDOFF section with:
+- command(s) run
+- row counts observed
+- one sample `data_ingestion_logs` row
+- `probable_pitchers` count
+- whether `/admin/pipeline-health` and `/admin/validation-audit` now reflect degraded state correctly
+- final verdict: **PASS** or **BLOCKED**
 
 ---
 
