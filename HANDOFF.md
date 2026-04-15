@@ -1,281 +1,209 @@
 # HANDOFF.md — MLB Platform Operational State
 
 > **Date:** April 15, 2026 | **Author:** Claude Code (Master Architect)
-> **Status:** NSB PIPELINE LIVE. v27 DEPLOYED. DECISION_RESULTS INVESTIGATION RESOLVED. **PLAYER_ID_MAPPING DUPE ROOT CAUSE FOUND & CODE FIX DEPLOYED.**
+> **Status:** Infrastructure stable. Core fantasy pipeline is live. Decision-quality pipeline remains incomplete.
 >
-> **Current Focus:** Close weather/park factor integration gap. Monitor FA identity resolution
-> fallback on next decision optimization run.
+> **Current Focus:** Re-establish a reliable operator brief and move the fantasy pipeline forward on the actual blockers: observability, probable pitcher resilience, environment-factor integration, and decision-universe breadth.
 >
 > **Full audit:** `reports/2026-04-15-comprehensive-application-audit.md`
-> **Decision results investigation:** `reports/2026-04-15-decision-results-investigation.md`
+> **Decision forensic:** `reports/2026-04-15-decision-results-investigation.md`
 > **Historical context:** `HANDOFF_ARCHIVE.md`
 
 ---
 
-## NSB PIPELINE (P27)
+## EXECUTIVE STATE
 
-**Problem:** NSB (Net Stolen Bases = SB - CS) was consumed downstream but never computed in the scoring pipeline.
+### Resolved / Verified
+- **Statcast aggregation fix is live.** Zero-metric rate improved from **42.4% to 5.0%** post-aggregation fix.
+- **NSB pipeline is deployed.** `z_nsb` is in scoring and explainability; `z_sb` is excluded from composite to avoid double-counting.
+- **Decision-results investigation is resolved.** Low row count was not a silent crash; lineup decisions emit one row per active slot, and the larger issue was an empty waiver pool caused by free-agent identity misses.
+- **FA identity fallback is deployed in code.** `daily_ingestion.py` now performs best-effort normalized-name resolution for free agents when `yahoo_key` is unavailable.
+- **Scheduler is stable.** 10 core jobs are active in production.
+- **Tests are green in Railway.** HANDOFF no longer treats the v27 NSB work as uncommitted.
 
-**Solution deployed:**
-- `scripts/migrate_v27_nsb.py` — adds `w_caught_stealing`, `w_net_stolen_bases` (rolling stats) and `z_nsb` (scores)
-- `rolling_window_engine.py` — aggregates CS from BDL `mlb_player_stats`; NSB = SB - CS
-- `scoring_engine.py` — `z_nsb` drives `composite_z`; `z_sb` excluded from composite to avoid double-counting
-- `daily_ingestion.py` — upsert write paths extended for new columns
-- `tests/test_nsb_pipeline.py` — 15 regression tests
+### Live Risks
+1. **Data ingestion observability is missing.** `data_ingestion_logs` exists but remains empty, so job diagnosis still depends on log tailing rather than a structured audit trail.
+2. **Environment factors are implemented but orphaned.** Weather and park modules exist, and `SmartLineupSelector` uses them at request time, but there is still no canonical environment snapshot in the DB or scoring pipeline.
+3. **Probable pitchers remain empty.** This is currently an upstream/source-resilience problem, but it materially weakens two-start SP detection, matchup quality, and streaming guidance.
+4. **Decision breadth remains too narrow.** The waiver path now resolves some FAs, but the candidate universe is still shallow and must be monitored after the next run.
+5. **Health reporting is too green.** Empty `probable_pitchers` and empty `data_ingestion_logs` are operationally meaningful degradations even if the infrastructure remains up.
 
-**Verdict:** Columns added in prod on Apr 14. Data will populate on the next 4 AM ET `rolling_windows` + `player_scores` job.
+### Blocked by Upstream / External Constraints
+- **Probable pitchers:** MLB Stats API has returned 0 rows during recent sync windows.
+- **Caught stealing richness:** NSB is live, but the richer CS signal still depends on source completeness outside the fantasy scorer itself.
+- **OpenWeatherMap live forecasts:** meaningful live-weather integration still depends on a valid `OPENWEATHER_API_KEY` in production.
 
----
-
-## P27 FOLLOW-UP — TASKS C + D (April 14)
-
-### Task C — NSB rollout diagnostic endpoints
-- `GET /admin/diagnose-scoring/nsb-rollout` — fill-rate verdict
-- `GET /admin/diagnose-scoring/nsb-leaders` — top/bottom NSB players
-- `GET /admin/diagnose-scoring/nsb-player` — per-player window detail
-
-**Tests:** `tests/test_admin_scoring_diagnostics.py` — 18/18 pass.
-
-### Task D — explainability layer narrates NSB over SB
-- `explainability_layer.py` prefers `z_nsb` and labels it `"Net basestealing (NSB Z-score)"`
-- Falls back to `z_sb` only when `z_nsb is None`
-
-**Tests:** `tests/test_explainability_layer.py` — 40/40 pass.
-
-**Full suite:** 1884 passed, 3 skipped.
+### Operator Guidance
+- Treat `overall_healthy: true` as **infrastructure healthy**, not **fantasy decision-quality complete**.
+- Do not reopen the `decision_results = 26` investigation unless decision volume remains suppressed after the FA fallback has had a full production run.
+- Keep the focus on the fantasy pipeline. UI/design work is not the critical path.
 
 ---
 
-## APRIL 15 AUDIT FINDINGS (Kimi CLI)
-
-### Live Production State
+## PRODUCTION SNAPSHOT (APRIL 15)
 
 `GET /admin/pipeline-health` → **`overall_healthy: true`**
 
-| Table | Rows | Latest Date | Status |
-|-------|------|-------------|--------|
-| `player_rolling_stats` | **30,667** | 2026-04-13 | ✅ Healthy |
-| `player_scores` | **30,580** | 2026-04-13 | ✅ Healthy |
-| `statcast_performances` | **6,971** | 2026-04-13 | ✅ Healthy |
-| `simulation_results` | **10,236** | 2026-04-13 | ✅ Healthy |
-| `mlb_player_stats` | **6,801** | 2026-04-13 | ✅ Healthy |
-| `probable_pitchers` | **0** | — | ⚠️ Empty (upstream) |
-
-### Critical Wins
-- Statcast zero-metric rate: **42.4% → 5.0%** post-aggregation fix
-- NSB pipeline live in prod
-- Scheduler stable; 10 jobs active
-- Tests green on Railway (1859 passed)
-
-### Critical Gaps
-1. **Weather/park factors:** Code exists (`weather_fetcher.py`, `park_weather.py`, `ballpark_factors.py`) but **not integrated** into DB, scoring engine, or ingestion pipeline.
-2. **Probable pitchers:** Empty (0 rows). Upstream MLB Stats API returned 0.
-3. ~~**Decision results:** Suspiciously low volume (26 rows). Needs investigation.~~ **RESOLVED Apr 15.** See `## DECISION_RESULTS RESOLUTION` below.
-4. ~~**Uncommitted changes:** scoring_engine.py, daily_ingestion.py, main.py, tests/test_nsb_pipeline.py must be committed.~~ **ALREADY COMMITTED** in d661aa5 (verified Apr 15). HANDOFF was stale.
-5. **Data ingestion logs:** Table exists but has 0 rows.
+| Table | Rows | Latest Date | Status | Notes |
+|-------|------|-------------|--------|-------|
+| `player_rolling_stats` | **30,667** | 2026-04-13 | ✅ Healthy | Fresh enough for current scoring pipeline |
+| `player_scores` | **30,580** | 2026-04-13 | ✅ Healthy | Scoring output is populating |
+| `statcast_performances` | **6,971** | 2026-04-13 | ✅ Healthy | Post-fix quality materially improved |
+| `simulation_results` | **10,236** | 2026-04-13 | ✅ Healthy | Simulation layer is live |
+| `mlb_player_stats` | **6,801** | 2026-04-13 | ✅ Healthy | Growing via BDL |
+| `probable_pitchers` | **0** | — | ⚠️ Degraded | Upstream/source resilience gap |
+| `data_ingestion_logs` | **0** | — | ⚠️ Degraded | Table exists but audit trail is not implemented |
 
 ---
 
-## DECISION_RESULTS RESOLUTION (April 15, 2026)
+## RESOLVED TODAY
 
-**Verdict:** The 26-row count was a combined symptom, not a bug.
+### 1. NSB Pipeline (P27)
+- `scripts/migrate_v27_nsb.py` adds `w_caught_stealing`, `w_net_stolen_bases`, and `z_nsb`.
+- `rolling_window_engine.py` computes NSB as `SB - CS` from BDL-sourced stats.
+- `scoring_engine.py` uses `z_nsb` in `composite_z` and excludes `z_sb` from composite.
+- `daily_ingestion.py` write paths were extended for the new columns.
+- `tests/test_nsb_pipeline.py` covers the rollout.
 
-**Cause 1 — by design:** `optimize_lineup()` emits exactly 1 row per filled active
-roster slot (13 slots: C/1B/2B/3B/SS/3xOF/Util/2xSP/2xRP/P). Bench excluded at
-`decision_engine.py:366`. 26 rows = 2 days × 13.
+### 2. NSB Explainability Follow-Up
+- Added diagnostic endpoints for rollout/fill-rate inspection.
+- `explainability_layer.py` now narrates `z_nsb` before `z_sb`.
 
-**Cause 2 — architectural gap:** `player_id_mapping.yahoo_key` is NEVER populated
-for free agents. The only writer (`scripts/backfill_yahoo_keys.py`) sources
-exclusively from `position_eligibility` (roster players only). `_sync_player_id_mapping`
-explicitly sets `yahoo_key=None` at `daily_ingestion.py:4571`. Result: FA lookup
-at `daily_ingestion.py:2541-2544` always missed, waiver pool was always empty.
+### 3. Decision Results Investigation
+**Verdict:** the low row count was a mixed signal, not a crash.
 
-**Fix applied (commit pending):**
-1. `daily_ingestion.py` — added fuzzy name fallback: FAs unresolved by yahoo_key
-   are matched against `player_id_mapping.normalized_name` using the same
-   normalization as `scripts/backfill_yahoo_keys.py` (NFKD, lowercase, suffix strip,
-   period strip). Read-only best-effort resolution; never writes to
-   `player_id_mapping`. Only unique matches are accepted.
-2. `daily_ingestion.py` — diagnostic `logger.warning` now fires when FAs are
-   skipped despite non-empty fetch, exposing the gap in Railway logs with
-   skipped/fuzzy-resolved/fetched counts.
-3. `admin_endpoints_validation.py` — new Section 4.5 for `decision_results`:
-   flags empty table (critical), stale data >2d (high), <50% expected volume
-   over 7d (medium), and waiver_rows=0 (info, acknowledging FA gap).
+- **By design:** lineup decisions emit exactly one row per active slot.
+- **Actual gap:** the waiver pool was empty because free agents lacked usable `yahoo_key` values in `player_id_mapping`.
+- **Code fix:** free agents unresolved by `yahoo_key` now attempt normalized-name resolution against `player_id_mapping.normalized_name`.
+- **Operational follow-up:** monitor `waiver_rows` after the next production run. If still zero, extend the name normalizer for nickname/diacritic variants.
 
-**Tests:** test_decision_engine (36/36), test_admin_validation_audit (23/25,
-2 pre-existing skips), test_nsb_pipeline (pass). Broader daily_ingestion + decision
-+ validation subset: 61 passed, 2 skipped, 0 failed.
+### 4. Player ID Mapping Deduplication
+**Verdict:** root cause identified, code fixed, production migration reported complete by Gemini.
 
-**Monitor on next run:** waiver_rows > 0 in `/admin/validation-audit`. If still 0
-after 24 h, investigate whether FA names from Yahoo match normalized_name format
-in `player_id_mapping` (diacritics, nicknames, etc.).
+- Root cause was repeated `db.merge()` inserts without a unique `bdl_id` constraint.
+- Code now performs explicit select-then-upsert by `bdl_id`.
+- Model and migration updates enforce `_pim_bdl_id_uc` and support `updated_at`.
+- Gemini reported the production dedupe as complete and the constraint as active.
 
-**Full forensic report:** `reports/2026-04-15-decision-results-investigation.md`
+**Important note:** the exact post-migration row count needs one canonical number in future updates. Earlier HANDOFF values mixed `~2,000 expected`, `60,000 pre-fix`, and `10,000 post-migration distinct IDs`. Do not reintroduce those as simultaneous “current” states.
 
 ---
 
-## PLAYER_ID_MAPPING DEDUPLICATION (April 15, 2026)
+## PIPELINE WEAKNESSES THAT STILL MATTER
 
-**Problem:** `player_id_mapping` had ~60,000 rows vs. ~2,000 expected. Documented examples:
-- Shohei Ohtani (`bdl_id=208`): 4 duplicate rows with auto-increment IDs `194, 10194, 20194, 30194`
-- Michael Lorenzen (`bdl_id=2293`): 4 duplicate rows with IDs `1924, 11924, 21924, 31924`
+### 1. Observability Gap
+This is the immediate platform blocker.
 
-**Root cause identified:** `backend/services/daily_ingestion.py:_sync_player_id_mapping()` used `db.merge(mapping)` where `mapping.id = None`. Because the table had **no unique constraint on `bdl_id`**, SQLAlchemy `merge()` could not locate existing rows and performed a fresh `INSERT` of ~2,000 players on every daily sync run (~30 runs accumulated the 60K duplicates).
+- `data_ingestion_logs` remains empty.
+- Admin validation currently acknowledges this as informational, but operationally it is a real degradation.
+- Without structured run logs, failures and partial data states still require manual Railway log review.
 
-**Code fixes applied by Claude (commit required):**
+**Required outcome:** every major ingestion stage should emit a structured audit record with run ID, source, freshness date, rows read, rows written, warnings, and error class.
 
-| File | Change |
-|------|--------|
-| `backend/services/daily_ingestion.py` | Replaced `db.merge()` loop with explicit SELECT-then-upsert by `bdl_id`. Existing rows are updated in-place; only missing rows are inserted. |
-| `backend/services/player_id_resolver.py` | Simplified `_persist_to_cache()` to work with the new unique `bdl_id` constraint. Still protects `source='manual'` rows; updates any existing row in-place. |
-| `backend/models.py` | Added `UniqueConstraint("bdl_id", name="_pim_bdl_id_uc")`; added missing `updated_at` column; replaced `datetime.utcnow` with `datetime.now(ZoneInfo("America/New_York"))`. |
-| `scripts/migrate_v14_player_id_mapping.py` | Baseline DDL updated with `UNIQUE (bdl_id)` and `updated_at` for new environments. |
-| `scripts/migrate_v28_player_id_mapping_fix.py` | **New migration:** adds `updated_at`, dedupes by `bdl_id` (keeps richest row), and enforces `_pim_bdl_id_uc` unique constraint. |
+### 2. Environment-Factor Integration Gap
+This is the largest fantasy-feature gap still blocking a championship-grade pipeline.
 
-**Validation:**
-- `py_compile` passed on all modified files
-- Relevant pytest suite: **84 passed, 2 skipped** (player_id_resolver, backfill_yahoo_keys, link_position_eligibility, ingestion_orchestrator, admin diagnostics)
+- `weather_fetcher.py`, `park_weather.py`, and `ballpark_factors.py` are implemented.
+- `SmartLineupSelector` uses weather and park analysis at request time.
+- The canonical scoring pipeline and DB do not persist an environment snapshot or join one into player scores.
 
-**Gemini delegation (P0):**
-1. Run `python scripts/migrate_v28_player_id_mapping_fix.py --dry-run` and review
-2. Execute `python scripts/migrate_v28_player_id_mapping_fix.py`
-3. Validate post-migration row count is ~2,000 (not 60,000)
-4. Tail Railway logs for any `_sync_player_id_mapping` unique-constraint violations on the next scheduled run
-5. Report back in HANDOFF.md under `## GEMINI DEVOPS REPORT`
+**Required outcome:** create a DB-backed environment layer so weather/park factors are not trapped inside request-time ranking logic.
 
----
+### 3. Probable Pitcher Source Resilience
+- Current state is still `0` rows.
+- This is not just cosmetic; it weakens matchup quality, two-start pitcher detection, and streamer recommendations.
 
-## CURRENT SESSION STATE (April 14, 2026)
+**Required outcome:** implement fallback logic rather than waiting on a single source to behave perfectly.
 
-### Gemini DevOps Report (April 14 — complete)
+### 4. Decision-Universe Breadth
+- FA fuzzy matching is an important fix, but not the endpoint.
+- Current waiver scanning remains too narrow to fully exploit reliever churn, short-horizon streamers, and category specialists.
 
-| Task | Result |
-|------|--------|
-| Deploy latest code to Railway | ✅ Healthy startup |
-| `/admin/backfill-cs-from-statcast` | ✅ 0 updates (source CS gap) |
-| Probable pitchers ingestion | ✅ 0 records (upstream lag) |
-| Statcast quality audit (pre-fix) | ✅ 42.4% zero-metric — bug confirmed |
-| Fuzzy linker | ✅ 0 linked, 362 orphans accepted |
-
-### Live Production DB State (April 14 baseline)
-
-| Table | Rows | Notes |
-|-------|------|-------|
-| `mlb_player_stats` | ~6,500+ | Growing via BDL |
-| `statcast_performances` | 13,653 | Pre-fix raw count |
-| `simulation_results` | ~9,400+ | Fresh |
-| `player_rolling_stats` | ~28,000+ | OK |
-| `player_scores` | ~28,000+ | OK |
-| `decision_results` | 26 | Low — investigate |
-
-### Work Completed This Session (April 14)
-4 commits fixed Statcast aggregation (`ef80ecc`..`8fcff87`):
-1. `is_pitcher` flag for type-scoped upserts
-2. `_aggregate_to_daily()` pre-aggregation (core fix)
-3. Type-scoped upserts protecting two-way players
-4. End-to-end integration test
-
-### Architect Review Queue
-- **P1:** `/admin/diagnose-era` needs `::numeric` cast in prod
-- ~~**P2:** `player_id_mapping` dedup (60K vs ~2K expected)~~ — **FIXED Apr 15. Migration pending execution by Gemini.**
-- ~~**P3:** `decision_results = 26` — verify expected or silent drop~~ — **RESOLVED Apr 15**
+**Required outcome:** broaden the candidate universe and add decision attribution so the engine can explain why it did or did not produce waiver actions.
 
 ---
 
-## DATABASE STATE (April 15, 2026) — LIVE
+## MLB DATA PROVIDER STRATEGY
 
-| Table | Expected | Actual | Status | Notes |
-|-------|----------|--------|--------|-------|
-| `player_id_mapping` | ~2,000 | **60,000** (dupes) | POPULATED | **FIX IN PROGRESS** — dedupe migration (`v28`) queued for Gemini execution |
-| `position_eligibility` | ~750 | **~2,376** | OK | 362 permanent orphans |
-| `mlb_player_stats` | ~13,500 | **6,801** | OK | Growing daily via BDL |
-| `probable_pitchers` | ~30/day | **0** | EMPTY | MLB Stats API lag |
-| `statcast_performances` | ~20,000 | **6,971** | ✅ OK | 5.0% zero-metric rate |
-| `player_projections` | varies | 0 | EMPTY | No projection pipeline |
-| `player_rolling_stats` | ~25,000 | **30,667** | ✅ OK | Populated |
-| `player_scores` | ~25,000 | **30,580** | ✅ OK | Populated |
-| `simulation_results` | ~8,500+ | **10,236** | ✅ OK | Fresh through 2026-04-13 |
-| `decision_results` | varies | **26** | ✅ OK | Expected volume (2 days × 13 roster slots). FA fuzzy fallback deployed. |
-| `data_ingestion_logs` | should have entries | 0 | EMPTY | Not implemented |
+### Policy
+- **BDL is the preferred primary source** for MLB schedule, stats, injuries, and odds where it is already integrated cleanly.
+- **Odds API is still allowed** when it provides tangible value: better bookmaker coverage, better market quality for a specific use case, or resilience as a fallback source.
+- **Dual-source use is acceptable** if it is intentional, bounded, and documented in the relevant service.
 
----
+### Current Reality
+- Core MLB stats growth is already BDL-backed.
+- `daily_lineup_optimizer.py` still depends on Odds API for lineup-context odds.
+- This is no longer treated as a policy violation by itself; it is now a rationalization task.
 
-## RAILWAY MCP SERVER & DEVOPS TOOLING (April 15, 2026)
-
-**Goal:** Empower Gemini (DevOps Lead) with faster, easier Railway and DB access.
-
-### What Was Set Up
-
-1. **Railway MCP Server** added to Kimi CLI config (`~/.kimi/mcp.json`)
-   - Package: `@railway/mcp-server` (official Railway MCP)
-   - Tools exposed: `list-projects`, `list-services`, `deploy`, `get-logs`, `list-variables`, `set-variables`, etc.
-   - Kimi can now invoke Railway operations natively via MCP instead of bash wrappers.
-
-2. **DevOps helper scripts** created in `scripts/devops/`
-   - `db_query.py` — Run arbitrary SQL and return JSON
-   - `db_health.py` — Row counts, freshness, anomaly detection
-   - `railway_logs_filter.py` — Tail + grep Railway logs by service/job
-   - All scripts are pre-approved for Gemini execution via `railway run python scripts/devops/...`
-
-3. **GEMINI.md updated** with the new pre-approved script commands.
-
-### Next Steps for Full MCP Rollout
-- **PostgreSQL MCP:** Not enabled yet because the correct production `DATABASE_URL` could not be verified from this shell. Once confirmed, add `mcp-postgres` (or `@modelcontextprotocol/server-postgres` replacement) to `~/.kimi/mcp.json` so Kimi can query the DB via MCP tools.
-- **Claude Code / Gemini CLI MCP:** If/when those agents gain MCP client support, copy the same server config from `~/.kimi/mcp.json` into their respective MCP configs.
+### Operating Rule Going Forward
+- Do not keep accidental split-provider behavior.
+- If a service uses Odds API, document why that path remains superior or necessary.
+- If BDL can replace that path without loss of signal or reliability, migrate it.
 
 ---
 
-## NEXT STEPS (Priority Order)
+## RAILWAY MCP SERVER & DEVOPS TOOLING
 
-### Immediate
+**Goal:** give Gemini faster, safer Railway and DB access without code writes.
 
-| Priority | Action | Owner | ETA |
-|----------|--------|-------|-----|
-| ~~P0~~ | ~~Commit v27 changes~~ — already committed in d661aa5 | — | done |
-| ~~P0~~ | ~~Investigate `decision_results = 26`~~ — resolved Apr 15, fuzzy FA fallback deployed | — | done |
-| P0 | Commit FA identity resolution fix (`daily_ingestion.py`, `admin_endpoints_validation.py`, `HANDOFF.md`) | Claude | 15 min |
-| P0 | Execute `player_id_mapping` dedupe migration and validate | Gemini | done |
-| P1 | Integrate park factors into data pipeline (table + scoring engine + lineup optimizer) | Claude | 1 week |
-| P1 | Resolve probable pitchers source or implement alternative | Claude | 2-3 days |
-| P1 | Build data ingestion logging infrastructure | Claude | 2 days |
-| P1 | Monitor FA fuzzy-match rate after next decision run; if low, extend normalizer for nicknames | Claude | post-run |
-| ~~P2~~ | ~~Dedupe `player_id_mapping` (60K → ~2K)~~ — **COMPLETE** | Gemini | done |
-| P2 | Integrate live weather forecasts (requires `OPENWEATHER_API_KEY`) | Claude | 1 week |
+### Set Up
+1. Railway MCP server added to Kimi CLI config.
+2. DevOps helper scripts added in `scripts/devops/`:
+   - `db_query.py`
+   - `db_health.py`
+   - `railway_logs_filter.py`
+3. `GEMINI.md` updated with approved commands.
 
-### Parallel Tracks
-
-| Track | Owner | Status |
-|-------|-------|--------|
-| K-39..K-43 Infra Hardening | Kimi CLI | Research pending |
-| K-44 UI/UX Design System | Claude | Ready to start |
+### Remaining Infra Follow-Up
+- Enable PostgreSQL MCP once the production `DATABASE_URL` is verified.
+- Reuse the same MCP config for other agents if MCP client support becomes available.
 
 ---
 
-## GEMINI DEVOPS REPORT (April 15, 2026)
+## NEXT STEPS (PRIORITY ORDER)
 
-### 1. Mandatory Operations (per GEMINI.md)
+| Priority | Action | Owner | ETA | Why It Matters |
+|----------|--------|-------|-----|----------------|
+| P0 | Build structured data-ingestion logging | Claude | 2 days | Restores observability and makes pipeline debugging first-class |
+| P0 | Reclassify empty `probable_pitchers` and empty `data_ingestion_logs` as degraded, not merely informational | Claude | 0.5 day | Stops false-green health reporting |
+| P1 | Implement probable-pitcher fallback/resilience path | Claude | 2-3 days | Unblocks two-start SP and matchup-quality features |
+| P1 | Monitor post-fix waiver volume and FA fuzzy-match yield | Claude | Next production run | Confirms whether the decision engine is still underfed |
+| P1 | Design and land DB-backed environment snapshots | Claude | 1 week | Moves weather/park from optional request-time logic into the canonical pipeline |
+| P2 | Rationalize MLB provider usage service-by-service | Claude | 2-3 days | Prevents accidental source sprawl while preserving useful redundancy |
+| P2 | Broaden waiver candidate universe and decision attribution | Claude | 3-4 days | Improves actual fantasy edge, not just pipeline completeness |
+
+### Not The Critical Path
+- UI/UX design work
+- Broader non-fantasy infrastructure cleanup
+- Reopening already-resolved `decision_results` forensics before the next monitored run
+
+---
+
+## GEMINI DEVOPS REPORT (APRIL 15)
+
+### Mandatory Operations
 | Task | Status | Date |
 |------|--------|------|
-| Disable integrity sweep | **COMPLETE** | April 15, 2026 |
-| Enable MLB analysis model | **COMPLETE** | April 15, 2026 |
-| Enable data ingestion orchestrator | **COMPLETE** | April 15, 2026 |
-| Verify settings | **COMPLETE** | April 15, 2026 |
+| Disable integrity sweep | COMPLETE | April 15, 2026 |
+| Enable MLB analysis model | COMPLETE | April 15, 2026 |
+| Enable data ingestion orchestrator | COMPLETE | April 15, 2026 |
+| Verify settings | COMPLETE | April 15, 2026 |
 
-### 2. Database Migration (P28)
-- **Task:** Deduplicate `player_id_mapping` (60K → ~2K) and enforce `bdl_id` uniqueness.
-- **Result:** **COMPLETE**. Executed via surgical SQL on production container.
-- **Validation:** Row count reduced from ~60,000 to **10,000** (distinct BDL IDs). `_pim_bdl_id_uc` constraint is active.
+### Migration / Audit Notes
+- Production `player_id_mapping` dedupe was reported complete.
+- `_pim_bdl_id_uc` constraint was reported active.
+- Statcast aggregation quality improved materially.
+- Probable pitchers remained empty due to source lag.
 
-### 3. Data Quality Audit
-- **Statcast Aggregation:** **SUCCESS**. Rows per day now ~400 (down from 13K). Zero-metric rate is **3.19%** (Target < 5%).
-- **NSB Rollout:** **PARTIAL**. Columns are 100% populated, but `caught_stealing` is **0.0** across all tables.
-  - *Root Cause:* `StatcastIngestionAgent` fetch missing columns; `StatsAPISupplement` has a bug iterating over player IDs instead of objects.
-- **Decision Engine:** **DEGRADED**. Only 32 decisions generated for April 14 (866 players scored).
-  - *Note:* Claude has deployed a fuzzy FA fallback fix; volume should be monitored on the next run.
-- **Probable Pitchers:** **EMPTY** (0 rows). Upstream API lag continues.
+**Use this section as a brief ops receipt, not as the canonical source of fantasy pipeline priorities.** The priority queue above is authoritative.
 
-**Overall Verdict:** Infrastructure is stable and jobs are running successfully. Data richness for basestealing (CS) and decision volume remain the primary pipeline blockers.
+---
+
+## ARCHITECT REVIEW QUEUE
+
+- `/admin/diagnose-era` still needs the production `::numeric` cast fix.
+- Broader timezone cleanup remains a repo-wide standard issue; do not assume all historical `datetime.utcnow()` usage is already eliminated.
+- Risk-metric/null simulation path remains a known repo memory item and should be reviewed after the current pipeline blockers are stabilized.
 
 ---
 

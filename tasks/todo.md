@@ -1,5 +1,5 @@
 # CBB Edge — Task Tracker
-*Updated: 2026-04-02 (implementation checkpoint) | Architect: Claude Sonnet 4.6 | Mission: Fantasy Baseball stabilization Phase A*
+*Updated: 2026-04-15 (handoff recovery checkpoint) | Architect: Claude Sonnet 4.6 | Mission: Fantasy Baseball stabilization Phase A*
 
 > **Canonical source:** `HANDOFF.md` — full specs, ADRs, exit criteria for each EPIC.
 > This file is the status board. HANDOFF.md has the implementation detail.
@@ -64,6 +64,19 @@
 | Split retryable vs fatal job queue failures | `backend/services/job_queue_service.py` | [ ] |
 
 **Checkpoint verification completed:** `py_compile` on touched backend files plus targeted pytest subset (`test_ingestion_orchestrator.py`, `test_fantasy_stat_contract.py`, `test_waiver_integration.py`, `test_weather_fetcher.py`) are green, and `frontend` passes `npx tsc --noEmit`.
+
+### 0B. HANDOFF Recovery — Apr 15 (ACTIVE)
+**Spec:** `HANDOFF.md` operator recovery rewrite | **Priority:** immediate documentation cleanup so pipeline work resumes from a reliable source of truth
+
+| Task | File | Done? |
+|------|------|-------|
+| Remove contradictory pipeline status across resolved vs pending items | `HANDOFF.md` | [x] |
+| Reframe executive state into resolved, live risks, upstream blockers, and next actions | `HANDOFF.md` | [x] |
+| Clarify MLB provider policy: BDL primary, Odds API allowed where additive or resilient | `HANDOFF.md`, `CLAUDE.md` | [x] |
+| Tighten fantasy pipeline priority queue around observability, probable pitchers, environment factors, and decision breadth | `HANDOFF.md` | [x] |
+| Add review notes and confirm cold-start readability | `HANDOFF.md` | [x] |
+
+**Review:** HANDOFF now distinguishes infrastructure health from fantasy decision-quality health, removes contradictory migration/commit state, and documents a deliberate dual-source MLB data policy with BDL preferred and Odds API allowed where it adds signal or resilience.
 
 ---
 
