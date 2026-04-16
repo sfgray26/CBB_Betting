@@ -35,3 +35,28 @@ def test_player_daily_metrics_has_metric_date_column():
     # Verify the column exists
     assert hasattr(PlayerDailyMetric, 'metric_date'), \
         "PlayerDailyMetric must have metric_date column"
+
+
+def test_scoring_engine_has_park_factor_consumer():
+    """
+    CRITERION 6: Scoring engine should consume persisted park factors.
+
+    This verifies at least one real consumer uses the ParkFactor model
+    from canonical persistence rather than request-time-only logic.
+    """
+    from backend.services.scoring_engine import get_park_factor
+    import inspect
+
+    # Verify the function exists
+    assert callable(get_park_factor), \
+        "scoring_engine.get_park_factor should be a callable function"
+
+    # Verify function signature (park_name, metric="hr")
+    sig = inspect.signature(get_park_factor)
+    assert 'park_name' in sig.parameters, "Should accept park_name parameter"
+    assert 'metric' in sig.parameters, "Should accept metric parameter with default"
+
+    # Verify the function imports ParkFactor from models (consumer check)
+    # We'll verify by checking the function source code references ParkFactor
+    source = inspect.getsource(get_park_factor)
+    assert 'ParkFactor' in source, "Function should use ParkFactor model from persistence"

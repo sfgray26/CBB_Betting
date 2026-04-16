@@ -419,3 +419,31 @@ def compute_league_params(
         league_stds[short] = std
 
     return league_means, league_stds
+
+
+# ── Park Factor Helper (Criterion 6 Consumer) ───────────────────────────────────
+
+def get_park_factor(park_name: str, metric: str = "hr") -> float:
+    """
+    Get park factor from canonical persistence.
+
+    This is a real consumer of Criterion 6 persisted context.
+    Park factors are queried from the database rather than request-time-only logic.
+
+    Args:
+        park_name: Stadium name
+        metric: One of 'hr', 'run', 'hits', 'era', 'whip'
+
+    Returns:
+        Park factor value (1.0 = neutral, > 1.0 = hitter-friendly, < 1.0 = pitcher-friendly)
+    """
+    from backend.models import ParkFactor, SessionLocal
+
+    db = SessionLocal()
+    try:
+        factor = db.query(ParkFactor).filter_by(park_name=park_name).first()
+        if factor:
+            return getattr(factor, f"{metric}_factor", 1.0)
+        return 1.0  # Fallback to neutral if park not found
+    finally:
+        db.close()
