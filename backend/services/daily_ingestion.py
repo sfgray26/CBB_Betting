@@ -4287,7 +4287,7 @@ class DailyIngestionOrchestrator:
                 SLA_ENSEMBLE_H = 12
                 result = db.execute(
                     text(
-                        "SELECT MAX(date) FROM player_daily_metrics "
+                        "SELECT MAX(metric_date) FROM player_daily_metrics "
                         "WHERE data_source = 'ensemble_blend'"
                     )
                 )
@@ -4310,7 +4310,7 @@ class DailyIngestionOrchestrator:
                 SLA_STATCAST_H = 6
                 result = db.execute(
                     text(
-                        "SELECT MAX(date) FROM player_daily_metrics "
+                        "SELECT MAX(metric_date) FROM player_daily_metrics "
                         "WHERE data_source = 'statcast'"
                     )
                 )
