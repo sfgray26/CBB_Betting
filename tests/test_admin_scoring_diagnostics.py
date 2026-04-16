@@ -31,6 +31,7 @@ EXPECTED_PATHS = {
     "/diagnose-scoring/nsb-leaders",
     "/diagnose-scoring/nsb-player",
     "/diagnose-scoring/layer3-freshness",
+    "/diagnose-decision/pipeline-freshness",
 }
 
 
@@ -512,6 +513,274 @@ def test_layer3_freshness_partial_data(monkeypatch):
     assert result["player_rolling_stats"]["latest_as_of_date"] == "2026-04-15"
     assert result["player_scores"]["latest_as_of_date"] is None
     assert "partial" in result["message"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Decision Pipeline Freshness endpoint tests (P17-P19)
+# ---------------------------------------------------------------------------
+
+
+def test_decision_freshness_verdict_computation():
+    """Verdict logic covers all expected states for decision pipeline."""
+    today = date(2026, 4, 15)
+    yesterday = date(2026, 4, 14)
+    three_days_ago = date(2026, 4, 12)
+
+    # Both fresh
+    assert diag._compute_decision_freshness_verdict(
+        True, True, yesterday, yesterday
+    ) == "healthy"
+    # Both stale
+    assert diag._compute_decision_freshness_verdict(
+        False, False, three_days_ago, three_days_ago
+    ) == "stale"
+    # One fresh, one stale
+    assert diag._compute_decision_freshness_verdict(
+        True, False, yesterday, three_days_ago
+    ) == "partial"
+    # Both missing
+    assert diag._compute_decision_freshness_verdict(
+        None, None, None, None
+    ) == "missing"
+    # One missing
+    assert diag._compute_decision_freshness_verdict(
+        True, None, yesterday, None
+    ) == "partial"
+    assert diag._compute_decision_freshness_verdict(
+        None, True, None, yesterday
+    ) == "partial"
+
+
+def test_decision_freshness_interpretation_messages():
+    """Each freshness verdict produces a non-empty human-readable string."""
+    from zoneinfo import ZoneInfo
+
+    now = datetime(2026, 4, 15, 10, 0, tzinfo=ZoneInfo("America/New_York"))
+    today = date(2026, 4, 15)
+    stale = date(2026, 4, 12)
+
+    for verdict, dr_d, de_d in [
+        ("missing", None, None),
+        ("healthy", today, today),
+        ("partial", today, None),
+        ("partial", None, today),
+        ("partial", today, stale),
+        ("stale", stale, stale),
+    ]:
+        msg = diag._interpret_decision_freshness_verdict(verdict, dr_d, de_d, now)
+        assert isinstance(msg, str) and len(msg) > 0, f"Empty message for verdict={verdict}"
+
+
+def test_decision_freshness_endpoint_registered():
+    """Decision pipeline freshness endpoint is registered and uses GET."""
+    registered = {r.path for r in diag.router.routes}
+    assert "/diagnose-decision/pipeline-freshness" in registered
+
+    # Uses GET method
+    for r in diag.router.routes:
+        if r.path == "/diagnose-decision/pipeline-freshness":
+            assert "GET" in r.methods
+
+
+def _fake_db_with_decision_results(results):
+    """
+    Create a fake DB object that returns queued results for decision pipeline queries.
+
+    The decision freshness endpoint queries in this order:
+    1-2: Latest as_of_date (decision_results, decision_explanations)
+    3-6: decision_results counts by type (lineup, waiver)
+    7-10: decision_explanations counts by type (lineup, waiver)
+    11-12: Latest computed_at (decision_results, decision_explanations)
+    """
+    from types import SimpleNamespace
+
+    result_queue = list(results)
+
+    class FakeResult:
+        def fetchone(self):
+            return result_queue.pop(0) if result_queue else None
+
+        def fetchall(self):
+            return []
+
+    fake_db = SimpleNamespace(
+        execute=lambda sql, params=None: FakeResult(),
+        close=lambda: None,
+    )
+    return fake_db
+
+
+def test_decision_freshness_healthy_response(monkeypatch):
+    """Healthy case: both tables have fresh data."""
+    from types import SimpleNamespace
+
+    today = date(2026, 4, 15)
+    now_et = datetime(2026, 4, 15, 10, 0, 0, tzinfo=diag._ET)
+    computed = datetime(2026, 4, 15, 7, 30, 0)
+
+    # The endpoint queries in this order:
+    # 1. dr_latest, 2. de_latest
+    # For each dtype in ("lineup", "waiver"):
+    #   - dr query, then de query
+    # So order is: dr_lineup, de_lineup, dr_waiver, de_waiver
+    # Then: dr_computed, de_computed
+    results = [
+        # Latest as_of_date
+        SimpleNamespace(latest_date=today),
+        SimpleNamespace(latest_date=today),
+        # lineup: dr then de
+        SimpleNamespace(n=10),
+        SimpleNamespace(n=10),
+        # waiver: dr then de
+        SimpleNamespace(n=5),
+        SimpleNamespace(n=5),
+        # Latest computed_at
+        SimpleNamespace(latest_computed=computed),
+        SimpleNamespace(latest_computed=computed),
+    ]
+
+    fake_db = _fake_db_with_decision_results(results)
+    monkeypatch.setattr(diag, "SessionLocal", lambda: fake_db)
+    monkeypatch.setattr(diag, "_now_et", lambda: now_et)
+
+    result = diag.diagnose_decision_pipeline_freshness()
+
+    assert result["verdict"] == "healthy"
+    assert result["decision_results"]["latest_as_of_date"] == "2026-04-15"
+    assert result["decision_explanations"]["latest_as_of_date"] == "2026-04-15"
+    # Total should be sum of breakdown values
+    dr_breakdown = result["decision_results"]["breakdown_by_type"]
+    de_breakdown = result["decision_explanations"]["breakdown_by_type"]
+    assert result["decision_results"]["total_row_count"] == sum(dr_breakdown.values())
+    assert result["decision_explanations"]["total_row_count"] == sum(de_breakdown.values())
+    assert result["decision_results"]["breakdown_by_type"] == {"lineup": 10, "waiver": 5}
+    assert result["decision_explanations"]["breakdown_by_type"] == {"lineup": 10, "waiver": 5}
+    assert "checked_at" in result
+    assert "schedule_expectations" in result
+
+
+def test_decision_freshness_missing_data(monkeypatch):
+    """Missing case: both tables are empty."""
+    from types import SimpleNamespace
+
+    now_et = datetime(2026, 4, 15, 10, 0, 0, tzinfo=diag._ET)
+
+    results = [
+        SimpleNamespace(latest_date=None),
+        SimpleNamespace(latest_date=None),
+    ]
+
+    fake_db = _fake_db_with_decision_results(results)
+    monkeypatch.setattr(diag, "SessionLocal", lambda: fake_db)
+    monkeypatch.setattr(diag, "_now_et", lambda: now_et)
+
+    result = diag.diagnose_decision_pipeline_freshness()
+
+    assert result["verdict"] == "missing"
+    assert result["decision_results"]["latest_as_of_date"] is None
+    assert result["decision_explanations"]["latest_as_of_date"] is None
+    assert "decision pipeline" in result["message"].lower()
+
+
+def test_decision_freshness_stale_data(monkeypatch):
+    """Stale case: both tables have data but it's 2+ days old."""
+    from types import SimpleNamespace
+
+    stale_date = date(2026, 4, 12)
+    now_et = datetime(2026, 4, 15, 10, 0, 0, tzinfo=diag._ET)
+    computed = datetime(2026, 4, 12, 7, 30, 0)
+
+    results = [
+        SimpleNamespace(latest_date=stale_date),
+        SimpleNamespace(latest_date=stale_date),
+        # lineup: dr then de
+        SimpleNamespace(n=10),
+        SimpleNamespace(n=10),
+        # waiver: dr then de
+        SimpleNamespace(n=5),
+        SimpleNamespace(n=5),
+        SimpleNamespace(latest_computed=computed),
+        SimpleNamespace(latest_computed=computed),
+    ]
+
+    fake_db = _fake_db_with_decision_results(results)
+    monkeypatch.setattr(diag, "SessionLocal", lambda: fake_db)
+    monkeypatch.setattr(diag, "_now_et", lambda: now_et)
+
+    result = diag.diagnose_decision_pipeline_freshness()
+
+    assert result["verdict"] == "stale"
+    assert result["decision_results"]["latest_as_of_date"] == "2026-04-12"
+    assert result["decision_explanations"]["latest_as_of_date"] == "2026-04-12"
+    assert "stale" in result["message"].lower()
+
+
+def test_decision_freshness_partial_data(monkeypatch):
+    """Partial case: decision_results has data, decision_explanations is empty."""
+    from types import SimpleNamespace
+
+    today = date(2026, 4, 15)
+    now_et = datetime(2026, 4, 15, 10, 0, 0, tzinfo=diag._ET)
+    computed = datetime(2026, 4, 15, 7, 30, 0)
+
+    results = [
+        SimpleNamespace(latest_date=today),
+        SimpleNamespace(latest_date=None),
+        SimpleNamespace(n=10),
+        SimpleNamespace(n=5),
+        # No explanation counts since latest_as_of_date is None
+        SimpleNamespace(latest_computed=computed),
+        SimpleNamespace(latest_computed=None),
+    ]
+
+    fake_db = _fake_db_with_decision_results(results)
+    monkeypatch.setattr(diag, "SessionLocal", lambda: fake_db)
+    monkeypatch.setattr(diag, "_now_et", lambda: now_et)
+
+    result = diag.diagnose_decision_pipeline_freshness()
+
+    assert result["verdict"] == "partial"
+    assert result["decision_results"]["latest_as_of_date"] == "2026-04-15"
+    assert result["decision_explanations"]["latest_as_of_date"] is None
+    assert "partial" in result["message"].lower()
+
+
+def test_decision_freshness_with_only_lineup_type(monkeypatch):
+    """Edge case: only lineup decisions exist (no waiver recommendations)."""
+    from types import SimpleNamespace
+
+    today = date(2026, 4, 15)
+    now_et = datetime(2026, 4, 15, 10, 0, 0, tzinfo=diag._ET)
+    computed = datetime(2026, 4, 15, 7, 30, 0)
+
+    # Order: dr_latest, de_latest, dr_lineup, de_lineup, dr_waiver, de_waiver, dr_computed, de_computed
+    results = [
+        SimpleNamespace(latest_date=today),
+        SimpleNamespace(latest_date=today),
+        # lineup: dr then de (both 20)
+        SimpleNamespace(n=20),
+        SimpleNamespace(n=20),
+        # waiver: dr then de (both 0)
+        SimpleNamespace(n=0),
+        SimpleNamespace(n=0),
+        SimpleNamespace(latest_computed=computed),
+        SimpleNamespace(latest_computed=computed),
+    ]
+
+    fake_db = _fake_db_with_decision_results(results)
+    monkeypatch.setattr(diag, "SessionLocal", lambda: fake_db)
+    monkeypatch.setattr(diag, "_now_et", lambda: now_et)
+
+    result = diag.diagnose_decision_pipeline_freshness()
+
+    assert result["verdict"] == "healthy"
+    # Total should be sum of breakdown values
+    dr_breakdown = result["decision_results"]["breakdown_by_type"]
+    de_breakdown = result["decision_explanations"]["breakdown_by_type"]
+    assert result["decision_results"]["total_row_count"] == sum(dr_breakdown.values())
+    assert result["decision_explanations"]["total_row_count"] == sum(de_breakdown.values())
+    assert result["decision_results"]["breakdown_by_type"] == {"lineup": 20, "waiver": 0}
+    assert result["decision_explanations"]["breakdown_by_type"] == {"lineup": 20, "waiver": 0}
 
 
 # ---------------------------------------------------------------------------

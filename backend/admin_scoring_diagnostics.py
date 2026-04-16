@@ -679,3 +679,169 @@ def _format_audit_log(row) -> dict:
         "started_at": row.started_at.isoformat() if row.started_at else None,
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# 5. Decision Pipeline Freshness -- P17-P19 observability
+# ---------------------------------------------------------------------------
+
+@router.get("/diagnose-decision/pipeline-freshness")
+def diagnose_decision_pipeline_freshness():
+    """
+    Decision pipeline freshness and coverage observability (P17-P19).
+
+    Answers:
+      - What is the latest as_of_date for decision_results (P17)?
+      - What is the latest as_of_date for decision_explanations (P19)?
+      - How many rows exist per decision_type on the latest dates?
+      - Is the pipeline healthy, stale, partial, or missing?
+
+    Use this for operational monitoring of the backend decision pipeline.
+    """
+    db = SessionLocal()
+    try:
+        now_et = _now_et()
+
+        # --- Latest as_of_date for each table -------------------------------
+        dr_latest_row = db.execute(text("""
+            SELECT MAX(as_of_date) AS latest_date FROM decision_results
+        """)).fetchone()
+
+        de_latest_row = db.execute(text("""
+            SELECT MAX(as_of_date) AS latest_date FROM decision_explanations
+        """)).fetchone()
+
+        dr_latest = dr_latest_row.latest_date if dr_latest_row else None
+        de_latest = de_latest_row.latest_date if de_latest_row else None
+
+        # --- Row counts by decision_type for latest dates ------------------
+        dr_counts = {}
+        de_counts = {}
+
+        for dtype in ("lineup", "waiver"):
+            if dr_latest:
+                cnt = db.execute(text("""
+                    SELECT COUNT(*) AS n FROM decision_results
+                    WHERE as_of_date = :d AND decision_type = :dt
+                """), {"d": dr_latest, "dt": dtype}).fetchone()
+                dr_counts[dtype] = _i(cnt.n) if cnt else 0
+            else:
+                dr_counts[dtype] = None
+
+            if de_latest:
+                cnt = db.execute(text("""
+                    SELECT COUNT(*) AS n FROM decision_explanations
+                    WHERE as_of_date = :d AND decision_type = :dt
+                """), {"d": de_latest, "dt": dtype}).fetchone()
+                de_counts[dtype] = _i(cnt.n) if cnt else 0
+            else:
+                de_counts[dtype] = None
+
+        # --- Total row counts for latest dates ------------------------------
+        dr_total = _i(sum(v for v in dr_counts.values() if v is not None)) if dr_latest else None
+        de_total = _i(sum(v for v in de_counts.values() if v is not None)) if de_latest else None
+
+        # --- Latest computed_at timestamps ---------------------------------
+        dr_computed_row = db.execute(text("""
+            SELECT MAX(computed_at) AS latest_computed FROM decision_results
+        """)).fetchone()
+
+        de_computed_row = db.execute(text("""
+            SELECT MAX(computed_at) AS latest_computed FROM decision_explanations
+        """)).fetchone()
+
+        dr_computed = dr_computed_row.latest_computed if dr_computed_row else None
+        de_computed = de_computed_row.latest_computed if de_computed_row else None
+
+        # --- Freshness verdict --------------------------------------------
+        # Expected schedule: decision_results ~7 AM ET, decision_explanations ~9 AM ET
+        # Consider data stale if latest as_of_date is 2+ days old
+        today_et = now_et.date()
+        stale_threshold = today_et - timedelta(days=2)
+
+        dr_is_fresh = dr_latest and dr_latest >= stale_threshold
+        de_is_fresh = de_latest and de_latest >= stale_threshold
+
+        verdict = _compute_decision_freshness_verdict(
+            dr_is_fresh, de_is_fresh, dr_latest, de_latest
+        )
+
+        return {
+            "checked_at": now_et.isoformat(),
+            "verdict": verdict,
+            "message": _interpret_decision_freshness_verdict(
+                verdict, dr_latest, de_latest, now_et
+            ),
+            "decision_results": {
+                "latest_as_of_date": _d(dr_latest),
+                "latest_computed_at": dr_computed.isoformat() if dr_computed else None,
+                "total_row_count": dr_total,
+                "breakdown_by_type": dr_counts,
+            },
+            "decision_explanations": {
+                "latest_as_of_date": _d(de_latest),
+                "latest_computed_at": de_computed.isoformat() if de_computed else None,
+                "total_row_count": de_total,
+                "breakdown_by_type": de_counts,
+            },
+            "schedule_expectations": {
+                "decision_results_expected": "07:00 AM ET (daily)",
+                "decision_explanations_expected": "09:00 AM ET (daily)",
+                "timezone": "America/New_York",
+            },
+        }
+    finally:
+        db.close()
+
+
+def _compute_decision_freshness_verdict(
+    dr_fresh: Optional[bool],
+    de_fresh: Optional[bool],
+    dr_latest: Optional[date],
+    de_latest: Optional[date],
+) -> str:
+    """
+    Compute a freshness verdict for the decision pipeline (P17-P19).
+
+    Returns one of: healthy, stale, partial, missing
+    """
+    if dr_latest is None and de_latest is None:
+        return "missing"
+    if dr_latest and de_latest is None:
+        return "partial"
+    if dr_latest is None and de_latest:
+        return "partial"
+    if dr_fresh and de_fresh:
+        return "healthy"
+    if dr_fresh or de_fresh:
+        return "partial"
+    return "stale"
+
+
+def _interpret_decision_freshness_verdict(
+    verdict: str,
+    dr_latest: Optional[date],
+    de_latest: Optional[date],
+    now_et: datetime,
+) -> str:
+    """Human-readable summary for the decision pipeline freshness verdict."""
+    if verdict == "missing":
+        return ("No decision pipeline data found. Both decision_results and "
+                "decision_explanations are empty. Has the 7 AM/9 AM job run?")
+    if verdict == "healthy":
+        return (f"Decision pipeline is healthy. Latest results: {_d(dr_latest)}, "
+                f"latest explanations: {_d(de_latest)}. Both tables are fresh.")
+    if verdict == "partial":
+        missing = []
+        if dr_latest is None:
+            missing.append("decision_results")
+        if de_latest is None:
+            missing.append("decision_explanations")
+        if missing:
+            return (f"Decision pipeline is partial. Missing data from: {', '.join(missing)}. "
+                    "Check if scheduled jobs completed.")
+        # One is stale, one is fresh
+        return (f"Decision pipeline shows partial freshness. One table is stale. "
+                f"results: {_d(dr_latest)}, explanations: {_d(de_latest)}.")
+    return (f"Decision pipeline is STALE. Latest results: {_d(dr_latest)}, "
+            f"latest explanations: {_d(de_latest)}. Data is 2+ days old. Check scheduled jobs.")

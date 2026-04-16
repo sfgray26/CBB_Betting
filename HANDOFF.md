@@ -60,6 +60,7 @@ Verified production state as of April 16, 2026 (18:00 UTC):
 | `park_factors` | 27 parks seeded, DB-backed reads active | Healthy |
 | `weather_forecasts` | Table exists, EMPTY (request-time weather used instead) | Deferred |
 | `/admin/diagnose-scoring/layer3-freshness` | Endpoint live, 13 tests passing | Healthy |
+| `/admin/diagnose-decision/pipeline-freshness` | Endpoint live, 8 tests passing | Healthy |
 
 ### Operational Interpretation
 
@@ -442,6 +443,16 @@ Layer 3 freshness endpoint `/admin/diagnose-scoring/layer3-freshness` is live an
 - Shows latest audit log entries for rolling_windows and player_scores jobs
 - 13 comprehensive tests in test_admin_scoring_diagnostics.py
 
+**Decision Pipeline Observability (2026-04-16):**
+
+Decision pipeline freshness endpoint `/admin/diagnose-decision/pipeline-freshness` is live and fully tested:
+- Provides observability for P17-P19 stages (DecisionResult and DecisionExplanation tables)
+- Returns freshness verdict (healthy/stale/partial/missing)
+- Shows breakdown_by_type (lineup/waiver), row counts, and latest computed_at timestamps
+- Includes schedule expectations (~7 AM for decision_results, ~9 AM for decision_explanations)
+- 8 comprehensive tests in test_admin_scoring_diagnostics.py
+- Total test count for admin_scoring_diagnostics.py: 34 tests passing
+
 **Out of scope for this phase:**
 
 - simulation expansion
@@ -463,6 +474,7 @@ Layer 3 freshness endpoint `/admin/diagnose-scoring/layer3-freshness` is live an
 | P1 | Audit context authority in scoring path (3B) | Claude | Complete |
 | P2 | Consolidate ballpark_factors.py to DB-backed read | Claude | Complete |
 | P2 | Add Layer 3 freshness observability endpoint | Claude | Complete |
+| P2 | Add decision pipeline freshness observability endpoint | Claude | Complete |
 | **P1** | **Confirm OddsAPI Basic call-budget headroom for player props (est. 13 500/mo)** | **Claude/Gemini** | **Pending** |
 | **P1** | **Implement `devig_american_odds()` pure function + unit tests (L3E-3)** | **Claude** | **Pending** |
 | **P1** | **Define `PlayerPropContract` Pydantic model with rejection validation (L3E-1)** | **Claude** | **Pending** |
@@ -507,4 +519,4 @@ No active handoff prompt is currently open. Create a new prompt only after the f
 
 ---
 
-Last Updated: April 16, 2026 (Layer 3E Market-Implied Probabilities roadmap added; L3E engineering tasks, schema design, de-vigging math, Pydantic contracts, and +EV synthesis goal documented; advisory lock 100_016 reserved for mlb_player_props ingestion job)
+Last Updated: April 16, 2026 (19:00 UTC - Decision pipeline observability complete: /admin/diagnose-decision/pipeline-freshness live with 34 tests passing; L3E Market-Implied Probabilities is active engineering lane)

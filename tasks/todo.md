@@ -147,6 +147,24 @@ Outcome:
 - Latest audit log entries for rolling_windows and player_scores jobs
 - 13 comprehensive tests covering all verdict branches and null cases
 
+**Decision Pipeline Observability (2026-04-16):**
+
+Implemented endpoint: `GET /admin/diagnose-decision/pipeline-freshness`
+
+Tasks:
+
+| Task | Owner | Done? |
+|------|-------|-------|
+| Add decision pipeline freshness endpoint for P17-P19 stages | Claude | [x] |
+| Include verdict, breakdown_by_type, row counts, computed_at timestamps | Claude | [x] |
+| Add 8 comprehensive tests covering all verdict branches | Claude | [x] |
+
+Outcome:
+- Endpoint returns freshness verdict (healthy/stale/partial/missing)
+- Provides breakdown_by_type (lineup/waiver) for DecisionResult and DecisionExplanation tables
+- Shows latest computed_at timestamps and schedule expectations (~7 AM / ~9 AM)
+- Total test count for admin_scoring_diagnostics.py: 34 tests passing
+
 ---
 
 ## Recommended Execution Sequence
@@ -197,8 +215,10 @@ These items remain intentionally deferred:
 
 **Next steps:**
 - All Layer 3 foundational work (3A-3D) is COMPLETE
+- Decision pipeline observability (P17-P19) is COMPLETE
+- **Active lane: L3E (Market-Implied Probabilities)** - see HANDOFF.md for full specification
 - P3 pending: Decide whether any Layer 5 response shape changes are needed after scoring output stabilizes
 
 ---
 
-Last Updated: 2026-04-16 (18:00 UTC - Truth reconciliation: Layer 3A-3D complete, weather_forecasts deferred, park_factors live)
+Last Updated: 2026-04-16 (19:00 UTC - Truth reconciliation: Layer 3A-3D complete, decision pipeline observability complete, L3E Market-Implied Probabilities is active lane)
