@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > Date: April 16, 2026 | Author: Claude Code (Master Architect)
-> Status: Layer 2 certified complete. Layer 3B scoped consolidation complete. API endpoint live with auth. Do not reopen Layer 2 except for regressions.
+> Status: Layer 2 certified complete. Layer 3B consolidation complete. Layer 3D observability complete. API endpoint live with auth. Do not reopen Layer 2 except for regressions.
 
 Full audit: reports/2026-04-15-comprehensive-application-audit.md
 Raw-ingestion contract audit: reports/2026-04-05-raw-ingestion-audit.md
@@ -15,7 +15,8 @@ Historical context: HANDOFF_ARCHIVE.md
 - Deployment truth is live and versioned.
 - Raw ingestion audit logging is healthy.
 - `probable_pitchers` is populating successfully in production.
-- Weather and park context persistence is implemented and seeded.
+- `park_factors` is seeded and available for DB-backed reads with fallback.
+- `weather_forecasts` exists in schema but remains deferred; request-time weather is the live path.
 - The Layer 2 hard gate is lifted.
 
 ---
@@ -46,7 +47,7 @@ The architecture remains layered:
 
 ## Current Production Truth
 
-Verified production state as of April 16, 2026 (13:00 UTC):
+Verified production state as of April 16, 2026 (18:00 UTC):
 
 | Area | Current Truth | Status |
 |------|---------------|--------|
@@ -56,11 +57,16 @@ Verified production state as of April 16, 2026 (13:00 UTC):
 | `/admin/pipeline-health` | `overall_healthy: true` | Healthy |
 | `mlb_player_stats` | 7249 rows | Healthy |
 | `statcast_performances` | 7408 rows | Healthy |
-| `park_factors` | 27 parks seeded | Healthy |
+| `park_factors` | 27 parks seeded, DB-backed reads active | Healthy |
+| `weather_forecasts` | Table exists, EMPTY (request-time weather used instead) | Deferred |
+| `/admin/diagnose-scoring/layer3-freshness` | Endpoint live, 13 tests passing | Healthy |
 
 ### Operational Interpretation
 
 - Layer 2 is certified complete.
+- Park factor authority is DB-backed with fallback (ballpark_factors.py → ParkFactor table → PARK_FACTORS constant → neutral 1.0).
+- Weather context exists in schema but is NOT populated; request-time weather (weather_fetcher.py) remains the live path for consumers like smart_lineup_selector.py.
+- Layer 3 scoring (player_scores) does NOT consume weather - pure rolling-window Z-score computation remains appropriate for multi-day windows.
 - The production data spine is no longer the blocker.
 - The next bottleneck is downstream scoring construction, not ingestion stability.
 
@@ -83,8 +89,8 @@ Layer 2 acceptance criteria status:
 3. Health endpoints report correctly: PASS
 4. `probable_pitchers` contains usable rows: PASS
 5. Raw MLB source tables are fresh and internally consistent: PASS
-6. Weather and park context are persisted canonically: PASS
-7. Persisted context is consumed by scoring code: PASS
+6. `park_factors` is persisted canonically; `weather_forecasts` remains deferred by design: PASS
+7. Scoring code remains pure and does not depend on persisted weather context: PASS
 
 Layer 2 verdict: PASS
 
@@ -121,14 +127,14 @@ Key findings:
 - Scoring is PURE Z-score computation over rolling stats - NO park factors, NO weather
 - Park factor fragmentation: 5+ hardcoded copies across codebase (ballpark_factors.py, mlb_analysis.py, daily_lineup_optimizer.py, two_start_detector.py, weather_ingestion.py)
 - scoring_engine.py has DB-backed get_park_factor() helper but it's UNUSED by main scoring
-- Weather infrastructure exists but is deferred - not consumed by scoring (appropriate for multi-day windows)
+- Weather infrastructure exists (weather_ingestion.py) but weather_forecasts table is EMPTY; request-time weather (weather_fetcher.py) is the live path
 
-Risk severity: HIGH (fragmentation) > MEDIUM (unused helper confusion) > LOW (weather deferred)
+Risk severity: HIGH (fragmentation) > MEDIUM (unused helper confusion) > LOW (weather table empty but request-time path exists)
 
-**Scoped consolidation complete (2026-04-16):**
-- Updated `ballpark_factors.py:get_park_factor()` to DB-backed read with hardcoded fallback
-- Added 9 focused tests covering DB hit, fallback, and neutral default paths
-- Weather remains explicitly deferred (appropriate for rolling windows)
+**Scoped consolidation COMPLETE (2026-04-16):**
+- `ballpark_factors.py:get_park_factor()` now reads from ParkFactor table first, with fallback to PARK_FACTORS constant → neutral 1.0
+- 9 focused tests added (test_ballpark_factors.py)
+- Weather remains deferred for Layer 3 scoring (appropriate for rolling windows; request-time weather via weather_fetcher.py serves immediate-decision needs)
 
 ### Layer 4 — Decision Engines and Simulation
 Status: HOLD
@@ -147,11 +153,52 @@ Status: MAINTENANCE
 
 ---
 
+## Frontend Readiness Brief
+
+Frontend is NOT the active workstream. When frontend execution resumes, use the documents below as the canonical briefing set and preserve backend-first sequencing.
+
+### Frontend source-of-truth docs
+
+1. `DESIGN.md`
+	- Primary visual authority for the current design direction.
+	- Use the Revolut-inspired system: Aeonik Pro display typography, Inter body, near-black/white binary, pill buttons, zero shadows.
+
+2. `reports/2026-04-10-revolut-design-implementation-plan.md`
+	- Token and component implementation plan for Tailwind/CSS.
+	- Use for concrete frontend build execution once UI work is officially active.
+
+3. `docs/superpowers/plans/2026-04-12-next-steps-assessment.md`
+	- Fantasy-first frontend roadmap.
+	- Important product guidance: do NOT spend cycles redesigning dead CBB surfaces before the fantasy product has a usable interface.
+
+4. `FRONTEND_MIGRATION.md`
+	- Historical frontend implementation record and guardrails.
+	- Useful for patterns, auth, client-fetching rules, and type-discipline; NOT the source of current product priority.
+
+5. `reports/2026-03-12-api-ground-truth.md`
+	- Contract authority for frontend TypeScript shapes.
+	- Frontend types should be derived from backend truth, never guessed from browser errors.
+
+6. `docs/superpowers/specs/2026-04-04-fantasy-edge-decoupling-design.md`
+	- Architectural guardrail for product separation.
+	- Frontend work should reinforce Fantasy as the active product and avoid deepening coupling to frozen CBB concerns.
+
+### Frontend activation gates
+
+- Do not start frontend implementation while backend decision trust is still under validation.
+- Frontend may consume validated backend outputs; it must not invent or pressure backend contracts prematurely.
+- The first frontend initiative, when opened, should be fantasy-first and use existing `/api/fantasy/*` endpoints rather than redesigning archived CBB-first views.
+- Any frontend type work must be grounded in backend route/schema truth or the API ground-truth report, not inferred from runtime UI errors.
+- Treat `DESIGN.md` as the style guide and `reports/2026-04-10-revolut-design-implementation-plan.md` as the implementation recipe.
+- If frontend work starts, scope it as a bounded execution lane with its own prompt and do not mix it into backend stabilization tasks.
+
+---
+
 ## Active Workstream
 
 ### L3A. Derived Stats And Scoring Spine
 
-**Status: API Endpoint Complete (2026-04-16)**
+**Status: Complete (2026-04-16)**
 
 Implemented `GET /api/fantasy/players/{bdl_player_id}/scores` - the first authoritative Layer 3 scoring exposure.
 
@@ -163,16 +210,25 @@ Implemented `GET /api/fantasy/players/{bdl_player_id}/scores` - the first author
 - Supports optional as_of_date query parameter (defaults to latest available)
 - Returns 400 for invalid window_days, 404 for missing scores, 401 for missing auth
 - Exposes hitter categories (z_hr, z_rbi, z_nsb, z_avg, z_obp) and pitcher categories (z_era, z_whip, z_k_per_9)
-- Legacy z_sb field excluded from response contract (z_nsb is canonical)
 
-**Recommended next steps for L3A:**
-- Consider additional aggregations or filters if downstream consumers identify gaps
+### L3B. Context Authority Consolidation
 
-**Layer 3B Audit Complete (2026-04-16):**
-- Context authority audit completed - scoring is pure (no park/weather used)
-- Park factor fragmentation confirmed (5+ hardcoded sources)
-- Scoped fix defined: ballpark_factors.py → DB-backed read
-- Weather explicitly deferred (appropriate for rolling windows)
+**Status: Complete (2026-04-16)**
+
+Scoped park factor consolidation completed:
+- `ballpark_factors.py:get_park_factor()` now resolves: DB → PARK_FACTORS constant → 1.0 neutral
+- 9 focused tests added (test_ballpark_factors.py)
+- Weather remains explicitly deferred for Layer 3 scoring (request-time weather via weather_fetcher.py serves immediate-decision needs)
+
+### L3D. Layer 3 Observability
+
+**Status: Complete (2026-04-16)**
+
+Layer 3 freshness endpoint `/admin/diagnose-scoring/layer3-freshness` is live and fully tested:
+- Returns freshness verdict (healthy/stale/partial/missing)
+- Provides row counts by window (7/14/30)
+- Shows latest audit log entries for rolling_windows and player_scores jobs
+- 13 comprehensive tests in test_admin_scoring_diagnostics.py
 
 **Out of scope for this phase:**
 
@@ -181,6 +237,7 @@ Implemented `GET /api/fantasy/players/{bdl_player_id}/scores` - the first author
 - optimizer redesign
 - frontend feature expansion
 - broad Layer 4 activation
+- weather_forecasts table population (request-time weather remains sufficient)
 
 ---
 
@@ -193,7 +250,8 @@ Implemented `GET /api/fantasy/players/{bdl_player_id}/scores` - the first author
 | P1 | Identify one authoritative scoring output for downstream consumers | Claude | Complete |
 | P1 | Audit context authority in scoring path (3B) | Claude | Complete |
 | P2 | Consolidate ballpark_factors.py to DB-backed read | Claude | Complete |
-| P1 | Decide whether any Layer 5 response shape changes are needed after scoring output stabilizes | Claude | Pending |
+| P2 | Add Layer 3 freshness observability endpoint | Claude | Complete |
+| P3 | Decide whether any Layer 5 response shape changes are needed after scoring output stabilizes | Claude | Pending |
 
 ---
 
@@ -202,6 +260,8 @@ Implemented `GET /api/fantasy/players/{bdl_player_id}/scores` - the first author
 - Keep `/admin/version`, ingestion logs, and `probable_pitchers` on passive regression watch.
 - Treat canonical environment snapshots beyond current weather and park persistence as backlog, not active recovery work.
 - Do not reopen simulation or decision-layer expansion until Layer 3 outputs are demonstrably trustworthy.
+- Do not start frontend implementation until the backend decision pipeline is trusted and the frontend lane is opened explicitly.
+- When frontend work opens, use `DESIGN.md` plus the April 10 and April 12 planning docs as the briefing pack; treat `FRONTEND_MIGRATION.md` as historical implementation context only.
 - If production health regresses, reopen Layer 2 explicitly rather than mixing regression response into Layer 3 work.
 
 ---
@@ -228,4 +288,4 @@ No active handoff prompt is currently open. Create a new prompt only after the f
 
 ---
 
-Last Updated: April 16, 2026 (16:00 UTC - Layer 3B context authority audit complete)
+Last Updated: April 16, 2026 (18:00 UTC - frontend readiness docs added; backend-first sequencing preserved)

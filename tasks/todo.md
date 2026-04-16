@@ -1,5 +1,5 @@
 # MLB Platform — Task Tracker
-*Updated: 2026-04-16 | Architect: Claude Code | Mission: Layer 3B scoped consolidation complete. Park factor authority now DB-backed with fallback.*
+*Updated: 2026-04-16 | Architect: Claude Code | Mission: Layer 3A-C complete. Layer 3B park factor consolidation complete. Layer 3D observability complete.*
 
 > Canonical source: `HANDOFF.md`
 > This file is the execution board for the current phase. If this tracker and HANDOFF disagree, HANDOFF wins.
@@ -124,9 +124,11 @@ Contract decisions locked:
 ---
 
 ### 3D. Layer 3 Observability
-**Spec:** support for 3A-3C | **Priority:** after first exposed output exists
+**Spec:** support for 3A-3C | **Priority:** after first exposed output exists | **Status:** COMPLETE (2026-04-16)
 
 Goal: make the Layer 3 scoring spine inspectable without opening a broad new admin surface.
+
+Implemented endpoint: `GET /admin/diagnose-scoring/layer3-freshness`
 
 Existing diagnostic surface:
 - `backend/admin_scoring_diagnostics.py`
@@ -135,12 +137,15 @@ Tasks:
 
 | Task | Owner | Done? |
 |------|-------|-------|
-| Decide whether existing scoring diagnostics are sufficient for the first release | Claude | [ ] |
-| If not sufficient, add one minimal health/summary diagnostic for Layer 3 jobs | Claude | [ ] |
-| Ensure observability reflects actual `player_scores` freshness and fill-rate health | Claude | [ ] |
+| Decide whether existing scoring diagnostics are sufficient for the first release | Claude | [x] |
+| Add Layer 3 freshness endpoint with verdict, row counts, and audit logs | Claude | [x] |
+| Ensure observability reflects actual `player_scores` freshness and fill-rate health | Claude | [x] |
 
-Review:
-Prefer a minimal diagnostic addition over a broad admin expansion.
+Outcome:
+- Endpoint returns freshness verdict (healthy/stale/partial/missing)
+- Row counts by window (7/14/30) for player_rolling_stats and player_scores
+- Latest audit log entries for rolling_windows and player_scores jobs
+- 13 comprehensive tests covering all verdict branches and null cases
 
 ---
 
@@ -179,16 +184,21 @@ These items remain intentionally deferred:
 2. Which windows are in-scope: 7, 14, 30, or a subset?
    - Answer: All three (7, 14, 30) are supported; 14 is default
 3. Is weather part of the first scoring objective, or deferred?
-   - Answer: Deferred - endpoint exposes existing `player_scores` data only; 3B audit confirms weather not used in scoring path
+   - Answer: DEFERRED - endpoint exposes existing `player_scores` data only; 3B audit confirms weather not used in scoring path
 4. Is the first consumer public API or an internal/service contract?
    - Answer: Public API (uses verify_api_key auth) - IMPLEMENTED
 5. (3B) Is context authority fragmented or consolidated?
    - Answer: FRAGMENTED - 5+ hardcoded park factor copies; scoring is pure (no park/weather used); scoped fix: ballpark_factors.py → DB-backed
    - **CONSOLIDATION COMPLETE (2026-04-16)**: Updated `ballpark_factors.py:get_park_factor()` to DB-backed read with fallback
+6. (3D) Is Layer 3 observability sufficient?
+   - Answer: YES - `/admin/diagnose-scoring/layer3-freshness` endpoint live with 13 tests passing
+7. Is weather_forecasts populated or deferred?
+   - Answer: DEFERRED - table exists but is EMPTY; request-time weather (weather_fetcher.py) serves immediate-decision needs; appropriate for rolling-window scoring
 
 **Next steps:**
-- Add observability for Layer 3 job health if needed (3D)
+- All Layer 3 foundational work (3A-3D) is COMPLETE
+- P3 pending: Decide whether any Layer 5 response shape changes are needed after scoring output stabilizes
 
 ---
 
-Last Updated: 2026-04-16 (17:00 UTC - Layer 3B scoped park factor consolidation complete)
+Last Updated: 2026-04-16 (18:00 UTC - Truth reconciliation: Layer 3A-3D complete, weather_forecasts deferred, park_factors live)
