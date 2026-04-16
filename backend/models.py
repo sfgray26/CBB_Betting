@@ -1702,3 +1702,74 @@ class ProbablePitcherSnapshot(Base):
         Index("idx_pp_date", "game_date"),
         Index("idx_pp_pitcher", "bdl_player_id"),
     )
+
+
+class WeatherForecast(Base):
+    """
+    Canonical weather forecast for MLB games.
+
+    Persists weather data for historical tracking and context enrichment.
+    Source: OpenWeatherMap API via WeatherFetcher.
+    """
+    __tablename__ = "weather_forecasts"
+
+    id = Column(Integer, primary_key=True)
+    game_date = Column(Date, nullable=False, index=True)
+    park_name = Column(String(100), nullable=False)
+    forecast_date = Column(Date, nullable=False, default=datetime.utcnow)
+
+    temperature_high = Column(Float)  # Celsius
+    temperature_low = Column(Float)
+    humidity = Column(Integer)  # Percentage
+    wind_speed = Column(Float)  # km/h
+    wind_direction = Column(String(10))  # N, NE, E, SE, S, SW, W, NW
+    precipitation_probability = Column(Integer)  # Percentage
+    conditions = Column(String(100))  # Rain, Cloudy, Sunny, etc.
+
+    fetched_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("game_date", "park_name", "forecast_date", name="_wf_game_park_date_uc"),
+        Index("idx_weather_game_date", "game_date"),
+    )
+
+
+class ParkFactor(Base):
+    """
+    Canonical park factors for MLB stadiums.
+
+    Park factors adjust player projections based on stadium characteristics.
+    Values > 1.0 favor hitters, < 1.0 favor pitchers.
+    """
+    __tablename__ = "park_factors"
+
+    id = Column(Integer, primary_key=True)
+    park_name = Column(String(100), nullable=False, unique=True)
+
+    # Factors: 1.0 = neutral, > 1.0 = hitter-friendly, < 1.0 = pitcher-friendly
+    hr_factor = Column(Float, nullable=False, default=1.0)
+    run_factor = Column(Float, nullable=False, default=1.0)
+    hits_factor = Column(Float, nullable=False, default=1.0)
+    era_factor = Column(Float, nullable=False, default=1.0)
+    whip_factor = Column(Float, nullable=False, default=1.0)
+
+    data_source = Column(String(50))  # fangraphs, baseball-reference, etc.
+    season = Column(Integer)
+
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DeploymentVersion(Base):
+    """
+    Deployment fingerprint for /admin/version endpoint.
+
+    Stores the git commit SHA and build timestamp for deployment verification.
+    """
+    __tablename__ = "deployment_version"
+
+    id = Column(Integer, primary_key=True)
+    git_commit_sha = Column(String(100), nullable=False, unique=True)
+    git_commit_date = Column(String(50))
+    build_timestamp = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    app_version = Column(String(50), default="dev")
+    deployed_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
