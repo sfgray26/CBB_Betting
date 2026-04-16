@@ -3,7 +3,7 @@ FastAPI application for CBB Edge Analyzer
 Includes REST API, scheduled jobs, and monitoring
 """
 
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, joinedload
@@ -17,6 +17,7 @@ from dataclasses import asdict
 from typing import List, Optional
 import logging
 import os
+import subprocess
 from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.interval import IntervalTrigger
@@ -3242,6 +3243,71 @@ async def admin_pipeline_health(
     )
     checks = check_table_health(db)
     return pipeline_health_summary(checks)
+
+
+@app.get("/admin/version")
+async def get_deployment_version(
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_admin_api_key),
+):
+    """
+    Return deployment fingerprint for production verification.
+
+    Used by Layer 2 certification (Stage 1 and Stage 5) to confirm
+    production is running the latest repo code.
+
+    Returns:
+    {
+        "git_commit_sha": "abc123def456...",
+        "git_commit_date": "2026-04-15T10:30:00Z",
+        "build_timestamp": "2026-04-15T10:31:15Z",
+        "app_version": "dev"
+    }
+    """
+    from backend.models import DeploymentVersion
+    import subprocess
+
+    # Try to get from database first (authoritative)
+    version = db.query(DeploymentVersion).order_by(DeploymentVersion.deployed_at.desc()).first()
+
+    if version:
+        return {
+            "git_commit_sha": version.git_commit_sha,
+            "git_commit_date": version.git_commit_date,
+            "build_timestamp": version.build_timestamp.isoformat(),
+            "app_version": version.app_version or "dev"
+        }
+
+    # Fallback: get from git directly
+    try:
+        sha = subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'],
+            cwd=os.path.dirname(__file__),
+            stderr=subprocess.DEVNULL,
+            timeout=5
+        ).decode().strip()
+
+        commit_date = subprocess.check_output(
+            ['git', 'show', '-s', '--format=%ci', 'HEAD'],
+            cwd=os.path.dirname(__file__),
+            stderr=subprocess.DEVNULL,
+            timeout=5
+        ).decode().strip()
+
+        return {
+            "git_commit_sha": sha,
+            "git_commit_date": commit_date,
+            "build_timestamp": datetime.now(ZoneInfo("UTC")).isoformat(),
+            "app_version": "dev"
+        }
+    except Exception:
+        # Ultimate fallback for environments without git
+        return {
+            "git_commit_sha": "unknown",
+            "git_commit_date": None,
+            "build_timestamp": datetime.now(ZoneInfo("UTC")).isoformat(),
+            "app_version": "dev"
+        }
 
 
 @app.get("/admin/ingestion/status")
