@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > Date: April 16, 2026 | Author: Claude Code (Master Architect)
-> Status: Layer 2 certified complete. Layer 3B consolidation complete. Layer 3D observability complete. API endpoint live with auth. Do not reopen Layer 2 except for regressions.
+> Status: Layer 2 certified complete. Layer 3B consolidation complete. Layer 3D observability complete. API endpoint live with auth. **Layer 3E (Market-Implied Probabilities) is the active engineering lane.** Do not reopen Layer 2 except for regressions.
 
 Full audit: reports/2026-04-15-comprehensive-application-audit.md
 Raw-ingestion contract audit: reports/2026-04-05-raw-ingestion-audit.md
@@ -118,6 +118,8 @@ Status: CERTIFIED COMPLETE
 Status: ACTIVE
 
 - This is the only active engineering workstream now.
+- L3A (scoring spine), L3B (context authority), and L3D (observability) are complete.
+- **L3E (Market-Implied Probabilities) is the current sub-task.** See detailed breakdown below.
 
 **Layer 3B Context Authority Audit (2026-04-16):**
 
@@ -135,6 +137,208 @@ Risk severity: HIGH (fragmentation) > MEDIUM (unused helper confusion) > LOW (we
 - `ballpark_factors.py:get_park_factor()` now reads from ParkFactor table first, with fallback to PARK_FACTORS constant → neutral 1.0
 - 9 focused tests added (test_ballpark_factors.py)
 - Weather remains deferred for Layer 3 scoring (appropriate for rolling windows; request-time weather via weather_fetcher.py serves immediate-decision needs)
+
+### L3E. Market-Implied Probability Integration
+
+**Status: PLANNED — next engineering lane**
+
+**Objective:** Enrich the daily player score with forward-looking Vegas market sentiment.
+The current `player_scores` table is built entirely from backward-looking rolling Z-scores
+(wOBA, ISO, HR rate, etc.). Layer 3E introduces a second signal axis — what the implied
+market currently believes about each player's performance for *today's* slate — and
+synthesises both into an **+EV Player Score** that can weight fantasy lineup decisions.
+
+---
+
+#### Data-Source Decision (READ BEFORE CODING)
+
+This is an active architectural decision with budget implications.
+
+| Source | What it offers | Constraint |
+|--------|----------------|------------|
+| **BallDontLie GOAT MLB** (`/mlb/v1/odds`) | Game-level moneylines and totals per sportsbook | **Already wired.** Does NOT expose player prop markets (O/U hits, HRs, TB, etc.) |
+| **The Odds API** (`/v4/sports/baseball_mlb/events/{id}/odds?markets=batter_*`) | Granular player prop lines per book | OddsAPI Basic = 20 k calls/month. This budget is currently reserved for CBB archival closing lines only. Player props require separate endpoint calls per event per market. |
+
+**Decision required before L3E coding begins:**
+
+1. Confirm whether the OddsAPI Basic 20 k call budget has headroom once CBB archival traffic
+   drops to near-zero (it should — CBB season is closed).
+2. Estimate call volume: ~15 MLB games/day × ~30 active props/game × ~1 bookmaker pass = ~450 calls/day × 30 days ≈ 13 500/month. This fits within 20 k with margin.
+3. If budget is confirmed: add `MLB_PROPS_ENABLED=true` env var gate before the ingestion job runs.
+4. Do NOT route game-level MLB moneylines through OddsAPI — those remain on BDL exclusively.
+
+**Provisional decision: proceed with The Odds API for player props only.** Rationale: BDL has no player-prop endpoint, CBB archival call volume is now negligible, and 13 500 estimated calls/month fits the 20 k budget. Gate behind env var `MLB_PROPS_ENABLED` so the job is opt-in.
+
+---
+
+#### Engineering Task Breakdown
+
+##### L3E-1. Pydantic Data Contracts (Layer 0 extension)
+
+New contracts required in `backend/data_contracts.py` (create file if missing) or
+the canonical contracts module used by the rest of the pipeline.
+
+```
+PlayerPropRaw         — raw API response record, strict field types, no defaults for
+                        critical fields (must reject if over/under odds missing)
+PlayerPropContract    — validated, de-vigged record ready for DB write
+PlayerPropBatch       — list[PlayerPropContract] + fetch metadata (source, fetched_at)
+```
+
+Rules (matches Layer 0 doctrine):
+- All monetary/odds fields typed as `int` (American odds are always integers).
+- `over_american_odds` and `under_american_odds` must both be present; if either is
+  null the record is rejected at validation, not silently coerced to None.
+- `prop_type` must come from an allowlist enum (`PropType`): hits, home_runs,
+  total_bases, rbis, strikeouts, walks, stolen_bases, runs_scored.
+- `bdl_player_id` linkage must be resolved *before* the contract is written to DB;
+  records with unresolved player IDs are logged and dropped, not stored.
+- Never pass raw dicts to DB write functions — always validate through `PlayerPropContract`
+  first.
+
+##### L3E-2. Schema: `player_prop_odds` Table
+
+New ORM model in `backend/models.py`. Natural key:
+`(bdl_player_id, game_date, prop_type, prop_line, bookmaker)`.
+
+```
+id                 BigInteger PK autoincrement
+bdl_player_id      Integer  NOT NULL  — FK-style reference to BDL player entity
+game_date          Date     NOT NULL  — calendar date of the game (ET)
+prop_type          String   NOT NULL  — enum: hits / home_runs / total_bases / rbis /
+                                        strikeouts / walks / stolen_bases / runs_scored
+prop_line          Float    NOT NULL  — the O/U threshold (e.g. 0.5, 1.5, 2.5)
+over_american_odds Integer  NOT NULL  — e.g. -130
+under_american_odds Integer NOT NULL  — e.g. +110
+over_implied_raw   Float    NOT NULL  — raw implied prob before vig removal
+under_implied_raw  Float    NOT NULL
+vig_pct            Float    NOT NULL  — (over_implied_raw + under_implied_raw) - 1.0
+over_true_prob     Float    NOT NULL  — de-vigged: over_implied_raw / total_implied
+under_true_prob    Float    NOT NULL  — de-vigged: under_implied_raw / total_implied
+bookmaker          String   NOT NULL  — e.g. "draftkings", "fanduel", "pinnacle"
+fetched_at         DateTime NOT NULL  — timestamp of API call (ET, timezone-aware)
+
+UniqueConstraint: (bdl_player_id, game_date, prop_type, prop_line, bookmaker)
+Index: (game_date, prop_type) — for daily slate queries
+Index: (bdl_player_id, game_date) — for player-centric lookups
+```
+
+Alembic migration required; do not use `Base.metadata.create_all()` in production.
+
+##### L3E-3. De-Vigging Math (Pure Layer 1 Function)
+
+Add a pure, zero-I/O function to `backend/core/odds_math.py` (or equivalent pure-logic
+module). No numpy/pandas — standard library arithmetic only, consistent with
+`scoring_engine.py` precedent.
+
+**Algorithm:**
+
+```
+American → decimal probability:
+  If odds > 0:  raw_prob = 100 / (odds + 100)
+  If odds < 0:  raw_prob = abs(odds) / (abs(odds) + 100)
+
+De-vig (Multiplicative method — most neutral):
+  total_implied = over_raw_prob + under_raw_prob   # always > 1.0 due to vig
+  over_true_prob  = over_raw_prob  / total_implied
+  under_true_prob = under_raw_prob / total_implied
+  vig_pct = total_implied - 1.0
+
+Validation guard:
+  Reject if total_implied < 1.0 (market inversion — data error).
+  Reject if total_implied > 1.25 (vig > 25% — implausible; API data error).
+  Reject if either raw_prob <= 0 or >= 1.
+```
+
+Example: Over -130, Under +110
+```
+  over_raw  = 130/230 = 0.5652
+  under_raw = 100/210 = 0.4762
+  total     = 1.0414  (vig = 4.14%)
+  over_true  = 0.5652 / 1.0414 = 0.5427
+  under_true = 0.4762 / 1.0414 = 0.4573
+```
+
+Unit test coverage required:
+- Positive American odds case, negative American odds case, symmetric -110/-110 case.
+- Rejection guards: inversion, extreme vig, zero/boundary odds.
+
+##### L3E-4. Ingestion Job
+
+New daily job in `backend/services/daily_ingestion.py`.
+
+```
+Lock ID:  100_016  (next available per CLAUDE.md advisory lock registry)
+Schedule: 10:00 AM ET (after probable pitchers are confirmed for the day)
+Gate:     env var MLB_PROPS_ENABLED=true (default false — must be explicitly enabled)
+```
+
+Job flow:
+1. Fetch today's MLB game IDs from BDL (`get_mlb_games`).
+2. For each game, call The Odds API player props endpoint for the configured markets.
+3. For each prop record, resolve player name → `bdl_player_id` via `PlayerIdResolver`
+   (existing service). Drop unresolvable records with a WARNING log entry.
+4. Validate each record through `PlayerPropContract`. Reject invalid records; log counts.
+5. De-vig via the Layer 1 pure function.
+6. Upsert into `player_prop_odds` using the natural key.
+7. Write a `data_ingestion_logs` row with `job_name="mlb_player_props"`, row counts, and any
+   rejection summary.
+
+Error handling: if The Odds API returns a non-200 or the response shape is unexpected,
+log the failure and write a FAILED ingestion log row. Do not raise — job must not crash the
+scheduler.
+
+Call-budget telemetry: log the `X-Requests-Remaining` header from The Odds API response on
+every call. Emit a WARNING if remaining calls drop below 2 000.
+
+##### L3E-5. Synthesis: +EV Player Score
+
+**Target end-state (may be a Layer 3F task depending on L3E execution scope).**
+
+The goal is a daily `ev_player_scores` table (or a new column set on `player_scores`) that
+merges two orthogonal signals:
+
+| Signal | Source | Nature |
+|--------|--------|--------|
+| Z-score composite | `player_scores.composite_z` (14d window) | Backward-looking: recent form |
+| Market-implied probability | `player_prop_odds.over_true_prob` (today's slate) | Forward-looking: market consensus |
+
+**Synthesis approach (to be refined in implementation):**
+
+For each hitter on the daily slate, for each relevant prop type:
+
+```
+base_score  = composite_z_14d  (normalised rolling form)
+market_edge = over_true_prob - historical_hit_rate_baseline
+              where baseline = rolling w_avg (hits proxy) or w_home_runs (HR proxy)
+              from PlayerRollingStats (14d window)
+
+ev_score = α × base_score + β × market_edge
+
+Initial calibration: α=0.6, β=0.4 (market-weighted; tunable via env var)
+```
+
+The `market_edge` term is the critical quant insight: if the market implies a 54% chance
+a player gets a hit today, and their 14-day rolling average implies ~48%, this positive
+delta (+6 pp) is a meaningful forward-looking signal. A negative delta suggests the market
+is pricing in something not captured by recent form (injury concern, tough matchup, travel).
+
+This synthesis must remain a **read-only computation** at output time (pure function over
+`player_scores` + `player_prop_odds`). Do not mutate existing `player_scores` rows.
+
+---
+
+#### L3E Acceptance Criteria
+
+- [ ] `devig_american_odds()` pure function with unit tests (all guard cases pass)
+- [ ] `PlayerPropContract` Pydantic model with rejection validation
+- [ ] `player_prop_odds` ORM model + Alembic migration applied in production
+- [ ] Ingestion job at lock 100_016, gated by `MLB_PROPS_ENABLED`
+- [ ] `data_ingestion_logs` row written on each run (success and failure)
+- [ ] Call-budget telemetry: remaining-requests logged on every Odds API call
+- [ ] At least 1 day of production data in `player_prop_odds` before synthesis work begins
+
+---
 
 ### Layer 4 — Decision Engines and Simulation
 Status: HOLD
@@ -196,6 +400,14 @@ Frontend is NOT the active workstream. When frontend execution resumes, use the 
 
 ## Active Workstream
 
+### L3E. Market-Implied Probability Integration
+
+**Status: PLANNED — see Layer Status section for full task breakdown**
+
+The next active sub-task is integrating Vegas player prop markets as a forward-looking
+signal into the scoring pipeline. Full specification is documented in the Layer Status
+section above under "L3E. Market-Implied Probability Integration."
+
 ### L3A. Derived Stats And Scoring Spine
 
 **Status: Complete (2026-04-16)**
@@ -251,6 +463,13 @@ Layer 3 freshness endpoint `/admin/diagnose-scoring/layer3-freshness` is live an
 | P1 | Audit context authority in scoring path (3B) | Claude | Complete |
 | P2 | Consolidate ballpark_factors.py to DB-backed read | Claude | Complete |
 | P2 | Add Layer 3 freshness observability endpoint | Claude | Complete |
+| **P1** | **Confirm OddsAPI Basic call-budget headroom for player props (est. 13 500/mo)** | **Claude/Gemini** | **Pending** |
+| **P1** | **Implement `devig_american_odds()` pure function + unit tests (L3E-3)** | **Claude** | **Pending** |
+| **P1** | **Define `PlayerPropContract` Pydantic model with rejection validation (L3E-1)** | **Claude** | **Pending** |
+| **P1** | **Design and migrate `player_prop_odds` table schema (L3E-2)** | **Claude** | **Pending** |
+| **P2** | **Build ingestion job at lock 100_016, gated by `MLB_PROPS_ENABLED` (L3E-4)** | **Claude** | **Pending** |
+| **P2** | **Wire call-budget telemetry (`X-Requests-Remaining` logging)** | **Claude** | **Pending** |
+| **P3** | **Prototype +EV Player Score synthesis function (L3E-5)** | **Claude** | **Pending** |
 | P3 | Decide whether any Layer 5 response shape changes are needed after scoring output stabilizes | Claude | Pending |
 
 ---
@@ -288,4 +507,4 @@ No active handoff prompt is currently open. Create a new prompt only after the f
 
 ---
 
-Last Updated: April 16, 2026 (18:00 UTC - frontend readiness docs added; backend-first sequencing preserved)
+Last Updated: April 16, 2026 (Layer 3E Market-Implied Probabilities roadmap added; L3E engineering tasks, schema design, de-vigging math, Pydantic contracts, and +EV synthesis goal documented; advisory lock 100_016 reserved for mlb_player_props ingestion job)
