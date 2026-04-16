@@ -1,5 +1,5 @@
 # MLB Platform — Task Tracker
-*Updated: 2026-04-16 | Architect: Claude Code | Mission: Layer 3B audit complete. Scoring path confirmed pure. Park factor consolidation scoped.*
+*Updated: 2026-04-16 | Architect: Claude Code | Mission: Layer 3B scoped consolidation complete. Park factor authority now DB-backed with fallback.*
 
 > Canonical source: `HANDOFF.md`
 > This file is the execution board for the current phase. If this tracker and HANDOFF disagree, HANDOFF wins.
@@ -87,7 +87,12 @@ Tasks:
 | Decide whether weather context is in-scope for the first scoring objective or explicitly deferred | Claude | [x] |
 | Limit any park-factor migration to the chosen scoring path only | Claude | [x] |
 
-**Next scoped step:** Update `ballpark_factors.py:get_park_factor()` to read from persisted ParkFactor table - ONE function in ONE file.
+**Scoped consolidation complete (2026-04-16):**
+- Updated `ballpark_factors.py:get_park_factor()` to read from persisted ParkFactor table first
+- Preserves PARK_FACTORS constant as fallback
+- Preserves neutral 1.0 default for unknown teams
+- Added 9 focused tests in `tests/test_ballpark_factors.py`
+- Resolution order: DB → hardcoded constant → neutral
 
 ---
 
@@ -179,12 +184,11 @@ These items remain intentionally deferred:
    - Answer: Public API (uses verify_api_key auth) - IMPLEMENTED
 5. (3B) Is context authority fragmented or consolidated?
    - Answer: FRAGMENTED - 5+ hardcoded park factor copies; scoring is pure (no park/weather used); scoped fix: ballpark_factors.py → DB-backed
+   - **CONSOLIDATION COMPLETE (2026-04-16)**: Updated `ballpark_factors.py:get_park_factor()` to DB-backed read with fallback
 
 **Next steps:**
-- Verify `player_scores` table is being populated by scheduled job in production
-- Implement scoped park factor consolidation: `ballpark_factors.py:get_park_factor()` → DB-backed read
-- Add observability for Layer 3 job health if needed
+- Add observability for Layer 3 job health if needed (3D)
 
 ---
 
-Last Updated: 2026-04-16 (16:00 UTC - Layer 3B context authority audit complete)
+Last Updated: 2026-04-16 (17:00 UTC - Layer 3B scoped park factor consolidation complete)

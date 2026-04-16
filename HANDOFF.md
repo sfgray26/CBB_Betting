@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > Date: April 16, 2026 | Author: Claude Code (Master Architect)
-> Status: Layer 2 certified complete. Layer 3B context authority audit complete. API endpoint live with auth. Do not reopen Layer 2 except for regressions.
+> Status: Layer 2 certified complete. Layer 3B scoped consolidation complete. API endpoint live with auth. Do not reopen Layer 2 except for regressions.
 
 Full audit: reports/2026-04-15-comprehensive-application-audit.md
 Raw-ingestion contract audit: reports/2026-04-05-raw-ingestion-audit.md
@@ -125,7 +125,10 @@ Key findings:
 
 Risk severity: HIGH (fragmentation) > MEDIUM (unused helper confusion) > LOW (weather deferred)
 
-Next step (scoped): Update `ballpark_factors.py:get_park_factor()` to read from persisted ParkFactor table - ONE function change in ONE file.
+**Scoped consolidation complete (2026-04-16):**
+- Updated `ballpark_factors.py:get_park_factor()` to DB-backed read with hardcoded fallback
+- Added 9 focused tests covering DB hit, fallback, and neutral default paths
+- Weather remains explicitly deferred (appropriate for rolling windows)
 
 ### Layer 4 — Decision Engines and Simulation
 Status: HOLD
@@ -163,8 +166,6 @@ Implemented `GET /api/fantasy/players/{bdl_player_id}/scores` - the first author
 - Legacy z_sb field excluded from response contract (z_nsb is canonical)
 
 **Recommended next steps for L3A:**
-- Verify player score generation pipeline is populating player_scores table in production
-- Add weather/park factor influence verification to scoring path
 - Consider additional aggregations or filters if downstream consumers identify gaps
 
 **Layer 3B Audit Complete (2026-04-16):**
@@ -191,8 +192,7 @@ Implemented `GET /api/fantasy/players/{bdl_player_id}/scores` - the first author
 | P0 | Audit current derived-stats and scoring code path for gaps | Claude | Complete |
 | P1 | Identify one authoritative scoring output for downstream consumers | Claude | Complete |
 | P1 | Audit context authority in scoring path (3B) | Claude | Complete |
-| P1 | Verify player_scores table is being populated in production | Claude | Next |
-| P2 | Consolidate ballpark_factors.py to DB-backed read | Claude | Pending |
+| P2 | Consolidate ballpark_factors.py to DB-backed read | Claude | Complete |
 | P1 | Decide whether any Layer 5 response shape changes are needed after scoring output stabilizes | Claude | Pending |
 
 ---
