@@ -196,9 +196,10 @@ def migrate_db(engine):
 
 def main():
     """Run migration."""
-    from backend.core.database import get_db_url
+    import os
+    DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres@127.0.0.1:5432/cbb_edge")
 
-    engine = create_engine(get_db_url())
+    engine = create_engine(DATABASE_URL)
 
     print("Starting Layer 2 Gap Closure migration...")
     migrate_db(engine)
