@@ -32,6 +32,7 @@ from backend.models import (
     PlayerValuationCache,
     DataIngestionLog,
     DBAlert,
+    PlayerScore,
     SessionLocal,
     get_db,
 )
@@ -48,6 +49,9 @@ from backend.schemas import (
     LineupApplyPlayer,
     LineupApplyRequest,
     MatchupSimulateRequest,
+    PlayerScoresResponse,
+    PlayerScoreOut,
+    PlayerScoreCategoryBreakdown,
 )
 from backend.utils.fantasy_stat_contract import YAHOO_STAT_ID_FALLBACK, LEAGUE_SCORING_CATEGORIES
 from backend.utils.time_utils import today_et
@@ -2932,3 +2936,93 @@ async def simulate_matchup(
         n_sims=n,
     )
     return result
+
+
+# ============================================================================
+# LAYER 3: PLAYER SCORES (P14 League Z-Scores)
+# ============================================================================
+
+_ALLOWED_WINDOWS = {7, 14, 30}
+
+
+@router.get("/api/fantasy/players/{bdl_player_id}/scores", response_model=PlayerScoresResponse)
+async def get_player_scores(
+    bdl_player_id: int,
+    window_days: int = Query(14, description="Rolling window size: 7, 14, or 30"),
+    as_of_date: Optional[date] = Query(None, description="Score date (defaults to latest available)"),
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Get authoritative Layer 3 scoring output for a player.
+
+    Returns player_scores (league Z-scores) sourced from the P14 scoring pipeline.
+    Default window_days=14. If as_of_date is omitted, returns the latest available
+    score for the requested player and window.
+
+    Raises 400 if window_days is not 7, 14, or 30.
+    Raises 404 if no score exists for the requested player/window/date.
+    """
+    # Validate window_days
+    if window_days not in _ALLOWED_WINDOWS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"window_days must be one of: {', '.join(map(str, sorted(_ALLOWED_WINDOWS)))}",
+        )
+
+    # Build query
+    query = db.query(PlayerScore).filter(
+        PlayerScore.bdl_player_id == bdl_player_id,
+        PlayerScore.window_days == window_days,
+    )
+
+    # Resolve as_of_date
+    if as_of_date is None:
+        # Default to latest available score for this player/window
+        latest = query.order_by(PlayerScore.as_of_date.desc()).first()
+        if not latest:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No player_scores found for bdl_player_id={bdl_player_id} window_days={window_days}",
+            )
+        as_of_date = latest.as_of_date
+    else:
+        # Query for specific date
+        latest = query.filter(PlayerScore.as_of_date == as_of_date).first()
+        if not latest:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No player_scores found for bdl_player_id={bdl_player_id} window_days={window_days} as_of_date={as_of_date}",
+            )
+
+    # Build category_scores
+    category_scores = PlayerScoreCategoryBreakdown(
+        z_hr=latest.z_hr,
+        z_rbi=latest.z_rbi,
+        z_nsb=latest.z_nsb,
+        z_avg=latest.z_avg,
+        z_obp=latest.z_obp,
+        z_era=latest.z_era,
+        z_whip=latest.z_whip,
+        z_k_per_9=latest.z_k_per_9,
+    )
+
+    # Build score output
+    score_out = PlayerScoreOut(
+        bdl_player_id=latest.bdl_player_id,
+        as_of_date=latest.as_of_date,
+        window_days=latest.window_days,
+        player_type=latest.player_type,
+        games_in_window=latest.games_in_window,
+        composite_z=latest.composite_z,
+        score_0_100=latest.score_0_100,
+        confidence=latest.confidence,
+        category_scores=category_scores,
+    )
+
+    return PlayerScoresResponse(
+        bdl_player_id=bdl_player_id,
+        requested_window_days=window_days,
+        as_of_date=as_of_date,
+        score=score_out,
+    )

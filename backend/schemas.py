@@ -759,3 +759,41 @@ class TwoStartDetectionResponse(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# Layer 3: Player Scores (P14 League Z-Scores)
+# ---------------------------------------------------------------------------
+
+
+class PlayerScoreCategoryBreakdown(BaseModel):
+    """Per-category Z-scores for a player."""
+    z_hr: Optional[float] = None
+    z_rbi: Optional[float] = None
+    z_nsb: Optional[float] = None
+    z_avg: Optional[float] = None
+    z_obp: Optional[float] = None
+    z_era: Optional[float] = None
+    z_whip: Optional[float] = None
+    z_k_per_9: Optional[float] = None
+
+
+class PlayerScoreOut(BaseModel):
+    """Authoritative Layer 3 scoring output for a single player."""
+    bdl_player_id: int
+    as_of_date: date
+    window_days: int
+    player_type: Literal["hitter", "pitcher", "two_way"]
+    games_in_window: int
+    composite_z: float
+    score_0_100: float
+    confidence: float
+    category_scores: PlayerScoreCategoryBreakdown
+
+
+class PlayerScoresResponse(BaseModel):
+    """Response wrapper for GET /api/fantasy/players/{id}/scores."""
+    bdl_player_id: int
+    requested_window_days: int
+    as_of_date: date
+    score: PlayerScoreOut
+
+

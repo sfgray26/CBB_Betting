@@ -504,6 +504,17 @@ def _extract_processed_records(result: Any) -> int:
     if found_composite:
         return composite_total
 
+    scored_window_keys = ("scored_7d", "scored_14d", "scored_30d")
+    scored_total = 0
+    found_scored = False
+    for key in scored_window_keys:
+        value = result.get(key)
+        if isinstance(value, (int, float)):
+            scored_total += int(value)
+            found_scored = True
+    if found_scored:
+        return scored_total
+
     return 0
 
 

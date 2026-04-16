@@ -132,7 +132,10 @@
       "Bash(venv/Scripts/python.exe:*)",
       "Bash(awk -F'@' '{print $2}')",
       "Bash(awk -F'/' '{print $1}')",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(\"venv/Scripts/python\" -m py_compile backend/schemas.py backend/routers/fantasy.py)",
+      "Bash(\"venv/Scripts/python\" -m pytest tests/test_player_scores_api.py -v --tb=short)",
+      "Bash(venv/Scripts/pip install *)"
     ]
   },
   "enabledPlugins": {}

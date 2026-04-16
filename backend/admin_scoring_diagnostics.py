@@ -9,15 +9,27 @@ Endpoints (all read-only, all GET, all whitelisted inputs):
   /admin/diagnose-scoring/nsb-rollout              -- aggregate fill-rate + distribution
   /admin/diagnose-scoring/nsb-leaders?direction=top&limit=20
   /admin/diagnose-scoring/nsb-player?bdl_player_id=12345
+  /admin/diagnose-scoring/layer3-freshness         -- Layer 3 freshness + coverage observability
 
 REMOVE AFTER NSB ROLLOUT VALIDATED (tracked in HANDOFF.md).
 """
 
+from datetime import date, datetime, timezone, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
+
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
 from backend.models import SessionLocal
+
+_ET = ZoneInfo("America/New_York")
+
+
+def _now_et():
+    """Get current time in ET. Overridable for testing."""
+    return datetime.now(_ET)
+
 
 router = APIRouter()
 
@@ -486,3 +498,184 @@ def _nsb_integrity_check(sb, cs, nsb) -> str:
     if abs(float(nsb) - expected) < 1e-6:
         return "ok"
     return f"mismatch (expected {expected:.4f}, got {float(nsb):.4f})"
+
+
+# ---------------------------------------------------------------------------
+# 4. Layer 3 Freshness -- operator-grade observability for scoring spine
+# ---------------------------------------------------------------------------
+
+@router.get("/diagnose-scoring/layer3-freshness")
+def diagnose_layer3_freshness():
+    """
+    Layer 3 scoring pipeline freshness and coverage observability.
+
+    Answers:
+      - What is the latest as_of_date for player_rolling_stats?
+      - What is the latest as_of_date for player_scores?
+      - How many rows exist per window on the latest dates?
+      - What were the last audit log entries for rolling_windows/player_scores?
+      - Is the pipeline healthy, stale, partial, or missing?
+
+    Use this for operational monitoring of the Layer 3 scoring spine.
+    """
+    db = SessionLocal()
+    try:
+        now_et = _now_et()
+
+        # --- Latest as_of_date for each table -------------------------------
+        prs_latest_row = db.execute(text("""
+            SELECT MAX(as_of_date) AS latest_date FROM player_rolling_stats
+        """)).fetchone()
+
+        ps_latest_row = db.execute(text("""
+            SELECT MAX(as_of_date) AS latest_date FROM player_scores
+        """)).fetchone()
+
+        prs_latest = prs_latest_row.latest_date if prs_latest_row else None
+        ps_latest = ps_latest_row.latest_date if ps_latest_row else None
+
+        # --- Row counts by window for latest dates -------------------------
+        prs_counts = {}
+        ps_counts = {}
+
+        for window in (7, 14, 30):
+            if prs_latest:
+                cnt = db.execute(text("""
+                    SELECT COUNT(*) AS n FROM player_rolling_stats
+                    WHERE as_of_date = :d AND window_days = :w
+                """), {"d": prs_latest, "w": window}).fetchone()
+                prs_counts[window] = _i(cnt.n) if cnt else 0
+            else:
+                prs_counts[window] = None
+
+            if ps_latest:
+                cnt = db.execute(text("""
+                    SELECT COUNT(*) AS n FROM player_scores
+                    WHERE as_of_date = :d AND window_days = :w
+                """), {"d": ps_latest, "w": window}).fetchone()
+                ps_counts[window] = _i(cnt.n) if cnt else 0
+            else:
+                ps_counts[window] = None
+
+        # --- Latest audit log entries --------------------------------------
+        # rolling_windows typically runs at 3 AM ET
+        rw_audit = db.execute(text("""
+            SELECT id, job_type, target_date, status, records_processed,
+                   records_failed, processing_time_seconds, started_at, completed_at
+            FROM data_ingestion_logs
+            WHERE job_type = 'rolling_windows'
+            ORDER BY id DESC
+            LIMIT 1
+        """)).fetchone()
+
+        # player_scores typically runs at 4 AM ET
+        ps_audit = db.execute(text("""
+            SELECT id, job_type, target_date, status, records_processed,
+                   records_failed, processing_time_seconds, started_at, completed_at
+            FROM data_ingestion_logs
+            WHERE job_type = 'player_scores'
+            ORDER BY id DESC
+            LIMIT 1
+        """)).fetchone()
+
+        # --- Freshness verdict --------------------------------------------
+        # Expected schedule: rolling_windows ~3 AM ET, player_scores ~4 AM ET
+        # Consider data stale if latest as_of_date is 2+ days old
+        today_et = now_et.date()
+        stale_threshold = today_et - timedelta(days=2)
+
+        prs_is_fresh = prs_latest and prs_latest >= stale_threshold
+        ps_is_fresh = ps_latest and ps_latest >= stale_threshold
+
+        verdict = _compute_freshness_verdict(prs_is_fresh, ps_is_fresh, prs_latest, ps_latest)
+
+        return {
+            "checked_at": now_et.isoformat(),
+            "verdict": verdict,
+            "message": _interpret_freshness_verdict(verdict, prs_latest, ps_latest, now_et),
+            "player_rolling_stats": {
+                "latest_as_of_date": _d(prs_latest),
+                "row_counts_by_window": prs_counts,
+                "latest_audit": _format_audit_log(rw_audit) if rw_audit else None,
+            },
+            "player_scores": {
+                "latest_as_of_date": _d(ps_latest),
+                "row_counts_by_window": ps_counts,
+                "latest_audit": _format_audit_log(ps_audit) if ps_audit else None,
+            },
+            "schedule_expectations": {
+                "rolling_windows_expected": "03:00 AM ET (daily)",
+                "player_scores_expected": "04:00 AM ET (daily)",
+                "timezone": "America/New_York",
+            },
+        }
+    finally:
+        db.close()
+
+
+def _compute_freshness_verdict(
+    prs_fresh: Optional[bool],
+    ps_fresh: Optional[bool],
+    prs_latest: Optional[date],
+    ps_latest: Optional[date],
+) -> str:
+    """
+    Compute a simple freshness verdict for Layer 3 tables.
+
+    Returns one of: healthy, stale, partial, missing
+    """
+    if prs_latest is None and ps_latest is None:
+        return "missing"
+    if prs_latest and ps_latest is None:
+        return "partial"
+    if prs_latest is None and ps_latest:
+        return "partial"
+    if prs_fresh and ps_fresh:
+        return "healthy"
+    if prs_fresh or ps_fresh:
+        return "partial"
+    return "stale"
+
+
+def _interpret_freshness_verdict(
+    verdict: str,
+    prs_latest: Optional[date],
+    ps_latest: Optional[date],
+    now_et: datetime,
+) -> str:
+    """Human-readable summary for the freshness verdict."""
+    if verdict == "missing":
+        return ("No Layer 3 data found. Both player_rolling_stats and player_scores "
+                "are empty. Has the daily ingestion job run?")
+    if verdict == "healthy":
+        return (f"Layer 3 pipeline is healthy. Latest rolling_stats: {_d(prs_latest)}, "
+                f"latest scores: {_d(ps_latest)}. Both tables are fresh.")
+    if verdict == "partial":
+        missing = []
+        if prs_latest is None:
+            missing.append("player_rolling_stats")
+        if ps_latest is None:
+            missing.append("player_scores")
+        if missing:
+            return (f"Layer 3 pipeline is partial. Missing data from: {', '.join(missing)}. "
+                    "Check if scheduled jobs completed.")
+        # One is stale, one is fresh
+        return (f"Layer 3 pipeline shows partial freshness. One table is stale. "
+                f"rolling_stats: {_d(prs_latest)}, scores: {_d(ps_latest)}.")
+    return (f"Layer 3 pipeline is STALE. Latest rolling_stats: {_d(prs_latest)}, "
+            f"latest scores: {_d(ps_latest)}. Data is 2+ days old. Check scheduled jobs.")
+
+
+def _format_audit_log(row) -> dict:
+    """Format a data_ingestion_logs row for JSON response."""
+    return {
+        "id": _i(row.id),
+        "job_type": row.job_type,
+        "target_date": _d(row.target_date),
+        "status": row.status,
+        "records_processed": _i(row.records_processed),
+        "records_failed": _i(row.records_failed),
+        "processing_time_seconds": _f(row.processing_time_seconds),
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+    }

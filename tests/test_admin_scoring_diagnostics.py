@@ -7,6 +7,8 @@ columns, and helpers/whitelists behave as documented. No DB required.
 """
 
 import inspect
+from datetime import date, datetime
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -15,6 +17,8 @@ from backend.models import (
     PlayerRollingStats,
     PlayerScore,
     PlayerIDMapping,
+    DataIngestionLog,
+    Base,
 )
 
 
@@ -26,6 +30,7 @@ EXPECTED_PATHS = {
     "/diagnose-scoring/nsb-rollout",
     "/diagnose-scoring/nsb-leaders",
     "/diagnose-scoring/nsb-player",
+    "/diagnose-scoring/layer3-freshness",
 }
 
 
@@ -189,6 +194,324 @@ def test_interpret_rollout_messages():
     for verdict in ("no_data", "healthy", "partial", "empty"):
         msg = diag._interpret_rollout(verdict, 50.0)
         assert isinstance(msg, str) and len(msg) > 0
+
+
+# ---------------------------------------------------------------------------
+# Layer 3 Freshness endpoint tests
+# ---------------------------------------------------------------------------
+
+
+def test_freshness_verdict_computation():
+    """Verdict logic covers all expected states."""
+    today = date(2026, 4, 15)
+    yesterday = date(2026, 4, 14)
+    three_days_ago = date(2026, 4, 12)
+
+    # Both fresh
+    assert diag._compute_freshness_verdict(True, True, yesterday, yesterday) == "healthy"
+    # Both stale
+    assert diag._compute_freshness_verdict(False, False, three_days_ago, three_days_ago) == "stale"
+    # One fresh, one stale
+    assert diag._compute_freshness_verdict(True, False, yesterday, three_days_ago) == "partial"
+    # Both missing
+    assert diag._compute_freshness_verdict(None, None, None, None) == "missing"
+    # One missing
+    assert diag._compute_freshness_verdict(True, None, yesterday, None) == "partial"
+    assert diag._compute_freshness_verdict(None, True, None, yesterday) == "partial"
+
+
+def test_freshness_interpretation_messages():
+    """Each freshness verdict produces a non-empty human-readable string."""
+    from zoneinfo import ZoneInfo
+
+    now = datetime(2026, 4, 15, 10, 0, tzinfo=ZoneInfo("America/New_York"))
+    today = date(2026, 4, 15)
+    stale = date(2026, 4, 12)
+
+    for verdict, prs_d, ps_d in [
+        ("missing", None, None),
+        ("healthy", today, today),
+        ("partial", today, None),
+        ("partial", None, today),
+        ("partial", today, stale),
+        ("stale", stale, stale),
+    ]:
+        msg = diag._interpret_freshness_verdict(verdict, prs_d, ps_d, now)
+        assert isinstance(msg, str) and len(msg) > 0, f"Empty message for verdict={verdict}"
+
+
+def test_format_audit_log():
+    """Audit log formatting handles null values correctly."""
+    class MockRow:
+        id = 123
+        job_type = "rolling_windows"
+        target_date = date(2026, 4, 15)
+        status = "SUCCESS"
+        records_processed = 1000
+        records_failed = 0
+        processing_time_seconds = 5.5
+        started_at = datetime(2026, 4, 15, 3, 0, 0)
+        completed_at = datetime(2026, 4, 15, 3, 5, 0)
+
+    result = diag._format_audit_log(MockRow())
+    assert result["id"] == 123
+    assert result["job_type"] == "rolling_windows"
+    assert result["target_date"] == "2026-04-15"
+    assert result["status"] == "SUCCESS"
+    assert result["records_processed"] == 1000
+    assert result["records_failed"] == 0
+    assert result["processing_time_seconds"] == 5.5
+    assert result["started_at"] == "2026-04-15T03:00:00"
+    assert result["completed_at"] == "2026-04-15T03:05:00"
+
+
+def test_layer3_freshness_endpoint_registered():
+    """Layer 3 freshness endpoint is registered and uses GET."""
+    from fastapi import HTTPException
+
+    # Endpoint exists
+    registered = {r.path for r in diag.router.routes}
+    assert "/diagnose-scoring/layer3-freshness" in registered
+
+    # Uses GET method
+    for r in diag.router.routes:
+        if r.path == "/diagnose-scoring/layer3-freshness":
+            assert "GET" in r.methods
+            # No query parameters expected
+            assert not getattr(r, "dependant", None) or len(
+                getattr(r.dependant, "query_params", [])
+            ) == 0
+
+
+# ---------------------------------------------------------------------------
+# Helper function for Layer 3 freshness tests
+# ---------------------------------------------------------------------------
+
+
+def _fake_db_with_results(results):
+    """
+    Create a fake DB object that returns queued results from fetchone() calls.
+
+    Args:
+        results: List of objects with attributes matching what the endpoint expects.
+
+    Returns a fake DB with:
+        - execute() that returns a result object
+        - fetchone() that pops from the results queue
+        - fetchall() that returns empty list
+        - close() that does nothing
+    """
+    from types import SimpleNamespace
+
+    result_queue = list(results)
+
+    class FakeResult:
+        def fetchone(self):
+            return result_queue.pop(0) if result_queue else None
+
+        def fetchall(self):
+            return []
+
+    fake_db = SimpleNamespace(
+        execute=lambda sql, params=None: FakeResult(),
+        close=lambda: None,
+    )
+    return fake_db
+
+
+# ---------------------------------------------------------------------------
+# Behavior-level tests for Layer 3 freshness endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_layer3_freshness_healthy_response(monkeypatch):
+    """Healthy case: both tables have fresh data, audit logs present."""
+    from types import SimpleNamespace
+
+    today = date(2026, 4, 15)
+    now_et = datetime(2026, 4, 15, 10, 0, 0, tzinfo=diag._ET)
+
+    # Queue up results in the order the endpoint will query:
+    # 1-2: Latest date queries (prs, ps)
+    # 3-8: Count queries for windows 7, 14, 30 (prs, ps)
+    # 9-10: Audit log queries (rw, ps)
+    results = [
+        # Latest dates
+        SimpleNamespace(latest_date=today),
+        SimpleNamespace(latest_date=today),
+        # Counts for window 7
+        SimpleNamespace(n=100),
+        SimpleNamespace(n=100),
+        # Counts for window 14
+        SimpleNamespace(n=100),
+        SimpleNamespace(n=100),
+        # Counts for window 30
+        SimpleNamespace(n=100),
+        SimpleNamespace(n=100),
+        # Audit logs
+        SimpleNamespace(
+            id=1,
+            job_type="rolling_windows",
+            target_date=today,
+            status="SUCCESS",
+            records_processed=500,
+            records_failed=0,
+            processing_time_seconds=12.5,
+            started_at=datetime(2026, 4, 15, 3, 0, 0),
+            completed_at=datetime(2026, 4, 15, 3, 12, 30),
+        ),
+        SimpleNamespace(
+            id=2,
+            job_type="player_scores",
+            target_date=today,
+            status="SUCCESS",
+            records_processed=500,
+            records_failed=0,
+            processing_time_seconds=12.5,
+            started_at=datetime(2026, 4, 15, 4, 0, 0),
+            completed_at=datetime(2026, 4, 15, 4, 12, 30),
+        ),
+    ]
+
+    fake_db = _fake_db_with_results(results)
+    monkeypatch.setattr(diag, "SessionLocal", lambda: fake_db)
+    monkeypatch.setattr(diag, "_now_et", lambda: now_et)
+
+    result = diag.diagnose_layer3_freshness()
+
+    assert result["verdict"] == "healthy"
+    assert result["player_rolling_stats"]["latest_as_of_date"] == "2026-04-15"
+    assert result["player_scores"]["latest_as_of_date"] == "2026-04-15"
+    assert result["player_rolling_stats"]["row_counts_by_window"] == {7: 100, 14: 100, 30: 100}
+    assert result["player_scores"]["row_counts_by_window"] == {7: 100, 14: 100, 30: 100}
+    assert result["player_rolling_stats"]["latest_audit"]["id"] == 1
+    assert result["player_scores"]["latest_audit"]["id"] == 2
+    assert result["player_rolling_stats"]["latest_audit"]["status"] == "SUCCESS"
+    assert "checked_at" in result
+    assert "message" in result
+    assert "schedule_expectations" in result
+
+
+def test_layer3_freshness_missing_data(monkeypatch):
+    """Missing case: both tables are empty."""
+    from types import SimpleNamespace
+
+    now_et = datetime(2026, 4, 15, 10, 0, 0, tzinfo=diag._ET)
+
+    # Both tables empty: latest dates are None
+    results = [
+        SimpleNamespace(latest_date=None),
+        SimpleNamespace(latest_date=None),
+        # No count queries needed when dates are None
+        # No audit logs
+    ]
+
+    fake_db = _fake_db_with_results(results)
+    monkeypatch.setattr(diag, "SessionLocal", lambda: fake_db)
+    monkeypatch.setattr(diag, "_now_et", lambda: now_et)
+
+    result = diag.diagnose_layer3_freshness()
+
+    assert result["verdict"] == "missing"
+    assert result["player_rolling_stats"]["latest_as_of_date"] is None
+    assert result["player_scores"]["latest_as_of_date"] is None
+    assert "layer 3 data" in result["message"].lower()
+
+
+def test_layer3_freshness_stale_data(monkeypatch):
+    """Stale case: both tables have data but it's 2+ days old."""
+    from types import SimpleNamespace
+
+    stale_date = date(2026, 4, 12)  # 3 days ago from April 15
+    now_et = datetime(2026, 4, 15, 10, 0, 0, tzinfo=diag._ET)
+
+    results = [
+        # Latest dates (stale)
+        SimpleNamespace(latest_date=stale_date),
+        SimpleNamespace(latest_date=stale_date),
+        # Counts for windows 7, 14, 30
+        SimpleNamespace(n=100),
+        SimpleNamespace(n=100),
+        SimpleNamespace(n=100),
+        SimpleNamespace(n=100),
+        SimpleNamespace(n=100),
+        SimpleNamespace(n=100),
+        # Audit logs
+        SimpleNamespace(
+            id=10,
+            job_type="rolling_windows",
+            target_date=stale_date,
+            status="SUCCESS",
+            records_processed=500,
+            records_failed=0,
+            processing_time_seconds=12.5,
+            started_at=datetime(2026, 4, 12, 3, 0, 0),
+            completed_at=datetime(2026, 4, 12, 3, 12, 30),
+        ),
+        SimpleNamespace(
+            id=11,
+            job_type="player_scores",
+            target_date=stale_date,
+            status="SUCCESS",
+            records_processed=500,
+            records_failed=0,
+            processing_time_seconds=12.5,
+            started_at=datetime(2026, 4, 12, 4, 0, 0),
+            completed_at=datetime(2026, 4, 12, 4, 12, 30),
+        ),
+    ]
+
+    fake_db = _fake_db_with_results(results)
+    monkeypatch.setattr(diag, "SessionLocal", lambda: fake_db)
+    monkeypatch.setattr(diag, "_now_et", lambda: now_et)
+
+    result = diag.diagnose_layer3_freshness()
+
+    assert result["verdict"] == "stale"
+    assert result["player_rolling_stats"]["latest_as_of_date"] == "2026-04-12"
+    assert result["player_scores"]["latest_as_of_date"] == "2026-04-12"
+    assert "stale" in result["message"].lower()
+
+
+def test_layer3_freshness_partial_data(monkeypatch):
+    """Partial case: player_rolling_stats has data, player_scores is empty."""
+    from types import SimpleNamespace
+
+    today = date(2026, 4, 15)
+    now_et = datetime(2026, 4, 15, 10, 0, 0, tzinfo=diag._ET)
+
+    results = [
+        # Latest dates: prs has data, ps is None
+        SimpleNamespace(latest_date=today),
+        SimpleNamespace(latest_date=None),
+        # Counts: only for prs (ps has no data)
+        SimpleNamespace(n=100),  # prs window 7
+        SimpleNamespace(n=100),  # prs window 14
+        SimpleNamespace(n=100),  # prs window 30
+        # Audit log: only for rolling_windows
+        SimpleNamespace(
+            id=20,
+            job_type="rolling_windows",
+            target_date=today,
+            status="SUCCESS",
+            records_processed=300,
+            records_failed=0,
+            processing_time_seconds=8.5,
+            started_at=datetime(2026, 4, 15, 3, 0, 0),
+            completed_at=datetime(2026, 4, 15, 3, 8, 30),
+        ),
+    ]
+
+    fake_db = _fake_db_with_results(results)
+    monkeypatch.setattr(diag, "SessionLocal", lambda: fake_db)
+    monkeypatch.setattr(diag, "_now_et", lambda: now_et)
+
+    result = diag.diagnose_layer3_freshness()
+
+    assert result["verdict"] == "partial"
+    assert result["player_rolling_stats"]["latest_as_of_date"] == "2026-04-15"
+    assert result["player_scores"]["latest_as_of_date"] is None
+    assert "partial" in result["message"].lower()
 
 
 # ---------------------------------------------------------------------------
