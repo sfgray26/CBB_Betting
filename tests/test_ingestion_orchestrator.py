@@ -912,3 +912,77 @@ class TestIngestionRosterFiltering:
             f"Expected 0 lineup decisions when roster is empty, got {result['lineup_decisions']}. "
             "The system must fail closed, not fall back to all player_scores."
         )
+
+    def test_ingestion_path_rejects_mismatched_yahoo_key_mapping(self):
+        """Yahoo-key mappings with a conflicting player name must be rejected.
+
+        This guards against stale or incorrect player_id_mapping rows where a
+        valid Yahoo roster key points at the wrong BDL player. In that case the
+        decision optimization job must reject the mapping rather than admit a
+        non-roster player into lineup results.
+        """
+        from backend.models import PlayerScore, PlayerMomentum, SimulationResult, PlayerIDMapping
+
+        mock_db = MagicMock()
+        mock_score_rows = [
+            MagicMock(
+                bdl_player_id=999,
+                player_name="Shane Smith",
+                player_type="pitcher",
+                score_0_100=99.0,
+                composite_z=1.2,
+            )
+        ]
+
+        def make_query(*args, **kwargs):
+            q = MagicMock()
+
+            def mock_filter(*filter_args, **filter_kwargs):
+                return q
+
+            q.filter = mock_filter
+            q.order_by = lambda *order_args, **order_kwargs: q
+
+            if len(args) == 1 and args[0] is PlayerScore:
+                q.all.return_value = mock_score_rows
+            elif len(args) == 1 and args[0] is PlayerMomentum:
+                q.all.return_value = []
+            elif len(args) == 1 and args[0] is SimulationResult:
+                q.all.return_value = []
+            elif len(args) == 4:
+                q.all.return_value = [
+                    ("469.p.123", 999, "shane smith", "Shane Smith")
+                ]
+            else:
+                q.all.return_value = []
+
+            return q
+
+        mock_db.query = make_query
+        mock_db.begin_nested.return_value = MagicMock()
+        mock_db.commit.return_value = None
+        mock_db.rollback.return_value = None
+        mock_db.bulk_insert_mappings.return_value = None
+
+        orch = DailyIngestionOrchestrator()
+
+        with patch("backend.services.daily_ingestion.SessionLocal", return_value=mock_db):
+            with patch("backend.fantasy_baseball.yahoo_client_resilient.YahooFantasyClient") as mock_yahoo_cls:
+                mock_client = MagicMock()
+                mock_client.get_roster.return_value = [
+                    {
+                        "player_key": "469.p.123",
+                        "name": "Teoscar Hernandez",
+                        "positions": ["OF"],
+                    }
+                ]
+                mock_client.get_free_agents.return_value = []
+                mock_yahoo_cls.return_value = mock_client
+
+                result = _run(orch._run_decision_optimization())
+
+        assert result["status"] == "success"
+        assert result["lineup_decisions"] == 0, (
+            "A Yahoo-key mapping whose player name conflicts with the roster name "
+            "must be rejected to prevent non-roster players from entering lineup results."
+        )

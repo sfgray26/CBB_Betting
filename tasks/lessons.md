@@ -68,6 +68,10 @@
 
 ## Fantasy Baseball
 
+### Exact Yahoo keys still need identity validation
+- **Lesson**: A matching `player_id_mapping.yahoo_key` is not sufficient to trust roster membership for lineup decisions. Stale or incorrect Yahoo-to-BDL rows can still point at the wrong BDL player. Validate the mapped player's normalized name against the live Yahoo roster name before admitting that BDL ID into lineup optimization.
+- **Context**: Decisions page showed non-roster players (for example, Shane Smith) because roster filtering trusted a bad `yahoo_key -> bdl_id` mapping row. The fix rejects mismatched names during `daily_ingestion` roster resolution.
+
 ### Existing backend module
 - `backend/fantasy_baseball/` has a rich set of modules: `player_board.py`, `draft_engine.py`, `projections_loader.py`, `daily_lineup_optimizer.py`, `keeper_engine.py`, `yahoo_client.py`, `qwen_advisor.py`.
 - Yahoo API credentials are already in `.env.example`.

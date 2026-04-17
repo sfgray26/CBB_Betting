@@ -2684,6 +2684,18 @@ class DailyIngestionOrchestrator:
 
                 # H1 fix: fetch real position eligibility from Yahoo roster
                 # via the PlayerIDMapping cross-reference table.
+                def _normalize_identity_name(name: str) -> str:
+                    if not name:
+                        return ""
+                    normalized = unicodedata.normalize("NFKD", name).lower().strip()
+                    for suffix in (" jr.", " sr.", " ii", " iii", " iv", " jr", " sr"):
+                        if normalized.endswith(suffix):
+                            normalized = normalized[: -len(suffix)].strip()
+                    normalized = normalized.replace(".", "")
+                    while "  " in normalized:
+                        normalized = normalized.replace("  ", " ")
+                    return normalized.strip()
+
                 yahoo_positions_by_bdl: dict[int, list[str]] = {}
                 try:
                     from backend.fantasy_baseball.yahoo_client_resilient import (
@@ -2697,25 +2709,56 @@ class DailyIngestionOrchestrator:
                         p["player_key"]: p.get("positions", [])
                         for p in roster if p.get("player_key")
                     }
+                    yahoo_key_to_name = {
+                        p["player_key"]: p.get("name", "")
+                        for p in roster if p.get("player_key")
+                    }
 
                     # Resolve yahoo_key -> bdl_id via PlayerIDMapping
                     if yahoo_key_to_pos:
                         mappings = (
-                            db.query(PlayerIDMapping.yahoo_key, PlayerIDMapping.bdl_id)
+                            db.query(
+                                PlayerIDMapping.yahoo_key,
+                                PlayerIDMapping.bdl_id,
+                                PlayerIDMapping.normalized_name,
+                                PlayerIDMapping.full_name,
+                            )
                             .filter(
                                 PlayerIDMapping.yahoo_key.in_(list(yahoo_key_to_pos.keys())),
                                 PlayerIDMapping.bdl_id.isnot(None),
                             )
                             .all()
                         )
-                        for ykey, bdl_id in mappings:
+                        rejected_mapping_count = 0
+                        for ykey, bdl_id, mapping_normalized_name, mapping_full_name in mappings:
                             positions = yahoo_key_to_pos.get(ykey, [])
+                            roster_name = yahoo_key_to_name.get(ykey, "")
+                            roster_normalized = _normalize_identity_name(roster_name)
+                            mapping_normalized = _normalize_identity_name(
+                                mapping_normalized_name or mapping_full_name or ""
+                            )
+                            if (
+                                roster_normalized
+                                and mapping_normalized
+                                and roster_normalized != mapping_normalized
+                            ):
+                                rejected_mapping_count += 1
+                                logger.warning(
+                                    "decision_optimization: rejecting yahoo_key %s due to name mismatch "
+                                    "(roster='%s', mapping='%s', bdl_id=%s)",
+                                    ykey,
+                                    roster_name,
+                                    mapping_full_name,
+                                    bdl_id,
+                                )
+                                continue
                             if positions:
                                 yahoo_positions_by_bdl[bdl_id] = positions
 
                     logger.info(
-                        "decision_optimization: resolved %d/%d roster players to BDL IDs",
-                        len(yahoo_positions_by_bdl), len(roster),
+                        "decision_optimization: resolved %d/%d roster players to BDL IDs "
+                        "(rejected_mismatches=%d)",
+                        len(yahoo_positions_by_bdl), len(roster), rejected_mapping_count,
                     )
                 except Exception as exc:
                     logger.warning(

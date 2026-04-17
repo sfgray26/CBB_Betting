@@ -21,6 +21,67 @@ import {
 
 type DecisionTypeFilter = 'lineup' | 'waiver'
 
+const LINEUP_SLOT_ORDER = ['C', '1B', '2B', '3B', 'SS', 'OF', 'Util', 'SP', 'RP', 'P'] as const
+const LINEUP_SLOT_CAPACITY: Record<(typeof LINEUP_SLOT_ORDER)[number], number> = {
+  C: 1,
+  '1B': 1,
+  '2B': 1,
+  '3B': 1,
+  SS: 1,
+  OF: 3,
+  Util: 1,
+  SP: 2,
+  RP: 2,
+  P: 1,
+}
+
+function getLineupCoverage(decisions: DecisionWithExplanation[]) {
+  const filledCounts = Object.fromEntries(
+    LINEUP_SLOT_ORDER.map((slot) => [slot, 0]),
+  ) as Record<(typeof LINEUP_SLOT_ORDER)[number], number>
+
+  for (const item of decisions) {
+    const slot = item.decision.target_slot as (typeof LINEUP_SLOT_ORDER)[number] | null
+    if (slot && slot in filledCounts) {
+      filledCounts[slot] += 1
+    }
+  }
+
+  const missingSlots = LINEUP_SLOT_ORDER.flatMap((slot) => {
+    const missingCount = Math.max(0, LINEUP_SLOT_CAPACITY[slot] - filledCounts[slot])
+    if (missingCount === 0) {
+      return []
+    }
+    return missingCount === 1 ? [slot] : [`${slot} x${missingCount}`]
+  })
+
+  const expectedStarters = Object.values(LINEUP_SLOT_CAPACITY).reduce((sum, count) => sum + count, 0)
+  const actualStarters = Object.values(filledCounts).reduce((sum, count) => sum + count, 0)
+
+  return {
+    actualStarters,
+    expectedStarters,
+    missingSlots,
+  }
+}
+
+function sortLineupDecisions(decisions: DecisionWithExplanation[]) {
+  const slotRank = Object.fromEntries(LINEUP_SLOT_ORDER.map((slot, index) => [slot, index]))
+
+  return [...decisions].sort((left, right) => {
+    const leftSlot = left.decision.target_slot ?? 'ZZZ'
+    const rightSlot = right.decision.target_slot ?? 'ZZZ'
+    const leftRank = slotRank[leftSlot] ?? Number.MAX_SAFE_INTEGER
+    const rightRank = slotRank[rightSlot] ?? Number.MAX_SAFE_INTEGER
+
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank
+    }
+
+    return right.decision.confidence - left.decision.confidence
+  })
+}
+
 function StatusBadge({ status }: { status: DecisionPipelineStatus }) {
   const { verdict, message, decision_results } = status
 
@@ -270,6 +331,11 @@ export default function DecisionsPage() {
     { label: 'Waiver', value: 'waiver' },
   ]
 
+  const displayedDecisions =
+    typeFilter === 'lineup' && data ? sortLineupDecisions(data.decisions) : data?.decisions ?? []
+  const lineupCoverage =
+    typeFilter === 'lineup' && data ? getLineupCoverage(data.decisions) : null
+
   const { data: statusData } = useQuery({
     queryKey: ['decisions-status'],
     queryFn: () => endpoints.getDecisionsStatus(),
@@ -349,6 +415,25 @@ export default function DecisionsPage() {
         </div>
       )}
 
+      {typeFilter === 'lineup' && lineupCoverage && data && data.decisions.length > 0 && (
+        <Card>
+          <div className="flex flex-col gap-2 py-3 text-sm text-zinc-300">
+            <div className="flex items-center gap-2">
+              <Info className="h-4 w-4 text-amber-400" />
+              <span>
+                Showing starter recommendations only, not your full roster or bench.
+              </span>
+            </div>
+            <div className="text-xs text-zinc-500">
+              Starter slot coverage: {lineupCoverage.actualStarters}/{lineupCoverage.expectedStarters}
+              {lineupCoverage.missingSlots.length > 0 && (
+                <span> | Missing: {lineupCoverage.missingSlots.join(', ')}</span>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
+
       {/* Loading state */}
       {isLoading && (
         <div className="flex items-center justify-center py-12">
@@ -377,7 +462,7 @@ export default function DecisionsPage() {
       {/* Decision cards */}
       {!isLoading && !isError && data && data.decisions.length > 0 && (
         <div className="space-y-3">
-          {data.decisions.map((item, idx) => (
+          {displayedDecisions.map((item, idx) => (
             <DecisionCard key={idx} item={item} />
           ))}
         </div>
