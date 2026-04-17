@@ -172,7 +172,15 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
   )
 }
 
-function EmptyState({ filter }: { filter: DecisionTypeFilter }) {
+function EmptyState({
+  filter,
+  selectedDate,
+  resolvedAsOfDate,
+}: {
+  filter: DecisionTypeFilter
+  selectedDate: string
+  resolvedAsOfDate?: string
+}) {
   const filterText =
     filter === 'all'
       ? 'No decisions available yet.'
@@ -180,14 +188,21 @@ function EmptyState({ filter }: { filter: DecisionTypeFilter }) {
         ? 'No lineup decisions available.'
         : 'No waiver decisions available.'
 
+  const detailText = selectedDate
+    ? `No decision rows were returned for ${selectedDate}.`
+    : resolvedAsOfDate
+      ? `The backend returned no decision rows for its latest available date (${resolvedAsOfDate}).`
+      : 'The backend returned no decision rows yet.'
+
   return (
     <Card>
       <div className="flex items-center gap-3 text-zinc-400 py-8">
         <CheckCircle2 className="h-8 w-8 text-zinc-600" />
         <div>
           <p className="text-sm">{filterText}</p>
+          <p className="text-xs text-zinc-600 mt-1">{detailText}</p>
           <p className="text-xs text-zinc-600 mt-1">
-            Decisions will appear here after the daily pipeline runs.
+            This page is loading correctly, but the decision pipeline has not populated this environment yet.
           </p>
         </div>
       </div>
@@ -301,7 +316,11 @@ export default function DecisionsPage() {
 
       {/* Empty state */}
       {!isLoading && !isError && data && data.decisions.length === 0 && (
-        <EmptyState filter={typeFilter} />
+        <EmptyState
+          filter={typeFilter}
+          selectedDate={dateFilter}
+          resolvedAsOfDate={data.as_of_date}
+        />
       )}
 
       {/* Decision cards */}
