@@ -797,3 +797,53 @@ class PlayerScoresResponse(BaseModel):
     score: PlayerScoreOut
 
 
+# ---------------------------------------------------------------------------
+# Layer 3F: Decision Output Read Surface (P17/P19)
+# ---------------------------------------------------------------------------
+
+
+class DecisionResultOut(BaseModel):
+    """P17 Decision Engine result -- lineup or waiver optimization output."""
+    bdl_player_id: int
+    as_of_date: date
+    decision_type: Literal["lineup", "waiver"]
+    target_slot: Optional[str] = None
+    drop_player_id: Optional[int] = None
+    lineup_score: Optional[float] = None
+    value_gain: Optional[float] = None
+    confidence: float
+    reasoning: Optional[str] = None
+
+
+class FactorDetail(BaseModel):
+    """Single factor from a decision explanation."""
+    name: str
+    value: Optional[str] = None
+    label: Optional[str] = None
+    weight: Optional[float] = None
+    narrative: Optional[str] = None
+
+
+class DecisionExplanationOut(BaseModel):
+    """P19 Explainability Layer -- human-readable decision trace."""
+    summary: str
+    factors: list[FactorDetail]
+    confidence_narrative: Optional[str] = None
+    risk_narrative: Optional[str] = None
+    track_record_narrative: Optional[str] = None
+
+
+class DecisionWithExplanation(BaseModel):
+    """Decision result with optional attached explanation."""
+    decision: DecisionResultOut
+    explanation: Optional[DecisionExplanationOut] = None
+
+
+class DecisionsResponse(BaseModel):
+    """Response wrapper for GET /api/fantasy/decisions."""
+    decisions: list[DecisionWithExplanation]
+    count: int
+    as_of_date: date
+    decision_type: Optional[Literal["lineup", "waiver"]] = None
+
+

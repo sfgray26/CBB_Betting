@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > Date: April 16, 2026 | Author: Claude Code (Master Architect)
-> Status: Layer 2 certified complete. Layer 3B consolidation complete. Layer 3D observability complete. API endpoint live with auth. **Layer 3E (Market-Implied Probabilities) is the active engineering lane.** Do not reopen Layer 2 except for regressions.
+> Status: Layer 2 certified complete. Layer 3B consolidation complete. Layer 3D observability complete. API endpoint live with auth. Decision pipeline observability complete. L3F (Decision Output Read Surface) complete. L3E (Market-Implied Probabilities) is deferred as a future enhancement. Do not reopen Layer 2 except for regressions.
 
 Full audit: reports/2026-04-15-comprehensive-application-audit.md
 Raw-ingestion contract audit: reports/2026-04-05-raw-ingestion-audit.md
@@ -119,8 +119,9 @@ Status: CERTIFIED COMPLETE
 Status: ACTIVE
 
 - This is the only active engineering workstream now.
-- L3A (scoring spine), L3B (context authority), and L3D (observability) are complete.
-- **L3E (Market-Implied Probabilities) is the current sub-task.** See detailed breakdown below.
+- L3A (scoring spine), L3B (context authority), L3D (observability), and decision pipeline observability are complete.
+- **L3F (Decision Output Read Surface) is the current sub-task.** See detailed breakdown below.
+- L3E (Market-Implied Probabilities) is preserved as backlog, deferred pending explicit policy gate.
 
 **Layer 3B Context Authority Audit (2026-04-16):**
 
@@ -141,7 +142,9 @@ Risk severity: HIGH (fragmentation) > MEDIUM (unused helper confusion) > LOW (we
 
 ### L3E. Market-Implied Probability Integration
 
-**Status: PLANNED — next engineering lane**
+**Status: DEFERRED — future enhancement backlog (not active)**
+
+> **NOTE:** This work requires an explicit policy gate before becoming active. It proposes using The Odds API for MLB player props, which currently conflicts with CLAUDE.md hard-stop rules ("Do NOT use THE_ODDS_API_KEY for new MLB features"). If this lane is activated in the future, CLAUDE.md must be updated first to reflect the policy change.
 
 **Objective:** Enrich the daily player score with forward-looking Vegas market sentiment.
 The current `player_scores` table is built entirely from backward-looking rolling Z-scores
@@ -401,13 +404,31 @@ Frontend is NOT the active workstream. When frontend execution resumes, use the 
 
 ## Active Workstream
 
+### L3F. Decision Output Read Surface
+
+**Status: COMPLETE (2026-04-16)**
+
+Implemented `GET /api/fantasy/decisions` endpoint exposing trusted P17/P19 outputs.
+
+**Completed:**
+- Endpoint implementation in `backend/routers/fantasy.py` with verify_api_key auth
+- Pydantic schemas (`DecisionsResponse`, `DecisionWithExplanation`, `DecisionResultOut`, `DecisionExplanationOut`, `FactorDetail`)
+- 13 comprehensive test cases covering filtering, pagination, auth, response contract, and empty result handling
+- Query params: `decision_type` (lineup/waiver, optional), `as_of_date` (optional, defaults to latest), `limit` (1-500, default 50)
+- Returns decisions ordered by confidence desc, value_gain desc
+- Empty list returned for dates with no data (not 404)
+- Explanation data attached when available
+
+**Out of scope (remains deferred):**
+- New decision computation logic (Layer 4 remains HOLD)
+- Frontend UI for decisions
+- OddsAPI-based player props (L3E remains deferred)
+
 ### L3E. Market-Implied Probability Integration
 
-**Status: PLANNED — see Layer Status section for full task breakdown**
+**Status: DEFERRED — see Layer Status section for full spec (preserved as backlog)**
 
-The next active sub-task is integrating Vegas player prop markets as a forward-looking
-signal into the scoring pipeline. Full specification is documented in the Layer Status
-section above under "L3E. Market-Implied Probability Integration."
+This work is preserved as a complete specification for future consideration, but requires an explicit policy gate before becoming active. The proposed use of The Odds API for MLB player props currently conflicts with CLAUDE.md hard-stop rules.
 
 ### L3A. Derived Stats And Scoring Spine
 
@@ -475,14 +496,8 @@ Decision pipeline freshness endpoint `/admin/diagnose-decision/pipeline-freshnes
 | P2 | Consolidate ballpark_factors.py to DB-backed read | Claude | Complete |
 | P2 | Add Layer 3 freshness observability endpoint | Claude | Complete |
 | P2 | Add decision pipeline freshness observability endpoint | Claude | Complete |
-| **P1** | **Confirm OddsAPI Basic call-budget headroom for player props (est. 13 500/mo)** | **Claude/Gemini** | **Pending** |
-| **P1** | **Implement `devig_american_odds()` pure function + unit tests (L3E-3)** | **Claude** | **Pending** |
-| **P1** | **Define `PlayerPropContract` Pydantic model with rejection validation (L3E-1)** | **Claude** | **Pending** |
-| **P1** | **Design and migrate `player_prop_odds` table schema (L3E-2)** | **Claude** | **Pending** |
-| **P2** | **Build ingestion job at lock 100_016, gated by `MLB_PROPS_ENABLED` (L3E-4)** | **Claude** | **Pending** |
-| **P2** | **Wire call-budget telemetry (`X-Requests-Remaining` logging)** | **Claude** | **Pending** |
-| **P3** | **Prototype +EV Player Score synthesis function (L3E-5)** | **Claude** | **Pending** |
-| P3 | Decide whether any Layer 5 response shape changes are needed after scoring output stabilizes | Claude | Pending |
+| P1 | Expose DecisionResult read API (lineup/waiver outputs) with verify_api_key auth (L3F) | Claude | Complete |
+| P2 | Decide whether any Layer 5 response shape changes are needed after scoring output stabilizes | Claude | Pending |
 
 ---
 
@@ -519,4 +534,4 @@ No active handoff prompt is currently open. Create a new prompt only after the f
 
 ---
 
-Last Updated: April 16, 2026 (19:00 UTC - Decision pipeline observability complete: /admin/diagnose-decision/pipeline-freshness live with 34 tests passing; L3E Market-Implied Probabilities is active engineering lane)
+Last Updated: April 16, 2026 (21:00 UTC - L3F Decision Output Read Surface complete; GET /api/fantasy/decisions live with 13 tests passing; L3E remains deferred pending policy gate)

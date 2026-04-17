@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func
-from typing import List, Optional
+from typing import List, Optional, Literal
 import logging
 import os
 import json as _json
@@ -33,6 +33,8 @@ from backend.models import (
     DataIngestionLog,
     DBAlert,
     PlayerScore,
+    DecisionResult,
+    DecisionExplanation,
     SessionLocal,
     get_db,
 )
@@ -52,6 +54,11 @@ from backend.schemas import (
     PlayerScoresResponse,
     PlayerScoreOut,
     PlayerScoreCategoryBreakdown,
+    DecisionsResponse,
+    DecisionWithExplanation,
+    DecisionResultOut,
+    DecisionExplanationOut,
+    FactorDetail,
 )
 from backend.utils.fantasy_stat_contract import YAHOO_STAT_ID_FALLBACK, LEAGUE_SCORING_CATEGORIES
 from backend.utils.time_utils import today_et
@@ -3025,4 +3032,131 @@ async def get_player_scores(
         requested_window_days=window_days,
         as_of_date=as_of_date,
         score=score_out,
+    )
+
+
+@router.get("/api/fantasy/decisions", response_model=DecisionsResponse)
+async def get_decisions(
+    decision_type: Optional[Literal["lineup", "waiver"]] = Query(
+        None, description="Filter by decision type: lineup or waiver"
+    ),
+    as_of_date: Optional[date] = Query(None, description="Decision date (defaults to latest available)"),
+    limit: int = Query(50, ge=1, le=500, description="Max results to return (1-500)"),
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Get trusted DecisionResult rows with optional DecisionExplanation data.
+
+    P17 Decision Engine results (lineup/waiver optimization outputs) with
+    optional P19 explainability traces. Default as_of_date returns the latest
+    available decisions. Returns empty list when no rows exist for the filter.
+
+    Auth: verify_api_key required.
+    """
+    # Build base query
+    query = db.query(DecisionResult)
+
+    # Apply decision_type filter if provided
+    if decision_type:
+        query = query.filter(DecisionResult.decision_type == decision_type)
+
+    # Resolve as_of_date: default to latest available date in decision_results
+    if as_of_date is None:
+        latest_date_row = query.order_by(DecisionResult.as_of_date.desc()).first()
+        if latest_date_row:
+            as_of_date = latest_date_row.as_of_date
+        else:
+            # No decisions at all - return empty response
+            return DecisionsResponse(
+                decisions=[],
+                count=0,
+                as_of_date=date.today(),
+                decision_type=decision_type,
+            )
+    else:
+        # Validate that requested date has any data
+        date_exists = query.filter(DecisionResult.as_of_date == as_of_date).first()
+        if not date_exists:
+            # No data for requested date - return empty response
+            return DecisionsResponse(
+                decisions=[],
+                count=0,
+                as_of_date=as_of_date,
+                decision_type=decision_type,
+            )
+
+    # Apply date filter
+    query = query.filter(DecisionResult.as_of_date == as_of_date)
+
+    # Order by confidence desc, then value_gain desc (most confident/valuable first)
+    query = query.order_by(
+        DecisionResult.confidence.desc(),
+        DecisionResult.value_gain.desc(),
+    )
+
+    # Apply limit
+    query = query.limit(limit)
+
+    # Fetch results
+    decision_rows = query.all()
+
+    # Fetch all explanations for these decisions in one query
+    decision_ids = [d.id for d in decision_rows]
+    explanations = (
+        db.query(DecisionExplanation)
+        .filter(DecisionExplanation.decision_id.in_(decision_ids))
+        .all()
+    )
+    explanation_map = {e.decision_id: e for e in explanations}
+
+    # Build response
+    results = []
+    for dr in decision_rows:
+        decision_out = DecisionResultOut(
+            bdl_player_id=dr.bdl_player_id,
+            as_of_date=dr.as_of_date,
+            decision_type=dr.decision_type,
+            target_slot=dr.target_slot,
+            drop_player_id=dr.drop_player_id,
+            lineup_score=dr.lineup_score,
+            value_gain=dr.value_gain,
+            confidence=dr.confidence,
+            reasoning=dr.reasoning,
+        )
+
+        explanation_out = None
+        if dr.id in explanation_map:
+            expl = explanation_map[dr.id]
+            factors = [
+                FactorDetail(
+                    name=f.get("name", ""),
+                    value=f.get("value"),
+                    label=f.get("label"),
+                    weight=f.get("weight"),
+                    narrative=f.get("narrative"),
+                )
+                for f in expl.factors_json
+            ] if expl.factors_json else []
+
+            explanation_out = DecisionExplanationOut(
+                summary=expl.summary,
+                factors=factors,
+                confidence_narrative=expl.confidence_narrative,
+                risk_narrative=expl.risk_narrative,
+                track_record_narrative=expl.track_record_narrative,
+            )
+
+        results.append(
+            DecisionWithExplanation(
+                decision=decision_out,
+                explanation=explanation_out,
+            )
+        )
+
+    return DecisionsResponse(
+        decisions=results,
+        count=len(results),
+        as_of_date=as_of_date,
+        decision_type=decision_type,
     )

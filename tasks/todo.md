@@ -1,5 +1,5 @@
 # MLB Platform — Task Tracker
-*Updated: 2026-04-16 | Architect: Claude Code | Mission: Layer 3A-C complete. Layer 3B park factor consolidation complete. Layer 3D observability complete.*
+*Updated: 2026-04-16 | Architect: Claude Code | Mission: Layer 3A-C complete. Layer 3B park factor consolidation complete. Layer 3D observability complete. Decision pipeline observability complete. L3F (Decision Output Read Surface) complete. L3E deferred.*
 
 > Canonical source: `HANDOFF.md`
 > This file is the execution board for the current phase. If this tracker and HANDOFF disagree, HANDOFF wins.
@@ -27,7 +27,7 @@ Do not start:
 | 0 | Immutable Decision Contracts | STABLE | Change only if Layer 3 contract definition forces it |
 | 1 | Pure Stateless Intelligence | AVAILABLE | Extend only as required by the scoring objective |
 | 2 | Data and Adaptation | CERTIFIED COMPLETE | Regression fixes only |
-| 3 | Derived Stats and Scoring | ACTIVE | Only authorized engineering workstream |
+| 3 | Derived Stats and Scoring | STABLE | L3A-L3F complete; L3E deferred pending policy gate |
 | 4 | Decision Engines and Simulation | HOLD | Do not expand until Layer 3 output is stable |
 | 5 | APIs and Service Presentation | LIMITED | Only expose validated Layer 3 output |
 | 6 | Frontend and UX | HOLD | No new UI work until Layer 3 contract is stable |
@@ -216,9 +216,17 @@ These items remain intentionally deferred:
 **Next steps:**
 - All Layer 3 foundational work (3A-3D) is COMPLETE
 - Decision pipeline observability (P17-P19) is COMPLETE
-- **Active lane: L3E (Market-Implied Probabilities)** - see HANDOFF.md for full specification
-- P3 pending: Decide whether any Layer 5 response shape changes are needed after scoring output stabilizes
+- **L3F (Decision Output Read Surface) is COMPLETE (2026-04-16)**
+  - GET /api/fantasy/decisions endpoint live
+  - Exposes DecisionResult/DecisionExplanation via read API
+  - verify_api_key auth
+  - Query params: decision_type (lineup/waiver), as_of_date, limit
+  - 13 tests passing (test_decisions_api.py)
+- **L3E (Market-Implied Probabilities) is DEFERRED** - preserved as backlog in HANDOFF.md
+  - Requires explicit policy gate to activate (conflicts with CLAUDE.md hard-stop rules)
+  - Full specification preserved for future reference
+- P2 pending: Decide whether any Layer 5 response shape changes are needed after scoring output stabilizes
 
 ---
 
-Last Updated: 2026-04-16 (19:00 UTC - Truth reconciliation: Layer 3A-3D complete, decision pipeline observability complete, L3E Market-Implied Probabilities is active lane)
+Last Updated: 2026-04-16 (21:00 UTC - L3F Decision Output Read Surface complete; GET /api/fantasy/decisions live with 13 tests passing; L3E remains deferred pending policy gate)
