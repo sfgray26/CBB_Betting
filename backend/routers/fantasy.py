@@ -3131,7 +3131,7 @@ async def get_decisions(
             factors = [
                 FactorDetail(
                     name=f.get("name", ""),
-                    value=f.get("value"),
+                    value=str(f["value"]) if f.get("value") is not None else None,
                     label=f.get("label"),
                     weight=f.get("weight"),
                     narrative=f.get("narrative"),
