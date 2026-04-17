@@ -100,6 +100,7 @@ from backend.services.daily_ingestion import (  # noqa: E402
     DailyIngestionOrchestrator,
     _with_advisory_lock,
     LOCK_IDS,
+    _extract_processed_records,
     _extract_blend_rows,
     _serialize_ros_frames,
     _deserialize_ros_frames,
@@ -281,6 +282,31 @@ def test_rolling_zscore_calc_skips_players_with_insufficient_data():
         new_z_recent = (vorp_values[-1] - mean_7) / std_7 if std_7 > 0 else 0.0
 
     assert new_z_recent is None, "z_score_recent must remain None with < 7 rows"
+
+
+def test_extract_processed_records_sums_player_score_windows():
+    """player_scores job summaries should report the total scored rows across windows."""
+    result = {
+        "status": "success",
+        "scored_7d": 817,
+        "scored_14d": 863,
+        "scored_30d": 883,
+    }
+
+    assert _extract_processed_records(result) == 2563
+
+
+def test_extract_processed_records_prefers_direct_record_keys():
+    """Direct record counters should still win over composite fallback logic."""
+    result = {
+        "status": "success",
+        "records_processed": 42,
+        "scored_7d": 817,
+        "scored_14d": 863,
+        "scored_30d": 883,
+    }
+
+    assert _extract_processed_records(result) == 42
 
 
 # ===========================================================================
@@ -590,3 +616,56 @@ def test_probable_pitchers_status_propagates_to_variants():
         assert orch._job_status[variant]["last_run"] is not None, (
             f"{variant} last_run is None after probable_pitchers ran"
         )
+
+
+def test_infer_probable_pitcher_exact_five_day_cycle():
+    """Fallback inference should return a starter on an exact 5-day cadence."""
+    from datetime import date
+    from backend.services.probable_pitcher_fallback import (
+        RecentStarterCandidate,
+        infer_probable_pitcher_for_team,
+    )
+
+    candidates = {
+        "NYY": [
+            RecentStarterCandidate(
+                team="NYY",
+                bdl_player_id=101,
+                mlbam_id=202,
+                pitcher_name="Gerrit Cole",
+                last_start_date=date(2026, 4, 10),
+                typical_ip=6.0,
+            )
+        ]
+    }
+
+    inferred = infer_probable_pitcher_for_team(candidates, "NYY", date(2026, 4, 15))
+
+    assert inferred is not None
+    assert inferred.pitcher_name == "Gerrit Cole"
+
+
+def test_infer_probable_pitcher_rejects_non_cycle_match():
+    """Fallback inference should stay conservative when the rotation cadence does not line up."""
+    from datetime import date
+    from backend.services.probable_pitcher_fallback import (
+        RecentStarterCandidate,
+        infer_probable_pitcher_for_team,
+    )
+
+    candidates = {
+        "NYY": [
+            RecentStarterCandidate(
+                team="NYY",
+                bdl_player_id=101,
+                mlbam_id=202,
+                pitcher_name="Gerrit Cole",
+                last_start_date=date(2026, 4, 10),
+                typical_ip=6.0,
+            )
+        ]
+    }
+
+    inferred = infer_probable_pitcher_for_team(candidates, "NYY", date(2026, 4, 14))
+
+    assert inferred is None

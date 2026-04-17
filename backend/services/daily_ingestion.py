@@ -15,6 +15,7 @@ import logging
 import os
 import time
 import math
+import traceback
 import unicodedata
 from datetime import datetime, date, timedelta
 from typing import Optional, Any
@@ -49,9 +50,14 @@ from backend.models import (
     DailySnapshot as DailySnapshotORM,
     PositionEligibility,
     ProbablePitcherSnapshot,
+    DataIngestionLog,
     engine,
 )
 from backend.services.explainability_layer import ExplanationInput, explain_batch
+from backend.services.probable_pitcher_fallback import (
+    build_recent_starter_candidates,
+    infer_probable_pitcher_for_team,
+)
 from backend.services.snapshot_engine import SnapshotInput, build_snapshot
 from backend.services.backtesting_harness import (
     BacktestInput,
@@ -343,30 +349,88 @@ async def _with_advisory_lock(lock_id: int, job_name: str, coro):
     Enhanced with comprehensive execution logging for observability.
     """
     job_start = time.monotonic()
-    logger.info("JOB START: %s (lock %d) at %s", job_name, lock_id, datetime.now(ZoneInfo("America/New_York")).isoformat())
+    started_at = now_et()
+    logger.info("JOB START: %s (lock %d) at %s", job_name, lock_id, started_at.isoformat())
 
     db = SessionLocal()
+    log_row: Optional[DataIngestionLog] = None
     try:
         result = db.execute(
             text("SELECT pg_try_advisory_lock(:lid)"), {"lid": lock_id}
         ).scalar()
         if not result:
             logger.warning("JOB SKIPPED: %s (lock %d) - advisory lock held by another worker", job_name, lock_id)
+            _persist_ingestion_log(
+                db,
+                job_type=job_name,
+                target_date=today_et(),
+                status="SKIPPED",
+                started_at=started_at,
+                completed_at=now_et(),
+                processing_time_seconds=time.monotonic() - job_start,
+                summary_stats={"skip_reason": "advisory_lock_held", "lock_id": lock_id},
+                warning_details=[{"type": "advisory_lock", "message": "Lock held by another worker"}],
+            )
             return None
 
         logger.info("JOB LOCK ACQUIRED: %s (lock %d)", job_name, lock_id)
+        log_row = DataIngestionLog(
+            job_type=job_name,
+            target_date=today_et(),
+            status="RUNNING",
+            started_at=started_at,
+            summary_stats={"lock_id": lock_id},
+            error_details=[],
+            warning_details=[],
+        )
+        db.add(log_row)
+        db.commit()
 
         try:
             result = await coro()
             job_end = time.monotonic()
-            elapsed_ms = int((job_end - job_start) * 1000)
+            elapsed_seconds = job_end - job_start
+            elapsed_ms = int(elapsed_seconds * 1000)
+            _persist_ingestion_log(
+                db,
+                log_row=log_row,
+                job_type=job_name,
+                target_date=today_et(),
+                status=_normalize_ingestion_log_status(result.get("status") if isinstance(result, dict) else None),
+                started_at=started_at,
+                completed_at=now_et(),
+                records_processed=_extract_processed_records(result),
+                records_failed=_extract_failed_records(result),
+                validation_errors=_extract_validation_count(result, "validation_errors"),
+                validation_warnings=_extract_validation_count(result, "validation_warnings"),
+                processing_time_seconds=elapsed_seconds,
+                data_quality_score=_extract_data_quality_score(result),
+                error_details=_extract_error_details(result),
+                warning_details=_extract_warning_details(result),
+                summary_stats=_sanitize_for_json(result),
+                error_message=_extract_error_message(result),
+            )
             logger.info("JOB COMPLETE: %s (lock %d) - status=%s, elapsed_ms=%d",
                        job_name, lock_id, result.get("status", "unknown"), elapsed_ms)
             return result
 
         except Exception as exc:
             job_end = time.monotonic()
-            elapsed_ms = int((job_end - job_start) * 1000)
+            elapsed_seconds = job_end - job_start
+            elapsed_ms = int(elapsed_seconds * 1000)
+            _persist_ingestion_log(
+                db,
+                log_row=log_row,
+                job_type=job_name,
+                target_date=today_et(),
+                status="FAILED",
+                started_at=started_at,
+                completed_at=now_et(),
+                processing_time_seconds=elapsed_seconds,
+                error_message=str(exc),
+                error_details=[{"type": exc.__class__.__name__, "message": str(exc)}],
+                stack_trace=traceback.format_exc(),
+            )
             logger.error("JOB FAILED: %s (lock %d) - exception=%s, elapsed_ms=%d",
                         job_name, lock_id, str(exc), elapsed_ms, exc_info=True)
             raise
@@ -377,6 +441,195 @@ async def _with_advisory_lock(lock_id: int, job_name: str, coro):
         except Exception:
             pass
         db.close()
+
+
+def _sanitize_for_json(value: Any) -> Any:
+    """Convert common Python objects into JSON-safe payloads for audit logging."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _sanitize_for_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_sanitize_for_json(v) for v in value]
+    return str(value)
+
+
+def _normalize_ingestion_log_status(raw_status: Optional[str]) -> str:
+    """Map job return statuses to the durable log vocabulary."""
+    normalized = (raw_status or "SUCCESS").strip().upper()
+    if normalized in {"SUCCESS", "PARTIAL", "FAILED", "SKIPPED", "RUNNING"}:
+        return normalized
+    if normalized in {"ERROR", "FAIL", "FAILURE"}:
+        return "FAILED"
+    if normalized in {"OK", "DONE"}:
+        return "SUCCESS"
+    return normalized
+
+
+def _extract_processed_records(result: Any) -> int:
+    """Best-effort extraction of the primary processed-record count from a job result."""
+    if not isinstance(result, dict):
+        return 0
+
+    direct_keys = (
+        "records_processed",
+        "records",
+        "rows_written",
+        "rows_upserted",
+        "rows_patched",
+        "records_written",
+        "records_updated",
+        "players_simulated",
+        "n_players",
+        "n_players_scored",
+        "n_explained",
+        "bat_rows",
+        "pit_rows",
+    )
+    for key in direct_keys:
+        value = result.get(key)
+        if isinstance(value, (int, float)):
+            return int(value)
+
+    composite_keys = ("lineup_decisions", "waiver_decisions")
+    composite_total = 0
+    found_composite = False
+    for key in composite_keys:
+        value = result.get(key)
+        if isinstance(value, (int, float)):
+            composite_total += int(value)
+            found_composite = True
+    if found_composite:
+        return composite_total
+
+    scored_window_keys = ("scored_7d", "scored_14d", "scored_30d")
+    scored_total = 0
+    found_scored = False
+    for key in scored_window_keys:
+        value = result.get(key)
+        if isinstance(value, (int, float)):
+            scored_total += int(value)
+            found_scored = True
+    if found_scored:
+        return scored_total
+
+    return 0
+
+
+def _extract_failed_records(result: Any) -> int:
+    if not isinstance(result, dict):
+        return 0
+    value = result.get("records_failed")
+    if isinstance(value, (int, float)):
+        return int(value)
+    return 0
+
+
+def _extract_validation_count(result: Any, key: str) -> int:
+    if not isinstance(result, dict):
+        return 0
+    value = result.get(key)
+    if isinstance(value, (int, float)):
+        return int(value)
+    return 0
+
+
+def _extract_data_quality_score(result: Any) -> Optional[float]:
+    if not isinstance(result, dict):
+        return None
+    value = result.get("data_quality_score")
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _extract_error_message(result: Any) -> Optional[str]:
+    if not isinstance(result, dict):
+        return None
+    for key in ("error_message", "error", "reason"):
+        value = result.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _extract_error_details(result: Any) -> list[dict[str, Any]]:
+    if not isinstance(result, dict):
+        return []
+    details = result.get("error_details")
+    if isinstance(details, list):
+        return _sanitize_for_json(details)
+    message = _extract_error_message(result)
+    if message:
+        return [{"message": message}]
+    return []
+
+
+def _extract_warning_details(result: Any) -> list[dict[str, Any]]:
+    if not isinstance(result, dict):
+        return []
+    details = result.get("warning_details")
+    if isinstance(details, list):
+        return _sanitize_for_json(details)
+    warnings = result.get("warnings")
+    if isinstance(warnings, list):
+        return [{"message": str(item)} for item in _sanitize_for_json(warnings)]
+    return []
+
+
+def _persist_ingestion_log(
+    db,
+    *,
+    job_type: str,
+    target_date: date,
+    status: str,
+    started_at: datetime,
+    completed_at: Optional[datetime] = None,
+    records_processed: int = 0,
+    records_failed: int = 0,
+    processing_time_seconds: Optional[float] = None,
+    validation_errors: int = 0,
+    validation_warnings: int = 0,
+    data_quality_score: Optional[float] = None,
+    error_details: Optional[list[dict[str, Any]]] = None,
+    warning_details: Optional[list[dict[str, Any]]] = None,
+    summary_stats: Optional[Any] = None,
+    error_message: Optional[str] = None,
+    stack_trace: Optional[str] = None,
+    log_row: Optional[DataIngestionLog] = None,
+) -> None:
+    """Persist or update the durable audit row for an ingestion job without affecting job success."""
+    try:
+        if log_row is None:
+            log_row = DataIngestionLog(
+                job_type=job_type,
+                target_date=target_date,
+                status=status,
+                started_at=started_at,
+            )
+            db.add(log_row)
+
+        log_row.status = status
+        log_row.target_date = target_date
+        log_row.started_at = started_at
+        log_row.completed_at = completed_at
+        log_row.records_processed = records_processed
+        log_row.records_failed = records_failed
+        log_row.processing_time_seconds = processing_time_seconds
+        log_row.validation_errors = validation_errors
+        log_row.validation_warnings = validation_warnings
+        log_row.data_quality_score = data_quality_score
+        log_row.error_details = _sanitize_for_json(error_details or [])
+        log_row.warning_details = _sanitize_for_json(warning_details or [])
+        log_row.summary_stats = _sanitize_for_json(summary_stats or {})
+        log_row.error_message = error_message
+        log_row.stack_trace = stack_trace
+        db.commit()
+    except Exception as log_exc:
+        db.rollback()
+        logger.warning("Failed to persist DataIngestionLog for %s: %s", job_type, log_exc)
 
 
 # ---------------------------------------------------------------------------
@@ -746,7 +999,7 @@ class DailyIngestionOrchestrator:
             pass
         return None
 
-    def _record_job_run(self, job_id: str, status: str, records: int = 0) -> None:
+    def _record_job_run(self, job_id: str, status: str, records: int = 0, elapsed_ms: Optional[int] = None) -> None:
         """Update in-memory job status after a run."""
         run_info = {
             "name": job_id,
@@ -754,6 +1007,8 @@ class DailyIngestionOrchestrator:
             "last_run": now_et().isoformat(),
             "last_status": status,
             "next_run": self._get_next_run(job_id),
+            "records_processed": records,
+            "last_elapsed_ms": elapsed_ms,
         }
         self._job_status[job_id] = run_info
 
@@ -1663,6 +1918,8 @@ class DailyIngestionOrchestrator:
                         w_walks=res.w_walks,
                         w_strikeouts_bat=res.w_strikeouts_bat,
                         w_stolen_bases=res.w_stolen_bases,
+                        w_caught_stealing=res.w_caught_stealing,
+                        w_net_stolen_bases=res.w_net_stolen_bases,
                         w_avg=res.w_avg,
                         w_obp=res.w_obp,
                         w_slg=res.w_slg,
@@ -1690,6 +1947,8 @@ class DailyIngestionOrchestrator:
                             w_walks=res.w_walks,
                             w_strikeouts_bat=res.w_strikeouts_bat,
                             w_stolen_bases=res.w_stolen_bases,
+                            w_caught_stealing=res.w_caught_stealing,
+                            w_net_stolen_bases=res.w_net_stolen_bases,
                             w_avg=res.w_avg,
                             w_obp=res.w_obp,
                             w_slg=res.w_slg,
@@ -1815,6 +2074,7 @@ class DailyIngestionOrchestrator:
                                 z_hr=res.z_hr,
                                 z_rbi=res.z_rbi,
                                 z_sb=res.z_sb,
+                                z_nsb=res.z_nsb,
                                 z_avg=res.z_avg,
                                 z_obp=res.z_obp,
                                 z_era=res.z_era,
@@ -1832,6 +2092,7 @@ class DailyIngestionOrchestrator:
                                     z_hr=res.z_hr,
                                     z_rbi=res.z_rbi,
                                     z_sb=res.z_sb,
+                                    z_nsb=res.z_nsb,
                                     z_avg=res.z_avg,
                                     z_obp=res.z_obp,
                                     z_era=res.z_era,
@@ -2532,10 +2793,64 @@ class DailyIngestionOrchestrator:
                         )
                         fa_bdl_map = {ykey: bdl_id for ykey, bdl_id in fa_mappings}
 
+                    # FA identity resolution fallback: yahoo_key is NULL for every
+                    # free agent in player_id_mapping (only roster players are
+                    # backfilled by scripts/backfill_yahoo_keys.py), so yahoo_key
+                    # lookup always misses for FAs. Best-effort fuzzy-match FA
+                    # names against player_id_mapping.normalized_name. Read-only:
+                    # never writes to player_id_mapping from here.
+                    def _norm_fa_name(name: str) -> str:
+                        if not name:
+                            return ""
+                        n = unicodedata.normalize("NFKD", name).lower().strip()
+                        for suffix in (" jr.", " sr.", " ii", " iii", " iv", " jr", " sr"):
+                            if n.endswith(suffix):
+                                n = n[: -len(suffix)].strip()
+                        n = n.replace(".", "")
+                        while "  " in n:
+                            n = n.replace("  ", " ")
+                        return n.strip()
+
+                    fa_name_map: dict[str, list[int]] = {}
+                    unresolved_fas = [
+                        fa for fa in free_agents
+                        if fa_bdl_map.get(fa.get("player_key")) is None
+                    ]
+                    if unresolved_fas:
+                        mapping_rows = (
+                            db.query(PlayerIDMapping.normalized_name, PlayerIDMapping.bdl_id)
+                            .filter(PlayerIDMapping.bdl_id.isnot(None))
+                            .all()
+                        )
+                        for norm_name, bdl_id in mapping_rows:
+                            key = _norm_fa_name(norm_name or "")
+                            if not key:
+                                continue
+                            fa_name_map.setdefault(key, []).append(bdl_id)
+
+                    fa_skipped = 0
+                    fa_fuzzy_resolved = 0
                     for fa in free_agents:
                         fa_bdl_id = fa_bdl_map.get(fa.get("player_key"))
                         if fa_bdl_id is None:
-                            continue  # Can't cross-reference — skip
+                            fa_name = fa.get("name", "")
+                            candidates = fa_name_map.get(_norm_fa_name(fa_name), [])
+                            if len(candidates) == 1:
+                                fa_bdl_id = candidates[0]
+                                fa_fuzzy_resolved += 1
+                                logger.info(
+                                    "decision_optimization: resolved FA '%s' via "
+                                    "name fallback (bdl_id=%d)",
+                                    fa_name, fa_bdl_id,
+                                )
+                            else:
+                                fa_skipped += 1
+                                logger.debug(
+                                    "decision_optimization: FA '%s' unresolved "
+                                    "(yahoo_key miss, %d name candidates)",
+                                    fa_name, len(candidates),
+                                )
+                                continue
                         fa_positions = fa.get("positions", [])
                         if not fa_positions:
                             fa_positions = ["Util"]
@@ -2559,9 +2874,18 @@ class DailyIngestionOrchestrator:
                             delta_z=0.0,
                         ))
                     logger.info(
-                        "decision_optimization: built waiver pool with %d candidates",
-                        len(waiver_pool),
+                        "decision_optimization: built waiver pool with %d candidates "
+                        "(fuzzy_resolved=%d, skipped=%d, fetched=%d)",
+                        len(waiver_pool), fa_fuzzy_resolved, fa_skipped, len(free_agents),
                     )
+                    if fa_skipped > 0 and len(free_agents) > 0:
+                        logger.warning(
+                            "decision_optimization: %d/%d free agents unresolvable to "
+                            "bdl_id (yahoo_key NULL in player_id_mapping and no unique "
+                            "normalized_name match). Fuzzy resolved %d. See "
+                            "reports/2026-04-15-decision-results-investigation.md.",
+                            fa_skipped, len(free_agents), fa_fuzzy_resolved,
+                        )
                 except Exception as exc:
                     logger.warning(
                         "decision_optimization: waiver pool fetch failed (%s) — "
@@ -3103,6 +3427,7 @@ class DailyIngestionOrchestrator:
                         z_hr=score_row.z_hr,
                         z_rbi=score_row.z_rbi,
                         z_sb=score_row.z_sb,
+                        z_nsb=score_row.z_nsb,
                         z_avg=score_row.z_avg,
                         z_obp=score_row.z_obp,
                         z_era=score_row.z_era,
@@ -3973,7 +4298,7 @@ class DailyIngestionOrchestrator:
                 SLA_ENSEMBLE_H = 12
                 result = db.execute(
                     text(
-                        "SELECT MAX(date) FROM player_daily_metrics "
+                        "SELECT MAX(metric_date) FROM player_daily_metrics "
                         "WHERE data_source = 'ensemble_blend'"
                     )
                 )
@@ -3996,7 +4321,7 @@ class DailyIngestionOrchestrator:
                 SLA_STATCAST_H = 6
                 result = db.execute(
                     text(
-                        "SELECT MAX(date) FROM player_daily_metrics "
+                        "SELECT MAX(metric_date) FROM player_daily_metrics "
                         "WHERE data_source = 'statcast'"
                     )
                 )
@@ -4361,6 +4686,8 @@ class DailyIngestionOrchestrator:
             today = today_et()
             records_processed = 0
             api_errors = 0
+            inferred_records = 0
+            official_records = 0
 
             db = SessionLocal()
             try:
@@ -4375,6 +4702,12 @@ class DailyIngestionOrchestrator:
                 for m in mappings:
                     mlbam_to_bdl[m.mlbam_id] = m.bdl_id
                 logger.info("_sync_probable_pitchers: Loaded %d MLBAM->BDL mappings", len(mlbam_to_bdl))
+
+                recent_starter_candidates = build_recent_starter_candidates(db, today)
+                logger.info(
+                    "_sync_probable_pitchers: Built fallback starter candidates for %d teams",
+                    len(recent_starter_candidates),
+                )
 
                 # Fetch schedule for next 7 days from MLB Stats API
                 for days_ahead in range(7):
@@ -4422,13 +4755,6 @@ class DailyIngestionOrchestrator:
                                 side_data = teams_data.get(side, {})
                                 opp_data = teams_data.get(opp_side, {})
 
-                                pitcher_data = side_data.get("probablePitcher", {})
-                                if not pitcher_data:
-                                    continue
-
-                                pitcher_name = pitcher_data.get("fullName", "")
-                                mlbam_id = pitcher_data.get("id")
-
                                 team_abbr = _normalize_abbr(
                                     side_data.get("team", {}).get("abbreviation", "")
                                 )
@@ -4439,8 +4765,29 @@ class DailyIngestionOrchestrator:
                                 if not team_abbr:
                                     continue
 
-                                # Resolve BDL ID via MLBAM mapping
-                                bdl_id = mlbam_to_bdl.get(mlbam_id) if mlbam_id else None
+                                pitcher_data = side_data.get("probablePitcher", {})
+                                inferred_candidate = None
+                                if pitcher_data:
+                                    pitcher_name = pitcher_data.get("fullName", "")
+                                    mlbam_id = pitcher_data.get("id")
+                                    bdl_id = mlbam_to_bdl.get(mlbam_id) if mlbam_id else None
+                                    official_records += 1
+                                else:
+                                    inferred_candidate = infer_probable_pitcher_for_team(
+                                        recent_starter_candidates,
+                                        team_abbr,
+                                        target_date,
+                                    )
+                                    if inferred_candidate is None:
+                                        continue
+                                    pitcher_name = inferred_candidate.pitcher_name
+                                    mlbam_id = inferred_candidate.mlbam_id
+                                    bdl_id = inferred_candidate.bdl_player_id
+                                    inferred_records += 1
+
+                                # Resolve BDL ID via MLBAM mapping when only official MLBAM is known
+                                if bdl_id is None and mlbam_id:
+                                    bdl_id = mlbam_to_bdl.get(mlbam_id)
 
                                 # Park factor: home team's park
                                 home_abbr = team_abbr if is_home else opp_abbr
@@ -4487,11 +4834,18 @@ class DailyIngestionOrchestrator:
                 db.commit()
                 elapsed = int((time.monotonic() - t0) * 1000)
                 logger.info(
-                    "SYNC JOB SUCCESS: _sync_probable_pitchers - %d records, %d API errors, %d ms",
-                    records_processed, api_errors, elapsed,
+                    "SYNC JOB SUCCESS: _sync_probable_pitchers - %d records (%d official, %d inferred), %d API errors, %d ms",
+                    records_processed, official_records, inferred_records, api_errors, elapsed,
                 )
                 self._record_job_run("probable_pitchers", "success", records_processed)
-                return {"status": "success", "records": records_processed, "elapsed_ms": elapsed}
+                return {
+                    "status": "success",
+                    "records": records_processed,
+                    "official_records": official_records,
+                    "inferred_records": inferred_records,
+                    "api_errors": api_errors,
+                    "elapsed_ms": elapsed,
+                }
 
             except Exception as exc:
                 db.rollback()
@@ -4559,17 +4913,27 @@ class DailyIngestionOrchestrator:
 
                         # Create/update mapping record
                         # We'll store both BDL and Yahoo mappings, plus MLBAM
-                        mapping = PlayerIDMapping(
-                            bdl_id=bdl_id,
-                            yahoo_key=None,  # Will be populated by Yahoo sync
-                            mlbam_id=mlbam_id,
-                            full_name=full_name,
-                            normalized_name=normalized_name,
-                            source='api',
-                            resolution_confidence=1.0,  # Direct from BDL API
+                        existing = (
+                            db.query(PlayerIDMapping)
+                            .filter(PlayerIDMapping.bdl_id == bdl_id)
+                            .first()
                         )
-
-                        db.merge(mapping)
+                        if existing:
+                            existing.mlbam_id = mlbam_id
+                            existing.full_name = full_name
+                            existing.normalized_name = normalized_name
+                            existing.resolution_confidence = 1.0
+                        else:
+                            mapping = PlayerIDMapping(
+                                bdl_id=bdl_id,
+                                yahoo_key=None,  # Will be populated by Yahoo sync
+                                mlbam_id=mlbam_id,
+                                full_name=full_name,
+                                normalized_name=normalized_name,
+                                source='api',
+                                resolution_confidence=1.0,  # Direct from BDL API
+                            )
+                            db.add(mapping)
                         records_processed += 1
 
                     except Exception as exc:

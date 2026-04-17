@@ -1,172 +1,232 @@
-# CBB Edge — Task Tracker
-*Updated: 2026-04-02 (implementation checkpoint) | Architect: Claude Sonnet 4.6 | Mission: Fantasy Baseball stabilization Phase A*
+# MLB Platform — Task Tracker
+*Updated: 2026-04-16 | Architect: Claude Code | Mission: Layer 3A-C complete. Layer 3B park factor consolidation complete. Layer 3D observability complete. Decision pipeline observability complete. L3F (Decision Output Read Surface) complete. L3E deferred.*
 
-> **Canonical source:** `HANDOFF.md` — full specs, ADRs, exit criteria for each EPIC.
-> This file is the status board. HANDOFF.md has the implementation detail.
-
----
-
-## System Status
-
-| Subsystem | Status | Notes |
-|-----------|--------|-------|
-| V9.1 CBB Model | FROZEN until Apr 7 | Guardian active |
-| Frontend (Next.js) Phases 0-5 | DONE | All pages live on main |
-| Fantasy Draft + Yahoo OAuth | DONE (Mar 20) | Live draft, value-board, sync endpoint |
-| Fantasy Lineup / Waiver endpoints | DONE (Mar 20) | `/fantasy/lineup`, `/fantasy/waiver` live |
-| Admin Risk Dashboard | DONE (Mar 20) | `/admin` — 4-panel ops view |
-| MLB+PGA Expansion Blueprint | REVIEWED (Mar 23) | Critical bugs identified — see `reports/EXPANSION_ARCHITECTURE_MLB_PGA_BLUEPRINT.md`. No implementation tickets open yet. |
-| EPIC-1: Time-Series Schema | **NOT STARTED** | First priority |
-| EPIC-2: Ingestion Orchestrator | NOT STARTED | Blocked on EPIC-1 exit criteria |
-| EPIC-3: Edge Generation Engine | NOT STARTED | Blocked on EPIC-2 |
-| EPIC-4: Waiver Edge Detector | NOT STARTED | Blocked on EPIC-3 |
-| EPIC-5: Sport Polling Switch | NOT STARTED | CBB wind-down, MLB ramp-up |
-| EPIC-6: Discord Router | NOT STARTED | Blocked on EPIC-4+5 |
+> Canonical source: `HANDOFF.md`
+> This file is the execution board for the current phase. If this tracker and HANDOFF disagree, HANDOFF wins.
 
 ---
 
-## GUARDIAN FREEZE (until Apr 7)
+## Operating Rule
 
-**DO NOT TOUCH:**
-- `backend/betting_model.py`
-- `backend/services/analysis.py`
-- Any CBB model services
+Only Layer 3 work is active.
 
----
-
-## Active Priority Queue
-
-### 0A. Fantasy Production Audit Hotfix — Apr 3 (COMPLETED)
-
-| Task | File | Done? |
-|------|------|-------|
-| Harden lineup apply payload: strict Yahoo key sanitization + OF fallback + ET date | `backend/main.py`, `frontend/app/(dashboard)/fantasy/lineup/page.tsx` | [x] |
-| Fix weather API compatibility: OneCall free-tier fallback chain | `backend/fantasy_baseball/weather_fetcher.py` | [x] |
-| Filter matchup payload to active scoring categories only | `backend/main.py` | [x] |
-| Stabilize waiver stat rendering and NSV reliever-only fallback | `backend/main.py` | [x] |
-| Add direct waiver add/drop API actuation + frontend button wiring | `backend/main.py`, `frontend/lib/api.ts`, `frontend/app/(dashboard)/fantasy/waiver/page.tsx` | [x] |
-| Validation: py_compile + frontend typecheck | backend + frontend | [x] |
-
-**Review:** Critical / High fantasy production regressions addressed in code with compile and type checks passing. Remaining medium UX redesign items (dashboard widget model and roster trend data source) need separate scoped implementation.
-
-### 0. Fantasy Stabilization — Phase A (ACTIVE)
-**Spec:** `HANDOFF.md` fantasy in-season pipeline sections | **Priority:** highest until stale-data risk is removed
-
-| Task | File | Done? |
-|------|------|-------|
-| Unify ET date anchoring for ingestion + fantasy lineup hot paths | `backend/services/daily_ingestion.py`, `backend/main.py`, `backend/utils/time_utils.py` | [x] |
-| Enforce projection freshness gate on lineup endpoint with `force_stale` override | `backend/main.py` | [x] |
-| Make fallback weather scoring temperature-aware and expose fallback flag | `backend/fantasy_baseball/weather_fetcher.py` | [x] |
-| Add regression coverage for freshness gate and weather fallback | `tests/test_waiver_integration.py`, `tests/test_weather_fetcher.py` | [x] |
-| Canonicalize backend/frontend stat ID contract | `frontend/lib/fantasy-stat-contract.json`, `backend/utils/fantasy_stat_contract.py`, `backend/main.py`, `backend/fantasy_baseball/category_tracker.py`, `frontend/lib/constants.ts` | [x] |
-| Replace `_ROS_CACHE` with durable DB-backed handoff | `backend/services/daily_ingestion.py`, `backend/models.py` | [x] |
-| Convert ensemble write path to atomic upsert counters | `backend/services/daily_ingestion.py` | [ ] |
-| Split retryable vs fatal job queue failures | `backend/services/job_queue_service.py` | [ ] |
-
-**Checkpoint verification completed:** `py_compile` on touched backend files plus targeted pytest subset (`test_ingestion_orchestrator.py`, `test_fantasy_stat_contract.py`, `test_waiver_integration.py`, `test_weather_fetcher.py`) are green, and `frontend` passes `npx tsc --noEmit`.
+Do not start:
+- broad Layer 4 simulation or decision-engine expansion
+- frontend feature work
+- waiver breadth expansion
+- optimizer redesign
+- repo-wide park-factor cleanup outside the chosen scoring path
+- new Layer 2 roadmap work unless a regression is observed in production
 
 ---
 
-### 1. EPIC-1 — Time-Series Schema (DO FIRST)
-**Spec:** `HANDOFF.md §2` | **No prerequisites**
+## Layer Status Board
 
-| Task | File | Done? |
-|------|------|-------|
-| Write `upgrade()` + `downgrade()` for `player_daily_metrics` | `scripts/migrate_v8_post_draft.py` | [ ] |
-| Write `upgrade()` + `downgrade()` for `projection_snapshots` | same | [ ] |
-| Add `pricing_engine` column to `predictions` (K-14) | same | [ ] |
-| Add SQLAlchemy ORM models (`PlayerDailyMetric`, `ProjectionSnapshot`) | `backend/models.py` | [ ] |
-| Write 7 required tests | `tests/test_schema_v8.py` | [ ] |
-| Dry-run test locally | — | [ ] |
-| Run migration on Railway | — | [ ] |
-| Verify schema on Railway DB | — | [ ] |
-
-**Exit gate:** All 8 criteria in `HANDOFF.md §2.5` must be TRUE before EPIC-2 starts.
+| Layer | Name | Status | Rule |
+|------|------|--------|------|
+| 0 | Immutable Decision Contracts | STABLE | Change only if Layer 3 contract definition forces it |
+| 1 | Pure Stateless Intelligence | AVAILABLE | Extend only as required by the scoring objective |
+| 2 | Data and Adaptation | CERTIFIED COMPLETE | Regression fixes only |
+| 3 | Derived Stats and Scoring | STABLE | L3A-L3F complete; L3E deferred pending policy gate |
+| 4 | Decision Engines and Simulation | HOLD | Do not expand until Layer 3 output is stable |
+| 5 | APIs and Service Presentation | LIMITED | Only expose validated Layer 3 output |
+| 6 | Frontend and UX | HOLD | No new UI work until Layer 3 contract is stable |
 
 ---
 
-### 2. EPIC-2 — Ingestion Orchestrator (after EPIC-1)
-**Spec:** `HANDOFF.md §3` | **Prerequisite: EPIC-1 exit criteria**
+## Active Objective
 
-Key deliverables:
-- `backend/services/daily_ingestion.py` — `DailyIngestionOrchestrator` with advisory lock wrapper (ADR-001)
-- `backend/services/clv.py` — add `compute_daily_clv_attribution()` (additive only)
-- `/admin/ingestion/status` endpoint
-- `tests/test_ingestion_orchestrator.py`
-- Mount under `ENABLE_INGESTION_ORCHESTRATOR=true` env var
+### 3A. Authoritative Player Scores Contract
+**Spec:** `HANDOFF.md` L3A | **Priority:** highest | **Status:** COMPLETE (2026-04-16)
 
----
+Goal: define and stabilize one authoritative Layer 3 scoring output before adding any new public API surface.
 
-### 3. Task 3: Verify Cross-System Joins (BLOCKED)
-**Spec:** Execute two verification queries to confirm position_eligibility, player_id_mapping, and mlb_player_stats joins work
+Target output:
+- `player_scores` as the canonical Layer 3 scoring artifact
 
-**BLOCKER**: Environment access constraints prevent query execution:
-- Local PostgreSQL: No local DB instance
-- `railway run`: Cannot resolve Railway internal DNS (postgres-ygnv.railway.internal)
-- `railway shell`: Interactive only, not scriptable
+Primary files:
+- `backend/services/scoring_engine.py`
+- `backend/services/daily_ingestion.py`
+- `backend/models.py`
+- `backend/services/decision_engine.py`
+- `backend/routers/fantasy.py`
+- `backend/admin_scoring_diagnostics.py`
 
-**REQUIRED**: Temporary verification endpoint `/admin/debug-verify-joins` in backend/main.py → execute via curl → capture results → remove endpoint
+Tasks:
 
-**DELEGATION BUNDLE**: Gemini CLI to create endpoint, execute queries, report results
+| Task | Owner | Done? |
+|------|-------|-------|
+| Define the canonical `player_scores` contract: required fields, supported windows, `as_of_date` semantics | Claude | [x] |
+| Identify the current authoritative consumer path for `player_scores` | Claude | [x] |
+| Verify whether any schema or response model changes are needed for a stable contract | Claude | [x] |
+| Write explicit success criteria for what counts as a trustworthy Layer 3 score output | Claude | [x] |
 
----
-
-## Post-Apr 7 Backlog (GUARDIAN-LOCKED)
-
-| Item | Spec | Priority |
-|------|------|----------|
-| V9.2 params (sd_mult 1.0→0.80, ha 2.419→2.85, SNR_KELLY_FLOOR 0.50→0.75) | `reports/K12_RECALIBRATION_SPEC_V92.md` | HIGH |
-| Wire Haslametrics as 3rd rating source | `docs/THIRD_RATING_SOURCE.md` | HIGH |
-| `pricing_engine` field on Prediction (K-14) — done in EPIC-1 | — | COMPLETE |
-| Oracle validation (K-15) | `reports/K15_ORACLE_VALIDATION_SPEC.md` | **COMPLETE** (Mar 23) |
-| Fantasy Baseball Yahoo OAuth wiring | `docs/MLB_FANTASY_ROADMAP.md` | LOW |
-| Pre-draft keeper sweep endpoint | `backend/main.py` `POST /sync-keepers` | **COMPLETE** (Mar 23) |
+Contract locked:
+- Fields: composite_z, score_0_100, confidence, category breakdown (z_hr, z_rbi, z_nsb, z_avg, z_obp for hitters; z_era, z_whip, z_k_per_9 for pitchers)
+- Windows: 7, 14, 30 (default 14)
+- as_of_date: optional, defaults to latest available
+- Auth: verify_api_key required (public API)
 
 ---
 
-## MLB+PGA Expansion (Future — Not Yet Scheduled)
+### 3B. Context Input Stabilization
+**Spec:** `HANDOFF.md` L3A | **Priority:** highest | **Status:** COMPLETE (2026-04-16)**
 
-Blueprint reviewed Mar 23. **6 critical bugs identified** — must be fixed before any implementation:
-1. `sport_type` enum references — replace with VARCHAR migrations
-2. `calculate_stuff_plus` variable shadowing (`break_z`)
-3. `mlb_player_stats` UNION ALL — mismatched columns
-4. `pga_shots` RANGE partition on VARCHAR — use LIST or drop partition
-5. `can_request()` priority bypass — clv_critical skips all budget guards
-6. CBB budget (800/mo) incompatible with live system (~11,610/mo) without EPIC-5 first
+Audit completed. Key findings:
+- Authoritative path `compute_league_zscores()` is PURE Z-score scoring - NO park factors, NO weather
+- Park factor fragmentation: 5+ hardcoded copies (ballpark_factors.py, mlb_analysis.py, daily_lineup_optimizer.py, two_start_detector.py, weather_ingestion.py)
+- scoring_engine.py has DB helper but it's UNUSED by main scoring
+- Weather infrastructure exists but is deferred (appropriate for rolling windows)
 
-No implementation tickets open until EMAC-077 EPIC-1 is complete and tournament is past Apr 7.
+Tasks:
+
+| Task | Owner | Done? |
+|------|-------|-------|
+| Define which park-factor source is authoritative for the Layer 3 scoring path | Claude | [x] |
+| Audit the chosen scoring path for hardcoded park-factor leakage | Claude | [x] |
+| Decide whether weather context is in-scope for the first scoring objective or explicitly deferred | Claude | [x] |
+| Limit any park-factor migration to the chosen scoring path only | Claude | [x] |
+
+**Scoped consolidation complete (2026-04-16):**
+- Updated `ballpark_factors.py:get_park_factor()` to read from persisted ParkFactor table first
+- Preserves PARK_FACTORS constant as fallback
+- Preserves neutral 1.0 default for unknown teams
+- Added 9 focused tests in `tests/test_ballpark_factors.py`
+- Resolution order: DB → hardcoded constant → neutral
 
 ---
 
-## Pending Manual Actions
+### 3C. Scoring Output Exposure
+**Spec:** depends on 3A and 3B | **Status:** COMPLETE (2026-04-16)
 
-| Item | Owner | Action |
-|------|-------|--------|
-| Push `v0.8.0-cbb-stable` tag | User | `git push origin v0.8.0-cbb-stable` |
-| Confirm `NEXT_PUBLIC_API_URL` in Railway frontend | User | Railway dashboard |
-| Set `ENABLE_INGESTION_ORCHESTRATOR=false` in Railway | User | Before EPIC-2 is deployed |
+Implemented `GET /api/fantasy/players/{bdl_player_id}/scores` endpoint.
+
+Files modified:
+- `backend/routers/fantasy.py` - endpoint implementation with verify_api_key auth
+- `backend/schemas.py` - response models (PlayerScoresResponse, PlayerScoreOut, PlayerScoreCategoryBreakdown)
+- `tests/test_player_scores_api.py` - 13 test cases including auth validation
+
+Tasks:
+
+| Task | Owner | Done? |
+|------|-------|-------|
+| Choose whether the first exposure is public API, internal service, or admin-only surface | Claude | [x] |
+| If public API is chosen, define the exact response shape and supported query params | Claude | [x] |
+| Expose only the authoritative `player_scores` output, not a mixed composite of unrelated artifacts | Claude | [x] |
+| Validate that the exposed output matches the underlying scheduled job output | Claude | [x] |
+
+Contract decisions locked:
+- Public API (requires verify_api_key)
+- Query params: `window_days` (7, 14, 30; default 14), `as_of_date` (optional; defaults to latest)
+- Response shape: bdl_player_id, requested_window_days, as_of_date, score (with category breakdown)
+- 400 for invalid window_days, 404 for missing scores
 
 ---
 
-## Done Archive
+### 3D. Layer 3 Observability
+**Spec:** support for 3A-3C | **Priority:** after first exposed output exists | **Status:** COMPLETE (2026-04-16)
 
-| Description | Date |
-|-------------|------|
-| MLB+PGA Expansion Blueprint reviewed, critical bugs documented | Mar 23 |
-| K-15 Oracle Validation System (oracle_validator.py, DB columns, admin endpoint, 19 tests) | Mar 23 |
-| Pre-draft keeper sweep: POST /api/fantasy/draft-session/{key}/sync-keepers | Mar 23 |
-| Fantasy Season Ops — full stack (/fantasy/lineup, /fantasy/waiver + backend endpoints) | Mar 20 |
-| Admin Risk Dashboard (/admin — 4-panel) | Mar 20 |
-| Fantasy Draft Assistant (Live Draft tab, snake order, roster panel) | Mar 20 |
-| Fantasy DB Migration v7 on Railway | Mar 20 |
-| Frontend Phase 5 (error.tsx + loading.tsx) | Mar 20 |
-| Frontend Phase 4 Mobile and PWA (viewport, manifest, drawer, responsive grids) | Mar 20 |
-| Frontend Phase 3 Tournament (/bracket 10k MC sims) | Mar 19 |
-| Frontend Phase 2 Trading (/today, /live-slate, /odds-monitor) | Mar 19 |
-| Frontend Phase 1 Core Analytics (5 pages, OpenClaw validated) | Mar 18 |
-| Frontend Phase 0 scaffold + auth + layout | Mar 18 |
-| Railway CORS fix | Mar 18 |
-| Monte Carlo bracket simulator | Mar 16 |
-| Discord morning brief + EOD results jobs fixed | Mar 16 |
-| Team mapping hardening (29 St variants, 78 tests) | Mar 16 |
-| V9.1 confidence engine (SNR + integrity scalars) | Mar 12 |
+Goal: make the Layer 3 scoring spine inspectable without opening a broad new admin surface.
+
+Implemented endpoint: `GET /admin/diagnose-scoring/layer3-freshness`
+
+Existing diagnostic surface:
+- `backend/admin_scoring_diagnostics.py`
+
+Tasks:
+
+| Task | Owner | Done? |
+|------|-------|-------|
+| Decide whether existing scoring diagnostics are sufficient for the first release | Claude | [x] |
+| Add Layer 3 freshness endpoint with verdict, row counts, and audit logs | Claude | [x] |
+| Ensure observability reflects actual `player_scores` freshness and fill-rate health | Claude | [x] |
+
+Outcome:
+- Endpoint returns freshness verdict (healthy/stale/partial/missing)
+- Row counts by window (7/14/30) for player_rolling_stats and player_scores
+- Latest audit log entries for rolling_windows and player_scores jobs
+- 13 comprehensive tests covering all verdict branches and null cases
+
+**Decision Pipeline Observability (2026-04-16):**
+
+Implemented endpoint: `GET /admin/diagnose-decision/pipeline-freshness`
+
+Tasks:
+
+| Task | Owner | Done? |
+|------|-------|-------|
+| Add decision pipeline freshness endpoint for P17-P19 stages | Claude | [x] |
+| Include verdict, breakdown_by_type, row counts, computed_at timestamps | Claude | [x] |
+| Add 8 comprehensive tests covering all verdict branches | Claude | [x] |
+
+Outcome:
+- Endpoint returns freshness verdict (healthy/stale/partial/missing)
+- Provides breakdown_by_type (lineup/waiver) for DecisionResult and DecisionExplanation tables
+- Shows latest computed_at timestamps and schedule expectations (~7 AM / ~9 AM)
+- Total test count for admin_scoring_diagnostics.py: 34 tests passing
+
+---
+
+## Recommended Execution Sequence
+
+1. Lock the `player_scores` contract.
+2. Identify the authoritative scoring consumer path.
+3. Stabilize park-factor authority within that path.
+4. Decide whether weather is included now or explicitly deferred.
+5. Expose one narrow score output.
+6. Add only the minimal observability needed to trust it.
+
+---
+
+## Frozen Backlog
+
+These items remain intentionally deferred:
+
+| Workstream | Status | Why Frozen |
+|-----------|--------|------------|
+| Broad simulation work | HOLD | Layer 4 not active |
+| Full decision-engine expansion | HOLD | Depends on stable Layer 3 output |
+| Repo-wide park-factor cleanup | HOLD | Too broad for first Layer 3 objective |
+| Weather-driven scoring expansion | HOLD unless explicitly chosen in 3B | Keep first objective narrow |
+| Frontend scoring views | HOLD | API/contract must stabilize first |
+| Waiver and optimizer redesign | HOLD | Not the current scoring-spine objective |
+
+---
+
+## Immediate Next Decision
+
+**Completed (2026-04-16):**
+
+1. What exact `player_scores` fields are canonical for first exposure?
+   - Answer: `composite_z`, `score_0_100`, `confidence`, plus category breakdown (z_hr, z_rbi, z_nsb, z_avg, z_obp for hitters; z_era, z_whip, z_k_per_9 for pitchers)
+2. Which windows are in-scope: 7, 14, 30, or a subset?
+   - Answer: All three (7, 14, 30) are supported; 14 is default
+3. Is weather part of the first scoring objective, or deferred?
+   - Answer: DEFERRED - endpoint exposes existing `player_scores` data only; 3B audit confirms weather not used in scoring path
+4. Is the first consumer public API or an internal/service contract?
+   - Answer: Public API (uses verify_api_key auth) - IMPLEMENTED
+5. (3B) Is context authority fragmented or consolidated?
+   - Answer: FRAGMENTED - 5+ hardcoded park factor copies; scoring is pure (no park/weather used); scoped fix: ballpark_factors.py → DB-backed
+   - **CONSOLIDATION COMPLETE (2026-04-16)**: Updated `ballpark_factors.py:get_park_factor()` to DB-backed read with fallback
+6. (3D) Is Layer 3 observability sufficient?
+   - Answer: YES - `/admin/diagnose-scoring/layer3-freshness` endpoint live with 13 tests passing
+7. Is weather_forecasts populated or deferred?
+   - Answer: DEFERRED - table exists but is EMPTY; request-time weather (weather_fetcher.py) serves immediate-decision needs; appropriate for rolling-window scoring
+
+**Next steps:**
+- All Layer 3 foundational work (3A-3D) is COMPLETE
+- Decision pipeline observability (P17-P19) is COMPLETE
+- **L3F (Decision Output Read Surface) is COMPLETE (2026-04-16)**
+  - GET /api/fantasy/decisions endpoint live
+  - Exposes DecisionResult/DecisionExplanation via read API
+  - verify_api_key auth
+  - Query params: decision_type (lineup/waiver), as_of_date, limit
+  - 13 tests passing (test_decisions_api.py)
+- **L3E (Market-Implied Probabilities) is DEFERRED** - preserved as backlog in HANDOFF.md
+  - Requires explicit policy gate to activate (conflicts with CLAUDE.md hard-stop rules)
+  - Full specification preserved for future reference
+- P2 pending: Decide whether any Layer 5 response shape changes are needed after scoring output stabilizes
+
+---
+
+Last Updated: 2026-04-16 (21:00 UTC - L3F Decision Output Read Surface complete; GET /api/fantasy/decisions live with 13 tests passing; L3E remains deferred pending policy gate)

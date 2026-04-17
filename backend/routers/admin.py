@@ -1292,3 +1292,206 @@ async def admin_orphan_link(user: str = Depends(verify_admin_api_key), db: Sessi
             for row in sample
         ]
     }
+
+
+@router.post("/admin/migrate/v28")
+async def run_migration_v28(user: str = Depends(verify_admin_api_key), db: Session = Depends(get_db)):
+    """
+    Run Layer 2 Gap Closure migration (v28).
+
+    Creates:
+    - weather_forecasts table
+    - park_factors table (with default data)
+    - deployment_version table
+    - Adds constraint _pp_date_team_uc to probable_pitchers
+    """
+    from sqlalchemy import text
+    import subprocess
+
+    results = {"steps": []}
+
+    # 1. Add constraint to probable_pitchers
+    try:
+        check_constraint = text("""
+            SELECT constraint_name
+            FROM information_schema.table_constraints
+            WHERE table_name = 'probable_pitchers'
+            AND constraint_name = '_pp_date_team_uc'
+        """)
+        result = db.execute(check_constraint).fetchone()
+
+        if result and result[0]:
+            results["steps"].append({"name": "constraint _pp_date_team_uc", "status": "already exists"})
+        else:
+            # Remove duplicates if any exist
+            db.execute(text("""
+                DELETE FROM probable_pitchers p1
+                USING probable_pitchers p2
+                WHERE p1.id < p2.id
+                AND p1.game_date = p2.game_date
+                AND p1.team = p2.team
+            """))
+            # Add constraint
+            db.execute(text("""
+                ALTER TABLE probable_pitchers
+                ADD CONSTRAINT _pp_date_team_uc
+                UNIQUE (game_date, team)
+            """))
+            db.commit()
+            results["steps"].append({"name": "constraint _pp_date_team_uc", "status": "created"})
+    except Exception as e:
+        results["steps"].append({"name": "constraint _pp_date_team_uc", "status": f"error: {e}"})
+
+    # 2. Create weather_forecasts table
+    try:
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS weather_forecasts (
+                id SERIAL PRIMARY KEY,
+                game_date DATE NOT NULL,
+                park_name VARCHAR(100) NOT NULL,
+                forecast_date DATE NOT NULL DEFAULT CURRENT_DATE,
+                temperature_high FLOAT,
+                temperature_low FLOAT,
+                humidity INTEGER,
+                wind_speed FLOAT,
+                wind_direction VARCHAR(10),
+                precipitation_probability INTEGER,
+                conditions VARCHAR(100),
+                fetched_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (game_date, park_name, forecast_date)
+            )
+        """))
+        db.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_weather_game_date
+            ON weather_forecasts (game_date)
+        """))
+        db.commit()
+        results["steps"].append({"name": "weather_forecasts table", "status": "created"})
+    except Exception as e:
+        results["steps"].append({"name": "weather_forecasts table", "status": f"error: {e}"})
+
+    # 3. Create park_factors table
+    try:
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS park_factors (
+                id SERIAL PRIMARY KEY,
+                park_name VARCHAR(100) NOT NULL UNIQUE,
+                hr_factor FLOAT NOT NULL DEFAULT 1.0,
+                run_factor FLOAT NOT NULL DEFAULT 1.0,
+                hits_factor FLOAT NOT NULL DEFAULT 1.0,
+                era_factor FLOAT NOT NULL DEFAULT 1.0,
+                whip_factor FLOAT NOT NULL DEFAULT 1.0,
+                data_source VARCHAR(50),
+                season INTEGER,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        db.commit()
+        results["steps"].append({"name": "park_factors table", "status": "created"})
+    except Exception as e:
+        results["steps"].append({"name": "park_factors table", "status": f"error: {e}"})
+
+    # 4. Seed default park factors
+    try:
+        result = db.execute(text("SELECT COUNT(*) FROM park_factors")).fetchone()
+        if result[0] == 0:
+            default_factors = [
+                ('Yankee Stadium', 1.02, 1.01, 1.00, 0.99, 1.00),
+                ('Dodger Stadium', 0.95, 0.97, 0.98, 1.01, 1.00),
+                ('Coors Field', 1.25, 1.15, 1.10, 1.10, 1.05),
+                ('Fenway Park', 1.08, 1.05, 1.03, 1.02, 1.01),
+                ('Wrigley Field', 1.05, 1.04, 1.03, 1.01, 1.01),
+                ('Oracle Park', 0.92, 0.95, 0.96, 0.98, 0.99),
+                ('Truist Park', 0.99, 1.00, 0.99, 1.00, 1.00),
+                ('Petco Park', 0.94, 0.96, 0.97, 1.00, 0.99),
+                ('Citizens Bank Park', 1.09, 1.06, 1.04, 1.02, 1.01),
+                ('Great American Ball Park', 1.15, 1.08, 1.05, 1.03, 1.02),
+                ('American Family Field', 1.05, 1.03, 1.02, 0.99, 1.00),
+                ('PNC Park', 0.97, 0.98, 0.98, 0.99, 1.00),
+                ('LoanDepot Park', 0.96, 0.97, 0.97, 1.01, 1.00),
+                ('Citi Field', 0.95, 0.97, 0.97, 1.00, 1.00),
+                ('Nationals Park', 1.00, 1.00, 1.00, 1.00, 1.00),
+                ('Tropicana Field', 0.94, 0.96, 0.97, 1.00, 0.99),
+                ('Busch Stadium', 1.00, 1.00, 1.00, 1.00, 1.00),
+                ('Comerica Park', 1.02, 1.02, 1.01, 1.00, 1.00),
+                ('Kauffman Stadium', 1.00, 1.00, 1.00, 1.00, 1.00),
+                ('Target Field', 0.98, 0.99, 0.99, 1.01, 1.00),
+                ('Globe Life Field', 0.98, 0.99, 0.99, 1.00, 1.00),
+                ('Angel Stadium', 0.98, 0.99, 0.99, 1.00, 1.00),
+                ('Oakland Coliseum', 0.97, 0.98, 0.98, 1.01, 1.00),
+                ('Rogers Centre', 1.03, 1.02, 1.01, 1.00, 1.00),
+                ('T-Mobile Park', 0.94, 0.96, 0.97, 1.01, 1.00),
+                ('Progressive Field', 1.02, 1.02, 1.01, 1.00, 1.00),
+                ('Guaranteed Rate Field', 1.07, 1.05, 1.04, 1.01, 1.01),
+            ]
+            for park in default_factors:
+                db.execute(text("""
+                    INSERT INTO park_factors
+                    (park_name, hr_factor, run_factor, hits_factor, era_factor, whip_factor, data_source, season)
+                    VALUES (:park_name, :hr, :run, :hits, :era, :whip, 'fangraphs', 2025)
+                """), {
+                    'park_name': park[0], 'hr': park[1], 'run': park[2], 'hits': park[3],
+                    'era': park[4], 'whip': park[5]
+                })
+            db.commit()
+            results["steps"].append({"name": "park_factors seed", "status": f"inserted {len(default_factors)} parks"})
+        else:
+            results["steps"].append({"name": "park_factors seed", "status": "already seeded"})
+    except Exception as e:
+        results["steps"].append({"name": "park_factors seed", "status": f"error: {e}"})
+
+    # 5. Create deployment_version table
+    try:
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS deployment_version (
+                id SERIAL PRIMARY KEY,
+                git_commit_sha VARCHAR(100) NOT NULL UNIQUE,
+                git_commit_date VARCHAR(50),
+                build_timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                app_version VARCHAR(50) DEFAULT 'dev',
+                deployed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        db.commit()
+        results["steps"].append({"name": "deployment_version table", "status": "created"})
+    except Exception as e:
+        results["steps"].append({"name": "deployment_version table", "status": f"error: {e}"})
+
+    # 6. Populate deployment_version
+    try:
+        sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], stderr=subprocess.DEVNULL).decode().strip()
+        commit_timestamp = subprocess.check_output(['git', 'show', '-s', '--format=%ci', 'HEAD'], stderr=subprocess.DEVNULL).decode().strip()
+        db.execute(text("""
+            INSERT INTO deployment_version (git_commit_sha, git_commit_date, app_version)
+            VALUES (:sha, :commit_date, 'dev')
+            ON CONFLICT (git_commit_sha)
+            DO UPDATE SET build_timestamp = CURRENT_TIMESTAMP
+        """), {'sha': sha, 'commit_date': commit_timestamp})
+        db.commit()
+        results["steps"].append({"name": "deployment_version seed", "status": f"SHA {sha[:12]}"})
+    except Exception as e:
+        results["steps"].append({"name": "deployment_version seed", "status": f"error: {e}"})
+
+    # Verify migration
+    verification = {}
+    try:
+        for table in ['weather_forecasts', 'park_factors', 'deployment_version']:
+            result = db.execute(text("""
+                SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = :tbl)
+            """), {'tbl': table}).fetchone()
+            verification[table] = "EXISTS" if result[0] else "MISSING"
+
+        result = db.execute(text("""
+            SELECT constraint_name FROM information_schema.table_constraints
+            WHERE table_name = 'probable_pitchers' AND constraint_name = '_pp_date_team_uc'
+        """)).fetchone()
+        verification["constraint _pp_date_team_uc"] = "EXISTS" if result else "MISSING"
+
+        park_count = db.execute(text("SELECT COUNT(*) FROM park_factors")).fetchone()
+        verification["park_factors count"] = park_count[0]
+
+    except Exception as e:
+        verification["error"] = str(e)
+
+    results["verification"] = verification
+    return results

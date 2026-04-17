@@ -3,7 +3,7 @@ FastAPI application for CBB Edge Analyzer
 Includes REST API, scheduled jobs, and monitoring
 """
 
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, joinedload
@@ -17,6 +17,7 @@ from dataclasses import asdict
 from typing import List, Optional
 import logging
 import os
+import subprocess
 from zoneinfo import ZoneInfo
 
 from apscheduler.triggers.interval import IntervalTrigger
@@ -86,6 +87,10 @@ from backend.admin_backfill_ops_whip import router as _backfill_ops_whip_router
 # STATCAST DIAGNOSTICS ENDPOINTS - REMOVE AFTER STATCAST VALIDATION COMPLETE
 from backend.admin_statcast_diagnostics import router as _statcast_diag_router
 # END STATCAST DIAGNOSTICS ENDPOINTS
+
+# SCORING DIAGNOSTICS ENDPOINTS - REMOVE AFTER NSB ROLLOUT VALIDATED
+from backend.admin_scoring_diagnostics import router as _scoring_diag_router
+# END SCORING DIAGNOSTICS ENDPOINTS
 
 from backend.services.recalibration import compute_dynamic_weights
 from backend.services.discord_notifier import send_todays_bets
@@ -629,6 +634,10 @@ app.include_router(_backfill_ops_whip_router, tags=["admin"])
 app.include_router(_statcast_diag_router, prefix="/admin", tags=["admin"])
 # END STATCAST DIAGNOSTICS ENDPOINTS
 
+# SCORING DIAGNOSTICS ENDPOINTS - REMOVE AFTER NSB ROLLOUT VALIDATED
+app.include_router(_scoring_diag_router, prefix="/admin", tags=["admin"])
+# END SCORING DIAGNOSTICS ENDPOINTS
+
 # --- end strangler-fig mounts ---
 
 # CORS - reads ALLOWED_ORIGINS env var (comma-separated) or falls back to wildcard.
@@ -644,6 +653,97 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/admin/audit/table-counts")
+async def get_all_table_counts(user: str = Depends(verify_admin_api_key)):
+    """
+    Factual audit of all table row counts in the public schema.
+    """
+    from backend.models import SessionLocal
+    from sqlalchemy import text
+    db = SessionLocal()
+    try:
+        # Get all table names in public schema
+        sql_tables = text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+        tables = [r[0] for r in db.execute(sql_tables).fetchall()]
+        
+        results = {}
+        for table in tables:
+            try:
+                count_sql = text(f'SELECT count(*) FROM "{table}"')
+                count = db.execute(count_sql).scalar()
+                results[table] = count
+            except Exception as e:
+                results[table] = f"Error: {str(e)}"
+        
+        return {
+            "status": "success",
+            "table_counts": dict(sorted(results.items()))
+        }
+    finally:
+        db.close()
+
+
+@app.get("/admin/audit/table-counts")
+async def get_all_table_counts(user: str = Depends(verify_admin_api_key)):
+    """
+    Factual audit of all table row counts in the public schema.
+    """
+    from backend.models import SessionLocal
+    from sqlalchemy import text
+    db = SessionLocal()
+    try:
+        # Get all table names in public schema
+        sql_tables = text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+        tables = [r[0] for r in db.execute(sql_tables).fetchall()]
+        
+        results = {}
+        for table in tables:
+            try:
+                count_sql = text(f'SELECT count(*) FROM "{table}"')
+                count = db.execute(count_sql).scalar()
+                results[table] = count
+            except Exception as e:
+                results[table] = f"Error: {str(e)}"
+        
+        return {
+            "status": "success",
+            "table_counts": dict(sorted(results.items()))
+        }
+    finally:
+        db.close()
+
+
+@app.post("/admin/run-migration-v27")
+async def run_migration_v27(user: str = Depends(verify_admin_api_key)):
+    """
+    Run v27 migration (NSB Pipeline) in production.
+    """
+    import subprocess
+    import sys
+    try:
+        # Run the script as a separate process using the app's python interpreter
+        result = subprocess.run(
+            [sys.executable, "scripts/migrate_v27_nsb.py"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return {
+            "status": "success",
+            "stdout": result.stdout,
+            "stderr": result.stderr
+        }
+    except subprocess.CalledProcessError as e:
+        return {
+            "status": "error",
+            "stdout": e.stdout,
+            "stderr": e.stderr,
+            "error": str(e)
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 
 @app.get("/admin/investigate/statcast-raw-columns")
 async def investigate_statcast_raw_columns(target_date: str = "2026-04-12", user: str = Depends(verify_admin_api_key)):
@@ -3143,6 +3243,71 @@ async def admin_pipeline_health(
     )
     checks = check_table_health(db)
     return pipeline_health_summary(checks)
+
+
+@app.get("/admin/version")
+async def get_deployment_version(
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_admin_api_key),
+):
+    """
+    Return deployment fingerprint for production verification.
+
+    Used by Layer 2 certification (Stage 1 and Stage 5) to confirm
+    production is running the latest repo code.
+
+    Returns:
+    {
+        "git_commit_sha": "abc123def456...",
+        "git_commit_date": "2026-04-15T10:30:00Z",
+        "build_timestamp": "2026-04-15T10:31:15Z",
+        "app_version": "dev"
+    }
+    """
+    from backend.models import DeploymentVersion
+    import subprocess
+
+    # Try to get from database first (authoritative)
+    version = db.query(DeploymentVersion).order_by(DeploymentVersion.deployed_at.desc()).first()
+
+    if version:
+        return {
+            "git_commit_sha": version.git_commit_sha,
+            "git_commit_date": version.git_commit_date,
+            "build_timestamp": version.build_timestamp.isoformat(),
+            "app_version": version.app_version or "dev"
+        }
+
+    # Fallback: get from git directly
+    try:
+        sha = subprocess.check_output(
+            ['git', 'rev-parse', 'HEAD'],
+            cwd=os.path.dirname(__file__),
+            stderr=subprocess.DEVNULL,
+            timeout=5
+        ).decode().strip()
+
+        commit_date = subprocess.check_output(
+            ['git', 'show', '-s', '--format=%ci', 'HEAD'],
+            cwd=os.path.dirname(__file__),
+            stderr=subprocess.DEVNULL,
+            timeout=5
+        ).decode().strip()
+
+        return {
+            "git_commit_sha": sha,
+            "git_commit_date": commit_date,
+            "build_timestamp": datetime.now(ZoneInfo("UTC")).isoformat(),
+            "app_version": "dev"
+        }
+    except Exception:
+        # Ultimate fallback for environments without git
+        return {
+            "git_commit_sha": "unknown",
+            "git_commit_date": None,
+            "build_timestamp": datetime.now(ZoneInfo("UTC")).isoformat(),
+            "app_version": "dev"
+        }
 
 
 @app.get("/admin/ingestion/status")

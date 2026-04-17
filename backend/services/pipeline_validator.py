@@ -28,9 +28,10 @@ _TABLE_SPECS: list[tuple[str, str, Optional[str], Optional[int], int]] = [
     ("PlayerRollingStats",      "player_rolling_stats",   "as_of_date",  2,  1000),
     ("PlayerScore",             "player_scores",          "as_of_date",  2,  1000),
     ("StatcastPerformance",     "statcast_performances",  "game_date",   3,  5000),
-    ("ProbablePitcherSnapshot", "probable_pitchers",      "game_date",   1,  0),
+    ("ProbablePitcherSnapshot", "probable_pitchers",      "game_date",   1,  1),
     ("SimulationResult",        "simulation_results",     "as_of_date",  2,  100),
     ("MLBPlayerStats",          "mlb_player_stats",       "game_date",   None, 2000),
+    ("DataIngestionLog",        "data_ingestion_logs",    "target_date", 1,  1),
 ]
 
 
@@ -46,6 +47,7 @@ def check_table_health(
         ProbablePitcherSnapshot,
         SimulationResult,
         StatcastPerformance,
+        DataIngestionLog,
     )
 
     model_map = {
@@ -55,6 +57,7 @@ def check_table_health(
         "ProbablePitcherSnapshot": ProbablePitcherSnapshot,
         "SimulationResult": SimulationResult,
         "MLBPlayerStats": MLBPlayerStats,
+        "DataIngestionLog": DataIngestionLog,
     }
 
     if today is None:

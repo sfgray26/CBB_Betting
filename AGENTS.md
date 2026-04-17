@@ -189,10 +189,11 @@ Any other string → 1.0× (no penalty; fallback "Sanity check unavailable" uses
 ## Every Session Startup (All Agents)
 
 Before doing anything else, read in order:
-1. `HANDOFF.md` — what was completed and what to do next
-2. `ORCHESTRATION.md` — swimlane routing rules
-3. `IDENTITY.md` — risk posture and system identity
-4. `HEARTBEAT.md` — active operational loops
-5. `memory/YYYY-MM-DD.md` (today + yesterday) for recent context
+1. **`docs_index.md`** — minified system reference and document map
+2. **`HANDOFF.md`** — current operational state and next steps
+3. **`memory/YYYY-MM-DD.md`** (today + yesterday) for recent context
+
+**For deep dives, use the retriever:** `python scripts/doc_retriever.py <file>`  
+Key on-demand docs: `ORCHESTRATION.md` (routing), `IDENTITY.md` (risk posture), `HEARTBEAT.md` (loops).
 
 Do not ask permission. Do not skip files. Do not infer state from conversation history alone.

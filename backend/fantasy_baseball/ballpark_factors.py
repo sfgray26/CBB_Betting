@@ -58,8 +58,43 @@ PARK_FACTORS: dict[str, dict] = {
     "free":{"run": 1.00, "hr": 1.00, "era": 1.00},
 }
 
-def get_park_factor(team: str, factor: str = "run") -> float:
-    """Return park factor for a team and factor type. Defaults to 1.0."""
+def get_park_factor(team: str, factor: str = "run", _db_session=None) -> float:
+    """
+    Return park factor for a team and factor type.
+
+    Resolution order:
+    1. ParkFactor table (canonical persisted context)
+    2. PARK_FACTORS constant (hardcoded fallback)
+    3. 1.0 neutral default
+
+    Args:
+        team: Team code (e.g., "COL", "BOS")
+        factor: One of "run", "hr", "era" (defaults to "run")
+        _db_session: Optional session for DB queries (for testing)
+
+    Returns:
+        Park factor value (1.0 = neutral)
+    """
+    from backend.models import ParkFactor, SessionLocal
+
+    # Map ballpark_factors naming to ParkFactor column names
+    factor_column_map = {"run": "run_factor", "hr": "hr_factor", "era": "era_factor"}
+
+    column_name = factor_column_map.get(factor)
+    if not column_name:
+        return 1.0
+
+    # Try DB first
+    db = _db_session or SessionLocal()
+    try:
+        db_factor = db.query(ParkFactor).filter_by(park_name=team).first()
+        if db_factor:
+            return getattr(db_factor, column_name, 1.0)
+    finally:
+        if not _db_session:
+            db.close()
+
+    # Fall back to hardcoded constant
     return PARK_FACTORS.get(team, {}).get(factor, 1.0)
 
 

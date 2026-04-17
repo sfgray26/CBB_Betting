@@ -759,3 +759,91 @@ class TwoStartDetectionResponse(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# Layer 3: Player Scores (P14 League Z-Scores)
+# ---------------------------------------------------------------------------
+
+
+class PlayerScoreCategoryBreakdown(BaseModel):
+    """Per-category Z-scores for a player."""
+    z_hr: Optional[float] = None
+    z_rbi: Optional[float] = None
+    z_nsb: Optional[float] = None
+    z_avg: Optional[float] = None
+    z_obp: Optional[float] = None
+    z_era: Optional[float] = None
+    z_whip: Optional[float] = None
+    z_k_per_9: Optional[float] = None
+
+
+class PlayerScoreOut(BaseModel):
+    """Authoritative Layer 3 scoring output for a single player."""
+    bdl_player_id: int
+    as_of_date: date
+    window_days: int
+    player_type: Literal["hitter", "pitcher", "two_way"]
+    games_in_window: int
+    composite_z: float
+    score_0_100: float
+    confidence: float
+    category_scores: PlayerScoreCategoryBreakdown
+
+
+class PlayerScoresResponse(BaseModel):
+    """Response wrapper for GET /api/fantasy/players/{id}/scores."""
+    bdl_player_id: int
+    requested_window_days: int
+    as_of_date: date
+    score: PlayerScoreOut
+
+
+# ---------------------------------------------------------------------------
+# Layer 3F: Decision Output Read Surface (P17/P19)
+# ---------------------------------------------------------------------------
+
+
+class DecisionResultOut(BaseModel):
+    """P17 Decision Engine result -- lineup or waiver optimization output."""
+    bdl_player_id: int
+    as_of_date: date
+    decision_type: Literal["lineup", "waiver"]
+    target_slot: Optional[str] = None
+    drop_player_id: Optional[int] = None
+    lineup_score: Optional[float] = None
+    value_gain: Optional[float] = None
+    confidence: float
+    reasoning: Optional[str] = None
+
+
+class FactorDetail(BaseModel):
+    """Single factor from a decision explanation."""
+    name: str
+    value: Optional[str] = None
+    label: Optional[str] = None
+    weight: Optional[float] = None
+    narrative: Optional[str] = None
+
+
+class DecisionExplanationOut(BaseModel):
+    """P19 Explainability Layer -- human-readable decision trace."""
+    summary: str
+    factors: list[FactorDetail]
+    confidence_narrative: Optional[str] = None
+    risk_narrative: Optional[str] = None
+    track_record_narrative: Optional[str] = None
+
+
+class DecisionWithExplanation(BaseModel):
+    """Decision result with optional attached explanation."""
+    decision: DecisionResultOut
+    explanation: Optional[DecisionExplanationOut] = None
+
+
+class DecisionsResponse(BaseModel):
+    """Response wrapper for GET /api/fantasy/decisions."""
+    decisions: list[DecisionWithExplanation]
+    count: int
+    as_of_date: date
+    decision_type: Optional[Literal["lineup", "waiver"]] = None
+
+

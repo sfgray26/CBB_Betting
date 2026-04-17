@@ -1,455 +1,537 @@
-# HANDOFF.md -- MLB Platform Master Plan (In-Season 2026)
+# HANDOFF.md — MLB Platform Operating Brief
 
-> **Date:** April 14, 2026 | **Author:** Claude Code (Master Architect)
-> **Status:** STATCAST AGGREGATION FIX COMPLETE -- PENDING GEMINI DEPLOY + RE-BACKFILL
->
-> **Current phase:** Statcast aggregation bug FIXED (4 commits). `_aggregate_to_daily()` makes
-> pipeline resilient to per-pitch data; type-scoped upserts protect two-way players; CS
-> indicators properly SUMmed. 1838/1838 tests pass (3 pre-existing DB-auth excluded).
-> Ready for Gemini to deploy, TRUNCATE corrupted data, and re-backfill.
+> Date: April 16, 2026 | Author: Claude Code (Master Architect)
+> Status: Layer 2 certified complete. Layer 3B consolidation complete. Layer 3D observability complete. API endpoint live with auth. Decision pipeline observability complete. L3F (Decision Output Read Surface) complete. L3E (Market-Implied Probabilities) is deferred as a future enhancement. Do not reopen Layer 2 except for regressions.
 
----
-
-## CURRENT SESSION STATE (April 14, 2026)
-
-### Gemini DevOps Report (April 14 — all requested tasks complete)
-
-| Task | Result | Verdict |
-|------|--------|---------|
-| Deploy latest code to Railway | Healthy startup, API accessible | DONE |
-| `/admin/backfill-cs-from-statcast` | **0 updates** — `statcast_performances` has zero rows with `cs > 0` | DONE (source issue) |
-| Probable pitchers ingestion | **0 records** — no games or upstream MLB API lag | DONE |
-| Statcast quality audit | **42.4% zero-metric rate** (13,653 rows) — pitch-level overwrite confirmed | DONE |
-| Fuzzy linker | **0 linked, 362 remaining** — orphans are prospects/retired (accepted) | DONE |
-| Bonus: pitcher metric probes + duplicate endpoint cleanup in main.py | Completed | DONE |
-
-### Live Production DB State (post-Gemini deploy, April 14)
-
-| Table | Rows | Latest Date | Notes |
-|-------|------|-------------|-------|
-| `mlb_player_stats` | ~6,500+ | 2026-04-13 | Growing daily via BDL |
-| `statcast_performances` | **13,653** | 2026-04-13 | **42.4% zero-metric** — pitch-level overwrite bug confirmed |
-| `probable_pitchers` | 0 | — | Upstream MLB API returned 0; not a code issue |
-| `simulation_results` | ~9,400+ | 2026-04-13 | Fresh |
-| `player_rolling_stats` | ~28,000+ | 2026-04-13 | OK |
-| `player_scores` | ~28,000+ | 2026-04-13 | OK |
-| `player_id_mapping` | 60,000 | — | **Dedup needed** (FU-3) |
-| `position_eligibility` | ~2,376 | — | 362 permanent orphans (prospects/retired — accepted) |
-| `decision_results` | 26 | — | Low; likely expected for early-season |
-
-Overall health: **Infrastructure stable.** Primary data quality blocker: Statcast aggregation.
-
-### Work Completed This Session (April 14 — Statcast Aggregation Fix)
-
-4 commits implementing a complete fix for the Statcast aggregation bug:
-
-1. **`is_pitcher` flag** (`ef80ecc`) — Added `is_pitcher: bool` to `PlayerDailyPerformance`
-   dataclass. Set to `True` in pitcher branch of `transform_to_performance()`. Prerequisite
-   for type-scoped upserts. 2 new tests.
-
-2. **`_aggregate_to_daily()` pre-aggregation** (`4c9eef5`) — Core fix. Groups per-pitch
-   rows by (player, date, type) before transform. SUMs counting stats (42 column aliases
-   including `caught_stealing_2b`), AVERAGEs quality metrics (18 aliases). Short-circuits
-   when data is already at daily granularity (leaderboard passthrough). Wired into
-   `fetch_statcast_day()` before return. 6 new tests.
-
-3. **Type-scoped upserts** (`9da1f3f`) — Pitcher rows only update pitching + quality metric
-   columns on conflict. Batting counting stats (`pa`, `ab`, `h`, `sb`, `cs`, etc.) are
-   excluded from pitcher `set_=` dict, preventing two-way player data corruption (Ohtani).
-   2 new tests.
-
-4. **End-to-end integration test** (`8fcff87`) — Simulates 5 per-pitch rows with
-   `caught_stealing_2b=1` on 2 of them. Verifies aggregation -> transform produces
-   `cs=2`. Full suite: **1838 passed**, 3 pre-existing DB-auth failures.
-
-### Architect Review Queue (needs judgment, not execution)
-
-- ~~**P0: Statcast pitch-level overwrite bug** — FIXED (commits ef80ecc..8fcff87)~~
-- ~~**P0: CS data gap** — FIXED (caught_stealing_2b now SUMmed in aggregation)~~
-- **P1: `/admin/diagnose-era` broken on prod** — `ROUND(AVG(era), 3)` needs `::numeric` cast.
-  Cosmetic; fix when touching ERA code.
-- **P2: player_id_mapping 60K rows** vs expected ~2K. FU-3 dedup deferred but join costs
-  compound. Worth re-prioritizing before NSB/xwOBA derived-stats work.
-- **P3: decision_results = 26 rows** — verify if expected early-season or silent drop.
-
-### Work Completed Prior Session (April 13)
-
-1. **MLBBettingOdd Pydantic validation** — `spread_*`, `total_*` fields now `Optional`.
-   Files: `backend/data_contracts/mlb_odds.py`, `backend/services/daily_ingestion.py`,
-   `tests/test_data_contracts.py` (+4 new tests; 46/46 pass).
-
-2. **caught_stealing backfill endpoint** — `POST /admin/backfill-cs-from-statcast`.
-   Idempotent join across `statcast_performances -> player_id_mapping -> mlb_player_stats`.
-   Files: `backend/admin_backfill_ops_whip.py`, `tests/test_admin_backfill_ops_whip.py`
-   (+6 new tests; 18/18 pass). **Result: 0 updates due to source CS gap.**
-
-3. **Partial derived stats layer** — `backend/services/derived_stats.py`. Pure null-safe
-   helpers for OPS/AVG/ISO/WHIP/ERA. 36 tests in `tests/test_derived_stats.py`.
-   Ready to ship — values come from `mlb_player_stats` (BDL), not `statcast_performances`.
-
-### Gemini Backfill Findings History (April 13-14)
-
-**April 13 findings (3 blockers identified):**
-1. Statcast backfill stalled at 13,376 rows — per-pitch rows overwriting daily aggregates.
-2. `statcast_performances.cs > 0` count is zero — `caught_stealing_2b` needs SUM aggregation.
-3. Probable pitchers + fuzzy linker returned 0 rows — tracked separately.
-
-**April 14 confirmation:** Gemini re-ran all tasks. Results consistent with April 13 findings.
-Zero-metric rate now measured at 42.4% (13,653 rows). Infrastructure is robust; blockers are
-logical aggregation gaps requiring architect-level code fixes, not ops issues.
-
-**Full diagnosis:** `reports/2026-04-13-statcast-aggregation-diagnosis.md`.
-
-**Resolution:** Fix implemented in 4 commits (ef80ecc..8fcff87). Ready for Gemini deploy + re-backfill.
+Full audit: reports/2026-04-15-comprehensive-application-audit.md
+Raw-ingestion contract audit: reports/2026-04-05-raw-ingestion-audit.md
+Historical context: HANDOFF_ARCHIVE.md
 
 ---
 
-## ARCHIVE — Prior Session (Derived Stats Readiness Assessment)
+## Mission Accomplished
 
-### What Just Happened -- Derived Stats Readiness Assessment
-- Database audit requested to verify production state after Statcast fixes
-- Direct DB connection from local environment blocked (`DATABASE_PUBLIC_URL` not configured on Railway)
-- Readiness assessment completed using known state from April 11 deployment + user-reported Statcast progress
-- **Full report:** `reports/2026-04-13-derived-stats-readiness-assessment.md`
-
-**Key Finding:** Overall readiness is **72/100** — **MARGINAL** for a complete derived stats layer.
-- OPS/WHIP: 85/100 ✅ (at mathematical floor, ready to use)
-- NSB (Net Stolen Bases): 0/100 🔴 (caught_stealing is 100% NULL — hard blocker)
-- Player identity linkage: 85/100 ✅ (362 orphans accepted)
-- Statcast (xwOBA, barrel%, exit velocity): 75/100 ⚠️ (progress reported, needs confirmation)
-- Pipeline freshness: 95/100 ✅
-- Data quality: 98/100 ✅
-
-**Recommendation:** Start building a **partial derived stats layer now** (OPS, WHIP, ERA, AVG, ISO). Parallel-track the `caught_stealing` source mapping and Statcast backfill confirmation. Add NSB and advanced metrics in a follow-up phase.
-
-### Previous Session -- Data Quality Hardening Sprint (April 12)
-
-**Critical Fixes:**
-- **Statcast Column Mapping (Task 0): FIXED** -- `transform_to_performance()` was looking for `exit_velocity_avg`/`xba`/`xwoba` but Baseball Savant returns `launch_speed`/`estimated_ba_using_speedangle`/`estimated_woba_using_speedangle`. This caused 6,255 shell records with all-zero quality metrics. Fixed both batter and pitcher sections. Added `stolen_base_2b`/`caught_stealing_2b` for SB/CS. 28 regression tests.
-- **Category Tracker Bug (Task 1): FIXED** -- Removed dead code on line 59 (copy-paste: both `my_stats` and `opp_stats` called `_extract_stats` which didn't even exist on the class). Lines 62-80 correctly parse both teams. 7 regression tests.
-- **Valuation Worker Logging (Task 2): FIXED** -- Replaced silent `.get(key, 0.0)` defaults with explicit `logger.warning()` calls naming the player and missing field. Added summary counter (complete vs degraded players).
-- **Production Schedules (Task 6): FIXED** -- Restored 5 jobs from temporary 10:32 AM test schedules to production times: player_id_mapping (7:00 AM), position_eligibility (7:15 AM), probable_pitchers (8:30 AM / 4:00 PM / 8:00 PM).
-
-**New Infrastructure:**
-- **FanGraphs RoS -> CSV Bridge (Task 3): IMPLEMENTED** -- `export_ros_to_steamer_csvs()` in `projections_loader.py`. Exports FanGraphs daily fetch to Steamer-format CSVs that `load_full_board()` can read. This unlocks real projections for Monte Carlo sims. 12 tests with round-trip verification.
-- **Projection Export Endpoint (Task 4): IMPLEMENTED** -- `POST /admin/export-projections` bridges FanGraphs cache to CSVs on demand. Clears `load_full_board()` LRU cache.
-- **Pipeline Freshness Validator (Task 5): IMPLEMENTED** -- `GET /admin/pipeline-health` checks row counts and staleness for 6 critical tables. Returns `overall_healthy` flag with per-table details.
-
-**Validation Tests:**
-- **E2E Pipeline Tests (Task 7):** 10 tests -- scoring Z-score bounds, simulation percentile ordering, VORP calculations.
-- **Monte Carlo Backtest (Task 8):** 12 tests -- mean convergence, variance scaling, percentile coverage, CV matching. Proves the simulation engine is statistically sound.
-
-**Test suite: 1738 passed, 3 pre-existing DB-auth failures (not our code).**
-
-### What's Next -- Gemini Deployment Tasks
-
-1. **Deploy latest code to Railway** (includes all data quality fixes)
-2. **Run `POST /admin/backfill/statcast`** -- re-run backfill with fixed column mapping. Should populate real quality metrics for ~6,255 existing shell records + new dates.
-3. **Run `POST /admin/ingestion/run/probable_pitchers_morning`** -- verify probable_pitchers populates
-4. **Run `POST /admin/ingestion/run/vorp`** -- verify VORP values populate
-5. **Run `POST /admin/export-projections`** -- bridge FanGraphs RoS to CSVs (requires fangraphs_ros job to have run at least once)
-6. **Run `GET /admin/pipeline-health`** -- validate ALL tables are fresh and populated. Must return `overall_healthy: true` before any frontend work begins.
-7. **Verify simulation_results table updates overnight** -- should populate after full pipeline runs (rolling_stats -> player_scores -> ros_simulation)
-
-### Validation Gates Before Frontend
-
-| Gate | Endpoint/Command | Passing Criteria |
-|------|------------------|-----------------|
-| Pipeline health | `GET /admin/pipeline-health` | All tables `is_healthy: true` |
-| Projection data | `POST /admin/export-projections` then verify | > 500 players with real projections |
-| Statcast populated | `statcast_performances` check | > 10,000 rows with non-zero quality metrics |
-| Simulation fresh | `simulation_results` latest date | Within 2 days of current date |
-| Test suite green | `pytest tests/ -q` | 1738+ passed, 0 new failures |
+- Layer 2 certification is complete in production.
+- Deployment truth is live and versioned.
+- Raw ingestion audit logging is healthy.
+- `probable_pitchers` is populating successfully in production.
+- `park_factors` is seeded and available for DB-backed reads with fallback.
+- `weather_forecasts` exists in schema but remains deferred; request-time weather is the live path.
+- The Layer 2 hard gate is lifted.
 
 ---
 
-## DATABASE STATE (April 12, 2026)
+## Core Doctrine
 
-| Table | Expected | Actual | Status | Notes |
-|-------|----------|--------|--------|-------|
-| `player_id_mapping` | ~2,000 | ~20,000 (with duplicates) | POPULATED | FU-3: dedup deferred |
-| `position_eligibility` | ~750 | ~750 | OK | 362 permanent orphans (prospects) |
-| `mlb_player_stats` | ~13,500 | ~5,632 | PARTIAL | Growing daily via BDL sync |
-| `probable_pitchers` | ~30/day | 0 | EMPTY | BDL API lacks probable pitcher data (K-37 confirmed). Needs MLB Stats API source. |
-| `statcast_performances` | ~20,000 | 0 (code fixed, backfill not yet run) | FIX DEPLOYED | Run `POST /admin/backfill/statcast` on Railway to populate |
-| `player_projections` | varies | 0 | EMPTY | No projection pipeline built yet |
-| `player_rolling_stats` | ~25,000 | ~25,581 | OK | Populated by rolling stats job |
-| `player_scores` | ~25,000 | ~25,506 | OK | Populated by scoring engine |
-| `simulation_results` | ~8,500+ | ~8,523 | STALE | Last updated 2026-04-07 -- needs investigation |
-| `decision_results` | varies | varies | OK | Fed by simulation engine |
-| `data_ingestion_logs` | should have entries | 0 | EMPTY | Logging infrastructure not implemented |
+The MLB data platform is now validated at Layer 2. Work may resume above Layer 2, but execution should remain disciplined and sequenced.
 
----
+The architecture remains layered:
 
-## COMPLETED WORK (Phases 1-7 + Production Deployment)
+| Layer | Name | Purpose | Status |
+|------|------|---------|--------|
+| 0 | Immutable Decision Contracts | Canonical contracts, schemas, IDs, and validation boundaries | Stable |
+| 1 | Pure Stateless Intelligence | Deterministic pure functions over validated inputs | Available |
+| 2 | Data and Adaptation | Ingestion, validation, persistence, observability, freshness, provenance | Certified Complete |
+| 3 | Derived Stats and Scoring | Rolling stats, player scores, context-enriched features | Active |
+| 4 | Decision Engines and Simulation | Lineup logic, waiver logic, matchup engines, Monte Carlo | Hold until the first Layer 3 objective is stable |
+| 5 | APIs and Service Presentation | FastAPI contracts, dashboards, admin views | Maintenance |
+| 6 | Frontend and UX | Next.js pages, interactions, polish | Maintenance |
 
-### Phase 1: Player Identity Resolution (Tasks 1-3) -- COMPLETE
-- Task 1: Backfilled yahoo_key from position_eligibility to player_id_mapping
-- Task 2: Linked position_eligibility.bdl_player_id to player_id_mapping
-- Task 3: Verified cross-system joins working
+### Operating Rule
 
-### Phase 2: Empty Tables Diagnosis (Tasks 4-6) -- COMPLETE (diagnosis only)
-- Task 4: Diagnosed probable_pitchers -- empty because BDL API has no probable pitcher endpoint (K-37 confirmed)
-- Task 5: Diagnosed statcast_performances -- empty due to column mismatch in transform (now fixed)
-- Task 6: Diagnosed data_ingestion_logs -- empty by design (not yet implemented)
-
-### Phase 3: Computed Fields (Task 7) -- COMPLETE (at mathematical floor)
-- Task 7: ops/whip/caught_stealing computation
-  - ops: At mathematical floor -- 1,639 remaining NULLs all have NULL obp or slg (unbackfillable)
-  - whip: At mathematical floor -- 8 remaining stuck rows have innings_pitched='0.0' (math undefined)
-  - caught_stealing: Defaulting to 0 (working)
-
-### Phase 4: Backtest Enhancement (Task 8) -- COMPLETE
-- Task 8: direction_correct population verified working
-
-### Phase 5: Player Metrics (Task 9) -- COMPLETE
-- Task 9: VORP/z-score computation verified working (scoring_engine.py)
-
-### Phase 6: Data Quality Fixes (Tasks 10-11) -- COMPLETE
-- Task 10: ERA investigation -- 1 impossible row (id=8683, era=162.0) fixed
-- Task 11: Full validation audit -- `/admin/validation-audit` endpoint created and refreshed
-
-### Phase 7: Root Cause Fixes (Tasks 19-29) -- COMPLETE
-- Task 19: Field name mismatch root cause (ops vs on_base_plus_slugging)
-- Task 22: WHIP computation fix
-- Task 24: OPS computation fix
-- Task 26: ops/whip backfill endpoint (`/admin/backfill-ops-whip`)
-- Task 27/28: ERA validator (0-100 range)
-- Task 21/29: Orphan linking infrastructure
-- Task 25: All fixes validated
-
-### Production Deployment (P-1..P-4) -- COMPLETE
-- P-1: OPS/WHIP backfill at mathematical floor
-- P-2: Legacy ERA cleanup (id=8683 NULL'd)
-- P-3: Orphan linking (366 -> 362 orphans; Ohtani + Lorenzen linked)
-- P-4: Statcast retry verified; persistence bug identified and fixed
-
-**Full report:** `reports/2026-04-11-production-deployment-results.md`
-
-### Post-Production Follow-Ups -- ALL HIGH/MEDIUM RESOLVED
-- FU-1: Statcast persistence bug -- RESOLVED (commit `6848acb`)
-- FU-2: Stale validation audit queries -- RESOLVED (commit `c66c445`)
-- FU-3: player_id_mapping duplicates -- LOW, deferred (non-blocking)
-- FU-4: backfill-ops-whip overcount -- RESOLVED (commit `b11c1e4`)
+- Do not reopen Layer 2 as an active workstream unless a production regression is observed.
+- Do not activate broad Layer 4 work yet.
+- Use Layer 3 as the single active engineering lane.
 
 ---
 
-## NEXT STEPS (Priority Order)
+## Current Production Truth
 
-### Tasks 4-9 Status
+Verified production state as of April 16, 2026 (18:00 UTC):
 
-| Task | Description | Status | Notes |
-|------|-------------|--------|-------|
-| **4** | Probable pitchers pipeline | **DONE** | Rewrote to MLB Stats API. `daily_ingestion.py:_sync_probable_pitchers()` |
-| **5** | Statcast production backfill | **GEMINI** | Code fixed. Gemini to deploy + run `POST /admin/backfill/statcast` on Railway |
-| **6** | Data ingestion logging | DEFERRED | Low priority -- build audit trail for sync jobs |
-| **7** | Derived stats computation | **DONE** (pre-existing) | Already in `scoring_engine.py` -- 8 categories computed |
-| **8** | VORP implementation | **DONE** | `backend/services/vorp_engine.py` + scheduled job (4:30 AM, lock 100_030) |
-| **9** | Z-score enhancements | **DONE** | Winsorization (default ON) + MAD-based robust Z option in `scoring_engine.py` |
+| Area | Current Truth | Status |
+|------|---------------|--------|
+| Deployment state | Fresh (Build: 2026-04-16T02:00:54) | Healthy |
+| `data_ingestion_logs` | 66 rows | Healthy |
+| `probable_pitchers` | 94 rows | Healthy |
+| `/admin/pipeline-health` | `overall_healthy: true` | Healthy |
+| `mlb_player_stats` | 7249 rows | Healthy |
+| `statcast_performances` | 7408 rows | Healthy |
+| `park_factors` | 27 parks seeded, DB-backed reads active | Healthy |
+| `weather_forecasts` | Table exists, EMPTY (request-time weather used instead) | Deferred |
+| `/admin/diagnose-scoring/layer3-freshness` | Endpoint live, 13 tests passing | Healthy |
+| `/admin/diagnose-decision/pipeline-freshness` | Endpoint live, 8 tests passing | Healthy |
 
-### IMMEDIATE: Gemini Deploy + Re-Backfill
+### Operational Interpretation
 
-Statcast aggregation fix is complete (4 commits on `stable/cbb-prod`). Gemini should:
-
-1. **Deploy latest code to Railway.** Includes `_aggregate_to_daily()`, type-scoped upserts,
-   and `is_pitcher` flag. Verify healthy startup.
-2. **TRUNCATE `statcast_performances` table.** Existing 13,653 rows contain corrupted
-   per-pitch overwrites. Must start clean.
-   ```sql
-   TRUNCATE TABLE statcast_performances;
-   ```
-3. **Run `POST /admin/backfill/statcast`** — full re-backfill with fixed aggregation.
-   Expected: ~600-900 rows per game date (one per player per date), NOT 10K+.
-   Monitor logs for `"_aggregate_to_daily: X raw rows -> Y aggregated rows"`.
-4. **Run `POST /admin/backfill-cs-from-statcast`** — should now find CS events since
-   `caught_stealing_2b` is properly SUMmed during aggregation.
-5. **Run `GET /admin/pipeline-health`** and report:
-   - Total `statcast_performances` row count
-   - Zero-metric rate (should drop from 42.4% to <10%)
-   - CS backfill result (expect >0 updates now)
-
-### NEXT: Architect Tasks (after Gemini confirms backfill)
-
-1. **Ship derived stats layer** — OPS/WHIP/ERA/AVG/ISO helpers are ready (independent of Statcast).
-2. **Add NSB (Net Stolen Bases) to derived stats** once CS data is confirmed populated.
-3. **Add Statcast-sourced advanced metrics** (xwOBA, barrel%, exit velocity) to derived stats
-   once zero-metric rate is confirmed <10%.
-
-### LOW PRIORITY (Housekeeping)
-
-| Item | Description | Priority |
-|------|-------------|----------|
-| FU-3 | Dedupe player_id_mapping (Ohtani/Lorenzen 4x rows each) | LOW |
-| Simulation staleness | simulation_results last updated 2026-04-07 -- investigate scheduler | LOW |
-| data_ingestion_logs | Comprehensive audit logging (Task 6, ~4 hours) | MEDIUM |
-
-### PARALLEL TRACKS (Independent)
-
-| Track | Owner | Status | Notes |
-|-------|-------|--------|-------|
-| K-39..K-43 Infra Hardening | Kimi CLI | Research pending | DB indexes, rate limiting, security, testing gaps, DR |
-| K-44 UI/UX Design System | Claude | Ready to start | Revolut-inspired redesign, 7-phase plan in `reports/2026-04-10-revolut-design-implementation-plan.md` |
+- Layer 2 is certified complete.
+- Park factor authority is DB-backed with fallback (ballpark_factors.py → ParkFactor table → PARK_FACTORS constant → neutral 1.0).
+- Weather context exists in schema but is NOT populated; request-time weather (weather_fetcher.py) remains the live path for consumers like smart_lineup_selector.py.
+- Layer 3 scoring (player_scores) does NOT consume weather - pure rolling-window Z-score computation remains appropriate for multi-day windows.
+- The production data spine is no longer the blocker.
+- The next bottleneck is downstream scoring construction, not ingestion stability.
 
 ---
 
-## RESEARCH REPORTS (K-34 to K-38) -- ALL COMPLETE
+## Layer 2 Certification Record
 
-| Task | Report | Key Takeaway |
-|------|--------|--------------|
-| K-34 | `reports/2026-04-10-bdl-api-capabilities.md` | BDL GOAT: 600 req/min, 18 MLB endpoints, cursor pagination, no probable pitchers |
-| K-35 | `reports/2026-04-09-zscore-best-practices.md` | Winsorize 5th/95th; MAD robust Z; sample size stabilization |
-| K-36 | `reports/2026-04-10-h2h-scoring-systems.md` | H2H One Win 5x5: NSB=SB-CS, NSV=SV-BS; position eligibility rules |
-| K-37 | `reports/2026-04-10-mlb-api-comparison.md` | Probable pitchers ONLY from MLB Stats API; Statcast for xwOBA; BDL for games/stats/injuries |
-| K-38 | `reports/2026-04-09-vorp-implementation-guide.md` | VORP = Player_Z - Replacement_Z; replacement levels by position documented |
+Final production verification:
 
----
+- `probable_pitchers` row count: 94
+- Latest `probable_pitchers` job result: SUCCESS (Job ID 65)
+- `data_ingestion_logs` contains recent durable rows
+- `/admin/pipeline-health` returns `overall_healthy: true`
+- `/admin/version` exists and deployment versioning is live
 
-## DATABASE HEALTH & EXCELLENCE ROADMAP
+Layer 2 acceptance criteria status:
 
-### Current Health: C+ (76.9%)
+1. Production is running latest repo code: PASS
+2. `data_ingestion_logs` has recent durable rows: PASS
+3. Health endpoints report correctly: PASS
+4. `probable_pitchers` contains usable rows: PASS
+5. Raw MLB source tables are fresh and internally consistent: PASS
+6. `park_factors` is persisted canonically; `weather_forecasts` remains deferred by design: PASS
+7. Scoring code remains pure and does not depend on persisted weather context: PASS
 
-| Metric | Score | Grade |
-|--------|-------|-------|
-| Data Completeness | 75% | C |
-| Cross-System Linkage | 80% | B- |
-| Computed Fields | 68% | D+ |
-| Pipeline Freshness | 75% | C |
-| Data Quality | 95% | A |
-
-### Target: A+ (95%+) via 6-week roadmap
-
-**Full roadmap:** `reports/2026-04-11-database-excellence-roadmap.md`
-
-| Phase | Duration | Focus | Target Grade |
-|-------|----------|-------|-------------|
-| 1. Foundation | Week 1 | Complete current fixes + Tasks 4-9 | B+ (85%) |
-| 2. Hardening | Weeks 2-3 | Reliability engineering | A- (90%) |
-| 3. Optimization | Week 4 | Query performance <200ms | A (93%) |
-| 4. Observability | Week 5 | Monitoring, MTTD < 5 min | A (95%) |
-| 5. Governance | Week 6 | Processes, docs | A+ (97%) |
+Layer 2 verdict: PASS
 
 ---
 
-## P-3 UNMATCHABLE ORPHANS -- ACCEPTED AS PERMANENT STATE
+## Layer Status
 
-362 orphaned position_eligibility records are retired/prospect/minor-league Yahoo players (`469.p.65xxx`, `469.p.66xxx`) with no MLB/BDL entry. Do NOT re-run `backend/scripts/link_orphans.py` -- it will burn ~7 minutes and return 0%. If surfacing in UI, use `yahoo_player_key` directly.
+### Layer 0 — Immutable Decision Contracts
+Status: STABLE
 
-**Export:** `reports/2026-04-11-unmatchable-orphans.csv` (162 batters, 200 pitchers)
+- No contract expansion is currently required.
 
----
+### Layer 1 — Pure Stateless Intelligence
+Status: AVAILABLE
 
-## INFRASTRUCTURE RESEARCH (K-39 to K-43) -- PENDING
+- Pure logic may be extended as required by Layer 3 scoring work.
 
-| Task | Focus | Priority | Owner |
-|------|-------|----------|-------|
-| K-39 | Database Index Optimization | HIGH | Kimi CLI |
-| K-40 | API Rate Limiting Strategy | HIGH | Kimi CLI |
-| K-41 | Testing Strategy Gap Analysis | MEDIUM | Kimi CLI |
-| K-42 | Security Audit - API Layer | HIGH | Kimi CLI |
-| K-43 | Backup & Disaster Recovery | MEDIUM | Kimi CLI |
+### Layer 2 — Data and Adaptation
+Status: CERTIFIED COMPLETE
 
-**Delegation doc:** `KIMI_K39_K43_DELEGATION.md`
+- Regressions only.
+- Do not run a new Layer 2 roadmap unless production evidence degrades.
 
----
+### Layer 3 — Derived Stats and Scoring
+Status: ACTIVE
 
-## UI/UX DESIGN SYSTEM (K-44)
+- This is the only active engineering workstream now.
+- L3A (scoring spine), L3B (context authority), L3D (observability), and decision pipeline observability are complete.
+- **L3F (Decision Output Read Surface) is the current sub-task.** See detailed breakdown below.
+- L3E (Market-Implied Probabilities) is preserved as backlog, deferred pending explicit policy gate.
 
-**Revolut-inspired fintech redesign.** 7-phase, 2-3 week implementation.
+**Layer 3B Context Authority Audit (2026-04-16):**
 
-**Plan:** `reports/2026-04-10-revolut-design-implementation-plan.md`
+Authoritative scoring path: `player_rolling_stats → compute_league_zscores() → player_scores`
 
-**Status:** Ready for implementation. Can run parallel with backend work.
+Key findings:
+- Scoring is PURE Z-score computation over rolling stats - NO park factors, NO weather
+- Park factor fragmentation: 5+ hardcoded copies across codebase (ballpark_factors.py, mlb_analysis.py, daily_lineup_optimizer.py, two_start_detector.py, weather_ingestion.py)
+- scoring_engine.py has DB-backed get_park_factor() helper but it's UNUSED by main scoring
+- Weather infrastructure exists (weather_ingestion.py) but weather_forecasts table is EMPTY; request-time weather (weather_fetcher.py) is the live path
 
-**Key design decisions:**
-- Pill-shaped buttons (9999px radius), zero shadows
-- Aeonik Pro (display) + Inter (body) typography
-- Semantic color tokens (danger/warning/teal/blue)
-- Dark/light section alternation
-- 8px base spacing system
+Risk severity: HIGH (fragmentation) > MEDIUM (unused helper confusion) > LOW (weather table empty but request-time path exists)
 
----
+**Scoped consolidation COMPLETE (2026-04-16):**
+- `ballpark_factors.py:get_park_factor()` now reads from ParkFactor table first, with fallback to PARK_FACTORS constant → neutral 1.0
+- 9 focused tests added (test_ballpark_factors.py)
+- Weather remains deferred for Layer 3 scoring (appropriate for rolling windows; request-time weather via weather_fetcher.py serves immediate-decision needs)
 
-## AGENT TEAM
+### L3E. Market-Implied Probability Integration
 
-| Agent | Role | Current Assignment |
-|-------|------|-------------------|
-| **Claude Code** | Master Architect -- algorithms, schema, core logic | Tasks 4-9 feature implementation |
-| **Gemini CLI** | Ops/DevOps -- Railway deploy, verification, smoke tests | Monitor Railway; run Statcast backfill (Task 5) |
-| **Kimi CLI** | Deep research, spec memos, API audits | K-39..K-43 infra hardening research |
+**Status: DEFERRED — future enhancement backlog (not active)**
 
----
+> **NOTE:** This work requires an explicit policy gate before becoming active. It proposes using The Odds API for MLB player props, which currently conflicts with CLAUDE.md hard-stop rules ("Do NOT use THE_ODDS_API_KEY for new MLB features"). If this lane is activated in the future, CLAUDE.md must be updated first to reflect the policy change.
 
-## VALIDATION TOOLS
-
-| Endpoint/Script | Purpose |
-|-----------------|---------|
-| `/admin/validation-audit` | Comprehensive data quality validation (refreshed FU-2) |
-| `/admin/backfill-ops-whip` | OPS/WHIP backfill (fixed FU-4) |
-| `/admin/backfill/statcast` | Statcast backfill (fixed FU-1) |
-| `/admin/diagnose-era` | ERA value diagnostics |
-| `/test/verify-db-state` | Phase 1+2 table row counts and recency |
+**Objective:** Enrich the daily player score with forward-looking Vegas market sentiment.
+The current `player_scores` table is built entirely from backward-looking rolling Z-scores
+(wOBA, ISO, HR rate, etc.). Layer 3E introduces a second signal axis — what the implied
+market currently believes about each player's performance for *today's* slate — and
+synthesises both into an **+EV Player Score** that can weight fantasy lineup decisions.
 
 ---
 
-## KEY FILES
+#### Data-Source Decision (READ BEFORE CODING)
 
-| What you need | Where it is |
-|---------------|-------------|
-| Current mission + task queue | `HANDOFF.md` (this file) |
-| Project orientation | `CLAUDE.md` |
-| Agent roles + swimlanes | `ORCHESTRATION.md`, `AGENTS.md` |
-| Production deployment report | `reports/2026-04-11-production-deployment-results.md` |
-| Database health report | `reports/2026-04-11-comprehensive-database-health-report.md` |
-| Database excellence roadmap | `reports/2026-04-11-database-excellence-roadmap.md` |
-| Statcast bug fix report | `reports/2026-04-11-statcast-bug-fix-results.md` |
-| Validation report | `reports/task-11-validation-report.md` |
-| BDL API capabilities | `reports/2026-04-10-bdl-api-capabilities.md` |
-| MLB API comparison | `reports/2026-04-10-mlb-api-comparison.md` |
-| VORP implementation guide | `reports/2026-04-09-vorp-implementation-guide.md` |
-| Z-score best practices | `reports/2026-04-09-zscore-best-practices.md` |
-| H2H scoring systems | `reports/2026-04-10-h2h-scoring-systems.md` |
-| UI/UX design plan | `reports/2026-04-10-revolut-design-implementation-plan.md` |
+This is an active architectural decision with budget implications.
+
+| Source | What it offers | Constraint |
+|--------|----------------|------------|
+| **BallDontLie GOAT MLB** (`/mlb/v1/odds`) | Game-level moneylines and totals per sportsbook | **Already wired.** Does NOT expose player prop markets (O/U hits, HRs, TB, etc.) |
+| **The Odds API** (`/v4/sports/baseball_mlb/events/{id}/odds?markets=batter_*`) | Granular player prop lines per book | OddsAPI Basic = 20 k calls/month. This budget is currently reserved for CBB archival closing lines only. Player props require separate endpoint calls per event per market. |
+
+**Decision required before L3E coding begins:**
+
+1. Confirm whether the OddsAPI Basic 20 k call budget has headroom once CBB archival traffic
+   drops to near-zero (it should — CBB season is closed).
+2. Estimate call volume: ~15 MLB games/day × ~30 active props/game × ~1 bookmaker pass = ~450 calls/day × 30 days ≈ 13 500/month. This fits within 20 k with margin.
+3. If budget is confirmed: add `MLB_PROPS_ENABLED=true` env var gate before the ingestion job runs.
+4. Do NOT route game-level MLB moneylines through OddsAPI — those remain on BDL exclusively.
+
+**Provisional decision: proceed with The Odds API for player props only.** Rationale: BDL has no player-prop endpoint, CBB archival call volume is now negligible, and 13 500 estimated calls/month fits the 20 k budget. Gate behind env var `MLB_PROPS_ENABLED` so the job is opt-in.
 
 ---
 
-## ADVISORY LOCK IDS (daily_ingestion.py)
+#### Engineering Task Breakdown
+
+##### L3E-1. Pydantic Data Contracts (Layer 0 extension)
+
+New contracts required in `backend/data_contracts.py` (create file if missing) or
+the canonical contracts module used by the rest of the pipeline.
 
 ```
-100_001 mlb_odds | 100_002 statcast | 100_003 rolling_z | 100_004 cbb_ratings
-100_005 clv      | 100_006 cleanup  | 100_007 waiver_scan | 100_008 mlb_brief
-100_009 openclaw_perf | 100_010 openclaw_sweep
-100_011 scarcity_index_recalc | 100_012 two_start_sp_identification
-100_013 projection_model_update | 100_014 probable_pitcher_sync | 100_015 waiver_priority_snapshot
-100_028 probable_pitchers | 100_029 player_id_mapping | 100_030 vorp
-Next available: 100_031
+PlayerPropRaw         — raw API response record, strict field types, no defaults for
+                        critical fields (must reject if over/under odds missing)
+PlayerPropContract    — validated, de-vigged record ready for DB write
+PlayerPropBatch       — list[PlayerPropContract] + fetch metadata (source, fetched_at)
 ```
 
+Rules (matches Layer 0 doctrine):
+- All monetary/odds fields typed as `int` (American odds are always integers).
+- `over_american_odds` and `under_american_odds` must both be present; if either is
+  null the record is rejected at validation, not silently coerced to None.
+- `prop_type` must come from an allowlist enum (`PropType`): hits, home_runs,
+  total_bases, rbis, strikeouts, walks, stolen_bases, runs_scored.
+- `bdl_player_id` linkage must be resolved *before* the contract is written to DB;
+  records with unresolved player IDs are logged and dropped, not stored.
+- Never pass raw dicts to DB write functions — always validate through `PlayerPropContract`
+  first.
+
+##### L3E-2. Schema: `player_prop_odds` Table
+
+New ORM model in `backend/models.py`. Natural key:
+`(bdl_player_id, game_date, prop_type, prop_line, bookmaker)`.
+
+```
+id                 BigInteger PK autoincrement
+bdl_player_id      Integer  NOT NULL  — FK-style reference to BDL player entity
+game_date          Date     NOT NULL  — calendar date of the game (ET)
+prop_type          String   NOT NULL  — enum: hits / home_runs / total_bases / rbis /
+                                        strikeouts / walks / stolen_bases / runs_scored
+prop_line          Float    NOT NULL  — the O/U threshold (e.g. 0.5, 1.5, 2.5)
+over_american_odds Integer  NOT NULL  — e.g. -130
+under_american_odds Integer NOT NULL  — e.g. +110
+over_implied_raw   Float    NOT NULL  — raw implied prob before vig removal
+under_implied_raw  Float    NOT NULL
+vig_pct            Float    NOT NULL  — (over_implied_raw + under_implied_raw) - 1.0
+over_true_prob     Float    NOT NULL  — de-vigged: over_implied_raw / total_implied
+under_true_prob    Float    NOT NULL  — de-vigged: under_implied_raw / total_implied
+bookmaker          String   NOT NULL  — e.g. "draftkings", "fanduel", "pinnacle"
+fetched_at         DateTime NOT NULL  — timestamp of API call (ET, timezone-aware)
+
+UniqueConstraint: (bdl_player_id, game_date, prop_type, prop_line, bookmaker)
+Index: (game_date, prop_type) — for daily slate queries
+Index: (bdl_player_id, game_date) — for player-centric lookups
+```
+
+Alembic migration required; do not use `Base.metadata.create_all()` in production.
+
+##### L3E-3. De-Vigging Math (Pure Layer 1 Function)
+
+Add a pure, zero-I/O function to `backend/core/odds_math.py` (or equivalent pure-logic
+module). No numpy/pandas — standard library arithmetic only, consistent with
+`scoring_engine.py` precedent.
+
+**Algorithm:**
+
+```
+American → decimal probability:
+  If odds > 0:  raw_prob = 100 / (odds + 100)
+  If odds < 0:  raw_prob = abs(odds) / (abs(odds) + 100)
+
+De-vig (Multiplicative method — most neutral):
+  total_implied = over_raw_prob + under_raw_prob   # always > 1.0 due to vig
+  over_true_prob  = over_raw_prob  / total_implied
+  under_true_prob = under_raw_prob / total_implied
+  vig_pct = total_implied - 1.0
+
+Validation guard:
+  Reject if total_implied < 1.0 (market inversion — data error).
+  Reject if total_implied > 1.25 (vig > 25% — implausible; API data error).
+  Reject if either raw_prob <= 0 or >= 1.
+```
+
+Example: Over -130, Under +110
+```
+  over_raw  = 130/230 = 0.5652
+  under_raw = 100/210 = 0.4762
+  total     = 1.0414  (vig = 4.14%)
+  over_true  = 0.5652 / 1.0414 = 0.5427
+  under_true = 0.4762 / 1.0414 = 0.4573
+```
+
+Unit test coverage required:
+- Positive American odds case, negative American odds case, symmetric -110/-110 case.
+- Rejection guards: inversion, extreme vig, zero/boundary odds.
+
+##### L3E-4. Ingestion Job
+
+New daily job in `backend/services/daily_ingestion.py`.
+
+```
+Lock ID:  100_016  (next available per CLAUDE.md advisory lock registry)
+Schedule: 10:00 AM ET (after probable pitchers are confirmed for the day)
+Gate:     env var MLB_PROPS_ENABLED=true (default false — must be explicitly enabled)
+```
+
+Job flow:
+1. Fetch today's MLB game IDs from BDL (`get_mlb_games`).
+2. For each game, call The Odds API player props endpoint for the configured markets.
+3. For each prop record, resolve player name → `bdl_player_id` via `PlayerIdResolver`
+   (existing service). Drop unresolvable records with a WARNING log entry.
+4. Validate each record through `PlayerPropContract`. Reject invalid records; log counts.
+5. De-vig via the Layer 1 pure function.
+6. Upsert into `player_prop_odds` using the natural key.
+7. Write a `data_ingestion_logs` row with `job_name="mlb_player_props"`, row counts, and any
+   rejection summary.
+
+Error handling: if The Odds API returns a non-200 or the response shape is unexpected,
+log the failure and write a FAILED ingestion log row. Do not raise — job must not crash the
+scheduler.
+
+Call-budget telemetry: log the `X-Requests-Remaining` header from The Odds API response on
+every call. Emit a WARNING if remaining calls drop below 2 000.
+
+##### L3E-5. Synthesis: +EV Player Score
+
+**Target end-state (may be a Layer 3F task depending on L3E execution scope).**
+
+The goal is a daily `ev_player_scores` table (or a new column set on `player_scores`) that
+merges two orthogonal signals:
+
+| Signal | Source | Nature |
+|--------|--------|--------|
+| Z-score composite | `player_scores.composite_z` (14d window) | Backward-looking: recent form |
+| Market-implied probability | `player_prop_odds.over_true_prob` (today's slate) | Forward-looking: market consensus |
+
+**Synthesis approach (to be refined in implementation):**
+
+For each hitter on the daily slate, for each relevant prop type:
+
+```
+base_score  = composite_z_14d  (normalised rolling form)
+market_edge = over_true_prob - historical_hit_rate_baseline
+              where baseline = rolling w_avg (hits proxy) or w_home_runs (HR proxy)
+              from PlayerRollingStats (14d window)
+
+ev_score = α × base_score + β × market_edge
+
+Initial calibration: α=0.6, β=0.4 (market-weighted; tunable via env var)
+```
+
+The `market_edge` term is the critical quant insight: if the market implies a 54% chance
+a player gets a hit today, and their 14-day rolling average implies ~48%, this positive
+delta (+6 pp) is a meaningful forward-looking signal. A negative delta suggests the market
+is pricing in something not captured by recent form (injury concern, tough matchup, travel).
+
+This synthesis must remain a **read-only computation** at output time (pure function over
+`player_scores` + `player_prop_odds`). Do not mutate existing `player_scores` rows.
+
 ---
 
-**Last Updated:** April 14, 2026
-**Session Context:** Statcast aggregation fix COMPLETE (4 commits). 1838/1838 tests pass.
-**Priority:** Gemini deploy + TRUNCATE + re-backfill. Then ship derived stats layer + NSB.
+#### L3E Acceptance Criteria
+
+- [ ] `devig_american_odds()` pure function with unit tests (all guard cases pass)
+- [ ] `PlayerPropContract` Pydantic model with rejection validation
+- [ ] `player_prop_odds` ORM model + Alembic migration applied in production
+- [ ] Ingestion job at lock 100_016, gated by `MLB_PROPS_ENABLED`
+- [ ] `data_ingestion_logs` row written on each run (success and failure)
+- [ ] Call-budget telemetry: remaining-requests logged on every Odds API call
+- [ ] At least 1 day of production data in `player_prop_odds` before synthesis work begins
 
 ---
 
-## ??? DEVOPS & PIPELINE AUDIT (April 14, 2026)
+### Layer 4 — Decision Engines and Simulation
+Status: HOLD
 
-**Mission:** Deploy latest fixes and execute required backfills/audits.
+- Do not resume broader decision-engine work until the first Layer 3 scoring objective is complete and stable.
 
-**Status:**
-1. **Deployment**: ? **SUCCESS**
-   - Latest code (CS backfill, Pydantic odds fixes) live on Railway.
-2. **CS Backfill (`/admin/backfill-cs-from-statcast`)**: ? **COMPLETE**
-   - Result: **0 updates**.
-   - Finding: `statcast_performances` currently contains **zero** records with `cs > 0`. Upstream source/mapping for `caught_stealing_2b` is effectively empty.
-3. **Probable Pitchers Ingestion**: ? **COMPLETE**
-   - Result: **0 records** (indicates API lag or no scheduled games).
-4. **Statcast Quality Audit**: ? **COMPLETE**
-   - **Zero-Metric Rate**: **42.4%** (Total Rows: 13,653).
-   - **Critical Finding**: Pitch-level data is overwriting daily player totals due to `on_conflict_do_update` without aggregation. This is the root cause of the "shell record" issue.
-5. **Fuzzy Linker**: ? **COMPLETE**
-   - Result: **0 linked**, 362 remaining. New orphans confirmed as unmatchable prospects/retired players.
+### Layer 5 — APIs and Service Presentation
+Status: MAINTENANCE
 
-**Overall Verdict**: Infrastructure is stable. The data pipeline requires a logical pivot from **overwrite** to **aggregate** for Statcast detail rows to reach required richness levels.
+- Only changes needed to expose validated Layer 3 outputs should be made.
 
-*Last Updated: April 14, 2026 � Gemini DevOps Lead*
+### Layer 6 — Frontend and UX
+Status: MAINTENANCE
+
+- No new UI initiative should begin until Layer 3 outputs are defined.
+
+---
+
+## Frontend Readiness Brief
+
+Frontend is NOT the active workstream. When frontend execution resumes, use the documents below as the canonical briefing set and preserve backend-first sequencing.
+
+### Frontend source-of-truth docs
+
+1. `DESIGN.md`
+	- Primary visual authority for the current design direction.
+	- Use the Revolut-inspired system: Aeonik Pro display typography, Inter body, near-black/white binary, pill buttons, zero shadows.
+
+2. `reports/2026-04-10-revolut-design-implementation-plan.md`
+	- Token and component implementation plan for Tailwind/CSS.
+	- Use for concrete frontend build execution once UI work is officially active.
+
+3. `docs/superpowers/plans/2026-04-12-next-steps-assessment.md`
+	- Fantasy-first frontend roadmap.
+	- Important product guidance: do NOT spend cycles redesigning dead CBB surfaces before the fantasy product has a usable interface.
+
+4. `FRONTEND_MIGRATION.md`
+	- Historical frontend implementation record and guardrails.
+	- Useful for patterns, auth, client-fetching rules, and type-discipline; NOT the source of current product priority.
+
+5. `reports/2026-03-12-api-ground-truth.md`
+	- Contract authority for frontend TypeScript shapes.
+	- Frontend types should be derived from backend truth, never guessed from browser errors.
+
+6. `docs/superpowers/specs/2026-04-04-fantasy-edge-decoupling-design.md`
+	- Architectural guardrail for product separation.
+	- Frontend work should reinforce Fantasy as the active product and avoid deepening coupling to frozen CBB concerns.
+
+### Frontend activation gates
+
+- Do not start frontend implementation while backend decision trust is still under validation.
+- Frontend may consume validated backend outputs; it must not invent or pressure backend contracts prematurely.
+- The first frontend initiative, when opened, should be fantasy-first and use existing `/api/fantasy/*` endpoints rather than redesigning archived CBB-first views.
+- Any frontend type work must be grounded in backend route/schema truth or the API ground-truth report, not inferred from runtime UI errors.
+- Treat `DESIGN.md` as the style guide and `reports/2026-04-10-revolut-design-implementation-plan.md` as the implementation recipe.
+- If frontend work starts, scope it as a bounded execution lane with its own prompt and do not mix it into backend stabilization tasks.
+
+---
+
+## Active Workstream
+
+### L3F. Decision Output Read Surface
+
+**Status: COMPLETE (2026-04-16)**
+
+Implemented `GET /api/fantasy/decisions` endpoint exposing trusted P17/P19 outputs.
+
+**Completed:**
+- Endpoint implementation in `backend/routers/fantasy.py` with verify_api_key auth
+- Pydantic schemas (`DecisionsResponse`, `DecisionWithExplanation`, `DecisionResultOut`, `DecisionExplanationOut`, `FactorDetail`)
+- 13 comprehensive test cases covering filtering, pagination, auth, response contract, and empty result handling
+- Query params: `decision_type` (lineup/waiver, optional), `as_of_date` (optional, defaults to latest), `limit` (1-500, default 50)
+- Returns decisions ordered by confidence desc, value_gain desc
+- Empty list returned for dates with no data (not 404)
+- Explanation data attached when available
+
+**Out of scope (remains deferred):**
+- New decision computation logic (Layer 4 remains HOLD)
+- Frontend UI for decisions
+- OddsAPI-based player props (L3E remains deferred)
+
+### L3E. Market-Implied Probability Integration
+
+**Status: DEFERRED — see Layer Status section for full spec (preserved as backlog)**
+
+This work is preserved as a complete specification for future consideration, but requires an explicit policy gate before becoming active. The proposed use of The Odds API for MLB player props currently conflicts with CLAUDE.md hard-stop rules.
+
+### L3A. Derived Stats And Scoring Spine
+
+**Status: Complete (2026-04-16)**
+
+Implemented `GET /api/fantasy/players/{bdl_player_id}/scores` - the first authoritative Layer 3 scoring exposure.
+
+**Completed:**
+- Endpoint implementation in `backend/routers/fantasy.py` with verify_api_key auth
+- Pydantic schemas (`PlayerScoresResponse`, `PlayerScoreOut`, `PlayerScoreCategoryBreakdown`)
+- 13 comprehensive test cases covering validation, response contract, and auth requirements
+- Supports window_days=7/14/30 (defaults to 14)
+- Supports optional as_of_date query parameter (defaults to latest available)
+- Returns 400 for invalid window_days, 404 for missing scores, 401 for missing auth
+- Exposes hitter categories (z_hr, z_rbi, z_nsb, z_avg, z_obp) and pitcher categories (z_era, z_whip, z_k_per_9)
+
+### L3B. Context Authority Consolidation
+
+**Status: Complete (2026-04-16)**
+
+Scoped park factor consolidation completed:
+- `ballpark_factors.py:get_park_factor()` now resolves: DB → PARK_FACTORS constant → 1.0 neutral
+- 9 focused tests added (test_ballpark_factors.py)
+- Weather remains explicitly deferred for Layer 3 scoring (request-time weather via weather_fetcher.py serves immediate-decision needs)
+
+### L3D. Layer 3 Observability
+
+**Status: Complete (2026-04-16)**
+
+Layer 3 freshness endpoint `/admin/diagnose-scoring/layer3-freshness` is live and fully tested:
+- Returns freshness verdict (healthy/stale/partial/missing)
+- Provides row counts by window (7/14/30)
+- Shows latest audit log entries for rolling_windows and player_scores jobs
+- 13 comprehensive tests in test_admin_scoring_diagnostics.py
+
+**Decision Pipeline Observability (2026-04-16):**
+
+Decision pipeline freshness endpoint `/admin/diagnose-decision/pipeline-freshness` is live and fully tested:
+- Provides observability for P17-P19 stages (DecisionResult and DecisionExplanation tables)
+- Returns freshness verdict (healthy/stale/partial/missing)
+- Shows breakdown_by_type (lineup/waiver), row counts, and latest computed_at timestamps
+- Includes schedule expectations (~7 AM for decision_results, ~9 AM for decision_explanations)
+- 8 comprehensive tests in test_admin_scoring_diagnostics.py
+- Total test count for admin_scoring_diagnostics.py: 34 tests passing
+
+**Out of scope for this phase:**
+
+- simulation expansion
+- waiver-system breadth work
+- optimizer redesign
+- frontend feature expansion
+- broad Layer 4 activation
+- weather_forecasts table population (request-time weather remains sufficient)
+
+---
+
+## Immediate Priority Queue
+
+| Priority | Action | Owner | Status |
+|----------|--------|-------|--------|
+| P0 | Define the first Layer 3 scoring objective and success criteria | Claude | Complete |
+| P0 | Audit current derived-stats and scoring code path for gaps | Claude | Complete |
+| P1 | Identify one authoritative scoring output for downstream consumers | Claude | Complete |
+| P1 | Audit context authority in scoring path (3B) | Claude | Complete |
+| P2 | Consolidate ballpark_factors.py to DB-backed read | Claude | Complete |
+| P2 | Add Layer 3 freshness observability endpoint | Claude | Complete |
+| P2 | Add decision pipeline freshness observability endpoint | Claude | Complete |
+| P1 | Expose DecisionResult read API (lineup/waiver outputs) with verify_api_key auth (L3F) | Claude | Complete |
+| P2 | Decide whether any Layer 5 response shape changes are needed after scoring output stabilizes | Claude | Pending |
+
+---
+
+## Architect Review Queue
+
+- Keep `/admin/version`, ingestion logs, and `probable_pitchers` on passive regression watch.
+- Treat canonical environment snapshots beyond current weather and park persistence as backlog, not active recovery work.
+- Do not reopen simulation or decision-layer expansion until Layer 3 outputs are demonstrably trustworthy.
+- Do not start frontend implementation until the backend decision pipeline is trusted and the frontend lane is opened explicitly.
+- When frontend work opens, use `DESIGN.md` plus the April 10 and April 12 planning docs as the briefing pack; treat `FRONTEND_MIGRATION.md` as historical implementation context only.
+- If production health regresses, reopen Layer 2 explicitly rather than mixing regression response into Layer 3 work.
+
+---
+
+## Delegation Bundles
+
+### Gemini CLI
+
+No active delegation.
+
+Use Gemini only if a production regression check, Railway deploy, log tail, or read-only production validation is required.
+
+### Kimi CLI
+
+No active delegation.
+
+Use Kimi for a bounded Layer 3 analysis memo only after Claude defines the exact scoring objective.
+
+---
+
+## HANDOFF PROMPTS
+
+No active handoff prompt is currently open. Create a new prompt only after the first Layer 3 objective is explicitly defined.
+
+---
+
+Last Updated: April 16, 2026 (21:00 UTC - L3F Decision Output Read Surface complete; GET /api/fantasy/decisions live with 13 tests passing; L3E remains deferred pending policy gate)
