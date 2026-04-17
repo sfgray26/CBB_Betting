@@ -2724,8 +2724,29 @@ class DailyIngestionOrchestrator:
                         exc,
                     )
 
+                # Filter player_scores to roster only for lineup optimization
+                # Lineup decisions should only include actual roster players
+                roster_bdl_ids = set(yahoo_positions_by_bdl.keys())
+                if roster_bdl_ids:
+                    roster_score_rows = [s for s in score_rows if s.bdl_player_id in roster_bdl_ids]
+                    logger.info(
+                        "decision_optimization: filtered to %d/%d roster players for lineup optimization",
+                        len(roster_score_rows), len(score_rows),
+                    )
+                else:
+                    # Fail closed: roster resolution failed, skip lineup optimization
+                    # We do NOT fall back to all player_scores — lineup recommendations
+                    # must only reflect the user's actual roster
+                    logger.error(
+                        "decision_optimization: roster BDL IDs empty — skipping lineup optimization "
+                        "(roster resolution failed or no players mapped to BDL IDs). "
+                        "Lineup decisions require successful Yahoo roster fetch and PlayerIDMapping entries."
+                    )
+                    # Set empty players list; optimize_lineup will return empty results
+                    roster_score_rows = []
+
                 players = []
-                for score in score_rows:
+                for score in roster_score_rows:
                     pid = score.bdl_player_id
                     mom  = momentum_by_id.get(pid)
                     sim  = sim_by_id.get(pid)
@@ -2897,7 +2918,19 @@ class DailyIngestionOrchestrator:
                     optimize_waivers, players, waiver_pool, as_of_date
                 )
 
-                all_results = lineup_results + waiver_results
+                # Filter low-quality waiver recommendations before persisting
+                # Threshold: value_gain > 0.10 to exclude zero/negative value adds
+                waiver_results_filtered = [
+                    r for r in waiver_results
+                    if r.value_gain is not None and r.value_gain > 0.10
+                ]
+                logger.info(
+                    "decision_optimization: filtered %d/%d waiver recommendations "
+                    "with value_gain > 0.10",
+                    len(waiver_results_filtered), len(waiver_results),
+                )
+
+                all_results = lineup_results + waiver_results_filtered
 
                 # Step 6: upsert DecisionResult rows
                 try:
@@ -2948,7 +2981,7 @@ class DailyIngestionOrchestrator:
 
             elapsed = int((time.monotonic() - t0) * 1000)
             n_lineup = len(lineup_results)
-            n_waiver = len(waiver_results)
+            n_waiver = len(waiver_results_filtered)
             self._record_job_run("decision_optimization", "success", n_lineup + n_waiver)
             logger.info(
                 "decision_optimization: %d lineup + %d waiver decisions for as_of_date=%s "

@@ -810,6 +810,7 @@ class DecisionResultOut(BaseModel):
     decision_type: Literal["lineup", "waiver"]
     target_slot: Optional[str] = None
     drop_player_id: Optional[int] = None
+    drop_player_name: Optional[str] = None
     lineup_score: Optional[float] = None
     value_gain: Optional[float] = None
     confidence: float
@@ -846,5 +847,27 @@ class DecisionsResponse(BaseModel):
     count: int
     as_of_date: date
     decision_type: Optional[Literal["lineup", "waiver"]] = None
+
+
+class DecisionPipelineStatus(BaseModel):
+    """Decision pipeline freshness and coverage observability (P17-P19)."""
+    verdict: Literal["healthy", "stale", "partial", "missing"]
+    message: str
+    checked_at: str
+    decision_results: "DecisionResultsStatus"
+
+
+class DecisionResultsStatus(BaseModel):
+    """Status of decision_results table."""
+    latest_as_of_date: Optional[str] = None
+    total_row_count: Optional[int] = None
+    breakdown_by_type: Optional["DecisionTypeBreakdown"] = None
+
+
+class DecisionTypeBreakdown(BaseModel):
+    """Row counts by decision type."""
+    lineup: Optional[int] = None
+    waiver: Optional[int] = None
+
 
 

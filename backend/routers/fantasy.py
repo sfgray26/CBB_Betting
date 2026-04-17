@@ -8,7 +8,8 @@ Do NOT import from other backend.routers modules here.
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import text, func
+from sqlalchemy import text, func, or_, and_
+from sqlalchemy.orm import aliased
 from typing import List, Optional, Literal
 import logging
 import os
@@ -60,6 +61,7 @@ from backend.schemas import (
     DecisionResultOut,
     DecisionExplanationOut,
     FactorDetail,
+    DecisionPipelineStatus,
 )
 from backend.utils.fantasy_stat_contract import YAHOO_STAT_ID_FALLBACK, LEAGUE_SCORING_CATEGORIES
 from backend.utils.time_utils import today_et
@@ -3055,15 +3057,22 @@ async def get_decisions(
 
     Auth: verify_api_key required.
     """
-    # Build base query with player name join
+    # Build base query with player name and drop player name joins
+    # Use aliased PlayerIDMapping for drop player to avoid ambiguity
+    DropMapping = aliased(PlayerIDMapping)
     query = (
         db.query(
             DecisionResult,
             PlayerIDMapping.full_name.label("player_name"),
+            DropMapping.full_name.label("drop_player_name"),
         )
         .outerjoin(
             PlayerIDMapping,
             DecisionResult.bdl_player_id == PlayerIDMapping.bdl_id,
+        )
+        .outerjoin(
+            DropMapping,
+            DecisionResult.drop_player_id == DropMapping.bdl_id,
         )
     )
 
@@ -3106,19 +3115,40 @@ async def get_decisions(
     # Apply date filter to main query
     query = query.filter(DecisionResult.as_of_date == as_of_date)
 
+    # Filter low-value waiver recommendations BEFORE applying limit
+    # This ensures we return up to `limit` high-value results, not fewer after filtering
+    WAIVER_VALUE_GAIN_THRESHOLD = 0.10
+    if decision_type == "waiver":
+        query = query.filter(
+            DecisionResult.value_gain.isnot(None),
+            DecisionResult.value_gain > WAIVER_VALUE_GAIN_THRESHOLD,
+        )
+    elif decision_type is None:
+        # When no type filter, exclude low-value waivers from mixed results
+        query = query.filter(
+            or_(
+                DecisionResult.decision_type != "waiver",
+                and_(
+                    DecisionResult.value_gain.isnot(None),
+                    DecisionResult.value_gain > WAIVER_VALUE_GAIN_THRESHOLD,
+                ),
+            )
+        )
+
     # Order by confidence desc, then value_gain desc (most confident/valuable first)
     query = query.order_by(
         DecisionResult.confidence.desc(),
         DecisionResult.value_gain.desc(),
     )
 
-    # Apply limit
+    # Apply limit AFTER filtering
     query = query.limit(limit)
 
     # Fetch results
     rows = query.all()
     decision_rows = [row[0] for row in rows]  # Extract DecisionResult from tuples
     player_names = {row[0].id: row[1] for row in rows}  # Map decision_id -> player_name
+    drop_player_names = {row[0].id: row[2] for row in rows}  # Map decision_id -> drop_player_name
 
     # Fetch all explanations for these decisions in one query
     decision_ids = [d.id for d in decision_rows]
@@ -3139,6 +3169,7 @@ async def get_decisions(
             decision_type=dr.decision_type,
             target_slot=dr.target_slot,
             drop_player_id=dr.drop_player_id,
+            drop_player_name=drop_player_names.get(dr.id),
             lineup_score=dr.lineup_score,
             value_gain=dr.value_gain,
             confidence=dr.confidence,
@@ -3179,4 +3210,72 @@ async def get_decisions(
         count=len(results),
         as_of_date=as_of_date,
         decision_type=decision_type,
+    )
+
+
+@router.get("/api/fantasy/decisions/status", response_model=DecisionPipelineStatus)
+async def get_decisions_status(
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Decision pipeline freshness and coverage observability.
+
+    Returns the latest as_of_date for decision results, row counts by type,
+    and a verdict indicating whether the pipeline is healthy, stale, partial,
+    or missing data. Use this to show status indicators on the decisions page.
+
+    Auth: verify_api_key required.
+    """
+    now_et = today_et()
+
+    # Latest as_of_date for decision_results
+    dr_latest_row = db.execute(
+        text("SELECT MAX(as_of_date) AS latest_date FROM decision_results")
+    ).fetchone()
+    dr_latest = dr_latest_row.latest_date if dr_latest_row else None
+
+    # Row counts by decision_type for latest date
+    dr_counts = {"lineup": None, "waiver": None}
+    if dr_latest:
+        for dtype in ("lineup", "waiver"):
+            cnt = db.execute(
+                text("""
+                    SELECT COUNT(*) AS n FROM decision_results
+                    WHERE as_of_date = :d AND decision_type = :dt
+                """),
+                {"d": dr_latest, "dt": dtype}
+            ).fetchone()
+            dr_counts[dtype] = cnt.n if cnt else 0
+
+    dr_total = sum(v for v in dr_counts.values() if v is not None) if dr_latest else None
+
+    # Compute freshness verdict (data stale if 2+ days old)
+    today_et_date = now_et.date()
+    stale_threshold = today_et_date - timedelta(days=2)
+    dr_is_fresh = dr_latest and dr_latest >= stale_threshold
+
+    # Determine verdict
+    if not dr_latest:
+        verdict = "missing"
+        message = "No decision data available yet."
+    elif not dr_is_fresh:
+        verdict = "stale"
+        message = f"Decision data is stale (latest: {dr_latest})."
+    elif dr_total == 0:
+        verdict = "partial"
+        message = f"Decision data exists for {dr_latest} but no results found."
+    else:
+        verdict = "healthy"
+        message = f"Decision pipeline is healthy (latest: {dr_latest})."
+
+    return DecisionPipelineStatus(
+        verdict=verdict,
+        message=message,
+        checked_at=now_et.isoformat(),
+        decision_results={
+            "latest_as_of_date": dr_latest.isoformat() if dr_latest else None,
+            "total_row_count": dr_total,
+            "breakdown_by_type": dr_counts,
+        },
     )

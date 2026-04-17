@@ -25,6 +25,7 @@ import type {
   StreakPlayer,
   WaiverTarget,
   DecisionsResponse,
+  DecisionPipelineStatus,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -284,4 +285,8 @@ export const endpoints = {
     const query = searchParams.toString()
     return apiFetch<DecisionsResponse>(`/api/fantasy/decisions${query ? `?${query}` : ''}`)
   },
+
+  /** Get decision pipeline status */
+  getDecisionsStatus: () =>
+    apiFetch<DecisionPipelineStatus>('/api/fantasy/decisions/status'),
 }

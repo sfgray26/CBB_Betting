@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
-import type { DecisionWithExplanation } from '@/lib/types'
+import type { DecisionWithExplanation, DecisionPipelineStatus } from '@/lib/types'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -16,9 +16,45 @@ import {
   Loader2,
   AlertCircle,
   CheckCircle2,
+  Info,
 } from 'lucide-react'
 
-type DecisionTypeFilter = 'all' | 'lineup' | 'waiver'
+type DecisionTypeFilter = 'lineup' | 'waiver'
+
+function StatusBadge({ status }: { status: DecisionPipelineStatus }) {
+  const { verdict, message, decision_results } = status
+
+  const verdictConfig = {
+    healthy: { icon: CheckCircle2, color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30' },
+    stale: { icon: AlertCircle, color: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/30' },
+    partial: { icon: Info, color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/30' },
+    missing: { icon: AlertCircle, color: 'text-zinc-400', bg: 'bg-zinc-500/10', border: 'border-zinc-500/30' },
+  }[verdict]
+
+  const StatusIcon = verdictConfig.icon
+
+  return (
+    <div className={cn(
+      'flex items-center gap-3 px-4 py-3 rounded-lg border',
+      verdictConfig.bg, verdictConfig.border
+    )}>
+      <StatusIcon className={cn('h-5 w-5', verdictConfig.color)} />
+      <div className="flex-1 min-w-0">
+        <p className={cn('text-sm font-medium', verdictConfig.color)}>
+          {message}
+        </p>
+        {decision_results.latest_as_of_date && (
+          <p className="text-xs text-zinc-500 mt-0.5">
+            Latest data: {decision_results.latest_as_of_date}
+            {decision_results.breakdown_by_type && (
+              <span> ({decision_results.breakdown_by_type.lineup ?? 0} lineup, {decision_results.breakdown_by_type.waiver ?? 0} waiver)</span>
+            )}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function DecisionCard({ item }: { item: DecisionWithExplanation }) {
   const [showExplanation, setShowExplanation] = useState(false)
@@ -59,7 +95,9 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
                 )}
                 {decision.drop_player_id && (
                   <span className="text-xs text-zinc-500">
-                    Drop: <span className="text-zinc-300">#{decision.drop_player_id}</span>
+                    Drop: <span className="text-zinc-300">
+                      {decision.drop_player_name || `#${decision.drop_player_id}`}
+                    </span>
                   </span>
                 )}
               </div>
@@ -123,7 +161,7 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
           {explanation.factors.length > 0 && (
             <div className="space-y-2">
               <div className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
-                Factors
+                Key Factors
               </div>
               <div className="grid gap-2 sm:grid-cols-2">
                 {explanation.factors.map((factor, idx) => (
@@ -141,8 +179,9 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
                         </span>
                       )}
                     </div>
+                    {/* Narrative is the high-signal part - hide technical weights */}
                     {factor.narrative && (
-                      <p className="text-xs text-zinc-400 mt-1">{factor.narrative}</p>
+                      <p className="text-xs text-zinc-300 mt-2">{factor.narrative}</p>
                     )}
                   </div>
                 ))}
@@ -150,19 +189,18 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
             </div>
           )}
 
-          {(explanation.confidence_narrative ||
-            explanation.risk_narrative ||
-            explanation.track_record_narrative) && (
+          {/* Narratives - simplified to just confidence and risk */}
+          {(explanation.confidence_narrative || explanation.risk_narrative) && (
             <div className="flex flex-wrap gap-3 text-xs">
               {explanation.confidence_narrative && (
-                <div className="flex items-center gap-1.5 text-zinc-400">
-                  <Shield className="h-3.5 w-3.5" />
+                <div className="flex items-center gap-1.5 text-zinc-300">
+                  <Shield className="h-3.5 w-3.5 text-emerald-400" />
                   <span>{explanation.confidence_narrative}</span>
                 </div>
               )}
               {explanation.risk_narrative && (
-                <div className="flex items-center gap-1.5 text-zinc-400">
-                  <AlertCircle className="h-3.5 w-3.5" />
+                <div className="flex items-center gap-1.5 text-zinc-300">
+                  <AlertCircle className="h-3.5 w-3.5 text-amber-400" />
                   <span>{explanation.risk_narrative}</span>
                 </div>
               )}
@@ -184,17 +222,15 @@ function EmptyState({
   resolvedAsOfDate?: string
 }) {
   const filterText =
-    filter === 'all'
-      ? 'No decisions available yet.'
-      : filter === 'lineup'
-        ? 'No lineup decisions available.'
-        : 'No waiver decisions available.'
+    filter === 'lineup'
+      ? 'No lineup decisions available.'
+      : 'No waiver recommendations available.'
 
   const detailText = selectedDate
-    ? `No decision rows were returned for ${selectedDate}.`
-    : resolvedAsOfDate
-      ? `The backend returned no decision rows for its latest available date (${resolvedAsOfDate}).`
-      : 'The backend returned no decision rows yet.'
+    ? `No recommendations for ${selectedDate}.`
+      : resolvedAsOfDate
+        ? `No recommendations available for the latest data (${resolvedAsOfDate}).`
+        : 'No recommendations available yet.'
 
   return (
     <Card>
@@ -204,7 +240,10 @@ function EmptyState({
           <p className="text-sm">{filterText}</p>
           <p className="text-xs text-zinc-600 mt-1">{detailText}</p>
           <p className="text-xs text-zinc-600 mt-1">
-            This page is loading correctly, but the decision pipeline has not populated this environment yet.
+            {filter === 'lineup'
+              ? 'Lineup recommendations will appear once your roster is synced and players are analyzed.'
+              : 'Waiver recommendations are generated daily based on free agent availability and projected value.'
+            }
           </p>
         </div>
       </div>
@@ -213,24 +252,29 @@ function EmptyState({
 }
 
 export default function DecisionsPage() {
-  const [typeFilter, setTypeFilter] = useState<DecisionTypeFilter>('all')
+  const [typeFilter, setTypeFilter] = useState<DecisionTypeFilter>('lineup')
   const [dateFilter, setDateFilter] = useState<string>('')
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['decisions', typeFilter, dateFilter],
     queryFn: () =>
       endpoints.getDecisions({
-        decision_type: typeFilter === 'all' ? undefined : typeFilter,
+        decision_type: typeFilter,
         as_of_date: dateFilter || undefined,
         limit: 100,
       }),
     })
 
   const filterButtons: { label: string; value: DecisionTypeFilter }[] = [
-    { label: 'All', value: 'all' },
     { label: 'Lineup', value: 'lineup' },
     { label: 'Waiver', value: 'waiver' },
   ]
+
+  const { data: statusData } = useQuery({
+    queryKey: ['decisions-status'],
+    queryFn: () => endpoints.getDecisionsStatus(),
+    refetchInterval: 5 * 60 * 1000, // Refresh every 5 minutes
+  })
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -241,6 +285,11 @@ export default function DecisionsPage() {
           Trusted decision engine outputs for lineup and waiver optimization.
         </p>
       </div>
+
+      {/* Status block - show when decisions are empty or status indicates issues */}
+      {statusData && (data?.decisions.length === 0 || statusData.verdict !== 'healthy') && (
+        <StatusBadge status={statusData} />
+      )}
 
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-4">

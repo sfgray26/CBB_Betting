@@ -307,6 +307,7 @@ export interface DecisionResultOut {
   decision_type: 'lineup' | 'waiver'
   target_slot: string | null
   drop_player_id: number | null
+  drop_player_name: string | null
   lineup_score: number | null
   value_gain: number | null
   confidence: number
@@ -331,4 +332,23 @@ export interface DecisionsResponse {
   count: number
   as_of_date: string
   decision_type: 'lineup' | 'waiver' | null
+}
+
+// Decision pipeline status for the decisions page status block
+export interface DecisionPipelineStatus {
+  verdict: 'healthy' | 'stale' | 'partial' | 'missing'
+  message: string
+  checked_at: string
+  decision_results: {
+    latest_as_of_date: string | null
+    total_row_count: number | null
+    breakdown_by_type: {
+      lineup: number | null
+      waiver: number | null
+    } | null
+  }
+  decision_explanations: {
+    latest_as_of_date: string | null
+    total_row_count: number | null
+  }
 }
