@@ -805,6 +805,7 @@ class PlayerScoresResponse(BaseModel):
 class DecisionResultOut(BaseModel):
     """P17 Decision Engine result -- lineup or waiver optimization output."""
     bdl_player_id: int
+    player_name: Optional[str] = None
     as_of_date: date
     decision_type: Literal["lineup", "waiver"]
     target_slot: Optional[str] = None

@@ -302,6 +302,7 @@ export interface FactorDetail {
 
 export interface DecisionResultOut {
   bdl_player_id: number
+  player_name: string | null
   as_of_date: string
   decision_type: 'lineup' | 'waiver'
   target_slot: string | null

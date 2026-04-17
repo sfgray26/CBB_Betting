@@ -38,7 +38,9 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
               <User className="h-5 w-5 text-zinc-400" />
             </div>
             <div>
-              <div className="font-medium text-zinc-100">Player #{decision.bdl_player_id}</div>
+              <div className="font-medium text-zinc-100">
+                {decision.player_name || `Player #${decision.bdl_player_id}`}
+              </div>
               <div className="flex items-center gap-2 mt-0.5">
                 <span
                   className={cn(

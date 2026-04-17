@@ -33,6 +33,7 @@ from backend.models import (
     DataIngestionLog,
     DBAlert,
     PlayerScore,
+    PlayerIDMapping,
     DecisionResult,
     DecisionExplanation,
     SessionLocal,
@@ -3054,16 +3055,29 @@ async def get_decisions(
 
     Auth: verify_api_key required.
     """
-    # Build base query
-    query = db.query(DecisionResult)
+    # Build base query with player name join
+    query = (
+        db.query(
+            DecisionResult,
+            PlayerIDMapping.full_name.label("player_name"),
+        )
+        .outerjoin(
+            PlayerIDMapping,
+            DecisionResult.bdl_player_id == PlayerIDMapping.bdl_id,
+        )
+    )
 
     # Apply decision_type filter if provided
     if decision_type:
         query = query.filter(DecisionResult.decision_type == decision_type)
 
     # Resolve as_of_date: default to latest available date in decision_results
+    # Use a separate base query for date resolution to avoid filter contamination
     if as_of_date is None:
-        latest_date_row = query.order_by(DecisionResult.as_of_date.desc()).first()
+        date_query = db.query(DecisionResult)
+        if decision_type:
+            date_query = date_query.filter(DecisionResult.decision_type == decision_type)
+        latest_date_row = date_query.order_by(DecisionResult.as_of_date.desc()).first()
         if latest_date_row:
             as_of_date = latest_date_row.as_of_date
         else:
@@ -3075,8 +3089,11 @@ async def get_decisions(
                 decision_type=decision_type,
             )
     else:
-        # Validate that requested date has any data
-        date_exists = query.filter(DecisionResult.as_of_date == as_of_date).first()
+        # Validate that requested date has any data (using separate query)
+        date_query = db.query(DecisionResult)
+        if decision_type:
+            date_query = date_query.filter(DecisionResult.decision_type == decision_type)
+        date_exists = date_query.filter(DecisionResult.as_of_date == as_of_date).first()
         if not date_exists:
             # No data for requested date - return empty response
             return DecisionsResponse(
@@ -3086,7 +3103,7 @@ async def get_decisions(
                 decision_type=decision_type,
             )
 
-    # Apply date filter
+    # Apply date filter to main query
     query = query.filter(DecisionResult.as_of_date == as_of_date)
 
     # Order by confidence desc, then value_gain desc (most confident/valuable first)
@@ -3099,7 +3116,9 @@ async def get_decisions(
     query = query.limit(limit)
 
     # Fetch results
-    decision_rows = query.all()
+    rows = query.all()
+    decision_rows = [row[0] for row in rows]  # Extract DecisionResult from tuples
+    player_names = {row[0].id: row[1] for row in rows}  # Map decision_id -> player_name
 
     # Fetch all explanations for these decisions in one query
     decision_ids = [d.id for d in decision_rows]
@@ -3115,6 +3134,7 @@ async def get_decisions(
     for dr in decision_rows:
         decision_out = DecisionResultOut(
             bdl_player_id=dr.bdl_player_id,
+            player_name=player_names.get(dr.id),
             as_of_date=dr.as_of_date,
             decision_type=dr.decision_type,
             target_slot=dr.target_slot,
