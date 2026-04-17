@@ -265,6 +265,22 @@ class TestSimulationEngineE2E:
         assert result.proj_k_p10 is not None
         assert result.proj_k_p10 <= result.proj_k_p50 <= result.proj_k_p90
 
+    def test_pitcher_micro_sample_does_not_use_team_games_as_starts(self):
+        """One strong outing should not extrapolate to 130 pitcher appearances."""
+        row = _make_pitcher(
+            pid=5005, name="OneStartWonder", games=1,
+            era=2.00, whip=1.00, k_per_9=12.0,
+            ip=6.0, earned_runs=1.0,
+            hits_allowed=4.0, walks_allowed=2.0,
+            strikeouts=8.0,
+        )
+        result = simulate_player(row, remaining_games=130, seed=42)
+
+        assert result.proj_k_p50 is not None
+        assert result.proj_k_p50 < 300.0, (
+            f"P50 K = {result.proj_k_p50}, expected well below team-games extrapolation."
+        )
+
 
 # ===================================================================
 # Test Suite 3: VORP Engine E2E

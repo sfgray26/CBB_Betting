@@ -24,6 +24,8 @@ from typing import Optional
 CV = 0.35                       # coefficient of variation per simulated game
 N_SIMULATIONS = 1000
 REMAINING_GAMES_DEFAULT = 130   # approximate remaining MLB games mid-April 2026
+STARTER_APPEARANCE_INTERVAL = 5.0
+RELIEVER_APPEARANCE_RATE = 0.45
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +163,21 @@ def _compute_composite_risk(
     prob_above = sum(1 for x in sim_composites if x > p50) / n
 
     return (variance, p25, p75, prob_above)
+
+
+def _estimate_pitching_appearances(ip_per_appearance: float, remaining_team_games: int) -> int:
+    """Estimate remaining pitching appearances from role-like usage.
+
+    Using team games directly for pitchers wildly overstates ROS strikeout totals,
+    especially for starters. We infer a coarse role from innings per appearance:
+    starters get roughly one appearance every five team games, while relievers
+    appear in a fraction of team games.
+    """
+    if remaining_team_games <= 0:
+        return 0
+    if ip_per_appearance >= 3.0:
+        return max(1, int(round(remaining_team_games / STARTER_APPEARANCE_INTERVAL)))
+    return max(1, int(round(remaining_team_games * RELIEVER_APPEARANCE_RATE)))
 
 
 # ---------------------------------------------------------------------------
@@ -340,13 +357,14 @@ def simulate_player(
         er_rate  = (rolling_row.w_earned_runs     or 0.0) / g
         h_rate   = (rolling_row.w_hits_allowed    or 0.0) / g
         bb_rate  = (rolling_row.w_walks_allowed   or 0.0) / g
+        pitching_appearances = _estimate_pitching_appearances(ip_rate, remaining_games)
 
         for _ in range(n_simulations):
-            total_ip  = _draw_games(rng, ip_rate,  remaining_games)
-            total_k   = _draw_games(rng, k_rate,   remaining_games)
-            total_er  = _draw_games(rng, er_rate,  remaining_games)
-            total_h   = _draw_games(rng, h_rate,   remaining_games)
-            total_bb  = _draw_games(rng, bb_rate,  remaining_games)
+            total_ip  = _draw_games(rng, ip_rate,  pitching_appearances)
+            total_k   = _draw_games(rng, k_rate,   pitching_appearances)
+            total_er  = _draw_games(rng, er_rate,  pitching_appearances)
+            total_h   = _draw_games(rng, h_rate,   pitching_appearances)
+            total_bb  = _draw_games(rng, bb_rate,  pitching_appearances)
 
             era  = 9.0 * total_er / total_ip       if total_ip > 0 else 0.0
             whip = (total_h + total_bb) / total_ip if total_ip > 0 else 0.0

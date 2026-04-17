@@ -2679,6 +2679,7 @@ class DailyIngestionOrchestrator:
                     }
 
                 # Step 4: build lookup dicts for join
+                score_by_id    = {r.bdl_player_id: r for r in score_rows}
                 momentum_by_id = {r.bdl_player_id: r for r in momentum_rows}
                 sim_by_id      = {r.bdl_player_id: r for r in sim_rows}
 
@@ -2894,6 +2895,7 @@ class DailyIngestionOrchestrator:
 
                     fa_skipped = 0
                     fa_fuzzy_resolved = 0
+                    fa_missing_model_data = 0
                     for fa in free_agents:
                         fa_bdl_id = fa_bdl_map.get(fa.get("player_key"))
                         if fa_bdl_id is None:
@@ -2915,6 +2917,20 @@ class DailyIngestionOrchestrator:
                                     fa_name, len(candidates),
                                 )
                                 continue
+                        fa_score = score_by_id.get(fa_bdl_id)
+                        fa_sim = sim_by_id.get(fa_bdl_id)
+                        fa_mom = momentum_by_id.get(fa_bdl_id)
+                        if fa_score is None or fa_sim is None:
+                            fa_missing_model_data += 1
+                            logger.debug(
+                                "decision_optimization: FA '%s' skipped due to missing modeled data "
+                                "(bdl_id=%s, has_score=%s, has_sim=%s)",
+                                fa.get("name", str(fa_bdl_id)),
+                                fa_bdl_id,
+                                fa_score is not None,
+                                fa_sim is not None,
+                            )
+                            continue
                         fa_positions = fa.get("positions", [])
                         if not fa_positions:
                             fa_positions = ["Util"]
@@ -2932,15 +2948,24 @@ class DailyIngestionOrchestrator:
                             name=fa.get("name", str(fa_bdl_id)),
                             player_type=fa_type,
                             eligible_positions=fa_positions,
-                            score_0_100=0.0,
-                            composite_z=0.0,
-                            momentum_signal="STABLE",
-                            delta_z=0.0,
+                            score_0_100=fa_score.score_0_100 or 0.0,
+                            composite_z=fa_score.composite_z or 0.0,
+                            momentum_signal=fa_mom.signal if fa_mom else "STABLE",
+                            delta_z=fa_mom.delta_z if fa_mom else 0.0,
+                            proj_hr_p50=fa_sim.proj_hr_p50,
+                            proj_rbi_p50=fa_sim.proj_rbi_p50,
+                            proj_sb_p50=fa_sim.proj_sb_p50,
+                            proj_avg_p50=fa_sim.proj_avg_p50,
+                            proj_k_p50=fa_sim.proj_k_p50,
+                            proj_era_p50=fa_sim.proj_era_p50,
+                            proj_whip_p50=fa_sim.proj_whip_p50,
+                            downside_p25=fa_sim.downside_p25,
+                            upside_p75=fa_sim.upside_p75,
                         ))
                     logger.info(
                         "decision_optimization: built waiver pool with %d candidates "
-                        "(fuzzy_resolved=%d, skipped=%d, fetched=%d)",
-                        len(waiver_pool), fa_fuzzy_resolved, fa_skipped, len(free_agents),
+                        "(fuzzy_resolved=%d, skipped=%d, missing_model_data=%d, fetched=%d)",
+                        len(waiver_pool), fa_fuzzy_resolved, fa_skipped, fa_missing_model_data, len(free_agents),
                     )
                     if fa_skipped > 0 and len(free_agents) > 0:
                         logger.warning(
@@ -2977,6 +3002,15 @@ class DailyIngestionOrchestrator:
 
                 # Step 6: upsert DecisionResult rows
                 try:
+                    db.query(DecisionExplanationORM).filter(
+                        DecisionExplanationORM.as_of_date == as_of_date,
+                        DecisionExplanationORM.decision_type.in_(["lineup", "waiver"]),
+                    ).delete(synchronize_session=False)
+                    db.query(DecisionResultORM).filter(
+                        DecisionResultORM.as_of_date == as_of_date,
+                        DecisionResultORM.decision_type.in_(["lineup", "waiver"]),
+                    ).delete(synchronize_session=False)
+
                     for res in all_results:
                         stmt = pg_insert(DecisionResultORM.__table__).values(
                             as_of_date=res.as_of_date,
