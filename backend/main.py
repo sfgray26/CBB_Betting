@@ -3625,10 +3625,16 @@ async def admin_export_projections():
 
 
 @app.get("/admin/explanations/{decision_id}")
-async def get_explanation(decision_id: int, db: Session = Depends(get_db)):
+async def get_explanation(
+    decision_id: int,
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
     """
     Return the stored explanation for a specific decision_results row.
     Returns 404 if no explanation exists for that decision_id.
+
+    Auth: verify_api_key required.
     """
     from backend.models import DecisionExplanation as _DecisionExplanation
     row = db.query(_DecisionExplanation).filter(

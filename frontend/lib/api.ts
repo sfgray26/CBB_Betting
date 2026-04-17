@@ -24,6 +24,7 @@ import type {
   AsyncJobStatus,
   StreakPlayer,
   WaiverTarget,
+  DecisionsResponse,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -265,4 +266,22 @@ export const endpoints = {
     apiFetch<{ success: boolean; targets: WaiverTarget[] }>(
       '/api/dashboard/waiver-targets'
     ),
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Fantasy Baseball Decisions (Layer 3F)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /** Get fantasy decisions with optional filters */
+  getDecisions: (params?: {
+    decision_type?: 'lineup' | 'waiver'
+    as_of_date?: string
+    limit?: number
+  }) => {
+    const searchParams = new URLSearchParams()
+    if (params?.decision_type) searchParams.set('decision_type', params.decision_type)
+    if (params?.as_of_date) searchParams.set('as_of_date', params.as_of_date)
+    if (params?.limit !== undefined) searchParams.set('limit', params.limit.toString())
+    const query = searchParams.toString()
+    return apiFetch<DecisionsResponse>(`/api/fantasy/decisions${query ? `?${query}` : ''}`)
+  },
 }

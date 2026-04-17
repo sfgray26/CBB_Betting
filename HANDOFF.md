@@ -119,8 +119,7 @@ Status: CERTIFIED COMPLETE
 Status: ACTIVE
 
 - This is the only active engineering workstream now.
-- L3A (scoring spine), L3B (context authority), L3D (observability), and decision pipeline observability are complete.
-- **L3F (Decision Output Read Surface) is the current sub-task.** See detailed breakdown below.
+- L3A (scoring spine), L3B (context authority), L3D (observability), L3F (decision read surface), and decision pipeline observability are complete.
 - L3E (Market-Implied Probabilities) is preserved as backlog, deferred pending explicit policy gate.
 
 **Layer 3B Context Authority Audit (2026-04-16):**
@@ -497,7 +496,7 @@ Decision pipeline freshness endpoint `/admin/diagnose-decision/pipeline-freshnes
 | P2 | Add Layer 3 freshness observability endpoint | Claude | Complete |
 | P2 | Add decision pipeline freshness observability endpoint | Claude | Complete |
 | P1 | Expose DecisionResult read API (lineup/waiver outputs) with verify_api_key auth (L3F) | Claude | Complete |
-| P2 | Decide whether any Layer 5 response shape changes are needed after scoring output stabilizes | Claude | Pending |
+| P2 | Decide whether any Layer 5 response shape changes are needed after scoring output stabilizes | Claude | Complete (2026-04-16: consumer audit found no changes needed) |
 
 ---
 
