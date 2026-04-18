@@ -2,38 +2,52 @@
 H2H One Win Monte Carlo Simulator
 
 Category-by-category win probability simulation for H2H One Win fantasy format.
-Returns P(win 6+ categories) instead of projected points.
+Returns P(win 10+ categories) instead of projected points.
 
 Performance target: 10,000 sims <200ms via NumPy vectorization.
+
+v2 Alignment:
+- Uses canonical codes from stat_contract.SCORING_CATEGORY_CODES
+- 18 categories: 9 batting, 9 pitching
+- Win threshold: 10 (majority of 18)
+- LOWER_IS_BETTER from stat_contract for ERA, WHIP, K_B, L, HR_P
 
 Usage:
     sim = H2HOneWinSimulator()
     result = sim.simulate_week(my_roster, opponent_roster, n_sims=10000)
+    # OR from pre-aggregated projections:
+    result = sim.simulate_week_from_projections(my_finals, opp_finals, n_sims=10000)
 """
 
 import numpy as np
 from dataclasses import dataclass
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import date
+
+from backend.stat_contract import SCORING_CATEGORY_CODES, BATTING_CODES, PITCHING_CODES, LOWER_IS_BETTER
 
 
 @dataclass
 class H2HWinResult:
     """Result of H2H One Win Monte Carlo simulation."""
 
-    win_probability: float  # P(win 6+ categories) [0.0, 1.0]
+    win_probability: float  # P(win 10+ categories) [0.0, 1.0]
 
     locked_categories: List[str]  # >85% win probability
     swing_categories: List[str]  # 40-60% win probability (key matchups)
     vulnerable_categories: List[str]  # <30% win probability (risk zones)
 
-    category_win_probs: Dict[str, float]  # Full breakdown: e.g. {"R": 0.72, "HR": 0.45}
+    category_win_probs: Dict[str, float]  # Full breakdown: e.g. {"R": 0.72, "HR_B": 0.45}
 
-    mean_categories_won: float  # Expected categories won (e.g., 5.8 / 10)
+    mean_categories_won: float  # Expected categories won (e.g., 9.2 / 18)
     std_categories_won: float  # Std dev (measure of volatility)
 
     n_simulations: int
     as_of_date: date
+
+    # v2: Original input projections for audit trail
+    my_input_projections: Optional[Dict[str, float]] = None
+    opp_input_projections: Optional[Dict[str, float]] = None
 
 
 @dataclass
@@ -51,37 +65,46 @@ class H2HOneWinSimulator:
     Monte Carlo simulation for H2H One Win fantasy format.
 
     Simulates N iterations of weekly stats for both rosters, comparing
-    category-by-category to determine win probability (6+ = win).
+    category-by-category to determine win probability (10+ = win).
 
-    Categories (10 total):
-    Hitting: R, HR, RBI, SB, AVG, OPS
-    Pitching: W, QS, K, K/9 (or ERA/WHIP depending on league settings)
+    v2 Categories (18 total):
+    Batting (9): R, H, HR_B, RBI, K_B, TB, AVG, OPS, NSB
+    Pitching (9): W, L, HR_P, K_P, ERA, WHIP, K_9, QS, NSV
 
     Performance: NumPy vectorization targets <200ms for 10,000 sims.
     """
 
-    # H2H One Win categories (default 10-cat format)
-    HITTING_CATS = ["R", "HR", "RBI", "SB", "NSB", "AVG", "OPS"]
-    PITCHING_CATS = ["W", "QS", "K", "K/9", "ERA", "WHIP"]
+    # Win threshold: majority of 18 categories
+    WIN_THRESHOLD = 10
+
+    # v2 canonical codes - reference from stat_contract
+    HITTING_CATS = sorted(list(BATTING_CODES))  # ["AVG", "H", "HR_B", "K_B", "NSB", "OPS", "R", "RBI", "TB"]
+    PITCHING_CATS = sorted(list(PITCHING_CODES))  # ["ERA", "HR_P", "K_9", "K_P", "L", "NSV", "QS", "W", "WHIP"]
 
     # Standard deviation for stat projection (game-to-game variance)
     # Conservative: CV=0.35 for counting stats, 0.15 for rate stats
     STAT_CV = {
-        # Counting stats
+        # Batting counting stats
         "R": 0.35,
-        "HR": 0.40,
+        "H": 0.30,
+        "HR_B": 0.40,
         "RBI": 0.35,
-        "SB": 0.50,
+        "K_B": 0.25,
+        "TB": 0.35,
         "NSB": 0.50,
+        # Pitching counting stats
         "W": 0.30,
+        "L": 0.30,
+        "HR_P": 0.40,
+        "K_P": 0.25,
         "QS": 0.25,
-        "K": 0.25,
+        "NSV": 0.45,
         # Rate stats (lower variance)
         "AVG": 0.08,
         "OPS": 0.10,
-        "K/9": 0.12,
         "ERA": 0.15,
         "WHIP": 0.12,
+        "K_9": 0.12,
     }
 
     def simulate_week(
@@ -96,7 +119,7 @@ class H2HOneWinSimulator:
 
         Args:
             my_roster: List of player dicts with projected stats
-                Example: [{"name": "Ohtani", "R": 15, "HR": 4, ...}, ...]
+                Example: [{"name": "Ohtani", "R": 15, "HR_B": 4, ...}, ...]
             opponent_roster: List of player dicts with projected stats
             n_sims: Number of simulations (default: 10000)
             as_of_date: Date for the simulation week
@@ -115,7 +138,7 @@ class H2HOneWinSimulator:
         categories_won, category_win_matrix = self._run_simulation(my_proj, opp_proj, n_sims)
 
         # Analyze results
-        win_prob = np.mean(categories_won >= 6)  # 6+ categories = win
+        win_prob = np.mean(categories_won >= self.WIN_THRESHOLD)
         locked, swing, vulnerable = self._classify_categories(category_win_matrix)
 
         return H2HWinResult(
@@ -128,6 +151,62 @@ class H2HOneWinSimulator:
             std_categories_won=float(np.std(categories_won)),
             n_simulations=n_sims,
             as_of_date=as_of_date,
+            my_input_projections=my_proj,
+            opp_input_projections=opp_proj,
+        )
+
+    def simulate_week_from_projections(
+        self,
+        my_finals: Dict[str, float],
+        opp_finals: Dict[str, float],
+        n_sims: int = 10000,
+        as_of_date: date = None,
+    ) -> H2HWinResult:
+        """
+        Run Monte Carlo simulation from pre-aggregated team projections.
+
+        This is the v2 entry point for ROW → Simulation bridge.
+        Accepts final projected totals (e.g., from ROWProjectionResult.to_dict()).
+
+        Args:
+            my_finals: Dict of canonical_code -> projected total for my team
+            opp_finals: Dict of canonical_code -> projected total for opponent
+            n_sims: Number of simulations (default: 10000)
+            as_of_date: Date for the simulation week
+
+        Returns:
+            H2HWinResult with win probability and category breakdown
+        """
+        if as_of_date is None:
+            as_of_date = date.today()
+
+        # Validate inputs contain all 18 categories
+        my_set = set(my_finals.keys())
+        opp_set = set(opp_finals.keys())
+        if my_set != SCORING_CATEGORY_CODES:
+            raise ValueError(f"my_finals missing categories: {SCORING_CATEGORY_CODES - my_set}")
+        if opp_set != SCORING_CATEGORY_CODES:
+            raise ValueError(f"opp_finals missing categories: {SCORING_CATEGORY_CODES - opp_set}")
+
+        # Run Monte Carlo simulation directly from projections
+        categories_won, category_win_matrix = self._run_simulation(my_finals, opp_finals, n_sims)
+
+        # Analyze results
+        win_prob = np.mean(categories_won >= self.WIN_THRESHOLD)
+        locked, swing, vulnerable = self._classify_categories(category_win_matrix)
+
+        return H2HWinResult(
+            win_probability=float(win_prob),
+            locked_categories=locked,
+            swing_categories=swing,
+            vulnerable_categories=vulnerable,
+            category_win_probs=self._compute_category_probs(category_win_matrix),
+            mean_categories_won=float(np.mean(categories_won)),
+            std_categories_won=float(np.std(categories_won)),
+            n_simulations=n_sims,
+            as_of_date=as_of_date,
+            my_input_projections=my_finals,
+            opp_input_projections=opp_finals,
         )
 
     def _aggregate_roster(self, roster: List[Dict[str, Any]]) -> Dict[str, float]:
@@ -151,7 +230,7 @@ class H2HOneWinSimulator:
 
         For each category:
           1. Sample stats from normal distribution (mean=proj, std=CV*mean)
-          2. Compare my vs opponent
+          2. Compare my vs opponent (respects LOWER_IS_BETTER from stat_contract)
           3. Count categories won per simulation
 
         Returns:
@@ -183,12 +262,12 @@ class H2HOneWinSimulator:
             my_samples = np.random.normal(my_mean, my_std, n_sims)
             opp_samples = np.random.normal(opp_mean, opp_std, n_sims)
 
-            # For rate stats, handle differently (lower is better for ERA/WHIP)
-            if cat in ["ERA", "WHIP"]:
-                # Lower is better
+            # v2: Use LOWER_IS_BETTER from stat_contract
+            if cat in LOWER_IS_BETTER:
+                # Lower is better (ERA, WHIP, K_B, L, HR_P)
                 category_win_matrix[:, i] = (my_samples < opp_samples).astype(float)
             else:
-                # Higher is better (counting stats, AVG, OPS, K/9)
+                # Higher is better (all other categories)
                 category_win_matrix[:, i] = (my_samples > opp_samples).astype(float)
 
         # Sum categories won per simulation

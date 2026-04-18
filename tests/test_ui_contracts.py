@@ -15,6 +15,8 @@ from backend.contracts import (
     MatchupScoreboardResponse,
     PlayerGameContext,
     CanonicalPlayerRow,
+    CategoryMathResult,
+    CategoryMathSummary,
 )
 from backend.stat_contract import SCORING_CATEGORY_CODES, BATTING_CODES
 
@@ -232,6 +234,7 @@ def test_canonical_player_row():
         game_context=game_context,
         season_stats=season_stats,
         rolling_7d=None,
+        rolling_14d=None,
         rolling_15d=None,
         rolling_30d=None,
         ros_projection=None,
@@ -277,6 +280,59 @@ def test_player_game_context():
     # Test frozen
     with pytest.raises(Exception):
         context.opponent = "NYY"
+
+
+def test_category_math_result():
+    """CategoryMathResult can be created with sample data; verify frozen."""
+    result = CategoryMathResult(
+        canonical_code="R",
+        margin=5.0,
+        delta_to_flip=0.0,
+        is_winning=True,
+        display_delta="Lead safe",
+    )
+    assert result.canonical_code == "R"
+    assert result.margin == 5.0
+    assert result.is_winning is True
+
+    # Test frozen
+    with pytest.raises(Exception):
+        result.margin = 10.0
+
+
+def test_category_math_result_optional_display_delta():
+    """CategoryMathResult display_delta is optional."""
+    result = CategoryMathResult(
+        canonical_code="ERA",
+        margin=-0.50,
+        delta_to_flip=2.0,
+        is_winning=False,
+    )
+    assert result.display_delta is None
+
+
+def test_category_math_summary():
+    """CategoryMathSummary aggregates results across all categories."""
+    results = {
+        "R": CategoryMathResult(canonical_code="R", margin=5.0, delta_to_flip=0.0, is_winning=True),
+        "ERA": CategoryMathResult(canonical_code="ERA", margin=-0.50, delta_to_flip=2.0, is_winning=False),
+        "AVG": CategoryMathResult(canonical_code="AVG", margin=0.0, delta_to_flip=1.0, is_winning=False),
+    }
+
+    summary = CategoryMathSummary(
+        results=results,
+        categories_won=1,
+        categories_lost=1,
+        categories_tied=1,
+    )
+    assert len(summary.results) == 3
+    assert summary.categories_won == 1
+    assert summary.categories_lost == 1
+    assert summary.categories_tied == 1
+
+    # Test frozen
+    with pytest.raises(Exception):
+        summary.categories_won = 2
 
 
 def test_all_contracts_frozen():
@@ -358,3 +414,23 @@ def test_all_contracts_frozen():
     )
     with pytest.raises(Exception):
         player.player_name = "Changed"
+
+    # CategoryMathResult
+    math_result = CategoryMathResult(
+        canonical_code="R",
+        margin=5.0,
+        delta_to_flip=0.0,
+        is_winning=True,
+    )
+    with pytest.raises(Exception):
+        math_result.margin = 10.0
+
+    # CategoryMathSummary
+    summary = CategoryMathSummary(
+        results={"R": math_result},
+        categories_won=1,
+        categories_lost=0,
+        categories_tied=0,
+    )
+    with pytest.raises(Exception):
+        summary.categories_won = 2

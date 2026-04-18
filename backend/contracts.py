@@ -341,6 +341,7 @@ class CanonicalPlayerRow(BaseModel):
     # Stats by window (keyed by canonical codes via CategoryStats validator)
     season_stats: Optional[CategoryStats] = None    # PR-13
     rolling_7d: Optional[CategoryStats] = None      # PR-14
+    rolling_14d: Optional[CategoryStats] = None     # 14-day rolling (ROW projection input)
     rolling_15d: Optional[CategoryStats] = None     # PR-15
     rolling_30d: Optional[CategoryStats] = None     # PR-16
     ros_projection: Optional[CategoryStats] = None  # PR-17
@@ -354,6 +355,30 @@ class CanonicalPlayerRow(BaseModel):
     yahoo_player_key: Optional[str] = None
     bdl_player_id: Optional[int] = None
     mlbam_id: Optional[int] = None
+
+    class Config:
+        frozen = True
+
+
+# P0-7: CategoryMathResult + CategoryMathSummary
+class CategoryMathResult(BaseModel):
+    """Margin and delta-to-flip for a single scoring category."""
+    canonical_code: str                 # v2 canonical code (e.g., "R", "ERA", "AVG")
+    margin: float                       # Positive = winning, negative = losing
+    delta_to_flip: float                # Change needed to reverse winner
+    is_winning: bool                    # True if margin > 0
+    display_delta: Optional[str] = None  # Human-readable delta string (computed property)
+
+    class Config:
+        frozen = True
+
+
+class CategoryMathSummary(BaseModel):
+    """Batch category math results for all 18 scoring categories."""
+    results: Dict[str, CategoryMathResult]  # Keyed by canonical_code
+    categories_won: int                     # Count of categories with margin > 0
+    categories_lost: int                    # Count of categories with margin < 0
+    categories_tied: int                    # Count of categories with margin == 0
 
     class Config:
         frozen = True

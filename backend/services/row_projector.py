@@ -135,12 +135,13 @@ _COUNTING_STAT_MAPPING: Dict[str, tuple[str, str]] = {
 }
 
 # Ratio stat components: (numerator_rolling, denominator_rolling, numerator_season, denominator_season)
+# Note: ERA/WHIP/K_9 use w_ip (decimal IP) and convert to outs internally (×3)
 _RATIO_COMPONENTS: Dict[str, tuple[str, str, str, str]] = {
     "AVG": ("w_hits", "w_ab", "hits", "at_bats"),
     "OPS": ("w_ops_components", "w_ab", "ops_components", "at_bats"),  # Composite
-    "ERA": ("w_earned_runs", "w_ip_outs", "earned_runs", "ip_outs"),
-    "WHIP": ("w_whip_numer", "w_ip_outs", "whip_numer", "ip_outs"),
-    "K_9": ("w_strikeouts_pit", "w_ip_outs", "strikeouts_pit", "ip_outs"),
+    "ERA": ("w_earned_runs", "w_ip", "earned_runs", "ip"),
+    "WHIP": ("w_whip_numer", "w_ip", "whip_numer", "ip"),
+    "K_9": ("w_strikeouts_pit", "w_ip", "strikeouts_pit", "ip"),
 }
 
 
@@ -165,8 +166,8 @@ def compute_row_projection(
     rolling_stats_by_player : dict
         {player_key: {stat_col: decay_weighted_value}}
         Expected columns include w_runs, w_hits, w_home_runs, w_rbi, w_strikeouts_bat,
-        w_tb, w_net_stolen_bases, w_ab, w_earned_runs, w_ip, w_strikeouts_pit,
-        w_qs, w_walks, w_hits_allowed, w_walks_allowed.
+        w_tb, w_net_stolen_bases, w_ab, w_earned_runs, w_ip (decimal IP, converted to outs internally),
+        w_strikeouts_pit, w_qs, w_walks, w_hits_allowed, w_walks_allowed.
     season_stats_by_player : dict, optional
         {player_key: {stat_name: season_total}}
         Used for blended rate stabilization. If None, only rolling rates used.
@@ -278,7 +279,7 @@ def compute_row_projection(
         sum_bb += bb_daily * gr
         sum_obp_denom += ab_daily * gr + bb_daily * gr  # AB + BB
 
-        # ERA: ER / IP_outs
+        # ERA: ER / IP_outs (convert w_ip to outs by multiplying by 3)
         er_daily = _blended_daily_rate(
             rolling_stats.get("w_earned_runs", 0.0),
             season_stats.get("earned_runs", 0.0) if season_stats else 0.0,
@@ -286,13 +287,15 @@ def compute_row_projection(
             rolling_weight,
             season_weight,
         )
-        ip_outs_daily = _blended_daily_rate(
-            rolling_stats.get("w_ip_outs", 0.0),
-            season_stats.get("ip_outs", 0.0) if season_stats else 0.0,
+        # Convert decimal IP to outs (1 IP = 3 outs)
+        ip_daily = _blended_daily_rate(
+            rolling_stats.get("w_ip", 0.0),
+            season_stats.get("ip", 0.0) if season_stats else 0.0,
             window_days,
             rolling_weight,
             season_weight,
         )
+        ip_outs_daily = ip_daily * 3.0
         sum_er += er_daily * gr
         sum_ip_outs += ip_outs_daily * gr
 

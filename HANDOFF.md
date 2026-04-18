@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > Date: April 18, 2026 | Author: Claude Code (Master Architect)
-> Status: Phase 0 COMPLETE (stat_contract package + 6 UI contracts). Phase 1 COMPLETE (v1→v2 consumer migration + 7 data gap closures, 2029 tests passing). Phase 2 NEXT (18-category rolling stats + ROW projection pipeline). L3E deferred. Do not reopen Layer 2 except for regressions.
+> Status: Phase 0 COMPLETE. Phase 1 COMPLETE. Phase 2 COMPLETE (15 Z-scores, ROW projector, category math — 96 new tests). Phase 3 NEXT (pure functions + engine wiring). L3E deferred. Do not reopen Layer 2 except for regressions.
 
 UI Specification Audit: reports/2026-04-17-ui-specification-contract-audit.md
 Comprehensive application audit: reports/2026-04-15-comprehensive-application-audit.md
@@ -75,18 +75,19 @@ The architecture remains layered:
 | Layer | Name | Purpose | Status |
 |------|------|---------|--------|
 | 0 | Immutable Decision Contracts | Canonical contracts, schemas, IDs, and validation boundaries | **COMPLETE — Phase 0 delivered stat_contract package + 6 UI contracts** |
-| 1 | Pure Stateless Intelligence | Deterministic pure functions over validated inputs | Available — 5 pure functions needed: delta-to-flip, ratio risk, IP pace, acquisition budget, category-count delta, TB calculator |
+| 1 | Pure Stateless Intelligence | Deterministic pure functions over validated inputs | **PARTIAL — delta-to-flip and margin delivered (Phase 2 category_math.py). IP pace and acquisition count delivered (Phase 1 constraint_helpers.py). Remaining: ratio risk quantifier, category-count delta extractor** |
 | 2 | Data and Adaptation | Ingestion, validation, persistence, observability, freshness, provenance | Certified Complete — 7 data gap tasks identified for Phase 1 |
-| 3 | Derived Stats and Scoring | Rolling stats, player scores, context-enriched features | **ACTIVE — Phase 2: expand rolling stats + projections to 18 categories, build ROW projection pipeline**. L3A/L3B/L3D/L3F remain complete. |
-| 4 | Decision Engines and Simulation | Lineup logic, waiver logic, matchup engines, Monte Carlo | **GATED — partial lift after Phase 2 gate passes. Phase 3 wires H2H Monte Carlo, MCMC, and lineup solver to projected data.** |
+| 3 | Derived Stats and Scoring | Rolling stats, player scores, context-enriched features | **COMPLETE — Phase 2 delivered: 15/18 Z-scores, ROW projector, category math. 4 greenfield categories (W, L, HR_P, NSV) deferred to Phase 2b.** L3A/L3B/L3D/L3F remain complete. |
+| 4 | Decision Engines and Simulation | Lineup logic, waiver logic, matchup engines, Monte Carlo | **ACTIVE — Phase 3: wire H2H Monte Carlo + MCMC to v2 codes and projected data. Align simulation categories with 18-category contract.** |
 | 5 | APIs and Service Presentation | FastAPI contracts, dashboards, admin views | **GATED — Phase 4: build scoreboard, budget, and roster endpoints after Phase 3 gate passes** |
 | 6 | Frontend and UX | Next.js pages, interactions, polish | **GATED — Phase 5: build P1 pages after Phase 4 gate passes. 15 components salvageable, 9 CBB pages to archive.** |
 
 ### Operating Rule
 
 - **Phase 0 is COMPLETE.** stat_contract package loaded, 6 UI contracts validated, 30/30 tests passing.
-- **Phase 1 is COMPLETE.** V1→V2 consumer migration + 7 data gap closures delivered, 2029 tests passing. All consumers now use `backend.stat_contract` v2 codes. Old v1 artifacts deleted.
-- Phase 2 (18-category rolling stats + ROW projection pipeline) is NEXT.
+- **Phase 1 is COMPLETE.** V1→V2 consumer migration + 7 data gap closures delivered, 2029 tests passing.
+- **Phase 2 is COMPLETE.** 15/18 Z-scores computed, ROW projector + category math delivered, 96 new tests passing. 4 greenfield categories (W, L, HR_P, NSV) awaiting upstream data.
+- Phase 3 (pure functions + engine wiring) is NEXT.
 - Do not reopen Layer 2 as an active workstream unless a production regression is observed.
 - Layers 4, 5, and 6 are gated until their prerequisite phases pass gate criteria.
 - The 9-phase plan defines the sequenced path. Do not skip phases.
@@ -213,20 +214,22 @@ This work remains preserved as a complete specification but requires an explicit
 
 ### Layer 4 — Decision Engines and Simulation
 
-Status: **GATED — Phase 3 after Phase 2 gate passes**
+Status: **ACTIVE — Phase 3**
 
-Phase 3 will wire existing H2H Monte Carlo, MCMC, and lineup optimizer to projected data from Layer 3. The gate lifts when ROW projections are stable and produce non-degenerate simulation results.
+Phase 3 wires existing simulation engines to v2 canonical codes and the ROW projection pipeline. The gate lifts when H2H Monte Carlo produces non-degenerate results with projected data.
 
-Existing engines (ready but awaiting projected inputs):
-- H2H Monte Carlo simulation (h2h_monte_carlo.py)
-- Lineup optimization (lineup_constraint_solver.py) — batting-only, needs full-roster extension
-- MCMC roster-move simulation (mcmc_simulator.py)
+Existing engines (ready, awaiting v2 alignment):
+- H2H Monte Carlo simulation (h2h_monte_carlo.py) — uses v1 codes: K, K/9, SB. Missing: H, K_B, TB, L, HR_P, NSV
+- MCMC roster-move simulation (mcmc_simulator.py) — uses z-score convention with non-canonical keys (k_pit, k9)
+- Lineup optimization (lineup_constraint_solver.py) — batting-only, needs full-roster extension (Phase 3+)
 - Drop candidate selection (_weakest_safe_to_drop)
 
-New engines needed (Phase 3):
-- Ratio risk quantifier
-- Category-count delta extractor
-- IP pace classifier
+New deliverables (Phase 3):
+- H2H Monte Carlo v2 alignment (18 categories, canonical codes)
+- MCMC simulator v2 alignment (canonical category keys)
+- ROW→Simulation bridge adapter
+- Ratio risk quantifier (pure function)
+- Category-count delta extractor (pure function)
 
 ### Layer 5 — APIs and Service Presentation
 
@@ -261,25 +264,23 @@ Phase 5 will build P1 pages (Matchup Scoreboard + My Roster) after Phase 4 gate 
 
 ---
 
-## Active Workstream: Phase 2 — 18-Category Rolling Stats + ROW Projection Pipeline
+## Active Workstream: Phase 3 — Pure Functions + Engine Wiring
 
 **Status: NEXT**
 
-Phase 2 is the highest-risk phase. It expands derived stats from 9 to 18 categories, builds the greenfield ROW projection pipeline, and produces team-level projected finals for each scoring category.
+Phase 3 wires the simulation layer (H2H Monte Carlo, MCMC) to v2 canonical codes and the ROW projection pipeline from Phase 2. It also builds remaining L1 pure functions.
 
 ### Prerequisites (verified)
 - Phase 0: stat_contract package loaded, 18 canonical codes, UI contracts ✓
-- Phase 1: v2 consumer migration complete, 7 constraint helpers available, v1 artifacts deleted ✓
+- Phase 1: v2 consumer migration complete, 7 constraint helpers available ✓
+- Phase 2: 15/18 Z-scores, ROW projector (`backend/services/row_projector.py`), category math (`backend/services/category_math.py`), 96 new tests ✓
 
-### Key Risks
-1. **DB stat codes may use v1 names** — `player_rolling_stats` and `mlb_player_stats` may store HR/HRA/K(B) instead of HR_B/HR_P/K_B. Needs audit before implementation.
-2. **ROW projection for ratio stats** — ERA, WHIP, AVG, OPS require weighted aggregation across roster (total_ER/total_IP×9, not average of player ERAs). Math must be precise.
-3. **9→18 expansion** — Current rolling window engine may only compute batting stats. Pitching category sources need identification.
-
-### Research needed before implementation
-- Rolling stats DB audit (what codes are stored, which categories are computed)
-- ROW projection architecture spec (aggregation formulas per category type)
-- Yahoo API response shape catalog (avoid re-reading 1200-line client code during implementation)
+### Key Deliverables
+1. **H2H Monte Carlo v2 alignment** — Update `h2h_monte_carlo.py` categories from v1 codes (K, K/9, SB) to v2 (K_P, K_9, NSB, + add H, K_B, TB, L, HR_P, NSV)
+2. **MCMC simulator v2 alignment** — Update `mcmc_simulator.py` category keys to match canonical codes
+3. **ROW→Simulation bridge** — Adapter that converts `ROWProjectionResult` into the player dict format expected by simulation engines
+4. **Remaining L1 pure functions** — Ratio risk quantifier, category-count delta extractor
+5. **Tests** — Simulation produces non-degenerate results with projected data
 
 ---
 
@@ -289,8 +290,8 @@ Phase 2 is the highest-risk phase. It expands derived stats from 9 to 18 categor
 |-------|------------|----------------|---------------|--------|
 | 0 | L0 | 6 Pydantic contracts + stat_contract package | All compile, all reference 18 categories, no optional fields for required data | **COMPLETE** |
 | 1 | L2 | V1→V2 migration + 7 data gap closures | All consumers on v2, 7 helpers tested, 2029 tests passing | **COMPLETE** |
-| 2 | L3 | 18-category rolling stats + projections + ROW pipeline | ROW projections stable for full matchup week | **NEXT** |
-| 3 | L1 + L4 | Pure functions + engine wiring | H2H Monte Carlo with projected finals produces non-degenerate results | Blocked by Phase 2 |
+| 2 | L3 | 18-category rolling stats + projections + ROW pipeline | ROW projections stable for full matchup week | **COMPLETE** |
+| 3 | L1 + L4 | Pure functions + engine wiring | H2H Monte Carlo with projected finals produces non-degenerate results | **NEXT** |
 | 4 | L5 | P1 page APIs (scoreboard, budget, roster, optimize) | All endpoints return complete data per contract | Blocked by Phase 3 |
 | 5 | L6 | Matchup Scoreboard + My Roster pages | Pages render with live data, mobile-optimized | Blocked by Phase 4 |
 | 6 | L3-L5 | P2 page backends (waiver v2, streaming) | Endpoints return complete data | Blocked by Phase 5 |

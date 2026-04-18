@@ -234,13 +234,13 @@ def test_ops_single_hitter():
 
 def test_era_single_pitcher():
     """ERA = 27 * sum(ER) / sum(IP_outs)."""
-    # IP_outs = IP * 3. For 7 IP, that's 21 outs
-    rolling = {"player_789": {"w_earned_runs": 14.0, "w_ip_outs": 21.0}}  # 7 IP, 14 ER -> 6.00 ERA
+    # w_ip is decimal IP (7.0 for 7 IP), converted to outs internally (×3)
+    rolling = {"player_789": {"w_earned_runs": 14.0, "w_ip": 7.0}}  # 7 IP, 14 ER -> 6.00 ERA
     games = {"player_789": 1}
 
     result = compute_row_projection(rolling, games_remaining=games)
 
-    # ER_daily = 14/14 * 0.6 = 0.6, IP_outs_daily = 21/14 * 0.6 = 0.9
+    # ER_daily = 14/14 * 0.6 = 0.6, IP_daily = 7/14 * 0.6 = 0.3, IP_outs_daily = 0.3 * 3 = 0.9
     # ERA = 27 * 0.6 / 0.9 = 18.0 (projected ERA for that one game)
     # Note: This is the per-game ERA contribution, not a cumulative stat
     assert result.ERA == pytest.approx(18.0, rel=0.01)
@@ -249,22 +249,22 @@ def test_era_single_pitcher():
 def test_era_two_pitchers():
     """Team ERA blends both pitchers."""
     rolling = {
-        "p1": {"w_earned_runs": 7.0, "w_ip_outs": 21.0},   # 3.00 ERA
-        "p2": {"w_earned_runs": 14.0, "w_ip_outs": 21.0},  # 6.00 ERA
+        "p1": {"w_earned_runs": 3.5, "w_ip": 7.0},   # 4.50 ERA (27 * 3.5 / 21 = 4.5)
+        "p2": {"w_earned_runs": 7.0, "w_ip": 7.0},   # 9.00 ERA (27 * 7.0 / 21 = 9.0)
     }
     games = {"p1": 1, "p2": 1}
 
     result = compute_row_projection(rolling, games_remaining=games)
 
-    # p1: ER_daily = 0.3, IP_outs_daily = 0.9
-    # p2: ER_daily = 0.6, IP_outs_daily = 0.9
-    # ERA = 27 * (0.3 + 0.6) / (0.9 + 0.9) = 27 * 0.9 / 1.8 = 13.5
-    assert result.ERA == pytest.approx(13.5, rel=0.01)
+    # p1: ER_daily = 3.5/14 * 0.6 = 0.15, IP_daily = 7/14 * 0.6 = 0.3, IP_outs_daily = 0.9
+    # p2: ER_daily = 7/14 * 0.6 = 0.3, IP_daily = 7/14 * 0.6 = 0.3, IP_outs_daily = 0.9
+    # ERA = 27 * (0.15 + 0.3) / (0.9 + 0.9) = 27 * 0.45 / 1.8 = 6.75
+    assert result.ERA == pytest.approx(6.75, rel=0.01)
 
 
 def test_era_zero_ip_returns_zero():
     """If no IP, ERA returns 0 (not division by zero)."""
-    rolling = {"player_789": {"w_earned_runs": 0.0, "w_ip_outs": 0.0}}
+    rolling = {"player_789": {"w_earned_runs": 0.0, "w_ip": 0.0}}
     games = {"player_789": 1}
 
     result = compute_row_projection(rolling, games_remaining=games)
@@ -282,7 +282,7 @@ def test_whip_single_pitcher():
         "player_789": {
             "w_hits_allowed": 21.0,
             "w_walks_allowed": 7.0,
-            "w_ip_outs": 21.0,  # 7 IP
+            "w_ip": 7.0,  # 7 IP (was 21 IP_outs)
         }
     }
     games = {"player_789": 1}
@@ -291,7 +291,7 @@ def test_whip_single_pitcher():
 
     # H_daily = 21/14 * 0.6 = 0.9
     # BB_daily = 7/14 * 0.6 = 0.3
-    # IP_outs_daily = 21/14 * 0.6 = 0.9
+    # IP_daily = 7/14 * 0.6 = 0.3, IP_outs_daily = 0.3 * 3 = 0.9
     # WHIP = 3 * (0.9 + 0.3) / 0.9 = 3 * 1.2 / 0.9 = 4.0
     assert result.WHIP == pytest.approx(4.0, rel=0.01)
 
@@ -302,13 +302,13 @@ def test_whip_single_pitcher():
 
 def test_k9_single_pitcher():
     """K/9 = 27 * sum(K) / sum(IP_outs)."""
-    rolling = {"player_789": {"w_strikeouts_pit": 42.0, "w_ip_outs": 21.0}}  # 18 K/9
+    rolling = {"player_789": {"w_strikeouts_pit": 42.0, "w_ip": 7.0}}  # 7 IP (was 21 IP_outs)
     games = {"player_789": 1}
 
     result = compute_row_projection(rolling, games_remaining=games)
 
     # K_daily = 42/14 * 0.6 = 1.8
-    # IP_outs_daily = 21/14 * 0.6 = 0.9
+    # IP_daily = 7/14 * 0.6 = 0.3, IP_outs_daily = 0.3 * 3 = 0.9
     # K/9 = 27 * 1.8 / 0.9 = 54
     assert result.K_9 == pytest.approx(54.0, rel=0.01)
 

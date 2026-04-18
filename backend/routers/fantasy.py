@@ -3279,3 +3279,121 @@ async def get_decisions_status(
             "breakdown_by_type": dr_counts,
         },
     )
+
+
+# ============================================================================
+# Phase 4: Matchup Scoreboard (P1 Page)
+# ============================================================================
+
+@router.get("/scoreboard")
+async def get_matchup_scoreboard(
+    week: int = Query(..., description="Matchup week number (1-25)"),
+    opponent_name: str = Query(..., description="Opponent team name"),
+    db: Session = Depends(get_db),
+) -> Dict:
+    """
+    GET /api/fantasy/scoreboard
+
+    Returns complete Matchup Scoreboard with 18 category rows.
+
+    Gate Criteria:
+    - All 18 scoring categories present
+    - Current stats from Yahoo
+    - ROW projections (L3)
+    - Category math (L1)
+    - Monte Carlo win probabilities (L4)
+    - Constraint budget state
+    - Freshness metadata
+
+    TODO: Wire up Yahoo client for live data.
+    Currently returns mock data for contract validation.
+    """
+    from backend.services.scoreboard_orchestrator import assemble_matchup_scoreboard
+
+    # TODO: Replace with real data fetching
+    # Mock data for contract validation
+    my_current_stats = {
+        "R": 45.0, "H": 110.0, "HR_B": 15.0, "RBI": 48.0,
+        "K_B": 78.0, "TB": 165.0, "AVG": 0.268, "OPS": 0.765,
+        "NSB": 3.0, "W": 3.0, "L": 4.0, "HR_P": 16.0,
+        "K_P": 80.0, "ERA": 4.00, "WHIP": 1.30, "K_9": 8.5,
+        "QS": 3.0, "NSV": -3.0,
+    }
+    opp_current_stats = {
+        "R": 50.0, "H": 115.0, "HR_B": 18.0, "RBI": 52.0,
+        "K_B": 72.0, "TB": 175.0, "AVG": 0.275, "OPS": 0.780,
+        "NSB": 5.0, "W": 4.0, "L": 3.0, "HR_P": 12.0,
+        "K_P": 88.0, "ERA": 3.60, "WHIP": 1.20, "K_9": 9.2,
+        "QS": 5.0, "NSV": -1.0,
+    }
+
+    # Mock player scores (empty for now)
+    my_player_scores = []
+
+    result = assemble_matchup_scoreboard(
+        week=week,
+        opponent_name=opponent_name,
+        my_current_stats=my_current_stats,
+        opp_current_stats=opp_current_stats,
+        my_player_scores=my_player_scores,
+        opp_player_scores=None,
+        ip_accumulated=45.0,
+        ip_minimum=90.0,
+        games_remaining=3,
+        days_remaining=4,
+        acquisitions_used=5,
+        il_used=1,
+        n_monte_carlo_sims=1000,
+        force_stale=False,
+    )
+
+    return {
+        "week": result.week,
+        "opponent_name": result.opponent_name,
+        "categories_won": result.categories_won,
+        "categories_lost": result.categories_lost,
+        "categories_tied": result.categories_tied,
+        "projected_won": result.projected_won,
+        "projected_lost": result.projected_lost,
+        "projected_tied": result.projected_tied,
+        "overall_win_probability": result.overall_win_probability,
+        "rows": [
+            {
+                "category": r.category,
+                "category_label": r.category_label,
+                "is_lower_better": r.is_lower_better,
+                "is_batting": r.is_batting,
+                "my_current": r.my_current,
+                "opp_current": r.opp_current,
+                "current_margin": r.current_margin,
+                "my_projected_final": r.my_projected_final,
+                "opp_projected_final": r.opp_projected_final,
+                "projected_margin": r.projected_margin,
+                "status": r.status.value if r.status else None,
+                "flip_probability": r.flip_probability,
+                "delta_to_flip": r.delta_to_flip,
+                "games_remaining": r.games_remaining,
+                "ip_context": r.ip_context,
+            }
+            for r in result.rows
+        ],
+        "budget": {
+            "acquisitions_used": result.budget.acquisitions_used,
+            "acquisitions_remaining": result.budget.acquisitions_remaining,
+            "acquisition_limit": result.budget.acquisition_limit,
+            "acquisition_warning": result.budget.acquisition_warning,
+            "il_used": result.budget.il_used,
+            "il_total": result.budget.il_total,
+            "ip_accumulated": result.budget.ip_accumulated,
+            "ip_minimum": result.budget.ip_minimum,
+            "ip_pace": result.budget.ip_pace.value,
+            "as_of": result.budget.as_of.isoformat(),
+        },
+        "freshness": {
+            "primary_source": result.freshness.primary_source,
+            "fetched_at": result.freshness.fetched_at.isoformat() if result.freshness.fetched_at else None,
+            "computed_at": result.freshness.computed_at.isoformat(),
+            "staleness_threshold_minutes": result.freshness.staleness_threshold_minutes,
+            "is_stale": result.freshness.is_stale,
+        },
+    }

@@ -15,7 +15,7 @@ Core concepts
 
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from backend.stat_contract import (
     BATTING_CODES,
@@ -494,3 +494,129 @@ def derive_ops_components(
     total_tb = current_tb + row_tb
     total_slg_denom = current_ab + row_ab
     return (total_h_plus_bb, total_obp_denom, total_tb, total_slg_denom)
+
+
+# ---------------------------------------------------------------------------
+# L1 Pure Functions: Phase 3 Workstream D
+# ---------------------------------------------------------------------------
+
+def compute_ratio_risk(
+    my_ip: float,
+    my_er: float,
+    my_hits_allowed: float,
+    my_bb_allowed: float,
+    opp_era: float,
+    opp_whip: float,
+    remaining_ip: float,
+) -> Dict[str, any]:
+    """
+    Quantify the risk that a single bad start could blow a ratio category.
+
+    A "ratio blowup" occurs when adding a bad start's stats to the current
+    accumulator would flip a winning category to losing.
+
+    Parameters
+    ----------
+    my_ip : current accumulated IP this week
+    my_er : current accumulated ER this week
+    my_hits_allowed : current accumulated H allowed this week
+    my_bb_allowed : current accumulated BB allowed this week
+    opp_era : opponent's current or projected ERA
+    opp_whip : opponent's current or projected WHIP
+    remaining_ip : expected IP remaining this week
+
+    Returns
+    -------
+    Dict with keys:
+      "era_risk": "SAFE" | "AT_RISK" | "CRITICAL"
+      "whip_risk": "SAFE" | "AT_RISK" | "CRITICAL"
+      "era_cushion_er": float (ER allowed before flipping)
+      "whip_cushion_baserunners": float (H+BB allowed before flipping)
+    """
+    result = {}
+
+    # ERA risk: how many ER can I allow in remaining IP before my ERA exceeds opponent's?
+    if my_ip > 0:
+        total_ip = my_ip + remaining_ip
+        # Max ER to stay below opponent's ERA: opp_ERA × total_IP_outs / 27
+        ip_outs = total_ip * 3
+        max_total_er = opp_era * ip_outs / 27.0
+        er_cushion = max_total_er - my_er
+        result["era_cushion_er"] = round(er_cushion, 1)
+
+        if er_cushion > remaining_ip * 0.5:
+            result["era_risk"] = "SAFE"
+        elif er_cushion > 0:
+            result["era_risk"] = "AT_RISK"
+        else:
+            result["era_risk"] = "CRITICAL"
+    else:
+        result["era_risk"] = "SAFE"
+        result["era_cushion_er"] = 99.0
+
+    # WHIP risk: how many H+BB can I allow in remaining IP before WHIP exceeds opponent's?
+    if my_ip > 0:
+        total_ip = my_ip + remaining_ip
+        ip_outs = total_ip * 3
+        max_total_baserunners = opp_whip * ip_outs / 3.0
+        current_baserunners = my_hits_allowed + my_bb_allowed
+        br_cushion = max_total_baserunners - current_baserunners
+        result["whip_cushion_baserunners"] = round(br_cushion, 1)
+
+        if br_cushion > remaining_ip * 1.5:
+            result["whip_risk"] = "SAFE"
+        elif br_cushion > 0:
+            result["whip_risk"] = "AT_RISK"
+        else:
+            result["whip_risk"] = "CRITICAL"
+    else:
+        result["whip_risk"] = "SAFE"
+        result["whip_cushion_baserunners"] = 99.0
+
+    return result
+
+
+def compute_category_count_delta(
+    category_results: Dict[str, "CategoryMathResult"],
+) -> Dict[str, any]:
+    """
+    Compute category win/loss/swing counts from a full set of CategoryMathResults.
+
+    Returns
+    -------
+    Dict with keys:
+      "winning": int — categories where margin > 0
+      "losing": int — categories where margin < 0
+      "tied": int — categories where margin == 0
+      "swing": int — categories where |margin| < close_threshold
+      "projected_result": str — "WIN", "LOSS", or "TOSS_UP"
+    """
+    winning = sum(1 for r in category_results.values() if r.is_winning)
+    losing = sum(1 for r in category_results.values() if not r.is_winning and r.margin < 0)
+    tied = sum(1 for r in category_results.values() if r.margin == 0.0)
+
+    n_cats = len(category_results)
+    win_threshold = n_cats // 2 + 1  # majority
+
+    if winning >= win_threshold:
+        projected_result = "WIN"
+    elif losing >= win_threshold:
+        projected_result = "LOSS"
+    else:
+        projected_result = "TOSS_UP"
+
+    # Swing categories: close margin (within 10% for ratio, within 2 for counting)
+    swing = 0
+    for r in category_results.values():
+        if abs(r.margin) < 2.0 and not r.is_winning:
+            swing += 1
+        elif abs(r.margin) < 0.1 and r.canonical_code in {"AVG", "OPS", "ERA", "WHIP", "K_9"}:
+            swing += 1
+
+    return {
+        "winning": winning,
+        "losing": losing,
+        "tied": tied,
+        "swing": swing,
+        "projected_result": projected_result,
+    }
