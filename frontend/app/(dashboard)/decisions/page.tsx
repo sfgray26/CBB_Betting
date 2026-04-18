@@ -421,7 +421,7 @@ export default function DecisionsPage() {
             <div className="flex items-center gap-2">
               <Info className="h-4 w-4 text-amber-400" />
               <span>
-                Showing starter recommendations only, not your full roster or bench.
+                Showing optimized roster assignments for starters and bench.
               </span>
             </div>
             <div className="text-xs text-zinc-500">

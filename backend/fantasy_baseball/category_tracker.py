@@ -10,12 +10,14 @@ from typing import Dict, List, Optional
 
 from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 from backend.fantasy_baseball.smart_lineup_selector import CategoryNeed
-from backend.utils.fantasy_stat_contract import BATTING_CATEGORIES, CATEGORY_NEED_STAT_MAP
+from backend.stat_contract import BATTING_CODES, YAHOO_ID_INDEX
 
 logger = logging.getLogger(__name__)
 
 
-YAHOO_STAT_MAP = dict(CATEGORY_NEED_STAT_MAP)
+# Filter YAHOO_ID_INDEX to only batting category stat_ids
+_BATTING_YAHOO_IDS = {sid: code for sid, code in YAHOO_ID_INDEX.items() if code in BATTING_CODES}
+YAHOO_STAT_MAP = dict(_BATTING_YAHOO_IDS)
 
 
 @dataclass
@@ -137,29 +139,30 @@ class CategoryTracker:
         return result
     
     def _calculate_needs(
-        self, 
-        my_stats: Dict[str, float], 
+        self,
+        my_stats: Dict[str, float],
         opp_stats: Dict[str, float]
     ) -> List[CategoryNeed]:
         """Calculate category needs from current stats."""
         needs = []
-        
-        for category in BATTING_CATEGORIES:
+
+        for category in sorted(BATTING_CODES):
             my_val = my_stats.get(category, 0.0)
             opp_val = opp_stats.get(category, 0.0)
-            
+
             # For average-based cats (AVG, OPS), higher is better
-            # For counting cats (R, HR, RBI, SB), higher is better
+            # For counting cats (R, HR_B, RBI, NSB), higher is better
+            # For K_B, lower is better (lower_is_better direction)
             # So if my_val > opp_val, I'm winning (needed is positive surplus)
             needed = my_val - opp_val
-            
+
             needs.append(CategoryNeed(
                 category=category,
                 current=my_val,
                 projected_opponent=opp_val,
                 needed=needed
             ))
-        
+
         return needs
     
     def get_matchup_status(self, week: Optional[int] = None) -> Optional[MatchupStatus]:

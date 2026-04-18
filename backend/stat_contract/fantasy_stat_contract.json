@@ -1,0 +1,547 @@
+{
+  "$schema": "https://fantasy.app/schemas/fantasy_stat_contract/v2.json",
+  "version": "2.0.0",
+  "league_id": "yahoo_2026_league_12345",
+  "format": "h2h_one_win",
+  "season": 2026,
+
+  "stats": {
+    "R": {
+      "canonical_code": "R",
+      "display_label": "Runs",
+      "short_label": "R",
+      "scope": ["hitter"],
+      "is_scoring_category": true,
+      "scoring_role": "batting",
+      "aggregation": { "method": "sum" },
+      "direction": "higher_is_better",
+      "data_type": "integer",
+      "precision": 0,
+      "valid_range": [0, null],
+      "external_ids": {
+        "yahoo_stat_id": 7,
+        "mlb_stats_api": "runs",
+        "balldontlie": "runs",
+        "pybaseball": "R"
+      },
+      "notes": null
+    },
+
+    "H": {
+      "canonical_code": "H",
+      "display_label": "Hits",
+      "short_label": "H",
+      "scope": ["hitter"],
+      "is_scoring_category": true,
+      "scoring_role": "batting",
+      "aggregation": { "method": "sum" },
+      "direction": "higher_is_better",
+      "data_type": "integer",
+      "precision": 0,
+      "valid_range": [0, null],
+      "external_ids": {
+        "yahoo_stat_id": 8,
+        "mlb_stats_api": "hits",
+        "balldontlie": "hits",
+        "pybaseball": "H"
+      }
+    },
+
+    "HR_B": {
+      "canonical_code": "HR_B",
+      "display_label": "Home Runs",
+      "short_label": "HR",
+      "scope": ["hitter"],
+      "is_scoring_category": true,
+      "scoring_role": "batting",
+      "aggregation": { "method": "sum" },
+      "direction": "higher_is_better",
+      "data_type": "integer",
+      "precision": 0,
+      "valid_range": [0, null],
+      "external_ids": {
+        "yahoo_stat_id": 12,
+        "mlb_stats_api": "homeRuns",
+        "balldontlie": "home_runs",
+        "pybaseball": "HR"
+      },
+      "notes": "Hitter home runs; distinct from HR_P (home runs allowed by pitcher)."
+    },
+
+    "RBI": {
+      "canonical_code": "RBI",
+      "display_label": "Runs Batted In",
+      "short_label": "RBI",
+      "scope": ["hitter"],
+      "is_scoring_category": true,
+      "scoring_role": "batting",
+      "aggregation": { "method": "sum" },
+      "direction": "higher_is_better",
+      "data_type": "integer",
+      "precision": 0,
+      "valid_range": [0, null],
+      "external_ids": {
+        "yahoo_stat_id": 13,
+        "mlb_stats_api": "rbi",
+        "balldontlie": "rbi",
+        "pybaseball": "RBI"
+      }
+    },
+
+    "K_B": {
+      "canonical_code": "K_B",
+      "display_label": "Strikeouts (Batter)",
+      "short_label": "K",
+      "scope": ["hitter"],
+      "is_scoring_category": true,
+      "scoring_role": "batting",
+      "aggregation": { "method": "sum" },
+      "direction": "lower_is_better",
+      "data_type": "integer",
+      "precision": 0,
+      "valid_range": [0, null],
+      "external_ids": {
+        "yahoo_stat_id": 42,
+        "mlb_stats_api": "strikeOuts",
+        "balldontlie": "strikeouts",
+        "pybaseball": "SO"
+      },
+      "notes": "Batter strikeouts. LOWER is better — this is a contact category."
+    },
+
+    "TB": {
+      "canonical_code": "TB",
+      "display_label": "Total Bases",
+      "short_label": "TB",
+      "scope": ["hitter"],
+      "is_scoring_category": true,
+      "scoring_role": "batting",
+      "aggregation": { "method": "sum" },
+      "direction": "higher_is_better",
+      "data_type": "integer",
+      "precision": 0,
+      "valid_range": [0, null],
+      "external_ids": {
+        "yahoo_stat_id": 4,
+        "yahoo_stat_id_alt": 6,
+        "mlb_stats_api": "totalBases",
+        "balldontlie": "total_bases",
+        "pybaseball": "TB"
+      },
+      "notes": "Yahoo emits TB as both stat_id 4 and 6 depending on context; both map here."
+    },
+
+    "AVG": {
+      "canonical_code": "AVG",
+      "display_label": "Batting Average",
+      "short_label": "AVG",
+      "scope": ["hitter"],
+      "is_scoring_category": true,
+      "scoring_role": "batting",
+      "aggregation": {
+        "method": "weighted_ratio",
+        "numerator_stat": "H",
+        "denominator_stat": "AB"
+      },
+      "direction": "higher_is_better",
+      "data_type": "decimal",
+      "precision": 3,
+      "valid_range": [0.0, 1.0],
+      "external_ids": {
+        "yahoo_stat_id": 3,
+        "mlb_stats_api": "avg",
+        "balldontlie": "batting_average",
+        "pybaseball": "AVG"
+      },
+      "notes": "Aggregate as sum(H) / sum(AB), NOT as average of averages."
+    },
+
+    "OPS": {
+      "canonical_code": "OPS",
+      "display_label": "On-Base Plus Slugging",
+      "short_label": "OPS",
+      "scope": ["hitter"],
+      "is_scoring_category": true,
+      "scoring_role": "batting",
+      "aggregation": {
+        "method": "composite",
+        "formula": "OBP + SLG",
+        "components": ["OBP", "SLG"]
+      },
+      "direction": "higher_is_better",
+      "data_type": "decimal",
+      "precision": 3,
+      "valid_range": [0.0, 5.0],
+      "external_ids": {
+        "yahoo_stat_id": 55,
+        "mlb_stats_api": "ops",
+        "balldontlie": "ops",
+        "pybaseball": "OPS"
+      },
+      "notes": "OBP = (H + BB + HBP) / (AB + BB + HBP + SF). SLG = TB / AB. Aggregate the components, then sum."
+    },
+
+    "NSB": {
+      "canonical_code": "NSB",
+      "display_label": "Net Stolen Bases",
+      "short_label": "NSB",
+      "scope": ["hitter"],
+      "is_scoring_category": true,
+      "scoring_role": "batting",
+      "aggregation": {
+        "method": "composite",
+        "formula": "SB - CS",
+        "components": ["SB", "CS"]
+      },
+      "direction": "higher_is_better",
+      "data_type": "integer",
+      "precision": 0,
+      "valid_range": [null, null],
+      "external_ids": {
+        "yahoo_stat_id": 60,
+        "mlb_stats_api_numerator": "stolenBases",
+        "mlb_stats_api_denominator": "caughtStealing"
+      },
+      "notes": "Can be negative. Computed as SB - CS."
+    },
+
+    "W": {
+      "canonical_code": "W",
+      "display_label": "Wins",
+      "short_label": "W",
+      "scope": ["pitcher"],
+      "is_scoring_category": true,
+      "scoring_role": "pitching",
+      "aggregation": { "method": "sum" },
+      "direction": "higher_is_better",
+      "data_type": "integer",
+      "precision": 0,
+      "valid_range": [0, null],
+      "external_ids": {
+        "yahoo_stat_id": 23,
+        "mlb_stats_api": "wins",
+        "pybaseball": "W"
+      }
+    },
+
+    "L": {
+      "canonical_code": "L",
+      "display_label": "Losses",
+      "short_label": "L",
+      "scope": ["pitcher"],
+      "is_scoring_category": true,
+      "scoring_role": "pitching",
+      "aggregation": { "method": "sum" },
+      "direction": "lower_is_better",
+      "data_type": "integer",
+      "precision": 0,
+      "valid_range": [0, null],
+      "external_ids": {
+        "yahoo_stat_id": 24,
+        "mlb_stats_api": "losses",
+        "pybaseball": "L"
+      }
+    },
+
+    "HR_P": {
+      "canonical_code": "HR_P",
+      "display_label": "Home Runs Allowed",
+      "short_label": "HRA",
+      "scope": ["pitcher"],
+      "is_scoring_category": true,
+      "scoring_role": "pitching",
+      "aggregation": { "method": "sum" },
+      "direction": "lower_is_better",
+      "data_type": "integer",
+      "precision": 0,
+      "valid_range": [0, null],
+      "external_ids": {
+        "yahoo_stat_id": 35,
+        "mlb_stats_api": "homeRunsAllowed",
+        "pybaseball": "HR"
+      },
+      "notes": "Home runs allowed by pitcher. Distinct from HR_B."
+    },
+
+    "K_P": {
+      "canonical_code": "K_P",
+      "display_label": "Strikeouts (Pitcher)",
+      "short_label": "K",
+      "scope": ["pitcher"],
+      "is_scoring_category": true,
+      "scoring_role": "pitching",
+      "aggregation": { "method": "sum" },
+      "direction": "higher_is_better",
+      "data_type": "integer",
+      "precision": 0,
+      "valid_range": [0, null],
+      "external_ids": {
+        "yahoo_stat_id": 28,
+        "mlb_stats_api": "strikeOuts",
+        "pybaseball": "SO"
+      },
+      "notes": "Pitcher strikeouts. Distinct from K_B."
+    },
+
+    "ERA": {
+      "canonical_code": "ERA",
+      "display_label": "Earned Run Average",
+      "short_label": "ERA",
+      "scope": ["pitcher"],
+      "is_scoring_category": true,
+      "scoring_role": "pitching",
+      "aggregation": {
+        "method": "weighted_ratio",
+        "numerator_stat": "ER",
+        "denominator_stat": "IP_OUTS",
+        "multiplier": 27.0
+      },
+      "direction": "lower_is_better",
+      "data_type": "decimal",
+      "precision": 2,
+      "valid_range": [0.0, 99.99],
+      "external_ids": {
+        "yahoo_stat_id": 26,
+        "mlb_stats_api": "era",
+        "pybaseball": "ERA"
+      },
+      "notes": "Aggregate as (sum(ER) * 27) / sum(outs). Using outs not IP avoids the 0.1/0.2 fractional notation trap."
+    },
+
+    "WHIP": {
+      "canonical_code": "WHIP",
+      "display_label": "Walks + Hits per IP",
+      "short_label": "WHIP",
+      "scope": ["pitcher"],
+      "is_scoring_category": true,
+      "scoring_role": "pitching",
+      "aggregation": {
+        "method": "weighted_ratio",
+        "numerator_formula": "BB_P + H_P",
+        "denominator_stat": "IP_OUTS",
+        "multiplier": 3.0
+      },
+      "direction": "lower_is_better",
+      "data_type": "decimal",
+      "precision": 3,
+      "valid_range": [0.0, 99.999],
+      "external_ids": {
+        "yahoo_stat_id": 27,
+        "mlb_stats_api": "whip",
+        "pybaseball": "WHIP"
+      },
+      "notes": "Aggregate as ((sum(BB) + sum(H_allowed)) * 3) / sum(outs)."
+    },
+
+    "K_9": {
+      "canonical_code": "K_9",
+      "display_label": "Strikeouts per Nine",
+      "short_label": "K/9",
+      "scope": ["pitcher"],
+      "is_scoring_category": true,
+      "scoring_role": "pitching",
+      "aggregation": {
+        "method": "weighted_ratio",
+        "numerator_stat": "K_P",
+        "denominator_stat": "IP_OUTS",
+        "multiplier": 27.0
+      },
+      "direction": "higher_is_better",
+      "data_type": "decimal",
+      "precision": 2,
+      "valid_range": [0.0, 30.0],
+      "external_ids": {
+        "yahoo_stat_id": 57,
+        "mlb_stats_api": "strikeoutsPer9Inn",
+        "pybaseball": "K/9"
+      },
+      "notes": "Aggregate as (sum(K) * 27) / sum(outs)."
+    },
+
+    "QS": {
+      "canonical_code": "QS",
+      "display_label": "Quality Starts",
+      "short_label": "QS",
+      "scope": ["pitcher"],
+      "is_scoring_category": true,
+      "scoring_role": "pitching",
+      "aggregation": { "method": "sum" },
+      "direction": "higher_is_better",
+      "data_type": "integer",
+      "precision": 0,
+      "valid_range": [0, null],
+      "external_ids": {
+        "yahoo_stat_id": 29,
+        "mlb_stats_api": "qualityStarts",
+        "pybaseball": "QS"
+      },
+      "notes": "A start of 6+ IP with 3 or fewer ER."
+    },
+
+    "NSV": {
+      "canonical_code": "NSV",
+      "display_label": "Net Saves",
+      "short_label": "NSV",
+      "scope": ["pitcher"],
+      "is_scoring_category": true,
+      "scoring_role": "pitching",
+      "aggregation": {
+        "method": "composite",
+        "formula": "SV - BS",
+        "components": ["SV", "BS"]
+      },
+      "direction": "higher_is_better",
+      "data_type": "integer",
+      "precision": 0,
+      "valid_range": [null, null],
+      "external_ids": {
+        "yahoo_stat_id": 83,
+        "mlb_stats_api_numerator": "saves",
+        "mlb_stats_api_denominator": "blownSaves"
+      },
+      "notes": "Can be negative. Computed as SV - BS."
+    },
+
+    "IP": {
+      "canonical_code": "IP",
+      "display_label": "Innings Pitched",
+      "short_label": "IP",
+      "scope": ["pitcher"],
+      "is_scoring_category": false,
+      "display_contexts": ["matchup", "player_row", "streaming"],
+      "aggregation": {
+        "method": "derived_from_outs",
+        "source_stat": "IP_OUTS",
+        "formula": "outs / 3"
+      },
+      "direction": "higher_is_better",
+      "data_type": "decimal",
+      "precision": 1,
+      "valid_range": [0.0, null],
+      "external_ids": {
+        "yahoo_stat_id": 21,
+        "yahoo_stat_id_alt": 50,
+        "mlb_stats_api": "inningsPitched",
+        "pybaseball": "IP"
+      },
+      "notes": "Display only — not a scoring category in this league but gates weekly eligibility (18 IP minimum). Yahoo emits as both 21 and 50 depending on context. Always store as outs internally (IP_OUTS) to avoid the 7.2 + 0.1 = 8.0 arithmetic trap."
+    },
+
+    "GS": {
+      "canonical_code": "GS",
+      "display_label": "Games Started",
+      "short_label": "GS",
+      "scope": ["pitcher"],
+      "is_scoring_category": false,
+      "display_contexts": ["matchup", "player_row"],
+      "aggregation": { "method": "sum" },
+      "direction": "higher_is_better",
+      "data_type": "integer",
+      "precision": 0,
+      "valid_range": [0, null],
+      "external_ids": {
+        "yahoo_stat_id": 62,
+        "mlb_stats_api": "gamesStarted",
+        "pybaseball": "GS"
+      }
+    },
+
+    "H_AB": {
+      "canonical_code": "H_AB",
+      "display_label": "Hits / At Bats",
+      "short_label": "H/AB",
+      "scope": ["hitter"],
+      "is_scoring_category": false,
+      "display_contexts": ["matchup"],
+      "aggregation": {
+        "method": "composite_display",
+        "formula": "sum(H) / sum(AB)",
+        "components": ["H", "AB"]
+      },
+      "direction": "display_only",
+      "data_type": "string",
+      "precision": null,
+      "valid_range": null,
+      "external_ids": {
+        "yahoo_stat_id": null
+      },
+      "notes": "Display-only composite shown in Yahoo-style matchup views."
+    }
+  },
+
+  "supporting_stats": {
+    "AB":  { "display_label": "At Bats",         "scope": ["hitter"],  "data_type": "integer", "precision": 0, "external_ids": { "mlb_stats_api": "atBats" } },
+    "BB":  { "display_label": "Walks (Batter)",  "scope": ["hitter"],  "data_type": "integer", "precision": 0, "external_ids": { "mlb_stats_api": "baseOnBalls" } },
+    "HBP": { "display_label": "Hit By Pitch",    "scope": ["hitter"],  "data_type": "integer", "precision": 0, "external_ids": { "mlb_stats_api": "hitByPitch" } },
+    "SF":  { "display_label": "Sacrifice Flies", "scope": ["hitter"],  "data_type": "integer", "precision": 0, "external_ids": { "mlb_stats_api": "sacFlies" } },
+    "SB":  { "display_label": "Stolen Bases",    "scope": ["hitter"],  "data_type": "integer", "precision": 0, "external_ids": { "yahoo_stat_id": 16, "mlb_stats_api": "stolenBases" } },
+    "CS":  { "display_label": "Caught Stealing", "scope": ["hitter"],  "data_type": "integer", "precision": 0, "external_ids": { "mlb_stats_api": "caughtStealing" } },
+    "OBP": { "display_label": "On-Base %",       "scope": ["hitter"],  "data_type": "decimal", "precision": 3, "external_ids": { "yahoo_stat_id": 85, "mlb_stats_api": "obp" } },
+    "SLG": { "display_label": "Slugging %",      "scope": ["hitter"],  "data_type": "decimal", "precision": 3, "external_ids": { "mlb_stats_api": "slg" } },
+
+    "ER":      { "display_label": "Earned Runs",     "scope": ["pitcher"], "data_type": "integer", "precision": 0, "external_ids": { "mlb_stats_api": "earnedRuns" } },
+    "IP_OUTS": { "display_label": "Outs Recorded",   "scope": ["pitcher"], "data_type": "integer", "precision": 0, "external_ids": { "mlb_stats_api": "outs" }, "notes": "Canonical internal representation of innings pitched. 1 IP = 3 outs." },
+    "BB_P":    { "display_label": "Walks Allowed",   "scope": ["pitcher"], "data_type": "integer", "precision": 0, "external_ids": { "mlb_stats_api": "baseOnBalls" } },
+    "H_P":     { "display_label": "Hits Allowed",    "scope": ["pitcher"], "data_type": "integer", "precision": 0, "external_ids": { "mlb_stats_api": "hits" } },
+    "SV":      { "display_label": "Saves",           "scope": ["pitcher"], "data_type": "integer", "precision": 0, "external_ids": { "yahoo_stat_id": 32, "mlb_stats_api": "saves" } },
+    "BS":      { "display_label": "Blown Saves",     "scope": ["pitcher"], "data_type": "integer", "precision": 0, "external_ids": { "mlb_stats_api": "blownSaves" } },
+    "HLD":     { "display_label": "Holds",           "scope": ["pitcher"], "data_type": "integer", "precision": 0, "external_ids": { "yahoo_stat_id": 48, "mlb_stats_api": "holds" } }
+  },
+
+  "scoring_categories": {
+    "batting": ["R", "H", "HR_B", "RBI", "K_B", "TB", "AVG", "OPS", "NSB"],
+    "pitching": ["W", "L", "HR_P", "K_P", "ERA", "WHIP", "K_9", "QS", "NSV"],
+    "total_count": 18,
+    "win_threshold": 10
+  },
+
+  "weekly_rules": {
+    "pitcher_ip_minimum": 18.0,
+    "pitcher_ip_minimum_outs": 54,
+    "acquisitions_max": 8,
+    "waiver_window_days": 1,
+    "categories_to_win_matchup": 10
+  },
+
+  "yahoo_id_index": {
+    "3":  "AVG",
+    "4":  "TB",
+    "6":  "TB",
+    "7":  "R",
+    "8":  "H",
+    "12": "HR_B",
+    "13": "RBI",
+    "16": "SB",
+    "21": "IP",
+    "23": "W",
+    "24": "L",
+    "26": "ERA",
+    "27": "WHIP",
+    "28": "K_P",
+    "29": "QS",
+    "32": "SV",
+    "35": "HR_P",
+    "42": "K_B",
+    "48": "HLD",
+    "50": "IP",
+    "55": "OPS",
+    "57": "K_9",
+    "60": "NSB",
+    "62": "GS",
+    "83": "NSV",
+    "85": "OBP"
+  },
+
+  "matchup_display_order": [
+    "R", "H", "HR_B", "RBI", "K_B", "TB", "AVG", "OPS", "NSB",
+    "W", "L", "HR_P", "K_P", "ERA", "WHIP", "K_9", "QS", "NSV",
+    "IP", "GS", "H_AB"
+  ],
+
+  "provenance": {
+    "derived_from": "yahoo_league_settings",
+    "source_league_key": "mlb.l.12345",
+    "generated_at": "2026-04-17T00:00:00Z",
+    "generator_version": "fantasy_stat_contract_v2.0.0"
+  }
+}

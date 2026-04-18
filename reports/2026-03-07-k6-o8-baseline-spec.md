@@ -805,3 +805,16 @@ def _tournament_risk_scalar(team_name: str) -> float:
 ---
 
 *Specification v1.0 — K-6 Mission Complete*
+
+10 teams 
+Head-to-Head - One Win 
+No max acquisitions or trade , waiver time is 1 day wiht a continual rolling list in standard mode . The max acquistions a week is 8 players. 
+
+For a pitcher the minim innings pitched requirement is 18 innings 
+
+Roster: [C, 1B, 2B, 3B, SS, LF, CR, RF, Util, SP, SP, RP, RP , P, P, P , BN, BN, BN, BN, IL, IL, IL, NA]
+
+Batter Stat Caterories: Runs (R), Hits (H), Home Runs (HR), Runs Batted In (RBI), Strikeouts (K), Total Bases (TB), Batting Average (AVG), On-base + Slugging Percentage (OPS), Net Stolen Bases (NSB)
+
+Pitcher Stat Caterories: 	Wins (W), Losses (L), Home Runs (HR), Strikeouts (K), Earned Run Average (ERA), (Walks + Hits)/ Innings Pitched (WHIP), Strikeouts per Nine Innings (K/9), Quality Starts (QS), Net Saves (NSV)
+

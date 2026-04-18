@@ -104,7 +104,7 @@ from backend.services.portfolio import get_portfolio_manager
 from backend.services.ratings import get_ratings_service
 from backend.services.job_queue_service import submit_job as jq_submit, get_job_status as jq_status, process_pending_jobs as jq_process
 from backend.utils.env_utils import get_float_env
-from backend.utils.fantasy_stat_contract import YAHOO_STAT_ID_FALLBACK, LEAGUE_SCORING_CATEGORIES
+from backend.stat_contract import YAHOO_ID_INDEX, SCORING_CATEGORY_CODES
 from backend.utils.time_utils import today_et
 from backend.schemas import (
     BetLogCreate,
@@ -6411,8 +6411,8 @@ async def get_player_valuations(
 
 
 # Shared fallback for Yahoo numeric stat category IDs.
-# Canonical source: frontend/lib/fantasy-stat-contract.json
-_YAHOO_STAT_FALLBACK: dict[str, str] = dict(YAHOO_STAT_ID_FALLBACK)
+# Canonical source: backend/stat_contract
+_YAHOO_STAT_FALLBACK: dict[str, str] = dict(YAHOO_ID_INDEX)
 
 
 @app.get("/api/fantasy/matchup", response_model=MatchupResponse)
@@ -6477,8 +6477,8 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
             _abbr_positions.setdefault(abbr, set()).add(pos_type)
 
         # Disambiguation map for known collisions
-        _PITCHER_RENAME = {"HR": "HRA", "K": "K(P)"}
-        _BATTER_RENAME = {"K": "K(B)", "HR": "HR"}
+        _PITCHER_RENAME = {"HR": "HR_P", "K": "K_P"}
+        _BATTER_RENAME = {"K": "K_B", "HR": "HR_B"}
 
         for sid, abbr, pos_type, is_display in _stat_entries:
             final_abbr = abbr
@@ -6502,9 +6502,9 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
 
     # If league settings were unavailable, fall back to the hardcoded league scoring
     # categories so we still filter out display-only/non-league stats (OBP, K/BB, etc.)
-    if not active_stat_abbrs and LEAGUE_SCORING_CATEGORIES:
-        active_stat_abbrs = set(LEAGUE_SCORING_CATEGORIES)
-        logger.info("Using hardcoded LEAGUE_SCORING_CATEGORIES as fallback: %s", sorted(active_stat_abbrs))
+    if not active_stat_abbrs and SCORING_CATEGORY_CODES:
+        active_stat_abbrs = set(SCORING_CATEGORY_CODES)
+        logger.info("Using stat_contract SCORING_CATEGORY_CODES as fallback: %s", sorted(active_stat_abbrs))
 
     try:
         matchups = client.get_scoreboard()

@@ -1,9 +1,10 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
-> Date: April 16, 2026 | Author: Claude Code (Master Architect)
-> Status: Layer 2 certified complete. Layer 3B consolidation complete. Layer 3D observability complete. API endpoint live with auth. Decision pipeline observability complete. L3F (Decision Output Read Surface) complete. L3E (Market-Implied Probabilities) is deferred as a future enhancement. Do not reopen Layer 2 except for regressions.
+> Date: April 18, 2026 | Author: Claude Code (Master Architect)
+> Status: Phase 0 COMPLETE (stat_contract package + 6 UI contracts). Phase 1 COMPLETE (v1→v2 consumer migration + 7 data gap closures, 2029 tests passing). Phase 2 NEXT (18-category rolling stats + ROW projection pipeline). L3E deferred. Do not reopen Layer 2 except for regressions.
 
-Full audit: reports/2026-04-15-comprehensive-application-audit.md
+UI Specification Audit: reports/2026-04-17-ui-specification-contract-audit.md
+Comprehensive application audit: reports/2026-04-15-comprehensive-application-audit.md
 Raw-ingestion contract audit: reports/2026-04-05-raw-ingestion-audit.md
 Historical context: HANDOFF_ARCHIVE.md
 
@@ -18,36 +19,83 @@ Historical context: HANDOFF_ARCHIVE.md
 - `park_factors` is seeded and available for DB-backed reads with fallback.
 - `weather_forecasts` exists in schema but remains deferred; request-time weather is the live path.
 - The Layer 2 hard gate is lifted.
+- **UI Specification Contract Audit completed — authoritative field-level mapping produced, 9-phase gated implementation plan adopted.**
+
+---
+
+## UI Contract Authority
+
+The document `reports/2026-04-17-ui-specification-contract-audit.md` is the authoritative mapping between the locked UI specification and backend readiness. The UI spec defines the contract; the backend serves it; not the other way around.
+
+### Field Readiness Summary
+
+The UI specification requires **110 fields** across 6 canonical pages plus global header and cross-cutting requirements.
+
+| Status | Count | Percentage |
+|--------|-------|------------|
+| READY | 19 | 17% |
+| PARTIAL | 27 | 25% |
+| MISSING | 64 | 58% |
+
+### Top 5 Blockers (Ranked by Fields Blocked)
+
+1. **ROW projection pipeline does not exist** — Blocks 18 fields across Matchup Scoreboard, My Roster, Waiver Wire, and Streaming pages. This is the single highest-priority gap.
+
+2. **Rolling stats cover only 9 of 18 categories** — Missing R, TB from batting; W, L, HRA, K(pitching), QS, NSV from pitching. Creates 27+ cell gaps across all player rows.
+
+3. **Projections cover only 8 of 18 categories** — Missing H, K(B), TB, NSB, W, L, HRA, SV/NSV, HLD, QS. Affects all projection displays.
+
+4. **Per-player games-remaining-this-week missing** — Required for ROW pipeline computation; blocks scoreboard games remaining and waiver filters.
+
+5. **Acquisition count not tracked** — Yahoo transactions fetched but not counted or week-filtered; blocks global header acquisition display and waiver budget.
+
+### Canonical Pages (Priority Order)
+
+| Priority | Page | Fields Ready | Status |
+|----------|------|-------------|--------|
+| P1 | Matchup Scoreboard | 3 of 16 (19%) | Load-bearing page; defining features all MISSING |
+| P1 | My Roster | 2 of 10 (20%) | Core roster management |
+| P2 | Waiver Wire | 1 of 8 (13%) | Marginal value computation incomplete |
+| P2 | Probable Pitchers / Streaming | 4 of 12 (33%) | Ratio risk and recommendations MISSING |
+| P3 | Trade Analyzer | 0 of 9 (0%) | Entire page blocked |
+| P3 | Season Dashboard | 0 of 6 (0%) | Projections and diagnosis incomplete |
+
+### Operating Principle
+
+The UI specification is now the requirements document. All downstream backend work must reference the field-level mapping in the audit report. No frontend implementation should proceed without backend readiness confirmed against this audit.
 
 ---
 
 ## Core Doctrine
 
-The MLB data platform is now validated at Layer 2. Work may resume above Layer 2, but execution should remain disciplined and sequenced.
+The MLB data platform is now validated at Layer 2. Work proceeds through a gated 9-phase plan to achieve UI contract readiness.
 
 The architecture remains layered:
 
 | Layer | Name | Purpose | Status |
 |------|------|---------|--------|
-| 0 | Immutable Decision Contracts | Canonical contracts, schemas, IDs, and validation boundaries | Stable |
-| 1 | Pure Stateless Intelligence | Deterministic pure functions over validated inputs | Available |
-| 2 | Data and Adaptation | Ingestion, validation, persistence, observability, freshness, provenance | Certified Complete |
-| 3 | Derived Stats and Scoring | Rolling stats, player scores, context-enriched features | Active |
-| 4 | Decision Engines and Simulation | Lineup logic, waiver logic, matchup engines, Monte Carlo | Hold until the first Layer 3 objective is stable |
-| 5 | APIs and Service Presentation | FastAPI contracts, dashboards, admin views | Maintenance |
-| 6 | Frontend and UX | Next.js pages, interactions, polish | Maintenance |
+| 0 | Immutable Decision Contracts | Canonical contracts, schemas, IDs, and validation boundaries | **COMPLETE — Phase 0 delivered stat_contract package + 6 UI contracts** |
+| 1 | Pure Stateless Intelligence | Deterministic pure functions over validated inputs | Available — 5 pure functions needed: delta-to-flip, ratio risk, IP pace, acquisition budget, category-count delta, TB calculator |
+| 2 | Data and Adaptation | Ingestion, validation, persistence, observability, freshness, provenance | Certified Complete — 7 data gap tasks identified for Phase 1 |
+| 3 | Derived Stats and Scoring | Rolling stats, player scores, context-enriched features | **ACTIVE — Phase 2: expand rolling stats + projections to 18 categories, build ROW projection pipeline**. L3A/L3B/L3D/L3F remain complete. |
+| 4 | Decision Engines and Simulation | Lineup logic, waiver logic, matchup engines, Monte Carlo | **GATED — partial lift after Phase 2 gate passes. Phase 3 wires H2H Monte Carlo, MCMC, and lineup solver to projected data.** |
+| 5 | APIs and Service Presentation | FastAPI contracts, dashboards, admin views | **GATED — Phase 4: build scoreboard, budget, and roster endpoints after Phase 3 gate passes** |
+| 6 | Frontend and UX | Next.js pages, interactions, polish | **GATED — Phase 5: build P1 pages after Phase 4 gate passes. 15 components salvageable, 9 CBB pages to archive.** |
 
 ### Operating Rule
 
+- **Phase 0 is COMPLETE.** stat_contract package loaded, 6 UI contracts validated, 30/30 tests passing.
+- **Phase 1 is COMPLETE.** V1→V2 consumer migration + 7 data gap closures delivered, 2029 tests passing. All consumers now use `backend.stat_contract` v2 codes. Old v1 artifacts deleted.
+- Phase 2 (18-category rolling stats + ROW projection pipeline) is NEXT.
 - Do not reopen Layer 2 as an active workstream unless a production regression is observed.
-- Do not activate broad Layer 4 work yet.
-- Use Layer 3 as the single active engineering lane.
+- Layers 4, 5, and 6 are gated until their prerequisite phases pass gate criteria.
+- The 9-phase plan defines the sequenced path. Do not skip phases.
 
 ---
 
 ## Current Production Truth
 
-Verified production state as of April 16, 2026 (18:00 UTC):
+Verified production state as of April 17, 2026 (18:00 UTC):
 
 | Area | Current Truth | Status |
 |------|---------------|--------|
@@ -69,7 +117,7 @@ Verified production state as of April 16, 2026 (18:00 UTC):
 - Weather context exists in schema but is NOT populated; request-time weather (weather_fetcher.py) remains the live path for consumers like smart_lineup_selector.py.
 - Layer 3 scoring (player_scores) does NOT consume weather - pure rolling-window Z-score computation remains appropriate for multi-day windows.
 - The production data spine is no longer the blocker.
-- The next bottleneck is downstream scoring construction, not ingestion stability.
+- The next bottleneck is completing the data contracts and pipelines required by the UI specification.
 
 ---
 
@@ -100,295 +148,181 @@ Layer 2 verdict: PASS
 ## Layer Status
 
 ### Layer 0 — Immutable Decision Contracts
-Status: STABLE
 
-- No contract expansion is currently required.
+Status: **COMPLETE — Phase 0 delivered stat_contract package + 6 UI contracts**
+
+**Deliverables:**
+- `backend/stat_contract/` package (5 modules): schema, registry, builder, loader, __init__
+- `fantasy_stat_contract.json` validated and loaded at import time
+- 6 UI contracts in `backend/contracts.py`:
+  - `CategoryStatusTag` enum (LOCKED_WIN, LOCKED_LOSS, BUBBLE, LEANING_WIN, LEANING_LOSS)
+  - `IPPaceFlag` enum (BEHIND, ON_TRACK, AHEAD)
+  - `ConstraintBudget` Pydantic model
+  - `FreshnessMetadata` Pydantic model
+  - `CategoryStats` Pydantic model (validates 18 canonical categories)
+  - `MatchupScoreboardRow` and `MatchupScoreboardResponse` Pydantic models
+  - `PlayerGameContext` and `CanonicalPlayerRow` Pydantic models
+
+**Gate 0 verification:** 30/30 tests passing. All py_compile checks passing. CategoryStats validator derives from loaded contract (no hardcoded frozensets).
 
 ### Layer 1 — Pure Stateless Intelligence
-Status: AVAILABLE
 
-- Pure logic may be extended as required by Layer 3 scoring work.
+Status: **Partially delivered — IP pace classifier in Phase 1, 4 pure functions remain for Phase 3**
+
+Phase 1 delivered `classify_ip_pace()` in `backend/services/constraint_helpers.py`. Remaining pure functions (delta-to-flip calculator, ratio risk quantifier, category-count delta extractor, TB calculator) will be implemented in Phase 3 after Layer 3 projected data is available.
 
 ### Layer 2 — Data and Adaptation
-Status: CERTIFIED COMPLETE
 
-- Regressions only.
-- Do not run a new Layer 2 roadmap unless production evidence degrades.
+Status: **Certified Complete — Phase 1 data gap closures delivered**
+
+Regressions only. Do not run a new Layer 2 roadmap unless production evidence degrades.
+
+**Phase 1 deliverables (COMPLETE):**
+- V1→V2 consumer migration: `main.py`, `routers/fantasy.py`, `category_tracker.py`, `smart_lineup_selector.py` all use `backend.stat_contract` v2 codes
+- Old v1 artifacts deleted: `backend/utils/fantasy_stat_contract.py`, `backend/utils/fantasy_stat_contract.json`, `tests/test_fantasy_stat_contract.py`
+- 7 pure functions in `backend/services/constraint_helpers.py`: acquisition counter, IP extractor, IP pace classifier, games-remaining, standings parser, opposing-SP lookup, playing-today status
+- 23 tests in `tests/test_constraint_helpers.py` + 3 migration verification tests
+- Full suite: 2029 passed, 3 skipped
 
 ### Layer 3 — Derived Stats and Scoring
-Status: ACTIVE
 
-- This is the only active engineering workstream now.
-- L3A (scoring spine), L3B (context authority), L3D (observability), L3F (decision read surface), and decision pipeline observability are complete.
-- L3E (Market-Implied Probabilities) is preserved as backlog, deferred pending explicit policy gate.
+Status: **ACTIVE — Phase 2 will expand coverage and build ROW pipeline**
 
-**Layer 3B Context Authority Audit (2026-04-16):**
+Historical accomplishments (preserved):
+- **L3A (scoring spine)** — Complete. `GET /api/fantasy/players/{bdl_player_id}/scores` endpoint live with 13 tests.
+- **L3B (context authority)** — Complete. Scoped park factor consolidation with DB-backed reads.
+- **L3D (observability)** — Complete. `/admin/diagnose-scoring/layer3-freshness` endpoint live with 13 tests.
+- **L3F (decision read surface)** — Complete. `GET /api/fantasy/decisions` endpoint live with 13 tests.
+- **Decision pipeline observability** — Complete. `/admin/diagnose-decision/pipeline-freshness` endpoint live with 8 tests.
 
-Authoritative scoring path: `player_rolling_stats → compute_league_zscores() → player_scores`
-
-Key findings:
-- Scoring is PURE Z-score computation over rolling stats - NO park factors, NO weather
-- Park factor fragmentation: 5+ hardcoded copies across codebase (ballpark_factors.py, mlb_analysis.py, daily_lineup_optimizer.py, two_start_detector.py, weather_ingestion.py)
-- scoring_engine.py has DB-backed get_park_factor() helper but it's UNUSED by main scoring
-- Weather infrastructure exists (weather_ingestion.py) but weather_forecasts table is EMPTY; request-time weather (weather_fetcher.py) is the live path
-
-Risk severity: HIGH (fragmentation) > MEDIUM (unused helper confusion) > LOW (weather table empty but request-time path exists)
-
-**Scoped consolidation COMPLETE (2026-04-16):**
-- `ballpark_factors.py:get_park_factor()` now reads from ParkFactor table first, with fallback to PARK_FACTORS constant → neutral 1.0
-- 9 focused tests added (test_ballpark_factors.py)
-- Weather remains deferred for Layer 3 scoring (appropriate for rolling windows; request-time weather via weather_fetcher.py serves immediate-decision needs)
+**Phase 2 focus:**
+- Expand rolling stats from 9 to 18 categories (add R, TB, W, L, HRA, K, QS, NSV)
+- Expand projections from 8 to 18 categories
+- Build ROW (Rest-of-Week) projection pipeline
+- Team-level ROW aggregation
+- Opponent ROW projection
+- Category classification with directionality
+- Delta-to-flip calculator
+- Freshness timestamp propagation
 
 ### L3E. Market-Implied Probability Integration
 
 **Status: DEFERRED — future enhancement backlog (not active)**
 
-> **NOTE:** This work requires an explicit policy gate before becoming active. It proposes using The Odds API for MLB player props, which currently conflicts with CLAUDE.md hard-stop rules ("Do NOT use THE_ODDS_API_KEY for new MLB features"). If this lane is activated in the future, CLAUDE.md must be updated first to reflect the policy change.
-
-**Objective:** Enrich the daily player score with forward-looking Vegas market sentiment.
-The current `player_scores` table is built entirely from backward-looking rolling Z-scores
-(wOBA, ISO, HR rate, etc.). Layer 3E introduces a second signal axis — what the implied
-market currently believes about each player's performance for *today's* slate — and
-synthesises both into an **+EV Player Score** that can weight fantasy lineup decisions.
-
----
-
-#### Data-Source Decision (READ BEFORE CODING)
-
-This is an active architectural decision with budget implications.
-
-| Source | What it offers | Constraint |
-|--------|----------------|------------|
-| **BallDontLie GOAT MLB** (`/mlb/v1/odds`) | Game-level moneylines and totals per sportsbook | **Already wired.** Does NOT expose player prop markets (O/U hits, HRs, TB, etc.) |
-| **The Odds API** (`/v4/sports/baseball_mlb/events/{id}/odds?markets=batter_*`) | Granular player prop lines per book | OddsAPI Basic = 20 k calls/month. This budget is currently reserved for CBB archival closing lines only. Player props require separate endpoint calls per event per market. |
-
-**Decision required before L3E coding begins:**
-
-1. Confirm whether the OddsAPI Basic 20 k call budget has headroom once CBB archival traffic
-   drops to near-zero (it should — CBB season is closed).
-2. Estimate call volume: ~15 MLB games/day × ~30 active props/game × ~1 bookmaker pass = ~450 calls/day × 30 days ≈ 13 500/month. This fits within 20 k with margin.
-3. If budget is confirmed: add `MLB_PROPS_ENABLED=true` env var gate before the ingestion job runs.
-4. Do NOT route game-level MLB moneylines through OddsAPI — those remain on BDL exclusively.
-
-**Provisional decision: proceed with The Odds API for player props only.** Rationale: BDL has no player-prop endpoint, CBB archival call volume is now negligible, and 13 500 estimated calls/month fits the 20 k budget. Gate behind env var `MLB_PROPS_ENABLED` so the job is opt-in.
-
----
-
-#### Engineering Task Breakdown
-
-##### L3E-1. Pydantic Data Contracts (Layer 0 extension)
-
-New contracts required in `backend/data_contracts.py` (create file if missing) or
-the canonical contracts module used by the rest of the pipeline.
-
-```
-PlayerPropRaw         — raw API response record, strict field types, no defaults for
-                        critical fields (must reject if over/under odds missing)
-PlayerPropContract    — validated, de-vigged record ready for DB write
-PlayerPropBatch       — list[PlayerPropContract] + fetch metadata (source, fetched_at)
-```
-
-Rules (matches Layer 0 doctrine):
-- All monetary/odds fields typed as `int` (American odds are always integers).
-- `over_american_odds` and `under_american_odds` must both be present; if either is
-  null the record is rejected at validation, not silently coerced to None.
-- `prop_type` must come from an allowlist enum (`PropType`): hits, home_runs,
-  total_bases, rbis, strikeouts, walks, stolen_bases, runs_scored.
-- `bdl_player_id` linkage must be resolved *before* the contract is written to DB;
-  records with unresolved player IDs are logged and dropped, not stored.
-- Never pass raw dicts to DB write functions — always validate through `PlayerPropContract`
-  first.
-
-##### L3E-2. Schema: `player_prop_odds` Table
-
-New ORM model in `backend/models.py`. Natural key:
-`(bdl_player_id, game_date, prop_type, prop_line, bookmaker)`.
-
-```
-id                 BigInteger PK autoincrement
-bdl_player_id      Integer  NOT NULL  — FK-style reference to BDL player entity
-game_date          Date     NOT NULL  — calendar date of the game (ET)
-prop_type          String   NOT NULL  — enum: hits / home_runs / total_bases / rbis /
-                                        strikeouts / walks / stolen_bases / runs_scored
-prop_line          Float    NOT NULL  — the O/U threshold (e.g. 0.5, 1.5, 2.5)
-over_american_odds Integer  NOT NULL  — e.g. -130
-under_american_odds Integer NOT NULL  — e.g. +110
-over_implied_raw   Float    NOT NULL  — raw implied prob before vig removal
-under_implied_raw  Float    NOT NULL
-vig_pct            Float    NOT NULL  — (over_implied_raw + under_implied_raw) - 1.0
-over_true_prob     Float    NOT NULL  — de-vigged: over_implied_raw / total_implied
-under_true_prob    Float    NOT NULL  — de-vigged: under_implied_raw / total_implied
-bookmaker          String   NOT NULL  — e.g. "draftkings", "fanduel", "pinnacle"
-fetched_at         DateTime NOT NULL  — timestamp of API call (ET, timezone-aware)
-
-UniqueConstraint: (bdl_player_id, game_date, prop_type, prop_line, bookmaker)
-Index: (game_date, prop_type) — for daily slate queries
-Index: (bdl_player_id, game_date) — for player-centric lookups
-```
-
-Alembic migration required; do not use `Base.metadata.create_all()` in production.
-
-##### L3E-3. De-Vigging Math (Pure Layer 1 Function)
-
-Add a pure, zero-I/O function to `backend/core/odds_math.py` (or equivalent pure-logic
-module). No numpy/pandas — standard library arithmetic only, consistent with
-`scoring_engine.py` precedent.
-
-**Algorithm:**
-
-```
-American → decimal probability:
-  If odds > 0:  raw_prob = 100 / (odds + 100)
-  If odds < 0:  raw_prob = abs(odds) / (abs(odds) + 100)
-
-De-vig (Multiplicative method — most neutral):
-  total_implied = over_raw_prob + under_raw_prob   # always > 1.0 due to vig
-  over_true_prob  = over_raw_prob  / total_implied
-  under_true_prob = under_raw_prob / total_implied
-  vig_pct = total_implied - 1.0
-
-Validation guard:
-  Reject if total_implied < 1.0 (market inversion — data error).
-  Reject if total_implied > 1.25 (vig > 25% — implausible; API data error).
-  Reject if either raw_prob <= 0 or >= 1.
-```
-
-Example: Over -130, Under +110
-```
-  over_raw  = 130/230 = 0.5652
-  under_raw = 100/210 = 0.4762
-  total     = 1.0414  (vig = 4.14%)
-  over_true  = 0.5652 / 1.0414 = 0.5427
-  under_true = 0.4762 / 1.0414 = 0.4573
-```
-
-Unit test coverage required:
-- Positive American odds case, negative American odds case, symmetric -110/-110 case.
-- Rejection guards: inversion, extreme vig, zero/boundary odds.
-
-##### L3E-4. Ingestion Job
-
-New daily job in `backend/services/daily_ingestion.py`.
-
-```
-Lock ID:  100_016  (next available per CLAUDE.md advisory lock registry)
-Schedule: 10:00 AM ET (after probable pitchers are confirmed for the day)
-Gate:     env var MLB_PROPS_ENABLED=true (default false — must be explicitly enabled)
-```
-
-Job flow:
-1. Fetch today's MLB game IDs from BDL (`get_mlb_games`).
-2. For each game, call The Odds API player props endpoint for the configured markets.
-3. For each prop record, resolve player name → `bdl_player_id` via `PlayerIdResolver`
-   (existing service). Drop unresolvable records with a WARNING log entry.
-4. Validate each record through `PlayerPropContract`. Reject invalid records; log counts.
-5. De-vig via the Layer 1 pure function.
-6. Upsert into `player_prop_odds` using the natural key.
-7. Write a `data_ingestion_logs` row with `job_name="mlb_player_props"`, row counts, and any
-   rejection summary.
-
-Error handling: if The Odds API returns a non-200 or the response shape is unexpected,
-log the failure and write a FAILED ingestion log row. Do not raise — job must not crash the
-scheduler.
-
-Call-budget telemetry: log the `X-Requests-Remaining` header from The Odds API response on
-every call. Emit a WARNING if remaining calls drop below 2 000.
-
-##### L3E-5. Synthesis: +EV Player Score
-
-**Target end-state (may be a Layer 3F task depending on L3E execution scope).**
-
-The goal is a daily `ev_player_scores` table (or a new column set on `player_scores`) that
-merges two orthogonal signals:
-
-| Signal | Source | Nature |
-|--------|--------|--------|
-| Z-score composite | `player_scores.composite_z` (14d window) | Backward-looking: recent form |
-| Market-implied probability | `player_prop_odds.over_true_prob` (today's slate) | Forward-looking: market consensus |
-
-**Synthesis approach (to be refined in implementation):**
-
-For each hitter on the daily slate, for each relevant prop type:
-
-```
-base_score  = composite_z_14d  (normalised rolling form)
-market_edge = over_true_prob - historical_hit_rate_baseline
-              where baseline = rolling w_avg (hits proxy) or w_home_runs (HR proxy)
-              from PlayerRollingStats (14d window)
-
-ev_score = α × base_score + β × market_edge
-
-Initial calibration: α=0.6, β=0.4 (market-weighted; tunable via env var)
-```
-
-The `market_edge` term is the critical quant insight: if the market implies a 54% chance
-a player gets a hit today, and their 14-day rolling average implies ~48%, this positive
-delta (+6 pp) is a meaningful forward-looking signal. A negative delta suggests the market
-is pricing in something not captured by recent form (injury concern, tough matchup, travel).
-
-This synthesis must remain a **read-only computation** at output time (pure function over
-`player_scores` + `player_prop_odds`). Do not mutate existing `player_scores` rows.
-
----
-
-#### L3E Acceptance Criteria
-
-- [ ] `devig_american_odds()` pure function with unit tests (all guard cases pass)
-- [ ] `PlayerPropContract` Pydantic model with rejection validation
-- [ ] `player_prop_odds` ORM model + Alembic migration applied in production
-- [ ] Ingestion job at lock 100_016, gated by `MLB_PROPS_ENABLED`
-- [ ] `data_ingestion_logs` row written on each run (success and failure)
-- [ ] Call-budget telemetry: remaining-requests logged on every Odds API call
-- [ ] At least 1 day of production data in `player_prop_odds` before synthesis work begins
-
----
+This work remains preserved as a complete specification but requires an explicit policy gate before becoming active. The proposed use of The Odds API for MLB player props currently conflicts with CLAUDE.md hard-stop rules. Do not conflate L3E with Phase 0-2 work.
 
 ### Layer 4 — Decision Engines and Simulation
-Status: HOLD
 
-- Do not resume broader decision-engine work until the first Layer 3 scoring objective is complete and stable.
+Status: **GATED — Phase 3 after Phase 2 gate passes**
+
+Phase 3 will wire existing H2H Monte Carlo, MCMC, and lineup optimizer to projected data from Layer 3. The gate lifts when ROW projections are stable and produce non-degenerate simulation results.
+
+Existing engines (ready but awaiting projected inputs):
+- H2H Monte Carlo simulation (h2h_monte_carlo.py)
+- Lineup optimization (lineup_constraint_solver.py) — batting-only, needs full-roster extension
+- MCMC roster-move simulation (mcmc_simulator.py)
+- Drop candidate selection (_weakest_safe_to_drop)
+
+New engines needed (Phase 3):
+- Ratio risk quantifier
+- Category-count delta extractor
+- IP pace classifier
 
 ### Layer 5 — APIs and Service Presentation
-Status: MAINTENANCE
 
-- Only changes needed to expose validated Layer 3 outputs should be made.
+Status: **GATED — Phase 4 after Phase 3 gate passes**
+
+Phase 4 will build P1 page APIs (scoreboard, budget, roster, optimize) after Phase 3 gate passes. All endpoints will return complete data per Layer 0 contracts and include freshness metadata.
+
+**Existing endpoints:**
+- `GET /api/fantasy/decisions` — live with 13 tests
+- `GET /api/fantasy/players/{id}/scores` — live with 13 tests
+- `GET /api/fantasy/lineup/{date}` — live
+- `GET /api/fantasy/waiver` — live
+- `GET /api/fantasy/waiver/recommendations` — live
+- `GET /api/fantasy/roster` — live
+- `GET /api/fantasy/matchup` — live (raw data, not scoreboard shape)
+- `POST /api/fantasy/matchup/simulate` — live
+- `GET /api/fantasy/briefing/{date}` — live
+- `GET /api/dashboard` — live
+
+**Phase 4 endpoints to build:**
+- `GET /api/fantasy/scoreboard` — MatchupScoreboardResponse contract
+- `GET /api/fantasy/budget` — ConstraintBudget contract
+- Extend `GET /api/fantasy/roster` to return CanonicalPlayerRow
+- `POST /api/fantasy/roster/move` — slot swaps and IL moves
+- `POST /api/fantasy/roster/optimize` — full-roster optimization
 
 ### Layer 6 — Frontend and UX
-Status: MAINTENANCE
 
-- No new UI initiative should begin until Layer 3 outputs are defined.
+Status: **GATED — Phase 5 after Phase 4 gate passes**
+
+Phase 5 will build P1 pages (Matchup Scoreboard + My Roster) after Phase 4 gate passes. Frontend readiness assessment in the UI audit found: 15 components salvageable, 9 CBB pages to archive, 6 canonical pages to build.
+
+---
+
+## Active Workstream: Phase 2 — 18-Category Rolling Stats + ROW Projection Pipeline
+
+**Status: NEXT**
+
+Phase 2 is the highest-risk phase. It expands derived stats from 9 to 18 categories, builds the greenfield ROW projection pipeline, and produces team-level projected finals for each scoring category.
+
+### Prerequisites (verified)
+- Phase 0: stat_contract package loaded, 18 canonical codes, UI contracts ✓
+- Phase 1: v2 consumer migration complete, 7 constraint helpers available, v1 artifacts deleted ✓
+
+### Key Risks
+1. **DB stat codes may use v1 names** — `player_rolling_stats` and `mlb_player_stats` may store HR/HRA/K(B) instead of HR_B/HR_P/K_B. Needs audit before implementation.
+2. **ROW projection for ratio stats** — ERA, WHIP, AVG, OPS require weighted aggregation across roster (total_ER/total_IP×9, not average of player ERAs). Math must be precise.
+3. **9→18 expansion** — Current rolling window engine may only compute batting stats. Pitching category sources need identification.
+
+### Research needed before implementation
+- Rolling stats DB audit (what codes are stored, which categories are computed)
+- ROW projection architecture spec (aggregation formulas per category type)
+- Yahoo API response shape catalog (avoid re-reading 1200-line client code during implementation)
+
+---
+
+## Immediate Priority Queue: 9-Phase Gated Implementation Plan
+
+| Phase | Layer Focus | Key Deliverable | Gate Criteria | Status |
+|-------|------------|----------------|---------------|--------|
+| 0 | L0 | 6 Pydantic contracts + stat_contract package | All compile, all reference 18 categories, no optional fields for required data | **COMPLETE** |
+| 1 | L2 | V1→V2 migration + 7 data gap closures | All consumers on v2, 7 helpers tested, 2029 tests passing | **COMPLETE** |
+| 2 | L3 | 18-category rolling stats + projections + ROW pipeline | ROW projections stable for full matchup week | **NEXT** |
+| 3 | L1 + L4 | Pure functions + engine wiring | H2H Monte Carlo with projected finals produces non-degenerate results | Blocked by Phase 2 |
+| 4 | L5 | P1 page APIs (scoreboard, budget, roster, optimize) | All endpoints return complete data per contract | Blocked by Phase 3 |
+| 5 | L6 | Matchup Scoreboard + My Roster pages | Pages render with live data, mobile-optimized | Blocked by Phase 4 |
+| 6 | L3-L5 | P2 page backends (waiver v2, streaming) | Endpoints return complete data | Blocked by Phase 5 |
+| 7 | L6 | Waiver Wire + Streaming pages | Pages render with live data | Blocked by Phase 6 |
+| 8-9 | L3-L6 | P3 pages (Trade + Season Dashboard) | Complete | Blocked by Phase 7 |
 
 ---
 
 ## Frontend Readiness Brief
 
+> NOTE: Superseded by the 9-phase gated plan. See "Active Workstream" and "Immediate Priority Queue" for the current plan.
+
 Frontend is NOT the active workstream. When frontend execution resumes, use the documents below as the canonical briefing set and preserve backend-first sequencing.
 
 ### Frontend source-of-truth docs
 
-1. `DESIGN.md`
-	- Primary visual authority for the current design direction.
-	- Use the Revolut-inspired system: Aeonik Pro display typography, Inter body, near-black/white binary, pill buttons, zero shadows.
+1. `DESIGN.md` — Primary visual authority for the current design direction
+2. `reports/2026-04-10-revolut-design-implementation-plan.md` — Token and component implementation plan
+3. `docs/superpowers/plans/2026-04-12-next-steps-assessment.md` — Fantasy-first frontend roadmap
+4. `FRONTEND_MIGRATION.md` — Historical frontend implementation record and guardrails
+5. `reports/2026-03-12-api-ground-truth.md` — Contract authority for frontend TypeScript shapes
+6. `docs/superpowers/specs/2026-04-04-fantasy-edge-decoupling-design.md` — Architectural guardrail
 
-2. `reports/2026-04-10-revolut-design-implementation-plan.md`
-	- Token and component implementation plan for Tailwind/CSS.
-	- Use for concrete frontend build execution once UI work is officially active.
+### UI Salvage Assessment (from UI Contract Audit)
 
-3. `docs/superpowers/plans/2026-04-12-next-steps-assessment.md`
-	- Fantasy-first frontend roadmap.
-	- Important product guidance: do NOT spend cycles redesigning dead CBB surfaces before the fantasy product has a usable interface.
+**Keep:** 15 UI components, API client, auth flow, query client, layout mechanism, Tailwind config, utils, login page, alerts page, admin page
 
-4. `FRONTEND_MIGRATION.md`
-	- Historical frontend implementation record and guardrails.
-	- Useful for patterns, auth, client-fetching rules, and type-discipline; NOT the source of current product priority.
+**Refactor:** Badge (new CategoryStatusTag variants), sidebar (canonical page hierarchy), layout header (add constraint display)
 
-5. `reports/2026-03-12-api-ground-truth.md`
-	- Contract authority for frontend TypeScript shapes.
-	- Frontend types should be derived from backend truth, never guessed from browser errors.
+**Archive (CBB):** 9 pages, CBB type definitions
 
-6. `docs/superpowers/specs/2026-04-04-fantasy-edge-decoupling-design.md`
-	- Architectural guardrail for product separation.
-	- Frontend work should reinforce Fantasy as the active product and avoid deepening coupling to frozen CBB concerns.
+**Rebuild from scratch:** Matchup Scoreboard, My Roster, Waiver Wire, Streaming, Trade Analyzer, Season Dashboard, global header, CanonicalPlayerRow component, CategoryStatusTag component, fantasy TypeScript types
 
 ### Frontend activation gates
 
@@ -396,118 +330,42 @@ Frontend is NOT the active workstream. When frontend execution resumes, use the 
 - Frontend may consume validated backend outputs; it must not invent or pressure backend contracts prematurely.
 - The first frontend initiative, when opened, should be fantasy-first and use existing `/api/fantasy/*` endpoints rather than redesigning archived CBB-first views.
 - Any frontend type work must be grounded in backend route/schema truth or the API ground-truth report, not inferred from runtime UI errors.
-- Treat `DESIGN.md` as the style guide and `reports/2026-04-10-revolut-design-implementation-plan.md` as the implementation recipe.
-- If frontend work starts, scope it as a bounded execution lane with its own prompt and do not mix it into backend stabilization tasks.
-
----
-
-## Active Workstream
-
-### L3F. Decision Output Read Surface
-
-**Status: COMPLETE (2026-04-16)**
-
-Implemented `GET /api/fantasy/decisions` endpoint exposing trusted P17/P19 outputs.
-
-**Completed:**
-- Endpoint implementation in `backend/routers/fantasy.py` with verify_api_key auth
-- Pydantic schemas (`DecisionsResponse`, `DecisionWithExplanation`, `DecisionResultOut`, `DecisionExplanationOut`, `FactorDetail`)
-- 13 comprehensive test cases covering filtering, pagination, auth, response contract, and empty result handling
-- Query params: `decision_type` (lineup/waiver, optional), `as_of_date` (optional, defaults to latest), `limit` (1-500, default 50)
-- Returns decisions ordered by confidence desc, value_gain desc
-- Empty list returned for dates with no data (not 404)
-- Explanation data attached when available
-
-**Out of scope (remains deferred):**
-- New decision computation logic (Layer 4 remains HOLD)
-- Frontend UI for decisions
-- OddsAPI-based player props (L3E remains deferred)
-
-### L3E. Market-Implied Probability Integration
-
-**Status: DEFERRED — see Layer Status section for full spec (preserved as backlog)**
-
-This work is preserved as a complete specification for future consideration, but requires an explicit policy gate before becoming active. The proposed use of The Odds API for MLB player props currently conflicts with CLAUDE.md hard-stop rules.
-
-### L3A. Derived Stats And Scoring Spine
-
-**Status: Complete (2026-04-16)**
-
-Implemented `GET /api/fantasy/players/{bdl_player_id}/scores` - the first authoritative Layer 3 scoring exposure.
-
-**Completed:**
-- Endpoint implementation in `backend/routers/fantasy.py` with verify_api_key auth
-- Pydantic schemas (`PlayerScoresResponse`, `PlayerScoreOut`, `PlayerScoreCategoryBreakdown`)
-- 13 comprehensive test cases covering validation, response contract, and auth requirements
-- Supports window_days=7/14/30 (defaults to 14)
-- Supports optional as_of_date query parameter (defaults to latest available)
-- Returns 400 for invalid window_days, 404 for missing scores, 401 for missing auth
-- Exposes hitter categories (z_hr, z_rbi, z_nsb, z_avg, z_obp) and pitcher categories (z_era, z_whip, z_k_per_9)
-
-### L3B. Context Authority Consolidation
-
-**Status: Complete (2026-04-16)**
-
-Scoped park factor consolidation completed:
-- `ballpark_factors.py:get_park_factor()` now resolves: DB → PARK_FACTORS constant → 1.0 neutral
-- 9 focused tests added (test_ballpark_factors.py)
-- Weather remains explicitly deferred for Layer 3 scoring (request-time weather via weather_fetcher.py serves immediate-decision needs)
-
-### L3D. Layer 3 Observability
-
-**Status: Complete (2026-04-16)**
-
-Layer 3 freshness endpoint `/admin/diagnose-scoring/layer3-freshness` is live and fully tested:
-- Returns freshness verdict (healthy/stale/partial/missing)
-- Provides row counts by window (7/14/30)
-- Shows latest audit log entries for rolling_windows and player_scores jobs
-- 13 comprehensive tests in test_admin_scoring_diagnostics.py
-
-**Decision Pipeline Observability (2026-04-16):**
-
-Decision pipeline freshness endpoint `/admin/diagnose-decision/pipeline-freshness` is live and fully tested:
-- Provides observability for P17-P19 stages (DecisionResult and DecisionExplanation tables)
-- Returns freshness verdict (healthy/stale/partial/missing)
-- Shows breakdown_by_type (lineup/waiver), row counts, and latest computed_at timestamps
-- Includes schedule expectations (~7 AM for decision_results, ~9 AM for decision_explanations)
-- 8 comprehensive tests in test_admin_scoring_diagnostics.py
-- Total test count for admin_scoring_diagnostics.py: 34 tests passing
-
-**Out of scope for this phase:**
-
-- simulation expansion
-- waiver-system breadth work
-- optimizer redesign
-- frontend feature expansion
-- broad Layer 4 activation
-- weather_forecasts table population (request-time weather remains sufficient)
-
----
-
-## Immediate Priority Queue
-
-| Priority | Action | Owner | Status |
-|----------|--------|-------|--------|
-| P0 | Define the first Layer 3 scoring objective and success criteria | Claude | Complete |
-| P0 | Audit current derived-stats and scoring code path for gaps | Claude | Complete |
-| P1 | Identify one authoritative scoring output for downstream consumers | Claude | Complete |
-| P1 | Audit context authority in scoring path (3B) | Claude | Complete |
-| P2 | Consolidate ballpark_factors.py to DB-backed read | Claude | Complete |
-| P2 | Add Layer 3 freshness observability endpoint | Claude | Complete |
-| P2 | Add decision pipeline freshness observability endpoint | Claude | Complete |
-| P1 | Expose DecisionResult read API (lineup/waiver outputs) with verify_api_key auth (L3F) | Claude | Complete |
-| P2 | Decide whether any Layer 5 response shape changes are needed after scoring output stabilizes | Claude | Complete (2026-04-16: consumer audit found no changes needed) |
 
 ---
 
 ## Architect Review Queue
 
+### Open Questions from UI Contract Audit (7 remaining — Q10, Q11 resolved by Phase 0 contract)
+
+**Q1:** Yahoo API rate limits for scoreboard/transactions/roster calls. Determines caching strategy.
+
+**Q2-Q3:** Are W, L, SV, HLD, QS available in Yahoo player season stats? Affects rolling stats source.
+
+**Q4:** Does the league use FAAB or priority-based waivers? Affects ConstraintBudget contract.
+
+**Q5:** For opponent ROW projections: per-player or pace-based? Affects P2-5 scope.
+
+**Q7:** What defines the matchup week boundary? Affects acquisition counting and games-remaining windows.
+
+**Q8:** Acceptable scoreboard response time? Determines on-demand vs pre-compute strategy.
+
+**Q9:** How should canonical player row handle trade context (same player as sending/receiving)?
+
+**Resolved:** Q6 (America/New_York confirmed), Q10 (HLD is supporting stat, not scoring — see stat_contract JSON), Q11 (K_B is lower-is-better — confirmed in LOWER_IS_BETTER frozenset).
+
+### Existing Contracts Note
+
+The existing `contracts.py` has `UncertaintyRange`, `LineupOptimizationRequest`, `PlayerValuationReport`, and `ExecutionDecision`. Phase 0 new contracts should live alongside these, not replace them.
+
+### L3E Deferral Confirmation
+
+L3E (Market-Implied Probabilities) remains deferred and unchanged. Do not conflate it with Phase 0-2 work.
+
+### Passive Monitoring
+
 - Keep `/admin/version`, ingestion logs, and `probable_pitchers` on passive regression watch.
 - Treat canonical environment snapshots beyond current weather and park persistence as backlog, not active recovery work.
-- Do not reopen simulation or decision-layer expansion until Layer 3 outputs are demonstrably trustworthy.
-- Do not start frontend implementation until the backend decision pipeline is trusted and the frontend lane is opened explicitly.
-- When frontend work opens, use `DESIGN.md` plus the April 10 and April 12 planning docs as the briefing pack; treat `FRONTEND_MIGRATION.md` as historical implementation context only.
-- If production health regresses, reopen Layer 2 explicitly rather than mixing regression response into Layer 3 work.
+- If production health regresses, reopen Layer 2 explicitly rather than mixing regression response into Phase 0-2 work.
 
 ---
 
@@ -521,16 +379,14 @@ Use Gemini only if a production regression check, Railway deploy, log tail, or r
 
 ### Kimi CLI
 
-No active delegation.
-
-Use Kimi for a bounded Layer 3 analysis memo only after Claude defines the exact scoring objective.
+Phase 2 research delegation available. See HANDOFF PROMPTS below for K1 (rolling stats audit) and K2 (ROW projection spec).
 
 ---
 
 ## HANDOFF PROMPTS
 
-No active handoff prompt is currently open. Create a new prompt only after the first Layer 3 objective is explicitly defined.
+Phase 2 research prompts ready for Kimi CLI delegation (K1 and K2). Implementation prompt at `CLAUDE_PHASE1_IMPLEMENTATION_PROMPT.md` is historical (Phase 1 complete). Phase 2 implementation prompt to be created after K1/K2 research memos are delivered.
 
 ---
 
-Last Updated: April 16, 2026 (21:00 UTC - L3F Decision Output Read Surface complete; GET /api/fantasy/decisions live with 13 tests passing; L3E remains deferred pending policy gate)
+Last Updated: April 18, 2026 (Phase 1 COMPLETE: v1→v2 migration + 7 data gap closures, 2029 tests passing. Phase 2 is NEXT: 18-category rolling stats + ROW projection pipeline.)

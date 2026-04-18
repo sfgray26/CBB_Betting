@@ -63,7 +63,7 @@ from backend.schemas import (
     FactorDetail,
     DecisionPipelineStatus,
 )
-from backend.utils.fantasy_stat_contract import YAHOO_STAT_ID_FALLBACK, LEAGUE_SCORING_CATEGORIES
+from backend.stat_contract import YAHOO_ID_INDEX, SCORING_CATEGORY_CODES
 from backend.utils.time_utils import today_et
 from backend.fantasy_baseball.yahoo_client_resilient import (
     YahooAuthError,
@@ -82,7 +82,7 @@ router = APIRouter()
 _STARTS_CACHE: dict = {}
 
 # Shared fallback for Yahoo numeric stat category IDs.
-_YAHOO_STAT_FALLBACK: dict = dict(YAHOO_STAT_ID_FALLBACK)
+_YAHOO_STAT_FALLBACK: dict = dict(YAHOO_ID_INDEX)
 
 
 # ============================================================================
@@ -2226,8 +2226,8 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         for sid, abbr, pos_type, _ in _stat_entries:
             _abbr_positions.setdefault(abbr, set()).add(pos_type)
 
-        _PITCHER_RENAME = {"HR": "HRA", "K": "K(P)"}
-        _BATTER_RENAME = {"K": "K(B)", "HR": "HR"}
+        _PITCHER_RENAME = {"HR": "HR_P", "K": "K_P"}
+        _BATTER_RENAME = {"K": "K_B", "HR": "HR_B"}
 
         for sid, abbr, pos_type, is_display in _stat_entries:
             final_abbr = abbr
@@ -2242,8 +2242,8 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
     except Exception as _e:
         logger.warning("get_league_settings failed, using fallback stat_id_map: %s", _e)
 
-    if not active_stat_abbrs and LEAGUE_SCORING_CATEGORIES:
-        active_stat_abbrs = set(LEAGUE_SCORING_CATEGORIES)
+    if not active_stat_abbrs and SCORING_CATEGORY_CODES:
+        active_stat_abbrs = set(SCORING_CATEGORY_CODES)
 
     try:
         matchups = client.get_scoreboard()

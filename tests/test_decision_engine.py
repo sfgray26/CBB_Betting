@@ -152,6 +152,16 @@ class TestLineupOptimizerFillsAllSlots:
             assert r.target_slot is not None
             assert 0.0 <= r.confidence <= 1.0
 
+    def test_bench_players_are_included_in_results(self):
+        players = _make_full_roster() + [
+            _make_hitter(15, "BenchOF", positions=["OF"], score=40.0),
+            _make_pitcher(16, "BenchSP", positions=["SP"], score=35.0),
+        ]
+        _, results = optimize_lineup(players, date(2026, 4, 5))
+
+        bench_rows = [r for r in results if r.target_slot == "BN"]
+        assert len(bench_rows) >= 1
+
 
 # ---------------------------------------------------------------------------
 # 2. Momentum bonus applied correctly
@@ -233,6 +243,43 @@ class TestWaiverDecisionPicksBestAdd:
         pool = [_make_hitter(400 + i, positions=["OF"], score=50.0 + i) for i in range(5)]
         _, results = optimize_waivers(roster, pool, date(2026, 4, 5))
         assert len(results) == 5
+
+    def test_waiver_drop_candidate_comes_from_bench(self):
+        roster = _make_full_roster() + [
+            _make_hitter(99, "WeakBenchBat", positions=["OF"], score=20.0, proj_hr=1.0, proj_rbi=8.0),
+        ]
+        strong_add = _make_hitter(305, "StrongAdd3", positions=["OF"], score=88.0, proj_hr=28.0, proj_rbi=90.0)
+
+        _, results = optimize_waivers(roster, [strong_add], date(2026, 4, 5))
+
+        assert len(results) == 1
+        assert results[0].drop_player_id == 99
+
+    def test_missing_projection_fields_do_not_make_star_undroppable(self):
+        roster = [
+            _make_hitter(501, "Juan Soto", positions=["OF"], score=95.0, proj_hr=None, proj_rbi=None, proj_sb=None),
+            _make_hitter(502, "BenchWeak", positions=["OF"], score=20.0, proj_hr=1.0, proj_rbi=5.0, proj_sb=1.0),
+            _make_hitter(503, "BenchWeak2", positions=["OF"], score=22.0, proj_hr=1.0, proj_rbi=6.0, proj_sb=1.0),
+            _make_hitter(504, "BenchWeak3", positions=["OF"], score=24.0, proj_hr=2.0, proj_rbi=8.0, proj_sb=1.0),
+            _make_hitter(505, "BenchWeak4", positions=["OF"], score=26.0, proj_hr=2.0, proj_rbi=9.0, proj_sb=1.0),
+            _make_hitter(506, "BenchWeak5", positions=["OF"], score=28.0, proj_hr=2.0, proj_rbi=10.0, proj_sb=1.0),
+            _make_hitter(507, "Starter1B", positions=["1B"], score=80.0),
+            _make_hitter(508, "Starter2B", positions=["2B"], score=75.0),
+            _make_hitter(509, "Starter3B", positions=["3B"], score=74.0),
+            _make_hitter(510, "StarterSS", positions=["SS"], score=73.0),
+            _make_hitter(511, "StarterC", positions=["C"], score=72.0),
+            _make_pitcher(512, "SP1", positions=["SP"], score=70.0),
+            _make_pitcher(513, "SP2", positions=["SP"], score=69.0),
+            _make_pitcher(514, "RP1", positions=["RP"], score=68.0),
+            _make_pitcher(515, "RP2", positions=["RP"], score=67.0),
+            _make_pitcher(516, "P1", positions=["SP", "RP"], score=66.0),
+        ]
+        candidate = _make_hitter(600, "WaiverAdd", positions=["OF"], score=85.0, proj_hr=25.0, proj_rbi=80.0)
+
+        _, results = optimize_waivers(roster, [candidate], date(2026, 4, 5))
+
+        assert len(results) == 1
+        assert results[0].drop_player_id != 501
 
 
 # ---------------------------------------------------------------------------

@@ -86,12 +86,14 @@ class RollingWindowResult:
     w_doubles: Optional[float] = None
     w_triples: Optional[float] = None
     w_home_runs: Optional[float] = None
+    w_runs: Optional[float] = None          # sum(weight × runs) — for R category
     w_rbi: Optional[float] = None
     w_walks: Optional[float] = None
     w_strikeouts_bat: Optional[float] = None
     w_stolen_bases: Optional[float] = None
     w_caught_stealing: Optional[float] = None       # P27 NSB support
     w_net_stolen_bases: Optional[float] = None      # P27 w_stolen_bases - w_caught_stealing
+    w_tb: Optional[float] = None                    # sum(weight × total_bases) — for TB category
 
     # Batting derived rates (from weighted sums)
     w_avg: Optional[float] = None       # w_hits / w_ab
@@ -105,6 +107,7 @@ class RollingWindowResult:
     w_hits_allowed: Optional[float] = None
     w_walks_allowed: Optional[float] = None
     w_strikeouts_pit: Optional[float] = None
+    w_qs: Optional[float] = None              # sum(weight × quality_starts) — IP≥6, ER≤3
 
     # Pitching derived rates
     w_era: Optional[float] = None       # 9 * w_earned_runs / w_ip
@@ -177,6 +180,7 @@ def compute_rolling_window(
     sum_w_doubles = 0.0
     sum_w_triples = 0.0
     sum_w_hr = 0.0
+    sum_w_runs = 0.0             # runs scored
     sum_w_rbi = 0.0
     sum_w_walks = 0.0
     sum_w_so_bat = 0.0
@@ -193,6 +197,7 @@ def compute_rolling_window(
     sum_w_h_allowed = 0.0
     sum_w_bb_allowed = 0.0
     sum_w_k_pit = 0.0
+    sum_w_qs = 0.0               # quality starts (IP≥6, ER≤3)
     has_pitching = False
 
     games_in_window = len(window_rows)
@@ -210,6 +215,7 @@ def compute_rolling_window(
         doubles = row.doubles
         triples = row.triples
         hr = row.home_runs
+        runs = row.runs               # runs scored
         rbi = row.rbi
         walks = row.walks
         so_bat = row.strikeouts_bat
@@ -227,6 +233,7 @@ def compute_rolling_window(
             _doubles = float(doubles) if doubles is not None else 0.0
             _triples = float(triples) if triples is not None else 0.0
             _hr = float(hr) if hr is not None else 0.0
+            _runs = float(runs) if runs is not None else 0.0
             _rbi = float(rbi) if rbi is not None else 0.0
             _walks = float(walks) if walks is not None else 0.0
             _so_bat = float(so_bat) if so_bat is not None else 0.0
@@ -243,6 +250,7 @@ def compute_rolling_window(
             sum_w_doubles += w * _doubles
             sum_w_triples += w * _triples
             sum_w_hr += w * _hr
+            sum_w_runs += w * _runs
             sum_w_rbi += w * _rbi
             sum_w_walks += w * _walks
             sum_w_so_bat += w * _so_bat
@@ -274,6 +282,10 @@ def compute_rolling_window(
                 sum_w_bb_allowed += w * _bb_allowed
                 sum_w_k_pit += w * _k_pit
 
+                # Quality start: IP ≥ 6.0 AND ER ≤ 3
+                if ip_decimal >= 6.0 and _er <= 3.0:
+                    sum_w_qs += w
+
     result = RollingWindowResult(
         bdl_player_id=window_rows[0][1].bdl_player_id,
         as_of_date=as_of_date,
@@ -289,6 +301,7 @@ def compute_rolling_window(
         result.w_doubles = sum_w_doubles
         result.w_triples = sum_w_triples
         result.w_home_runs = sum_w_hr
+        result.w_runs = sum_w_runs
         result.w_rbi = sum_w_rbi
         result.w_walks = sum_w_walks
         result.w_strikeouts_bat = sum_w_so_bat
@@ -298,6 +311,7 @@ def compute_rolling_window(
         # half of the result so pure pitchers remain None for both.
         result.w_caught_stealing = sum_w_cs
         result.w_net_stolen_bases = sum_w_sb - sum_w_cs
+        result.w_tb = sum_w_tb
 
         # Batting derived rates
         if sum_w_ab > 0:
@@ -319,6 +333,7 @@ def compute_rolling_window(
         result.w_hits_allowed = sum_w_h_allowed
         result.w_walks_allowed = sum_w_bb_allowed
         result.w_strikeouts_pit = sum_w_k_pit
+        result.w_qs = sum_w_qs
 
         # Pitching derived rates
         if sum_w_ip > 0:

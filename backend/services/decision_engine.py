@@ -241,18 +241,23 @@ def _composite_value(player: PlayerDecisionInput) -> float:
     Returns a value in approximately [0, 3].
     """
     pt = (player.player_type or "unknown").lower()
+    score_anchor = (player.score_0_100 / 100.0) * 1.5
+    z_anchor = max(-1.0, min(player.composite_z, 2.0)) + 1.0
+    baseline = max(score_anchor, z_anchor / 2.0)
 
     if pt == "hitter":
         hr  = min((player.proj_hr_p50  or 0.0) / _HR_NORM,  1.0)
         rbi = min((player.proj_rbi_p50 or 0.0) / _RBI_NORM, 1.0)
         sb  = min((player.proj_sb_p50  or 0.0) / 50.0,      1.0)
-        return hr + rbi + sb
+        projection_total = hr + rbi + sb
+        return max(projection_total, baseline)
 
     if pt == "pitcher":
         k    = min((player.proj_k_p50   or 0.0) / _K_NORM, 1.0)
         era  = (player.proj_era_p50  or 4.50) / 9.0   # 9 ERA -> 1.0 penalty
         whip = (player.proj_whip_p50 or 1.30) / 2.0   # 2.0 WHIP -> 1.0 penalty
-        return max(0.0, k - era + (1.0 - whip))
+        projection_total = max(0.0, k - era + (1.0 - whip))
+        return max(projection_total, baseline)
 
     if pt == "two_way":
         hr  = min((player.proj_hr_p50  or 0.0) / _HR_NORM,  1.0)
@@ -263,10 +268,10 @@ def _composite_value(player: PlayerDecisionInput) -> float:
         whip = (player.proj_whip_p50 or 1.30) / 2.0
         hitter_val  = hr + rbi + sb
         pitcher_val = max(0.0, k - era + (1.0 - whip))
-        return (hitter_val + pitcher_val) / 2.0
+        return max((hitter_val + pitcher_val) / 2.0, baseline)
 
     # unknown player type -- fall back to score_0_100 normalized to [0, 3]
-    return (player.score_0_100 / 100.0) * 3.0
+    return baseline
 
 
 # ---------------------------------------------------------------------------
@@ -362,17 +367,22 @@ def optimize_lineup(
         pid = player.bdl_player_id
         if pid not in placed_ids:
             continue
-        if pid in bench:
-            continue   # bench players get no lineup DecisionResult row
         raw_slot = slot_lookup.get(pid)
+        is_bench_player = pid in bench
         # Normalize multi-slot keys ("OF_0" -> "OF")
-        display_slot = raw_slot.split("_")[0] if raw_slot else None
+        display_slot = "BN" if is_bench_player else (raw_slot.split("_")[0] if raw_slot else None)
         ls = _lineup_score(player)
         mb = _momentum_bonus(player.momentum_signal)
-        reasoning = (
-            f"Slot {display_slot}: score={player.score_0_100:.1f}, "
-            f"momentum={player.momentum_signal}({mb:+.0f}), z={player.composite_z:.2f}"
-        )
+        if is_bench_player:
+            reasoning = (
+                f"Bench stash: score={player.score_0_100:.1f}, "
+                f"momentum={player.momentum_signal}({mb:+.0f}), z={player.composite_z:.2f}"
+            )
+        else:
+            reasoning = (
+                f"Slot {display_slot}: score={player.score_0_100:.1f}, "
+                f"momentum={player.momentum_signal}({mb:+.0f}), z={player.composite_z:.2f}"
+            )
         results.append(DecisionResult(
             as_of_date=as_of_date,
             decision_type="lineup",
@@ -415,10 +425,11 @@ def optimize_waivers(
     if not waiver_pool:
         return WaiverDecision(), []
 
-    # Identify weakest bench player as potential drop target
-    # (bench = all players not slotted as starters)
-    roster_sorted = sorted(roster, key=_composite_value)
-    drop_candidate = roster_sorted[0] if roster_sorted else None
+    lineup, _ = optimize_lineup(roster, as_of_date)
+    bench_ids = set(lineup.bench)
+    bench_candidates = [player for player in roster if player.bdl_player_id in bench_ids]
+    drop_pool = bench_candidates if bench_candidates else roster
+    drop_candidate = min(drop_pool, key=_composite_value) if drop_pool else None
 
     if drop_candidate is None:
         return WaiverDecision(), []

@@ -40,18 +40,25 @@ from typing import Optional
 # via _COMPOSITE_EXCLUDED below. z_nsb (Net SB = SB - CS) is the canonical
 # H2H One Win basestealing category and drives the composite.
 HITTER_CATEGORIES: dict[str, tuple[str, bool]] = {
-    "z_hr":  ("w_home_runs",     False),
-    "z_rbi": ("w_rbi",           False),
-    "z_sb":  ("w_stolen_bases",  False),      # legacy -- excluded from composite
-    "z_nsb": ("w_net_stolen_bases", False),   # P27 canonical basestealing Z
-    "z_avg": ("w_avg",           False),
-    "z_obp": ("w_obp",           False),
+    "z_r":    ("w_runs",              False),  # V31: Runs
+    "z_h":    ("w_hits",              False),  # V31: Hits
+    "z_hr":   ("w_home_runs",         False),
+    "z_rbi":  ("w_rbi",               False),
+    "z_sb":   ("w_stolen_bases",      False),   # legacy -- excluded from composite
+    "z_nsb":  ("w_net_stolen_bases",  False),   # P27 canonical basestealing Z
+    "z_k_b":  ("w_strikeouts_bat",    True),    # V31: Batting K (lower is better)
+    "z_tb":   ("w_tb",                False),  # V31: Total Bases
+    "z_avg":  ("w_avg",               False),
+    "z_obp":  ("w_obp",               False),
+    "z_ops":  ("w_ops",               False),  # V31: OPS
 }
 
 PITCHER_CATEGORIES: dict[str, tuple[str, bool]] = {
     "z_era":     ("w_era",         True),   # lower ERA is better -> negate Z
     "z_whip":    ("w_whip",        True),   # lower WHIP is better -> negate Z
     "z_k_per_9": ("w_k_per_9",     False),
+    "z_k_p":     ("w_strikeouts_pit", False),  # V31: Pitching K
+    "z_qs":      ("w_qs",          False),  # V31: Quality Starts
 }
 
 # Combined for iteration convenience
@@ -85,15 +92,24 @@ class PlayerScoreResult:
     games_in_window: int
 
     # Per-category Z-scores (None if category not applicable or < MIN_SAMPLE)
+    # Batting
+    z_r:       Optional[float] = None    # V31: Runs
+    z_h:       Optional[float] = None    # V31: Hits
     z_hr:      Optional[float] = None
     z_rbi:     Optional[float] = None
     z_sb:      Optional[float] = None   # legacy -- excluded from composite_z
     z_nsb:     Optional[float] = None   # P27 Net SB (SB - CS) -- enters composite
+    z_k_b:     Optional[float] = None    # V31: Batting K (lower is better)
+    z_tb:      Optional[float] = None    # V31: Total Bases
     z_avg:     Optional[float] = None
     z_obp:     Optional[float] = None
+    z_ops:     Optional[float] = None    # V31: OPS
+    # Pitching
     z_era:     Optional[float] = None
     z_whip:    Optional[float] = None
     z_k_per_9: Optional[float] = None
+    z_k_p:     Optional[float] = None    # V31: Pitching K
+    z_qs:      Optional[float] = None    # V31: Quality Starts
 
     composite_z: float = 0.0   # mean of all applicable non-None Z-scores
     score_0_100: float = 50.0  # percentile rank 0-100 within player_type
@@ -391,9 +407,11 @@ def compute_league_params(
     """
     # Map z_key -> short key used by simulation_engine
     _Z_TO_SHORT = {
-        "z_hr": "hr", "z_rbi": "rbi", "z_sb": "sb", "z_nsb": "nsb",
-        "z_avg": "avg", "z_obp": "obp",
-        "z_era": "era", "z_whip": "whip", "z_k_per_9": "k",
+        "z_r": "r", "z_h": "h", "z_hr": "hr", "z_rbi": "rbi",
+        "z_sb": "sb", "z_nsb": "nsb", "z_k_b": "k_b", "z_tb": "tb",
+        "z_avg": "avg", "z_obp": "obp", "z_ops": "ops",
+        "z_era": "era", "z_whip": "whip", "z_k_per_9": "k_per_9",
+        "z_k_p": "k_p", "z_qs": "qs",
     }
 
     league_means: dict[str, float] = {}

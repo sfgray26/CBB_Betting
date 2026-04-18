@@ -100,8 +100,11 @@ class OpposingPitcher:
 
 @dataclass
 class CategoryNeed:
-    """Team's need in a specific category."""
-    category: str  # "hr", "r", "rbi", "sb", "avg", etc.
+    """Team's need in a specific category.
+
+    Uses v2 canonical codes from stat_contract (e.g., "HR_B", "R", "RBI").
+    """
+    category: str  # V2 canonical code: "HR_B", "R", "RBI", "NSB", "AVG", "OPS", etc.
     current: float
     projected_opponent: float
     needed: float  # Positive = need more, Negative = ahead
@@ -215,14 +218,18 @@ class SmartBatterRanking:
         return self.smart_score
     
     def _category_contribution(self, category: str) -> float:
-        """How much does this player contribute to a category?"""
+        """How much does this player contribute to a category?
+
+        Uses v2 canonical codes from stat_contract (e.g., "HR_B", "R", "RBI").
+        """
+        # V2 canonical code mapping
         contributions = {
-            "hr": self.proj_hr,
-            "r": self.proj_r,
-            "rbi": self.proj_rbi,
-            "sb": self.proj_sb,
-            "avg": self.proj_avg * 100,  # Scale up
-            "ops": self.proj_ops * 100,
+            "HR_B": self.proj_hr,
+            "R": self.proj_r,
+            "RBI": self.proj_rbi,
+            "NSB": self.proj_sb,  # Best-effort: NSB = SB - CS, using proj_sb as proxy
+            "AVG": self.proj_avg * 100,  # Scale up
+            "OPS": self.proj_ops * 100,
         }
         return contributions.get(category, 0.0)
 

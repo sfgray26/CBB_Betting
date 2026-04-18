@@ -1174,12 +1174,14 @@ class PlayerRollingStats(Base):
     w_doubles       = Column(Float, nullable=True)
     w_triples       = Column(Float, nullable=True)
     w_home_runs     = Column(Float, nullable=True)
+    w_runs          = Column(Float, nullable=True)   # sum(weight × runs) — for R category
     w_rbi           = Column(Float, nullable=True)
     w_walks         = Column(Float, nullable=True)
     w_strikeouts_bat = Column(Float, nullable=True)
     w_stolen_bases  = Column(Float, nullable=True)
     w_caught_stealing  = Column(Float, nullable=True)  # P27 NSB support
     w_net_stolen_bases = Column(Float, nullable=True)  # P27 w_stolen_bases - w_caught_stealing
+    w_tb              = Column(Float, nullable=True)  # sum(weight × total_bases) — for TB category
 
     # Batting derived rates (computed from weighted sums)
     w_avg           = Column(Float, nullable=True)   # w_hits / w_ab
@@ -1193,6 +1195,7 @@ class PlayerRollingStats(Base):
     w_hits_allowed  = Column(Float, nullable=True)
     w_walks_allowed = Column(Float, nullable=True)
     w_strikeouts_pit = Column(Float, nullable=True)
+    w_qs            = Column(Float, nullable=True)   # sum(weight × quality_starts) — IP≥6, ER≤3
 
     # Pitching derived rates
     w_era           = Column(Float, nullable=True)   # 9 * w_earned_runs / w_ip
@@ -1250,15 +1253,24 @@ class PlayerScore(Base):
     games_in_window = Column(Integer, nullable=False)
 
     # Per-category Z-scores (NULL if not applicable or < MIN_SAMPLE)
+    # Batting
+    z_r         = Column(Float, nullable=True)    # V31: Runs
+    z_h         = Column(Float, nullable=True)    # V31: Hits
     z_hr        = Column(Float, nullable=True)
     z_rbi       = Column(Float, nullable=True)
-    z_sb        = Column(Float, nullable=True)   # legacy -- still computed, excluded from composite
-    z_nsb       = Column(Float, nullable=True)   # P27 Net SB (SB - CS) -- drives composite
+    z_sb        = Column(Float, nullable=True)    # legacy -- still computed, excluded from composite
+    z_nsb       = Column(Float, nullable=True)    # P27 Net SB (SB - CS) -- drives composite
+    z_k_b       = Column(Float, nullable=True)    # V31: Batting K (lower is better)
+    z_tb        = Column(Float, nullable=True)    # V31: Total Bases
     z_avg       = Column(Float, nullable=True)
     z_obp       = Column(Float, nullable=True)
+    z_ops       = Column(Float, nullable=True)    # V31: OPS
+    # Pitching
     z_era       = Column(Float, nullable=True)
     z_whip      = Column(Float, nullable=True)
     z_k_per_9   = Column(Float, nullable=True)
+    z_k_p       = Column(Float, nullable=True)    # V31: Pitching K
+    z_qs        = Column(Float, nullable=True)    # V31: Quality Starts
 
     composite_z = Column(Float, nullable=False, default=0.0)
     score_0_100 = Column(Float, nullable=False, default=50.0)
