@@ -39,6 +39,7 @@ def _make_hitter(
     row.window_days = 14
     row.games_in_window = games
     row.player_type = "hitter"
+    row.w_runs = None
     row.w_home_runs = hr
     row.w_rbi = rbi
     row.w_stolen_bases = sb
@@ -46,6 +47,12 @@ def _make_hitter(
     row.w_obp = obp
     row.w_ab = ab
     row.w_hits = hits
+    row.w_tb = None
+    row.w_doubles = None
+    row.w_triples = None
+    row.w_walks = None
+    row.w_net_stolen_bases = None
+    row.w_strikeouts_bat = None
     row.w_games = games
     # Pitcher fields must be None for hitter detection
     row.w_ip = None
@@ -56,6 +63,7 @@ def _make_hitter(
     row.w_earned_runs = None
     row.w_hits_allowed = None
     row.w_walks_allowed = None
+    row.w_qs = None
     return row
 
 
@@ -88,15 +96,23 @@ def _make_pitcher(
     row.w_hits_allowed = hits_allowed
     row.w_walks_allowed = walks_allowed
     row.w_strikeouts_pit = strikeouts
+    row.w_qs = None
     row.w_games = games
     # Hitter fields must be None for pitcher detection
     row.w_ab = None
+    row.w_runs = None
     row.w_home_runs = None
     row.w_rbi = None
     row.w_stolen_bases = None
     row.w_avg = None
     row.w_obp = None
     row.w_hits = None
+    row.w_tb = None
+    row.w_doubles = None
+    row.w_triples = None
+    row.w_walks = None
+    row.w_net_stolen_bases = None
+    row.w_strikeouts_bat = None
     return row
 
 

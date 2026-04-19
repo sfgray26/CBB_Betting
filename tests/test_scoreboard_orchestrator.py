@@ -326,3 +326,51 @@ class TestAssembleMatchupScoreboard:
         # Note: lower_is_better categories will have opposite margin
         total = result.categories_won + result.categories_lost + result.categories_tied
         assert total == 18
+
+
+class TestBudgetStateFunction:
+    """Unit tests for compute_budget_state() function."""
+
+    def test_acquisitions_remaining_calculation(self):
+        """acquisitions_remaining = limit - used."""
+        budget = compute_budget_state(
+            acquisitions_used=5,
+            acquisition_limit=8,
+        )
+        assert budget.acquisitions_remaining == 3
+
+    def test_acquisition_warning_at_6(self):
+        """acquisition_warning is True when 6 or more acquisitions used."""
+        budget = compute_budget_state(
+            acquisitions_used=6,
+            acquisition_limit=8,
+        )
+        assert budget.acquisition_warning is True
+
+    def test_no_acquisition_warning_below_6(self):
+        """acquisition_warning is False when fewer than 6 acquisitions used."""
+        budget = compute_budget_state(
+            acquisitions_used=5,
+            acquisition_limit=8,
+        )
+        assert budget.acquisition_warning is False
+
+    def test_ip_pace_flag_is_valid(self):
+        """ip_pace returns a valid IPPaceFlag enum."""
+        budget = compute_budget_state(
+            acquisitions_used=0,
+            ip_accumulated=45.0,
+            ip_minimum=90.0,
+            season_days_elapsed=30,
+        )
+        # Should be one of the valid flags
+        assert budget.ip_pace.value in ("behind", "on_track", "ahead", "complete", "unknown")
+
+    def test_budget_as_of_is_recent(self):
+        """as_of timestamp is set to current time."""
+        from datetime import datetime
+        budget = compute_budget_state(acquisitions_used=0)
+        now = datetime.now(tz=budget.as_of.tzinfo)
+        # Should be within 1 second
+        assert (now - budget.as_of).total_seconds() < 1.0
+

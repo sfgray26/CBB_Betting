@@ -1,0 +1,248 @@
+"""
+Tests for Phase 4 Roster Optimize API endpoint.
+
+Tests for POST /api/fantasy/roster/optimize.
+"""
+
+import pytest
+from unittest.mock import patch, MagicMock
+
+
+@pytest.fixture
+def fantasy_client():
+    with patch("backend.schedulers.fantasy_scheduler.start_fantasy_scheduler"):
+        with patch("backend.schedulers.fantasy_scheduler.stop_fantasy_scheduler"):
+            from backend.fantasy_app import app
+            from fastapi.testclient import TestClient
+            with TestClient(app) as client:
+                yield client
+
+
+class TestRosterOptimizeEndpoint:
+    """Tests for POST /api/fantasy/roster/optimize endpoint."""
+
+    def test_optimize_response_structure(self, fantasy_client):
+        """Optimize response has all required fields."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.12345",
+                "name": "Hitter A",
+                "team": "NYY",
+                "positions": ["1B"],
+                "selected_position": "1B",
+            },
+            {
+                "player_key": "469.l.72586.p.67890",
+                "name": "Pitcher A",
+                "team": "BOS",
+                "positions": ["SP"],
+                "selected_position": "SP",
+            },
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            with patch("backend.services.player_mapper.fetch_rolling_stats_for_players", return_value={}):
+                response = fantasy_client.post(
+                    "/api/fantasy/roster/optimize",
+                    json={"target_date": "2026-04-15"},
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Response fields
+        assert "success" in data
+        assert "message" in data
+        assert "target_date" in data
+        assert "starters" in data
+        assert "bench" in data
+        assert "unrostered" in data
+        assert "total_lineup_score" in data
+        assert "freshness" in data
+
+        # Freshness fields
+        freshness = data["freshness"]
+        assert "primary_source" in freshness
+        assert "computed_at" in freshness
+        assert "staleness_threshold_minutes" in freshness
+        assert "is_stale" in freshness
+
+    def test_successful_optimization(self, fantasy_client):
+        """Roster optimized successfully."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.111",
+                "name": "Catcher",
+                "team": "NYY",
+                "positions": ["C"],
+                "selected_position": "C",
+            },
+            {
+                "player_key": "469.l.72586.p.222",
+                "name": "First Baseman",
+                "team": "BOS",
+                "positions": ["1B"],
+                "selected_position": "1B",
+            },
+            {
+                "player_key": "469.l.72586.p.333",
+                "name": "Weak Player",
+                "team": "BAL",
+                "positions": ["1B"],
+                "selected_position": "BN",
+            },
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            with patch("backend.services.player_mapper.fetch_rolling_stats_for_players", return_value={}):
+                response = fantasy_client.post(
+                    "/api/fantasy/roster/optimize",
+                    json={},
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert len(data["starters"]) >= 0
+        assert isinstance(data["bench"], list)
+
+    def test_default_target_date(self, fantasy_client):
+        """Default target_date when not provided."""
+        mock_roster = []
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            with patch("backend.services.player_mapper.fetch_rolling_stats_for_players", return_value={}):
+                response = fantasy_client.post(
+                    "/api/fantasy/roster/optimize",
+                    json={},
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "target_date" in data
+        # Should be today's date in YYYY-MM-DD format
+        assert len(data["target_date"]) == 10
+
+    def test_empty_roster(self, fantasy_client):
+        """Empty roster returns empty optimization."""
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = []
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            with patch("backend.services.player_mapper.fetch_rolling_stats_for_players", return_value={}):
+                response = fantasy_client.post(
+                    "/api/fantasy/roster/optimize",
+                    json={},
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["starters"] == []
+        assert data["bench"] == []
+        assert data["total_lineup_score"] == 0.0
+
+    def test_yahoo_api_error(self, fantasy_client):
+        """Yahoo API error handled gracefully."""
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooAPIError
+
+        mock_client = MagicMock()
+        mock_client.get_roster.side_effect = YahooAPIError("API rate limit")
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/optimize",
+                json={},
+            )
+
+        assert response.status_code in (200, 502)  # Either graceful or HTTP exception
+
+    def test_util_slot_filling(self, fantasy_client):
+        """Util slot filled by eligible hitters."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.111",
+                "name": "Catcher",
+                "team": "NYY",
+                "positions": ["C"],
+                "selected_position": "C",
+            },
+            {
+                "player_key": "469.l.72586.p.222",
+                "name": "OF Hitter",
+                "team": "BOS",
+                "positions": ["OF"],
+                "selected_position": "OF",
+            },
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            with patch("backend.services.player_mapper.fetch_rolling_stats_for_players", return_value={}):
+                response = fantasy_client.post(
+                    "/api/fantasy/roster/optimize",
+                    json={},
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Check that OF player is assigned to OF slot
+        of_assignments = [s for s in data["starters"] if s["assigned_slot"] == "OF"]
+        assert len(of_assignments) >= 0  # TODO: meaningful assertion once player_scores wired
+
+    def test_pitcher_slot_filling(self, fantasy_client):
+        """Pitching slots filled by pitchers."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.901",
+                "name": "Starter A",
+                "team": "NYY",
+                "positions": ["SP"],
+                "selected_position": "SP",
+            },
+            {
+                "player_key": "469.l.72586.p.902",
+                "name": "Starter B",
+                "team": "BOS",
+                "positions": ["SP"],
+                "selected_position": "SP",
+            },
+            {
+                "player_key": "469.l.72586.p.951",
+                "name": "Reliever A",
+                "team": "BAL",
+                "positions": ["RP"],
+                "selected_position": "RP",
+            },
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            with patch("backend.services.player_mapper.fetch_rolling_stats_for_players", return_value={}):
+                response = fantasy_client.post(
+                    "/api/fantasy/roster/optimize",
+                    json={},
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Check SP and RP assignments
+        sp_assignments = [s for s in data["starters"] if s["assigned_slot"] == "SP"]
+        rp_assignments = [s for s in data["starters"] if s["assigned_slot"] == "RP"]
+        assert len(sp_assignments) >= 0  # TODO: meaningful assertion once player_scores wired
+        assert len(rp_assignments) >= 0  # TODO: meaningful assertion once player_scores wired

@@ -40,7 +40,7 @@ WINDOW = 7
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _stat_row(pid, gd, ab=4, hits=1, sb=0, cs=None, **kw):
+def _stat_row(pid, gd, ab=4, hits=1, sb=0, cs=None, runs=1, **kw):
     """ORM stub for MLBPlayerStats with optional caught_stealing override."""
     return SimpleNamespace(
         bdl_player_id=pid,
@@ -50,6 +50,7 @@ def _stat_row(pid, gd, ab=4, hits=1, sb=0, cs=None, **kw):
         doubles=0,
         triples=0,
         home_runs=0,
+        runs=runs,
         rbi=0,
         walks=0,
         strikeouts_bat=0,
@@ -134,7 +135,7 @@ def test_rolling_engine_missing_cs_attribute_treated_as_zero():
     row = SimpleNamespace(
         bdl_player_id=7,
         game_date=AS_OF,
-        ab=4, hits=2, doubles=0, triples=0, home_runs=0, rbi=0, walks=0,
+        ab=4, hits=2, doubles=0, triples=0, home_runs=0, runs=1, rbi=0, walks=0,
         strikeouts_bat=0, stolen_bases=2,
         # NO caught_stealing attribute at all
         innings_pitched=None, hits_allowed=None, runs_allowed=None,
@@ -152,7 +153,7 @@ def test_rolling_engine_pure_pitcher_has_null_nsb_fields():
         bdl_player_id=99,
         game_date=AS_OF,
         ab=None, hits=None, doubles=None, triples=None, home_runs=None,
-        rbi=None, walks=None, strikeouts_bat=None, stolen_bases=None,
+        runs=None, rbi=None, walks=None, strikeouts_bat=None, stolen_bases=None,
         caught_stealing=None,
         innings_pitched="5.0", hits_allowed=4, runs_allowed=2,
         earned_runs=2, walks_allowed=1, strikeouts_pit=6,

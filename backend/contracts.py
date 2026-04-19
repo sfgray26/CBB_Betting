@@ -311,6 +311,15 @@ class MatchupScoreboardResponse(BaseModel):
         frozen = True
 
 
+class BudgetResponse(BaseModel):
+    """Budget constraint state. Returned by GET /api/fantasy/budget."""
+    budget: ConstraintBudget
+    freshness: FreshnessMetadata
+
+    class Config:
+        frozen = True
+
+
 # P0-6: CanonicalPlayerRow + PlayerGameContext
 class PlayerGameContext(BaseModel):
     """Today's game context for a player."""
@@ -379,6 +388,75 @@ class CategoryMathSummary(BaseModel):
     categories_won: int                     # Count of categories with margin > 0
     categories_lost: int                    # Count of categories with margin < 0
     categories_tied: int                    # Count of categories with margin == 0
+
+    class Config:
+        frozen = True
+
+
+# P0-8: RosterResponse (CanonicalPlayerRow version)
+class CanonicalRosterResponse(BaseModel):
+    """Full roster response with CanonicalPlayerRow format. Returned by GET /api/fantasy/roster."""
+    team_key: str
+    players: List[CanonicalPlayerRow]
+    count: int
+    freshness: FreshnessMetadata
+
+    class Config:
+        frozen = True
+
+
+# P0-9: RosterMoveRequest + RosterMoveResponse
+class RosterMoveRequest(BaseModel):
+    """Request to move a player to a new roster slot."""
+    player_key: str
+    target_position: str  # 'C','1B','2B','3B','SS','LF','CF','RF','OF','Util','SP','RP','P','BN','IL','IL60'
+
+
+class RosterMoveResponse(BaseModel):
+    """Response from roster move operation."""
+    success: bool
+    player_key: str
+    from_position: Optional[str] = None
+    to_position: str
+    message: str
+    warnings: List[str] = Field(default_factory=list)
+    freshness: FreshnessMetadata
+
+    class Config:
+        frozen = True
+
+
+# P0-10: RosterOptimizeRequest + RosterOptimizeResponse
+class PlayerSlotAssignment(BaseModel):
+    """Slot assignment for a single player."""
+    player_key: str
+    player_name: str
+    assigned_slot: str  # 'C','1B','2B','3B','SS','OF','Util','SP','RP','P','BN'
+    lineup_score: float
+    reasoning: str
+
+    class Config:
+        frozen = True
+
+
+class RosterOptimizeRequest(BaseModel):
+    """Request to optimize roster lineup."""
+    target_date: Optional[str] = None  # YYYY-MM-DD, defaults to today
+
+    class Config:
+        frozen = True
+
+
+class RosterOptimizeResponse(BaseModel):
+    """Response from roster optimization."""
+    success: bool
+    message: str
+    target_date: str
+    starters: List[PlayerSlotAssignment]
+    bench: List[PlayerSlotAssignment]
+    unrostered: List[str]  # player_keys that couldn't fit
+    total_lineup_score: float
+    freshness: FreshnessMetadata
 
     class Config:
         frozen = True

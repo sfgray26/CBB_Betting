@@ -119,16 +119,19 @@ def test_empty_roster_returns_50_pct():
 # ---------------------------------------------------------------------------
 
 def test_two_start_pitcher_contributes_more():
-    one_start = [_pitcher("Ace", k_pit=1.0, starts=1)]
-    two_start = [_pitcher("Ace", k_pit=1.0, starts=2)]
-    opp = []
+    # Two identical pitchers, one makes 2 starts vs 1 start
+    one_start = [_pitcher("Ace", k_pit=0.8, starts=1)]
+    two_start = [_pitcher("Ace", k_pit=0.8, starts=2)]
+    # Average opponent pitcher (k_pit=0.0 is z-score average)
+    opp = [_pitcher("Opponent", k_pit=0.0, starts=1)]
 
     r1 = simulate_weekly_matchup(one_start, opp, n_sims=1000, seed=7)
     r2 = simulate_weekly_matchup(two_start, opp, n_sims=1000, seed=7)
 
     # Two-start pitcher should win K category more often
-    k1 = r1["category_win_probs"].get("k_pit", 0.5)
-    k2 = r2["category_win_probs"].get("k_pit", 0.5)
+    # Note: category_win_probs keys are normalized to lowercase v2 codes (k_p, not k_pit)
+    k1 = r1["category_win_probs"].get("k_p", 0.5)
+    k2 = r2["category_win_probs"].get("k_p", 0.5)
     assert k2 > k1, f"Two-start K win prob ({k2:.2f}) should exceed one-start ({k1:.2f})"
 
 

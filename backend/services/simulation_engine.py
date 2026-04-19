@@ -44,6 +44,19 @@ class SimulationResult:
     player_type: str            # "hitter" | "pitcher" | "two_way" | "unknown"
 
     # Hitter stat percentiles (None for pure pitchers / unknown)
+    # Counting stats
+    proj_r_p10: Optional[float] = None
+    proj_r_p25: Optional[float] = None
+    proj_r_p50: Optional[float] = None
+    proj_r_p75: Optional[float] = None
+    proj_r_p90: Optional[float] = None
+
+    proj_h_p10: Optional[float] = None
+    proj_h_p25: Optional[float] = None
+    proj_h_p50: Optional[float] = None
+    proj_h_p75: Optional[float] = None
+    proj_h_p90: Optional[float] = None
+
     proj_hr_p10: Optional[float] = None
     proj_hr_p25: Optional[float] = None
     proj_hr_p50: Optional[float] = None
@@ -56,17 +69,45 @@ class SimulationResult:
     proj_rbi_p75: Optional[float] = None
     proj_rbi_p90: Optional[float] = None
 
+    proj_tb_p10: Optional[float] = None
+    proj_tb_p25: Optional[float] = None
+    proj_tb_p50: Optional[float] = None
+    proj_tb_p75: Optional[float] = None
+    proj_tb_p90: Optional[float] = None
+
+    # Net stolen bases (SB - CS)
+    proj_nsb_p10: Optional[float] = None
+    proj_nsb_p25: Optional[float] = None
+    proj_nsb_p50: Optional[float] = None
+    proj_nsb_p75: Optional[float] = None
+    proj_nsb_p90: Optional[float] = None
+
+    # Legacy SB (retained for backward compatibility)
     proj_sb_p10: Optional[float] = None
     proj_sb_p25: Optional[float] = None
     proj_sb_p50: Optional[float] = None
     proj_sb_p75: Optional[float] = None
     proj_sb_p90: Optional[float] = None
 
+    # Batting strikeouts (lower is better)
+    proj_k_b_p10: Optional[float] = None
+    proj_k_b_p25: Optional[float] = None
+    proj_k_b_p50: Optional[float] = None
+    proj_k_b_p75: Optional[float] = None
+    proj_k_b_p90: Optional[float] = None
+
+    # Rate stats
     proj_avg_p10: Optional[float] = None
     proj_avg_p25: Optional[float] = None
     proj_avg_p50: Optional[float] = None
     proj_avg_p75: Optional[float] = None
     proj_avg_p90: Optional[float] = None
+
+    proj_ops_p10: Optional[float] = None
+    proj_ops_p25: Optional[float] = None
+    proj_ops_p50: Optional[float] = None
+    proj_ops_p75: Optional[float] = None
+    proj_ops_p90: Optional[float] = None
 
     # Pitcher stat percentiles (None for pure hitters / unknown)
     proj_k_p10: Optional[float] = None
@@ -75,6 +116,13 @@ class SimulationResult:
     proj_k_p75: Optional[float] = None
     proj_k_p90: Optional[float] = None
 
+    proj_qs_p10: Optional[float] = None
+    proj_qs_p25: Optional[float] = None
+    proj_qs_p50: Optional[float] = None
+    proj_qs_p75: Optional[float] = None
+    proj_qs_p90: Optional[float] = None
+
+    # Rate stats (lower is better)
     proj_era_p10: Optional[float] = None
     proj_era_p25: Optional[float] = None
     proj_era_p50: Optional[float] = None
@@ -86,6 +134,12 @@ class SimulationResult:
     proj_whip_p50: Optional[float] = None
     proj_whip_p75: Optional[float] = None
     proj_whip_p90: Optional[float] = None
+
+    proj_k_per_9_p10: Optional[float] = None
+    proj_k_per_9_p25: Optional[float] = None
+    proj_k_per_9_p50: Optional[float] = None
+    proj_k_per_9_p75: Optional[float] = None
+    proj_k_per_9_p90: Optional[float] = None
 
     # Risk metrics (populated when composite z-scores are computable)
     composite_variance: Optional[float] = None
@@ -212,8 +266,9 @@ def simulate_player(
         If provided, the RNG is seeded for reproducibility. Use seed=42 in tests.
 
     league_means : dict or None
-        {"hr": float, "rbi": float, "sb": float, "avg": float,
-         "k": float, "era": float, "whip": float}
+        Batting: {"r": float, "h": float, "hr": float, "rbi": float, "tb": float,
+                  "nsb": float, "k_b": float, "avg": float, "ops": float}
+        Pitching: {"k": float, "qs": float, "k_per_9": float, "era": float, "whip": float}
         Required to compute composite risk metrics. If None, risk fields are None.
 
     league_stds : dict or None
@@ -222,6 +277,7 @@ def simulate_player(
     Returns
     -------
     SimulationResult dataclass with all applicable percentile fields populated.
+    Covers 15 of 18 v2 categories (W, L, HR_P deferred - not available in rolling stats).
     """
     rng = random.Random(seed)
     # M3 fix: use decay-weighted game count for consistent rate derivation.
@@ -259,88 +315,137 @@ def simulate_player(
     sim_composites = []  # populated later if league parameters available
 
     if has_batting:
-        hr_rate  = (rolling_row.w_home_runs     or 0.0) / g
-        rbi_rate = (rolling_row.w_rbi           or 0.0) / g
-        sb_rate  = (rolling_row.w_stolen_bases  or 0.0) / g
-        ab_rate  = (rolling_row.w_ab            or 0.0) / g
-        hit_rate = (rolling_row.w_hits          or 0.0) / g
+        # Counting stat rates
+        r_rate   = (rolling_row.w_runs           or 0.0) / g
+        h_rate   = (rolling_row.w_hits           or 0.0) / g
+        hr_rate  = (rolling_row.w_home_runs      or 0.0) / g
+        rbi_rate = (rolling_row.w_rbi            or 0.0) / g
+        tb_rate  = (rolling_row.w_tb             or 0.0) / g
+        nsb_rate = (rolling_row.w_net_stolen_bases or 0.0) / g  # SB - CS
+        sb_rate  = (rolling_row.w_stolen_bases   or 0.0) / g   # legacy
+        k_b_rate = (rolling_row.w_strikeouts_bat or 0.0) / g   # K (lower better)
 
+        # Rate stat inputs
+        ab_rate   = (rolling_row.w_ab    or 0.0) / g
+        hit_rate  = (rolling_row.w_hits  or 0.0) / g
+        double_rate = (rolling_row.w_doubles or 0.0) / g
+        triple_rate = (rolling_row.w_triples or 0.0) / g
+        walk_rate   = (rolling_row.w_walks   or 0.0) / g
+
+        # Sim lists for counting stats
+        sim_r   = []
+        sim_h   = []
         sim_hr  = []
         sim_rbi = []
-        sim_sb  = []
+        sim_tb  = []
+        sim_nsb = []
+        sim_sb  = []   # legacy
+        sim_k_b = []
+
+        # Sim lists for rate stats
         sim_avg = []
+        sim_ops = []
 
         for _ in range(n_simulations):
-            total_hr  = _draw_games(rng, hr_rate,  remaining_games)
-            total_rbi = _draw_games(rng, rbi_rate, remaining_games)
-            total_sb  = _draw_games(rng, sb_rate,  remaining_games)
-            total_ab  = _draw_games(rng, ab_rate,  remaining_games)
-            total_hit = _draw_games(rng, hit_rate, remaining_games)
+            total_r    = _draw_games(rng, r_rate,    remaining_games)
+            total_h    = _draw_games(rng, h_rate,    remaining_games)
+            total_hr   = _draw_games(rng, hr_rate,   remaining_games)
+            total_rbi  = _draw_games(rng, rbi_rate,  remaining_games)
+            total_tb   = _draw_games(rng, tb_rate,   remaining_games)
+            total_nsb  = _draw_games(rng, nsb_rate,  remaining_games)
+            total_sb   = _draw_games(rng, sb_rate,   remaining_games)
+            total_k_b  = _draw_games(rng, k_b_rate,  remaining_games)
+            total_ab   = _draw_games(rng, ab_rate,   remaining_games)
+            total_hit  = _draw_games(rng, hit_rate,  remaining_games)
+            total_2b   = _draw_games(rng, double_rate, remaining_games)
+            total_3b   = _draw_games(rng, triple_rate, remaining_games)
+            total_walk = _draw_games(rng, walk_rate,   remaining_games)
 
             avg = total_hit / total_ab if total_ab > 0 else 0.0
 
+            # OPS = (H + BB) / (AB + BB) + (TB) / (AB)
+            # Using simulated totals for rate calculation
+            obp_num = total_hit + total_walk
+            obp_den = total_ab + total_walk
+            obp = obp_num / obp_den if obp_den > 0 else 0.0
+            slg = total_tb / total_ab if total_ab > 0 else 0.0
+            ops = obp + slg
+
+            sim_r.append(total_r)
+            sim_h.append(total_h)
             sim_hr.append(total_hr)
             sim_rbi.append(total_rbi)
+            sim_tb.append(total_tb)
+            sim_nsb.append(total_nsb)
             sim_sb.append(total_sb)
+            sim_k_b.append(total_k_b)
             sim_avg.append(avg)
+            sim_ops.append(ops)
 
-        (
-            result.proj_hr_p10,
-            result.proj_hr_p25,
-            result.proj_hr_p50,
-            result.proj_hr_p75,
-            result.proj_hr_p90,
-        ) = _percentiles(sim_hr)
+        # Populate percentile fields for counting stats
+        (result.proj_r_p10, result.proj_r_p25, result.proj_r_p50,
+         result.proj_r_p75, result.proj_r_p90) = _percentiles(sim_r)
 
-        (
-            result.proj_rbi_p10,
-            result.proj_rbi_p25,
-            result.proj_rbi_p50,
-            result.proj_rbi_p75,
-            result.proj_rbi_p90,
-        ) = _percentiles(sim_rbi)
+        (result.proj_h_p10, result.proj_h_p25, result.proj_h_p50,
+         result.proj_h_p75, result.proj_h_p90) = _percentiles(sim_h)
 
-        (
-            result.proj_sb_p10,
-            result.proj_sb_p25,
-            result.proj_sb_p50,
-            result.proj_sb_p75,
-            result.proj_sb_p90,
-        ) = _percentiles(sim_sb)
+        (result.proj_hr_p10, result.proj_hr_p25, result.proj_hr_p50,
+         result.proj_hr_p75, result.proj_hr_p90) = _percentiles(sim_hr)
 
-        (
-            result.proj_avg_p10,
-            result.proj_avg_p25,
-            result.proj_avg_p50,
-            result.proj_avg_p75,
-            result.proj_avg_p90,
-        ) = _percentiles(sim_avg)
+        (result.proj_rbi_p10, result.proj_rbi_p25, result.proj_rbi_p50,
+         result.proj_rbi_p75, result.proj_rbi_p90) = _percentiles(sim_rbi)
+
+        (result.proj_tb_p10, result.proj_tb_p25, result.proj_tb_p50,
+         result.proj_tb_p75, result.proj_tb_p90) = _percentiles(sim_tb)
+
+        (result.proj_nsb_p10, result.proj_nsb_p25, result.proj_nsb_p50,
+         result.proj_nsb_p75, result.proj_nsb_p90) = _percentiles(sim_nsb)
+
+        (result.proj_sb_p10, result.proj_sb_p25, result.proj_sb_p50,
+         result.proj_sb_p75, result.proj_sb_p90) = _percentiles(sim_sb)
+
+        (result.proj_k_b_p10, result.proj_k_b_p25, result.proj_k_b_p50,
+         result.proj_k_b_p75, result.proj_k_b_p90) = _percentiles(sim_k_b)
+
+        # Populate percentile fields for rate stats
+        (result.proj_avg_p10, result.proj_avg_p25, result.proj_avg_p50,
+         result.proj_avg_p75, result.proj_avg_p90) = _percentiles(sim_avg)
+
+        (result.proj_ops_p10, result.proj_ops_p25, result.proj_ops_p50,
+         result.proj_ops_p75, result.proj_ops_p90) = _percentiles(sim_ops)
 
         # Build per-run composite z-scores for batting if league params available
         if (
             league_means is not None
             and league_stds is not None
-            and league_stds.get("hr", 0) > 0
         ):
-            hr_mean  = league_means.get("hr",  0.0)
-            hr_std   = league_stds.get("hr",   1.0)
-            rbi_mean = league_means.get("rbi", 0.0)
-            rbi_std  = league_stds.get("rbi",  1.0)
-            sb_mean  = league_means.get("sb",  0.0)
-            sb_std   = league_stds.get("sb",   1.0)
-            avg_mean = league_means.get("avg", 0.0)
-            avg_std  = league_stds.get("avg",  1.0)
-
+            # Use all applicable batting categories for composite
             for i in range(n_simulations):
                 zs = []
-                if hr_std > 0:
-                    zs.append((sim_hr[i]  - hr_mean)  / hr_std)
-                if rbi_std > 0:
-                    zs.append((sim_rbi[i] - rbi_mean) / rbi_std)
-                if sb_std > 0:
-                    zs.append((sim_sb[i]  - sb_mean)  / sb_std)
-                if avg_std > 0:
-                    zs.append((sim_avg[i] - avg_mean) / avg_std)
+                # Counting stats (higher is better)
+                for stat_name, sim_list, mean_key in [
+                    ("r", sim_r, "r"), ("h", sim_h, "h"), ("hr", sim_hr, "hr"),
+                    ("rbi", sim_rbi, "rbi"), ("tb", sim_tb, "tb"),
+                    ("nsb", sim_nsb, "nsb"),
+                ]:
+                    std = league_stds.get(mean_key, 0)
+                    if std > 0:
+                        mean = league_means.get(mean_key, 0.0)
+                        zs.append((sim_list[i] - mean) / std)
+                # K_B is lower-is-better, invert z-score
+                if league_stds.get("k_b", 0) > 0:
+                    mean = league_means.get("k_b", 0.0)
+                    std = league_stds.get("k_b", 1.0)
+                    # Lower K is better, so negate the z-score
+                    zs.append((mean - sim_k_b[i]) / std)
+                # Rate stats (higher is better)
+                for stat_name, sim_list, mean_key in [
+                    ("avg", sim_avg, "avg"), ("ops", sim_ops, "ops"),
+                ]:
+                    std = league_stds.get(mean_key, 0)
+                    if std > 0:
+                        mean = league_means.get(mean_key, 0.0)
+                        zs.append((sim_list[i] - mean) / std)
                 comp = sum(zs) / len(zs) if zs else 0.0
                 sim_composites.append(comp)
 
@@ -348,12 +453,15 @@ def simulate_player(
     # Pitching simulation
     # ------------------------------------------------------------------
     sim_k_list    = []
+    sim_qs_list   = []
     sim_era_list  = []
     sim_whip_list = []
+    sim_k_per_9_list = []
 
     if has_pitching:
         ip_rate  = (rolling_row.w_ip              or 0.0) / g
         k_rate   = (rolling_row.w_strikeouts_pit  or 0.0) / g
+        qs_rate  = (rolling_row.w_qs              or 0.0) / g
         er_rate  = (rolling_row.w_earned_runs     or 0.0) / g
         h_rate   = (rolling_row.w_hits_allowed    or 0.0) / g
         bb_rate  = (rolling_row.w_walks_allowed   or 0.0) / g
@@ -362,16 +470,20 @@ def simulate_player(
         for _ in range(n_simulations):
             total_ip  = _draw_games(rng, ip_rate,  pitching_appearances)
             total_k   = _draw_games(rng, k_rate,   pitching_appearances)
+            total_qs  = _draw_games(rng, qs_rate,  pitching_appearances)
             total_er  = _draw_games(rng, er_rate,  pitching_appearances)
             total_h   = _draw_games(rng, h_rate,   pitching_appearances)
             total_bb  = _draw_games(rng, bb_rate,  pitching_appearances)
 
             era  = 9.0 * total_er / total_ip       if total_ip > 0 else 0.0
             whip = (total_h + total_bb) / total_ip if total_ip > 0 else 0.0
+            k_per_9 = 9.0 * total_k / total_ip    if total_ip > 0 else 0.0
 
             sim_k_list.append(total_k)
+            sim_qs_list.append(total_qs)
             sim_era_list.append(era)
             sim_whip_list.append(whip)
+            sim_k_per_9_list.append(k_per_9)
 
         (
             result.proj_k_p10,
@@ -380,6 +492,14 @@ def simulate_player(
             result.proj_k_p75,
             result.proj_k_p90,
         ) = _percentiles(sim_k_list)
+
+        (
+            result.proj_qs_p10,
+            result.proj_qs_p25,
+            result.proj_qs_p50,
+            result.proj_qs_p75,
+            result.proj_qs_p90,
+        ) = _percentiles(sim_qs_list)
 
         (
             result.proj_era_p10,
@@ -397,19 +517,45 @@ def simulate_player(
             result.proj_whip_p90,
         ) = _percentiles(sim_whip_list)
 
-        # Augment sim_composites with pitcher K z-scores if league params available
+        (
+            result.proj_k_per_9_p10,
+            result.proj_k_per_9_p25,
+            result.proj_k_per_9_p50,
+            result.proj_k_per_9_p75,
+            result.proj_k_per_9_p90,
+        ) = _percentiles(sim_k_per_9_list)
+
+        # Augment sim_composites with pitcher z-scores if league params available
         if (
             league_means is not None
             and league_stds is not None
-            and league_stds.get("k", 0) > 0
             and not has_batting    # pure pitcher -- composites built here
         ):
-            k_mean  = league_means.get("k",  0.0)
-            k_std   = league_stds.get("k",   1.0)
             for i in range(n_simulations):
                 zs = []
-                if k_std > 0:
-                    zs.append((sim_k_list[i] - k_mean) / k_std)
+                # Counting stats (higher is better)
+                for stat_name, sim_list, mean_key in [
+                    ("k", sim_k_list, "k"), ("qs", sim_qs_list, "qs"),
+                ]:
+                    std = league_stds.get(mean_key, 0)
+                    if std > 0:
+                        mean = league_means.get(mean_key, 0.0)
+                        zs.append((sim_list[i] - mean) / std)
+                # Rate stats - ERA, WHIP are lower-is-better, invert
+                for stat_name, sim_list, mean_key in [
+                    ("era", sim_era_list, "era"),
+                    ("whip", sim_whip_list, "whip"),
+                ]:
+                    std = league_stds.get(mean_key, 0)
+                    if std > 0:
+                        mean = league_means.get(mean_key, 0.0)
+                        # Lower ERA/WHIP is better, so negate the z-score
+                        zs.append((mean - sim_list[i]) / std)
+                # K_9 is higher-is-better
+                if league_stds.get("k_per_9", 0) > 0:
+                    mean = league_means.get("k_per_9", 0.0)
+                    std = league_stds.get("k_per_9", 1.0)
+                    zs.append((sim_k_per_9_list[i] - mean) / std)
                 comp = sum(zs) / len(zs) if zs else 0.0
                 sim_composites.append(comp)
 

@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func, or_, and_
 from sqlalchemy.orm import aliased
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict
 import logging
 import os
 import json as _json
@@ -62,6 +62,15 @@ from backend.schemas import (
     DecisionExplanationOut,
     FactorDetail,
     DecisionPipelineStatus,
+)
+from backend.contracts import (
+    CanonicalRosterResponse,
+    FreshnessMetadata,
+    RosterMoveRequest,
+    RosterMoveResponse,
+    RosterOptimizeRequest,
+    RosterOptimizeResponse,
+    PlayerSlotAssignment,
 )
 from backend.stat_contract import YAHOO_ID_INDEX, SCORING_CATEGORY_CODES
 from backend.utils.time_utils import today_et
@@ -2050,10 +2059,22 @@ async def yahoo_diag(user: str = Depends(verify_api_key)):
     }
 
 
-@router.get("/api/fantasy/roster", response_model=RosterResponse)
-async def get_fantasy_roster(user: str = Depends(verify_api_key)):
-    """Return the authenticated user's current Yahoo roster enriched with z-scores."""
-    from backend.fantasy_baseball.player_board import get_or_create_projection
+@router.get("/api/fantasy/roster", response_model=CanonicalRosterResponse)
+async def get_fantasy_roster(
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """Return the authenticated user's current Yahoo roster in CanonicalPlayerRow format.
+
+    Phase 4 Workstream B: Returns CanonicalPlayerRow with rolling_14d stats from
+    PlayerRollingStats table and season stats from Yahoo.
+    """
+    from backend.services.player_mapper import (
+        map_yahoo_player_to_canonical_row,
+        fetch_rolling_stats_for_players,
+    )
+
+    now_et = datetime.now(ZoneInfo("America/New_York"))
 
     try:
         client = get_yahoo_client()
@@ -2072,44 +2093,474 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
     except YahooAPIError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    players_map: dict = {}
+    # Extract player keys for rolling stats lookup
+    player_keys = [p.get("player_key") for p in raw_players if p.get("player_key")]
+
+    # Fetch rolling stats for all players (14-day window)
+    rolling_stats_map = fetch_rolling_stats_for_players(
+        db=db,
+        yahoo_player_keys=player_keys,
+        as_of_date=now_et.strftime("%Y-%m-%d"),
+        window_days=14,
+    )
+
+    # Map each Yahoo player to CanonicalPlayerRow
+    canonical_players = []
     for p in raw_players:
-        player_key = p.get("player_key") or ""
+        player_key = p.get("player_key")
         if not player_key:
             continue
-        name = p.get("name") or ""
-        proj = get_or_create_projection(p) if name else {}
-        raw_status = p.get("status")
-        if isinstance(raw_status, bool):
-            status_str = "Active" if raw_status else "Inactive"
-        else:
-            status_str = raw_status if raw_status else None
 
-        injury_note = p.get("injury_note")
-        if isinstance(injury_note, bool):
-            injury_note = None
-
-        players_map[player_key] = RosterPlayerOut(
-            player_key=player_key,
-            name=name,
-            team=p.get("team"),
-            positions=p.get("positions") or [],
-            status=status_str,
-            injury_note=injury_note if injury_note else None,
-            injury_status=status_str,
-            z_score=proj.get("z_score"),
-            is_undroppable=bool(p.get("is_undroppable", 0)),
-            is_proxy=bool(proj.get("is_proxy", False)),
-            cat_scores=proj.get("cat_scores") or {},
-            selected_position=p.get("selected_position"),
+        rolling_stats = rolling_stats_map.get(player_key)
+        canonical_row = map_yahoo_player_to_canonical_row(
+            yahoo_player=p,
+            rolling_stats=rolling_stats,
+            computed_at=now_et,
         )
-    players_out = list(players_map.values())
+        canonical_players.append(canonical_row)
 
-    return RosterResponse(
-        team_key=team_key,
-        players=players_out,
-        count=len(players_out),
+    # Build freshness metadata
+    freshness = FreshnessMetadata(
+        primary_source="yahoo",
+        fetched_at=None,  # TODO: track from Yahoo client
+        computed_at=now_et,
+        staleness_threshold_minutes=60,
+        is_stale=False,  # TODO: compute from fetched_at
     )
+
+    return CanonicalRosterResponse(
+        team_key=team_key,
+        players=canonical_players,
+        count=len(canonical_players),
+        freshness=freshness,
+    )
+
+
+@router.post("/api/fantasy/roster/move", response_model=RosterMoveResponse)
+async def move_roster_player(
+    request: RosterMoveRequest,
+):
+    """
+    Move a player to a new roster slot.
+
+    Validates the move, builds the full lineup with the player moved,
+    and submits to Yahoo via set_lineup.
+
+    Valid target positions: C, 1B, 2B, 3B, SS, LF, CF, RF, OF, Util, SP, RP, P, BN, IL, IL60.
+    """
+    from pydantic import ValidationError
+
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+
+    # Valid roster slots (LF/CF/RF are Yahoo's granular outfield positions)
+    valid_positions = {
+        "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "OF", "Util",
+        "SP", "RP", "P",
+        "BN", "IL", "IL60",
+    }
+
+    # Validate target position
+    if request.target_position not in valid_positions:
+        return RosterMoveResponse(
+            success=False,
+            player_key=request.player_key,
+            to_position=request.target_position,
+            message=f"Invalid position: {request.target_position}. Valid: {sorted(valid_positions)}",
+            freshness=FreshnessMetadata(
+                primary_source="yahoo",
+                fetched_at=None,
+                computed_at=now_et,
+                staleness_threshold_minutes=60,
+                is_stale=False,
+            ),
+        )
+
+    try:
+        client = get_yahoo_client()
+    except YahooAuthError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Yahoo not configured -- set YAHOO_REFRESH_TOKEN",
+        ) from exc
+
+    team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+
+    # Fetch current roster
+    try:
+        raw_players = client.get_roster(team_key=team_key)
+    except YahooAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # Find the player being moved
+    player_to_move = None
+    from_position = None
+    for p in raw_players:
+        if p.get("player_key") == request.player_key:
+            player_to_move = p
+            from_position = p.get("selected_position")
+            break
+
+    if not player_to_move:
+        return RosterMoveResponse(
+            success=False,
+            player_key=request.player_key,
+            to_position=request.target_position,
+            message=f"Player {request.player_key} not found on roster",
+            freshness=FreshnessMetadata(
+                primary_source="yahoo",
+                fetched_at=None,
+                computed_at=now_et,
+                staleness_threshold_minutes=60,
+                is_stale=False,
+            ),
+        )
+
+    # Build lineup list: all players with the moved player's position updated
+    lineup = []
+    for p in raw_players:
+        player_key = p.get("player_key")
+        if not player_key:
+            continue
+
+        if player_key == request.player_key:
+            # Move to target position
+            lineup.append({
+                "player_key": player_key,
+                "position": request.target_position,
+            })
+        else:
+            # Keep existing position
+            existing_pos = p.get("selected_position", "BN")
+            lineup.append({
+                "player_key": player_key,
+                "position": existing_pos,
+            })
+
+    # Apply the lineup change
+    try:
+        result = client.set_lineup(team_key=team_key, lineup=lineup)
+        applied = result.get("applied", [])
+        warnings = result.get("warnings", [])
+    except YahooAPIError as exc:
+        return RosterMoveResponse(
+            success=False,
+            player_key=request.player_key,
+            from_position=from_position,
+            to_position=request.target_position,
+            message=f"Yahoo API error: {str(exc)}",
+            freshness=FreshnessMetadata(
+                primary_source="yahoo",
+                fetched_at=None,
+                computed_at=now_et,
+                staleness_threshold_minutes=60,
+                is_stale=False,
+            ),
+        )
+
+    success = request.player_key in applied
+    if success:
+        message = f"Moved {player_to_move.get('name', request.player_key)} from {from_position} to {request.target_position}"
+    else:
+        message = f"Failed to move {player_to_move.get('name', request.player_key)} to {request.target_position}"
+
+    return RosterMoveResponse(
+        success=success,
+        player_key=request.player_key,
+        from_position=from_position,
+        to_position=request.target_position,
+        message=message,
+        warnings=warnings,
+        freshness=FreshnessMetadata(
+            primary_source="yahoo",
+            fetched_at=None,
+            computed_at=now_et,
+            staleness_threshold_minutes=60,
+            is_stale=False,
+        ),
+    )
+
+
+@router.post("/api/fantasy/roster/optimize", response_model=RosterOptimizeResponse)
+async def optimize_roster(
+    request: RosterOptimizeRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Optimize roster lineup assignment.
+
+    Uses rolling_14d stats to score players and recommend optimal
+    starter/bench assignments based on roster slots.
+
+    Valid roster slots: C, 1B, 2B, 3B, SS, OF (x3, accepts LF/CF/RF), Util, SP (x2), RP (x2), P, BN (x5).
+    """
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    target_date = request.target_date or now_et.strftime("%Y-%m-%d")
+
+    # Roster slot configuration (Yahoo H2H standard)
+    # Yahoo uses LF/CF/RF but our league has 3 generic OF slots.
+    # _can_fill_slot() handles the LF/CF/RF → OF eligibility mapping.
+    slot_capacity = {
+        "C": 1, "1B": 1, "2B": 1, "3B": 1, "SS": 1, "OF": 3, "Util": 1,
+        "SP": 2, "RP": 2, "P": 1, "BN": 5,
+    }
+
+    # Slot priority order (fill in this order)
+    slot_priority = ["C", "1B", "2B", "3B", "SS", "OF", "Util", "SP", "RP", "P"]
+
+    try:
+        client = get_yahoo_client()
+    except YahooAuthError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Yahoo not configured -- set YAHOO_REFRESH_TOKEN",
+        ) from exc
+
+    team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+
+    # Fetch current roster
+    try:
+        raw_players = client.get_roster(team_key=team_key)
+    except YahooAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # Fetch player_scores for all roster players (Priority 2 fix: wire to player_scores table)
+    # Extract yahoo_id from full yahoo_player_key (format: "469.l.72586.p.12345")
+    yahoo_ids = []
+    for p in raw_players:
+        player_key = p.get("player_key")
+        if player_key and ".p." in player_key:
+            yahoo_id = player_key.split(".p.")[-1]
+            yahoo_ids.append(yahoo_id)
+
+    # Map yahoo_id -> bdl_id via PlayerIDMapping
+    id_mapping = (
+        db.query(PlayerIDMapping.yahoo_id, PlayerIDMapping.bdl_id)
+        .filter(PlayerIDMapping.yahoo_id.in_(yahoo_ids))
+        .all()
+    )
+    yahoo_to_bdl = {row.yahoo_id: row.bdl_id for row in id_mapping if row.bdl_id}
+
+    # Map full player_key -> bdl_id
+    player_key_to_bdl = {}
+    for p in raw_players:
+        player_key = p.get("player_key")
+        if player_key and ".p." in player_key:
+            yahoo_id = player_key.split(".p.")[-1]
+            if yahoo_id in yahoo_to_bdl:
+                player_key_to_bdl[player_key] = yahoo_to_bdl[yahoo_id]
+
+    # Fetch player_scores for each player's most recent date (not exact target_date match)
+    # Phase 4.5a Priority 2 fix: Use actual as_of_date from player_scores, not requested date
+    from sqlalchemy import desc
+
+    bdl_ids = list(player_key_to_bdl.values())
+    player_scores_map = {}
+    as_of_dates = set()  # Track actual as_of_dates found
+    staleness_warning = False
+    actual_data_date = target_date  # Initialize with requested date
+
+    if bdl_ids:
+        # Get most recent score for each player (may differ from target_date)
+        subq = (
+            db.query(
+                PlayerScore.bdl_player_id,
+                func.max(PlayerScore.as_of_date).label("max_date"),
+            )
+            .filter(
+                PlayerScore.bdl_player_id.in_(bdl_ids),
+                PlayerScore.window_days == 14,
+            )
+            .group_by(PlayerScore.bdl_player_id)
+            .subquery()
+        )
+
+        scores = (
+            db.query(PlayerScore)
+            .join(
+                subq,
+                (PlayerScore.bdl_player_id == subq.c.bdl_player_id) &
+                (PlayerScore.as_of_date == subq.c.max_date),
+            )
+            .filter(PlayerScore.window_days == 14)
+            .all()
+        )
+        # Map bdl_id -> score_0_100 and track as_of_dates
+        for s in scores:
+            player_scores_map[s.bdl_player_id] = s.score_0_100
+            as_of_dates.add(s.as_of_date)
+
+        # Check for staleness: if fewer than 50% of players have scores, warn
+        if len(player_scores_map) < len(bdl_ids) * 0.5:
+            staleness_warning = True
+
+        # Use the most recent as_of_date in response, or target_date if none found
+        actual_data_date = max(as_of_dates) if as_of_dates else target_date
+
+    # Build player data with scores
+    player_data = []
+    for p in raw_players:
+        player_key = p.get("player_key")
+        if not player_key:
+            continue
+
+        # Use score_0_100 from player_scores, or fall back to default
+        score = 50.0  # default score
+        score_source = "default"
+        if player_key in player_key_to_bdl:
+            bdl_id = player_key_to_bdl[player_key]
+            if bdl_id in player_scores_map:
+                score = player_scores_map[bdl_id]
+                score_source = "player_scores"
+            else:
+                score = 50.0  # No player_score entry found
+                score_source = "stale_fallback"
+
+        player_data.append({
+            "player_key": player_key,
+            "name": p.get("name", "Unknown"),
+            "eligible_positions": p.get("positions") or [],
+            "current_position": p.get("selected_position", "BN"),
+            "lineup_score": score,
+            "score_source": score_source,
+        })
+
+    # Sort by lineup score descending
+    player_data.sort(key=lambda x: x["lineup_score"], reverse=True)
+
+    # Assign players to slots (greedy algorithm)
+    slot_fill_count = {s: 0 for s in slot_capacity}
+    assigned = []  # List of (player_key, slot, score, reasoning)
+    placed_keys = set()
+
+    # Fill hitting slots
+    for player in player_data:
+        if player["player_key"] in placed_keys:
+            continue
+
+        for slot in slot_priority:
+            if slot not in {"C", "1B", "2B", "3B", "SS", "OF", "Util", "SP", "RP", "P"}:
+                continue
+            if slot_fill_count[slot] >= slot_capacity[slot]:
+                continue
+
+            eligible = _can_fill_slot(player["eligible_positions"], slot, player["name"])
+            if eligible:
+                assigned.append({
+                    "player_key": player["player_key"],
+                    "name": player["name"],
+                    "slot": slot,
+                    "score": player["lineup_score"],
+                    "reasoning": f"Score {player['lineup_score']:.1f} ({player.get('score_source', 'default')}), eligible for {slot}",
+                })
+                slot_fill_count[slot] += 1
+                placed_keys.add(player["player_key"])
+                break
+
+    # Fill bench with remaining players
+    bench = []
+    unrostered = []
+    for player in player_data:
+        if player["player_key"] in placed_keys:
+            continue
+
+        if len(bench) < slot_capacity["BN"]:
+            bench.append({
+                "player_key": player["player_key"],
+                "name": player["name"],
+                "slot": "BN",
+                "score": player["lineup_score"],
+                "reasoning": f"Bench: score {player['lineup_score']:.1f}",
+            })
+            placed_keys.add(player["player_key"])
+        else:
+            unrostered.append(player["player_key"])
+
+    # Build response
+    starters = [
+        PlayerSlotAssignment(
+            player_key=a["player_key"],
+            player_name=a["name"],
+            assigned_slot=a["slot"],
+            lineup_score=round(a["score"], 2),
+            reasoning=a["reasoning"],
+        )
+        for a in assigned
+    ]
+
+    bench_assignments = [
+        PlayerSlotAssignment(
+            player_key=b["player_key"],
+            player_name=b["name"],
+            assigned_slot="BN",
+            lineup_score=round(b["score"], 2),
+            reasoning=b["reasoning"],
+        )
+        for b in bench
+    ]
+
+    total_score = sum(a["score"] for a in assigned) if assigned else 0.0
+
+    # Build message with staleness warning if needed
+    # Use actual_data_date to reflect real data freshness, not requested date
+    base_msg = f"Optimized lineup for {actual_data_date}"
+    if staleness_warning:
+        base_msg += " (Warning: Using fallback scores for some players - player_scores stale)"
+    elif actual_data_date != target_date:
+        base_msg += f" (Note: Data from {actual_data_date}, not requested {target_date})"
+
+    return RosterOptimizeResponse(
+        success=True,
+        message=base_msg,
+        target_date=target_date,
+        starters=starters,
+        bench=bench_assignments,
+        unrostered=unrostered,
+        total_lineup_score=round(total_score, 2),
+        freshness=FreshnessMetadata(
+            primary_source="yahoo",
+            fetched_at=None,
+            computed_at=now_et,
+            staleness_threshold_minutes=60,
+            is_stale=False,
+        ),
+    )
+
+
+# Outfield positions: Yahoo returns LF/CF/RF as distinct positions.
+# Any of LF, CF, RF, OF can fill an "OF" slot.
+_OUTFIELD_POSITIONS = {"OF", "LF", "CF", "RF"}
+_HITTER_POSITIONS = {"C", "1B", "2B", "3B", "SS", "OF", "LF", "CF", "RF", "DH"}
+
+
+def _can_fill_slot(eligible_positions, slot, player_name) -> bool:
+    """Check if player can fill the given roster slot."""
+    if not eligible_positions:
+        return False
+
+    positions = [p.upper() for p in eligible_positions] if isinstance(eligible_positions, list) else [eligible_positions.upper()]
+
+    # Direct position match
+    if slot in positions:
+        return True
+
+    # OF slot accepts any outfield position (LF, CF, RF)
+    if slot == "OF":
+        return any(p in _OUTFIELD_POSITIONS for p in positions)
+
+    # Util accepts any hitter position (including LF/CF/RF)
+    if slot == "Util":
+        return any(p in _HITTER_POSITIONS for p in positions)
+
+    # P accepts any pitcher position
+    if slot == "P":
+        pitcher_positions = {"SP", "RP"}
+        return any(p in pitcher_positions for p in positions)
+
+    return False
 
 
 @router.get("/api/fantasy/players/valuations")
@@ -3305,27 +3756,26 @@ async def get_matchup_scoreboard(
     - Constraint budget state
     - Freshness metadata
 
-    TODO: Wire up Yahoo client for live data.
-    Currently returns mock data for contract validation.
+    Phase 4.5a Priority 1: Wired to live Yahoo data.
     """
     from backend.services.scoreboard_orchestrator import assemble_matchup_scoreboard
 
-    # TODO: Replace with real data fetching
-    # Mock data for contract validation
-    my_current_stats = {
-        "R": 45.0, "H": 110.0, "HR_B": 15.0, "RBI": 48.0,
-        "K_B": 78.0, "TB": 165.0, "AVG": 0.268, "OPS": 0.765,
-        "NSB": 3.0, "W": 3.0, "L": 4.0, "HR_P": 16.0,
-        "K_P": 80.0, "ERA": 4.00, "WHIP": 1.30, "K_9": 8.5,
-        "QS": 3.0, "NSV": -3.0,
-    }
-    opp_current_stats = {
-        "R": 50.0, "H": 115.0, "HR_B": 18.0, "RBI": 52.0,
-        "K_B": 72.0, "TB": 175.0, "AVG": 0.275, "OPS": 0.780,
-        "NSB": 5.0, "W": 4.0, "L": 3.0, "HR_P": 12.0,
-        "K_P": 88.0, "ERA": 3.60, "WHIP": 1.20, "K_9": 9.2,
-        "QS": 5.0, "NSV": -1.0,
-    }
+    try:
+        client = get_yahoo_client()
+    except YahooAuthError:
+        raise HTTPException(status_code=503, detail="Yahoo not configured")
+
+    # Fetch live matchup stats from Yahoo
+    matchup_data = client.get_matchup_stats(week=week)
+
+    # Use fetched stats, with fallback to empty if not found
+    my_current_stats = matchup_data.get("my_stats", {})
+    opp_current_stats = matchup_data.get("opp_stats", {})
+
+    # Override opponent_name from Yahoo if available
+    yahoo_opp_name = matchup_data.get("opponent_name")
+    if yahoo_opp_name and yahoo_opp_name != "Unknown":
+        opponent_name = yahoo_opp_name
 
     # Mock player scores (empty for now)
     my_player_scores = []
@@ -3395,5 +3845,99 @@ async def get_matchup_scoreboard(
             "computed_at": result.freshness.computed_at.isoformat(),
             "staleness_threshold_minutes": result.freshness.staleness_threshold_minutes,
             "is_stale": result.freshness.is_stale,
+        },
+    }
+
+
+@router.get("/budget")
+async def get_constraint_budget(
+    db: Session = Depends(get_db),
+) -> Dict:
+    """
+    GET /api/fantasy/budget
+
+    Returns current constraint budget state for the global header.
+
+    Gate Criteria:
+    - Acquisitions used/remaining (with warning at 6+)
+    - IL slots used/total
+    - IP accumulated vs minimum
+    - IP pace flag (BEHIND/ON_TRACK/COMPLETE)
+    - Freshness metadata
+
+    Phase 4.5a Priority 1: Wired to live Yahoo data.
+    """
+    from backend.services.scoreboard_orchestrator import compute_budget_state
+    from backend.services.constraint_helpers import count_weekly_acquisitions
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    try:
+        client = get_yahoo_client()
+    except YahooAuthError:
+        raise HTTPException(status_code=503, detail="Yahoo not configured")
+
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+
+    # Fetch live data from Yahoo
+    acquisitions_used = 0
+    il_used = 0
+    il_total = 3  # Yahoo standard IL slots
+    acquisition_limit = 8  # Yahoo standard adds
+
+    # 1. Count IL players from roster
+    try:
+        roster = client.get_roster(team_key=team_key)
+        il_count = sum(1 for p in roster if p.get("selected_position") in ["IL", "IL60"])
+        il_used = il_count
+    except (YahooAuthError, YahooAPIError):
+        pass  # Fall back to 0
+
+    # 2. Count acquisitions from last 7 days
+    try:
+        transactions = client.get_transactions(t_type="add")
+        week_start = now_et - timedelta(days=7)
+        week_end = now_et
+        acquisitions_used = count_weekly_acquisitions(
+            transactions, team_key, week_start, week_end
+        )
+    except (YahooAuthError, YahooAPIError):
+        pass  # Fall back to 0
+
+    # 3. IP tracking - still mock (requires matchup week logic + stat aggregation)
+    ip_accumulated = 0.0  # TODO: Wire to player_rolling_stats or Yahoo matchup stats
+    ip_minimum = 90.0  # Yahoo H2H standard
+
+    budget = compute_budget_state(
+        acquisitions_used=acquisitions_used,
+        acquisition_limit=acquisition_limit,
+        il_used=il_used,
+        il_total=il_total,
+        ip_accumulated=ip_accumulated,
+        ip_minimum=ip_minimum,
+        days_remaining=6,  # Approximate for MVP
+        season_days_elapsed=1,  # Approximate for MVP
+    )
+
+    return {
+        "budget": {
+            "acquisitions_used": budget.acquisitions_used,
+            "acquisitions_remaining": budget.acquisitions_remaining,
+            "acquisition_limit": budget.acquisition_limit,
+            "acquisition_warning": budget.acquisition_warning,
+            "il_used": budget.il_used,
+            "il_total": budget.il_total,
+            "ip_accumulated": budget.ip_accumulated,
+            "ip_minimum": budget.ip_minimum,
+            "ip_pace": budget.ip_pace.value,
+            "as_of": budget.as_of.isoformat(),
+        },
+        "freshness": {
+            "primary_source": "yahoo",
+            "fetched_at": now_et.isoformat(),
+            "computed_at": now_et.isoformat(),
+            "staleness_threshold_minutes": 60,
+            "is_stale": False,
         },
     }

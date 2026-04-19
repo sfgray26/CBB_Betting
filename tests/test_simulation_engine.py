@@ -37,6 +37,15 @@ def _make_hitter(
     w_rbi=10.0,
     w_stolen_bases=2.0,
     w_walks=5.0,
+    w_runs=12.0,
+    w_tb=24.0,
+    w_net_stolen_bases=1.0,
+    w_strikeouts_bat=8.0,
+    w_doubles=3.0,
+    w_triples=0.5,
+    w_obp=None,
+    w_slg=None,
+    w_ops=None,
 ):
     """Return a MagicMock that looks like a PlayerRollingStats hitter row."""
     row = MagicMock()
@@ -49,11 +58,22 @@ def _make_hitter(
     row.w_rbi = w_rbi
     row.w_stolen_bases = w_stolen_bases
     row.w_walks = w_walks
+    row.w_runs = w_runs
+    row.w_tb = w_tb
+    row.w_net_stolen_bases = w_net_stolen_bases
+    row.w_strikeouts_bat = w_strikeouts_bat
+    row.w_doubles = w_doubles
+    row.w_triples = w_triples
+    row.w_obp = w_obp
+    row.w_slg = w_slg
+    row.w_ops = w_ops
     row.w_ip = None
     row.w_strikeouts_pit = None
     row.w_earned_runs = None
     row.w_hits_allowed = None
     row.w_walks_allowed = None
+    row.w_qs = None
+    row.w_k_per_9 = None
     return row
 
 
@@ -66,6 +86,8 @@ def _make_pitcher(
     w_earned_runs=8.0,
     w_hits_allowed=25.0,
     w_walks_allowed=10.0,
+    w_qs=2.0,
+    w_k_per_9=10.5,
 ):
     """Return a MagicMock that looks like a PlayerRollingStats pitcher row."""
     row = MagicMock()
@@ -83,6 +105,8 @@ def _make_pitcher(
     row.w_earned_runs = w_earned_runs
     row.w_hits_allowed = w_hits_allowed
     row.w_walks_allowed = w_walks_allowed
+    row.w_qs = w_qs
+    row.w_k_per_9 = w_k_per_9
     return row
 
 
@@ -221,6 +245,40 @@ def test_simulate_player_avg_between_0_and_1():
         assert 0.0 <= p <= 1.0, f"AVG percentile out of range: {p}"
 
 
+def test_simulate_player_hitter_new_categories_populated():
+    """New batting categories (R, H, TB, NSB, K_B, OPS) should have percentiles."""
+    row = _make_hitter()
+    result = simulate_player(row, remaining_games=130, seed=42)
+
+    # Counting stats
+    assert result.proj_r_p50 is not None
+    assert result.proj_r_p50 > 0
+    assert result.proj_h_p50 is not None
+    assert result.proj_h_p50 > 0
+    assert result.proj_tb_p50 is not None
+    assert result.proj_tb_p50 > 0
+    assert result.proj_nsb_p50 is not None
+    assert result.proj_k_b_p50 is not None
+
+    # Rate stat
+    assert result.proj_ops_p50 is not None
+    assert result.proj_ops_p50 > 0
+
+
+def test_simulate_player_hitter_percentiles_sorted():
+    """New batting category percentiles should be sorted (P10 <= P25 <= ... <= P90)."""
+    row = _make_hitter()
+    result = simulate_player(row, remaining_games=130, seed=42)
+
+    for attr in ["proj_r", "proj_h", "proj_tb", "proj_nsb", "proj_k_b", "proj_ops"]:
+        p10 = getattr(result, f"{attr}_p10")
+        p25 = getattr(result, f"{attr}_p25")
+        p50 = getattr(result, f"{attr}_p50")
+        p75 = getattr(result, f"{attr}_p75")
+        p90 = getattr(result, f"{attr}_p90")
+        assert p10 <= p25 <= p50 <= p75 <= p90, f"{attr} percentiles not sorted"
+
+
 # ===========================================================================
 # simulate_player -- pitcher
 # ===========================================================================
@@ -268,6 +326,30 @@ def test_simulate_player_era_sorted():
     assert result.proj_era_p25 <= result.proj_era_p50
     assert result.proj_era_p50 <= result.proj_era_p75
     assert result.proj_era_p75 <= result.proj_era_p90
+
+
+def test_simulate_player_pitcher_new_categories_populated():
+    """New pitching categories (QS, K_9) should have percentiles."""
+    row = _make_pitcher()
+    result = simulate_player(row, remaining_games=130, seed=42)
+
+    # QS (counting stat)
+    assert result.proj_qs_p50 is not None
+    assert result.proj_qs_p50 >= 0
+
+    # K_9 (rate stat)
+    assert result.proj_k_per_9_p50 is not None
+    assert result.proj_k_per_9_p50 > 0
+
+
+def test_simulate_player_pitcher_k_per_9_sorted():
+    """K_9 percentiles should be sorted."""
+    row = _make_pitcher()
+    result = simulate_player(row, remaining_games=130, seed=42)
+    assert result.proj_k_per_9_p10 <= result.proj_k_per_9_p25
+    assert result.proj_k_per_9_p25 <= result.proj_k_per_9_p50
+    assert result.proj_k_per_9_p50 <= result.proj_k_per_9_p75
+    assert result.proj_k_per_9_p75 <= result.proj_k_per_9_p90
 
 
 # ===========================================================================

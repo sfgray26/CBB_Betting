@@ -1020,8 +1020,104 @@ class YahooFantasyClient:
         txns = []
         count = int(txns_raw.get("count", 0))
         for i in range(count):
-            txns.append(txns_raw[str(i)].get("transaction", {}))
+            txn = txns_raw[str(i)].get("transaction", {})
+            # Yahoo sometimes returns transaction as a list of single-key dicts
+            # that needs to be flattened (same pattern as _league_section)
+            if isinstance(txn, list):
+                txn = self._flatten_league_section(txn)
+            txns.append(txn)
         return txns
+
+    def get_matchup_stats(self, week: Optional[int] = None, my_team_key: Optional[str] = None) -> dict:
+        """Fetch current matchup stats for my team and opponent.
+
+        Returns dict with:
+            - my_stats: Dict[str, float] keyed by canonical category code
+            - opp_stats: Dict[str, float] keyed by canonical category code
+            - opponent_name: str
+
+        Phase 4.5a Priority 1: Live Yahoo data for scoreboard.
+        """
+        from backend.stat_contract import load_contract
+
+        if my_team_key is None:
+            my_team_key = self.get_my_team_key()
+
+        matchups = self.get_scoreboard(week=week)
+
+        # Find my matchup
+        my_matchup = None
+        for matchup in matchups:
+            teams = matchup.get("teams", {})
+            if isinstance(teams, dict):
+                # Check both "0" and "1" team keys
+                for team_key in ["0", "1"]:
+                    team = teams.get(team_key, {})
+                    if team.get("team_key") == my_team_key:
+                        my_matchup = matchup
+                        break
+            if my_matchup:
+                break
+
+        if not my_matchup:
+            # Return empty stats if matchup not found
+            return {"my_stats": {}, "opp_stats": {}, "opponent_name": "Unknown"}
+
+        # Extract team stats
+        teams = my_matchup.get("teams", {})
+        my_stats_raw = {}
+        opp_stats_raw = {}
+        opponent_name = "Unknown"
+
+        # Yahoo stat_id to canonical code mapping (from fantasy_stat_contract.json)
+        yahoo_to_canonical = {
+            # Batting (higher better)
+            "7": "R", "8": "H", "12": "HR_B", "13": "RBI", "16": "TB",
+            # Batting (lower better)
+            "10": "K_B",
+            # Batting rate stats
+            "25": "AVG", "26": "OPS", "53": "NSV",  # NSV = NSB (Net Stolen Bases)
+            # Pitching (higher better)
+            "34": "W", "35": "L", "41": "K_P", "47": "QS", "50": "K_9",
+            # Pitching (lower better)
+            "40": "HR_P", "44": "ERA", "45": "WHIP",
+        }
+
+        # Process both teams
+        for team_key in ["0", "1"]:
+            team = teams.get(team_key, {})
+            team_key_value = team.get("team_key")
+            is_my_team = (team_key_value == my_team_key)
+
+            if not is_my_team:
+                opponent_name = team.get("name", "Unknown")
+
+            # Extract stats from team_stats or team_points
+            team_stats = team.get("team_stats", {})
+            if not team_stats:
+                team_stats = team.get("team_points", {})
+
+            stats = {}
+            if isinstance(team_stats, dict):
+                for stat_id_str, stat_value in team_stats.items():
+                    if stat_id_str in yahoo_to_canonical:
+                        canonical = yahoo_to_canonical[stat_id_str]
+                        # Handle both numeric and string values
+                        try:
+                            stats[canonical] = float(stat_value)
+                        except (ValueError, TypeError):
+                            continue
+
+            if is_my_team:
+                my_stats_raw = stats
+            else:
+                opp_stats_raw = stats
+
+        return {
+            "my_stats": my_stats_raw,
+            "opp_stats": opp_stats_raw,
+            "opponent_name": opponent_name,
+        }
 
     # ------------------------------------------------------------------
     # Parsing helpers
