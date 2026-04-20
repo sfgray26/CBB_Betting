@@ -489,6 +489,8 @@ class RosterPlayerOut(BaseModel):
     selected_position: Optional[str] = None  # Yahoo lineup slot: IL, BN, C, 1B, OF, etc.
     season_stats: Optional[dict] = None      # PR-13: Season-to-date stats
     rolling_14d: Optional[dict] = None       # PR-14: 14-day rolling stats
+    statcast_stats: Optional[dict] = None    # PR-15: Statcast/FanGraphs advanced metrics
+    statcast_signals: Optional[List[str]] = None  # PR-15: BUY_LOW, SELL_HIGH, BREAKOUT, etc.
 
     model_config = ConfigDict(populate_by_name=True)  # Allow both original and alias names
     

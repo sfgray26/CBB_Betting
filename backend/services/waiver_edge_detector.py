@@ -58,13 +58,18 @@ class WaiverEdgeDetector:
         self.fa_cache_ttl = fa_cache_ttl
 
     def get_top_moves(self, my_roster, opponent_roster, n_candidates=10, force_refresh=False):
-        free_agents = self._fetch_fas(force_refresh)
+        free_agents = self._enrich_players(self._fetch_fas(force_refresh))
         if not free_agents:
             return []
+        my_roster = self._enrich_players(my_roster)
+        opponent_roster = self._enrich_players(opponent_roster)
         deficits = self._compute_deficits(my_roster, opponent_roster)
+        has_deficit_signal = any(abs(v) > 0 for v in deficits.values())
         moves = []
         for fa in free_agents[:40]:
             score = self._score_fa_against_deficits(fa, deficits)
+            if score <= 0 and not has_deficit_signal:
+                score = float(fa.get("z_score") or 0.0)
             fa_positions = fa.get("positions") or []
             drop_candidate = self._weakest_droppable_at(my_roster, fa_positions)
             move = {
@@ -98,6 +103,32 @@ class WaiverEdgeDetector:
             moves.append(move)
         moves.sort(key=lambda m: (m["win_prob_gain"], m["need_score"]), reverse=True)
         return moves[:n_candidates]
+
+    def _enrich_players(self, players: list[dict]) -> list[dict]:
+        return [self._enrich_player(player) for player in players]
+
+    def _enrich_player(self, player: Optional[dict]) -> dict:
+        if not player:
+            return {}
+
+        try:
+            from backend.fantasy_baseball.player_board import get_or_create_projection
+            projection = get_or_create_projection(player)
+        except Exception as exc:
+            logger.debug("Projection enrichment failed for %s: %s", player.get("name"), exc)
+            projection = {}
+
+        enriched = dict(player)
+
+        if projection:
+            enriched.setdefault("team", projection.get("team") or player.get("team") or "")
+            enriched.setdefault("positions", projection.get("positions") or player.get("positions") or [])
+            enriched["z_score"] = projection.get("z_score", enriched.get("z_score", 0.0))
+            enriched["cat_scores"] = projection.get("cat_scores") or enriched.get("cat_scores") or {}
+            enriched["proj"] = projection.get("proj") or enriched.get("proj") or {}
+            enriched["is_proxy"] = bool(projection.get("is_proxy", enriched.get("is_proxy", False)))
+
+        return enriched
 
     def _fetch_fas(self, force_refresh):
         now = time.monotonic()
@@ -182,7 +213,7 @@ class WaiverEdgeDetector:
             ]
             if not candidates:
                 return None
-            return min(candidates, key=lambda p: sum((p.get("cat_scores") or {}).values()))
+            return min(candidates, key=self._player_value)
 
     def _weakest_droppable(self, roster):
         """Return weakest droppable player, excluding IL players."""
@@ -194,7 +225,14 @@ class WaiverEdgeDetector:
         ]
         if not droppable:
             return None
-        return min(droppable, key=lambda p: sum((p.get("cat_scores") or {}).values()))
+        return min(droppable, key=self._player_value)
+
+    @staticmethod
+    def _player_value(player: dict) -> float:
+        cat_scores = player.get("cat_scores") or {}
+        if cat_scores:
+            return float(sum(cat_scores.values()))
+        return float(player.get("z_score") or 0.0)
 
     def _score_fa_against_deficits(self, fa, deficits):
         cat_scores = fa.get("cat_scores") or {}

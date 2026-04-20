@@ -21,8 +21,12 @@ UAT was run against Railway production (`uat_findings_fresh.md`): 53 PASS / 15 F
 | `backend/routers/fantasy.py` | Fix briefing `overall_confidence` from int % to float 0-1 (divide by 100). |
 | `backend/routers/fantasy.py` | Fix IL player drop guard: derive effective status from `selected_position` slot when `status` is None; add z>=6.0 superstar protection to prevent dropping elite players. |
 | `backend/main.py` | Roster endpoint: add `get_players_stats_batch()` call to populate `season_stats` for all roster players. Status default changed from "playing" → "Active". |
+| `backend/services/waiver_edge_detector.py` | Enrich raw Yahoo roster/free-agent players with board projections before scoring so `need_score` no longer collapses to 0.0 when `cat_scores` are missing from Yahoo payloads. Fallback to player `z_score` when matchup deficits are unavailable. |
+| `backend/services/dashboard_service.py` | Fix waiver-target ownership serialization: accept `owned_pct` as well as `percent_owned` when building `WaiverTarget`. |
 | `scripts/uat_validator.py` | Fix field name mismatch: check `name`/`player_key` (Python field names) not `player_name`/`yahoo_player_key` (aliases). |
 | `tests/test_budget_api.py` | Update test paths from `/budget` → `/api/fantasy/budget` to match renamed route. |
+| `tests/test_waiver_edge.py` | Add regression coverage for projection enrichment and `z_score` fallback in waiver scoring. |
+| `tests/test_dashboard_service_waiver_targets.py` | Add regression coverage for `owned_pct` → dashboard ownership handoff and computed priority score. |
 
 ### Post-Fix Test Results
 
@@ -46,6 +50,7 @@ After Gemini deploys, expected UAT improvements:
 - Briefing `categories/starters` — depends on `category_tracker.get_category_needs()` returning data (empty when scoreboard parsing fails)
 - Proxy players (Ballesteros, Antonacci, Murakami) — genuinely not in Steamer/ZiPS; stats will come from Yahoo season stats batch
 - No Statcast/advanced stats on roster endpoint (future work)
+- Dashboard waiver targets previously showed `percent_owned=0.0` and `priority_score=0.0` because the detector was scoring raw Yahoo players with no `cat_scores` and the serializer only read `percent_owned`. Local fix is complete; deploy + live UAT rerun still required.
 
 ---
 

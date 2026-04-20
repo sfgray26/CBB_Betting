@@ -506,7 +506,7 @@ class DashboardService:
                     name=fa.get("name", "Unknown"),
                     team=fa.get("team", ""),
                     positions=fa.get("positions", []),
-                    percent_owned=float(fa.get("percent_owned", 0.0)),
+                    percent_owned=float(fa.get("percent_owned", fa.get("owned_pct", 0.0))),
                     priority_score=priority_score,
                     tier=tier,
                     reason=reason,

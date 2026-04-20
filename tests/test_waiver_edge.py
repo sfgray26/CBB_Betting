@@ -90,3 +90,71 @@ class TestWaiverEdgeDetector:
             moves = det.get_top_moves(my_roster, opp_roster, n_candidates=5)
         assert len(moves) == 1
         assert moves[0]["mcmc_enabled"] is False
+
+    def test_get_top_moves_enriches_raw_yahoo_players(self):
+        raw_fa = {
+            "name": "Michael Wacha",
+            "player_key": "469.p.9329",
+            "positions": ["SP"],
+            "percent_owned": 44.2,
+        }
+        raw_my_roster = [{
+            "name": "Weak Starter",
+            "positions": ["SP"],
+            "selected_position": "SP",
+            "is_undroppable": False,
+        }]
+        raw_opp_roster = [{
+            "name": "Opponent Starter",
+            "positions": ["SP"],
+            "selected_position": "SP",
+            "is_undroppable": False,
+        }]
+
+        def _proj(player):
+            lookup = {
+                "Michael Wacha": {"name": "Michael Wacha", "positions": ["SP"], "team": "KC", "z_score": 1.7, "cat_scores": {"era": 1.2}},
+                "Weak Starter": {"name": "Weak Starter", "positions": ["SP"], "team": "NYY", "z_score": -0.8, "cat_scores": {"era": -0.2}},
+                "Opponent Starter": {"name": "Opponent Starter", "positions": ["SP"], "team": "BOS", "z_score": 0.9, "cat_scores": {"era": 1.0}},
+            }
+            return lookup[player["name"]]
+
+        det = WaiverEdgeDetector(mcmc_simulator=None)
+        with patch.object(det, "_fetch_fas", return_value=[raw_fa]):
+            with patch("backend.fantasy_baseball.player_board.get_or_create_projection", side_effect=_proj):
+                moves = det.get_top_moves(raw_my_roster, raw_opp_roster, n_candidates=5)
+
+        assert len(moves) == 1
+        assert moves[0]["need_score"] > 0
+        assert moves[0]["add_player"]["percent_owned"] == pytest.approx(44.2)
+        assert moves[0]["add_player"]["cat_scores"] == {"era": 1.2}
+
+    def test_get_top_moves_falls_back_to_z_score_without_deficits(self):
+        raw_fa = {
+            "name": "Fallback Bat",
+            "player_key": "469.p.9999",
+            "positions": ["OF"],
+            "percent_owned": 12.0,
+        }
+        raw_my_roster = [{
+            "name": "Roster Bat",
+            "positions": ["OF"],
+            "selected_position": "OF",
+            "is_undroppable": False,
+        }]
+
+        def _proj(player):
+            lookup = {
+                "Fallback Bat": {"name": "Fallback Bat", "positions": ["OF"], "team": "SEA", "z_score": 2.3, "cat_scores": {"hr": 1.1}},
+                "Roster Bat": {"name": "Roster Bat", "positions": ["OF"], "team": "SEA", "z_score": 0.2, "cat_scores": {}},
+            }
+            return lookup[player["name"]]
+
+        det = WaiverEdgeDetector(mcmc_simulator=None)
+        with patch.object(det, "_fetch_fas", return_value=[raw_fa]):
+            with patch("backend.fantasy_baseball.player_board.get_or_create_projection", side_effect=_proj):
+                moves = det.get_top_moves(raw_my_roster, [], n_candidates=5)
+
+        assert len(moves) == 1
+        assert moves[0]["need_score"] == pytest.approx(2.3)
+

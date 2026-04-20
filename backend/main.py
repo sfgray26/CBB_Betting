@@ -6301,6 +6301,26 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
     except Exception as _se:
         logger.warning("Roster season stats batch fetch failed (non-fatal): %s", _se)
 
+    # Load Statcast / FanGraphs advanced metrics (best-effort, non-fatal)
+    statcast_batters: dict = {}
+    statcast_pitchers: dict = {}
+    try:
+        from backend.fantasy_baseball.pybaseball_loader import (
+            load_pybaseball_batters, load_pybaseball_pitchers,
+            match_yahoo_to_statcast,
+        )
+        from backend.fantasy_baseball.statcast_loader import build_statcast_signals
+        import dataclasses as _dc
+
+        statcast_batters = load_pybaseball_batters(2026)
+        statcast_pitchers = load_pybaseball_pitchers(2026)
+        logger.info(
+            "Roster Statcast enrichment: %d batters, %d pitchers loaded",
+            len(statcast_batters), len(statcast_pitchers),
+        )
+    except Exception as _sc_err:
+        logger.warning("Roster Statcast enrichment load failed (non-fatal): %s", _sc_err)
+
     # Deduplicate by player_key to prevent state duplication (Page 4 bug fix)
     players_map: dict[str, RosterPlayerOut] = {}
     for p in raw_players:
