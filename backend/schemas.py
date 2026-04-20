@@ -398,7 +398,8 @@ class WaiverPlayerOut(BaseModel):
     injury_note: Optional[str] = None     # Yahoo injury note text
     injury_status: Optional[str] = None   # Explicit injury status pass-through
     stats: dict = {}                        # K-24: actual season stats from Yahoo (stat_id→value)
-    
+    statcast_stats: Optional[dict] = None   # PR-15: raw Statcast/FanGraphs metrics (xwOBA, barrel%, etc.)
+
     @field_validator("need_score", "owned_pct", "projected_saves", "projected_points", mode="before")
     @classmethod
     def default_floats(cls, v):

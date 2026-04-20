@@ -4,6 +4,21 @@
 > Canonical source: `HANDOFF.md`
 > This file is the execution board for the current phase. If this tracker and HANDOFF disagree, HANDOFF wins.
 
+## Current Session Override — 2026-04-20 Waiver Intelligence Hardening
+
+Status: COMPLETE locally, deploy pending.
+
+Plan:
+- [x] Add a shared long-term hold-value policy for drop decisions in `backend/services/waiver_edge_detector.py`.
+- [x] Reuse the same protection logic in `backend/routers/fantasy.py` so dashboard and API recommendations stay aligned.
+- [x] Add regression coverage for elite and high-upside hold cases in `tests/test_waiver_edge.py`.
+- [x] Validate with `py_compile` and targeted `pytest`.
+
+Review:
+- Waiver drop candidates now carry a long-term hold floor based on projection tier, ADP, ownership, and locked-risk profiles.
+- Core assets such as top-tier bats and high-upside arms are no longer eligible as routine add/drop fodder when a short-term streamer looks temporarily better.
+- Residual risk: `backend/main.py` still contains mirrored legacy waiver logic and can drift from `backend/routers/fantasy.py`.
+
 ---
 
 ## Operating Rule

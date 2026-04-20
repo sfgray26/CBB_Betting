@@ -1,7 +1,11 @@
 """Tests for WaiverEdgeDetector."""
 import pytest
 from unittest.mock import MagicMock, patch
-from backend.services.waiver_edge_detector import WaiverEdgeDetector
+from backend.services.waiver_edge_detector import (
+    WaiverEdgeDetector,
+    drop_candidate_value,
+    is_protected_drop_candidate,
+)
 
 
 def _make_player(name, positions, cat_scores, is_undroppable=False):
@@ -157,4 +161,65 @@ class TestWaiverEdgeDetector:
 
         assert len(moves) == 1
         assert moves[0]["need_score"] == pytest.approx(2.3)
+
+    def test_drop_candidate_value_respects_long_term_hold_floor(self):
+        juan_soto = {
+            "name": "Juan Soto",
+            "positions": ["OF"],
+            "z_score": 1.4,
+            "tier": 1,
+            "adp": 2.0,
+            "percent_owned": 99.0,
+        }
+
+        assert is_protected_drop_candidate(juan_soto) is True
+        assert drop_candidate_value(juan_soto) >= 4.5
+
+    def test_locked_high_upside_pitcher_is_protected_from_drop(self):
+        det = WaiverEdgeDetector()
+        roster = [
+            {
+                "name": "Eury Pérez",
+                "positions": ["SP"],
+                "selected_position": "SP",
+                "status": "SP",
+                "z_score": 0.8,
+                "tier": 4,
+                "adp": 118.0,
+                "percent_owned": 74.0,
+            }
+        ]
+
+        assert is_protected_drop_candidate(roster[0]) is True
+        assert det._weakest_droppable_at(roster, ["SP"]) is None
+
+    def test_detector_prefers_streamer_drop_over_core_asset(self):
+        det = WaiverEdgeDetector()
+        roster = [
+            {
+                "name": "Eury Pérez",
+                "positions": ["SP"],
+                "selected_position": "SP",
+                "status": "SP",
+                "z_score": 0.8,
+                "tier": 4,
+                "adp": 118.0,
+                "percent_owned": 74.0,
+            },
+            {
+                "name": "Back-end Streamer",
+                "positions": ["SP"],
+                "selected_position": "SP",
+                "status": "SP",
+                "z_score": -0.9,
+                "tier": 10,
+                "adp": 9999.0,
+                "percent_owned": 18.0,
+            },
+        ]
+
+        result = det._weakest_droppable_at(roster, ["SP"])
+
+        assert result is not None
+        assert result["name"] == "Back-end Streamer"
 

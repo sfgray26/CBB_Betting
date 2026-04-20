@@ -81,3 +81,7 @@
 - Yahoo API credentials are already in `.env.example`.
 - `player_board.get_board()` returns a list of player dicts sorted by rank; each has `id`, `name`, `team`, `positions`, `type`, `tier`, `rank`, `adp`, `proj`, `z_score`, `cat_scores`.
 - When adding fantasy API routes, wire directly to these modules — do NOT reimplement ranking logic.
+
+### Waiver drop logic must blend short-term output with hold value
+- **Lesson**: Waiver recommendations cannot compare a free agent only against a roster player's current z-score or recent signal. Drop logic needs a long-term hold floor from projection metadata such as tier, ADP, ownership, and locked-upside risk profiles, or it will recommend shallow recency-biased cuts.
+- **Context**: April 20 fantasy UAT surfaced risky suggestions like dropping Eury Perez for a short-term streamer and concern about elite players like Juan Soto being treated as disposable after a short slump.

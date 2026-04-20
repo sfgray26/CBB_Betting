@@ -1083,6 +1083,64 @@ async def get_daily_briefing(
             game_date=briefing_date,
         )
 
+        # Statcast enrichment for briefing cards (PR-15, non-blocking)
+        _br_bat: dict = {}
+        _br_pit: dict = {}
+        try:
+            from backend.fantasy_baseball.pybaseball_loader import (
+                load_pybaseball_batters as _lb,
+                load_pybaseball_pitchers as _lp,
+                match_yahoo_to_statcast as _ms,
+            )
+            from backend.fantasy_baseball.statcast_loader import build_statcast_signals as _bss
+            _br_bat = _lb(2026)
+            _br_pit = _lp(2026)
+        except Exception:
+            pass
+
+        def _enrich_card(card: dict, roster_player_positions: list) -> dict:
+            """Add statcast_stats and statcast_signals to a briefing card."""
+            name = card.get("name", "")
+            if not name or (not _br_bat and not _br_pit):
+                return card
+            is_pit = bool(roster_player_positions) and roster_player_positions[0] in ("SP", "RP", "P")
+            try:
+                if not is_pit and _br_bat:
+                    ck = _ms(name, _br_bat)
+                    if ck:
+                        sb = _br_bat[ck]
+                        card["statcast_stats"] = {
+                            "xwoba": round(sb.xwoba, 3) if sb.xwoba else None,
+                            "barrel_pct": round(sb.barrel_pct, 1) if sb.barrel_pct else None,
+                            "exit_velo_avg": round(sb.exit_velo_avg, 1) if sb.exit_velo_avg else None,
+                            "hard_hit_pct": round(sb.hard_hit_pct, 1) if sb.hard_hit_pct else None,
+                            "wrc_plus": round(sb.wrc_plus, 0) if sb.wrc_plus else None,
+                        }
+                elif is_pit and _br_pit:
+                    ck = _ms(name, _br_pit)
+                    if ck:
+                        sp = _br_pit[ck]
+                        card["statcast_stats"] = {
+                            "xera": round(sp.xera, 2) if sp.xera else None,
+                            "stuff_plus": round(sp.stuff_plus, 0) if sp.stuff_plus else None,
+                            "whiff_pct": round(sp.whiff_pct, 1) if sp.whiff_pct else None,
+                            "fb_velo_avg": round(sp.fb_velo_avg, 1) if sp.fb_velo_avg else None,
+                        }
+                sigs, _ = _bss(name, is_pit)
+                if sigs:
+                    card["statcast_signals"] = sigs
+            except Exception:
+                pass
+            return card
+
+        # Build position lookup from roster for enrichment
+        _pos_by_name: dict = {}
+        for rp in roster:
+            _pos_by_name[(rp.get("name") or "").strip()] = rp.get("positions") or []
+
+        def _enrich_cards(cards: list) -> list:
+            return [_enrich_card(c, _pos_by_name.get(c.get("name", ""), [])) for c in cards]
+
         return {
             "date": briefing_date,
             "generated_at": briefing.generated_at.isoformat(),
@@ -1105,9 +1163,9 @@ async def get_daily_briefing(
                 }
                 for c in briefing.categories
             ],
-            "starters": [p.to_card() for p in briefing.start_recommendations],
-            "bench": [p.to_card() for p in briefing.bench_recommendations[:5]],
-            "monitor": [p.to_card() for p in briefing.monitor_list],
+            "starters": _enrich_cards([p.to_card() for p in briefing.start_recommendations]),
+            "bench": _enrich_cards([p.to_card() for p in briefing.bench_recommendations[:5]]),
+            "monitor": _enrich_cards([p.to_card() for p in briefing.monitor_list]),
             "alerts": briefing.alerts,
             "_meta": {
                 "decisions_recorded": record_decisions,
@@ -1334,6 +1392,21 @@ async def get_fantasy_waiver_recommendations(
 
         from backend.fantasy_baseball.player_board import get_or_create_projection as _get_proj
 
+        # Load Statcast / FanGraphs caches for waiver enrichment (PR-15)
+        _waiver_sc_batters: dict = {}
+        _waiver_sc_pitchers: dict = {}
+        try:
+            from backend.fantasy_baseball.pybaseball_loader import (
+                load_pybaseball_batters as _load_bat,
+                load_pybaseball_pitchers as _load_pit,
+                match_yahoo_to_statcast as _match_sc,
+            )
+            from backend.fantasy_baseball.statcast_loader import build_statcast_signals as _build_sc_sig
+            _waiver_sc_batters = _load_bat(2026)
+            _waiver_sc_pitchers = _load_pit(2026)
+        except Exception:
+            pass
+
         def _hot_cold_flag(cat_contributions: dict) -> Optional[str]:
             scores = list(cat_contributions.values())
             if not scores:
@@ -1407,6 +1480,44 @@ async def get_fantasy_waiver_recommendations(
             _status = p.get("status") or None
             _injury_note = p.get("injury_note") or None
 
+            # Statcast enrichment for waiver player (PR-15, non-blocking)
+            _sc_dict: dict | None = None
+            _sc_sigs: list[str] = []
+            _fa_is_pitcher = positions[0] in ("SP", "RP", "P") if positions else False
+            try:
+                if name and _waiver_sc_batters and not _fa_is_pitcher:
+                    _ck = _match_sc(name, _waiver_sc_batters)
+                    if _ck:
+                        _sb = _waiver_sc_batters[_ck]
+                        _sc_dict = {
+                            "xwoba": round(_sb.xwoba, 3) if _sb.xwoba else None,
+                            "xwoba_diff": round(_sb.xwoba_diff, 3) if _sb.xwoba_diff else None,
+                            "barrel_pct": round(_sb.barrel_pct, 1) if _sb.barrel_pct else None,
+                            "exit_velo_avg": round(_sb.exit_velo_avg, 1) if _sb.exit_velo_avg else None,
+                            "hard_hit_pct": round(_sb.hard_hit_pct, 1) if _sb.hard_hit_pct else None,
+                            "wrc_plus": round(_sb.wrc_plus, 0) if _sb.wrc_plus else None,
+                            "regression_up": _sb.regression_up,
+                            "regression_down": _sb.regression_down,
+                        }
+                elif name and _waiver_sc_pitchers and _fa_is_pitcher:
+                    _ck = _match_sc(name, _waiver_sc_pitchers)
+                    if _ck:
+                        _sp = _waiver_sc_pitchers[_ck]
+                        _sc_dict = {
+                            "xera": round(_sp.xera, 2) if _sp.xera else None,
+                            "xera_diff": round(_sp.xera_diff, 2) if _sp.xera_diff else None,
+                            "stuff_plus": round(_sp.stuff_plus, 0) if _sp.stuff_plus else None,
+                            "whiff_pct": round(_sp.whiff_pct, 1) if _sp.whiff_pct else None,
+                            "barrel_allowed_pct": round(_sp.barrel_allowed_pct, 1) if _sp.barrel_allowed_pct else None,
+                            "xwoba_allowed": round(_sp.xwoba_allowed, 3) if _sp.xwoba_allowed else None,
+                            "luck_regression": _sp.luck_regression,
+                        }
+                if name:
+                    _sigs, _ = _build_sc_sig(name, _fa_is_pitcher, p.get("percent_owned", 100.0))
+                    _sc_sigs = _sigs
+            except Exception:
+                pass
+
             return WaiverPlayerOut(
                 player_id=p.get("player_key") or "",
                 name=name,
@@ -1421,6 +1532,8 @@ async def get_fantasy_waiver_recommendations(
                 status=_status,
                 injury_note=_injury_note,
                 stats=_translated_stats,
+                statcast_stats=_sc_dict,
+                statcast_signals=_sc_sigs,
             )
 
         top_available = [_to_waiver_player(p) for p in free_agents]
@@ -1707,6 +1820,11 @@ async def get_waiver_recommendations(
         except Exception:
             pass
 
+        from backend.services.waiver_edge_detector import (
+            drop_candidate_value as _drop_candidate_value,
+            is_protected_drop_candidate as _is_protected_drop_candidate,
+        )
+
         my_roster_scored: list = []
         _IL_STATUSES = {"IL", "IL10", "IL60", "NA", "OUT", "DL"}
         for rp in my_roster:
@@ -1720,13 +1838,18 @@ async def get_waiver_recommendations(
                 "name": (rp.get("name") or "").strip(),
                 "player_key": rp.get("player_key") or "",
                 "positions": rp.get("positions") or [],
+                "id": bp.get("id") or rp.get("player_key") or "",
                 "z_score": bp.get("z_score", 0.0),
                 "is_proxy": bp.get("is_proxy", False),
                 "cat_scores": bp.get("cat_scores") or {},
+                "tier": bp.get("tier"),
+                "adp": bp.get("adp"),
                 "starts_this_week": int(rp.get("starts_this_week", 1)),
                 "status": effective_status,
                 "injury_note": rp.get("injury_note"),
                 "is_undroppable": bool(rp.get("is_undroppable", 0)),
+                "is_keeper": bool(bp.get("is_keeper", False)),
+                "percent_owned": rp.get("percent_owned", rp.get("owned_pct", 0.0)),
             })
 
         def _weakest_safe_to_drop(target_positions: list) -> Optional[dict]:
@@ -1734,6 +1857,7 @@ async def get_waiver_recommendations(
                 rp for rp in my_roster_scored
                 if not rp.get("is_undroppable", False)
                 and any(pos in rp["positions"] for pos in target_positions)
+                and not _is_protected_drop_candidate(rp)
             ]
             if not candidates:
                 return None
@@ -1741,13 +1865,8 @@ async def get_waiver_recommendations(
             if len(active) == 1:
                 return None
             if len(active) == 0:
-                return min(candidates, key=lambda x: x.get("z_score") or 0.0)
-            # Never drop a superstar (z >= 6.0) regardless of injury status;
-            # they retain long-term roster value and should be held.
-            droppable_active = [p for p in active if (p.get("z_score") or 0.0) < 6.0]
-            if not droppable_active:
-                return None  # All active players are elite — don't recommend drop
-            return min(droppable_active, key=lambda x: x.get("z_score") or 0.0)
+                return min(candidates, key=_drop_candidate_value)
+            return min(active, key=_drop_candidate_value)
 
         def _fmt_signals(signals: list, reg_delta: float, is_pitcher: bool) -> str:
             parts = []
@@ -1834,12 +1953,15 @@ async def get_waiver_recommendations(
             drop_signals, drop_reg_delta = build_statcast_signals(
                 drop_candidate["name"], drop_is_pitcher
             )
-            drop_score_adj = drop_candidate["z_score"] + statcast_need_score_boost(drop_signals)
+            drop_score_adj = max(
+                _drop_candidate_value(drop_candidate),
+                drop_candidate["z_score"] + statcast_need_score_boost(drop_signals),
+            )
 
             if drop_score_adj >= adjusted_need:
                 continue
 
-            gain = adjusted_need - drop_candidate["z_score"]
+            gain = adjusted_need - drop_score_adj
             if gain < 0.5:
                 continue
 
@@ -1853,7 +1975,7 @@ async def get_waiver_recommendations(
             rationale = (
                 f"Add {fa.name} ({fa.position}, {fa.team}, {fa.owned_pct:.0f}% owned), "
                 f"drop {drop_candidate['name']} ({drop_candidate['positions'][0] if drop_candidate['positions'] else '?'}). "
-                f"Net gain: {gain:+.1f} ({drop_candidate['z_score']:+.1f} -> {adjusted_need:+.1f}){signal_text}{drop_signal_text}."
+                f"Net gain: {gain:+.1f} ({drop_score_adj:+.1f} -> {adjusted_need:+.1f}){signal_text}{drop_signal_text}."
             )
             if is_proxy:
                 rationale += " [Call-up - projections estimated.]"

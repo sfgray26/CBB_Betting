@@ -1,0 +1,55 @@
+{
+  "running": true,
+  "jobs": [
+    {
+      "id": "job_queue_processor",
+      "name": "Async Job Queue Processor",
+      "next_run": "2026-04-20T21:53:25.089676+00:00"
+    },
+    {
+      "id": "capture_closing_lines",
+      "name": "Capture Closing Lines",
+      "next_run": "2026-04-20T22:18:10.081582+00:00"
+    },
+    {
+      "id": "update_outcomes",
+      "name": "Update Completed Game Outcomes",
+      "next_run": "2026-04-20T23:48:10.081442+00:00"
+    },
+    {
+      "id": "nightly_decision_resolution",
+      "name": "Nightly Fantasy Decision Resolution",
+      "next_run": "2026-04-20T23:59:00-04:00"
+    },
+    {
+      "id": "settle_games_daily",
+      "name": "Daily Settle Completed Games",
+      "next_run": "2026-04-21T04:00:00-04:00"
+    },
+    {
+      "id": "daily_snapshot",
+      "name": "Daily Performance Snapshot",
+      "next_run": "2026-04-21T04:30:00-04:00"
+    },
+    {
+      "id": "statcast_daily_ingestion",
+      "name": "Statcast Daily Ingestion + Bayesian Updates",
+      "next_run": "2026-04-21T06:00:00-04:00"
+    },
+    {
+      "id": "fetch_pybaseball",
+      "name": "Refresh pybaseball Statcast Leaderboards",
+      "next_run": "2026-04-21T07:30:00-04:00"
+    },
+    {
+      "id": "openclaw_morning",
+      "name": "OpenClaw Autonomous Morning Workflow",
+      "next_run": "2026-04-21T08:30:00-04:00"
+    },
+    {
+      "id": "mlb_nightly_analysis",
+      "name": "MLB Nightly Analysis",
+      "next_run": "2026-04-21T09:00:00-04:00"
+    }
+  ]
+}

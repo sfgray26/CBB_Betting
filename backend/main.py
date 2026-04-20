@@ -1460,7 +1460,7 @@ def _pybaseball_fetch_job():
     try:
         from backend.fantasy_baseball.pybaseball_loader import fetch_all_statcast_leaderboards
         import backend.fantasy_baseball.statcast_loader as _sc
-        fetch_all_statcast_leaderboards(year=2025)
+        fetch_all_statcast_leaderboards(year=2026)
         _sc._batter_cache.clear()
         _sc._pitcher_cache.clear()
         _sc._loaded_at = 0.0
@@ -5485,6 +5485,22 @@ async def get_fantasy_waiver_recommendations(
         # call-ups / undrafted players get a conservative position-baseline proxy.
         from backend.fantasy_baseball.player_board import get_or_create_projection as _get_proj
 
+        # Load Statcast / FanGraphs caches for waiver enrichment (PR-15)
+        _waiver_sc_batters: dict = {}
+        _waiver_sc_pitchers: dict = {}
+        try:
+            from backend.fantasy_baseball.pybaseball_loader import (
+                load_pybaseball_batters as _load_bat,
+                load_pybaseball_pitchers as _load_pit,
+                match_yahoo_to_statcast as _match_sc,
+            )
+            from backend.fantasy_baseball.statcast_loader import build_statcast_signals as _build_sc_sig
+            import dataclasses as _dc_waiver
+            _waiver_sc_batters = _load_bat(2026)
+            _waiver_sc_pitchers = _load_pit(2026)
+        except Exception:
+            pass
+
         def _hot_cold_flag(cat_contributions: dict) -> Optional[str]:
             """Simple hot/cold based on category contribution z-scores."""
             scores = list(cat_contributions.values())
@@ -5571,6 +5587,44 @@ async def get_fantasy_waiver_recommendations(
             _status = p.get("status") or None
             _injury_note = p.get("injury_note") or None
 
+            # Statcast enrichment for waiver player (PR-15, non-blocking)
+            _sc_dict: dict | None = None
+            _sc_sigs: list[str] = []
+            _fa_is_pitcher = positions[0] in ("SP", "RP", "P") if positions else False
+            try:
+                if name and _waiver_sc_batters and not _fa_is_pitcher:
+                    _ck = _match_sc(name, _waiver_sc_batters)
+                    if _ck:
+                        _sb = _waiver_sc_batters[_ck]
+                        _sc_dict = {
+                            "xwoba": round(_sb.xwoba, 3) if _sb.xwoba else None,
+                            "xwoba_diff": round(_sb.xwoba_diff, 3) if _sb.xwoba_diff else None,
+                            "barrel_pct": round(_sb.barrel_pct, 1) if _sb.barrel_pct else None,
+                            "exit_velo_avg": round(_sb.exit_velo_avg, 1) if _sb.exit_velo_avg else None,
+                            "hard_hit_pct": round(_sb.hard_hit_pct, 1) if _sb.hard_hit_pct else None,
+                            "wrc_plus": round(_sb.wrc_plus, 0) if _sb.wrc_plus else None,
+                            "regression_up": _sb.regression_up,
+                            "regression_down": _sb.regression_down,
+                        }
+                elif name and _waiver_sc_pitchers and _fa_is_pitcher:
+                    _ck = _match_sc(name, _waiver_sc_pitchers)
+                    if _ck:
+                        _sp = _waiver_sc_pitchers[_ck]
+                        _sc_dict = {
+                            "xera": round(_sp.xera, 2) if _sp.xera else None,
+                            "xera_diff": round(_sp.xera_diff, 2) if _sp.xera_diff else None,
+                            "stuff_plus": round(_sp.stuff_plus, 0) if _sp.stuff_plus else None,
+                            "whiff_pct": round(_sp.whiff_pct, 1) if _sp.whiff_pct else None,
+                            "barrel_allowed_pct": round(_sp.barrel_allowed_pct, 1) if _sp.barrel_allowed_pct else None,
+                            "xwoba_allowed": round(_sp.xwoba_allowed, 3) if _sp.xwoba_allowed else None,
+                            "luck_regression": _sp.luck_regression,
+                        }
+                if name:
+                    _sigs, _ = _build_sc_sig(name, _fa_is_pitcher, p.get("percent_owned", 100.0))
+                    _sc_sigs = _sigs
+            except Exception:
+                pass
+
             return WaiverPlayerOut(
                 player_id=p.get("player_key") or "",
                 name=name,
@@ -5585,6 +5639,8 @@ async def get_fantasy_waiver_recommendations(
                 status=_status,
                 injury_note=_injury_note,
                 stats=_translated_stats,
+                statcast_stats=_sc_dict,
+                statcast_signals=_sc_sigs,
             )
 
         # Build + filter + sort top_available
@@ -5754,381 +5810,6 @@ async def add_fantasy_waiver_player(
         "dropped": drop_key,
         "team_key": team_key,
     }
-
-
-@app.get("/api/fantasy/waiver/recommendations")
-async def get_waiver_recommendations(
-    user: str = Depends(verify_api_key),
-    db: Session = Depends(get_db),
-):
-    """
-    Actionable ADD/DROP/ADD_DROP recommendations.
-
-    Algorithm:
-    1. Fetch my roster + category deficits (matchup-aware if in-season)
-    2. Fetch top free agents
-    3. For each deficit category, find best available FA who helps
-    4. Pair each ADD with the weakest same-position player on my roster
-    5. Return ranked list of RosterMoveRecommendation
-
-    Returns at most 5 recommendations ranked by need_score.
-    """
-    from datetime import date as date_type, timedelta
-    from backend.schemas import (
-        RosterMoveRecommendation, WaiverRecommendationsResponse,
-        WaiverPlayerOut, CategoryDeficitOut,
-    )
-    from backend.fantasy_baseball.player_board import get_or_create_projection as _get_proj
-    from backend.fantasy_baseball.statcast_loader import (
-        build_statcast_signals, statcast_need_score_boost,
-    )
-
-    today = date_type.today()
-    week_end = today + timedelta(days=(6 - today.weekday()))
-
-    matchup_opponent = "TBD"
-    category_deficits: list = []
-    recommendations: list[RosterMoveRecommendation] = []
-
-    try:
-        client = get_yahoo_client()
-        my_team_key = os.getenv("YAHOO_TEAM_KEY", "")
-        if not my_team_key:
-            try:
-                my_team_key = client.get_my_team_key()
-            except Exception:
-                my_team_key = ""
-
-        # Fetch my current roster
-        my_roster: list[dict] = []
-        if my_team_key:
-            try:
-                my_roster = client.get_roster()
-            except Exception:
-                pass
-
-        # Fetch category deficits via scoreboard
-        try:
-            from backend.schemas import CategoryDeficitOut as _CDOut
-            matchups = client.get_scoreboard()
-            for m in matchups:
-                if not isinstance(m, dict):
-                    continue
-                teams = m.get("teams", {})
-                raw_entries = []
-                if isinstance(teams, list):
-                    raw_entries = [item.get("team", []) for item in teams if isinstance(item, dict)]
-                elif isinstance(teams, dict):
-                    count_t = int(teams.get("count", 0))
-                    raw_entries = [teams.get(str(ti), {}).get("team", []) for ti in range(count_t)]
-                team_keys_in_matchup = []
-                team_stats: dict = {}
-                team_names: dict = {}
-                for t_entry in raw_entries:
-                    t_meta: dict = {}
-                    t_stat_cats: dict = {}
-                    if isinstance(t_entry, list):
-                        for sub in t_entry:
-                            if isinstance(sub, list):
-                                for item in sub:
-                                    if isinstance(item, dict):
-                                        t_meta.update(item)
-                            elif isinstance(sub, dict):
-                                t_meta.update(sub)
-                                if "team_stats" in sub:
-                                    stats_block = sub["team_stats"].get("stats", [])
-                                    for s_entry in stats_block:
-                                        if isinstance(s_entry, dict):
-                                            s = s_entry.get("stat", {})
-                                            t_stat_cats[s.get("stat_id")] = s.get("value")
-                    tk = t_meta.get("team_key", "")
-                    tn = t_meta.get("name", "")
-                    team_keys_in_matchup.append(tk)
-                    team_stats[tk] = t_stat_cats
-                    team_names[tk] = tn
-                if my_team_key in team_keys_in_matchup:
-                    for tk in team_keys_in_matchup:
-                        if tk != my_team_key:
-                            matchup_opponent = team_names.get(tk, "TBD")
-                    break
-        except Exception:
-            pass
-
-        # Get free agents (larger pool for better recommendations)
-        free_agents = client.get_free_agents(count=40)
-
-        # Build scored FA list with universal projections
-        def _score_fa(p: dict) -> WaiverPlayerOut:
-            positions = p.get("positions") or []
-            name = (p.get("name") or "").strip()
-            bp = _get_proj(p)
-            need_score = bp.get("z_score", 0.0)
-            return WaiverPlayerOut(
-                player_id=p.get("player_key") or "",
-                name=name,
-                team=p.get("team") or "",
-                position=positions[0] if positions else "?",
-                need_score=round(need_score, 3),
-                category_contributions=bp.get("cat_scores", {}) if bp else {},
-                owned_pct=p.get("percent_owned", 0.0),
-                starts_this_week=0,
-            )
-
-        scored_fas = sorted(
-            [_score_fa(p) for p in free_agents],
-            key=lambda x: x.need_score,
-            reverse=True,
-        )
-
-        # Non-blocking Statcast coverage log
-        try:
-            from backend.fantasy_baseball.pybaseball_loader import (
-                log_statcast_coverage,
-                load_pybaseball_batters,
-                load_pybaseball_pitchers,
-            )
-            fa_names = [p.get("name", "") for p in free_agents]
-            _sc = {**load_pybaseball_batters(2025), **load_pybaseball_pitchers(2025)}
-            if _sc:
-                log_statcast_coverage(fa_names, _sc, "waiver FAs")
-        except Exception:
-            pass
-
-        # Build my roster with projections for drop candidate evaluation
-        my_roster_scored: list[dict] = []
-        for rp in my_roster:
-            bp = _get_proj(rp)
-            my_roster_scored.append({
-                "name": (rp.get("name") or "").strip(),
-                "player_key": rp.get("player_key") or "",
-                "positions": rp.get("positions") or [],
-                "z_score": bp.get("z_score", 0.0),
-                "is_proxy": bp.get("is_proxy", False),
-                "cat_scores": bp.get("cat_scores") or {},
-                "starts_this_week": int(rp.get("starts_this_week", 1)),
-                "status": rp.get("status"),
-                "injury_note": rp.get("injury_note"),
-                "is_undroppable": bool(rp.get("is_undroppable", 0)),
-            })
-
-        # Statuses that mean a player is occupying an IL/NA slot, not an active slot.
-        # DTD players are borderline but still fill their active slot, so they remain droppable.
-        _IL_STATUSES = {"IL", "IL10", "IL60", "NA", "OUT"}
-
-        def _weakest_safe_to_drop(target_positions: list[str]) -> dict | None:
-            """Return the weakest droppable player at the given positions, with 1-active-cover protection."""
-            candidates = [
-                rp for rp in my_roster_scored
-                if not rp.get("is_undroppable", False)
-                and any(pos in rp["positions"] for pos in target_positions)
-            ]
-            if not candidates:
-                return None
-            active = [p for p in candidates if p.get("status") not in _IL_STATUSES]
-            if len(active) == 1:
-                # Only one active at this position - protected, do not drop
-                return None
-            if len(active) == 0:
-                # All injured - position already uncovered, anyone is droppable
-                return min(candidates, key=lambda x: x.get("z_score") or 0.0)
-            return min(active, key=lambda x: x.get("z_score") or 0.0)
-
-        def _fmt_signals(signals: list[str], reg_delta: float, is_pitcher: bool) -> str:
-            """Format FA Statcast signals as a rationale suffix."""
-            parts = []
-            if "BUY_LOW" in signals:
-                metric = "xERA" if is_pitcher else "xwOBA"
-                parts.append(f"BUY_LOW ({metric} delta={reg_delta:+.3f})")
-            if "BREAKOUT" in signals:
-                parts.append("BREAKOUT candidate")
-            if not parts:
-                return ""
-            return " [" + "; ".join(parts) + "]"
-
-        def _fmt_drop_signals(signals: list[str], reg_delta: float, is_pitcher: bool) -> str:
-            """Format drop candidate Statcast signals as a rationale suffix."""
-            parts = []
-            if "SELL_HIGH" in signals:
-                metric = "xERA" if is_pitcher else "xwOBA"
-                parts.append(f"drop is SELL_HIGH ({metric} delta={reg_delta:+.3f})")
-            if "HIGH_INJURY_RISK" in signals:
-                parts.append("drop has HIGH_INJURY_RISK")
-            if not parts:
-                return ""
-            return " [" + "; ".join(parts) + "]"
-
-        # Generate recommendations for top FAs
-        for fa in scored_fas[:15]:
-            if len(recommendations) >= 5:
-                break
-
-            fa_positions = [fa.position] if fa.position != "?" else []
-            # What generic position group does this player fill?
-            if fa.position in ("SP", "RP", "P"):
-                pos_group = ["SP", "RP", "P"]
-                pos_label = "pitching"
-            elif fa.position in ("C",):
-                pos_group = ["C"]
-                pos_label = "catcher"
-            elif fa.position in ("SS",):
-                pos_group = ["SS"]
-                pos_label = "shortstop"
-            elif fa.position in ("2B",):
-                pos_group = ["2B"]
-                pos_label = "second base"
-            elif fa.position in ("3B",):
-                pos_group = ["3B"]
-                pos_label = "third base"
-            elif fa.position in ("1B",):
-                pos_group = ["1B"]
-                pos_label = "first base"
-            elif fa.position in ("OF", "LF", "CF", "RF"):
-                pos_group = ["OF", "LF", "CF", "RF"]
-                pos_label = "outfield"
-            else:
-                pos_group = fa_positions
-                pos_label = fa.position
-
-            # Statcast enrichment for FA (non-blocking)
-            fa_is_pitcher = fa.position in ("SP", "RP", "P")
-            fa_signals, fa_reg_delta = build_statcast_signals(
-                fa.name, fa_is_pitcher, fa.owned_pct
-            )
-            statcast_boost = statcast_need_score_boost(fa_signals)
-            adjusted_need = fa.need_score + statcast_boost
-
-            drop_candidate = _weakest_safe_to_drop(pos_group)
-            if not drop_candidate:
-                # No roster player at same position - still recommend add if FA is strong
-                if adjusted_need >= 2.0:
-                    signal_text = _fmt_signals(fa_signals, fa_reg_delta, fa_is_pitcher)
-                    recommendations.append(RosterMoveRecommendation(
-                        action="ADD",
-                        add_player=fa,
-                        drop_player_name=None,
-                        drop_player_position=None,
-                        rationale=(
-                            f"Add {fa.name} ({fa.position}, {fa.team}) - "
-                            f"projected z={fa.need_score:+.1f}{signal_text}. "
-                            f"No {pos_label} to drop suggested; check bench."
-                        ),
-                        category_targets=[],
-                        need_score=round(adjusted_need, 3),
-                        confidence=0.5 if not _get_proj({"player_key": fa.player_id, "name": fa.name}).get("is_proxy") else 0.3,
-                        statcast_signals=fa_signals,
-                        regression_delta=fa_reg_delta,
-                    ))
-                continue
-
-            # Statcast injury risk on drop candidate (pitcher only - higher risk = easier drop)
-            drop_is_pitcher = drop_candidate["positions"][0] in ("SP", "RP", "P") if drop_candidate["positions"] else False
-            drop_signals, drop_reg_delta = build_statcast_signals(
-                drop_candidate["name"], drop_is_pitcher
-            )
-            drop_score_adj = drop_candidate["z_score"] + statcast_need_score_boost(drop_signals)
-
-            # Skip if drop candidate is still better than FA after Statcast adjustment
-            if drop_score_adj >= adjusted_need:
-                continue
-
-            gain = adjusted_need - drop_candidate["z_score"]
-            if gain < 0.5:
-                continue  # Not worth the move
-
-            fa_proj = _get_proj({"player_key": fa.player_id, "name": fa.name, "positions": [fa.position]})
-            is_proxy = fa_proj.get("is_proxy", False)
-            confidence = 0.75 if not is_proxy else 0.45
-
-            signal_text = _fmt_signals(fa_signals, fa_reg_delta, fa_is_pitcher)
-            drop_signal_text = _fmt_drop_signals(drop_signals, drop_reg_delta, drop_is_pitcher)
-
-            rationale = (
-                f"Add {fa.name} ({fa.position}, {fa.team}, {fa.owned_pct:.0f}% owned), "
-                f"drop {drop_candidate['name']} ({drop_candidate['positions'][0] if drop_candidate['positions'] else '?'}). "
-                f"Net gain: {gain:+.1f} ({drop_candidate['z_score']:+.1f} -> {adjusted_need:+.1f}){signal_text}{drop_signal_text}."
-            )
-            if is_proxy:
-                rationale += " [Call-up - projections estimated.]"
-            if drop_candidate.get("status") in _IL_STATUSES:
-                from backend.services.waiver_edge_detector import il_capacity_info as _il_cap2
-                if my_roster and _il_cap2(my_roster)["available"] > 0:
-                    rationale = (
-                        f"[IL slot free - move {drop_candidate['name']} to IL first] " + rationale
-                    )
-                else:
-                    rationale += f" [Note: {drop_candidate['name']} is {drop_candidate['status']} - consider IL slot if available]"
-
-            # MCMC win-probability simulation (non-blocking, graceful fallback)
-            _mcmc = {}
-            try:
-                from backend.fantasy_baseball.mcmc_simulator import simulate_roster_move as _sim_move
-                _add_for_mcmc = {
-                    "name": fa.name,
-                    "positions": [fa.position],
-                    "cat_scores": dict(fa.category_contributions),
-                    "starts_this_week": fa.starts_this_week,
-                }
-                _mcmc = _sim_move(
-                    my_roster=my_roster_scored,
-                    opponent_roster=[],  # league-average opponent
-                    add_player=_add_for_mcmc,
-                    drop_player_name=drop_candidate["name"],
-                    n_sims=1000,
-                )
-                if _mcmc.get("mcmc_enabled") and abs(_mcmc["win_prob_gain"]) >= 0.005:
-                    wp_before_pct = round(_mcmc["win_prob_before"] * 100)
-                    wp_after_pct = round(_mcmc["win_prob_after"] * 100)
-                    wp_gain_pct = round(_mcmc["win_prob_gain"] * 100)
-                    rationale += (
-                        f" Win prob: {wp_before_pct}% -> {wp_after_pct}%"
-                        f" ({wp_gain_pct:+d}%)."
-                    )
-            except Exception:
-                pass
-
-            recommendations.append(RosterMoveRecommendation(
-                action="ADD_DROP",
-                add_player=fa,
-                drop_player_name=drop_candidate["name"],
-                drop_player_position=drop_candidate["positions"][0] if drop_candidate["positions"] else "?",
-                rationale=rationale,
-                category_targets=[],
-                need_score=round(gain, 3),
-                confidence=confidence,
-                statcast_signals=fa_signals,
-                regression_delta=fa_reg_delta,
-                win_prob_before=_mcmc.get("win_prob_before", 0.0),
-                win_prob_after=_mcmc.get("win_prob_after", 0.0),
-                win_prob_gain=_mcmc.get("win_prob_gain", 0.0),
-                category_win_probs=_mcmc.get("category_win_probs_after", {}),
-                mcmc_enabled=_mcmc.get("mcmc_enabled", False),
-            ))
-
-    except YahooAuthError as exc:
-        logger.error("Waiver recommendations endpoint -- Yahoo auth error: %s", exc)
-        raise HTTPException(
-            status_code=503,
-            detail=f"Yahoo auth failed - refresh token may be expired. ({exc})",
-        ) from exc
-    except YahooAPIError as exc:
-        logger.error("Waiver recommendations endpoint -- Yahoo API error: %s", exc)
-        raise HTTPException(
-            status_code=503,
-            detail=f"Yahoo API error: {exc}",
-        ) from exc
-    except Exception as exc:
-        logger.exception("Waiver recommendations endpoint failed unexpectedly: %s", exc)
-        raise HTTPException(
-            status_code=503,
-            detail=f"Unexpected error: {exc}",
-        ) from exc
-
-    return WaiverRecommendationsResponse(
-        week_end=week_end,
-        matchup_opponent=matchup_opponent,
-        recommendations=sorted(recommendations, key=lambda r: r.need_score, reverse=True),
-        category_deficits=category_deficits,
-    )
 
 
 @app.post("/api/fantasy/lineup")
@@ -6344,11 +6025,62 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
         # Use season stats from batch fetch; fall back to Yahoo roster data if present
         season_stats = season_stats_by_key.get(player_key) or p.get("season_stats") or None
 
+        # Statcast / FanGraphs advanced metrics enrichment (PR-15)
+        sc_stats: dict | None = None
+        sc_signals: list[str] | None = None
+        positions = p.get("positions") or []
+        is_pitcher = bool(positions) and positions[0] in ("SP", "RP", "P")
+        try:
+            if name and statcast_batters and not is_pitcher:
+                cache_key = match_yahoo_to_statcast(name, statcast_batters)
+                if cache_key:
+                    sb = statcast_batters[cache_key]
+                    sc_stats = {
+                        "xwoba": round(sb.xwoba, 3) if sb.xwoba else None,
+                        "xwoba_diff": round(sb.xwoba_diff, 3) if sb.xwoba_diff else None,
+                        "barrel_pct": round(sb.barrel_pct, 1) if sb.barrel_pct else None,
+                        "exit_velo_avg": round(sb.exit_velo_avg, 1) if sb.exit_velo_avg else None,
+                        "hard_hit_pct": round(sb.hard_hit_pct, 1) if sb.hard_hit_pct else None,
+                        "sweet_spot_pct": round(sb.sweet_spot_pct, 1) if sb.sweet_spot_pct else None,
+                        "wrc_plus": round(sb.wrc_plus, 0) if sb.wrc_plus else None,
+                        "o_swing_pct": round(sb.o_swing_pct, 1) if sb.o_swing_pct else None,
+                        "z_contact_pct": round(sb.z_contact_pct, 1) if sb.z_contact_pct else None,
+                        "gb_pct": round(sb.gb_pct, 1) if sb.gb_pct else None,
+                        "fb_pct": round(sb.fb_pct, 1) if sb.fb_pct else None,
+                        "regression_up": sb.regression_up,
+                        "regression_down": sb.regression_down,
+                    }
+            elif name and statcast_pitchers and is_pitcher:
+                cache_key = match_yahoo_to_statcast(name, statcast_pitchers)
+                if cache_key:
+                    sp = statcast_pitchers[cache_key]
+                    sc_stats = {
+                        "xera": round(sp.xera, 2) if sp.xera else None,
+                        "xera_diff": round(sp.xera_diff, 2) if sp.xera_diff else None,
+                        "stuff_plus": round(sp.stuff_plus, 0) if sp.stuff_plus else None,
+                        "location_plus": round(sp.location_plus, 0) if sp.location_plus else None,
+                        "fb_velo_avg": round(sp.fb_velo_avg, 1) if sp.fb_velo_avg else None,
+                        "whiff_pct": round(sp.whiff_pct, 1) if sp.whiff_pct else None,
+                        "chase_pct": round(sp.chase_pct, 1) if sp.chase_pct else None,
+                        "csw_pct": round(sp.csw_pct, 1) if sp.csw_pct else None,
+                        "barrel_allowed_pct": round(sp.barrel_allowed_pct, 1) if sp.barrel_allowed_pct else None,
+                        "hard_hit_allowed_pct": round(sp.hard_hit_allowed_pct, 1) if sp.hard_hit_allowed_pct else None,
+                        "xwoba_allowed": round(sp.xwoba_allowed, 3) if sp.xwoba_allowed else None,
+                        "luck_regression": sp.luck_regression,
+                    }
+            # Build signals (BUY_LOW, SELL_HIGH, BREAKOUT, etc.)
+            if name and (statcast_batters or statcast_pitchers):
+                signals, _ = build_statcast_signals(name, is_pitcher)
+                if signals:
+                    sc_signals = signals
+        except Exception as _sc_player_err:
+            logger.debug("Statcast enrichment failed for %s: %s", name, _sc_player_err)
+
         players_map[player_key] = RosterPlayerOut(
             player_key=player_key,
             name=name,
             team=p.get("team"),
-            positions=p.get("positions") or [],
+            positions=positions,
             status=status_str,
             injury_note=injury_note if injury_note else None,
             injury_status=status_str,  # Pass through same coerced status
@@ -6359,6 +6091,8 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
             selected_position=p.get("selected_position"),
             season_stats=season_stats,
             rolling_14d=p.get("rolling_14d"),  # 14-day rolling if available
+            statcast_stats=sc_stats,
+            statcast_signals=sc_signals,
         )
     players_out = list(players_map.values())
 

@@ -6,6 +6,7 @@ Returns [] (not raise) on YahooAuthError.
 import logging
 import os
 import time
+import unicodedata
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,127 @@ _INACTIVE_STATUSES = frozenset({"IL", "IL10", "IL60", "NA", "OUT"})
 # Yahoo IL slot position labels (selected_position values for IL-slotted players)
 _IL_SLOT_POSITIONS = frozenset({"IL", "IL10", "IL60", "IL+"})
 _DEFAULT_IL_SLOTS = int(os.getenv("YAHOO_IL_SLOTS", "2"))
+_ELITE_Z_THRESHOLD = 4.0
+_TIER_HOLD_FLOORS = {
+    1: 4.5,
+    2: 3.5,
+    3: 2.75,
+    4: 2.0,
+    5: 1.25,
+}
+
+
+def _coerce_float(value, default=0.0) -> float:
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_int(value, default=999) -> int:
+    try:
+        if value is None or value == "":
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _player_lookup_id(player: dict) -> str:
+    raw = (
+        player.get("id")
+        or player.get("player_id")
+        or player.get("player_key")
+        or player.get("name")
+        or ""
+    )
+    normalized = unicodedata.normalize("NFKD", str(raw))
+    ascii_only = normalized.encode("ascii", "ignore").decode("ascii")
+    return ascii_only.lower().replace(" ", "_").replace(".", "").replace("'", "")
+
+
+def long_term_hold_floor(player: dict) -> float:
+    """Estimate a conservative rest-of-season hold value for drop decisions."""
+    score = _coerce_float(player.get("z_score"), 0.0)
+    tier = _coerce_int(player.get("tier"), 999)
+    adp = _coerce_float(player.get("adp"), 9999.0)
+    owned_pct = _coerce_float(
+        player.get("percent_owned", player.get("owned_pct", 0.0)),
+        0.0,
+    )
+
+    tier_floor = _TIER_HOLD_FLOORS.get(tier)
+    if tier_floor is not None:
+        score = max(score, tier_floor)
+
+    if adp <= 30:
+        score = max(score, 4.5)
+    elif adp <= 75:
+        score = max(score, 3.25)
+    elif adp <= 130:
+        score = max(score, 2.0)
+    elif adp <= 180:
+        score = max(score, 1.0)
+
+    if owned_pct >= 95:
+        score = max(score, 4.0)
+    elif owned_pct >= 90:
+        score = max(score, 3.25)
+    elif owned_pct >= 80:
+        score = max(score, 2.25)
+
+    if player.get("is_keeper"):
+        score = max(score, 4.0)
+
+    try:
+        from backend.fantasy_baseball.ballpark_factors import get_risk_profile
+
+        risk_profile = get_risk_profile(_player_lookup_id(player))
+    except Exception:
+        risk_profile = None
+
+    if (
+        risk_profile
+        and risk_profile.acquisition in {"locked", "likely"}
+        and adp <= 130
+    ):
+        score = max(score, 2.25)
+
+    return score
+
+
+def drop_candidate_value(player: dict) -> float:
+    """Blend short-term category output with longer-term roster value."""
+    cat_scores = player.get("cat_scores") or {}
+    base_value = float(sum(cat_scores.values())) if cat_scores else _coerce_float(player.get("z_score"), 0.0)
+    return max(base_value, long_term_hold_floor(player))
+
+
+def is_protected_drop_candidate(player: dict) -> bool:
+    """Return True for players that should not be recommended as routine drops."""
+    if player.get("is_undroppable") or player.get("is_keeper"):
+        return True
+
+    z_score = _coerce_float(player.get("z_score"), 0.0)
+    tier = _coerce_int(player.get("tier"), 999)
+    adp = _coerce_float(player.get("adp"), 9999.0)
+    owned_pct = _coerce_float(
+        player.get("percent_owned", player.get("owned_pct", 0.0)),
+        0.0,
+    )
+
+    if z_score >= _ELITE_Z_THRESHOLD:
+        return True
+    if tier <= 2 or adp <= 30:
+        return True
+    if owned_pct >= 92 and z_score >= 1.5:
+        return True
+    if tier <= 4 and adp <= 130 and owned_pct >= 65:
+        return True
+
+    return long_term_hold_floor(player) >= 2.25 and tier <= 4 and adp <= 130
 
 
 def count_il_slots_used(roster: list[dict]) -> int:
@@ -121,11 +243,15 @@ class WaiverEdgeDetector:
         enriched = dict(player)
 
         if projection:
+            enriched.setdefault("id", projection.get("id") or player.get("id") or "")
             enriched.setdefault("team", projection.get("team") or player.get("team") or "")
             enriched.setdefault("positions", projection.get("positions") or player.get("positions") or [])
+            enriched["tier"] = projection.get("tier", enriched.get("tier"))
+            enriched["adp"] = projection.get("adp", enriched.get("adp"))
             enriched["z_score"] = projection.get("z_score", enriched.get("z_score", 0.0))
             enriched["cat_scores"] = projection.get("cat_scores") or enriched.get("cat_scores") or {}
             enriched["proj"] = projection.get("proj") or enriched.get("proj") or {}
+            enriched["is_keeper"] = bool(projection.get("is_keeper", enriched.get("is_keeper", False)))
             enriched["is_proxy"] = bool(projection.get("is_proxy", enriched.get("is_proxy", False)))
 
         return enriched
@@ -210,10 +336,11 @@ class WaiverEdgeDetector:
                 and p.get("selected_position") not in _INACTIVE_STATUSES
                 and p.get("status") not in _INACTIVE_STATUSES
                 and any(pos in (p.get("positions") or []) for pos in pos_group)
+                and not is_protected_drop_candidate(p)
             ]
             if not candidates:
                 return None
-            return min(candidates, key=self._player_value)
+            return min(candidates, key=drop_candidate_value)
 
     def _weakest_droppable(self, roster):
         """Return weakest droppable player, excluding IL players."""
@@ -222,17 +349,15 @@ class WaiverEdgeDetector:
             if not p.get("is_undroppable", False)
             and p.get("selected_position") not in _INACTIVE_STATUSES
             and p.get("status") not in _INACTIVE_STATUSES
+            and not is_protected_drop_candidate(p)
         ]
         if not droppable:
             return None
-        return min(droppable, key=self._player_value)
+        return min(droppable, key=drop_candidate_value)
 
     @staticmethod
     def _player_value(player: dict) -> float:
-        cat_scores = player.get("cat_scores") or {}
-        if cat_scores:
-            return float(sum(cat_scores.values()))
-        return float(player.get("z_score") or 0.0)
+        return drop_candidate_value(player)
 
     def _score_fa_against_deficits(self, fa, deficits):
         cat_scores = fa.get("cat_scores") or {}

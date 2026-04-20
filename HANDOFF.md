@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > Date: April 20, 2026 | Author: Claude Code (Master Architect)
-> Status: **UAT remediation session complete (Apr 20). 6 bugs fixed, 2245/2245 tests passing. Deploy needed — see Gemini bundle below.**
+> Status: **Local UAT remediation, waiver-intelligence hardening, and waiver-route deduplication complete (Apr 20). Production is still pre-deploy on key fantasy fixes.**
 
 ---
 
@@ -21,12 +21,26 @@ UAT was run against Railway production (`uat_findings_fresh.md`): 53 PASS / 15 F
 | `backend/routers/fantasy.py` | Fix briefing `overall_confidence` from int % to float 0-1 (divide by 100). |
 | `backend/routers/fantasy.py` | Fix IL player drop guard: derive effective status from `selected_position` slot when `status` is None; add z>=6.0 superstar protection to prevent dropping elite players. |
 | `backend/main.py` | Roster endpoint: add `get_players_stats_batch()` call to populate `season_stats` for all roster players. Status default changed from "playing" → "Active". |
+| `backend/main.py` | Remove the duplicated inline `/api/fantasy/waiver/recommendations` route so the canonical router implementation is the only owner of waiver recommendation behavior. |
 | `backend/services/waiver_edge_detector.py` | Enrich raw Yahoo roster/free-agent players with board projections before scoring so `need_score` no longer collapses to 0.0 when `cat_scores` are missing from Yahoo payloads. Fallback to player `z_score` when matchup deficits are unavailable. |
+| `backend/services/waiver_edge_detector.py` | Add long-term hold-value floors and protected-drop logic using projection tier, ADP, ownership, and locked-upside risk profiles so core assets are not treated as routine waiver fodder. |
 | `backend/services/dashboard_service.py` | Fix waiver-target ownership serialization: accept `owned_pct` as well as `percent_owned` when building `WaiverTarget`. |
 | `scripts/uat_validator.py` | Fix field name mismatch: check `name`/`player_key` (Python field names) not `player_name`/`yahoo_player_key` (aliases). |
 | `tests/test_budget_api.py` | Update test paths from `/budget` → `/api/fantasy/budget` to match renamed route. |
 | `tests/test_waiver_edge.py` | Add regression coverage for projection enrichment and `z_score` fallback in waiver scoring. |
+| `backend/routers/fantasy.py` | Reuse the shared protected-drop policy in `/api/fantasy/waiver/recommendations` and compare FA adds against effective drop value rather than naive current z-score. |
+| `tests/test_waiver_edge.py` | Add regression coverage for elite / high-upside hold cases so players like Juan Soto and Eury Perez are not surfaced as routine drops. |
 | `tests/test_dashboard_service_waiver_targets.py` | Add regression coverage for `owned_pct` → dashboard ownership handoff and computed priority score. |
+
+### Additional Validation
+
+Targeted local checks passed after waiver hardening and route deduplication:
+
+```
+venv/Scripts/python -m py_compile backend/services/waiver_edge_detector.py backend/routers/fantasy.py backend/main.py tests/test_waiver_edge.py
+venv/Scripts/python -m pytest tests/test_waiver_edge.py tests/test_dashboard_service_waiver_targets.py -q --tb=short
+# 14 passed in 3.20s
+```
 
 ### Post-Fix Test Results
 
@@ -52,6 +66,10 @@ After Gemini deploys, expected UAT improvements:
 - No Statcast/advanced stats on roster endpoint (future work)
 - Dashboard waiver targets previously showed `percent_owned=0.0` and `priority_score=0.0` because the detector was scoring raw Yahoo players with no `cat_scores` and the serializer only read `percent_owned`. Local fix is complete; deploy + live UAT rerun still required.
 
+**Current production truth from the latest captured responses:**
+- Railway is still serving pre-deploy waiver behavior. The archived response in `postman_collections/responses/waiver_200.json` still shows `owned_pct=0.0` / empty `category_contributions`, and `postman_collections/responses/waiver_recommendations_200.json` still reflects the old shallow add/drop output.
+- Local code is ahead of production on waiver scoring, ownership handoff, and route ownership.
+
 ---
 
 ## GEMINI DELEGATION BUNDLE — Deploy April 20 Fixes
@@ -59,26 +77,34 @@ After Gemini deploys, expected UAT improvements:
 **HANDOFF PROMPT FOR GEMINI CLI:**
 
 ```
-Deploy the April 20 UAT remediation fixes to Railway.
+Deploy the April 20 fantasy UAT remediation and waiver-hardening fixes to Railway.
 
-Files changed locally (all tests passing at 2245/0 fail):
+Files changed locally:
 - backend/schemas.py — ConfigDict import added (critical: was crashing router)
-- backend/routers/fantasy.py — decisions/status fix, NSB fix, briefing fix, IL guard
-- backend/main.py — roster season_stats batch fetch added
+- backend/routers/fantasy.py — decisions/status fix, NSB fix, briefing fix, IL guard, canonical waiver hardening
+- backend/main.py — roster season_stats batch fetch added; duplicate inline waiver recommendations route removed
+- backend/services/waiver_edge_detector.py — projection enrichment, z-score fallback, long-term hold/drop protection
+- backend/services/dashboard_service.py — preserve owned_pct when serializing waiver targets
 - scripts/uat_validator.py — field name corrections
 - tests/test_budget_api.py — route path updated
+- tests/test_waiver_edge.py — regressions for enrichment, z-score fallback, elite/high-upside drop protection
+- tests/test_dashboard_service_waiver_targets.py — regression for owned_pct handoff and priority score
 
 Steps:
-1. Run: venv/Scripts/python -m py_compile backend/schemas.py backend/routers/fantasy.py backend/main.py
+1. Run: venv/Scripts/python -m py_compile backend/schemas.py backend/routers/fantasy.py backend/main.py backend/services/waiver_edge_detector.py tests/test_waiver_edge.py
 2. Verify all pass with "OK"
 3. Run: venv/Scripts/python -m pytest tests/ -q --tb=short
 4. Verify 2245 passed, 0 failed
-5. git add backend/schemas.py backend/routers/fantasy.py backend/main.py backend/fantasy_baseball/daily_briefing.py scripts/uat_validator.py tests/test_budget_api.py tasks/uat_findings_fresh.md HANDOFF.md
-6. git commit -m "fix(uat): fix router crash, decisions/status 500, NSB parse, IL guard, roster stats"
-7. git push origin stable/cbb-prod
-8. Confirm Railway auto-deploys (check Railway dashboard)
-9. After deploy, run: venv/Scripts/python scripts/uat_validator.py --base-url "https://fantasy-app-production-5079.up.railway.app" --api-key "j01F3n2sSzbhi-jNAEULNkgzFqRXgOl2FuIDgKRoyfg" --output tasks/uat_findings_post_deploy.md
-10. Report: count of PASS/FAIL/WARN. Expected: scoreboard/budget/optimize now 200, decisions/status now 200, NSB numeric.
+5. Run targeted regression confirmation if full suite is too slow during triage: venv/Scripts/python -m pytest tests/test_waiver_edge.py tests/test_dashboard_service_waiver_targets.py -q --tb=short
+6. git add backend/schemas.py backend/routers/fantasy.py backend/main.py backend/services/waiver_edge_detector.py backend/services/dashboard_service.py backend/fantasy_baseball/daily_briefing.py scripts/uat_validator.py tests/test_budget_api.py tests/test_waiver_edge.py tests/test_dashboard_service_waiver_targets.py tasks/uat_findings_fresh.md HANDOFF.md
+7. git commit -m "fix(fantasy): harden waiver recommendations and remove legacy route drift"
+8. git push origin stable/cbb-prod
+9. Confirm Railway auto-deploys (check Railway dashboard)
+10. After deploy, run: venv/Scripts/python scripts/uat_validator.py --base-url "https://fantasy-app-production-5079.up.railway.app" --api-key "j01F3n2sSzbhi-jNAEULNkgzFqRXgOl2FuIDgKRoyfg" --output tasks/uat_findings_post_deploy.md
+11. Spot-check live waiver outputs against local expectations:
+  - `GET /api/fantasy/waiver` should stop showing blanket `owned_pct=0.0` when Yahoo ownership exists
+  - `GET /api/fantasy/waiver/recommendations` should avoid shallow drops of core assets like Juan Soto / Eury Perez
+12. Report: count of PASS/FAIL/WARN and whether live waiver outputs still show stale ownership or legacy drop behavior.
 ```
 
 ---
@@ -443,6 +469,56 @@ Once Phase 4.5a is complete:
 - [ ] `GET /api/fantasy/budget` — Verify acquisition count matches Yahoo. Confirm IP pace flag makes sense. Check acquisition_warning triggers at 6+.
 - [ ] `POST /api/fantasy/roster/optimize` — Verify recommended starters make sense (best players starting, not benchwarming). Check position eligibility is respected. Confirm LOWER_IS_BETTER categories are scored correctly.
 - [ ] `POST /api/fantasy/roster/move` — Test one safe move (BN → Util swap). Verify Yahoo reflects the change. Test rollback.
+
+---
+
+## Production API Probe — April 15, 2026
+
+**Agent:** Kimi CLI
+**Probe Script:** `postman_collections/api_probe.py`
+**Full Report:** `reports/2026-04-15-production-api-probe-report.md`
+**Production DB Date:** 2026-04-19 (data freshness through Apr 19, latest `probable_pitchers` through Apr 24)
+
+### Key Finding: April 20 UAT Fixes NOT Yet Deployed
+
+The probe hit production **before** the April 20 UAT remediation deploy. Endpoints that the HANDOFF delta says were fixed locally still return errors:
+- `POST /api/fantasy/roster/optimize` → **404** (HANDOFF says will be 200 after deploy)
+- `GET /api/fantasy/player-scores?period=season` → **404**
+- `GET /admin/validate-system` → **404**
+
+### Critical Data Gaps Discovered (New)
+
+| # | Gap | Severity | Evidence |
+|---|-----|----------|----------|
+| 1 | **Lineup engine schedule-blind** | P0 | `/api/fantasy/lineup/2026-04-20` returns `has_game: false` for ALL 14 batters, `games_count: 0`. Odds API coverage gap or date mismatch. |
+| 2 | **Proxy players (6/23 roster)** | P1 | Ballesteros, Kim, Murakami, Smith, Arrighetti, De Los Santos are `is_proxy: true` with empty `cat_scores` and hardcoded z=-0.8. |
+| 3 | **Waiver intelligence hollow** | P1 | `category_contributions: {}`, `owned_pct: 0.0`, `hot_cold: null`, `statcast_signals: []` for ALL 25 free agents. |
+| 4 | **Waiver recommendations monoculture** | P1 | All 22 waiver decisions recommend dropping **Garrett Crochet** (bdl_id 555). Only 1 recommendation in `/waiver/recommendations`. |
+| 5 | **Matchup stats empty** | P1 | My team: 0 in almost every category. Missing ERA, WHIP, K/9 entirely. |
+| 6 | **Impossible projections** | P1 | Decisions API shows "Projects 0.00 ERA ROS", "Projects 91.2 HR ROS", "Projects 204.4 RBI ROS". Rate extrapolation uncapped. |
+| 7 | **Briefing empty** | P2 | `categories: []`, `starters: []`, all benched with "No game today". |
+
+### Decisions API Composition
+
+- **31 total decisions** (9 lineup, 22 waiver)
+- Lineup decisions fill SP×2, RP×2, 1B, 2B, 3B, SS, OF×3, Util
+- Waiver decisions all target dropping Garrett Crochet
+- Factor explanations are rich and well-structured (weights, labels, narratives)
+
+### Positive Findings
+
+- Draft board has excellent Steamer projections with park-adjusted and risk-adjusted z-scores
+- Pipeline health: 7/7 tables healthy, 46K+ rolling stats rows, 9K+ statcast rows
+- `category_win_probs` in waiver recommendations has real values across 18 categories
+- Roster endpoint correctly maps `selected_position` from Yahoo
+
+### Action Required
+
+1. **Gemini must deploy April 20 fixes** — scoreboard, budget, optimize, decisions/status will all change after deploy
+2. **Re-run probe after deploy** — The 404s may resolve; new data paths will activate
+3. **Claude must investigate schedule lookup** — The `lineup/{date}` and `briefing/{date}` endpoints are the highest-value fix
+4. **Claude must cap projection math** — Add plausible ROS caps to prevent 0.00 ERA and 91 HR narratives
+5. **Claude must fix universal drop target** — Investigate `_composite_value()` for bdl_id 555
 
 ---
 

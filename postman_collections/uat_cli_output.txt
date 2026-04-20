@@ -1,0 +1,943 @@
+﻿node.exe : (node:69640) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
+At C:\Users\sfgra\AppData\Roaming\npm\newman.ps1:24 char:5
++     & "node$exe"  "$basedir/node_modules/newman/bin/newman.js" $args
++     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ((node:69640) [D...ts.F_OK instead:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+(Use `node --trace-deprecation ...` to show where the warning was created)
+newman
+
+CBB Edge - MLB Platform UAT Collection
+
+Γûí 0_Health_Check
+Γöö Root Endpoint
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+  2. Status code is 200
+  3. Returns API info
+
+Γöö Health Check
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+  5. Status code is 200
+  6. Returns healthy status
+
+Γûí 1_Fantasy_Baseball / Draft Board
+Γöö Get Full Draft Board
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET ?limit=200 [errored]
+     Invalid URI "http:///?limit=200"
+  8. Status code is 200
+  9. Returns players array
+ 10. Player has required fields
+
+Γöö Get Player Detail
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γûí 1_Fantasy_Baseball / Roster Management
+Γöö Get My Roster
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+ 13. Status code is 200
+ 14. Returns roster structure
+  Γöî
+  Γöé 'Could not save player ID'
+  Γöö
+
+Γöö Roster Move (Add/Drop)
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  POST  [errored]
+     runtime:extensions~request: request url is empty
+ 16. Status code is 200 or 422 (validation)
+
+Γöö Optimize Roster
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  POST  [errored]
+     runtime:extensions~request: request url is empty
+ 18. Status code is 200 or 503 (stale projections)
+ 19. Returns optimization result
+
+Γûí 1_Fantasy_Baseball / Lineup Management
+Γöö Get Daily Lineup
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+ 21. Status code is 200
+ 22. Returns lineup structure
+
+Γöö Get Saved Lineup
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γöö Save Lineup
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  POST  [errored]
+     runtime:extensions~request: request url is empty
+
+Γöö Apply Lineup to Yahoo
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  PUT  [errored]
+     runtime:extensions~request: request url is empty
+
+Γûí 1_Fantasy_Baseball / Waiver Wire
+Γöö Get Waiver Wire
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET ?position=ALL&player_type=ALL [errored]
+     Invalid URI "http:///?position=ALL&player_type=ALL"
+ 27. Status code is 200
+ 28. Returns waiver targets
+
+Γöö Get Waiver Recommendations
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γöö Simulate Waiver Add
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  POST  [errored]
+     runtime:extensions~request: request url is empty
+
+Γûí 1_Fantasy_Baseball / Matchup
+Γöö Get Current Matchup
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+ 32. Status code is 200
+ 33. Returns matchup structure
+
+Γöö Simulate Matchup
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  POST  [errored]
+     runtime:extensions~request: request url is empty
+
+Γûí 1_Fantasy_Baseball / Player Scores
+Γöö Get Player Scores
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET ?period=season [errored]
+     Invalid URI "http:///?period=season"
+
+Γûí 1_Fantasy_Baseball / Decisions
+Γöö Get Decisions
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET ?limit=20 [errored]
+     Invalid URI "http:///?limit=20"
+ 37. Status code is 200
+ 38. Returns decisions array
+
+Γöö Get Decision Pipeline Status
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γûí 1_Fantasy_Baseball / Daily Briefing
+Γöö Get Daily Briefing
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+ 41. Status code is 200
+ 42. Returns briefing structure
+
+Γûí 1_Fantasy_Baseball / Yahoo Diagnostics
+Γöö Yahoo API Diagnostics
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γûí 1_Fantasy_Baseball / Player Valuations
+Γöö Get Player Valuations
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γûí 2_Scoreboard
+Γöö Get Scoreboard
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+ 46. Status code is 200
+ 47. Returns scoreboard structure
+ 48. Category structure is valid
+
+Γûí 3_Budget
+Γöö Get Budget Status
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+ 50. Status code is 200
+ 51. Returns budget structure
+
+Γûí 4_Dashboard
+Γöö Get Dashboard Data
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+ 53. Status code is 200
+
+Γöö Get Streaks
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γöö Get Waiver Targets
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γûí 5_User_Preferences
+Γöö Get Preferences
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γöö Update Preferences
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  POST  [errored]
+     runtime:extensions~request: request url is empty
+
+Γûí 6_Admin_Endpoints / System Status
+Γöö Ingestion Status
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+ 59. Status code is 200
+ 60. Returns ingestion status
+
+Γöö Scheduler Status
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γöö Portfolio Status
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γöö Odds Monitor Status
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γöö Ratings Status
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γûí 6_Admin_Endpoints / Yahoo Admin
+Γöö Yahoo Connection Test
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+ 66. Status code is 200
+ 67. Returns connection status
+
+Γöö Get Roster Raw
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γöö Get Roster Parsed
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γöö Reload Draft Board
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  POST  [errored]
+     runtime:extensions~request: request url is empty
+
+Γûí 6_Admin_Endpoints / Database Admin
+Γöö Audit Tables
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+ 72. Status code is 200
+ 73. Returns table audit
+
+Γöö Check Databases
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γûí 6_Admin_Endpoints / Backfill Operations
+Γöö Backfill Player ID Mapping
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  POST  [errored]
+     runtime:extensions~request: request url is empty
+
+Γöö Backfill Positions
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  POST  [errored]
+     runtime:extensions~request: request url is empty
+
+Γöö Backfill Statcast
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  POST  [errored]
+     runtime:extensions~request: request url is empty
+
+Γöö Backfill All
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  POST  [errored]
+     runtime:extensions~request: request url is empty
+
+Γûí 6_Admin_Endpoints / Job Queue
+Γöö Get Job Status
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γûí 7_CBB_Edge_Legacy / Predictions
+Γöö Today's Predictions
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γöö Today's Bets
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γûí 7_CBB_Edge_Legacy / Performance
+Γöö Performance Summary
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty
+
+Γöö CLV Analysis
+
+ΓöîΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö¼ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö¼ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÉ
+Γöé                         Γöé executed Γöé   failed Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé              iterations Γöé        0 Γöé        0 Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé                requests Γöé       48 Γöé       48 Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé            test-scripts Γöé       17 Γöé        0 Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé      prerequest-scripts Γöé       48 Γöé        0 Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé              assertions Γöé       34 Γöé       34 Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö┤ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö┤ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé total run duration: 0ms                       Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé total data received: 0B (approx)              Γöé
+ΓööΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÿ
+
+[31m   # [39m[31m failure        [39m[31m detail                                                                   [39m
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 01.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 02.  AssertionError  Status code is 200                                                       
+                      expected PostmanResponse{ ΓÇª(5) } to have property 'code'                 
+                      at assertion:0 in test-script                                            
+                      inside "0_Health_Check / Root Endpoint"                                  
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 03.  JSONError       Returns API info                                                         
+                      "undefined" is not valid JSON                                            
+                      at assertion:1 in test-script                                            
+                      inside "0_Health_Check / Root Endpoint"                                  
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 04.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 05.  AssertionError  Status code is 200                                                       
+                      expected PostmanResponse{ ΓÇª(5) } to have property 'code'                 
+                      at assertion:0 in test-script                                            
+                      inside "0_Health_Check / Health Check"                                   
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 06.  JSONError       Returns healthy status                                                   
+                      "undefined" is not valid JSON                                            
+                      at assertion:1 in test-script                                            
+                      inside "0_Health_Check / Health Check"                                   
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 07.  Error                                                                                    
+                      Invalid URI "http:///?limit=200"                                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 08.  AssertionError  Status code is 200                                                       
+                      expected PostmanResponse{ ΓÇª(5) } to have property 'code'                 
+                      at assertion:0 in test-script                                            
+                      inside "1_Fantasy_Baseball / Draft Board / Get Full Draft Board"         
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 09.  JSONError       Returns players array                                                    
+                      "undefined" is not valid JSON                                            
+                      at assertion:1 in test-script                                            
+                      inside "1_Fantasy_Baseball / Draft Board / Get Full Draft Board"         
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 10.  JSONError       Player has required fields                                               
+                      "undefined" is not valid JSON                                            
+                      at assertion:2 in test-script                                            
+                      inside "1_Fantasy_Baseball / Draft Board / Get Full Draft Board"         
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 11.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 12.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 13.  AssertionError  Status code is 200                                                       
+                      expected PostmanResponse{ ΓÇª(5) } to have property 'code'                 
+                      at assertion:0 in test-script                                            
+                      inside "1_Fantasy_Baseball / Roster Management / Get My Roster"          
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 14.  JSONError       Returns roster structure                                                 
+                      "undefined" is not valid JSON                                            
+                      at assertion:1 in test-script                                            
+                      inside "1_Fantasy_Baseball / Roster Management / Get My Roster"          
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 15.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 16.  AssertionError  Status code is 200 or 422 (validation)                                   
+                      expected undefined to be one of [ 200, 422 ]                             
+                      at assertion:0 in test-script                                            
+                      inside "1_Fantasy_Baseball / Roster Management / Roster Move (Add/Drop)" 
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 17.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 18.  AssertionError  Status code is 200 or 503 (stale projections)                            
+                      expected undefined to be one of [ 200, 503 ]                             
+                      at assertion:0 in test-script                                            
+                      inside "1_Fantasy_Baseball / Roster Management / Optimize Roster"        
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 19.  JSONError       Returns optimization result                                              
+                      "undefined" is not valid JSON                                            
+                      at assertion:1 in test-script                                            
+                      inside "1_Fantasy_Baseball / Roster Management / Optimize Roster"        
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 20.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 21.  AssertionError  Status code is 200                                                       
+                      expected PostmanResponse{ ΓÇª(5) } to have property 'code'                 
+                      at assertion:0 in test-script                                            
+                      inside "1_Fantasy_Baseball / Lineup Management / Get Daily Lineup"       
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 22.  JSONError       Returns lineup structure                                                 
+                      "undefined" is not valid JSON                                            
+                      at assertion:1 in test-script                                            
+                      inside "1_Fantasy_Baseball / Lineup Management / Get Daily Lineup"       
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 23.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 24.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 25.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 26.  Error                                                                                    
+                      Invalid URI "http:///?position=ALL&player_type=ALL"                      
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 27.  AssertionError  Status code is 200                                                       
+                      expected PostmanResponse{ ΓÇª(5) } to have property 'code'                 
+                      at assertion:0 in test-script                                            
+                      inside "1_Fantasy_Baseball / Waiver Wire / Get Waiver Wire"              
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 28.  JSONError       Returns waiver targets                                                   
+                      "undefined" is not valid JSON                                            
+                      at assertion:1 in test-script                                            
+                      inside "1_Fantasy_Baseball / Waiver Wire / Get Waiver Wire"              
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 29.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 30.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 31.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 32.  AssertionError  Status code is 200                                                       
+                      expected PostmanResponse{ ΓÇª(5) } to have property 'code'                 
+                      at assertion:0 in test-script                                            
+                      inside "1_Fantasy_Baseball / Matchup / Get Current Matchup"              
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 33.  JSONError       Returns matchup structure                                                
+                      "undefined" is not valid JSON                                            
+                      at assertion:1 in test-script                                            
+                      inside "1_Fantasy_Baseball / Matchup / Get Current Matchup"              
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 34.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 35.  Error                                                                                    
+                      Invalid URI "http:///?period=season"                                     
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 36.  Error                                                                                    
+                      Invalid URI "http:///?limit=20"                                          
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 37.  AssertionError  Status code is 200                                                       
+                      expected PostmanResponse{ ΓÇª(5) } to have property 'code'                 
+                      at assertion:0 in test-script                                            
+                      inside "1_Fantasy_Baseball / Decisions / Get Decisions"                  
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 38.  JSONError       Returns decisions array                                                  
+                      "undefined" is not valid JSON                                            
+                      at assertion:1 in test-script                                            
+                      inside "1_Fantasy_Baseball / Decisions / Get Decisions"                  
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 39.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 40.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 41.  AssertionError  Status code is 200                                                       
+                      expected PostmanResponse{ ΓÇª(5) } to have property 'code'                 
+                      at assertion:0 in test-script                                            
+                      inside "1_Fantasy_Baseball / Daily Briefing / Get Daily Briefing"        
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 42.  JSONError       Returns briefing structure                                               
+                      "undefined" is not valid JSON                                            
+                      at assertion:1 in test-script                                            
+                      inside "1_Fantasy_Baseball / Daily Briefing / Get Daily Briefing"        
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 43.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 44.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 45.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 46.  AssertionError  Status code is 200                                                       
+                      expected PostmanResponse{ ΓÇª(5) } to have property 'code'                 
+                      at assertion:0 in test-script                                            
+                      inside "2_Scoreboard / Get Scoreboard"                                   
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 47.  JSONError       Returns scoreboard structure                                             
+                      "undefined" is not valid JSON                                            
+                      at assertion:1 in test-script                                            
+                      inside "2_Scoreboard / Get Scoreboard"                                   
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 48.  JSONError       Category structure is valid                                              
+                      "undefined" is not valid JSON                                            
+                      at assertion:2 in test-script                                            
+                      inside "2_Scoreboard / Get Scoreboard"                                   
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 49.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 50.  AssertionError  Status code is 200                                                       
+                      expected PostmanResponse{ ΓÇª(5) } to have property 'code'                 
+                      at assertion:0 in test-script                                            
+                      inside "3_Budget / Get Budget Status"                                    
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 51.  JSONError       Returns budget structure                                                 
+                      "undefined" is not valid JSON                                            
+                      at assertion:1 in test-script                                            
+                      inside "3_Budget / Get Budget Status"                                    
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 52.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 53.  AssertionError  Status code is 200                                                       
+                      expected PostmanResponse{ ΓÇª(5) } to have property 'code'                 
+                      at assertion:0 in test-script                                            
+                      inside "4_Dashboard / Get Dashboard Data"                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 54.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 55.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 56.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 57.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 58.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 59.  AssertionError  Status code is 200                                                       
+                      expected PostmanResponse{ ΓÇª(5) } to have property 'code'                 
+                      at assertion:0 in test-script                                            
+                      inside "6_Admin_Endpoints / System Status / Ingestion Status"            
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 60.  JSONError       Returns ingestion status                                                 
+                      "undefined" is not valid JSON                                            
+                      at assertion:1 in test-script                                            
+                      inside "6_Admin_Endpoints / System Status / Ingestion Status"            
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 61.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 62.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 63.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 64.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 65.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 66.  AssertionError  Status code is 200                                                       
+                      expected PostmanResponse{ ΓÇª(5) } to have property 'code'                 
+                      at assertion:0 in test-script                                            
+                      inside "6_Admin_Endpoints / Yahoo Admin / Yahoo Connection Test"         
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 67.  JSONError       Returns connection status                                                
+                      "undefined" is not valid JSON                                            
+                      at assertion:1 in test-script                                            
+                      inside "6_Admin_Endpoints / Yahoo Admin / Yahoo Connection Test"         
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 68.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 69.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 70.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 71.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 72.  AssertionError  Status code is 200                                                       
+                      expected PostmanResponse{ ΓÇª(5) } to have property 'code'                 
+                      at assertion:0 in test-script                                            
+                      inside "6_Admin_Endpoints / Database Admin / Audit Tables"               
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 73.  JSONError       Returns table audit                                                      
+                      "undefined" is not valid JSON                                            
+                      at assertion:1 in test-script                                            
+                      inside "6_Admin_Endpoints / Database Admin / Audit Tables"               
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 74.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 75.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 76.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 77.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 78.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 79.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+error: callback timed out
+
+ 80.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 81.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+[90m     [39m[90m                [39m[90m                                                                          [39m
+ 82.  Error                                                                                    
+                      runtime:extensions~request: request url is empty                         
+                      at request                                                               
+                      inside ""                                                                
+  Γöî
+  Γöé 'Testing against:', 'https://fantasy-app-production-50
+  Γöé 79.up.railway.app'
+  Γöé 'Date (ET):', '2026-04-20'
+  Γöö
+  GET  [errored]
+     runtime:extensions~request: request url is empty

@@ -1245,7 +1245,7 @@ async def admin_reload_fantasy_board():
 
 
 @router.post("/admin/pybaseball/refresh")
-async def admin_refresh_pybaseball(year: int = 2025, user: str = Depends(verify_admin_api_key)):
+async def admin_refresh_pybaseball(year: int = 2026, user: str = Depends(verify_admin_api_key)):
     """Force-refresh pybaseball Statcast cache and invalidate in-memory statcast_loader cache."""
     from backend.fantasy_baseball.pybaseball_loader import fetch_all_statcast_leaderboards
     import backend.fantasy_baseball.statcast_loader as _sc
