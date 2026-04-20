@@ -4,20 +4,19 @@
 > Canonical source: `HANDOFF.md`
 > This file is the execution board for the current phase. If this tracker and HANDOFF disagree, HANDOFF wins.
 
-## Current Session Override — 2026-04-20 Waiver Intelligence Hardening
+## Current Session Override — 2026-04-20 Roster Optimize Scoring Repair
 
-Status: COMPLETE locally, deploy pending.
+Status: IN PROGRESS locally.
 
 Plan:
-- [x] Add a shared long-term hold-value policy for drop decisions in `backend/services/waiver_edge_detector.py`.
-- [x] Reuse the same protection logic in `backend/routers/fantasy.py` so dashboard and API recommendations stay aligned.
-- [x] Add regression coverage for elite and high-upside hold cases in `tests/test_waiver_edge.py`.
-- [x] Validate with `py_compile` and targeted `pytest`.
+- [ ] Repair `/api/fantasy/roster/optimize` identity resolution so roster players map to `PlayerIDMapping` by canonical `yahoo_key` before looser fallbacks.
+- [ ] Replace flat `50.0` optimize fallbacks with projection-driven fallback scores when `player_scores` rows are missing or stale.
+- [ ] Add focused regression coverage for full-key Yahoo mappings and non-uniform fallback scoring.
+- [ ] Validate with `py_compile` and targeted `pytest`.
 
 Review:
-- Waiver drop candidates now carry a long-term hold floor based on projection tier, ADP, ownership, and locked-risk profiles.
-- Core assets such as top-tier bats and high-upside arms are no longer eligible as routine add/drop fodder when a short-term streamer looks temporarily better.
-- Residual risk: `backend/main.py` still contains mirrored legacy waiver logic and can drift from `backend/routers/fantasy.py`.
+- Root cause under investigation: the optimize route was querying `PlayerIDMapping.yahoo_id` from the numeric tail only, while the fantasy stack’s authoritative linkage is `yahoo_key` first.
+- User-visible failure: starters and bench were collapsing to identical `lineup_score: 50.0` with `"Score 50.0 (default)"` reasoning even for elite roster players.
 
 ---
 

@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > Date: April 20, 2026 | Author: Claude Code (Master Architect)
-> Status: **Local UAT remediation, waiver-intelligence hardening, and waiver-route deduplication complete (Apr 20). Production is still pre-deploy on key fantasy fixes.**
+> Status: **Local UAT remediation, waiver-intelligence hardening, waiver-route deduplication, and roster-optimize scoring repair are complete locally (Apr 20). Production is still pre-deploy on key fantasy fixes.**
 
 ---
 
@@ -29,8 +29,11 @@ UAT was run against Railway production (`uat_findings_fresh.md`): 53 PASS / 15 F
 | `tests/test_budget_api.py` | Update test paths from `/budget` → `/api/fantasy/budget` to match renamed route. |
 | `tests/test_waiver_edge.py` | Add regression coverage for projection enrichment and `z_score` fallback in waiver scoring. |
 | `backend/routers/fantasy.py` | Reuse the shared protected-drop policy in `/api/fantasy/waiver/recommendations` and compare FA adds against effective drop value rather than naive current z-score. |
+| `backend/routers/fantasy.py` | Fix `/api/fantasy/roster/optimize` identity resolution: resolve roster players via canonical `yahoo_key` variants first, then guarded Yahoo-ID/name fallback, so player_scores join on real roster players instead of collapsing to 50.0 defaults. |
+| `backend/routers/fantasy.py` | Replace optimize route's flat 50.0 fallback with projection-driven fallback scores from `player_board` when `player_scores` rows are stale or missing. |
 | `tests/test_waiver_edge.py` | Add regression coverage for elite / high-upside hold cases so players like Juan Soto and Eury Perez are not surfaced as routine drops. |
 | `tests/test_dashboard_service_waiver_targets.py` | Add regression coverage for `owned_pct` → dashboard ownership handoff and computed priority score. |
+| `tests/test_roster_optimize_api.py` | Add regressions for short-form `yahoo_key` mapping against full roster keys and for non-uniform projection fallback scoring. |
 
 ### Additional Validation
 
@@ -65,10 +68,11 @@ After Gemini deploys, expected UAT improvements:
 - Proxy players (Ballesteros, Antonacci, Murakami) — genuinely not in Steamer/ZiPS; stats will come from Yahoo season stats batch
 - No Statcast/advanced stats on roster endpoint (future work)
 - Dashboard waiver targets previously showed `percent_owned=0.0` and `priority_score=0.0` because the detector was scoring raw Yahoo players with no `cat_scores` and the serializer only read `percent_owned`. Local fix is complete; deploy + live UAT rerun still required.
+- Optimize still does not use the richer statcast matchup scorer path; the local fix stops uniform 50.0 defaults by restoring identity resolution and projection fallback, but a later task is still needed if the product should use daily matchup-aware scoring rather than `player_scores` plus projection fallback.
 
 **Current production truth from the latest captured responses:**
 - Railway is still serving pre-deploy waiver behavior. The archived response in `postman_collections/responses/waiver_200.json` still shows `owned_pct=0.0` / empty `category_contributions`, and `postman_collections/responses/waiver_recommendations_200.json` still reflects the old shallow add/drop output.
-- Local code is ahead of production on waiver scoring, ownership handoff, and route ownership.
+- Local code is ahead of production on waiver scoring, ownership handoff, route ownership, and roster optimize scoring.
 
 ---
 
@@ -81,7 +85,7 @@ Deploy the April 20 fantasy UAT remediation and waiver-hardening fixes to Railwa
 
 Files changed locally:
 - backend/schemas.py — ConfigDict import added (critical: was crashing router)
-- backend/routers/fantasy.py — decisions/status fix, NSB fix, briefing fix, IL guard, canonical waiver hardening
+- backend/routers/fantasy.py — decisions/status fix, NSB fix, briefing fix, IL guard, canonical waiver hardening, optimize identity/fallback scoring repair
 - backend/main.py — roster season_stats batch fetch added; duplicate inline waiver recommendations route removed
 - backend/services/waiver_edge_detector.py — projection enrichment, z-score fallback, long-term hold/drop protection
 - backend/services/dashboard_service.py — preserve owned_pct when serializing waiver targets
@@ -89,6 +93,7 @@ Files changed locally:
 - tests/test_budget_api.py — route path updated
 - tests/test_waiver_edge.py — regressions for enrichment, z-score fallback, elite/high-upside drop protection
 - tests/test_dashboard_service_waiver_targets.py — regression for owned_pct handoff and priority score
+- tests/test_roster_optimize_api.py — regressions for yahoo_key mapping variants and projection fallback scoring
 
 Steps:
 1. Run: venv/Scripts/python -m py_compile backend/schemas.py backend/routers/fantasy.py backend/main.py backend/services/waiver_edge_detector.py tests/test_waiver_edge.py

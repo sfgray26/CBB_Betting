@@ -85,3 +85,7 @@
 ### Waiver drop logic must blend short-term output with hold value
 - **Lesson**: Waiver recommendations cannot compare a free agent only against a roster player's current z-score or recent signal. Drop logic needs a long-term hold floor from projection metadata such as tier, ADP, ownership, and locked-upside risk profiles, or it will recommend shallow recency-biased cuts.
 - **Context**: April 20 fantasy UAT surfaced risky suggestions like dropping Eury Perez for a short-term streamer and concern about elite players like Juan Soto being treated as disposable after a short slump.
+
+### Roster optimize identity should key off yahoo_key first
+- **Lesson**: `/api/fantasy/roster/optimize` cannot rely on the numeric Yahoo tail alone when resolving roster players to `PlayerIDMapping`. The stable linkage is `yahoo_key` first, with name-validated fallback paths; otherwise valid roster players miss `player_scores` and collapse to neutral fallback scoring.
+- **Context**: April 20 optimizer triage showed live responses where every player returned `lineup_score: 50.0` because full roster keys were not matching the canonical identity table reliably.

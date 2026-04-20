@@ -15,6 +15,7 @@ import logging
 import os
 import json as _json
 import asyncio
+import unicodedata
 from zoneinfo import ZoneInfo
 from datetime import date, datetime, timedelta
 from dataclasses import asdict
@@ -134,6 +135,175 @@ def _enforce_projection_freshness(consumer: str, force_stale: bool = False) -> l
     logger.warning("%s -- proceeding due to force_stale override: %s", message, violations)
     return [f"Stale-data override active: {'; '.join(violations)}"]
 
+
+def _normalize_identity_name(name: str) -> str:
+    """Normalize player names before cross-system identity comparisons."""
+    if not name:
+        return ""
+
+    normalized = unicodedata.normalize("NFKD", str(name)).lower().strip()
+    for suffix in (" jr.", " sr.", " ii", " iii", " iv", " jr", " sr"):
+        if normalized.endswith(suffix):
+            normalized = normalized[: -len(suffix)].strip()
+    normalized = normalized.replace(".", "")
+    while "  " in normalized:
+        normalized = normalized.replace("  ", " ")
+    return normalized.strip()
+
+
+def _yahoo_key_variants(player_key: str) -> set[str]:
+    """Return lookup variants for Yahoo roster keys across legacy formats."""
+    if not player_key:
+        return set()
+
+    variants = {player_key.strip()}
+    if ".p." not in player_key:
+        return variants
+
+    prefix, yahoo_id = player_key.split(".p.", 1)
+    if ".l." in prefix:
+        game_id = prefix.split(".l.", 1)[0]
+        variants.add(f"{game_id}.p.{yahoo_id}")
+    return {variant for variant in variants if variant}
+
+
+def _mapping_name_matches(player_name: str, mapping_name: str) -> bool:
+    """Reject stale identity rows that point a Yahoo key at the wrong player."""
+    roster_normalized = _normalize_identity_name(player_name)
+    mapping_normalized = _normalize_identity_name(mapping_name)
+    if not roster_normalized or not mapping_normalized:
+        return True
+    return roster_normalized == mapping_normalized
+
+
+def _projection_fallback_score(yahoo_player: dict) -> tuple[float, str]:
+    """Return a differentiated fallback lineup score from board projections."""
+    from backend.fantasy_baseball.player_board import get_or_create_projection
+
+    projection = get_or_create_projection(yahoo_player)
+    z_score = float(projection.get("z_score") or 0.0)
+    ownership_pct = float(
+        yahoo_player.get("percent_owned", yahoo_player.get("owned_pct", 0.0)) or 0.0
+    )
+
+    score = 50.0 + (z_score * 8.0) + min(ownership_pct, 100.0) * 0.05
+    if projection.get("is_proxy"):
+        score = min(score, 58.0)
+        source = "proxy_projection"
+    else:
+        source = "projection_fallback"
+
+    return max(20.0, min(95.0, round(score, 2))), source
+
+
+def _resolve_roster_player_bdl_ids(db: Session, raw_players: list[dict]) -> dict[str, int]:
+    """Resolve Yahoo roster players to BDL IDs using key-first identity matching."""
+    roster_lookup_keys: set[str] = set()
+    yahoo_ids: set[str] = set()
+
+    for player in raw_players:
+        player_key = player.get("player_key") or ""
+        roster_lookup_keys.update(_yahoo_key_variants(player_key))
+        if ".p." in player_key:
+            yahoo_ids.add(player_key.split(".p.", 1)[-1])
+
+    predicates = []
+    if roster_lookup_keys:
+        predicates.append(PlayerIDMapping.yahoo_key.in_(list(roster_lookup_keys)))
+    if yahoo_ids:
+        predicates.append(PlayerIDMapping.yahoo_id.in_(list(yahoo_ids)))
+    if not predicates:
+        return {}
+
+    mapping_rows = (
+        db.query(
+            PlayerIDMapping.yahoo_key,
+            PlayerIDMapping.yahoo_id,
+            PlayerIDMapping.bdl_id,
+            PlayerIDMapping.normalized_name,
+            PlayerIDMapping.full_name,
+        )
+        .filter(
+            PlayerIDMapping.bdl_id.isnot(None),
+            or_(*predicates),
+        )
+        .all()
+    )
+
+    mapping_by_key = {}
+    mapping_by_yahoo_id = {}
+    for row in mapping_rows:
+        if row.yahoo_key:
+            mapping_by_key[row.yahoo_key] = row
+        if row.yahoo_id:
+            mapping_by_yahoo_id[row.yahoo_id] = row
+
+    player_key_to_bdl: dict[str, int] = {}
+    unresolved_players: list[dict] = []
+
+    for player in raw_players:
+        player_key = player.get("player_key") or ""
+        player_name = player.get("name") or ""
+
+        matched_row = None
+        for key_variant in _yahoo_key_variants(player_key):
+            candidate = mapping_by_key.get(key_variant)
+            if candidate and _mapping_name_matches(
+                player_name,
+                candidate.normalized_name or candidate.full_name or "",
+            ):
+                matched_row = candidate
+                break
+
+        if matched_row is None and ".p." in player_key:
+            yahoo_id = player_key.split(".p.", 1)[-1]
+            candidate = mapping_by_yahoo_id.get(yahoo_id)
+            if candidate and _mapping_name_matches(
+                player_name,
+                candidate.normalized_name or candidate.full_name or "",
+            ):
+                matched_row = candidate
+
+        if matched_row is not None and matched_row.bdl_id is not None:
+            player_key_to_bdl[player_key] = matched_row.bdl_id
+        else:
+            unresolved_players.append(player)
+
+    unresolved_names = {
+        _normalize_identity_name(player.get("name") or "")
+        for player in unresolved_players
+        if player.get("name")
+    }
+    unresolved_names.discard("")
+
+    if unresolved_names:
+        name_rows = (
+            db.query(
+                PlayerIDMapping.normalized_name,
+                PlayerIDMapping.bdl_id,
+                PlayerIDMapping.full_name,
+            )
+            .filter(
+                PlayerIDMapping.normalized_name.in_(list(unresolved_names)),
+                PlayerIDMapping.bdl_id.isnot(None),
+            )
+            .all()
+        )
+
+        candidates_by_name: dict[str, list] = {}
+        for row in name_rows:
+            candidates_by_name.setdefault(row.normalized_name, []).append(row)
+
+        for player in unresolved_players:
+            normalized_name = _normalize_identity_name(player.get("name") or "")
+            candidates = candidates_by_name.get(normalized_name, [])
+            unique_bdl_ids = {row.bdl_id for row in candidates if row.bdl_id is not None}
+            if len(unique_bdl_ids) == 1:
+                player_key = player.get("player_key") or ""
+                if player_key:
+                    player_key_to_bdl[player_key] = next(iter(unique_bdl_ids))
+
+    return player_key_to_bdl
 
 # ============================================================================
 # DRAFT BOARD
@@ -2458,41 +2628,17 @@ async def optimize_roster(
     except YahooAPIError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    # Fetch player_scores for all roster players (Priority 2 fix: wire to player_scores table)
-    # Extract yahoo_id from full yahoo_player_key (format: "469.l.72586.p.12345")
-    yahoo_ids = []
-    for p in raw_players:
-        player_key = p.get("player_key")
-        if player_key and ".p." in player_key:
-            yahoo_id = player_key.split(".p.")[-1]
-            yahoo_ids.append(yahoo_id)
-
-    # Map yahoo_id -> bdl_id via PlayerIDMapping
-    id_mapping = (
-        db.query(PlayerIDMapping.yahoo_id, PlayerIDMapping.bdl_id)
-        .filter(PlayerIDMapping.yahoo_id.in_(yahoo_ids))
-        .all()
-    )
-    yahoo_to_bdl = {row.yahoo_id: row.bdl_id for row in id_mapping if row.bdl_id}
-
-    # Map full player_key -> bdl_id
-    player_key_to_bdl = {}
-    for p in raw_players:
-        player_key = p.get("player_key")
-        if player_key and ".p." in player_key:
-            yahoo_id = player_key.split(".p.")[-1]
-            if yahoo_id in yahoo_to_bdl:
-                player_key_to_bdl[player_key] = yahoo_to_bdl[yahoo_id]
+    # Resolve Yahoo roster keys to BDL IDs using canonical yahoo_key linkage first.
+    player_key_to_bdl = _resolve_roster_player_bdl_ids(db, raw_players)
 
     # Fetch player_scores for each player's most recent date (not exact target_date match)
     # Phase 4.5a Priority 2 fix: Use actual as_of_date from player_scores, not requested date
-    from sqlalchemy import desc
-
-    bdl_ids = list(player_key_to_bdl.values())
+    bdl_ids = list({bdl_id for bdl_id in player_key_to_bdl.values() if bdl_id is not None})
     player_scores_map = {}
     as_of_dates = set()  # Track actual as_of_dates found
     staleness_warning = False
     actual_data_date = target_date  # Initialize with requested date
+    fallback_count = 0
 
     if bdl_ids:
         # Get most recent score for each player (may differ from target_date)
@@ -2538,8 +2684,7 @@ async def optimize_roster(
         if not player_key:
             continue
 
-        # Use score_0_100 from player_scores, or fall back to default
-        score = 50.0  # default score
+        score = 50.0
         score_source = "default"
         if player_key in player_key_to_bdl:
             bdl_id = player_key_to_bdl[player_key]
@@ -2547,8 +2692,11 @@ async def optimize_roster(
                 score = player_scores_map[bdl_id]
                 score_source = "player_scores"
             else:
-                score = 50.0  # No player_score entry found
-                score_source = "stale_fallback"
+                score, score_source = _projection_fallback_score(p)
+                fallback_count += 1
+        else:
+            score, score_source = _projection_fallback_score(p)
+            fallback_count += 1
 
         player_data.append({
             "player_key": player_key,
@@ -2639,9 +2787,11 @@ async def optimize_roster(
     # Use actual_data_date to reflect real data freshness, not requested date
     base_msg = f"Optimized lineup for {actual_data_date}"
     if staleness_warning:
-        base_msg += " (Warning: Using fallback scores for some players - player_scores stale)"
+        base_msg += " (Warning: Using projection fallback for some players - player_scores stale)"
     elif actual_data_date != target_date:
         base_msg += f" (Note: Data from {actual_data_date}, not requested {target_date})"
+    elif fallback_count:
+        base_msg += f" (Used projection fallback for {fallback_count} player{'s' if fallback_count != 1 else ''})"
 
     return RosterOptimizeResponse(
         success=True,

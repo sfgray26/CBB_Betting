@@ -1,0 +1,47 @@
+{
+  "week": 5,
+  "my_team": {
+    "team_key": "469.l.72586.t.7",
+    "team_name": "Lindor Truffles",
+    "stats": {
+      "NSB": "0",
+      "R": 0,
+      "H": 0,
+      "HR_B": 0,
+      "RBI": 0,
+      "W": 0,
+      "AVG": null,
+      "OPS": null,
+      "K_P": 0,
+      "QS": 0,
+      "K_B": 0,
+      "ERA": null,
+      "WHIP": null,
+      "K_9": null,
+      "NSV": 0
+    }
+  },
+  "opponent": {
+    "team_key": "469.l.72586.t.2",
+    "team_name": "Bartolo's Colon",
+    "stats": {
+      "NSB": "1",
+      "R": 0,
+      "H": 1,
+      "HR_B": 0,
+      "RBI": 0,
+      "W": 1,
+      "AVG": ".200",
+      "OPS": ".400",
+      "K_P": 0,
+      "QS": 0,
+      "K_B": 0,
+      "ERA": null,
+      "WHIP": null,
+      "K_9": null,
+      "NSV": 0
+    }
+  },
+  "is_playoffs": false,
+  "message": null
+}

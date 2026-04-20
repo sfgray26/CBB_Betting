@@ -39,6 +39,114 @@ def fantasy_client():
 class TestRosterOptimizeEndpoint:
     """Tests for POST /api/fantasy/roster/optimize endpoint."""
 
+    def test_optimize_resolves_player_scores_from_yahoo_key_variants(self, fantasy_client):
+        """Short-form yahoo_key mappings should score full roster keys correctly."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.111",
+                "name": "Catcher",
+                "team": "NYY",
+                "positions": ["C"],
+                "selected_position": "C",
+            }
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        mapping_query = MagicMock()
+        mapping_query.filter.return_value.all.return_value = [
+            MagicMock(
+                yahoo_key="469.p.111",
+                yahoo_id="111",
+                bdl_id=1111,
+                normalized_name="catcher",
+                full_name="Catcher",
+            )
+        ]
+
+        subquery_handle = MagicMock(name="player_score_subquery")
+        subquery_query = MagicMock()
+        subquery_query.filter.return_value.group_by.return_value.subquery.return_value = subquery_handle
+
+        score_query = MagicMock()
+        score_query.join.return_value.filter.return_value.all.return_value = [
+            MagicMock(bdl_player_id=1111, score_0_100=87.5, as_of_date="2026-04-15")
+        ]
+
+        fantasy_client.app.dependency_overrides = dict(fantasy_client.app.dependency_overrides)
+        db_override = MagicMock()
+        db_override.query.side_effect = [mapping_query, subquery_query, score_query]
+
+        from backend.models import get_db
+
+        def override_get_db():
+            try:
+                yield db_override
+            finally:
+                pass
+
+        fantasy_client.app.dependency_overrides[get_db] = override_get_db
+
+        try:
+            with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+                response = fantasy_client.post(
+                    "/api/fantasy/roster/optimize",
+                    json={"target_date": "2026-04-15"},
+                )
+        finally:
+            fantasy_client.app.dependency_overrides.pop(get_db, None)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["starters"][0]["lineup_score"] == 87.5
+        assert "player_scores" in data["starters"][0]["reasoning"]
+
+    def test_optimize_uses_projection_fallback_scores_instead_of_flat_default(self, fantasy_client):
+        """Projection fallback should differentiate players when DB scores are unavailable."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.111",
+                "name": "Pete Alonso",
+                "team": "NYM",
+                "positions": ["1B"],
+                "selected_position": "1B",
+            },
+            {
+                "player_key": "469.l.72586.p.222",
+                "name": "Michael Wacha",
+                "team": "KC",
+                "positions": ["SP"],
+                "selected_position": "SP",
+            },
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        projection_rows = [
+            {"z_score": 3.5, "is_proxy": False},
+            {"z_score": 0.5, "is_proxy": False},
+        ]
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            with patch(
+                "backend.fantasy_baseball.player_board.get_or_create_projection",
+                side_effect=projection_rows,
+            ):
+                response = fantasy_client.post(
+                    "/api/fantasy/roster/optimize",
+                    json={"target_date": "2026-04-15"},
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+        scores = {player["player_name"]: player["lineup_score"] for player in data["starters"]}
+        assert scores["Pete Alonso"] != scores["Michael Wacha"]
+        assert scores["Pete Alonso"] > scores["Michael Wacha"]
+        assert all("default" not in player["reasoning"] for player in data["starters"])
+        assert "projection fallback" in data["message"].lower()
+
     def test_optimize_response_structure(self, fantasy_client):
         """Optimize response has all required fields."""
         mock_roster = [
