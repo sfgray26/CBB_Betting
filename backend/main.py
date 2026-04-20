@@ -5222,7 +5222,7 @@ async def get_daily_briefing(
             "generated_at": briefing.generated_at.isoformat(),
             "strategy": briefing.strategy,
             "risk_profile": briefing.risk_profile,
-            "overall_confidence": briefing.overall_confidence,
+            "overall_confidence": round(briefing.overall_confidence / 100.0, 2),
             "summary": {
                 "total_decisions": briefing.total_decisions,
                 "easy_decisions": briefing.easy_decisions,
@@ -6292,6 +6292,15 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
     except YahooAPIError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    # Fetch season stats for all roster players (best-effort, non-fatal)
+    player_keys_list = [p.get("player_key") for p in raw_players if p.get("player_key")]
+    season_stats_by_key: dict = {}
+    try:
+        if player_keys_list:
+            season_stats_by_key = client.get_players_stats_batch(player_keys_list, stat_type="season")
+    except Exception as _se:
+        logger.warning("Roster season stats batch fetch failed (non-fatal): %s", _se)
+
     # Deduplicate by player_key to prevent state duplication (Page 4 bug fix)
     players_map: dict[str, RosterPlayerOut] = {}
     for p in raw_players:
@@ -6305,12 +6314,16 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
         if isinstance(raw_status, bool):
             status_str = "Active" if raw_status else "Inactive"
         else:
-            status_str = raw_status if raw_status else None
-        
+            # Healthy players (no Yahoo status) should default to "Active" not None
+            status_str = raw_status if raw_status else "Active"
+
         injury_note = p.get("injury_note")
         if isinstance(injury_note, bool):
             injury_note = None
-        
+
+        # Use season stats from batch fetch; fall back to Yahoo roster data if present
+        season_stats = season_stats_by_key.get(player_key) or p.get("season_stats") or None
+
         players_map[player_key] = RosterPlayerOut(
             player_key=player_key,
             name=name,
@@ -6324,13 +6337,27 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
             is_proxy=bool(proj.get("is_proxy", False)),
             cat_scores=proj.get("cat_scores") or {},
             selected_position=p.get("selected_position"),
+            season_stats=season_stats,
+            rolling_14d=p.get("rolling_14d"),  # 14-day rolling if available
         )
     players_out = list(players_map.values())
+
+    # Build freshness metadata
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    from backend.contracts import FreshnessMetadata
+    freshness = FreshnessMetadata(
+        primary_source="yahoo",
+        fetched_at=now_et,  # Approximate - could be tracked more precisely
+        computed_at=now_et,
+        staleness_threshold_minutes=60,
+        is_stale=False,
+    )
 
     return RosterResponse(
         team_key=team_key,
         players=players_out,
         count=len(players_out),
+        freshness=freshness,
     )
 
 
@@ -6599,6 +6626,16 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                         "matchup stat_id=%s → key=%s val=%s", sid, key, val
                     )
                     if key:
+                        # Handle Yahoo NSB format "SB/CS" → convert to numeric (SB - CS)
+                        if key == "NSB" and isinstance(val, str) and "/" in val:
+                            try:
+                                parts = val.split("/")
+                                if len(parts) == 2:
+                                    sb = float(parts[0]) if parts[0] else 0
+                                    cs = float(parts[1]) if parts[1] else 0
+                                    val = str(sb - cs)  # Net Stolen Bases = SB - CS
+                            except (ValueError, TypeError):
+                                pass  # Keep original value if parsing fails
                         stats_dict[key] = val
 
         # Try multiple key formats Yahoo might use

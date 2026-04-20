@@ -23,7 +23,7 @@ class TestBudgetEndpoint:
 
     def test_budget_response_structure(self, fantasy_client):
         """Budget response has all required fields."""
-        response = fantasy_client.get("/budget")
+        response = fantasy_client.get("/api/fantasy/budget")
 
         assert response.status_code == 200
         data = response.json()
@@ -55,7 +55,7 @@ class TestBudgetEndpoint:
 
     def test_budget_values_are_valid(self, fantasy_client):
         """Budget values are within valid ranges."""
-        response = fantasy_client.get("/budget")
+        response = fantasy_client.get("/api/fantasy/budget")
         data = response.json()
         budget = data["budget"]
 
@@ -76,7 +76,7 @@ class TestBudgetEndpoint:
 
     def test_freshness_metadata_present(self, fantasy_client):
         """Freshness metadata is present and valid."""
-        response = fantasy_client.get("/budget")
+        response = fantasy_client.get("/api/fantasy/budget")
         data = response.json()
         freshness = data["freshness"]
 
@@ -88,7 +88,7 @@ class TestBudgetEndpoint:
     def test_acquisition_warning_threshold(self, fantasy_client):
         """Acquisition warning triggers at 6+ used."""
         # The mock data has 5 acquisitions used, so warning should be False
-        response = fantasy_client.get("/budget")
+        response = fantasy_client.get("/api/fantasy/budget")
         data = response.json()
         budget = data["budget"]
 
@@ -97,7 +97,7 @@ class TestBudgetEndpoint:
 
     def test_ip_pace_calculation(self, fantasy_client):
         """IP pace is calculated based on accumulated IP and season days."""
-        response = fantasy_client.get("/budget")
+        response = fantasy_client.get("/api/fantasy/budget")
         data = response.json()
         budget = data["budget"]
 
@@ -109,5 +109,5 @@ class TestBudgetEndpoint:
 
     def test_budget_response_200(self, fantasy_client):
         """Budget endpoint returns 200 OK."""
-        response = fantasy_client.get("/budget")
+        response = fantasy_client.get("/api/fantasy/budget")
         assert response.status_code == 200

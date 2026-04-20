@@ -10,7 +10,8 @@ from __future__ import annotations
 from typing import List, Literal, Optional
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from backend.contracts import FreshnessMetadata
 
 
 # ---------------------------------------------------------------------------
@@ -474,10 +475,10 @@ class MatchupSimulateRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 class RosterPlayerOut(BaseModel):
-    player_key: str
-    name: str
+    player_key: str = Field(alias="yahoo_player_key")
+    name: str = Field(alias="player_name")
     team: Optional[str] = None
-    positions: List[str] = []
+    positions: List[str] = Field(default=[], alias="eligible_positions")
     status: Optional[str] = None              # Yahoo status: Active, IL, DTD, etc.
     injury_note: Optional[str] = None
     injury_status: Optional[str] = None       # Explicit injury status pass-through
@@ -486,6 +487,10 @@ class RosterPlayerOut(BaseModel):
     is_proxy: bool = False
     cat_scores: dict = {}
     selected_position: Optional[str] = None  # Yahoo lineup slot: IL, BN, C, 1B, OF, etc.
+    season_stats: Optional[dict] = None      # PR-13: Season-to-date stats
+    rolling_14d: Optional[dict] = None       # PR-14: 14-day rolling stats
+
+    model_config = ConfigDict(populate_by_name=True)  # Allow both original and alias names
     
     @field_validator("z_score", mode="before")
     @classmethod
@@ -516,6 +521,7 @@ class RosterResponse(BaseModel):
     team_key: str
     players: List[RosterPlayerOut]
     count: int
+    freshness: Optional[FreshnessMetadata] = None
 
 
 class MatchupTeamOut(BaseModel):

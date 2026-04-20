@@ -1088,7 +1088,7 @@ async def get_daily_briefing(
             "generated_at": briefing.generated_at.isoformat(),
             "strategy": briefing.strategy,
             "risk_profile": briefing.risk_profile,
-            "overall_confidence": briefing.overall_confidence,
+            "overall_confidence": round(briefing.overall_confidence / 100, 4),
             "summary": {
                 "total_decisions": briefing.total_decisions,
                 "easy_decisions": briefing.easy_decisions,
@@ -1708,8 +1708,14 @@ async def get_waiver_recommendations(
             pass
 
         my_roster_scored: list = []
+        _IL_STATUSES = {"IL", "IL10", "IL60", "NA", "OUT", "DL"}
         for rp in my_roster:
             bp = _get_proj(rp)
+            # Derive effective IL status from both status field and selected_position slot.
+            # Yahoo sometimes returns status=None for IL players but sets selected_position=IL.
+            raw_status = rp.get("status")
+            sel_pos = rp.get("selected_position") or ""
+            effective_status = raw_status if raw_status else (sel_pos if sel_pos in _IL_STATUSES else raw_status)
             my_roster_scored.append({
                 "name": (rp.get("name") or "").strip(),
                 "player_key": rp.get("player_key") or "",
@@ -1718,12 +1724,10 @@ async def get_waiver_recommendations(
                 "is_proxy": bp.get("is_proxy", False),
                 "cat_scores": bp.get("cat_scores") or {},
                 "starts_this_week": int(rp.get("starts_this_week", 1)),
-                "status": rp.get("status"),
+                "status": effective_status,
                 "injury_note": rp.get("injury_note"),
                 "is_undroppable": bool(rp.get("is_undroppable", 0)),
             })
-
-        _IL_STATUSES = {"IL", "IL10", "IL60", "NA", "OUT"}
 
         def _weakest_safe_to_drop(target_positions: list) -> Optional[dict]:
             candidates = [
@@ -1738,7 +1742,12 @@ async def get_waiver_recommendations(
                 return None
             if len(active) == 0:
                 return min(candidates, key=lambda x: x.get("z_score") or 0.0)
-            return min(active, key=lambda x: x.get("z_score") or 0.0)
+            # Never drop a superstar (z >= 6.0) regardless of injury status;
+            # they retain long-term roster value and should be held.
+            droppable_active = [p for p in active if (p.get("z_score") or 0.0) < 6.0]
+            if not droppable_active:
+                return None  # All active players are elite — don't recommend drop
+            return min(droppable_active, key=lambda x: x.get("z_score") or 0.0)
 
         def _fmt_signals(signals: list, reg_delta: float, is_pitcher: bool) -> str:
             parts = []
@@ -2758,6 +2767,13 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                         except (TypeError, ValueError):
                             pass
                     if key:
+                        # NSB (and any fraction stat like "X/Y") — Yahoo returns
+                        # "successful_steals/attempts". Use only the numerator.
+                        if isinstance(val, str) and "/" in val:
+                            try:
+                                val = str(int(val.split("/")[0]))
+                            except (ValueError, IndexError):
+                                pass
                         stats_dict[key] = val
 
         team_key = t_meta.get("team_key", "")
@@ -3684,7 +3700,7 @@ async def get_decisions_status(
     dr_latest_row = db.execute(
         text("SELECT MAX(as_of_date) AS latest_date FROM decision_results")
     ).fetchone()
-    dr_latest = dr_latest_row.latest_date if dr_latest_row else None
+    dr_latest = dr_latest_row['latest_date'] if dr_latest_row and dr_latest_row['latest_date'] else None
 
     # Row counts by decision_type for latest date
     dr_counts = {"lineup": None, "waiver": None}
@@ -3697,12 +3713,13 @@ async def get_decisions_status(
                 """),
                 {"d": dr_latest, "dt": dtype}
             ).fetchone()
-            dr_counts[dtype] = cnt.n if cnt else 0
+            dr_counts[dtype] = cnt['n'] if cnt else 0
 
     dr_total = sum(v for v in dr_counts.values() if v is not None) if dr_latest else None
 
     # Compute freshness verdict (data stale if 2+ days old)
-    today_et_date = now_et.date()
+    # today_et() returns a date object directly (not datetime), so .date() is not valid
+    today_et_date = now_et
     stale_threshold = today_et_date - timedelta(days=2)
     dr_is_fresh = dr_latest and dr_latest >= stale_threshold
 
@@ -3736,10 +3753,10 @@ async def get_decisions_status(
 # Phase 4: Matchup Scoreboard (P1 Page)
 # ============================================================================
 
-@router.get("/scoreboard")
+@router.get("/api/fantasy/scoreboard")
 async def get_matchup_scoreboard(
-    week: int = Query(..., description="Matchup week number (1-25)"),
-    opponent_name: str = Query(..., description="Opponent team name"),
+    week: Optional[int] = Query(None, description="Matchup week number (1-25), defaults to current week"),
+    opponent_name: Optional[str] = Query(None, description="Opponent team name, fetched from Yahoo if not provided"),
     db: Session = Depends(get_db),
 ) -> Dict:
     """
@@ -3764,6 +3781,13 @@ async def get_matchup_scoreboard(
         client = get_yahoo_client()
     except YahooAuthError:
         raise HTTPException(status_code=503, detail="Yahoo not configured")
+
+    # Default to current week if not provided
+    if week is None:
+        now_et = datetime.now(ZoneInfo("America/New_York"))
+        # Approximate week number (season starts late March)
+        days_since_opening = (now_et - datetime(now_et.year, 3, 28, tzinfo=ZoneInfo("America/New_York"))).days
+        week = max(1, min(25, (days_since_opening // 7) + 1))
 
     # Fetch live matchup stats from Yahoo
     matchup_data = client.get_matchup_stats(week=week)
@@ -3849,7 +3873,7 @@ async def get_matchup_scoreboard(
     }
 
 
-@router.get("/budget")
+@router.get("/api/fantasy/budget")
 async def get_constraint_budget(
     db: Session = Depends(get_db),
 ) -> Dict:

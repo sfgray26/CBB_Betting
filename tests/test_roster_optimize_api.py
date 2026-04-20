@@ -13,9 +13,27 @@ def fantasy_client():
     with patch("backend.schedulers.fantasy_scheduler.start_fantasy_scheduler"):
         with patch("backend.schedulers.fantasy_scheduler.stop_fantasy_scheduler"):
             from backend.fantasy_app import app
+            from backend.models import get_db
             from fastapi.testclient import TestClient
+
+            # Mock DB session so tests don't need a real PostgreSQL connection.
+            # The optimize endpoint queries PlayerIDMapping and PlayerScore;
+            # an empty-result mock makes it fall back to default scores.
+            mock_db = MagicMock()
+            mock_db.query.return_value.filter.return_value.all.return_value = []
+            mock_db.query.return_value.filter.return_value.group_by.return_value.subquery.return_value = MagicMock()
+            mock_db.query.return_value.join.return_value.filter.return_value.all.return_value = []
+
+            def override_get_db():
+                try:
+                    yield mock_db
+                finally:
+                    pass
+
+            app.dependency_overrides[get_db] = override_get_db
             with TestClient(app) as client:
                 yield client
+            app.dependency_overrides = {}
 
 
 class TestRosterOptimizeEndpoint:

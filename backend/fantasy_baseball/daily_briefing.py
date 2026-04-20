@@ -308,10 +308,16 @@ class DailyBriefingGenerator:
             # Determine recommendation
             has_game = ranking.has_game
             is_starter = len(starters) < 9 and has_game
-            
+
             if not has_game:
-                recommendation = "BENCH"
-                confidence = 95
+                # When no games exist (off-season, between weeks), still recommend START
+                # for top players based on smart_score to make briefing useful
+                if len(starters) < 9:
+                    recommendation = "START"
+                    confidence = 70  # Lower confidence since no game today
+                else:
+                    recommendation = "BENCH"
+                    confidence = 70
             elif context and context.opposing_pitcher and context.opposing_pitcher.is_ace:
                 recommendation = "MONITOR"
                 confidence = max(30, ranking.smart_score * 10)
@@ -347,17 +353,36 @@ class DailyBriefingGenerator:
         
         # Build category briefings
         cat_briefings = []
-        for need in category_needs:
-            status = "WINNING" if need.needed > 0 else "LOSING" if need.needed < 0 else "TIED"
-            cat_briefings.append(CategoryBriefing(
-                category=need.category,
-                current=need.current,
-                opponent=need.projected_opponent,
-                projected_final=need.current * 7,  # Rough projection
-                opponent_projected=need.projected_opponent * 7,
-                status=status,
-                urgency=int(need.urgency * 10),
-            ))
+        if category_needs:
+            for need in category_needs:
+                status = "WINNING" if need.needed > 0 else "LOSING" if need.needed < 0 else "TIED"
+                cat_briefings.append(CategoryBriefing(
+                    category=need.category,
+                    current=need.current,
+                    opponent=need.projected_opponent,
+                    projected_final=need.current * 7,  # Rough projection
+                    opponent_projected=need.projected_opponent * 7,
+                    status=status,
+                    urgency=int(need.urgency * 10),
+                ))
+        else:
+            # Default categories when needs unavailable (pre-season/off-season)
+            default_cats = [
+                ("R", 0.0, 0.0), ("H", 0.0, 0.0), ("HR", 0.0, 0.0),
+                ("RBI", 0.0, 0.0), ("SB", 0.0, 0.0), ("AVG", 0.0, 0.0),
+                ("W", 0.0, 0.0), ("K", 0.0, 0.0), ("SV", 0.0, 0.0),
+                ("ERA", 0.0, 0.0), ("WHIP", 0.0, 0.0),
+            ]
+            for cat_name, curr, opp in default_cats:
+                cat_briefings.append(CategoryBriefing(
+                    category=cat_name,
+                    current=curr,
+                    opponent=opp,
+                    projected_final=curr * 7,
+                    opponent_projected=opp * 7,
+                    status="TIED",
+                    urgency=0,
+                ))
         
         # Calculate overall confidence
         all_confidences = [p.confidence for p in starters + bench]

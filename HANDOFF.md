@@ -1,6 +1,84 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
-> Date: April 18, 2026 | Author: Claude Code (Master Architect)
+> Date: April 20, 2026 | Author: Claude Code (Master Architect)
+> Status: **UAT remediation session complete (Apr 20). 6 bugs fixed, 2245/2245 tests passing. Deploy needed — see Gemini bundle below.**
+
+---
+
+## SESSION DELTA — April 20, 2026 (UAT Remediation)
+
+### What Was Done
+
+UAT was run against Railway production (`uat_findings_fresh.md`): 53 PASS / 15 FAIL. Root causes diagnosed and fixed. **Critical discovery: `ConfigDict` missing from schemas.py caused the ENTIRE fantasy router to fail on import, making scoreboard/budget/optimize return 404 and explaining many observed failures.**
+
+### Fixes Applied (Local — Need Deployment)
+
+| File | Fix |
+|------|-----|
+| `backend/schemas.py` | Add `ConfigDict` import (was missing — crashed router on import). Add `FreshnessMetadata` import from contracts (resolves forward-ref null in roster response). |
+| `backend/routers/fantasy.py` | Fix `decisions/status` AttributeError: `today_et()` returns `date`, not `datetime` — `now_et.date()` call removed. |
+| `backend/routers/fantasy.py` | Fix NSB "X/Y" non-numeric in matchup: parse fraction to numerator. |
+| `backend/routers/fantasy.py` | Fix briefing `overall_confidence` from int % to float 0-1 (divide by 100). |
+| `backend/routers/fantasy.py` | Fix IL player drop guard: derive effective status from `selected_position` slot when `status` is None; add z>=6.0 superstar protection to prevent dropping elite players. |
+| `backend/main.py` | Roster endpoint: add `get_players_stats_batch()` call to populate `season_stats` for all roster players. Status default changed from "playing" → "Active". |
+| `scripts/uat_validator.py` | Fix field name mismatch: check `name`/`player_key` (Python field names) not `player_name`/`yahoo_player_key` (aliases). |
+| `tests/test_budget_api.py` | Update test paths from `/budget` → `/api/fantasy/budget` to match renamed route. |
+
+### Post-Fix Test Results
+
+```
+2245 passed, 3 skipped, 0 failed
+```
+
+### Remaining After Deployment
+
+After Gemini deploys, expected UAT improvements:
+- `GET /api/fantasy/scoreboard` → was 404, will be 200 (router now loads)
+- `GET /api/fantasy/budget` → was 404, will be 200
+- `POST /api/fantasy/roster/optimize` → was 404, will be 200
+- `GET /api/fantasy/decisions/status` → was 500, will be 200
+- `GET /api/fantasy/matchup` NSB → was "0/0", will be "0" (numeric)
+- `GET /api/fantasy/roster` freshness → was null, will be dict
+- `GET /api/fantasy/roster` season_stats → was 0%, will be >0% (Yahoo stats batch)
+
+**Known gaps still open after deployment:**
+- Waiver `matchup_opponent='TBD'` — Yahoo scoreboard parsing fragile (not fixed this session)
+- Briefing `categories/starters` — depends on `category_tracker.get_category_needs()` returning data (empty when scoreboard parsing fails)
+- Proxy players (Ballesteros, Antonacci, Murakami) — genuinely not in Steamer/ZiPS; stats will come from Yahoo season stats batch
+- No Statcast/advanced stats on roster endpoint (future work)
+
+---
+
+## GEMINI DELEGATION BUNDLE — Deploy April 20 Fixes
+
+**HANDOFF PROMPT FOR GEMINI CLI:**
+
+```
+Deploy the April 20 UAT remediation fixes to Railway.
+
+Files changed locally (all tests passing at 2245/0 fail):
+- backend/schemas.py — ConfigDict import added (critical: was crashing router)
+- backend/routers/fantasy.py — decisions/status fix, NSB fix, briefing fix, IL guard
+- backend/main.py — roster season_stats batch fetch added
+- scripts/uat_validator.py — field name corrections
+- tests/test_budget_api.py — route path updated
+
+Steps:
+1. Run: venv/Scripts/python -m py_compile backend/schemas.py backend/routers/fantasy.py backend/main.py
+2. Verify all pass with "OK"
+3. Run: venv/Scripts/python -m pytest tests/ -q --tb=short
+4. Verify 2245 passed, 0 failed
+5. git add backend/schemas.py backend/routers/fantasy.py backend/main.py backend/fantasy_baseball/daily_briefing.py scripts/uat_validator.py tests/test_budget_api.py tasks/uat_findings_fresh.md HANDOFF.md
+6. git commit -m "fix(uat): fix router crash, decisions/status 500, NSB parse, IL guard, roster stats"
+7. git push origin stable/cbb-prod
+8. Confirm Railway auto-deploys (check Railway dashboard)
+9. After deploy, run: venv/Scripts/python scripts/uat_validator.py --base-url "https://fantasy-app-production-5079.up.railway.app" --api-key "j01F3n2sSzbhi-jNAEULNkgzFqRXgOl2FuIDgKRoyfg" --output tasks/uat_findings_post_deploy.md
+10. Report: count of PASS/FAIL/WARN. Expected: scoreboard/budget/optimize now 200, decisions/status now 200, NSB numeric.
+```
+
+---
+
+> Previous session date: April 18, 2026 | Author: Claude Code (Master Architect)
 > Status: Phase 0–4 COMPLETE. **Phase 4.5a Quality Remediation P1-P3-P5 COMPLETE.** P4 (statcast integration) remains optional. Kimi framework audit (verified) exposed 3 critical foundation gaps that must be fixed before UAT is meaningful. Phase 4.5b UAT ready to proceed. L3E deferred. Do not reopen Layer 2 except for regressions.
 
 UI Specification Audit: reports/2026-04-17-ui-specification-contract-audit.md
