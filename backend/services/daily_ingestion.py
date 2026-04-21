@@ -2847,6 +2847,10 @@ class DailyIngestionOrchestrator:
                         proj_whip_p50=sim.proj_whip_p50 if sim else None,
                         downside_p25=sim.downside_p25  if sim else None,
                         upside_p75=sim.upside_p75      if sim else None,
+                        # P0-3: Pitcher z-scores from player_scores
+                        z_k_p=score.z_k_p,
+                        z_era=score.z_era,
+                        z_whip=score.z_whip,
                     ))
 
                 # Step 5: run decision engine (CPU-bound -- offload to thread pool)
@@ -2981,6 +2985,10 @@ class DailyIngestionOrchestrator:
                             proj_whip_p50=fa_sim.proj_whip_p50,
                             downside_p25=fa_sim.downside_p25,
                             upside_p75=fa_sim.upside_p75,
+                            # P0-3: Pitcher z-scores from player_scores
+                            z_k_p=fa_score.z_k_p,
+                            z_era=fa_score.z_era,
+                            z_whip=fa_score.z_whip,
                         ))
                     logger.info(
                         "decision_optimization: built waiver pool with %d candidates "

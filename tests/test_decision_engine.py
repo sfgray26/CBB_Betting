@@ -70,6 +70,9 @@ def _make_pitcher(
     proj_era: float = 3.50,
     proj_whip: float = 1.15,
     delta_z: float = 0.0,
+    z_k_p: float = 0.0,
+    z_era: float = 0.0,
+    z_whip: float = 0.0,
 ) -> PlayerDecisionInput:
     return PlayerDecisionInput(
         bdl_player_id=pid,
@@ -89,6 +92,10 @@ def _make_pitcher(
         proj_whip_p50=proj_whip,
         downside_p25=None,
         upside_p75=None,
+        # P0-3: Pitcher z-scores
+        z_k_p=z_k_p,
+        z_era=z_era,
+        z_whip=z_whip,
     )
 
 
@@ -339,9 +346,137 @@ class TestEdgeCases:
         assert score >= 0.0
 
     def test_pitcher_composite_value_uses_k(self):
-        elite = _make_pitcher(901, proj_k=200.0, proj_era=2.50, proj_whip=1.00)
-        poor  = _make_pitcher(902, proj_k=50.0,  proj_era=6.00, proj_whip=1.80)
+        # P0-3: Updated to use z-scores for pitcher composite
+        elite = _make_pitcher(
+            901, proj_k=200.0, proj_era=2.50, proj_whip=1.00,
+            z_k_p=2.0, z_era=1.5, z_whip=1.2,  # Elite z-scores
+        )
+        poor  = _make_pitcher(
+            902, proj_k=50.0, proj_era=6.00, proj_whip=1.80,
+            z_k_p=-1.5, z_era=-1.8, z_whip=-1.3,  # Poor z-scores
+        )
         assert _composite_value(elite) > _composite_value(poor)
+
+
+# ---------------------------------------------------------------------------
+# P0-3: Pitcher Composite Uses Z-Scores
+# ---------------------------------------------------------------------------
+
+class TestP03PitcherCompositeUsesZScores:
+    """P0-3: Pitcher composite value uses z-scores instead of raw projections."""
+
+    def test_elite_pitcher_z_scores_rank_higher(self):
+        """Elite pitcher (positive z-scores) should rank higher than poor pitcher."""
+        elite = _make_pitcher(
+            901, "EliteSP",
+            score=75.0,
+            z_k_p=2.0,   # Well above average K rate
+            z_era=1.5,   # Well above average (low ERA is good, z_era negated)
+            z_whip=1.2,  # Above average (low WHIP is good, z_whip negated)
+        )
+        poor = _make_pitcher(
+            902, "PoorSP",
+            score=25.0,
+            z_k_p=-1.5,  # Below average K rate
+            z_era=-1.8,  # Poor ERA (high ERA, z_era negative)
+            z_whip=-1.3, # Poor WHIP (high WHIP, z_whip negative)
+        )
+        assert _composite_value(elite) > _composite_value(poor)
+
+    def test_z_scores_override_raw_projections(self):
+        """Z-scores should be the primary driver, not raw projections."""
+        # High raw projections but negative z-scores (lucky stats, poor underlying)
+        lucky = _make_pitcher(
+            903, "LuckyPitcher",
+            score=50.0,
+            proj_k=200.0, proj_era=3.00, proj_whip=1.10,  # Good raw stats
+            z_k_p=-1.0, z_era=-0.5, z_whip=-0.3,  # But negative z-scores
+        )
+        # Moderate raw projections but positive z-scores (solid performer)
+        solid = _make_pitcher(
+            904, "SolidPitcher",
+            score=50.0,
+            proj_k=150.0, proj_era=3.80, proj_whip=1.25,  # Moderate raw stats
+            z_k_p=0.8, z_era=0.6, z_whip=0.4,  # Positive z-scores
+        )
+        # Z-scores should win out
+        assert _composite_value(solid) > _composite_value(lucky)
+
+    def test_null_z_scores_fallback_to_baseline(self):
+        """When z-scores are None, should fall back to score_0_100 baseline."""
+        no_z = _make_pitcher(
+            905, "NoZScores",
+            score=70.0,
+            z_k_p=None, z_era=None, z_whip=None,
+        )
+        # Should not crash, and baseline from score_0_100 should apply
+        val = _composite_value(no_z)
+        assert val > 0.0
+        # With score=70, baseline = (70/100) * 1.5 = 1.05
+        assert val > 1.0
+
+    def test_two_way_pitcher_component_uses_z_scores(self):
+        """Two-way players should use z-scores for pitcher component."""
+        two_way_elite = PlayerDecisionInput(
+            bdl_player_id=1001,
+            name="TwoWayElite",
+            player_type="two_way",
+            eligible_positions=["UTIL", "P"],
+            score_0_100=70.0,
+            composite_z=1.0,
+            momentum_signal="STABLE",
+            delta_z=0.0,
+            proj_hr_p50=15.0, proj_rbi_p50=60.0, proj_sb_p50=5.0,
+            proj_avg_p50=0.270,
+            proj_k_p50=180.0, proj_era_p50=3.20, proj_whip_p50=1.15,
+            downside_p25=None, upside_p75=None,
+            # P0-3: Pitcher z-scores
+            z_k_p=1.5, z_era=1.0, z_whip=0.8,
+        )
+        two_way_poor_pitcher = PlayerDecisionInput(
+            bdl_player_id=1002,
+            name="TwoWayPoorPitcher",
+            player_type="two_way",
+            eligible_positions=["UTIL", "P"],
+            score_0_100=70.0,
+            composite_z=1.0,
+            momentum_signal="STABLE",
+            delta_z=0.0,
+            proj_hr_p50=15.0, proj_rbi_p50=60.0, proj_sb_p50=5.0,
+            proj_avg_p50=0.270,
+            proj_k_p50=180.0, proj_era_p50=3.20, proj_whip_p50=1.15,
+            downside_p25=None, upside_p75=None,
+            # P0-3: Poor pitcher z-scores
+            z_k_p=-1.0, z_era=-1.2, z_whip=-0.8,
+        )
+        # Same hitting stats, different pitcher z-scores
+        # Elite pitcher should have higher composite
+        assert _composite_value(two_way_elite) > _composite_value(two_way_poor_pitcher)
+
+    def test_z_score_sum_scaling(self):
+        """Z-score sum should be scaled to [0, 3] range for compatibility."""
+        # Max positive z-scores: +3 each = +9 total
+        # Scaled: (9 + 9) / 6 = 3.0
+        perfect = _make_pitcher(
+            906, "PerfectPitcher",
+            score=50.0,
+            z_k_p=3.0, z_era=3.0, z_whip=3.0,
+        )
+        val = _composite_value(perfect)
+        # Should be at the top of the range (near 3.0)
+        assert val > 2.5
+
+        # Max negative z-scores: -3 each = -9 total
+        # Scaled: (-9 + 9) / 6 = 0.0
+        terrible = _make_pitcher(
+            907, "TerriblePitcher",
+            score=50.0,
+            z_k_p=-3.0, z_era=-3.0, z_whip=-3.0,
+        )
+        val_terrible = _composite_value(terrible)
+        # Should be at the bottom of the range
+        # Baseline from score_0_100 may apply
+        assert 0.0 <= val_terrible <= 1.5
 
 
 # ---------------------------------------------------------------------------

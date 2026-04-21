@@ -72,6 +72,9 @@ class PlayerDecisionInput:
 
     Built by daily_ingestion._run_decision_optimization() from the join of
     player_scores + player_momentum + simulation_results for a single date.
+
+    P0-3: Pitcher z-scores (z_k_p, z_era, z_whip) added for composite calculation.
+    These are sourced from player_scores and replace raw projection normalization.
     """
     bdl_player_id: int
     name: str
@@ -89,7 +92,11 @@ class PlayerDecisionInput:
     proj_era_p50:  Optional[float] = None
     proj_whip_p50: Optional[float] = None
     downside_p25:  Optional[float] = None
-    upside_p75:    Optional[float] = None
+    upside_p75:   Optional[float] = None
+    # P0-3: Pitcher Z-scores from player_scores (used for composite calculation)
+    z_k_p:    Optional[float] = None
+    z_era:    Optional[float] = None
+    z_whip:   Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -235,8 +242,12 @@ def _composite_value(player: PlayerDecisionInput) -> float:
     Simple composite value metric for waiver world-with/world-without comparisons.
 
     Hitters:  HR + RBI + SB (all normalized to 0-1 then summed)
-    Pitchers: K (normalized) - ERA_penalty - WHIP_penalty
+    Pitchers: z_k_p + z_era + z_whip (P0-3: z-scores directly)
     Two-way:  average of both
+
+    Z-scores are already normalized (mean=0, typically -3 to +3).
+    z_era and z_whip are negated in scoring_engine (lower-is-better), so
+    higher z_era/z_whip means better performance.
 
     Returns a value in approximately [0, 3].
     """
@@ -253,21 +264,23 @@ def _composite_value(player: PlayerDecisionInput) -> float:
         return max(projection_total, baseline)
 
     if pt == "pitcher":
-        k    = min((player.proj_k_p50   or 0.0) / _K_NORM, 1.0)
-        era  = (player.proj_era_p50  or 4.50) / 9.0   # 9 ERA -> 1.0 penalty
-        whip = (player.proj_whip_p50 or 1.30) / 2.0   # 2.0 WHIP -> 1.0 penalty
-        projection_total = max(0.0, k - era + (1.0 - whip))
+        # P0-3: Use z-scores directly instead of normalizing raw projections
+        # z_k_p: higher is better (more Ks)
+        # z_era, z_whip: already negated in scoring_engine (lower ERA/WHIP = higher z)
+        z_total = (player.z_k_p or 0.0) + (player.z_era or 0.0) + (player.z_whip or 0.0)
+        # Scale z_total (roughly -9 to +9) to [0, 3] range for compatibility
+        projection_total = max(0.0, (z_total + 9.0) / 6.0)
         return max(projection_total, baseline)
 
     if pt == "two_way":
+        # Hitter component: unchanged
         hr  = min((player.proj_hr_p50  or 0.0) / _HR_NORM,  1.0)
         rbi = min((player.proj_rbi_p50 or 0.0) / _RBI_NORM, 1.0)
         sb  = min((player.proj_sb_p50  or 0.0) / 50.0,      1.0)
-        k    = min((player.proj_k_p50   or 0.0) / _K_NORM, 1.0)
-        era  = (player.proj_era_p50  or 4.50) / 9.0
-        whip = (player.proj_whip_p50 or 1.30) / 2.0
-        hitter_val  = hr + rbi + sb
-        pitcher_val = max(0.0, k - era + (1.0 - whip))
+        hitter_val = hr + rbi + sb
+        # Pitcher component: P0-3 use z-scores
+        z_total = (player.z_k_p or 0.0) + (player.z_era or 0.0) + (player.z_whip or 0.0)
+        pitcher_val = max(0.0, (z_total + 9.0) / 6.0)
         return max((hitter_val + pitcher_val) / 2.0, baseline)
 
     # unknown player type -- fall back to score_0_100 normalized to [0, 3]
