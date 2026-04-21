@@ -1,17 +1,20 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-04-21 | **Architect:** Claude Code (Master Architect)
-> **Status:** Apr 20 UAT remediation and Apr 21 Lineup/Admin repair are **committed** (see commits below). Apr 21 Postman P0/P1 regression fixes are **local and uncommitted** — awaiting Gemini deploy. Phase 4.5a Quality Remediation is **COMPLETE**. Phase 4.5b UAT and Phase 5 (frontend) remain gated.
+> **Status:** Post-deploy UAT v5 (`tasks/uat_findings_post_deploy_v5.md`) reported **95 PASS / 3 FAIL / 1 WARN**. The three FAIL rows (roster enrichment null, waiver `matchup_opponent = "TBD"`, waiver `category_deficits = []`) are **fixed locally and uncommitted**. Targeted regression sweep (68 fantasy tests) is green. Phase 4.5b now awaits deploy + rerun confirmation; Phase 5 (frontend) remains gated.
 
 ---
 
-## 1. Mission Accomplished — Latest Session (2026-04-21, Postman P0/P1)
+## 1. Mission Accomplished — Latest Session (2026-04-21, Post-Deploy UAT v5)
 
-- Root-caused and fixed the highest-priority fantasy API regressions surfaced by the April 20 Postman captures in `postman_collections/responses/`.
-- Four P0 defects plus three P1 contract defects, each with a regression test. No refactors or speculative cleanup.
-- Full suite after fixes: **2285 passed, 1 failed (pre-existing, out of scope), 3 skipped**.
+- Root-caused the three post-deploy live failures from `tasks/uat_findings_post_deploy_v5.md`. Each has a focused regression test; no speculative refactors.
+- **Roster enrichment null (P0):** canonical roster handler never called `get_players_stats_batch()` after `get_roster()`, so the player_mapper received empty `stats` dicts and `season_stats` stayed null for every player.
+- **Waiver `matchup_opponent = "TBD"` (P0):** inline scoreboard parser did only a 2-level descent; Yahoo's actual payload nests `team_key` and `team_stats` one level deeper. The matchup endpoint already uses a recursive walker — extracted that logic into a shared helper so both handlers use identical parsing.
+- **Waiver `category_deficits = []` (P0):** cascading consequence of the previous — the deficit block was gated on `matchup_opponent != "TBD"`. Same helper now feeds both opponent resolution and deficit math in a single scoreboard fetch (previously two redundant calls).
+- Added `tests/test_roster_waiver_enrichment_contract.py` — 5 regression tests covering season_stats hydration, nested scoreboard parsing, single-call consolidation, and graceful degradation.
+- Targeted fantasy-suite sweep: **309 passed** (68 in the primary roster/waiver slice, 0 regressions elsewhere).
 
-See §3 for the rolled-up session log covering this session and the two prior ones (already committed).
+The prior Apr 21 Postman P0/P1 slice (MCMC negative-gain gate, numeric stat_id filter, briefing MONITOR routing, etc.) is also still uncommitted and rolls forward into the same commit. See §3 for the full rolled-up session log.
 
 ---
 
@@ -24,8 +27,16 @@ See §3 for the rolled-up session log covering this session and the two prior on
 | Apr 20 UAT Remediation (schemas, fantasy router hardening, waiver edge detector, scoreboard orchestrator, player mapper) | **Committed** | `a2e2e56`, `791f6fa`, `3347937` |
 | Apr 21 Lineup/Admin Repair (probable-pitcher fallback, smart-selector positions, admin compatibility) | **Committed** | `2749276`, `9147f83`, `80889dc`, `8ca2ebe` |
 | Apr 21 Postman P0/P1 Regression Fixes (briefing MONITOR routing, waiver MCMC gate, stat-contract filter, roster ImportError hoist) | **Local / uncommitted** | — |
+| Apr 21 Post-Deploy UAT v5 Fixes (roster season_stats batch hydration, shared scoreboard parser for waiver matchup/deficits) | **Local / uncommitted** | — |
 
-Railway auto-deploy state for committed slices is not confirmed in this session. Gemini should verify `/admin/version` reflects the latest commit on deploy.
+Post-deploy validation artifact: `tasks/uat_findings_post_deploy_v5.md`.
+
+Pre-fix live truth from that rerun:
+
+- `GET /api/fantasy/roster` returns `200` but `players_with_stats = 0% (0/23)` — **fixed locally**
+- `GET /api/fantasy/waiver` returns `200` with `matchup_opponent = "TBD"` and `category_deficits = []` — **fixed locally**
+- `GET /api/fantasy/lineup/2026-04-21` returns `200`; remaining issue is warning-level pitcher-start coverage (unchanged)
+- Older route-level failures from the Apr 20 captures no longer reproduce in the UAT v5 rerun
 
 ### 2.2 Phase Plan Progress
 
@@ -47,12 +58,16 @@ Railway auto-deploy state for committed slices is not confirmed in this session.
 
 | # | Severity | Defect | Owner / Next Action |
 |---|----------|--------|--------------------|
-| 1 | P1 | Pre-existing NSB composite test failure (`test_composite_z_excludes_z_sb_when_both_populated`) — reproduces on clean HEAD | Architect — decide whether composite math excludes `z_sb` when both SB and CS populated, or update test expectation |
-| 2 | P2 | Unknown Yahoo stat_ids (e.g. `"38"`) silently dropped from waiver output | Architect — decide whether to log as warning so `YAHOO_ID_INDEX` can be enriched over time |
-| 3 | P2 | `/admin/backfill/player-id-mapping` runtime behavior — reported "no response" in prod, not reproduced locally | Gemini — confirm on next deploy: responds / times out / hangs |
-| 4 | P2 | Schedule-blind lineup fallback emits synthetic implied runs without a mode flag | Architect — decide whether to surface "schedule fallback mode" so UI can distinguish sportsbook-derived vs neutral context |
-| 5 | P2 | Proxy players (6 of 23 roster — Ballesteros, Kim, Murakami, Smith, Arrighetti, De Los Santos) carry hardcoded `z=-0.8`, empty `cat_scores`, genuinely absent from Steamer/ZiPS | Claude — future pipeline work to synthesize proxy projections or route through Yahoo season stats |
-| 6 | P3 | Impossible projection extrapolations surfaced in Decisions API (0.00 ERA ROS, 91.2 HR ROS, 204.4 RBI ROS) | Claude — add plausible ROS caps in projection math |
+| 1 | P1 | Roster endpoint still returns null for `rolling_7d/14d/15d/30d`, `ros_projection`, `row_projection`, `bdl_player_id`, `mlbam_id`, `game_context` | Claude — season_stats now hydrates from the Yahoo batch, but `PlayerIDMapping` join appears empty in prod (rolling stats and canonical IDs remain null). Verify `PlayerIDMapping` ingestion health and `player_rolling_stats` freshness for the current `as_of_date`. |
+| 2 | P1 | Lineup still emits pitcher warning noise (`7 SP(s) have no start today`, `0 active pitcher slots filled`) | Claude — inspect pitcher-start detection and active-slot logic; only investigate after post-deploy rerun confirms the roster/waiver fixes landed |
+| 3 | P1 | Pre-existing NSB composite test failure (`test_composite_z_excludes_z_sb_when_both_populated`) — reproduces on clean HEAD | Architect — decide whether composite math excludes `z_sb` when both SB and CS populated, or update test expectation |
+| 4 | P2 | Unknown Yahoo stat_ids (e.g. `"38"`) silently dropped from waiver output and deficit math | Architect — decide whether to log as warning so `YAHOO_ID_INDEX` can be enriched over time |
+| 5 | P2 | `/admin/backfill/player-id-mapping` runtime behavior — reported "no response" in prod, not reproduced locally | Gemini — confirm on next deploy: responds / times out / hangs |
+| 6 | P2 | Schedule-blind lineup fallback emits synthetic implied runs without a mode flag | Architect — decide whether to surface "schedule fallback mode" so UI can distinguish sportsbook-derived vs neutral context |
+| 7 | P2 | Proxy players (6 of 23 roster — Ballesteros, Kim, Murakami, Smith, Arrighetti, De Los Santos) carry hardcoded `z=-0.8`, empty `cat_scores`, genuinely absent from Steamer/ZiPS | Claude — future pipeline work to synthesize proxy projections or route through Yahoo season stats |
+| 8 | P3 | Impossible projection extrapolations surfaced in Decisions API (0.00 ERA ROS, 91.2 HR ROS, 204.4 RBI ROS) | Claude — add plausible ROS caps in projection math |
+
+**Resolved this session (awaiting deploy):** roster `players_with_stats = 0%`, waiver `matchup_opponent = "TBD"`, waiver `category_deficits = []`.
 
 ---
 
