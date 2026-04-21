@@ -5,6 +5,7 @@ Pure function tests only -- zero I/O, zero DB, zero mocks needed.
 """
 
 import pytest
+from datetime import date
 
 from backend.services.row_projector import (
     ROWProjectionResult,
@@ -327,6 +328,7 @@ def test_blended_rate_rolling_and_season():
         rolling,
         season_stats_by_player=season,
         games_remaining=games,
+        as_of_date=date(2026, 7, 4),  # Day 100 of season
     )
 
     # Rolling daily = 1.0, Season daily = 150/100 = 1.5
@@ -346,6 +348,7 @@ def test_custom_weights():
         games_remaining=games,
         rolling_weight=0.8,  # Heavier rolling weight
         season_weight=0.2,
+        as_of_date=date(2026, 7, 4),  # Day 100 of season
     )
 
     # Blended = 0.8*1.0 + 0.2*1.0 = 1.0
