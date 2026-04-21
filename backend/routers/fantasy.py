@@ -8,7 +8,8 @@ Do NOT import from other backend.routers modules here.
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import text, func, or_, and_
+from sqlalchemy import text, func, or_, and_, inspect
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import aliased
 from typing import List, Optional, Literal, Dict
 import logging
@@ -3719,53 +3720,138 @@ async def get_player_scores(
             detail=f"window_days must be one of: {', '.join(map(str, sorted(_ALLOWED_WINDOWS)))}",
         )
 
-    # Build query
-    query = db.query(PlayerScore).filter(
-        PlayerScore.bdl_player_id == bdl_player_id,
-        PlayerScore.window_days == window_days,
-    )
+    def _get_score_value(source, key: str, default=None):
+        if source is None:
+            return default
+        mapping = getattr(source, "_mapping", None)
+        if mapping is not None and key in mapping:
+            return mapping.get(key, default)
+        if isinstance(source, dict):
+            return source.get(key, default)
+        return getattr(source, key, default)
 
-    # Resolve as_of_date
-    if as_of_date is None:
-        # Default to latest available score for this player/window
-        latest = query.order_by(PlayerScore.as_of_date.desc()).first()
-        if not latest:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No player_scores found for bdl_player_id={bdl_player_id} window_days={window_days}",
+    def _infer_player_type(source) -> str:
+        hitter_fields = ("z_hr", "z_rbi", "z_nsb", "z_avg", "z_obp")
+        pitcher_fields = ("z_era", "z_whip", "z_k_per_9")
+        has_hitter = any(_get_score_value(source, field) is not None for field in hitter_fields)
+        has_pitcher = any(_get_score_value(source, field) is not None for field in pitcher_fields)
+        if has_hitter and has_pitcher:
+            return "two_way"
+        if has_pitcher:
+            return "pitcher"
+        return "hitter"
+
+    def _normalize_score_date(raw_value):
+        if isinstance(raw_value, datetime):
+            return raw_value.date()
+        if isinstance(raw_value, str):
+            return date.fromisoformat(raw_value)
+        return raw_value
+
+    def _load_score_via_schema_fallback(target_date: Optional[date]):
+        try:
+            inspector = inspect(db.bind)
+            if "player_scores" not in inspector.get_table_names():
+                return None
+            available_columns = {
+                column["name"] for column in inspector.get_columns("player_scores")
+            }
+        except Exception:
+            return None
+
+        required_columns = {"bdl_player_id", "as_of_date", "window_days"}
+        if not required_columns.issubset(available_columns):
+            return None
+
+        select_columns = [
+            column
+            for column in (
+                "bdl_player_id",
+                "as_of_date",
+                "window_days",
+                "player_type",
+                "games_in_window",
+                "composite_z",
+                "score_0_100",
+                "confidence",
+                "z_hr",
+                "z_rbi",
+                "z_nsb",
+                "z_avg",
+                "z_obp",
+                "z_era",
+                "z_whip",
+                "z_k_per_9",
             )
-        as_of_date = latest.as_of_date
-    else:
-        # Query for specific date
-        latest = query.filter(PlayerScore.as_of_date == as_of_date).first()
+            if column in available_columns
+        ]
+        sql = (
+            f"SELECT {', '.join(select_columns)} FROM player_scores "
+            "WHERE bdl_player_id = :bdl_player_id AND window_days = :window_days"
+        )
+        params = {"bdl_player_id": bdl_player_id, "window_days": window_days}
+        if target_date is not None:
+            sql += " AND as_of_date = :as_of_date"
+            params["as_of_date"] = target_date
+        sql += " ORDER BY as_of_date DESC LIMIT 1"
+        return db.execute(text(sql), params).mappings().first()
+
+    # Build query
+    try:
+        query = db.query(PlayerScore).filter(
+            PlayerScore.bdl_player_id == bdl_player_id,
+            PlayerScore.window_days == window_days,
+        )
+
+        # Resolve as_of_date
+        if as_of_date is None:
+            latest = query.order_by(PlayerScore.as_of_date.desc()).first()
+            if not latest:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No player_scores found for bdl_player_id={bdl_player_id} window_days={window_days}",
+                )
+            as_of_date = latest.as_of_date
+        else:
+            latest = query.filter(PlayerScore.as_of_date == as_of_date).first()
+            if not latest:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"No player_scores found for bdl_player_id={bdl_player_id} window_days={window_days} as_of_date={as_of_date}",
+                )
+    except (ProgrammingError, OperationalError):
+        latest = _load_score_via_schema_fallback(as_of_date)
         if not latest:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No player_scores found for bdl_player_id={bdl_player_id} window_days={window_days} as_of_date={as_of_date}",
+            detail = (
+                f"No player_scores found for bdl_player_id={bdl_player_id} window_days={window_days}"
+                if as_of_date is None
+                else f"No player_scores found for bdl_player_id={bdl_player_id} window_days={window_days} as_of_date={as_of_date}"
             )
+            raise HTTPException(status_code=404, detail=detail)
+        as_of_date = _normalize_score_date(_get_score_value(latest, "as_of_date"))
 
     # Build category_scores
     category_scores = PlayerScoreCategoryBreakdown(
-        z_hr=latest.z_hr,
-        z_rbi=latest.z_rbi,
-        z_nsb=latest.z_nsb,
-        z_avg=latest.z_avg,
-        z_obp=latest.z_obp,
-        z_era=latest.z_era,
-        z_whip=latest.z_whip,
-        z_k_per_9=latest.z_k_per_9,
+        z_hr=_get_score_value(latest, "z_hr"),
+        z_rbi=_get_score_value(latest, "z_rbi"),
+        z_nsb=_get_score_value(latest, "z_nsb"),
+        z_avg=_get_score_value(latest, "z_avg"),
+        z_obp=_get_score_value(latest, "z_obp"),
+        z_era=_get_score_value(latest, "z_era"),
+        z_whip=_get_score_value(latest, "z_whip"),
+        z_k_per_9=_get_score_value(latest, "z_k_per_9"),
     )
 
     # Build score output
     score_out = PlayerScoreOut(
-        bdl_player_id=latest.bdl_player_id,
-        as_of_date=latest.as_of_date,
-        window_days=latest.window_days,
-        player_type=latest.player_type,
-        games_in_window=latest.games_in_window,
-        composite_z=latest.composite_z,
-        score_0_100=latest.score_0_100,
-        confidence=latest.confidence,
+        bdl_player_id=_get_score_value(latest, "bdl_player_id"),
+        as_of_date=_normalize_score_date(_get_score_value(latest, "as_of_date")),
+        window_days=_get_score_value(latest, "window_days"),
+        player_type=_get_score_value(latest, "player_type") or _infer_player_type(latest),
+        games_in_window=_get_score_value(latest, "games_in_window", 0) or 0,
+        composite_z=_get_score_value(latest, "composite_z", 0.0) or 0.0,
+        score_0_100=_get_score_value(latest, "score_0_100", 0.0) or 0.0,
+        confidence=_get_score_value(latest, "confidence", 0.0) or 0.0,
         category_scores=category_scores,
     )
 
@@ -3968,11 +4054,18 @@ async def get_decisions_status(
     """
     now_et = today_et()
 
+    def _normalize_sql_date(raw_value):
+        if isinstance(raw_value, datetime):
+            return raw_value.date()
+        if isinstance(raw_value, str):
+            return date.fromisoformat(raw_value)
+        return raw_value
+
     # Latest as_of_date for decision_results
-    dr_latest_row = db.execute(
+    dr_latest = db.execute(
         text("SELECT MAX(as_of_date) AS latest_date FROM decision_results")
-    ).fetchone()
-    dr_latest = dr_latest_row['latest_date'] if dr_latest_row and dr_latest_row['latest_date'] else None
+    ).scalar()
+    dr_latest = _normalize_sql_date(dr_latest)
 
     # Row counts by decision_type for latest date
     dr_counts = {"lineup": None, "waiver": None}
@@ -3984,8 +4077,8 @@ async def get_decisions_status(
                     WHERE as_of_date = :d AND decision_type = :dt
                 """),
                 {"d": dr_latest, "dt": dtype}
-            ).fetchone()
-            dr_counts[dtype] = cnt['n'] if cnt else 0
+            ).scalar()
+            dr_counts[dtype] = int(cnt or 0)
 
     dr_total = sum(v for v in dr_counts.values() if v is not None) if dr_latest else None
 

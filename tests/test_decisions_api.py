@@ -319,6 +319,20 @@ def test_get_decisions_response_contract_complete(client_with_decisions):
     assert "computed_at" not in decision
 
 
+def test_get_decisions_status_returns_breakdown(client_with_decisions):
+    response = client_with_decisions.get("/api/fantasy/decisions/status")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["verdict"] in {"healthy", "stale"}
+    assert data["decision_results"]["latest_as_of_date"] == "2026-04-15"
+    assert data["decision_results"]["total_row_count"] == 3
+    assert data["decision_results"]["breakdown_by_type"] == {
+        "lineup": 2,
+        "waiver": 1,
+    }
+
+
 def test_get_decisions_unauthorized_without_api_key(client_with_decisions):
     """Endpoint returns 401 when no API key is provided."""
     # Clear overrides to test real auth behavior

@@ -1,6 +1,6 @@
 # UAT Validation Report
 
-**Generated:** 2026-04-20 18:38 ET
+**Generated:** 2026-04-20 18:39 ET
 **Total Checks:** 80
 **PASS:** 69  |  **FAIL:** 8  |  **WARN:** 3  |  **SKIP:** 0
 
@@ -8,18 +8,18 @@
 
 | Endpoint | HTTP | Time (ms) | PASS | FAIL | WARN |
 |----------|------|-----------|------|------|------|
-| GET /health | 200 | 296 | 2 | 0 | 0 |
-| GET /api/fantasy/roster | 500 | 717 | 0 | 1 | 0 |
-| GET /api/fantasy/matchup | 200 | 641 | 9 | 1 | 0 |
-| GET /api/fantasy/scoreboard | 500 | 469 | 0 | 1 | 0 |
-| GET /api/fantasy/budget | 200 | 608 | 12 | 1 | 0 |
-| POST /api/fantasy/roster/optimize | 200 | 296 | 9 | 0 | 2 |
-| GET /api/fantasy/waiver | 200 | 20000 | 7 | 2 | 0 |
-| GET /api/fantasy/lineup/2026-04-20 | 200 | 5766 | 8 | 0 | 1 |
-| GET /api/fantasy/briefing/2026-04-20 | 200 | 1250 | 5 | 0 | 0 |
-| GET /api/fantasy/players/1/scores | 500 | 170 | 0 | 1 | 0 |
-| GET /api/fantasy/decisions | 200 | 172 | 17 | 0 | 0 |
-| GET /api/fantasy/decisions/status | 500 | 172 | 0 | 1 | 0 |
+| GET /health | 200 | 281 | 2 | 0 | 0 |
+| GET /api/fantasy/roster | 500 | 422 | 0 | 1 | 0 |
+| GET /api/fantasy/matchup | 200 | 811 | 9 | 1 | 0 |
+| GET /api/fantasy/scoreboard | 500 | 438 | 0 | 1 | 0 |
+| GET /api/fantasy/budget | 200 | 530 | 12 | 1 | 0 |
+| POST /api/fantasy/roster/optimize | 200 | 281 | 9 | 0 | 2 |
+| GET /api/fantasy/waiver | 200 | 1561 | 7 | 2 | 0 |
+| GET /api/fantasy/lineup/2026-04-20 | 200 | 1282 | 8 | 0 | 1 |
+| GET /api/fantasy/briefing/2026-04-20 | 200 | 1140 | 5 | 0 | 0 |
+| GET /api/fantasy/players/1/scores | 500 | 109 | 0 | 1 | 0 |
+| GET /api/fantasy/decisions | 200 | 217 | 17 | 0 | 0 |
+| GET /api/fantasy/decisions/status | 500 | 110 | 0 | 1 | 0 |
 
 ## FAILURES (must fix)
 
@@ -45,7 +45,7 @@
 ## Full Check Details
 
 ### GET /health
-HTTP 200 — 296ms
+HTTP 200 — 281ms
 
 | Status | Check | Expected | Actual |
 |--------|-------|----------|--------|
@@ -53,14 +53,14 @@ HTTP 200 — 296ms
 | PASS | status_field | healthy | healthy |
 
 ### GET /api/fantasy/roster
-HTTP 500 — 717ms
+HTTP 500 — 422ms
 
 | Status | Check | Expected | Actual |
 |--------|-------|----------|--------|
 | **FAIL** | http_status | 200 | 500 |
 
 ### GET /api/fantasy/matchup
-HTTP 200 — 641ms
+HTTP 200 — 811ms
 
 | Status | Check | Expected | Actual |
 |--------|-------|----------|--------|
@@ -76,14 +76,14 @@ HTTP 200 — 641ms
 | PASS | opponent_team_name | non-empty | "Bartolo's Colon" |
 
 ### GET /api/fantasy/scoreboard
-HTTP 500 — 469ms
+HTTP 500 — 438ms
 
 | Status | Check | Expected | Actual |
 |--------|-------|----------|--------|
 | **FAIL** | http_status | 200 | 500 |
 
 ### GET /api/fantasy/budget
-HTTP 200 — 608ms
+HTTP 200 — 530ms
 
 | Status | Check | Expected | Actual |
 |--------|-------|----------|--------|
@@ -102,7 +102,7 @@ HTTP 200 — 608ms
 | PASS | freshness_present | dict | dict |
 
 ### POST /api/fantasy/roster/optimize
-HTTP 200 — 296ms
+HTTP 200 — 281ms
 
 | Status | Check | Expected | Actual |
 |--------|-------|----------|--------|
@@ -119,7 +119,7 @@ HTTP 200 — 296ms
 | PASS | freshness_present | dict | dict |
 
 ### GET /api/fantasy/waiver
-HTTP 200 — 20000ms
+HTTP 200 — 1561ms
 
 | Status | Check | Expected | Actual |
 |--------|-------|----------|--------|
@@ -134,7 +134,7 @@ HTTP 200 — 20000ms
 | PASS | pagination_present | dict | dict |
 
 ### GET /api/fantasy/lineup/2026-04-20
-HTTP 200 — 5766ms
+HTTP 200 — 1282ms
 
 | Status | Check | Expected | Actual |
 |--------|-------|----------|--------|
@@ -149,7 +149,7 @@ HTTP 200 — 5766ms
 | WARN | lineup_warnings | empty ideally | 30 warnings: ['No games found for this date -- Odds API may not have data yet (requested: 2026-04-20). Lineup ranked by projections only.', 'Moisés Ballesteros: Starting but no game today'] |
 
 ### GET /api/fantasy/briefing/2026-04-20
-HTTP 200 — 1250ms
+HTTP 200 — 1140ms
 
 | Status | Check | Expected | Actual |
 |--------|-------|----------|--------|
@@ -160,14 +160,14 @@ HTTP 200 — 1250ms
 | PASS | overall_confidence | 0-1 float | 0.7 |
 
 ### GET /api/fantasy/players/1/scores
-HTTP 500 — 170ms
+HTTP 500 — 109ms
 
 | Status | Check | Expected | Actual |
 |--------|-------|----------|--------|
 | **FAIL** | http_status | 200 or 404 | 500 |
 
 ### GET /api/fantasy/decisions
-HTTP 200 — 172ms
+HTTP 200 — 217ms
 
 | Status | Check | Expected | Actual |
 |--------|-------|----------|--------|
@@ -190,7 +190,7 @@ HTTP 200 — 172ms
 | PASS | decision[4].confidence | present | 0.9033 |
 
 ### GET /api/fantasy/decisions/status
-HTTP 500 — 172ms
+HTTP 500 — 110ms
 
 | Status | Check | Expected | Actual |
 |--------|-------|----------|--------|
@@ -278,12 +278,12 @@ HTTP 500 — 172ms
     "ip_accumulated": 0.0,
     "ip_minimum": 90.0,
     "ip_pace": "behind",
-    "as_of": "2026-04-20T18:37:32.137178-04:00"
+    "as_of": "2026-04-20T18:39:50.627531-04:00"
   },
   "freshness": {
     "primary_source": "yahoo",
-    "fetched_at": "2026-04-20T18:37:31.760312-04:00",
-    "computed_at": "2026-04-20T18:37:31.760312-04:00",
+    "fetched_at": "2026-04-20T18:39:50.265818-04:00",
+    "computed_at": "2026-04-20T18:39:50.265818-04:00",
     "staleness_threshold_minutes": 60,
     "is_stale": false
   }

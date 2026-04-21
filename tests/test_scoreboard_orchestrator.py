@@ -219,6 +219,34 @@ class TestBuildScoreboardRows:
 class TestAssembleMatchupScoreboard:
     """Tests for assemble_matchup_scoreboard()."""
 
+    def test_omitted_games_remaining_does_not_zero_projection_components(self):
+        player_scores = [
+            {
+                "yahoo_player_key": "test_player",
+                "rolling_14d": {
+                    "w_hits": 14.0,
+                    "w_ab": 42.0,
+                    "w_tb": 21.0,
+                },
+                "hits": 30,
+                "at_bats": 120,
+                "total_bases": 55,
+                "walks": 10,
+            }
+        ]
+
+        result = assemble_matchup_scoreboard(
+            week=1,
+            opponent_name="Opponent",
+            my_current_stats={cat: 0.0 for cat in SCORING_CATEGORY_CODES},
+            opp_current_stats={cat: 0.0 for cat in SCORING_CATEGORY_CODES},
+            my_player_scores=player_scores,
+        )
+
+        assert len(result.rows) == 18
+        avg_row = next(row for row in result.rows if row.category == "AVG")
+        assert avg_row.my_projected_final > 0
+
     def test_complete_response(self):
         # Provide ratio stat components via player_scores
         player_scores = [

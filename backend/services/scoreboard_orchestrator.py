@@ -44,6 +44,35 @@ from backend.contracts import (
 )
 
 
+def _resolve_ratio_components(
+    row: ROWProjectionResult,
+) -> Tuple[Dict[str, float], Dict[str, float]]:
+    """Return usable ratio components, falling back to synthetic denominators when needed."""
+    finals = row.to_dict()
+    numerators = {
+        "AVG": finals.get("AVG", 0.0) * 450.0,
+        "OPS": finals.get("TB", 0.0),
+        "ERA": finals.get("ERA", 0.0) * 90.0 / 9.0,
+        "WHIP": finals.get("WHIP", 0.0) * 90.0,
+        "K_9": finals.get("K_9", 0.0) * 90.0 / 9.0,
+    }
+    denominators = {
+        "AVG": 450.0,
+        "OPS": 450.0,
+        "ERA": 270.0,
+        "WHIP": 270.0,
+        "K_9": 270.0,
+    }
+
+    for code, numerator in (row.numerators or {}).items():
+        denominator = (row.denominators or {}).get(code)
+        if denominator and denominator > 0:
+            numerators[code] = numerator
+            denominators[code] = denominator
+
+    return numerators, denominators
+
+
 def _map_status_tag(win_prob: float) -> CategoryStatusTag:
     """Map Monte Carlo win probability to CategoryStatusTag."""
     if win_prob > 0.90:
@@ -102,9 +131,7 @@ def _project_row_from_player_scores(
         player_key = str(player.get("yahoo_player_key") or player.get("bdl_player_id"))
 
         # Get rolling_14d dict if available
-        rolling_14d = player.get("rolling_14d", {})
-        if rolling_14d:
-            rolling_by_player[player_key] = rolling_14d
+        rolling_by_player[player_key] = player.get("rolling_14d") or {}
 
         # Get season stats for blended rate
         season_by_player[player_key] = {
@@ -128,7 +155,7 @@ def _project_row_from_player_scores(
     return compute_row_projection(
         rolling_stats_by_player=rolling_by_player,
         season_stats_by_player=season_by_player,
-        games_remaining=games_remaining or {},
+        games_remaining=games_remaining,
     )
 
 
@@ -293,59 +320,26 @@ def assemble_matchup_scoreboard(
     if opp_player_scores:
         opp_row = _project_row_from_player_scores(opp_player_scores)
     else:
-        # Fallback: create ROW from current stats (no rest-of-week contribution)
+        # Fallback: preserve current-state ratios/counts rather than zeroing them out.
         opp_row = ROWProjectionResult(
-            **{k: opp_current_stats.get(k, 0.0) * 0.0 for k in SCORING_CATEGORY_CODES}
+            **{k: opp_current_stats.get(k, 0.0) for k in SCORING_CATEGORY_CODES}
         )
 
     # Step 2: Compute category math (L1)
     my_finals = my_row.to_dict()
     opp_finals = opp_row.to_dict()
 
-    # Derive ratio stat components from player_scores for category math
-    my_numerators = {}
-    my_denominators = {}
-
-    # Simple derivation from current stats (approximation for MVP)
-    if my_player_scores:
-        # Accumulate from player scores
-        sum_h = sum_ab = sum_tb = sum_bb = 0.0
-        sum_er = sum_ip_outs = 0.0
-        sum_h_allowed = sum_bb_allowed = 0.0
-        sum_k_p = 0.0
-
-        for player in my_player_scores:
-            sum_h += player.get("hits", 0)
-            sum_ab += player.get("at_bats", 0)
-            sum_tb += player.get("total_bases", 0)
-            sum_bb += player.get("walks", 0)
-            sum_er += player.get("earned_runs", 0)
-            ip_dec = player.get("ip", 0)
-            sum_ip_outs += ip_dec * 3.0
-            sum_h_allowed += player.get("hits_allowed", 0)
-            sum_bb_allowed += player.get("walks_allowed", 0)
-            sum_k_p += player.get("strikeouts_pit", 0)
-
-        my_numerators = {
-            "AVG": sum_h,
-            "OPS": sum_tb + sum_h,  # Simplified OBP+SLG numerator
-            "ERA": sum_er,
-            "WHIP": sum_h_allowed + sum_bb_allowed,
-            "K_9": sum_k_p,
-        }
-        my_denominators = {
-            "AVG": sum_ab,
-            "OPS": sum_ab + sum_bb,  # Simplified OBP+SLG denominator
-            "ERA": sum_ip_outs,
-            "WHIP": sum_ip_outs,
-            "K_9": sum_ip_outs,
-        }
+    # Use ratio stat components from projected rows for category math
+    my_numerators, my_denominators = _resolve_ratio_components(my_row)
+    opp_numerators, opp_denominators = _resolve_ratio_components(opp_row)
 
     category_math = compute_all_category_math(
         my_finals=my_finals,
         opp_finals=opp_finals,
         my_numerators=my_numerators,
         my_denominators=my_denominators,
+        opp_numerators=opp_numerators,
+        opp_denominators=opp_denominators,
     )
 
     # Step 3: Run Monte Carlo simulation (L4)

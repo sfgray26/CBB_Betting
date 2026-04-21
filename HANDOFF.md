@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > Date: April 20, 2026 | Author: Claude Code (Master Architect)
-> Status: **Local UAT remediation, waiver-intelligence hardening, waiver-route deduplication, and roster-optimize scoring repair are complete locally (Apr 20). Production is still pre-deploy on key fantasy fixes.**
+> Status: **Local UAT remediation, waiver-intelligence hardening, roster-optimize scoring repair, and the reviewed roster/scoreboard/player-scores/decisions-status repair set are complete locally (Apr 20). Production is still pre-deploy on key fantasy fixes.**
 
 ---
 
@@ -31,9 +31,17 @@ UAT was run against Railway production (`uat_findings_fresh.md`): 53 PASS / 15 F
 | `backend/routers/fantasy.py` | Reuse the shared protected-drop policy in `/api/fantasy/waiver/recommendations` and compare FA adds against effective drop value rather than naive current z-score. |
 | `backend/routers/fantasy.py` | Fix `/api/fantasy/roster/optimize` identity resolution: resolve roster players via canonical `yahoo_key` variants first, then guarded Yahoo-ID/name fallback, so player_scores join on real roster players instead of collapsing to 50.0 defaults. |
 | `backend/routers/fantasy.py` | Replace optimize route's flat 50.0 fallback with projection-driven fallback scores from `player_board` when `player_scores` rows are stale or missing. |
+| `backend/services/scoreboard_orchestrator.py` | Fix reviewed scoreboard crash: preserve default `games_remaining` behavior, keep season-only players in ROW projection inputs, and synthesize safe ratio components when projections are sparse so `OPS`/ratio categories do not 500. |
+| `backend/services/player_mapper.py` | Fix `/api/fantasy/roster` import drift (`PlayerIdMap` -> `PlayerIDMapping`) and resolve rolling-stat lookups from full Yahoo player keys with numeric-tail fallback. |
+| `backend/routers/fantasy.py` | Harden `/api/fantasy/players/{id}/scores` with a schema-tolerant fallback query for legacy `player_scores` table shapes so old production schemas return 200/404 instead of `ProgrammingError`. |
+| `backend/routers/fantasy.py` | Harden `/api/fantasy/decisions/status` by normalizing raw SQL scalar dates and using scalar row counts instead of brittle mapping access. |
 | `tests/test_waiver_edge.py` | Add regression coverage for elite / high-upside hold cases so players like Juan Soto and Eury Perez are not surfaced as routine drops. |
 | `tests/test_dashboard_service_waiver_targets.py` | Add regression coverage for `owned_pct` → dashboard ownership handoff and computed priority score. |
 | `tests/test_roster_optimize_api.py` | Add regressions for short-form `yahoo_key` mapping against full roster keys and for non-uniform projection fallback scoring. |
+| `tests/test_scoreboard_orchestrator.py` | Add regression covering omitted `games_remaining` so ROW projections do not zero out ratio components. |
+| `tests/test_player_mapper.py` | Add regression for full Yahoo roster keys resolving through `PlayerIDMapping` into rolling stats. |
+| `tests/test_player_scores_api.py` | Add regression for legacy `player_scores` table shapes missing newer nullable columns. |
+| `tests/test_decisions_api.py` | Add regression for `/api/fantasy/decisions/status` row counts / latest date contract. |
 
 ### Additional Validation
 
@@ -76,6 +84,18 @@ After Gemini deploys, expected UAT improvements:
 
 ---
 
+## 16.4 DEVOPS OPERATIONS LOG
+
+| Date | Operation | Status | Notes |
+|------|-----------|--------|-------|
+| 2026-04-20 | Disable Integrity Sweep | **COMPLETE** | INTEGRITY_SWEEP_ENABLED=false |
+| 2026-04-20 | Enable MLB Analysis | **COMPLETE** | ENABLE_MLB_ANALYSIS=true |
+| 2026-04-20 | Enable Ingestion Orchestrator | **COMPLETE** | ENABLE_INGESTION_ORCHESTRATOR=true |
+| 2026-04-20 | Ratio Stat 500 Fix (Orch) | **COMPLETE LOCAL / REVIEWED** | Claude reviewed the unauthorized Gemini patch, replaced the failing call path in `scoreboard_orchestrator.py`, and validated the repaired slice with `76 passed, 0 failed` across scoreboard, player-mapper, decisions, and player-scores tests. |
+| 2026-04-20 | Production UAT Audit | **COMPLETE** | 69 PASS, 8 FAIL. 500 errors found in roster/scoreboard. |
+
+---
+
 ## GEMINI DELEGATION BUNDLE — Deploy April 20 Fixes
 
 **HANDOFF PROMPT FOR GEMINI CLI:**
@@ -83,17 +103,28 @@ After Gemini deploys, expected UAT improvements:
 ```
 Deploy the April 20 fantasy UAT remediation and waiver-hardening fixes to Railway.
 
+Do NOT edit any Python files. Gemini CLI is restricted to deploy / log / validation work only.
+
 Files changed locally:
 - backend/schemas.py — ConfigDict import added (critical: was crashing router)
-- backend/routers/fantasy.py — decisions/status fix, NSB fix, briefing fix, IL guard, canonical waiver hardening, optimize identity/fallback scoring repair
+- backend/routers/fantasy.py — decisions/status fix, NSB fix, briefing fix, IL guard, canonical waiver hardening, optimize identity/fallback scoring repair, legacy player_scores schema fallback
 - backend/main.py — roster season_stats batch fetch added; duplicate inline waiver recommendations route removed
 - backend/services/waiver_edge_detector.py — projection enrichment, z-score fallback, long-term hold/drop protection
 - backend/services/dashboard_service.py — preserve owned_pct when serializing waiver targets
+- backend/services/scoreboard_orchestrator.py — reviewed scoreboard ratio-component fix
+- backend/services/player_mapper.py — reviewed roster mapping/import fix
 - scripts/uat_validator.py — field name corrections
 - tests/test_budget_api.py — route path updated
 - tests/test_waiver_edge.py — regressions for enrichment, z-score fallback, elite/high-upside drop protection
 - tests/test_dashboard_service_waiver_targets.py — regression for owned_pct handoff and priority score
 - tests/test_roster_optimize_api.py — regressions for yahoo_key mapping variants and projection fallback scoring
+- tests/test_scoreboard_orchestrator.py — regression for omitted games_remaining
+- tests/test_player_mapper.py — regression for full Yahoo key rolling-stat lookup
+- tests/test_player_scores_api.py — regression for legacy player_scores schema fallback
+- tests/test_decisions_api.py — regression for decisions/status breakdown endpoint
+
+Explicit exclusion:
+- Do NOT let Gemini edit Python while deploying. `backend/services/row_projector.py` and `backend/services/category_math.py` still contain earlier reviewed context, but no further code edits should be made during deploy.
 
 Steps:
 1. Run: venv/Scripts/python -m py_compile backend/schemas.py backend/routers/fantasy.py backend/main.py backend/services/waiver_edge_detector.py tests/test_waiver_edge.py
@@ -101,8 +132,8 @@ Steps:
 3. Run: venv/Scripts/python -m pytest tests/ -q --tb=short
 4. Verify 2245 passed, 0 failed
 5. Run targeted regression confirmation if full suite is too slow during triage: venv/Scripts/python -m pytest tests/test_waiver_edge.py tests/test_dashboard_service_waiver_targets.py -q --tb=short
-6. git add backend/schemas.py backend/routers/fantasy.py backend/main.py backend/services/waiver_edge_detector.py backend/services/dashboard_service.py backend/fantasy_baseball/daily_briefing.py scripts/uat_validator.py tests/test_budget_api.py tests/test_waiver_edge.py tests/test_dashboard_service_waiver_targets.py tasks/uat_findings_fresh.md HANDOFF.md
-7. git commit -m "fix(fantasy): harden waiver recommendations and remove legacy route drift"
+6. git add backend/schemas.py backend/routers/fantasy.py backend/main.py backend/services/waiver_edge_detector.py backend/services/dashboard_service.py backend/services/scoreboard_orchestrator.py backend/services/player_mapper.py backend/fantasy_baseball/daily_briefing.py scripts/uat_validator.py tests/test_budget_api.py tests/test_waiver_edge.py tests/test_dashboard_service_waiver_targets.py tests/test_roster_optimize_api.py tests/test_scoreboard_orchestrator.py tests/test_player_mapper.py tests/test_player_scores_api.py tests/test_decisions_api.py tasks/uat_findings_fresh.md HANDOFF.md tasks/todo.md tasks/lessons.md
+7. git commit -m "fix(fantasy): harden fantasy endpoint recovery paths"
 8. git push origin stable/cbb-prod
 9. Confirm Railway auto-deploys (check Railway dashboard)
 10. After deploy, run: venv/Scripts/python scripts/uat_validator.py --base-url "https://fantasy-app-production-5079.up.railway.app" --api-key "j01F3n2sSzbhi-jNAEULNkgzFqRXgOl2FuIDgKRoyfg" --output tasks/uat_findings_post_deploy.md

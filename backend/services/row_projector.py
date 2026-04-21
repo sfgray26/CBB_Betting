@@ -75,6 +75,16 @@ class ROWProjectionResult:
     WHIP: float = 0.0
     K_9: float = 0.0
 
+    # Ratio stat components for delta-to-flip math
+    numerators: Dict[str, float] = None
+    denominators: Dict[str, float] = None
+
+    def __post_init__(self):
+        if self.numerators is None:
+            self.numerators = {}
+        if self.denominators is None:
+            self.denominators = {}
+
     def to_dict(self) -> Dict[str, float]:
         """Convert to flat dict keyed by canonical codes."""
         return {
@@ -356,6 +366,22 @@ def compute_row_projection(
     # K_9 = 27 * sum(K) / sum(IP_outs)
     if sum_ip_outs > 0:
         result.K_9 = 27.0 * sum_k_p / sum_ip_outs
+
+    # Store ratio components
+    result.numerators = {
+        "AVG": sum_h,
+        "OPS": sum_h + sum_bb + sum_tb,  # Simplified composite
+        "ERA": sum_er,
+        "WHIP": sum_h_allowed + sum_bb_allowed,
+        "K_9": sum_k_p,
+    }
+    result.denominators = {
+        "AVG": sum_ab,
+        "OPS": sum_obp_denom + sum_ab,  # Simplified composite
+        "ERA": sum_ip_outs,
+        "WHIP": sum_ip_outs,
+        "K_9": sum_ip_outs,
+    }
 
     return result
 

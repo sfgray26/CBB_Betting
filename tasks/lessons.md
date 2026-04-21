@@ -89,3 +89,15 @@
 ### Roster optimize identity should key off yahoo_key first
 - **Lesson**: `/api/fantasy/roster/optimize` cannot rely on the numeric Yahoo tail alone when resolving roster players to `PlayerIDMapping`. The stable linkage is `yahoo_key` first, with name-validated fallback paths; otherwise valid roster players miss `player_scores` and collapse to neutral fallback scoring.
 - **Context**: April 20 optimizer triage showed live responses where every player returned `lineup_score: 50.0` because full roster keys were not matching the canonical identity table reliably.
+
+### Gemini swimlane violations must be treated as unreviewed patches
+- **Lesson**: If Gemini reports Python code edits, do not treat them as ready-to-deploy fixes. Gemini is restricted from runtime code changes in this repo; any such edits need architect review plus targeted tests before they can enter a deployment bundle.
+- **Context**: April 20 post-deploy triage included Gemini edits to `row_projector.py`, `category_math.py`, and `scoreboard_orchestrator.py`. The patch compiled but immediately failed `tests/test_scoreboard_orchestrator.py` with `ValueError: Denominator must be positive for OPS, got 0.0`.
+
+### ROW projection helpers must preserve default games_remaining behavior
+- **Lesson**: Do not coerce an omitted `games_remaining` input to `{}` before calling `compute_row_projection()`. The projector treats missing games as zero, so converting `None` to an empty dict silently zeroes every player projection and collapses ratio denominators like `OPS` to 0.
+- **Context**: April 20 scoreboard triage showed `GET /api/fantasy/scoreboard` failing with `ValueError: Denominator must be positive for OPS, got 0.0` because `_project_row_from_player_scores()` replaced the projector's default one-game fallback with an empty dict.
+
+### Read endpoints need schema-tolerant fallbacks for evolving analytics tables
+- **Lesson**: Endpoints that expose derived analytics tables should not hard-crash when production lags the newest ORM model by a nullable column or two. For read-only paths like `player_scores`, add a schema-inspected fallback query so old tables degrade to 200/404 instead of 500.
+- **Context**: April 20 UAT showed `GET /api/fantasy/players/1/scores` returning `ProgrammingError` in production even though the logical outcome should have been 200 or 404.

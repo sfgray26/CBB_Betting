@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Set
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from backend.stat_contract import (
@@ -269,21 +270,44 @@ def fetch_rolling_stats_for_players(
 
     Returns a dict mapping yahoo_player_key -> PlayerRollingStats.
     """
-    from backend.models import PlayerIdMap
+    from backend.models import PlayerIDMapping
 
     if not yahoo_player_keys:
         return {}
 
-    # Map Yahoo keys to BDL IDs via PlayerIdMap
+    query_keys = {str(key) for key in yahoo_player_keys if key}
+    yahoo_ids = {key.rsplit(".", 1)[-1] for key in query_keys}
+
+    # Map Yahoo keys to BDL IDs via PlayerIDMapping.
     bdl_ids_query = (
-        db.query(PlayerIdMap.bdl_player_id, PlayerIdMap.yahoo_id)
-        .filter(PlayerIdMap.yahoo_id.in_(yahoo_player_keys))
+        db.query(PlayerIDMapping.bdl_id, PlayerIDMapping.yahoo_key, PlayerIDMapping.yahoo_id)
+        .filter(
+            or_(
+                PlayerIDMapping.yahoo_key.in_(query_keys),
+                PlayerIDMapping.yahoo_id.in_(yahoo_ids),
+            )
+        )
         .all()
     )
 
-    yahoo_to_bdl = {row.yahoo_id: row.bdl_player_id for row in bdl_ids_query}
+    yahoo_to_bdl: Dict[str, int] = {}
+    for row in bdl_ids_query:
+        if row.bdl_id is None:
+            continue
+        if row.yahoo_key:
+            yahoo_to_bdl[str(row.yahoo_key)] = row.bdl_id
+        if row.yahoo_id:
+            yahoo_to_bdl[str(row.yahoo_id)] = row.bdl_id
 
-    if not yahoo_to_bdl:
+    resolved_map = {}
+    for yahoo_key in query_keys:
+        bdl_id = yahoo_to_bdl.get(yahoo_key)
+        if bdl_id is None:
+            bdl_id = yahoo_to_bdl.get(yahoo_key.rsplit(".", 1)[-1])
+        if bdl_id is not None:
+            resolved_map[yahoo_key] = bdl_id
+
+    if not resolved_map:
         return {}
 
     # Fetch rolling stats
@@ -292,7 +316,7 @@ def fetch_rolling_stats_for_players(
     rolling_stats_query = (
         db.query(PlayerRollingStats)
         .filter(
-            PlayerRollingStats.bdl_player_id.in_(yahoo_to_bdl.values()),
+            PlayerRollingStats.bdl_player_id.in_(resolved_map.values()),
             PlayerRollingStats.as_of_date == target_date,
             PlayerRollingStats.window_days == window_days,
         )
@@ -300,7 +324,7 @@ def fetch_rolling_stats_for_players(
     )
 
     # Map back to Yahoo player keys
-    bdl_to_yahoo = {v: k for k, v in yahoo_to_bdl.items()}
+    bdl_to_yahoo = {bdl_id: yahoo_key for yahoo_key, bdl_id in resolved_map.items()}
     result = {}
     for rs in rolling_stats_query:
         yahoo_key = bdl_to_yahoo.get(rs.bdl_player_id)

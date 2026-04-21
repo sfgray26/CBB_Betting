@@ -7,16 +7,19 @@ Tests for map_yahoo_player_to_canonical_row() and related helpers.
 import pytest
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from backend.services.player_mapper import (
     map_yahoo_player_to_canonical_row,
     _normalize_status,
     _map_rolling_to_category_stats,
     _map_yahoo_stats_to_category_stats,
+    fetch_rolling_stats_for_players,
 )
 from backend.contracts import CanonicalPlayerRow, CategoryStats
 from backend.stat_contract import SCORING_CATEGORY_CODES
-from backend.models import PlayerRollingStats
+from backend.models import PlayerIDMapping, PlayerRollingStats
 
 
 class TestNormalizeStatus:
@@ -243,3 +246,43 @@ class TestMapYahooPlayerToCanonicalRow:
         assert result.freshness.primary_source == "yahoo"
         assert result.freshness.staleness_threshold_minutes == 60
         assert isinstance(result.freshness.computed_at, datetime)
+
+
+def test_fetch_rolling_stats_for_players_resolves_full_yahoo_key():
+    engine = create_engine("sqlite:///:memory:")
+    PlayerIDMapping.__table__.create(bind=engine)
+    PlayerRollingStats.__table__.create(bind=engine)
+    SessionLocal = sessionmaker(bind=engine)
+    db = SessionLocal()
+
+    db.add(
+        PlayerIDMapping(
+            yahoo_key="469.p.12345",
+            yahoo_id="12345",
+            bdl_id=99,
+            full_name="Test Player",
+            normalized_name="test player",
+        )
+    )
+    db.add(
+        PlayerRollingStats(
+            id=1,
+            bdl_player_id=99,
+            as_of_date=datetime(2026, 4, 20).date(),
+            window_days=14,
+            games_in_window=7,
+            w_games=7.0,
+            w_hits=10.0,
+        )
+    )
+    db.commit()
+
+    result = fetch_rolling_stats_for_players(
+        db=db,
+        yahoo_player_keys=["469.l.72586.p.12345"],
+        as_of_date="2026-04-20",
+        window_days=14,
+    )
+
+    assert "469.l.72586.p.12345" in result
+    assert result["469.l.72586.p.12345"].bdl_player_id == 99

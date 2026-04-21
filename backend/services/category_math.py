@@ -365,6 +365,8 @@ def compute_all_category_math(
     opp_finals: Dict[str, float],
     my_numerators: Optional[Dict[str, float]] = None,
     my_denominators: Optional[Dict[str, float]] = None,
+    opp_numerators: Optional[Dict[str, float]] = None,
+    opp_denominators: Optional[Dict[str, float]] = None,
 ) -> Dict[str, CategoryMathResult]:
     """
     Compute margin and delta-to-flip for all 18 scoring categories.
@@ -379,6 +381,10 @@ def compute_all_category_math(
         {canonical_code: my_numerator} for ratio stats.
     my_denominators : dict, optional
         {canonical_code: my_denominator} for ratio stats.
+    opp_numerators : dict, optional
+        {canonical_code: opp_numerator} for ratio stats.
+    opp_denominators : dict, optional
+        {canonical_code: opp_denominator} for ratio stats.
 
     Returns
     -------
@@ -386,6 +392,8 @@ def compute_all_category_math(
     """
     my_numerators = my_numerators or {}
     my_denominators = my_denominators or {}
+    opp_numerators = opp_numerators or {}
+    opp_denominators = opp_denominators or {}
 
     results = {}
     for code in SCORING_CATEGORY_CODES:
@@ -395,6 +403,8 @@ def compute_all_category_math(
             opp_final=opp_finals.get(code),
             my_numerator=my_numerators.get(code),
             my_denominator=my_denominators.get(code),
+            opp_numerator=opp_numerators.get(code),
+            opp_denominator=opp_denominators.get(code),
         )
     return results
 

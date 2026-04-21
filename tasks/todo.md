@@ -4,19 +4,24 @@
 > Canonical source: `HANDOFF.md`
 > This file is the execution board for the current phase. If this tracker and HANDOFF disagree, HANDOFF wins.
 
-## Current Session Override — 2026-04-20 Roster Optimize Scoring Repair
+## Current Session Override — 2026-04-20 Fantasy Endpoint Repair
 
-Status: IN PROGRESS locally.
+Status: COMPLETE locally.
 
 Plan:
-- [ ] Repair `/api/fantasy/roster/optimize` identity resolution so roster players map to `PlayerIDMapping` by canonical `yahoo_key` before looser fallbacks.
-- [ ] Replace flat `50.0` optimize fallbacks with projection-driven fallback scores when `player_scores` rows are missing or stale.
-- [ ] Add focused regression coverage for full-key Yahoo mappings and non-uniform fallback scoring.
-- [ ] Validate with `py_compile` and targeted `pytest`.
+- [x] Repair `/api/fantasy/roster/optimize` identity resolution so roster players map to `PlayerIDMapping` by canonical `yahoo_key` before looser fallbacks.
+- [x] Replace flat `50.0` optimize fallbacks with projection-driven fallback scores when `player_scores` rows are missing or stale.
+- [x] Fix the reviewed scoreboard crash path by preserving default games-remaining behavior and supplying safe ratio components when row projections are sparse.
+- [x] Fix `/api/fantasy/roster` import drift in `player_mapper` and restore full-key Yahoo roster lookups.
+- [x] Harden `/api/fantasy/players/{id}/scores` against legacy `player_scores` table shapes.
+- [x] Harden `/api/fantasy/decisions/status` SQL row/date handling.
+- [x] Validate with `py_compile` and targeted `pytest`.
 
 Review:
-- Root cause under investigation: the optimize route was querying `PlayerIDMapping.yahoo_id` from the numeric tail only, while the fantasy stack’s authoritative linkage is `yahoo_key` first.
-- User-visible failure: starters and bench were collapsing to identical `lineup_score: 50.0` with `"Score 50.0 (default)"` reasoning even for elite roster players.
+- Root cause for the scoreboard 500 was not the raw ratio math itself; `_project_row_from_player_scores()` was coercing omitted `games_remaining` into `{}`, which caused every player to project `0` games and collapsed ratio denominators to zero.
+- Root cause for the roster 500 was stale mapper code importing `PlayerIdMap` instead of the live `PlayerIDMapping` model.
+- Root cause for the player-scores 500 was schema brittleness: ORM reads exploded when `player_scores` in production did not exactly match the newest model shape.
+- Targeted validation now passes: `76 passed, 0 failed` across scoreboard, player-mapper, decisions, and player-scores slices.
 
 ---
 
