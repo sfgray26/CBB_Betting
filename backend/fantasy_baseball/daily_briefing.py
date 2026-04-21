@@ -285,16 +285,24 @@ class DailyBriefingGenerator:
         monitor = []
         
         for ranking in smart_rankings:
-            # Get full context
+            # Opponent: prefer the team we know the pitcher belongs to; fall
+            # back to the scheduler lookup. Avoids hard-coded "TBD" when odds
+            # are unavailable but the probable-pitcher snapshot has context.
+            resolved_opponent = ""
+            if getattr(ranking, "opposing_pitcher", None) and ranking.opposing_pitcher.team:
+                resolved_opponent = ranking.opposing_pitcher.team
+            else:
+                resolved_opponent = self._get_opponent(ranking.team, game_date)
+
             game_info = {
-                "opponent": self._get_opponent(ranking.team, game_date),
+                "opponent": resolved_opponent,
                 "park_factor": ranking.park_factor,
                 "implied_runs": ranking.implied_team_runs,
                 "is_home": ranking.is_home,
             }
-            
+
             matchup_state = {c.category: c.needed for c in category_needs}
-            
+
             # Build full context (expensive, only for starters)
             if ranking.smart_score > smart_rankings[8].smart_score if len(smart_rankings) > 8 else True:
                 context = self.context_builder.build_context(
@@ -304,20 +312,19 @@ class DailyBriefingGenerator:
                 )
             else:
                 context = None
-            
+
             # Determine recommendation
             has_game = ranking.has_game
             is_starter = len(starters) < 9 and has_game
 
             if not has_game:
-                # When no games exist (off-season, between weeks), still recommend START
-                # for top players based on smart_score to make briefing useful
-                if len(starters) < 9:
-                    recommendation = "START"
-                    confidence = 70  # Lower confidence since no game today
-                else:
-                    recommendation = "BENCH"
-                    confidence = 70
+                # Without a confirmed game, route the card to MONITOR rather
+                # than START. A START recommendation paired with a "no game
+                # today" alert is a self-contradiction that makes the UI
+                # untrustworthy; MONITOR preserves visibility while being
+                # accurate about the uncertainty.
+                recommendation = "MONITOR"
+                confidence = 50
             elif context and context.opposing_pitcher and context.opposing_pitcher.is_ace:
                 recommendation = "MONITOR"
                 confidence = max(30, ranking.smart_score * 10)

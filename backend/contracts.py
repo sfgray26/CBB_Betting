@@ -212,9 +212,9 @@ class CategoryStatusTag(str, Enum):
 # P0-2: IPPaceFlag + ConstraintBudget
 class IPPaceFlag(str, Enum):
     """Weekly innings pitched pace relative to league minimum."""
-    BEHIND = "behind"
-    ON_TRACK = "on_track"
-    AHEAD = "ahead"
+    BEHIND = "BEHIND"
+    ON_TRACK = "ON_TRACK"
+    AHEAD = "AHEAD"
 
 
 class ConstraintBudget(BaseModel):

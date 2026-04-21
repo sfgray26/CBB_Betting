@@ -378,7 +378,11 @@ class SmartLineupSelector:
         # Generate warnings for potential issues
         for rank in smart_rankings[:9]:  # Check starters
             if not rank.has_game:
-                warnings.append(f"{rank.name}: Starting but no game today")
+                # Downstream callers (briefing, lineup endpoint) route no-game
+                # players to MONITOR/BENCH. Emitting "Starting but no game"
+                # here contradicts that routing, so label it as a monitor
+                # advisory instead.
+                warnings.append(f"{rank.name}: No game scheduled — monitor before lock")
             if rank.opposing_pitcher and rank.opposing_pitcher.quality_score > 8:
                 warnings.append(f"{rank.name}: Facing ace {rank.opposing_pitcher.name} ({rank.opposing_pitcher.era:.2f} ERA)")
             if rank.platoon and abs(rank.platoon.split_delta) > 0.050:

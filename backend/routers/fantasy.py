@@ -85,6 +85,10 @@ from backend.fantasy_baseball.yahoo_client_resilient import (
 )
 from backend.fantasy_baseball.daily_lineup_optimizer import get_lineup_optimizer
 from backend.services.job_queue_service import submit_job as jq_submit, get_job_status as jq_status
+from backend.services.player_mapper import (
+    map_yahoo_player_to_canonical_row,
+    fetch_rolling_stats_for_players,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1612,6 +1616,12 @@ async def get_fantasy_waiver_recommendations(
                 _translated_key = sid_map.get(k, k)
                 if _translated_key == "K(P)":
                     _translated_key = "K"
+                # Drop untranslated numeric stat_ids (e.g. "38") — Yahoo's
+                # stats batch can include non-scoring stat_ids not present
+                # in YAHOO_ID_INDEX or league settings, which would surface
+                # as opaque "38": "0" entries in the API response.
+                if isinstance(_translated_key, str) and _translated_key.isdigit():
+                    continue
                 _translated_stats[_translated_key] = v
 
             _is_reliever = "RP" in positions
@@ -2198,6 +2208,13 @@ async def get_waiver_recommendations(
             except Exception:
                 pass
 
+            # When MCMC produced a verdict, never surface a move that the
+            # simulator says hurts the matchup. z-score-driven gains can
+            # disagree with simulated win probability (e.g. category
+            # tradeoffs); trust the simulator when it ran.
+            if _mcmc.get("mcmc_enabled") and _mcmc.get("win_prob_gain", 0.0) < 0:
+                continue
+
             recommendations.append(RosterMoveRecommendation(
                 action="ADD_DROP",
                 add_player=fa,
@@ -2383,11 +2400,6 @@ async def get_fantasy_roster(
     Phase 4 Workstream B: Returns CanonicalPlayerRow with rolling_14d stats from
     PlayerRollingStats table and season stats from Yahoo.
     """
-    from backend.services.player_mapper import (
-        map_yahoo_player_to_canonical_row,
-        fetch_rolling_stats_for_players,
-    )
-
     now_et = datetime.now(ZoneInfo("America/New_York"))
 
     try:

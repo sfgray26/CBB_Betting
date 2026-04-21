@@ -25,6 +25,28 @@ Review:
 
 ---
 
+## Current Session Override — 2026-04-21 Postman P0/P1 Regression Fixes
+
+Status: COMPLETE locally. Deploy pending.
+
+Plan:
+- [x] Map the broken routes exposed by the 2026-04-20 Postman captures and confirm which were already fixed in prior commits (9147f83 landed the RiskProfile.acquisition fix before this session started).
+- [x] Hoist `player_mapper` imports to module top in `backend/routers/fantasy.py` so the ImportError surfaces at deploy time instead of per-request.
+- [x] Fix briefing semantic breakage: prefer `opposing_pitcher.team` over hard-coded `"TBD"`; route no-game players to MONITOR instead of START; reword smart-selector warning so it does not contradict the routing.
+- [x] Add MCMC negative-win-prob-gain guard in waiver recommendations.
+- [x] Drop untranslated numeric Yahoo stat_ids from waiver output (root cause of the `"38": "0"` leak) while preserving stat_contract v2 canonicals.
+- [x] Add regression tests (tests/test_waiver_edge.py, tests/test_daily_briefing_no_game_contract.py, tests/test_waiver_recommendations_gates.py).
+- [x] Run py_compile + targeted pytest + full suite to confirm no regressions.
+- [x] Update HANDOFF.md with a cold-start Gemini deploy/validation prompt.
+
+Review:
+- Key finding: several of the defects listed in the raw Postman capture were **already fixed** in local commits (9147f83) that had not yet deployed; the captures were pre-deploy snapshots. Git archaeology avoided re-implementing fixes that already existed.
+- The P1-7 "stat contract leakage" turned out to be mostly a naming misreading: `K_P`, `K_B`, `K_9`, `NSV`, `QS`, `OBP`, `ERA`, `WHIP`, `IP` are **valid stat_contract v2 canonical codes**, not leakage. The genuine leak was the bare numeric stat_id `"38"` (a non-scoring Yahoo stat not in `YAHOO_ID_INDEX`) surviving `sid_map.get(k, k)` untranslated. Fix is surgical: drop keys that are still all-digits after translation.
+- Full suite: **2285 passed, 1 failed, 3 skipped**. The single failure (`test_composite_z_excludes_z_sb_when_both_populated`) is **pre-existing** — reproduces on clean HEAD. Queued for a separate NSB composite fix cycle.
+- No Python edits to the smart-selector method stubs needed because the briefing-side routing change carries the correct behavior; the smart-selector change is purely the warning-string rewording.
+
+---
+
 ## Current Session Override — 2026-04-21 Lineup/Admin Regression Repair
 
 Status: COMPLETE locally.

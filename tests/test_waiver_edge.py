@@ -5,7 +5,31 @@ from backend.services.waiver_edge_detector import (
     WaiverEdgeDetector,
     drop_candidate_value,
     is_protected_drop_candidate,
+    long_term_hold_floor,
 )
+
+
+def test_long_term_hold_floor_uses_role_certainty_not_acquisition():
+    """Regression: long_term_hold_floor must read risk_profile.role_certainty.
+
+    A prior bug accessed `.acquisition` on the RiskProfile dataclass, which
+    only exposes role_certainty/health_history. Production emitted
+    `'RiskProfile' object has no attribute 'acquisition'` on
+    /api/fantasy/waiver/recommendations. Fixed in commit 9147f83.
+    """
+    eury = {
+        "name": "Eury Perez",
+        "positions": ["SP"],
+        "z_score": 0.8,
+        "tier": 4,
+        "adp": 118.0,
+        "percent_owned": 74.0,
+    }
+
+    floor = long_term_hold_floor(eury)
+
+    assert isinstance(floor, float)
+    assert floor >= 2.25
 
 
 def _make_player(name, positions, cat_scores, is_undroppable=False):
