@@ -6,6 +6,7 @@ so multi-eligible flex players (Castro 2B/3B) cover uncovered positions
 rather than being benched behind score-ranked duplicates.
 """
 import pytest
+from types import SimpleNamespace
 from unittest.mock import patch
 from backend.fantasy_baseball.daily_lineup_optimizer import (
     DailyLineupOptimizer,
@@ -238,3 +239,72 @@ def slot_map_from(results, slot_label):
         if r.slot == slot_label:
             return r.player_name
     return None
+
+
+def test_schedule_fallback_uses_probable_pitcher_snapshot(monkeypatch):
+    """Missing odds should still produce game context from the snapshot table."""
+    opt = DailyLineupOptimizer()
+    opt._api_key = ""
+
+    rows = [
+        SimpleNamespace(team="NYY", opponent="BOS", is_home=True, park_factor=1.04),
+        SimpleNamespace(team="BOS", opponent="NYY", is_home=False, park_factor=1.04),
+    ]
+
+    class FakeQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def all(self):
+            return rows
+
+    class FakeSession:
+        def query(self, *args, **kwargs):
+            return FakeQuery()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("backend.fantasy_baseball.daily_lineup_optimizer.SessionLocal", lambda: FakeSession())
+
+    games = opt.fetch_mlb_odds("2026-04-20")
+
+    assert len(games) == 1
+    assert games[0].home_abbrev == "NYY"
+    assert games[0].away_abbrev == "BOS"
+    assert games[0].park_factor == pytest.approx(1.04)
+    assert games[0].implied_home_runs != 4.5
+
+
+def test_smart_lineup_assignments_include_positions(monkeypatch):
+    """Smart selector assignments must preserve eligible positions for API payloads."""
+    from backend.fantasy_baseball.smart_lineup_selector import SmartLineupSelector, SmartBatterRanking
+
+    selector = SmartLineupSelector()
+
+    def fake_select_optimal_lineup(roster, projections, game_date, category_needs):
+        return [
+            SmartBatterRanking(
+                name="Pete Alonso",
+                player_id="alonso",
+                team="NYM",
+                positions=["1B"],
+                has_game=True,
+                implied_team_runs=5.2,
+                park_factor=1.03,
+                smart_score=7.4,
+            )
+        ], []
+
+    monkeypatch.setattr(selector, "select_optimal_lineup", fake_select_optimal_lineup)
+
+    assignments, warnings = selector.solve_smart_lineup(
+        roster=[],
+        projections=[],
+        game_date="2026-04-20",
+        slot_config=[("1B", ["1B"])],
+    )
+
+    assert warnings == []
+    assert assignments[0]["positions"] == ["1B"]
+    assert assignments[0]["slot"] == "1B"

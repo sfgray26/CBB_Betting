@@ -208,7 +208,10 @@ class DailyLineupOptimizer:
         """
         if not self._api_key:
             logger.warning("THE_ODDS_API_KEY not set — lineup optimizer running without odds data")
-            return []
+            fallback_games = self._load_schedule_fallback_games(game_date)
+            if fallback_games:
+                self._odds_cache[game_date or "today"] = fallback_games
+            return fallback_games
 
         cache_key = game_date or "today"
         if cache_key in self._odds_cache:
@@ -229,7 +232,10 @@ class DailyLineupOptimizer:
             )
             if resp.status_code != 200:
                 logger.warning("Odds API returned %d for MLB odds", resp.status_code)
-                return []
+                fallback_games = self._load_schedule_fallback_games(game_date)
+                if fallback_games:
+                    self._odds_cache[cache_key] = fallback_games
+                return fallback_games
 
             games_raw = resp.json()
             games = []
@@ -243,11 +249,98 @@ class DailyLineupOptimizer:
             logger.info("Odds API [%s]: %d games — %s", game_date or "today", len(games), matchup_str or "NONE")
             if not games:
                 logger.warning("Odds API returned 0 games for %s — check API key / coverage", game_date or "today")
+                fallback_games = self._load_schedule_fallback_games(game_date)
+                if fallback_games:
+                    self._odds_cache[cache_key] = fallback_games
+                    return fallback_games
             return games
 
         except Exception as exc:
             logger.warning("Failed to fetch MLB odds: %s", exc)
+            fallback_games = self._load_schedule_fallback_games(game_date)
+            if fallback_games:
+                self._odds_cache[cache_key] = fallback_games
+            return fallback_games
+
+    def _load_schedule_fallback_games(self, game_date: Optional[str]) -> List[MLBGameOdds]:
+        """Build synthetic game context from persisted probable-pitcher snapshots."""
+        from backend.models import ProbablePitcherSnapshot
+
+        target_date = self._parse_game_date(game_date)
+        if target_date is None:
             return []
+
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(
+                    ProbablePitcherSnapshot.team,
+                    ProbablePitcherSnapshot.opponent,
+                    ProbablePitcherSnapshot.is_home,
+                    ProbablePitcherSnapshot.park_factor,
+                )
+                .filter(ProbablePitcherSnapshot.game_date == target_date)
+                .all()
+            )
+        except Exception as exc:
+            logger.warning("Failed to load probable-pitcher schedule fallback: %s", exc)
+            return []
+        finally:
+            db.close()
+
+        synthetic_games: Dict[str, MLBGameOdds] = {}
+        for row in rows:
+            if hasattr(row, "team"):
+                team = row.team
+                opponent = row.opponent
+                is_home = row.is_home
+                park_factor = row.park_factor
+            else:
+                team, opponent, is_home, park_factor = row
+            team_norm = normalize_team_abbr(team)
+            opp_norm = normalize_team_abbr(opponent)
+            if not team_norm or not opp_norm or is_home is None:
+                continue
+
+            home_team = team_norm if is_home else opp_norm
+            away_team = opp_norm if is_home else team_norm
+            game_key = f"{away_team}@{home_team}"
+            home_park_factor = park_factor or _PARK_FACTORS.get(home_team, 1.0)
+            neutral_total = max(7.0, min(11.5, round(9.0 * home_park_factor, 2)))
+            implied_home_runs = round(min(7.0, max(2.5, neutral_total / 2.0 + 0.15)), 2)
+            implied_away_runs = round(min(7.0, max(2.5, neutral_total - implied_home_runs)), 2)
+
+            synthetic_games[game_key] = MLBGameOdds(
+                game_id=f"snapshot:{target_date.isoformat()}:{game_key}",
+                commence_time="",
+                home_team=home_team,
+                away_team=away_team,
+                home_abbrev=home_team,
+                away_abbrev=away_team,
+                implied_home_runs=implied_home_runs,
+                implied_away_runs=implied_away_runs,
+                park_factor=home_park_factor,
+            )
+
+        games = list(synthetic_games.values())
+        if games:
+            logger.info(
+                "Lineup optimizer using probable-pitcher schedule fallback for %s (%d games)",
+                target_date.isoformat(),
+                len(games),
+            )
+        return games
+
+    @staticmethod
+    def _parse_game_date(game_date: Optional[str]) -> Optional[date]:
+        """Parse a game date string in YYYY-MM-DD format using ET as default."""
+        if game_date:
+            try:
+                return datetime.fromisoformat(game_date).date()
+            except ValueError:
+                logger.warning("Could not parse game_date '%s' for schedule fallback", game_date)
+                return None
+        return datetime.now(ZoneInfo("America/New_York")).date()
 
     def _parse_game_odds(self, raw: dict) -> Optional[MLBGameOdds]:
         """Parse raw Odds API game dict into MLBGameOdds."""

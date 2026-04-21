@@ -26,7 +26,7 @@ This is a **reference document**. See the companion **Fix Implementation Plan** 
 | Error ID | Severity | Component | Bias Introduced | Lines Affected |
 |----------|----------|-----------|----------------|----------------|
 | **P0-1** | CRITICAL | ROW Projector | 5x downward bias on day 20 | `row_projector.py:387` |
-| **P0-2** | HIGH | ROW Projector | OBP undervalued by ~15% | `row_projector.py:349` |
+| **P0-2** | HIGH | ROW Projector | OBP undervalued by ~2.1% | `row_projector.py:349` |
 | **P0-3** | HIGH | Decision Engine | Pitcher valuation arbitrary | `decision_engine.py:259` |
 | **P1-4** | MEDIUM | Scoring Engine | Category specialists diluted | `scoring_engine.py:374` |
 | **P1-5** | MEDIUM | Scoring Engine | Two-way players 2x inflated | `scoring_engine.py:231` |

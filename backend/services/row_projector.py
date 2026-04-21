@@ -35,6 +35,34 @@ from backend.stat_contract import (
     PITCHING_CODES,
     SCORING_CATEGORY_CODES,
 )
+from datetime import date
+
+
+# MLB Opening Day 2026 - season start reference point
+# ⚠️ VERIFY from authoritative source (MLB.com, official schedule)
+# Last verified: 2026-04-20 - confirm before deploying
+_MLB_OPENING_DAY = date(2026, 3, 27)
+
+
+def _days_into_season(as_of_date: Optional[date] = None) -> int:
+    """
+    Return days since MLB Opening Day (minimum 1).
+
+    Used for season-rate normalization in ROW projections.
+    Prevents early-season projection bias from hardcoded 100-day assumption.
+
+    Args:
+        as_of_date: Date to calculate from. PREFER explicit date over None.
+                    Defaults to today only for backward compatibility.
+
+    Returns:
+        Days since opening day (1 = opening day, 100 = ~June 1)
+    """
+    if as_of_date is None:
+        # Fallback for callers without explicit date context
+        as_of_date = date.today()
+    delta = (as_of_date - _MLB_OPENING_DAY).days + 1
+    return max(1, delta)
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +143,11 @@ _SEASON_WEIGHT = 0.40
 # Standard rolling window size for daily rate computation
 _STANDARD_WINDOW_DAYS = 14
 
+# MLB average HBP and SF rates per AB (for OBP imputation)
+# Yahoo Fantasy API does not provide HBP/SF; we impute from league averages
+_MLB_HBP_PER_AB = 0.0067   # ~4 HBP per 600 AB
+_MLB_SF_PER_AB = 0.0083    # ~5 SF per 600 AB
+
 
 # ---------------------------------------------------------------------------
 # Mapping: canonical_code -> (rolling_w_col, season_col)
@@ -167,6 +200,7 @@ def compute_row_projection(
     rolling_weight: float = _ROLLING_WEIGHT,
     season_weight: float = _SEASON_WEIGHT,
     window_days: int = _STANDARD_WINDOW_DAYS,
+    as_of_date: Optional[date] = None,
 ) -> ROWProjectionResult:
     """
     Compute team-level Rest-of-Week (ROW) projections for all 18 scoring categories.
@@ -190,6 +224,9 @@ def compute_row_projection(
         Weight for season rate in blended calculation (default 0.40).
     window_days : int
         Rolling window size for daily rate computation (default 14).
+    as_of_date : date, optional
+        Date to calculate season rate from. PREFER explicit date over None.
+        Defaults to today only for backward compatibility.
 
     Returns
     -------
@@ -205,6 +242,9 @@ def compute_row_projection(
 
     # Initialize accumulators
     result = ROWProjectionResult()
+
+    # Compute days into season once for all rate calculations
+    days = _days_into_season(as_of_date)
 
     # Ratio stat component accumulators
     sum_h = sum_ab = 0.0
@@ -239,7 +279,7 @@ def compute_row_projection(
 
             # Compute daily rates
             rolling_rate = rolling_val / window_days if rolling_val else 0.0
-            season_rate = season_val / _DEFAULT_SEASON_DAYS if season_val else 0.0
+            season_rate = season_val / days if season_val else 0.0
 
             # Blended rate
             blended_rate = (rolling_weight * rolling_rate +
@@ -255,6 +295,7 @@ def compute_row_projection(
             rolling_stats.get("w_hits", 0.0),
             season_stats.get("hits", 0.0) if season_stats else 0.0,
             window_days,
+            days,
             rolling_weight,
             season_weight,
         )
@@ -262,6 +303,7 @@ def compute_row_projection(
             rolling_stats.get("w_ab", 0.0),
             season_stats.get("at_bats", 0.0) if season_stats else 0.0,
             window_days,
+            days,
             rolling_weight,
             season_weight,
         )
@@ -273,6 +315,7 @@ def compute_row_projection(
             rolling_stats.get("w_tb", 0.0),
             season_stats.get("total_bases", 0.0) if season_stats else 0.0,
             window_days,
+            days,
             rolling_weight,
             season_weight,
         )
@@ -283,17 +326,23 @@ def compute_row_projection(
             rolling_stats.get("w_walks", 0.0),
             season_stats.get("walks", 0.0) if season_stats else 0.0,
             window_days,
+            days,
             rolling_weight,
             season_weight,
         )
         sum_bb += bb_daily * gr
-        sum_obp_denom += ab_daily * gr + bb_daily * gr  # AB + BB
+        # OBP = (H + BB + HBP) / (AB + BB + HBP + SF)
+        # Impute HBP and SF from league averages
+        sum_obp_denom += (ab_daily + bb_daily +
+                          ab_daily * _MLB_HBP_PER_AB +
+                          ab_daily * _MLB_SF_PER_AB) * gr
 
         # ERA: ER / IP_outs (convert w_ip to outs by multiplying by 3)
         er_daily = _blended_daily_rate(
             rolling_stats.get("w_earned_runs", 0.0),
             season_stats.get("earned_runs", 0.0) if season_stats else 0.0,
             window_days,
+            days,
             rolling_weight,
             season_weight,
         )
@@ -302,6 +351,7 @@ def compute_row_projection(
             rolling_stats.get("w_ip", 0.0),
             season_stats.get("ip", 0.0) if season_stats else 0.0,
             window_days,
+            days,
             rolling_weight,
             season_weight,
         )
@@ -314,6 +364,7 @@ def compute_row_projection(
             rolling_stats.get("w_hits_allowed", 0.0),
             season_stats.get("hits_allowed", 0.0) if season_stats else 0.0,
             window_days,
+            days,
             rolling_weight,
             season_weight,
         )
@@ -321,6 +372,7 @@ def compute_row_projection(
             rolling_stats.get("w_walks_allowed", 0.0),
             season_stats.get("walks_allowed", 0.0) if season_stats else 0.0,
             window_days,
+            days,
             rolling_weight,
             season_weight,
         )
@@ -332,6 +384,7 @@ def compute_row_projection(
             rolling_stats.get("w_strikeouts_pit", 0.0),
             season_stats.get("strikeouts_pit", 0.0) if season_stats else 0.0,
             window_days,
+            days,
             rolling_weight,
             season_weight,
         )
@@ -345,14 +398,23 @@ def compute_row_projection(
         result.AVG = sum_h / sum_ab
 
     # OPS = OBP + SLG = (sum(H+BB)/sum(AB+BB)) + (sum(TB)/sum(AB))
-    if sum_obp_denom > 0:
-        obp = (sum_h + sum_bb) / sum_obp_denom
+    # OBP with HBP imputation: (H + BB + HBP) / (AB + BB + HBP + SF)
+    sum_hbp = sum_ab * _MLB_HBP_PER_AB
+    sum_sf = sum_ab * _MLB_SF_PER_AB
+    obp_numer = sum_h + sum_bb + sum_hbp
+    obp_denom = sum_ab + sum_bb + sum_hbp + sum_sf
+
+    if obp_denom > 0:
+        obp = obp_numer / obp_denom
     else:
         obp = 0.0
+
+    # SLG unchanged: TB / AB
     if sum_ab > 0:
         slg = sum_tb / sum_ab
     else:
         slg = 0.0
+
     result.OPS = obp + slg
 
     # ERA = 27 * sum(ER) / sum(IP_outs)
@@ -390,6 +452,7 @@ def _blended_daily_rate(
     rolling_total: float,
     season_total: float,
     window_days: int,
+    days_into_season: int,
     rolling_weight: float,
     season_weight: float,
 ) -> float:
@@ -397,20 +460,23 @@ def _blended_daily_rate(
     Compute blended daily rate from rolling and season totals.
 
     Formula: (rolling_weight * rolling_total / window_days) +
-             (season_weight * season_total / DEFAULT_SEASON_DAYS)
+             (season_weight * season_total / days_into_season)
+
+    Args:
+        rolling_total: Decay-weighted rolling total over window_days
+        season_total: Season-to-date total
+        window_days: Rolling window size (typically 14)
+        days_into_season: Days since MLB Opening Day (dynamic, not hardcoded)
+        rolling_weight: Weight for rolling rate (default 0.60)
+        season_weight: Weight for season rate (default 0.40)
     """
     if rolling_total <= 0 and season_total <= 0:
         return 0.0
 
     rolling_rate = rolling_total / window_days if rolling_total > 0 else 0.0
-    season_rate = season_total / _DEFAULT_SEASON_DAYS if season_total > 0 else 0.0
+    season_rate = season_total / days_into_season if season_total > 0 else 0.0
 
     return rolling_weight * rolling_rate + season_weight * season_rate
-
-
-# Default season days for season rate normalization
-# Approximate mid-season value; in production, use actual days_into_season
-_DEFAULT_SEASON_DAYS = 100
 
 
 def compute_row_projection_from_canonical_rows(

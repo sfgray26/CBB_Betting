@@ -101,3 +101,7 @@
 ### Read endpoints need schema-tolerant fallbacks for evolving analytics tables
 - **Lesson**: Endpoints that expose derived analytics tables should not hard-crash when production lags the newest ORM model by a nullable column or two. For read-only paths like `player_scores`, add a schema-inspected fallback query so old tables degrade to 200/404 instead of 500.
 - **Context**: April 20 UAT showed `GET /api/fantasy/players/1/scores` returning `ProgrammingError` in production even though the logical outcome should have been 200 or 404.
+
+### Daily lineup APIs need a schedule fallback and contract shims
+- **Lesson**: Fantasy lineup endpoints cannot treat missing live odds as "no games today" when persisted probable-pitcher snapshots already provide enough schedule context to keep `has_game`, opponent, and park data alive. When admin/Postman contracts are already in use, preserve compatibility aliases and fields (`/admin/audit-tables`, `connected`, degraded status payloads) instead of forcing clients to rediscover renamed shapes.
+- **Context**: April 21 production-regression triage showed lineup payloads collapsing to `implied_runs=4.5`, `park_factor=1.0`, `position="?"`, `has_game=false` for every batter, while admin checks failed because legacy route/field names had drifted.

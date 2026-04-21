@@ -1,0 +1,1 @@
+﻿from sqlalchemy import create_engine, inspect; import os; engine = create_engine(os.getenv(\"DATABASE_URL\")); inspector = inspect(engine); columns = inspector.get_columns(\"player_scores\"); print([c[\"name\"] for c in columns])

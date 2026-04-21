@@ -5,6 +5,87 @@
 
 ---
 
+## SESSION DELTA — April 21, 2026 (Lineup/Admin Regression Repair)
+
+### Mission Accomplished
+
+- Repaired the fantasy lineup degradation path locally so lineup APIs can reconstruct schedule context from persisted probable-pitcher snapshots when live Odds API coverage is absent.
+- Restored non-placeholder batter positions in both the canonical fantasy router and the legacy inline lineup route by carrying smart-selector eligibility through to `LineupPlayerOut`.
+- Hardened admin compatibility surfaces so `/admin/odds-monitor/status` degrades cleanly without Odds API config, `/admin/yahoo/test` emits `connected`, and `/admin/audit-tables` works as a legacy alias with a `tables` field.
+- Added focused regressions and validated the repair slice locally.
+
+### Technical State
+
+| Area | State | Notes |
+|------|-------|-------|
+| Fantasy lineup schedule context | **COMPLETE LOCAL** | `DailyLineupOptimizer.fetch_mlb_odds()` now falls back to persisted `probable_pitchers` snapshots and synthesizes game context instead of returning an empty slate. |
+| Lineup payload positions | **COMPLETE LOCAL** | `smart_lineup_selector.solve_smart_lineup()` now returns `positions`; both lineup routes stop emitting blanket `position="?"`. |
+| Admin odds monitor status | **COMPLETE LOCAL** | Missing Odds API config no longer 500s `/admin/odds-monitor/status`; returns `status="degraded"` payload instead. |
+| Admin Yahoo test contract | **COMPLETE LOCAL** | `/admin/yahoo/test` now includes `connected: true` on success. |
+| Admin audit tables contract | **COMPLETE LOCAL** | `/admin/audit-tables` alias restored; response includes `tables` and `table_counts`. |
+| `/admin/backfill/player-id-mapping` runtime behavior | **NEEDS LIVE CHECK** | Route exists, but the reported "no response" behavior was not reproduced locally; likely needs deployed timing/ops validation. |
+
+### Local Validation
+
+```
+venv/Scripts/python -m py_compile backend/fantasy_baseball/daily_lineup_optimizer.py backend/fantasy_baseball/smart_lineup_selector.py backend/routers/fantasy.py backend/main.py tests/test_lineup_optimizer.py tests/test_admin_version.py
+venv/Scripts/python -m pytest tests/test_lineup_optimizer.py tests/test_admin_version.py -q --tb=short
+# 12 passed, 0 failed
+```
+
+### Delegation Bundle — Gemini CLI
+
+Task: deploy the April 21 lineup/admin regression repair and run live endpoint checks. Gemini must not edit Python.
+
+### HANDOFF PROMPT FOR GEMINI CLI
+
+```
+Deploy the April 21 fantasy lineup/admin regression fixes to Railway.
+
+Do NOT edit any Python files. Gemini CLI is restricted to deploy, logs, and validation only.
+
+Files changed locally in this repair slice:
+- backend/fantasy_baseball/daily_lineup_optimizer.py
+- backend/fantasy_baseball/smart_lineup_selector.py
+- backend/routers/fantasy.py
+- backend/main.py
+- tests/test_lineup_optimizer.py
+- tests/test_admin_version.py
+- tasks/todo.md
+- HANDOFF.md
+
+Purpose of this slice:
+1. Lineup endpoints should no longer go schedule-blind when Odds API coverage is absent; persisted probable-pitcher snapshots should provide fallback game context.
+2. Smart-selector lineup payloads should stop returning `position="?"` for every batter.
+3. `/admin/odds-monitor/status` should return a degraded JSON payload instead of HTTP 500 when THE_ODDS_API_KEY is missing.
+4. `/admin/yahoo/test` should include `connected: true` on success.
+5. `/admin/audit-tables` should resolve and return a `tables` field in addition to `table_counts`.
+
+Validation steps:
+1. Run: venv/Scripts/python -m py_compile backend/fantasy_baseball/daily_lineup_optimizer.py backend/fantasy_baseball/smart_lineup_selector.py backend/routers/fantasy.py backend/main.py tests/test_lineup_optimizer.py tests/test_admin_version.py
+2. Run: venv/Scripts/python -m pytest tests/test_lineup_optimizer.py tests/test_admin_version.py -q --tb=short
+3. Deploy to Railway.
+4. Hit live endpoints and capture responses:
+  - GET /api/fantasy/lineup/2026-04-20
+  - GET /admin/odds-monitor/status
+  - GET /admin/yahoo/test
+  - GET /admin/audit-tables
+  - POST /admin/backfill/player-id-mapping
+5. Report:
+  - whether lineup batters still show blanket `implied_runs=4.5`, `park_factor=1.0`, `position="?"`, `has_game=false`
+  - whether the three admin compatibility checks now pass
+  - whether `/admin/backfill/player-id-mapping` responds, times out, or hangs
+
+If any live endpoint still fails, provide the exact status code and JSON body. Do not patch code.
+```
+
+### Architect Review Queue
+
+- Decide whether synthetic implied-run estimates from probable-pitcher fallback are sufficient for product use, or whether lineup APIs should surface an explicit "schedule fallback mode" flag to distinguish neutral context from sportsbook-derived context.
+- Decide whether `/admin/backfill/player-id-mapping` should remain a synchronous long-running endpoint or be moved onto the existing job queue so Postman/UAT stops depending on request timeouts.
+
+---
+
 ## SESSION DELTA — April 20, 2026 (UAT Remediation)
 
 ### What Was Done

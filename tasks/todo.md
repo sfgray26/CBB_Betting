@@ -25,6 +25,25 @@ Review:
 
 ---
 
+## Current Session Override — 2026-04-21 Lineup/Admin Regression Repair
+
+Status: COMPLETE locally.
+
+Plan:
+- [x] Trace why lineup payloads collapsed to neutral defaults (`4.5`, `1.0`, `?`, all-bench).
+- [x] Restore schedule context when live odds are unavailable by falling back to persisted probable-pitcher snapshots.
+- [x] Preserve smart-selector position eligibility in lineup API payloads.
+- [x] Restore admin compatibility fields / aliases for Yahoo test, odds monitor status, and audit tables.
+- [x] Add focused regression tests and validate with `py_compile` + targeted `pytest`.
+
+Review:
+- Root cause for the lineup blindness was not just the route layer; the lineup optimizer returned `[]` whenever Odds API coverage was absent, even though persisted probable-pitcher snapshots already carried enough schedule context to keep `has_game`, opponent, and park context alive.
+- Root cause for `position="?"` was the smart-selector response shape: assignments carried slot/name/team/score but dropped eligible positions before the API serializer built `LineupPlayerOut`.
+- Root cause for the admin failures was mixed contract drift: `/admin/yahoo/test` no longer emitted `connected`, `/admin/audit-tables` no longer existed as a legacy alias, and `/admin/odds-monitor/status` could 500 when Odds API configuration was missing.
+- Targeted validation now passes: `12 passed, 0 failed` across `tests/test_lineup_optimizer.py` and `tests/test_admin_version.py`.
+
+---
+
 ## Operating Rule
 
 Only Layer 3 work is active.

@@ -962,6 +962,15 @@ async def get_fantasy_lineup_recommendations(
             logger.warning("[LINEUP_DEBUG] Team '%s' not found - no games data available", team_norm)
         return "", None, 4.5
 
+    def _resolve_assignment_position(assignment: dict) -> str:
+        positions = [str(pos) for pos in (assignment.get("positions") or []) if pos]
+        slot = assignment.get("slot")
+        if positions:
+            return positions[0]
+        if slot and slot not in {"BN", "Util"}:
+            return str(slot)
+        return "?"
+
     if use_smart_selector and _lineup_roster and _lineup_projections:
         try:
             from backend.fantasy_baseball import SmartLineupSelector, get_smart_selector
@@ -989,21 +998,22 @@ async def get_fantasy_lineup_recommendations(
             for a in assignments:
                 team = a.get("team", "")
                 opp, start, opp_impl = _get_game_context(team)
+                team_info = team_odds.get(normalize_team_abbr(team), {})
                 _pname = a["player_name"]
                 batters.append(LineupPlayerOut(
                     player_id=a["player_id"] or _pname,
                     player_key=_name_to_player_key.get(_pname.lower().strip(), "") or None,
                     name=_pname,
                     team=team,
-                    position="?",
-                    implied_runs=round(a.get("implied_runs", opp_impl), 2),
-                    park_factor=round(a.get("park_factor", 1.0), 3),
+                    position=_resolve_assignment_position(a),
+                    implied_runs=round(float(team_info.get("implied_runs", a.get("implied_runs", 4.5))), 2),
+                    park_factor=round(float(team_info.get("park_factor", a.get("park_factor", 1.0))), 3),
                     lineup_score=round(a.get("smart_score", 0), 3),
                     start_time=start,
                     opponent=opp,
                     status="START" if a["slot"] != "BN" else "BENCH",
                     assigned_slot=a["slot"],
-                    has_game=a.get("has_game", False),
+                    has_game=bool(team_info) or a.get("has_game", False),
                     injury_status=_injury_lookup.get(_pname.lower()),
                 ))
 
@@ -1025,20 +1035,21 @@ async def get_fantasy_lineup_recommendations(
             batters = []
             for s in solved_slots:
                 opp, start, opp_impl = _get_game_context(s.player_team)
+                team_info = team_odds.get(normalize_team_abbr(s.player_team), {})
                 batters.append(LineupPlayerOut(
                     player_id=s.player_name,
                     player_key=_name_to_player_key.get(s.player_name.lower().strip(), "") or None,
                     name=s.player_name,
                     team=s.player_team,
                     position=s.positions[0] if s.positions else "?",
-                    implied_runs=round(opp_impl, 2),
-                    park_factor=round(s.park_factor, 3),
+                    implied_runs=round(float(team_info.get("implied_runs", s.implied_runs)), 2),
+                    park_factor=round(float(team_info.get("park_factor", s.park_factor)), 3),
                     lineup_score=round(s.lineup_score, 3),
                     start_time=start,
                     opponent=opp,
                     status="START" if s.slot != "BN" else "BENCH",
                     assigned_slot=s.slot,
-                    has_game=s.has_game,
+                    has_game=bool(team_info) or s.has_game,
                     injury_status=_injury_lookup.get(s.player_name.lower()),
                 ))
         except Exception as _exc:
@@ -1056,6 +1067,7 @@ async def get_fantasy_lineup_recommendations(
         for i, b in enumerate(report.get("batter_rankings", [])):
             team = b.get("team", "")
             opp, start, opp_impl = _get_game_context(team)
+            team_info = team_odds.get(normalize_team_abbr(team), {})
             _b_name = b.get("name", "")
             batters.append(LineupPlayerOut(
                 player_id=str(b.get("player_id", _b_name)),
@@ -1063,14 +1075,14 @@ async def get_fantasy_lineup_recommendations(
                 name=_b_name,
                 team=team,
                 position=(b.get("positions") or ["OF"])[0],
-                implied_runs=round(opp_impl, 2),
-                park_factor=float(b.get("park_factor", 1.0)),
+                implied_runs=round(float(team_info.get("implied_runs", b.get("implied_team_runs", 4.5))), 2),
+                park_factor=float(team_info.get("park_factor", b.get("park_factor", 1.0))),
                 lineup_score=float(b.get("score", 0)),
                 start_time=start,
                 opponent=opp,
                 status="START" if i < 9 else "BENCH",
                 assigned_slot=None,
-                has_game=b.get("has_game", True),
+                has_game=bool(team_info) or b.get("has_game", True),
                 injury_status=_injury_lookup.get(_b_name.lower()),
             ))
 

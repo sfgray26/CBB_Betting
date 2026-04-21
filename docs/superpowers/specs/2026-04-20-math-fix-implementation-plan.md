@@ -540,10 +540,14 @@ venv/Scripts/python -m pytest tests/test_lineup_optimizer.py -q --tb=short
 
 ## Phase 3: Scoring Engine Fixes (P1-4, P1-5, P1-6)
 
-### Fix P1-4: Weighted Category Sum
+### Fix P1-4 & P1-5: Weighted Sum (No Normalization)
 
 **File**: `backend/services/scoring_engine.py`
-**Lines to modify**: 76-79 (add weights), 374 (use weights)
+**Lines to modify**: 76-79 (add weights), 374 (replace composite_z calculation)
+
+**Recommended Approach**: Use weighted sum directly (no division by count). This:
+- Addresses P1-4: Category specialists get full weight for their strengths
+- Addresses P1-5: Two-way players contribute more categories (fair — they do more)
 
 #### Step 1: Add category weights (after line 79)
 
@@ -564,7 +568,7 @@ _CATEGORY_WEIGHTS: dict[str, float] = {
 }
 ```
 
-#### Step 2: Replace line 374
+#### Step 2: Replace line 374 (composite_z calculation)
 
 **Before**:
 ```python
@@ -573,29 +577,9 @@ result.composite_z = sum(non_none) / len(non_none) if non_none else 0.0
 
 **After**:
 ```python
-# Weighted sum of category z-scores
-if non_none:
-    weighted_sum = sum(
-        _CATEGORY_WEIGHTS.get(k, 1.0) * v
-        for k, v in zip(applicable_keys, non_none)
-        if k not in _COMPOSITE_EXCLUDED
-    )
-    # Normalize by sum of weights (not count) for fair comparison
-    weight_sum = sum(
-        _CATEGORY_WEIGHTS.get(k, 1.0)
-        for k in applicable_keys
-        if k not in _COMPOSITE_EXCLUDED
-    )
-    result.composite_z = weighted_sum / weight_sum if weight_sum > 0 else 0.0
-else:
-    result.composite_z = 0.0
-```
-
-**Wait** - there's a bug in the above. The `non_none` list contains values, but we need to track which key each value came from. Let me fix this:
-
-**Corrected After**:
-```python
-# Weighted sum of category z-scores
+# P1-4/P1-5 FIX: Weighted sum (no normalization)
+# - Specialists not diluted by mean (P1-4)
+# - Two-way players fairly valued for extra categories (P1-5)
 if non_none:
     # Build list of (key, value) pairs for non-None scores
     kv_pairs = [
@@ -603,130 +587,14 @@ if non_none:
         for k in applicable_keys
         if k not in _COMPOSITE_EXCLUDED and getattr(result, k) is not None
     ]
-    weighted_sum = sum(
+    # Weighted sum IS the composite (no division)
+    result.composite_z = sum(
         _CATEGORY_WEIGHTS.get(k, 1.0) * v
         for k, v in kv_pairs
     )
-    weight_sum = sum(_CATEGORY_WEIGHTS.get(k, 1.0) for k, _ in kv_pairs)
-    result.composite_z = weighted_sum / weight_sum if weight_sum > 0 else 0.0
 else:
     result.composite_z = 0.0
 ```
-
-### Fix P1-5: Two-Way Player Normalization
-
-**File**: `backend/services/scoring_engine.py`
-**Lines to modify**: 374-380 (composite_z calculation)
-
-#### Step 1: Modify the weighted sum code to normalize two-way players
-
-**Replace the entire section** with:
-
-```python
-# Weighted sum of category z-scores
-if non_none:
-    # Build list of (key, value) pairs for non-None scores
-    kv_pairs = [
-        (k, getattr(result, k))
-        for k in applicable_keys
-        if k not in _COMPOSITE_EXCLUDED and getattr(result, k) is not None
-    ]
-    weighted_sum = sum(
-        _CATEGORY_WEIGHTS.get(k, 1.0) * v
-        for k, v in kv_pairs
-    )
-    weight_sum = sum(_CATEGORY_WEIGHTS.get(k, 1.0) for k, _ in kv_pairs)
-
-    # P1-5 FIX: Normalize two-way players to 11-category basis
-    # This prevents two-way players from being unfairly penalized
-    # for having more categories than pure hitters/pitchers
-    if player_type == "two_way":
-        # Two-way players have 18 categories; normalize to 11 for fairness
-        # Weight sum for 11 hitting categories (baseline)
-        baseline_weight_sum = 11.0  # Approximate average weight
-        result.composite_z = (weighted_sum / weight_sum) * (weight_sum / baseline_weight_sum)
-    else:
-        result.composite_z = weighted_sum / weight_sum if weight_sum > 0 else 0.0
-else:
-    result.composite_z = 0.0
-```
-
-**Actually, that's still wrong.** Let me think through this more carefully:
-
-The issue is that two-way players have 18 categories while hitters have 11. If we take the arithmetic mean:
-- Hitter: `sum(11 z-scores) / 11`
-- Two-way: `sum(18 z-scores) / 18`
-
-If both are "average" (z=0 for all categories), they both get 0. That's fine.
-
-But the **variance** differs:
-- Hitter variance: `Var(mean) = σ²/11`
-- Two-way variance: `Var(mean) = σ²/18`
-
-Two-way players' scores cluster tighter around the mean, which is the real issue.
-
-**Better approach**: Don't normalize by count at all. Use the **weighted sum** directly:
-
-```python
-# Composite z = weighted sum (no division)
-# This allows comparison across player types with different category counts
-result.composite_z = weighted_sum
-```
-
-But this makes interpretation harder. Let me try yet another approach:
-
-**Final approach**: Normalize all players to a **fixed baseline** (e.g., 10 categories):
-
-```python
-# FINAL CORRECT VERSION
-if non_none:
-    kv_pairs = [
-        (k, getattr(result, k))
-        for k in applicable_keys
-        if k not in _COMPOSITE_EXCLUDED and getattr(result, k) is not None
-    ]
-    weighted_sum = sum(
-        _CATEGORY_WEIGHTS.get(k, 1.0) * v
-        for k, v in kv_pairs
-    )
-    weight_sum = sum(_CATEGORY_WEIGHTS.get(k, 1.0) for k, _ in kv_pairs)
-
-    # P1-5 FIX: Normalize to 10-category baseline for all player types
-    # 10 is roughly the middle ground between 11 (hitter) and 7 (pitcher)
-    BASELINE_CATEGORIES = 10
-    result.composite_z = (weighted_sum / weight_sum) * (weight_sum / BASELINE_CATEGORIES) if weight_sum > 0 else 0.0
-else:
-    result.composite_z = 0.0
-```
-
-**Actually, I think the simplest fix is to just not divide by count at all for P1-5.** Let me provide a clearer implementation:
-
-```python
-# SIMPLIFIED FIX for P1-4 and P1-5 together
-if non_none:
-    kv_pairs = [
-        (k, getattr(result, k))
-        for k in applicable_keys
-        if k not in _COMPOSITE_EXCLUDED and getattr(result, k) is not None
-    ]
-
-    # P1-4: Weighted sum (not mean)
-    weighted_sum = sum(
-        _CATEGORY_WEIGHTS.get(k, 1.0) * v
-        for k, v in kv_pairs
-    )
-
-    # P1-5: No normalization - weighted sum IS the composite
-    # This treats all categories equally regardless of player type
-    result.composite_z = weighted_sum
-else:
-    result.composite_z = 0.0
-```
-
-This is the cleanest approach. The weighted sum:
-- Gives more value to players with more good categories (fair)
-- Handles two-way players naturally (they just have more categories to contribute)
-- Uses category weights to prevent any single category from dominating
 
 ### Fix P1-6: Lower MIN_SAMPLE, Use Confidence Field
 

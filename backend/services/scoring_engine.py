@@ -73,10 +73,28 @@ _ALL_CATEGORIES: dict[str, tuple[str, bool]] = {
 _COMPOSITE_EXCLUDED: frozenset = frozenset({"z_sb"})
 
 # Minimum number of players with a non-null value before computing Z for a category
-MIN_SAMPLE: int = 5
+MIN_SAMPLE: int = 3  # Minimum players to compute any z-score
+# Low threshold ensures early-season rankings exist
+# Consumers should use 'confidence' field to filter uncertain values
 
 # Cap Z-scores at this absolute value to reduce outlier distortion
 Z_CAP: float = 3.0
+
+
+# Category weights based on scarcity (inverse of league average SD)
+# Categories with higher variance get higher weights
+_CATEGORY_WEIGHTS: dict[str, float] = {
+    # Batting - counting stats
+    "z_r": 1.0, "z_h": 1.0, "z_hr": 1.2, "z_rbi": 1.1,
+    "z_tb": 1.0, "z_nsb": 1.3,  # NSB scarcest (highest variance)
+    "z_k_b": 0.9,   # K is rate-like, less variance
+    # Batting - rate stats (more stable, lower weight)
+    "z_avg": 0.8, "z_ops": 0.9,
+    # Pitching - counting stats
+    "z_k_p": 1.1, "z_qs": 1.0, "z_nsv": 1.3,  # NSV scarcest
+    # Pitching - rate stats
+    "z_era": 0.9, "z_whip": 0.9, "z_k_per_9": 0.8,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -363,15 +381,23 @@ def compute_league_zscores(
             z_val = category_z_lookup[z_key].get(pid)  # None if not computed
             setattr(result, z_key, z_val)
 
-        # Step 3: composite_z = mean of all applicable non-None Z-scores.
+        # Step 3: composite_z = weighted sum of all applicable non-None Z-scores.
+        # P1-4/P1-5 FIX: Weighted sum (no normalization)
+        # - Specialists not diluted by mean (P1-4)
+        # - Two-way players fairly valued for extra categories (P1-5)
         # P27: z_sb is excluded (superseded by z_nsb) to avoid double-counting
         # basestealing in the 5-category hitter composite.
-        non_none = [
-            getattr(result, k)
+        # Build list of (key, value) pairs for non-None scores
+        kv_pairs = [
+            (k, getattr(result, k))
             for k in applicable_keys
             if k not in _COMPOSITE_EXCLUDED and getattr(result, k) is not None
         ]
-        result.composite_z = sum(non_none) / len(non_none) if non_none else 0.0
+        # Weighted sum IS the composite (no division)
+        result.composite_z = sum(
+            _CATEGORY_WEIGHTS.get(k, 1.0) * v
+            for k, v in kv_pairs
+        ) if kv_pairs else 0.0
 
         # Step 4: confidence = min(1.0, games_in_window / window_days)
         result.confidence = min(1.0, row.games_in_window / window_days)
