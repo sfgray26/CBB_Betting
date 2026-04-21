@@ -104,7 +104,7 @@ def long_term_hold_floor(player: dict) -> float:
 
     if (
         risk_profile
-        and risk_profile.acquisition in {"locked", "likely"}
+        and risk_profile.role_certainty in {"locked", "likely"}
         and adp <= 130
     ):
         score = max(score, 2.25)
