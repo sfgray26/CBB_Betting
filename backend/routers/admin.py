@@ -1495,3 +1495,127 @@ async def run_migration_v28(user: str = Depends(verify_admin_api_key), db: Sessi
 
     results["verification"] = verification
     return results
+
+
+@router.post("/admin/migrate/v31")
+async def run_migration_v31(user: str = Depends(verify_admin_api_key), db: Session = Depends(get_db)):
+    """
+    Run V31 Rolling Stats Expansion migration.
+
+    Adds to player_rolling_stats:
+    - w_runs (decay-weighted runs scored)
+    - w_tb (decay-weighted total bases)
+    - w_qs (decay-weighted quality starts)
+    """
+    from sqlalchemy import text
+
+    results = {"steps": []}
+
+    # Columns to add to player_rolling_stats
+    columns = [
+        ("w_runs", "V31 Decay-weighted runs scored over the rolling window. Source: mlb_player_stats.runs (BDL). Drives z_runs for the R (Runs) batting category."),
+        ("w_tb", "V31 Decay-weighted total bases over the rolling window. Computed as singles + 2*doubles + 3*triples + 4*home_runs per game. Drives z_tb for the TB (Total Bases) batting category."),
+        ("w_qs", "V31 Decay-weighted quality starts over the rolling window. A quality start is IP >= 6.0 AND ER <= 3. Drives z_qs for the QS (Quality Starts) pitching category."),
+    ]
+
+    for col_name, comment in columns:
+        try:
+            # Check if column exists
+            check_col = text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'player_rolling_stats'
+                AND column_name = :col_name
+            """)
+            result = db.execute(check_col, {"col_name": col_name}).fetchone()
+
+            if result and result[0]:
+                results["steps"].append({col_name: "already exists"})
+            else:
+                # Add column
+                db.execute(text(f"""
+                    ALTER TABLE player_rolling_stats
+                    ADD COLUMN {col_name} DOUBLE PRECISION
+                """))
+                db.commit()
+                results["steps"].append({col_name: "created"})
+        except Exception as e:
+            results["steps"].append({col_name: f"error: {e}"})
+
+    # Verify migration
+    verification = {}
+    for col_name, _ in columns:
+        result = db.execute(text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'player_rolling_stats' AND column_name = :col_name
+        """), {"col_name": col_name}).fetchone()
+        verification[col_name] = "EXISTS" if result else "MISSING"
+
+    results["verification"] = verification
+    return results
+
+
+@router.post("/admin/migrate/v32")
+async def run_migration_v32(user: str = Depends(verify_admin_api_key), db: Session = Depends(get_db)):
+    """
+    Run V32 Z-Score Expansion migration.
+
+    Adds to player_scores:
+    - z_r (league Z of w_runs)
+    - z_h (league Z of w_hits)
+    - z_tb (league Z of w_tb)
+    - z_k_b (league Z of w_strikeouts_bat, lower-is-better)
+    - z_ops (league Z of w_ops)
+    - z_k_p (league Z of w_strikeouts_pit)
+    - z_qs (league Z of w_qs)
+    """
+    from sqlalchemy import text
+
+    results = {"steps": []}
+
+    # Columns to add to player_scores
+    columns = [
+        ("z_r", "V31 League Z-score of w_runs (decay-weighted runs scored). For the R (Runs) batting category."),
+        ("z_h", "V31 League Z-score of w_hits (decay-weighted hits). For the H (Hits) batting category."),
+        ("z_tb", "V31 League Z-score of w_tb (decay-weighted total bases). For the TB (Total Bases) batting category."),
+        ("z_k_b", "V31 League Z-score of w_strikeouts_bat (decay-weighted batter K). For the K_B (Batting Strikeouts) category. Lower-is-better: Z is negated."),
+        ("z_ops", "V31 League Z-score of w_ops (decay-weighted OBP + SLG). For the OPS (On-Base Plus Slugging) batting category."),
+        ("z_k_p", "V31 League Z-score of w_strikeouts_pit (decay-weighted pitcher K). For the K_P (Pitching Strikeouts) category."),
+        ("z_qs", "V31 League Z-score of w_qs (decay-weighted quality starts). For the QS (Quality Starts) pitching category. QS = IP>=6 AND ER<=3."),
+    ]
+
+    for col_name, comment in columns:
+        try:
+            # Check if column exists
+            check_col = text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'player_scores'
+                AND column_name = :col_name
+            """)
+            result = db.execute(check_col, {"col_name": col_name}).fetchone()
+
+            if result and result[0]:
+                results["steps"].append({col_name: "already exists"})
+            else:
+                # Add column
+                db.execute(text(f"""
+                    ALTER TABLE player_scores
+                    ADD COLUMN {col_name} DOUBLE PRECISION
+                """))
+                db.commit()
+                results["steps"].append({col_name: "created"})
+        except Exception as e:
+            results["steps"].append({col_name: f"error: {e}"})
+
+    # Verify migration
+    verification = {}
+    for col_name, _ in columns:
+        result = db.execute(text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'player_scores' AND column_name = :col_name
+        """), {"col_name": col_name}).fetchone()
+        verification[col_name] = "EXISTS" if result else "MISSING"
+
+    results["verification"] = verification
+    return results
