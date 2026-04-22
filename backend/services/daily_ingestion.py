@@ -1849,7 +1849,7 @@ class DailyIngestionOrchestrator:
         async def _run():
             from backend.services.rolling_window_engine import compute_all_rolling_windows
 
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
             lookback_start = as_of_date - timedelta(days=30)
 
             db = SessionLocal()
@@ -2007,8 +2007,8 @@ class DailyIngestionOrchestrator:
 
         Algorithm:
           1. For each window_days in [7, 14, 30]:
-             a. Query all player_rolling_stats WHERE as_of_date = yesterday AND window_days = N
-             b. Call compute_league_zscores(rows, yesterday, N)
+             a. Query all player_rolling_stats WHERE as_of_date = today AND window_days = N
+             b. Call compute_league_zscores(rows, today, N)
              c. Upsert each PlayerScoreResult to player_scores table
           2. Anomaly: WARN if 0 players scored for any window
           3. Return scored counts per window
@@ -2020,7 +2020,7 @@ class DailyIngestionOrchestrator:
         async def _run():
             from backend.services.scoring_engine import compute_league_zscores, compute_league_params
 
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
 
             scored_7d = 0
             scored_14d = 0
@@ -2281,8 +2281,8 @@ class DailyIngestionOrchestrator:
         Runs after _compute_player_scores (4 AM) so player_scores is current.
 
         Algorithm:
-          1. Query player_scores WHERE as_of_date = yesterday AND window_days = 14
-          2. Query player_scores WHERE as_of_date = yesterday AND window_days = 30
+          1. Query player_scores WHERE as_of_date = today AND window_days = 14
+          2. Query player_scores WHERE as_of_date = today AND window_days = 30
           3. compute_all_momentum(scores_14d, scores_30d)
           4. Upsert each MomentumResult to player_momentum ON CONFLICT (_pm_player_date_uc)
           5. WARN if 0 results (off-day or scoring pipeline missing)
@@ -2297,7 +2297,7 @@ class DailyIngestionOrchestrator:
             from collections import Counter
             from backend.services.momentum_engine import compute_all_momentum
 
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
 
             db = SessionLocal()
             results = []
@@ -2424,7 +2424,7 @@ class DailyIngestionOrchestrator:
         Runs after _compute_player_momentum (5 AM) so momentum layer is current.
 
         Algorithm:
-          1. Query player_rolling_stats WHERE as_of_date = yesterday AND window_days = 14
+          1. Query player_rolling_stats WHERE as_of_date = today AND window_days = 14
           2. simulate_all_players(rows, remaining_games=None, db=db, as_of_date=as_of_date)
              -> Player-specific remaining_games calculated from MLBPlayerStats
           3. Upsert each result to simulation_results ON CONFLICT (_sr_player_date_uc)
@@ -2436,7 +2436,7 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
             now = datetime.now(ZoneInfo("America/New_York"))
 
             db = SessionLocal()
@@ -2618,9 +2618,9 @@ class DailyIngestionOrchestrator:
         Runs after _run_ros_simulation (6 AM) so simulation_results is current.
 
         Algorithm:
-          1. Query player_scores WHERE as_of_date = yesterday AND window_days = 14
-          2. Query player_momentum WHERE as_of_date = yesterday (join on bdl_player_id)
-          3. Query simulation_results WHERE as_of_date = yesterday (join on bdl_player_id)
+          1. Query player_scores WHERE as_of_date = today AND window_days = 14
+          2. Query player_momentum WHERE as_of_date = today (join on bdl_player_id)
+          3. Query simulation_results WHERE as_of_date = today (join on bdl_player_id)
           4. Build PlayerDecisionInput list from joined data
           5. Call optimize_lineup(players) and optimize_waivers(players, waiver_pool=[])
           6. Upsert DecisionResult ORM rows ON CONFLICT _dr_date_type_player_uc DO UPDATE
@@ -2631,7 +2631,7 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
             now = datetime.now(ZoneInfo("America/New_York"))
 
             db = SessionLocal()
@@ -3111,8 +3111,8 @@ class DailyIngestionOrchestrator:
         Runs after _run_decision_optimization (7 AM) so the full pipeline is current.
 
         Algorithm:
-          1. Compute as_of_date = yesterday
-          2. Query simulation_results WHERE as_of_date = yesterday AND window_days = 14
+          1. Compute as_of_date = today
+          2. Query simulation_results WHERE as_of_date = today AND window_days = 14
           3. For each sim_row, query mlb_player_stats for the 14-day actuals window
           4. Aggregate actuals: sum HR/RBI/SB/K, mean AVG, IP-weighted ERA/WHIP
           5. Build BacktestInput list and call evaluate_cohort via asyncio.to_thread
@@ -3126,7 +3126,7 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
             window_start = as_of_date - timedelta(days=14)
             now = datetime.now(ZoneInfo("America/New_York"))
 
@@ -3135,7 +3135,7 @@ class DailyIngestionOrchestrator:
 
             db = SessionLocal()
             try:
-                # Step 1: fetch simulation_results for yesterday (14d window)
+                # Step 1: fetch simulation_results for today (14d window)
                 try:
                     sim_rows = (
                         db.query(SimulationResultORM)
@@ -3399,7 +3399,7 @@ class DailyIngestionOrchestrator:
         Runs after _run_backtesting (8 AM) so all P14-P18 signals are current.
 
         Algorithm:
-          1. Query decision_results WHERE as_of_date = yesterday
+          1. Query decision_results WHERE as_of_date = today
           2. For each decision, join player_scores (14d), player_momentum,
              simulation_results, backtest_results, and PlayerIDMapping for names
           3. Build ExplanationInput dataclasses; skip if player_scores row missing
@@ -3412,12 +3412,12 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
             now = datetime.now(ZoneInfo("America/New_York"))
 
             db = SessionLocal()
             try:
-                # Step 1: fetch all decision_results for yesterday
+                # Step 1: fetch all decision_results for today
                 try:
                     decision_rows = (
                         db.query(DecisionResultORM)
@@ -3679,7 +3679,7 @@ class DailyIngestionOrchestrator:
         Runs after _run_explainability (9 AM) -- final stage of the daily pipeline.
 
         Algorithm:
-          1. Compute as_of_date = yesterday
+          1. Compute as_of_date = today
           2. Query count metrics from all 6 phase tables for that date
           3. Compute regression detection vs. historical average composite_mae
           4. Fetch top 5 lineup + top 3 waiver player IDs from decision_results
@@ -3692,7 +3692,7 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
             now = datetime.now(ZoneInfo("America/New_York"))
 
             db = SessionLocal()

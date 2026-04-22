@@ -28,6 +28,7 @@ from datetime import datetime, date
 from zoneinfo import ZoneInfo
 import os
 import time
+import random
 
 # Try to load dotenv, but don't fail if not installed
 try:
@@ -90,8 +91,16 @@ Base = declarative_base()
 # ── Session dependencies ─────────────────────────────────────────────────────
 
 def get_db():
-    """Sync session dependency with retry on transient connection failures."""
+    """
+    Sync session dependency with retry on transient connection failures.
+    
+    Implements exponential backoff with jitter to prevent thundering herd
+    connection pool stampedes under load.
+    """
     db = None
+    base_delay = 0.5  # Base delay in seconds
+    max_delay = 5.0   # Cap delay at 5 seconds
+    
     for attempt in range(3):
         try:
             db = SessionLocal()
@@ -101,7 +110,11 @@ def get_db():
                 raise
             error_str = str(e).lower()
             if any(k in error_str for k in ("connection", "timeout", "ssl")):
-                time.sleep(0.1 * (2 ** attempt))
+                # Exponential backoff: 2^attempt * base_delay, capped at max_delay
+                delay = min(max_delay, base_delay * (2 ** attempt))
+                # Jitter: ±25% randomization to prevent synchronized retries
+                jittered_delay = delay * (0.75 + random.random() * 0.5)
+                time.sleep(jittered_delay)
             else:
                 raise
     try:
