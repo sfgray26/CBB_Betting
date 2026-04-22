@@ -236,9 +236,30 @@ def compute_row_projection(
     if season_stats_by_player is None:
         season_stats_by_player = {}
     if games_remaining is None:
-        # Default: assume all active hitters have 1 game remaining
-        # Pitchers require more sophisticated start counting
-        games_remaining = {k: 1 for k in rolling_stats_by_player.keys()}
+        # MVP fix: Position-aware fallbacks instead of hardcoded 1
+        # Hitters: Assume most games remaining in week (~7 days max)
+        # SPs: Assume 1 start (conservative, can be improved with probable pitcher data)
+        # RPs: Assume 2-3 appearances
+        games_remaining = {}
+        for player_key, stats in rolling_stats_by_player.items():
+            # Detect player type from rolling stats
+            has_batting = stats.get("w_ab", 0) > 0
+            has_pitching = stats.get("w_ip", 0) > 0
+            
+            if has_batting and not has_pitching:
+                # Pure hitter: games in week (TODO: use actual schedule)
+                games_remaining[player_key] = 7
+            elif has_pitching and not has_batting:
+                # Pure pitcher: assume 1 start for SP, 3 appearances for RP
+                # (TODO: use ProbablePitcherSnapshot for accurate 1-start vs 2-start)
+                qs = stats.get("w_qs", 0)
+                if qs > 0:  # Likely a starter (had QS recently)
+                    games_remaining[player_key] = 1
+                else:
+                    games_remaining[player_key] = 3  # Reliever appearances
+            else:
+                # Two-way or unknown: conservative fallback
+                games_remaining[player_key] = 3
 
     # Initialize accumulators
     result = ROWProjectionResult()

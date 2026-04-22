@@ -67,7 +67,7 @@ from backend.services.backtesting_harness import (
     save_golden_baseline,
     BASELINE_PATH,
 )
-from backend.services.simulation_engine import simulate_all_players, REMAINING_GAMES_DEFAULT
+from backend.services.simulation_engine import simulate_all_players, MLB_SEASON_GAMES
 from backend.services.decision_engine import (
     PlayerDecisionInput,
     optimize_lineup,
@@ -2425,8 +2425,8 @@ class DailyIngestionOrchestrator:
 
         Algorithm:
           1. Query player_rolling_stats WHERE as_of_date = yesterday AND window_days = 14
-          2. simulate_all_players(rows, remaining_games=REMAINING_GAMES_DEFAULT)
-             -> list[SimulationResult dataclass]
+          2. simulate_all_players(rows, remaining_games=None, db=db, as_of_date=as_of_date)
+             -> Player-specific remaining_games calculated from MLBPlayerStats
           3. Upsert each result to simulation_results ON CONFLICT (_sr_player_date_uc)
           4. WARN if 0 players simulated (off-day or rolling_windows pipeline missing)
           5. Return {"as_of_date": str(yesterday), "players_simulated": n}
@@ -2464,10 +2464,12 @@ class DailyIngestionOrchestrator:
                 sim_results = await asyncio.to_thread(
                     simulate_all_players,
                     rolling_rows,
-                    REMAINING_GAMES_DEFAULT,
+                    None,  # remaining_games=None triggers player-specific calculation
                     1000,
                     self._league_means,
                     self._league_stds,
+                    db,  # Pass DB session for games_played queries
+                    as_of_date,  # Pass reference date
                 )
 
                 if not sim_results:
@@ -2597,14 +2599,13 @@ class DailyIngestionOrchestrator:
             self._record_job_run("ros_simulation", "success", n)
             logger.info(
                 "ros_simulation: %d players simulated for as_of_date=%s "
-                "remaining_games=%d elapsed_ms=%d",
-                n, as_of_date, REMAINING_GAMES_DEFAULT, elapsed,
+                "(player-specific remaining_games) elapsed_ms=%d",
+                n, as_of_date, elapsed,
             )
             return {
                 "status": "success",
                 "as_of_date": str(as_of_date),
                 "players_simulated": n,
-                "remaining_games": REMAINING_GAMES_DEFAULT,
                 "elapsed_ms": elapsed,
             }
 
@@ -3249,10 +3250,10 @@ class DailyIngestionOrchestrator:
                             actual_era  = era_sum  / total_ip
                             actual_whip = whip_sum / total_ip
 
-                    # H3 fix: scale ROS projections (130-game totals) down to
+                    # H3 fix: scale ROS projections (player-specific totals) down to
                     # match the 14-day actual window. Without this, MAE compares
                     # season totals to ~10-game sums and produces garbage values.
-                    remaining = sim.remaining_games or REMAINING_GAMES_DEFAULT
+                    remaining = sim.remaining_games or MLB_SEASON_GAMES
                     scale = games_played / remaining if remaining > 0 and games_played > 0 else 0.0
 
                     def _scale(val):

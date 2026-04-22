@@ -19,11 +19,17 @@ ADR-004: Never import betting_model or analysis.
 import random
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional
+from typing import Optional, Dict
+from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 CV = 0.35                       # coefficient of variation per simulated game
 N_SIMULATIONS = 1000
-REMAINING_GAMES_DEFAULT = 130   # approximate remaining MLB games mid-April 2026
+MLB_SEASON_GAMES = 162          # standard MLB season length
+# Position-aware fallbacks when games_played unavailable
+HITTER_GAMES_FALLBACK = 130     # everyday hitters mid-April
+STARTER_APPEARANCES_FALLBACK = 12  # ~12 starts remaining for SP
+RELIEVER_APPEARANCES_FALLBACK = 30 # ~30 appearances for RP
 STARTER_APPEARANCE_INTERVAL = 5.0
 RELIEVER_APPEARANCE_RATE = 0.45
 
@@ -234,13 +240,91 @@ def _estimate_pitching_appearances(ip_per_appearance: float, remaining_team_game
     return max(1, int(round(remaining_team_games * RELIEVER_APPEARANCE_RATE)))
 
 
+def _calculate_player_remaining_games(
+    bdl_player_id: int,
+    player_type: str,
+    db: Optional[Session] = None,
+    as_of_date: Optional[date] = None,
+) -> int:
+    """
+    Calculate player-specific remaining games based on games_played.
+
+    Formula:
+    - Hitters: 162 - games_played (fallback: 130)
+    - Starting Pitchers: round((162 - team_games_played) / 5) (fallback: 12)
+    - Relief Pitchers: fallback: 30 appearances
+
+    Parameters
+    ----------
+    bdl_player_id : int
+    player_type : str ("hitter", "pitcher", "two_way", "unknown")
+    db : Session or None
+    as_of_date : date or None (defaults to today)
+
+    Returns
+    -------
+    int : remaining games/appearances
+    """
+    if db is None or as_of_date is None:
+        # No DB access - use fallbacks
+        if player_type == "hitter":
+            return HITTER_GAMES_FALLBACK
+        elif player_type == "pitcher":
+            return STARTER_APPEARANCES_FALLBACK
+        return HITTER_GAMES_FALLBACK
+
+    try:
+        # Import here to avoid circular dependency
+        from backend.models import MLBPlayerStats
+
+        # Count games played by this player so far this season
+        games_played = (
+            db.query(func.count(func.distinct(MLBPlayerStats.game_date)))
+            .filter(
+                MLBPlayerStats.bdl_player_id == bdl_player_id,
+                MLBPlayerStats.game_date <= as_of_date,
+                MLBPlayerStats.season == as_of_date.year,
+            )
+            .scalar()
+        ) or 0
+
+        if games_played == 0:
+            # No games found - use fallbacks
+            if player_type == "hitter":
+                return HITTER_GAMES_FALLBACK
+            elif player_type == "pitcher":
+                return STARTER_APPEARANCES_FALLBACK
+            return HITTER_GAMES_FALLBACK
+
+        # Calculate remaining games
+        remaining = MLB_SEASON_GAMES - games_played
+
+        # For pitchers, convert to starts/appearances
+        if player_type == "pitcher":
+            # SP assumption: ~1 start every 5 team games
+            # For MVP, use simplified estimate
+            starts_remaining = max(1, round(remaining / 5))
+            return starts_remaining
+
+        # For hitters and two-way players, return games directly
+        return max(1, remaining)
+
+    except Exception:
+        # Database error - use safe fallbacks
+        if player_type == "hitter":
+            return HITTER_GAMES_FALLBACK
+        elif player_type == "pitcher":
+            return STARTER_APPEARANCES_FALLBACK
+        return HITTER_GAMES_FALLBACK
+
+
 # ---------------------------------------------------------------------------
 # Main simulation entry points
 # ---------------------------------------------------------------------------
 
 def simulate_player(
     rolling_row,
-    remaining_games: int = REMAINING_GAMES_DEFAULT,
+    remaining_games: int = HITTER_GAMES_FALLBACK,
     n_simulations: int = N_SIMULATIONS,
     seed: Optional[int] = None,
     league_means: Optional[dict] = None,
@@ -574,11 +658,13 @@ def simulate_player(
 
 
 def simulate_all_players(
-    rolling_rows: list,
-    remaining_games: int = REMAINING_GAMES_DEFAULT,
+    rolling_rows,
+    remaining_games: Optional[int] = None,
     n_simulations: int = N_SIMULATIONS,
     league_means: Optional[dict] = None,
     league_stds: Optional[dict] = None,
+    db: Optional[Session] = None,
+    as_of_date: Optional[date] = None,
 ) -> list:
     """
     Run simulate_player for every row in rolling_rows.
@@ -589,10 +675,16 @@ def simulate_all_players(
     Parameters
     ----------
     rolling_rows : list of PlayerRollingStats ORM objects (window_days=14)
-    remaining_games : int
+    remaining_games : int or None
+        If None, calculates player-specific remaining games from DB.
+        If provided, uses this value for ALL players (legacy behavior).
     n_simulations : int
     league_means : dict or None -- forwarded to simulate_player
     league_stds : dict or None -- forwarded to simulate_player
+    db : Session or None
+        Required for player-specific remaining games calculation.
+    as_of_date : date or None
+        Reference date for games_played query.
 
     Returns
     -------
@@ -600,9 +692,36 @@ def simulate_all_players(
     """
     results = []
     for row in rolling_rows:
+        # Determine player type first
+        has_batting = row.w_ab is not None
+        has_pitching = row.w_ip is not None
+        if has_batting and has_pitching:
+            player_type = "two_way"
+        elif has_batting:
+            player_type = "hitter"
+        elif has_pitching:
+            player_type = "pitcher"
+        else:
+            player_type = "unknown"
+
+        # Skip unknown types
+        if player_type == "unknown":
+            continue
+
+        # Calculate player-specific remaining games if not provided
+        if remaining_games is None:
+            player_remaining = _calculate_player_remaining_games(
+                bdl_player_id=row.bdl_player_id,
+                player_type=player_type,
+                db=db,
+                as_of_date=as_of_date or row.as_of_date,
+            )
+        else:
+            player_remaining = remaining_games
+
         r = simulate_player(
             row,
-            remaining_games=remaining_games,
+            remaining_games=player_remaining,
             n_simulations=n_simulations,
             seed=None,
             league_means=league_means,

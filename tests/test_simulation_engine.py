@@ -19,7 +19,8 @@ from backend.services.simulation_engine import (
     simulate_all_players,
     CV,
     N_SIMULATIONS,
-    REMAINING_GAMES_DEFAULT,
+    HITTER_GAMES_FALLBACK,
+    MLB_SEASON_GAMES,
 )
 
 
@@ -493,7 +494,8 @@ def test_simulate_all_players_mixed_types():
 # ===========================================================================
 
 def test_constants_have_expected_values():
-    """CV, N_SIMULATIONS, REMAINING_GAMES_DEFAULT must match spec."""
+    """CV, N_SIMULATIONS, MLB_SEASON_GAMES, HITTER_GAMES_FALLBACK must match spec."""
     assert CV == 0.35
     assert N_SIMULATIONS == 1000
-    assert REMAINING_GAMES_DEFAULT == 130
+    assert MLB_SEASON_GAMES == 162
+    assert HITTER_GAMES_FALLBACK == 130  # Fallback when games_played unavailable

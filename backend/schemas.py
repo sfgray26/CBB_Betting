@@ -500,6 +500,14 @@ class MatchupSimulateRequest(BaseModel):
     n_sims: int = 1000
     week: Optional[str] = None  # ISO week label (informational only)
 
+    @field_validator("my_roster", "opponent_roster")
+    @classmethod
+    def validate_roster_not_empty(cls, v: List[dict]) -> List[dict]:
+        """Ensure both rosters contain at least one player."""
+        if len(v) == 0:
+            raise ValueError("Roster cannot be empty. Each roster must contain at least one player.")
+        return v
+
 
 # ---------------------------------------------------------------------------
 # EMAC-076: Yahoo Roster, Matchup, Lineup Apply
