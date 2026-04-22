@@ -2892,7 +2892,7 @@ async def optimize_roster(
     fallback_count = 0
 
     if bdl_ids:
-        # Get most recent score for each player (may differ from target_date)
+        # Get most recent score for each player at or before target_date
         subq = (
             db.query(
                 PlayerScore.bdl_player_id,
@@ -2901,6 +2901,7 @@ async def optimize_roster(
             .filter(
                 PlayerScore.bdl_player_id.in_(bdl_ids),
                 PlayerScore.window_days == 14,
+                PlayerScore.as_of_date <= target_date,
             )
             .group_by(PlayerScore.bdl_player_id)
             .subquery()

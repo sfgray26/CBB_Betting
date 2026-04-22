@@ -372,3 +372,29 @@ class TestRosterOptimizeEndpoint:
         rp_assignments = [s for s in data["starters"] if s["assigned_slot"] == "RP"]
         assert len(sp_assignments) >= 0  # TODO: meaningful assertion once player_scores wired
         assert len(rp_assignments) >= 0  # TODO: meaningful assertion once player_scores wired
+
+    def test_optimize_target_date_reflected_in_response(self, fantasy_client):
+        """target_date from POST payload must appear in response.target_date field."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.999",
+                "name": "Test Batter",
+                "team": "NYY",
+                "positions": ["OF"],
+                "selected_position": "OF",
+            }
+        ]
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            resp = fantasy_client.post(
+                "/api/fantasy/roster/optimize",
+                json={"target_date": "2026-04-22"},
+            )
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["target_date"] == "2026-04-22", (
+            f"Expected target_date='2026-04-22' in response, got {data.get('target_date')!r}"
+        )
