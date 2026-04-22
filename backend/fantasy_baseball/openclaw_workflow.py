@@ -139,20 +139,13 @@ class OpenClawWorkflowManager:
         return stats
     
     async def run_daily_briefing(self) -> bool:
-        """Generate and send daily briefing."""
-        logger.info("Generating daily briefing...")
-        
-        stats = self.collect_stats()
-        
-        # Send email
-        result = send_daily_briefing(stats)
-        
-        # Check if budget warning needed
-        if stats['budget_remaining_pct'] < 20:
-            send_budget_warning(100 - stats['budget_remaining_pct'])
-        
-        logger.info(f"Daily briefing sent: {result}")
-        return result
+        """Generate and send daily briefing.
+
+        PAUSED (2026-04-21): OpenClaw workflow is on hold until the baseball
+        module is fully implemented.
+        """
+        logger.info("OpenClaw daily briefing skipped — paused until baseball module is complete")
+        return False
     
     def generate_weekly_summary(self) -> str:
         """Generate weekly performance summary."""

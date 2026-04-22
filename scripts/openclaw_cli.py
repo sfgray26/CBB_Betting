@@ -217,16 +217,13 @@ def main():
     status_parser.set_defaults(func=cmd_status)
     
     args = parser.parse_args()
-    
+
+    # PAUSED (2026-04-21): OpenClaw CLI is on hold until the baseball module is
+    # fully implemented.
     if not args.command:
         parser.print_help()
-        return 1
-    
-    try:
-        return args.func(args)
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
+    print("\nOpenClaw CLI is paused. Re-enable when baseball module is complete.")
+    return 0
 
 
 if __name__ == '__main__':

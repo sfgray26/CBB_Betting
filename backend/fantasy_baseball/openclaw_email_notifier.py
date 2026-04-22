@@ -310,23 +310,39 @@ def get_notifier() -> OpenClawEmailNotifier:
 
 
 def send_daily_briefing(stats: Dict) -> bool:
-    """Convenience function to send daily briefing."""
-    return get_notifier().send_daily_briefing(stats)
+    """Convenience function to send daily briefing.
+
+    PAUSED (2026-04-21): OpenClaw email notifications disabled.
+    """
+    logger.info("send_daily_briefing skipped — OpenClaw paused")
+    return False
 
 
 def send_high_stakes_alert(game: Dict) -> bool:
-    """Convenience function to send high-stakes alert."""
-    return get_notifier().send_high_stakes_alert(game)
+    """Convenience function to send high-stakes alert.
+
+    PAUSED (2026-04-21): OpenClaw email notifications disabled.
+    """
+    logger.info("send_high_stakes_alert skipped — OpenClaw paused")
+    return False
 
 
 def send_circuit_breaker_alert(state: str, reason: str) -> bool:
-    """Convenience function to send circuit breaker alert."""
-    return get_notifier().send_circuit_breaker_alert(state, reason)
+    """Convenience function to send circuit breaker alert.
+
+    PAUSED (2026-04-21): OpenClaw email notifications disabled.
+    """
+    logger.info("send_circuit_breaker_alert skipped — OpenClaw paused")
+    return False
 
 
 def send_budget_warning(usage_pct: float) -> bool:
-    """Convenience function to send budget warning."""
-    return get_notifier().send_budget_warning(usage_pct)
+    """Convenience function to send budget warning.
+
+    PAUSED (2026-04-21): OpenClaw email notifications disabled.
+    """
+    logger.info("send_budget_warning skipped — OpenClaw paused")
+    return False
 
 
 if __name__ == "__main__":

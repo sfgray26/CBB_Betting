@@ -33,15 +33,17 @@ Deliverable: 70% reduction in I/O wait time during high-volume Saturday slates.
     print(master_prompt)
     
     # Summary for Discord
-    summary = f"📈 **Quant Review Complete**
-- **Focus:** Async Resiliency
-- **Objective:** Fix high-volume I/O bottlenecks
-- **Next Step:** Apply Master Prompt to Claude Code."
-    
+    summary = (
+        "📈 **Quant Review Complete**\n"
+        "- **Focus:** Async Resiliency\n"
+        "- **Objective:** Fix high-volume I/O bottlenecks\n"
+        "- **Next Step:** Apply Master Prompt to Claude Code."
+    )
+
     # Send to Discord via OpenClaw
     # PAUSED (2026-04-21): OpenClaw Discord notifications disabled.
     # os.system(f'openclaw message send --channel discord --target "1477436117426110615" --message "{summary}"')
-    print(f"[PAUSED] Would send Discord summary")
+    print("[PAUSED] Would send Discord summary")
 
 if __name__ == "__main__":
     run_review()
