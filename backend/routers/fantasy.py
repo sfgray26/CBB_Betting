@@ -2057,50 +2057,73 @@ async def get_waiver_recommendations(
                 pass
 
         try:
-            from backend.schemas import CategoryDeficitOut as _CDOut
-            matchups = client.get_scoreboard()
-            for m in matchups:
-                if not isinstance(m, dict):
-                    continue
-                teams = m.get("teams", {})
-                raw_entries = []
-                if isinstance(teams, list):
-                    raw_entries = [item.get("team", []) for item in teams if isinstance(item, dict)]
-                elif isinstance(teams, dict):
-                    count_t = int(teams.get("count", 0))
-                    raw_entries = [teams.get(str(ti), {}).get("team", []) for ti in range(count_t)]
-                team_keys_in_matchup = []
-                team_stats: dict = {}
-                team_names: dict = {}
-                for t_entry in raw_entries:
-                    t_meta: dict = {}
-                    t_stat_cats: dict = {}
-                    if isinstance(t_entry, list):
-                        for sub in t_entry:
-                            if isinstance(sub, list):
-                                for item in sub:
-                                    if isinstance(item, dict):
-                                        t_meta.update(item)
-                            elif isinstance(sub, dict):
-                                t_meta.update(sub)
-                                if "team_stats" in sub:
-                                    stats_block = sub["team_stats"].get("stats", [])
-                                    for s_entry in stats_block:
-                                        if isinstance(s_entry, dict):
-                                            s = s_entry.get("stat", {})
-                                            t_stat_cats[s.get("stat_id")] = s.get("value")
-                    tk = t_meta.get("team_key", "")
-                    tn = t_meta.get("name", "")
-                    team_keys_in_matchup.append(tk)
-                    team_stats[tk] = t_stat_cats
-                    team_names[tk] = tn
-                if my_team_key in team_keys_in_matchup:
-                    for tk in team_keys_in_matchup:
-                        if tk != my_team_key:
-                            matchup_opponent = team_names.get(tk, "TBD")
+            from backend.schemas import CategoryDeficitOut
+            _sb = client.get_scoreboard()
+            _my_matchup_teams: list = []
+            for _matchup_teams in _iter_scoreboard_matchup_teams(_sb):
+                _my_tuple = None
+                for _t in _matchup_teams:
+                    _tk = _t[0]
+                    if _tk and (
+                        _tk == my_team_key
+                        or (my_team_key and (_tk in my_team_key or my_team_key in _tk))
+                    ):
+                        _my_tuple = _t
+                        break
+                if _my_tuple is not None:
+                    _opp_tuple = next(
+                        (_t for _t in _matchup_teams if _t[0] != _my_tuple[0]), None
+                    )
+                    if _opp_tuple is not None:
+                        matchup_opponent = _opp_tuple[1] or "TBD"
+                        _my_matchup_teams = [_my_tuple, _opp_tuple]
                     break
-        except Exception:
-            pass
+
+            if _my_matchup_teams:
+                _sid_map: dict = dict(_YAHOO_STAT_FALLBACK)
+
+                def _rec_stats_dict(raw_stats_list: list) -> dict:
+                    out: dict = {}
+                    for _st in raw_stats_list:
+                        if not isinstance(_st, dict):
+                            continue
+                        _so = _st.get("stat", {})
+                        if not isinstance(_so, dict):
+                            continue
+                        _sid_k = str(_so.get("stat_id", ""))
+                        if not _sid_k:
+                            continue
+                        _key2 = _sid_map.get(_sid_k, _sid_k)
+                        if isinstance(_key2, str) and _key2.isdigit():
+                            continue
+                        try:
+                            out[_key2] = float(_so.get("value", 0) or 0)
+                        except (TypeError, ValueError):
+                            out[_key2] = 0.0
+                    return out
+
+                _my_stats = _rec_stats_dict(_my_matchup_teams[0][2])
+                _opp_stats = _rec_stats_dict(_my_matchup_teams[1][2])
+                _lower_better = {"ERA", "WHIP", "L", "K(B)", "HRA"}
+                for _cat, _my_val in _my_stats.items():
+                    _opp_val = _opp_stats.get(_cat, 0.0)
+                    if _cat in _lower_better:
+                        _deficit = _my_val - _opp_val
+                        _winning = _my_val < _opp_val
+                    else:
+                        _deficit = _opp_val - _my_val
+                        _winning = _my_val > _opp_val
+                    category_deficits.append(
+                        CategoryDeficitOut(
+                            category=_cat,
+                            my_total=_my_val,
+                            opponent_total=_opp_val,
+                            deficit=_deficit,
+                            winning=_winning,
+                        )
+                    )
+        except Exception as _rec_sb_err:
+            logger.warning("recommendations scoreboard failed (non-fatal): %s", _rec_sb_err)
 
         free_agents = client.get_free_agents(count=40)
 

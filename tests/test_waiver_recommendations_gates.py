@@ -103,3 +103,64 @@ def test_waiver_stats_numeric_id_filter_behavior():
         assert canonical in translated, (
             f"canonical code {canonical} must survive translation"
         )
+
+
+def test_recommendations_populates_category_deficits_and_opponent(monkeypatch):
+    """Recommendations endpoint must compute category_deficits using shared helper."""
+    from fastapi.testclient import TestClient
+    from unittest.mock import MagicMock, patch
+    from backend.main import app
+    from backend.auth import verify_api_key
+
+    async def _auth():
+        return "test-user"
+
+    app.dependency_overrides[verify_api_key] = _auth
+
+    scoreboard = [{
+        "teams": {
+            "count": 2,
+            "0": {
+                "team": [
+                    {"team_key": "469.l.1.t.7", "name": "My Team"},
+                    {"team_stats": {"stats": [
+                        {"stat": {"stat_id": "7", "value": "10"}},
+                        {"stat": {"stat_id": "12", "value": "40"}},
+                    ]}},
+                ]
+            },
+            "1": {
+                "team": [
+                    {"team_key": "469.l.1.t.3", "name": "Rival Squad"},
+                    {"team_stats": {"stats": [
+                        {"stat": {"stat_id": "7", "value": "8"}},
+                        {"stat": {"stat_id": "12", "value": "45"}},
+                    ]}},
+                ]
+            },
+        }
+    }]
+
+    mock_client = MagicMock()
+    mock_client.get_my_team_key.return_value = "469.l.1.t.7"
+    mock_client.get_roster.return_value = []
+    mock_client.get_free_agents.return_value = []
+    mock_client.get_scoreboard.return_value = scoreboard
+
+    try:
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client), \
+             patch("backend.fantasy_baseball.statcast_loader.build_statcast_signals", return_value=([], 0.0)), \
+             patch("backend.fantasy_baseball.statcast_loader.statcast_need_score_boost", return_value=0.0), \
+             patch("backend.fantasy_baseball.pybaseball_loader.load_pybaseball_batters", return_value={}), \
+             patch("backend.fantasy_baseball.pybaseball_loader.load_pybaseball_pitchers", return_value={}):
+            client = TestClient(app)
+            resp = client.get("/api/fantasy/waiver/recommendations")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["matchup_opponent"] == "Rival Squad", \
+            f"Expected 'Rival Squad', got {data['matchup_opponent']!r}"
+        assert isinstance(data["category_deficits"], list), "category_deficits must be a list"
+        assert len(data["category_deficits"]) > 0, \
+            "category_deficits must be non-empty when scoreboard has stat data"
+    finally:
+        app.dependency_overrides.pop(verify_api_key, None)
