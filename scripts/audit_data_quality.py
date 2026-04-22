@@ -34,8 +34,9 @@ from backend.models import (
     MLBGameLog,
     MLBPlayerStats,
     StatcastPerformance,
+    PlayerIDMapping,
 )
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func, and_, or_, text
 
 
 # Priority levels
@@ -172,25 +173,46 @@ def audit_missing_statcast(db) -> List[Dict[str, Any]]:
     week_ago_date = date.today() - timedelta(days=7)
     
     # Get players with recent stats (active)
+    # Join with PlayerIDMapping to get names and mlbam_ids
+    # Note: MLBPlayerStats does not have a direct 'team' column
     active_players = db.query(
-        MLBPlayerStats.player_name,
+        PlayerIDMapping.full_name.label("player_name"),
         MLBPlayerStats.bdl_player_id,
-        MLBPlayerStats.team,
-        func.sum(MLBPlayerStats.pa).label("total_pa")
+        PlayerIDMapping.mlbam_id,
+        func.sum(MLBPlayerStats.ab).label("total_ab")
+    ).join(
+        PlayerIDMapping,
+        MLBPlayerStats.bdl_player_id == PlayerIDMapping.bdl_id
     ).filter(
         MLBPlayerStats.game_date > week_ago_date
     ).group_by(
-        MLBPlayerStats.player_name,
+        PlayerIDMapping.full_name,
         MLBPlayerStats.bdl_player_id,
-        MLBPlayerStats.team
+        PlayerIDMapping.mlbam_id
     ).having(
-        func.sum(MLBPlayerStats.pa) > 50  # Active player threshold
+        func.sum(MLBPlayerStats.ab) > 40  # Active player threshold proxy (AB)
     ).all()
     
     # Check which ones have no Statcast data
     for player in active_players:
+        if not player.mlbam_id:
+            issues.append({
+                "issue_type": "missing_mlbam_mapping",
+                "player_name": player.player_name,
+                "player_id": str(player.bdl_player_id),
+                "team": "N/A",
+                "pa": int(player.total_ab),
+                "expected_value": "mlbam_id",
+                "actual_value": "NULL",
+                "priority": PRIORITY_P1,
+                "category": CATEGORY_C,
+                "impact_score": 7.0,
+                "description": f"Active player missing mlbam_id mapping - blocks Statcast lookup"
+            })
+            continue
+
         has_statcast = db.query(StatcastPerformance).filter(
-            StatcastPerformance.player_id == str(player.bdl_player_id),
+            StatcastPerformance.player_id == str(player.mlbam_id),
             StatcastPerformance.game_date > week_ago_date
         ).first()
         
@@ -198,15 +220,15 @@ def audit_missing_statcast(db) -> List[Dict[str, Any]]:
             issues.append({
                 "issue_type": "missing_statcast_data",
                 "player_name": player.player_name,
-                "player_id": str(player.bdl_player_id),
-                "team": player.team,
-                "pa": player.total_pa,
+                "player_id": str(player.mlbam_id),
+                "team": "N/A",
+                "pa": int(player.total_ab),
                 "expected_value": "xwOBA, barrel%, exit_velo",
                 "actual_value": "NULL",
                 "priority": PRIORITY_P2,
                 "category": CATEGORY_B,
                 "impact_score": 5.0,
-                "description": f"Active player (PA={player.total_pa}) missing Statcast - likely name mismatch or qual threshold"
+                "description": f"Active player (AB={player.total_ab}) missing Statcast - likely name mismatch or qual threshold"
             })
     
     return issues
@@ -227,30 +249,26 @@ def audit_matchup_detection(db) -> List[Dict[str, Any]]:
         # Not enough games to audit (might be off-day or early season)
         return issues
     
-    # Check if recent player stats exist for these teams
+    # Check if recent player stats exist for these games
     for game in games_today:
-        home_team = game.home_team
-        away_team = game.away_team
+        # Query recent player stats for this game
+        stats_count = db.query(func.count(MLBPlayerStats.id)).filter(
+            MLBPlayerStats.game_id == game.game_id
+        ).scalar()
         
-        # Query recent player stats for home team
-        home_players = db.query(MLBPlayerStats).filter(
-            MLBPlayerStats.team == home_team,
-            MLBPlayerStats.game_date > today_et - timedelta(days=3)
-        ).limit(5).all()
-        
-        if not home_players:
+        if stats_count == 0 and game.status == "Final":
             issues.append({
                 "issue_type": "matchup_detection_false_negative",
-                "player_name": f"{home_team} players",
-                "player_id": "N/A",
-                "team": home_team,
+                "player_name": "Game players",
+                "player_id": str(game.game_id),
+                "team": "N/A",
                 "pa": None,
-                "expected_value": f"has_game=True (vs {away_team})",
-                "actual_value": "no recent stats found",
+                "expected_value": f"stats_count > 0",
+                "actual_value": "0 stats found",
                 "priority": PRIORITY_P0,
                 "category": CATEGORY_A,
-                "impact_score": 9.0,
-                "description": f"Game scheduled today but no recent player data for {home_team}"
+                "impact_score": 9.5,
+                "description": f"Game {game.game_id} is Final but has no player stats ingested"
             })
     
     return issues

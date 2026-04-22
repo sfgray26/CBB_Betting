@@ -831,23 +831,6 @@ def available_players(drafted_ids: set[str]) -> list[dict]:
 # Derived from get_board() distribution; update each spring.
 # ---------------------------------------------------------------------------
 
-_POSITION_BASELINE_Z: dict[str, float] = {
-    "SP": -0.5,
-    "RP": -0.3,
-    "C":  -1.5,   # Catchers are scarce — even fringe C has roster value
-    "1B": -0.8,
-    "2B": -0.8,
-    "3B": -0.8,
-    "SS": -0.8,
-    "OF": -0.8,
-    "LF": -0.8,
-    "CF": -0.8,
-    "RF": -0.8,
-    "DH": -1.0,
-    "P":  -0.5,   # Generic pitcher
-}
-_DEFAULT_BASELINE_Z = -1.0  # Unknown position
-
 # Runtime cache for on-the-fly projections (cleared on process restart)
 _projection_cache: dict[str, dict] = {}
 
@@ -920,45 +903,52 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
     # Infer type from position
     player_type = "pitcher" if primary_pos in ("SP", "RP", "P") else "batter"
 
-    # Use position baseline z_score as fallback
-    proxy_z = _POSITION_BASELINE_Z.get(primary_pos, _DEFAULT_BASELINE_Z)
-
     # Fetch real projection from database (CRITICAL: no synthetic data)
     # Tests may provide explicit cat_scores — preserve those
     existing_cat_scores = yahoo_player.get("cat_scores") or {}
     db_cat_scores = {}
-    db_z_score = proxy_z
+    db_z_score = 0.0  # NO synthetic baselines — zero when no real data
 
     if not existing_cat_scores:
         # Query PlayerProjection table for real data
         try:
-            from backend.models import get_db, PlayerProjection
+            from backend.models import get_db, PlayerProjection, PlayerIDMapping
 
             # Try to get DB session (may fail in test contexts)
             db_gen = get_db()
             db = next(db_gen)
 
-            # Normalize player_key to extract numeric ID.
+            # Extract Yahoo ID from player_key.
             # Standard Yahoo keys: "469.l.X.p.12345" or "mlb.p.12345" → "12345"
             # Non-standard (no .p.): "mlb.12345" → "12345" via last segment
+            yahoo_id = None
             if player_key and ".p." in player_key:
-                player_id = player_key.split(".p.")[-1]
+                yahoo_id = player_key.split(".p.")[-1]
             elif player_key:
-                player_id = player_key.split(".")[-1]
-            else:
-                player_id = None
-            player_id = player_id or None  # Treat empty string as None
+                yahoo_id = player_key.split(".")[-1]
+            yahoo_id = yahoo_id or None  # Treat empty string as None
             
-            if player_id:
-                # Query for real projection
+            mlbam_id = None
+            if yahoo_id:
+                # Step 1: Translate Yahoo ID → MLBAM ID via PlayerIDMapping
+                id_mapping = db.query(PlayerIDMapping).filter(
+                    PlayerIDMapping.yahoo_id == yahoo_id
+                ).first()
+                
+                if id_mapping:
+                    # Found mapping — use mlbam_id or bdl_id as fallback
+                    mlbam_id = id_mapping.mlbam_id or id_mapping.bdl_id
+            
+            if mlbam_id:
+                # Step 2: Query PlayerProjection with MLBAM ID (stored as string)
                 projection_row = db.query(PlayerProjection).filter(
-                    PlayerProjection.player_id == player_id
+                    PlayerProjection.player_id == str(mlbam_id)
                 ).first()
                 
                 if projection_row and projection_row.cat_scores:
                     # Found real projection data — use it
                     db_cat_scores = projection_row.cat_scores
-                    db_z_score = sum(db_cat_scores.values()) if db_cat_scores else proxy_z
+                    db_z_score = sum(db_cat_scores.values()) if db_cat_scores else 0.0
             
             # Close DB session
             try:
@@ -987,7 +977,7 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
     proxy = {
         "id": player_key or name.lower().replace(" ", "_"),
         "name": name,
-        "team": yahoo_player.get("team") or "",
+        "team": yahoo_player.get("team") or yahoo_player.get("editorial_team_abbr") or "",
         "positions": positions,
         "type": player_type,
         "tier": 10,

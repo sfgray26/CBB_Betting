@@ -2852,6 +2852,12 @@ class DailyIngestionOrchestrator:
                         z_k_p=score.z_k_p,
                         z_era=score.z_era,
                         z_whip=score.z_whip,
+                        # Hitter z-scores from player_scores (category-aware scoring)
+                        z_hr=score.z_hr,
+                        z_rbi=score.z_rbi,
+                        z_nsb=score.z_nsb,
+                        z_r=score.z_r,
+                        z_ops=score.z_ops,
                     ))
 
                 # Step 5: run decision engine (CPU-bound -- offload to thread pool)
@@ -2990,6 +2996,12 @@ class DailyIngestionOrchestrator:
                             z_k_p=fa_score.z_k_p,
                             z_era=fa_score.z_era,
                             z_whip=fa_score.z_whip,
+                            # Hitter z-scores from player_scores (category-aware scoring)
+                            z_hr=fa_score.z_hr,
+                            z_rbi=fa_score.z_rbi,
+                            z_nsb=fa_score.z_nsb,
+                            z_r=fa_score.z_r,
+                            z_ops=fa_score.z_ops,
                         ))
                     logger.info(
                         "decision_optimization: built waiver pool with %d candidates "

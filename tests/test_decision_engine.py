@@ -38,6 +38,11 @@ def _make_hitter(
     proj_rbi=60.0,
     proj_sb=5.0,
     delta_z: float = 0.0,
+    z_hr: float = 0.0,
+    z_rbi: float = 0.0,
+    z_nsb: float = 0.0,
+    z_r: float = 0.0,
+    z_ops: float = 0.0,
 ) -> PlayerDecisionInput:
     return PlayerDecisionInput(
         bdl_player_id=pid,
@@ -57,6 +62,11 @@ def _make_hitter(
         proj_whip_p50=None,
         downside_p25=None,
         upside_p75=None,
+        z_hr=z_hr,
+        z_rbi=z_rbi,
+        z_nsb=z_nsb,
+        z_r=z_r,
+        z_ops=z_ops,
     )
 
 
@@ -697,3 +707,118 @@ class TestCategoryAwareWaivers:
         assert len(results_no_vec) == len(results_none)
         if results_no_vec:
             assert results_no_vec[0].value_gain == pytest.approx(results_none[0].value_gain)
+
+
+# ---------------------------------------------------------------------------
+# 7. Hitter category-aware scoring (Phase 4C: Hitter Parity)
+# ---------------------------------------------------------------------------
+
+class TestHitterCategoryAwareScoring:
+    """Hitters receive category-aware scoring using their z-scores."""
+
+    def test_hitter_with_high_sb_z_score_gets_positive_adjustment(self):
+        """
+        A hitter with a high SB z-score addressing a team's SB deficit
+        receives a positive adjustment via category-aware scoring.
+        """
+        from backend.fantasy_baseball.category_aware_scorer import CategoryNeedVector
+
+        # Team needs stolen bases (deficit = +2.0)
+        need_vector = CategoryNeedVector(needs={"nsb": 2.0})
+
+        # Weak roster hitter
+        weak_roster_hitter = _make_hitter(
+            201, "WeakHitter", positions=["OF"],
+            score=30.0, z_nsb=-0.5, z_hr=0.0, z_rbi=0.0, z_r=0.0, z_ops=0.0,
+        )
+
+        # Strong SB waiver candidate (high z_nsb)
+        sb_specialist = _make_hitter(
+            301, "Speedster", positions=["OF"],
+            score=75.0, z_nsb=2.0, z_hr=0.2, z_rbi=0.0, z_r=0.5, z_ops=0.3,
+        )
+
+        _, results = optimize_waivers(
+            [weak_roster_hitter], [sb_specialist], need_vector=need_vector
+        )
+
+        assert len(results) == 1
+        # The SB specialist should generate positive gain
+        assert results[0].value_gain > 0, (
+            f"SB specialist should produce positive gain when team needs SB; "
+            f"got value_gain={results[0].value_gain:.4f}"
+        )
+
+    def test_hitter_bad_ops_gets_penalized_when_team_crushing_ops(self):
+        """
+        When the team is heavily winning OPS, a bad-OPS hitter's world_with_value
+        must be penalized below world_without_value, producing negative gain.
+        """
+        from backend.fantasy_baseball.category_aware_scorer import (
+            CategoryNeedVector, RATE_STAT_PROTECT_THRESHOLD,
+        )
+
+        # Team crushing OPS (negative deficit)
+        ops_deficit = -(RATE_STAT_PROTECT_THRESHOLD + 1.5)
+        need_vector = CategoryNeedVector(needs={"ops": ops_deficit})
+
+        bad_ops_hitter = _make_hitter(
+            401, "BadOPS", positions=["OF"],
+            score=45.0, z_ops=-1.0, z_hr=0.2, z_rbi=0.3, z_nsb=0.0, z_r=0.1,
+        )
+        roster_player = _make_hitter(
+            402, "MedHitter", positions=["OF"],
+            score=50.0, z_ops=0.3, z_hr=0.4, z_rbi=0.5, z_nsb=0.2, z_r=0.4,
+        )
+
+        _, results = optimize_waivers([roster_player], [bad_ops_hitter], need_vector=need_vector)
+
+        assert len(results) == 1
+        # Bad OPS hitter should produce negative gain due to rate-stat protection gate
+        assert results[0].value_gain < 0, (
+            f"Bad-OPS hitter must produce negative gain when team is crushing OPS; "
+            f"got value_gain={results[0].value_gain:.4f}"
+        )
+
+    def test_hitter_fallback_to_composite_when_no_z_scores(self):
+        """
+        When a hitter has no z-scores (all None), category-aware scoring
+        should fall back to composite_value.
+        """
+        from backend.fantasy_baseball.category_aware_scorer import CategoryNeedVector
+
+        need_vector = CategoryNeedVector(needs={"hr": 2.0, "rbi": 1.5})
+
+        # Hitter with no z-scores
+        hitter_no_z = PlayerDecisionInput(
+            bdl_player_id=501,
+            name="NoZScores",
+            player_type="hitter",
+            eligible_positions=["OF"],
+            score_0_100=60.0,
+            composite_z=0.5,
+            momentum_signal="STABLE",
+            delta_z=0.0,
+            proj_hr_p50=20.0,
+            proj_rbi_p50=70.0,
+            proj_sb_p50=5.0,
+            proj_avg_p50=0.270,
+            proj_k_p50=None,
+            proj_era_p50=None,
+            proj_whip_p50=None,
+            downside_p25=None,
+            upside_p75=None,
+            # Hitter z-scores all None
+            z_hr=None, z_rbi=None, z_nsb=None, z_r=None, z_ops=None,
+        )
+        roster_player = _make_hitter(
+            502, "RosterHitter", positions=["OF"], score=40.0,
+        )
+
+        # Should not crash, and should fall back to composite_value
+        _, results = optimize_waivers([roster_player], [hitter_no_z], need_vector=need_vector)
+
+        assert len(results) == 1
+        # Value gain should be positive since hitter_no_z is better (score_0_100=60 vs 40)
+        assert results[0].value_gain > 0
+

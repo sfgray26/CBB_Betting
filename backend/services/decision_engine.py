@@ -97,6 +97,12 @@ class PlayerDecisionInput:
     z_k_p:    Optional[float] = None
     z_era:    Optional[float] = None
     z_whip:   Optional[float] = None
+    # Hitter Z-scores from player_scores (category-aware scoring)
+    z_hr:     Optional[float] = None
+    z_rbi:    Optional[float] = None
+    z_nsb:    Optional[float] = None
+    z_r:      Optional[float] = None
+    z_ops:    Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -241,21 +247,35 @@ def _derive_category_impacts(player: PlayerDecisionInput) -> dict:
     """
     Map PlayerDecisionInput z-score fields to a {board_key: z_score} dict.
 
-    Only pitchers have per-category z-scores on PlayerDecisionInput (z_era,
-    z_whip, z_k_p). Hitters fall back to composite_z which cannot be split
-    into per-category impacts, so we return {} for them (callers fall back to
-    _composite_value).
+    Hitters: extracts z_hr, z_rbi, z_nsb, z_r, z_ops (if available).
+    Pitchers: extracts z_era, z_whip, z_k_p.
+    Two-way: extracts both hitter and pitcher categories.
     """
     pt = (player.player_type or "unknown").lower()
-    if pt not in ("pitcher", "two_way"):
-        return {}
     impacts: dict = {}
-    if player.z_era is not None:
-        impacts["era"] = float(player.z_era)
-    if player.z_whip is not None:
-        impacts["whip"] = float(player.z_whip)
-    if player.z_k_p is not None:
-        impacts["k9"] = float(player.z_k_p)
+
+    # Hitter categories (hitters and two-way)
+    if pt in ("hitter", "two_way"):
+        if player.z_hr is not None:
+            impacts["hr"] = float(player.z_hr)
+        if player.z_rbi is not None:
+            impacts["rbi"] = float(player.z_rbi)
+        if player.z_nsb is not None:
+            impacts["nsb"] = float(player.z_nsb)
+        if player.z_r is not None:
+            impacts["r"] = float(player.z_r)
+        if player.z_ops is not None:
+            impacts["ops"] = float(player.z_ops)
+
+    # Pitcher categories (pitchers and two-way)
+    if pt in ("pitcher", "two_way"):
+        if player.z_era is not None:
+            impacts["era"] = float(player.z_era)
+        if player.z_whip is not None:
+            impacts["whip"] = float(player.z_whip)
+        if player.z_k_p is not None:
+            impacts["k9"] = float(player.z_k_p)
+
     return impacts
 
 
@@ -263,12 +283,12 @@ def _category_aware_value(player: PlayerDecisionInput, need_vector) -> float:
     """
     Category-aware world-with value for waiver candidates.
 
-    For pitchers: applies the rate-stat protection gate via score_fa_against_needs.
+    Applies the rate-stat protection gate via score_fa_against_needs.
     The category score is added as a bounded adjustment to composite_value so the
     output scale stays near [0, 3], but can go negative when the penalty gate fires.
 
-    For hitters and unknowns (no per-category z-scores): falls back to
-    _composite_value unchanged.
+    Works for both hitters and pitchers using their respective z-scores.
+    Falls back to _composite_value only if no per-category z-scores are available.
     """
     impacts = _derive_category_impacts(player)
     if not impacts:
