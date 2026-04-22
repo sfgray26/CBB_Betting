@@ -197,7 +197,8 @@ class TestWaiverEdgeDetector:
         }
 
         assert is_protected_drop_candidate(juan_soto) is True
-        assert drop_candidate_value(juan_soto) >= 4.5
+        score = drop_candidate_value(juan_soto)[0]  # Tuple: (primary_score, ...)
+        assert score >= 4.5
 
     def test_locked_high_upside_pitcher_is_protected_from_drop(self):
         det = WaiverEdgeDetector()

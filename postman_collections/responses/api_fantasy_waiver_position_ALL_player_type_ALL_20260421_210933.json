@@ -1,3 +1,0 @@
-{
-  "detail": "Yahoo API error: Yahoo API error 400: {\n    \"error\": {\n        \"xml:lang\": \"en-us\",\n        \"yahoo:uri\": \"\\/fantasy\\/v2\\/league\\/469.l.72586\\/players?out=ownership&amp;format=json&amp;status=A&amp;start=0&amp;count=25&amp;sort=AR\",\n        \"description\": \"Invalid subresource ownership requested\",\n        \"detail\": \"\"\n    }\n}"
-}

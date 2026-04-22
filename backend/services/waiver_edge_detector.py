@@ -379,7 +379,7 @@ class WaiverEdgeDetector:
         return min(droppable, key=drop_candidate_value)
 
     @staticmethod
-    def _player_value(player: dict) -> float:
+    def _player_value(player: dict) -> tuple:
         return drop_candidate_value(player)
 
     def _score_fa_against_deficits(self, fa, deficits):

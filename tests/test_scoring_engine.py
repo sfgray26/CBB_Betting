@@ -273,13 +273,14 @@ def test_z_capped_at_minus_3():
 
 
 # ===========================================================================
-# 9. composite_z is weighted sum of applicable non-None Z-scores
+# 9. composite_z is weighted MEAN of applicable non-None Z-scores
 # ===========================================================================
 
-def test_composite_z_is_weighted_sum():
+def test_composite_z_is_weighted_mean():
     """
-    Hitter with 5 non-None category Z-scores -> composite = weighted sum.
-    P1-4/P1-5 FIX: weighted sum (no normalization), z_sb excluded.
+    Hitter with 5 non-None category Z-scores -> composite = weighted MEAN.
+    Phase 1 Remediation: Fixed to use weighted mean (divide by sum of weights)
+    to balance hitter and pitcher scales. z_sb excluded.
     Uses controlled values so we can predict composite_z precisely.
     """
     # 6 identical hitters except pid=6 has different values in all categories
@@ -303,16 +304,24 @@ def test_composite_z_is_weighted_sum():
     assert all(v is not None for v in [z_hr, z_rbi, z_sb, z_avg, z_obp]), \
         f"Expected all 5 hitter Z-scores, got {[z_hr, z_rbi, z_sb, z_avg, z_obp]}"
 
-    # P1-4/P1-5: weighted sum, not arithmetic mean
+    # Phase 1 Remediation: weighted MEAN (divide by sum of weights), not arithmetic mean
     # Category weights from scoring_engine._CATEGORY_WEIGHTS
     # Note: z_obp is NOT in _CATEGORY_WEIGHTS, so defaults to 1.0
     from backend.services.scoring_engine import _CATEGORY_WEIGHTS
-    expected_composite = (
+    weighted_sum = (
         _CATEGORY_WEIGHTS.get("z_hr", 1.0) * z_hr +
         _CATEGORY_WEIGHTS.get("z_rbi", 1.0) * z_rbi +
         _CATEGORY_WEIGHTS.get("z_avg", 1.0) * z_avg +
         _CATEGORY_WEIGHTS.get("z_obp", 1.0) * z_obp  # z_obp defaults to 1.0
     )
+    # Sum of weights for normalization
+    weight_sum = (
+        _CATEGORY_WEIGHTS.get("z_hr", 1.0) +
+        _CATEGORY_WEIGHTS.get("z_rbi", 1.0) +
+        _CATEGORY_WEIGHTS.get("z_avg", 1.0) +
+        _CATEGORY_WEIGHTS.get("z_obp", 1.0)
+    )
+    expected_composite = weighted_sum / weight_sum
     # Allow for small floating point differences
     assert math.isclose(r.composite_z, expected_composite, rel_tol=1e-9), (
         f"composite_z mismatch: {r.composite_z} != {expected_composite}"

@@ -71,8 +71,8 @@ class TestBudgetEndpoint:
         assert budget["ip_accumulated"] >= 0
         assert budget["ip_minimum"] > 0
 
-        # IP pace should be one of the valid flags
-        assert budget["ip_pace"] in ("behind", "on_track", "ahead", "complete", "unknown")
+        # IP pace should be one of the valid flags (uppercase enum values)
+        assert budget["ip_pace"] in ("BEHIND", "ON_TRACK", "AHEAD", "COMPLETE", "UNKNOWN")
 
     def test_freshness_metadata_present(self, fantasy_client):
         """Freshness metadata is present and valid."""
@@ -104,8 +104,8 @@ class TestBudgetEndpoint:
         # Mock data: 45 IP accumulated, 90 minimum, 30 days elapsed
         # 45 IP / 30 days = 1.5 IP/day
         # 90 IP / 182 days = ~0.5 IP/day needed
-        # Should be "on_track" or "ahead" with this pace
-        assert budget["ip_pace"] in ("on_track", "ahead", "behind", "complete", "unknown")
+        # Should be "ON_TRACK" or "AHEAD" with this pace (uppercase enum values)
+        assert budget["ip_pace"] in ("ON_TRACK", "AHEAD", "BEHIND", "COMPLETE", "UNKNOWN")
 
     def test_budget_response_200(self, fantasy_client):
         """Budget endpoint returns 200 OK."""

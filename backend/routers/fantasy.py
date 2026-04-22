@@ -2273,7 +2273,7 @@ async def get_waiver_recommendations(
                 drop_candidate["name"], drop_is_pitcher
             )
             drop_score_adj = max(
-                _drop_candidate_value(drop_candidate),
+                _drop_candidate_value(drop_candidate)[0],
                 drop_candidate["z_score"] + statcast_need_score_boost(drop_signals),
             )
 
@@ -2574,12 +2574,6 @@ async def get_fantasy_roster(
         as_of_date=now_et.strftime("%Y-%m-%d"),
         window_days=14,
     )
-    rolling_stats_15d = fetch_rolling_stats_for_players(
-        db=db,
-        yahoo_player_keys=player_keys,
-        as_of_date=now_et.strftime("%Y-%m-%d"),
-        window_days=15,
-    )
     rolling_stats_30d = fetch_rolling_stats_for_players(
         db=db,
         yahoo_player_keys=player_keys,
@@ -2630,7 +2624,7 @@ async def get_fantasy_roster(
         # Fetch all rolling windows for this player
         rs_7d = rolling_stats_7d.get(player_key)
         rs_14d = rolling_stats_14d.get(player_key)
-        rs_15d = rolling_stats_15d.get(player_key)
+        rs_15d = None
         rs_30d = rolling_stats_30d.get(player_key)
 
         canonical_row = map_yahoo_player_to_canonical_row(

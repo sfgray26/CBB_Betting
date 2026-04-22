@@ -393,11 +393,13 @@ def compute_league_zscores(
             for k in applicable_keys
             if k not in _COMPOSITE_EXCLUDED and getattr(result, k) is not None
         ]
-        # Weighted sum IS the composite (no division)
-        result.composite_z = sum(
-            _CATEGORY_WEIGHTS.get(k, 1.0) * v
-            for k, v in kv_pairs
-        ) if kv_pairs else 0.0
+        # Weighted MEAN (divide by sum of weights) to balance hitter/pitcher scales
+        weight_sum = sum(_CATEGORY_WEIGHTS.get(k, 1.0) for k, _ in kv_pairs)
+        result.composite_z = (
+            sum(_CATEGORY_WEIGHTS.get(k, 1.0) * v for k, v in kv_pairs) / weight_sum
+            if kv_pairs and weight_sum > 0
+            else 0.0
+        )
 
         # Step 4: confidence = min(1.0, games_in_window / window_days)
         result.confidence = min(1.0, row.games_in_window / window_days)

@@ -56,12 +56,12 @@ def test_constraint_budget():
 
 
 def test_ip_pace_flag():
-    """IPPaceFlag has exactly 3 values."""
+    """IPPaceFlag has exactly 3 values (uppercase enum values)."""
     values = [flag.value for flag in IPPaceFlag]
     assert len(values) == 3
-    assert "behind" in values
-    assert "on_track" in values
-    assert "ahead" in values
+    assert "BEHIND" in values
+    assert "ON_TRACK" in values
+    assert "AHEAD" in values
 
 
 def test_freshness_metadata():

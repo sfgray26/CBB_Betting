@@ -1,0 +1,8 @@
+{
+  "win_prob": 0.5,
+  "category_win_probs": {},
+  "expected_cats_won": 0.0,
+  "n_sims": 0,
+  "elapsed_ms": 0.0,
+  "categories_simulated": []
+}
