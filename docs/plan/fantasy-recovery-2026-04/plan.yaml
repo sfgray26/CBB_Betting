@@ -1,0 +1,1468 @@
+plan_id: fantasy-recovery-2026-04
+objective: |
+  Architectural cleanup and forward roadmap for fantasy baseball platform. Restructure bloated documentation, 
+  recover data quality from 0-33% population rates, build missing ROW projection pipeline, expand rolling stats 
+  from 9/18 to 18/18 categories, and establish clear UI enablement gate.
+created_at: '2026-04-21T20:00:00-05:00'
+created_by: gem-planner
+status: pending
+research_confidence: high
+
+plan_metrics:
+  wave_1_task_count: 3
+  total_dependencies: 42
+  risk_score: high
+
+tldr: |
+  Fantasy baseball platform has route availability (95/99 checks pass) but suffers critical data quality issues:
+  roster enrichment 0%, waiver matchup data hollow, rolling stats only 9/18 categories, ROW projection pipeline
+  missing entirely. This plan executes architectural cleanup in 10 waves: (1) document restructure, (2) deploy
+  uncommitted fixes, (3) diagnose data ingestion, (4-7) build missing features (ROW pipeline, rolling stats,
+  ROS projections, games-remaining), (8) UI readiness gate, (9-10) Phase 5 UI execution. Estimated 60-90 days
+  to unblock Phase 5.
+
+open_questions:
+  - Is PlayerIDMapping table empty due to ingestion failure or missing data source?
+  - What is the actual freshness of player_rolling_stats in production (stale by how many days)?
+  - Should ownership_pct ingestion source from Yahoo API or different provider?
+  - Is K_P mislabeling (carries wins instead of strikeouts) a schema bug or data transformation bug?
+
+pre_mortem:
+  overall_risk_level: high
+  critical_failure_modes:
+    - scenario: ROW projection pipeline implementation reveals Yahoo API does not provide games-remaining-this-week data
+      likelihood: medium
+      impact: critical
+      mitigation: Design fallback using MLB Stats API schedule endpoint; pre-research Yahoo scoreboard API structure before Wave 4
+    - scenario: Rolling stats expansion blocked by missing upstream Yahoo data for W, L, HR_P, NSV categories
+      likelihood: medium
+      impact: high
+      mitigation: HANDOFF.md already notes these 4 categories deferred awaiting upstream data; document exact Yahoo API gap in Wave 3
+    - scenario: PlayerIDMapping empty because BDL player ID ingestion never built, not just broken
+      likelihood: high
+      impact: high
+      mitigation: Audit backend/services/daily_ingestion.py for missing BDL player sync job; may need new Wave 3 task to build it
+    - scenario: Data quality issues cascade - fixing one enrichment reveals 3 more missing joins
+      likelihood: high
+      impact: medium
+      mitigation: Wave 3 diagnosis tasks must produce comprehensive data lineage audit before Wave 4 begins
+    - scenario: UI readiness gate (Wave 8) fails because enrichment fixes don't persist across Yahoo API cache refreshes
+      likelihood: medium
+      impact: high
+      mitigation: Add cache invalidation validation in Wave 2; verify enrichment survives 24-hour window
+  assumptions:
+    - HANDOFF.md bloat is primarily historical session logs, not critical operational detail
+    - Uncommitted fixes from Apr 21 sessions are regression-tested and safe to deploy
+    - Yahoo API provides sufficient data for ROW projections (games-remaining inference possible)
+    - pybaseball/Statcast integration for advanced stats remains out of scope for data quality recovery
+    - Phase 5 UI can proceed with 50% READY / 30% MISSING threshold (not 100% complete)
+    - 60-90 day timeline acceptable for production-grade data quality
+
+implementation_specification:
+  code_structure: |
+    Document restructure: Move session logs to memory/, architect decisions to tasks/, layer detail to docs/ARCHITECTURE.md.
+    Keep HANDOFF.md focused on §1 Mission, §2 Defects, §3 Phase Status, §4 Data Quality Dashboard, §5 Delegation, §6 References.
+    
+    Data quality: Fix ingestion in backend/services/daily_ingestion.py, enrichment in backend/services/player_mapper.py,
+    API orchestration in backend/routers/fantasy.py. Each fix must have regression test in tests/.
+    
+    ROW pipeline: New module backend/services/row_projector.py (or extend existing if found). Input: rolling stats,
+    season stats, games-remaining. Output: 18-category rest-of-week projections. Wire into scoreboard orchestrator.
+    
+    Rolling stats: Expand backend/services/rolling_stats.py ingestion from 9 to 18 categories. Add missing batting (R, TB),
+    pitching (W, L, HRA, K_P, QS, NSV). Verify Yahoo API provides these categories before implementation.
+  affected_areas:
+    - HANDOFF.md - restructure from 500 lines to 150 lines
+    - memory/ - new session log files (YYYY-MM-DD.md)
+    - tasks/architect_review.md - new file for architectural decisions
+    - docs/ARCHITECTURE.md - layer status detail relocation
+    - backend/services/daily_ingestion.py - PlayerIDMapping ingestion diagnosis
+    - backend/services/player_mapper.py - enrichment validation
+    - backend/services/row_projector.py - new ROW projection pipeline (if missing)
+    - backend/services/rolling_stats.py - expand from 9/18 to 18/18 categories
+    - backend/routers/fantasy.py - API contract field additions (MS-5, MS-6, MS-7)
+    - backend/schemas.py - Pydantic models for new fields
+    - tests/ - regression tests for all data quality fixes
+  component_details:
+    - component: HANDOFF.md
+      responsibility: Current mission state, defects, phase status, delegation bundles. Target 150 lines, zero session logs.
+      interfaces:
+        - §1 Mission Accomplished (what was done in latest session)
+        - §2 Current State (deploy state, phase progress, open defects)
+        - §3 Delegation Bundles (one per agent with verbatim prompts)
+        - §4 References (links to memory/, tasks/, docs/)
+    - component: memory/YYYY-MM-DD.md
+      responsibility: Session-specific operational logs, git commit trails, tactical debugging notes
+      interfaces:
+        - Daily session log format (date, agent, commits, file changes, validation)
+    - component: ROW Projection Pipeline
+      responsibility: Compute rest-of-week projections per player for all 18 categories
+      interfaces:
+        - Input: rolling_stats (7d/14d/30d), season_stats, games_remaining_this_week
+        - Output: ROWProjectionResult (18 categories: R, H, HR_B, RBI, K_B, TB, NSB, AVG, OPS, W, L, HR_P, K_P, QS, NSV, ERA, WHIP, K_9)
+        - Wire into: GET /api/fantasy/scoreboard (fields MS-5, MS-6, MS-7)
+    - component: Rolling Stats Expansion
+      responsibility: Expand ingestion from 9/18 to 18/18 categories
+      interfaces:
+        - Input: Yahoo API player stats (verify W, L, HR_P, NSV availability)
+        - Output: player_rolling_stats table (all 18 categories populated)
+        - Expose via: GET /api/fantasy/roster (rolling_7d, rolling_14d, rolling_30d fields)
+    - component: PlayerIDMapping Ingestion
+      responsibility: Populate PlayerIDMapping table with Yahoo-to-BDL-to-MLBAM joins
+      interfaces:
+        - Input: Yahoo player_key, BDL player API, MLB Stats API
+        - Output: PlayerIDMapping table rows (yahoo_key, bdl_player_id, mlbam_id)
+        - Expose via: GET /api/fantasy/roster (bdl_player_id, mlbam_id, game_context fields)
+  dependencies:
+    - component: ROW Projection Pipeline
+      relationship: Requires rolling_stats expansion (Wave 5) to provide 18/18 input categories
+    - component: UI Readiness Gate
+      relationship: Blocks Phase 5 execution until ROW pipeline, rolling stats, ROS projections operational
+    - component: Document Restructure
+      relationship: Independent - can run in parallel with data quality work
+  integration_points:
+    - backend/routers/fantasy.py GET /api/fantasy/scoreboard - add MS-5, MS-6, MS-7 fields from ROW projections
+    - backend/routers/fantasy.py GET /api/fantasy/roster - expose rolling_7d/14d/30d, ros_projection, row_projection
+    - backend/routers/fantasy.py GET /api/fantasy/waiver - expose games_remaining_this_week in filters
+    - backend/services/dashboard_service.py - orchestrate ROW projection calls
+    - backend/services/daily_ingestion.py - add PlayerIDMapping sync job if missing
+
+contracts:
+  - from_task: wave1-handoff-restructure
+    to_task: wave2-deploy-fixes
+    interface: Clean HANDOFF.md with §1-6 structure, session logs moved to memory/
+    format: Markdown document with max 150 lines, zero historical session logs
+  - from_task: wave2-validate-enrichment
+    to_task: wave3-diagnose-player-id
+    interface: Validation report showing which enrichment fields are null vs populated
+    format: Markdown table with field name, expected population %, actual population %, gap analysis
+  - from_task: wave3-diagnose-player-id
+    to_task: wave4-row-pipeline-design
+    interface: PlayerIDMapping ingestion status (is it missing or broken?) and data lineage audit
+    format: Technical report with root cause, data source availability, recommended fix
+  - from_task: wave4-row-pipeline-design
+    to_task: wave4-row-pipeline-implement
+    interface: ROW projection algorithm spec with input/output contracts and edge case handling
+    format: Technical spec markdown with pseudo-code, sample inputs/outputs, test cases
+  - from_task: wave4-row-pipeline-implement
+    to_task: wave4-row-pipeline-wire
+    interface: Functional row_projector.py module with compute_row_projection() function
+    format: Python module passing py_compile and unit tests
+  - from_task: wave5-verify-yahoo-categories
+    to_task: wave5-expand-rolling-stats
+    interface: Yahoo API category availability report (which of W, L, HR_P, NSV are available)
+    format: JSON document with category availability matrix
+  - from_task: wave4-row-pipeline-validate
+    to_task: wave8-ui-contract-audit
+    interface: ROW pipeline operational confirmation with populated MS-5, MS-6, MS-7 fields
+    format: Postman capture showing non-null ROW projection fields
+  - from_task: wave5-expand-rolling-stats
+    to_task: wave8-ui-contract-audit
+    interface: Rolling stats 18/18 categories operational confirmation
+    format: Database query result showing all 18 categories populated in player_rolling_stats
+  - from_task: wave6-expand-ros-projections
+    to_task: wave8-ui-contract-audit
+    interface: ROS projections 18/18 categories operational confirmation
+    format: API response showing all 18 categories in ros_projection field
+  - from_task: wave8-ui-contract-audit
+    to_task: wave9-matchup-scoreboard-p1
+    interface: UI readiness validation report with READY >50%, MISSING <30%
+    format: Markdown audit report with field-by-field status
+
+tasks:
+  - id: wave1-handoff-restructure
+    title: Restructure HANDOFF.md from 500 to 150 lines
+    description: |
+      Restructure HANDOFF.md into 6 focused sections: §1 Mission Accomplished, §2 Current State (Deploy State, 
+      Phase Plan Progress, Open Defects), §3 Delegation Bundles, §4 References. Move session logs to memory/YYYY-MM-DD.md, 
+      architect decisions to tasks/architect_review.md, layer status detail to docs/ARCHITECTURE.md. Target: 500 lines → 150 lines.
+    wave: 1
+    agent: gem-documentation-writer
+    prototype: false
+    covers: []
+    priority: medium
+    status: pending
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: HANDOFF.md
+        description: Current 500-line bloated document with session logs, defects, phase status mixed together
+      - path: AGENTS.md
+        description: Agent role definitions and swimlane routing conventions
+      - path: CLAUDE.md
+        description: Project orientation and file map
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Initial task creation for document restructure
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: small
+        estimated_files: 2
+        estimated_lines: 150
+        focus_area: Documentation cleanup
+        verification:
+          - HANDOFF.md is 150 lines or less
+          - Session logs moved to memory/2026-04-21.md
+          - Architect decisions moved to tasks/architect_review.md
+          - Layer status detail moved to docs/ARCHITECTURE.md
+          - HANDOFF.md has clean §1-6 structure with no historical logs
+        acceptance_criteria:
+          - HANDOFF.md line count: ≤150 lines
+          - Zero session log entries in HANDOFF.md (all moved to memory/)
+          - §1 Mission Accomplished: 1-2 paragraphs on latest session only
+          - §2 Current State: Deploy state table, Phase plan table, Open defects table
+          - §3 Delegation Bundles: One subsection per active agent with verbatim prompt
+          - §4 References: Links to memory/, tasks/, docs/ only
+        failure_modes:
+          - scenario: Critical operational detail mistakenly moved to memory/ causing loss of context
+            likelihood: medium
+            impact: medium
+            mitigation: Review HANDOFF.md history before moving; preserve any decision that affects current work
+    task_type: update
+    audience: developers
+
+  - id: wave1-create-memory-logs
+    title: Create memory/YYYY-MM-DD.md session log files
+    description: |
+      Extract session logs from HANDOFF.md §3 and create daily memory files: memory/2026-04-19.md (lineup/admin repair session), 
+      memory/2026-04-20.md (UAT remediation session), memory/2026-04-21.md (Postman regression fixes + post-deploy UAT v5 session). 
+      Each file should follow format: date, agent, commits, file changes, validation results.
+    wave: 1
+    agent: gem-documentation-writer
+    prototype: false
+    covers: []
+    priority: medium
+    status: pending
+    dependencies:
+      - wave1-handoff-restructure
+    conflicts_with: []
+    context_files:
+      - path: HANDOFF.md
+        description: Source of session log content (§3 Recent Session Log)
+      - path: memory/
+        description: Target directory for session logs
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Create session log extraction task
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: small
+        estimated_files: 3
+        estimated_lines: 200
+        focus_area: Session log extraction
+        verification:
+          - memory/2026-04-19.md exists with lineup/admin repair session
+          - memory/2026-04-20.md exists with UAT remediation session
+          - memory/2026-04-21.md exists with Postman regression + UAT v5 session
+          - Each file has date, agent, commits, file changes, validation results
+        acceptance_criteria:
+          - Three new files created in memory/
+          - Each file follows daily session log format
+          - All session detail from HANDOFF.md §3 preserved
+          - Git commit SHAs preserved for each session
+        failure_modes:
+          - scenario: Session logs lose critical commit SHA references during extraction
+            likelihood: low
+            impact: medium
+            mitigation: Cross-reference git log during extraction to preserve exact commit references
+    task_type: documentation
+    audience: developers
+
+  - id: wave1-create-architect-review
+    title: Create tasks/architect_review.md for open decisions
+    description: |
+      Extract architectural decisions and open questions from HANDOFF.md §2.3 (Open Defects) that require architect judgment, 
+      not implementation. Examples: NSB composite test failure (#3), unknown Yahoo stat_ids handling (#4), schedule-blind lineup 
+      fallback mode flag (#6). Structure as decision queue with context, options, recommendation, decision status.
+    wave: 1
+    agent: gem-documentation-writer
+    prototype: false
+    covers: []
+    priority: low
+    status: pending
+    dependencies:
+      - wave1-handoff-restructure
+    conflicts_with: []
+    context_files:
+      - path: HANDOFF.md
+        description: Source of open architectural decisions (§2.3 Open Defects)
+      - path: tasks/
+        description: Target directory for architect review file
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Create architect decision extraction task
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: small
+        estimated_files: 1
+        estimated_lines: 100
+        focus_area: Architect decision extraction
+        verification:
+          - tasks/architect_review.md exists
+          - Contains #3 NSB composite test decision
+          - Contains #4 unknown stat_ids logging decision
+          - Contains #6 schedule fallback mode flag decision
+          - Each decision has context, options, recommendation, status
+        acceptance_criteria:
+          - File created with ≥3 decision items
+          - Each item structured as: ID, Context, Options, Recommendation, Status
+          - No implementation detail (focuses on policy/design choices only)
+        failure_modes:
+          - scenario: Implementation tasks mistakenly categorized as architect decisions
+            likelihood: medium
+            impact: low
+            mitigation: Only extract items explicitly labeled "Architect — decide" in HANDOFF.md
+    task_type: documentation
+    audience: developers
+
+  - id: wave2-deploy-fixes
+    title: Deploy Apr 21 uncommitted fixes to Railway
+    description: |
+      Deploy the Apr 21 Postman P0/P1 regression fixes (roster ImportError hoist, briefing MONITOR routing, waiver MCMC gate, 
+      stat-contract filter) to Railway. Verify py_compile clean, run targeted pytest (72 tests), commit, push to stable/cbb-prod, 
+      confirm Railway auto-deploy, wait for /admin/version to reflect new commit SHA.
+    wave: 2
+    agent: gem-devops
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave1-handoff-restructure
+    conflicts_with: []
+    context_files:
+      - path: backend/routers/fantasy.py
+        description: Roster ImportError hoist
+      - path: backend/fantasy_baseball/daily_briefing.py
+        description: Briefing MONITOR routing fix
+      - path: backend/fantasy_baseball/smart_lineup_selector.py
+        description: Lineup warning rewording
+      - path: tests/test_waiver_recommendations_gates.py
+        description: MCMC gate regression test
+      - path: tests/test_daily_briefing_no_game_contract.py
+        description: Briefing contract regression test
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Deploy uncommitted fixes from Apr 21 sessions
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: small
+        estimated_files: 6
+        estimated_lines: 100
+        focus_area: Deployment of tested fixes
+        verification:
+          - py_compile passes for all 3 backend files
+          - pytest 72 tests pass (waiver + briefing slice)
+          - Git commit created with semantic message
+          - Railway deploy succeeds
+          - /admin/version reflects new commit SHA
+        acceptance_criteria:
+          - All uncommitted files deployed to Railway
+          - Railway logs show no errors during startup
+          - /admin/version returns new commit SHA
+          - Pre-deploy validation (py_compile + pytest) passes
+        failure_modes:
+          - scenario: Railway deploy fails due to missing environment variable
+            likelihood: low
+            impact: high
+            mitigation: Pre-check Railway env vars before deploy; validate DATABASE_URL, YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET present
+    environment: production
+    requires_approval: true
+    devops_security_sensitive: false
+
+  - id: wave2-validate-enrichment
+    title: Validate enrichment fixes with fresh Postman captures
+    description: |
+      Run Postman validation suite against Railway production after Wave 2 deploy. Capture responses to 
+      postman_collections/responses/2026-04-22/ for: GET /api/fantasy/roster (verify players_with_stats >0%), 
+      GET /api/fantasy/waiver (verify matchup_opponent != "TBD", category_deficits >0), GET /api/fantasy/lineup/2026-04-22 
+      (verify pitcher warnings reduced). Compare to UAT v5 baseline. Report delta in tasks/uat_findings_post_deploy_v6.md.
+    wave: 2
+    agent: gem-browser-tester
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave2-deploy-fixes
+    conflicts_with: []
+    context_files:
+      - path: tasks/uat_findings_post_deploy_v5.md
+        description: Baseline UAT report showing 95 PASS / 3 FAIL / 1 WARN before fixes
+      - path: postman_collections/
+        description: Target directory for response captures
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Validate enrichment fixes in production
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: small
+        estimated_files: 1
+        estimated_lines: 200
+        focus_area: Post-deploy validation
+        verification:
+          - Postman captures saved to postman_collections/responses/2026-04-22/
+          - UAT v6 report shows FAIL count reduced from 3 to 0-1
+          - Roster players_with_stats >50% (was 0%)
+          - Waiver matchup_opponent != "TBD" (was "TBD")
+          - Waiver category_deficits >0 (was 0)
+        acceptance_criteria:
+          - Fresh Postman captures for 3 primary endpoints (roster, waiver, lineup)
+          - Delta report comparing UAT v5 vs v6 results
+          - PASS count increase OR FAIL count decrease documented
+          - Specific data quality improvements quantified (e.g., "0% → 65% players_with_stats")
+        failure_modes:
+          - scenario: Enrichment fixes don't persist across Yahoo API cache refresh
+            likelihood: medium
+            impact: high
+            mitigation: Capture responses at T+0, T+4h, T+24h to verify enrichment survives cache rotation
+    validation_matrix:
+      - scenario: Roster enrichment validation
+        steps:
+          - GET /api/fantasy/roster
+          - Parse response.players array
+          - Count players with non-null season_stats
+          - Assert >50% populated
+        expected_result: players_with_stats >50% (improved from 0%)
+      - scenario: Waiver matchup validation
+        steps:
+          - GET /api/fantasy/waiver?position=ALL
+          - Parse response.scoreboard_context.matchup_opponent
+          - Assert != "TBD"
+          - Parse response.scoreboard_context.category_deficits
+          - Assert length >0
+        expected_result: matchup_opponent is real team code, category_deficits array non-empty
+      - scenario: Lineup pitcher warnings validation
+        steps:
+          - GET /api/fantasy/lineup/2026-04-22
+          - Parse response.warnings array
+          - Count warnings containing "no start today"
+          - Compare to UAT v5 baseline
+        expected_result: Pitcher warnings reduced or eliminated (was 2 warnings)
+
+  - id: wave3-diagnose-player-id
+    title: Diagnose PlayerIDMapping table ingestion
+    description: |
+      Investigate why PlayerIDMapping table is empty in production. Check backend/services/daily_ingestion.py for missing 
+      PlayerIDMapping sync job. Query production database to confirm row count. If job exists, check logs for ingestion failures. 
+      If job missing, document gap and recommend implementation approach (BDL player ID sync + MLBAM ID join).
+    wave: 3
+    agent: gem-debugger
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave2-validate-enrichment
+    conflicts_with: []
+    context_files:
+      - path: backend/services/daily_ingestion.py
+        description: Daily job scheduler - check for PlayerIDMapping sync job
+      - path: backend/models.py
+        description: PlayerIDMapping model definition
+      - path: backend/services/balldontlie.py
+        description: BDL client - check for player ID endpoints
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Root cause PlayerIDMapping empty table
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: medium
+        estimated_files: 3
+        estimated_lines: 50
+        focus_area: Data ingestion diagnosis
+        verification:
+          - Production database query confirms PlayerIDMapping row count
+          - daily_ingestion.py audit reveals job presence/absence
+          - Railway logs checked for ingestion error patterns
+          - Root cause documented (missing job OR failed job OR missing data source)
+        acceptance_criteria:
+          - Technical report with root cause analysis
+          - PlayerIDMapping row count confirmed (expected >90% of roster players)
+          - Recommended fix documented (build new job OR fix existing job OR change data source)
+          - Data source availability confirmed (BDL player API OR alternative)
+        failure_modes:
+          - scenario: PlayerIDMapping ingestion never built because BDL player API doesn't exist
+            likelihood: high
+            impact: high
+            mitigation: Research BDL API docs for /mlb/v1/players endpoint before recommending implementation
+
+  - id: wave3-verify-rolling-stats-freshness
+    title: Verify player_rolling_stats freshness in production
+    description: |
+      Query player_rolling_stats table in production to check as_of_date freshness. Expected: ≤7 days stale. 
+      Actual: document staleness. If >7 days, check daily_ingestion.py for rolling_stats job and Railway logs for errors. 
+      Report findings in tasks/data_quality_audit.md with table name, expected freshness, actual freshness, recommended action.
+    wave: 3
+    agent: gem-debugger
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave2-validate-enrichment
+    conflicts_with: []
+    context_files:
+      - path: backend/services/daily_ingestion.py
+        description: Rolling stats ingestion job
+      - path: backend/models.py
+        description: PlayerRollingStats model definition
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Verify rolling stats data freshness
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: small
+        estimated_files: 2
+        estimated_lines: 30
+        focus_area: Data freshness validation
+        verification:
+          - SQL query returns most recent as_of_date from player_rolling_stats
+          - Staleness calculated (current_date - as_of_date)
+          - Findings documented in tasks/data_quality_audit.md
+          - If stale, daily_ingestion.py job checked for execution
+        acceptance_criteria:
+          - as_of_date confirmed (expected ≤7 days stale)
+          - If stale, root cause documented (job not running OR job failing)
+          - Recommended fix documented if stale
+        failure_modes:
+          - scenario: Rolling stats job runs but Yahoo API doesn't return fresh data
+            likelihood: medium
+            impact: medium
+            mitigation: Check Yahoo API response timestamps; document if Yahoo data itself is stale
+
+  - id: wave3-fix-ownership-pct-ingestion
+    title: Fix ownership_pct ingestion (currently all 0.0)
+    description: |
+      Investigate why ownership_pct field is 0.0 for all players. Check if Yahoo API provides ownership data and if 
+      backend/services/player_mapper.py correctly extracts it. If Yahoo doesn't provide it, document alternative sources 
+      (FanGraphs, ESPN) and recommend implementation approach. If extraction broken, fix player_mapper.py and add regression test.
+    wave: 3
+    agent: gem-implementer
+    prototype: false
+    covers: []
+    priority: medium
+    status: pending
+    dependencies:
+      - wave3-diagnose-player-id
+    conflicts_with: []
+    context_files:
+      - path: backend/services/player_mapper.py
+        description: Player enrichment logic - check ownership_pct extraction
+      - path: backend/fantasy_baseball/yahoo_client_resilient.py
+        description: Yahoo API client - verify ownership data in API responses
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Fix ownership percentage data ingestion
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: medium
+        estimated_files: 2
+        estimated_lines: 50
+        focus_area: Ownership data ingestion
+        verification:
+          - Yahoo API response structure documented (does it provide ownership?)
+          - player_mapper.py extraction logic reviewed
+          - If broken, fix implemented and py_compile passes
+          - Regression test added in tests/test_player_mapper.py
+        acceptance_criteria:
+          - Root cause documented (Yahoo doesn't provide OR extraction broken)
+          - If Yahoo provides, extraction fix implemented
+          - If Yahoo doesn't provide, alternative source recommended
+          - Regression test passes
+        failure_modes:
+          - scenario: Yahoo API provides ownership only for league-specific context, not globally
+            likelihood: high
+            impact: medium
+            mitigation: Document Yahoo API limitation; consider FanGraphs ADP as proxy for ownership
+    tech_stack:
+      - Python 3.11
+      - Yahoo Fantasy API
+      - SQLAlchemy
+    test_coverage: Unit test for ownership_pct extraction in tests/test_player_mapper.py
+
+  - id: wave4-row-pipeline-design
+    title: Design rest-of-week projection pipeline specification
+    description: |
+      Design ROW projection calculation algorithm. Input: rolling_stats (7d/14d/30d by category), season_stats, 
+      games_remaining_this_week per player. Output: ROWProjectionResult with 18 categories. Define games-remaining inference 
+      logic (Yahoo scoreboard API OR MLB Stats API schedule). Document edge cases: no games remaining, missing rolling stats, 
+      ratio stat accumulation. Produce technical spec in docs/row_projection_spec.md with pseudo-code and test cases.
+    wave: 4
+    agent: gem-researcher
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave3-verify-rolling-stats-freshness
+    conflicts_with: []
+    context_files:
+      - path: backend/services/row_projector.py
+        description: Check if module exists (HANDOFF.md says Phase 2 complete but may be stub)
+      - path: backend/contracts.py
+        description: ROWProjectionResult dataclass definition (if exists)
+      - path: backend/services/category_math.py
+        description: Category math reference for ratio stat handling
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Design ROW projection algorithm before implementation
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: medium
+        estimated_files: 1
+        estimated_lines: 200
+        focus_area: Algorithm design for ROW projections
+        verification:
+          - docs/row_projection_spec.md created with algorithm pseudo-code
+          - Input/output contracts defined
+          - Edge cases documented (no games, missing stats, ratio accumulation)
+          - Games-remaining data source confirmed (Yahoo OR MLB Stats API)
+        acceptance_criteria:
+          - Technical spec with ≥3 test cases
+          - Pseudo-code for 18-category projection calculation
+          - Edge case handling documented
+          - Data source availability confirmed
+        failure_modes:
+          - scenario: Yahoo API doesn't provide games-remaining-this-week, requiring MLB Stats API fallback
+            likelihood: medium
+            impact: critical
+            mitigation: Pre-research both Yahoo scoreboard structure and MLB Stats API schedule endpoint during design phase
+
+  - id: wave4-row-pipeline-implement
+    title: Implement ROW projection pipeline in backend/services/row_projector.py
+    description: |
+      Implement compute_row_projection() function per docs/row_projection_spec.md design. Input: rolling_stats dict, 
+      season_stats dict, games_remaining int. Output: ROWProjectionResult with 18 categories (counting + ratio). 
+      Handle edge cases: no games remaining (return zeros), missing rolling stats (fall back to season pace), 
+      ratio stat accumulation (AVG, OPS, ERA, WHIP, K_9 require numerator/denominator tracking).
+    wave: 4
+    agent: gem-implementer
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave4-row-pipeline-design
+    conflicts_with: []
+    context_files:
+      - path: docs/row_projection_spec.md
+        description: ROW projection algorithm design spec
+      - path: backend/services/category_math.py
+        description: Reference for ratio stat handling
+      - path: backend/contracts.py
+        description: ROWProjectionResult dataclass (add if missing)
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Implement ROW projection algorithm
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: large
+        estimated_files: 2
+        estimated_lines: 300
+        focus_area: ROW projection implementation
+        verification:
+          - backend/services/row_projector.py passes py_compile
+          - Unit tests added in tests/test_row_projector.py
+          - Test cases from design spec pass
+          - Edge cases handled (no games, missing stats)
+        acceptance_criteria:
+          - compute_row_projection() function implemented
+          - 18 categories projected (R, H, HR_B, RBI, K_B, TB, NSB, AVG, OPS, W, L, HR_P, K_P, QS, NSV, ERA, WHIP, K_9)
+          - Ratio stat accumulation correct
+          - Unit tests pass (≥5 test cases)
+        failure_modes:
+          - scenario: Ratio stat accumulation logic incorrect (AVG/OPS/ERA/WHIP/K_9 miscalculated)
+            likelihood: medium
+            impact: high
+            mitigation: Cross-reference backend/services/category_math.py for correct ratio handling; add explicit ratio test cases
+    tech_stack:
+      - Python 3.11
+      - SQLAlchemy
+      - Pydantic
+    test_coverage: Unit tests in tests/test_row_projector.py covering 18 categories and edge cases
+
+  - id: wave4-row-pipeline-wire
+    title: Wire ROW projection pipeline into scoreboard API
+    description: |
+      Wire compute_row_projection() into GET /api/fantasy/scoreboard orchestrator. Add fields MS-5 (my_row_projection), 
+      MS-6 (opp_row_projection), MS-7 (row_impact) to scoreboard response. Update backend/schemas.py ScoreboardRow model. 
+      Call row_projector.compute_row_projection() for each player on my roster and opponent roster. Aggregate by category.
+    wave: 4
+    agent: gem-implementer
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave4-row-pipeline-implement
+    conflicts_with: []
+    context_files:
+      - path: backend/routers/fantasy.py
+        description: Scoreboard endpoint - add ROW projection calls
+      - path: backend/services/dashboard_service.py
+        description: Scoreboard orchestrator - wire row_projector calls
+      - path: backend/schemas.py
+        description: ScoreboardRow model - add MS-5, MS-6, MS-7 fields
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Wire ROW projections into scoreboard API
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: medium
+        estimated_files: 3
+        estimated_lines: 150
+        focus_area: API integration for ROW projections
+        verification:
+          - backend/schemas.py ScoreboardRow has MS-5, MS-6, MS-7 fields
+          - GET /api/fantasy/scoreboard returns populated ROW projection fields
+          - py_compile passes for all 3 files
+          - Regression test added in tests/test_scoreboard_contract.py
+        acceptance_criteria:
+          - ScoreboardRow model updated with new fields
+          - Scoreboard orchestrator calls compute_row_projection()
+          - Response shows non-null MS-5, MS-6, MS-7 for all 18 categories
+          - Regression test passes
+        failure_modes:
+          - scenario: ROW projection calls slow down scoreboard endpoint (>3s response time)
+            likelihood: medium
+            impact: medium
+            mitigation: Profile row_projector.compute_row_projection() performance; optimize if >100ms per player
+    tech_stack:
+      - FastAPI
+      - Pydantic
+      - Python 3.11
+    test_coverage: Regression test in tests/test_scoreboard_contract.py
+
+  - id: wave4-row-pipeline-validate
+    title: Validate ROW projection pipeline with Postman capture
+    description: |
+      Capture GET /api/fantasy/scoreboard response to postman_collections/responses/2026-04-22-row-validation.json. 
+      Verify MS-5, MS-6, MS-7 fields present and non-null. Compare projected values against actual rolling stats for 
+      sanity check. Document validation in tasks/row_validation_report.md.
+    wave: 4
+    agent: gem-browser-tester
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave4-row-pipeline-wire
+    conflicts_with: []
+    context_files:
+      - path: postman_collections/
+        description: Target directory for validation capture
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Validate ROW projections in production
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: small
+        estimated_files: 1
+        estimated_lines: 100
+        focus_area: ROW projection validation
+        verification:
+          - Postman capture saved with populated MS-5, MS-6, MS-7 fields
+          - Sanity check passes (projected values reasonable vs rolling stats)
+          - Validation report documents findings
+        acceptance_criteria:
+          - MS-5, MS-6, MS-7 fields present for all 18 categories
+          - No null values in ROW projections
+          - Projected values pass sanity check (within 2x of rolling averages)
+        failure_modes:
+          - scenario: ROW projections wildly off (10x rolling averages) indicating calculation bug
+            likelihood: medium
+            impact: high
+            mitigation: Add explicit bounds checking in row_projector.py; cap projections at 3x rolling average
+    validation_matrix:
+      - scenario: ROW projection sanity check
+        steps:
+          - GET /api/fantasy/scoreboard
+          - Parse MS-5 (my_row_projection) for category R
+          - Compare to my rolling_14d R average × games_remaining
+          - Assert within 2x tolerance
+        expected_result: Projected R within 50-200% of rolling average × games_remaining
+
+  - id: wave5-verify-yahoo-categories
+    title: Verify Yahoo API provides W, L, HR_P, NSV category data
+    description: |
+      Research Yahoo Fantasy API documentation and live API responses to confirm availability of pitching categories W, L, HR_P, NSV. 
+      HANDOFF.md notes these 4 categories deferred "awaiting upstream Yahoo data." Capture API response structure to 
+      postman_collections/yahoo_api_structure.json. Document findings in tasks/yahoo_category_availability.md. If missing, 
+      recommend alternative data sources or mark as permanently out of scope.
+    wave: 5
+    agent: gem-researcher
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave3-verify-rolling-stats-freshness
+    conflicts_with: []
+    context_files:
+      - path: backend/fantasy_baseball/yahoo_client_resilient.py
+        description: Yahoo API client - check player stats response structure
+      - path: HANDOFF.md
+        description: Notes that W, L, HR_P, NSV deferred awaiting upstream data
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Confirm Yahoo API category availability before expanding rolling stats
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: small
+        estimated_files: 1
+        estimated_lines: 50
+        focus_area: Data source validation
+        verification:
+          - Yahoo API response structure documented
+          - W, L, HR_P, NSV availability confirmed (yes/no per category)
+          - Findings documented in tasks/yahoo_category_availability.md
+          - If missing, alternative sources recommended
+        acceptance_criteria:
+          - Category availability matrix (4 categories × yes/no)
+          - API response structure captured
+          - Alternative sources documented if Yahoo doesn't provide
+        failure_modes:
+          - scenario: Yahoo provides W, L but not HR_P, NSV
+            likelihood: medium
+            impact: medium
+            mitigation: Document partial availability; recommend FanGraphs or MLB Stats API for missing categories
+
+  - id: wave5-expand-rolling-stats
+    title: Expand rolling stats ingestion from 9/18 to 18/18 categories
+    description: |
+      Expand backend/services/rolling_stats.py (or equivalent ingestion module) to ingest all 18 categories. Add missing batting: R, TB. 
+      Add missing pitching: W, L, HR_P, K_P, QS, NSV (if Yahoo provides per wave5-verify-yahoo-categories). Update player_rolling_stats 
+      table schema if needed. Verify ingestion job populates all 18 categories in production.
+    wave: 5
+    agent: gem-implementer
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave5-verify-yahoo-categories
+    conflicts_with: []
+    context_files:
+      - path: backend/services/rolling_stats.py
+        description: Rolling stats ingestion logic (if exists; may be in daily_ingestion.py)
+      - path: backend/models.py
+        description: PlayerRollingStats model - verify schema supports 18 categories
+      - path: tasks/yahoo_category_availability.md
+        description: Yahoo category availability findings
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Expand rolling stats from 9/18 to 18/18 categories
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: large
+        estimated_files: 2
+        estimated_lines: 200
+        focus_area: Rolling stats expansion
+        verification:
+          - py_compile passes for modified files
+          - Unit tests added for new categories
+          - Production database query confirms 18/18 categories populated
+          - Ingestion job runs successfully
+        acceptance_criteria:
+          - Rolling stats ingestion expanded to 18 categories
+          - player_rolling_stats table rows show all 18 categories non-null (where Yahoo provides data)
+          - Regression test passes for new categories
+        failure_modes:
+          - scenario: Yahoo doesn't provide 4 deferred categories (W, L, HR_P, NSV), blocking 18/18 completion
+            likelihood: medium
+            impact: high
+            mitigation: Document as known limitation; proceed with 14/18 if Yahoo blocks 4 categories
+    tech_stack:
+      - Python 3.11
+      - SQLAlchemy
+      - Yahoo Fantasy API
+    test_coverage: Unit tests for 18-category ingestion in tests/test_rolling_stats.py
+
+  - id: wave5-expose-rolling-stats
+    title: Expose rolling_7d/14d/30d in GET /api/fantasy/roster response
+    description: |
+      Wire player_rolling_stats table joins into GET /api/fantasy/roster endpoint. Update backend/schemas.py PlayerWithStats model 
+      to include rolling_7d, rolling_14d, rolling_30d fields (dict of 18 categories). Update player_mapper.py enrichment logic 
+      to query player_rolling_stats and populate these fields. Verify Postman capture shows populated rolling stats.
+    wave: 5
+    agent: gem-implementer
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave5-expand-rolling-stats
+    conflicts_with: []
+    context_files:
+      - path: backend/routers/fantasy.py
+        description: Roster endpoint - add rolling stats joins
+      - path: backend/services/player_mapper.py
+        description: Player enrichment - query player_rolling_stats table
+      - path: backend/schemas.py
+        description: PlayerWithStats model - add rolling_7d/14d/30d fields
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Expose rolling stats in roster API
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: medium
+        estimated_files: 3
+        estimated_lines: 150
+        focus_area: API integration for rolling stats
+        verification:
+          - PlayerWithStats schema has rolling_7d/14d/30d fields
+          - GET /api/fantasy/roster returns populated rolling stats
+          - py_compile passes for all 3 files
+          - Regression test added
+        acceptance_criteria:
+          - Roster response includes rolling_7d/14d/30d for all players
+          - Rolling stats populated with 18 categories (or 14 if Yahoo blocks 4)
+          - Regression test passes
+        failure_modes:
+          - scenario: Rolling stats join slows down roster endpoint (>3s response time)
+            likelihood: medium
+            impact: medium
+            mitigation: Add database index on player_rolling_stats(yahoo_key, as_of_date); profile query performance
+    tech_stack:
+      - FastAPI
+      - SQLAlchemy
+      - Pydantic
+    test_coverage: Regression test in tests/test_roster_contract.py
+
+  - id: wave6-expand-ros-projections
+    title: Expand ROS projections from 8/18 to 18/18 categories
+    description: |
+      Audit backend/services/projections_loader.py (or equivalent) to confirm current ROS projection coverage. HANDOFF.md notes 
+      "ROS projections only 8/18 categories." Expand to all 18 categories. Add missing categories per UI contract audit. 
+      Cap impossible extrapolations (0.00 ERA ROS, 91.2 HR ROS, 204.4 RBI ROS noted as defect #8). Add plausible bounds.
+    wave: 6
+    agent: gem-implementer
+    prototype: false
+    covers: []
+    priority: medium
+    status: pending
+    dependencies:
+      - wave5-expand-rolling-stats
+    conflicts_with: []
+    context_files:
+      - path: backend/services/projections_loader.py
+        description: ROS projection loading logic
+      - path: backend/models.py
+        description: PlayerProjection model - verify schema
+      - path: HANDOFF.md
+        description: Defect #8 notes impossible projection extrapolations
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Expand ROS projections to 18 categories with bounds
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: medium
+        estimated_files: 2
+        estimated_lines: 200
+        focus_area: ROS projection expansion
+        verification:
+          - ROS projection coverage expanded to 18 categories
+          - Plausible bounds added (ERA ≥0.50, HR ≤73, RBI ≤200)
+          - py_compile passes
+          - Unit tests for bounds checking
+        acceptance_criteria:
+          - ROS projections expanded to 18/18 categories
+          - Impossible extrapolations capped (ERA ≥0.50, HR ≤73, RBI ≤200)
+          - Regression test passes
+        failure_modes:
+          - scenario: Projection source (Steamer CSV) doesn't provide all 18 categories
+            likelihood: medium
+            impact: medium
+            mitigation: Document missing categories; use season pace as fallback for missing projections
+    tech_stack:
+      - Python 3.11
+      - SQLAlchemy
+    test_coverage: Unit tests for ROS projection bounds in tests/test_projections_loader.py
+
+  - id: wave6-expose-ros-projections
+    title: Expose ros_projection in GET /api/fantasy/roster response
+    description: |
+      Wire ros_projection field into GET /api/fantasy/roster endpoint. Update PlayerWithStats schema to include ros_projection 
+      (dict of 18 categories). Update player_mapper.py to query PlayerProjection table and populate ros_projection field. 
+      Verify Postman capture shows populated ROS projections for all players.
+    wave: 6
+    agent: gem-implementer
+    prototype: false
+    covers: []
+    priority: medium
+    status: pending
+    dependencies:
+      - wave6-expand-ros-projections
+    conflicts_with: []
+    context_files:
+      - path: backend/routers/fantasy.py
+        description: Roster endpoint - add ROS projection join
+      - path: backend/services/player_mapper.py
+        description: Player enrichment - query PlayerProjection table
+      - path: backend/schemas.py
+        description: PlayerWithStats model - add ros_projection field
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Expose ROS projections in roster API
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: small
+        estimated_files: 3
+        estimated_lines: 100
+        focus_area: API integration for ROS projections
+        verification:
+          - PlayerWithStats schema has ros_projection field
+          - GET /api/fantasy/roster returns populated ROS projections
+          - py_compile passes
+          - Regression test added
+        acceptance_criteria:
+          - Roster response includes ros_projection for all players
+          - ROS projections populated with 18 categories
+          - Regression test passes
+        failure_modes:
+          - scenario: ROS projection join slows down roster endpoint
+            likelihood: low
+            impact: medium
+            mitigation: Use existing player_mapper join logic; no additional query needed if PlayerProjection already joined
+    tech_stack:
+      - FastAPI
+      - SQLAlchemy
+      - Pydantic
+    test_coverage: Regression test in tests/test_roster_contract.py
+
+  - id: wave7-implement-games-remaining
+    title: Implement games-remaining-this-week calculation per player
+    description: |
+      Implement per-player games-remaining-this-week calculation. Use MLB Stats API schedule endpoint to fetch team schedules 
+      for current week. Join to player rosters via PlayerIDMapping(mlbam_id). Calculate games remaining from current date to 
+      end of matchup week (Yahoo matchup week boundaries). Store in player_rolling_stats or new table. Handle edge cases: 
+      All-Star break, playoff schedules, rainouts.
+    wave: 7
+    agent: gem-implementer
+    prototype: false
+    covers: []
+    priority: medium
+    status: pending
+    dependencies:
+      - wave3-diagnose-player-id
+    conflicts_with: []
+    context_files:
+      - path: backend/services/mlb_analysis.py
+        description: MLB Stats API client - schedule endpoint
+      - path: backend/models.py
+        description: PlayerIDMapping model for MLBAM ID joins
+      - path: backend/services/constraint_helpers.py
+        description: count_games_remaining() function reference
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Implement games-remaining calculation for ROW projections and waiver filters
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: large
+        estimated_files: 3
+        estimated_lines: 250
+        focus_area: Games-remaining calculation
+        verification:
+          - Games-remaining calculation implemented
+          - MLB Stats API schedule data fetched successfully
+          - PlayerIDMapping join operational
+          - py_compile passes
+          - Unit tests for edge cases (All-Star break, rainouts)
+        acceptance_criteria:
+          - Per-player games-remaining-this-week field populated
+          - Edge cases handled (All-Star break returns 0 games)
+          - Regression test passes
+        failure_modes:
+          - scenario: PlayerIDMapping empty blocks MLBAM ID joins, causing games-remaining to fail
+            likelihood: high
+            impact: critical
+            mitigation: Wave 3 must resolve PlayerIDMapping ingestion before Wave 7 begins
+    tech_stack:
+      - Python 3.11
+      - MLB Stats API
+      - SQLAlchemy
+    test_coverage: Unit tests for games-remaining edge cases in tests/test_games_remaining.py
+
+  - id: wave7-wire-games-remaining
+    title: Wire games-remaining into waiver filters and scoreboard
+    description: |
+      Wire games-remaining-this-week field into GET /api/fantasy/waiver filters (WF-4) and GET /api/fantasy/scoreboard (MS-11). 
+      Update waiver_edge_detector.py to filter candidates by games_remaining >0. Update scoreboard_orchestrator.py to display 
+      games_remaining per player. Update schemas.py WaiverPlayer and ScoreboardRow models. Verify Postman captures show populated fields.
+    wave: 7
+    agent: gem-implementer
+    prototype: false
+    covers: []
+    priority: medium
+    status: pending
+    dependencies:
+      - wave7-implement-games-remaining
+    conflicts_with: []
+    context_files:
+      - path: backend/services/waiver_edge_detector.py
+        description: Waiver filters - add games_remaining >0 filter
+      - path: backend/services/dashboard_service.py
+        description: Scoreboard orchestrator - add games_remaining display
+      - path: backend/schemas.py
+        description: WaiverPlayer and ScoreboardRow models - add games_remaining fields
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Wire games-remaining into waiver and scoreboard APIs
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: medium
+        estimated_files: 3
+        estimated_lines: 150
+        focus_area: API integration for games-remaining
+        verification:
+          - WaiverPlayer schema has games_remaining field
+          - ScoreboardRow schema has games_remaining field (MS-11)
+          - Waiver filters apply games_remaining >0 (WF-4)
+          - Postman captures show populated fields
+          - py_compile passes
+        acceptance_criteria:
+          - Waiver response includes games_remaining for all candidates
+          - Scoreboard response includes games_remaining per player (MS-11)
+          - Waiver filters exclude players with 0 games remaining (WF-4)
+          - Regression test passes
+        failure_modes:
+          - scenario: games_remaining filter too aggressive, excludes valid candidates in Monday matchup weeks
+            likelihood: medium
+            impact: medium
+            mitigation: Use matchup week boundaries (not calendar week) for games-remaining calculation
+    tech_stack:
+      - FastAPI
+      - SQLAlchemy
+      - Pydantic
+    test_coverage: Regression test in tests/test_waiver_filters.py and tests/test_scoreboard_contract.py
+
+  - id: wave8-ui-contract-audit
+    title: Run UI contract audit against live production data
+    description: |
+      Run comprehensive UI contract audit against Railway production after Waves 4-7 complete. Audit all fields in 
+      GET /api/fantasy/scoreboard (MS-1 through MS-11) and GET /api/fantasy/roster (all PlayerWithStats fields). 
+      Categorize each field: READY (>90% populated), PARTIAL (50-90%), MISSING (<50%). Target: READY >50%, MISSING <30%. 
+      Document findings in tasks/ui_contract_audit_final.md.
+    wave: 8
+    agent: gem-browser-tester
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave4-row-pipeline-validate
+      - wave5-expose-rolling-stats
+      - wave6-expose-ros-projections
+      - wave7-wire-games-remaining
+    conflicts_with: []
+    context_files:
+      - path: postman_collections/
+        description: Target directory for audit captures
+      - path: tasks/uat_findings_post_deploy_v5.md
+        description: Baseline data quality findings
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Validate UI readiness before Phase 5 gate
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: medium
+        estimated_files: 1
+        estimated_lines: 300
+        focus_area: UI readiness validation
+        verification:
+          - Postman captures for scoreboard and roster endpoints
+          - Field-by-field audit categorized (READY/PARTIAL/MISSING)
+          - READY >50% achieved
+          - MISSING <30% achieved
+          - Audit report documents findings
+        acceptance_criteria:
+          - UI contract audit shows READY >50%, MISSING <30%
+          - Scoreboard fields MS-5, MS-6, MS-7 populated (ROW projections)
+          - Roster fields rolling_7d/14d/30d, ros_projection, row_projection populated
+          - Games-remaining field populated in waiver and scoreboard
+        failure_modes:
+          - scenario: Data quality improvements don't reach 50% READY threshold due to cascading missing joins
+            likelihood: medium
+            impact: critical
+            mitigation: Document exact field gaps; prioritize top 5 missing fields for hotfix wave before Phase 5
+    validation_matrix:
+      - scenario: Scoreboard ROW projection fields
+        steps:
+          - GET /api/fantasy/scoreboard
+          - Parse MS-5, MS-6, MS-7 fields
+          - Assert all 18 categories non-null
+        expected_result: MS-5, MS-6, MS-7 populated for all 18 categories
+      - scenario: Roster rolling stats fields
+        steps:
+          - GET /api/fantasy/roster
+          - Parse rolling_7d, rolling_14d, rolling_30d fields
+          - Count players with non-null rolling stats
+          - Assert >90% populated
+        expected_result: rolling_7d/14d/30d populated for >90% of roster
+      - scenario: Roster ROS projection fields
+        steps:
+          - GET /api/fantasy/roster
+          - Parse ros_projection field
+          - Count players with non-null ROS projections
+          - Assert >90% populated
+        expected_result: ros_projection populated for >90% of roster
+      - scenario: Waiver games-remaining filter
+        steps:
+          - GET /api/fantasy/waiver?position=ALL
+          - Parse games_remaining field for all candidates
+          - Assert all candidates have games_remaining ≥0
+        expected_result: games_remaining populated for 100% of waiver candidates
+
+  - id: wave8-phase-5-gate-decision
+    title: Phase 5 UI enablement gate decision
+    description: |
+      Review UI contract audit findings from wave8-ui-contract-audit. If READY >50% and MISSING <30%, approve Phase 5 start. 
+      If thresholds not met, document top 5 blocking fields and create hotfix wave. Document gate decision in 
+      tasks/phase_5_gate_decision.md with approval/rejection, blocking fields (if rejected), recommended timeline.
+    wave: 8
+    agent: gem-critic
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave8-ui-contract-audit
+    conflicts_with: []
+    context_files:
+      - path: tasks/ui_contract_audit_final.md
+        description: UI contract audit findings
+      - path: HANDOFF.md
+        description: Phase plan table - update Phase 5 status
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Gate Phase 5 start on data quality threshold
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: small
+        estimated_files: 1
+        estimated_lines: 50
+        focus_area: Gate decision
+        verification:
+          - Gate decision documented in tasks/phase_5_gate_decision.md
+          - If approved, HANDOFF.md Phase 5 status updated to "READY"
+          - If rejected, top 5 blocking fields documented
+          - Recommended timeline provided
+        acceptance_criteria:
+          - Gate decision documented (APPROVED or REJECTED)
+          - If APPROVED, Phase 5 unblocked
+          - If REJECTED, blocking fields and hotfix plan documented
+        failure_modes:
+          - scenario: Gate rejected but no clear hotfix path for top 5 blocking fields
+            likelihood: low
+            impact: high
+            mitigation: Provide alternative path (e.g., proceed with PARTIAL fields, document UI degradation)
+
+  - id: wave9-matchup-scoreboard-p1
+    title: Implement Phase 5 Matchup Scoreboard P1 UI
+    description: |
+      Build Next.js Matchup Scoreboard P1 page. Display 18-category scoreboard with my_total, opp_total, margin, 
+      win_probability, ROW projections (MS-5, MS-6, MS-7). Use GET /api/fantasy/scoreboard endpoint. Implement responsive 
+      layout, category color coding (winning=green, losing=red), mobile-first design. Target: production deploy within 2 weeks of gate approval.
+    wave: 9
+    agent: gem-designer
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave8-phase-5-gate-decision
+    conflicts_with: []
+    context_files:
+      - path: frontend/
+        description: Next.js frontend codebase
+      - path: backend/schemas.py
+        description: ScoreboardRow schema reference
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Build Matchup Scoreboard P1 UI after gate approval
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: large
+        estimated_files: 5
+        estimated_lines: 500
+        focus_area: Phase 5 Matchup Scoreboard UI
+        verification:
+          - Matchup Scoreboard page renders 18 categories
+          - ROW projection fields (MS-5, MS-6, MS-7) displayed
+          - Color coding functional (winning=green, losing=red)
+          - Mobile responsive
+          - Deployed to Railway
+        acceptance_criteria:
+          - Scoreboard page displays all 18 categories
+          - Win probability displayed prominently
+          - ROW projections visible (my_row_projection, opp_row_projection, row_impact)
+          - Mobile-first responsive design
+        failure_modes:
+          - scenario: Frontend deploy breaks due to Next.js build errors
+            likelihood: low
+            impact: medium
+            mitigation: Test frontend build locally before Railway deploy; use Railway preview deployments
+    task_type: documentation
+    audience: end-users
+
+  - id: wave9-my-roster-p1
+    title: Implement Phase 5 My Roster P1 UI
+    description: |
+      Build Next.js My Roster P1 page. Display roster table with player name, position, season_stats, rolling_7d/14d/30d, 
+      ros_projection, row_projection, game_context. Use GET /api/fantasy/roster endpoint. Implement sortable columns, 
+      player detail expansion, mobile-first design. Target: production deploy within 2 weeks of gate approval.
+    wave: 9
+    agent: gem-designer
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave8-phase-5-gate-decision
+    conflicts_with: []
+    context_files:
+      - path: frontend/
+        description: Next.js frontend codebase
+      - path: backend/schemas.py
+        description: PlayerWithStats schema reference
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Build My Roster P1 UI after gate approval
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: large
+        estimated_files: 5
+        estimated_lines: 500
+        focus_area: Phase 5 My Roster UI
+        verification:
+          - My Roster page renders roster table
+          - Rolling stats (7d/14d/30d) displayed
+          - ROS and ROW projections displayed
+          - Sortable columns functional
+          - Mobile responsive
+          - Deployed to Railway
+        acceptance_criteria:
+          - Roster table displays all 23 players
+          - season_stats, rolling_7d/14d/30d, ros_projection, row_projection visible
+          - Sortable by any stat column
+          - Player detail expansion shows game_context
+          - Mobile-first responsive design
+        failure_modes:
+          - scenario: Roster table too wide for mobile devices
+            likelihood: medium
+            impact: medium
+            mitigation: Use horizontal scroll on mobile; collapse less critical columns by default
+    task_type: documentation
+    audience: end-users
+
+  - id: wave10-testing-validation
+    title: Phase 5 E2E testing and validation
+    description: |
+      Run comprehensive E2E testing for Matchup Scoreboard and My Roster pages. Test user flows: view scoreboard, expand categories, 
+      check ROW projections, sort roster table, expand player details. Validate mobile responsive behavior. Run visual regression tests. 
+      Document findings in tasks/phase_5_e2e_validation.md.
+    wave: 10
+    agent: gem-browser-tester
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave9-matchup-scoreboard-p1
+      - wave9-my-roster-p1
+    conflicts_with: []
+    context_files:
+      - path: frontend/
+        description: Next.js frontend codebase
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: E2E validation for Phase 5 UI
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: medium
+        estimated_files: 1
+        estimated_lines: 200
+        focus_area: E2E testing
+        verification:
+          - User flows tested (scoreboard view, roster sort, player detail)
+          - Mobile responsive validated
+          - Visual regression tests pass
+          - Validation report documents findings
+        acceptance_criteria:
+          - All user flows pass
+          - No visual regressions
+          - Mobile responsive on iPhone/Android tested
+          - E2E validation report complete
+        failure_modes:
+          - scenario: Visual regressions due to CSS conflicts
+            likelihood: medium
+            impact: low
+            mitigation: Use Percy or Chromatic for visual regression baseline
+    validation_matrix:
+      - scenario: Scoreboard category expansion
+        steps:
+          - Navigate to /matchup-scoreboard
+          - Click category row to expand
+          - Verify ROW projection details visible
+        expected_result: ROW projections (MS-5, MS-6, MS-7) displayed on expansion
+      - scenario: Roster table sorting
+        steps:
+          - Navigate to /my-roster
+          - Click rolling_14d column header
+          - Verify table sorts descending
+        expected_result: Roster sorted by rolling_14d descending
+      - scenario: Mobile responsive scoreboard
+        steps:
+          - Navigate to /matchup-scoreboard on iPhone simulator
+          - Verify table scrolls horizontally
+          - Verify win probability prominent
+        expected_result: Scoreboard readable on mobile, no layout breaks
+
+  - id: wave10-production-deploy
+    title: Phase 5 production deploy and monitoring
+    description: |
+      Deploy Phase 5 UI (Matchup Scoreboard + My Roster) to Railway production. Monitor Railway logs for frontend errors. 
+      Capture production Postman responses for scoreboard and roster APIs. Verify frontend renders correctly. Monitor for 24 hours 
+      post-deploy. Document deploy status in memory/2026-04-XX-phase-5-deploy.md.
+    wave: 10
+    agent: gem-devops
+    prototype: false
+    covers: []
+    priority: high
+    status: pending
+    dependencies:
+      - wave10-testing-validation
+    conflicts_with: []
+    context_files:
+      - path: frontend/
+        description: Next.js frontend to deploy
+      - path: HANDOFF.md
+        description: Update Phase 5 status to COMPLETE
+    planning_pass: 1
+    planning_history:
+      - pass: 1
+        reason: Deploy Phase 5 UI to production
+        timestamp: '2026-04-21T20:00:00-05:00'
+        estimated_effort: small
+        estimated_files: 1
+        estimated_lines: 50
+        focus_area: Production deploy
+        verification:
+          - Railway deploy succeeds
+          - Frontend renders correctly in production
+          - No errors in Railway logs (24h window)
+          - Deploy documented in memory/
+        acceptance_criteria:
+          - Phase 5 UI live on Railway
+          - Scoreboard and roster pages render correctly
+          - No critical errors in 24h post-deploy window
+          - HANDOFF.md Phase 5 status updated to COMPLETE
+        failure_modes:
+          - scenario: Frontend deploy breaks due to Railway build config
+            likelihood: low
+            impact: high
+            mitigation: Test Railway preview deploy before production; rollback plan ready
+    environment: production
+    requires_approval: true
+    devops_security_sensitive: false

@@ -1502,8 +1502,9 @@ async def get_fantasy_waiver_recommendations(
             pass
 
         _fa_start = (page - 1) * per_page
+        _yahoo_pos = position if position and position.upper() != "ALL" else ""
         free_agents = client.get_free_agents(
-            position=position or "", start=_fa_start, count=per_page
+            position=_yahoo_pos, start=_fa_start, count=per_page
         )
 
         # Fetch scoreboard once and reuse for both opponent resolution and
@@ -2824,8 +2825,8 @@ async def optimize_roster(
 
         score = 50.0
         score_source = "default"
-        if player_key in player_key_to_bdl:
-            bdl_id = player_key_to_bdl[player_key]
+        if player_key in player_key_to_ids:
+            bdl_id = player_key_to_ids[player_key].get("bdl_id")
             if bdl_id in player_scores_map:
                 score = player_scores_map[bdl_id]
                 score_source = "player_scores"

@@ -1075,15 +1075,16 @@ class YahooFantasyClient:
 
         # Yahoo stat_id to canonical code mapping (from fantasy_stat_contract.json)
         # April 21 Issue 4 fix: K_P was mapped to wrong stat_id (41→28), showing wins instead of Ks
+        # April 21 Issue NSV/NSB fix: NSB (60) is batting, NSV (83) is pitching
         yahoo_to_canonical = {
             # Batting (higher better)
-            "7": "R", "8": "H", "12": "HR_B", "13": "RBI", "16": "TB",
+            "7": "R", "8": "H", "12": "HR_B", "13": "RBI", "16": "TB", "60": "NSB",
             # Batting (lower better)
             "10": "K_B",
             # Batting rate stats
-            "25": "AVG", "26": "OPS", "53": "NSV",  # NSV = NSB (Net Stolen Bases)
+            "25": "AVG", "26": "OPS",
             # Pitching (higher better)
-            "23": "W", "24": "L", "28": "K_P", "29": "QS", "57": "K_9",
+            "23": "W", "24": "L", "28": "K_P", "29": "QS", "57": "K_9", "83": "NSV",
             # Pitching (lower better)
             "35": "HR_P", "44": "ERA", "45": "WHIP",
         }

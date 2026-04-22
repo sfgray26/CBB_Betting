@@ -411,6 +411,57 @@ def optimize_lineup(
     return lineup, results
 
 
+def _find_weakest_for_candidate(
+    candidate: PlayerDecisionInput,
+    roster: list,
+) -> Optional[PlayerDecisionInput]:
+    """
+    Find the weakest roster player that a waiver candidate would replace.
+
+    Logic:
+    - Hitters: prefer weakest at same position, else weakest hitter overall
+    - Pitchers: prefer weakest pitcher at same role, else weakest pitcher overall
+    - Two-way: treat as hitter for replacement targeting
+    """
+    candidate_pt = (candidate.player_type or "unknown").lower()
+    candidate_positions = [p.upper() for p in (candidate.eligible_positions or [])]
+
+    hitters = [p for p in roster if (p.player_type or "unknown").lower() in ("hitter", "two_way")]
+    pitchers = [p for p in roster if (p.player_type or "unknown").lower() in ("pitcher", "two_way")]
+
+    if candidate_pt in ("hitter", "two_way"):
+        # Try to find weakest at same position first
+        for pos in candidate_positions:
+            if pos == "UTIL":
+                continue
+            same_pos = [p for p in hitters if pos in [x.upper() for x in (p.eligible_positions or [])]]
+            if same_pos:
+                return min(same_pos, key=_composite_value)
+        # Fallback: weakest hitter overall
+        return min(hitters, key=_composite_value) if hitters else None
+
+    if candidate_pt == "pitcher":
+        # Pitcher roles: SP vs RP vs P (any)
+        candidate_can_sp = "SP" in candidate_positions
+        candidate_can_rp = "RP" in candidate_positions
+        candidate_can_p = "P" in candidate_positions
+
+        sp_pool = [p for p in pitchers if "SP" in [x.upper() for x in (p.eligible_positions or [])]]
+        rp_pool = [p for p in pitchers if "RP" in [x.upper() for x in (p.eligible_positions or [])]]
+        p_pool = [p for p in pitchers if "P" in [x.upper() for x in (p.eligible_positions or [])]]
+
+        if candidate_can_sp and sp_pool:
+            return min(sp_pool, key=_composite_value)
+        if candidate_can_rp and rp_pool:
+            return min(rp_pool, key=_composite_value)
+        if candidate_can_p and p_pool:
+            return min(p_pool, key=_composite_value)
+        # Fallback: weakest pitcher overall
+        return min(pitchers, key=_composite_value) if pitchers else None
+
+    return None
+
+
 def optimize_waivers(
     roster: list,
     waiver_pool: list,
@@ -420,7 +471,7 @@ def optimize_waivers(
     Waiver intelligence: world-with vs world-without.
 
     For each waiver candidate, computes the value gain of adding the candidate
-    while dropping the weakest bench player on the current roster.
+    while dropping the weakest roster player at the appropriate position.
 
     Parameters
     ----------
@@ -438,20 +489,16 @@ def optimize_waivers(
     if not waiver_pool:
         return WaiverDecision(), []
 
-    lineup, _ = optimize_lineup(roster, as_of_date)
-    bench_ids = set(lineup.bench)
-    bench_candidates = [player for player in roster if player.bdl_player_id in bench_ids]
-    drop_pool = bench_candidates if bench_candidates else roster
-    drop_candidate = min(drop_pool, key=_composite_value) if drop_pool else None
-
-    if drop_candidate is None:
-        return WaiverDecision(), []
-
-    world_without_value = _composite_value(drop_candidate)
-
     recommendations: list = []
     for candidate in waiver_pool:
+        # Find the specific player this candidate would replace
+        drop_target = _find_weakest_for_candidate(candidate, roster)
+
+        if drop_target is None:
+            continue
+
         world_with_value = _composite_value(candidate)
+        world_without_value = _composite_value(drop_target)
         gain = world_with_value - world_without_value
 
         # Confidence scales with score_0_100 and momentum signal
@@ -462,11 +509,11 @@ def optimize_waivers(
         reasoning = (
             f"Add {candidate.name}: value_gain={gain:+.3f}, "
             f"score={candidate.score_0_100:.1f}, momentum={candidate.momentum_signal}; "
-            f"drop {drop_candidate.name}: value={world_without_value:.3f}"
+            f"drop {drop_target.name}: value={world_without_value:.3f}"
         )
         recommendations.append(WaiverRecommendation(
             add_player_id=candidate.bdl_player_id,
-            drop_player_id=drop_candidate.bdl_player_id,
+            drop_player_id=drop_target.bdl_player_id,
             value_gain=gain,
             confidence=confidence,
             reasoning=reasoning,
