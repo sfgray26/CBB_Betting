@@ -92,6 +92,10 @@ from backend.admin_statcast_diagnostics import router as _statcast_diag_router
 from backend.admin_scoring_diagnostics import router as _scoring_diag_router
 # END SCORING DIAGNOSTICS ENDPOINTS
 
+# DATA QUALITY MONITORING DASHBOARD
+from backend.routers import data_quality
+# END DATA QUALITY MONITORING DASHBOARD
+
 from backend.services.recalibration import compute_dynamic_weights
 from backend.services.discord_notifier import send_todays_bets
 from backend.services.sentinel import run_nightly_health_check
@@ -638,6 +642,9 @@ app.include_router(_statcast_diag_router, prefix="/admin", tags=["admin"])
 # SCORING DIAGNOSTICS ENDPOINTS - REMOVE AFTER NSB ROLLOUT VALIDATED
 app.include_router(_scoring_diag_router, prefix="/admin", tags=["admin"])
 # END SCORING DIAGNOSTICS ENDPOINTS
+
+# DATA QUALITY MONITORING DASHBOARD (Phase 1: diagnostic instrumentation)
+app.include_router(data_quality.router)
 
 # --- end strangler-fig mounts ---
 

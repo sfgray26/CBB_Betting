@@ -658,6 +658,17 @@ class DailyLineupOptimizer:
                 if not any(pos in b.positions for pos in eligible_positions):
                     continue
                 if apply_offday_filter and not _has_game(b.team):
+                    # Log data quality issue: player has no game when expected
+                    import json
+                    logger.info(json.dumps({
+                        "event": "data_quality_issue",
+                        "issue_type": "matchup_detection_miss",
+                        "player_name": b.name,
+                        "team": b.team,
+                        "game_date": game_date,
+                        "team_odds_keys": list(team_odds.keys()),
+                        "odds_api_games_count": len(games) if games else 0
+                    }))
                     continue
                 best = b
                 break

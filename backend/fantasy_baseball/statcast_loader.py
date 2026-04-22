@@ -310,6 +310,15 @@ def get_statcast_batter(name: str) -> Optional[StatcastBatter]:
             matched = match_yahoo_to_statcast(name, _batter_cache)
             if matched:
                 result = _batter_cache.get(matched)
+            else:
+                # Log data quality issue: name matching failed
+                import json
+                logger.info(json.dumps({
+                    "event": "data_quality_issue",
+                    "issue_type": "statcast_name_match_failure",
+                    "yahoo_name": name,
+                    "cache_keys_sample": list(_batter_cache.keys())[:5]
+                }))
         except Exception:
             pass
     return result
