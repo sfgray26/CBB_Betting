@@ -112,11 +112,34 @@ def long_term_hold_floor(player: dict) -> float:
     return score
 
 
-def drop_candidate_value(player: dict) -> float:
-    """Blend short-term category output with longer-term roster value."""
+def drop_candidate_value(player: dict) -> tuple:
+    """Return a comparable tuple for ranking drop candidates (lower = more droppable).
+
+    Tuple order: (primary_score, neg_tier, adp, neg_owned_pct, name_hash)
+    - primary_score: cat_score sum or z_score (lower = worse)
+    - neg_tier: negative tier (tier 5 → -5) so lower tiers drop first
+    - adp: higher ADP means worse player (drafted later)
+    - neg_owned_pct: negative ownership (less owned = more droppable)
+    - name_hash: deterministic final tiebreaker
+
+    Regression for April 21 Issue 3: Universal drop bug where 24/24 waiver
+    decisions dropped the same player (Seiya Suzuki). The previous single-value
+    return lacked discriminative power when cat_scores were empty and z_scores
+    were similar across candidates.
+    """
     cat_scores = player.get("cat_scores") or {}
     base_value = float(sum(cat_scores.values())) if cat_scores else _coerce_float(player.get("z_score"), 0.0)
-    return max(base_value, long_term_hold_floor(player))
+    primary = max(base_value, long_term_hold_floor(player))
+
+    tier = _coerce_int(player.get("tier"), 999)
+    adp = _coerce_float(player.get("adp"), 9999.0)
+    owned_pct = _coerce_float(
+        player.get("percent_owned", player.get("owned_pct", 0.0)),
+        0.0,
+    )
+    name = player.get("name", "")
+
+    return (primary, -tier, adp, -owned_pct, hash(name))
 
 
 def is_protected_drop_candidate(player: dict) -> bool:

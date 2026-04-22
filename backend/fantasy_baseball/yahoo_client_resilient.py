@@ -665,8 +665,12 @@ class YahooFantasyClient:
         requested". Stats are fetched separately via get_players_stats_batch()
         and merged in as a best-effort enrichment step so a stats API failure
         cannot take down the waiver surface.
+
+        FIX (April 21, 2026): out=ownership IS a valid subresource and must be
+        requested to populate percent_owned for waiver players. Without this,
+        all players return percent_owned=0.0.
         """
-        params = {"status": "A", "start": start, "count": count, "sort": "AR"}
+        params = {"status": "A", "start": start, "count": count, "sort": "AR", "out": "ownership"}
         if position:
             params["position"] = position
         data = self._get(f"league/{self.league_key}/players", params=params)
@@ -1070,6 +1074,7 @@ class YahooFantasyClient:
         opponent_name = "Unknown"
 
         # Yahoo stat_id to canonical code mapping (from fantasy_stat_contract.json)
+        # April 21 Issue 4 fix: K_P was mapped to wrong stat_id (41→28), showing wins instead of Ks
         yahoo_to_canonical = {
             # Batting (higher better)
             "7": "R", "8": "H", "12": "HR_B", "13": "RBI", "16": "TB",
@@ -1078,9 +1083,9 @@ class YahooFantasyClient:
             # Batting rate stats
             "25": "AVG", "26": "OPS", "53": "NSV",  # NSV = NSB (Net Stolen Bases)
             # Pitching (higher better)
-            "34": "W", "35": "L", "41": "K_P", "47": "QS", "50": "K_9",
+            "23": "W", "24": "L", "28": "K_P", "29": "QS", "57": "K_9",
             # Pitching (lower better)
-            "40": "HR_P", "44": "ERA", "45": "WHIP",
+            "35": "HR_P", "44": "ERA", "45": "WHIP",
         }
 
         # Process both teams

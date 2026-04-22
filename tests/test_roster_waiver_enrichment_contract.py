@@ -88,7 +88,8 @@ def test_roster_populates_season_stats_from_batch(fantasy_client):
     mock_client.get_players_stats_batch.return_value = mock_stats
 
     with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client), \
-         patch("backend.routers.fantasy.fetch_rolling_stats_for_players", return_value={}):
+         patch("backend.routers.fantasy.fetch_rolling_stats_for_players", return_value={}), \
+         patch("backend.routers.fantasy._resolve_roster_player_bdl_ids", return_value={}):
         response = fantasy_client.get("/api/fantasy/roster")
 
     assert response.status_code == 200
@@ -142,7 +143,8 @@ def test_roster_survives_stats_batch_failure(fantasy_client):
     mock_client.get_players_stats_batch.side_effect = RuntimeError("boom")
 
     with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client), \
-         patch("backend.routers.fantasy.fetch_rolling_stats_for_players", return_value={}):
+         patch("backend.routers.fantasy.fetch_rolling_stats_for_players", return_value={}), \
+         patch("backend.routers.fantasy._resolve_roster_player_bdl_ids", return_value={}):
         response = fantasy_client.get("/api/fantasy/roster")
 
     assert response.status_code == 200
@@ -150,6 +152,55 @@ def test_roster_survives_stats_batch_failure(fantasy_client):
     assert len(payload["players"]) == 1
     # Degrades gracefully: no season_stats but handler must not 5xx.
     assert payload["players"][0]["season_stats"] is None
+
+
+def test_roster_populates_bdl_and_mlbam_ids(fantasy_client):
+    """Roster endpoint must populate bdl_player_id and mlbam_id from PlayerIDMapping.
+
+    Regression for Issue 10 (April 21 audit): BDL/MLBAM IDs were null for all
+    23 roster players, which broke rolling stats enrichment and cross-referencing.
+    """
+    mock_roster = [
+        {
+            "player_key": "469.l.72586.p.10001",
+            "name": "Test Player",
+            "team": "NYY",
+            "positions": ["OF"],
+            "selected_position": "OF",
+        },
+    ]
+
+    mock_client = MagicMock()
+    mock_client.get_roster.return_value = mock_roster
+    mock_client.get_players_stats_batch.return_value = {}
+
+    # Mock _resolve_roster_player_bdl_ids to return a mapping with both IDs.
+    mock_id_mapping = {
+        "469.l.72586.p.10001": {
+            "bdl_id": 12345,
+            "mlbam_id": 67890,
+        },
+    }
+
+    with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client), \
+         patch("backend.routers.fantasy.fetch_rolling_stats_for_players", return_value={}), \
+         patch("backend.routers.fantasy._resolve_roster_player_bdl_ids", return_value=mock_id_mapping):
+        response = fantasy_client.get("/api/fantasy/roster")
+
+    assert response.status_code == 200
+    payload = response.json()
+    players = payload["players"]
+    assert len(players) == 1
+
+    player = players[0]
+    assert player["bdl_player_id"] == 12345, (
+        "bdl_player_id must populate from PlayerIDMapping — April 21 audit "
+        "showed this field was null for all 23 roster players"
+    )
+    assert player["mlbam_id"] == 67890, (
+        "mlbam_id must populate from PlayerIDMapping — required for "
+        "cross-referencing with Statcast, Baseball-Reference, and FanGraphs"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -307,3 +358,132 @@ def test_flatten_scoreboard_team_entry_recovers_nested_team_key():
     assert team_name == "Lindor Truffles"
     assert len(stats_raw) == 1
     assert stats_raw[0]["stat"]["stat_id"] == "7"
+
+
+def test_drop_candidate_value_uses_tier_adp_ownership_as_tiebreakers():
+    """drop_candidate_value must discriminate when primary scores are identical.
+
+    Regression for April 21 Issue 3 (Universal Drop Bug): 24/24 waiver decisions
+    dropped Seiya Suzuki because the single-value return lacked discriminative
+    power when cat_scores were empty and z_scores were similar.
+
+    The tuple return now uses (primary_score, -tier, adp, -owned_pct, name_hash)
+    to ensure different players get different rankings.
+    """
+    from backend.services.waiver_edge_detector import drop_candidate_value
+
+    # Two players with identical cat_scores (empty) and z_scores.
+    # Tier 3 has floor 2.75, tier 5 has floor 1.25.
+    player_a = {
+        "name": "Player A",
+        "cat_scores": {},
+        "z_score": 1.0,
+        "tier": 3,
+        "adp": 150.0,
+        "owned_pct": 50.0,
+    }
+
+    player_b = {
+        "name": "Player B",
+        "cat_scores": {},
+        "z_score": 1.0,
+        "tier": 5,  # Worse tier → should be dropped first
+        "adp": 200.0,  # Higher ADP → worse player
+        "owned_pct": 30.0,  # Less owned → more droppable
+    }
+
+    value_a = drop_candidate_value(player_a)
+    value_b = drop_candidate_value(player_b)
+
+    # Both should be tuples
+    assert isinstance(value_a, tuple)
+    assert isinstance(value_b, tuple)
+
+    # Player B should rank "lower" (more droppable) than Player A
+    # Primary: 1.25 (tier 5 floor) < 2.75 (tier 3 floor)
+    assert value_b < value_a, (
+        "Player with worse tier (5 vs 3), higher ADP (200 vs 150), "
+        "and lower ownership (30% vs 50%) should be considered more droppable"
+    )
+
+    # Verify tuple structure: (primary, -tier, adp, -owned_pct, name_hash)
+    assert value_a[0] == 2.75  # primary = tier 3 floor (max(1.0, 2.75))
+    assert value_a[1] == -3    # neg_tier = -3
+    assert value_a[2] == 150.0  # adp
+    assert value_a[3] == -50.0  # neg_owned_pct
+
+    # Player B: tier 5 floor is 1.25
+    assert value_b[0] == 1.25  # primary = tier 5 floor (max(1.0, 1.25))
+    assert value_b[1] == -5    # neg_tier = -5
+
+
+def test_waiver_populates_percent_owned_from_ownership_subresource(fantasy_client):
+    """Waiver must populate owned_pct from Yahoo ownership subresource.
+
+    Regression for April 21 Issue 2: waiver owned_pct=0.0 for all 25 players.
+    Root cause: get_free_agents() didn't request out=ownership subresource.
+    """
+    # Mock free agent response with ownership block in Yahoo's actual format
+    mock_fa_response = {
+        "fantasy_content": {
+            "league": [{
+                "players": {
+                    "count": "1",
+                    "0": {
+                        "player": [
+                            {"player_key": "469.p.10001", "player_id": "10001"},
+                            {"name": {"full": "Test Player"}},
+                            {"editorial_team_abbr": "NYY"},
+                            {
+                                "eligible_positions": {
+                                    "position": [
+                                        {"position": "OF"},
+                                        {"position": "Util"}
+                                    ]
+                                }
+                            },
+                            {
+                                "ownership": {
+                                    "percent_rostered": {
+                                        "value": "87"
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                }
+            }]
+        }
+    }
+
+    mock_client = MagicMock()
+    mock_client.get_roster.return_value = []
+    mock_client.get_faab_balance.return_value = 100
+    mock_client.get_my_team_key.return_value = "469.l.72586.t.7"
+    mock_client.get_scoreboard.return_value = []
+    mock_client.get_league_settings.side_effect = RuntimeError("no settings in test")
+
+    # Mock get_free_agents to return a player with percent_owned
+    mock_client.get_free_agents.return_value = [
+        {
+            "player_key": "469.p.10001",
+            "name": "Test Player",
+            "team": "NYY",
+            "positions": ["OF", "Util"],
+            "percent_owned": 87.0,  # Parsed from ownership.percent_rostered.value
+        }
+    ]
+
+    with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+        response = fantasy_client.get("/api/fantasy/waiver")
+
+    assert response.status_code == 200
+    payload = response.json()
+    players = payload["top_available"]
+    assert len(players) == 1
+
+    player = players[0]
+    assert player["owned_pct"] == 87.0, (
+        "owned_pct must be populated from Yahoo ownership subresource — "
+        "April 21 audit showed owned_pct=0.0 for all 25 waiver players"
+    )

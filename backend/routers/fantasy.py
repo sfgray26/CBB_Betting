@@ -269,8 +269,11 @@ def _projection_fallback_score(yahoo_player: dict) -> tuple[float, str]:
     return max(20.0, min(95.0, round(score, 2))), source
 
 
-def _resolve_roster_player_bdl_ids(db: Session, raw_players: list[dict]) -> dict[str, int]:
-    """Resolve Yahoo roster players to BDL IDs using key-first identity matching."""
+def _resolve_roster_player_bdl_ids(db: Session, raw_players: list[dict]) -> dict[str, dict]:
+    """Resolve Yahoo roster players to BDL and MLBAM IDs using key-first identity matching.
+
+    Returns dict mapping player_key -> {"bdl_id": int, "mlbam_id": int | None}.
+    """
     roster_lookup_keys: set[str] = set()
     yahoo_ids: set[str] = set()
 
@@ -293,6 +296,7 @@ def _resolve_roster_player_bdl_ids(db: Session, raw_players: list[dict]) -> dict
             PlayerIDMapping.yahoo_key,
             PlayerIDMapping.yahoo_id,
             PlayerIDMapping.bdl_id,
+            PlayerIDMapping.mlbam_id,
             PlayerIDMapping.normalized_name,
             PlayerIDMapping.full_name,
         )
@@ -311,7 +315,7 @@ def _resolve_roster_player_bdl_ids(db: Session, raw_players: list[dict]) -> dict
         if row.yahoo_id:
             mapping_by_yahoo_id[row.yahoo_id] = row
 
-    player_key_to_bdl: dict[str, int] = {}
+    player_key_to_ids: dict[str, dict] = {}
     unresolved_players: list[dict] = []
 
     for player in raw_players:
@@ -338,7 +342,10 @@ def _resolve_roster_player_bdl_ids(db: Session, raw_players: list[dict]) -> dict
                 matched_row = candidate
 
         if matched_row is not None and matched_row.bdl_id is not None:
-            player_key_to_bdl[player_key] = matched_row.bdl_id
+            player_key_to_ids[player_key] = {
+                "bdl_id": matched_row.bdl_id,
+                "mlbam_id": matched_row.mlbam_id,
+            }
         else:
             unresolved_players.append(player)
 
@@ -354,6 +361,7 @@ def _resolve_roster_player_bdl_ids(db: Session, raw_players: list[dict]) -> dict
             db.query(
                 PlayerIDMapping.normalized_name,
                 PlayerIDMapping.bdl_id,
+                PlayerIDMapping.mlbam_id,
                 PlayerIDMapping.full_name,
             )
             .filter(
@@ -370,13 +378,15 @@ def _resolve_roster_player_bdl_ids(db: Session, raw_players: list[dict]) -> dict
         for player in unresolved_players:
             normalized_name = _normalize_identity_name(player.get("name") or "")
             candidates = candidates_by_name.get(normalized_name, [])
-            unique_bdl_ids = {row.bdl_id for row in candidates if row.bdl_id is not None}
-            if len(unique_bdl_ids) == 1:
+            if len(candidates) == 1:
                 player_key = player.get("player_key") or ""
                 if player_key:
-                    player_key_to_bdl[player_key] = next(iter(unique_bdl_ids))
+                    player_key_to_ids[player_key] = {
+                        "bdl_id": candidates[0].bdl_id,
+                        "mlbam_id": candidates[0].mlbam_id,
+                    }
 
-    return player_key_to_bdl
+    return player_key_to_ids
 
 # ============================================================================
 # DRAFT BOARD
@@ -1664,6 +1674,29 @@ async def get_fantasy_waiver_recommendations(
                     continue
                 _translated_stats[_translated_key] = v
 
+            # April 21 Issue 5 fix: Remove position-inappropriate stats to prevent
+            # batters from carrying pitcher-only stats (IP, W, GS, ERA, WHIP, etc.)
+            # and pitchers from carrying batter-only stats (R, H, HR_B, RBI, etc.)
+            _PITCHER_ONLY_STATS = frozenset({
+                "IP", "W", "L", "ERA", "WHIP", "K_9", "QS", "HR_P", "K_P", "NSV", "GS"
+            })
+            _BATTER_ONLY_STATS = frozenset({
+                "R", "H", "HR_B", "RBI", "TB", "AVG", "OPS", "NSB", "K_B", "SB"
+            })
+            _primary_pos = positions[0] if positions else None
+            if _primary_pos in ("SP", "RP", "P"):
+                # Pitcher: remove batter-only stats
+                _translated_stats = {
+                    k: v for k, v in _translated_stats.items()
+                    if k not in _BATTER_ONLY_STATS
+                }
+            elif _primary_pos not in ("P",):
+                # Batter (or utility/etc. without explicit pitcher position): remove pitcher-only stats
+                _translated_stats = {
+                    k: v for k, v in _translated_stats.items()
+                    if k not in _PITCHER_ONLY_STATS
+                }
+
             _is_reliever = "RP" in positions
             _raw_nsv = 0.0
             if _is_reliever:
@@ -1769,15 +1802,8 @@ async def get_fantasy_waiver_recommendations(
                 statcast_signals=_sc_sigs,
             )
 
-        top_available = [_to_waiver_player(p) for p in free_agents]
-        if min_z_score is not None:
-            top_available = [p for p in top_available if p.need_score >= min_z_score]
-        top_available = [p for p in top_available if p.owned_pct <= max_percent_owned]
-        if sort == "percent_owned":
-            top_available.sort(key=lambda x: x.owned_pct, reverse=True)
-        else:
-            top_available.sort(key=lambda x: x.need_score, reverse=True)
-
+        # Fetch MLB probable starts and populate starts_this_week for ALL SP pitchers
+        # BEFORE creating top_available — April 21 Issue 2 fix (starts_this_week was 0 for all)
         import difflib as _difflib_starts
         from datetime import date as _dt, timedelta as _td
         _today = date_type.today()
@@ -1820,24 +1846,35 @@ async def get_fantasy_waiver_recommendations(
             _today.strftime("%Y-%m-%d"), _week_end_ts.strftime("%Y-%m-%d")
         )
 
-        sp_fas = [p for p in free_agents if "SP" in (p.get("positions") or [])]
-        two_start_pitchers_raw = []
-        for _sp in sp_fas[:50]:
-            _sp_name = (_sp.get("name") or "").strip().lower()
-            _starts = starts_map.get(_sp_name, 0)
-            if _starts == 0 and starts_map:
-                _best = max(
-                    starts_map.keys(),
-                    key=lambda k: _difflib_starts.SequenceMatcher(None, _sp_name, k).ratio(),
-                    default=None,
-                )
-                if _best and _difflib_starts.SequenceMatcher(None, _sp_name, _best).ratio() >= 0.90:
-                    _starts = starts_map[_best]
-            if _starts >= 2:
-                _sp["starts_this_week"] = _starts
-                two_start_pitchers_raw.append(_to_waiver_player(_sp))
+        # Populate starts_this_week for ALL SP pitchers in free_agents
+        for _fa in free_agents:
+            if "SP" in (_fa.get("positions") or []):
+                _sp_name = (_fa.get("name") or "").strip().lower()
+                _starts = starts_map.get(_sp_name, 0)
+                # Fuzzy match if no exact match (handles name variations)
+                if _starts == 0 and starts_map:
+                    _best = max(
+                        starts_map.keys(),
+                        key=lambda k: _difflib_starts.SequenceMatcher(None, _sp_name, k).ratio(),
+                        default=None,
+                    )
+                    if _best and _difflib_starts.SequenceMatcher(None, _sp_name, _best).ratio() >= 0.90:
+                        _starts = starts_map[_best]
+                _fa["starts_this_week"] = _starts
+
+        top_available = [_to_waiver_player(p) for p in free_agents]
+        if min_z_score is not None:
+            top_available = [p for p in top_available if p.need_score >= min_z_score]
+        top_available = [p for p in top_available if p.owned_pct <= max_percent_owned]
+        if sort == "percent_owned":
+            top_available.sort(key=lambda x: x.owned_pct, reverse=True)
+        else:
+            top_available.sort(key=lambda x: x.need_score, reverse=True)
+
+        # two_start_pitchers — filter from top_available (starts_this_week already populated)
         two_start_pitchers = sorted(
-            two_start_pitchers_raw, key=lambda x: x.need_score, reverse=True
+            [p for p in top_available if p.starts_this_week >= 2],
+            key=lambda x: x.need_score, reverse=True
         )[:5]
 
         _closer_fas = [f for f in top_available if f.category_contributions.get("nsv", 0) > 0.5]
@@ -2486,6 +2523,10 @@ async def get_fantasy_roster(
             "Roster season stats batch fetch failed (non-fatal): %s", _season_err
         )
 
+    # Resolve BDL and MLBAM IDs via PlayerIDMapping — required for rolling stats
+    # and for populating bdl_player_id/mlbam_id in CanonicalPlayerRow output.
+    player_key_to_ids = _resolve_roster_player_bdl_ids(db, raw_players)
+
     # Map each Yahoo player to CanonicalPlayerRow
     canonical_players = []
     for p in raw_players:
@@ -2493,12 +2534,18 @@ async def get_fantasy_roster(
         if not player_key:
             continue
 
-        # Merge season stats from batch into the player dict so the mapper's
-        # _map_yahoo_stats_to_category_stats has something to translate.
-        merged_player = p
+        # Start with the raw player dict and enrich it.
+        merged_player = dict(p)
+
+        # Merge season stats from batch so the mapper can translate them.
         if player_key in season_stats_by_key:
-            merged_player = dict(p)
             merged_player["stats"] = season_stats_by_key[player_key]
+
+        # Merge BDL/MLBAM IDs from PlayerIDMapping lookup.
+        if player_key in player_key_to_ids:
+            ids = player_key_to_ids[player_key]
+            merged_player["bdl_player_id"] = ids.get("bdl_id")
+            merged_player["mlbam_id"] = ids.get("mlbam_id")
 
         rolling_stats = rolling_stats_map.get(player_key)
         canonical_row = map_yahoo_player_to_canonical_row(
@@ -2717,11 +2764,14 @@ async def optimize_roster(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     # Resolve Yahoo roster keys to BDL IDs using canonical yahoo_key linkage first.
-    player_key_to_bdl = _resolve_roster_player_bdl_ids(db, raw_players)
+    player_key_to_ids = _resolve_roster_player_bdl_ids(db, raw_players)
 
     # Fetch player_scores for each player's most recent date (not exact target_date match)
     # Phase 4.5a Priority 2 fix: Use actual as_of_date from player_scores, not requested date
-    bdl_ids = list({bdl_id for bdl_id in player_key_to_bdl.values() if bdl_id is not None})
+    bdl_ids = list({
+        ids["bdl_id"] for ids in player_key_to_ids.values()
+        if ids.get("bdl_id") is not None
+    })
     player_scores_map = {}
     as_of_dates = set()  # Track actual as_of_dates found
     staleness_warning = False
