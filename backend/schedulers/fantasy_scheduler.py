@@ -32,7 +32,6 @@ def start_fantasy_scheduler() -> None:
         _process_job_queue_job,
         _pybaseball_fetch_job,
         _statcast_daily_ingestion_job,
-        _openclaw_morning_job,
         _nightly_decision_resolution_job,
     )
 
@@ -53,9 +52,11 @@ def start_fantasy_scheduler() -> None:
                       replace_existing=True)
 
     # OpenClaw autonomous waiver intelligence -- 8:30 AM daily
-    scheduler.add_job(_openclaw_morning_job, CronTrigger(hour=8, minute=30, timezone=tz),
-                      id="openclaw_morning", name="OpenClaw Autonomous Morning Workflow",
-                      replace_existing=True)
+    # PAUSED (2026-04-21): Disabled to reduce noise while baseball module is
+    # being implemented. Re-enable when OpenClaw is needed again.
+    # scheduler.add_job(_openclaw_morning_job, CronTrigger(hour=8, minute=30, timezone=tz),
+    #                   id="openclaw_morning", name="OpenClaw Autonomous Morning Workflow",
+    #                   replace_existing=True)
 
     # Nightly fantasy decision resolution -- 11:59 PM ET
     scheduler.add_job(_nightly_decision_resolution_job, CronTrigger(hour=23, minute=59, timezone=tz),

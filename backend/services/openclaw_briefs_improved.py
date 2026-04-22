@@ -177,29 +177,12 @@ class ImprovedMorningBriefGenerator:
 def generate_and_send_morning_brief_improved() -> bool:
     """
     Generate and send the improved morning brief.
-    
-    This is the main entry point.
+
+    PAUSED (2026-04-21): OpenClaw morning briefs are disabled to reduce
+    Discord noise while the baseball module is being implemented.
     """
-    logger.info("Generating improved morning brief...")
-    
-    try:
-        generator = ImprovedMorningBriefGenerator()
-        data = generator.collect_real_data()
-        embed = generator.generate_brief(data)
-        
-        # Send to morning brief channel
-        success = send_to_channel("cbb-morning-brief", embed=embed)
-        
-        if success:
-            logger.info("Morning brief sent successfully")
-        else:
-            logger.warning("Failed to send morning brief")
-        
-        return success
-        
-    except Exception as e:
-        logger.error(f"Failed to generate morning brief: {e}")
-        return False
+    logger.info("Morning brief generation skipped — OpenClaw paused")
+    return False
 
 
 # Canonical alias — callers should use this name

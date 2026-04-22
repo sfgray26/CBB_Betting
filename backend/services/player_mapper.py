@@ -164,6 +164,10 @@ def _normalize_status(yahoo_player: Dict) -> str:
 def map_yahoo_player_to_canonical_row(
     yahoo_player: Dict,
     rolling_stats: Optional[PlayerRollingStats] = None,
+    rolling_stats_7d: Optional[PlayerRollingStats] = None,
+    rolling_stats_14d: Optional[PlayerRollingStats] = None,
+    rolling_stats_15d: Optional[PlayerRollingStats] = None,
+    rolling_stats_30d: Optional[PlayerRollingStats] = None,
     computed_at: Optional[datetime] = None,
 ) -> CanonicalPlayerRow:
     """
@@ -171,13 +175,21 @@ def map_yahoo_player_to_canonical_row(
 
     Args:
         yahoo_player: Parsed dict from YahooFantasyClient.get_roster()
-        rolling_stats: Optional PlayerRollingStats row for 14-day window
+        rolling_stats: (Deprecated, use rolling_stats_14d) Optional PlayerRollingStats row for 14-day window
+        rolling_stats_7d: Optional PlayerRollingStats row for 7-day window
+        rolling_stats_14d: Optional PlayerRollingStats row for 14-day window
+        rolling_stats_15d: Optional PlayerRollingStats row for 15-day window
+        rolling_stats_30d: Optional PlayerRollingStats row for 30-day window
         computed_at: Timestamp for freshness metadata
 
     Returns:
         CanonicalPlayerRow with all PR-1 through PR-22 fields populated
     """
     now_et = computed_at or datetime.now(ZoneInfo("America/New_York"))
+
+    # Backward compatibility: rolling_stats -> rolling_stats_14d
+    if rolling_stats is not None and rolling_stats_14d is None:
+        rolling_stats_14d = rolling_stats
 
     # PR-1 through PR-4: Identity and status
     player_name = yahoo_player.get("name") or yahoo_player.get("full_name", "")
@@ -194,17 +206,11 @@ def map_yahoo_player_to_canonical_row(
     # PR-13: Season stats from Yahoo
     season_stats = _map_yahoo_stats_to_category_stats(yahoo_player)
 
-    # PR-14: rolling_7d (not currently populated - TODO)
-    rolling_7d = None
-
-    # PR-15: rolling_14d from PlayerRollingStats
-    rolling_14d = _map_rolling_to_category_stats(rolling_stats)
-
-    # PR-16: rolling_15d (not currently populated - TODO)
-    rolling_15d = None
-
-    # PR-17: rolling_30d (not currently populated - TODO)
-    rolling_30d = None
+    # PR-14 through PR-17: Rolling windows from PlayerRollingStats
+    rolling_7d = _map_rolling_to_category_stats(rolling_stats_7d)
+    rolling_14d = _map_rolling_to_category_stats(rolling_stats_14d)
+    rolling_15d = _map_rolling_to_category_stats(rolling_stats_15d)
+    rolling_30d = _map_rolling_to_category_stats(rolling_stats_30d)
 
     # PR-18: ROS projection (not currently populated - TODO)
     ros_projection = None
@@ -310,7 +316,7 @@ def fetch_rolling_stats_for_players(
     if not resolved_map:
         return {}
 
-    # Fetch rolling stats
+    # Fetch rolling stats — fall back to latest available date if target_date has no data
     target_date = as_of_date or datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
 
     rolling_stats_query = (
@@ -322,6 +328,30 @@ def fetch_rolling_stats_for_players(
         )
         .all()
     )
+
+    # Fallback: if no stats for target_date, use the most recent available date
+    if not rolling_stats_query:
+        from sqlalchemy import func
+
+        latest_date_result = (
+            db.query(func.max(PlayerRollingStats.as_of_date))
+            .filter(
+                PlayerRollingStats.bdl_player_id.in_(resolved_map.values()),
+                PlayerRollingStats.window_days == window_days,
+            )
+            .scalar()
+        )
+        if latest_date_result:
+            target_date = latest_date_result.strftime("%Y-%m-%d")
+            rolling_stats_query = (
+                db.query(PlayerRollingStats)
+                .filter(
+                    PlayerRollingStats.bdl_player_id.in_(resolved_map.values()),
+                    PlayerRollingStats.as_of_date == target_date,
+                    PlayerRollingStats.window_days == window_days,
+                )
+                .all()
+            )
 
     # Map back to Yahoo player keys
     bdl_to_yahoo = {bdl_id: yahoo_key for yahoo_key, bdl_id in resolved_map.items()}

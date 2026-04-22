@@ -161,7 +161,7 @@ BATTING_STATS: dict[str, StatDefinition] = {
         precision=0,
         valid_range=(0, None),
         external_ids=ExternalIds(
-            yahoo_stat_id=42,
+            yahoo_stat_id=23,
             mlb_stats_api="strikeOuts",
             balldontlie="strikeouts",
             pybaseball="SO",
@@ -180,8 +180,7 @@ BATTING_STATS: dict[str, StatDefinition] = {
         precision=0,
         valid_range=(0, None),
         external_ids=ExternalIds(
-            yahoo_stat_id=4,
-            yahoo_stat_id_alt=6,
+            yahoo_stat_id=21,
             mlb_stats_api="totalBases",
             balldontlie="total_bases",
             pybaseball="TB",
@@ -250,7 +249,7 @@ BATTING_STATS: dict[str, StatDefinition] = {
         precision=0,
         valid_range=(None, None),
         external_ids=ExternalIds(
-            yahoo_stat_id=60,
+            yahoo_stat_id=62,
             mlb_stats_api_numerator="stolenBases",
             mlb_stats_api_denominator="caughtStealing",
         ),
@@ -272,7 +271,7 @@ PITCHING_STATS: dict[str, StatDefinition] = {
         precision=0,
         valid_range=(0, None),
         external_ids=ExternalIds(
-            yahoo_stat_id=23,
+            yahoo_stat_id=28,
             mlb_stats_api="wins",
             pybaseball="W",
         ),
@@ -289,7 +288,7 @@ PITCHING_STATS: dict[str, StatDefinition] = {
         precision=0,
         valid_range=(0, None),
         external_ids=ExternalIds(
-            yahoo_stat_id=24,
+            yahoo_stat_id=29,
             mlb_stats_api="losses",
             pybaseball="L",
         ),
@@ -306,7 +305,7 @@ PITCHING_STATS: dict[str, StatDefinition] = {
         precision=0,
         valid_range=(0, None),
         external_ids=ExternalIds(
-            yahoo_stat_id=35,
+            yahoo_stat_id=38,
             mlb_stats_api="homeRunsAllowed",
             pybaseball="HR",
         ),
@@ -324,7 +323,7 @@ PITCHING_STATS: dict[str, StatDefinition] = {
         precision=0,
         valid_range=(0, None),
         external_ids=ExternalIds(
-            yahoo_stat_id=28,
+            yahoo_stat_id=42,
             mlb_stats_api="strikeOuts",
             pybaseball="SO",
         ),
@@ -409,7 +408,7 @@ PITCHING_STATS: dict[str, StatDefinition] = {
         precision=0,
         valid_range=(0, None),
         external_ids=ExternalIds(
-            yahoo_stat_id=29,
+            yahoo_stat_id=85,
             mlb_stats_api="qualityStarts",
             pybaseball="QS",
         ),
@@ -461,8 +460,7 @@ DISPLAY_STATS: dict[str, StatDefinition] = {
         precision=1,
         valid_range=(0.0, None),
         external_ids=ExternalIds(
-            yahoo_stat_id=21,
-            yahoo_stat_id_alt=50,
+            yahoo_stat_id=50,
             mlb_stats_api="inningsPitched",
             pybaseball="IP",
         ),
@@ -482,7 +480,7 @@ DISPLAY_STATS: dict[str, StatDefinition] = {
         precision=0,
         valid_range=(0, None),
         external_ids=ExternalIds(
-            yahoo_stat_id=62,
+            yahoo_stat_id=None,
             mlb_stats_api="gamesStarted",
             pybaseball="GS",
         ),
@@ -504,7 +502,9 @@ DISPLAY_STATS: dict[str, StatDefinition] = {
         data_type="string",
         precision=None,
         valid_range=(None, None),
-        external_ids=ExternalIds(),
+        external_ids=ExternalIds(
+            yahoo_stat_id=60
+        ),
         display_contexts=("matchup",),
         scorable=False,
     ),

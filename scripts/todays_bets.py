@@ -48,7 +48,9 @@ def run():
     # Send to Discord via OpenClaw
     if message.strip():
         safe_msg = message.replace('"', "'").replace("`", "")
-        os.system(f'openclaw message send --channel discord --target "1477436117426110615" --message "{safe_msg}"')
+        # PAUSED (2026-04-21): OpenClaw Discord notifications disabled.
+        # os.system(f'openclaw message send --channel discord --target "1477436117426110615" --message "{safe_msg}"')
+        print(f"[PAUSED] Would send: {safe_msg[:80]}...")
 
 if __name__ == "__main__":
     run()

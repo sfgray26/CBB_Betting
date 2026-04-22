@@ -5002,14 +5002,14 @@ class DailyIngestionOrchestrator:
 
     async def _sync_player_id_mapping(self) -> dict:
         """
-        Sync player ID mappings from BDL + MLB Stats API cross-reference (lock 100_029).
+        Sync player ID mappings from BDL + pybaseball MLBAM ID cross-reference (lock 100_029).
 
         Every sync (daily 7:00 AM ET):
           1. Fetch all players from BDL (GOAT tier: 600 req/min)
-          2. For each player: get MLBAM ID from MLB Stats API player endpoint
+          2. Build MLBAM ID cache using pybaseball.playerid_lookup()
           3. Store cross-reference in player_id_mapping table
 
-        Critical for data integration — connects BDL, MLB Stats, and Yahoo namespaces.
+        Critical for data integration — connects BDL, MLB Stats (Statcast), and Yahoo namespaces.
         Natural key: (source_system, source_id).
         """
         logger.info("SYNC JOB ENTRY: _sync_player_id_mapping - Starting player ID mapping sync")
@@ -5017,6 +5017,7 @@ class DailyIngestionOrchestrator:
 
         async def _run():
             from backend.services.balldontlie import BallDontLieClient
+            from backend.services.mlbam_id_lookup import build_mlbam_cache
             try:
                 bdl = BallDontLieClient()
             except ValueError as exc:
@@ -5032,8 +5033,29 @@ class DailyIngestionOrchestrator:
                 self._record_job_run("player_id_mapping", "error", 0)
                 return {"status": "error", "records": 0, "elapsed_ms": 0}
 
+            # Build MLBAM ID cache using pybaseball
+            player_list = []
+            for p in players:
+                try:
+                    first_name = p.first_name
+                except Exception:
+                    first_name = ''
+                try:
+                    last_name = p.last_name
+                except Exception:
+                    last_name = ''
+                full_name = p.full_name or f"{first_name} {last_name}".strip()
+                player_list.append({
+                    "full_name": full_name,
+                    "first_name": first_name,
+                    "last_name": last_name
+                })
+
+            mlbam_cache = await asyncio.to_thread(build_mlbam_cache, player_list)
+
             db = SessionLocal()
             records_processed = 0
+            mlbam_found = 0
 
             try:
                 for player in players:
@@ -5042,15 +5064,17 @@ class DailyIngestionOrchestrator:
                         if not bdl_id:
                             continue
 
-                        # Get MLBAM ID from player data
-                        mlbam_id = getattr(player, 'mlbam_id', None)
-
-                        # Get full name
+                        # Get MLBAM ID from cache
                         full_name = player.full_name
                         normalized_name = full_name.lower()
+                        mlbam_data = mlbam_cache.get(normalized_name, {})
+                        mlbam_id = mlbam_data.get("mlbam_id")
+                        confidence = mlbam_data.get("confidence", 0.0)
+
+                        if mlbam_id:
+                            mlbam_found += 1
 
                         # Create/update mapping record
-                        # We'll store both BDL and Yahoo mappings, plus MLBAM
                         existing = (
                             db.query(PlayerIDMapping)
                             .filter(PlayerIDMapping.bdl_id == bdl_id)
@@ -5060,7 +5084,9 @@ class DailyIngestionOrchestrator:
                             existing.mlbam_id = mlbam_id
                             existing.full_name = full_name
                             existing.normalized_name = normalized_name
-                            existing.resolution_confidence = 1.0
+                            existing.source = 'pybaseball' if mlbam_id else existing.source
+                            if confidence > 0:
+                                existing.resolution_confidence = confidence
                         else:
                             mapping = PlayerIDMapping(
                                 bdl_id=bdl_id,
@@ -5068,8 +5094,8 @@ class DailyIngestionOrchestrator:
                                 mlbam_id=mlbam_id,
                                 full_name=full_name,
                                 normalized_name=normalized_name,
-                                source='api',
-                                resolution_confidence=1.0,  # Direct from BDL API
+                                source='pybaseball' if mlbam_id else 'bdl',
+                                resolution_confidence=confidence if confidence > 0 else 0.5,
                             )
                             db.add(mapping)
                         records_processed += 1
@@ -5081,9 +5107,10 @@ class DailyIngestionOrchestrator:
                 db.commit()
                 elapsed = int((time.monotonic() - t0) * 1000)
                 logger.info("SYNC JOB SUCCESS: _sync_player_id_mapping - Processed %d records in %d ms", records_processed, elapsed)
+                logger.info("SYNC JOB SUCCESS: _sync_player_id_mapping - Found %d MLBAM IDs (%.1f%%)", mlbam_found, 100*mlbam_found/records_processed if records_processed else 0)
                 logger.info("SYNC JOB EXIT: _sync_player_id_mapping - Completed successfully")
                 self._record_job_run("player_id_mapping", "success", records_processed)
-                return {"status": "success", "records": records_processed, "elapsed_ms": elapsed}
+                return {"status": "success", "records": records_processed, "mlbam_found": mlbam_found, "elapsed_ms": elapsed}
 
             except Exception as exc:
                 db.rollback()

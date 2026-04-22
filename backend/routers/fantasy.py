@@ -2500,12 +2500,30 @@ async def get_fantasy_roster(
     # Extract player keys for rolling stats lookup
     player_keys = [p.get("player_key") for p in raw_players if p.get("player_key")]
 
-    # Fetch rolling stats for all players (14-day window)
-    rolling_stats_map = fetch_rolling_stats_for_players(
+    # Fetch rolling stats for all players across all window sizes
+    rolling_stats_7d = fetch_rolling_stats_for_players(
+        db=db,
+        yahoo_player_keys=player_keys,
+        as_of_date=now_et.strftime("%Y-%m-%d"),
+        window_days=7,
+    )
+    rolling_stats_14d = fetch_rolling_stats_for_players(
         db=db,
         yahoo_player_keys=player_keys,
         as_of_date=now_et.strftime("%Y-%m-%d"),
         window_days=14,
+    )
+    rolling_stats_15d = fetch_rolling_stats_for_players(
+        db=db,
+        yahoo_player_keys=player_keys,
+        as_of_date=now_et.strftime("%Y-%m-%d"),
+        window_days=15,
+    )
+    rolling_stats_30d = fetch_rolling_stats_for_players(
+        db=db,
+        yahoo_player_keys=player_keys,
+        as_of_date=now_et.strftime("%Y-%m-%d"),
+        window_days=30,
     )
 
     # Fetch Yahoo season stats for all roster players — the canonical router
@@ -2548,10 +2566,18 @@ async def get_fantasy_roster(
             merged_player["bdl_player_id"] = ids.get("bdl_id")
             merged_player["mlbam_id"] = ids.get("mlbam_id")
 
-        rolling_stats = rolling_stats_map.get(player_key)
+        # Fetch all rolling windows for this player
+        rs_7d = rolling_stats_7d.get(player_key)
+        rs_14d = rolling_stats_14d.get(player_key)
+        rs_15d = rolling_stats_15d.get(player_key)
+        rs_30d = rolling_stats_30d.get(player_key)
+
         canonical_row = map_yahoo_player_to_canonical_row(
             yahoo_player=merged_player,
-            rolling_stats=rolling_stats,
+            rolling_stats_7d=rs_7d,
+            rolling_stats_14d=rs_14d,
+            rolling_stats_15d=rs_15d,
+            rolling_stats_30d=rs_30d,
             computed_at=now_et,
         )
         canonical_players.append(canonical_row)

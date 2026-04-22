@@ -22,6 +22,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
 from backend.services.balldontlie import BallDontLieClient
+from backend.services.mlbam_id_lookup import build_mlbam_cache
 from backend.models import SessionLocal, PlayerIDMapping
 
 logging.basicConfig(
@@ -69,6 +70,27 @@ def backfill_player_id_mapping() -> dict:
                 'elapsed_ms': int((datetime.now(ZoneInfo("America/New_York")) - t0).total_seconds() * 1000)
             }
 
+        # Build MLBAM ID cache using pybaseball
+        logger.info("Building MLBAM ID cache via pybaseball...")
+        player_list = []
+        for p in all_players:
+            try:
+                first_name = p.first_name
+            except Exception:
+                first_name = ''
+            try:
+                last_name = p.last_name
+            except Exception:
+                last_name = ''
+            full_name = p.full_name or f"{first_name} {last_name}".strip()
+            player_list.append({
+                "full_name": full_name,
+                "first_name": first_name,
+                "last_name": last_name
+            })
+
+        mlbam_cache = build_mlbam_cache(player_list)
+
         # Store cross-reference mappings
         logger.info("Storing player ID mappings in database...")
 
@@ -85,10 +107,24 @@ def backfill_player_id_mapping() -> dict:
                 if not bdl_id:
                     continue
 
-                mlbam_id = None  # BDL doesn't provide mlbam_id directly
                 full_name = player.full_name
 
                 # Handle validation errors from Pydantic models
+                try:
+                    first_name = player.first_name
+                except Exception:
+                    first_name = ''
+
+                try:
+                    last_name = player.last_name
+                except Exception:
+                    last_name = ''
+
+                # Lookup MLBAM ID from cache
+                norm_name = full_name.lower()
+                mlbam_data = mlbam_cache.get(norm_name, {})
+                mlbam_id = mlbam_data.get("mlbam_id")
+                confidence = mlbam_data.get("confidence", 0.0)
                 try:
                     first_name = player.first_name
                 except Exception:
@@ -121,6 +157,8 @@ def backfill_player_id_mapping() -> dict:
                     existing.mlbam_id = mlbam_id
                     existing.full_name = full_name
                     existing.normalized_name = full_name.lower()
+                    existing.source = 'pybaseball' if mlbam_id else existing.source
+                    existing.resolution_confidence = confidence if confidence > 0 else existing.resolution_confidence
                     existing.updated_at = now
                     records_updated += 1
                 else:
@@ -132,8 +170,8 @@ def backfill_player_id_mapping() -> dict:
                         bdl_id=bdl_id,
                         full_name=full_name,
                         normalized_name=full_name.lower(),
-                        source='api',
-                        resolution_confidence=1.0,  # Direct from BDL API
+                        source='pybaseball' if mlbam_id else 'bdl',
+                        resolution_confidence=confidence,  # From MLBAM lookup
                         created_at=now,
                         updated_at=now
                     )
@@ -166,7 +204,11 @@ def backfill_player_id_mapping() -> dict:
 
         # Verify table count
         table_count = db.query(PlayerIDMapping).count()
+        mlbam_count = db.query(PlayerIDMapping).filter(
+            PlayerIDMapping.mlbam_id.isnot(None)
+        ).count()
         logger.info(f"Total rows in player_id_mapping table: {table_count}")
+        logger.info(f"Rows with MLBAM IDs: {mlbam_count} ({100*mlbam_count/table_count:.1f}%)")
 
         db.close()
 

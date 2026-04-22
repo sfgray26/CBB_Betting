@@ -72,14 +72,14 @@ def test_roster_populates_season_stats_from_batch(fantasy_client):
     ]
 
     # Yahoo batch-stats response keyed by stat_id string.
-    # 7=R, 8=H, 12=HR_B, 13=RBI, 42=K_B (per YAHOO_ID_INDEX)
+    # 7=R, 8=H, 12=HR_B, 13=RBI, 23=K_B (per YAHOO_ID_INDEX)
     mock_stats = {
         "469.l.72586.p.10001": {
-            "7": "42", "8": "78", "12": "11", "13": "38", "42": "52",
+            "7": "42", "8": "78", "12": "11", "13": "38", "23": "52",
         },
-        # 26=ERA, 27=WHIP, 28=K_P, 29=QS, 57=K_9
+        # 26=ERA, 27=WHIP, 28=W, 29=L, 38=HR_P, 42=K_P, 57=K_9, 85=QS
         "469.l.72586.p.10002": {
-            "26": "2.85", "27": "1.05", "28": "64", "29": "4", "57": "9.2",
+            "26": "2.85", "27": "1.05", "28": "12", "29": "4", "38": "3", "42": "64", "57": "9.2", "85": "4",
         },
     }
 

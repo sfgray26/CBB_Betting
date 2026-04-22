@@ -75,16 +75,18 @@ def test_waiver_stats_numeric_id_filter_behavior():
     sid_map: dict = dict(YAHOO_ID_INDEX)
 
     raw_stats = {
-        "21": "24.1",   # IP
-        "28": "1",      # K_P (Yahoo sends under this id too)
-        "29": "1",      # QS
-        "38": "0",      # unknown stat_id — must drop
-        "42": "21",     # K_B
+        "21": "24.1",   # TB
+        "50": "6.0",    # IP
+        "28": "1",      # W
+        "29": "0",      # L
+        "38": "0",      # HR_P (unknown stat_id in old contract — must drop)
+        "42": "21",     # K_P
+        "23": "5",      # K_B
         "26": "1.48",   # ERA
         "27": "0.99",   # WHIP
         "57": "7.77",   # K_9
         "83": "3",      # NSV
-        "85": "0",      # OBP
+        "85": "1",      # QS
     }
 
     translated: dict = {}
@@ -97,7 +99,7 @@ def test_waiver_stats_numeric_id_filter_behavior():
         translated[tk] = v
 
     assert "38" not in translated, "raw numeric stat_id must be dropped"
-    for canonical in {"IP", "K_P", "QS", "K_B", "ERA", "WHIP", "K_9", "NSV", "OBP"}:
+    for canonical in {"TB", "IP", "W", "L", "HR_P", "K_P", "K_B", "ERA", "WHIP", "K_9", "NSV", "QS"}:
         assert canonical in translated, (
             f"canonical code {canonical} must survive translation"
         )

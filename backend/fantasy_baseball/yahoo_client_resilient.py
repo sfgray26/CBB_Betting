@@ -666,11 +666,11 @@ class YahooFantasyClient:
         and merged in as a best-effort enrichment step so a stats API failure
         cannot take down the waiver surface.
 
-        FIX (April 21, 2026): out=ownership IS a valid subresource and must be
-        requested to populate percent_owned for waiver players. Without this,
-        all players return percent_owned=0.0.
+        FIX (April 21, 2026): out=ownership is NOT a valid subresource on
+        league/.../players and causes a 400 error. Ownership data is fetched
+        via get_players_stats_batch() in the best-effort enrichment step below.
         """
-        params = {"status": "A", "start": start, "count": count, "sort": "AR", "out": "ownership"}
+        params = {"status": "A", "start": start, "count": count, "sort": "AR"}
         if position:
             params["position"] = position
         data = self._get(f"league/{self.league_key}/players", params=params)
@@ -1073,20 +1073,34 @@ class YahooFantasyClient:
         opp_stats_raw = {}
         opponent_name = "Unknown"
 
-        # Yahoo stat_id to canonical code mapping (from fantasy_stat_contract.json)
-        # April 21 Issue 4 fix: K_P was mapped to wrong stat_id (41→28), showing wins instead of Ks
-        # April 21 Issue NSV/NSB fix: NSB (60) is batting, NSV (83) is pitching
+        # Yahoo stat_id to canonical code mapping
+        # AUTHORITATIVE MAPPING verified against Yahoo Fantasy Baseball UI (April 22, 2026)
+        # Batting order: H/AB, R, H, HR, RBI, K, TB, AVG, OPS, NSB
+        # Pitching order: IP, W, L, HR, K, ERA, WHIP, K/9, QS, NSV
         yahoo_to_canonical = {
-            # Batting (higher better)
-            "7": "R", "8": "H", "12": "HR_B", "13": "RBI", "16": "TB", "60": "NSB",
-            # Batting (lower better)
-            "10": "K_B",
-            # Batting rate stats
-            "25": "AVG", "26": "OPS",
-            # Pitching (higher better)
-            "23": "W", "24": "L", "28": "K_P", "29": "QS", "57": "K_9", "83": "NSV",
-            # Pitching (lower better)
-            "35": "HR_P", "44": "ERA", "45": "WHIP",
+            # BATTING STATS (in Yahoo display order)
+            "60": "H_AB",     # Hits/At Bats (display field, e.g., "48/218")
+            "7": "R",         # Runs
+            "8": "H",         # Hits
+            "12": "HR_B",     # Home Runs (batters)
+            "13": "RBI",      # Runs Batted In
+            "23": "K_B",      # Strikeouts (batters) — was incorrectly mapped to W
+            "21": "TB",       # Total Bases
+            "3": "AVG",       # Batting Average
+            "55": "OPS",      # On-base Plus Slugging
+            "62": "NSB",      # Net Stolen Bases
+            
+            # PITCHING STATS (in Yahoo display order)
+            "50": "IP",       # Innings Pitched
+            "28": "W",        # Wins — was incorrectly mapped to K_P
+            "29": "L",        # Losses — was incorrectly mapped to QS
+            "38": "HR_P",     # Home Runs Allowed (pitchers)
+            "42": "K_P",      # Strikeouts (pitchers) — was unmapped
+            "26": "ERA",      # Earned Run Average — was incorrectly mapped to OPS
+            "27": "WHIP",     # Walks + Hits per IP
+            "57": "K_9",      # Strikeouts per 9 innings
+            "85": "QS",       # Quality Starts — was unmapped
+            "83": "NSV",      # Net Saves
         }
 
         # Process both teams
@@ -1108,11 +1122,15 @@ class YahooFantasyClient:
                 for stat_id_str, stat_value in team_stats.items():
                     if stat_id_str in yahoo_to_canonical:
                         canonical = yahoo_to_canonical[stat_id_str]
-                        # Handle both numeric and string values
-                        try:
-                            stats[canonical] = float(stat_value)
-                        except (ValueError, TypeError):
-                            continue
+                        # H_AB is a display field with format "48/218" - keep as string
+                        if canonical == "H_AB":
+                            stats[canonical] = str(stat_value)
+                        else:
+                            # Handle numeric values (both int and float)
+                            try:
+                                stats[canonical] = float(stat_value)
+                            except (ValueError, TypeError):
+                                continue
 
             if is_my_team:
                 my_stats_raw = stats

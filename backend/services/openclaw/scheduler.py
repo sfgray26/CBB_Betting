@@ -61,49 +61,14 @@ class OpenClawScheduler:
         self._detector = None
         
     def start_monitoring(self):
-        """Schedule all OpenClaw monitoring jobs."""
-        from .performance_monitor import PerformanceMonitor, DecaySeverity
-        from .pattern_detector import PatternDetector
-        
-        self._monitor = PerformanceMonitor(sport=self.sport)
-        self._detector = PatternDetector(sport=self.sport)
-        
-        # 1. Performance Monitor: Every 2 hours
-        self.scheduler.add_job(
-            self._run_performance_check,
-            trigger='interval',
-            hours=2,
-            id=self.JOB_PERFORMANCE_MONITOR,
-            name=f'OpenClaw: Performance Monitor ({self.sport})',
-            replace_existing=True,
-            next_run_time=datetime.now()  # Run immediately on start
-        )
-        
-        # 2. Pattern Detector: Daily at 6 AM
-        self.scheduler.add_job(
-            self._run_pattern_sweep,
-            trigger='cron',
-            hour=6,
-            minute=0,
-            id=self.JOB_PATTERN_SWEEP,
-            name=f'OpenClaw: Pattern Sweep ({self.sport})',
-            replace_existing=True
-        )
-        
-        # 3. Health Summary: Daily at 7 AM (after pattern sweep)
-        self.scheduler.add_job(
-            self._send_health_summary,
-            trigger='cron',
-            hour=7,
-            minute=0,
-            id=self.JOB_HEALTH_SUMMARY,
-            name=f'OpenClaw: Health Summary ({self.sport})',
-            replace_existing=True
-        )
-        
+        """Schedule all OpenClaw monitoring jobs.
+
+        PAUSED (2026-04-21): OpenClaw monitoring is disabled to reduce noise
+        and filesystem clutter while the baseball module is being implemented.
+        Re-enable when OpenClaw is needed again.
+        """
         logger.info(
-            f"OpenClaw monitoring scheduled for {self.sport}: "
-            f"performance every 2h, sweep daily at 6 AM, summary at 7 AM"
+            "OpenClaw monitoring not scheduled — paused until baseball module is complete"
         )
     
     def stop_monitoring(self):

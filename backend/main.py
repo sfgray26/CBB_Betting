@@ -308,13 +308,14 @@ async def lifespan(app: FastAPI):
         )
 
         # OpenClaw autonomous waiver intelligence at 8:30 AM daily
-        scheduler.add_job(
-            _openclaw_morning_job,
-            CronTrigger(hour=8, minute=30, timezone=timezone),
-            id="openclaw_morning",
-            name="OpenClaw Autonomous Morning Workflow",
-            replace_existing=True,
-        )
+        # PAUSED (2026-04-21): Disabled while baseball module is being implemented.
+        # scheduler.add_job(
+        #     _openclaw_morning_job,
+        #     CronTrigger(hour=8, minute=30, timezone=timezone),
+        #     id="openclaw_morning",
+        #     name="OpenClaw Autonomous Morning Workflow",
+        #     replace_existing=True,
+        # )
 
     if cbb_active:
         # Odds monitor - poll every 5 minutes for line movements
@@ -1531,17 +1532,13 @@ async def _run_mlb_analysis_job():
 
 
 def _openclaw_morning_job():
-    """Daily 8:30 AM OpenClaw autonomous waiver intelligence workflow."""
-    try:
-        from backend.services.mcmc_simulator import MCMCWeeklySimulator
-        from backend.services.waiver_edge_detector import WaiverEdgeDetector
-        from backend.services.discord_router import DiscordRouter
-        from backend.services.openclaw_autonomous import OpenClawAutonomousLoop
-        sim = MCMCWeeklySimulator(n_sims=1000)
-        loop = OpenClawAutonomousLoop(WaiverEdgeDetector(mcmc_simulator=sim), DiscordRouter())
-        loop.run_morning_workflow()
-    except Exception as e:
-        logger.error("OpenClaw morning job failed: %s", e)
+    """Daily 8:30 AM OpenClaw autonomous waiver intelligence workflow.
+
+    PAUSED (2026-04-21): OpenClaw is on hold until the baseball module is
+    fully implemented. All Discord notifications and report generation are
+    disabled to reduce noise and filesystem clutter.
+    """
+    logger.info("OpenClaw morning job skipped — paused until baseball module is complete")
 
 
 async def _opener_attack_job():

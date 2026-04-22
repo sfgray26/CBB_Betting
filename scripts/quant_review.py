@@ -39,7 +39,9 @@ Deliverable: 70% reduction in I/O wait time during high-volume Saturday slates.
 - **Next Step:** Apply Master Prompt to Claude Code."
     
     # Send to Discord via OpenClaw
-    os.system(f'openclaw message send --channel discord --target "1477436117426110615" --message "{summary}"')
+    # PAUSED (2026-04-21): OpenClaw Discord notifications disabled.
+    # os.system(f'openclaw message send --channel discord --target "1477436117426110615" --message "{summary}"')
+    print(f"[PAUSED] Would send Discord summary")
 
 if __name__ == "__main__":
     run_review()

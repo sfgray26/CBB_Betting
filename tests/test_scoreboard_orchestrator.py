@@ -111,7 +111,7 @@ class TestBudgetState:
         )
 
         # With only 30 IP and 2 days left, pace should be BEHIND
-        assert "behind" in budget.ip_pace.value
+        assert budget.ip_pace.value == "BEHIND"
 
 
 class TestProjectRowFromPlayerScores:
@@ -392,7 +392,7 @@ class TestBudgetStateFunction:
             season_days_elapsed=30,
         )
         # Should be one of the valid flags
-        assert budget.ip_pace.value in ("behind", "on_track", "ahead", "complete", "unknown")
+        assert budget.ip_pace.value in ("BEHIND", "ON_TRACK", "AHEAD")
 
     def test_budget_as_of_is_recent(self):
         """as_of timestamp is set to current time."""
