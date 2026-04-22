@@ -383,10 +383,15 @@ class WaiverEdgeDetector:
         return drop_candidate_value(player)
 
     def _score_fa_against_deficits(self, fa, deficits):
+        from backend.fantasy_baseball.category_aware_scorer import (
+            CategoryNeedVector,
+            PlayerCategoryImpactVector,
+            score_fa_against_needs,
+        )
         cat_scores = fa.get("cat_scores") or {}
-        return sum(
-            cat_scores.get(cat, 0.0) * max(0.0, deficit)
-            for cat, deficit in deficits.items()
+        return score_fa_against_needs(
+            PlayerCategoryImpactVector(impacts={k: float(v) for k, v in cat_scores.items()}),
+            CategoryNeedVector(needs={k: float(v) for k, v in deficits.items()}),
         )
 
     def _has_dead_2b(self, roster):
