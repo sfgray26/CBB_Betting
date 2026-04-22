@@ -99,6 +99,17 @@ _STARTS_CACHE: dict = {}
 # Shared fallback for Yahoo numeric stat category IDs.
 _YAHOO_STAT_FALLBACK: dict = dict(YAHOO_ID_INDEX)
 
+# Maps SCORING_CATEGORY_CODES (uppercase, from YAHOO_ID_INDEX values) to the
+# lowercase board keys used in PlayerProjection.cat_scores and player_board.py.
+# cat.lower() covers most cases; only non-trivial remappings are listed here.
+_CANONICAL_TO_BOARD: dict = {
+    "HR_B":  "hr",
+    "HR_P":  "hr_pit",
+    "K_9":   "k9",
+    "K_P":   "k_pit",
+    "K_B":   "k_bat",
+}
+
 
 # ============================================================================
 # HELPERS
@@ -2125,13 +2136,48 @@ async def get_waiver_recommendations(
         except Exception as _rec_sb_err:
             logger.warning("recommendations scoreboard failed (non-fatal): %s", _rec_sb_err)
 
+        # Build CategoryNeedVector from the parsed category_deficits so FA scoring
+        # is category-aware for this week's matchup.
+        _need_vector = None
+        if category_deficits:
+            try:
+                from backend.fantasy_baseball.category_aware_scorer import CategoryNeedVector as _CNV
+                _need_vector = _CNV(needs={
+                    _CANONICAL_TO_BOARD.get(cd.category, cd.category.lower()): cd.deficit
+                    for cd in category_deficits
+                })
+            except Exception:
+                _need_vector = None
+
         free_agents = client.get_free_agents(count=40)
 
         def _score_fa(p: dict) -> WaiverPlayerOut:
             positions = p.get("positions") or []
             name = (p.get("name") or "").strip()
             bp = _get_proj(p)
-            need_score = bp.get("z_score", 0.0)
+            z_score = bp.get("z_score", 0.0)
+            if isinstance(z_score, (tuple, list)):
+                z_score = float(z_score[0]) if z_score else 0.0
+            else:
+                z_score = float(z_score) if z_score is not None else 0.0
+            need_score = z_score
+            if _need_vector is not None:
+                cat_scores = bp.get("cat_scores") or {}
+                if cat_scores:
+                    try:
+                        from backend.fantasy_baseball.category_aware_scorer import (
+                            PlayerCategoryImpactVector as _PCIV,
+                            score_fa_against_needs as _sfan,
+                        )
+                        n_cats = max(1, len(_need_vector.needs))
+                        cat_score = _sfan(
+                            _PCIV(impacts={k: float(v) for k, v in cat_scores.items()}),
+                            _need_vector,
+                        )
+                        # Normalize per-category and blend: 40% generic z_score + 60% matchup-specific
+                        need_score = 0.4 * z_score + 0.6 * (cat_score / n_cats)
+                    except Exception:
+                        pass  # fallback to z_score if scorer unavailable
             return WaiverPlayerOut(
                 player_id=p.get("player_key") or "",
                 name=name,

@@ -91,9 +91,7 @@ def audit_empty_projections(db) -> List[Dict[str, Any]]:
     players_with_empty_cats = db.query(PlayerProjection).filter(
         PlayerProjection.updated_at > week_ago,
         func.jsonb_typeof(PlayerProjection.cat_scores) == "object",
-        func.jsonb_array_length(
-            func.jsonb_object_keys(PlayerProjection.cat_scores)
-        ) == 0
+        PlayerProjection.cat_scores == text("'{}'::jsonb")
     ).all()
     
     for player in players_with_empty_cats:

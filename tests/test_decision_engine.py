@@ -616,3 +616,84 @@ class TestWaiverValueGainFiltering:
         # If the threshold changes, update this test and the comment above
         FILTER_THRESHOLD = 0.10
         assert FILTER_THRESHOLD == 0.10
+
+
+# ---------------------------------------------------------------------------
+# 6. Category-aware waiver optimization (rate-stat protection gate)
+# ---------------------------------------------------------------------------
+
+class TestCategoryAwareWaivers:
+    """optimize_waivers() with need_vector routes to category-aware math."""
+
+    def test_bad_era_pitcher_gets_negative_gain_when_team_crushing_era(self):
+        """
+        When the team is heavily winning ERA, a bad-ERA pitcher's world_with_value
+        must be penalized below world_without_value, producing negative gain.
+        This prevents the system recommending a 5.50-ERA reliever when the team
+        already owns a 3.10 ERA lead.
+        """
+        from backend.fantasy_baseball.category_aware_scorer import (
+            CategoryNeedVector, RATE_STAT_PROTECT_THRESHOLD,
+        )
+        era_deficit = -(RATE_STAT_PROTECT_THRESHOLD + 2.0)
+        need_vector = CategoryNeedVector(needs={"era": era_deficit})
+
+        bad_era_pitcher = _make_pitcher(
+            901, "BadERA", positions=["SP"],
+            score=45.0, z_era=-1.0, z_whip=-0.3, z_k_p=0.5,
+        )
+        roster_player = _make_pitcher(
+            902, "MedPitcher", positions=["SP"],
+            score=50.0, z_era=0.2, z_whip=0.1, z_k_p=0.5,
+        )
+
+        _, results = optimize_waivers([roster_player], [bad_era_pitcher], need_vector=need_vector)
+
+        assert len(results) == 1
+        assert results[0].value_gain < 0, (
+            f"Bad-ERA pitcher must produce negative gain when team is crushing ERA; "
+            f"got value_gain={results[0].value_gain:.4f}"
+        )
+
+    def test_good_era_pitcher_gets_positive_gain_when_team_needs_era(self):
+        """
+        When the team is losing ERA, a good ERA pitcher's category score
+        boosts world_with_value above the weak roster pitcher's value.
+        """
+        from backend.fantasy_baseball.category_aware_scorer import CategoryNeedVector
+
+        need_vector = CategoryNeedVector(needs={"era": 2.0})
+
+        good_era_pitcher = _make_pitcher(
+            903, "GoodERA", positions=["SP"],
+            score=80.0, z_era=1.5, z_whip=0.8, z_k_p=1.2,
+        )
+        weak_roster_pitcher = _make_pitcher(
+            904, "WeakPitcher", positions=["SP"],
+            score=25.0, z_era=-0.5, z_whip=-0.2, z_k_p=0.0,
+        )
+
+        _, results = optimize_waivers([weak_roster_pitcher], [good_era_pitcher], need_vector=need_vector)
+
+        assert len(results) == 1
+        assert results[0].value_gain > 0, (
+            "Good ERA pitcher must generate positive gain when team needs ERA"
+        )
+
+    def test_fallback_to_composite_when_need_vector_is_none(self):
+        """
+        optimize_waivers(need_vector=None) must produce identical results
+        to optimize_waivers() with no need_vector argument.
+        """
+        roster = [_make_pitcher(905, "RosterPit", positions=["SP"], score=40.0)]
+        candidate = _make_pitcher(
+            906, "WaiverPit", positions=["SP"], score=80.0,
+            proj_k=180.0, z_k_p=1.0, z_era=1.0, z_whip=0.5,
+        )
+
+        _, results_no_vec = optimize_waivers(roster, [candidate])
+        _, results_none = optimize_waivers(roster, [candidate], need_vector=None)
+
+        assert len(results_no_vec) == len(results_none)
+        if results_no_vec:
+            assert results_no_vec[0].value_gain == pytest.approx(results_none[0].value_gain)

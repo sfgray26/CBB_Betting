@@ -237,6 +237,58 @@ def _can_fill_slot(player: PlayerDecisionInput, slot: str) -> bool:
     return False
 
 
+def _derive_category_impacts(player: PlayerDecisionInput) -> dict:
+    """
+    Map PlayerDecisionInput z-score fields to a {board_key: z_score} dict.
+
+    Only pitchers have per-category z-scores on PlayerDecisionInput (z_era,
+    z_whip, z_k_p). Hitters fall back to composite_z which cannot be split
+    into per-category impacts, so we return {} for them (callers fall back to
+    _composite_value).
+    """
+    pt = (player.player_type or "unknown").lower()
+    if pt not in ("pitcher", "two_way"):
+        return {}
+    impacts: dict = {}
+    if player.z_era is not None:
+        impacts["era"] = float(player.z_era)
+    if player.z_whip is not None:
+        impacts["whip"] = float(player.z_whip)
+    if player.z_k_p is not None:
+        impacts["k9"] = float(player.z_k_p)
+    return impacts
+
+
+def _category_aware_value(player: PlayerDecisionInput, need_vector) -> float:
+    """
+    Category-aware world-with value for waiver candidates.
+
+    For pitchers: applies the rate-stat protection gate via score_fa_against_needs.
+    The category score is added as a bounded adjustment to composite_value so the
+    output scale stays near [0, 3], but can go negative when the penalty gate fires.
+
+    For hitters and unknowns (no per-category z-scores): falls back to
+    _composite_value unchanged.
+    """
+    impacts = _derive_category_impacts(player)
+    if not impacts:
+        return _composite_value(player)
+
+    from backend.fantasy_baseball.category_aware_scorer import (
+        PlayerCategoryImpactVector,
+        score_fa_against_needs,
+    )
+    cat_score = score_fa_against_needs(
+        PlayerCategoryImpactVector(impacts=impacts),
+        need_vector,
+    )
+    # Scale cat_score (typical range ±3–10) to ±1.5 additive adjustment.
+    # Bound ensures the output stays interpretable relative to _composite_value
+    # while still producing negatives when the penalty gate fires hard.
+    cat_adj = max(-1.5, min(1.5, cat_score * 0.3))
+    return _composite_value(player) + cat_adj
+
+
 def _composite_value(player: PlayerDecisionInput) -> float:
     """
     Simple composite value metric for waiver world-with/world-without comparisons.
@@ -466,6 +518,7 @@ def optimize_waivers(
     roster: list,
     waiver_pool: list,
     as_of_date: Optional[date] = None,
+    need_vector=None,
 ) -> tuple:
     """
     Waiver intelligence: world-with vs world-without.
@@ -497,7 +550,10 @@ def optimize_waivers(
         if drop_target is None:
             continue
 
-        world_with_value = _composite_value(candidate)
+        if need_vector is not None:
+            world_with_value = _category_aware_value(candidate, need_vector)
+        else:
+            world_with_value = _composite_value(candidate)
         world_without_value = _composite_value(drop_target)
         gain = world_with_value - world_without_value
 
