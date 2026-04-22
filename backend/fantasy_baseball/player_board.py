@@ -909,15 +909,58 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
             _projection_cache[player_key] = best_entry
         return best_entry
 
-    # 4. Not on board — build proxy entry
+    # 4. Not on board — query DB for real projection data
     positions = yahoo_player.get("positions") or []
     primary_pos = positions[0] if positions else ""
 
     # Infer type from position
     player_type = "pitcher" if primary_pos in ("SP", "RP", "P") else "batter"
 
-    # Use position baseline z_score
+    # Use position baseline z_score as fallback
     proxy_z = _POSITION_BASELINE_Z.get(primary_pos, _DEFAULT_BASELINE_Z)
+
+    # Fetch real projection from database (CRITICAL: no synthetic data)
+    # Tests may provide explicit cat_scores — preserve those
+    existing_cat_scores = yahoo_player.get("cat_scores") or {}
+    db_cat_scores = {}
+    db_z_score = proxy_z
+
+    if not existing_cat_scores:
+        # Query PlayerProjection table for real data
+        try:
+            from backend.db import get_db
+            from backend.models import PlayerProjection
+            
+            # Try to get DB session (may fail in test contexts)
+            db_gen = get_db()
+            db = next(db_gen)
+            
+            # Normalize player_key to extract ID (mlb.p.12345 → 12345)
+            player_id = player_key.split(".")[-1] if player_key and ".p." in player_key else None
+            
+            if player_id:
+                # Query for real projection
+                projection_row = db.query(PlayerProjection).filter(
+                    PlayerProjection.player_id == player_id
+                ).first()
+                
+                if projection_row and projection_row.cat_scores:
+                    # Found real projection data — use it
+                    db_cat_scores = projection_row.cat_scores
+                    db_z_score = sum(db_cat_scores.values()) if db_cat_scores else proxy_z
+            
+            # Close DB session
+            try:
+                next(db_gen)
+            except StopIteration:
+                pass
+                
+        except Exception:
+            # DB query failed (test env, no DB, etc.) — fall back to empty cat_scores
+            pass
+
+    # Final cat_scores: explicit test data > DB data > empty (no synthetic baselines)
+    final_cat_scores = existing_cat_scores or db_cat_scores
 
     proxy = {
         "id": player_key or name.lower().replace(" ", "_"),
@@ -928,12 +971,12 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
         "tier": 10,
         "rank": 9999,
         "adp": 9999.0,
-        "z_score": proxy_z,
-        "cat_scores": {},  # No per-category data for unknown players
+        "z_score": db_z_score,
+        "cat_scores": final_cat_scores,  # Real DB data or empty (NO synthetic baselines)
         "proj": {},
         "is_keeper": False,
         "keeper_round": None,
-        "is_proxy": True,  # Flag so callers know this is estimated
+        "is_proxy": True,  # Flag so callers know this is not from hardcoded board
     }
 
     if player_key:

@@ -2272,9 +2272,17 @@ async def get_waiver_recommendations(
             drop_signals, drop_reg_delta = build_statcast_signals(
                 drop_candidate["name"], drop_is_pitcher
             )
+            # Defensive type coercion: ensure both sides of comparison are floats
+            # drop_candidate["z_score"] might leak as tuple from board projection data
+            drop_z_score = drop_candidate.get("z_score", 0.0)
+            if isinstance(drop_z_score, (tuple, list)):
+                drop_z_score = float(drop_z_score[0]) if drop_z_score else 0.0
+            else:
+                drop_z_score = float(drop_z_score)
+            
             drop_score_adj = max(
                 _drop_candidate_value(drop_candidate)[0],
-                drop_candidate["z_score"] + statcast_need_score_boost(drop_signals),
+                drop_z_score + statcast_need_score_boost(drop_signals),
             )
 
             if drop_score_adj >= adjusted_need:
