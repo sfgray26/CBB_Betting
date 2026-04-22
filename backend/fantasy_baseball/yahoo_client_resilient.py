@@ -724,6 +724,12 @@ class YahooFantasyClient:
                                     sid = s.get("stat_id")
                                     if sid is not None:
                                         stats_raw[str(sid)] = s.get("value", "")
+            if player_key and not stats_raw:
+                logger.warning(
+                    "get_players_stats_batch: %s returned empty stats_raw "
+                    "(likely IL-status response variant or malformed stats block); skipping",
+                    player_key,
+                )
             if player_key and stats_raw:
                 result[player_key] = stats_raw
         return result
@@ -1084,23 +1090,23 @@ class YahooFantasyClient:
             "8": "H",         # Hits
             "12": "HR_B",     # Home Runs (batters)
             "13": "RBI",      # Runs Batted In
-            "23": "K_B",      # Strikeouts (batters) — was incorrectly mapped to W
-            "21": "TB",       # Total Bases
+            "21": "K_B",      # Strikeouts (batters) — SWAPPED with TB (was 23)
+            "23": "TB",       # Total Bases — SWAPPED with K_B (was 21)
             "3": "AVG",       # Batting Average
             "55": "OPS",      # On-base Plus Slugging
             "62": "NSB",      # Net Stolen Bases
             
             # PITCHING STATS (in Yahoo display order)
             "50": "IP",       # Innings Pitched
-            "28": "W",        # Wins — was incorrectly mapped to K_P
-            "29": "L",        # Losses — was incorrectly mapped to QS
+            "28": "W",        # Wins
+            "29": "L",        # Losses
             "38": "HR_P",     # Home Runs Allowed (pitchers)
-            "42": "K_P",      # Strikeouts (pitchers) — was unmapped
-            "26": "ERA",      # Earned Run Average — was incorrectly mapped to OPS
+            "42": "K_P",      # Strikeouts (pitchers)
+            "26": "ERA",      # Earned Run Average
             "27": "WHIP",     # Walks + Hits per IP
             "57": "K_9",      # Strikeouts per 9 innings
-            "85": "QS",       # Quality Starts — was unmapped
-            "83": "NSV",      # Net Saves
+            "83": "QS",       # Quality Starts — SWAPPED with NSV (was 85)
+            "85": "NSV",      # Net Saves — SWAPPED with QS (was 83)
         }
 
         # Process both teams

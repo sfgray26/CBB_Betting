@@ -1,0 +1,56 @@
+{
+  "overall_healthy": true,
+  "healthy_count": 7,
+  "unhealthy_count": 0,
+  "tables": [
+    {
+      "name": "player_rolling_stats",
+      "healthy": true,
+      "row_count": 51515,
+      "latest_date": "2026-04-21",
+      "issues": []
+    },
+    {
+      "name": "player_scores",
+      "healthy": true,
+      "row_count": 51335,
+      "latest_date": "2026-04-21",
+      "issues": []
+    },
+    {
+      "name": "statcast_performances",
+      "healthy": true,
+      "row_count": 9720,
+      "latest_date": "2026-04-20",
+      "issues": []
+    },
+    {
+      "name": "probable_pitchers",
+      "healthy": true,
+      "row_count": 251,
+      "latest_date": "2026-04-26",
+      "issues": []
+    },
+    {
+      "name": "simulation_results",
+      "healthy": true,
+      "row_count": 16342,
+      "latest_date": "2026-04-20",
+      "issues": []
+    },
+    {
+      "name": "mlb_player_stats",
+      "healthy": true,
+      "row_count": 10061,
+      "latest_date": "2026-04-21",
+      "issues": []
+    },
+    {
+      "name": "data_ingestion_logs",
+      "healthy": true,
+      "row_count": 2270,
+      "latest_date": "2026-04-22",
+      "issues": []
+    }
+  ]
+}

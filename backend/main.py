@@ -5236,7 +5236,7 @@ async def get_daily_briefing(
 
     # Generate briefing
     try:
-        from backend.fantasy_baseball.daily_briefing import get_briefing_generator
+        from backend.fantasy_baseball.daily_briefing import get_briefing_generator, CATEGORY_DISPLAY_NAMES
         generator = get_briefing_generator(record_decisions=record_decisions)
         briefing = generator.generate(
             roster=roster,
@@ -5258,6 +5258,7 @@ async def get_daily_briefing(
             },
             "categories": [
                 {
+                    "name": CATEGORY_DISPLAY_NAMES.get(c.category, c.category),
                     "category": c.category,
                     "current": c.current,
                     "opponent": c.opponent,

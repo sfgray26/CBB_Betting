@@ -1,6 +1,39 @@
 # Stat Mapping Impact Analysis
 **Date:** April 22, 2026  
-**Context:** Verifying system-wide impact of Yahoo stat_id mapping corrections
+**Last Updated:** April 22, 2026 09:30 ET (Round 2 fixes)  
+**Analyst:** Claude Code (Master Architect)  
+**Scope:** Yahoo stat_id corrections across the stat contract system
+
+---
+
+## ⚠️ Round 2 Corrections (April 22, 2026 09:30 ET)
+
+**Issue:** After deploying initial fixes, user reported 4 stats still incorrect:
+- TB showing 13 (should be 19) — SWAPPED with K_B
+- K_B showing 19 (should be 13) — SWAPPED with TB
+- NSV showing 0 (should be 1) — SWAPPED with QS
+- QS showing 1 (should be 0) — SWAPPED with NSV
+
+**Root Cause:** Initial yahoo_stat_id assignments were reversed for two pairs of stats.
+
+**Fix Applied:** Swapped stat_ids in all THREE files:
+
+| Stat | Round 1 ID | Round 2 ID (CORRECT) | Reason |
+|------|-----------|---------------------|---------|
+| K_B | 23 | **21** | Yahoo sends K_B value (13) under stat_id 21 |
+| TB | 21 | **23** | Yahoo sends TB value (19) under stat_id 23 |
+| QS | 85 | **83** | Yahoo sends QS value (0) under stat_id 83 |
+| NSV | 83 | **85** | Yahoo sends NSV value (1) under stat_id 85 |
+
+**Files Updated:**
+1. `backend/fantasy_baseball/yahoo_client_resilient.py` (lines 1080-1110)
+2. `backend/stat_contract/registry.py` (K_B, TB, QS, NSV definitions)
+3. `backend/stat_contract/fantasy_stat_contract.json` (external_ids + yahoo_id_index)
+
+**Verification:**
+- ✅ Python syntax validated (`py_compile` passed)
+- ✅ JSON syntax validated (parseable)
+- 🔄 Awaiting production test with real Yahoo API response
 
 ---
 

@@ -178,3 +178,4 @@ Capture responses to `postman_collections/responses/2026-04-22/`.
 ---
 
 *Last updated: 2026-04-21 21:30 UTC — **CRITICAL**: Waiver 503 regression detected (v3 audit). Emergency recovery required before Wave 2 deploy. Session logs in `memory/`, architectural decisions in `tasks/architect_review.md`.*
+| 2026-04-22 | MLBAM ID Backfill | **COMPLETE** | 6,567/10,000 players populated with MLBAM IDs. |

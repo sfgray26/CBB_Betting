@@ -322,6 +322,14 @@ class LineupPlayerOut(BaseModel):
             return "Active" if v else "Inactive"
         return v
 
+    # Consumer-facing alias for `status`. Frontend reads `lineup_status`; `status`
+    # kept alongside for backward compatibility with legacy consumers.
+    lineup_status: Optional[str] = None
+    # Positional eligibility from Yahoo roster metadata.
+    eligible_positions: Optional[List[str]] = None
+    # game_time is an alias of start_time; consumers on the roster contract read this key.
+    game_time: Optional[datetime] = None
+
     class Config:
         # Serialize datetime as ISO 8601 with Z suffix for proper timezone handling
         json_encoders = {datetime: lambda v: v.strftime("%Y-%m-%dT%H:%M:%SZ") if v else None}
@@ -355,6 +363,14 @@ class StartingPitcherOut(BaseModel):
                 return 1.0  # Neutral park
             return 0.0
         return v
+
+    # has_game mirrors the batter-side contract. Pitchers with no scheduled start
+    # still appear in the list (status="NO_START") but has_game=False.
+    has_game: bool = False
+    # is_two_start: True when pitcher has 2 probable starts this scoring week.
+    is_two_start: bool = False
+    # game_time alias matches the batter contract key.
+    game_time: Optional[datetime] = None
 
     class Config:
         # Serialize datetime as ISO 8601 with Z suffix for proper timezone handling
@@ -449,6 +465,20 @@ class RosterMoveRecommendation(BaseModel):
     win_prob_gain: float = 0.0              # Absolute gain (after - before)
     category_win_probs: dict = {}           # Per-category win probability after move
     mcmc_enabled: bool = False              # True if MCMC simulation ran successfully
+
+    @field_validator("need_score", mode="before")
+    @classmethod
+    def _coerce_need_score(cls, v):
+        # Upstream scoring code has leaked (score, tiebreak) tuples into this
+        # scalar field, causing sorted() to raise "'>' not supported between
+        # instances of 'float' and 'tuple'". Take the first element for tuples;
+        # fall back to 0.0 for anything else non-numeric.
+        if isinstance(v, tuple):
+            return float(v[0]) if v else 0.0
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
 
 
 class WaiverRecommendationsResponse(BaseModel):

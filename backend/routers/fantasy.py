@@ -994,6 +994,27 @@ async def get_fantasy_lineup_recommendations(
         if p.get("name") and p.get("player_key")
     }
 
+    # Lookup tables for lineup schema enrichment fields.
+    # eligible_positions comes from Yahoo roster metadata parsed by _parse_player().
+    # bdl_player_id / mlbam_id are only present if the roster payload was enriched
+    # by the DB hydration step (they are not in raw Yahoo data), so most entries
+    # will be None — consistent with Optional[int] typing.
+    _eligible_positions_lookup: dict = {
+        p.get("name", "").strip().lower(): p.get("positions") or []
+        for p in _lineup_roster
+        if p.get("name")
+    }
+    _bdl_id_lookup: dict = {
+        p.get("name", "").strip().lower(): p.get("bdl_player_id")
+        for p in _lineup_roster
+        if p.get("name") and p.get("bdl_player_id")
+    }
+    _mlbam_id_lookup: dict = {
+        p.get("name", "").strip().lower(): p.get("mlbam_id")
+        for p in _lineup_roster
+        if p.get("name") and p.get("mlbam_id")
+    }
+
     batters: list = []
 
     team_odds: dict = {}
@@ -1082,6 +1103,7 @@ async def get_fantasy_lineup_recommendations(
                 opp, start, opp_impl = _get_game_context(team)
                 team_info = team_odds.get(normalize_team_abbr(team), {})
                 _pname = a["player_name"]
+                _slot_status = "START" if a["slot"] != "BN" else "BENCH"
                 batters.append(LineupPlayerOut(
                     player_id=a["player_id"] or _pname,
                     player_key=_name_to_player_key.get(_pname.lower().strip(), "") or None,
@@ -1093,9 +1115,14 @@ async def get_fantasy_lineup_recommendations(
                     lineup_score=round(a.get("smart_score", 0), 3),
                     start_time=start,
                     opponent=opp,
-                    status="START" if a["slot"] != "BN" else "BENCH",
+                    status=_slot_status,
+                    lineup_status=_slot_status,
                     assigned_slot=a["slot"],
                     has_game=bool(team_info) or a.get("has_game", False),
+                    eligible_positions=_eligible_positions_lookup.get(_pname.lower().strip()) or None,
+                    game_time=start,
+                    bdl_player_id=_bdl_id_lookup.get(_pname.lower().strip()),
+                    mlbam_id=_mlbam_id_lookup.get(_pname.lower().strip()),
                     injury_status=_injury_lookup.get(_pname.lower()),
                 ))
 
@@ -1118,10 +1145,12 @@ async def get_fantasy_lineup_recommendations(
             for s in solved_slots:
                 opp, start, opp_impl = _get_game_context(s.player_team)
                 team_info = team_odds.get(normalize_team_abbr(s.player_team), {})
+                _sname = s.player_name
+                _s_slot_status = "START" if s.slot != "BN" else "BENCH"
                 batters.append(LineupPlayerOut(
-                    player_id=s.player_name,
-                    player_key=_name_to_player_key.get(s.player_name.lower().strip(), "") or None,
-                    name=s.player_name,
+                    player_id=_sname,
+                    player_key=_name_to_player_key.get(_sname.lower().strip(), "") or None,
+                    name=_sname,
                     team=s.player_team,
                     position=s.positions[0] if s.positions else "?",
                     implied_runs=round(float(team_info.get("implied_runs", s.implied_runs)), 2),
@@ -1129,10 +1158,15 @@ async def get_fantasy_lineup_recommendations(
                     lineup_score=round(s.lineup_score, 3),
                     start_time=start,
                     opponent=opp,
-                    status="START" if s.slot != "BN" else "BENCH",
+                    status=_s_slot_status,
+                    lineup_status=_s_slot_status,
                     assigned_slot=s.slot,
                     has_game=bool(team_info) or s.has_game,
-                    injury_status=_injury_lookup.get(s.player_name.lower()),
+                    eligible_positions=_eligible_positions_lookup.get(_sname.lower().strip()) or None,
+                    game_time=start,
+                    bdl_player_id=_bdl_id_lookup.get(_sname.lower().strip()),
+                    mlbam_id=_mlbam_id_lookup.get(_sname.lower().strip()),
+                    injury_status=_injury_lookup.get(_sname.lower()),
                 ))
         except Exception as _exc:
             logger.warning("solve_lineup failed, falling back to score-rank: %s", _exc)
@@ -1151,6 +1185,7 @@ async def get_fantasy_lineup_recommendations(
             opp, start, opp_impl = _get_game_context(team)
             team_info = team_odds.get(normalize_team_abbr(team), {})
             _b_name = b.get("name", "")
+            _rank_slot_status = "START" if i < 9 else "BENCH"
             batters.append(LineupPlayerOut(
                 player_id=str(b.get("player_id", _b_name)),
                 player_key=_name_to_player_key.get(_b_name.lower().strip(), "") or None,
@@ -1162,15 +1197,21 @@ async def get_fantasy_lineup_recommendations(
                 lineup_score=float(b.get("score", 0)),
                 start_time=start,
                 opponent=opp,
-                status="START" if i < 9 else "BENCH",
+                status=_rank_slot_status,
+                lineup_status=_rank_slot_status,
                 assigned_slot=None,
                 has_game=bool(team_info) or b.get("has_game", True),
+                eligible_positions=_eligible_positions_lookup.get(_b_name.lower().strip()) or None,
+                game_time=start,
+                bdl_player_id=_bdl_id_lookup.get(_b_name.lower().strip()),
+                mlbam_id=_mlbam_id_lookup.get(_b_name.lower().strip()),
                 injury_status=_injury_lookup.get(_b_name.lower()),
             ))
 
     for _b in batters:
         if _b.status == "START" and not _b.opponent:
             _b.status = "BENCH"
+            _b.lineup_status = "BENCH"
             _msg = f"{_b.name} moved to BENCH -- no game data for {_b.team} on {lineup_date} (Odds API coverage gap)"
             if _msg not in lineup_warnings:
                 lineup_warnings.append(_msg)
@@ -1235,10 +1276,11 @@ async def get_fantasy_lineup_recommendations(
 
             pitcher_type = "SP" if is_sp else "RP"
 
+            _pname_raw = p.get("name", "")
             pitchers.append(StartingPitcherOut(
-                player_id=p.get("player_key") or p.get("name", ""),
-                player_key=p.get("player_key") or _name_to_player_key.get(p.get("name", "").lower().strip(), "") or None,
-                name=p.get("name", ""),
+                player_id=p.get("player_key") or _pname_raw,
+                player_key=p.get("player_key") or _name_to_player_key.get(_pname_raw.lower().strip(), "") or None,
+                name=_pname_raw,
                 team=team,
                 pitcher_type=pitcher_type,
                 opponent=opponent,
@@ -1247,6 +1289,11 @@ async def get_fantasy_lineup_recommendations(
                 sp_score=round(sp_score, 3),
                 start_time=start_time,
                 status=status,
+                has_game=has_start or bool(opponent),
+                is_two_start=bool(p.get("is_two_start", False)),
+                game_time=start_time,
+                bdl_player_id=_bdl_id_lookup.get(_pname_raw.lower().strip()),
+                mlbam_id=_mlbam_id_lookup.get(_pname_raw.lower().strip()),
             ))
 
         sp_no_start = [p for p in pitchers if p.status == "NO_START"]
@@ -1340,7 +1387,7 @@ async def get_daily_briefing(
         logger.warning("Could not load projections: %s", e)
 
     try:
-        from backend.fantasy_baseball.daily_briefing import get_briefing_generator
+        from backend.fantasy_baseball.daily_briefing import get_briefing_generator, CATEGORY_DISPLAY_NAMES
         generator = get_briefing_generator(record_decisions=record_decisions)
         briefing = generator.generate(
             roster=roster,
@@ -1420,6 +1467,7 @@ async def get_daily_briefing(
             },
             "categories": [
                 {
+                    "name": CATEGORY_DISPLAY_NAMES.get(c.category, c.category),
                     "category": c.category,
                     "current": c.current,
                     "opponent": c.opponent,
@@ -2330,10 +2378,23 @@ async def get_waiver_recommendations(
             detail=f"Unexpected error: {exc}",
         ) from exc
 
+    def _safe_need_score(r):
+        ns = r.need_score
+        if isinstance(ns, (int, float)):
+            return float(ns)
+        if isinstance(ns, tuple) and ns:
+            logger.warning(
+                "Waiver rec leaked tuple need_score for %s; using first element",
+                getattr(getattr(r, "add_player", None), "name", "?"),
+            )
+            return float(ns[0])
+        logger.warning("Waiver rec non-numeric need_score %r; treating as 0.0", ns)
+        return 0.0
+
     return WaiverRecommendationsResponse(
         week_end=week_end,
         matchup_opponent=matchup_opponent,
-        recommendations=sorted(recommendations, key=lambda r: r.need_score, reverse=True),
+        recommendations=sorted(recommendations, key=_safe_need_score, reverse=True),
         category_deficits=category_deficits,
     )
 

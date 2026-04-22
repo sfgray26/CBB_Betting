@@ -101,7 +101,7 @@
       "precision": 0,
       "valid_range": [0, null],
       "external_ids": {
-        "yahoo_stat_id": 23,
+        "yahoo_stat_id": 21,
         "mlb_stats_api": "strikeOuts",
         "balldontlie": "strikeouts",
         "pybaseball": "SO"
@@ -122,7 +122,7 @@
       "precision": 0,
       "valid_range": [0, null],
       "external_ids": {
-        "yahoo_stat_id": 21,
+        "yahoo_stat_id": 23,
         "mlb_stats_api": "totalBases",
         "balldontlie": "total_bases",
         "pybaseball": "TB"
@@ -370,7 +370,7 @@
       "precision": 0,
       "valid_range": [0, null],
       "external_ids": {
-        "yahoo_stat_id": 85,
+        "yahoo_stat_id": 83,
         "mlb_stats_api": "qualityStarts",
         "pybaseball": "QS"
       },
@@ -394,7 +394,7 @@
       "precision": 0,
       "valid_range": [null, null],
       "external_ids": {
-        "yahoo_stat_id": 83,
+        "yahoo_stat_id": 85,
         "mlb_stats_api_numerator": "saves",
         "mlb_stats_api_denominator": "blownSaves"
       },
@@ -510,8 +510,8 @@
     "12": "HR_B",
     "13": "RBI",
     "16": "SB",
-    "21": "TB",
-    "23": "K_B",
+    "21": "K_B",
+    "23": "TB",
     "24": "L",
     "26": "ERA",
     "27": "WHIP",
@@ -527,8 +527,8 @@
     "57": "K_9",
     "60": "H_AB",
     "62": "NSB",
-    "83": "NSV",
-    "85": "QS"
+    "83": "QS",
+    "85": "NSV"
   },
 
   "matchup_display_order": [
