@@ -20,8 +20,12 @@ Run this module standalone to see rankings:
   python -m backend.fantasy_baseball.player_board
 """
 
+import json
+import logging
 import statistics
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -928,15 +932,22 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
     if not existing_cat_scores:
         # Query PlayerProjection table for real data
         try:
-            from backend.db import get_db
-            from backend.models import PlayerProjection
-            
+            from backend.models import get_db, PlayerProjection
+
             # Try to get DB session (may fail in test contexts)
             db_gen = get_db()
             db = next(db_gen)
-            
-            # Normalize player_key to extract ID (mlb.p.12345 → 12345)
-            player_id = player_key.split(".")[-1] if player_key and ".p." in player_key else None
+
+            # Normalize player_key to extract numeric ID.
+            # Standard Yahoo keys: "469.l.X.p.12345" or "mlb.p.12345" → "12345"
+            # Non-standard (no .p.): "mlb.12345" → "12345" via last segment
+            if player_key and ".p." in player_key:
+                player_id = player_key.split(".p.")[-1]
+            elif player_key:
+                player_id = player_key.split(".")[-1]
+            else:
+                player_id = None
+            player_id = player_id or None  # Treat empty string as None
             
             if player_id:
                 # Query for real projection
@@ -961,6 +972,17 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
 
     # Final cat_scores: explicit test data > DB data > empty (no synthetic baselines)
     final_cat_scores = existing_cat_scores or db_cat_scores
+    
+    # Log data quality issue if proxy player has empty projection
+    if not final_cat_scores:
+        import json
+        logger.info(json.dumps({
+            "event": "data_quality_issue",
+            "issue_type": "proxy_player_empty_projection",
+            "player_key": player_key,
+            "player_name": name,
+            "positions": positions
+        }))
 
     proxy = {
         "id": player_key or name.lower().replace(" ", "_"),

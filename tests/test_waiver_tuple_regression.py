@@ -239,8 +239,40 @@ def test_waiver_recommendations_normal_z_score():
             assert response.status_code == 200
             data = response.json()
             assert "recommendations" in data
-        
+
         finally:
             # Clean up dependency override
             app.dependency_overrides.pop(verify_api_key, None)
+
+
+def test_proxy_hydration_attempts_db_lookup_for_key_without_dot_p():
+    """
+    Player keys without '.p.' separator must still attempt DB lookup,
+    not silently return empty cat_scores.
+    """
+    from unittest.mock import patch, MagicMock
+
+    mock_projection = MagicMock()
+    mock_projection.cat_scores = {"HR_B": 0.9, "RBI": 0.7}
+    mock_session = MagicMock()
+    mock_session.query.return_value.filter.return_value.first.return_value = mock_projection
+
+    def mock_get_db():
+        yield mock_session
+
+    yahoo_player_no_dot_p = {
+        "name": "Bare Key Player",
+        "player_key": "mlb.12345",   # No '.p.' — was previously silently skipped
+        "positions": ["1B"],
+        "team": "STL",
+    }
+
+    # get_db is defined in backend.models; player_board imports it from there after fix
+    with patch("backend.models.get_db", side_effect=mock_get_db):
+        from backend.fantasy_baseball.player_board import get_or_create_projection
+        result = get_or_create_projection(yahoo_player_no_dot_p)
+
+    assert result.get("cat_scores") == {"HR_B": 0.9, "RBI": 0.7}, (
+        f"Expected DB cat_scores for non-dot-p key, got {result.get('cat_scores')!r}"
+    )
 
