@@ -169,6 +169,7 @@ def map_yahoo_player_to_canonical_row(
     rolling_stats_15d: Optional[PlayerRollingStats] = None,
     rolling_stats_30d: Optional[PlayerRollingStats] = None,
     computed_at: Optional[datetime] = None,
+    ros_projection: Optional[CategoryStats] = None,
 ) -> CanonicalPlayerRow:
     """
     Map Yahoo player data + PlayerRollingStats to CanonicalPlayerRow.
@@ -181,6 +182,7 @@ def map_yahoo_player_to_canonical_row(
         rolling_stats_15d: Optional PlayerRollingStats row for 15-day window
         rolling_stats_30d: Optional PlayerRollingStats row for 30-day window
         computed_at: Timestamp for freshness metadata
+        ros_projection: Pre-built ROS CategoryStats from PlayerProjection.cat_scores batch query
 
     Returns:
         CanonicalPlayerRow with all PR-1 through PR-22 fields populated
@@ -212,10 +214,8 @@ def map_yahoo_player_to_canonical_row(
     rolling_15d = _map_rolling_to_category_stats(rolling_stats_15d)
     rolling_30d = _map_rolling_to_category_stats(rolling_stats_30d)
 
-    # PR-18: ROS projection (not currently populated - TODO)
-    ros_projection = None
-
-    # PR-19: ROW projection (not currently populated - TODO)
+    # ros_projection: passed in by caller from PlayerProjection.cat_scores batch query
+    # row_projection: Phase 2 deliverable — remains None until RoW data is wired
     row_projection = None
 
     # PR-20: Ownership percentage from Yahoo

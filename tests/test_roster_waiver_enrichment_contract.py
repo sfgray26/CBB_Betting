@@ -487,3 +487,32 @@ def test_waiver_populates_percent_owned_from_ownership_subresource(fantasy_clien
         "owned_pct must be populated from Yahoo ownership subresource — "
         "April 21 audit showed owned_pct=0.0 for all 25 waiver players"
     )
+
+
+def test_roster_ros_projection_populated_when_player_projection_exists(monkeypatch):
+    """ros_projection must be non-null when PlayerProjection.cat_scores exists for a player."""
+    from backend.services.player_mapper import map_yahoo_player_to_canonical_row
+    from backend.contracts import CategoryStats
+    from backend.stat_contract import SCORING_CATEGORY_CODES
+
+    values = {code: None for code in SCORING_CATEGORY_CODES}
+    values["HR_B"] = 0.85
+    values["RBI"] = 0.60
+
+    ros = CategoryStats(values=values)
+
+    yahoo_player = {
+        "player_key": "469.l.72586.p.12345",
+        "name": "Test Batter",
+        "team": "CHC",
+        "positions": ["OF"],
+        "status": None,
+    }
+
+    row = map_yahoo_player_to_canonical_row(
+        yahoo_player=yahoo_player,
+        ros_projection=ros,
+    )
+
+    assert row.ros_projection is not None, "ros_projection must be set when passed in"
+    assert row.ros_projection.values.get("HR_B") == 0.85

@@ -2632,6 +2632,19 @@ async def get_fantasy_roster(
     # and for populating bdl_player_id/mlbam_id in CanonicalPlayerRow output.
     player_key_to_ids = _resolve_roster_player_bdl_ids(db, raw_players)
 
+    # Batch-query PlayerProjection for all roster players (ros_projection hydration)
+    from backend.models import PlayerProjection as _PlayerProjection
+    from backend.stat_contract import SCORING_CATEGORY_CODES as _SCC
+    _proj_numeric_ids = [
+        pk.split(".p.")[-1] for pk in player_keys if ".p." in pk
+    ]
+    _projections_by_id: dict = {}
+    if _proj_numeric_ids:
+        _proj_rows = db.query(_PlayerProjection).filter(
+            _PlayerProjection.player_id.in_(_proj_numeric_ids)
+        ).all()
+        _projections_by_id = {p.player_id: p for p in _proj_rows}
+
     # Map each Yahoo player to CanonicalPlayerRow
     canonical_players = []
     for p in raw_players:
@@ -2658,6 +2671,22 @@ async def get_fantasy_roster(
         rs_15d = None
         rs_30d = rolling_stats_30d.get(player_key)
 
+        # Build ros_projection from PlayerProjection.cat_scores if available
+        _ros_proj = None
+        _pid_numeric = player_key.split(".p.")[-1] if ".p." in player_key else None
+        if _pid_numeric and _pid_numeric in _projections_by_id:
+            _proj = _projections_by_id[_pid_numeric]
+            if _proj.cat_scores:
+                _values = {code: None for code in _SCC}
+                for _code, _val in _proj.cat_scores.items():
+                    if _code in _SCC:
+                        _values[_code] = float(_val) if _val is not None else None
+                try:
+                    from backend.contracts import CategoryStats as _CategoryStats
+                    _ros_proj = _CategoryStats(values=_values)
+                except Exception:
+                    _ros_proj = None
+
         canonical_row = map_yahoo_player_to_canonical_row(
             yahoo_player=merged_player,
             rolling_stats_7d=rs_7d,
@@ -2665,6 +2694,7 @@ async def get_fantasy_roster(
             rolling_stats_15d=rs_15d,
             rolling_stats_30d=rs_30d,
             computed_at=now_et,
+            ros_projection=_ros_proj,
         )
         canonical_players.append(canonical_row)
 
