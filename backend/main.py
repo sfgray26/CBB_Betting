@@ -3398,6 +3398,30 @@ async def ingestion_run_pipeline(
     return {"pipeline": _PIPELINE_JOB_ORDER, "results": results}
 
 
+@app.post("/admin/ingestion/steamer-csv")
+async def ingest_steamer_csv_projections(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Ingest Steamer 2026 projections from CSV files into PlayerProjection table.
+
+    Reads from data/projections/steamer_batting_2026.csv and
+    data/projections/steamer_pitching_2026.csv, then writes all
+    projections to the database with proper column mappings.
+
+    Returns: dict with status, batters/pitchers counts, and rows written.
+    """
+    from backend.fantasy_baseball.csv_projection_ingestion import run_steamer_ingestion
+
+    try:
+        result = run_steamer_ingestion(db)
+        return result
+    except Exception as exc:
+        logger.error("Steamer CSV ingestion failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.post("/admin/backfill/player-id-mapping")
 async def backfill_player_id_mapping(
     user: str = Depends(verify_admin_api_key),
