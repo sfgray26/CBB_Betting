@@ -4207,8 +4207,209 @@ async def get_decisions(
     optional P19 explainability traces. Default as_of_date returns the latest
     available decisions. Returns empty list when no rows exist for the filter.
 
+    For waiver decisions, performs live category-aware optimization using
+    current matchup category_deficits. This ensures waiver recommendations
+    are contextual to this week's matchup needs.
+
     Auth: verify_api_key required.
     """
+    # For waiver decisions, perform live category-aware optimization
+    if decision_type == "waiver" or decision_type is None:
+        try:
+            from backend.services.decision_engine import (
+                optimize_waivers,
+                PlayerDecisionInput,
+            )
+            from backend.fantasy_baseball.category_aware_scorer import CategoryNeedVector
+
+            # Fetch live matchup scoreboard to build category_deficits
+            client = get_yahoo_client()
+            my_team_key = os.getenv("YAHOO_TEAM_KEY", "")
+            if not my_team_key:
+                try:
+                    my_team_key = client.get_my_team_key()
+                except Exception:
+                    pass
+
+            need_vector = None
+            if my_team_key:
+                try:
+                    matchups_scoreboard = client.get_scoreboard()
+                    _category_deficits = []
+
+                    for matchup_teams in _iter_scoreboard_matchup_teams(matchups_scoreboard):
+                        my_tuple = None
+                        opp_tuple = None
+                        for t in matchup_teams:
+                            if t[0] == my_team_key:
+                                my_tuple = t
+                            elif len(matchup_teams) == 2:
+                                opp_tuple = t
+
+                        if my_tuple and opp_tuple:
+                            my_stats = my_tuple[2]
+                            opp_stats = opp_tuple[2]
+
+                            _YAHOO_CAT_TO_BOARD = {
+                                "R": "r", "H": "h", "HR": "hr", "RBI": "rbi", "TB": "tb",
+                                "SB": "nsb", "AVG": "avg", "OPS": "ops",
+                                "W": "w", "L": "l", "K": "k_pit", "SO": "k_pit",
+                                "SV": "nsv", "ERA": "era", "WHIP": "whip",
+                                "QS": "qs", "K9": "k9", "K/9": "k9",
+                            }
+
+                            for stat_entry in my_stats:
+                                if not isinstance(stat_entry, dict):
+                                    continue
+                                cat = stat_entry.get("name")
+                                my_val = stat_entry.get("value")
+                                if not cat or my_val is None:
+                                    continue
+
+                                opp_val = None
+                                for opp_stat in opp_stats:
+                                    if isinstance(opp_stat, dict) and opp_stat.get("name") == cat:
+                                        opp_val = opp_stat.get("value")
+                                        break
+
+                                if opp_val is None:
+                                    continue
+
+                                try:
+                                    my_val_f = float(my_val)
+                                    opp_val_f = float(opp_val)
+                                except (ValueError, TypeError):
+                                    continue
+
+                                lower_is_better = cat in ("ERA", "WHIP", "L", "AVG")
+                                if lower_is_better:
+                                    deficit = my_val_f - opp_val_f
+                                else:
+                                    deficit = opp_val_f - my_val_f
+
+                                _category_deficits.append((cat, deficit))
+
+                    if _category_deficits:
+                        _CANONICAL_TO_BOARD = {
+                            "R": "r", "H": "h", "HR": "hr", "RBI": "rbi", "SB": "nsb",
+                            "AVG": "avg", "OPS": "ops",
+                            "W": "w", "K": "k_pit", "SV": "nsv",
+                            "ERA": "era", "WHIP": "whip", "QS": "qs", "K9": "k9",
+                        }
+
+                        needs = {
+                            _CANONICAL_TO_BOARD.get(cat, cat.lower()): deficit
+                            for cat, deficit in _category_deficits
+                        }
+                        need_vector = CategoryNeedVector(needs=needs)
+                except Exception as _sb_err:
+                    logger.warning("decisions endpoint scoreboard fetch failed (non-fatal): %s", _sb_err)
+
+            # Perform live waiver optimization with category awareness
+            if need_vector and as_of_date is None:
+                as_of_date = date.today()
+
+            if need_vector:
+                import asyncio
+                from backend.fantasy_baseball.projection_sync import get_or_create_projection
+
+                # Fetch current roster and waiver pool
+                try:
+                    roster = client.get_roster()
+                    free_agents = client.get_free_agents(count=100)
+
+                    # Build PlayerDecisionInput lists
+                    players = []
+                    for p in roster:
+                        proj = get_or_create_projection(p)
+                        if proj:
+                            players.append(PlayerDecisionInput(
+                                bdl_player_id=proj.bdl_player_id,
+                                position=p.get("position", "UTIL"),
+                                composite_z=proj.get("composite_z", 0.0),
+                                z_hr=proj.get("z_hr", 0.0),
+                                z_rbi=proj.get("z_rbi", 0.0),
+                                z_nsb=proj.get("z_nsb", 0.0),
+                                z_r=proj.get("z_r", 0.0),
+                                z_ops=proj.get("z_ops", 0.0),
+                                z_w=proj.get("z_w", 0.0),
+                                z_k=proj.get("z_k", 0.0),
+                                z_nsv=proj.get("z_nsv", 0.0),
+                                z_era=proj.get("z_era", 0.0),
+                                z_whip=proj.get("z_whip", 0.0),
+                            ))
+
+                    waiver_pool = []
+                    for fa in free_agents:
+                        proj = get_or_create_projection(fa)
+                        if proj:
+                            waiver_pool.append(PlayerDecisionInput(
+                                bdl_player_id=proj.bdl_player_id,
+                                position=fa.get("position", "UTIL"),
+                                composite_z=proj.get("composite_z", 0.0),
+                                z_hr=proj.get("z_hr", 0.0),
+                                z_rbi=proj.get("z_rbi", 0.0),
+                                z_nsb=proj.get("z_nsb", 0.0),
+                                z_r=proj.get("z_r", 0.0),
+                                z_ops=proj.get("z_ops", 0.0),
+                                z_w=proj.get("z_w", 0.0),
+                                z_k=proj.get("z_k", 0.0),
+                                z_nsv=proj.get("z_nsv", 0.0),
+                                z_era=proj.get("z_era", 0.0),
+                                z_whip=proj.get("z_whip", 0.0),
+                            ))
+
+                    # Run optimization with category awareness
+                    _waiver_decision, waiver_results = await asyncio.to_thread(
+                        optimize_waivers, players, waiver_pool, as_of_date, need_vector
+                    )
+
+                    # Convert results to DecisionResultOut format
+                    results = []
+                    for wr in waiver_results[:limit]:
+                        decision_out = DecisionResultOut(
+                            bdl_player_id=wr.bdl_player_id,
+                            player_name=None,  # Will be resolved below
+                            as_of_date=wr.as_of_date,
+                            decision_type="waiver",
+                            target_slot=wr.target_slot,
+                            drop_player_id=wr.drop_player_id,
+                            drop_player_name=None,
+                            lineup_score=wr.lineup_score,
+                            value_gain=wr.value_gain,
+                            confidence=wr.confidence,
+                            reasoning=wr.reasoning,
+                        )
+
+                        # Resolve player names
+                        pname = db.query(PlayerIDMapping.full_name).filter(
+                            PlayerIDMapping.bdl_id == wr.bdl_player_id
+                        ).scalar()
+                        decision_out.player_name = pname
+
+                        if wr.drop_player_id:
+                            dname = db.query(PlayerIDMapping.full_name).filter(
+                                PlayerIDMapping.bdl_id == wr.drop_player_id
+                            ).scalar()
+                            decision_out.drop_player_name = dname
+
+                        results.append(DecisionWithExplanation(
+                            decision=decision_out,
+                            explanation=None,
+                        ))
+
+                    if results:
+                        return DecisionsResponse(
+                            decisions=results,
+                            count=len(results),
+                            as_of_date=as_of_date or date.today(),
+                            decision_type="waiver",
+                        )
+                except Exception as _live_err:
+                    logger.warning("decisions endpoint live optimization failed (falling back to DB): %s", _live_err)
+        except Exception as _init_err:
+            logger.warning("decisions endpoint category-aware setup failed (using DB fallback): %s", _init_err)
+
     # Build base query with player name and drop player name joins
     # Use aliased PlayerIDMapping for drop player to avoid ambiguity
     DropMapping = aliased(PlayerIDMapping)

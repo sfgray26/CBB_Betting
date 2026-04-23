@@ -1,6 +1,6 @@
 import json
 
-with open('postman_collections/responses/api_fantasy_roster_20260422_145543.json') as f:
+with open('postman_collections/responses/api_fantasy_roster_20260422_174227.json') as f:
     roster = json.load(f)
 
 print('=== PLAYERS WITH NULL ROLLING WINDOWS ===')
@@ -29,7 +29,7 @@ for p in roster['players']:
     if ros is not None or row is not None:
         print(f"  {p['player_name']}: ros={ros is not None}, row={row is not None}")
 
-with open('postman_collections/responses/api_fantasy_waiver_recommendations_20260422_145543.json') as f:
+with open('postman_collections/responses/api_fantasy_waiver_recommendations_20260422_174227.json') as f:
     recs = json.load(f)
 
 print('\n=== WAIVER REC DETAIL ===')
@@ -39,7 +39,7 @@ for r in recs['recommendations']:
     ap = r['add_player']
     print(f"Add: {ap['name']} need_score={ap['need_score']} cat_keys={list(ap['category_contributions'].keys())}")
 
-with open('postman_collections/responses/api_fantasy_decisions_20260422_145543.json') as f:
+with open('postman_collections/responses/api_fantasy_decisions_20260422_174227.json') as f:
     decisions = json.load(f)
 
 print('\n=== DECISIONS AS_OF_DATE ===')
@@ -53,3 +53,11 @@ for d in decisions.get('decisions', []):
     dt = d['decision']['decision_type']
     dt_counts[dt] = dt_counts.get(dt, 0) + 1
 print('Decision type counts:', dt_counts)
+
+# Count waiver need scores
+with open('postman_collections/responses/api_fantasy_waiver_position_ALL_player_type_ALL_20260422_174227.json') as f:
+    waiver = json.load(f)
+
+need_scores = [p['need_score'] for p in waiver.get('top_available', [])]
+print(f'\nWaiver need_scores: nonzero={sum(1 for s in need_scores if s != 0)}/{len(need_scores)}')
+print(f'Need score values: {need_scores[:5]}...')

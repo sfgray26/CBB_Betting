@@ -1,0 +1,30 @@
+{
+  "detail": [
+    {
+      "type": "value_error",
+      "loc": [
+        "body",
+        "my_roster"
+      ],
+      "msg": "Value error, Roster cannot be empty. Each roster must contain at least one player.",
+      "input": [],
+      "ctx": {
+        "error": {}
+      },
+      "url": "https://errors.pydantic.dev/2.5/v/value_error"
+    },
+    {
+      "type": "value_error",
+      "loc": [
+        "body",
+        "opponent_roster"
+      ],
+      "msg": "Value error, Roster cannot be empty. Each roster must contain at least one player.",
+      "input": [],
+      "ctx": {
+        "error": {}
+      },
+      "url": "https://errors.pydantic.dev/2.5/v/value_error"
+    }
+  ]
+}

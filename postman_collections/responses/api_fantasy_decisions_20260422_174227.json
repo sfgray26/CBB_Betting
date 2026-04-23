@@ -1,0 +1,749 @@
+{
+  "decisions": [
+    {
+      "decision": {
+        "bdl_player_id": 879,
+        "player_name": "Gavin Williams",
+        "as_of_date": "2026-04-21",
+        "decision_type": "lineup",
+        "target_slot": "P",
+        "drop_player_id": null,
+        "drop_player_name": null,
+        "lineup_score": 5.826,
+        "value_gain": null,
+        "confidence": 0.971,
+        "reasoning": "Slot P: score=97.1, momentum=COLLAPSING(-10), z=6.54"
+      },
+      "explanation": {
+        "summary": "Gavin Williams starts at P: score 97/100, COLLAPSING momentum.",
+        "factors": [
+          {
+            "name": "Strikeout rate (K/9 Z-score)",
+            "value": "1.1242067780335525",
+            "label": "STRONG",
+            "weight": 0.37473559267785084,
+            "narrative": "Z-score +1.12 (STRONG)"
+          },
+          {
+            "name": "Baserunner control (WHIP Z-score)",
+            "value": "0.7075230932355941",
+            "label": "STRONG",
+            "weight": 0.23584103107853138,
+            "narrative": "Z-score +0.71 (STRONG)"
+          },
+          {
+            "name": "Run prevention (ERA Z-score)",
+            "value": "0.6332814844686204",
+            "label": "STRONG",
+            "weight": 0.2110938281562068,
+            "narrative": "Z-score +0.63 (STRONG)"
+          }
+        ],
+        "confidence_narrative": "Low confidence (2 games, limited data)",
+        "risk_narrative": null,
+        "track_record_narrative": null
+      }
+    },
+    {
+      "decision": {
+        "bdl_player_id": 4667586,
+        "player_name": "Munetaka Murakami",
+        "as_of_date": "2026-04-21",
+        "decision_type": "lineup",
+        "target_slot": "1B",
+        "drop_player_id": null,
+        "drop_player_name": null,
+        "lineup_score": 8.706,
+        "value_gain": null,
+        "confidence": 0.951,
+        "reasoning": "Slot 1B: score=95.1, momentum=SURGING(+10), z=11.83"
+      },
+      "explanation": {
+        "summary": "Munetaka Murakami starts at 1B: score 95/100, SURGING momentum.",
+        "factors": [
+          {
+            "name": "Power (HR Z-score)",
+            "value": "3.0",
+            "label": "ELITE",
+            "weight": 1.0,
+            "narrative": "Z-score +3.00 (ELITE)"
+          },
+          {
+            "name": "Run production (RBI Z-score)",
+            "value": "2.0562110858273237",
+            "label": "ELITE",
+            "weight": 0.6854036952757746,
+            "narrative": "Z-score +2.06 (ELITE)"
+          },
+          {
+            "name": "On-base ability (OBP Z-score)",
+            "value": "1.5307651136701375",
+            "label": "ELITE",
+            "weight": 0.5102550378900458,
+            "narrative": "OBP Z-score +1.53 (ELITE)"
+          },
+          {
+            "name": "Batting average (AVG Z-score)",
+            "value": "0.6645379652403176",
+            "label": "STRONG",
+            "weight": 0.22151265508010587,
+            "narrative": "Z-score +0.66 (STRONG)"
+          },
+          {
+            "name": "Net basestealing (NSB Z-score)",
+            "value": "-0.6551921302222504",
+            "label": "WEAK",
+            "weight": 0.21839737674075013,
+            "narrative": "NSB Z-score -0.66 (WEAK)"
+          }
+        ],
+        "confidence_narrative": "High confidence (12 games, strong data)",
+        "risk_narrative": null,
+        "track_record_narrative": null
+      }
+    },
+    {
+      "decision": {
+        "bdl_player_id": 4624,
+        "player_name": "Michael Soroka",
+        "as_of_date": "2026-04-21",
+        "decision_type": "lineup",
+        "target_slot": "SP",
+        "drop_player_id": null,
+        "drop_player_name": null,
+        "lineup_score": 7.044,
+        "value_gain": null,
+        "confidence": 0.924,
+        "reasoning": "Slot SP: score=92.4, momentum=STABLE(+0), z=4.75"
+      },
+      "explanation": {
+        "summary": "Michael Soroka starts at SP: score 92/100, STABLE momentum.",
+        "factors": [
+          {
+            "name": "Baserunner control (WHIP Z-score)",
+            "value": "0.6537572380801481",
+            "label": "STRONG",
+            "weight": 0.21791907936004937,
+            "narrative": "Z-score +0.65 (STRONG)"
+          },
+          {
+            "name": "Strikeout rate (K/9 Z-score)",
+            "value": "0.6106494494361867",
+            "label": "STRONG",
+            "weight": 0.2035498164787289,
+            "narrative": "Z-score +0.61 (STRONG)"
+          },
+          {
+            "name": "Run prevention (ERA Z-score)",
+            "value": "0.18887879724836162",
+            "label": "AVERAGE",
+            "weight": 0.06295959908278721,
+            "narrative": "Z-score +0.19 (AVERAGE)"
+          }
+        ],
+        "confidence_narrative": "Low confidence (2 games, limited data)",
+        "risk_narrative": null,
+        "track_record_narrative": null
+      }
+    },
+    {
+      "decision": {
+        "bdl_player_id": 539,
+        "player_name": "Jordan Walker",
+        "as_of_date": "2026-04-21",
+        "decision_type": "lineup",
+        "target_slot": "BN",
+        "drop_player_id": null,
+        "drop_player_name": null,
+        "lineup_score": 5.496,
+        "value_gain": null,
+        "confidence": 0.9159999999999999,
+        "reasoning": "Bench stash: score=91.6, momentum=COLLAPSING(-10), z=10.66"
+      },
+      "explanation": {
+        "summary": "Jordan Walker starts at BN: score 92/100, COLLAPSING momentum.",
+        "factors": [
+          {
+            "name": "Net basestealing (NSB Z-score)",
+            "value": "2.4501752935119616",
+            "label": "ELITE",
+            "weight": 0.8167250978373205,
+            "narrative": "NSB Z-score +2.45 (ELITE)"
+          },
+          {
+            "name": "Power (HR Z-score)",
+            "value": "2.4415099159299727",
+            "label": "ELITE",
+            "weight": 0.8138366386433242,
+            "narrative": "Z-score +2.44 (ELITE)"
+          },
+          {
+            "name": "Batting average (AVG Z-score)",
+            "value": "0.39386352336706093",
+            "label": "AVERAGE",
+            "weight": 0.13128784112235364,
+            "narrative": "Z-score +0.39 (AVERAGE)"
+          },
+          {
+            "name": "On-base ability (OBP Z-score)",
+            "value": "0.3294654968343558",
+            "label": "AVERAGE",
+            "weight": 0.10982183227811859,
+            "narrative": "OBP Z-score +0.33 (AVERAGE)"
+          },
+          {
+            "name": "Run production (RBI Z-score)",
+            "value": "0.30373443618150886",
+            "label": "AVERAGE",
+            "weight": 0.10124481206050295,
+            "narrative": "Z-score +0.30 (AVERAGE)"
+          }
+        ],
+        "confidence_narrative": "High confidence (12 games, strong data)",
+        "risk_narrative": null,
+        "track_record_narrative": null
+      }
+    },
+    {
+      "decision": {
+        "bdl_player_id": 356,
+        "player_name": "Spencer Arrighetti",
+        "as_of_date": "2026-04-21",
+        "decision_type": "lineup",
+        "target_slot": "SP",
+        "drop_player_id": null,
+        "drop_player_name": null,
+        "lineup_score": 8.436,
+        "value_gain": null,
+        "confidence": 0.9059999999999999,
+        "reasoning": "Slot SP: score=90.6, momentum=SURGING(+10), z=4.35"
+      },
+      "explanation": {
+        "summary": "Spencer Arrighetti starts at SP: score 91/100, SURGING momentum.",
+        "factors": [
+          {
+            "name": "Strikeout rate (K/9 Z-score)",
+            "value": "0.6610038632605257",
+            "label": "STRONG",
+            "weight": 0.2203346210868419,
+            "narrative": "Z-score +0.66 (STRONG)"
+          },
+          {
+            "name": "Run prevention (ERA Z-score)",
+            "value": "0.516711533460075",
+            "label": "STRONG",
+            "weight": 0.172237177820025,
+            "narrative": "Z-score +0.52 (STRONG)"
+          },
+          {
+            "name": "Baserunner control (WHIP Z-score)",
+            "value": "-0.1097295259851819",
+            "label": "AVERAGE",
+            "weight": 0.0365765086617273,
+            "narrative": "Z-score -0.11 (AVERAGE)"
+          }
+        ],
+        "confidence_narrative": "Low confidence (2 games, limited data)",
+        "risk_narrative": null,
+        "track_record_narrative": null
+      }
+    },
+    {
+      "decision": {
+        "bdl_player_id": 933897,
+        "player_name": "Hyeseong Kim",
+        "as_of_date": "2026-04-21",
+        "decision_type": "lineup",
+        "target_slot": "2B",
+        "drop_player_id": null,
+        "drop_player_name": null,
+        "lineup_score": 6.63,
+        "value_gain": null,
+        "confidence": 0.855,
+        "reasoning": "Slot 2B: score=85.5, momentum=STABLE(+0), z=7.71"
+      },
+      "explanation": {
+        "summary": "Hyeseong Kim starts at 2B: score 86/100, STABLE momentum.",
+        "factors": [
+          {
+            "name": "Net basestealing (NSB Z-score)",
+            "value": "3.0",
+            "label": "ELITE",
+            "weight": 1.0,
+            "narrative": "NSB Z-score +3.00 (ELITE)"
+          },
+          {
+            "name": "On-base ability (OBP Z-score)",
+            "value": "1.3520845893677618",
+            "label": "STRONG",
+            "weight": 0.4506948631225873,
+            "narrative": "OBP Z-score +1.35 (STRONG)"
+          },
+          {
+            "name": "Batting average (AVG Z-score)",
+            "value": "1.2890382837262666",
+            "label": "STRONG",
+            "weight": 0.4296794279087555,
+            "narrative": "Z-score +1.29 (STRONG)"
+          },
+          {
+            "name": "Run production (RBI Z-score)",
+            "value": "0.21788006422893602",
+            "label": "AVERAGE",
+            "weight": 0.07262668807631201,
+            "narrative": "Z-score +0.22 (AVERAGE)"
+          },
+          {
+            "name": "Power (HR Z-score)",
+            "value": "0.19828052828684978",
+            "label": "AVERAGE",
+            "weight": 0.06609350942894993,
+            "narrative": "Z-score +0.20 (AVERAGE)"
+          }
+        ],
+        "confidence_narrative": "Moderate confidence (10 games)",
+        "risk_narrative": null,
+        "track_record_narrative": null
+      }
+    },
+    {
+      "decision": {
+        "bdl_player_id": 424,
+        "player_name": "Brandon Nimmo",
+        "as_of_date": "2026-04-21",
+        "decision_type": "lineup",
+        "target_slot": "BN",
+        "drop_player_id": null,
+        "drop_player_name": null,
+        "lineup_score": 4.686,
+        "value_gain": null,
+        "confidence": 0.7809999999999999,
+        "reasoning": "Bench stash: score=78.1, momentum=COLLAPSING(-10), z=5.10"
+      },
+      "explanation": {
+        "summary": "Brandon Nimmo starts at BN: score 78/100, COLLAPSING momentum.",
+        "factors": [
+          {
+            "name": "Power (HR Z-score)",
+            "value": "1.9127876152213954",
+            "label": "ELITE",
+            "weight": 0.6375958717404652,
+            "narrative": "Z-score +1.91 (ELITE)"
+          },
+          {
+            "name": "Run production (RBI Z-score)",
+            "value": "0.9785260070920516",
+            "label": "STRONG",
+            "weight": 0.3261753356973505,
+            "narrative": "Z-score +0.98 (STRONG)"
+          },
+          {
+            "name": "Net basestealing (NSB Z-score)",
+            "value": "-0.6551921302222504",
+            "label": "WEAK",
+            "weight": 0.21839737674075013,
+            "narrative": "NSB Z-score -0.66 (WEAK)"
+          },
+          {
+            "name": "Batting average (AVG Z-score)",
+            "value": "0.15478748212340418",
+            "label": "AVERAGE",
+            "weight": 0.05159582737446806,
+            "narrative": "Z-score +0.15 (AVERAGE)"
+          },
+          {
+            "name": "On-base ability (OBP Z-score)",
+            "value": "-0.06148751368042028",
+            "label": "AVERAGE",
+            "weight": 0.020495837893473427,
+            "narrative": "OBP Z-score -0.06 (AVERAGE)"
+          }
+        ],
+        "confidence_narrative": "High confidence (12 games, strong data)",
+        "risk_narrative": null,
+        "track_record_narrative": null
+      }
+    },
+    {
+      "decision": {
+        "bdl_player_id": 5,
+        "player_name": "Geraldo Perdomo",
+        "as_of_date": "2026-04-21",
+        "decision_type": "lineup",
+        "target_slot": "SS",
+        "drop_player_id": null,
+        "drop_player_name": null,
+        "lineup_score": 7.596,
+        "value_gain": null,
+        "confidence": 0.7659999999999999,
+        "reasoning": "Slot SS: score=76.6, momentum=SURGING(+10), z=4.99"
+      },
+      "explanation": {
+        "summary": "Geraldo Perdomo starts at SS: score 77/100, SURGING momentum.",
+        "factors": [
+          {
+            "name": "Net basestealing (NSB Z-score)",
+            "value": "2.2869781695809883",
+            "label": "ELITE",
+            "weight": 0.7623260565269961,
+            "narrative": "NSB Z-score +2.29 (ELITE)"
+          },
+          {
+            "name": "On-base ability (OBP Z-score)",
+            "value": "1.2107739886406652",
+            "label": "STRONG",
+            "weight": 0.4035913295468884,
+            "narrative": "OBP Z-score +1.21 (STRONG)"
+          },
+          {
+            "name": "Power (HR Z-score)",
+            "value": "-0.7887441921734504",
+            "label": "WEAK",
+            "weight": 0.26291473072448346,
+            "narrative": "Z-score -0.79 (WEAK)"
+          },
+          {
+            "name": "Run production (RBI Z-score)",
+            "value": "-0.5722507779386398",
+            "label": "WEAK",
+            "weight": 0.19075025931287992,
+            "narrative": "Z-score -0.57 (WEAK)"
+          },
+          {
+            "name": "Batting average (AVG Z-score)",
+            "value": "0.42722596264364393",
+            "label": "AVERAGE",
+            "weight": 0.14240865421454799,
+            "narrative": "Z-score +0.43 (AVERAGE)"
+          }
+        ],
+        "confidence_narrative": "Moderate confidence (11 games)",
+        "risk_narrative": null,
+        "track_record_narrative": null
+      }
+    },
+    {
+      "decision": {
+        "bdl_player_id": 966,
+        "player_name": "Seiya Suzuki",
+        "as_of_date": "2026-04-21",
+        "decision_type": "lineup",
+        "target_slot": "Util",
+        "drop_player_id": null,
+        "drop_player_name": null,
+        "lineup_score": 7.152,
+        "value_gain": null,
+        "confidence": 0.6920000000000001,
+        "reasoning": "Slot Util: score=69.2, momentum=SURGING(+10), z=3.43"
+      },
+      "explanation": {
+        "summary": "Seiya Suzuki starts at Util: score 69/100, SURGING momentum.",
+        "factors": [
+          {
+            "name": "On-base ability (OBP Z-score)",
+            "value": "0.8064353032412036",
+            "label": "STRONG",
+            "weight": 0.2688117677470679,
+            "narrative": "OBP Z-score +0.81 (STRONG)"
+          },
+          {
+            "name": "Net basestealing (NSB Z-score)",
+            "value": "-0.6551921302222504",
+            "label": "WEAK",
+            "weight": 0.21839737674075013,
+            "narrative": "NSB Z-score -0.66 (WEAK)"
+          },
+          {
+            "name": "Power (HR Z-score)",
+            "value": "0.5539787150553297",
+            "label": "STRONG",
+            "weight": 0.1846595716851099,
+            "narrative": "Z-score +0.55 (STRONG)"
+          },
+          {
+            "name": "Run production (RBI Z-score)",
+            "value": "0.42577382102399003",
+            "label": "AVERAGE",
+            "weight": 0.14192460700799667,
+            "narrative": "Z-score +0.43 (AVERAGE)"
+          },
+          {
+            "name": "Batting average (AVG Z-score)",
+            "value": "0.35923970476211475",
+            "label": "AVERAGE",
+            "weight": 0.11974656825403825,
+            "narrative": "Z-score +0.36 (AVERAGE)"
+          }
+        ],
+        "confidence_narrative": "Moderate confidence (11 games)",
+        "risk_narrative": null,
+        "track_record_narrative": null
+      }
+    },
+    {
+      "decision": {
+        "bdl_player_id": 1635,
+        "player_name": "Pete Alonso",
+        "as_of_date": "2026-04-21",
+        "decision_type": "lineup",
+        "target_slot": "BN",
+        "drop_player_id": null,
+        "drop_player_name": null,
+        "lineup_score": 7.092,
+        "value_gain": null,
+        "confidence": 0.682,
+        "reasoning": "Bench stash: score=68.2, momentum=SURGING(+10), z=3.25"
+      },
+      "explanation": {
+        "summary": "Pete Alonso starts at BN: score 68/100, SURGING momentum.",
+        "factors": [
+          {
+            "name": "Net basestealing (NSB Z-score)",
+            "value": "0.37353637741849466",
+            "label": "AVERAGE",
+            "weight": 0.12451212580616489,
+            "narrative": "NSB Z-score +0.37 (AVERAGE)"
+          },
+          {
+            "name": "Run production (RBI Z-score)",
+            "value": "0.37045169120061605",
+            "label": "AVERAGE",
+            "weight": 0.12348389706687202,
+            "narrative": "Z-score +0.37 (AVERAGE)"
+          },
+          {
+            "name": "On-base ability (OBP Z-score)",
+            "value": "0.31932061191585337",
+            "label": "AVERAGE",
+            "weight": 0.10644020397195113,
+            "narrative": "OBP Z-score +0.32 (AVERAGE)"
+          },
+          {
+            "name": "Batting average (AVG Z-score)",
+            "value": "0.11307256862024208",
+            "label": "AVERAGE",
+            "weight": 0.03769085620674736,
+            "narrative": "Z-score +0.11 (AVERAGE)"
+          },
+          {
+            "name": "Power (HR Z-score)",
+            "value": "0.10204561804197042",
+            "label": "AVERAGE",
+            "weight": 0.03401520601399014,
+            "narrative": "Z-score +0.10 (AVERAGE)"
+          }
+        ],
+        "confidence_narrative": "High confidence (13 games, strong data)",
+        "risk_narrative": null,
+        "track_record_narrative": null
+      }
+    },
+    {
+      "decision": {
+        "bdl_player_id": 1028,
+        "player_name": "Byron Buxton",
+        "as_of_date": "2026-04-21",
+        "decision_type": "lineup",
+        "target_slot": "BN",
+        "drop_player_id": null,
+        "drop_player_name": null,
+        "lineup_score": 6.828,
+        "value_gain": null,
+        "confidence": 0.638,
+        "reasoning": "Bench stash: score=63.8, momentum=SURGING(+10), z=2.27"
+      },
+      "explanation": {
+        "summary": "Byron Buxton starts at BN: score 64/100, SURGING momentum.",
+        "factors": [
+          {
+            "name": "Power (HR Z-score)",
+            "value": "1.4447685252707505",
+            "label": "STRONG",
+            "weight": 0.4815895084235835,
+            "narrative": "Z-score +1.44 (STRONG)"
+          },
+          {
+            "name": "Net basestealing (NSB Z-score)",
+            "value": "-0.6551921302222504",
+            "label": "WEAK",
+            "weight": 0.21839737674075013,
+            "narrative": "NSB Z-score -0.66 (WEAK)"
+          },
+          {
+            "name": "On-base ability (OBP Z-score)",
+            "value": "-0.26207722141066647",
+            "label": "AVERAGE",
+            "weight": 0.0873590738035555,
+            "narrative": "OBP Z-score -0.26 (AVERAGE)"
+          },
+          {
+            "name": "Batting average (AVG Z-score)",
+            "value": "-0.15587967969966451",
+            "label": "AVERAGE",
+            "weight": 0.051959893233221505,
+            "narrative": "Z-score -0.16 (AVERAGE)"
+          },
+          {
+            "name": "Run production (RBI Z-score)",
+            "value": "0.040004282826813294",
+            "label": "AVERAGE",
+            "weight": 0.013334760942271097,
+            "narrative": "Z-score +0.04 (AVERAGE)"
+          }
+        ],
+        "confidence_narrative": "Moderate confidence (11 games)",
+        "risk_narrative": null,
+        "track_record_narrative": null
+      }
+    },
+    {
+      "decision": {
+        "bdl_player_id": 2116,
+        "player_name": "Caleb Thielbar",
+        "as_of_date": "2026-04-21",
+        "decision_type": "lineup",
+        "target_slot": "RP",
+        "drop_player_id": null,
+        "drop_player_name": null,
+        "lineup_score": 4.926,
+        "value_gain": null,
+        "confidence": 0.5710000000000001,
+        "reasoning": "Slot RP: score=57.1, momentum=STABLE(+0), z=-5.88"
+      },
+      "explanation": {
+        "summary": "Caleb Thielbar starts at RP: score 57/100, STABLE momentum.",
+        "factors": [
+          {
+            "name": "Run production (RBI Z-score)",
+            "value": "-1.2214549997794366",
+            "label": "WEAK",
+            "weight": 0.40715166659314556,
+            "narrative": "Z-score -1.22 (WEAK)"
+          },
+          {
+            "name": "Power (HR Z-score)",
+            "value": "-0.7887441921734504",
+            "label": "WEAK",
+            "weight": 0.26291473072448346,
+            "narrative": "Z-score -0.79 (WEAK)"
+          },
+          {
+            "name": "Net basestealing (NSB Z-score)",
+            "value": "-0.6551921302222504",
+            "label": "WEAK",
+            "weight": 0.21839737674075013,
+            "narrative": "NSB Z-score -0.66 (WEAK)"
+          }
+        ],
+        "confidence_narrative": "Low confidence (6 games, limited data)",
+        "risk_narrative": null,
+        "track_record_narrative": null
+      }
+    },
+    {
+      "decision": {
+        "bdl_player_id": 239887,
+        "player_name": "Cam Smith",
+        "as_of_date": "2026-04-21",
+        "decision_type": "lineup",
+        "target_slot": "BN",
+        "drop_player_id": null,
+        "drop_player_name": null,
+        "lineup_score": 2.85,
+        "value_gain": null,
+        "confidence": 0.475,
+        "reasoning": "Bench stash: score=47.5, momentum=COLLAPSING(-10), z=-0.43"
+      },
+      "explanation": {
+        "summary": "Cam Smith starts at BN: score 48/100, COLLAPSING momentum.",
+        "factors": [
+          {
+            "name": "Net basestealing (NSB Z-score)",
+            "value": "0.9770640714777297",
+            "label": "STRONG",
+            "weight": 0.3256880238259099,
+            "narrative": "NSB Z-score +0.98 (STRONG)"
+          },
+          {
+            "name": "Power (HR Z-score)",
+            "value": "-0.7887441921734504",
+            "label": "WEAK",
+            "weight": 0.26291473072448346,
+            "narrative": "Z-score -0.79 (WEAK)"
+          },
+          {
+            "name": "Batting average (AVG Z-score)",
+            "value": "-0.5019934249771308",
+            "label": "WEAK",
+            "weight": 0.16733114165904361,
+            "narrative": "Z-score -0.50 (WEAK)"
+          },
+          {
+            "name": "On-base ability (OBP Z-score)",
+            "value": "-0.3784398572067579",
+            "label": "AVERAGE",
+            "weight": 0.1261466190689193,
+            "narrative": "OBP Z-score -0.38 (AVERAGE)"
+          },
+          {
+            "name": "Run production (RBI Z-score)",
+            "value": "0.1437967285766987",
+            "label": "AVERAGE",
+            "weight": 0.04793224285889957,
+            "narrative": "Z-score +0.14 (AVERAGE)"
+          }
+        ],
+        "confidence_narrative": "High confidence (13 games, strong data)",
+        "risk_narrative": null,
+        "track_record_narrative": null
+      }
+    },
+    {
+      "decision": {
+        "bdl_player_id": 559,
+        "player_name": "Enyel De Los Santos",
+        "as_of_date": "2026-04-21",
+        "decision_type": "lineup",
+        "target_slot": "RP",
+        "drop_player_id": null,
+        "drop_player_name": null,
+        "lineup_score": 5.22,
+        "value_gain": null,
+        "confidence": 0.37,
+        "reasoning": "Slot RP: score=37.0, momentum=SURGING(+10), z=-0.99"
+      },
+      "explanation": {
+        "summary": "Enyel De Los Santos starts at RP: score 37/100, SURGING momentum.",
+        "factors": [
+          {
+            "name": "Run prevention (ERA Z-score)",
+            "value": "-0.5109903486161476",
+            "label": "WEAK",
+            "weight": 0.17033011620538252,
+            "narrative": "Z-score -0.51 (WEAK)"
+          },
+          {
+            "name": "Baserunner control (WHIP Z-score)",
+            "value": "0.06780703599648695",
+            "label": "AVERAGE",
+            "weight": 0.022602345332162318,
+            "narrative": "Z-score +0.07 (AVERAGE)"
+          },
+          {
+            "name": "Strikeout rate (K/9 Z-score)",
+            "value": "0.008198102230418397",
+            "label": "AVERAGE",
+            "weight": 0.0027327007434727987,
+            "narrative": "Z-score +0.01 (AVERAGE)"
+          }
+        ],
+        "confidence_narrative": "Moderate confidence (7 games)",
+        "risk_narrative": null,
+        "track_record_narrative": null
+      }
+    }
+  ],
+  "count": 14,
+  "as_of_date": "2026-04-21",
+  "decision_type": null
+}

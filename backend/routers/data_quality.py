@@ -4,7 +4,7 @@ from typing import Dict, Any, List
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, and_, or_
+from sqlalchemy import func, and_, or_, text
 from sqlalchemy.orm import Session
 
 from backend.models import (
@@ -82,12 +82,14 @@ def get_data_quality_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
     
     # Metric 6: Projection coverage
     total_projections = db.query(func.count(PlayerProjection.id)).scalar() or 0
-    
-    # Count projections with empty cat_scores (JSONB equality check)
-    empty_cat_scores = db.query(func.count(PlayerProjection.id)).filter(
-        func.jsonb_typeof(PlayerProjection.cat_scores) == "object",
-        func.jsonb_array_length(func.jsonb_object_keys(PlayerProjection.cat_scores)) == 0,
-    ).scalar() or 0
+
+    # Count projections with empty cat_scores using raw SQL
+    empty_cat_scores_query = text("""
+        SELECT COUNT(*) FROM player_projections
+        WHERE jsonb_typeof(cat_scores) = 'object'
+        AND jsonb_array_length(jsonb_object_keys(cat_scores)) = 0
+    """)
+    empty_cat_scores = db.execute(empty_cat_scores_query).scalar() or 0
     
     projection_coverage_pct = (
         ((total_projections - empty_cat_scores) / total_projections * 100)
@@ -202,12 +204,19 @@ def run_data_quality_audit(db: Session = Depends(get_db)) -> Dict[str, Any]:
     
     # === Audit 2: Empty projections for active players ===
     week_ago = datetime.now(ZoneInfo("UTC")) - timedelta(days=7)
-    
+
+    # Use raw SQL for JSONB operations
+    empty_cats_query = text("""
+        SELECT id FROM player_projections
+        WHERE updated_at > :week_ago
+        AND jsonb_typeof(cat_scores) = 'object'
+        AND jsonb_array_length(jsonb_object_keys(cat_scores)) = 0
+        LIMIT 100
+    """)
+    empty_cat_ids = [row[0] for row in db.execute(empty_cats_query, {"week_ago": week_ago}).fetchall()]
     players_with_empty_cats = db.query(PlayerProjection).filter(
-        PlayerProjection.updated_at > week_ago,
-        func.jsonb_typeof(PlayerProjection.cat_scores) == "object",
-        func.jsonb_array_length(func.jsonb_object_keys(PlayerProjection.cat_scores)) == 0
-    ).limit(100).all()
+        PlayerProjection.id.in_(empty_cat_ids)
+    ).all()
     
     for player in players_with_empty_cats:
         pa = player.sample_size or 0
@@ -262,11 +271,15 @@ def run_data_quality_audit(db: Session = Depends(get_db)) -> Dict[str, Any]:
     ).limit(200).all()
     
     for player in active_players:
+        # Skip if bdl_player_id is None
+        if player.bdl_player_id is None:
+            continue
+
         has_statcast = db.query(StatcastPerformance).filter(
             StatcastPerformance.player_id == str(player.bdl_player_id),
             StatcastPerformance.game_date > week_ago_date
         ).first()
-        
+
         if not has_statcast:
             all_issues.append({
                 "issue_type": "missing_statcast_data",

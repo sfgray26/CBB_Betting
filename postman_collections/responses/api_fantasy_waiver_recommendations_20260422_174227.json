@@ -1,0 +1,212 @@
+{
+  "week_end": "2026-04-26",
+  "matchup_opponent": "Bartolo's Colon",
+  "recommendations": [
+    {
+      "action": "ADD_DROP",
+      "add_player": {
+        "player_id": "469.p.10326",
+        "name": "Seth Lugo",
+        "team": "KC",
+        "position": "SP",
+        "need_score": 0.865,
+        "category_contributions": {
+          "w": 1.373,
+          "l": -0.833,
+          "hr_pit": -0.476,
+          "k_pit": 0.92,
+          "era": -0.326,
+          "whip": 0.033,
+          "k9": -0.173,
+          "qs": 0.981,
+          "nsv": -0.465
+        },
+        "owned_pct": 0.0,
+        "starts_this_week": 0,
+        "statcast_signals": [],
+        "projected_saves": 0.0,
+        "projected_points": 0.0,
+        "hot_cold": null,
+        "status": null,
+        "injury_note": null,
+        "injury_status": null,
+        "stats": {},
+        "statcast_stats": null
+      },
+      "drop_player_name": "Michael Soroka",
+      "drop_player_position": "SP",
+      "rationale": "Add Seth Lugo (SP, KC, 0% owned), drop Michael Soroka (SP). Net gain: +0.9 (+0.0 -> +0.9).",
+      "category_targets": [],
+      "need_score": 0.865,
+      "confidence": 0.75,
+      "statcast_signals": [],
+      "regression_delta": 0.0,
+      "win_prob_before": 0.996,
+      "win_prob_after": 0.997,
+      "win_prob_gain": 0.001,
+      "category_win_probs": {
+        "avg": 0.905,
+        "era": 0.534,
+        "h": 0.903,
+        "hr_b": 0.937,
+        "hr_pit": 0.399,
+        "k_9": 0.865,
+        "k_bat": 0.357,
+        "k_p": 0.934,
+        "l": 0.294,
+        "nsb": 0.817,
+        "nsv": 0.747,
+        "ops": 0.992,
+        "qs": 0.831,
+        "r": 0.948,
+        "rbi": 0.928,
+        "tb": 0.919,
+        "w": 0.937,
+        "whip": 0.466
+      },
+      "mcmc_enabled": true
+    }
+  ],
+  "category_deficits": [
+    {
+      "category": "H_AB",
+      "my_total": 0.0,
+      "opponent_total": 0.0,
+      "deficit": 0.0,
+      "winning": false
+    },
+    {
+      "category": "R",
+      "my_total": 11.0,
+      "opponent_total": 14.0,
+      "deficit": 3.0,
+      "winning": false
+    },
+    {
+      "category": "H",
+      "my_total": 11.0,
+      "opponent_total": 21.0,
+      "deficit": 10.0,
+      "winning": false
+    },
+    {
+      "category": "HR_B",
+      "my_total": 3.0,
+      "opponent_total": 3.0,
+      "deficit": 0.0,
+      "winning": false
+    },
+    {
+      "category": "RBI",
+      "my_total": 8.0,
+      "opponent_total": 9.0,
+      "deficit": 1.0,
+      "winning": false
+    },
+    {
+      "category": "K_B",
+      "my_total": 15.0,
+      "opponent_total": 12.0,
+      "deficit": -3.0,
+      "winning": true
+    },
+    {
+      "category": "TB",
+      "my_total": 23.0,
+      "opponent_total": 33.0,
+      "deficit": 10.0,
+      "winning": false
+    },
+    {
+      "category": "AVG",
+      "my_total": 0.2,
+      "opponent_total": 0.266,
+      "deficit": 0.066,
+      "winning": false
+    },
+    {
+      "category": "OPS",
+      "my_total": 0.766,
+      "opponent_total": 0.803,
+      "deficit": 0.03700000000000003,
+      "winning": false
+    },
+    {
+      "category": "NSB",
+      "my_total": 1.0,
+      "opponent_total": 0.0,
+      "deficit": -1.0,
+      "winning": true
+    },
+    {
+      "category": "IP",
+      "my_total": 7.1,
+      "opponent_total": 23.2,
+      "deficit": 16.1,
+      "winning": false
+    },
+    {
+      "category": "W",
+      "my_total": 1.0,
+      "opponent_total": 2.0,
+      "deficit": 1.0,
+      "winning": false
+    },
+    {
+      "category": "L",
+      "my_total": 1.0,
+      "opponent_total": 0.0,
+      "deficit": 1.0,
+      "winning": false
+    },
+    {
+      "category": "HR_P",
+      "my_total": 0.0,
+      "opponent_total": 3.0,
+      "deficit": 3.0,
+      "winning": false
+    },
+    {
+      "category": "K_P",
+      "my_total": 4.0,
+      "opponent_total": 22.0,
+      "deficit": 18.0,
+      "winning": false
+    },
+    {
+      "category": "ERA",
+      "my_total": 6.14,
+      "opponent_total": 3.04,
+      "deficit": 3.0999999999999996,
+      "winning": false
+    },
+    {
+      "category": "WHIP",
+      "my_total": 1.91,
+      "opponent_total": 1.35,
+      "deficit": 0.5599999999999998,
+      "winning": false
+    },
+    {
+      "category": "K_9",
+      "my_total": 4.91,
+      "opponent_total": 8.37,
+      "deficit": 3.459999999999999,
+      "winning": false
+    },
+    {
+      "category": "QS",
+      "my_total": 0.0,
+      "opponent_total": 1.0,
+      "deficit": 1.0,
+      "winning": false
+    },
+    {
+      "category": "NSV",
+      "my_total": 2.0,
+      "opponent_total": 2.0,
+      "deficit": 0.0,
+      "winning": false
+    }
+  ]
+}

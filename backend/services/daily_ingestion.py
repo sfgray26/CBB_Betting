@@ -43,6 +43,7 @@ from backend.models import (
     PlayerScore,
     PlayerMomentum,
     PlayerIDMapping,
+    PlayerProjection,
     SimulationResult as SimulationResultORM,
     DecisionResult as DecisionResultORM,
     BacktestResult as BacktestResultORM,
@@ -121,6 +122,7 @@ LOCK_IDS = {
     "probable_pitchers":     100_028,
     "player_id_mapping":     100_029,
     "vorp":                  100_030,
+    "projection_cat_scores": 100_031,
 }
 
 
@@ -867,6 +869,17 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Per-category z-score computation: daily 5:30 AM ET (after ensemble_update at 5 AM)
+        # Reads FanGraphs RoS blend → computes 9 batting + 9 pitching cat z-scores
+        # → upserts PlayerProjection.cat_scores and team field.
+        self._scheduler.add_job(
+            self._update_projection_cat_scores,
+            CronTrigger(hour=5, minute=30, timezone=tz),
+            id="projection_cat_scores",
+            name="PlayerProjection cat_scores Update",
+            replace_existing=True,
+        )
+
         # Projection freshness SLA gate: hourly
         self._scheduler.add_job(
             self._check_projection_freshness,
@@ -924,7 +937,7 @@ class DailyIngestionOrchestrator:
                         "backtesting", "explainability", "snapshot",
                         "mlb_odds", "statcast",
                         "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
-                        "ensemble_update", "projection_freshness",
+                        "ensemble_update", "projection_cat_scores", "projection_freshness",
                         "player_id_mapping", "position_eligibility",
                         "probable_pitchers_morning", "probable_pitchers_afternoon", "probable_pitchers_evening"]
         if _fantasy_leagues:
@@ -4426,6 +4439,229 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["ensemble_update"], "ensemble_update", _run)
+
+    async def _update_projection_cat_scores(self) -> dict:
+        """Compute per-category z-scores from FanGraphs RoS blend and write to
+        PlayerProjection.cat_scores + team (lock 100_031).
+
+        Runs at 5:30 AM ET, 30 minutes after _update_ensemble_blend.
+        Reads the same RoS DataFrames from _ROS_CACHE populated by _fetch_fangraphs_ros
+        at 3 AM, computes the full 9-category batter z-scores (r, h, hr, rbi, k_bat,
+        tb, avg, ops, nsb) and 9-category pitcher z-scores (w, l, hr_pit, k_pit, era,
+        whip, k9, qs, nsv), then upserts PlayerProjection rows keyed by MLBAM ID
+        (via PlayerIDMapping.normalized_name → mlbam_id translation).
+
+        Also populates the team field from the FanGraphs Team column.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.fantasy_baseball.fangraphs_loader import compute_ensemble_blend
+            from backend.fantasy_baseball.player_board import _compute_zscores
+            from zoneinfo import ZoneInfo
+
+            # --- 1. Get RoS DataFrames from module cache or persisted store ---
+            bat_raw = _ROS_CACHE.get("bat")
+            pit_raw = _ROS_CACHE.get("pit")
+
+            if not bat_raw and not pit_raw:
+                bat_raw, pit_raw, _ = _load_persisted_ros_cache()
+
+            if not bat_raw and not pit_raw:
+                logger.warning("projection_cat_scores: no RoS cache available — skipping")
+                self._record_job_run("projection_cat_scores", "failed")
+                return {"status": "failed", "reason": "no_ros_cache", "upserted": 0}
+
+            # --- 2. Blend all stat columns needed for full _compute_zscores ---
+            BAT_STAT_COLS = ["HR", "R", "RBI", "SB", "SO", "AVG", "OPS", "SLG", "PA"]
+            PIT_STAT_COLS = ["W", "SV", "SO", "ERA", "WHIP", "GS", "K/9", "IP"]
+
+            bat_blend = compute_ensemble_blend(bat_raw or {}, stat_columns=BAT_STAT_COLS) if bat_raw else None
+            pit_blend = compute_ensemble_blend(pit_raw or {}, stat_columns=PIT_STAT_COLS) if pit_raw else None
+
+            if bat_blend is None and pit_blend is None:
+                logger.error("projection_cat_scores: blend produced no data")
+                self._record_job_run("projection_cat_scores", "failed")
+                return {"status": "failed", "reason": "blend_failed", "upserted": 0}
+
+            # --- 3. Convert blended DataFrames to player dicts for _compute_zscores ---
+            # h and tb are estimated from AVG/SLG × projected AB (PA × 0.87)
+            batters: list[dict] = []
+            if bat_blend is not None:
+                for _, row in bat_blend.iterrows():
+                    pa = float(row.get("PA", 500) or 500) or 500.0
+                    avg = float(row.get("AVG", 0.250) or 0.250)
+                    slg = float(row.get("SLG", 0.400) or 0.400)
+                    ab_est = pa * 0.87  # typical AB/PA ratio
+                    batters.append({
+                        "id": str(row.get("player_id", "")),
+                        "name": str(row.get("name", "")),
+                        "team": (str(row.get("team", "") or "")).upper().strip(),
+                        "type": "batter",
+                        "proj": {
+                            "r":     float(row.get("R", 0) or 0),
+                            "h":     round(avg * ab_est),
+                            "hr":    float(row.get("HR", 0) or 0),
+                            "rbi":   float(row.get("RBI", 0) or 0),
+                            "k_bat": float(row.get("SO", 0) or 0),
+                            "tb":    round(slg * ab_est),
+                            "avg":   avg,
+                            "ops":   float(row.get("OPS", 0) or 0),
+                            "nsb":   float(row.get("SB", 0) or 0),
+                        },
+                        "z_score": 0.0,
+                        "cat_scores": {},
+                    })
+
+            pitchers: list[dict] = []
+            if pit_blend is not None:
+                for _, row in pit_blend.iterrows():
+                    ip = float(row.get("IP", 0) or 0)
+                    k = float(row.get("SO", 0) or 0)
+                    k9_val = float(row.get("K/9", 0) or 0) or ((k / ip * 9) if ip > 0 else 0.0)
+                    gs = float(row.get("GS", 0) or 0)
+                    sv = float(row.get("SV", 0) or 0)
+                    pitchers.append({
+                        "id": str(row.get("player_id", "")),
+                        "name": str(row.get("name", "")),
+                        "team": (str(row.get("team", "") or "")).upper().strip(),
+                        "type": "pitcher",
+                        "proj": {
+                            "w":      float(row.get("W", 0) or 0),
+                            "l":      0.0,      # not in FanGraphs subset
+                            "hr_pit": 0.0,      # not in FanGraphs subset
+                            "k_pit":  k,
+                            "era":    float(row.get("ERA", 4.5) or 4.5),
+                            "whip":   float(row.get("WHIP", 1.3) or 1.3),
+                            "k9":     k9_val,
+                            "qs":     round(gs * 0.55) if gs >= 10 else 0.0,
+                            "nsv":    sv,
+                        },
+                        "z_score": 0.0,
+                        "cat_scores": {},
+                    })
+
+            if not batters and not pitchers:
+                logger.warning("projection_cat_scores: no player dicts after conversion")
+                self._record_job_run("projection_cat_scores", "failed")
+                return {"status": "failed", "reason": "no_players", "upserted": 0}
+
+            # --- 4. Compute per-category z-scores (modifies in place) ---
+            _compute_zscores(batters, pitchers)
+
+            # --- 5. Build normalized_name → mlbam_id lookup from PlayerIDMapping ---
+            db = SessionLocal()
+            try:
+                id_map_rows = (
+                    db.query(PlayerIDMapping.normalized_name, PlayerIDMapping.mlbam_id)
+                    .filter(PlayerIDMapping.mlbam_id.isnot(None))
+                    .all()
+                )
+                name_to_mlbam: dict[str, str] = {
+                    r.normalized_name: str(r.mlbam_id)
+                    for r in id_map_rows
+                    if r.normalized_name
+                }
+
+                # --- 6. Upsert PlayerProjection rows ---
+                now = datetime.now(ZoneInfo("America/New_York"))
+                upserted = 0
+                skipped = 0
+
+                for p in batters + pitchers:
+                    fg_id = p["id"]
+                    mlbam_id = name_to_mlbam.get(fg_id)
+                    if not mlbam_id:
+                        skipped += 1
+                        continue
+
+                    cat_scores = p.get("cat_scores") or {}
+                    if not cat_scores:
+                        skipped += 1
+                        continue
+
+                    team = p.get("team") or ""
+                    proj = p["proj"]
+
+                    # Build upsert values — only write stats that exist in the model
+                    upsert_vals: dict = {
+                        "player_id":   mlbam_id,
+                        "player_name": p.get("name", ""),
+                        "team":        team,
+                        "cat_scores":  cat_scores,
+                        "prior_source": "fangraphs_ros",
+                        "update_method": "ensemble_blend",
+                        "updated_at":  now,
+                        "created_at":  now,
+                    }
+                    if p["type"] == "batter":
+                        upsert_vals.update({
+                            "hr":  int(max(0, proj.get("hr", 15))),
+                            "r":   int(max(0, proj.get("r", 65))),
+                            "rbi": int(max(0, proj.get("rbi", 65))),
+                            "sb":  int(max(0, proj.get("nsb", 5))),
+                            "avg": round(float(proj.get("avg", 0.250)), 3),
+                            "ops": round(float(proj.get("ops", 0.720)), 3),
+                        })
+                    else:
+                        upsert_vals.update({
+                            "era":        round(float(proj.get("era", 4.00)), 2),
+                            "whip":       round(float(proj.get("whip", 1.30)), 2),
+                            "k_per_nine": round(float(proj.get("k9", 8.5)), 2),
+                        })
+
+                    conflict_set = {
+                        k: v for k, v in upsert_vals.items()
+                        if k not in ("player_id", "created_at")
+                    }
+
+                    stmt = pg_insert(PlayerProjection.__table__).values(
+                        **upsert_vals
+                    ).on_conflict_do_update(
+                        index_elements=["player_id"],
+                        set_=conflict_set,
+                    )
+
+                    try:
+                        with db.begin_nested():
+                            db.execute(stmt)
+                        upserted += 1
+                    except Exception as row_exc:
+                        skipped += 1
+                        logger.warning(
+                            "projection_cat_scores: skip player %s (mlbam=%s): %s",
+                            fg_id, mlbam_id, row_exc,
+                        )
+
+                db.commit()
+
+            except Exception as exc:
+                db.rollback()
+                logger.error("projection_cat_scores DB write failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("projection_cat_scores", "failed")
+                return {"status": "failed", "elapsed_ms": elapsed, "upserted": 0}
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.info(
+                "projection_cat_scores: upserted=%d skipped=%d elapsed=%dms",
+                upserted, skipped, elapsed,
+            )
+            self._record_job_run("projection_cat_scores", "success", upserted)
+            return {
+                "status": "success",
+                "upserted": upserted,
+                "skipped": skipped,
+                "elapsed_ms": elapsed,
+                "batters": len(batters),
+                "pitchers": len(pitchers),
+            }
+
+        return await _with_advisory_lock(
+            LOCK_IDS["projection_cat_scores"], "projection_cat_scores", _run
+        )
 
     async def _check_projection_freshness(self) -> dict:
         """
