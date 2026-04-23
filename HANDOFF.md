@@ -230,7 +230,9 @@ Capture responses to `postman_collections/responses/2026-04-22/`.
 | 2026-04-23 | Enable MLB Analysis | **COMPLETE** | ENABLE_MLB_ANALYSIS=true |
 | 2026-04-23 | Enable Ingestion Orchestrator | **COMPLETE** | ENABLE_INGESTION_ORCHESTRATOR=true |
 | 2026-04-23 | Production Deployment | **COMPLETE** | `railway up` pushed latest changes (including SQL cast fix) |
-| 2026-04-23 | Cat Scores Backfill | **COMPLETE** | 350 rows populated. Target met (0 remaining). |
+| 2026-04-23 | Steamer Re-Ingest | **COMPLETE** | 388 projections written with fixed pitcher columns. |
+| 2026-04-23 | Z-Score Recalculation | **COMPLETE** | 625 rows recalculated with real pitcher counting stats. |
+| 2026-04-23 | Scoreboard 400 Fix | **COMPLETE** | Resolved nested "0" team key structure; endpoint now 200 OK. |
 | 2026-04-23 | CSV Projection Ingest | **COMPLETE** | 25 player projections backfilled from CSV. |
 | 2026-04-23 | Yahoo Error Diagnosis | **COMPLETE** | Waiver endpoint 200 OK; `pybaseball` 403 (FanGraphs) detected in logs. |
 
