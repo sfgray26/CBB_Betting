@@ -2694,12 +2694,68 @@ async def get_fantasy_roster(
     _proj_numeric_ids = [
         pk.split(".p.")[-1] for pk in player_keys if ".p." in pk
     ]
+    # Primary lookup: by Yahoo numeric player_id
     _projections_by_id: dict = {}
     if _proj_numeric_ids:
         _proj_rows = db.query(_PlayerProjection).filter(
             _PlayerProjection.player_id.in_(_proj_numeric_ids)
         ).all()
         _projections_by_id = {p.player_id: p for p in _proj_rows}
+
+    # Secondary lookup: by normalized player_name for Steamer rows whose
+    # player_id is a Steamer internal key (not Yahoo numeric ID).
+    # Build a name->projection map over ALL projections that have cat_scores.
+    _projections_by_name: dict[str, _PlayerProjection] = {}
+    try:
+        from sqlalchemy import text as _sqlt
+        _name_proj_ids = [r[0] for r in db.execute(
+            _sqlt("SELECT player_id FROM player_projections WHERE cat_scores IS NOT NULL AND CAST(cat_scores AS TEXT) != '{}'")
+        ).fetchall()]
+        if _name_proj_ids:
+            _name_rows = db.query(_PlayerProjection).filter(
+                _PlayerProjection.player_id.in_(_name_proj_ids)
+            ).all()
+            for _nr in _name_rows:
+                if _nr.player_name:
+                    _projections_by_name[_normalize_identity_name(_nr.player_name)] = _nr
+    except Exception as _nq_err:
+        logger.warning("roster: name-projection index build failed: %s", _nq_err)
+
+    # Build a canonical-code upper→lower lookup map once, outside the per-player loop.
+    # cat_scores_builder stores keys lowercase (e.g. "hr", "k_bat", "era").
+    # SCORING_CATEGORY_CODES are uppercase (e.g. "HR_B", "K_B", "ERA").
+    # Map: uppercase_code -> lowercase_cat_scores_key
+    _UPPER_TO_LOWER: dict[str, str] = {
+        "R": "r", "H": "h", "HR_B": "hr", "RBI": "rbi",
+        "K_B": "k_bat", "TB": "tb", "AVG": "avg", "OPS": "ops", "NSB": "nsb",
+        "W": "w", "L": "l", "HR_P": "hr_pit", "K_P": "k_pit",
+        "ERA": "era", "WHIP": "whip", "K_9": "k9", "QS": "qs", "NSV": "nsv",
+        "IP": "ip", "SV": "sv", "HLD": "hld",
+    }
+
+    def _build_ros_proj(proj_row: _PlayerProjection):
+        """Convert a PlayerProjection row into a CategoryStats object."""
+        if not proj_row or not proj_row.cat_scores:
+            return None
+        raw: dict = proj_row.cat_scores
+        _values: dict[str, float | None] = {code: None for code in _SCC}
+        for upper_code in _SCC:
+            # Try direct uppercase key first (future-proofing)
+            if upper_code in raw:
+                _values[upper_code] = float(raw[upper_code]) if raw[upper_code] is not None else None
+                continue
+            # Try lowercase mapping
+            lower_key = _UPPER_TO_LOWER.get(upper_code)
+            if lower_key and lower_key in raw:
+                _values[upper_code] = float(raw[lower_key]) if raw[lower_key] is not None else None
+        # Only return if at least some values were populated
+        if not any(v is not None for v in _values.values()):
+            return None
+        try:
+            from backend.contracts import CategoryStats as _CategoryStats
+            return _CategoryStats(values=_values)
+        except Exception:
+            return None
 
     # Map each Yahoo player to CanonicalPlayerRow
     canonical_players = []
@@ -2727,21 +2783,23 @@ async def get_fantasy_roster(
         rs_15d = None
         rs_30d = rolling_stats_30d.get(player_key)
 
-        # Build ros_projection from PlayerProjection.cat_scores if available
+        # Build ros_projection from PlayerProjection.cat_scores if available.
+        # Priority 1: Yahoo numeric ID lookup (fast path).
+        # Priority 2: Normalized name lookup (catches Steamer rows with non-Yahoo IDs).
         _ros_proj = None
         _pid_numeric = player_key.split(".p.")[-1] if ".p." in player_key else None
+        _proj_row = None
         if _pid_numeric and _pid_numeric in _projections_by_id:
-            _proj = _projections_by_id[_pid_numeric]
-            if _proj.cat_scores:
-                _values = {code: None for code in _SCC}
-                for _code, _val in _proj.cat_scores.items():
-                    if _code in _SCC:
-                        _values[_code] = float(_val) if _val is not None else None
-                try:
-                    from backend.contracts import CategoryStats as _CategoryStats
-                    _ros_proj = _CategoryStats(values=_values)
-                except Exception:
-                    _ros_proj = None
+            _proj_row = _projections_by_id[_pid_numeric]
+        if _proj_row is None:
+            _pname = p.get("name", "")
+            if _pname:
+                _proj_row = _projections_by_name.get(_normalize_identity_name(_pname))
+        _ros_proj = _build_ros_proj(_proj_row) if _proj_row else None
+        if _ros_proj is not None:
+            logger.debug("roster: ros_projection populated for %s", p.get("name"))
+        else:
+            logger.debug("roster: ros_projection missing for %s (no matching projection)", p.get("name"))
 
         canonical_row = map_yahoo_player_to_canonical_row(
             yahoo_player=merged_player,
@@ -4750,12 +4808,29 @@ async def get_matchup_scoreboard(
         logger.error("scoreboard: Yahoo auth failed for week %d: %s", week, auth_err, exc_info=False)
         raise HTTPException(status_code=401, detail="Yahoo authentication expired")
     except YahooAPIError as api_err:
-        logger.error("scoreboard: Yahoo API error for week %d: %s (status=%s)", week, api_err, api_err.status_code, exc_info=False)
+        # Log the FULL Yahoo response body so we can diagnose bad-parameter 400s.
+        logger.error(
+            "scoreboard: Yahoo API error for week %d — HTTP %s — full_body=%r",
+            week,
+            api_err.status_code,
+            str(api_err),
+            exc_info=True,
+        )
+        if api_err.status_code == 400:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Yahoo rejected request (bad parameter or expired token) — {str(api_err)[:200]}",
+            )
+        if api_err.status_code in (401, 403):
+            raise HTTPException(status_code=401, detail="Yahoo authentication expired — re-auth required")
         if api_err.status_code == 503:
             raise HTTPException(status_code=503, detail="Yahoo service unavailable")
         raise HTTPException(status_code=502, detail=f"Yahoo API error: {str(api_err)[:100]}")
     except Exception as yahoo_err:
-        logger.error("scoreboard: unexpected error fetching matchup_stats for week %d: %s", week, yahoo_err, exc_info=True)
+        logger.error(
+            "scoreboard: unexpected error fetching matchup_stats for week %d: %s",
+            week, yahoo_err, exc_info=True,
+        )
         raise HTTPException(status_code=500, detail=f"Scoreboard fetch failed: {type(yahoo_err).__name__}")
 
     # Use fetched stats, with fallback to empty if not found
