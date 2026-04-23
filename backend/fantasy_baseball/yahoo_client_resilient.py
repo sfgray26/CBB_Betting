@@ -175,6 +175,10 @@ class YahooFantasyClient:
             raise YahooAuthError(
                 "No refresh token stored. Run: python -m backend.fantasy_baseball.yahoo_client_resilient --auth"
             )
+
+        # Diagnostic: small sleep to avoid 429 if called in tight loop
+        time.sleep(2)
+
         response = requests.post(
             YAHOO_TOKEN_URL,
             data={
@@ -1055,17 +1059,34 @@ class YahooFantasyClient:
             my_team_key = self.get_my_team_key()
 
         matchups = self.get_scoreboard(week=week)
+        
+        # DIAGNOSTIC: log raw matchups to see why we can't find our team
+        logger.info("get_matchup_stats: found %d matchups", len(matchups))
+        if matchups:
+            logger.info("get_matchup_stats: first matchup keys: %s", list(matchups[0].keys()))
+            if "teams" in matchups[0]:
+                logger.info("get_matchup_stats: first matchup teams raw: %s", str(matchups[0]["teams"])[:500])
 
         # Find my matchup
         my_matchup = None
         for matchup in matchups:
-            teams = matchup.get("teams", {})
-            if isinstance(teams, dict):
+            # Handle nested teams structure: matchup["0"].teams or matchup["teams"]
+            teams_wrapper = matchup.get("teams", {})
+            if not teams_wrapper and "0" in matchup:
+                # Some Yahoo API versions wrap teams inside an indexed "0" block
+                inner_0 = matchup["0"]
+                if isinstance(inner_0, dict):
+                    teams_wrapper = inner_0.get("teams", {})
+            
+            if isinstance(teams_wrapper, dict):
                 # Check both "0" and "1" team keys
                 for team_key in ["0", "1"]:
-                    team = teams.get(team_key, {})
+                    team = teams_wrapper.get(team_key, {})
                     if team.get("team_key") == my_team_key:
                         my_matchup = matchup
+                        # Ensure teams block is accessible at top level for extraction logic below
+                        if "teams" not in my_matchup:
+                            my_matchup["teams"] = teams_wrapper
                         break
             if my_matchup:
                 break

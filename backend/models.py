@@ -729,7 +729,13 @@ class PlayerProjection(Base):
     whip = Column(Float, default=1.30)
     k_per_nine = Column(Float, default=8.5)
     bb_per_nine = Column(Float, default=3.0)
-    
+    w = Column(Integer, default=0)
+    l = Column(Integer, default=0)
+    hr_pit = Column(Integer, default=0)
+    k_pit = Column(Integer, default=0)
+    qs = Column(Integer, default=0)
+    nsv = Column(Integer, default=0)
+
     # Bayesian metadata
     shrinkage = Column(Float, default=1.0)  # 1.0 = trust prior fully
     data_quality_score = Column(Float, default=0.0)  # 0-1 based on sample size

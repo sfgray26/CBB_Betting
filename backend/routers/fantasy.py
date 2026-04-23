@@ -4804,6 +4804,8 @@ async def get_matchup_scoreboard(
     try:
         matchup_data = client.get_matchup_stats(week=week)
         logger.info("scoreboard: fetched matchup_data for week %d", week)
+        import json as _json_diag
+        logger.info("scoreboard: raw data sample: %s", _json_diag.dumps(matchup_data)[:1000])
     except YahooAuthError as auth_err:
         logger.error("scoreboard: Yahoo auth failed for week %d: %s", week, auth_err, exc_info=False)
         raise HTTPException(status_code=401, detail="Yahoo authentication expired")
@@ -4837,10 +4839,13 @@ async def get_matchup_scoreboard(
     my_current_stats = matchup_data.get("my_stats", {})
     opp_current_stats = matchup_data.get("opp_stats", {})
 
+    # Ensure opponent_name is a string (avoid None validation errors)
+    safe_opponent_name = opponent_name or "Opponent"
+
     # Override opponent_name from Yahoo if available
     yahoo_opp_name = matchup_data.get("opponent_name")
     if yahoo_opp_name and yahoo_opp_name != "Unknown":
-        opponent_name = yahoo_opp_name
+        safe_opponent_name = yahoo_opp_name
 
     # Mock player scores (empty for now)
     my_player_scores = []
@@ -4849,7 +4854,7 @@ async def get_matchup_scoreboard(
     try:
         result = assemble_matchup_scoreboard(
             week=week,
-            opponent_name=opponent_name,
+            opponent_name=safe_opponent_name,
             my_current_stats=my_current_stats,
             opp_current_stats=opp_current_stats,
             my_player_scores=my_player_scores,
