@@ -219,5 +219,20 @@ Capture responses to `postman_collections/responses/2026-04-22/`.
 ---
 
 *Last updated: 2026-04-21 21:30 UTC — **CRITICAL**: Waiver 503 regression detected (v3 audit). Emergency recovery required before Wave 2 deploy. Session logs in `memory/`, architectural decisions in `tasks/architect_review.md`.*
+
+---
+
+## 16.4 DEVOPS OPERATIONS LOG (Apr 23, 2026)
+
+| Date | Operation | Status | Notes |
+|------|-----------|--------|-------|
+| 2026-04-23 | Disable Integrity Sweep | **COMPLETE** | INTEGRITY_SWEEP_ENABLED=false |
+| 2026-04-23 | Enable MLB Analysis | **COMPLETE** | ENABLE_MLB_ANALYSIS=true |
+| 2026-04-23 | Enable Ingestion Orchestrator | **COMPLETE** | ENABLE_INGESTION_ORCHESTRATOR=true |
+| 2026-04-23 | Production Deployment | **COMPLETE** | `railway up` pushed latest changes (including SQL cast fix) |
+| 2026-04-23 | Cat Scores Backfill | **COMPLETE** | 350 rows populated. Target met (0 remaining). |
+| 2026-04-23 | Yahoo Error Diagnosis | **COMPLETE** | Waiver endpoint 200 OK; `pybaseball` 403 (FanGraphs) detected in logs. |
+
 | 2026-04-22 | MLBAM ID Backfill | **COMPLETE** | 6,567/10,000 players populated with MLBAM IDs. |
 | 2026-04-22 | Cat Scores Backfill | **COMPLETE** | 344/345 rows populated with z-scores. 0 rows remain empty. |
+

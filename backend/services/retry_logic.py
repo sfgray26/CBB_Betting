@@ -60,8 +60,19 @@ def async_retry(
                     # Check for specific error types
                     error_msg = str(e)
                     is_502 = "502" in error_msg or hasattr(e, 'status') and getattr(e, 'status') == 502
+                    is_403 = "403" in error_msg or "Forbidden" in error_msg
 
-                    if is_502:
+                    if is_403:
+                        # Longer backoff for 403 (FanGraphs rate limit)
+                        delay = min(base_delay * (3 ** attempt), max_delay * 2)
+                        logger.warning(
+                            "FanGraphs 403 Forbidden in %s (attempt %d/%d): retrying in %.1fs",
+                            func.__name__,
+                            attempt + 1,
+                            max_retries,
+                            delay
+                        )
+                    elif is_502:
                         logger.warning(
                             "Statcast 502 error in %s (attempt %d/%d): retrying in %.1fs",
                             func.__name__,
@@ -136,8 +147,19 @@ def sync_retry(
                     # Check for specific error types
                     error_msg = str(e)
                     is_502 = "502" in error_msg
+                    is_403 = "403" in error_msg or "Forbidden" in error_msg
 
-                    if is_502:
+                    if is_403:
+                        # Longer backoff for 403 (FanGraphs rate limit)
+                        delay = min(base_delay * (3 ** attempt), max_delay * 2)
+                        logger.warning(
+                            "FanGraphs 403 Forbidden in %s (attempt %d/%d): retrying in %.1fs",
+                            func.__name__,
+                            attempt + 1,
+                            max_retries,
+                            delay
+                        )
+                    elif is_502:
                         logger.warning(
                             "Statcast 502 error in %s (attempt %d/%d): retrying in %.1fs",
                             func.__name__,

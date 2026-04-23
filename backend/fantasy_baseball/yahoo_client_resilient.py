@@ -28,6 +28,7 @@ import os
 import re
 import threading
 import time
+import unicodedata
 import webbrowser
 from dataclasses import dataclass
 import asyncio
@@ -1261,12 +1262,24 @@ class YahooFantasyClient:
             else:
                 owned_pct = YahooFantasyClient._safe_float(owned_raw, 0.0)
 
-        # Extract name with defensive handling
+        # Extract name with defensive handling and UTF-8 encoding
         name = meta.get("full_name")
         if not name and isinstance(meta.get("name"), dict):
             name = meta["name"].get("full")
         if not name:
             name = meta.get("name", "Unknown")
+        
+        # Ensure UTF-8 encoding: decode if bytes, normalize if string
+        if isinstance(name, bytes):
+            try:
+                name = name.decode("utf-8")
+            except UnicodeDecodeError:
+                name = name.decode("utf-8", errors="replace")
+        elif isinstance(name, str):
+            # Normalize unicode: NFKD decomposition then recomposition (NFC)
+            # This ensures "Díaz" stays as "Díaz" (not decomposed)
+            name = unicodedata.normalize("NFC", name)
+        
         # Strip injury descriptions occasionally appended by Yahoo to the name field
         # e.g. "Jason Adam Quadriceps" -> "Jason Adam"
         if isinstance(name, str):

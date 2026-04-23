@@ -311,7 +311,7 @@ def run_backfill(db: Session) -> dict[str, Any]:
         if write_cat:
             # PostgreSQL requires explicit JSONB cast; SQLite handles JSON natively
             if dialect_name == 'postgresql':
-                parts.append("cat_scores = :cs::jsonb")
+                parts.append("cat_scores = CAST(:cs AS JSONB)")
             else:
                 parts.append("cat_scores = :cs")
             params["cs"] = json.dumps(p["cat_scores"])
@@ -335,7 +335,7 @@ def run_backfill(db: Session) -> dict[str, Any]:
     # Use dialect-specific SQL for JSON text comparison
     if dialect_name == 'postgresql':
         verify_query = text(
-            "SELECT COUNT(*) FROM player_projections WHERE cat_scores::text = '{}'"
+            "SELECT COUNT(*) FROM player_projections WHERE CAST(cat_scores AS TEXT) = '{}'"
         )
     else:
         # SQLite: check for empty JSON object

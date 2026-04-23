@@ -4731,6 +4731,7 @@ async def get_matchup_scoreboard(
     try:
         client = get_yahoo_client()
     except YahooAuthError:
+        logger.error("scoreboard: Yahoo not configured")
         raise HTTPException(status_code=503, detail="Yahoo not configured")
 
     # Default to current week if not provided
@@ -4741,12 +4742,21 @@ async def get_matchup_scoreboard(
         week = max(1, min(25, (days_since_opening // 7) + 1))
 
     # Fetch live matchup stats from Yahoo
+    matchup_data = {}
     try:
         matchup_data = client.get_matchup_stats(week=week)
         logger.info("scoreboard: fetched matchup_data for week %d", week)
+    except YahooAuthError as auth_err:
+        logger.error("scoreboard: Yahoo auth failed for week %d: %s", week, auth_err, exc_info=False)
+        raise HTTPException(status_code=401, detail="Yahoo authentication expired")
+    except YahooAPIError as api_err:
+        logger.error("scoreboard: Yahoo API error for week %d: %s (status=%s)", week, api_err, api_err.status_code, exc_info=False)
+        if api_err.status_code == 503:
+            raise HTTPException(status_code=503, detail="Yahoo service unavailable")
+        raise HTTPException(status_code=502, detail=f"Yahoo API error: {str(api_err)[:100]}")
     except Exception as yahoo_err:
-        logger.error("scoreboard: failed to fetch matchup_stats: %s", yahoo_err, exc_info=True)
-        raise HTTPException(status_code=502, detail=f"Yahoo API error: {str(yahoo_err)}")
+        logger.error("scoreboard: unexpected error fetching matchup_stats for week %d: %s", week, yahoo_err, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Scoreboard fetch failed: {type(yahoo_err).__name__}")
 
     # Use fetched stats, with fallback to empty if not found
     my_current_stats = matchup_data.get("my_stats", {})
@@ -4760,73 +4770,90 @@ async def get_matchup_scoreboard(
     # Mock player scores (empty for now)
     my_player_scores = []
 
-    result = assemble_matchup_scoreboard(
-        week=week,
-        opponent_name=opponent_name,
-        my_current_stats=my_current_stats,
-        opp_current_stats=opp_current_stats,
-        my_player_scores=my_player_scores,
-        opp_player_scores=None,
-        ip_accumulated=45.0,
-        ip_minimum=90.0,
-        games_remaining=3,
-        days_remaining=4,
-        acquisitions_used=5,
-        il_used=1,
-        n_monte_carlo_sims=1000,
-        force_stale=False,
-    )
+    # Assemble scoreboard with defensive error handling
+    try:
+        result = assemble_matchup_scoreboard(
+            week=week,
+            opponent_name=opponent_name,
+            my_current_stats=my_current_stats,
+            opp_current_stats=opp_current_stats,
+            my_player_scores=my_player_scores,
+            opp_player_scores=None,
+            ip_accumulated=45.0,
+            ip_minimum=90.0,
+            games_remaining=3,
+            days_remaining=4,
+            acquisitions_used=5,
+            il_used=1,
+            n_monte_carlo_sims=1000,
+            force_stale=False,
+        )
+        logger.debug("scoreboard: assembled scoreboard for week %d", week)
+    except ValueError as val_err:
+        logger.error("scoreboard: invalid data for week %d: %s", week, val_err, exc_info=False)
+        raise HTTPException(status_code=400, detail=f"Invalid scoreboard data: {str(val_err)[:100]}")
+    except TypeError as type_err:
+        logger.error("scoreboard: type error assembling scoreboard for week %d: %s", week, type_err, exc_info=True)
+        raise HTTPException(status_code=500, detail="Scoreboard assembly failed: data structure mismatch")
+    except Exception as orch_err:
+        logger.error("scoreboard: unexpected error in orchestrator for week %d: %s", week, orch_err, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Scoreboard assembly failed: {type(orch_err).__name__}")
 
-    return {
-        "week": result.week,
-        "opponent_name": result.opponent_name,
-        "categories_won": result.categories_won,
-        "categories_lost": result.categories_lost,
-        "categories_tied": result.categories_tied,
-        "projected_won": result.projected_won,
-        "projected_lost": result.projected_lost,
-        "projected_tied": result.projected_tied,
-        "overall_win_probability": result.overall_win_probability,
-        "rows": [
-            {
-                "category": r.category,
-                "category_label": r.category_label,
-                "is_lower_better": r.is_lower_better,
-                "is_batting": r.is_batting,
-                "my_current": r.my_current,
-                "opp_current": r.opp_current,
-                "current_margin": r.current_margin,
-                "my_projected_final": r.my_projected_final,
-                "opp_projected_final": r.opp_projected_final,
-                "projected_margin": r.projected_margin,
-                "status": r.status.value if r.status else None,
-                "flip_probability": r.flip_probability,
-                "delta_to_flip": r.delta_to_flip,
-                "games_remaining": r.games_remaining,
-                "ip_context": r.ip_context,
-            }
-            for r in result.rows
-        ],
-        "budget": {
-            "acquisitions_used": result.budget.acquisitions_used,
-            "acquisitions_remaining": result.budget.acquisitions_remaining,
-            "acquisition_limit": result.budget.acquisition_limit,
-            "acquisition_warning": result.budget.acquisition_warning,
-            "il_used": result.budget.il_used,
-            "il_total": result.budget.il_total,
-            "ip_accumulated": result.budget.ip_accumulated,
-            "ip_minimum": result.budget.ip_minimum,
-            "ip_pace": result.budget.ip_pace.value,
-            "as_of": result.budget.as_of.isoformat(),
-        },
-        "freshness": {
-            "primary_source": result.freshness.primary_source,
-            "fetched_at": result.freshness.fetched_at.isoformat() if result.freshness.fetched_at else None,
-            "computed_at": result.freshness.computed_at.isoformat(),
-            "staleness_threshold_minutes": result.freshness.staleness_threshold_minutes,
-            "is_stale": result.freshness.is_stale,
-        },
-    }
+    # Serialize result with defensive handling
+    try:
+        return {
+            "week": result.week,
+            "opponent_name": result.opponent_name,
+            "categories_won": result.categories_won,
+            "categories_lost": result.categories_lost,
+            "categories_tied": result.categories_tied,
+            "projected_won": result.projected_won,
+            "projected_lost": result.projected_lost,
+            "projected_tied": result.projected_tied,
+            "overall_win_probability": result.overall_win_probability,
+            "rows": [
+                {
+                    "category": r.category,
+                    "category_label": r.category_label,
+                    "is_lower_better": r.is_lower_better,
+                    "is_batting": r.is_batting,
+                    "my_current": r.my_current,
+                    "opp_current": r.opp_current,
+                    "current_margin": r.current_margin,
+                    "my_projected_final": r.my_projected_final,
+                    "opp_projected_final": r.opp_projected_final,
+                    "projected_margin": r.projected_margin,
+                    "status": r.status.value if r.status else None,
+                    "flip_probability": r.flip_probability,
+                    "delta_to_flip": r.delta_to_flip,
+                    "games_remaining": r.games_remaining,
+                    "ip_context": r.ip_context,
+                }
+                for r in result.rows
+            ],
+            "budget": {
+                "acquisitions_used": result.budget.acquisitions_used,
+                "acquisitions_remaining": result.budget.acquisitions_remaining,
+                "acquisition_limit": result.budget.acquisition_limit,
+                "acquisition_warning": result.budget.acquisition_warning,
+                "il_used": result.budget.il_used,
+                "il_total": result.budget.il_total,
+                "ip_accumulated": result.budget.ip_accumulated,
+                "ip_minimum": result.budget.ip_minimum,
+                "ip_pace": result.budget.ip_pace.value,
+                "as_of": result.budget.as_of.isoformat(),
+            },
+            "freshness": {
+                "primary_source": result.freshness.primary_source,
+                "fetched_at": result.freshness.fetched_at.isoformat() if result.freshness.fetched_at else None,
+                "computed_at": result.freshness.computed_at.isoformat(),
+                "staleness_threshold_minutes": result.freshness.staleness_threshold_minutes,
+                "is_stale": result.freshness.is_stale,
+            },
+        }
+    except AttributeError as attr_err:
+        logger.error("scoreboard: attribute error serializing result for week %d: %s", week, attr_err, exc_info=True)
+        raise HTTPException(status_code=500, detail="Scoreboard serialization failed: missing field")
 
 
 @router.get("/api/fantasy/budget")

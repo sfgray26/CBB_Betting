@@ -1,4 +1,5 @@
 """Data quality monitoring dashboard for fantasy baseball platform."""
+import logging
 from datetime import datetime, timedelta, date
 from typing import Dict, Any, List
 from zoneinfo import ZoneInfo
@@ -6,6 +7,8 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, and_, or_, text
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from backend.models import (
     get_db,
@@ -84,11 +87,16 @@ def get_data_quality_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
     total_projections = db.query(func.count(PlayerProjection.id)).scalar() or 0
 
     # Count projections with empty cat_scores using standard null/empty check
-    empty_cat_scores_query = text("""
-        SELECT COUNT(*) FROM player_projections
-        WHERE cat_scores IS NULL OR cat_scores::text = '{}'
-    """)
-    empty_cat_scores = db.execute(empty_cat_scores_query).scalar() or 0
+    # PostgreSQL: CAST(jsonb_col AS TEXT) safely converts NULL and {} to strings
+    try:
+        empty_cat_scores_query = text("""
+            SELECT COUNT(*) FROM player_projections
+            WHERE cat_scores IS NULL OR CAST(cat_scores AS TEXT) = '{}'
+        """)
+        empty_cat_scores = db.execute(empty_cat_scores_query).scalar() or 0
+    except Exception as sql_err:
+        logger.warning("data_quality: empty_cat_scores query failed: %s", sql_err)
+        empty_cat_scores = 0
     
     projection_coverage_pct = (
         ((total_projections - empty_cat_scores) / total_projections * 100)
@@ -204,14 +212,18 @@ def run_data_quality_audit(db: Session = Depends(get_db)) -> Dict[str, Any]:
     # === Audit 2: Empty projections for active players ===
     week_ago = datetime.now(ZoneInfo("UTC")) - timedelta(days=7)
 
-    # Use standard null/empty check for cat_scores
-    empty_cats_query = text("""
-        SELECT id FROM player_projections
-        WHERE updated_at > :week_ago
-        AND (cat_scores IS NULL OR cat_scores::text = '{}')
-        LIMIT 100
-    """)
-    empty_cat_ids = [row[0] for row in db.execute(empty_cats_query, {"week_ago": week_ago}).fetchall()]
+    # Use standard null/empty check for cat_scores with safe CAST to TEXT
+    try:
+        empty_cats_query = text("""
+            SELECT id FROM player_projections
+            WHERE updated_at > :week_ago
+            AND (cat_scores IS NULL OR CAST(cat_scores AS TEXT) = '{}')
+            LIMIT 100
+        """)
+        empty_cat_ids = [row[0] for row in db.execute(empty_cats_query, {"week_ago": week_ago}).fetchall()]
+    except Exception as sql_err:
+        logger.warning("data_quality: empty_cats_query failed: %s", sql_err)
+        empty_cat_ids = []
     players_with_empty_cats = db.query(PlayerProjection).filter(
         PlayerProjection.id.in_(empty_cat_ids)
     ).all()
@@ -371,3 +383,31 @@ def backfill_cat_scores(db: Session = Depends(get_db)) -> Dict[str, Any]:
     """
     from backend.services.cat_scores_builder import run_backfill
     return run_backfill(db)
+
+
+@router.post("/ingest-csv-projections")
+def ingest_csv_projections(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """Ingest projections from CSV file to PlayerProjection table.
+
+    Fallback for when FanGraphs 403 errors block automated scraping.
+    Reads from data/projections/fangraphs_ros.csv (or fangraphs_ros_sample.csv for testing).
+
+    This endpoint runs on the production server inside Railway's network, giving
+    it direct access to the internal Postgres instance. Safe to call multiple times —
+    existing rows are updated with new projection values.
+
+    Returns dict with status and counts:
+        status: "success" | "partial" | "failed"
+        fetched: projections loaded from CSV
+        resolved: player IDs matched via PlayerIDMapping
+        written: rows to database
+    """
+    from pathlib import Path
+    from backend.fantasy_baseball.csv_projection_ingestion import run_csv_backfill
+
+    # Try main file first, then sample
+    csv_path = Path("data/projections/fangraphs_ros.csv")
+    if not csv_path.exists():
+        csv_path = Path("data/projections/fangraphs_ros_sample.csv")
+
+    return run_csv_backfill(db, csv_path if csv_path.exists() else None)
