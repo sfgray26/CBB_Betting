@@ -1562,9 +1562,19 @@ async def get_fantasy_waiver_recommendations(
 
         _fa_start = (page - 1) * per_page
         _yahoo_pos = position if position and position.upper() != "ALL" else ""
-        free_agents = client.get_free_agents(
-            position=_yahoo_pos, start=_fa_start, count=per_page
-        )
+
+        # Fetch free agents with defensive error handling
+        try:
+            free_agents = client.get_free_agents(
+                position=_yahoo_pos, start=_fa_start, count=per_page
+            )
+            logger.info("waiver: fetched %d free agents for position=%s start=%d", len(free_agents) if free_agents else 0, _yahoo_pos, _fa_start)
+        except Exception as fa_err:
+            logger.error("waiver: get_free_agents failed: %s", fa_err, exc_info=True)
+            free_agents = []
+
+        if not free_agents:
+            logger.warning("waiver: no free agents returned from Yahoo API, returning empty response")
 
         # Fetch scoreboard once and reuse for both opponent resolution and
         # category_deficits — the previous implementation fetched twice and
@@ -4214,6 +4224,7 @@ async def get_decisions(
     Auth: verify_api_key required.
     """
     # For waiver decisions, perform live category-aware optimization
+    # This is wrapped in extensive try/except to prevent cascading failures
     if decision_type == "waiver" or decision_type is None:
         try:
             from backend.services.decision_engine import (
@@ -4222,19 +4233,32 @@ async def get_decisions(
             )
             from backend.fantasy_baseball.category_aware_scorer import CategoryNeedVector
 
+            logger.info("decisions endpoint: starting live category-aware waiver optimization")
+
             # Fetch live matchup scoreboard to build category_deficits
-            client = get_yahoo_client()
+            try:
+                client = get_yahoo_client()
+                logger.info("decisions endpoint: Yahoo client obtained successfully")
+            except Exception as client_err:
+                logger.error("decisions endpoint: failed to get Yahoo client: %s", client_err)
+                raise  # Re-raise to fall through to DB query
+
             my_team_key = os.getenv("YAHOO_TEAM_KEY", "")
             if not my_team_key:
                 try:
                     my_team_key = client.get_my_team_key()
-                except Exception:
-                    pass
+                    logger.info("decisions endpoint: obtained team_key=%s", my_team_key)
+                except Exception as team_key_err:
+                    logger.warning("decisions endpoint: failed to get team_key: %s", team_key_err)
+                    pass  # Continue without team_key
 
             need_vector = None
             if my_team_key:
                 try:
+                    logger.info("decisions endpoint: fetching scoreboard for team=%s", my_team_key)
                     matchups_scoreboard = client.get_scoreboard()
+                    logger.info("decisions endpoint: scoreboard fetched, %d matchups", len(matchups_scoreboard) if matchups_scoreboard else 0)
+
                     _category_deficits = []
 
                     for matchup_teams in _iter_scoreboard_matchup_teams(matchups_scoreboard):
@@ -4302,8 +4326,9 @@ async def get_decisions(
                             for cat, deficit in _category_deficits
                         }
                         need_vector = CategoryNeedVector(needs=needs)
+                        logger.info("decisions endpoint: built CategoryNeedVector with %d categories", len(needs))
                 except Exception as _sb_err:
-                    logger.warning("decisions endpoint scoreboard fetch failed (non-fatal): %s", _sb_err)
+                    logger.warning("decisions endpoint: scoreboard fetch failed (non-fatal): %s", _sb_err, exc_info=True)
 
             # Perform live waiver optimization with category awareness
             if need_vector and as_of_date is None:
@@ -4315,100 +4340,133 @@ async def get_decisions(
 
                 # Fetch current roster and waiver pool
                 try:
+                    logger.info("decisions endpoint: fetching roster and waiver pool")
                     roster = client.get_roster()
+                    logger.info("decisions endpoint: fetched %d roster players", len(roster) if roster else 0)
+
                     free_agents = client.get_free_agents(count=100)
+                    logger.info("decisions endpoint: fetched %d free agents", len(free_agents) if free_agents else 0)
+
+                    if not free_agents:
+                        logger.warning("decisions endpoint: free_agents is empty/None, skipping live optimization")
+                        raise ValueError("No free agents available from Yahoo API")
 
                     # Build PlayerDecisionInput lists
                     players = []
                     for p in roster:
-                        proj = get_or_create_projection(p)
-                        if proj:
-                            players.append(PlayerDecisionInput(
-                                bdl_player_id=proj.bdl_player_id,
-                                position=p.get("position", "UTIL"),
-                                composite_z=proj.get("composite_z", 0.0),
-                                z_hr=proj.get("z_hr", 0.0),
-                                z_rbi=proj.get("z_rbi", 0.0),
-                                z_nsb=proj.get("z_nsb", 0.0),
-                                z_r=proj.get("z_r", 0.0),
-                                z_ops=proj.get("z_ops", 0.0),
-                                z_w=proj.get("z_w", 0.0),
-                                z_k=proj.get("z_k", 0.0),
-                                z_nsv=proj.get("z_nsv", 0.0),
-                                z_era=proj.get("z_era", 0.0),
-                                z_whip=proj.get("z_whip", 0.0),
-                            ))
+                        try:
+                            proj = get_or_create_projection(p)
+                            if proj and proj.bdl_player_id:
+                                players.append(PlayerDecisionInput(
+                                    bdl_player_id=proj.bdl_player_id,
+                                    position=p.get("position", "UTIL"),
+                                    composite_z=proj.get("composite_z", 0.0),
+                                    z_hr=proj.get("z_hr", 0.0),
+                                    z_rbi=proj.get("z_rbi", 0.0),
+                                    z_nsb=proj.get("z_nsb", 0.0),
+                                    z_r=proj.get("z_r", 0.0),
+                                    z_ops=proj.get("z_ops", 0.0),
+                                    z_w=proj.get("z_w", 0.0),
+                                    z_k=proj.get("z_k", 0.0),
+                                    z_nsv=proj.get("z_nsv", 0.0),
+                                    z_era=proj.get("z_era", 0.0),
+                                    z_whip=proj.get("z_whip", 0.0),
+                                ))
+                        except Exception as proj_err:
+                            logger.warning("decisions endpoint: failed to build player input: %s", proj_err)
+                            continue
+
+                    logger.info("decisions endpoint: built %d roster players with projections", len(players))
 
                     waiver_pool = []
                     for fa in free_agents:
-                        proj = get_or_create_projection(fa)
-                        if proj:
-                            waiver_pool.append(PlayerDecisionInput(
-                                bdl_player_id=proj.bdl_player_id,
-                                position=fa.get("position", "UTIL"),
-                                composite_z=proj.get("composite_z", 0.0),
-                                z_hr=proj.get("z_hr", 0.0),
-                                z_rbi=proj.get("z_rbi", 0.0),
-                                z_nsb=proj.get("z_nsb", 0.0),
-                                z_r=proj.get("z_r", 0.0),
-                                z_ops=proj.get("z_ops", 0.0),
-                                z_w=proj.get("z_w", 0.0),
-                                z_k=proj.get("z_k", 0.0),
-                                z_nsv=proj.get("z_nsv", 0.0),
-                                z_era=proj.get("z_era", 0.0),
-                                z_whip=proj.get("z_whip", 0.0),
-                            ))
+                        try:
+                            proj = get_or_create_projection(fa)
+                            if proj and proj.bdl_player_id:
+                                waiver_pool.append(PlayerDecisionInput(
+                                    bdl_player_id=proj.bdl_player_id,
+                                    position=fa.get("position", "UTIL"),
+                                    composite_z=proj.get("composite_z", 0.0),
+                                    z_hr=proj.get("z_hr", 0.0),
+                                    z_rbi=proj.get("z_rbi", 0.0),
+                                    z_nsb=proj.get("z_nsb", 0.0),
+                                    z_r=proj.get("z_r", 0.0),
+                                    z_ops=proj.get("z_ops", 0.0),
+                                    z_w=proj.get("z_w", 0.0),
+                                    z_k=proj.get("z_k", 0.0),
+                                    z_nsv=proj.get("z_nsv", 0.0),
+                                    z_era=proj.get("z_era", 0.0),
+                                    z_whip=proj.get("z_whip", 0.0),
+                                ))
+                        except Exception as proj_err:
+                            logger.warning("decisions endpoint: failed to build waiver pool input: %s", proj_err)
+                            continue
+
+                    logger.info("decisions endpoint: built %d waiver pool candidates with projections", len(waiver_pool))
+
+                    if not waiver_pool:
+                        logger.warning("decisions endpoint: waiver_pool is empty after projection resolution, skipping live optimization")
+                        raise ValueError("No valid waiver pool candidates")
 
                     # Run optimization with category awareness
+                    logger.info("decisions endpoint: running optimize_waivers with need_vector")
                     _waiver_decision, waiver_results = await asyncio.to_thread(
                         optimize_waivers, players, waiver_pool, as_of_date, need_vector
                     )
+                    logger.info("decisions endpoint: optimize_waivers returned %d results", len(waiver_results))
 
                     # Convert results to DecisionResultOut format
                     results = []
                     for wr in waiver_results[:limit]:
-                        decision_out = DecisionResultOut(
-                            bdl_player_id=wr.bdl_player_id,
-                            player_name=None,  # Will be resolved below
-                            as_of_date=wr.as_of_date,
-                            decision_type="waiver",
-                            target_slot=wr.target_slot,
-                            drop_player_id=wr.drop_player_id,
-                            drop_player_name=None,
-                            lineup_score=wr.lineup_score,
-                            value_gain=wr.value_gain,
-                            confidence=wr.confidence,
-                            reasoning=wr.reasoning,
-                        )
+                        try:
+                            decision_out = DecisionResultOut(
+                                bdl_player_id=wr.bdl_player_id,
+                                player_name=None,  # Will be resolved below
+                                as_of_date=wr.as_of_date,
+                                decision_type="waiver",
+                                target_slot=wr.target_slot,
+                                drop_player_id=wr.drop_player_id,
+                                drop_player_name=None,
+                                lineup_score=wr.lineup_score,
+                                value_gain=wr.value_gain,
+                                confidence=wr.confidence,
+                                reasoning=wr.reasoning,
+                            )
 
-                        # Resolve player names
-                        pname = db.query(PlayerIDMapping.full_name).filter(
-                            PlayerIDMapping.bdl_id == wr.bdl_player_id
-                        ).scalar()
-                        decision_out.player_name = pname
-
-                        if wr.drop_player_id:
-                            dname = db.query(PlayerIDMapping.full_name).filter(
-                                PlayerIDMapping.bdl_id == wr.drop_player_id
+                            # Resolve player names
+                            pname = db.query(PlayerIDMapping.full_name).filter(
+                                PlayerIDMapping.bdl_id == wr.bdl_player_id
                             ).scalar()
-                            decision_out.drop_player_name = dname
+                            decision_out.player_name = pname
 
-                        results.append(DecisionWithExplanation(
-                            decision=decision_out,
-                            explanation=None,
-                        ))
+                            if wr.drop_player_id:
+                                dname = db.query(PlayerIDMapping.full_name).filter(
+                                    PlayerIDMapping.bdl_id == wr.drop_player_id
+                                ).scalar()
+                                decision_out.drop_player_name = dname
+
+                            results.append(DecisionWithExplanation(
+                                decision=decision_out,
+                                explanation=None,
+                            ))
+                        except Exception as res_build_err:
+                            logger.warning("decisions endpoint: failed to build result: %s", res_build_err)
+                            continue
 
                     if results:
+                        logger.info("decisions endpoint: returning %d live waiver results", len(results))
                         return DecisionsResponse(
                             decisions=results,
                             count=len(results),
                             as_of_date=as_of_date or date.today(),
                             decision_type="waiver",
                         )
+                    else:
+                        logger.warning("decisions endpoint: no results built from optimization output, falling back to DB")
                 except Exception as _live_err:
-                    logger.warning("decisions endpoint live optimization failed (falling back to DB): %s", _live_err)
+                    logger.warning("decisions endpoint: live optimization failed (falling back to DB): %s", _live_err, exc_info=True)
         except Exception as _init_err:
-            logger.warning("decisions endpoint category-aware setup failed (using DB fallback): %s", _init_err)
+            logger.warning("decisions endpoint: category-aware setup failed (using DB fallback): %s", _init_err, exc_info=True)
 
     # Build base query with player name and drop player name joins
     # Use aliased PlayerIDMapping for drop player to avoid ambiguity
@@ -4683,7 +4741,12 @@ async def get_matchup_scoreboard(
         week = max(1, min(25, (days_since_opening // 7) + 1))
 
     # Fetch live matchup stats from Yahoo
-    matchup_data = client.get_matchup_stats(week=week)
+    try:
+        matchup_data = client.get_matchup_stats(week=week)
+        logger.info("scoreboard: fetched matchup_data for week %d", week)
+    except Exception as yahoo_err:
+        logger.error("scoreboard: failed to fetch matchup_stats: %s", yahoo_err, exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Yahoo API error: {str(yahoo_err)}")
 
     # Use fetched stats, with fallback to empty if not found
     my_current_stats = matchup_data.get("my_stats", {})
