@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.routers.fantasy import router as fantasy_router
 from backend.routers.admin import router as admin_router
+from backend.routers.data_quality import router as data_quality_router
 from backend.schedulers.fantasy_scheduler import start_fantasy_scheduler, stop_fantasy_scheduler
 
 logger = logging.getLogger(__name__)
@@ -72,3 +73,4 @@ app.add_middleware(
 
 app.include_router(fantasy_router)
 app.include_router(admin_router)
+app.include_router(data_quality_router)

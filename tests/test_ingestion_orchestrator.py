@@ -180,7 +180,7 @@ def test_orchestrator_get_status_returns_all_jobs():
         "decision_optimization", "backtesting", "explainability", "snapshot",
         "mlb_odds", "statcast",
         "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
-        "ensemble_update", "projection_freshness",
+        "ensemble_update", "projection_freshness", "projection_cat_scores",
         "player_id_mapping", "position_eligibility",
         "probable_pitchers_morning", "probable_pitchers_afternoon", "probable_pitchers_evening",
     }

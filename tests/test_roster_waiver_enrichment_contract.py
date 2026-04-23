@@ -34,18 +34,33 @@ def fantasy_client():
     with patch("backend.schedulers.fantasy_scheduler.start_fantasy_scheduler"):
         with patch("backend.schedulers.fantasy_scheduler.stop_fantasy_scheduler"):
             from backend.auth import verify_api_key
+            from backend.models import get_db
             from backend.fantasy_app import app
             from fastapi.testclient import TestClient
 
             async def _no_auth() -> str:
                 return "test_user"
 
+            def _fake_db():
+                """Yield a MagicMock so routes that accept db: Session don't hit local postgres."""
+                db = MagicMock()
+                db.query.return_value.filter.return_value.all.return_value = []
+                db.query.return_value.filter.return_value.first.return_value = None
+                db.query.return_value.all.return_value = []
+                db.query.return_value.first.return_value = None
+                try:
+                    yield db
+                finally:
+                    pass
+
             app.dependency_overrides[verify_api_key] = _no_auth
+            app.dependency_overrides[get_db] = _fake_db
             try:
                 with TestClient(app) as client:
                     yield client
             finally:
                 app.dependency_overrides.pop(verify_api_key, None)
+                app.dependency_overrides.pop(get_db, None)
 
 
 # ---------------------------------------------------------------------------
