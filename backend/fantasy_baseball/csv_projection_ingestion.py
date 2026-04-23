@@ -134,8 +134,10 @@ def resolve_player_ids(db: Session, projections: dict[str, CSVProjection]) -> di
     # Build name -> ID lookup
     name_to_id = {}
     for row in db.execute(select(PlayerIDMapping)).scalars():
-        key = row.player_name.lower().strip()
-        name_to_id[key] = row.player_id
+        if not row.mlbam_id:
+            continue
+        key = row.full_name.lower().strip()
+        name_to_id[key] = str(row.mlbam_id)
 
     # Build team lookup from statcast_performance
     team_lookup = {}
