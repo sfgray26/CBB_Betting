@@ -83,11 +83,10 @@ def get_data_quality_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
     # Metric 6: Projection coverage
     total_projections = db.query(func.count(PlayerProjection.id)).scalar() or 0
 
-    # Count projections with empty cat_scores using raw SQL
+    # Count projections with empty cat_scores using standard null/empty check
     empty_cat_scores_query = text("""
         SELECT COUNT(*) FROM player_projections
-        WHERE jsonb_typeof(cat_scores) = 'object'
-        AND jsonb_array_length(jsonb_object_keys(cat_scores)) = 0
+        WHERE cat_scores IS NULL OR cat_scores::text = '{}'
     """)
     empty_cat_scores = db.execute(empty_cat_scores_query).scalar() or 0
     
@@ -205,12 +204,11 @@ def run_data_quality_audit(db: Session = Depends(get_db)) -> Dict[str, Any]:
     # === Audit 2: Empty projections for active players ===
     week_ago = datetime.now(ZoneInfo("UTC")) - timedelta(days=7)
 
-    # Use raw SQL for JSONB operations
+    # Use standard null/empty check for cat_scores
     empty_cats_query = text("""
         SELECT id FROM player_projections
         WHERE updated_at > :week_ago
-        AND jsonb_typeof(cat_scores) = 'object'
-        AND jsonb_array_length(jsonb_object_keys(cat_scores)) = 0
+        AND (cat_scores IS NULL OR cat_scores::text = '{}')
         LIMIT 100
     """)
     empty_cat_ids = [row[0] for row in db.execute(empty_cats_query, {"week_ago": week_ago}).fetchall()]
@@ -349,4 +347,208 @@ def run_data_quality_audit(db: Session = Depends(get_db)) -> Dict[str, Any]:
             "top_5": all_issues[:5] if all_issues else []
         },
         "generated_at": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# One-shot backfill endpoint — runs inside Railway network (has internal DB access)
+# ---------------------------------------------------------------------------
+
+@router.post("/backfill-cat-scores")
+def backfill_cat_scores(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """Compute and write cat_scores z-scores for all PlayerProjection rows that
+    still have empty cat_scores ({}) or null team fields.
+
+    This endpoint runs on the production server inside Railway's network, giving
+    it direct access to the internal Postgres instance.  Safe to call multiple
+    times — rows already populated are skipped.
+
+    Verification query is included in the response:
+        remaining_empty = SELECT COUNT(*) WHERE cat_scores::text = '{}'
+    """
+    import json
+    import statistics
+    from zoneinfo import ZoneInfo as _ZI
+
+    # --- z-score helpers (mirrors player_board._compute_zscores) ----------------
+    _BAT_W = {
+        "r": 1.0, "h": 0.8, "hr": 1.3, "rbi": 1.2,
+        "k_bat": -0.7, "tb": 0.9, "avg": 1.1, "ops": 1.4, "nsb": 1.0,
+    }
+    _PIT_W = {
+        "w": 1.0, "l": -0.8, "hr_pit": -1.0, "k_pit": 1.2,
+        "era": -1.3, "whip": -1.3, "k9": 0.9, "qs": 1.0, "nsv": 1.1,
+    }
+
+    def _z(value: float, pool: list, direction: float = 1.0) -> float:
+        if len(pool) < 2:
+            return 0.0
+        try:
+            mu = statistics.mean(pool)
+            sd = statistics.stdev(pool)
+            return 0.0 if sd < 1e-9 else ((value - mu) / sd) * direction
+        except Exception:
+            return 0.0
+
+    def _score(players: list, weights: dict) -> None:
+        cats = list(weights.keys())
+        pool = {c: [float(p["proj"].get(c, 0) or 0) for p in players] for c in cats}
+        for p in players:
+            scores, total = {}, 0.0
+            for c in cats:
+                w = weights[c]
+                z = _z(float(p["proj"].get(c, 0) or 0), pool[c], 1.0 if w >= 0 else -1.0)
+                scores[c] = round(z, 4)
+                total += z * abs(w)
+            p["cat_scores"] = scores
+            p["z_score"] = round(total, 4)
+
+    # --- classify ---------------------------------------------------------------
+    BAT_POS = {"C", "1B", "2B", "3B", "SS", "OF", "LF", "CF", "RF", "DH", "UTIL"}
+    PIT_POS = {"SP", "RP", "P"}
+
+    def _classify(positions, era, hr, r_val):
+        pos_set = {str(p).upper().strip() for p in (positions or [])}
+        has_bat = bool(pos_set & BAT_POS)
+        has_pit = bool(pos_set & PIT_POS)
+        if has_bat and not has_pit:
+            return "batter"
+        if has_pit and not has_bat:
+            return "pitcher"
+        if has_bat and has_pit:
+            return "pitcher" if (era is not None and abs(float(era) - 4.00) > 0.01) else "batter"
+        # no position — stats heuristic
+        if era is not None and abs(float(era) - 4.00) > 0.01:
+            return "pitcher"
+        if (hr or 0) > 5 or (r_val or 0) > 30:
+            return "batter"
+        return None  # ambiguous — will still receive default cat_scores
+
+    # --- load all rows ----------------------------------------------------------
+    rows = db.execute(
+        text(
+            "SELECT player_id, team, positions, hr, r, rbi, sb, "
+            "       avg, slg, ops, era, whip, k_per_nine, cat_scores "
+            "FROM player_projections"
+        )
+    ).mappings().fetchall()
+
+    now = datetime.now(_ZI("America/New_York"))
+    batters, pitchers, ambiguous = [], [], []
+
+    for row in rows:
+        pa, ab = 550.0, 550.0 * 0.87
+        avg  = float(row["avg"]  or 0.250)
+        slg  = float(row["slg"]  or 0.400)
+        ptype = _classify(row["positions"], row["era"], row["hr"], row["r"])
+
+        if ptype == "batter":
+            proj = {
+                "r": float(row["r"] or 65), "h": round(avg * ab),
+                "hr": float(row["hr"] or 15), "rbi": float(row["rbi"] or 65),
+                "k_bat": 0.0, "tb": round(slg * ab),
+                "avg": avg, "ops": float(row["ops"] or 0.720),
+                "nsb": float(row["sb"] or 5),
+            }
+            batters.append({
+                "player_id": row["player_id"], "team": row["team"],
+                "proj": proj, "cat_scores": {},
+                "needs_cat": not row["cat_scores"] or len(row["cat_scores"]) < 2,
+                "needs_team": not (row["team"] or "").strip(),
+            })
+        elif ptype == "pitcher":
+            proj = {
+                "w": 0.0, "l": 0.0, "hr_pit": 0.0, "k_pit": 0.0,
+                "era": float(row["era"] or 4.00), "whip": float(row["whip"] or 1.30),
+                "k9": float(row["k_per_nine"] or 8.5), "qs": 0.0, "nsv": 0.0,
+            }
+            pitchers.append({
+                "player_id": row["player_id"], "team": row["team"],
+                "proj": proj, "cat_scores": {},
+                "needs_cat": not row["cat_scores"] or len(row["cat_scores"]) < 2,
+                "needs_team": not (row["team"] or "").strip(),
+            })
+        else:
+            # ambiguous — still queue with default pitcher proj so they get some cat_scores
+            proj = {
+                "w": 0.0, "l": 0.0, "hr_pit": 0.0, "k_pit": 0.0,
+                "era": float(row["era"] or 4.00), "whip": float(row["whip"] or 1.30),
+                "k9": float(row["k_per_nine"] or 8.5), "qs": 0.0, "nsv": 0.0,
+            }
+            ambiguous.append({
+                "player_id": row["player_id"], "team": row["team"],
+                "proj": proj, "cat_scores": {},
+                "needs_cat": not row["cat_scores"] or len(row["cat_scores"]) < 2,
+                "needs_team": not (row["team"] or "").strip(),
+            })
+
+    # --- compute ----------------------------------------------------------------
+    _score(batters, _BAT_W)
+    _score(pitchers, _PIT_W)
+    _score(ambiguous, _PIT_W)    # ambiguous get pitcher scores as safe default
+
+    # --- team lookup from statcast ----------------------------------------------
+    all_players = batters + pitchers + ambiguous
+    null_ids = {p["player_id"] for p in all_players if p["needs_team"]}
+    team_map: dict = {}
+    if null_ids:
+        id_list = ", ".join(f"'{pid}'" for pid in null_ids)
+        team_rows = db.execute(
+            text(
+                f"SELECT DISTINCT ON (player_id) player_id, team "
+                f"FROM statcast_performances "
+                f"WHERE player_id IN ({id_list}) AND team IS NOT NULL "
+                f"ORDER BY player_id, game_date DESC"
+            )
+        ).fetchall()
+        for tr in team_rows:
+            if tr.team:
+                team_map[str(tr.player_id)] = tr.team.upper().strip()
+
+    # --- write ------------------------------------------------------------------
+    cat_updated = team_updated = skipped = 0
+    for p in all_players:
+        pid = p["player_id"]
+        write_cat = p["needs_cat"]
+        resolved_team = (p.get("team") or "").strip() or team_map.get(pid, "")
+        write_team = p["needs_team"] and bool(resolved_team)
+
+        if not write_cat and not write_team:
+            skipped += 1
+            continue
+
+        parts = ["updated_at = :ts"]
+        params: dict = {"ts": now.replace(tzinfo=None), "pid": pid}
+
+        if write_cat:
+            parts.append("cat_scores = :cs::jsonb")
+            params["cs"] = json.dumps(p["cat_scores"])
+            cat_updated += 1
+
+        if write_team:
+            parts.append("team = :team")
+            params["team"] = resolved_team
+            team_updated += 1
+
+        db.execute(
+            text("UPDATE player_projections SET " + ", ".join(parts) + " WHERE player_id = :pid"),
+            params,
+        )
+
+    db.commit()
+
+    # --- verify -----------------------------------------------------------------
+    remaining = db.execute(
+        text("SELECT COUNT(*) FROM player_projections WHERE cat_scores::text = '{}'")
+    ).scalar() or 0
+
+    return {
+        "status": "success",
+        "cat_scores_updated": cat_updated,
+        "team_updated": team_updated,
+        "skipped_already_filled": skipped,
+        "ambiguous_rows": len(ambiguous),
+        "verify_remaining_empty": remaining,
+        "target_met": remaining == 0,
+        "generated_at": now.isoformat(),
     }
