@@ -41,15 +41,15 @@ class CSVProjection:
     r: float
     rbi: float
     sb: float
-    w: float
-    k_pit: float
-    qs: float
     avg: float = 0.250
     obp: float = 0.320
     slg: float = 0.400
     ops: float = 0.720
+    # Pitching stats (PlayerProjection has era, whip, k_per_nine, bb_per_nine)
     era: float = 4.00
     whip: float = 1.30
+    k_per_nine: float = 8.5
+    bb_per_nine: float = 3.0
 
 
 def load_projections_from_csv(csv_path: Path) -> dict[str, CSVProjection]:
@@ -90,12 +90,13 @@ def load_projections_from_csv(csv_path: Path) -> dict[str, CSVProjection]:
                 ops = _float(row.get('OPS', 0.720))
 
                 # Pitcher stats (may be empty for batters)
-                w = _float(row.get('W', 0))
-                k_pit = _float(row.get('SO', 0))
                 era = _float(row.get('ERA', 4.00))
                 whip = _float(row.get('WHIP', 1.30))
+                so = _float(row.get('SO', 0))
                 games_started = _float(row.get('GS', 0))
-                qs = games_started * 0.6  # Approximate
+
+                # Calculate k_per_nine from SO and GS (default ~8.5 if no data)
+                k_per_nine = (so / games_started * 9) if games_started > 0 and so > 0 else 8.5
 
                 team = str(row.get('Team', 'FA')).replace('-', '').strip()
 
@@ -105,10 +106,10 @@ def load_projections_from_csv(csv_path: Path) -> dict[str, CSVProjection]:
                     team=team,
                     positions=[],
                     hr=hr, r=r, rbi=rbi, sb=sb,
-                    w=w, k_pit=k_pit, qs=qs,
                     avg=avg, obp=obp, slg=slg, ops=ops,
                     era=era if era > 0 else 4.00,
                     whip=whip if whip > 0 else 1.30,
+                    k_per_nine=k_per_nine,
                 )
 
         logger.info(f"Loaded {len(projections)} projections from {csv_path.name}")
@@ -179,12 +180,10 @@ def write_projections_to_db(db: Session, projections: dict[str, CSVProjection]) 
             existing.obp = proj.obp if proj.obp > 0 else existing.obp
             existing.slg = proj.slg if proj.slg > 0 else existing.slg
             existing.ops = proj.ops if proj.ops > 0 else existing.ops
-            if proj.w > 0:
-                existing.w = int(proj.w)
-                existing.k_pit = int(proj.k_pit)
-                existing.qs = int(proj.qs)
-                existing.era = proj.era if proj.era > 0 else existing.era
-                existing.whip = proj.whip if proj.whip > 0 else existing.whip
+            # Pitching stats
+            existing.era = proj.era if proj.era > 0 else existing.era
+            existing.whip = proj.whip if proj.whip > 0 else existing.whip
+            existing.k_per_nine = proj.k_per_nine if proj.k_per_nine > 0 else existing.k_per_nine
             if proj.team and proj.team != "FA":
                 existing.team = proj.team
         else:
@@ -201,11 +200,9 @@ def write_projections_to_db(db: Session, projections: dict[str, CSVProjection]) 
                 r=int(proj.r),
                 rbi=int(proj.rbi),
                 sb=int(proj.sb),
-                w=int(proj.w) if proj.w > 0 else None,
-                k_pit=int(proj.k_pit) if proj.k_pit > 0 else None,
-                qs=int(proj.qs) if proj.qs > 0 else None,
                 era=proj.era if proj.era > 0 else None,
                 whip=proj.whip if proj.whip > 0 else None,
+                k_per_nine=proj.k_per_nine if proj.k_per_nine > 0 else None,
             )
             db.add(new_row)
 

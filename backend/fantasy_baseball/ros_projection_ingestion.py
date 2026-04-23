@@ -54,16 +54,16 @@ class ROSProjection:
     r: float
     rbi: float
     sb: float
-    w: float
-    k_pit: float
-    qs: float
     # Additional stats for completeness
     avg: float = 0.250
     obp: float = 0.320
     slg: float = 0.400
     ops: float = 0.720
+    # Pitching stats (PlayerProjection has era, whip, k_per_nine, bb_per_nine)
     era: float = 4.00
     whip: float = 1.30
+    k_per_nine: float = 8.5
+    bb_per_nine: float = 3.0
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +119,6 @@ def fetch_ros_projections(db: Session, year: int = 2026) -> dict[str, ROSProject
                 r=_float(row.get("R", 65)),
                 rbi=_float(row.get("RBI", 65)),
                 sb=_float(row.get("SB", 10)),
-                w=0, k_pit=0, qs=0,  # Batter defaults
                 avg=_float(row.get("AVG", 0.250)),
                 obp=_float(row.get("OBP", 0.320)),
                 slg=_float(row.get("SLG", 0.400)),
@@ -139,15 +138,15 @@ def fetch_ros_projections(db: Session, year: int = 2026) -> dict[str, ROSProject
                 continue
 
             games_started = _float(row.get("GS", 30))
+            so = _float(row.get("SO", 150))
+            k_per_nine = (so / games_started * 9) if games_started > 0 and so > 0 else 8.5
 
             # Merge if already exists (multi-pos players like Ohtani)
             if name in projections:
                 proj = projections[name]
-                proj.w = _float(row.get("W", 10))
-                proj.k_pit = _float(row.get("SO", 150))
-                proj.qs = games_started * 0.6  # Approximate QS from GS
                 proj.era = _float(row.get("ERA", 4.00))
                 proj.whip = _float(row.get("WHIP", 1.30))
+                proj.k_per_nine = k_per_nine
             else:
                 projections[name] = ROSProjection(
                     player_id="",
@@ -155,12 +154,10 @@ def fetch_ros_projections(db: Session, year: int = 2026) -> dict[str, ROSProject
                     team=str(row.get("Team") or "FA").replace("-", ""),
                     positions=[],
                     hr=0, r=0, rbi=0, sb=0,  # Pitcher defaults
-                    w=_float(row.get("W", 10)),
-                    k_pit=_float(row.get("SO", 150)),
-                    qs=games_started * 0.6,
                     avg=0, obp=0, slg=0, ops=0,
                     era=_float(row.get("ERA", 4.00)),
                     whip=_float(row.get("WHIP", 1.30)),
+                    k_per_nine=k_per_nine,
                 )
     except Exception as e:
         logger.error("RoS pitching fetch failed: %s", e)
@@ -261,12 +258,9 @@ def write_projections_to_db(db: Session, projections: dict[str, ROSProjection]) 
             existing.ops = proj.ops if proj.ops > 0 else existing.ops
 
             # Update pitcher stats if applicable
-            if proj.w > 0:
-                existing.w = int(proj.w)
-                existing.k_pit = int(proj.k_pit)
-                existing.qs = int(proj.qs)
-                existing.era = proj.era if proj.era > 0 else existing.era
-                existing.whip = proj.whip if proj.whip > 0 else existing.whip
+            existing.era = proj.era if proj.era > 0 else existing.era
+            existing.whip = proj.whip if proj.whip > 0 else existing.whip
+            existing.k_per_nine = proj.k_per_nine if proj.k_per_nine > 0 else existing.k_per_nine
 
             # Update metadata
             if proj.team and proj.team != "FA":
@@ -291,11 +285,9 @@ def write_projections_to_db(db: Session, projections: dict[str, ROSProjection]) 
                 rbi=int(proj.rbi),
                 sb=int(proj.sb),
                 # Pitcher stats
-                w=int(proj.w) if proj.w > 0 else None,
-                k_pit=int(proj.k_pit) if proj.k_pit > 0 else None,
-                qs=int(proj.qs) if proj.qs > 0 else None,
                 era=proj.era if proj.era > 0 else None,
                 whip=proj.whip if proj.whip > 0 else None,
+                k_per_nine=proj.k_per_nine if proj.k_per_nine > 0 else None,
             )
             db.add(new_row)
 
