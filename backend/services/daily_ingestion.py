@@ -123,6 +123,7 @@ LOCK_IDS = {
     "player_id_mapping":     100_029,
     "vorp":                  100_030,
     "projection_cat_scores": 100_031,
+    "savant_ingestion":      100_032,  # Phase 9: Statcast leaderboard ingestion
 }
 
 
@@ -803,6 +804,16 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Phase 9: Savant leaderboard ingestion: daily 6 AM ET
+        # Fetches Statcast leaderboards (xwOBA, barrel%, xERA) for proxy projections
+        self._scheduler.add_job(
+            self._ingest_savant_leaderboards,
+            CronTrigger(hour=6, minute=0, timezone=tz),
+            id="savant_ingestion",
+            name="Savant Leaderboard Ingestion",
+            replace_existing=True,
+        )
+
         # Rolling z-scores: daily 4 AM ET
         self._scheduler.add_job(
             self._calc_rolling_zscores,
@@ -978,6 +989,7 @@ class DailyIngestionOrchestrator:
             "mlb_game_log":    self._ingest_mlb_game_log,
             "mlb_box_stats":   self._ingest_mlb_box_stats,
             "statcast":        self._update_statcast,
+            "savant_ingestion": self._ingest_savant_leaderboards,  # Phase 9
             "rolling_windows": self._compute_rolling_windows,
             "player_scores":   self._compute_player_scores,
             "vorp":            self._compute_vorp,
@@ -3940,6 +3952,78 @@ class DailyIngestionOrchestrator:
                 return {"status": "failed", "records": 0, "error": str(exc), "elapsed_ms": elapsed}
 
         return await _with_advisory_lock(LOCK_IDS["statcast"], "statcast", _run)
+
+    async def _ingest_savant_leaderboards(self) -> dict:
+        """
+        Phase 9: Fetch Statcast leaderboards from Baseball Savant CSV endpoints.
+
+        Ingests aggregated season stats (xwOBA, barrel%, xERA, etc.) into
+        statcast_batter_metrics and statcast_pitcher_metrics tables.
+
+        These metrics power the Statcast Proxy Engine for generating projections
+        when Steamer data is missing or outdated.
+
+        Returns stats dict with status and record counts.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            try:
+                from backend.fantasy_baseball.savant_ingestion import SavantIngestionAgent
+                db = SessionLocal()
+
+                agent = SavantIngestionAgent(db, season=2026)
+                result = await asyncio.to_thread(agent.run_daily_ingestion)
+
+                elapsed = int((time.monotonic() - t0) * 1000)
+
+                if result.get("status") == "success":
+                    batters = result.get("batters", {})
+                    pitchers = result.get("pitchers", {})
+                    b_total = batters.get("inserted", 0) + batters.get("updated", 0)
+                    p_total = pitchers.get("inserted", 0) + pitchers.get("updated", 0)
+
+                    logger.info(
+                        "_ingest_savant_leaderboards: success — %d batters (%d new), %d pitchers (%d new)",
+                        b_total, batters.get("inserted", 0),
+                        p_total, pitchers.get("inserted", 0)
+                    )
+                    self._record_job_run("savant_ingestion", "success", b_total + p_total)
+
+                    return {
+                        "status": "success",
+                        "batters": b_total,
+                        "pitchers": p_total,
+                        "elapsed_ms": elapsed,
+                    }
+                elif result.get("status") == "skipped":
+                    logger.info("_ingest_savant_leaderboards: skipped (lock held)")
+                    self._record_job_run("savant_ingestion", "skipped")
+                    return {"status": "skipped", "elapsed_ms": elapsed}
+                else:
+                    logger.error(
+                        "_ingest_savant_leaderboards: failed — %s",
+                        result.get("error", "unknown")
+                    )
+                    self._record_job_run("savant_ingestion", "failed")
+                    return {
+                        "status": "failed",
+                        "error": result.get("error"),
+                        "elapsed_ms": elapsed,
+                    }
+
+            except Exception as exc:
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.exception("_ingest_savant_leaderboards: unhandled error -- %s", exc)
+                self._record_job_run("savant_ingestion", "failed")
+                return {"status": "failed", "error": str(exc), "elapsed_ms": elapsed}
+            finally:
+                try:
+                    db.close()
+                except:
+                    pass
+
+        return await _with_advisory_lock(LOCK_IDS["savant_ingestion"], "savant_ingestion", _run)
 
     async def _calc_rolling_zscores(self) -> dict:
         """

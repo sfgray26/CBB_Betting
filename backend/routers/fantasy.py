@@ -2396,12 +2396,29 @@ async def get_waiver_recommendations(
                     "cat_scores": dict(fa.category_contributions),
                     "starts_this_week": fa.starts_this_week,
                 }
+                # DEBUG: Log MCMC inputs to diagnose flatlining
+                logger.debug(
+                    "[MCMC_DEBUG] fa.name=%s, cat_scores=%s, starts=%s",
+                    fa.name, fa.category_contributions, fa.starts_this_week
+                )
+                logger.debug(
+                    "[MCMC_DEBUG] my_roster players with cat_scores: %d/%d",
+                    sum(1 for p in my_roster_scored if p.get("cat_scores")),
+                    len(my_roster_scored)
+                )
+                # NOTE: opponent_roster=[] is a known limitation causing inflated win probabilities.
+                # TODO: Fetch opponent roster from Yahoo API to enable true head-to-head simulation.
                 _mcmc = _sim_move(
                     my_roster=my_roster_scored,
                     opponent_roster=[],
                     add_player=_add_for_mcmc,
                     drop_player_name=drop_candidate["name"],
                     n_sims=1000,
+                )
+                logger.debug(
+                    "[MCMC_DEBUG] result: mcmc_enabled=%s, win_prob_before=%.3f, win_prob_after=%.3f, gain=%.3f",
+                    _mcmc.get("mcmc_enabled"), _mcmc.get("win_prob_before"),
+                    _mcmc.get("win_prob_after"), _mcmc.get("win_prob_gain")
                 )
                 if _mcmc.get("mcmc_enabled") and abs(_mcmc["win_prob_gain"]) >= 0.005:
                     wp_before_pct = round(_mcmc["win_prob_before"] * 100)

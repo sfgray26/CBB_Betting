@@ -280,3 +280,286 @@ Capture responses to `postman_collections/responses/2026-04-22/`.
 
 **Phase 8 is BLOCKED** until all above pass re-audit.
 
+---
+
+## 16.6 PHASE 7 POST-FIX COMPREHENSIVE AUDIT (Apr 25, 2026)
+
+> **Auditor:** Kimi CLI  
+> **Full Report:** `reports/2026-04-25-phase-7-post-fix-comprehensive-audit.md`  
+> **Deployment Audited:** `c22c1fa2` (2026-04-25 12:06 UTC)  
+> **Verdict:** ⚠️ **PARTIALLY OPERATIONAL** — Pitcher math fixed, roster improved, but optimizer output remains critically degraded.
+
+### K-25 FINDINGS (Database Layer)
+
+| Check | Before (Apr 24) | After (Apr 25) |
+|-------|-----------------|----------------|
+| Pitcher cat_scores (w, qs, k_pit) | ❌ ALL ZERO | ✅ **174/174 non-zero** |
+| Total projection rows | 625 | **628** |
+| ID-only names | 353 | **353** (unchanged) |
+| Missing team | 326 | **326** (unchanged) |
+| Missing positions | 240 | **240** (unchanged) |
+| player_id_mapping.yahoo_id | 0 | **0** (completely missing) |
+
+### K-25 FINDINGS (API Layer — Live Probes)
+
+| Endpoint | HTTP | Before | After |
+|----------|------|--------|-------|
+| `GET /api/fantasy/roster` | 200 | season_stats 0/23, ros null 22/23 | **season_stats 23/23, ros null 12/11 populated** |
+| `GET /api/fantasy/scoreboard` | 200 | ALL values 0.0 | **All 18 categories have real current values** |
+| `GET /api/fantasy/waiver` | 200 | need_score 2/25 positive | **need_score 4/25 positive; pitcher cat_scores now full** |
+| `GET /api/fantasy/lineup/2026-04-25` | 200 | N/A (different format) | **13/14 batters have NEGATIVE lineup_score** ❌ |
+| `GET /api/admin/data-quality/summary` | 500 | N/A | **500 `AttributeError: MLBGameLog.id`** ❌ |
+| `GET /admin/version` | 200 | N/A | **git_commit_sha = "unknown"** |
+
+### K-25 CRITICAL NEW BUGS
+
+1. **LINEUP SCORES NEGATIVE (P0):** 13/14 active batters have negative `lineup_score`. The empty bench slot scores 0.0, making it "better" than all real players. Root cause likely in `elite_lineup_scorer.py` or `fantasy.py` `smart_score` path.
+2. **DATA-QUALITY ENDPOINT 500 (P0):** `backend/routers/data_quality.py:42` references `MLBGameLog.id` which does not exist; correct column is `game_id`.
+3. **MCMC FLATNESS (P1):** Waiver recommendations still return only 1 rec with `win_prob_gain=0.0` and `win_prob_before=0.998`.
+
+### K-25 PRIORITY ACTIONS FOR CLAUDE CODE
+
+1. **P0:** Fix negative lineup scores — debug `smart_score` / `elite_lineup_scorer` vs `daily_lineup_optimizer` scoring paths
+2. **P0:** Fix data_quality.py `MLBGameLog.id` → `MLBGameLog.game_id`
+3. **P1:** Fix scoreboard `opponent_name` = "Opponent" (should be real team name)
+4. **P1:** Expand projection coverage — 21/25 waiver FAs have zero need_score because they are absent from `player_projections`
+5. **P1:** Ingest Yahoo player IDs into `player_id_mapping` (currently 0/10,000)
+6. **P1:** Investigate MCMC flat 99.8% win probability
+7. **P2:** Backfill human-readable names for 353 ID-only projection rows
+
+### Phase 8 Gate (Updated)
+
+Blocked until:
+- [ ] ALL active batters have `lineup_score > 0`
+- [ ] Data-quality endpoint returns 200
+- [ ] Waiver endpoint >12/25 FAs with `need_score > 0`
+- [ ] Waiver recommendations ≥3 distinct recs with non-zero `win_prob_gain`
+- [ ] Scoreboard opponent_name is real (not "Opponent")
+- [ ] Re-audit by Kimi CLI
+
+
+
+
+---
+
+## 16.7 PHASE 9 STATCAST BAYESIAN PROXY RESEARCH (Apr 24, 2026)
+
+> **Auditor:** Kimi CLI  
+> **Full Report:** `reports/2026-04-24-phase9-statcast-bayesian-proxy-research.md`  
+> **Verdict:** 🔬 **RESEARCH COMPLETE** — Architectural design for dynamic proxy engine ready for Claude Code approval.
+
+### K-26 FINDINGS (Codebase Architecture)
+
+| Component | Status | Critical Gap |
+|-----------|--------|--------------|
+| `BayesianProjectionUpdater` (statcast_ingestion.py:797) | ✅ Implemented | Only updates players WITH priors; skips unknowns entirely |
+| `StatcastIngestionAgent` | ✅ Operational | 11,230 rows stored; data quality validation active |
+| `get_or_create_projection()` (player_board.py) | ⚠️ Broken | Returns EMPTY proxy (`z_score=0.0`, `cat_scores={}`) for unknowns |
+| Statcast → Proxy bridge | ❌ MISSING | No module queries `statcast_performances` for unknown players |
+
+**Root cause of 21/25 zero-need-score FAs:** `get_or_create_projection()` has three lookup paths:
+1. Hardcoded board (200 players) — misses most FAs
+2. DB via `PlayerIDMapping` → `PlayerProjection` — `yahoo_id` is 0/10,000; always fails
+3. Fallback → empty proxy with `z_score=0.0` and empty `cat_scores`
+
+The `statcast_performances` table has rich data (xwOBA, Barrel%, Exit Velocity) but is **never queried** during proxy generation.
+
+### K-26 FINDINGS (Research — Stabilization & Translation)
+
+| Metric | Stabilization | Source |
+|--------|--------------|--------|
+| K% (batters) | ~60 PA | Carleton 2007 |
+| BB% (batters) | ~120 PA | Carleton 2007 |
+| Barrel% | ~50 BBE (~15–20 games) | Freeze 2019 |
+| xwOBA | ~100–150 BBE | Industry consensus |
+| K% (pitchers) | ~70 BF | Carleton 2007 |
+| BB% (pitchers) | ~170 BF | Carleton 2007 |
+
+**Key insight:** Statcast process metrics stabilize **5–10× faster** than outcome stats. A rookie with 3 weeks of data has a **meaningful Barrel% signal** even though their batting average is noise.
+
+**Empirical Bayes outperforms raw small-sample stats** for end-of-season prediction (Brill 2023). The conjugate normal update formula is already implemented in `BayesianProjectionUpdater`, but it requires a prior. For players without priors, a **population prior** (league-average distribution) must be substituted.
+
+### K-26 PROPOSED ARCHITECTURE
+
+**New module:** `backend/fantasy_baseball/statcast_proxy_engine.py`
+
+```
+Yahoo Player (unknown)
+    └── StatcastProxyEngine.get_proxy_projection()
+        ├── Query statcast_performances (last 14 days, weighted by PA)
+        ├── If data exists:
+        │   ├── Shrink Statcast metrics toward league average (by stabilization point)
+        │   ├── Translate to synthetic counting stats (HR, R, RBI, AVG, OPS)
+        │   └── Compute z-scores against current player pool
+        ├── If no data:
+        │   └── Return population-prior proxy (z_score ≈ -0.5, not 0.0)
+        └── Return populated dict compatible with get_or_create_projection()
+```
+
+**Translation coefficients (proposed):**
+- Barrel% → HR: `~3.5 HR per 1% Barrel over 600 PA`
+- xwOBA → R/RBI: `scale by xwOBA / 0.320 against league-average 75 R / 72 RBI`
+- xBA → AVG: direct mapping
+- xSLG → SLG → TB: direct mapping
+
+### K-26 PRIORITY ACTIONS FOR CLAUDE CODE
+
+1. **Quick Win (1–2 days):** Replace empty proxy with population-prior proxy (`z_score=-0.5`, league-average `cat_scores`). Fixes 21/25 zero-need-score FAs immediately with zero risk.
+2. **Phase 2 (3–5 days):** Implement `StatcastProxyEngine` with Batter translation model. Integrate into `get_or_create_projection()` DB fallback path.
+3. **Phase 3 (1–2 weeks):** Add Pitcher translation model, MLE support for true rookies, and daily automated run.
+
+**Decision required:** Approve Phase 1 quick win? Approve Phase 2 full engine?
+
+
+
+---
+
+## 16.8 SAVANT PIPELINE REVERSE-ENGINEERING (Apr 24, 2026)
+
+> **Auditor:** Kimi CLI  
+> **Full Report:** `reports/2026-04-24-savant-pipeline-architecture-report.md`  
+> **Verdict:** ✅ **DIRECT HTTP WORKS** — No Playwright, no Cloudflare, no tokens. `&csv=true` appended to leaderboard URL returns clean CSV with MLBAM IDs.
+
+### K-27 FINDINGS (Endpoint Analysis)
+
+| Test | Result | Evidence |
+|------|--------|----------|
+| Batter CSV (qualified, `min=q`) | ✅ 200 OK | 171 rows, 18,775 bytes |
+| Batter CSV (all, `min=0`) | ✅ 200 OK | **442 rows** — includes rookies/part-timers |
+| Pitcher CSV (all, `min=0`) | ✅ 200 OK | **505 rows** — includes relievers |
+| Pitcher + xERA + ERA + WHIP + K/9 + W/L/QS | ✅ 200 OK | All traditional stats available |
+| `player_id` = MLBAM ID | ✅ Confirmed | 670541 = Yordan Alvarez |
+| Filter by `player_id` | ❌ Ignored | Returns full dataset regardless |
+| `&csv=true` bypass | ✅ Works | Returns `text/csv; charset=utf-8` |
+
+### K-27 KEY ENDPOINTS
+
+**Batter (all players, `min=0`):**
+```
+https://baseballsavant.mlb.com/leaderboard/custom
+?year=2026&type=batter&filter=&min=0
+&selections=pa%2Ck_percent%2Cbb_percent%2Cwoba%2Cxwoba
+%2Cbarrel_batted_rate%2Chard_hit_percent%2Cexit_velocity_avg
+%2Cwhiff_percent%2Cswing_percent
+&chart=false&x=pa&y=pa&r=no&chartType=beeswarm
+&sort=xwoba&sortDir=desc&csv=true
+```
+
+**Pitcher (all players, extended stats):**
+```
+https://baseballsavant.mlb.com/leaderboard/custom
+?year=2026&type=pitcher&filter=&min=0
+&selections=pa%2Ck_percent%2Cbb_percent%2Cwoba%2Cxwoba%2Cxera
+%2Cbarrel_batted_rate%2Chard_hit_percent%2Cexit_velocity_avg
+%2Cwhiff_percent%2Cera%2Cwhip%2Ck_9%2Cip%2Cw%2Cl%2Cqs
+&chart=false&x=pa&y=pa&r=no&chartType=beeswarm
+&sort=xwoba&sortDir=asc&csv=true
+```
+
+### K-27 PITCHER DISCOVERY
+
+Baseball Savant returns **pitcher traditional stats** when requested: `era`, `whip`, `k_9`, `ip`, `w`, `l`, `qs`. This means we can build pitcher proxies using **real counting stats** (not just xERA estimates) for any pitcher who has thrown MLB innings in 2026.
+
+This is a **major acceleration** for the proxy engine — we don't need translation models for pitchers with Savant data; we can use their actual ERA/WHIP/K9 and supplement with xERA/xwOBA for predictive quality.
+
+### K-27 ARCHITECTURAL DECISIONS
+
+1. **Primary path:** Direct `requests.get()` with `&csv=true`. No Playwright needed.
+2. **Fallback path:** Lightweight Playwright script kept in reserve (see report Section 1.5).
+3. **New table:** `statcast_leaderboard` (distinct from `statcast_performances` which stores daily granularity).
+4. **Join key:** `player_id` (MLBAM ID) → cast `player_projections.player_id` to `INTEGER`.
+5. **CSV parsing quirk:** Header column is `"last_name, first_name"` (single quoted field). Parser must normalize keys.
+6. **Data type quirk:** Many stats are strings with leading dots (`.551` for wOBA). Need `savant_float()` helper.
+
+### K-27 PRIORITY ACTIONS FOR CLAUDE CODE
+
+1. **Create `savant_ingestion.py`** — ingestion client with confirmed endpoints
+2. **Create `statcast_leaderboard` table** — SQLAlchemy model + migration
+3. **Integrate into `get_or_create_projection()`** — query `statcast_leaderboard` before returning empty proxy
+4. **Phase 1 quick win still applies** — population-prior proxy for players with zero Savant data
+
+---
+
+
+
+---
+
+## 16.9 EXPANDED SAVANT GOLDMINE AUDIT (Apr 24, 2026)
+
+> **Auditor:** Kimi CLI  
+> **Full Report:** `reports/2026-04-24-savant-pipeline-architecture-report-v2.md`  
+> **Verdict:** 🏆 **FIVE DATA SOURCES CONFIRMED** — Baseball Savant is a comprehensive, mostly-automatable data platform.
+
+### K-28 FINDINGS (Data Source Matrix)
+
+| Source | Records | Extraction | Status |
+|--------|---------|-----------|--------|
+| Custom Leaderboard (batter) | 442 players | `&csv=true` HTTP | ✅ Primary proxy source |
+| Custom Leaderboard (pitcher) | 505 pitchers | `&csv=true` HTTP | ✅ Primary proxy source |
+| Exit Velocity & Barrels | 280 batters | `&csv=true` HTTP | ✅ Redundant with Custom |
+| Park Factors | 30 parks | Regex from HTML | ✅ Park-adjusted projections |
+| Bat Tracking | 218 batters | Regex from HTML | ✅ Breakout/tiebreaker signals |
+| Probable Pitchers | Daily matchups | HTML scraping | ⚠️ Daily lineup confirmation |
+
+### K-28 CRITICAL DISCOVERY: 187 Columns on Custom Leaderboard
+
+The Statcast checkbox (`chkStatcast`) unlocks **187 selectable columns** including:
+- **All counting stats:** R, RBI, SB, CS, H, 1B, 2B, 3B, HR, TB, G, Sac
+- **All rate stats:** AVG, OBP, SLG, OPS, ISO, BABIP, K%, BB%
+- **Expected stats:** xBA, xSLG, xOBP, xISO, xwOBAcon, xBACON, diff metrics
+- **Batted ball:** EV, LA, Sweet-Spot%, Barrel%, HardHit%, GB/FB/LD/Popup%, Pull/Oppo%
+- **Plate discipline:** Whiff%, Swing%, Zone Swing%, Zone Contact%, Chase%
+- **Baserunning:** Sprint Speed, Bolts, HP to 1B
+- **Fielding:** OAA (Outs Above Average), 1-5 star breakdowns
+- **Bat tracking (2024+):** Bat Speed, Fast Swing%, Swing Length, Blasts, Squared-Up%, Swords, Attack Angle
+
+**This means we can build proxies using REAL counting stats (not just xwOBA translations) for any player with MLB data.**
+
+### K-28 PARK FACTORS DISCOVERY
+
+29 parks with indexed factors (100 = neutral) for:
+- Runs, HR, wOBA, wOBAcon, xwOBAcon, xBACON, OBP, SO, BB, BACON, Hits, 1B, 2B, 3B, HardHit
+
+**Application:** Directly multiply projected stats by park factor / 100. A player projected for 30 HR who plays half their games at Coors Field (HR factor ~118) gets a +9% boost.
+
+### K-28 BAT TRACKING DISCOVERY
+
+52 metrics per player including:
+- `avg_sweetspot_speed_mph` (bat speed)
+- `swing_length_qualified`
+- `squared_up_with_speed` (elite contact indicator)
+- `swords` (bad swing indicator — inverse quality signal)
+- `delta_run_exp` (run value from swing quality)
+
+**Application:** Use as tiebreakers when two waiver candidates have similar z-scores. High bat speed + high squared-up rate = breakout candidate. High swords = avoid.
+
+### K-28 PROBABLE PITCHERS DISCOVERY
+
+Daily matchup page shows each probable pitcher's **career stats vs the current opposing roster**:
+- PA, K%, BB%, AVG, wOBA
+- Exit Velo, Launch Angle, xBA, xSLG, xwOBA
+
+**Application:** Confirm probable pitcher assignments and make start/sit decisions based on historical matchup data.
+
+### K-28 ARCHITECTURAL DECISIONS
+
+1. **Primary ingestion:** Custom Leaderboard (batter + pitcher) with full 187-column selection
+2. **Park adjustment:** Separate `statcast_park_factors` table, joined by venue_id
+3. **Tiebreaker layer:** Bat Tracking metrics stored in `statcast_leaderboard` bat tracking columns
+4. **Daily confirmation:** Probable Pitchers HTML scraping for lineup slot verification
+5. **Extraction patterns:**
+   - CSV sources: `requests.get(url + "&csv=true")`
+   - HTML sources: `requests.get(url)` → `re.search(r'var data = (\[.*?\]);', html)`
+   - Scraping: `BeautifulSoup` for Probable Pitchers
+
+### K-28 PRIORITY ACTIONS FOR CLAUDE CODE
+
+1. **P0:** Implement `SavantIngestionClient` with Custom Leaderboard CSV ingestion (batter + pitcher)
+2. **P0:** Create `statcast_leaderboard` table with full 50+ column schema
+3. **P1:** Implement park factor extraction and projection adjustment
+4. **P1:** Integrate Savant lookup into `get_or_create_projection()` BEFORE empty proxy fallback
+5. **P2:** Add bat tracking tiebreakers to waiver recommendation engine
+6. **P2:** Add probable pitcher scraping for daily lineup confirmation
+
+---
+

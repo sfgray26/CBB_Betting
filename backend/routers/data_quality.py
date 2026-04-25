@@ -39,7 +39,7 @@ def get_data_quality_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
     
     # Metric 1: Matchup detection rate
     today_et = datetime.now(ZoneInfo("America/New_York")).date()
-    games_today = db.query(func.count(MLBGameLog.id)).filter(
+    games_today = db.query(func.count(MLBGameLog.game_id)).filter(
         MLBGameLog.game_date == today_et
     ).scalar() or 0
     

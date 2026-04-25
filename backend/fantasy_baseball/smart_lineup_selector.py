@@ -214,7 +214,10 @@ class SmartBatterRanking:
             pitcher_penalty * 0.10 +
             cat_boost * 0.20
         )
-        
+        # Apply baseline offset to ensure active players outscore EMPTY (0.0)
+        # Worst-case score ~ -6.0; +6.0 shift ensures minimum positive score
+        self.smart_score += 6.0
+
         return self.smart_score
     
     def _category_contribution(self, category: str) -> float:

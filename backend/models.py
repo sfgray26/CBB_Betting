@@ -691,6 +691,108 @@ class StatcastPerformance(Base):
     )
 
 
+class StatcastBatterMetrics(Base):
+    """
+    Aggregated Statcast leaderboard metrics for batters from Baseball Savant.
+
+    Stores player-level season stats used for predictive proxy generation
+    when Steamer projections are missing or outdated.
+
+    Ingested daily from Savant CSV leaderboard endpoints.
+    Updated via Savant ingestion pipeline (Phase 9).
+    """
+
+    __tablename__ = "statcast_batter_metrics"
+
+    # Player identification
+    mlbam_id = Column(String(20), primary_key=True)  # MLBAM ID from Savant
+    player_name = Column(String(100), nullable=False)
+    team = Column(String(10))
+    season = Column(Integer, nullable=False)
+
+    # Batted Ball Quality (Savant's predictive signals)
+    xwoba = Column(Float)  # Expected weighted on-base average
+    barrel_percent = Column(Float)  # Barrel rate (stored as e.g. 12.5 for 12.5%)
+    hard_hit_percent = Column(Float)  # Hard hit rate (95+ mph)
+    avg_exit_velocity = Column(Float)  # Average exit velocity
+    max_exit_velocity = Column(Float)  # Max exit velocity
+
+    # Plate Discipline
+    whiff_percent = Column(Float)  # Whiff rate
+    swing_percent = Column(Float)  # Swing rate
+
+    # Traditional Stats (for direct projection when Steamer missing)
+    pa = Column(Integer)  # Plate appearances
+    ab = Column(Integer)  # At-bats
+    h = Column(Integer)  # Hits
+    hr = Column(Integer)  # Home runs
+    r = Column(Integer)  # Runs
+    rbi = Column(Integer)  # RBIs
+    sb = Column(Integer)  # Stolen bases
+    avg = Column(Float)  # Batting average
+    slg = Column(Float)  # Slugging percentage
+    ops = Column(Float)  # On-base plus slugging
+
+    # Metadata
+    last_updated = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(ZoneInfo("America/New_York")),
+        onupdate=lambda: datetime.now(ZoneInfo("America/New_York"))
+    )
+
+
+class StatcastPitcherMetrics(Base):
+    """
+    Aggregated Statcast leaderboard metrics for pitchers from Baseball Savant.
+
+    Stores player-level season stats used for predictive proxy generation
+    when Steamer projections are missing or outdated.
+
+    Ingested daily from Savant CSV leaderboard endpoints.
+    Updated via Savant ingestion pipeline (Phase 9).
+    """
+
+    __tablename__ = "statcast_pitcher_metrics"
+
+    # Player identification
+    mlbam_id = Column(String(20), primary_key=True)  # MLBAM ID from Savant
+    player_name = Column(String(100), nullable=False)
+    team = Column(String(10))
+    season = Column(Integer, nullable=False)
+
+    # Pitch Quality (Savant's predictive signals)
+    xera = Column(Float)  # Expected ERA
+    xwoba = Column(Float)  # Expected wOBA against
+    barrel_percent_allowed = Column(Float)  # Barrel rate allowed
+    hard_hit_percent_allowed = Column(Float)  # Hard hit rate allowed
+    avg_exit_velocity_allowed = Column(Float)  # Average exit velocity allowed
+
+    # Rate Stats
+    k_percent = Column(Float)  # Strikeout rate
+    bb_percent = Column(Float)  # Walk rate
+    k_9 = Column(Float)  # K per 9 innings
+    whiff_percent = Column(Float)  # Whiff rate generated
+
+    # Traditional Stats (for direct projection when Steamer missing)
+    w = Column(Integer)  # Wins
+    l = Column(Integer)  # Losses
+    qs = Column(Integer)  # Quality starts
+    ip = Column(Float)  # Innings pitched
+    era = Column(Float)  # ERA
+    whip = Column(Float)  # WHIP
+    sv = Column(Float)  # Saves
+    h = Column(Integer)  # Hits allowed
+    hr_pit = Column(Integer)  # Home runs allowed
+    k_pit = Column(Integer)  # Strikeouts
+
+    # Metadata
+    last_updated = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(ZoneInfo("America/New_York")),
+        onupdate=lambda: datetime.now(ZoneInfo("America/New_York"))
+    )
+
+
 class PlayerProjection(Base):
     """
     Live-updated player projections using Bayesian inference.

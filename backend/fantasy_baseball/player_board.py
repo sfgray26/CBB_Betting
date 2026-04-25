@@ -835,6 +835,136 @@ def available_players(drafted_ids: set[str]) -> list[dict]:
 _projection_cache: dict[str, dict] = {}
 
 
+def _query_statcast_proxy(db: Session, player_id: str, player_type: str,
+                          name: str = "") -> dict | None:
+    """
+    Query Statcast metrics tables to build a projection proxy.
+
+    Used when Steamer projection is missing but Statcast data exists.
+    Applies minimum qualifications before returning a proxy.
+
+    Pitcher qualifications: IP >= 20.0
+    Batter qualifications: PA >= 50 (meaningful sample)
+
+    Args:
+        db: SQLAlchemy database session
+        player_id: Yahoo player ID string
+        player_type: 'batter' or 'pitcher'
+        name: Player name (for fallback name-based lookup)
+
+    Returns:
+        Dict with 'proj' and 'cat_scores' keys, or None if insufficient data
+    """
+    from backend.models import (
+        StatcastBatterMetrics, StatcastPitcherMetrics,
+        PlayerIDMapping
+    )
+    from backend.services.cat_scores_builder import (
+        BATTER_WEIGHTS, PITCHER_WEIGHTS, compute_cat_scores
+    )
+
+    # Try to find mlbam_id via PlayerIDMapping
+    mlbam_id = None
+    id_mapping = db.query(PlayerIDMapping).filter(
+        PlayerIDMapping.yahoo_id == player_id
+    ).first()
+
+    if id_mapping and id_mapping.mlbam_id:
+        mlbam_id = str(id_mapping.mlbam_id)
+
+    # If no ID mapping, try name-based lookup as fallback
+    if not mlbam_id and name:
+        name_normalized = name.lower().strip()
+        mapping = db.query(PlayerIDMapping).filter(
+            PlayerIDMapping.normalized_name == name_normalized
+        ).first()
+        if mapping and mapping.mlbam_id:
+            mlbam_id = str(mapping.mlbam_id)
+
+    if not mlbam_id:
+        return None
+
+    # Query appropriate Statcast table
+    if player_type == "pitcher":
+        metrics = db.query(StatcastPitcherMetrics).filter_by(
+            mlbam_id=mlbam_id
+        ).first()
+
+        if not metrics or metrics.ip is None or metrics.ip < 20.0:
+            return None  # Insufficient data for reliable projection
+
+        # Build projection from Savant counting stats
+        # Scale to full season (cap at 3.0x to avoid extreme projections)
+        games = max(1, int(metrics.ip / 5))  # Rough games from IP
+        scale_factor = min(3.0, 162 / games)
+
+        proj_list = [{
+            "proj": {
+                "w": round((metrics.w or 0) * scale_factor),
+                "l": round((metrics.l or 0) * scale_factor),
+                "hr_pit": round((metrics.hr_pit or 0) * scale_factor),
+                "k_pit": round((metrics.k_pit or 0) * scale_factor),
+                "era": metrics.era or 4.00,
+                "whip": metrics.whip or 1.30,
+                "k9": metrics.k_9 or 8.5,
+                "qs": round((metrics.qs or 0) * scale_factor),
+                "nsv": round((metrics.sv or 0) * scale_factor),
+            },
+            "cat_scores": {},
+        }]
+
+        compute_cat_scores(proj_list, PITCHER_WEIGHTS)
+
+        return {
+            "proj": proj_list[0]["proj"],
+            "cat_scores": proj_list[0]["cat_scores"],
+            "source": "statcast_proxy"
+        }
+
+    else:  # batter
+        metrics = db.query(StatcastBatterMetrics).filter_by(
+            mlbam_id=mlbam_id
+        ).first()
+
+        if not metrics or metrics.pa is None or metrics.pa < 50:
+            return None  # Insufficient data for reliable projection
+
+        # Build projection from Savant stats
+        # Scale to full season
+        current_pa = metrics.pa or 0
+        target_pa = 550  # Full-season PA target
+        scale_factor = min(3.0, target_pa / max(1, current_pa))
+
+        # Compute xwOBA-based multiplier for counting stats
+        # League avg xwOBA ≈ 0.310; above league = boost projection
+        xwOBA = metrics.xwoba or 0.310
+        xwoba_multiplier = xwOBA / 0.310
+        xwoba_multiplier = max(0.5, min(2.0, xwoba_multiplier))  # Clamp to reasonable bounds
+
+        proj_list = [{
+            "proj": {
+                "r": round((metrics.r or 65) * scale_factor * xwoba_multiplier),
+                "h": round((metrics.h or 120) * scale_factor),
+                "hr": round((metrics.hr or 15) * scale_factor * xwoba_multiplier),
+                "rbi": round((metrics.rbi or 65) * scale_factor * xwoba_multiplier),
+                "k_bat": 0.0,  # Not in Savant leaderboard
+                "tb": round(((metrics.h or 120) * 1.5) * scale_factor),  # Rough TB estimate
+                "avg": metrics.avg or 0.250,
+                "ops": metrics.ops or 0.720,
+                "nsb": round((metrics.sb or 5) * scale_factor),
+            },
+            "cat_scores": {},
+        }]
+
+        compute_cat_scores(proj_list, BATTER_WEIGHTS)
+
+        return {
+            "proj": proj_list[0]["proj"],
+            "cat_scores": proj_list[0]["cat_scores"],
+            "source": "statcast_proxy"
+        }
+
+
 def get_or_create_projection(yahoo_player: dict) -> dict:
     """
     Return a board-compatible dict for any Yahoo player, whether they are
@@ -944,12 +1074,34 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
                 projection_row = db.query(PlayerProjection).filter(
                     PlayerProjection.player_id == str(mlbam_id)
                 ).first()
-                
+
                 if projection_row and projection_row.cat_scores:
                     # Found real projection data — use it
                     db_cat_scores = projection_row.cat_scores
                     db_z_score = sum(db_cat_scores.values()) if db_cat_scores else 0.0
-            
+
+            # Step 2b: Name-based fallback if ID lookup failed
+            # This handles cases where PlayerIDMapping is missing or outdated
+            if not db_cat_scores and name:
+                projection_row = db.query(PlayerProjection).filter(
+                    PlayerProjection.player_name.ilike(f"%{name}%")
+                ).first()
+
+                if projection_row and projection_row.cat_scores:
+                    # Found real projection data via name match — use it
+                    db_cat_scores = projection_row.cat_scores
+                    db_z_score = sum(db_cat_scores.values()) if db_cat_scores else 0.0
+                    logger.info(f"[player_board] Name-based fallback matched: {name} -> {projection_row.player_name}")
+                else:
+                    # Steamer lookup failed — try Statcast proxy (Phase 9)
+                    statcast_proxy = _query_statcast_proxy(db, yahoo_id, player_type, name)
+                    if statcast_proxy:
+                        db_cat_scores = statcast_proxy["cat_scores"]
+                        db_z_score = db_cat_scores.get("z_score", 0.0)
+                        logger.info(f"[player_board] Statcast proxy generated for: {name} (xwOBA-based)")
+                    else:
+                        logger.warning(f"[player_board] No projection found for: {name} (player_key={player_key})")
+
             # Close DB session
             try:
                 next(db_gen)
