@@ -1906,3 +1906,46 @@ class DeploymentVersion(Base):
     build_timestamp = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     app_version = Column(String(50), default="dev")
     deployed_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+
+class IngestedInjury(Base):
+    """
+    MLB injury reports ingested from BDL /mlb/v1/player_injuries (Phase 1).
+
+    Natural key: (bdl_player_id, status) — tracks active IL list. DTD entries
+    may have duplicate player_ids (multi-injury) but status separates them.
+
+    Active injuries are upserted hourly; inactive injuries expire when no longer
+    returned by BDL (cleanup job handles deletion).
+
+    Contract source: backend/data_contracts/mlb_injury.py
+    """
+    __tablename__ = "ingested_injuries"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    bdl_player_id = Column(Integer, nullable=False, index=True)
+    player_name = Column(String(150), nullable=False)
+
+    # Injury details from BDL MLBInjury contract
+    injury_date = Column(DateTime(timezone=True), nullable=True)  # ISO 8601 UTC from BDL
+    return_date = Column(DateTime(timezone=True), nullable=True)  # Estimated return
+    injury_type = Column(String(100), nullable=False)  # Body part: "Triceps", "Hamstring"
+    injury_detail = Column(String(100))  # Sub-type: "Strain", "Tear"
+    injury_side = Column(String(10))  # "Right", "Left", or NULL (bilateral/unknown)
+    injury_status = Column(String(20), nullable=False, index=True)  # "15-Day-IL", "60-Day-IL", "10-Day-IL", "DTD"
+
+    # Narrative fields
+    long_comment = Column(Text, nullable=False)  # Paragraph-length note
+    short_comment = Column(String(500), nullable=False)  # One-sentence note
+
+    # Audit columns
+    raw_payload = Column(JSONB, nullable=False)  # Full BDL MLBInjury dict
+    ingested_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow,
+                       onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("bdl_player_id", "injury_status", "injury_type", name="_ii_player_status_type_uc"),
+        Index("idx_ingested_injuries_active", "ingested_at", "injury_status"),
+        Index("idx_ingested_injuries_player", "bdl_player_id", "ingested_at"),
+    )

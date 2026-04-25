@@ -52,6 +52,7 @@ from backend.models import (
     PositionEligibility,
     ProbablePitcherSnapshot,
     DataIngestionLog,
+    IngestedInjury,
     engine,
 )
 from backend.services.explainability_layer import ExplanationInput, explain_batch
@@ -124,6 +125,7 @@ LOCK_IDS = {
     "vorp":                  100_030,
     "projection_cat_scores": 100_031,
     "savant_ingestion":      100_032,  # Phase 9: Statcast leaderboard ingestion
+    "bdl_injuries":          100_033,  # Phase 1: BDL injury ingestion
 }
 
 
@@ -682,6 +684,16 @@ class DailyIngestionOrchestrator:
             CronTrigger(hour=2, minute=0, timezone=tz),
             id="mlb_box_stats",
             name="MLB Box Stats Ingestion",
+            replace_existing=True,
+        )
+
+        # BDL injury ingestion: hourly (every hour)
+        # Keeps injury list fresh for lineup decisions. Uses lock 100_033.
+        self._scheduler.add_job(
+            self._ingest_bdl_injuries,
+            IntervalTrigger(hours=1),
+            id="bdl_injuries",
+            name="BDL Injury Ingestion",
             replace_existing=True,
         )
 
@@ -1634,6 +1646,116 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["mlb_box_stats"], "mlb_box_stats", _run)
+
+    async def _ingest_bdl_injuries(self) -> dict:
+        """
+        Hourly MLB injury ingestion from BDL /mlb/v1/player_injuries (lock 100_033).
+
+        Fetches the full active injury list and upserts into ingested_injuries.
+        Injuries are tracked by (bdl_player_id, injury_status, injury_type) as the
+        natural key. When a player recovers, BDL stops returning their injury entry,
+        and a separate cleanup job handles deletion.
+
+        This job runs hourly to keep the injury list fresh for lineup decisions.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.services.balldontlie import BallDontLieClient
+            try:
+                bdl = BallDontLieClient()
+            except ValueError as exc:
+                logger.error("bdl_injuries: BDL init failed -- %s", exc)
+                self._record_job_run("bdl_injuries", "skipped")
+                return {"status": "skipped", "records": 0, "elapsed_ms": 0}
+
+            # Fetch all active injuries
+            injuries = await asyncio.to_thread(bdl.get_mlb_injuries)
+
+            if not injuries:
+                logger.info("bdl_injuries: 0 injuries returned from BDL -- healthy league or API error")
+                self._record_job_run("bdl_injuries", "success", 0)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                return {"status": "success", "records": 0, "elapsed_ms": elapsed}
+
+            now = now_et()
+            rows_upserted = 0
+            db = SessionLocal()
+            try:
+                for injury in injuries:
+                    if injury.player is None:
+                        logger.warning("bdl_injuries: skipping injury with no player object")
+                        continue
+
+                    # Parse ISO 8601 dates from BDL
+                    injury_date = None
+                    if injury.date:
+                        try:
+                            injury_date = datetime.fromisoformat(injury.date.replace("Z", "+00:00"))
+                        except Exception as exc:
+                            logger.warning("bdl_injuries: failed to parse injury_date %s: %s", injury.date, exc)
+
+                    return_date = None
+                    if injury.return_date:
+                        try:
+                            return_date = datetime.fromisoformat(injury.return_date.replace("Z", "+00:00"))
+                        except Exception as exc:
+                            logger.warning("bdl_injuries: failed to parse return_date %s: %s", injury.return_date, exc)
+
+                    payload = injury.model_dump()
+                    stmt = pg_insert(IngestedInjury.__table__).values(
+                        bdl_player_id=injury.player.id,
+                        player_name=injury.player.full_name or "",
+                        injury_date=injury_date,
+                        return_date=return_date,
+                        injury_type=injury.type,
+                        injury_detail=injury.detail,
+                        injury_side=injury.side,
+                        injury_status=injury.status,
+                        long_comment=injury.long_comment,
+                        short_comment=injury.short_comment,
+                        raw_payload=payload,
+                        ingested_at=now,
+                    ).on_conflict_do_update(
+                        constraint="_ii_player_status_type_uc",
+                        set_=dict(
+                            player_name=injury.player.full_name or "",
+                            injury_date=injury_date,
+                            return_date=return_date,
+                            injury_detail=injury.detail,
+                            injury_side=injury.side,
+                            long_comment=injury.long_comment,
+                            short_comment=injury.short_comment,
+                            raw_payload=payload,
+                            ingested_at=now,
+                        ),
+                    )
+                    db.execute(stmt)
+                    rows_upserted += 1
+
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                logger.error("bdl_injuries DB write failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("bdl_injuries", "failed")
+                return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.info(
+                "bdl_injuries: %d injuries upserted in %dms",
+                rows_upserted, elapsed,
+            )
+            self._record_job_run("bdl_injuries", "success", rows_upserted)
+            return {
+                "status": "success",
+                "records": rows_upserted,
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["bdl_injuries"], "bdl_injuries", _run)
 
     async def _supplement_statsapi_counting_stats(self) -> dict:
         """

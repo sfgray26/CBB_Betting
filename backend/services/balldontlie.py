@@ -599,6 +599,75 @@ class BallDontLieClient:
             params["player_ids[]"] = player_ids
         return self._paginate("/player_season_stats", params)
 
+    # ------------------------------------------------------------------
+    # MLB Player Season Stats -- Priority P12 (Phase 1)
+    # ------------------------------------------------------------------
+
+    def get_mlb_player_season_stats(
+        self,
+        season: int = 2026,
+        player_ids: Optional[List[int]] = None,
+    ) -> List[MLBPlayerStats]:
+        """
+        Fetch MLB player season-aggregated stats from BDL /mlb/v1/stats.
+
+        Uses the stats endpoint with season filter to return per-player
+        season totals. Rate stats (avg, obp, slg, era, whip) are pre-aggregated
+        by BDL. Counting stats (ab, h, r, hr, etc.) are season totals.
+
+        Args:
+            season: MLB season year (e.g. 2026)
+            player_ids: Optional list of BDL player IDs to filter
+
+        Returns:
+            list[MLBPlayerStats] -- Pydantic-validated season stat rows.
+            Returns empty list on any API error (logged, never raises).
+
+        Note:
+            This method reuses the /mlb/v1/stats endpoint with season filtering.
+            The returned stats are season-aggregated, not per-game.
+        """
+        params: Dict[str, Any] = {"season": season, "per_page": 100}
+        if player_ids:
+            params["player_ids[]"] = player_ids
+
+        results: List[MLBPlayerStats] = []
+        cursor: Optional[int] = None
+        page = 0
+        max_pages = 50  # generous ceiling for season stats
+
+        while page < max_pages:
+            if cursor is not None:
+                params["cursor"] = cursor
+            try:
+                raw = self._mlb_get("/stats", params=params)
+            except Exception as exc:
+                logger.error("get_mlb_player_season_stats() page=%d HTTP error: %s", page, exc)
+                break
+
+            rows = raw.get("data", [])
+            meta = raw.get("meta", {})
+
+            for raw_row in rows:
+                try:
+                    stat = MLBPlayerStats.model_validate(raw_row)
+                    results.append(stat)
+                except Exception as exc:
+                    logger.warning(
+                        "get_mlb_player_season_stats(): validation failed for player_id=%s -- %s",
+                        raw_row.get("player", {}).get("id") if isinstance(raw_row, dict) else "?",
+                        exc,
+                    )
+
+            next_cursor = meta.get("next_cursor") if isinstance(meta, dict) else None
+            if not next_cursor:
+                break
+            cursor = next_cursor
+            page += 1
+            time.sleep(0.1)
+
+        return results
+
 
 # ---------------------------------------------------------------------------
 # Convenience factory (mirrors singleton pattern used elsewhere in the project)
