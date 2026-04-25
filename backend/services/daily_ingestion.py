@@ -4878,7 +4878,7 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            from datetime import datetime
+            from datetime import datetime, time as dt_time
             from zoneinfo import ZoneInfo
 
             now = datetime.now(ZoneInfo("America/New_York"))
@@ -4903,7 +4903,7 @@ class DailyIngestionOrchestrator:
                 else:
                     from datetime import date
                     if isinstance(latest_ensemble, date) and not isinstance(latest_ensemble, datetime):
-                        latest_ensemble = datetime.combine(latest_ensemble, time(), tzinfo=ZoneInfo("America/New_York"))
+                        latest_ensemble = datetime.combine(latest_ensemble, dt_time(), tzinfo=ZoneInfo("America/New_York"))
                     elif hasattr(latest_ensemble, "tzinfo") and latest_ensemble.tzinfo is None:
                         latest_ensemble = latest_ensemble.replace(tzinfo=ZoneInfo("America/New_York"))
                     age_h = (now - latest_ensemble).total_seconds() / 3600
@@ -4929,7 +4929,7 @@ class DailyIngestionOrchestrator:
                 else:
                     from datetime import date
                     if isinstance(latest_statcast, date) and not isinstance(latest_statcast, datetime):
-                        latest_statcast = datetime.combine(latest_statcast, time(), tzinfo=ZoneInfo("America/New_York"))
+                        latest_statcast = datetime.combine(latest_statcast, dt_time(), tzinfo=ZoneInfo("America/New_York"))
                     elif hasattr(latest_statcast, "tzinfo") and latest_statcast.tzinfo is None:
                         latest_statcast = latest_statcast.replace(tzinfo=ZoneInfo("America/New_York"))
                     age_h = (now - latest_statcast).total_seconds() / 3600
