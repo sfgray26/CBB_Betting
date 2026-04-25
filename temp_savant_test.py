@@ -1,0 +1,1 @@
+﻿from backend.models import SessionLocal; from backend.fantasy_baseball.savant_ingestion import SavantIngestionAgent; db = SessionLocal(); agent = SavantIngestionAgent(db, season=2026); result = agent.run_daily_ingestion(); print(result)

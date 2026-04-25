@@ -24,6 +24,7 @@ import json
 import logging
 import statistics
 from typing import Optional
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
