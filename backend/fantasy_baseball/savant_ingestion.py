@@ -59,23 +59,21 @@ class SavantIngestionAgent:
     Data is upserted into statcast_batter_metrics and statcast_pitcher_metrics.
     """
 
-    BASE_URL = "https://baseballsavant.mlbbro.com/statcast_leaderboard"
+    BASE_URL = "https://baseballsavant.mlb.com/leaderboard/custom"
 
-    # Batter metrics columns from Savant leaderboard
-    BATTER_METRICS = [
-        "player_id", "last_name", "first_name", "team", "xwoba",
-        "barrel_percent", "hard_hit_percent", "avg_exit_velocity",
-        "max_exit_velocity", "whiff_percent", "swing_percent",
-        "pa", "ab", "h", "hr", "r", "rbi", "sb", "avg", "slg", "ops"
-    ]
+    # Custom Leaderboard selections (URL-encoded comma-separated)
+    # These are the actual column names returned by /leaderboard/custom
+    BATTER_SELECTIONS = (
+        "pa,xwoba,barrel_batted_rate,hard_hit_percent,exit_velocity_avg,"
+        "whiff_percent,swing_percent,ab,h,hr,r,rbi,sb,"
+        "batting_avg,slg_percent,on_base_plus_slg"
+    )
 
-    # Pitcher metrics columns from Savant leaderboard
-    PITCHER_METRICS = [
-        "player_id", "last_name", "first_name", "team", "xera",
-        "xwoba", "barrel_percent", "hard_hit_percent", "avg_exit_velocity",
-        "k_percent", "bb_percent", "k_9", "whiff_percent",
-        "w", "l", "qs", "ip", "era", "whip", "sv", "h", "hr", "k"
-    ]
+    PITCHER_SELECTIONS = (
+        "pa,xwoba,xera,barrel_batted_rate,hard_hit_percent,exit_velocity_avg,"
+        "k_percent,bb_percent,k_9,whiff_percent,"
+        "w,l,qs,ip,era,whip,sv,h,hr,k"
+    )
 
     def __init__(self, db: Session, season: int = 2026):
         """
@@ -87,6 +85,37 @@ class SavantIngestionAgent:
         """
         self.db = db
         self.season = season
+
+    @staticmethod
+    def _savant_float(value: str) -> Optional[float]:
+        """
+        Parse a Baseball Savant numeric string to float.
+
+        Handles:
+        - Leading dots: '.000' → 0.0, '.352' → 0.352
+        - Empty strings: '' → None
+        - Percent signs: stripped by caller
+        """
+        if not value or not value.strip():
+            return None
+        s = value.strip().rstrip("%")
+        if s.startswith("."):
+            s = "0" + s
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _savant_int(value: str) -> Optional[int]:
+        """Parse a Baseball Savant numeric string to int."""
+        if not value or not value.strip():
+            return None
+        s = value.strip()
+        try:
+            return int(float(s))  # Handles '5.0' → 5
+        except (ValueError, TypeError):
+            return None
 
     def _fetch_csv(self, url: str) -> str:
         """
@@ -104,86 +133,113 @@ class SavantIngestionAgent:
         """
         response = requests.get(url, timeout=30)
         response.raise_for_status()
-        return response.text
+        # Strip UTF-8 BOM if present — Savant CSVs sometimes include it,
+        # which breaks csv.DictReader's quoted-field parsing.
+        return response.text.lstrip("\ufeff")
 
     def _parse_batter_row(self, row: dict[str, str]) -> Optional[SavantMetricsRow]:
         """
-        Parse a single batter CSV row into a SavantMetricsRow.
+        Parse a single batter CSV row from Custom Leaderboard.
 
-        Handles type conversions:
-        - Strips '%' from percentage fields
-        - Converts empty strings to None
-        - Converts numeric fields to float/int
-
-        Args:
-            row: Dict from csv.DictReader
-
-        Returns:
-            SavantMetricsRow or None if row is invalid
+        Handles the combined name column and extracts MLBAM ID.
+        Maps Custom Leaderboard column names to schema keys.
         """
         try:
             mlbam_id = row.get("player_id", "").strip()
             if not mlbam_id:
                 return None
 
-            player_name = f"{row.get('first_name', '')} {row.get('last_name', '')}".strip()
-
-            metrics = {}
-            for key, value in row.items():
-                if not value or value.strip() == "":
-                    metrics[key] = None
-                elif key in ("barrel_percent", "hard_hit_percent", "whiff_percent",
-                           "swing_percent", "k_percent", "bb_percent"):
-                    # Strip % and convert to float
-                    metrics[key] = float(value.rstrip("%"))
-                elif key in ("pa", "ab", "h", "hr", "r", "rbi", "sb", "w", "l",
-                           "qs", "h", "sv", "hr"):
-                    metrics[key] = int(value) if value else None
+            # Extract player name from combined column
+            player_name = ""
+            name_col = row.get("last_name, first_name") or row.get("name")
+            if name_col:
+                if "," in name_col:
+                    parts = name_col.split(",")
+                    player_name = f"{parts[1].strip()} {parts[0].strip()}"
                 else:
-                    # Float fields
-                    metrics[key] = float(value) if value else None
+                    player_name = name_col.strip()
+
+            if not player_name:
+                return None
+
+            # Map Custom Leaderboard columns to schema keys
+            mapped_metrics = {
+                "xwoba": self._savant_float(row.get("xwoba", "")),
+                "barrel_percent": self._savant_float(row.get("barrel_batted_rate", "")),
+                "hard_hit_percent": self._savant_float(row.get("hard_hit_percent", "")),
+                "avg_exit_velocity": self._savant_float(row.get("exit_velocity_avg", "")),
+                "whiff_percent": self._savant_float(row.get("whiff_percent", "")),
+                "swing_percent": self._savant_float(row.get("swing_percent", "")),
+                "pa": self._savant_int(row.get("pa", "")),
+                "ab": self._savant_int(row.get("ab", "")),
+                "h": self._savant_int(row.get("h", "")),
+                "hr": self._savant_int(row.get("hr", "")),
+                "r": self._savant_int(row.get("r", "")),
+                "rbi": self._savant_int(row.get("rbi", "")),
+                "sb": self._savant_int(row.get("sb", "")),
+                "avg": self._savant_float(row.get("batting_avg", "")),
+                "slg": self._savant_float(row.get("slg_percent", "")),
+                "ops": self._savant_float(row.get("on_base_plus_slg", "")),
+            }
 
             return SavantMetricsRow(
                 mlbam_id=mlbam_id,
                 player_name=player_name,
-                team=row.get("team"),
+                team=row.get("team") or None,
                 season=self.season,
-                metrics=metrics
+                metrics=mapped_metrics
             )
-        except (ValueError, KeyError) as e:
-            logger.warning("Failed to parse batter row: %s — %s", row, e)
+        except Exception as e:
+            logger.warning("Unexpected error parsing batter row: %s", e)
             return None
-
     def _parse_pitcher_row(self, row: dict[str, str]) -> Optional[SavantMetricsRow]:
-        """Parse a single pitcher CSV row into a SavantMetricsRow."""
+        """Parse a single pitcher CSV row from Custom Leaderboard."""
         try:
             mlbam_id = row.get("player_id", "").strip()
             if not mlbam_id:
                 return None
 
-            player_name = f"{row.get('last_name', '')}, {row.get('first_name', '')}".strip()
-
-            metrics = {}
-            for key, value in row.items():
-                if not value or value.strip() == "":
-                    metrics[key] = None
-                elif key in ("barrel_percent", "hard_hit_percent", "k_percent",
-                           "bb_percent", "whiff_percent"):
-                    metrics[key] = float(value.rstrip("%")) if value else None
-                elif key in ("w", "l", "qs", "h", "sv", "hr", "k"):
-                    metrics[key] = int(value) if value else None
+            player_name = ""
+            name_col = row.get("last_name, first_name") or row.get("name")
+            if name_col:
+                if "," in name_col:
+                    parts = name_col.split(",")
+                    player_name = f"{parts[1].strip()} {parts[0].strip()}"
                 else:
-                    metrics[key] = float(value) if value else None
+                    player_name = name_col.strip()
+
+            # Map Custom Leaderboard columns to schema keys
+            mapped_metrics = {
+                "xwoba": self._savant_float(row.get("xwoba", "")),
+                "xera": self._savant_float(row.get("xera", "")),
+                "barrel_percent": self._savant_float(row.get("barrel_batted_rate", "")),
+                "hard_hit_percent": self._savant_float(row.get("hard_hit_percent", "")),
+                "avg_exit_velocity": self._savant_float(row.get("exit_velocity_avg", "")),
+                "k_percent": self._savant_float(row.get("k_percent", "")),
+                "bb_percent": self._savant_float(row.get("bb_percent", "")),
+                "k_9": self._savant_float(row.get("k_9", "")),
+                "whiff_percent": self._savant_float(row.get("whiff_percent", "")),
+                "w": self._savant_int(row.get("w", "")),
+                "l": self._savant_int(row.get("l", "")),
+                "qs": self._savant_int(row.get("qs", "")),
+                "ip": self._savant_float(row.get("ip", "")),
+                "era": self._savant_float(row.get("era", "")),
+                "whip": self._savant_float(row.get("whip", "")),
+                "sv": self._savant_int(row.get("sv", "")),
+                "h": self._savant_int(row.get("h", "")),
+                "hr": self._savant_int(row.get("hr", "")),
+                "k": self._savant_int(row.get("k", "")),
+            }
 
             return SavantMetricsRow(
                 mlbam_id=mlbam_id,
                 player_name=player_name,
-                team=row.get("team"),
+                team=row.get("team") or None,
                 season=self.season,
-                metrics=metrics
+                metrics=mapped_metrics
             )
-        except (ValueError, KeyError) as e:
-            logger.warning("Failed to parse pitcher row: %s — %s", row, e)
+        except Exception as e:
+            logger.warning("Unexpected error parsing pitcher row: %s", e)
             return None
 
     def _upsert_batters(self, rows: list[SavantMetricsRow]) -> dict[str, int]:
@@ -362,20 +418,18 @@ class SavantIngestionAgent:
 
     def fetch_batter_leaderboard(self) -> list[SavantMetricsRow]:
         """
-        Fetch and parse batter leaderboard from Savant.
+        Fetch and parse batter Custom Leaderboard from Savant.
+
+        Uses the /leaderboard/custom endpoint with selections parameter.
 
         Returns:
             List of parsed SavantMetricsRow objects
         """
-        metrics_str = ",".join([
-            "xwoba", "barrel_percent", "hard_hit_percent", "avg_exit_velocity",
-            "max_exit_velocity", "whiff_percent", "swing_percent",
-            "pa", "ab", "h", "hr", "r", "rbi", "sb", "avg", "slg", "ops"
-        ])
-
         url = (
-            f"{self.BASE_URL}?year={self.season}&player_type=batter"
-            f"&metrics={metrics_str}&csv=true"
+            f"{self.BASE_URL}?year={self.season}&type=batter&filter=&min=0"
+            f"&selections={self.BATTER_SELECTIONS}"
+            f"&chart=false&x=pa&y=pa&r=no&chartType=beeswarm"
+            f"&sort=xwoba&sortDir=desc&csv=true"
         )
 
         csv_text = self._fetch_csv(url)
@@ -387,26 +441,23 @@ class SavantIngestionAgent:
             if parsed:
                 rows.append(parsed)
 
-        logger.info("Fetched %d batter rows from Savant", len(rows))
+        logger.info("Fetched %d batter rows from Savant Custom Leaderboard", len(rows))
         return rows
 
     def fetch_pitcher_leaderboard(self) -> list[SavantMetricsRow]:
         """
-        Fetch and parse pitcher leaderboard from Savant.
+        Fetch and parse pitcher Custom Leaderboard from Savant.
+
+        Uses the /leaderboard/custom endpoint with selections parameter.
 
         Returns:
             List of parsed SavantMetricsRow objects
         """
-        metrics_str = ",".join([
-            "xera", "xwoba", "barrel_percent", "hard_hit_percent",
-            "avg_exit_velocity", "k_percent", "bb_percent", "k_9",
-            "whiff_percent", "w", "l", "qs", "ip", "era", "whip", "sv",
-            "h", "hr", "k"
-        ])
-
         url = (
-            f"{self.BASE_URL}?year={self.season}&player_type=pitcher"
-            f"&metrics={metrics_str}&csv=true"
+            f"{self.BASE_URL}?year={self.season}&type=pitcher&filter=&min=0"
+            f"&selections={self.PITCHER_SELECTIONS}"
+            f"&chart=false&x=pa&y=pa&r=no&chartType=beeswarm"
+            f"&sort=xwoba&sortDir=asc&csv=true"
         )
 
         csv_text = self._fetch_csv(url)
@@ -418,7 +469,7 @@ class SavantIngestionAgent:
             if parsed:
                 rows.append(parsed)
 
-        logger.info("Fetched %d pitcher rows from Savant", len(rows))
+        logger.info("Fetched %d pitcher rows from Savant Custom Leaderboard", len(rows))
         return rows
 
     def run_daily_ingestion(self) -> dict[str, Any]:

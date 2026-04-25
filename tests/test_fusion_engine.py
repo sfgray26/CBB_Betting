@@ -257,7 +257,7 @@ class TestBatterFusionFourState:
 
         result = fuse_batter_projection(steamer, statcast, sample_size=400)
 
-        assert result.xwoba_override_applied is True
+        assert result.xwoba_override_detected is True
 
     def test_xwoba_override_no_trigger(self):
         """xwOBA override does NOT trigger when delta <= 0.030."""
@@ -279,7 +279,7 @@ class TestBatterFusionFourState:
 
         result = fuse_batter_projection(steamer, statcast, sample_size=400)
 
-        assert result.xwoba_override_applied is False
+        assert result.xwoba_override_detected is False
 
 
 class TestPitcherFusionFourState:
@@ -364,7 +364,7 @@ class TestPitcherFusionFourState:
 
         result = fuse_pitcher_projection(steamer, statcast, sample_size=100)
 
-        assert result.xwoba_override_applied is True  # Reuses flag name
+        assert result.xwoba_override_detected is True
 
     def test_xera_override_no_trigger(self):
         """xERA override does NOT trigger when delta <= 0.50."""
@@ -383,7 +383,7 @@ class TestPitcherFusionFourState:
 
         result = fuse_pitcher_projection(steamer, statcast, sample_size=100)
 
-        assert result.xwoba_override_applied is False
+        assert result.xwoba_override_detected is False
 
 
 class TestFusionResult:
@@ -393,17 +393,17 @@ class TestFusionResult:
         """Verify FusionResult has required fields."""
         result = FusionResult(
             proj={'avg': 0.280},
-            cat_scores={'avg': 80},
             source='fusion',
             components_fused=5,
-            xwoba_override_applied=False
+            xwoba_override_detected=False
         )
 
         assert result.proj == {'avg': 0.280}
-        assert result.cat_scores == {'avg': 80}
         assert result.source == 'fusion'
         assert result.components_fused == 5
-        assert result.xwoba_override_applied is False
+        assert result.xwoba_override_detected is False
+        assert result.components_fused == 5
+        assert result.xwoba_override_detected is False
 
 
 class TestMathematicalProperties:

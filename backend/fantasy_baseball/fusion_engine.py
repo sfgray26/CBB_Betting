@@ -90,16 +90,18 @@ class FusionResult:
 
     Attributes:
         proj: Fused projection dictionary with all rate stats
-        cat_scores: Category scores (1-100) relative to league
         source: Data source label ('fusion', 'steamer', 'statcast_shrunk', 'population_prior')
         components_fused: Number of components that underwent Marcel update
-        xwoba_override_applied: Whether xwOBA/xERA override was triggered
+        xwoba_override_detected: Whether xwOBA/xERA divergence was detected (metadata only)
+
+    Note: cat_scores are NOT computed here. Use pre-computed DB z-scores from
+    PlayerProjection.cat_scores when available; otherwise accept z_score=0.0.
+    Computing cat_scores against a full player pool requires cat_scores_builder.py.
     """
     proj: Dict[str, Any]
-    cat_scores: Dict[str, float]
     source: str
     components_fused: int
-    xwoba_override_applied: bool
+    xwoba_override_detected: bool
 
 
 def marcel_update(
@@ -155,13 +157,41 @@ def marcel_update(
     return numerator / denominator
 
 
+def _safe_get(obj: Any, key: str, default: Any = None) -> Any:
+    """
+    Safely retrieve a value from a dict-like or object-like source.
+
+    Handles None, dicts, and arbitrary objects (e.g. SQLAlchemy rows or test mocks).
+    Returns the default if the key is absent or the value is not a real number.
+    """
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        val = obj.get(key, default)
+    else:
+        val = getattr(obj, key, default)
+    return val
+
+
+def _safe_num(obj: Any, key: str) -> Optional[float]:
+    """Return a numeric value from obj[key], or None if missing/non-numeric."""
+    val = _safe_get(obj, key, None)
+    if isinstance(val, bool):
+        return None
+    if isinstance(val, (int, float)):
+        return float(val)
+    return None
+
+
 def _should_apply_xwoba_override(statcast: Dict[str, Any]) -> bool:
     """
-    Determine if xwOBA override should be applied.
+    Detect if xwOBA override should be applied (metadata only).
 
     When xwOBA differs significantly from actual wOBA, it suggests the player's
-    performance was unsustainable (lucky or unlucky). In such cases, we use
-    xwOBA as a prior source for rate stats.
+    performance was unsustainable (lucky or unlucky). This function detects
+    that condition for metadata reporting; it does NOT swap the prior source.
+
+    Future enhancement: use xwOBA as prior source instead of Steamer when True.
 
     Args:
         statcast: Statcast data dict containing 'xwoba' and 'woba'
@@ -172,8 +202,8 @@ def _should_apply_xwoba_override(statcast: Dict[str, Any]) -> bool:
     if statcast is None:
         return False
 
-    xwoba = statcast.get('xwoba')
-    woba = statcast.get('woba')
+    xwoba = _safe_num(statcast, 'xwoba')
+    woba = _safe_num(statcast, 'woba')
 
     if xwoba is None or woba is None:
         return False
@@ -183,9 +213,13 @@ def _should_apply_xwoba_override(statcast: Dict[str, Any]) -> bool:
 
 def _should_apply_xera_override(statcast: Dict[str, Any]) -> bool:
     """
-    Determine if xERA override should be applied for pitchers.
+    Detect if xERA override should be applied for pitchers (metadata only).
 
-    When xERA differs significantly from actual ERA, use xERA as prior source.
+    When xERA differs significantly from actual ERA, it suggests the pitcher's
+    performance was unsustainable. This function detects that condition for
+    metadata reporting; it does NOT swap the prior source.
+
+    Future enhancement: use xERA as prior source instead of Steamer when True.
 
     Args:
         statcast: Statcast data dict containing 'xera' and 'era'
@@ -196,8 +230,8 @@ def _should_apply_xera_override(statcast: Dict[str, Any]) -> bool:
     if statcast is None:
         return False
 
-    xera = statcast.get('xera')
-    era = statcast.get('era')
+    xera = _safe_num(statcast, 'xera')
+    era = _safe_num(statcast, 'era')
 
     if xera is None or era is None:
         return False
@@ -219,9 +253,9 @@ def fuse_batter_projection(
         3. Statcast only: Fuse with POPULATION_PRIOR using double shrinkage
         4. Neither: Return pure POPULATION_PRIOR (rookie baseline)
 
-    xwOBA Override:
-        If |xwOBA - wOBA| > 0.030, use xwOBA as prior source instead of population prior.
-        This captures "unsustainable performance" signal from Statcast batted ball data.
+    xwOBA Override Detection:
+        If |xwOBA - wOBA| > 0.030, the override flag is set in metadata.
+        Future enhancement: swap prior source to xwOBA when override detected.
 
     Args:
         steamer: Steamer projection dict with rate stats (avg, obp, slg, k_percent, bb_percent, hr_per_pa, sb_per_pa)
@@ -249,16 +283,18 @@ def fuse_batter_projection(
         # STATE 1: Full fusion - Steamer as prior, Statcast as observed
         source = 'fusion'
 
-        def fuse_component(steam_key: str, stat_key: str, stabil_point: int, fallback: float = None) -> float:
+        def fuse_component(steam_key: str, stat_key: str, stabil_point: int, fallback: float) -> float:
             nonlocal components_fused
+            steamer_val = _safe_num(steamer, steam_key)
+            obs_val = _safe_num(statcast, stat_key)
+            prior_val = steamer_val if steamer_val is not None else fallback
+            if obs_val is None:
+                # No observed data — return prior unchanged
+                return prior_val
             components_fused += 1
-            prior = steamer.get(steam_key, fallback) if fallback is not None else steamer[steam_key]
-            if prior is None:
-                # Use statcast value directly if no Steamer prior
-                return statcast[stat_key]
             return marcel_update(
-                prior_mean=prior,
-                observed_mean=statcast[stat_key],
+                prior_mean=prior_val,
+                observed_mean=obs_val,
                 sample_size=sample_size,
                 stabilization_point=stabil_point
             )
@@ -270,39 +306,43 @@ def fuse_batter_projection(
         proj['bb_percent'] = fuse_component('bb_percent', 'bb_percent', stabil.BATTER_BB_PERCENT, prior.BATTER_BB_PERCENT)
 
         # Use Steamer for counting stats (per-PA rates)
-        proj['hr_per_pa'] = steamer.get('hr_per_pa', prior.BATTER_HR_PER_PA)
-        proj['sb_per_pa'] = steamer.get('sb_per_pa', prior.BATTER_SB_PER_PA)
+        hr_rate = _safe_num(steamer, 'hr_per_pa')
+        sb_rate = _safe_num(steamer, 'sb_per_pa')
+        proj['hr_per_pa'] = hr_rate if hr_rate is not None else prior.BATTER_HR_PER_PA
+        proj['sb_per_pa'] = sb_rate if sb_rate is not None else prior.BATTER_SB_PER_PA
 
     elif has_steamer:
         # STATE 2: Steamer only - return unchanged
         source = 'steamer'
-        proj['avg'] = steamer['avg']
-        proj['obp'] = steamer['obp']
-        proj['slg'] = steamer['slg']
-        proj['k_percent'] = steamer.get('k_percent', prior.BATTER_K_PERCENT)
-        proj['bb_percent'] = steamer.get('bb_percent', prior.BATTER_BB_PERCENT)
-        proj['hr_per_pa'] = steamer.get('hr_per_pa', prior.BATTER_HR_PER_PA)
-        proj['sb_per_pa'] = steamer.get('sb_per_pa', prior.BATTER_SB_PER_PA)
+        avg_val = _safe_num(steamer, 'avg')
+        obp_val = _safe_num(steamer, 'obp')
+        slg_val = _safe_num(steamer, 'slg')
+        k_val = _safe_num(steamer, 'k_percent')
+        bb_val = _safe_num(steamer, 'bb_percent')
+        hr_val = _safe_num(steamer, 'hr_per_pa')
+        sb_val = _safe_num(steamer, 'sb_per_pa')
+        proj['avg'] = avg_val if avg_val is not None else prior.BATTER_AVG
+        proj['obp'] = obp_val if obp_val is not None else prior.BATTER_OBP
+        proj['slg'] = slg_val if slg_val is not None else prior.BATTER_SLG
+        proj['k_percent'] = k_val if k_val is not None else prior.BATTER_K_PERCENT
+        proj['bb_percent'] = bb_val if bb_val is not None else prior.BATTER_BB_PERCENT
+        proj['hr_per_pa'] = hr_val if hr_val is not None else prior.BATTER_HR_PER_PA
+        proj['sb_per_pa'] = sb_val if sb_val is not None else prior.BATTER_SB_PER_PA
 
     elif has_statcast:
         # STATE 3: Statcast only - fuse with population prior, double shrinkage
         source = 'statcast_shrunk'
 
-        # If xwOBA override, use xwOBA-informed prior
-        if xwoba_override:
-            # Create adjusted prior from xwOBA signal
-            # xwOBA suggests true talent; shift prior toward observed
-            prior_adj = 0.5  # Midpoint prior
-        else:
-            prior_adj = prior.BATTER_AVG
-
         def shrink_to_population(stat_key: str, stabil_point: int, prior_val: float) -> float:
             nonlocal components_fused
+            obs_val = _safe_num(statcast, stat_key)
+            if obs_val is None:
+                # No observed data for this component — fall back to prior
+                return prior_val
             components_fused += 1
-            # Double shrinkage: use 2x stabilization point for more aggressive regression
             return marcel_update(
                 prior_mean=prior_val,
-                observed_mean=statcast[stat_key],
+                observed_mean=obs_val,
                 sample_size=sample_size,
                 stabilization_point=stabil_point * 2  # Double shrinkage
             )
@@ -333,15 +373,11 @@ def fuse_batter_projection(
     if 'ops' not in proj and 'obp' in proj and 'slg' in proj:
         proj['ops'] = proj['obp'] + proj['slg']
 
-    # Calculate category scores (simplified - 1-100 scale)
-    cat_scores = _calculate_batter_cat_scores(proj)
-
     return FusionResult(
         proj=proj,
-        cat_scores=cat_scores,
         source=source,
         components_fused=components_fused,
-        xwoba_override_applied=xwoba_override
+        xwoba_override_detected=xwoba_override
     )
 
 
@@ -359,8 +395,9 @@ def fuse_pitcher_projection(
         3. Statcast only: Fuse with POPULATION_PRIOR using double shrinkage
         4. Neither: Return pure POPULATION_PRIOR
 
-    xERA Override:
-        If |xERA - ERA| > 0.50, use xERA as prior source.
+    xERA Override Detection:
+        If |xERA - ERA| > 0.50, the override flag is set in metadata.
+        Future enhancement: swap prior source to xERA when override detected.
 
     Args:
         steamer: Steamer projection dict with era, whip, k_percent, bb_percent, k_per_nine, bb_per_nine
@@ -388,16 +425,17 @@ def fuse_pitcher_projection(
         # STATE 1: Full fusion
         source = 'fusion'
 
-        def fuse_component(steam_key: str, stat_key: str, stabil_point: int, fallback: float = None) -> float:
+        def fuse_component(steam_key: str, stat_key: str, stabil_point: int, fallback: float) -> float:
             nonlocal components_fused
+            steamer_val = _safe_num(steamer, steam_key)
+            obs_val = _safe_num(statcast, stat_key)
+            prior_val = steamer_val if steamer_val is not None else fallback
+            if obs_val is None:
+                return prior_val
             components_fused += 1
-            prior = steamer.get(steam_key, fallback) if fallback is not None else steamer[steam_key]
-            if prior is None:
-                # Use statcast value directly if no Steamer prior
-                return statcast[stat_key]
             return marcel_update(
-                prior_mean=prior,
-                observed_mean=statcast[stat_key],
+                prior_mean=prior_val,
+                observed_mean=obs_val,
                 sample_size=sample_size,
                 stabilization_point=stabil_point
             )
@@ -408,18 +446,26 @@ def fuse_pitcher_projection(
         proj['bb_percent'] = fuse_component('bb_percent', 'bb_percent', stabil.PITCHER_BB_PERCENT, 0.07)
 
         # Use Steamer for rate stats
-        proj['k_per_nine'] = steamer.get('k_per_nine', prior.PITCHER_K_PER_NINE)
-        proj['bb_per_nine'] = steamer.get('bb_per_nine', prior.PITCHER_BB_PER_NINE)
+        k9_val = _safe_num(steamer, 'k_per_nine')
+        bb9_val = _safe_num(steamer, 'bb_per_nine')
+        proj['k_per_nine'] = k9_val if k9_val is not None else prior.PITCHER_K_PER_NINE
+        proj['bb_per_nine'] = bb9_val if bb9_val is not None else prior.PITCHER_BB_PER_NINE
 
     elif has_steamer:
         # STATE 2: Steamer only
         source = 'steamer'
-        proj['era'] = steamer['era']
-        proj['whip'] = steamer['whip']
-        proj['k_percent'] = steamer.get('k_percent', 0.22)
-        proj['bb_percent'] = steamer.get('bb_percent', 0.07)
-        proj['k_per_nine'] = steamer.get('k_per_nine', prior.PITCHER_K_PER_NINE)
-        proj['bb_per_nine'] = steamer.get('bb_per_nine', prior.PITCHER_BB_PER_NINE)
+        era_val = _safe_num(steamer, 'era')
+        whip_val = _safe_num(steamer, 'whip')
+        k_val = _safe_num(steamer, 'k_percent')
+        bb_val = _safe_num(steamer, 'bb_percent')
+        k9_val = _safe_num(steamer, 'k_per_nine')
+        bb9_val = _safe_num(steamer, 'bb_per_nine')
+        proj['era'] = era_val if era_val is not None else prior.PITCHER_ERA
+        proj['whip'] = whip_val if whip_val is not None else prior.PITCHER_WHIP
+        proj['k_percent'] = k_val if k_val is not None else 0.22
+        proj['bb_percent'] = bb_val if bb_val is not None else 0.07
+        proj['k_per_nine'] = k9_val if k9_val is not None else prior.PITCHER_K_PER_NINE
+        proj['bb_per_nine'] = bb9_val if bb9_val is not None else prior.PITCHER_BB_PER_NINE
 
     elif has_statcast:
         # STATE 3: Statcast only - double shrinkage
@@ -427,10 +473,13 @@ def fuse_pitcher_projection(
 
         def shrink_to_population(stat_key: str, stabil_point: int, prior_val: float) -> float:
             nonlocal components_fused
+            obs_val = _safe_num(statcast, stat_key)
+            if obs_val is None:
+                return prior_val
             components_fused += 1
             return marcel_update(
                 prior_mean=prior_val,
-                observed_mean=statcast[stat_key],
+                observed_mean=obs_val,
                 sample_size=sample_size,
                 stabilization_point=stabil_point * 2  # Double shrinkage
             )
@@ -454,86 +503,12 @@ def fuse_pitcher_projection(
         proj['k_per_nine'] = prior.PITCHER_K_PER_NINE
         proj['bb_per_nine'] = prior.PITCHER_BB_PER_NINE
 
-    # Calculate category scores
-    cat_scores = _calculate_pitcher_cat_scores(proj)
-
     return FusionResult(
         proj=proj,
-        cat_scores=cat_scores,
         source=source,
         components_fused=components_fused,
-        xwoba_override_applied=xera_override  # Reuse flag name
+        xwoba_override_detected=xera_override
     )
-
-
-def _calculate_batter_cat_scores(proj: Dict[str, Any]) -> Dict[str, float]:
-    """
-    Calculate category scores (1-100) for 5x5 roto scoring.
-
-    Simple linear scaling centered on league average.
-    """
-    scores = {}
-
-    # AVG: .250 = 50, each .010 = 5 points
-    if 'avg' in proj:
-        scores['avg'] = 50 + (proj['avg'] - 0.250) * 500
-        scores['avg'] = max(1, min(100, scores['avg']))
-
-    # HR: scale from HR/PA
-    if 'hr_per_pa' in proj:
-        scores['hr'] = 50 + (proj['hr_per_pa'] - 0.035) * 1500
-        scores['hr'] = max(1, min(100, scores['hr']))
-
-    # RBI: proxy from SLG
-    if 'slg' in proj:
-        scores['rbi'] = 50 + (proj['slg'] - 0.410) * 200
-        scores['rbi'] = max(1, min(100, scores['rbi']))
-
-    # SB: scale from SB/PA
-    if 'sb_per_pa' in proj:
-        scores['sb'] = 50 + (proj['sb_per_pa'] - 0.010) * 4000
-        scores['sb'] = max(1, min(100, scores['sb']))
-
-    # Runs: proxy from OBP
-    if 'obp' in proj:
-        scores['runs'] = 50 + (proj['obp'] - 0.320) * 300
-        scores['runs'] = max(1, min(100, scores['runs']))
-
-    return scores
-
-
-def _calculate_pitcher_cat_scores(proj: Dict[str, Any]) -> Dict[str, float]:
-    """
-    Calculate category scores (1-100) for pitcher roto scoring.
-
-    Lower ERA/WHIP is better. Higher K is better.
-    """
-    scores = {}
-
-    # ERA: 4.50 = 50, each 0.10 = 5 points (inverse)
-    if 'era' in proj:
-        scores['era'] = 50 + (4.50 - proj['era']) * 50
-        scores['era'] = max(1, min(100, scores['era']))
-
-    # WHIP: 1.35 = 50, each 0.05 = 5 points (inverse)
-    if 'whip' in proj:
-        scores['whip'] = 50 + (1.35 - proj['whip']) * 100
-        scores['whip'] = max(1, min(100, scores['whip']))
-
-    # K: scale from K/9
-    if 'k_per_nine' in proj:
-        scores['k'] = 50 + (proj['k_per_nine'] - 8.5) * 10
-        scores['k'] = max(1, min(100, scores['k']))
-
-    # Wins: proxy from ERA (inverse)
-    if 'era' in proj:
-        scores['wins'] = 50 + (4.50 - proj['era']) * 40
-        scores['wins'] = max(1, min(100, scores['wins']))
-
-    # Saves: assume 0 for starting pitchers
-    scores['saves'] = 10  # Low default
-
-    return scores
 
 
 # Public API for external modules
