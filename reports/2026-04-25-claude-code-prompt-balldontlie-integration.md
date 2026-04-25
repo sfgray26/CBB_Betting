@@ -18,6 +18,7 @@ The fantasy baseball platform has critical data gaps that BallDontLie (BDL) reso
 |---|-----------|---------------|--------------|
 | 1 | **Yahoo ID Mapping dead** | 0/10,000 rows have yahoo_id | `GET /mlb/v1/players?search=` |
 | 2 | **Probable Pitchers unconfirmed** | 0/332 confirmed | `GET /mlb/v1/lineups` |
+
 | 3 | **Injury data sparse** | 3/23 players | `GET /mlb/v1/player_injuries` |
 | 4 | **Rolling windows 100% null** | No ingestion pipeline | `GET /mlb/v1/stats?dates[]=` |
 | 5 | **Player scores table empty** | 0 rows current window | `GET /mlb/v1/season_stats` |

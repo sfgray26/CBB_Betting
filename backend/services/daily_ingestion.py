@@ -4779,7 +4779,10 @@ class DailyIngestionOrchestrator:
                     logger.warning("PROJECTION FRESHNESS: %s", msg)
                     violations.append(msg)
                 else:
-                    if hasattr(latest_ensemble, "tzinfo") and latest_ensemble.tzinfo is None:
+                    from datetime import date
+                    if isinstance(latest_ensemble, date) and not isinstance(latest_ensemble, datetime):
+                        latest_ensemble = datetime.combine(latest_ensemble, time(), tzinfo=ZoneInfo("America/New_York"))
+                    elif hasattr(latest_ensemble, "tzinfo") and latest_ensemble.tzinfo is None:
                         latest_ensemble = latest_ensemble.replace(tzinfo=ZoneInfo("America/New_York"))
                     age_h = (now - latest_ensemble).total_seconds() / 3600
                     report["ensemble_blend_age_h"] = round(age_h, 1)
@@ -4802,7 +4805,10 @@ class DailyIngestionOrchestrator:
                     logger.warning("PROJECTION FRESHNESS: %s", msg)
                     violations.append(msg)
                 else:
-                    if hasattr(latest_statcast, "tzinfo") and latest_statcast.tzinfo is None:
+                    from datetime import date
+                    if isinstance(latest_statcast, date) and not isinstance(latest_statcast, datetime):
+                        latest_statcast = datetime.combine(latest_statcast, time(), tzinfo=ZoneInfo("America/New_York"))
+                    elif hasattr(latest_statcast, "tzinfo") and latest_statcast.tzinfo is None:
                         latest_statcast = latest_statcast.replace(tzinfo=ZoneInfo("America/New_York"))
                     age_h = (now - latest_statcast).total_seconds() / 3600
                     report["statcast_age_h"] = round(age_h, 1)
