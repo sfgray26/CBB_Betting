@@ -32,7 +32,7 @@ def main() -> None:
 
     with engine.connect() as conn:
         result = conn.execute(text(query))
-        rows = [dict(row._mapping) for row in result.mappings()]
+        rows = [dict(row) for row in result.mappings()]
 
     print(json.dumps(rows, indent=2, default=str))
 
