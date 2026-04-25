@@ -1786,24 +1786,23 @@ async def get_fantasy_waiver_recommendations(
             need_score = 0.0
             contributions: dict = {}
 
+            cat_scores = board_player.get("cat_scores", {})
+            player_z = board_player.get("z_score", 0.0)
+
             if category_deficits:
-                cat_scores = board_player.get("cat_scores", {})
-                for cd in category_deficits:
-                    if cd.winning or cd.deficit <= 0:
-                        continue
-                    board_key = _YAHOO_CAT_TO_BOARD.get(cd.category)
-                    if not board_key or board_key not in cat_scores:
-                        continue
-                    player_z = cat_scores[board_key]
-                    if player_z <= 0:
-                        continue
-                    opp_total = abs(cd.opponent_total) or 1.0
-                    deficit_weight = cd.deficit / opp_total
-                    contribution = deficit_weight * player_z
-                    contributions[cd.category] = round(contribution, 3)
-                    need_score += contribution
+                try:
+                    from backend.fantasy_baseball.category_aware_scorer import (
+                        compute_need_score as _cns,
+                    )
+                    n_cats = max(1, len(category_deficits))
+                    need_score = _cns(cat_scores, player_z, category_deficits, n_cats)
+                except Exception:
+                    need_score = player_z  # fallback to plain z_score
             else:
-                need_score = board_player.get("z_score", 0.0)
+                need_score = player_z
+
+            # Use raw cat_scores for hot/cold flag (consistent with recommendations endpoint)
+            contributions = {k: float(v) for k, v in cat_scores.items() if isinstance(v, (int, float))}
 
             _hc: Optional[str] = None
             try:
@@ -2176,16 +2175,10 @@ async def get_waiver_recommendations(
                 if cat_scores:
                     try:
                         from backend.fantasy_baseball.category_aware_scorer import (
-                            PlayerCategoryImpactVector as _PCIV,
-                            score_fa_against_needs as _sfan,
+                            compute_need_score as _cns,
                         )
                         n_cats = max(1, len(_need_vector.needs))
-                        cat_score = _sfan(
-                            _PCIV(impacts={k: float(v) for k, v in cat_scores.items()}),
-                            _need_vector,
-                        )
-                        # Normalize per-category and blend: 40% generic z_score + 60% matchup-specific
-                        need_score = 0.4 * z_score + 0.6 * (cat_score / n_cats)
+                        need_score = _cns(cat_scores, z_score, category_deficits, n_cats)
                     except Exception:
                         pass  # fallback to z_score if scorer unavailable
             return WaiverPlayerOut(
@@ -2691,16 +2684,19 @@ async def get_fantasy_roster(
     # Batch-query PlayerProjection for all roster players (ros_projection hydration)
     from backend.models import PlayerProjection as _PlayerProjection
     from backend.stat_contract import SCORING_CATEGORY_CODES as _SCC
-    _proj_numeric_ids = [
-        pk.split(".p.")[-1] for pk in player_keys if ".p." in pk
+    # Primary lookup: by MLBAM ID via PlayerIDMapping crosswalk.
+    # PlayerProjection.player_id stores MLBAM IDs after Steamer ingestion.
+    _proj_mlbam_ids = [
+        str(ids["mlbam_id"])
+        for pk, ids in player_key_to_ids.items()
+        if ids.get("mlbam_id") is not None
     ]
-    # Primary lookup: by Yahoo numeric player_id
-    _projections_by_id: dict = {}
-    if _proj_numeric_ids:
+    _projections_by_mlbam: dict[str, _PlayerProjection] = {}
+    if _proj_mlbam_ids:
         _proj_rows = db.query(_PlayerProjection).filter(
-            _PlayerProjection.player_id.in_(_proj_numeric_ids)
+            _PlayerProjection.player_id.in_(_proj_mlbam_ids)
         ).all()
-        _projections_by_id = {p.player_id: p for p in _proj_rows}
+        _projections_by_mlbam = {p.player_id: p for p in _proj_rows}
 
     # Secondary lookup: by normalized player_name for Steamer rows whose
     # player_id is a Steamer internal key (not Yahoo numeric ID).
@@ -2784,13 +2780,14 @@ async def get_fantasy_roster(
         rs_30d = rolling_stats_30d.get(player_key)
 
         # Build ros_projection from PlayerProjection.cat_scores if available.
-        # Priority 1: Yahoo numeric ID lookup (fast path).
-        # Priority 2: Normalized name lookup (catches Steamer rows with non-Yahoo IDs).
+        # Priority 1: MLBAM ID lookup via PlayerIDMapping crosswalk.
+        # Priority 2: Normalized name lookup (catches unmapped call-ups).
         _ros_proj = None
-        _pid_numeric = player_key.split(".p.")[-1] if ".p." in player_key else None
         _proj_row = None
-        if _pid_numeric and _pid_numeric in _projections_by_id:
-            _proj_row = _projections_by_id[_pid_numeric]
+        _ids = player_key_to_ids.get(player_key) or {}
+        _mlbam = _ids.get("mlbam_id")
+        if _mlbam is not None:
+            _proj_row = _projections_by_mlbam.get(str(_mlbam))
         if _proj_row is None:
             _pname = p.get("name", "")
             if _pname:

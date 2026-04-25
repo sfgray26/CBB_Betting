@@ -135,7 +135,9 @@
       "Bash(git *)",
       "Bash(\"venv/Scripts/python\" -m py_compile backend/schemas.py backend/routers/fantasy.py)",
       "Bash(\"venv/Scripts/python\" -m pytest tests/test_player_scores_api.py -v --tb=short)",
-      "Bash(venv/Scripts/pip install *)"
+      "Bash(venv/Scripts/pip install *)",
+      "Bash(cat)",
+      "Read(//tmp/**)"
     ]
   },
   "enabledPlugins": {}

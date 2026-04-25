@@ -345,6 +345,70 @@ def test_waiver_scoreboard_calls_once(fantasy_client, monkeypatch):
 # Pure helper — scoreboard parsing
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Pure helper — scoreboard parsing (Yahoo client get_matchup_stats)
+# ---------------------------------------------------------------------------
+
+def test_get_matchup_stats_parses_nested_team_stats_structure(fantasy_client, monkeypatch):
+    """Phase 8 Step 3 — get_matchup_stats must parse Yahoo's nested
+    team_stats.stats[] structure.
+
+    Prior fix: line 1150 iterated over {"stats": [...]} as if it were
+    {"7": 48, "8": 78, ...}. No stat_id strings matched yahoo_to_canonical,
+    so the returned dicts stayed empty and /scoreboard showed all 0.0.
+
+    This test uses the authoritatively-shaped fixture from the contract file
+    and asserts non-zero values are extracted from the nested structure.
+    """
+    from unittest.mock import patch
+    from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
+
+    monkeypatch.setenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+
+    my_key = "469.l.72586.t.7"
+    opp_key = "469.l.72586.t.3"
+    my_sids = {"7": "48", "8": "120", "12": "25", "13": "75"}   # R, H, HR, RBI
+    opp_sids = {"7": "41", "8": "105", "12": "18", "13": "65"}
+
+    mock_client = MagicMock()
+    mock_client.get_my_team_key.return_value = my_key
+    mock_client.get_scoreboard.return_value = _nested_scoreboard(
+        my_key, opp_key, my_sids, opp_sids,
+    )
+
+    real_client = YahooFantasyClient()
+    with patch.object(real_client, "get_my_team_key", return_value=my_key):
+        with patch.object(real_client, "get_scoreboard", return_value=_nested_scoreboard(
+            my_key, opp_key, my_sids, opp_sids,
+        )):
+            result = real_client.get_matchup_stats()
+
+    # Structure check
+    assert "my_stats" in result
+    assert "opp_stats" in result
+    assert result["opponent_name"] == "Bartolo's Colon"
+
+    # Data-flow check: non-zero values extracted from nested structure
+    my_stats = result["my_stats"]
+    opp_stats = result["opp_stats"]
+
+    # R (stat_id "7")
+    assert my_stats["R"] == 48.0, "my_stats.R should be extracted from nested team_stats"
+    assert opp_stats["R"] == 41.0
+
+    # H (stat_id "8")
+    assert my_stats["H"] == 120.0
+    assert opp_stats["H"] == 105.0
+
+    # HR_B (stat_id "12")
+    assert my_stats["HR_B"] == 25.0
+    assert opp_stats["HR_B"] == 18.0
+
+    # RBI (stat_id "13")
+    assert my_stats["RBI"] == 75.0
+    assert opp_stats["RBI"] == 65.0
+
+
 def test_flatten_scoreboard_team_entry_recovers_nested_team_key():
     """The recursive parser must recover team_key nested deeper than 2 levels.
 

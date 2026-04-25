@@ -1,0 +1,1861 @@
+﻿{
+    "decisions":  [
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  4667586,
+                                           "player_name":  "Munetaka Murakami",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "lineup",
+                                           "target_slot":  "1B",
+                                           "drop_player_id":  null,
+                                           "drop_player_name":  null,
+                                           "lineup_score":  8.35,
+                                           "value_gain":  null,
+                                           "confidence":  0.975,
+                                           "reasoning":  "Slot 1B: score=97.5, momentum=STABLE(+0), z=1.50"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Munetaka Murakami starts at 1B: score 98/100, STABLE momentum.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Power (HR Z-score)",
+                                                                  "value":  "3.0",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  1.0,
+                                                                  "narrative":  "Projects 74.6 HR ROS; Z-score +3.00 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Run production (RBI Z-score)",
+                                                                  "value":  "2.715108932325097",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.9050363107750323,
+                                                                  "narrative":  "Projects 145.5 RBI ROS; Z-score +2.72 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "On-base ability (OBP Z-score)",
+                                                                  "value":  "1.6767755804471793",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.5589251934823931,
+                                                                  "narrative":  "OBP Z-score +1.68 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Batting average (AVG Z-score)",
+                                                                  "value":  "1.3789644859523338",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.45965482865077795,
+                                                                  "narrative":  "Batting avg projection .358; Z-score +1.38 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Net basestealing (NSB Z-score)",
+                                                                  "value":  "-0.6293790917094939",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.2097930305698313,
+                                                                  "narrative":  "Projects 0.0 SB ROS; NSB Z-score -0.63 (WEAK)"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Moderate confidence (11 games)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=29.4)",
+                                              "track_record_narrative":  "Strong track record (MAE=0.26 over 12 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  879,
+                                           "player_name":  "Gavin Williams",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "lineup",
+                                           "target_slot":  "P",
+                                           "drop_player_id":  null,
+                                           "drop_player_name":  null,
+                                           "lineup_score":  6.762,
+                                           "value_gain":  null,
+                                           "confidence":  0.9620000000000001,
+                                           "reasoning":  "Slot P: score=96.2, momentum=COLD(-5), z=1.35"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Gavin Williams starts at P: score 96/100, COLD momentum.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "1.1116497112332544",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.37054990374441815,
+                                                                  "narrative":  "K/9 Z-score +1.11 (STRONG); projects 48 K ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "0.6977836755274904",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.23259455850916347,
+                                                                  "narrative":  "WHIP Z-score +0.70 (STRONG); projects 0.86 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.661764804354152",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.22058826811805066,
+                                                                  "narrative":  "ERA Z-score +0.66 (STRONG); projects 2.11 ERA ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (2 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=2.6)",
+                                              "track_record_narrative":  "Acceptable track record (MAE=4.29 over 2 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  183,
+                                           "player_name":  "Ildemaro Vargas",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "lineup",
+                                           "target_slot":  "2B",
+                                           "drop_player_id":  null,
+                                           "drop_player_name":  null,
+                                           "lineup_score":  8.218,
+                                           "value_gain":  null,
+                                           "confidence":  0.953,
+                                           "reasoning":  "Slot 2B: score=95.3, momentum=STABLE(+0), z=1.29"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Ildemaro Vargas starts at 2B: score 95/100, STABLE momentum.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Power (HR Z-score)",
+                                                                  "value":  "2.7540971360265565",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.9180323786755188,
+                                                                  "narrative":  "Projects 56.9 HR ROS; Z-score +2.75 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Run production (RBI Z-score)",
+                                                                  "value":  "2.6311334166314766",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.8770444722104922,
+                                                                  "narrative":  "Projects 161.6 RBI ROS; Z-score +2.63 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Batting average (AVG Z-score)",
+                                                                  "value":  "1.0154757642327354",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.33849192141091183,
+                                                                  "narrative":  "Batting avg projection .326; Z-score +1.02 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Net basestealing (NSB Z-score)",
+                                                                  "value":  "-0.6293790917094939",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.2097930305698313,
+                                                                  "narrative":  "Projects 0.0 SB ROS; NSB Z-score -0.63 (WEAK)"
+                                                              },
+                                                              {
+                                                                  "name":  "On-base ability (OBP Z-score)",
+                                                                  "value":  "0.13227926490312397",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.044093088301041326,
+                                                                  "narrative":  "OBP Z-score +0.13 (AVERAGE)"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Moderate confidence (10 games)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=32.5)",
+                                              "track_record_narrative":  "Strong track record (MAE=0.14 over 11 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  4624,
+                                           "player_name":  "Michael Soroka",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "lineup",
+                                           "target_slot":  "SP",
+                                           "drop_player_id":  null,
+                                           "drop_player_name":  null,
+                                           "lineup_score":  7.225,
+                                           "value_gain":  null,
+                                           "confidence":  0.919,
+                                           "reasoning":  "Slot SP: score=91.9, momentum=STABLE(+0), z=0.97"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Michael Soroka starts at SP: score 92/100, STABLE momentum.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "0.6416403853306364",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.21388012844354545,
+                                                                  "narrative":  "WHIP Z-score +0.64 (STRONG); projects 0.91 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "0.6219781725142396",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.20732605750474653,
+                                                                  "narrative":  "K/9 Z-score +0.62 (STRONG); projects 42 K ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.2036956308095548",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.06789854360318494,
+                                                                  "narrative":  "ERA Z-score +0.20 (AVERAGE); projects 3.91 ERA ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (2 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=2.6)",
+                                              "track_record_narrative":  "Acceptable track record (MAE=4.60 over 2 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  6274,
+                                           "player_name":  "Will Warren",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  555,
+                                           "drop_player_name":  "Garrett Crochet",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.4753,
+                                           "confidence":  0.9138,
+                                           "reasoning":  "Add Will Warren: value_gain=+1.475, score=98.4, momentum=HOT; drop 555: value=0.741"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Will Warren (drop Garrett Crochet): +1.48 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "1.8185717981711973",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.6061905993903991,
+                                                                  "narrative":  "K/9 Z-score +1.82 (ELITE); projects 53 K ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "0.7654038498001046",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.25513461660003484,
+                                                                  "narrative":  "WHIP Z-score +0.77 (STRONG); projects 0.84 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.731872764893089",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.24395758829769632,
+                                                                  "narrative":  "ERA Z-score +0.73 (STRONG); projects 1.81 ERA ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (2 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=2.8)",
+                                              "track_record_narrative":  "Poor track record (MAE=5.03 over 2 games) -- use with caution"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  356,
+                                           "player_name":  "Spencer Arrighetti",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "lineup",
+                                           "target_slot":  "SP",
+                                           "drop_player_id":  null,
+                                           "drop_player_name":  null,
+                                           "lineup_score":  7.8676,
+                                           "value_gain":  null,
+                                           "confidence":  0.9059999999999999,
+                                           "reasoning":  "Slot SP: score=90.6, momentum=HOT(+5), z=0.89"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Spencer Arrighetti starts at SP: score 91/100, HOT momentum.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "0.6699905791641496",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.22333019305471655,
+                                                                  "narrative":  "K/9 Z-score +0.67 (STRONG); projects 36 K ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.5416100378458353",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.18053667928194508,
+                                                                  "narrative":  "ERA Z-score +0.54 (STRONG); projects 2.54 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "-0.15560647017734203",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.05186882339244734,
+                                                                  "narrative":  "WHIP Z-score -0.16 (AVERAGE); projects 1.39 WHIP ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (2 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=1.9)",
+                                              "track_record_narrative":  "Acceptable track record (MAE=4.24 over 2 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  966,
+                                           "player_name":  "Seiya Suzuki",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "lineup",
+                                           "target_slot":  "Util",
+                                           "drop_player_id":  null,
+                                           "drop_player_name":  null,
+                                           "lineup_score":  7.5598,
+                                           "value_gain":  null,
+                                           "confidence":  0.853,
+                                           "reasoning":  "Slot Util: score=85.3, momentum=STABLE(+0), z=0.76"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Seiya Suzuki starts at Util: score 85/100, STABLE momentum.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Power (HR Z-score)",
+                                                                  "value":  "1.5627215100742573",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.5209071700247524,
+                                                                  "narrative":  "Projects 32.5 HR ROS; Z-score +1.56 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Run production (RBI Z-score)",
+                                                                  "value":  "1.2227199016924195",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.4075733005641398,
+                                                                  "narrative":  "Projects 88.4 RBI ROS; Z-score +1.22 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "On-base ability (OBP Z-score)",
+                                                                  "value":  "0.9035698476050605",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.30118994920168685,
+                                                                  "narrative":  "OBP Z-score +0.90 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Batting average (AVG Z-score)",
+                                                                  "value":  "0.698008179284545",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.23266939309484833,
+                                                                  "narrative":  "Batting avg projection .299; Z-score +0.70 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Net basestealing (NSB Z-score)",
+                                                                  "value":  "-0.6293790917094939",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.2097930305698313,
+                                                                  "narrative":  "Projects 0.0 SB ROS; NSB Z-score -0.63 (WEAK)"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "High confidence (12 games, strong data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=18.4)",
+                                              "track_record_narrative":  "Strong track record (MAE=0.42 over 12 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  539,
+                                           "player_name":  "Jordan Walker",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "lineup",
+                                           "target_slot":  "BN",
+                                           "drop_player_id":  null,
+                                           "drop_player_name":  null,
+                                           "lineup_score":  5.8132,
+                                           "value_gain":  null,
+                                           "confidence":  0.848,
+                                           "reasoning":  "Bench stash: score=84.8, momentum=COLLAPSING(-10), z=0.74"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Jordan Walker starts at BN: score 85/100, COLLAPSING momentum.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Net basestealing (NSB Z-score)",
+                                                                  "value":  "2.2573210072528904",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.7524403357509635,
+                                                                  "narrative":  "Projects 30.1 SB ROS; NSB Z-score +2.26 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Power (HR Z-score)",
+                                                                  "value":  "1.3813779862274767",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.46045932874249224,
+                                                                  "narrative":  "Projects 31.5 HR ROS; Z-score +1.38 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Batting average (AVG Z-score)",
+                                                                  "value":  "0.3594150478991615",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.11980501596638717,
+                                                                  "narrative":  "Batting avg projection .271; Z-score +0.36 (AVERAGE)"
+                                                              },
+                                                              {
+                                                                  "name":  "On-base ability (OBP Z-score)",
+                                                                  "value":  "0.26074157668558573",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.08691385889519525,
+                                                                  "narrative":  "OBP Z-score +0.26 (AVERAGE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Run production (RBI Z-score)",
+                                                                  "value":  "-0.024210302641096304",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.008070100880365435,
+                                                                  "narrative":  "Projects 45.0 RBI ROS; Z-score -0.02 (AVERAGE)"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Moderate confidence (11 games)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=18.7)",
+                                              "track_record_narrative":  "Strong track record (MAE=0.34 over 11 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  159,
+                                           "player_name":  "Casey Mize",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  555,
+                                           "drop_player_name":  "Garrett Crochet",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.5218,
+                                           "confidence":  0.8451,
+                                           "reasoning":  "Add Casey Mize: value_gain=+1.522, score=99.3, momentum=STABLE; drop 555: value=0.741"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Casey Mize (drop Garrett Crochet): +1.52 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.9444235573961772",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.3148078524653924,
+                                                                  "narrative":  "ERA Z-score +0.94 (STRONG); projects 0.97 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "0.6310452648989784",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.2103484216329928,
+                                                                  "narrative":  "WHIP Z-score +0.63 (STRONG); projects 0.89 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "0.5435364539028084",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.1811788179676028,
+                                                                  "narrative":  "K/9 Z-score +0.54 (STRONG); projects 39 K ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (3 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=3.4)",
+                                              "track_record_narrative":  "Poor track record (MAE=5.93 over 3 games) -- use with caution"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  928,
+                                           "player_name":  "Landen Roupp",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  555,
+                                           "drop_player_name":  "Garrett Crochet",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.5021,
+                                           "confidence":  0.8437,
+                                           "reasoning":  "Add Landen Roupp: value_gain=+1.502, score=99.1, momentum=STABLE; drop 555: value=0.741"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Landen Roupp (drop Garrett Crochet): +1.50 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.919427221918159",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.3064757406393863,
+                                                                  "narrative":  "ERA Z-score +0.92 (STRONG); projects 1.09 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "0.5795431036661874",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.19318103455539581,
+                                                                  "narrative":  "WHIP Z-score +0.58 (STRONG); projects 0.94 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "0.555481283436265",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.18516042781208833,
+                                                                  "narrative":  "K/9 Z-score +0.56 (STRONG); projects 35 K ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (3 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=2.6)",
+                                              "track_record_narrative":  "Poor track record (MAE=5.23 over 3 games) -- use with caution"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  1035,
+                                           "player_name":  "Seth Lugo",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  555,
+                                           "drop_player_name":  "Garrett Crochet",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.4674,
+                                           "confidence":  0.8423,
+                                           "reasoning":  "Add Seth Lugo: value_gain=+1.467, score=98.9, momentum=STABLE; drop 555: value=0.741"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Seth Lugo (drop Garrett Crochet): +1.47 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "1.0469279187765657",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.3489759729255219,
+                                                                  "narrative":  "ERA Z-score +1.05 (STRONG); projects 0.57 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "0.910844281789674",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.303614760596558,
+                                                                  "narrative":  "WHIP Z-score +0.91 (STRONG); projects 0.73 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "0.44740924537209215",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.14913641512403072,
+                                                                  "narrative":  "K/9 Z-score +0.45 (AVERAGE); projects 42 K ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (2 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=4.3)",
+                                              "track_record_narrative":  "Poor track record (MAE=5.03 over 3 games) -- use with caution"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  5,
+                                           "player_name":  "Geraldo Perdomo",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "lineup",
+                                           "target_slot":  "SS",
+                                           "drop_player_id":  null,
+                                           "drop_player_name":  null,
+                                           "lineup_score":  6.7034,
+                                           "value_gain":  null,
+                                           "confidence":  0.838,
+                                           "reasoning":  "Slot SS: score=83.8, momentum=STABLE(+0), z=0.72"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Geraldo Perdomo starts at SS: score 84/100, STABLE momentum.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "On-base ability (OBP Z-score)",
+                                                                  "value":  "1.5517094242971037",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.5172364747657012,
+                                                                  "narrative":  "OBP Z-score +1.55 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Batting average (AVG Z-score)",
+                                                                  "value":  "1.3686421605795618",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.4562140535265206,
+                                                                  "narrative":  "Batting avg projection .355; Z-score +1.37 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Net basestealing (NSB Z-score)",
+                                                                  "value":  "1.2857167329463104",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.4285722443154368,
+                                                                  "narrative":  "Projects 22.0 SB ROS; NSB Z-score +1.29 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Power (HR Z-score)",
+                                                                  "value":  "-0.7604609605327272",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.25348698684424237,
+                                                                  "narrative":  "Projects 0.0 HR ROS; Z-score -0.76 (WEAK)"
+                                                              },
+                                                              {
+                                                                  "name":  "Run production (RBI Z-score)",
+                                                                  "value":  "-0.3696870387724491",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.12322901292414969,
+                                                                  "narrative":  "Projects 35.1 RBI ROS; Z-score -0.37 (AVERAGE)"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Moderate confidence (10 games)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=17.0)",
+                                              "track_record_narrative":  "Strong track record (MAE=0.27 over 11 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  1635,
+                                           "player_name":  "Pete Alonso",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "lineup",
+                                           "target_slot":  "BN",
+                                           "drop_player_id":  null,
+                                           "drop_player_name":  null,
+                                           "lineup_score":  7.2705,
+                                           "value_gain":  null,
+                                           "confidence":  0.836,
+                                           "reasoning":  "Bench stash: score=83.6, momentum=STABLE(+0), z=0.70"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Pete Alonso starts at BN: score 84/100, STABLE momentum.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Power (HR Z-score)",
+                                                                  "value":  "1.1817784504362958",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.3939261501454319,
+                                                                  "narrative":  "Projects 23.2 HR ROS; Z-score +1.18 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Run production (RBI Z-score)",
+                                                                  "value":  "1.172081866435295",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.39069395547843166,
+                                                                  "narrative":  "Projects 73.6 RBI ROS; Z-score +1.17 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "On-base ability (OBP Z-score)",
+                                                                  "value":  "0.464142132723894",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.154714044241298,
+                                                                  "narrative":  "OBP Z-score +0.46 (AVERAGE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Net basestealing (NSB Z-score)",
+                                                                  "value":  "0.32691054478092063",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.1089701815936402,
+                                                                  "narrative":  "Projects 8.1 SB ROS; NSB Z-score +0.33 (AVERAGE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Batting average (AVG Z-score)",
+                                                                  "value":  "0.11873908291117741",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.0395796943037258,
+                                                                  "narrative":  "Batting avg projection .251; Z-score +0.12 (AVERAGE)"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "High confidence (13 games, strong data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=15.9)",
+                                              "track_record_narrative":  "Strong track record (MAE=0.12 over 13 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  1305539,
+                                           "player_name":  "Daylen Lile",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  1106,
+                                           "drop_player_name":  "Juan Soto",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.5976,
+                                           "confidence":  0.8136,
+                                           "reasoning":  "Add Daylen Lile: value_gain=+1.598, score=94.8, momentum=STABLE; drop 1106: value=0.572"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Daylen Lile (drop Juan Soto): +1.60 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Power (HR Z-score)",
+                                                                  "value":  "2.427994916605542",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.809331638868514,
+                                                                  "narrative":  "Projects 41.9 HR ROS; Z-score +2.43 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Run production (RBI Z-score)",
+                                                                  "value":  "1.7228821482251173",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.5742940494083725,
+                                                                  "narrative":  "Projects 100.3 RBI ROS; Z-score +1.72 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Batting average (AVG Z-score)",
+                                                                  "value":  "0.6752476177387958",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.22508253924626528,
+                                                                  "narrative":  "Batting avg projection .297; Z-score +0.68 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "On-base ability (OBP Z-score)",
+                                                                  "value":  "0.5201349274438732",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.17337830914795774,
+                                                                  "narrative":  "OBP Z-score +0.52 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Net basestealing (NSB Z-score)",
+                                                                  "value":  "0.2790960629563999",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.09303202098546663,
+                                                                  "narrative":  "Projects 8.5 SB ROS; NSB Z-score +0.28 (AVERAGE)"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "High confidence (12 games, strong data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=25.0)",
+                                              "track_record_narrative":  "Strong track record (MAE=0.39 over 12 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  770,
+                                           "player_name":  "Mickey Moniak",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  1106,
+                                           "drop_player_name":  "Juan Soto",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.7011,
+                                           "confidence":  0.801,
+                                           "reasoning":  "Add Mickey Moniak: value_gain=+1.701, score=93.0, momentum=STABLE; drop 1106: value=0.572"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Mickey Moniak (drop Juan Soto): +1.70 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Power (HR Z-score)",
+                                                                  "value":  "1.6163038487233115",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.5387679495744372,
+                                                                  "narrative":  "Projects 35.0 HR ROS; Z-score +1.62 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Run production (RBI Z-score)",
+                                                                  "value":  "1.470646764914764",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.49021558830492135,
+                                                                  "narrative":  "Projects 102.8 RBI ROS; Z-score +1.47 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Batting average (AVG Z-score)",
+                                                                  "value":  "1.1642222098173427",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.38807406993911425,
+                                                                  "narrative":  "Batting avg projection .338; Z-score +1.16 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Net basestealing (NSB Z-score)",
+                                                                  "value":  "0.6715326020344611",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.2238442006781537,
+                                                                  "narrative":  "Projects 13.6 SB ROS; NSB Z-score +0.67 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "On-base ability (OBP Z-score)",
+                                                                  "value":  "0.6209714876614838",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.20699049588716126,
+                                                                  "narrative":  "OBP Z-score +0.62 (STRONG)"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Moderate confidence (11 games)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=24.5)",
+                                              "track_record_narrative":  "Strong track record (MAE=0.20 over 12 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  1039,
+                                           "player_name":  "Daniel Lynch IV",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  2116,
+                                           "drop_player_name":  "Caleb Thielbar",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.2041,
+                                           "confidence":  0.7478,
+                                           "reasoning":  "Add Daniel Lynch IV: value_gain=+1.204, score=85.4, momentum=STABLE; drop 2116: value=0.811"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Daniel Lynch IV (drop Caleb Thielbar): +1.20 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "2.0458433315861027",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.6819477771953676,
+                                                                  "narrative":  "WHIP Z-score +2.05 (ELITE); projects 0.00 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "1.324834273576016",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.44161142452533864,
+                                                                  "narrative":  "K/9 Z-score +1.32 (STRONG); projects 18 K ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "1.190484515682803",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.39682817189426767,
+                                                                  "narrative":  "ERA Z-score +1.19 (STRONG); projects 0.00 ERA ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (4 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=0.7)",
+                                              "track_record_narrative":  "Strong track record (MAE=1.27 over 4 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  219,
+                                           "player_name":  "John King",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  2116,
+                                           "drop_player_name":  "Caleb Thielbar",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.1248,
+                                           "confidence":  0.731,
+                                           "reasoning":  "Add John King: value_gain=+1.125, score=83.0, momentum=STABLE; drop 2116: value=0.811"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add John King (drop Caleb Thielbar): +1.12 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "1.1489470088088736",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.3829823362696245,
+                                                                  "narrative":  "WHIP Z-score +1.15 (STRONG); projects 0.58 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "1.0334701994351256",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.3444900664783752,
+                                                                  "narrative":  "K/9 Z-score +1.03 (STRONG); projects 19 K ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.8638626307310392",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.28795421024367973,
+                                                                  "narrative":  "ERA Z-score +0.86 (STRONG); projects 1.31 ERA ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (6 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=0.5)",
+                                              "track_record_narrative":  "Strong track record (MAE=1.66 over 6 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  424,
+                                           "player_name":  "Brandon Nimmo",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "lineup",
+                                           "target_slot":  "BN",
+                                           "drop_player_id":  null,
+                                           "drop_player_name":  null,
+                                           "lineup_score":  5.9717,
+                                           "value_gain":  null,
+                                           "confidence":  0.7290000000000001,
+                                           "reasoning":  "Bench stash: score=72.9, momentum=COLD(-5), z=0.38"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Brandon Nimmo starts at BN: score 73/100, COLD momentum.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Power (HR Z-score)",
+                                                                  "value":  "1.516711920186478",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.5055706400621593,
+                                                                  "narrative":  "Projects 30.1 HR ROS; Z-score +1.52 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Run production (RBI Z-score)",
+                                                                  "value":  "0.8159922864412658",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.27199742881375527,
+                                                                  "narrative":  "Projects 69.5 RBI ROS; Z-score +0.82 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Net basestealing (NSB Z-score)",
+                                                                  "value":  "-0.6293790917094939",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.2097930305698313,
+                                                                  "narrative":  "Projects 0.0 SB ROS; NSB Z-score -0.63 (WEAK)"
+                                                              },
+                                                              {
+                                                                  "name":  "On-base ability (OBP Z-score)",
+                                                                  "value":  "-0.23361618102921666",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.07787206034307222,
+                                                                  "narrative":  "OBP Z-score -0.23 (AVERAGE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Batting average (AVG Z-score)",
+                                                                  "value":  "-0.04844718704398744",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.016149062347995815,
+                                                                  "narrative":  "Batting avg projection .237; Z-score -0.05 (AVERAGE)"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "High confidence (12 games, strong data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=14.6)",
+                                              "track_record_narrative":  "Strong track record (MAE=0.35 over 12 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  4667192,
+                                           "player_name":  "Anthony Nunez",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  2116,
+                                           "drop_player_name":  "Caleb Thielbar",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.0982,
+                                           "confidence":  0.7226,
+                                           "reasoning":  "Add Anthony Nunez: value_gain=+1.098, score=81.8, momentum=STABLE; drop 2116: value=0.811"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Anthony Nunez (drop Caleb Thielbar): +1.10 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "1.0624632458712033",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.3541544152904011,
+                                                                  "narrative":  "K/9 Z-score +1.06 (STRONG); projects 19 K ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "1.022859720738834",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.340953240246278,
+                                                                  "narrative":  "WHIP Z-score +1.02 (STRONG); projects 0.65 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.8259074030939461",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.275302467697982,
+                                                                  "narrative":  "ERA Z-score +0.83 (STRONG); projects 1.44 ERA ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (6 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=0.5)",
+                                              "track_record_narrative":  "Strong track record (MAE=1.58 over 6 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  351,
+                                           "player_name":  "Randy Vasquez",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  555,
+                                           "drop_player_name":  "Garrett Crochet",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.1935,
+                                           "confidence":  0.7218,
+                                           "reasoning":  "Add Randy VÃ¡squez: value_gain=+1.193, score=92.4, momentum=COLD; drop 555: value=0.741"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Randy Vasquez (drop Garrett Crochet): +1.19 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "0.5406540335923461",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.1802180111974487,
+                                                                  "narrative":  "WHIP Z-score +0.54 (STRONG); projects 0.96 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.5232389124550579",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.17441297081835264,
+                                                                  "narrative":  "ERA Z-score +0.52 (STRONG); projects 2.66 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "0.2678314137517563",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.0892771379172521,
+                                                                  "narrative":  "K/9 Z-score +0.27 (AVERAGE); projects 32 K ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (2 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=2.5)",
+                                              "track_record_narrative":  "Poor track record (MAE=5.78 over 3 games) -- use with caution"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  214,
+                                           "player_name":  "Vinnie Pasquantino",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "lineup",
+                                           "target_slot":  "BN",
+                                           "drop_player_id":  null,
+                                           "drop_player_name":  null,
+                                           "lineup_score":  6.6748,
+                                           "value_gain":  null,
+                                           "confidence":  0.711,
+                                           "reasoning":  "Bench stash: score=71.1, momentum=STABLE(+0), z=0.35"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Vinnie Pasquantino starts at BN: score 71/100, STABLE momentum.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Power (HR Z-score)",
+                                                                  "value":  "2.22854897550941",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.7428496585031367,
+                                                                  "narrative":  "Projects 38.0 HR ROS; Z-score +2.23 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Run production (RBI Z-score)",
+                                                                  "value":  "1.266601692898568",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.42220056429952263,
+                                                                  "narrative":  "Projects 81.8 RBI ROS; Z-score +1.27 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Batting average (AVG Z-score)",
+                                                                  "value":  "-0.9999747941442544",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.3333249313814181,
+                                                                  "narrative":  "Batting avg projection .157; Z-score -1.00 (WEAK)"
+                                                              },
+                                                              {
+                                                                  "name":  "Net basestealing (NSB Z-score)",
+                                                                  "value":  "-0.6293790917094939",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.2097930305698313,
+                                                                  "narrative":  "Projects 0.0 SB ROS; NSB Z-score -0.63 (WEAK)"
+                                                              },
+                                                              {
+                                                                  "name":  "On-base ability (OBP Z-score)",
+                                                                  "value":  "-0.6286445942125763",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.20954819807085878,
+                                                                  "narrative":  "OBP Z-score -0.63 (WEAK)"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "High confidence (12 games, strong data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=15.3)",
+                                              "track_record_narrative":  "Strong track record (MAE=0.33 over 13 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  1046,
+                                           "player_name":  "Aaron Ashby",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  2116,
+                                           "drop_player_name":  "Caleb Thielbar",
+                                           "lineup_score":  null,
+                                           "value_gain":  0.7944,
+                                           "confidence":  0.7086,
+                                           "reasoning":  "Add Aaron Ashby: value_gain=+0.794, score=79.8, momentum=STABLE; drop 2116: value=0.811"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Aaron Ashby (drop Caleb Thielbar): +0.79 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "2.5678719621328794",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.8559573207109598,
+                                                                  "narrative":  "K/9 Z-score +2.57 (ELITE); projects 27 K ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "-0.6916748914712054",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.23055829715706846,
+                                                                  "narrative":  "WHIP Z-score -0.69 (WEAK); projects 1.76 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.504428073626373",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.168142691208791,
+                                                                  "narrative":  "ERA Z-score +0.50 (STRONG); projects 2.76 ERA ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (5 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=0.5)",
+                                              "track_record_narrative":  "Acceptable track record (MAE=2.42 over 5 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  152,
+                                           "player_name":  "Huascar Brazoban",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  555,
+                                           "drop_player_name":  "Garrett Crochet",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.0332,
+                                           "confidence":  0.7072,
+                                           "reasoning":  "Add Huascar BrazobÃ¡n: value_gain=+1.033, score=79.6, momentum=STABLE; drop 555: value=0.741"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Huascar Brazoban (drop Garrett Crochet): +1.03 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "1.5071045866218982",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.5023681955406327,
+                                                                  "narrative":  "K/9 Z-score +1.51 (ELITE); projects 23 K ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "1.190484515682803",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.39682817189426767,
+                                                                  "narrative":  "ERA Z-score +1.19 (STRONG); projects 0.00 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "0.13621817671106828",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.04540605890368943,
+                                                                  "narrative":  "WHIP Z-score +0.14 (AVERAGE); projects 1.23 WHIP ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (4 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=0.5)",
+                                              "track_record_narrative":  "Strong track record (MAE=1.57 over 4 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  1139596,
+                                           "player_name":  "Dalton Rushing",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  1106,
+                                           "drop_player_name":  "Juan Soto",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.4285,
+                                           "confidence":  0.705,
+                                           "reasoning":  "Add Dalton Rushing: value_gain=+1.429, score=90.0, momentum=COLD; drop 1106: value=0.572"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Dalton Rushing (drop Juan Soto): +1.43 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Power (HR Z-score)",
+                                                                  "value":  "3.0",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  1.0,
+                                                                  "narrative":  "Projects 105.4 HR ROS; Z-score +3.00 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Run production (RBI Z-score)",
+                                                                  "value":  "2.075481168133402",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.6918270560444674,
+                                                                  "narrative":  "Projects 227.2 RBI ROS; Z-score +2.08 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Net basestealing (NSB Z-score)",
+                                                                  "value":  "-0.6293790917094939",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.2097930305698313,
+                                                                  "narrative":  "Projects 0.0 SB ROS; NSB Z-score -0.63 (WEAK)"
+                                                              },
+                                                              {
+                                                                  "name":  "Batting average (AVG Z-score)",
+                                                                  "value":  "0.6253271432660192",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.20844238108867308,
+                                                                  "narrative":  "Batting avg projection .294; Z-score +0.63 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "On-base ability (OBP Z-score)",
+                                                                  "value":  "0.21102117658711744",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.07034039219570581,
+                                                                  "narrative":  "OBP Z-score +0.21 (AVERAGE)"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (6 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=40.7)",
+                                              "track_record_narrative":  "Strong track record (MAE=0.06 over 6 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  618,
+                                           "player_name":  "Davis Martin",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  555,
+                                           "drop_player_name":  "Garrett Crochet",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.0312,
+                                           "confidence":  0.6917,
+                                           "reasoning":  "Add Davis Martin: value_gain=+1.031, score=88.1, momentum=COLD; drop 555: value=0.741"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Davis Martin (drop Garrett Crochet): +1.03 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "-0.7781477021310479",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.259382567377016,
+                                                                  "narrative":  "K/9 Z-score -0.78 (WEAK); projects 22 K ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "0.7516199171502475",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.2505399723834158,
+                                                                  "narrative":  "WHIP Z-score +0.75 (STRONG); projects 0.83 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.7357335541805264",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.24524451806017547,
+                                                                  "narrative":  "ERA Z-score +0.74 (STRONG); projects 1.83 ERA ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (2 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=4.0)",
+                                              "track_record_narrative":  "Acceptable track record (MAE=2.16 over 2 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  2234,
+                                           "player_name":  "Dominic Smith",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  1635,
+                                           "drop_player_name":  "Pete Alonso",
+                                           "lineup_score":  null,
+                                           "value_gain":  0.3298,
+                                           "confidence":  0.6673,
+                                           "reasoning":  "Add Dominic Smith: value_gain=+0.330, score=73.9, momentum=STABLE; drop 1635: value=1.670"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Dominic Smith (drop Pete Alonso): +0.33 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Run production (RBI Z-score)",
+                                                                  "value":  "0.8944723386638935",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.29815744622129786,
+                                                                  "narrative":  "Projects 106.0 RBI ROS; Z-score +0.89 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Power (HR Z-score)",
+                                                                  "value":  "0.8747233839971795",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.2915744613323932,
+                                                                  "narrative":  "Projects 31.7 HR ROS; Z-score +0.87 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Batting average (AVG Z-score)",
+                                                                  "value":  "0.8389915452678604",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.2796638484226201,
+                                                                  "narrative":  "Batting avg projection .311; Z-score +0.84 (STRONG)"
+                                                              },
+                                                              {
+                                                                  "name":  "Net basestealing (NSB Z-score)",
+                                                                  "value":  "-0.6293790917094939",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.2097930305698313,
+                                                                  "narrative":  "Projects 0.0 SB ROS; NSB Z-score -0.63 (WEAK)"
+                                                              },
+                                                              {
+                                                                  "name":  "On-base ability (OBP Z-score)",
+                                                                  "value":  "-0.023026981921741657",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.007675660640580552,
+                                                                  "narrative":  "OBP Z-score -0.02 (AVERAGE)"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Moderate confidence (9 games)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=20.0)",
+                                              "track_record_narrative":  "Strong track record (MAE=1.10 over 9 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  1028,
+                                           "player_name":  "Byron Buxton",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "lineup",
+                                           "target_slot":  "BN",
+                                           "drop_player_id":  null,
+                                           "drop_player_name":  null,
+                                           "lineup_score":  6.2438,
+                                           "value_gain":  null,
+                                           "confidence":  0.652,
+                                           "reasoning":  "Bench stash: score=65.2, momentum=STABLE(+0), z=0.22"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Byron Buxton starts at BN: score 65/100, STABLE momentum.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Power (HR Z-score)",
+                                                                  "value":  "2.3135852950909803",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.7711950983636601,
+                                                                  "narrative":  "Projects 48.5 HR ROS; Z-score +2.31 (ELITE)"
+                                                              },
+                                                              {
+                                                                  "name":  "On-base ability (OBP Z-score)",
+                                                                  "value":  "-0.7761612721540506",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.2587204240513502,
+                                                                  "narrative":  "OBP Z-score -0.78 (WEAK)"
+                                                              },
+                                                              {
+                                                                  "name":  "Net basestealing (NSB Z-score)",
+                                                                  "value":  "-0.6293790917094939",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.2097930305698313,
+                                                                  "narrative":  "Projects 0.0 SB ROS; NSB Z-score -0.63 (WEAK)"
+                                                              },
+                                                              {
+                                                                  "name":  "Batting average (AVG Z-score)",
+                                                                  "value":  "-0.49124381020309305",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.16374793673436436,
+                                                                  "narrative":  "Batting avg projection .200; Z-score -0.49 (AVERAGE)"
+                                                              },
+                                                              {
+                                                                  "name":  "Run production (RBI Z-score)",
+                                                                  "value":  "0.4132739723790755",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.13775799079302517,
+                                                                  "narrative":  "Projects 66.4 RBI ROS; Z-score +0.41 (AVERAGE)"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Moderate confidence (10 games)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=16.0)",
+                                              "track_record_narrative":  "Strong track record (MAE=0.51 over 11 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  723,
+                                           "player_name":  "Caleb Kilian",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  2116,
+                                           "drop_player_name":  "Caleb Thielbar",
+                                           "lineup_score":  null,
+                                           "value_gain":  0.965,
+                                           "confidence":  0.6239,
+                                           "reasoning":  "Add Caleb Kilian: value_gain=+0.965, score=67.7, momentum=STABLE; drop 2116: value=0.811"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Caleb Kilian (drop Caleb Thielbar): +0.96 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.9018594842421341",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.30061982808071136,
+                                                                  "narrative":  "ERA Z-score +0.90 (STRONG); projects 1.15 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "0.7417026579735541",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.24723421932451803,
+                                                                  "narrative":  "WHIP Z-score +0.74 (STRONG); projects 0.84 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "0.32513447895142544",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.10837815965047515,
+                                                                  "narrative":  "K/9 Z-score +0.33 (AVERAGE); projects 16 K ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (5 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=0.2)",
+                                              "track_record_narrative":  "Strong track record (MAE=1.31 over 5 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  1045,
+                                           "player_name":  "Tyler Kinley",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  2116,
+                                           "drop_player_name":  "Caleb Thielbar",
+                                           "lineup_score":  null,
+                                           "value_gain":  0.9754,
+                                           "confidence":  0.6113,
+                                           "reasoning":  "Add Tyler Kinley: value_gain=+0.975, score=65.9, momentum=STABLE; drop 2116: value=0.811"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Tyler Kinley (drop Caleb Thielbar): +0.98 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.9260233838070795",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.3086744612690265,
+                                                                  "narrative":  "ERA Z-score +0.93 (STRONG); projects 1.05 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "0.7645851184816987",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.25486170616056625,
+                                                                  "narrative":  "WHIP Z-score +0.76 (STRONG); projects 0.83 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "0.152440308377869",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.05081343612595634,
+                                                                  "narrative":  "K/9 Z-score +0.15 (AVERAGE); projects 12 K ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Moderate confidence (7 games)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=0.2)",
+                                              "track_record_narrative":  "Strong track record (MAE=0.98 over 7 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  695,
+                                           "player_name":  "Tony Santillan",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  2116,
+                                           "drop_player_name":  "Caleb Thielbar",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.0562,
+                                           "confidence":  0.5987,
+                                           "reasoning":  "Add Tony Santillan: value_gain=+1.056, score=64.1, momentum=STABLE; drop 2116: value=0.811"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Tony Santillan (drop Caleb Thielbar): +1.06 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "1.7005793418610278",
+                                                                  "label":  "ELITE",
+                                                                  "weight":  0.5668597806203426,
+                                                                  "narrative":  "WHIP Z-score +1.70 (ELITE); projects 0.22 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "1.190484515682803",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.39682817189426767,
+                                                                  "narrative":  "ERA Z-score +1.19 (STRONG); projects 0.00 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "-0.4948051927562776",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.16493506425209253,
+                                                                  "narrative":  "K/9 Z-score -0.49 (AVERAGE); projects 8 K ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (5 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=0.2)",
+                                              "track_record_narrative":  "Strong track record (MAE=0.63 over 5 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  5319,
+                                           "player_name":  "Rico Garcia",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  2116,
+                                           "drop_player_name":  "Caleb Thielbar",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.0006,
+                                           "confidence":  0.591,
+                                           "reasoning":  "Add Rico Garcia: value_gain=+1.001, score=63.0, momentum=STABLE; drop 2116: value=0.811"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Rico Garcia (drop Caleb Thielbar): +1.00 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "1.4338393012815447",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.4779464337605149,
+                                                                  "narrative":  "WHIP Z-score +1.43 (STRONG); projects 0.40 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.7354972007964224",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.24516573359880747,
+                                                                  "narrative":  "ERA Z-score +0.74 (STRONG); projects 1.83 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "-0.2886631531122296",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.09622105103740987,
+                                                                  "narrative":  "K/9 Z-score -0.29 (AVERAGE); projects 10 K ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (6 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=0.2)",
+                                              "track_record_narrative":  "Strong track record (MAE=1.34 over 6 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  838,
+                                           "player_name":  "Tyler Alexander",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  555,
+                                           "drop_player_name":  "Garrett Crochet",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.0627,
+                                           "confidence":  0.5819,
+                                           "reasoning":  "Add Tyler Alexander: value_gain=+1.063, score=61.7, momentum=STABLE; drop 555: value=0.741"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Tyler Alexander (drop Garrett Crochet): +1.06 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "1.190484515682803",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.39682817189426767,
+                                                                  "narrative":  "ERA Z-score +1.19 (STRONG); projects 0.00 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "0.7246265795711954",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.24154219319039846,
+                                                                  "narrative":  "WHIP Z-score +0.72 (STRONG); projects 0.86 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "-0.3622878793126018",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.12076262643753394,
+                                                                  "narrative":  "K/9 Z-score -0.36 (AVERAGE); projects 12 K ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (6 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=0.1)",
+                                              "track_record_narrative":  "Strong track record (MAE=1.31 over 6 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  389,
+                                           "player_name":  "Tyler Phillips",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  2116,
+                                           "drop_player_name":  "Caleb Thielbar",
+                                           "lineup_score":  null,
+                                           "value_gain":  0.9041,
+                                           "confidence":  0.5741,
+                                           "reasoning":  "Add Tyler Phillips: value_gain=+0.904, score=71.3, momentum=COLD; drop 2116: value=0.811"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Tyler Phillips (drop Caleb Thielbar): +0.90 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "1.0082017707434499",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.3360672569144833,
+                                                                  "narrative":  "K/9 Z-score +1.01 (STRONG); projects 39 K ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.9245780873703191",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.3081926957901064,
+                                                                  "narrative":  "ERA Z-score +0.92 (STRONG); projects 1.06 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "-0.3256887452726165",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.10856291509087217,
+                                                                  "narrative":  "WHIP Z-score -0.33 (AVERAGE); projects 1.52 WHIP ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (3 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=0.3)",
+                                              "track_record_narrative":  "Acceptable track record (MAE=2.83 over 4 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  703,
+                                           "player_name":  "Dylan Lee",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  2116,
+                                           "drop_player_name":  "Caleb Thielbar",
+                                           "lineup_score":  null,
+                                           "value_gain":  1.0076,
+                                           "confidence":  0.5504,
+                                           "reasoning":  "Add Dylan Lee: value_gain=+1.008, score=57.2, momentum=STABLE; drop 2116: value=0.811"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Dylan Lee (drop Caleb Thielbar): +1.01 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "1.4566481764653538",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.48554939215511794,
+                                                                  "narrative":  "WHIP Z-score +1.46 (STRONG); projects 0.38 WHIP ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "1.190484515682803",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.39682817189426767,
+                                                                  "narrative":  "ERA Z-score +1.19 (STRONG); projects 0.00 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "-0.8093207930012278",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.2697735976670759,
+                                                                  "narrative":  "K/9 Z-score -0.81 (WEAK); projects 6 K ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (6 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=0.1)",
+                                              "track_record_narrative":  "Strong track record (MAE=1.06 over 6 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  2116,
+                                           "player_name":  "Caleb Thielbar",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "lineup",
+                                           "target_slot":  "RP",
+                                           "drop_player_id":  null,
+                                           "drop_player_name":  null,
+                                           "lineup_score":  4.629,
+                                           "value_gain":  null,
+                                           "confidence":  0.5,
+                                           "reasoning":  "Slot RP: score=50.0, momentum=STABLE(+0), z=-0.48"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Caleb Thielbar starts at RP: score 50/100, STABLE momentum.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Run production (RBI Z-score)",
+                                                                  "value":  "-1.1977175281778638",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.39923917605928794,
+                                                                  "narrative":  "Projects 0.0 RBI ROS; Z-score -1.20 (WEAK)"
+                                                              },
+                                                              {
+                                                                  "name":  "Power (HR Z-score)",
+                                                                  "value":  "-0.7604609605327272",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.25348698684424237,
+                                                                  "narrative":  "Projects 0.0 HR ROS; Z-score -0.76 (WEAK)"
+                                                              },
+                                                              {
+                                                                  "name":  "Net basestealing (NSB Z-score)",
+                                                                  "value":  "-0.6293790917094939",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.2097930305698313,
+                                                                  "narrative":  "Projects 0.0 SB ROS; NSB Z-score -0.63 (WEAK)"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (6 games, limited data)",
+                                              "risk_narrative":  "Elevated downside risk (P25=-1.1)",
+                                              "track_record_narrative":  "Strong track record (MAE=0.53 over 6 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  63,
+                                           "player_name":  "Antonio Senzatela",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  555,
+                                           "drop_player_name":  "Garrett Crochet",
+                                           "lineup_score":  null,
+                                           "value_gain":  0.9846,
+                                           "confidence":  0.4439,
+                                           "reasoning":  "Add Antonio Senzatela: value_gain=+0.985, score=52.7, momentum=COLD; drop 555: value=0.741"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Antonio Senzatela (drop Garrett Crochet): +0.98 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.9071866795962557",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.30239555986541855,
+                                                                  "narrative":  "ERA Z-score +0.91 (STRONG); projects 1.13 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "-0.8360998777311653",
+                                                                  "label":  "WEAK",
+                                                                  "weight":  0.27869995924372176,
+                                                                  "narrative":  "K/9 Z-score -0.84 (WEAK); projects 15 K ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "0.7574160433406589",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.25247201444688633,
+                                                                  "narrative":  "WHIP Z-score +0.76 (STRONG); projects 0.83 WHIP ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (4 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=-0.0)",
+                                              "track_record_narrative":  "Strong track record (MAE=1.51 over 4 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  425499,
+                                           "player_name":  "Grant Wolfram",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "waiver",
+                                           "target_slot":  null,
+                                           "drop_player_id":  2116,
+                                           "drop_player_name":  "Caleb Thielbar",
+                                           "lineup_score":  null,
+                                           "value_gain":  0.7485,
+                                           "confidence":  0.4075,
+                                           "reasoning":  "Add Grant Wolfram: value_gain=+0.748, score=47.5, momentum=COLD; drop 2116: value=0.811"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Add Grant Wolfram (drop Caleb Thielbar): +0.75 projected value gain.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "0.7612322481154324",
+                                                                  "label":  "STRONG",
+                                                                  "weight":  0.25374408270514415,
+                                                                  "narrative":  "ERA Z-score +0.76 (STRONG); projects 1.71 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "-0.031182791874353237",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.010394263958117746,
+                                                                  "narrative":  "K/9 Z-score -0.03 (AVERAGE); projects 9 K ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "0.012018234461309762",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.004006078153769921,
+                                                                  "narrative":  "WHIP Z-score +0.01 (AVERAGE); projects 1.30 WHIP ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Low confidence (6 games, limited data)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=0.0)",
+                                              "track_record_narrative":  "Strong track record (MAE=1.54 over 6 games)"
+                                          }
+                      },
+                      {
+                          "decision":  {
+                                           "bdl_player_id":  559,
+                                           "player_name":  "Enyel De Los Santos",
+                                           "as_of_date":  "2026-04-23",
+                                           "decision_type":  "lineup",
+                                           "target_slot":  "RP",
+                                           "drop_player_id":  null,
+                                           "drop_player_name":  null,
+                                           "lineup_score":  3.866,
+                                           "value_gain":  null,
+                                           "confidence":  0.386,
+                                           "reasoning":  "Slot RP: score=38.6, momentum=STABLE(+0), z=-0.18"
+                                       },
+                          "explanation":  {
+                                              "summary":  "Enyel De Los Santos starts at RP: score 39/100, STABLE momentum.",
+                                              "factors":  [
+                                                              {
+                                                                  "name":  "Run prevention (ERA Z-score)",
+                                                                  "value":  "-0.158541530541598",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.052847176847199334,
+                                                                  "narrative":  "ERA Z-score -0.16 (AVERAGE); projects 5.43 ERA ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Strikeout rate (K/9 Z-score)",
+                                                                  "value":  "-0.09482888414058722",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.03160962804686241,
+                                                                  "narrative":  "K/9 Z-score -0.09 (AVERAGE); projects 10 K ROS"
+                                                              },
+                                                              {
+                                                                  "name":  "Baserunner control (WHIP Z-score)",
+                                                                  "value":  "0.005898306827632554",
+                                                                  "label":  "AVERAGE",
+                                                                  "weight":  0.0019661022758775183,
+                                                                  "narrative":  "WHIP Z-score +0.01 (AVERAGE); projects 1.32 WHIP ROS"
+                                                              }
+                                                          ],
+                                              "confidence_narrative":  "Moderate confidence (7 games)",
+                                              "risk_narrative":  "Balanced risk/reward (P75=-0.1)",
+                                              "track_record_narrative":  "Acceptable track record (MAE=2.36 over 7 games)"
+                                          }
+                      }
+                  ],
+    "count":  38,
+    "as_of_date":  "2026-04-23",
+    "decision_type":  null
+}

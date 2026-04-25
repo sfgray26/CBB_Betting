@@ -1079,12 +1079,28 @@ class YahooFantasyClient:
                     teams_wrapper = inner_0.get("teams", {})
             
             if isinstance(teams_wrapper, dict):
-                # Check both "0" and "1" team keys
-                for team_key in ["0", "1"]:
-                    team = teams_wrapper.get(team_key, {})
-                    if team.get("team_key") == my_team_key:
+                # Check both "0" and "1" team keys. Yahoo wraps the team dict in a "team" key
+                # in some response shapes, so unwrap that if present.
+                for team_key_str in ["0", "1"]:
+                    raw_team = teams_wrapper.get(team_key_str, {})
+                    # Unwrap the intermediate "team" layer if present (see _nested_scoreboard fixture)
+                    if isinstance(raw_team, dict) and "team" in raw_team and "team_key" not in raw_team:
+                        team_contents = raw_team["team"]
+                        if isinstance(team_contents, list) and len(team_contents) > 0:
+                            # team_contents[0] is a list: [{team_key}, {name}, {team_id}]
+                            meta_list = team_contents[0] if isinstance(team_contents[0], list) else []
+                            if len(meta_list) > 0:
+                                first_meta = meta_list[0] if isinstance(meta_list[0], dict) else {}
+                                if isinstance(first_meta, dict) and "team_key" in first_meta:
+                                    if first_meta["team_key"] == my_team_key:
+                                        my_matchup = matchup
+                                        # Promote unwrapped structure so the stats extraction loop below can access it
+                                        teams_wrapper[team_key_str] = team_contents
+                                        if "teams" not in my_matchup:
+                                            my_matchup["teams"] = teams_wrapper
+                                        break
+                    elif isinstance(raw_team, dict) and raw_team.get("team_key") == my_team_key:
                         my_matchup = matchup
-                        # Ensure teams block is accessible at top level for extraction logic below
                         if "teams" not in my_matchup:
                             my_matchup["teams"] = teams_wrapper
                         break
@@ -1134,6 +1150,40 @@ class YahooFantasyClient:
         # Process both teams
         for team_key in ["0", "1"]:
             team = teams.get(team_key, {})
+
+            # Handle wrapped team structure: {"team": [[{team_key}, {name}, {team_id}], {team_stats}]}
+            # This occurs when the opponent team wasn't unwrapped during matchup finding.
+            if isinstance(team, dict) and "team" in team and "team_key" not in team:
+                team_contents = team["team"]
+                if isinstance(team_contents, list) and len(team_contents) >= 2:
+                    team_meta = team_contents[0] if isinstance(team_contents[0], list) else []
+                    if len(team_meta) >= 3:
+                        team_stats_dict = team_contents[1] if isinstance(team_contents[1], dict) else {}
+                        team = {
+                            "team_key": team_meta[0].get("team_key") if isinstance(team_meta[0], dict) else None,
+                            "name": team_meta[1].get("name") if isinstance(team_meta[1], dict) else None,
+                            "team_stats": team_stats_dict.get("team_stats") if isinstance(team_stats_dict, dict) else {},
+                        }
+                    else:
+                        team = {}
+                else:
+                    team = {}
+            # Handle pre-unwrapped team structure from the my_team_key lookup above.
+            # The fixture shape is: [[{team_key}, {name}, {team_id}], {team_stats}]
+            elif isinstance(team, list) and len(team) >= 2:
+                team_meta = team[0] if isinstance(team[0], list) else []
+                if len(team_meta) >= 3:
+                    team_stats_dict = team[1] if isinstance(team[1], dict) else {}
+                    team = {
+                        "team_key": team_meta[0].get("team_key") if isinstance(team_meta[0], dict) else None,
+                        "name": team_meta[1].get("name") if isinstance(team_meta[1], dict) else None,
+                        "team_stats": team_stats_dict.get("team_stats") if isinstance(team_stats_dict, dict) else {},
+                    }
+                else:
+                    team = {}
+            elif not isinstance(team, dict):
+                team = {}
+
             team_key_value = team.get("team_key")
             is_my_team = (team_key_value == my_team_key)
 
@@ -1146,15 +1196,41 @@ class YahooFantasyClient:
                 team_stats = team.get("team_points", {})
 
             stats = {}
+            # Yahoo's authoritative payload wraps stats in a nested list:
+            #   team_stats = {"stats": [{"stat": {"stat_id": "7", "value": "48"}}, ...]}
+            # A legacy flat-dict variant exists in some cached fixtures; preserve
+            # it as an elif fallback so old tests/fixtures still parse.
+            raw_stats_list = None
             if isinstance(team_stats, dict):
+                raw_stats_list = team_stats.get("stats")
+
+            if isinstance(raw_stats_list, list):
+                for entry in raw_stats_list:
+                    if not isinstance(entry, dict):
+                        continue
+                    stat_obj = entry.get("stat")
+                    if not isinstance(stat_obj, dict):
+                        continue
+                    stat_id_str = str(stat_obj.get("stat_id", ""))
+                    stat_value = stat_obj.get("value")
+                    if stat_id_str not in yahoo_to_canonical:
+                        continue
+                    canonical = yahoo_to_canonical[stat_id_str]
+                    if canonical == "H_AB":
+                        stats[canonical] = str(stat_value)
+                    else:
+                        try:
+                            stats[canonical] = float(stat_value)
+                        except (ValueError, TypeError):
+                            continue
+            elif isinstance(team_stats, dict):
+                # Legacy flat-dict variant.
                 for stat_id_str, stat_value in team_stats.items():
                     if stat_id_str in yahoo_to_canonical:
                         canonical = yahoo_to_canonical[stat_id_str]
-                        # H_AB is a display field with format "48/218" - keep as string
                         if canonical == "H_AB":
                             stats[canonical] = str(stat_value)
                         else:
-                            # Handle numeric values (both int and float)
                             try:
                                 stats[canonical] = float(stat_value)
                             except (ValueError, TypeError):

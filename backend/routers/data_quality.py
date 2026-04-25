@@ -367,13 +367,22 @@ def run_data_quality_audit(db: Session = Depends(get_db)) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 @router.post("/backfill-cat-scores")
-def backfill_cat_scores(db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """Compute and write cat_scores z-scores for all PlayerProjection rows that
-    still have empty cat_scores ({}) or null team fields.
+def backfill_cat_scores(
+    force: bool = False,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Compute and write cat_scores z-scores for PlayerProjection rows.
 
     This endpoint runs on the production server inside Railway's network, giving
-    it direct access to the internal Postgres instance.  Safe to call multiple
-    times — rows already populated are skipped.
+    it direct access to the internal Postgres instance.
+
+    Query params:
+        force (bool, default False): When False (default), rows that already
+            have a non-empty cat_scores JSONB value are skipped — safe to call
+            repeatedly from cron. When True, ALL rows are recomputed and
+            overwritten; use this after upstream stat-source changes (e.g., a
+            new Steamer ingestion or a bug fix in the proj dict assembly) so
+            stale z-scores are flushed.
 
     Verification query is included in the response:
         remaining_empty = SELECT COUNT(*) WHERE cat_scores::text = '{}'
@@ -382,7 +391,7 @@ def backfill_cat_scores(db: Session = Depends(get_db)) -> Dict[str, Any]:
     actual computation logic, enabling integration testing.
     """
     from backend.services.cat_scores_builder import run_backfill
-    return run_backfill(db)
+    return run_backfill(db, force=force)
 
 
 @router.post("/ingest-csv-projections")

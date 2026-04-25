@@ -239,3 +239,44 @@ Capture responses to `postman_collections/responses/2026-04-22/`.
 | 2026-04-22 | MLBAM ID Backfill | **COMPLETE** | 6,567/10,000 players populated with MLBAM IDs. |
 | 2026-04-22 | Cat Scores Backfill | **COMPLETE** | 344/345 rows populated with z-scores. 0 rows remain empty. |
 
+---
+
+## 16.5 PHASE 7 FRESH DELTA AUDIT FINDINGS (Apr 24, 2026)
+
+> **Auditor:** Kimi CLI  
+> **Full Report:** `reports/2026-04-24-phase-7-fresh-delta-audit.md`  
+> **Verdict:** ⚠️ **NOT OPERATIONAL** — Critical structural bugs remain in z-score math.
+
+### K-24 FINDINGS (Database Layer)
+
+| Check | Result |
+|-------|--------|
+| Pitcher raw stats in DB | ✅ 174 pitchers with `w > 0`, 123 with `qs > 0` |
+| Pitcher `cat_scores` z-scores | ❌ **ALL ZERO** for `w`, `qs`, `k_pit`, `l`, `hr_pit`, `nsv` |
+| Batter `cat_scores` completeness | ✅ 426/451 batters have `nsb` (SB) z-scores |
+| Total rows with cat_scores | ✅ 625/625 populated |
+| Backfill idempotency trap | ⚠️ Skips all 625 rows; cannot fix existing bad data |
+
+**Root Cause:** `backend/services/cat_scores_builder.py` lines 222-226 hardcode pitcher counting stats to `0.0` and never read `row["w"]`, `row["qs"]`, `row["k_pit"]` from the database. The z-score "recalculation" was a no-op for pitcher counting categories.
+
+### K-24 FINDINGS (API Layer)
+
+| Endpoint | HTTP | Data Quality |
+|----------|------|--------------|
+| `GET /api/fantasy/waiver` | 200 | 23/25 FAs have `need_score = 0.0` |
+| `GET /api/fantasy/waiver/recommendations` | 200 | Only 1 rec (Seth Lugo); MCMC 99.8% flat |
+| `GET /api/fantasy/roster` | 200 | `ros_projection` null for 22/23 players |
+| `GET /api/fantasy/scoreboard` | 200 | ALL values `0.0`; opponent_name="Opponent" |
+| `POST /backfill-cat-scores` | 200 | False green: 0 updated, 625 skipped |
+
+### K-24 PRIORITY ACTIONS FOR CLAUDE CODE
+
+1. **P0:** Fix `cat_scores_builder.py` pitcher `proj` dict to read real DB columns (`w`, `l`, `hr_pit`, `k_pit`, `qs`, `nsv`)
+2. **P0:** Change backfill logic to force-recalculate all rows (or add `?force=true` parameter)
+3. **P1:** Fix scoreboard data mapping (parses but doesn't extract values)
+4. **P1:** Fix roster `ros_projection` null (22/23 players)
+5. **P1:** Investigate dual data source: waiver endpoint vs recommendations endpoint return different cat_scores for same player
+6. **P2:** Investigate MCMC flat 99.8% win probability
+
+**Phase 8 is BLOCKED** until all above pass re-audit.
+

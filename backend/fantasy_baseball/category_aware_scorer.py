@@ -83,3 +83,67 @@ def score_fa_against_needs(
             total += player_z * max(0.0, deficit)
 
     return float(total)
+
+
+def compute_need_score(
+    player_cat_scores: dict,
+    player_z_score: float,
+    category_deficits: list,
+    n_cats: int,
+) -> float:
+    """Unified need_score computation for waiver and recommendations endpoints.
+
+    Combines generic player quality (z_score) with matchup-specific category impact
+    using a 40/60 blend. Applies rate-stat protection via score_fa_against_needs().
+
+    Args:
+        player_cat_scores: Dict of {category: z_score} from PlayerProjection.cat_scores
+        player_z_score: Overall z_score for the player (generic quality metric)
+        category_deficits: List of CategoryDeficitOut objects from matchup analysis
+        n_cats: Number of categories in the scoring system (for normalization)
+
+    Returns:
+        Float need_score. If category_deficits is empty/None, returns player_z_score.
+        If scoring fails, falls back to player_z_score.
+    """
+    from backend.schemas import CategoryDeficitOut
+
+    # Fallback: no matchup data available or empty cat_scores
+    if not category_deficits or not player_cat_scores:
+        return float(player_z_score)
+
+    # Filter to only numeric values (skip strings, None, etc.)
+    valid_cat_scores: Dict[str, float] = {
+        k: float(v) for k, v in player_cat_scores.items()
+        if isinstance(v, (int, float))
+    }
+    if not valid_cat_scores:
+        return float(player_z_score)
+
+    # Build CategoryNeedVector from CategoryDeficit list
+    needs_dict: Dict[str, float] = {}
+    for cd in category_deficits:
+        if isinstance(cd, CategoryDeficitOut):
+            # CategoryDeficitOut.deficit is positive when team is losing
+            # Lowercase category to match board keys in cat_scores
+            needs_dict[cd.category.lower()] = float(cd.deficit)
+
+    if not needs_dict:
+        return float(player_z_score)
+
+    team_needs = CategoryNeedVector(needs=needs_dict)
+
+    # Build PlayerCategoryImpactVector from cat_scores
+    fa_impact = PlayerCategoryImpactVector(impacts=valid_cat_scores)
+
+    try:
+        # Compute matchup-specific score with rate-stat protection
+        cat_score = score_fa_against_needs(fa_impact, team_needs)
+
+        # Normalize per-category and blend: 40% generic z + 60% matchup-specific
+        n_cats_safe = max(1, n_cats)
+        blended_score = 0.4 * player_z_score + 0.6 * (cat_score / n_cats_safe)
+        return float(blended_score)
+    except Exception:
+        # Fallback to plain z_score if scorer fails
+        return float(player_z_score)

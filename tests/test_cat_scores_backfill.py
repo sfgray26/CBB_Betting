@@ -263,6 +263,106 @@ def test_run_backfill_full_pipeline(in_memory_db):
                                                "ops": 1.0, "nsb": 0.2}
 
 
+def test_run_backfill_reads_pitcher_counting_stats_from_row(in_memory_db):
+    """Phase 8 Step 1 regression guard — pitcher counting stats (w, l, qs,
+    hr_pit, k_pit, nsv) MUST flow from the DB row into the z-score pipeline.
+
+    Prior to this fix, the pitcher proj dict hardcoded these to 0.0, collapsing
+    variance across all 625 projection rows. This test seeds two pitchers with
+    distinct counting stats and asserts the resulting cat_scores differ across
+    those categories — which can only happen if the builder reads the columns.
+    """
+    ace = PlayerProjection(
+        player_id="ace_sp", player_name="Ace SP", team="LAD", positions=["SP"],
+        hr=0, r=0, rbi=0, sb=0, avg=None, slg=None, ops=None,
+        era=2.90, whip=1.05, k_per_nine=11.0,
+        w=18, l=4, qs=28, hr_pit=15, k_pit=240, nsv=0,
+        cat_scores={},
+    )
+    back_end = PlayerProjection(
+        player_id="back_sp", player_name="Back-end SP", team="PIT", positions=["SP"],
+        hr=0, r=0, rbi=0, sb=0, avg=None, slg=None, ops=None,
+        era=4.80, whip=1.45, k_per_nine=7.5,
+        w=6, l=14, qs=8, hr_pit=32, k_pit=120, nsv=0,
+        cat_scores={},
+    )
+    in_memory_db.add_all([ace, back_end])
+    in_memory_db.commit()
+
+    result = run_backfill(in_memory_db)
+    assert result["status"] == "success"
+    assert result["cat_scores_updated"] == 2
+
+    in_memory_db.expire_all()
+    rows = {
+        r.player_id: r
+        for r in in_memory_db.query(PlayerProjection).all()
+    }
+    ace_scores = rows["ace_sp"].cat_scores
+    back_scores = rows["back_sp"].cat_scores
+
+    # Every counting-stat category must have distinct z-scores between the two
+    # pitchers. If the proj dict still hardcoded zeros, all of these would be
+    # identical (both players get 0, z=0) — so this asserts the data flow.
+    for cat in ("w", "l", "qs", "hr_pit", "k_pit"):
+        assert ace_scores[cat] != back_scores[cat], (
+            f"cat_scores[{cat!r}] identical across two distinct pitchers — "
+            f"counting stats are not flowing from DB row into proj dict"
+        )
+
+    # Direction sanity: ace has more wins, so z(ace.w) > z(back.w).
+    assert ace_scores["w"] > back_scores["w"]
+    # More QS is good.
+    assert ace_scores["qs"] > back_scores["qs"]
+    # More HR allowed is bad (weight is negative), ace gave up fewer HR →
+    # ace.hr_pit z-contribution should be greater (less negative) than back's.
+    assert ace_scores["hr_pit"] > back_scores["hr_pit"]
+
+
+def test_run_backfill_force_flag_overwrites_populated_rows(in_memory_db):
+    """Phase 8 Step 2 — force=True must recompute rows that already have
+    non-empty cat_scores (default force=False preserves idempotent behavior).
+    """
+    stale = {"r": 9.9, "h": 9.9, "hr": 9.9, "rbi": 9.9, "k_bat": 9.9,
+             "tb": 9.9, "avg": 9.9, "ops": 9.9, "nsb": 9.9}
+
+    filled = PlayerProjection(
+        player_id="already_filled", player_name="Filled", team="NYY",
+        positions=["OF"],
+        hr=25, r=80, rbi=75, sb=8, avg=0.270, slg=0.480, ops=0.810,
+        era=None, whip=None, k_per_nine=None,
+        cat_scores=dict(stale),
+    )
+    # Need >=2 players in the batter pool for z-scores to be non-zero.
+    peer = PlayerProjection(
+        player_id="peer", player_name="Peer", team="BOS", positions=["OF"],
+        hr=10, r=40, rbi=30, sb=2, avg=0.230, slg=0.350, ops=0.640,
+        era=None, whip=None, k_per_nine=None, cat_scores={},
+    )
+    in_memory_db.add_all([filled, peer])
+    in_memory_db.commit()
+
+    # force=False (default): filled row is skipped, stays stale.
+    result = run_backfill(in_memory_db, force=False)
+    assert result["skipped_already_filled"] == 1
+    in_memory_db.expire_all()
+    assert in_memory_db.query(PlayerProjection).filter_by(
+        player_id="already_filled"
+    ).first().cat_scores == stale
+
+    # force=True: filled row is overwritten with real z-scores.
+    result = run_backfill(in_memory_db, force=True)
+    assert result["skipped_already_filled"] == 0
+    assert result["cat_scores_updated"] == 2
+    in_memory_db.expire_all()
+    refreshed = in_memory_db.query(PlayerProjection).filter_by(
+        player_id="already_filled"
+    ).first().cat_scores
+    assert refreshed != stale, "force=True did not overwrite stale cat_scores"
+    # Direction sanity: filled has better counting stats than peer → positive z on HR.
+    assert refreshed["hr"] > 0
+
+
 def test_run_backfill_team_lookup_from_statcast(in_memory_db):
     """Test that null team fields are resolved from statcast_performances."""
     from sqlalchemy import text

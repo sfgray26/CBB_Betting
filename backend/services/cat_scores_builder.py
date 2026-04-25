@@ -144,7 +144,7 @@ def classify_player(positions: list | str | None, era: float | None,
 # Full backfill pipeline
 # ---------------------------------------------------------------------------
 
-def run_backfill(db: Session) -> dict[str, Any]:
+def run_backfill(db: Session, force: bool = False) -> dict[str, Any]:
     """Compute and write cat_scores z-scores for all PlayerProjection rows.
 
     This function:
@@ -171,7 +171,9 @@ def run_backfill(db: Session) -> dict[str, Any]:
     rows = db.execute(
         text(
             "SELECT player_id, team, positions, hr, r, rbi, sb, "
-            "       avg, slg, ops, era, whip, k_per_nine, cat_scores "
+            "       avg, slg, ops, era, whip, k_per_nine, "
+            "       w, l, qs, hr_pit, k_pit, nsv, "
+            "       cat_scores "
             "FROM player_projections"
         )
     ).mappings().fetchall()
@@ -215,32 +217,44 @@ def run_backfill(db: Session) -> dict[str, Any]:
             batters.append({
                 "player_id": row["player_id"], "team": row["team"],
                 "proj": proj, "cat_scores": {},
-                "needs_cat": _parse_cat_scores(row["cat_scores"]) is None,
+                "needs_cat": force or _parse_cat_scores(row["cat_scores"]) is None,
                 "needs_team": not (row["team"] or "").strip(),
             })
         elif ptype == "pitcher":
             proj = {
-                "w": 0.0, "l": 0.0, "hr_pit": 0.0, "k_pit": 0.0,
-                "era": float(row["era"] or 4.00), "whip": float(row["whip"] or 1.30),
-                "k9": float(row["k_per_nine"] or 8.5), "qs": 0.0, "nsv": 0.0,
+                "w":      float(row["w"]      or 0),
+                "l":      float(row["l"]      or 0),
+                "hr_pit": float(row["hr_pit"] or 0),
+                "k_pit":  float(row["k_pit"]  or 0),
+                "era":    float(row["era"]    or 4.00),
+                "whip":   float(row["whip"]   or 1.30),
+                "k9":     float(row["k_per_nine"] or 8.5),
+                "qs":     float(row["qs"]     or 0),
+                "nsv":    float(row["nsv"]    or 0),
             }
             pitchers.append({
                 "player_id": row["player_id"], "team": row["team"],
                 "proj": proj, "cat_scores": {},
-                "needs_cat": _parse_cat_scores(row["cat_scores"]) is None,
+                "needs_cat": force or _parse_cat_scores(row["cat_scores"]) is None,
                 "needs_team": not (row["team"] or "").strip(),
             })
         else:
             # Ambiguous — still queue with default pitcher proj so they get cat_scores
             proj = {
-                "w": 0.0, "l": 0.0, "hr_pit": 0.0, "k_pit": 0.0,
-                "era": float(row["era"] or 4.00), "whip": float(row["whip"] or 1.30),
-                "k9": float(row["k_per_nine"] or 8.5), "qs": 0.0, "nsv": 0.0,
+                "w":      float(row["w"]      or 0),
+                "l":      float(row["l"]      or 0),
+                "hr_pit": float(row["hr_pit"] or 0),
+                "k_pit":  float(row["k_pit"]  or 0),
+                "era":    float(row["era"]    or 4.00),
+                "whip":   float(row["whip"]   or 1.30),
+                "k9":     float(row["k_per_nine"] or 8.5),
+                "qs":     float(row["qs"]     or 0),
+                "nsv":    float(row["nsv"]    or 0),
             }
             ambiguous.append({
                 "player_id": row["player_id"], "team": row["team"],
                 "proj": proj, "cat_scores": {},
-                "needs_cat": _parse_cat_scores(row["cat_scores"]) is None,
+                "needs_cat": force or _parse_cat_scores(row["cat_scores"]) is None,
                 "needs_team": not (row["team"] or "").strip(),
             })
 
