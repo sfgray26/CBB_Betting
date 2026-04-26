@@ -1016,6 +1016,8 @@ class DailyIngestionOrchestrator:
             "probable_pitchers_morning":   self._sync_probable_pitchers,
             "probable_pitchers_afternoon": self._sync_probable_pitchers,
             "probable_pitchers_evening":   self._sync_probable_pitchers,
+            "bdl_injuries":          self._ingest_bdl_injuries,
+            "projection_freshness":  self._check_projection_freshness,
         }
         handler = _handlers.get(job_id)
         if handler is None:
@@ -4949,7 +4951,10 @@ class DailyIngestionOrchestrator:
                 logger.warning("PROJECTION FRESHNESS: %s", msg)
                 violations.append(msg)
             else:
-                if hasattr(ros_fetched_at, "tzinfo") and ros_fetched_at.tzinfo is None:
+                from datetime import date
+                if isinstance(ros_fetched_at, date) and not isinstance(ros_fetched_at, datetime):
+                    ros_fetched_at = datetime.combine(ros_fetched_at, dt_time(), tzinfo=ZoneInfo("America/New_York"))
+                elif hasattr(ros_fetched_at, "tzinfo") and ros_fetched_at.tzinfo is None:
                     ros_fetched_at = ros_fetched_at.replace(tzinfo=ZoneInfo("America/New_York"))
                 age_h = (now - ros_fetched_at).total_seconds() / 3600
                 report["ros_cache_age_h"] = round(age_h, 1)

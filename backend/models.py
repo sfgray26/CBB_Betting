@@ -1931,8 +1931,8 @@ class IngestedInjury(Base):
     return_date = Column(DateTime(timezone=True), nullable=True)  # Estimated return
     injury_type = Column(String(100), nullable=False)  # Body part: "Triceps", "Hamstring"
     injury_detail = Column(String(100))  # Sub-type: "Strain", "Tear"
-    injury_side = Column(String(10))  # "Right", "Left", or NULL (bilateral/unknown)
-    injury_status = Column(String(20), nullable=False, index=True)  # "15-Day-IL", "60-Day-IL", "10-Day-IL", "DTD"
+    injury_side = Column(String(50))  # "Right", "Left", or NULL (bilateral/unknown)
+    injury_status = Column(String(50), nullable=False, index=True)  # "15-Day-IL", "60-Day-IL", "10-Day-IL", "DTD"
 
     # Narrative fields
     long_comment = Column(Text, nullable=False)  # Paragraph-length note

@@ -18,8 +18,8 @@ CREATE TABLE IF NOT EXISTS ingested_injuries (
     return_date TIMESTAMP WITH TIME ZONE,
     injury_type VARCHAR(100) NOT NULL,
     injury_detail VARCHAR(100),
-    injury_side VARCHAR(10),
-    injury_status VARCHAR(20) NOT NULL,
+    injury_side VARCHAR(50),
+    injury_status VARCHAR(50) NOT NULL,
 
     -- Narrative fields
     long_comment TEXT NOT NULL,
@@ -33,8 +33,8 @@ CREATE TABLE IF NOT EXISTS ingested_injuries (
 
 -- Unique constraint: one injury per player, status, and type
 -- Allows tracking of multi-injury players (e.g., same player with two DTD entries)
-CREATE UNIQUE INDEX IF NOT EXISTS _ii_player_status_type_uc
-    ON ingested_injuries (bdl_player_id, injury_status, injury_type);
+ALTER TABLE ingested_injuries DROP CONSTRAINT IF EXISTS _ii_player_status_type_uc;
+ALTER TABLE ingested_injuries ADD CONSTRAINT _ii_player_status_type_uc UNIQUE (bdl_player_id, injury_status, injury_type);
 
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_ingested_injuries_active

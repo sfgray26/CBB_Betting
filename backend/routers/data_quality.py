@@ -73,11 +73,11 @@ def get_data_quality_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
     
     # Metric 5: Data ingestion failure rate (last 7 days)
     total_jobs = db.query(func.count(DataIngestionLog.id)).filter(
-        DataIngestionLog.run_at > now - timedelta(days=7)
+        DataIngestionLog.started_at > now - timedelta(days=7)
     ).scalar() or 1
     
     failed_jobs = db.query(func.count(DataIngestionLog.id)).filter(
-        DataIngestionLog.run_at > now - timedelta(days=7),
+        DataIngestionLog.started_at > now - timedelta(days=7),
         DataIngestionLog.status == "failed",
     ).scalar() or 0
     
