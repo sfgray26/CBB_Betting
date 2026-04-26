@@ -5416,7 +5416,7 @@ class DailyIngestionOrchestrator:
                                         pitcher_name=pitcher_name,
                                         bdl_player_id=bdl_id,
                                         mlbam_id=mlbam_id,
-                                        is_confirmed=bool(pitcher_data),
+                                        is_confirmed=bool(pitcher_data and pitcher_data.get("fullName")),
                                         game_time_et=game_time_et_str,
                                         park_factor=pf,
                                         quality_score=None,

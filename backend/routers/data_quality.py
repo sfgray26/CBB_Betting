@@ -65,6 +65,8 @@ def get_data_quality_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
     
     # Metric 4: Pipeline staleness
     last_projection_update = db.query(func.max(PlayerProjection.updated_at)).scalar()
+    if last_projection_update and last_projection_update.tzinfo is None:
+        last_projection_update = last_projection_update.replace(tzinfo=ZoneInfo("UTC"))
     staleness_hours = (
         (now - last_projection_update).total_seconds() / 3600
         if last_projection_update

@@ -4596,10 +4596,12 @@ async def get_decisions(
                                         data_as_of=_now_utc,
                                     ))
                             except Exception as _cache_err:
-                                logger.warning(
-                                    "decisions endpoint: valuation cache write failed for bdl_id=%s: %s",
+                                logger.error(
+                                    "decisions endpoint: valuation cache write FAILED for bdl_id=%s: %s",
                                     wr.bdl_player_id, _cache_err,
+                                    exc_info=True,
                                 )
+                                db.rollback()
                         except Exception as res_build_err:
                             logger.warning("decisions endpoint: failed to build result: %s", res_build_err)
                             continue
