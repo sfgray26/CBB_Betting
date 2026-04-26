@@ -1738,10 +1738,20 @@ class DailyIngestionOrchestrator:
                 db.commit()
             except Exception as exc:
                 db.rollback()
-                logger.error("bdl_injuries DB write failed: %s", exc)
+                logger.error("bdl_injuries DB write failed: %s", exc, exc_info=True)
                 elapsed = int((time.monotonic() - t0) * 1000)
                 self._record_job_run("bdl_injuries", "failed")
-                return {"status": "failed", "records": 0, "elapsed_ms": elapsed}
+                return {
+                    "status": "failed",
+                    "records": rows_upserted,
+                    "elapsed_ms": elapsed,
+                    "error_message": str(exc),
+                    "error_details": [{
+                        "type": exc.__class__.__name__,
+                        "message": str(exc),
+                        "traceback": traceback.format_exc(),
+                    }],
+                }
             finally:
                 db.close()
 
