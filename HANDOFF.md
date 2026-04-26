@@ -937,3 +937,71 @@ On-Demand ────┬── BDL Splits → lineup_optimizer
 ---
 
 *Last updated: 2026-04-25 — BallDontLie GOAT tier unlocked. 19 endpoints mapped. 10 pain points targeted. Implementation prompt ready for Claude Code.*
+
+
+---
+
+## 16.13 POST-DEPLOYMENT AUDIT & PHASE 1 REMEDIATION PROMPT (Apr 25, 2026)
+
+> **Auditor:** Kimi CLI  
+> **Post-Deploy Audit:** `reports/2026-04-25-post-deployment-audit-comparison.md`  
+> **Remediation Prompt:** `reports/2026-04-25-claude-code-prompt-phase-1-remediation.md`  
+> **Status:** Partial deployment. 8 tasks scoped for immediate remediation.
+
+### K-32 FINDINGS (What Claude Deployed vs What Was Missed)
+
+**DEPLOYED (commits `9860762` + `ca89a8a`):**
+- ✅ `scripts/backfill_numeric_player_names.py` — **260/353 numeric names resolved**
+- ✅ `backend/services/balldontlie.py` — BDL client with pagination (NEW)
+- ✅ `backend/services/daily_ingestion.py` — `_sync_bdl_injuries` method added
+- ✅ `backend/models.py` — `IngestedInjury` model added
+- ✅ `scripts/migrations/create_ingested_injuries.sql` — migration script created
+
+**NOT DEPLOYED / NOT RUN:**
+- 🔴 Migration `create_ingested_injuries.sql` — **never executed** (table doesn't exist)
+- 🔴 `DataIngestionLog.run_at` bug in `backend/routers/data_quality.py:76,80` — **admin still 500**
+- 🔴 `projection_freshness` fix — code exists but DB still shows 152 failures
+- 🔴 `yahoo_id` backfill — still 0/10,000
+- 🔴 `fantasy_lineups` — still 0 rows
+- 🔴 `player_valuation_cache` — still 0 rows
+- 🔴 `probable_pitchers.is_confirmed` — still 0/332
+
+### K-32 ROOT CAUSE ANALYSIS
+
+1. **Admin 500 Error:** Not `MLBGameLog.id` — that was already fixed. The actual bug is **`DataIngestionLog.run_at`** on lines 76 and 80 of `data_quality.py`. The `DataIngestionLog` table has **no `run_at` column** — actual columns are `started_at` and `completed_at`.
+
+2. **Projection Freshness:** The `datetime` → `date` fix IS in repo code (`daily_ingestion.py:4905-4908, 4931-4934`). But failures continue. Likely the **deployed code is stale** OR `_load_persisted_ros_cache()` returns a `date` object for `ros_fetched_at` (line 4946) without conversion.
+
+3. **Migration Not Run:** The `IngestedInjury` model and SQL migration were committed but **never executed against production PostgreSQL**. This is a common deployment gap — code ships, schema doesn't.
+
+4. **Empty Tables:** `fantasy_lineups` and `player_valuation_cache` have INSERT logic missing. The computation pipelines run but never persist results. This is a wiring gap, not a data gap.
+
+### K-32 REVISED PRIORITY ORDER
+
+| Priority | Task | File | ETA | Acceptance |
+|----------|------|------|-----|------------|
+| P0 | Fix admin 500 | `data_quality.py:76,80` | 5 min | `GET /api/admin/data-quality/summary` → 200 |
+| P0 | Run migration | `scripts/migrations/create_ingested_injuries.sql` | 10 min | `ingested_injuries` table exists |
+| P0 | Fix projection_freshness | `daily_ingestion.py:4946-4958` | 15 min | Next run shows SUCCESS |
+| P0 | Finish name backfill | `scripts/backfill_numeric_player_names.py` | 30 min | 0 numeric names remain |
+| P1 | Wire BDL injuries | `daily_ingestion.py` scheduler | 1 hr | `ingested_injuries` has rows |
+| P1 | Persist fantasy_lineups | `fantasy.py` or optimizer | 30 min | `fantasy_lineups` > 0 rows |
+| P1 | Persist valuation_cache | `fantasy.py` waiver endpoint | 30 min | `player_valuation_cache` > 0 rows |
+| P1 | Confirm probable pitchers | `daily_ingestion.py` | 1 hr | `is_confirmed` > 0 |
+
+### K-32 FILES REFERENCED
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `backend/routers/data_quality.py` | **MODIFY** lines 76, 80 | Fix `run_at` → `completed_at` |
+| `backend/services/daily_ingestion.py` | **MODIFY** ~line 4952 | Add `ros_fetched_at` date→datetime guard |
+| `scripts/backfill_numeric_player_names.py` | **MODIFY/EXTEND** | Handle 93 orphan players via BDL/Stats API |
+| `scripts/migrations/create_ingested_injuries.sql` | **RUN** | Create `ingested_injuries` table |
+| `backend/services/daily_ingestion.py` | **MODIFY** scheduler | Schedule `_sync_bdl_injuries` with lock ID 100_036 |
+| `backend/routers/fantasy.py` | **MODIFY** | INSERT computed lineups into `fantasy_lineups` |
+| `backend/routers/fantasy.py` | **MODIFY** | INSERT waiver valuations into `player_valuation_cache` |
+| `backend/services/daily_ingestion.py` | **MODIFY** | Wire BDL lineups to flip `is_confirmed` |
+
+---
+
+*Section added by Kimi CLI v1.17.0 | Post-deploy audit complete | 8 tasks scoped | Exact line numbers verified against HEAD*
