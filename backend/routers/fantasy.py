@@ -17,6 +17,7 @@ import os
 import json as _json
 import asyncio
 import unicodedata
+import uuid
 from zoneinfo import ZoneInfo
 from datetime import date, datetime, timedelta
 from dataclasses import asdict
@@ -1358,6 +1359,42 @@ async def get_fantasy_lineup_recommendations(
             -b.lineup_score
         )
     )
+
+    try:
+        pos_map: dict = {}
+        for _b in batters:
+            if _b.assigned_slot and _b.assigned_slot != "BN":
+                pos_map[_b.assigned_slot] = _b.name
+        _sp_idx = 0
+        for _p in pitchers:
+            if _p.status == "START":
+                _sp_idx += 1
+                pos_map[f"SP{_sp_idx}"] = _p.name
+        _projected = float(
+            sum(_b.lineup_score for _b in batters if _b.assigned_slot and _b.assigned_slot != "BN")
+            + sum(_p.sp_score for _p in pitchers if _p.status == "START")
+        )
+        _notes_str = "; ".join(lineup_warnings) if lineup_warnings else None
+        _existing_rec = db.query(FantasyLineup).filter_by(
+            lineup_date=ld, platform="yahoo_recommendation"
+        ).first()
+        if _existing_rec:
+            _existing_rec.positions = pos_map
+            _existing_rec.projected_points = _projected
+            _existing_rec.notes = _notes_str
+            _existing_rec.updated_at = datetime.utcnow()
+        else:
+            db.add(FantasyLineup(
+                lineup_date=ld,
+                platform="yahoo_recommendation",
+                positions=pos_map,
+                projected_points=_projected,
+                notes=_notes_str,
+            ))
+        db.commit()
+    except Exception as _persist_err:
+        db.rollback()
+        logger.warning("lineup recommendation persistence failed: %s", _persist_err)
 
     return DailyLineupResponse(
         date=ld,
@@ -4521,9 +4558,57 @@ async def get_decisions(
                                 decision=decision_out,
                                 explanation=None,
                             ))
+
+                            try:
+                                _league_key = os.getenv("YAHOO_LEAGUE_ID", "default")
+                                _target_date = wr.as_of_date or date.today()
+                                _now_utc = datetime.now(ZoneInfo("UTC"))
+                                _report_blob = {
+                                    "decision_type": "waiver",
+                                    "target_slot": wr.target_slot,
+                                    "drop_player_id": wr.drop_player_id,
+                                    "lineup_score": wr.lineup_score,
+                                    "value_gain": wr.value_gain,
+                                    "confidence": wr.confidence,
+                                    "reasoning": wr.reasoning,
+                                }
+                                _existing_cache = db.query(PlayerValuationCache).filter_by(
+                                    player_id=str(wr.bdl_player_id),
+                                    target_date=_target_date,
+                                    league_key=_league_key,
+                                ).first()
+                                if _existing_cache:
+                                    _existing_cache.report = _report_blob
+                                    _existing_cache.computed_at = _now_utc
+                                    _existing_cache.data_as_of = _now_utc
+                                    _existing_cache.invalidated_at = None
+                                    if pname:
+                                        _existing_cache.player_name = pname
+                                else:
+                                    db.add(PlayerValuationCache(
+                                        id=str(uuid.uuid4()),
+                                        player_id=str(wr.bdl_player_id),
+                                        player_name=pname or f"BDL#{wr.bdl_player_id}",
+                                        target_date=_target_date,
+                                        league_key=_league_key,
+                                        report=_report_blob,
+                                        computed_at=_now_utc,
+                                        data_as_of=_now_utc,
+                                    ))
+                            except Exception as _cache_err:
+                                logger.warning(
+                                    "decisions endpoint: valuation cache write failed for bdl_id=%s: %s",
+                                    wr.bdl_player_id, _cache_err,
+                                )
                         except Exception as res_build_err:
                             logger.warning("decisions endpoint: failed to build result: %s", res_build_err)
                             continue
+
+                    try:
+                        db.commit()
+                    except Exception as _commit_err:
+                        db.rollback()
+                        logger.warning("decisions endpoint: valuation cache commit failed: %s", _commit_err)
 
                     if results:
                         logger.info("decisions endpoint: returning %d live waiver results", len(results))
