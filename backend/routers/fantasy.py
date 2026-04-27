@@ -4380,46 +4380,78 @@ async def get_decisions(
                                 opp_tuple = t
 
                         if my_tuple and opp_tuple:
-                            my_stats = my_tuple[2]
-                            opp_stats = opp_tuple[2]
+                            sid_map: dict = dict(_YAHOO_STAT_FALLBACK)
+                            try:
+                                _settings_dec = client.get_league_settings()
+                                _stat_cats_dec = (
+                                    _settings_dec
+                                    .get("settings", [{}])[0]
+                                    .get("stat_categories", {})
+                                    .get("stats", [])
+                                )
+                                _dec_stat_entries: list = []
+                                for _entry_d in _stat_cats_dec:
+                                    if isinstance(_entry_d, dict):
+                                        _s_d = _entry_d.get("stat", {})
+                                        _sid_d = str(_s_d.get("stat_id", ""))
+                                        _abbr_d = (
+                                            _s_d.get("display_name")
+                                            or _s_d.get("abbreviation")
+                                            or _s_d.get("name")
+                                            or _sid_d
+                                        )
+                                        _pos_d = _s_d.get("position_type", "")
+                                        if _sid_d:
+                                            _dec_stat_entries.append((_sid_d, _abbr_d, _pos_d))
+                                _dec_abbr_pos: dict = {}
+                                for _sid_d, _abbr_d, _pos_d in _dec_stat_entries:
+                                    _dec_abbr_pos.setdefault(_abbr_d, set()).add(_pos_d)
+                                _P_RENAME = {"HR": "HRA", "K": "K(P)"}
+                                _B_RENAME = {"K": "K(B)", "HR": "HR"}
+                                for _sid_d, _abbr_d, _pos_d in _dec_stat_entries:
+                                    _final = _abbr_d
+                                    if len(_dec_abbr_pos.get(_abbr_d, set())) > 1:
+                                        if _pos_d == "P" and _abbr_d in _P_RENAME:
+                                            _final = _P_RENAME[_abbr_d]
+                                        elif _pos_d == "B" and _abbr_d in _B_RENAME:
+                                            _final = _B_RENAME[_abbr_d]
+                                    sid_map[_sid_d] = _final
+                            except Exception as _e_sid:
+                                logger.warning(
+                                    "decisions endpoint: get_league_settings failed in sid_map build (using fallback): %s",
+                                    _e_sid,
+                                )
 
-                            _YAHOO_CAT_TO_BOARD = {
-                                "R": "r", "H": "h", "HR": "hr", "RBI": "rbi", "TB": "tb",
-                                "SB": "nsb", "AVG": "avg", "OPS": "ops",
-                                "W": "w", "L": "l", "K": "k_pit", "SO": "k_pit",
-                                "SV": "nsv", "ERA": "era", "WHIP": "whip",
-                                "QS": "qs", "K9": "k9", "K/9": "k9",
-                            }
+                            def _stats_dict_from_raw(raw_stats_list: list) -> dict:
+                                out: dict = {}
+                                for st in raw_stats_list:
+                                    if not isinstance(st, dict):
+                                        continue
+                                    stobj = st.get("stat", {})
+                                    if not isinstance(stobj, dict):
+                                        continue
+                                    sid_k = str(stobj.get("stat_id", ""))
+                                    if not sid_k:
+                                        continue
+                                    key2 = sid_map.get(sid_k, sid_k)
+                                    if isinstance(key2, str) and key2.isdigit():
+                                        continue
+                                    try:
+                                        out[key2] = float(stobj.get("value", 0) or 0)
+                                    except (TypeError, ValueError):
+                                        out[key2] = 0.0
+                                return out
 
-                            for stat_entry in my_stats:
-                                if not isinstance(stat_entry, dict):
-                                    continue
-                                cat = stat_entry.get("name")
-                                my_val = stat_entry.get("value")
-                                if not cat or my_val is None:
-                                    continue
+                            my_stats_dict = _stats_dict_from_raw(my_tuple[2])
+                            opp_stats_dict = _stats_dict_from_raw(opp_tuple[2])
+                            lower_better = {"ERA", "WHIP", "L", "K(B)", "HRA"}
 
-                                opp_val = None
-                                for opp_stat in opp_stats:
-                                    if isinstance(opp_stat, dict) and opp_stat.get("name") == cat:
-                                        opp_val = opp_stat.get("value")
-                                        break
-
-                                if opp_val is None:
-                                    continue
-
-                                try:
-                                    my_val_f = float(my_val)
-                                    opp_val_f = float(opp_val)
-                                except (ValueError, TypeError):
-                                    continue
-
-                                lower_is_better = cat in ("ERA", "WHIP", "L", "AVG")
-                                if lower_is_better:
+                            for cat, my_val_f in my_stats_dict.items():
+                                opp_val_f = opp_stats_dict.get(cat, 0.0)
+                                if cat in lower_better:
                                     deficit = my_val_f - opp_val_f
                                 else:
                                     deficit = opp_val_f - my_val_f
-
                                 _category_deficits.append((cat, deficit))
 
                     if _category_deficits:
