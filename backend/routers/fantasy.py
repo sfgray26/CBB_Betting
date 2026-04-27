@@ -4979,6 +4979,44 @@ async def get_matchup_scoreboard(
     yahoo_opp_name = matchup_data.get("opponent_name")
     if yahoo_opp_name and yahoo_opp_name != "Unknown":
         safe_opponent_name = yahoo_opp_name
+    elif safe_opponent_name == "Opponent":
+        # Fallback: matchup_stats did not surface opponent_name. Resolve via
+        # get_scoreboard() + the shared matchup-team walker, mirroring the
+        # pattern proven at fantasy.py:1626-1643. Best-effort only — any
+        # exception falls through to the "Opponent" literal already assigned.
+        try:
+            _my_team_key_sb = os.getenv("YAHOO_TEAM_KEY", "")
+            if not _my_team_key_sb:
+                try:
+                    _my_team_key_sb = client.get_my_team_key()
+                except Exception:
+                    _my_team_key_sb = ""
+            if _my_team_key_sb:
+                _sb_matchups = client.get_scoreboard()
+                for _matchup_teams in _iter_scoreboard_matchup_teams(_sb_matchups):
+                    _my_tuple = None
+                    for _t in _matchup_teams:
+                        _t_key = _t[0]
+                        if not _t_key:
+                            continue
+                        if _t_key == _my_team_key_sb or (
+                            _t_key in _my_team_key_sb or _my_team_key_sb in _t_key
+                        ):
+                            _my_tuple = _t
+                            break
+                    if _my_tuple is not None:
+                        _opp_tuple = next(
+                            (_t for _t in _matchup_teams if _t[0] != _my_tuple[0]),
+                            None,
+                        )
+                        if _opp_tuple is not None and _opp_tuple[1]:
+                            safe_opponent_name = _opp_tuple[1]
+                        break
+        except Exception as _opp_fb_err:
+            logger.warning(
+                "scoreboard: opponent_name fallback via get_scoreboard failed (non-fatal): %s",
+                _opp_fb_err,
+            )
 
     # Mock player scores (empty for now)
     my_player_scores = []
