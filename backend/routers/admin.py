@@ -701,6 +701,34 @@ async def ingestion_status(user: str = Depends(verify_api_key)):
     return {"enabled": True, "jobs": _ingestion_orchestrator.get_status()}
 
 
+@router.post("/admin/sync-yahoo-ids")
+async def manual_yahoo_id_sync(user: str = Depends(verify_admin_api_key)):
+    """
+    Manually trigger Yahoo ID sync job (admin only).
+
+    Syncs yahoo_id/yahoo_key from Yahoo Fantasy API to player_id_mapping
+    by matching normalized names against BDL player index. Returns
+    match statistics and any errors encountered.
+
+    Runs synchronously and returns results immediately.
+    """
+    from backend.main import _ingestion_orchestrator
+    if _ingestion_orchestrator is None:
+        raise HTTPException(status_code=503, detail="Ingestion orchestrator not initialized")
+
+    logger.info("Manual Yahoo ID sync triggered by %s", user)
+    try:
+        result = await _ingestion_orchestrator._sync_yahoo_id_mapping()
+        return {
+            "triggered_by": user,
+            "timestamp": datetime.utcnow().isoformat(),
+            "result": result,
+        }
+    except Exception as exc:
+        logger.error("Manual Yahoo ID sync failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.get("/admin/portfolio/status")
 async def get_portfolio_status(
     user: str = Depends(verify_api_key),

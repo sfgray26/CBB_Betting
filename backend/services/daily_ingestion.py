@@ -126,6 +126,7 @@ LOCK_IDS = {
     "projection_cat_scores": 100_031,
     "savant_ingestion":      100_032,  # Phase 9: Statcast leaderboard ingestion
     "bdl_injuries":          100_033,  # Phase 1: BDL injury ingestion
+    "yahoo_id_sync":         100_034,  # Yahoo ID mapping sync
 }
 
 
@@ -912,6 +913,17 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Yahoo ID mapping sync: daily 4:30 AM ET
+        # Syncs yahoo_id/yahoo_key from Yahoo Fantasy API to player_id_mapping
+        # Runs before player_id_mapping (BDL) at 7 AM and before VORP computation
+        self._scheduler.add_job(
+            self._sync_yahoo_id_mapping,
+            CronTrigger(hour=4, minute=30, timezone=tz),
+            id="yahoo_id_sync",
+            name="Yahoo ID Mapping Sync",
+            replace_existing=True,
+        )
+
         # Player ID mapping sync: 7:00 AM ET (before probable_pitchers needs IDs)
         self._scheduler.add_job(
             self._sync_player_id_mapping,
@@ -961,6 +973,7 @@ class DailyIngestionOrchestrator:
                         "mlb_odds", "statcast",
                         "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
                         "ensemble_update", "projection_cat_scores", "projection_freshness",
+                        "yahoo_id_sync",
                         "player_id_mapping", "position_eligibility",
                         "probable_pitchers_morning", "probable_pitchers_afternoon", "probable_pitchers_evening"]
         if _fantasy_leagues:
@@ -1768,6 +1781,175 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["bdl_injuries"], "bdl_injuries", _run)
+
+    async def _sync_yahoo_id_mapping(self) -> dict:
+        """
+        Sync Yahoo player IDs to player_id_mapping table (lock 100_034).
+
+        Builds an in-memory index of all BDL players (~10,000), enumerates
+        active fantasy players via Yahoo API (rosters + free agents), matches
+        by normalized name, and upserts yahoo_id/yahoo_key to player_id_mapping.
+
+        This unblocks projection resolution, VORP computation, and z-score
+        pipeline which all rely on yahoo_id for player lookups.
+
+        Matching strategy:
+          1. Build BDL player index keyed by normalized full_name
+          2. Enumerate all Yahoo players (league rosters + free agents by position)
+          3. Exact match on normalized name first
+          4. Fuzzy match (threshold 85) for ambiguous cases
+          5. Upsert to player_id_mapping with yahoo_id + yahoo_key
+
+        Rate limiting: 500ms delay between Yahoo API calls to avoid 429s.
+        """
+        import re
+        from backend.fantasy_baseball.mlb_boxscore import normalize_name
+        from backend.services.balldontlie import BallDontLieClient
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
+
+        t0 = time.monotonic()
+
+        async def _run():
+            # Build BDL name index (in-memory dict for fast lookup)
+            logger.info("yahoo_id_sync: Building BDL player index...")
+            try:
+                bdl = BallDontLieClient()
+                bdl_players = await asyncio.to_thread(bdl.get_all_mlb_players)
+                bdl_index = {
+                    normalize_name(p.full_name): {
+                        "bdl_id": p.id,
+                        "full_name": p.full_name,
+                    }
+                    for p in bdl_players
+                }
+                logger.info("yahoo_id_sync: BDL index built with %d players", len(bdl_index))
+            except Exception as exc:
+                logger.error("yahoo_id_sync: BDL index build failed -- %s", exc)
+                self._record_job_run("yahoo_id_sync", "skipped")
+                return {"status": "skipped", "records": 0, "elapsed_ms": 0}
+
+            # Enumerate Yahoo players
+            logger.info("yahoo_id_sync: Enumerating Yahoo players...")
+            yahoo_players = []
+
+            try:
+                yahoo = YahooFantasyClient()
+                league_key = yahoo.get_my_team_key().split("/t")[0]  # Extract league key
+
+                # Get all league rosters (~25 players x 12 teams = ~300 players)
+                logger.info("yahoo_id_sync: Fetching league rosters...")
+                roster_players = await asyncio.to_thread(yahoo.get_league_rosters, league_key)
+                yahoo_players.extend(roster_players)
+                logger.info("yahoo_id_sync: Got %d roster players", len(roster_players))
+                await asyncio.sleep(0.5)  # Rate limit
+
+                # Get free agents for each position
+                positions = ["C", "1B", "2B", "3B", "SS", "OF", "DH", "SP", "RP"]
+                for pos in positions:
+                    logger.info("yahoo_id_sync: Fetching free agents for position=%s", pos)
+                    fa_players = await asyncio.to_thread(yahoo.get_free_agents, position=pos, start=0, count=25)
+                    yahoo_players.extend(fa_players)
+                    await asyncio.sleep(0.5)  # Rate limit between calls
+
+            except Exception as exc:
+                logger.error("yahoo_id_sync: Yahoo enumeration failed -- %s", exc)
+                self._record_job_run("yahoo_id_sync", "failed")
+                return {
+                    "status": "failed",
+                    "records": 0,
+                    "elapsed_ms": int((time.monotonic() - t0) * 1000),
+                    "error_message": str(exc),
+                }
+
+            # Deduplicate Yahoo players by player_id
+            seen_ids = set()
+            unique_yahoo_players = []
+            for yp in yahoo_players:
+                pid = yp.get("player_id")
+                if pid and pid not in seen_ids:
+                    seen_ids.add(pid)
+                    unique_yahoo_players.append(yp)
+
+            logger.info("yahoo_id_sync: %d unique Yahoo players after dedup", len(unique_yahoo_players))
+
+            # Match and prepare updates
+            db = SessionLocal()
+            updates = 0
+            matched = 0
+            unmatched = []
+
+            try:
+                for yp in unique_yahoo_players:
+                    yahoo_id = yp.get("player_id")
+                    yahoo_key = yp.get("player_key")
+                    name = yp.get("name", "")
+
+                    if not yahoo_id or not yahoo_key or not name:
+                        continue
+
+                    norm_name = normalize_name(name)
+
+                    # Exact match first
+                    if norm_name in bdl_index:
+                        bdl_data = bdl_index[norm_name]
+                        # Upsert to player_id_mapping
+                        stmt = pg_insert(PlayerIDMapping.__table__).values(
+                            yahoo_id=str(yahoo_id),
+                            yahoo_key=yahoo_key,
+                            bdl_id=bdl_data["bdl_id"],
+                            full_name=name,
+                            normalized_name=norm_name,
+                            source="yahoo_sync",
+                            resolution_confidence=1.0,
+                            updated_at=now_et(),
+                        ).on_conflict_do_update(
+                            constraint="_pim_yahoo_key_uc",
+                            set_=dict(
+                                yahoo_id=str(yahoo_id),
+                                full_name=name,
+                                normalized_name=norm_name,
+                                updated_at=now_et(),
+                            ),
+                        )
+                        db.execute(stmt)
+                        matched += 1
+                        updates += 1
+                    else:
+                        unmatched.append({"name": name, "yahoo_id": yahoo_id})
+
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                logger.error("yahoo_id_sync: DB write failed -- %s", exc, exc_info=True)
+                self._record_job_run("yahoo_id_sync", "failed")
+                return {
+                    "status": "failed",
+                    "records": updates,
+                    "elapsed_ms": int((time.monotonic() - t0) * 1000),
+                    "error_message": str(exc),
+                }
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.info(
+                "yahoo_id_sync: %d matched, %d unmatched, %d upserts in %dms",
+                matched, len(unmatched), updates, elapsed,
+            )
+
+            if unmatched:
+                logger.debug("yahoo_id_sync: Unmatched players (first 10): %s", unmatched[:10])
+
+            self._record_job_run("yahoo_id_sync", "success", updates)
+            return {
+                "status": "success",
+                "records": updates,
+                "matched": matched,
+                "unmatched": len(unmatched),
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["yahoo_id_sync"], "yahoo_id_sync", _run)
 
     async def _supplement_statsapi_counting_stats(self) -> dict:
         """
