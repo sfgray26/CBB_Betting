@@ -1892,26 +1892,43 @@ class DailyIngestionOrchestrator:
                     # Exact match first
                     if norm_name in bdl_index:
                         bdl_data = bdl_index[norm_name]
-                        # Upsert to player_id_mapping
-                        stmt = pg_insert(PlayerIDMapping.__table__).values(
-                            yahoo_id=str(yahoo_id),
-                            yahoo_key=yahoo_key,
-                            bdl_id=bdl_data["bdl_id"],
-                            full_name=name,
-                            normalized_name=norm_name,
-                            source="yahoo_sync",
-                            resolution_confidence=1.0,
-                            updated_at=now_et(),
-                        ).on_conflict_do_update(
-                            constraint="_pim_yahoo_key_uc",
-                            set_=dict(
+                        bdl_id = bdl_data["bdl_id"]
+
+                        # Check if row exists by bdl_id (from pybaseball seeding)
+                        existing = db.query(PlayerIDMapping).filter(
+                            PlayerIDMapping.bdl_id == bdl_id
+                        ).first()
+
+                        if existing:
+                            # Update existing row with Yahoo IDs
+                            existing.yahoo_id = str(yahoo_id)
+                            existing.yahoo_key = yahoo_key
+                            existing.full_name = name
+                            existing.normalized_name = norm_name
+                            existing.source = "yahoo_sync"
+                            existing.resolution_confidence = 1.0
+                            existing.updated_at = now_et()
+                        else:
+                            # Insert new row with ON CONFLICT on yahoo_key
+                            stmt = pg_insert(PlayerIDMapping.__table__).values(
                                 yahoo_id=str(yahoo_id),
+                                yahoo_key=yahoo_key,
+                                bdl_id=bdl_id,
                                 full_name=name,
                                 normalized_name=norm_name,
+                                source="yahoo_sync",
+                                resolution_confidence=1.0,
                                 updated_at=now_et(),
-                            ),
-                        )
-                        db.execute(stmt)
+                            ).on_conflict_do_update(
+                                constraint="_pim_yahoo_key_uc",
+                                set_=dict(
+                                    yahoo_id=str(yahoo_id),
+                                    full_name=name,
+                                    normalized_name=norm_name,
+                                    updated_at=now_et(),
+                                ),
+                            )
+                            db.execute(stmt)
                         matched += 1
                         updates += 1
                     else:
