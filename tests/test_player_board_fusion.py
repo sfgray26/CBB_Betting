@@ -291,6 +291,70 @@ class TestConvertFusionProjToBoardFormat:
         assert result["k9"] == 9.5
         assert result["ip"] == 180
 
+    def test_pitcher_wins_losses_qs_are_monotonic_in_era(self):
+        """
+        Lower ERA should produce more wins, fewer losses, and more QS.
+        Validates the PitcherCountingStatFormulas logic.
+        """
+        good_era_proj = {"era": 3.00, "whip": 1.10, "k_per_nine": 9.0}
+        avg_era_proj = {"era": 4.50, "whip": 1.35, "k_per_nine": 8.5}
+        bad_era_proj = {"era": 6.00, "whip": 1.60, "k_per_nine": 7.5}
+
+        good = _convert_fusion_proj_to_board_format(good_era_proj, "pitcher")
+        avg = _convert_fusion_proj_to_board_format(avg_era_proj, "pitcher")
+        bad = _convert_fusion_proj_to_board_format(bad_era_proj, "pitcher")
+
+        # Better ERA → more wins
+        assert good["w"] > avg["w"] > bad["w"]
+        # Better ERA → fewer losses
+        assert good["l"] < avg["l"] < bad["l"]
+        # Better ERA → more quality starts
+        assert good["qs"] > avg["qs"] > bad["qs"]
+
+    def test_pitcher_counting_stats_reasonable_ranges(self):
+        """
+        Projected counting stats must fall within realistic MLB ranges
+        for a full-season starter (180 IP).
+        """
+        fusion_proj = {"era": 3.50, "whip": 1.20, "k_per_nine": 9.5}
+        result = _convert_fusion_proj_to_board_format(fusion_proj, "pitcher")
+
+        # Wins: 10–20 for a quality starter
+        assert 10 <= result["w"] <= 20
+        # Losses: 5–15 for a quality starter
+        assert 5 <= result["l"] <= 15
+        # QS: 12–25 for a quality starter
+        assert 12 <= result["qs"] <= 25
+        # HR allowed: 15–35 for 180 IP
+        assert 15 <= result["hr_pit"] <= 35
+        # W + L should be close to decision estimate (~21)
+        assert 15 <= result["w"] + result["l"] <= 25
+
+    def test_steamer_counting_stats_passthrough_untouched(self):
+        """
+        When Steamer provides counting stats, they must pass through unchanged.
+        The new formulas must NOT override explicit Steamer values.
+        """
+        fusion_proj = {"era": 3.50, "whip": 1.20, "k_per_nine": 9.5}
+        steamer = Mock()
+        steamer.w = 14
+        steamer.l = 8
+        steamer.qs = 22
+        steamer.hr_pit = 20
+        steamer.k_pit = 190
+        steamer.nsv = 0
+
+        result = _convert_fusion_proj_to_board_format(
+            fusion_proj, "pitcher", steamer_projection=steamer
+        )
+
+        assert result["w"] == 14
+        assert result["l"] == 8
+        assert result["qs"] == 22
+        assert result["hr_pit"] == 20
+        assert result["k_pit"] == 190
+        assert result["nsv"] == 0
+
 
 class TestFourStateFusionIntegration:
     """Integration tests for the four-state Bayesian fusion logic."""

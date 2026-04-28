@@ -1493,16 +1493,25 @@ def _convert_fusion_proj_to_board_format(
         era = fusion_proj.get("era", 4.50)
         k9 = fusion_proj.get("k_per_nine", 8.5)
 
+        # Use mathematically sound formulas when Steamer counting stats unavailable.
+        # See PitcherCountingStatFormulas docstring for derivation and constants.
+        from backend.fantasy_baseball.fusion_engine import PitcherCountingStatFormulas as _pcf
+
+        _w = _pcf.project_wins(era, ip) if steamer_w is None else steamer_w
+        _l = _pcf.project_losses(era, ip) if steamer_l is None else steamer_l
+        _qs = _pcf.project_quality_starts(era, ip) if steamer_qs is None else steamer_qs
+        _hr_pit = _pcf.project_hr_allowed(era, ip) if steamer_hr_pit is None else steamer_hr_pit
+
         return {
             "ip": ip,
-            "w": steamer_w if isinstance(steamer_w, int) else round(max(0, 12 - era)),
-            "l": steamer_l if isinstance(steamer_l, int) else round(max(0, era - 3)),
-            "hr_pit": steamer_hr_pit if isinstance(steamer_hr_pit, int) else round(era * 1.7),
+            "w": _w if isinstance(_w, int) else round(_w),
+            "l": _l if isinstance(_l, int) else round(_l),
+            "hr_pit": _hr_pit if isinstance(_hr_pit, int) else round(_hr_pit),
             "k_pit": steamer_k_pit if isinstance(steamer_k_pit, int) else round(k9 * ip / 9),
             "era": era,
             "whip": fusion_proj.get("whip", 1.35),
             "k9": k9,
-            "qs": steamer_qs if isinstance(steamer_qs, int) else round(ip * 0.50),
+            "qs": _qs if isinstance(_qs, int) else round(_qs),
             "nsv": steamer_nsv if isinstance(steamer_nsv, int) else 0,
         }
 

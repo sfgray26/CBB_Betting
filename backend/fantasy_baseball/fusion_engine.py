@@ -511,6 +511,164 @@ def fuse_pitcher_projection(
     )
 
 
+class PitcherCountingStatFormulas:
+    """
+    Industry-standard translation from pitcher rate stats (ERA, IP) to counting stats (W, L, QS, HR allowed).
+
+    Mathematical basis:
+    - **Wins / Losses**: Derived from Bill James Pythagorean expectation linearized
+      around a league-average run environment (RS ≈ RA ≈ 4.50 runs/game).
+      The linearized form (Dayaratna & Miller 2012) gives:
+          win% ≈ 0.50 + γ/(4·R_avg) · (RS − RA)
+      With γ ≈ 1.82 and R_avg ≈ 4.50, the theoretical coefficient is ~0.101.
+      We dampen this to 0.06 for single-pitcher fantasy projections because
+      run-support variance dominates and we project without team-specific data.
+      Decisions are estimated as IP / 8.5, accounting for the ~25-30% no-decision
+      rate observed for MLB starters (Mastersball methodology).
+
+    - **Quality Starts**: QS requires 6+ IP and ≤ 3 ER. The probability of achieving
+      this in a given start is modeled as a linear function of ERA relative to
+      the 4.50 threshold (the ERA of a 6-IP, 3-ER start). Historical MLB data
+      (2019-2024) shows league-average starters convert ~45% of starts to QS.
+      Better ERA → higher QS rate; worse ERA → lower QS rate.
+
+    - **HR Allowed**: League-average HR/9 is ~1.2. ERA correlates weakly with
+      HR rate, so we use a modest slope (0.15 HR/9 per run of ERA) clamped
+      to realistic bounds [0.4, 2.5].
+
+    Sources:
+    - Bill James, *Baseball Abstract* (Pythagorean expectation)
+    - Dayaratna & Miller, "The Pythagorean Won-Loss Formula" (2012)
+    - Mastersball Projection Process (Todd Zola)
+    - MLB Statcast data 2019-2024
+    """
+
+    # League-average ERA — neutral point where win% and QS% are baseline
+    LEAGUE_ERA: float = 4.50
+
+    # Decisions per IP. A starter with 180 IP gets ~21 decisions
+    # (30 starts × ~70% decision rate). 180 / 8.5 ≈ 21.2.
+    DECISIONS_PER_IP: float = 1.0 / 8.5
+
+    # Win-rate elasticity w.r.t. ERA differential.
+    # Dampened from theoretical 0.101 to 0.06 to account for run-support noise.
+    WIN_RATE_ERA_COEFF: float = 0.06
+
+    # QS constants
+    STARTS_PER_IP: float = 1.0 / 5.8      # ~31 starts per 180 IP
+    BASE_QS_RATE: float = 0.45             # league-average QS conversion
+    QS_RATE_ERA_COEFF: float = 0.10        # slope of QS% vs ERA
+
+    # HR-allowed constants
+    BASE_HR_PER_NINE: float = 1.2
+    HR_RATE_ERA_COEFF: float = 0.15
+    MIN_HR_PER_NINE: float = 0.4
+    MAX_HR_PER_NINE: float = 2.5
+
+    @staticmethod
+    def _decisions(ip: float) -> int:
+        """Estimate total decisions (W + L) from innings pitched."""
+        return max(0, round(ip * PitcherCountingStatFormulas.DECISIONS_PER_IP))
+
+    @staticmethod
+    def _win_rate(era: float) -> float:
+        """Expected winning percentage given ERA (league-average run support assumed)."""
+        return max(
+            0.20,
+            min(
+                0.70,
+                0.50 + (PitcherCountingStatFormulas.LEAGUE_ERA - era)
+                * PitcherCountingStatFormulas.WIN_RATE_ERA_COEFF,
+            ),
+        )
+
+    @staticmethod
+    def project_wins(era: float, ip: float) -> int:
+        """
+        Project wins from ERA and IP.
+
+        Args:
+            era: Projected earned run average.
+            ip:  Projected innings pitched.
+
+        Returns:
+            Projected win total (int).
+        """
+        decisions = PitcherCountingStatFormulas._decisions(ip)
+        win_pct = PitcherCountingStatFormulas._win_rate(era)
+        return round(decisions * win_pct)
+
+    @staticmethod
+    def project_losses(era: float, ip: float) -> int:
+        """
+        Project losses from ERA and IP.
+
+        Ensures W + L equals the estimated decision total.
+
+        Args:
+            era: Projected earned run average.
+            ip:  Projected innings pitched.
+
+        Returns:
+            Projected loss total (int).
+        """
+        decisions = PitcherCountingStatFormulas._decisions(ip)
+        wins = PitcherCountingStatFormulas.project_wins(era, ip)
+        return max(0, decisions - wins)
+
+    @staticmethod
+    def project_quality_starts(era: float, ip: float) -> int:
+        """
+        Project quality starts from ERA and IP.
+
+        QS = 6+ IP and ≤ 3 ER. The probability is modeled linearly in ERA
+        with a baseline of 45% at league-average ERA.
+
+        Args:
+            era: Projected earned run average.
+            ip:  Projected innings pitched.
+
+        Returns:
+            Projected quality-start total (int).
+        """
+        starts = ip * PitcherCountingStatFormulas.STARTS_PER_IP
+        qs_prob = max(
+            0.05,
+            min(
+                0.85,
+                PitcherCountingStatFormulas.BASE_QS_RATE
+                + (PitcherCountingStatFormulas.LEAGUE_ERA - era)
+                * PitcherCountingStatFormulas.QS_RATE_ERA_COEFF,
+            ),
+        )
+        return round(starts * qs_prob)
+
+    @staticmethod
+    def project_hr_allowed(era: float, ip: float) -> int:
+        """
+        Project home runs allowed from ERA and IP.
+
+        Uses a league-average HR/9 baseline (~1.2) with a modest ERA slope.
+
+        Args:
+            era: Projected earned run average.
+            ip:  Projected innings pitched.
+
+        Returns:
+            Projected HR allowed total (int).
+        """
+        hr_per_nine = max(
+            PitcherCountingStatFormulas.MIN_HR_PER_NINE,
+            min(
+                PitcherCountingStatFormulas.MAX_HR_PER_NINE,
+                PitcherCountingStatFormulas.BASE_HR_PER_NINE
+                + (era - PitcherCountingStatFormulas.LEAGUE_ERA)
+                * PitcherCountingStatFormulas.HR_RATE_ERA_COEFF,
+            ),
+        )
+        return round(ip * hr_per_nine / 9)
+
+
 # Public API for external modules
 __all__ = [
     'StabilizationPoints',
@@ -519,4 +677,5 @@ __all__ = [
     'fuse_batter_projection',
     'fuse_pitcher_projection',
     'FusionResult',
+    'PitcherCountingStatFormulas',
 ]
