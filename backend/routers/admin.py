@@ -730,6 +730,31 @@ async def manual_yahoo_id_sync(user: str = Depends(verify_admin_api_key)):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.post("/admin/refresh-valuation-cache")
+async def manual_refresh_valuation_cache(user: str = Depends(verify_admin_api_key)):
+    """
+    Manually trigger player valuation cache refresh (admin only).
+
+    Runs _refresh_valuation_cache() for all leagues in FANTASY_LEAGUES env var.
+    Advisory lock 100_011 prevents concurrent runs.
+    """
+    from backend.main import _ingestion_orchestrator
+    if _ingestion_orchestrator is None:
+        raise HTTPException(status_code=503, detail="Ingestion orchestrator not initialized")
+
+    logger.info("Manual valuation cache refresh triggered by %s", user)
+    try:
+        await _ingestion_orchestrator._refresh_valuation_cache()
+        return {
+            "triggered_by": user,
+            "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+            "status": "ok",
+        }
+    except Exception as exc:
+        logger.error("Manual valuation cache refresh failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @router.get("/admin/player-id-mapping/conflicts")
 async def get_player_id_mapping_conflicts(
     user: str = Depends(verify_admin_api_key),
