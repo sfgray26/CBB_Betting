@@ -1834,7 +1834,7 @@ class DailyIngestionOrchestrator:
 
             try:
                 yahoo = YahooFantasyClient()
-                league_key = yahoo.get_my_team_key().split("/t")[0]  # Extract league key
+                league_key = yahoo.get_my_team_key().split(".t.")[0]  # Extract league key (format: game.l.league.t.team)
 
                 # Get all league rosters (~25 players x 12 teams = ~300 players)
                 logger.info("yahoo_id_sync: Fetching league rosters...")
