@@ -8,7 +8,7 @@ import logging
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-@router.post("/admin/migrate/add-yahoo-key-constraint")
+@router.post("/migrate/add-yahoo-key-constraint")
 async def add_yahoo_key_constraint():
     """
     One-time migration: Add _pim_yahoo_key_uc unique constraint.
