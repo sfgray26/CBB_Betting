@@ -1900,14 +1900,27 @@ class DailyIngestionOrchestrator:
                         ).first()
 
                         if existing_by_yahoo:
-                            # Update the row that already has this yahoo_key
-                            existing_by_yahoo.bdl_id = bdl_id
-                            existing_by_yahoo.yahoo_id = str(yahoo_id)
-                            existing_by_yahoo.full_name = name
-                            existing_by_yahoo.normalized_name = norm_name
-                            existing_by_yahoo.source = "yahoo_sync"
-                            existing_by_yahoo.resolution_confidence = 1.0
-                            existing_by_yahoo.updated_at = now_et()
+                            # Check if target bdl_id is already used by another row
+                            existing_by_bdl = db.query(PlayerIDMapping).filter(
+                                PlayerIDMapping.bdl_id == bdl_id
+                            ).first()
+
+                            if existing_by_bdl and existing_by_bdl.id != existing_by_yahoo.id:
+                                # bdl_id already taken by a different row - skip to avoid constraint violation
+                                logger.warning(
+                                    "yahoo_id_sync: Skipping update for yahoo_key=%s (bdl_id=%d already used by row id=%d)",
+                                    yahoo_key, bdl_id, existing_by_bdl.id
+                                )
+                                unmatched.append({"name": name, "yahoo_id": yahoo_id, "reason": "bdl_id_conflict"})
+                            else:
+                                # Safe to update - bdl_id is either free or already assigned to this row
+                                existing_by_yahoo.bdl_id = bdl_id
+                                existing_by_yahoo.yahoo_id = str(yahoo_id)
+                                existing_by_yahoo.full_name = name
+                                existing_by_yahoo.normalized_name = norm_name
+                                existing_by_yahoo.source = "yahoo_sync"
+                                existing_by_yahoo.resolution_confidence = 1.0
+                                existing_by_yahoo.updated_at = now_et()
                         else:
                             # Priority 2: Check if row exists by bdl_id (from pybaseball seeding)
                             existing_by_bdl = db.query(PlayerIDMapping).filter(
