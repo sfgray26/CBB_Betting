@@ -1024,7 +1024,7 @@ async def check_databases(user: str = Depends(verify_api_key)):
                     table_count = result.scalar()
 
                     # Check for migration tables
-                    target_tables = ['position_eligibility', 'probable_pitchers']
+                    target_tables = ['position_eligibility', 'probable_pitchers', 'ingested_injuries', 'player_valuation_cache']
                     found_tables = []
                     table_details = []
 
