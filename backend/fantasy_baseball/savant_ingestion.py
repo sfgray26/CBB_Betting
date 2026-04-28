@@ -534,12 +534,13 @@ class SavantIngestionAgent:
                 "message": str(e)
             }
         except Exception as e:
-            logger.exception("Savant ingestion failed")
+            import traceback as _tb
+            logger.exception("Savant ingestion failed: %s\n%s", e, _tb.format_exc())
             self.db.rollback()
             return {
                 "status": "error",
-                "error": "unknown",
-                "message": str(e)
+                "error": type(e).__name__,
+                "message": str(e),
             }
         finally:
             self._release_advisory_lock()

@@ -4362,14 +4362,16 @@ class DailyIngestionOrchestrator:
                     self._record_job_run("savant_ingestion", "skipped")
                     return {"status": "skipped", "elapsed_ms": elapsed}
                 else:
+                    err_type = result.get("error", "unknown")
+                    err_msg = result.get("message") or "no detail"
                     logger.error(
-                        "_ingest_savant_leaderboards: failed — %s",
-                        result.get("error", "unknown")
+                        "_ingest_savant_leaderboards: failed — %s: %s",
+                        err_type, err_msg
                     )
                     self._record_job_run("savant_ingestion", "failed")
                     return {
                         "status": "failed",
-                        "error": result.get("error"),
+                        "error": f"{err_type}: {err_msg}",
                         "elapsed_ms": elapsed,
                     }
 
