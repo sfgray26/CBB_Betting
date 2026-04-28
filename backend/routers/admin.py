@@ -907,6 +907,34 @@ async def purge_stub_projections(
     }
 
 
+@router.get("/admin/db/constraints")
+async def get_table_constraints(
+    table_name: str = "player_id_mapping",
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """Return all constraint names for a given table (admin only)."""
+    rows = db.execute(text("""
+        SELECT tc.constraint_name, tc.constraint_type,
+               array_agg(kcu.column_name ORDER BY kcu.ordinal_position) AS columns
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema = kcu.table_schema
+        WHERE tc.table_name = :tname
+          AND tc.table_schema = 'public'
+        GROUP BY tc.constraint_name, tc.constraint_type
+        ORDER BY tc.constraint_type, tc.constraint_name
+    """), {"tname": table_name}).fetchall()
+    return {
+        "table": table_name,
+        "constraints": [
+            {"name": r[0], "type": r[1], "columns": list(r[2])}
+            for r in rows
+        ],
+    }
+
+
 @router.get("/admin/player-id-mapping/conflicts")
 async def get_player_id_mapping_conflicts(
     user: str = Depends(verify_admin_api_key),
