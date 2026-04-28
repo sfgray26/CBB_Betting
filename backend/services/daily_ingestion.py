@@ -1894,41 +1894,56 @@ class DailyIngestionOrchestrator:
                         bdl_data = bdl_index[norm_name]
                         bdl_id = bdl_data["bdl_id"]
 
-                        # Check if row exists by bdl_id (from pybaseball seeding)
-                        existing = db.query(PlayerIDMapping).filter(
-                            PlayerIDMapping.bdl_id == bdl_id
+                        # Priority 1: Check if row exists with this yahoo_key (update it)
+                        existing_by_yahoo = db.query(PlayerIDMapping).filter(
+                            PlayerIDMapping.yahoo_key == yahoo_key
                         ).first()
 
-                        if existing:
-                            # Update existing row with Yahoo IDs
-                            existing.yahoo_id = str(yahoo_id)
-                            existing.yahoo_key = yahoo_key
-                            existing.full_name = name
-                            existing.normalized_name = norm_name
-                            existing.source = "yahoo_sync"
-                            existing.resolution_confidence = 1.0
-                            existing.updated_at = now_et()
+                        if existing_by_yahoo:
+                            # Update the row that already has this yahoo_key
+                            existing_by_yahoo.bdl_id = bdl_id
+                            existing_by_yahoo.yahoo_id = str(yahoo_id)
+                            existing_by_yahoo.full_name = name
+                            existing_by_yahoo.normalized_name = norm_name
+                            existing_by_yahoo.source = "yahoo_sync"
+                            existing_by_yahoo.resolution_confidence = 1.0
+                            existing_by_yahoo.updated_at = now_et()
                         else:
-                            # Insert new row with ON CONFLICT on yahoo_key
-                            stmt = pg_insert(PlayerIDMapping.__table__).values(
-                                yahoo_id=str(yahoo_id),
-                                yahoo_key=yahoo_key,
-                                bdl_id=bdl_id,
-                                full_name=name,
-                                normalized_name=norm_name,
-                                source="yahoo_sync",
-                                resolution_confidence=1.0,
-                                updated_at=now_et(),
-                            ).on_conflict_do_update(
-                                constraint="_pim_yahoo_key_uc",
-                                set_=dict(
+                            # Priority 2: Check if row exists by bdl_id (from pybaseball seeding)
+                            existing_by_bdl = db.query(PlayerIDMapping).filter(
+                                PlayerIDMapping.bdl_id == bdl_id
+                            ).first()
+
+                            if existing_by_bdl:
+                                # Update existing row with Yahoo IDs (only if yahoo_key not taken)
+                                existing_by_bdl.yahoo_id = str(yahoo_id)
+                                existing_by_bdl.yahoo_key = yahoo_key
+                                existing_by_bdl.full_name = name
+                                existing_by_bdl.normalized_name = norm_name
+                                existing_by_bdl.source = "yahoo_sync"
+                                existing_by_bdl.resolution_confidence = 1.0
+                                existing_by_bdl.updated_at = now_et()
+                            else:
+                                # Insert new row with ON CONFLICT on yahoo_key
+                                stmt = pg_insert(PlayerIDMapping.__table__).values(
                                     yahoo_id=str(yahoo_id),
+                                    yahoo_key=yahoo_key,
+                                    bdl_id=bdl_id,
                                     full_name=name,
                                     normalized_name=norm_name,
+                                    source="yahoo_sync",
+                                    resolution_confidence=1.0,
                                     updated_at=now_et(),
-                                ),
-                            )
-                            db.execute(stmt)
+                                ).on_conflict_do_update(
+                                    constraint="_pim_yahoo_key_uc",
+                                    set_=dict(
+                                        yahoo_id=str(yahoo_id),
+                                        full_name=name,
+                                        normalized_name=norm_name,
+                                        updated_at=now_et(),
+                                    ),
+                                )
+                                db.execute(stmt)
                         matched += 1
                         updates += 1
                     else:
