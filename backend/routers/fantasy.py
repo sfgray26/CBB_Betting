@@ -4334,6 +4334,7 @@ async def get_decisions(
     """
     # For waiver decisions, perform live category-aware optimization
     # This is wrapped in extensive try/except to prevent cascading failures
+    _original_as_of_date = as_of_date  # preserve for DB fallback if live path fails
     if decision_type == "waiver" or decision_type is None:
         try:
             from backend.services.decision_engine import (
@@ -4657,6 +4658,7 @@ async def get_decisions(
                 except Exception as _live_err:
                     logger.warning("decisions endpoint: live optimization failed (falling back to DB): %s", _live_err, exc_info=True)
         except Exception as _init_err:
+            as_of_date = _original_as_of_date  # restore so DB fallback uses correct date
             logger.warning("decisions endpoint: category-aware setup failed (using DB fallback): %s", _init_err, exc_info=True)
 
     # Build base query with player name and drop player name joins
