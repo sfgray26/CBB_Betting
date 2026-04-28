@@ -854,6 +854,59 @@ async def audit_stub_projections(
     }
 
 
+@router.post("/admin/purge-stub-projections")
+async def purge_stub_projections(
+    dry_run: bool = True,
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Purge zombie rows from player_projections (admin only).
+
+    Zombie = matches BOTH batter defaults (hr=15,r=65,rbi=65,sb=5,avg=0.25,ops=0.72)
+    AND pitcher defaults (era=4.0,whip=1.3,w=0,qs=0,k_pit=0) AND team IS NULL.
+
+    Pass ?dry_run=false to execute. Default is dry-run (safe to call repeatedly).
+    Audit baseline 2026-04-28: 24 rows.
+    """
+    ZOMBIE_WHERE = """
+        hr = 15 AND r = 65 AND rbi = 65 AND sb = 5
+        AND ABS(avg - 0.250) < 0.001 AND ABS(ops - 0.720) < 0.001
+        AND ABS(era - 4.0) < 0.001 AND ABS(whip - 1.3) < 0.001
+        AND w = 0 AND qs = 0 AND k_pit = 0
+        AND team IS NULL
+    """
+
+    count = db.execute(text(f"SELECT COUNT(*) FROM player_projections WHERE {ZOMBIE_WHERE}")).scalar()
+
+    samples = db.execute(text(f"""
+        SELECT id, player_name, player_id, prior_source
+        FROM player_projections WHERE {ZOMBIE_WHERE}
+        ORDER BY id LIMIT 10
+    """)).fetchall()
+    sample_list = [
+        {"id": r[0], "player_name": r[1], "player_id": r[2], "prior_source": r[3]}
+        for r in samples
+    ]
+
+    if dry_run:
+        return {
+            "mode": "dry_run",
+            "rows_to_delete": count,
+            "samples": sample_list,
+        }
+
+    deleted = db.execute(text(f"DELETE FROM player_projections WHERE {ZOMBIE_WHERE}")).rowcount
+    db.commit()
+    logger.info("purge_stub_projections: deleted %d zombie rows (triggered by %s)", deleted, user)
+    return {
+        "mode": "execute",
+        "rows_deleted": deleted,
+        "samples": sample_list,
+        "next_step": "POST /api/admin/data-quality/backfill-cat-scores?force=true",
+    }
+
+
 @router.get("/admin/player-id-mapping/conflicts")
 async def get_player_id_mapping_conflicts(
     user: str = Depends(verify_admin_api_key),
