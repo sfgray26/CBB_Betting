@@ -4383,8 +4383,8 @@ class DailyIngestionOrchestrator:
             finally:
                 try:
                     db.close()
-                except:
-                    pass
+                except Exception as db_exc:
+                    logger.warning("_ingest_savant_leaderboards: db.close() failed: %s", db_exc)
 
         return await _with_advisory_lock(LOCK_IDS["savant_ingestion"], "savant_ingestion", _run)
 
