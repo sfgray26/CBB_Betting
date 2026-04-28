@@ -1065,6 +1065,78 @@ async def check_databases(user: str = Depends(verify_api_key)):
     }
 
 
+@router.get("/admin/probable-pitchers/status")
+async def get_probable_pitchers_status(
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """Return probable_pitchers table status: total rows, today/tomorrow counts, is_confirmed counts."""
+    from datetime import date, timedelta
+
+    result = {}
+
+    # Total rows
+    total = db.execute(text("SELECT COUNT(*) FROM probable_pitchers")).scalar()
+    result["total_rows"] = total
+
+    # Today and tomorrow
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+
+    today_count = db.execute(
+        text("SELECT COUNT(*) FROM probable_pitchers WHERE game_date = :today"),
+        {"today": today}
+    ).scalar()
+    tomorrow_count = db.execute(
+        text("SELECT COUNT(*) FROM probable_pitchers WHERE game_date = :tomorrow"),
+        {"tomorrow": tomorrow}
+    ).scalar()
+
+    result["today"] = {
+        "date": str(today),
+        "total": today_count,
+    }
+    result["tomorrow"] = {
+        "date": str(tomorrow),
+        "total": tomorrow_count,
+    }
+
+    # is_confirmed counts
+    confirmed_today = db.execute(
+        text("SELECT COUNT(*) FROM probable_pitchers WHERE game_date = :today AND is_confirmed = true"),
+        {"today": today}
+    ).scalar()
+    confirmed_tomorrow = db.execute(
+        text("SELECT COUNT(*) FROM probable_pitchers WHERE game_date = :tomorrow AND is_confirmed = true"),
+        {"tomorrow": tomorrow}
+    ).scalar()
+
+    result["today"]["confirmed"] = confirmed_today
+    result["tomorrow"]["confirmed"] = confirmed_tomorrow
+
+    # Recent sample rows
+    if total > 0:
+        recent = db.execute(text("""
+            SELECT game_date, team, pitcher_name, is_confirmed, opponent
+            FROM probable_pitchers
+            WHERE game_date >= :today
+            ORDER BY game_date, team
+            LIMIT 5
+        """), {"today": today}).fetchall()
+        result["sample_rows"] = [
+            {
+                "game_date": str(r[0]),
+                "team": r[1],
+                "pitcher_name": r[2],
+                "is_confirmed": bool(r[3]),
+                "opponent": r[4]
+            }
+            for r in recent
+        ]
+
+    return result
+
+
 @router.get("/admin/odds-monitor/status")
 async def get_odds_monitor_status(user: str = Depends(verify_api_key)):
     """Return odds monitor status: tracked games, last poll time."""
