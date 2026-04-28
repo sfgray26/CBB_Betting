@@ -36,33 +36,35 @@ def get_data_quality_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
     6. Projection coverage (% players with cat_scores)
     """
     now = datetime.now(ZoneInfo("UTC"))
-    
+    cutoff_naive = (now - timedelta(days=7)).replace(tzinfo=None)
+
     # Metric 1: Matchup detection rate
     today_et = datetime.now(ZoneInfo("America/New_York")).date()
     games_today = db.query(func.count(MLBGameLog.game_id)).filter(
         MLBGameLog.game_date == today_et
     ).scalar() or 0
-    
+
     # Metric 2: Statcast coverage
+    # PlayerProjection.updated_at is naive DateTime — compare against naive cutoff
     active_players = db.query(func.count(PlayerProjection.id)).filter(
-        PlayerProjection.updated_at > now - timedelta(days=7)
+        PlayerProjection.updated_at > cutoff_naive
     ).scalar() or 0
-    
+
     statcast_covered = db.query(
         func.count(func.distinct(StatcastPerformance.player_id))
     ).filter(
         StatcastPerformance.game_date > today_et - timedelta(days=7)
     ).scalar() or 0
-    
+
     statcast_coverage_pct = (
         (statcast_covered / active_players * 100) if active_players > 0 else 0.0
     )
-    
+
     # Metric 3: Null field counts
     null_teams = db.query(func.count(PlayerProjection.id)).filter(
         PlayerProjection.team.is_(None)
     ).scalar() or 0
-    
+
     # Metric 4: Pipeline staleness
     last_projection_update = db.query(func.max(PlayerProjection.updated_at)).scalar()
     if last_projection_update and last_projection_update.tzinfo is None:
@@ -72,14 +74,15 @@ def get_data_quality_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
         if last_projection_update
         else 999
     )
-    
+
     # Metric 5: Data ingestion failure rate (last 7 days)
+    # DataIngestionLog.started_at is naive DateTime — compare against naive cutoff
     total_jobs = db.query(func.count(DataIngestionLog.id)).filter(
-        DataIngestionLog.started_at > now - timedelta(days=7)
+        DataIngestionLog.started_at > cutoff_naive
     ).scalar() or 1
-    
+
     failed_jobs = db.query(func.count(DataIngestionLog.id)).filter(
-        DataIngestionLog.started_at > now - timedelta(days=7),
+        DataIngestionLog.started_at > cutoff_naive,
         DataIngestionLog.status == "failed",
     ).scalar() or 0
     

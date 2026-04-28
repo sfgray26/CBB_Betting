@@ -79,6 +79,7 @@
 
 | Document | Purpose |
 |----------|---------|
+| **[RAILWAY.md](RAILWAY.md)** | **CRITICAL:** Authoritative guide for Railway operations (SSH vs RUN) |
 | [QUICKREF.md](QUICKREF.md) | Quick command reference |
 | [TOOLS.md](TOOLS.md) | Tool integrations and credentials |
 | [USER.md](USER.md) | Who we're helping |

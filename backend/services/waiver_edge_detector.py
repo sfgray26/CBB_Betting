@@ -137,9 +137,11 @@ def drop_candidate_value(player: dict) -> tuple:
         player.get("percent_owned", player.get("owned_pct", 0.0)),
         0.0,
     )
-    name = player.get("name", "")
+    # Use player id (Yahoo key) as tiebreaker — stable, unique, avoids name-hash bias
+    # that caused the "always Seiya Suzuki" universal-drop bug (April 21).
+    player_id = str(player.get("id") or player.get("player_key") or player.get("name") or "")
 
-    return (primary, -tier, adp, -owned_pct, hash(name))
+    return (primary, -tier, adp, -owned_pct, player_id)
 
 
 def is_protected_drop_candidate(player: dict) -> bool:

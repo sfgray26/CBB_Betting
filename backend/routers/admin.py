@@ -2115,3 +2115,152 @@ async def run_migration_v32(user: str = Depends(verify_admin_api_key), db: Sessi
 
     results["verification"] = verification
     return results
+
+
+@router.get("/admin/pipeline/box-stats-health")
+async def get_box_stats_pipeline_health(
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_admin_api_key),
+):
+    """
+    Diagnose rolling window null root cause.
+
+    Reports row counts + null rates for the box stats pipeline:
+      mlb_game_log -> mlb_player_stats -> player_rolling_stats -> player_scores
+    """
+    from zoneinfo import ZoneInfo
+
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    cutoff_30d = today - timedelta(days=30)
+
+    result: dict = {"as_of": str(today)}
+
+    # ---- mlb_game_log -------------------------------------------------------
+    try:
+        gl_total = db.execute(text("SELECT COUNT(*) FROM mlb_game_log")).scalar() or 0
+        gl_recent = db.execute(
+            text("SELECT COUNT(*) FROM mlb_game_log WHERE game_date >= :cutoff"),
+            {"cutoff": cutoff_30d},
+        ).scalar() or 0
+        gl_sample = db.execute(
+            text(
+                "SELECT game_id, game_date FROM mlb_game_log "
+                "ORDER BY game_date DESC LIMIT 5"
+            )
+        ).fetchall()
+        result["mlb_game_log"] = {
+            "total_rows": gl_total,
+            "last_30d_rows": gl_recent,
+            "recent_game_ids": [{"game_id": r[0], "game_date": str(r[1])} for r in gl_sample],
+        }
+    except Exception as exc:
+        result["mlb_game_log"] = {"error": str(exc)}
+
+    # ---- mlb_player_stats ---------------------------------------------------
+    try:
+        ps_total = db.execute(text("SELECT COUNT(*) FROM mlb_player_stats")).scalar() or 0
+        ps_recent = db.execute(
+            text("SELECT COUNT(*) FROM mlb_player_stats WHERE game_date >= :cutoff"),
+            {"cutoff": cutoff_30d},
+        ).scalar() or 0
+        ps_ab_null = db.execute(
+            text("SELECT COUNT(*) FROM mlb_player_stats WHERE game_date >= :cutoff AND ab IS NULL"),
+            {"cutoff": cutoff_30d},
+        ).scalar() or 0
+        ps_ip_null = db.execute(
+            text("SELECT COUNT(*) FROM mlb_player_stats WHERE game_date >= :cutoff AND innings_pitched IS NULL"),
+            {"cutoff": cutoff_30d},
+        ).scalar() or 0
+        ps_both_null = db.execute(
+            text(
+                "SELECT COUNT(*) FROM mlb_player_stats "
+                "WHERE game_date >= :cutoff AND ab IS NULL AND innings_pitched IS NULL"
+            ),
+            {"cutoff": cutoff_30d},
+        ).scalar() or 0
+        ps_dates = db.execute(
+            text("SELECT MIN(game_date), MAX(game_date) FROM mlb_player_stats")
+        ).fetchone()
+        result["mlb_player_stats"] = {
+            "total_rows": ps_total,
+            "last_30d_rows": ps_recent,
+            "date_range": {"min": str(ps_dates[0]), "max": str(ps_dates[1])} if ps_dates and ps_dates[0] else None,
+            "ab_null_pct": round(100.0 * ps_ab_null / ps_recent, 1) if ps_recent else None,
+            "ip_null_pct": round(100.0 * ps_ip_null / ps_recent, 1) if ps_recent else None,
+            "both_null_pct": round(100.0 * ps_both_null / ps_recent, 1) if ps_recent else None,
+        }
+    except Exception as exc:
+        result["mlb_player_stats"] = {"error": str(exc)}
+
+    # ---- player_rolling_stats -----------------------------------------------
+    try:
+        prs_total = db.execute(text("SELECT COUNT(*) FROM player_rolling_stats")).scalar() or 0
+        prs_latest_date = db.execute(
+            text("SELECT MAX(as_of_date) FROM player_rolling_stats")
+        ).scalar()
+        prs_by_window: dict = {}
+        prs_w_ab_null = 0
+        prs_ip_null_prs = 0
+        if prs_latest_date:
+            for w in [7, 14, 30]:
+                cnt = db.execute(
+                    text(
+                        "SELECT COUNT(*) FROM player_rolling_stats "
+                        "WHERE as_of_date = :d AND window_days = :w"
+                    ),
+                    {"d": prs_latest_date, "w": w},
+                ).scalar() or 0
+                prs_by_window[w] = cnt
+            prs_w_ab_null = db.execute(
+                text(
+                    "SELECT COUNT(*) FROM player_rolling_stats "
+                    "WHERE as_of_date = :d AND window_days = 14 AND w_ab IS NULL"
+                ),
+                {"d": prs_latest_date},
+            ).scalar() or 0
+            prs_ip_null_prs = db.execute(
+                text(
+                    "SELECT COUNT(*) FROM player_rolling_stats "
+                    "WHERE as_of_date = :d AND window_days = 14 AND w_ip IS NULL"
+                ),
+                {"d": prs_latest_date},
+            ).scalar() or 0
+        result["player_rolling_stats"] = {
+            "total_rows": prs_total,
+            "latest_as_of_date": str(prs_latest_date) if prs_latest_date else None,
+            "row_counts_by_window": prs_by_window,
+            "w14_w_ab_null_count": prs_w_ab_null,
+            "w14_w_ip_null_count": prs_ip_null_prs,
+        }
+    except Exception as exc:
+        result["player_rolling_stats"] = {"error": str(exc)}
+
+    # ---- player_scores ------------------------------------------------------
+    try:
+        sc_total = db.execute(text("SELECT COUNT(*) FROM player_scores")).scalar() or 0
+        sc_latest_date = db.execute(
+            text("SELECT MAX(as_of_date) FROM player_scores")
+        ).scalar()
+        result["player_scores"] = {
+            "total_rows": sc_total,
+            "latest_as_of_date": str(sc_latest_date) if sc_latest_date else None,
+        }
+    except Exception as exc:
+        result["player_scores"] = {"error": str(exc)}
+
+    # ---- verdict ------------------------------------------------------------
+    issues = []
+    mps = result.get("mlb_player_stats", {})
+    prs = result.get("player_rolling_stats", {})
+    if mps.get("last_30d_rows", 0) == 0:
+        issues.append("mlb_player_stats EMPTY -- box stats never ingested")
+    elif mps.get("both_null_pct") == 100.0:
+        issues.append("mlb_player_stats: 100% rows have ab=NULL AND ip=NULL -- BDL field mapping broken")
+    if prs.get("total_rows", 0) == 0:
+        issues.append("player_rolling_stats EMPTY -- rolling window job never ran or found no stat rows")
+    elif prs_by_window and prs.get("w14_w_ab_null_count", 0) == prs_by_window.get(14, -1) > 0:
+        issues.append("player_rolling_stats w14: all w_ab null -- batters not contributing")
+
+    result["verdict"] = "healthy" if not issues else "; ".join(issues)
+
+    return result

@@ -2290,11 +2290,26 @@ async def get_waiver_recommendations(
             if not candidates:
                 return None
             active = [p for p in candidates if p.get("status") not in _IL_STATUSES]
-            if len(active) == 1:
+            pool = active if len(active) >= 2 else (candidates if len(active) == 0 else None)
+            if pool is None:
                 return None
-            if len(active) == 0:
-                return min(candidates, key=_drop_candidate_value)
-            return min(active, key=_drop_candidate_value)
+
+            # Refuse to pick a drop when ALL candidates have default/missing scoring
+            # data (empty cat_scores + z_score=0 + default ADP). This prevents the
+            # "always Seiya Suzuki" universal-drop bug where the tiebreaker became
+            # the only discriminator across identically-scored players.
+            from backend.services.waiver_edge_detector import _coerce_float as _wv_cf, _coerce_int as _wv_ci
+            all_data_missing = all(
+                not p.get("cat_scores")
+                and _wv_cf(p.get("z_score"), 0.0) == 0.0
+                and _wv_cf(p.get("adp"), 9999.0) >= 9000.0
+                and _wv_ci(p.get("tier"), 999) >= 999
+                for p in pool
+            )
+            if all_data_missing:
+                return None
+
+            return min(pool, key=_drop_candidate_value)
 
         def _fmt_signals(signals: list, reg_delta: float, is_pitcher: bool) -> str:
             parts = []

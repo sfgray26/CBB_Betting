@@ -393,12 +393,12 @@ def compute_league_zscores(
             for k in applicable_keys
             if k not in _COMPOSITE_EXCLUDED and getattr(result, k) is not None
         ]
-        # Weighted MEAN (divide by sum of weights) to balance hitter/pitcher scales
-        weight_sum = sum(_CATEGORY_WEIGHTS.get(k, 1.0) for k, _ in kv_pairs)
+        # Weighted SUM (P1-4/P1-5): no normalization so two-way players (Ohtani)
+        # are valued higher for contributing to more categories, and specialists
+        # are appropriately lower for fewer non-None categories.
         result.composite_z = (
-            sum(_CATEGORY_WEIGHTS.get(k, 1.0) * v for k, v in kv_pairs) / weight_sum
-            if kv_pairs and weight_sum > 0
-            else 0.0
+            sum(_CATEGORY_WEIGHTS.get(k, 1.0) * v for k, v in kv_pairs)
+            if kv_pairs else 0.0
         )
 
         # Step 4: confidence = min(1.0, games_in_window / window_days)

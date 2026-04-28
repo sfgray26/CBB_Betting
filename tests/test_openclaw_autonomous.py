@@ -35,14 +35,22 @@ def _make_loop(moves=None, brief_raises=False, detector_raises=False):
     return loop, detector, router, brief_patch
 
 
+_PAUSED = pytest.mark.xfail(
+    reason="OpenClaw paused 2026-04-21 until baseball module complete — stub returns immediately",
+    strict=True,
+)
+
+
 class TestOpenClawAutonomousLoop:
 
+    @_PAUSED
     def test_run_morning_workflow_returns_summary_keys(self):
         loop, _, _, brief_patch = _make_loop(moves=[])
         with brief_patch:
             summary = loop.run_morning_workflow()
         assert set(summary.keys()) == {"brief_sent", "moves_evaluated", "high_impact", "digest_sent"}
 
+    @_PAUSED
     def test_high_impact_move_fires_immediate_alert(self):
         high_impact_move = {
             "add_player": {"name": "Westburg"},
@@ -59,6 +67,7 @@ class TestOpenClawAutonomousLoop:
         assert pkg.mention_admin is True
         assert "HIGH IMPACT" in pkg.message
 
+    @_PAUSED
     def test_low_impact_move_goes_to_digest(self):
         low_move = {
             "add_player": {"name": "LowFA"},
@@ -75,6 +84,7 @@ class TestOpenClawAutonomousLoop:
         items_arg = mock_digest.call_args[0][1]
         assert any("LowFA" in item for item in items_arg)
 
+    @_PAUSED
     def test_brief_failure_does_not_abort_workflow(self):
         moves = [{"add_player": {"name": "X"}, "drop_player_name": "Y", "win_prob_gain": 0.01}]
         loop, _, _, brief_patch = _make_loop(moves=moves, brief_raises=True)
@@ -89,6 +99,7 @@ class TestOpenClawAutonomousLoop:
             summary = loop.run_morning_workflow()
         assert summary["moves_evaluated"] == 0
 
+    @_PAUSED
     def test_batch_digest_called_with_correct_items(self):
         moves = [
             {"add_player": {"name": "Alpha"}, "drop_player_name": "Z", "win_prob_gain": 0.01},
@@ -114,6 +125,7 @@ class TestOpenClawAutonomousLoop:
         assert loop.my_roster is new_my
         assert loop.opponent_roster is new_opp
 
+    @_PAUSED
     def test_discord_router_flush_called_when_threshold_met(self):
         loop, _, router, brief_patch = _make_loop(moves=[])
         router.should_flush.return_value = True

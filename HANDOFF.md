@@ -1,13 +1,63 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
-> **Date:** 2026-04-27 16:00 UTC | **Architect:** Claude Code (Master Architect)
-> **Status:** K-32 P0 Remediation — Findings correct audit assumptions. 4 tasks completed, 4 clarified/ready for DevOps.
+> **Date:** 2026-04-28 | **Architect:** Claude Code (Master Architect)
+> **Status:** K-34 Remediation Session F — 5 bugs fixed, test suite clean (2433 pass / 7 xfail)
 
-> **Previous Status:** K-32 P0 Remediation In Progress — 4/8 tasks completed, 4 in progress. Created numeric name backfill script.
+> **Previous Status:** K-32 P0 Remediation — Findings correct audit assumptions. 4 tasks completed, 4 clarified/ready for DevOps.
 
 ---
 
-## 1. Mission Accomplished — Latest Session (2026-04-27)
+## 1. Mission Accomplished — Latest Session (2026-04-28)
+
+### Session F — Bug Fixes: timezone, universal-drop, scoring formula, pre-existing failures
+
+**Test suite:** 2433 pass / 3 skip / 7 xfail / 0 fail (up from 2364 pass / 8 fail)
+
+#### Fixes Applied
+
+1. **data_quality.py — timezone mismatch (P2)**
+   - `PlayerProjection.updated_at` and `DataIngestionLog.started_at` are naive `DateTime` columns.
+   - Was comparing against tz-aware `now - timedelta(days=7)` → PostgreSQL raises `can't subtract offset-naive and offset-aware datetimes`
+   - Fix: `cutoff_naive = (now - timedelta(days=7)).replace(tzinfo=None)` used for all 3 filter expressions
+   - File: `backend/routers/data_quality.py`
+
+2. **Seiya Suzuki universal-drop bug (P1) — two-part fix**
+   - Root cause A: `drop_candidate_value` used `hash(name)` as tiebreaker — consistent within a Python process, always picked the same player (Seiya Suzuki) when all other fields were equal
+   - Root cause B: `_weakest_safe_to_drop` had no guard against "all candidates have empty scoring data" state
+   - Fix A (`waiver_edge_detector.py`): replaced `hash(name)` → `player_id` (Yahoo key, unique per player)
+   - Fix B (`fantasy.py`): added `all_data_missing` guard in `_weakest_safe_to_drop` — returns None when all candidates have `cat_scores={}`, `z_score=0.0`, `adp≥9000`, `tier≥999`
+
+3. **scoring_engine.py — weighted SUM vs MEAN regression (P1)**
+   - Commit `6b54c3f` changed weighted SUM (P1-4/P1-5 design) to weighted MEAN, breaking `test_nsb_pipeline.py`
+   - Fix: reverted to weighted SUM per documented P1-4/P1-5 intent (two-way players valued higher for contributing to more categories)
+   - File: `backend/services/scoring_engine.py`
+   - Updated `test_scoring_engine.py::test_composite_z_is_weighted_mean` → `test_composite_z_is_weighted_sum` to match
+
+4. **OpenClaw pre-existing failures (7 tests)**
+   - OpenClaw deliberately paused 2026-04-21 (stubs returning immediately)
+   - Tests were testing active behavior that no longer exists
+   - Fix: marked 7 tests as `xfail(strict=True)` with reason documenting the pause
+   - Files: `tests/test_openclaw_autonomous.py`, `tests/test_openclaw_lite.py`
+
+5. **Box stats pipeline diagnostic endpoint (NEW)**
+   - Added `GET /admin/pipeline/box-stats-health` to diagnose rolling windows 100% null
+   - Reports: mlb_game_log row count/dates, mlb_player_stats null rates (ab, ip, both), player_rolling_stats counts by window + w_ab/w_ip null rates, player_scores latest date
+   - Verdict field auto-detects: empty table vs 100% null mapping vs healthy
+   - File: `backend/routers/admin.py`
+
+#### Pending Investigation (needs Gemini to hit prod endpoint)
+- **Rolling windows 100% null**: root cause still unknown. Run `GET /admin/pipeline/box-stats-health` to determine if mlb_player_stats is empty (no box stats ever ingested) vs null field mapping issue
+- Most likely: mlb_game_log empty → game_ids=[] → box stats job skips → rolling windows finds 0 rows
+
+#### DevOps Still Needed (Gemini)
+- Run `scripts/migrations/rename_yahoo_key_constraint.sql` (drop duplicate `player_id_mapping_yahoo_key_key`)
+- Run `railway run python scripts/backfill_numeric_player_names.py`
+- Set `FANTASY_LEAGUES` env var in Railway dashboard
+- Hit `GET /admin/pipeline/box-stats-health` and report verdict back
+
+---
+
+## 1. Mission Accomplished — Previous Session (2026-04-27)
 
 ### K-32 P0 Remediation — Clarified & Corrected
 
@@ -132,16 +182,15 @@ Also bundled: Apr 21 Postman P0/P1 fixes (MCMC negative-gain gate, numeric stat_
 
 | # | Severity | Defect | Evidence | Next Action |
 |---|----------|--------|----------|-------------|
-| **0** | **P0** | **⚠️ Waiver endpoints 503 — Yahoo API `out=ownership` regression** | v3 audit 21:09 UTC | **IMMEDIATE:** Identify unknown deploy between 19:01-21:09, verify K-20 fix presence, redeploy correct version |
-| 1 | P1 | Roster rolling windows 100% null (7d/14d/15d/30d, ROS, ROW, game_context) | v3 audit: 0/23 populated | Wave 3: Diagnose rolling_stats ingestion + PlayerIDMapping |
+| 1 | P1 | Roster rolling windows 100% null | v3 audit + diagnostic endpoint added | **Gemini: `GET /admin/pipeline/box-stats-health` → report verdict** |
 | 2 | P1 | MLBAM IDs 100% null (blocks Statcast joins) | v3 audit: 0/23 populated | Wave 3: PlayerIDMapping ingestion diagnosis |
-| 3 | P1 | Universal-drop bug — all 24 recs drop Seiya Suzuki | v3 audit: 24/24 same drop | Architect review + code fix |
+| ~~3~~ | ~~P1~~ | ~~Universal-drop bug — all 24 recs drop Seiya Suzuki~~ | **FIXED Session F** | Two-part fix: `hash(name)` → `player_id`, data-guard in `_weakest_safe_to_drop` |
 | 4 | P1 | Lineup pitcher warning noise — 7 SP no start, 0 active slots | Legacy issue | Wave 3: Pitcher-start detection logic |
 | 5 | P2 | Briefing uses legacy v1 category names (HR, SB, K, SV) | v3 audit: 11 categories | Wave 3: Migrate to v2 canonicals |
 | 6 | P2 | Schema pollution — K_P mislabeled, batters have pitcher stats | Legacy issue | Wave 3: Stat schema cleanup |
 | 7 | P3 | Impossible ROS projections (0.00 ERA, 0.00 WHIP) | v3 audit: 5 instances | See `tasks/architect_review.md` Decision #5 |
 | 8 | P3 | Draft board age=0 for 92.5% (185/200 players) | v3 audit | Low priority |
-| 9 | P3 | NSB composite test failure | Pre-existing | See `tasks/architect_review.md` Decision #1 |
+| ~~9~~ | ~~P3~~ | ~~NSB composite test failure~~ | **FIXED Session F** | scoring_engine.py reverted to weighted SUM, test updated |
 
 **Positive changes (v3 audit):** BDL IDs 0/23 → 19/23, injury data 0/23 → 3/23.
 
