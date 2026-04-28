@@ -92,6 +92,10 @@ from backend.admin_statcast_diagnostics import router as _statcast_diag_router
 from backend.admin_scoring_diagnostics import router as _scoring_diag_router
 # END SCORING DIAGNOSTICS ENDPOINTS
 
+# CONSTRAINT MIGRATION ENDPOINT - REMOVE AFTER YAHOO ID SYNC IS LIVE
+from backend.admin_add_constraint import router as _constraint_migration_router
+# END CONSTRAINT MIGRATION ENDPOINT
+
 # DATA QUALITY MONITORING DASHBOARD
 from backend.routers import data_quality
 # END DATA QUALITY MONITORING DASHBOARD
@@ -642,6 +646,10 @@ app.include_router(_statcast_diag_router, prefix="/admin", tags=["admin"])
 # SCORING DIAGNOSTICS ENDPOINTS - REMOVE AFTER NSB ROLLOUT VALIDATED
 app.include_router(_scoring_diag_router, prefix="/admin", tags=["admin"])
 # END SCORING DIAGNOSTICS ENDPOINTS
+
+# CONSTRAINT MIGRATION ENDPOINT - REMOVE AFTER YAHOO ID SYNC IS LIVE
+app.include_router(_constraint_migration_router, prefix="/admin", tags=["admin"])
+# END CONSTRAINT MIGRATION ENDPOINT
 
 # DATA QUALITY MONITORING DASHBOARD (Phase 1: diagnostic instrumentation)
 app.include_router(data_quality.router)
