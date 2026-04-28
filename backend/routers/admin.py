@@ -12,6 +12,7 @@ from typing import Optional
 import logging
 import os
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from backend.models import (
     get_db,
