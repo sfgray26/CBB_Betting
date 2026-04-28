@@ -5333,7 +5333,7 @@ class DailyIngestionOrchestrator:
         }
 
         try:
-            results = await _with_advisory_lock(LOCK_IDS["valuation_cache"], _run)
+            results = await _with_advisory_lock(LOCK_IDS["valuation_cache"], "valuation_cache", _run)
             self._job_status["valuation_cache"]["last_status"] = "ok"
             logger.info("valuation_cache: complete -- %s", results)
         except Exception as exc:
