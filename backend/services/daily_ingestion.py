@@ -1948,10 +1948,7 @@ class DailyIngestionOrchestrator:
                                     resolution_confidence=1.0,
                                     updated_at=now_et(),
                                 ).on_conflict_do_update(
-                                    # Production constraint is auto-named; migration
-                                    # scripts/migrations/rename_yahoo_key_constraint.sql
-                                    # will rename it to _pim_yahoo_key_uc once run.
-                                    constraint="player_id_mapping_yahoo_key_key",
+                                    constraint="_pim_yahoo_key_uc",
                                     set_=dict(
                                         yahoo_id=str(yahoo_id),
                                         full_name=name,

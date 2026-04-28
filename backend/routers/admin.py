@@ -916,7 +916,7 @@ async def get_table_constraints(
     """Return all constraint names for a given table (admin only)."""
     rows = db.execute(text("""
         SELECT tc.constraint_name, tc.constraint_type,
-               array_agg(kcu.column_name ORDER BY kcu.ordinal_position) AS columns
+               string_agg(kcu.column_name, ',' ORDER BY kcu.ordinal_position) AS columns
         FROM information_schema.table_constraints tc
         JOIN information_schema.key_column_usage kcu
           ON tc.constraint_name = kcu.constraint_name
@@ -929,7 +929,7 @@ async def get_table_constraints(
     return {
         "table": table_name,
         "constraints": [
-            {"name": r[0], "type": r[1], "columns": list(r[2])}
+            {"name": r[0], "type": r[1], "columns": r[2].split(",") if r[2] else []}
             for r in rows
         ],
     }

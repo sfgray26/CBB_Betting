@@ -1,17 +1,18 @@
--- Rename auto-generated yahoo_key unique constraint to match SQLAlchemy model expectation.
+-- Drop duplicate yahoo_key unique constraint.
 --
--- The SQLAlchemy model defines:
---   UniqueConstraint("yahoo_key", name="_pim_yahoo_key_uc")
+-- History:
+--   The SQLAlchemy model defines UniqueConstraint("yahoo_key", name="_pim_yahoo_key_uc").
+--   PostgreSQL also auto-created "player_id_mapping_yahoo_key_key" when the column was
+--   added without an explicit name in an earlier migration.
 --
--- But when the table was created/migrated in production, PostgreSQL auto-named
--- the constraint "player_id_mapping_yahoo_key_key" instead of "_pim_yahoo_key_uc".
+-- As of 2026-04-28, BOTH constraints exist on the same column (confirmed via
+-- GET /admin/db/constraints). The named constraint _pim_yahoo_key_uc is the
+-- authoritative one; the auto-named duplicate is redundant.
 --
--- After running this migration:
---   1. Update daily_ingestion.py ON CONFLICT back to constraint="_pim_yahoo_key_uc"
---   2. Model and DB are in sync
---
--- Run via: railway run psql $DATABASE_URL -f scripts/migrations/rename_yahoo_key_constraint.sql
--- Or: psql $DATABASE_URL -c "ALTER TABLE player_id_mapping RENAME CONSTRAINT player_id_mapping_yahoo_key_key TO _pim_yahoo_key_uc;"
+-- Run via:
+--   railway run psql $DATABASE_URL -f scripts/migrations/rename_yahoo_key_constraint.sql
+-- Or:
+--   psql $DATABASE_URL -c "ALTER TABLE player_id_mapping DROP CONSTRAINT player_id_mapping_yahoo_key_key;"
 
 ALTER TABLE player_id_mapping
-    RENAME CONSTRAINT player_id_mapping_yahoo_key_key TO _pim_yahoo_key_uc;
+    DROP CONSTRAINT IF EXISTS player_id_mapping_yahoo_key_key;
