@@ -755,6 +755,105 @@ async def manual_refresh_valuation_cache(user: str = Depends(verify_admin_api_ke
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@router.get("/admin/audit/stub-projections")
+async def audit_stub_projections(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Audit player_projections for stub/default contamination (read-only).
+
+    Returns counts and samples for:
+    - batter stubs (hr=15, r=65, rbi=65, sb=5, avg=0.250, ops=0.720)
+    - pitcher stubs (era=4.0, whip=1.30, w=0, qs=0, k_pit=0)
+    - zombie rows (match BOTH patterns)
+    - prior_source breakdown
+    - linked rows (joined to player_id_mapping where yahoo_key IS NOT NULL)
+    - safe-delete candidates (zombie OR prior_source IN stub/default)
+    """
+    BATTER = """
+        hr = 15 AND r = 65 AND rbi = 65 AND sb = 5
+        AND ABS(avg - 0.250) < 0.001 AND ABS(ops - 0.720) < 0.001
+    """
+    PITCHER = """
+        ABS(era - 4.0) < 0.001 AND ABS(whip - 1.3) < 0.001
+        AND w = 0 AND qs = 0 AND k_pit = 0
+    """
+
+    total = db.execute(text("SELECT COUNT(*) FROM player_projections")).scalar()
+    batter_count = db.execute(text(f"SELECT COUNT(*) FROM player_projections WHERE {BATTER}")).scalar()
+    pitcher_count = db.execute(text(f"SELECT COUNT(*) FROM player_projections WHERE {PITCHER}")).scalar()
+    zombie_count = db.execute(text(f"SELECT COUNT(*) FROM player_projections WHERE ({BATTER}) AND ({PITCHER})")).scalar()
+    stub_src_count = db.execute(text(
+        "SELECT COUNT(*) FROM player_projections WHERE prior_source IN ('stub','default')"
+    )).scalar()
+    linked_count = db.execute(text("""
+        SELECT COUNT(DISTINCT pp.id)
+        FROM player_projections pp
+        JOIN player_id_mapping pim
+          ON pp.player_id = pim.yahoo_id OR pp.player_id = pim.yahoo_key
+        WHERE pim.yahoo_key IS NOT NULL
+    """)).scalar()
+    safe_delete_count = db.execute(text(f"""
+        SELECT COUNT(*) FROM player_projections
+        WHERE (({BATTER}) AND ({PITCHER}))
+           OR prior_source IN ('stub', 'default')
+    """)).scalar()
+
+    src_rows = db.execute(text(
+        "SELECT prior_source, COUNT(*) AS cnt FROM player_projections GROUP BY prior_source ORDER BY cnt DESC"
+    )).fetchall()
+
+    zombie_samples = []
+    if zombie_count > 0:
+        rows = db.execute(text(f"""
+            SELECT id, player_id, player_name, team, prior_source, update_method,
+                   hr, r, rbi, sb, avg, ops, era, whip, w, qs, k_pit
+            FROM player_projections
+            WHERE ({BATTER}) AND ({PITCHER})
+            LIMIT 5
+        """)).fetchall()
+        zombie_samples = [
+            {"id": r[0], "player_id": r[1], "player_name": r[2], "team": r[3],
+             "prior_source": r[4], "update_method": r[5],
+             "hr": r[6], "r": r[7], "rbi": r[8], "sb": r[9],
+             "avg": r[10], "ops": r[11], "era": r[12], "whip": r[13],
+             "w": r[14], "qs": r[15], "k_pit": r[16]}
+            for r in rows
+        ]
+
+    stub_samples = []
+    if stub_src_count > 0:
+        rows = db.execute(text("""
+            SELECT id, player_id, player_name, team, prior_source, update_method,
+                   hr, r, rbi, avg, era, whip
+            FROM player_projections
+            WHERE prior_source IN ('stub', 'default')
+            LIMIT 5
+        """)).fetchall()
+        stub_samples = [
+            {"id": r[0], "player_id": r[1], "player_name": r[2], "team": r[3],
+             "prior_source": r[4], "update_method": r[5],
+             "hr": r[6], "r": r[7], "rbi": r[8], "avg": r[9],
+             "era": r[10], "whip": r[11]}
+            for r in rows
+        ]
+
+    return {
+        "total_rows": total,
+        "batter_stubs": batter_count,
+        "pitcher_stubs": pitcher_count,
+        "zombie_rows": zombie_count,
+        "stub_source_rows": stub_src_count,
+        "linked_to_yahoo_key": linked_count,
+        "safe_delete_candidates": safe_delete_count,
+        "steamer_rows_preserved": total - safe_delete_count,
+        "prior_source_breakdown": {str(r[0]): r[1] for r in src_rows},
+        "zombie_samples": zombie_samples,
+        "stub_source_samples": stub_samples,
+    }
+
+
 @router.get("/admin/player-id-mapping/conflicts")
 async def get_player_id_mapping_conflicts(
     user: str = Depends(verify_admin_api_key),
