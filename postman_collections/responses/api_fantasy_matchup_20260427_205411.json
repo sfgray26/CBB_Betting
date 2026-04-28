@@ -1,0 +1,53 @@
+{
+  "week": 6,
+  "my_team": {
+    "team_key": "469.l.72586.t.7",
+    "team_name": "Lindor Truffles",
+    "stats": {
+      "R": 1,
+      "H": 2,
+      "HR_B": 1,
+      "RBI": 2,
+      "K_B": 2,
+      "TB": 5,
+      "AVG": ".286",
+      "OPS": "1.000",
+      "NSB": 0,
+      "W": 0,
+      "L": 0,
+      "HR_P": 0,
+      "K_P": 0,
+      "ERA": null,
+      "WHIP": null,
+      "K_9": null,
+      "QS": 0,
+      "NSV": 0
+    }
+  },
+  "opponent": {
+    "team_key": "469.l.72586.t.4",
+    "team_name": "Damn the Torpedoes",
+    "stats": {
+      "R": 0,
+      "H": 1,
+      "HR_B": 0,
+      "RBI": 0,
+      "K_B": 1,
+      "TB": 1,
+      "AVG": ".333",
+      "OPS": ".667",
+      "NSB": -1,
+      "W": 0,
+      "L": 0,
+      "HR_P": 0,
+      "K_P": 9,
+      "ERA": "1.59",
+      "WHIP": "0.88",
+      "K_9": "14.29",
+      "QS": 0,
+      "NSV": 0
+    }
+  },
+  "is_playoffs": false,
+  "message": null
+}

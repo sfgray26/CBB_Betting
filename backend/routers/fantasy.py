@@ -1382,7 +1382,7 @@ async def get_fantasy_lineup_recommendations(
             _existing_rec.positions = pos_map
             _existing_rec.projected_points = _projected
             _existing_rec.notes = _notes_str
-            _existing_rec.updated_at = datetime.utcnow()
+            _existing_rec.updated_at = datetime.now(ZoneInfo("America/New_York"))
         else:
             db.add(FantasyLineup(
                 lineup_date=ld,

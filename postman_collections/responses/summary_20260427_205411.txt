@@ -1,0 +1,16 @@
+GET / -> 200 (129 bytes) -> _20260427_205411.json
+GET /health -> 200 (82 bytes) -> health_20260427_205411.json
+GET /api/fantasy/draft-board?limit=200 -> 200 (200263 bytes) -> api_fantasy_draft_board_limit_200_20260427_205411.json
+GET /api/fantasy/roster -> 200 (70485 bytes) -> api_fantasy_roster_20260427_205411.json
+GET /api/fantasy/lineup/2026-04-22 -> 200 (12914 bytes) -> api_fantasy_lineup_2026_04_22_20260427_205411.json
+GET /api/fantasy/waiver?position=ALL&player_type=ALL -> 200 (22679 bytes) -> api_fantasy_waiver_position_ALL_player_type_ALL_20260427_205411.json
+GET /api/fantasy/waiver/recommendations -> 200 (6105 bytes) -> api_fantasy_waiver_recommendations_20260427_205411.json
+GET /api/fantasy/matchup -> 200 (945 bytes) -> api_fantasy_matchup_20260427_205411.json
+GET /api/fantasy/player-scores?period=season -> 404 (29 bytes) -> api_fantasy_player_scores_period_season_20260427_205411.json
+GET /api/fantasy/decisions -> 200 (95 bytes) -> api_fantasy_decisions_20260427_205411.json
+GET /api/fantasy/briefing/2026-04-22 -> 200 (5160 bytes) -> api_fantasy_briefing_2026_04_22_20260427_205411.json
+GET /admin/pipeline-health -> 200 (1227 bytes) -> admin_pipeline_health_20260427_205411.json
+GET /admin/scheduler/status -> 200 (1386 bytes) -> admin_scheduler_status_20260427_205411.json
+GET /admin/validate-system -> 404 (29 bytes) -> admin_validate_system_20260427_205411.json
+POST /api/fantasy/roster/optimize -> 200 (4318 bytes) -> api_fantasy_roster_optimize_20260427_205411.json
+POST /api/fantasy/matchup/simulate -> 422 (705 bytes) -> api_fantasy_matchup_simulate_20260427_205411.json

@@ -721,12 +721,101 @@ async def manual_yahoo_id_sync(user: str = Depends(verify_admin_api_key)):
         result = await _ingestion_orchestrator._sync_yahoo_id_mapping()
         return {
             "triggered_by": user,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
             "result": result,
         }
     except Exception as exc:
         logger.error("Manual Yahoo ID sync failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/admin/player-id-mapping/conflicts")
+async def get_player_id_mapping_conflicts(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Check player_id_mapping for unique constraint violations.
+
+    Returns:
+    - bdl_id_conflicts: bdl_ids appearing in multiple rows
+    - yahoo_key_conflicts: yahoo_keys appearing in multiple rows
+    - sample_conflict_rows: detailed rows for a specific conflict
+    - overall_counts: total counts for each column
+    """
+    from backend.models import PlayerIDMapping
+
+    # Check for duplicate bdl_ids
+    bdl_conflicts = db.execute(text("""
+        SELECT bdl_id, COUNT(*) as cnt
+        FROM player_id_mapping
+        WHERE bdl_id IS NOT NULL
+        GROUP BY bdl_id
+        HAVING COUNT(*) > 1
+        ORDER BY cnt DESC
+        LIMIT 20
+    """)).fetchall()
+
+    bdl_conflict_list = [{"bdl_id": row[0], "count": row[1]} for row in bdl_conflicts]
+
+    # Check for duplicate yahoo_keys
+    yahoo_conflicts = db.execute(text("""
+        SELECT yahoo_key, COUNT(*) as cnt
+        FROM player_id_mapping
+        WHERE yahoo_key IS NOT NULL
+        GROUP BY yahoo_key
+        HAVING COUNT(*) > 1
+        ORDER BY cnt DESC
+        LIMIT 20
+    """)).fetchall()
+
+    yahoo_conflict_list = [{"yahoo_key": row[0], "count": row[1]} for row in yahoo_conflicts]
+
+    # Get sample conflict rows if bdl_id conflicts exist
+    sample_rows = []
+    if bdl_conflict_list:
+        sample_bdl_id = bdl_conflict_list[0]["bdl_id"]
+        sample_rows = db.execute(text("""
+            SELECT id, yahoo_key, yahoo_id, bdl_id, full_name, source
+            FROM player_id_mapping
+            WHERE bdl_id = :bdl_id
+            ORDER BY id
+        """), {"bdl_id": sample_bdl_id}).fetchall()
+        sample_rows = [
+            {
+                "id": row[0],
+                "yahoo_key": row[1],
+                "yahoo_id": row[2],
+                "bdl_id": row[3],
+                "full_name": row[4],
+                "source": row[5],
+            }
+            for row in sample_rows
+        ]
+
+    # Overall counts
+    counts = db.execute(text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(yahoo_key) as with_yahoo_key,
+            COUNT(bdl_id) as with_bdl_id,
+            COUNT(yahoo_id) as with_yahoo_id
+        FROM player_id_mapping
+    """)).fetchone()
+
+    overall = {
+        "total": counts[0],
+        "with_yahoo_key": counts[1],
+        "with_bdl_id": counts[2],
+        "with_yahoo_id": counts[3],
+    }
+
+    return {
+        "bdl_id_conflicts": bdl_conflict_list,
+        "yahoo_key_conflicts": yahoo_conflict_list,
+        "sample_conflict_rows": sample_rows,
+        "overall_counts": overall,
+    }
 
 
 @router.get("/admin/portfolio/status")

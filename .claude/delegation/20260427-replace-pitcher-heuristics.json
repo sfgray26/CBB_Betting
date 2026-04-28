@@ -1,0 +1,12 @@
+{
+  "task_id": "20260427-replace-pitcher-heuristics",
+  "assignee": "Kimi",
+  "branch": "kimi/fix-pitcher-heuristics",
+  "scope": [
+    "backend/fantasy_baseball/player_board.py",
+    "backend/fantasy_baseball/fusion_engine.py"
+  ],
+  "goal": "Replace heuristic pitcher counting stat estimates in `_convert_fusion_proj_to_board_format` with mathematically sound formulas based on Statcast rate metrics (ERA, WHIP, K/9, etc.). Eliminate placeholders like `12 - era` and `era - 3`.",
+  "criteria": "1. Research and implement industry-standard translation constants for Wins, Losses, and Quality Starts based on ERA and IP. 2. Ensure all formulas are documented with docstrings referencing the mathematical rationale. 3. Existing tests in `tests/test_player_board_fusion.py` must pass. 4. Add at least 2 new test cases to verify the improved math.",
+  "status": "READY FOR REVIEW"
+}

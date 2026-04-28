@@ -1,0 +1,257 @@
+{
+  "week_end": "2026-05-03",
+  "matchup_opponent": "Damn the Torpedoes",
+  "recommendations": [
+    {
+      "action": "ADD_DROP",
+      "add_player": {
+        "player_id": "469.p.63494",
+        "name": "Jung Hoo Lee",
+        "team": "SF",
+        "position": "CF",
+        "need_score": 1.654,
+        "category_contributions": {
+          "h": 1.7261,
+          "r": -0.0219,
+          "hr": -0.3189,
+          "tb": 0.5627,
+          "avg": 1.7272,
+          "nsb": -0.3269,
+          "ops": 0.8263,
+          "rbi": -0.0447,
+          "k_bat": 0.0
+        },
+        "owned_pct": 0.0,
+        "starts_this_week": 0,
+        "statcast_signals": [],
+        "projected_saves": 0.0,
+        "projected_points": 0.0,
+        "hot_cold": null,
+        "status": null,
+        "injury_note": null,
+        "injury_status": null,
+        "stats": {},
+        "statcast_stats": null
+      },
+      "drop_player_name": "Cam Smith",
+      "drop_player_position": "RF",
+      "rationale": "Add Jung Hoo Lee (CF, SF, 0% owned), drop Cam Smith (RF). Net gain: +5.5 (-3.8 -> +1.7). [Call-up - projections estimated.]",
+      "category_targets": [],
+      "need_score": 5.49,
+      "confidence": 0.45,
+      "statcast_signals": [],
+      "regression_delta": 0.0,
+      "win_prob_before": 0.998,
+      "win_prob_after": 0.998,
+      "win_prob_gain": 0.0,
+      "category_win_probs": {
+        "avg": 0.994,
+        "era": 0.579,
+        "h": 0.987,
+        "hr_b": 0.901,
+        "hr_pit": 0.505,
+        "k_9": 0.927,
+        "k_bat": 0.356,
+        "k_p": 0.887,
+        "l": 0.376,
+        "nsb": 0.752,
+        "nsv": 0.74,
+        "ops": 1.0,
+        "qs": 0.679,
+        "r": 0.946,
+        "rbi": 0.924,
+        "tb": 0.993,
+        "w": 0.891,
+        "whip": 0.448
+      },
+      "mcmc_enabled": true
+    },
+    {
+      "action": "ADD",
+      "add_player": {
+        "player_id": "469.p.60232",
+        "name": "Dalton Rushing",
+        "team": "LAD",
+        "position": "C",
+        "need_score": 2.757,
+        "category_contributions": {
+          "h": 0.9736,
+          "r": -0.0219,
+          "hr": -0.3189,
+          "tb": 3.175,
+          "avg": 0.9778,
+          "nsb": -0.3269,
+          "ops": 2.4744,
+          "rbi": -0.0447,
+          "k_bat": 0.0
+        },
+        "owned_pct": 0.0,
+        "starts_this_week": 0,
+        "statcast_signals": [],
+        "projected_saves": 0.0,
+        "projected_points": 0.0,
+        "hot_cold": null,
+        "status": null,
+        "injury_note": null,
+        "injury_status": null,
+        "stats": {},
+        "statcast_stats": null
+      },
+      "drop_player_name": null,
+      "drop_player_position": null,
+      "rationale": "Add Dalton Rushing (C, LAD) - projected z=+2.8. No catcher to drop suggested; check bench.",
+      "category_targets": [],
+      "need_score": 2.757,
+      "confidence": 0.3,
+      "statcast_signals": [],
+      "regression_delta": 0.0,
+      "win_prob_before": 0.0,
+      "win_prob_after": 0.0,
+      "win_prob_gain": 0.0,
+      "category_win_probs": {},
+      "mcmc_enabled": false
+    }
+  ],
+  "category_deficits": [
+    {
+      "category": "H_AB",
+      "my_total": 0.0,
+      "opponent_total": 0.0,
+      "deficit": 0.0,
+      "winning": false
+    },
+    {
+      "category": "R",
+      "my_total": 1.0,
+      "opponent_total": 0.0,
+      "deficit": -1.0,
+      "winning": true
+    },
+    {
+      "category": "H",
+      "my_total": 2.0,
+      "opponent_total": 1.0,
+      "deficit": -1.0,
+      "winning": true
+    },
+    {
+      "category": "HR_B",
+      "my_total": 1.0,
+      "opponent_total": 0.0,
+      "deficit": -1.0,
+      "winning": true
+    },
+    {
+      "category": "RBI",
+      "my_total": 2.0,
+      "opponent_total": 0.0,
+      "deficit": -2.0,
+      "winning": true
+    },
+    {
+      "category": "K_B",
+      "my_total": 2.0,
+      "opponent_total": 1.0,
+      "deficit": -1.0,
+      "winning": true
+    },
+    {
+      "category": "TB",
+      "my_total": 5.0,
+      "opponent_total": 1.0,
+      "deficit": -4.0,
+      "winning": true
+    },
+    {
+      "category": "AVG",
+      "my_total": 0.286,
+      "opponent_total": 0.333,
+      "deficit": 0.04700000000000004,
+      "winning": false
+    },
+    {
+      "category": "OPS",
+      "my_total": 1.0,
+      "opponent_total": 0.667,
+      "deficit": -0.33299999999999996,
+      "winning": true
+    },
+    {
+      "category": "NSB",
+      "my_total": 0.0,
+      "opponent_total": -1.0,
+      "deficit": -1.0,
+      "winning": true
+    },
+    {
+      "category": "IP",
+      "my_total": 0.0,
+      "opponent_total": 5.2,
+      "deficit": 5.2,
+      "winning": false
+    },
+    {
+      "category": "W",
+      "my_total": 0.0,
+      "opponent_total": 0.0,
+      "deficit": 0.0,
+      "winning": false
+    },
+    {
+      "category": "L",
+      "my_total": 0.0,
+      "opponent_total": 0.0,
+      "deficit": 0.0,
+      "winning": false
+    },
+    {
+      "category": "HR_P",
+      "my_total": 0.0,
+      "opponent_total": 0.0,
+      "deficit": 0.0,
+      "winning": false
+    },
+    {
+      "category": "K_P",
+      "my_total": 0.0,
+      "opponent_total": 9.0,
+      "deficit": 9.0,
+      "winning": false
+    },
+    {
+      "category": "ERA",
+      "my_total": 0.0,
+      "opponent_total": 1.59,
+      "deficit": -1.59,
+      "winning": true
+    },
+    {
+      "category": "WHIP",
+      "my_total": 0.0,
+      "opponent_total": 0.88,
+      "deficit": -0.88,
+      "winning": true
+    },
+    {
+      "category": "K_9",
+      "my_total": 0.0,
+      "opponent_total": 14.29,
+      "deficit": 14.29,
+      "winning": false
+    },
+    {
+      "category": "QS",
+      "my_total": 0.0,
+      "opponent_total": 0.0,
+      "deficit": 0.0,
+      "winning": false
+    },
+    {
+      "category": "NSV",
+      "my_total": 0.0,
+      "opponent_total": 0.0,
+      "deficit": 0.0,
+      "winning": false
+    }
+  ]
+}
