@@ -819,6 +819,107 @@ async def get_player_id_mapping_conflicts(
     }
 
 
+@router.post("/admin/backfill-numeric-names")
+async def backfill_numeric_player_names(
+    limit: int = Query(100, ge=1, le=500),
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Backfill numeric player names in player_projections table.
+
+    Finds projections with numeric names (e.g., "695578") and resolves them
+    using BDL player search by player_id.
+
+    Returns statistics on resolved/failed/skipped players.
+    """
+    from backend.services.balldontlie import BallDontLieClient
+    from backend.models import PlayerProjection, PlayerIDMapping
+
+    logger.info("Numeric name backfill triggered by %s, limit=%d", user, limit)
+
+    # Find numeric-name projections
+    numeric_players = db.execute(text("""
+        SELECT DISTINCT pp.id, pp.player_id, pp.player_name
+        FROM player_projections pp
+        WHERE pp.player_name ~ '^[0-9]+$'
+        LIMIT :limit
+    """), {"limit": limit}).fetchall()
+
+    total = len(numeric_players)
+    resolved = 0
+    failed = 0
+    skipped = 0
+
+    if total == 0:
+        return {
+            "status": "complete",
+            "total": 0,
+            "resolved": 0,
+            "failed": 0,
+            "skipped": 0,
+            "message": "No numeric names found",
+        }
+
+    bdl = BallDontLieClient()
+
+    for pp_id, player_id, numeric_name in numeric_players:
+        try:
+            # BDL lookup by player_id
+            bdl_player = bdl.get_mlb_player(player_id)
+
+            if bdl_player and bdl_player.full_name:
+                real_name = " ".join(bdl_player.full_name.strip().split())
+
+                # Update projection
+                db.execute(text("""
+                    UPDATE player_projections
+                    SET player_name = :name, updated_at = NOW()
+                    WHERE id = :pp_id
+                """), {"name": real_name, "pp_id": pp_id})
+
+                # Upsert player_id_mapping
+                db.execute(text("""
+                    INSERT INTO player_id_mapping (yahoo_id, mlb_id, bdl_id, player_name)
+                    VALUES (:yahoo_id, :mlb_id, :bdl_id, :name)
+                    ON CONFLICT (yahoo_id) DO UPDATE SET
+                        mlb_id = EXCLUDED.mlb_id,
+                        bdl_id = EXCLUDED.bdl_id,
+                        player_name = EXCLUDED.player_name
+                """), {
+                    "yahoo_id": player_id,
+                    "mlb_id": getattr(bdl_player, "mlb_id", None),
+                    "bdl_id": bdl_player.id,
+                    "name": real_name,
+                })
+
+                resolved += 1
+                logger.info("Resolved %s: %s -> %s", player_id, numeric_name, real_name)
+            else:
+                logger.warning("BDL lookup failed for %s", player_id)
+                failed += 1
+        except Exception as exc:
+            logger.error("Failed to resolve %s: %s", player_id, exc)
+            failed += 1
+
+    db.commit()
+
+    # Check remaining numeric names
+    remaining = db.execute(text("""
+        SELECT COUNT(*) FILTER (WHERE player_name ~ '^[0-9]+$') AS numeric_names
+        FROM player_projections
+    """)).fetchone()[0]
+
+    return {
+        "status": "complete",
+        "total": total,
+        "resolved": resolved,
+        "failed": failed,
+        "skipped": skipped,
+        "remaining_numeric_names": remaining,
+    }
+
+
 @router.get("/admin/portfolio/status")
 async def get_portfolio_status(
     user: str = Depends(verify_api_key),
