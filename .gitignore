@@ -98,3 +98,6 @@ reports/GEMINI_YAHOO_PIPELINE_PAYLOADS.
 .gemini/history/
 .gemini/tmp/
 .gemini/.gemini/
+.kimi/
+kimi-mcp-config.json
+mcp-shared-config.json

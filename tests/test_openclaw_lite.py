@@ -305,10 +305,6 @@ class TestHighStakesEscalation:
         assert len(pending) == 1
         assert pending[0]["recommended_units"] == 2.0
     
-    @pytest.mark.xfail(
-        reason="escalate_if_needed paused 2026-04-21 — always returns None until OpenClaw re-enabled",
-        strict=True,
-    )
     def test_escalate_if_needed_helper(self, tmp_path):
         import backend.services.openclaw_lite as ocl
 

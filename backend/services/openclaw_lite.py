@@ -617,13 +617,39 @@ def escalate_if_needed(
     is_neutral: bool = False
 ) -> Optional[str]:
     """
-    Manually trigger escalation for a game.
+    Manually trigger escalation for a game when stakes are high.
 
-    PAUSED (2026-04-21): OpenClaw escalation queue is disabled to reduce
-    filesystem clutter while the baseball module is being implemented.
+    Escalation criteria:
+      - recommended_units >= 1.5
+      - neutral site game
+      - VOLATILE integrity verdict
 
     Returns:
-        None — escalation queue writes are paused.
+        queue_id if escalated, None otherwise.
     """
-    logger.info("escalate_if_needed skipped — OpenClaw paused")
-    return None
+    needs_escalation = (
+        recommended_units >= 1.5
+        or is_neutral
+        or (integrity_verdict and "VOLATILE" in integrity_verdict)
+    )
+
+    if not needs_escalation:
+        return None
+
+    queue = get_escalation_queue()
+    reason_parts = []
+    if recommended_units >= 1.5:
+        reason_parts.append(f"high stakes ({recommended_units}u)")
+    if is_neutral:
+        reason_parts.append("neutral site")
+    if integrity_verdict and "VOLATILE" in integrity_verdict:
+        reason_parts.append("volatile verdict")
+
+    return queue.enqueue(
+        game_key=game_key,
+        home_team=home_team,
+        away_team=away_team,
+        recommended_units=recommended_units,
+        integrity_verdict=integrity_verdict,
+        reason="; ".join(reason_parts),
+    )

@@ -137,7 +137,8 @@
       "Bash(\"venv/Scripts/python\" -m pytest tests/test_player_scores_api.py -v --tb=short)",
       "Bash(venv/Scripts/pip install *)",
       "Bash(cat)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(railway --version)"
     ]
   },
   "enabledPlugins": {}

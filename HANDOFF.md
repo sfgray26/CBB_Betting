@@ -1,15 +1,261 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
-> **Date:** 2026-04-28 | **Architect:** Claude Code (Master Architect)
-> **Status:** K-34 Remediation Session F — 5 bugs fixed, test suite clean (2433 pass / 7 xfail)
-
-> **Previous Status:** K-32 P0 Remediation — Findings correct audit assumptions. 4 tasks completed, 4 clarified/ready for DevOps.
+> **Date:** 2026-04-29 | **Architect:** Claude Code (Master Architect)
+> **Status:** Session H COMPLETE — 4 P0 structural gaps fixed, bdl_stat_id removed, test baseline held (2433/7xfail). Awaiting Gemini post-H ops before Session I.
 
 ---
 
-## 1. Mission Accomplished — Latest Session (2026-04-28)
+## 1. Mission Accomplished — Session H (2026-04-29)
 
-### Session F — Bug Fixes: timezone, universal-drop, scoring formula, pre-existing failures
+### Session H — P0 Structural Fixes
+
+**Test suite:** 2433 pass / 3 skip / 7 xfail / 0 fail (baseline held) — HEAD: `ff7b5a6`
+
+| Step | Task | Status |
+|------|------|--------|
+| 1 | `scripts/backfill_v31_rolling.py` — recomputes w_runs, w_tb, w_qs, w_caught_stealing, w_net_stolen_bases for NULL rows | ✅ ff7b5a6 |
+| 1 | `scripts/backfill_v32_zscores.py` — recomputes z_r, z_h, z_tb, z_k_b, z_ops, z_k_p, z_qs for NULL rows | ✅ ff7b5a6 |
+| 2 | `POSITION_SCARCITY` dict added to `_sync_position_eligibility`; `scarcity_rank` + `league_rostered_pct=None` now in INSERT + ON CONFLICT SET | ✅ ff7b5a6 |
+| 3 | `quality_score` heuristic in `_sync_probable_pitchers`: bulk ERA lookup via `mlb_player_stats` JOIN `player_id_mapping`, formula: `0.5 + era_score + park_score` clamped [0,1] | ✅ ff7b5a6 |
+| 4 | `_supplement_statsapi_counting_stats` filter broadened: `ab IS NULL OR runs IS NULL OR hits IS NULL OR doubles IS NULL OR triples IS NULL OR home_runs IS NULL OR rbi IS NULL OR stolen_bases IS NULL` | ✅ ff7b5a6 |
+| 5 | `bdl_stat_id` removed from `backend/models.py:1166`, ingestion assignments at lines 1559+1594; `scripts/migrations/drop_bdl_stat_id.py` created for Gemini | ✅ ff7b5a6 |
+
+**ERA lookup SQL (Step 3 as implemented):**
+```sql
+SELECT m.mlbam_id, AVG(s.era) AS avg_era
+FROM (
+    SELECT bdl_player_id, era,
+           ROW_NUMBER() OVER (PARTITION BY bdl_player_id ORDER BY game_date DESC) AS rn
+    FROM mlb_player_stats
+    WHERE innings_pitched > 0 AND era IS NOT NULL
+) s
+JOIN player_id_mapping m ON m.bdl_id = s.bdl_player_id::text
+WHERE s.rn <= 10 AND m.mlbam_id IS NOT NULL
+GROUP BY m.mlbam_id
+```
+
+---
+
+## 1a. Mission Accomplished — Sessions G + Post-G Ops (2026-04-28)
+
+### Session G — Bug Fixes + Migration Scripts
+
+**Test suite:** 2433 pass / 7 xfail / 0 fail (baseline maintained)
+
+| Step | Task | Commit | Status |
+|------|------|--------|--------|
+| 1 | Fix `_with_advisory_lock` missing `job_name` arg in `daily_ingestion.py:5338` | e92f1a0 | ✅ |
+| 2 | `scripts/migrations/drop_duplicate_yahoo_key_constraint.py` | 0c05411 | ✅ |
+| 3 | `scripts/sync_projection_names_from_mapping.py` (6 numeric-name players) | 0c05411 | ✅ |
+| 4 | Fix bare `except Exception:` in savant finally block → captures real error + traceback | 0c05411 | ✅ |
+| 5 | Test suite ≥ 2433 pass / 7 xfail | — | ✅ |
+
+### Post-Session G — Gemini Production Ops
+
+| Operation | Result |
+|-----------|--------|
+| Deploy Session G commits | ✅ railway up deployed |
+| Drop duplicate `player_id_mapping_yahoo_key_key` constraint | ✅ Dropped successfully |
+| Run `sync_projection_names_from_mapping.py --execute` | ✅ 6 players backfilled |
+| `POST /admin/refresh-valuation-cache` | ⏳ Re-trigger pending (fix now deployed) |
+
+**6 players with numeric names — resolved by Gemini:**
+| player_id | Name assigned |
+|-----------|---------------|
+| 608701 | Rob Refsnyder |
+| 641598 | Mitch Garver |
+| 642201 | Eli White |
+| 657136 | Connor Wong |
+| 669065 | Kyle Stowers |
+| 669743 | Alex Call |
+
+### K-33 — Kimi Deep Data Quality Audit (2026-04-28)
+
+> **Full report:** `reports/2026-04-28-data-quality-null-audit.md`  
+> **Scope:** 8 tables, 155,474 rows
+
+**5 root-cause patterns identified:**
+
+| Pattern | Tables Affected | Impact |
+|---------|-----------------|--------|
+| Migrations without backfills | `player_rolling_stats`, `player_scores` | 85% null on V31/V32 columns (w_runs, w_tb, w_qs, z_r, z_tb, z_qs, etc.) |
+| Unimplemented computed fields | `position_eligibility`, `probable_pitchers` | `scarcity_rank`, `league_rostered_pct`, `quality_score` hardcoded to None — never computed |
+| Cross-system ID resolution gaps | `player_projections`, `probable_pitchers` | FanGraphs → MLBAM → BDL → Yahoo chain incomplete; 50% of projections have no `team` |
+| BDL partial stat coverage | `mlb_player_stats` | supplement job only patches `ab IS NULL`, misses partial rows |
+| Season-age effect (self-healing) | `player_daily_metrics` | `z_score_total` requires 30d history; resolves automatically by ~May 25 |
+
+**4 P0 items for Session H:**
+1. Backfill V31/V32 columns (`w_runs`, `w_tb`, `w_qs`, `z_r`, `z_h`, `z_tb`, `z_k_b`, `z_ops`, `z_k_p`, `z_qs`) for all historical rows — currently 85% null
+2. Implement `scarcity_rank` + `league_rostered_pct` in `_sync_position_eligibility` (static Option A)
+3. Implement `quality_score` in `_sync_probable_pitchers` (heuristic Option A)
+4. Harden `_supplement_statsapi_counting_stats` to patch any NULL counting stat (not just `ab IS NULL`)
+
+**Downstream feature impact:**
+| Feature | Current State |
+|---------|---------------|
+| Two-Start Command Center | ❌ Broken — `quality_score` 100% null |
+| Waiver Edge Detector | ⚠️ Degraded — `scarcity_rank` 100% null, new Z-categories 85% null |
+| Daily Lineup Optimizer | ⚠️ Degraded — missing scarcity weighting |
+| VORP Engine | ⚠️ Degraded — flat replacement levels |
+| Statcast / core pipeline | ✅ Healthy |
+
+**Decisions already made (per Kimi recommendation):**
+- `scarcity_rank`: Option A — static percentile mapping (C=most scarce, OF=least scarce). No daily recalculation needed.
+- `quality_score`: Option A — heuristic using `park_factor` + pitcher ERA vs league average. No new dependencies.
+- V31/V32 backfills: Option A — one-off scripts, run via Gemini. Not integrated into daily pipeline.
+- `bdl_stat_id` column: Drop it (Option A). 100% null, BDL does not expose per-row stat IDs. Migration script needed.
+
+---
+
+## 2. Current System State (2026-04-29)
+
+| System | Status | Notes |
+|--------|--------|---------|
+| Test suite | ✅ 2433 pass / 7 xfail | Session H — HEAD ff7b5a6 |
+| Production deploy | ⏳ Needs `railway up` | Session H commits local only |
+| `player_id_mapping` | ✅ No duplicate constraint | Dropped by Gemini |
+| Player projection names | ✅ 6 numeric names resolved | Gemini backfill complete |
+| `_with_advisory_lock` bug | ✅ Fixed | `job_name` arg added |
+| Savant error capture | ✅ Fixed | Bare except → real traceback |
+| Advisory locks | ✅ 100_001–100_034 taken | **Next available: 100_035** |
+| Valuation cache | ⏳ Needs re-trigger after deploy | Fix live in code |
+| `scarcity_rank` logic | ✅ Code written | Needs deploy + daily job run to populate |
+| `quality_score` logic | ✅ Code written | Needs deploy + daily job run to populate |
+| MLB Stats supplement job | ✅ Hardened | Patches all NULL counting stats, not just `ab IS NULL` |
+| V31/V32 backfill scripts | ✅ Scripts ready | Gemini runs after deploy |
+| `bdl_stat_id` column | ✅ Removed from model/code | Gemini runs drop migration after deploy |
+| Kimi MCP config | ✅ Clean | 4 servers, no Docker, no fake packages |
+| K-34 Downstream audit | ✅ Complete | Full report: `reports/2026-04-28-downstream-consumption-audit.md` |
+
+---
+
+## 3. Delegation Bundle — Post-Session H (Gemini, run after deploy)
+
+> All 5 ops below require Session H to be deployed first (`railway up` + healthy health check).
+
+```bash
+# 1. Deploy
+railway up
+# wait for healthy
+curl -s https://fantasy-app-production-5079.up.railway.app/health
+
+# 2. Drop bdl_stat_id column
+railway run python scripts/migrations/drop_bdl_stat_id.py
+
+# 3. Backfill V31 rolling columns (allow 5-10 min)
+railway run python scripts/backfill_v31_rolling.py --execute
+
+# 4. Backfill V32 z-score columns (run AFTER V31 completes)
+railway run python scripts/backfill_v32_zscores.py --execute
+
+# 5. Re-trigger valuation cache
+curl -X POST https://fantasy-app-production-5079.up.railway.app/admin/refresh-valuation-cache
+```
+
+**Spot-check queries (via `railway run python -c` or `@postgres` MCP):**
+```sql
+-- V31 backfill result
+SELECT COUNT(*) FROM player_rolling_stats WHERE w_runs IS NOT NULL;
+-- expect > 60,000
+
+-- V32 backfill result
+SELECT COUNT(*) FROM player_scores WHERE z_r IS NOT NULL;
+-- expect > 60,000
+
+-- scarcity_rank populated (will populate on next daily job run after deploy)
+SELECT scarcity_rank, COUNT(*) FROM position_eligibility
+GROUP BY scarcity_rank ORDER BY scarcity_rank;
+-- expect non-null values, C=1 most frequent for catchers
+
+-- quality_score populated (will populate on next probable_pitchers sync)
+SELECT quality_score IS NULL AS is_null, COUNT(*)
+FROM probable_pitchers GROUP BY quality_score IS NULL;
+-- expect 0 nulls after next sync
+
+-- bdl_stat_id gone
+SELECT column_name FROM information_schema.columns
+WHERE table_name='mlb_player_stats' AND column_name='bdl_stat_id';
+-- expect 0 rows
+```
+
+**Report back:** row counts for all 5 spot-checks + any errors.
+
+---
+
+## 4. Next Session (Session I) — Scope Confirmed by K-34
+
+> K-34 audit complete (2026-04-29). Full report: `reports/2026-04-28-downstream-consumption-audit.md`
+>
+> **Do not start Session I until Gemini post-H ops are confirmed complete (deploy + backfills + drop bdl_stat_id).**
+> Session I only touches Python source code — it can be run in parallel with Gemini post-H ops if needed.
+
+### Session I Targets (4 items)
+
+**Item 1 — Fix `quality_score` range mismatch (schema contract)**
+- `MatchupRatingSchema` at `backend/schemas.py:722` documents `quality_score` as `-2.0 to +2.0`
+- Session H heuristic in `_sync_probable_pitchers` outputs `0.0–1.0`
+- Two options: (A) rescale heuristic output `[0,1] → [-2,+2]` at storage time; (B) update schema docstring to `0.0 to 1.0`
+- K-34 recommends Option B (update docstring). Option A is required if `two_start_detector.py` has threshold comparisons against `-2/+2` range values.
+- Claude Code must read `two_start_detector.py` to determine which is correct before implementing.
+
+**Item 2 — Wire `scarcity_rank` into `waiver_edge_detector.py`**
+- K-34 confirmed: position logic is entirely hardcoded in `_POS_GROUP` (lines 185–199); no `position_eligibility` query.
+- Replace/augment with a bulk DB query to `position_eligibility.scarcity_rank` at scoring time.
+- Keep `_POS_GROUP` as fallback when DB data unavailable.
+
+**Item 3 — Wire `scarcity_rank` into `daily_lineup_optimizer.py`**
+- K-34 confirmed: hardcoded `_DEFAULT_BATTER_SLOTS` order; no `position_eligibility` query.
+- Scope narrowly: use `scarcity_rank` as tiebreaker in slot assignment only. Do not rearchitect the optimizer.
+
+**Item 4 — Add `quality_score` to waiver recommendation schemas**
+- K-34 confirmed: `WaiverPlayerOut` and `RosterMoveRecommendation` missing the field.
+- Add `quality_score: Optional[float] = None` to both schemas.
+- Populate from `probable_pitchers` for pitcher FA candidates; leave `None` otherwise.
+
+### Session I — Out of Scope
+- `lineup_constraint_solver.py` — K-34 noted a static `SLOT_CONFIG` with its own internal `scarcity_rank` column. Defer; too invasive for Session I.
+- `_update_projection_cat_scores` MLBAM fallback — deferred; separate track from scarcity wiring.
+- `two_start_detector.py` — ✅ already reads `quality_score`; will auto-heal once Session H is deployed and data populates.
+
+---
+
+## 5. Advisory Locks Reference
+
+```
+100_001–100_034   TAKEN (see CLAUDE.md for full map)
+Next available:   100_035
+```
+
+---
+
+## K-33 FINDINGS (Kimi — 2026-04-28, RESOLVED by Session H)
+
+See full report: `reports/2026-04-28-data-quality-null-audit.md`
+
+**Key numbers (pre-Session H state):**
+- `player_rolling_stats.w_runs/w_tb/w_qs`: 85% null → **backfill scripts created (ff7b5a6)**
+- `player_scores.z_r/z_h/z_tb/z_k_b/z_ops/z_k_p/z_qs`: 85% null → **backfill scripts created (ff7b5a6)**
+- `position_eligibility.scarcity_rank`: 100% null → **logic implemented (ff7b5a6); populates on next daily run**
+- `probable_pitchers.quality_score`: 100% null → **heuristic implemented (ff7b5a6); populates on next sync**
+- `mlb_player_stats.bdl_stat_id`: 100% null → **removed from model + code (ff7b5a6); Gemini drops column**
+- `statcast_performances`: ✅ 0 nulls (unchanged)
+- `player_projections.cat_scores`: ✅ 0 nulls (unchanged)
+
+**Self-healing (no action):** `player_daily_metrics.z_score_total` 100% null because season <30 days old. Resolves automatically ~May 25.
+
+---
+
+*Last updated: 2026-04-29 — Session H complete (ff7b5a6). Gemini post-H ops pending (deploy + backfills + drop bdl_stat_id). K-34 downstream consumption audit complete (see Section 4 + K-34 FINDINGS block at bottom). Session I scope confirmed: quality_score range fix, scarcity_rank wiring × 2, waiver schemas.*
+
+---
+
+<!-- ARCHIVED SESSIONS BELOW — DO NOT EDIT -->
+
+---
+
+## SESSION F — Bug Fixes (2026-04-28, archived)
+
+> All DevOps items from this session are complete. Constraint dropped, names backfilled, FANTASY_LEAGUES set. See Section 1 for status.
 
 **Test suite:** 2433 pass / 3 skip / 7 xfail / 0 fail (up from 2364 pass / 8 fail)
 
@@ -49,11 +295,95 @@
 - **Rolling windows 100% null**: root cause still unknown. Run `GET /admin/pipeline/box-stats-health` to determine if mlb_player_stats is empty (no box stats ever ingested) vs null field mapping issue
 - Most likely: mlb_game_log empty → game_ids=[] → box stats job skips → rolling windows finds 0 rows
 
-#### DevOps Still Needed (Gemini)
-- Run `scripts/migrations/rename_yahoo_key_constraint.sql` (drop duplicate `player_id_mapping_yahoo_key_key`)
-- Run `railway run python scripts/backfill_numeric_player_names.py`
-- Set `FANTASY_LEAGUES` env var in Railway dashboard
-- Hit `GET /admin/pipeline/box-stats-health` and report verdict back
+#### DevOps Status (all complete as of Session G)
+- ✅ Duplicate constraint dropped by Gemini
+- ✅ Numeric player names backfilled (6 players — see Section 1)
+- ✅ `FANTASY_LEAGUES` env var set in Railway
+- ✅ Box stats health confirmed HEALTHY (12,297 rows, 3.5% both-null)
+
+---
+
+## SESSION F PART 2 — MCP & Skills Infrastructure (2026-04-28, archived)
+
+> **Owner:** Kimi CLI (Deep Intelligence Unit)  
+> **Scope:** Agent tooling improvements for Gemini CLI (DevOps) and Kimi CLI (Research)
+
+### 2.1 Gemini CLI Improvements
+
+**Updated `.gemini/settings.json`** with MCP servers:
+- `@railway` — Deployment, logs, service management (trust=false)
+- `@postgres-readonly` — Read-only database queries via `crystaldba/postgres-mcp` (trust=false, `--access-mode=restricted`)
+
+**Created `GEMINI.md`** — Project context file auto-loaded by Gemini CLI on startup. Defines role, permitted ops, escalation path, and MCP tool reference.
+
+**Created 2 new skills:**
+| Skill | File | Purpose |
+|-------|------|---------|
+| `pre-deploy` | `.gemini/skills/pre-deploy/SKILL.md` | py_compile → tests → env-check → health-check → `railway up` (gated) |
+| `post-deploy` | `.gemini/skills/post-deploy/SKILL.md` | Verify Railway status, logs, health endpoints after deploy |
+
+**Gemini skills inventory (now 6):** `db-migrate`, `env-check`, `health-check`, `railway-logs`, `pre-deploy`, `post-deploy`
+
+### 2.2 Kimi CLI Improvements
+
+**Registered 5 MCP servers** in `~/.kimi/mcp.json`:
+| Server | Transport | Status |
+|--------|-----------|--------|
+| `railway` | stdio | ✅ Connected |
+| `postgres` | stdio (npx, no Docker) | ✅ Connected |
+| `sequential-thinking` | stdio | ✅ Connected |
+| `context7` | HTTP | ✅ Connected (free tier) |
+
+> Note: `balldontlie` MCP removed — package does not exist on npm. BDL data is already in Railway DB; query via `@postgres` instead.
+
+**Created `.kimi/skills/` directory with 3 research skills:**
+| Skill | File | Purpose |
+|-------|------|---------|
+| `deep-db-audit` | `.kimi/skills/deep-db-audit/SKILL.md` | Comprehensive DB integrity audit using `@postgres-audit` MCP |
+| `codebase-analysis` | `.kimi/skills/codebase-analysis/SKILL.md` | Multi-file architecture mapping and anti-pattern detection |
+| `research-memo` | `.kimi/skills/research-memo/SKILL.md` | Enforces structured `reports/YYYY-MM-DD-<topic>.md` format |
+
+**Created `.kimi/project_context.md`** — Kimi CLI project context with AGENTS.md constraints, session startup rules, MCP tool reference, and output rules.
+
+### 2.3 Shared Infrastructure
+
+**Created `mcp-shared-config.json`** — Reference MCP config template for all agents (gitignored).
+**Created `scripts/setup_mcp_agents.ps1`** — One-command setup script for recreating MCP + skills config on new machines.
+**Updated `.gitignore`** — Added `.kimi/`, `kimi-mcp-config.json`, `mcp-shared-config.json` to prevent secret leakage.
+
+### 2.4 Remaining Manual Steps
+
+| Step | Owner | Blocker |
+|------|-------|---------|
+| Set `RAILWAY_API_TOKEN` in `.env` | User | Need token from Railway dashboard → Account Settings → Tokens |
+| Set `GITHUB_PERSONAL_ACCESS_TOKEN` in `.env` (optional) | User | Create at github.com/settings/tokens (scopes: repo, read:org) |
+| Set `CONTEXT7_API_KEY` in `.env` (optional) | User | For higher rate limits at context7.com/dashboard |
+| Register GitHub MCP in Kimi | User | After token obtained: `kimi mcp add --transport stdio github -- npx -y @modelcontextprotocol/server-github` |
+| Register GitHub MCP in Claude Code | Claude | After token obtained |
+
+**Auto-load `.env` setup:**
+- PowerShell profile updated at `$PROFILE`
+- `.env` loads automatically when PowerShell starts in `cbb-edge/`
+- Manual load: `. .\scripts\load-env.ps1`
+
+**Verification:**
+```powershell
+.\scripts\test_mcp.ps1
+```
+
+**Interactive test commands:**
+```bash
+# Gemini
+gemini
+@railway List services
+@postgres-readonly List tables
+
+# Kimi
+kimi
+@postgres-audit List tables
+@balldontlie Get today's MLB games
+@sequential-thinking Think through a complex problem
+```
 
 ---
 
@@ -1086,3 +1416,132 @@ On-Demand ────┬── BDL Splits → lineup_optimizer
 ---
 
 *Section added by Kimi CLI v1.17.0 | Post-deploy audit complete | 8 tasks scoped | Exact line numbers verified against HEAD*
+
+
+---
+
+## 16.14 DATA QUALITY NULL AUDIT — ROOT CAUSES & REMEDIATION PLAN (Apr 28, 2026)
+
+> **Auditor:** Kimi CLI  
+> **Full Report:** `reports/2026-04-28-data-quality-null-audit.md`  
+> **Status:** Research complete. 8 tables audited. 5 root-cause patterns identified. 10 prioritized actions for Claude Code.
+
+### K-33 FINDINGS (Executive Summary)
+
+**Three root-cause patterns drive ~90% of nulls:**
+1. **Schema migrations without historical backfills** (V31/V31) → `player_rolling_stats.w_runs/w_tb/w_qs` and `player_scores.z_r/z_h/z_tb/z_k_b/z_ops/z_k_p/z_qs` are 85% NULL.
+2. **Ingestion jobs write placeholder NULLs for unimplemented computed fields** → `position_eligibility.scarcity_rank`/`league_rostered_pct` and `probable_pitchers.quality_score` are 100% NULL.
+3. **Cross-system ID resolution failures** (FanGraphs ↔ MLBAM ↔ BDL ↔ Yahoo) → `player_projections.team` (50.7% null), `positions` (24.6% null), `probable_pitchers.bdl_player_id` (53.9% null).
+
+**Highest-impact gaps:**
+| Table | Column | Null % | Downstream Impact |
+|-------|--------|--------|-------------------|
+| `position_eligibility` | `scarcity_rank` | 100% | VORP uses flat replacement levels; waiver edge ignores position scarcity |
+| `probable_pitchers` | `quality_score` | 100% | Two-Start Command Center shows neutral ratings for all matchups |
+| `player_rolling_stats` | `w_runs`, `w_tb`, `w_qs` | 85% | New scoring categories (R, TB, QS) missing for historical windows |
+| `player_scores` | `z_r`, `z_h`, `z_tb`, `z_k_b`, `z_ops`, `z_k_p`, `z_qs` | 85% | Composite Z-scores exclude new categories for pre-migration rows |
+| `player_projections` | `team` | 50.7% | Dashboard shows "—" for team; filters break |
+| `mlb_player_stats` | `bdl_stat_id` | 100% | Unused column; dead weight in schema |
+
+### K-33 ROOT CAUSES (Verified Against Code)
+
+**A. Migrations Without Backfills**
+- `scripts/migrate_v31_rolling_expansion.py:20` — explicit comment: "no backfill required"
+- `scripts/migrate_v32_zscore_expansion.py:22` — identical comment
+- Daily pipeline only computes windows for `as_of_date = today`; historical rows never updated.
+
+**B. Unimplemented Computed Fields**
+- `backend/services/daily_ingestion.py:5443` — `_sync_position_eligibility` never writes `scarcity_rank` or `league_rostered_pct`
+- `backend/services/daily_ingestion.py:5651` — `_sync_probable_pitchers` hardcodes `quality_score=None`
+
+**C. Cross-System ID Resolution**
+- `backend/services/daily_ingestion.py:5020-5028` — `_update_projection_cat_scores` skips players whose FanGraphs normalized name does not resolve to MLBAM ID via `player_id_mapping`
+- `backend/services/daily_ingestion.py:5538-5546` — `mlbam_to_bdl` mapping preloaded but incomplete; 53.9% of probable pitchers miss BDL linkage
+
+**D. BDL Partial Stat Coverage**
+- `backend/services/daily_ingestion.py:2036-2043` — `_supplement_statsapi_counting_stats` only patches rows where `ab IS NULL`; does not patch partial rows where some counting stats are present and others missing
+
+**E. Season-History Insufficiency (Expected)**
+- `backend/services/daily_ingestion.py:4452-4462` — `z_score_total` requires ≥30 days of `vorp_7d`; `z_score_recent` requires ≥7 days. Season <30 days old → self-healing.
+
+### K-33 PRIORITY ACTIONS FOR CLAUDE CODE
+
+| Priority | Task | File | ETA |
+|----------|------|------|-----|
+| **P0** | Backfill `player_rolling_stats` V31 columns (w_runs, w_tb, w_qs) | `scripts/backfill_v31_rolling.py` (new) | 2 days |
+| **P0** | Backfill `player_scores` V32 columns (z_r, z_h, z_tb, z_k_b, z_ops, z_k_p, z_qs) | `scripts/backfill_v32_zscores.py` (new) | 1 day |
+| **P0** | Implement `scarcity_rank` + `league_rostered_pct` in position eligibility sync | `backend/services/daily_ingestion.py` | 1 day |
+| **P0** | Implement `quality_score` in probable pitchers sync | `backend/services/daily_ingestion.py` | 1 day |
+| **P1** | Harden StatsAPI supplement to patch ANY null counting stat | `backend/services/daily_ingestion.py` | 1 day |
+| **P1** | Fix projection cat_scores team/positions fallback when MLBAM lookup fails | `backend/services/daily_ingestion.py` | 0.5 days |
+| **P1** | Drop unused `bdl_stat_id` column OR map it correctly | `backend/models.py` or migration | 0.5 days |
+| **P1** | Backfill `position_eligibility.bdl_player_id` gaps | `scripts/link_position_eligibility_bdl_ids.py` | 0.5 days |
+| **P2** | Add data-quality gate for partial box-stat rows | `backend/services/daily_ingestion.py` | 1 day |
+| **P2** | Document z_score_total self-healing timeline | `HANDOFF.md` or `docs/data_quality.md` | 0.25 days |
+
+### K-33 DECISIONS REQUIRED
+
+1. **Drop `bdl_stat_id`?** Column is 100% null, no consumer uses it. Recommend: drop via migration.
+2. **Scarcity rank algorithm:** Static (preseason position frequency) vs dynamic (daily league roster counts)? Recommend: static for immediate fix; dynamic in backlog.
+3. **Quality score heuristic:** Simple (`park_factor * opp_woba`) vs full model (ROS projections + opponent strength)? Recommend: simple heuristic for immediate fix.
+4. **Auto-backfill strategy:** One-off scripts vs integrated retroactive computation in daily jobs? Recommend: one-off now; add `AUTO_BACKFILL_DAYS=30` config later.
+
+---
+
+*Section added by Kimi CLI v1.17.0 | Null audit complete | 8 tables inspected | 155,474 rows analyzed | Full report: `reports/2026-04-28-data-quality-null-audit.md`*
+
+
+---
+
+## K-34 FINDINGS — Downstream Consumption Audit (2026-04-28)
+
+> **Full report:** `reports/2026-04-28-downstream-consumption-audit.md`  
+> **Auditor:** Kimi CLI | **Scope:** `scarcity_rank` + `quality_score` downstream readers
+
+### Q1–Q3: `scarcity_rank` Consumers
+
+| Consumer | Queries `position_eligibility`? | Uses `scarcity_rank`? | Current Scarcity Logic |
+|----------|-------------------------------|----------------------|------------------------|
+| `waiver_edge_detector.py` | ❌ No | ❌ No | Hardcoded `_POS_GROUP` dict for drop pairing |
+| `daily_lineup_optimizer.py` | ❌ No | ❌ No | Hardcoded `_DEFAULT_BATTER_SLOTS` order |
+| `lineup_constraint_solver.py` | ❌ No | ❌ No | Static `SLOT_CONFIG` with internal `scarcity_rank` column |
+
+**Gap:** None of the three consumers read `position_eligibility`. `scarcity_rank` must be wired into each scorer before it affects user-facing output.
+
+### Q3: `quality_score` Consumer — `two_start_detector.py`
+
+- **Reads `quality_score`?** ✅ Yes — SELECTs it from `probable_pitchers` and surfaces it in `MatchupRating` / `TwoStartOpportunity` dataclasses.
+- **Downstream impact of null:** All pitchers get `0.0` fallback → `"GOOD"` rating for everyone. `EXCELLENT`/`AVOID` buckets unreachable.
+- **Schema mismatch:** `MatchupRatingSchema` documents `quality_score` as `-2.0 to +2.0` (`backend/schemas.py:722`), but Session H heuristic emits `0.0–1.0`.
+
+### Q4: Waiver Recommendations Endpoint (`GET /api/fantasy/waiver/recommendations`)
+
+- **Queries `probable_pitchers`?** ❌ No.
+- **Response includes `quality_score`?** ❌ No — `WaiverPlayerOut` and `RosterMoveRecommendation` schemas lack the field.
+- **Gap:** Pitcher FA recommendations do not include matchup quality context.
+
+### Q5: DB Schema Verification
+
+```text
+position_eligibility.scarcity_rank       integer          nullable
+position_eligibility.league_rostered_pct  double precision nullable
+probable_pitchers.quality_score           double precision nullable
+```
+
+All three columns exist and are nullable. No `NOT NULL` constraints.
+
+### K-34 Recommendations for Session H
+
+| Priority | Action |
+|----------|--------|
+| P0 | Implement `scarcity_rank` in `_sync_position_eligibility` (already in Session H scope) |
+| P0 | Implement `quality_score` in `_sync_probable_pitchers` (already in Session H scope) |
+| P1 | **Fix `MatchupRatingSchema` docstring** — `-2.0 to +2.0` → `0.0 to 1.0` to match heuristic |
+| P2 | Wire `scarcity_rank` into `waiver_edge_detector.py` need-score multiplier |
+| P2 | Wire `scarcity_rank` into `daily_lineup_optimizer.py` slot ordering |
+| P2 | Wire `scarcity_rank` into `lineup_constraint_solver.py` objective bonus |
+| P3 | Add `matchup_quality` to `WaiverPlayerOut` / `RosterMoveRecommendation` for pitcher FAs |
+
+---
+
+*Section added by Kimi CLI v1.17.0 | Downstream consumption audit complete | Full report: `reports/2026-04-28-downstream-consumption-audit.md`*

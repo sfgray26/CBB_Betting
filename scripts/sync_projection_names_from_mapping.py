@@ -42,7 +42,7 @@ def main() -> None:
             # Find projection rows with purely numeric names
             cur.execute(
                 """
-                SELECT pp.id, pp.player_name, pp.bdl_player_id
+                SELECT pp.id, pp.player_name, pp.player_id
                 FROM player_projections pp
                 WHERE pp.player_name ~ '^[0-9]+$'
                 ORDER BY pp.player_name
@@ -62,7 +62,7 @@ def main() -> None:
             for row in numeric_rows:
                 proj_id = row["id"]
                 numeric_name = row["player_name"]
-                bdl_id = row["bdl_player_id"]
+                bdl_id = row["player_id"]
 
                 # Try to find canonical name in player_id_mapping
                 # Match on bdl_id if available, otherwise fall back to numeric name as bdl_id
@@ -72,12 +72,12 @@ def main() -> None:
                     """
                     SELECT full_name
                     FROM player_id_mapping
-                    WHERE bdl_id = %s
+                    WHERE (bdl_id = %s OR mlbam_id = %s::integer)
                       AND full_name IS NOT NULL
                       AND full_name !~ '^[0-9]+$'
                     LIMIT 1
                     """,
-                    (str(lookup_bdl_id),),
+                    (str(lookup_bdl_id), str(lookup_bdl_id)),
                 )
                 mapping_row = cur.fetchone()
 
