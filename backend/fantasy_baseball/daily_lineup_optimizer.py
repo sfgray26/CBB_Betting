@@ -184,6 +184,55 @@ _DEFAULT_BATTER_SLOTS: List[Tuple[str, List[str]]] = [
 # Statuses that mean "occupying an IL slot, not an active roster spot"
 _INACTIVE_STATUSES = frozenset({"IL", "IL10", "IL60", "NA", "OUT"})
 
+# Static scarcity rank: lower = scarcer. Mirrors POSITION_SCARCITY in
+# daily_ingestion._sync_position_eligibility (kept in sync manually).
+_POSITION_SCARCITY: dict[str, int] = {
+    "C": 1, "SS": 2, "2B": 3, "3B": 4, "CF": 5,
+    "SP": 6, "RP": 7, "LF": 8, "RF": 9, "1B": 10, "DH": 11, "OF": 12,
+}
+
+
+def _get_scarcity_rank(db, primary_position: str) -> int:
+    """
+    Return the scarcity_rank for a position, lowest = most scarce (C=1).
+
+    Strategy:
+      1. Query position_eligibility for the median scarcity_rank among all
+         players at this primary_position (single query, cached per call site).
+      2. Fall back to _POSITION_SCARCITY static dict if DB returns nothing.
+      3. Fall back to 13 (least scarce) if position unknown.
+
+    Integration point: call this from assign_lineup_slots() when two players
+    are equally eligible for a slot and one should prefer their natural position
+    over Util. Example:
+        if score_a == score_b:
+            rank_a = _get_scarcity_rank(db, player_a.primary_position)
+            rank_b = _get_scarcity_rank(db, player_b.primary_position)
+            winner = player_a if rank_a < rank_b else player_b
+    """
+    if primary_position in _POSITION_SCARCITY:
+        static_rank = _POSITION_SCARCITY[primary_position]
+    else:
+        static_rank = 13
+
+    if db is None:
+        return static_rank
+
+    try:
+        from backend.models import PositionEligibility
+        from sqlalchemy import func
+        result = (
+            db.query(func.min(PositionEligibility.scarcity_rank))
+            .filter(
+                PositionEligibility.primary_position == primary_position,
+                PositionEligibility.scarcity_rank.isnot(None),
+            )
+            .scalar()
+        )
+        return int(result) if result is not None else static_rank
+    except Exception:
+        return static_rank
+
 
 class DailyLineupOptimizer:
     """
