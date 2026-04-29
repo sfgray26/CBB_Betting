@@ -415,6 +415,7 @@ class WaiverPlayerOut(BaseModel):
     injury_status: Optional[str] = None   # Explicit injury status pass-through
     stats: dict = {}                        # K-24: actual season stats from Yahoo (stat_id→value)
     statcast_stats: Optional[dict] = None   # PR-15: raw Statcast/FanGraphs metrics (xwOBA, barrel%, etc.)
+    quality_score: Optional[float] = None   # Pitcher matchup quality [-2.0 to +2.0]. None when not a pitcher FA candidate.
 
     @field_validator("need_score", "owned_pct", "projected_saves", "projected_points", mode="before")
     @classmethod
@@ -465,6 +466,8 @@ class RosterMoveRecommendation(BaseModel):
     win_prob_gain: float = 0.0              # Absolute gain (after - before)
     category_win_probs: dict = {}           # Per-category win probability after move
     mcmc_enabled: bool = False              # True if MCMC simulation ran successfully
+
+    quality_score: Optional[float] = None   # Pitcher matchup quality [-2.0 to +2.0]. None when not a pitcher FA candidate.
 
     @field_validator("need_score", mode="before")
     @classmethod

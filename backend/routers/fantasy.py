@@ -2197,6 +2197,35 @@ async def get_waiver_recommendations(
 
         free_agents = client.get_free_agents(count=40)
 
+        # Bulk quality_score lookup for pitcher FA candidates (enrichment only).
+        # Queries probable_pitchers for today+next 7 days, keyed by pitcher_name.
+        # Non-fatal: any exception leaves the dict empty (quality_score stays None).
+        _pitcher_quality: dict[str, float] = {}
+        try:
+            from backend.models import ProbablePitcherSnapshot
+            from datetime import date as _date_type, timedelta as _td
+            _today = _date_type.today()
+            _qs_rows = (
+                db.query(
+                    ProbablePitcherSnapshot.pitcher_name,
+                    ProbablePitcherSnapshot.quality_score,
+                )
+                .filter(
+                    ProbablePitcherSnapshot.game_date >= _today,
+                    ProbablePitcherSnapshot.game_date <= _today + _td(days=7),
+                    ProbablePitcherSnapshot.quality_score.isnot(None),
+                )
+                .all()
+            )
+            for _r in _qs_rows:
+                if _r.pitcher_name and _r.quality_score is not None:
+                    # Keep highest quality_score per name (multiple starts possible)
+                    key = _r.pitcher_name.strip().lower()
+                    if key not in _pitcher_quality or _r.quality_score > _pitcher_quality[key]:
+                        _pitcher_quality[key] = float(_r.quality_score)
+        except Exception:
+            pass
+
         def _score_fa(p: dict) -> WaiverPlayerOut:
             positions = p.get("positions") or []
             name = (p.get("name") or "").strip()
@@ -2218,6 +2247,9 @@ async def get_waiver_recommendations(
                         need_score = _cns(cat_scores, z_score, category_deficits, n_cats)
                     except Exception:
                         pass  # fallback to z_score if scorer unavailable
+            # Populate quality_score for pitcher FA candidates only
+            is_pitcher_fa = positions and positions[0] in ("SP", "RP", "P")
+            qs = _pitcher_quality.get(name.lower()) if is_pitcher_fa else None
             return WaiverPlayerOut(
                 player_id=p.get("player_key") or "",
                 name=name,
@@ -2227,6 +2259,7 @@ async def get_waiver_recommendations(
                 category_contributions=bp.get("cat_scores", {}) if bp else {},
                 owned_pct=p.get("percent_owned", 0.0),
                 starts_this_week=0,
+                quality_score=qs,
             )
 
         scored_fas = sorted(
