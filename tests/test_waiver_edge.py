@@ -93,14 +93,17 @@ class TestWaiverEdgeDetector:
         fa_2b = _make_player("Westburg", ["2B"], {"hr": 1.5}, )
 
         det = WaiverEdgeDetector(mcmc_simulator=None)
-        with patch.object(det, "_fetch_fas", return_value=[fa_2b]):
+        # Mock scarcity lookup to empty so test uses _FALLBACK_RANK (2B=rank 3, multiplier 1.50)
+        with patch.object(det, "_fetch_fas", return_value=[fa_2b]), \
+             patch.object(WaiverEdgeDetector, "_load_scarcity_lookup", return_value={}):
             moves = det.get_top_moves(dead_roster, opp_roster, n_candidates=5)
         assert len(moves) == 1
-        # need_score should be boosted by 1.25x relative to un-boosted version
+        # need_score = base × scarcity_multiplier(2B=rank3=1.50) × dead-2B-boost(1.25)
         base_score = det._score_fa_against_deficits(
             fa_2b, det._compute_deficits(dead_roster, opp_roster)
         )
-        assert moves[0]["need_score"] == pytest.approx(base_score * 1.25)
+        scarcity_mult = 1.0 + (13 - 3) * 0.05  # 2B rank=3 -> 1.50
+        assert moves[0]["need_score"] == pytest.approx(base_score * scarcity_mult * 1.25)
 
     def test_empty_free_agents_returns_empty(self):
         det = WaiverEdgeDetector(mcmc_simulator=None)

@@ -204,6 +204,31 @@ class WaiverEdgeDetector:
         self.mcmc = mcmc_simulator
         self.fa_cache_ttl = fa_cache_ttl
 
+    @staticmethod
+    def _load_scarcity_lookup(player_keys: list[str]) -> dict[str, int]:
+        """Bulk-load scarcity_rank from position_eligibility for the given yahoo_player_keys.
+        Returns {yahoo_player_key: scarcity_rank}. Empty dict on any DB error (non-fatal)."""
+        if not player_keys:
+            return {}
+        try:
+            from backend.models import SessionLocal, PositionEligibility
+            db = SessionLocal()
+            try:
+                rows = (
+                    db.query(PositionEligibility.yahoo_player_key, PositionEligibility.scarcity_rank)
+                    .filter(
+                        PositionEligibility.yahoo_player_key.in_(player_keys),
+                        PositionEligibility.scarcity_rank.isnot(None),
+                    )
+                    .all()
+                )
+                return {r.yahoo_player_key: r.scarcity_rank for r in rows}
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.debug("_load_scarcity_lookup: DB query failed (%s) -- using _POS_GROUP fallback", exc)
+            return {}
+
     def get_top_moves(self, my_roster, opponent_roster, n_candidates=10, force_refresh=False):
         free_agents = self._enrich_players(self._fetch_fas(force_refresh))
         if not free_agents:
@@ -212,9 +237,30 @@ class WaiverEdgeDetector:
         opponent_roster = self._enrich_players(opponent_roster)
         deficits = self._compute_deficits(my_roster, opponent_roster)
         has_deficit_signal = any(abs(v) > 0 for v in deficits.values())
+
+        # Bulk-load scarcity_rank for all FA candidates in a single query.
+        fa_keys = [fa.get("player_key") or fa.get("id") or "" for fa in free_agents[:40]]
+        scarcity_lookup = self._load_scarcity_lookup([k for k in fa_keys if k])
+
         moves = []
         for fa in free_agents[:40]:
             score = self._score_fa_against_deficits(fa, deficits)
+
+            # Scarcity multiplier: boosts need_score for players at scarcer positions.
+            # Formula: 1.0 + (13 - rank) * 0.05; clamped to ≥1.0 (no penalty for common positions).
+            # Falls back to _POS_GROUP grouping when position_eligibility has no row.
+            fa_key = fa.get("player_key") or fa.get("id") or ""
+            scarcity_rank = scarcity_lookup.get(fa_key)
+            if scarcity_rank is None:
+                # _POS_GROUP fallback: use first position to estimate group scarcity
+                fa_pos = (fa.get("positions") or ["OF"])[0].upper()
+                _FALLBACK_RANK = {
+                    "C": 1, "SS": 2, "2B": 3, "3B": 4, "CF": 5,
+                    "SP": 6, "RP": 7, "LF": 8, "RF": 9, "1B": 10, "DH": 11, "OF": 12,
+                }
+                scarcity_rank = _FALLBACK_RANK.get(fa_pos, 13)
+            scarcity_multiplier = max(1.0, 1.0 + (13 - scarcity_rank) * 0.05)
+            score *= scarcity_multiplier
             if score <= 0 and not has_deficit_signal:
                 score = float(fa.get("z_score") or 0.0)
             fa_positions = fa.get("positions") or []
