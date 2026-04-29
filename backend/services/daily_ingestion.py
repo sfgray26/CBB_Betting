@@ -22,7 +22,7 @@ from typing import Optional, Any
 from zoneinfo import ZoneInfo
 
 import requests
-from sqlalchemy import text, func
+from sqlalchemy import text, func, or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -1556,7 +1556,6 @@ class DailyIngestionOrchestrator:
 
                     payload = stat.model_dump()
                     stmt = pg_insert(MLBPlayerStats.__table__).values(
-                        bdl_stat_id=stat.id,
                         bdl_player_id=stat.bdl_player_id,
                         game_id=stat.game_id,
                         game_date=game_date,
@@ -1592,7 +1591,6 @@ class DailyIngestionOrchestrator:
                     ).on_conflict_do_update(
                         constraint="_mps_player_game_uc",
                         set_=dict(
-                            bdl_stat_id=stat.id,
                             season=stat.season if stat.season is not None else 2026,
                             ab=stat.ab,
                             runs=stat.r,
@@ -2033,12 +2031,22 @@ class DailyIngestionOrchestrator:
 
             db = SessionLocal()
             try:
-                # Find rows needing supplementation (ab IS NULL = BDL didn't provide counting stats)
+                # Find rows needing supplementation: any counting stat is NULL.
+                # BDL may return ab but leave runs/hits/etc null for some games.
                 rows_needing_fill = (
                     db.query(MLBPlayerStats)
                     .filter(
                         MLBPlayerStats.game_date.in_(target_dates),
-                        MLBPlayerStats.ab.is_(None),
+                        or_(
+                            MLBPlayerStats.ab.is_(None),
+                            MLBPlayerStats.runs.is_(None),
+                            MLBPlayerStats.hits.is_(None),
+                            MLBPlayerStats.doubles.is_(None),
+                            MLBPlayerStats.triples.is_(None),
+                            MLBPlayerStats.home_runs.is_(None),
+                            MLBPlayerStats.rbi.is_(None),
+                            MLBPlayerStats.stolen_bases.is_(None),
+                        ),
                     )
                     .all()
                 )
@@ -5359,6 +5367,12 @@ class DailyIngestionOrchestrator:
         _POSITION_PRIORITY = ["C", "SS", "2B", "CF", "3B", "RF", "LF", "1B", "OF", "DH", "SP", "RP", "Util"]
         _BATTER_POS = {"C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "OF", "DH"}
 
+        # Static scarcity rank: lower number = scarcer position (C=1 most scarce, OF=12 least)
+        POSITION_SCARCITY = {
+            "C": 1, "SS": 2, "2B": 3, "3B": 4, "CF": 5,
+            "SP": 6, "RP": 7, "LF": 8, "RF": 9, "1B": 10, "DH": 11, "OF": 12,
+        }
+
         async def _run():
             from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
             try:
@@ -5425,6 +5439,7 @@ class DailyIngestionOrchestrator:
                         # Primary position by scarcity
                         pos_upper = [p.upper() for p in positions if p]
                         primary = next((pr for pr in _POSITION_PRIORITY if pr.upper() in pos_upper), positions[0] if positions else "DH")
+                        scarcity_rank = POSITION_SCARCITY.get(primary, 99)
 
                         # Player type classification
                         has_pitcher = bool(pos_set & {"SP", "RP", "P"})
@@ -5449,6 +5464,8 @@ class DailyIngestionOrchestrator:
                             primary_position=primary,
                             player_type=ptype,
                             multi_eligibility_count=multi_count,
+                            scarcity_rank=scarcity_rank,
+                            league_rostered_pct=None,
                             fetched_at=now,
                             updated_at=now,
                             **flags,
@@ -5459,6 +5476,7 @@ class DailyIngestionOrchestrator:
                                 "primary_position": primary,
                                 "player_type": ptype,
                                 "multi_eligibility_count": multi_count,
+                                "scarcity_rank": scarcity_rank,
                                 "updated_at": now,
                                 **flags,
                             },
@@ -5552,6 +5570,40 @@ class DailyIngestionOrchestrator:
                     len(recent_starter_candidates),
                 )
 
+                # Build rolling ERA lookup: mlbam_id -> avg ERA over last 10 starts with IP > 0
+                mlbam_to_era: dict[int, float] = {}
+                try:
+                    era_rows = db.execute(
+                        text(
+                            """
+                            SELECT m.mlbam_id, AVG(s.era) AS avg_era
+                            FROM (
+                                SELECT bdl_player_id, era,
+                                       ROW_NUMBER() OVER (
+                                           PARTITION BY bdl_player_id
+                                           ORDER BY game_date DESC
+                                       ) AS rn
+                                FROM mlb_player_stats
+                                WHERE innings_pitched > 0
+                                  AND era IS NOT NULL
+                            ) s
+                            JOIN player_id_mapping m ON m.bdl_id = s.bdl_player_id::text
+                            WHERE s.rn <= 10
+                              AND m.mlbam_id IS NOT NULL
+                            GROUP BY m.mlbam_id
+                            """
+                        )
+                    ).fetchall()
+                    for r in era_rows:
+                        if r.mlbam_id and r.avg_era is not None:
+                            mlbam_to_era[r.mlbam_id] = float(r.avg_era)
+                    logger.info(
+                        "_sync_probable_pitchers: Built ERA lookup for %d pitchers",
+                        len(mlbam_to_era),
+                    )
+                except Exception as exc:
+                    logger.warning("_sync_probable_pitchers: ERA lookup failed (%s) -- quality_score will be 0.5", exc)
+
                 # Fetch schedule for next 7 days from MLB Stats API
                 for days_ahead in range(7):
                     target_date = today + timedelta(days=days_ahead)
@@ -5636,6 +5688,16 @@ class DailyIngestionOrchestrator:
                                 home_abbr = team_abbr if is_home else opp_abbr
                                 pf = get_park_factor(home_abbr, "era")
 
+                                # quality_score: heuristic from ERA vs league average + park factor
+                                pitcher_era = mlbam_to_era.get(mlbam_id) if mlbam_id else None
+                                if pitcher_era is None:
+                                    quality_score = 0.5
+                                else:
+                                    era_score = max(-0.5, min(0.5, (4.50 - pitcher_era) / 3.00))
+                                    park_val = pf if pf else 1.0
+                                    park_score = max(-0.25, min(0.25, (1.0 - park_val) * 0.25))
+                                    quality_score = round(max(0.0, min(1.0, 0.5 + era_score + park_score)), 2)
+
                                 try:
                                     stmt = pg_insert(ProbablePitcherSnapshot).values(
                                         game_date=target_date,
@@ -5648,7 +5710,7 @@ class DailyIngestionOrchestrator:
                                         is_confirmed=bool(pitcher_data and pitcher_data.get("fullName")),
                                         game_time_et=game_time_et_str,
                                         park_factor=pf,
-                                        quality_score=None,
+                                        quality_score=quality_score,
                                         fetched_at=now_et(),
                                         updated_at=now_et(),
                                     )
@@ -5663,6 +5725,7 @@ class DailyIngestionOrchestrator:
                                             "is_confirmed": stmt.excluded.is_confirmed,
                                             "game_time_et": stmt.excluded.game_time_et,
                                             "park_factor": stmt.excluded.park_factor,
+                                            "quality_score": stmt.excluded.quality_score,
                                             "updated_at": stmt.excluded.updated_at,
                                         },
                                     )

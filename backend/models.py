@@ -1163,7 +1163,6 @@ class MLBPlayerStats(Base):
     __tablename__ = "mlb_player_stats"
 
     id              = Column(BigInteger, primary_key=True, autoincrement=True)
-    bdl_stat_id     = Column(Integer, nullable=True)           # BDL stats record id
     bdl_player_id   = Column(Integer, nullable=False)          # player.id from BDL
     game_id         = Column(Integer, ForeignKey("mlb_game_log.game_id"), nullable=True)
     game_date       = Column(Date, nullable=False)
