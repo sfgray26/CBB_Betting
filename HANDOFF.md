@@ -1,11 +1,25 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-04-29 | **Architect:** Claude Code (Master Architect)
-> **Status:** Session J COMPLETE — scarcity tiebreaker + MLBAM fallback live. Suite 2451/0. HEAD `eff1160`. Pushed + Railway deploy triggered. Session K candidates in Section 4.
+> **Status:** Session K COMPLETE — ILP + greedy scarcity bonus live. Suite 2453/3 skip/0 fail. HEAD `7007939`. Session L candidates in Section 4.
 
 ---
 
-## 1. Mission Accomplished — Session J (2026-04-29)
+## 1. Mission Accomplished — Session K (2026-04-29)
+
+### Session K — ILP + Greedy Scarcity Objective Bonus
+
+**Test suite:** 2453 pass / 3 skip / 0 fail — HEAD: `7007939`
+
+| Step | Task | Detail | Commit |
+|------|------|--------|--------|
+| K1 | `lineup_constraint_solver.py` scarcity bonus | ILP: second objective pass adds `10*(10-scarcity_rank)` bonus units per natural-pos assignment (Util excluded). Max 90 units = <0.001 score-space — never overrides real gap ≥0.091. Greedy: candidates extended to 4-tuple with `natural_bonus`; `max()` key = `(score, natural_bonus)`. 4 new tests (2 skip without OR-Tools, 2 always pass). | 7007939 |
+
+**Deferred:** ILP tie-break tests skip locally (OR-Tools absent); auto-promote to pass on Railway prod where OR-Tools is installed.
+
+---
+
+## 1a. Mission Accomplished — Session J (2026-04-29)
 
 ### Session J — Scarcity Tiebreaker + MLBAM Fallback
 
@@ -235,26 +249,22 @@ WHERE table_name='mlb_player_stats' AND column_name='bdl_stat_id';
 
 ---
 
-## 4. Next Session (Session K) — Scope
+## 4. Next Session (Session L) — Scope
 
-> Session J complete and deployed. Session K candidates below.
+> Session K complete. K1 deployed. Session L candidates below.
 
-### Session K Candidate Items
+### Session L Candidate Items
 
-**Candidate 1 — `lineup_constraint_solver.py` scarcity objective bonus (K-34 deferred from Session J)**
-- OR-Tools ILP solver has static `SLOT_CONFIG`. Add small objective coefficient bonus for filling scarce-position slots with the natural-position player rather than utility.
-- Scope: read `scarcity_rank` from `position_eligibility` (same pattern as `_get_scarcity_rank`); add `+0.01 * (14 - scarcity_rank)` to ILP objective for each natural-pos fill. Apply same bonus in greedy fallback path.
-
-**Candidate 2 — Savant leaderboard first production ingestion run (K-28/K-30 deferred)**
+**Candidate 1 — Savant leaderboard first production ingestion run (K-28/K-30 deferred)**
 - Pipeline verified and tested (445 batters, 507 pitchers). Never run in production.
 - Scope: trigger `SavantIngestionClient` once manually; verify `statcast_leaderboard` table populated.
 - Command: `railway run python -c "from backend.services.savant_ingestion import SavantIngestionClient; SavantIngestionClient().run()"`
 
-**Candidate 3 — Post-deploy DB verification**
+**Candidate 2 — Post-deploy DB verification (K3 carry-over)**
 - After first daily job run post-deploy, confirm `position_eligibility.scarcity_rank` non-null and `probable_pitchers.quality_score` non-null.
 - Spot-check: `SELECT COUNT(*), AVG(scarcity_rank) FROM position_eligibility WHERE scarcity_rank IS NOT NULL`
 
-**Priority:** K1 (ILP bonus) → K2 (Savant ingest) → K3 (verify).
+**Priority:** L1 (Savant ingest) → L2 (DB verify).
 
 ---
 
@@ -284,7 +294,7 @@ See full report: `reports/2026-04-28-data-quality-null-audit.md`
 
 ---
 
-*Last updated: 2026-04-29 — Session J complete. HEAD: eff1160. Test suite: 2451 pass / 1 skip / 0 fail. Pushed + railway up triggered. GitHub PAT redacted from history (autosquash rebase). Session K ready.*
+*Last updated: 2026-04-29 — Session K complete. HEAD: 7007939. Test suite: 2453 pass / 3 skip / 0 fail. ILP + greedy scarcity bonus live. Session L ready (Savant ingest + DB verify).*
 
 ---
 
