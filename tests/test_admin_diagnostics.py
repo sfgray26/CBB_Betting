@@ -76,3 +76,141 @@ def test_field_coverage_returns_all_keys():
     assert isinstance(pp["total"], int)
     assert isinstance(prs["total"], int)
     assert isinstance(ps["total"], int)
+
+
+def _patched_session_execute(sql_text, rows_by_keyword):
+    """Return a mock execute result whose fetchone/fetchall matches the SQL."""
+    mock_db = MagicMock()
+
+    def _side_effect(stmt, *args, **kwargs):
+        sql = str(stmt)
+        for keyword, rows in rows_by_keyword.items():
+            if keyword in sql:
+                mock_result = MagicMock()
+                if isinstance(rows, list):
+                    mock_result.fetchall.return_value = rows
+                else:
+                    mock_result.fetchone.return_value = rows
+                # rowcount for UPDATE statements
+                mock_result.rowcount = rows if isinstance(rows, int) else 0
+                return mock_result
+        mock_result = MagicMock()
+        mock_result.fetchone.return_value = (0,)
+        mock_result.fetchall.return_value = []
+        mock_result.rowcount = 0
+        return mock_result
+
+    mock_db.execute.side_effect = _side_effect
+    mock_db.commit.return_value = None
+    mock_db.rollback.return_value = None
+    mock_db.close.return_value = None
+    return mock_db
+
+
+def test_backfill_scarcity_rank_endpoint():
+    """
+    POST /admin/actions/backfill-scarcity-rank returns rows_updated and coverage list.
+    """
+    app.dependency_overrides[verify_admin_api_key] = mock_verify_admin_api_key
+
+    with patch("backend.main.SessionLocal") as mock_sl:
+        mock_db = MagicMock()
+        mock_sl.return_value = mock_db
+
+        # UPDATE returns 150 updated rows
+        update_result = MagicMock()
+        update_result.rowcount = 150
+
+        # Coverage query returns sample rows
+        coverage_rows = [("C", 172, 172), ("SS", 270, 270), ("SP", 747, 747)]
+        coverage_result = MagicMock()
+        coverage_result.fetchall.return_value = coverage_rows
+
+        mock_db.execute.side_effect = [update_result, coverage_result]
+        mock_db.commit.return_value = None
+        mock_db.close.return_value = None
+
+        client = TestClient(app)
+        response = client.post("/admin/actions/backfill-scarcity-rank")
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["rows_updated"] == 150
+    assert "coverage" in data
+    assert isinstance(data["coverage"], list)
+    assert data["coverage"][0]["position"] == "C"
+
+
+def test_backfill_quality_scores_endpoint():
+    """
+    POST /admin/actions/backfill-quality-scores returns constraint status and null rows patched.
+    """
+    app.dependency_overrides[verify_admin_api_key] = mock_verify_admin_api_key
+
+    with patch("backend.main.SessionLocal") as mock_sl:
+        mock_db = MagicMock()
+        mock_sl.return_value = mock_db
+
+        # Constraint already exists → ALTER TABLE raises exception
+        alter_result = MagicMock()
+        alter_result.rowcount = 0
+
+        # Constraint exists check
+        constraint_row = MagicMock()  # truthy → constraint present
+
+        # UPDATE NULL rows: patched 61
+        update_result = MagicMock()
+        update_result.rowcount = 61
+
+        # Summary counts
+        summary_row = (61, 61, 0.0)
+
+        mock_db.execute.side_effect = [
+            Exception("constraint already exists"),  # ALTER TABLE fails → caught
+            constraint_row,                          # constraint check
+            update_result,                           # UPDATE quality_score
+            MagicMock(fetchone=lambda: summary_row), # summary SELECT
+        ]
+        mock_db.commit.return_value = None
+        mock_db.rollback.return_value = None
+        mock_db.close.return_value = None
+
+        client = TestClient(app)
+        response = client.post("/admin/actions/backfill-quality-scores")
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "ok"
+    assert "null_rows_patched" in data
+    assert "constraint_present" in data
+
+
+def test_patch_null_teams_endpoint():
+    """
+    POST /admin/actions/patch-null-teams returns rows_patched and remaining count.
+    """
+    app.dependency_overrides[verify_admin_api_key] = mock_verify_admin_api_key
+
+    with patch("backend.main.SessionLocal") as mock_sl:
+        mock_db = MagicMock()
+        mock_sl.return_value = mock_db
+
+        update_result = MagicMock()
+        update_result.rowcount = 311
+
+        remaining_result = MagicMock()
+        remaining_result.fetchone.return_value = (0,)
+
+        mock_db.execute.side_effect = [update_result, remaining_result]
+        mock_db.commit.return_value = None
+        mock_db.close.return_value = None
+
+        client = TestClient(app)
+        response = client.post("/admin/actions/patch-null-teams")
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["status"] == "ok"
+    assert data["rows_patched"] == 311
+    assert data["remaining_null_team"] == 0

@@ -813,6 +813,187 @@ async def get_field_coverage(user: str = Depends(verify_admin_api_key)):
         db.close()
 
 
+# ---------------------------------------------------------------------------
+# Session O admin backfill endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/admin/actions/backfill-scarcity-rank")
+async def backfill_scarcity_rank(user: str = Depends(verify_admin_api_key)):
+    """
+    O1 — Bulk-set scarcity_rank for all position_eligibility rows where it is NULL.
+
+    Uses the same static POSITION_SCARCITY mapping as _sync_position_eligibility.
+    Safe to run multiple times (WHERE scarcity_rank IS NULL is idempotent).
+    """
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            UPDATE position_eligibility
+            SET scarcity_rank = CASE primary_position
+                WHEN 'C'  THEN 1
+                WHEN 'SS' THEN 2
+                WHEN '2B' THEN 3
+                WHEN '3B' THEN 4
+                WHEN 'CF' THEN 5
+                WHEN 'SP' THEN 6
+                WHEN 'RP' THEN 7
+                WHEN 'LF' THEN 8
+                WHEN 'RF' THEN 9
+                WHEN '1B' THEN 10
+                WHEN 'DH' THEN 11
+                WHEN 'OF' THEN 12
+                ELSE 99
+            END
+            WHERE scarcity_rank IS NULL
+        """))
+        db.commit()
+        updated = result.rowcount
+
+        # Coverage check
+        coverage = db.execute(text("""
+            SELECT primary_position,
+                   COUNT(*) AS total,
+                   COUNT(scarcity_rank) AS has_rank
+            FROM position_eligibility
+            GROUP BY primary_position
+            ORDER BY MIN(scarcity_rank) NULLS LAST
+        """)).fetchall()
+
+        return {
+            "status": "ok",
+            "rows_updated": updated,
+            "as_of": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+            "coverage": [
+                {"position": r[0], "total": r[1], "has_rank": r[2],
+                 "pct": round(100 * r[2] / r[1], 1) if r[1] else 0}
+                for r in coverage
+            ],
+        }
+    except Exception as exc:
+        db.rollback()
+        logger.error("backfill_scarcity_rank: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        db.close()
+
+
+@app.post("/admin/actions/backfill-quality-scores")
+async def backfill_quality_scores(user: str = Depends(verify_admin_api_key)):
+    """
+    O2 — Ensure the _pp_date_team_uc constraint exists, then set quality_score=0.0
+    for all probable_pitchers rows where quality_score IS NULL.
+
+    Root cause: the ON CONFLICT constraint used in _sync_probable_pitchers may not
+    exist in the production DB if the Alembic migration was not run when the column
+    was added. This causes all daily upserts to fail silently, leaving quality_score
+    NULL. The 0.0 fill is a safe neutral value (same as the code-level default when
+    no ERA data is available).
+
+    After running this endpoint, trigger /admin/sync/probable-pitchers to backfill
+    ERA-based quality scores for pitchers where MLBAM data is available.
+    """
+    db = SessionLocal()
+    try:
+        # Step 1: ensure the unique constraint exists so future upserts work
+        constraint_created = False
+        try:
+            db.execute(text("""
+                ALTER TABLE probable_pitchers
+                ADD CONSTRAINT _pp_date_team_uc UNIQUE (game_date, team)
+            """))
+            db.commit()
+            constraint_created = True
+        except Exception:
+            db.rollback()
+            # Constraint already exists — expected on a healthy DB
+
+        # Step 2: verify constraint presence
+        constraint_exists = db.execute(text("""
+            SELECT 1 FROM information_schema.table_constraints
+            WHERE constraint_name = '_pp_date_team_uc'
+              AND table_name = 'probable_pitchers'
+        """)).fetchone() is not None
+
+        # Step 3: set quality_score = 0.0 (neutral) where NULL
+        result = db.execute(text("""
+            UPDATE probable_pitchers
+            SET quality_score = 0.0
+            WHERE quality_score IS NULL
+        """))
+        db.commit()
+        null_rows_patched = result.rowcount
+
+        # Step 4: summary counts
+        counts = db.execute(text("""
+            SELECT
+                COUNT(*) AS total,
+                COUNT(quality_score) AS has_qs,
+                AVG(quality_score) AS avg_qs
+            FROM probable_pitchers
+            WHERE game_date >= CURRENT_DATE
+        """)).fetchone()
+
+        return {
+            "status": "ok",
+            "constraint_existed": not constraint_created,
+            "constraint_created_now": constraint_created,
+            "constraint_present": constraint_exists,
+            "null_rows_patched": null_rows_patched,
+            "upcoming_pitchers": {
+                "total": counts[0],
+                "has_quality_score": counts[1],
+                "avg_quality_score": round(float(counts[2]), 3) if counts[2] else None,
+            },
+            "as_of": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+        }
+    except Exception as exc:
+        db.rollback()
+        logger.error("backfill_quality_scores: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        db.close()
+
+
+@app.post("/admin/actions/patch-null-teams")
+async def patch_null_teams(user: str = Depends(verify_admin_api_key)):
+    """
+    O5 — Set team='Unknown' for player_projections rows where team IS NULL or empty.
+
+    Motivation: Session J stores 'Unknown' for new MLBAM-lookup failures, but 311
+    pre-existing rows from before Session J have NULL team. NULL causes the lineup
+    optimizer to treat these players as un-slottable; 'Unknown' is the explicit
+    sentinel value used by downstream logic.
+    """
+    db = SessionLocal()
+    try:
+        result = db.execute(text("""
+            UPDATE player_projections
+            SET team = 'Unknown'
+            WHERE team IS NULL OR team = ''
+        """))
+        db.commit()
+        patched = result.rowcount
+
+        # Residual check
+        remaining = db.execute(text("""
+            SELECT COUNT(*) FROM player_projections
+            WHERE team IS NULL OR team = ''
+        """)).fetchone()[0]
+
+        return {
+            "status": "ok",
+            "rows_patched": patched,
+            "remaining_null_team": remaining,
+            "as_of": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+        }
+    except Exception as exc:
+        db.rollback()
+        logger.error("patch_null_teams: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        db.close()
+
+
 @app.post("/admin/run-migration-v27")
 async def run_migration_v27(user: str = Depends(verify_admin_api_key)):
     """

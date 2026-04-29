@@ -1,11 +1,47 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-04-29 | **Architect:** Claude Code (Master Architect)
-> **Status:** Session M COMPLETE — `/admin/diagnostics/field-coverage` endpoint live. Suite 2454/3 skip/0 fail. HEAD `858f2fb`. Deploying now. Session N = hit endpoint + read K-33/K-34 field counts.
+> **Status:** Session O COMPLETE — 3 admin backfill endpoints + `scripts/backfill_scarcity_rank.py`. Suite 2457/3 skip/0 fail. HEAD pending push. Next = fire endpoints against prod, then Session P (ID bridge / quality_score wiring).
 
 ---
 
-## 1. Mission Accomplished — Session M (2026-04-29)
+## 1. Mission Accomplished — Session O (2026-04-29)
+
+### Session O — Pipeline Data Quality Backfills
+
+**Test suite:** 2457 pass / 3 skip / 0 fail — HEAD: (commit after this HANDOFF update)
+
+| Step | Task | Detail | Commit |
+|------|------|--------|--------|
+| O1 | `scripts/backfill_scarcity_rank.py` | Standalone psycopg2 script. Single CASE-WHEN UPDATE sets `scarcity_rank` for all NULL rows in `position_eligibility` using static `POSITION_SCARCITY` map. Prints per-position coverage table post-run. Safe to re-run (idempotent WHERE scarcity_rank IS NULL). | TBD |
+| O2 | `POST /admin/actions/backfill-scarcity-rank` | REST equivalent of O1 — runs the same CASE-WHEN UPDATE then returns per-position coverage JSON. Auth: `verify_admin_api_key`. | TBD |
+| O3 | `POST /admin/actions/backfill-quality-scores` | Sets `quality_score=0.0` for all NULL rows in `probable_pitchers`. Also attempts to CREATE the `_pp_date_team_uc` constraint if missing (root cause: Alembic migration may not have run). Returns `constraint_present`, `null_rows_patched`, upcoming-pitcher summary. | TBD |
+| O4 | `POST /admin/actions/patch-null-teams` | Sets `team='Unknown'` for all `player_projections` rows where `team IS NULL OR team = ''`. Addresses 311 pre-Session-J NULL-team rows. Returns `rows_patched` + `remaining_null_team`. | TBD |
+| O5 | `tests/test_admin_diagnostics.py` | 3 new tests (mock-DB) for the 3 new endpoints. All pass. Total: 4 tests in file. | TBD |
+
+**To fire all three backfills after deploy:**
+```bash
+BASE=https://fantasy-app-production-5079.up.railway.app
+# O1 — scarcity_rank
+curl -s -X POST -H "X-API-Key: $API_KEY_USER1" $BASE/admin/actions/backfill-scarcity-rank | python -m json.tool
+# O2 — quality_score neutral fill
+curl -s -X POST -H "X-API-Key: $API_KEY_USER1" $BASE/admin/actions/backfill-quality-scores | python -m json.tool
+# O3 — NULL team patch
+curl -s -X POST -H "X-API-Key: $API_KEY_USER1" $BASE/admin/actions/patch-null-teams | python -m json.tool
+```
+Expected: `scarcity_rank` rows_updated ≈ 2100+, `quality_score` null_rows_patched ≈ 61, `team` rows_patched ≈ 311.
+
+**Still open after Session O:**
+| Gap | Priority | Next action |
+|-----|----------|-------------|
+| V31 rolling-stats 49% complete in prod | P0 | Run `scripts/backfill_v31_fast.py` locally against prod DATABASE_URL |
+| Cross-table ID mismatch (`player_id` varchar ≠ `bdl_player_id` int) | P0 | Session P: join on `yahoo_player_key` in optimizer + waiver detector |
+| `quality_score` heuristic uses ERA but sync path only fires for NEW upserts | P1 | After O3 fills 0.0, trigger `/admin/sync/probable-pitchers` to overwrite with real ERA values |
+| `league_rostered_pct` 0% | P1 | Needs Yahoo roster API integration in `_sync_position_eligibility` |
+
+---
+
+## 1a. Mission Accomplished — Session M (2026-04-29)
 
 ### Session M — Field Coverage Diagnostics Endpoint
 
