@@ -1152,6 +1152,7 @@ async def get_fantasy_lineup_recommendations(
                 roster=_lineup_roster,
                 projections=_lineup_projections,
                 game_date=lineup_date,
+                db=db,
             )
             batters = []
             for s in solved_slots:

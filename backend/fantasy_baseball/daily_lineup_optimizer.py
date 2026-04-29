@@ -655,6 +655,7 @@ class DailyLineupOptimizer:
         projections: List[dict],
         game_date: Optional[str] = None,
         slot_config: Optional[List[Tuple[str, List[str]]]] = None,
+        db=None,
     ) -> Tuple[List[LineupSlotResult], List[str]]:
         """
         Fill Yahoo lineup slots using greedy scarcity-first constraint solving.
@@ -697,10 +698,17 @@ class DailyLineupOptimizer:
         slot_results: List[LineupSlotResult] = []
         warnings: List[str] = []
 
-        for slot_label, eligible_positions in slots:
-            best: Optional[BatterRanking] = None
+        # Sort key: lineup_score DESC, scarcity_rank ASC (tiebreaker only).
+        # _get_scarcity_rank falls back to _POSITION_SCARCITY when db is None.
+        def _slot_sort_key(b: BatterRanking) -> tuple:
+            primary = b.positions[0] if b.positions else "OF"
+            return (-b.lineup_score, _get_scarcity_rank(db, primary))
 
-            # Pass 1: find best eligible player WITH a game today
+        for slot_label, eligible_positions in slots:
+            # Collect all eligible candidates, split by off-day status
+            in_game: List[BatterRanking] = []
+            off_day_eligible: List[BatterRanking] = []
+
             for b in ranked:
                 if b.name in assigned:
                     continue
@@ -718,23 +726,22 @@ class DailyLineupOptimizer:
                         "team_odds_keys": list(team_odds.keys()),
                         "odds_api_games_count": len(games) if games else 0
                     }))
+                    off_day_eligible.append(b)
                     continue
-                best = b
-                break
+                in_game.append(b)
 
-            # Pass 2: no in-game player found — fall back to any eligible player
-            if best is None:
-                for b in ranked:
-                    if b.name in assigned:
-                        continue
-                    if not any(pos in b.positions for pos in eligible_positions):
-                        continue
-                    best = b
-                    if apply_offday_filter:
-                        warnings.append(
-                            f"{slot_label}: {b.name} ({b.team}) has no game today — verify schedule"
-                        )
-                    break
+            # Pass 1 → prefer in-game; Pass 2 → fall back to off-day
+            candidates = in_game if in_game else off_day_eligible
+            using_offday_fallback = not in_game and bool(off_day_eligible) and apply_offday_filter
+
+            # Pick best: lineup_score DESC, scarcity_rank ASC as tiebreaker
+            candidates.sort(key=_slot_sort_key)
+            best: Optional[BatterRanking] = candidates[0] if candidates else None
+
+            if best is not None and using_offday_fallback:
+                warnings.append(
+                    f"{slot_label}: {best.name} ({best.team}) has no game today — verify schedule"
+                )
 
             if best is None:
                 warnings.append(f"No eligible active player found for {slot_label} slot")
