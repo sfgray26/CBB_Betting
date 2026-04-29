@@ -359,6 +359,25 @@ class TestConvertFusionProjToBoardFormat:
 class TestFourStateFusionIntegration:
     """Integration tests for the four-state Bayesian fusion logic."""
 
+    def setup_method(self):
+        """
+        Prevent real DB access from the get_db() call inside get_or_create_projection.
+        Without this, a production DB with cat_scores populated would trigger the
+        fast-path short-circuit and return fusion_source='steamer_db' instead of 'fusion'.
+        Also clear the module-level projection cache so prior test runs don't interfere.
+        """
+        import backend.fantasy_baseball.player_board as _pb
+        _pb._projection_cache.clear()
+        self._get_db_patcher = patch("backend.models.get_db")
+        mock_get_db = self._get_db_patcher.start()
+        # Yield a mock session where all query chains return None
+        mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.first.return_value = None
+        mock_get_db.return_value = iter([mock_session, None])
+
+    def teardown_method(self):
+        self._get_db_patcher.stop()
+
     @patch("backend.fantasy_baseball.player_board._query_statcast_proxy")
     @patch("backend.fantasy_baseball.player_board.get_board")
     @patch("backend.fantasy_baseball.player_board._extract_steamer_data")
