@@ -5025,7 +5025,24 @@ class DailyIngestionOrchestrator:
 
                 for p in batters + pitchers:
                     fg_id = p["id"]
-                    mlbam_id = name_to_mlbam.get(fg_id)
+                    # Primary: normalized FG id → MLBAM; secondary: raw player name
+                    mlbam_id = name_to_mlbam.get(fg_id) or name_to_mlbam.get(
+                        p.get("name", "").lower().strip()
+                    )
+
+                    # Tertiary: look up an existing PlayerProjection row by name
+                    if not mlbam_id:
+                        try:
+                            existing_row = (
+                                db.query(PlayerProjection)
+                                .filter(PlayerProjection.player_name.ilike(p.get("name", "")))
+                                .first()
+                            )
+                            if existing_row:
+                                mlbam_id = existing_row.player_id
+                        except Exception:
+                            pass
+
                     if not mlbam_id:
                         skipped += 1
                         continue
@@ -5035,14 +5052,17 @@ class DailyIngestionOrchestrator:
                         skipped += 1
                         continue
 
-                    team = p.get("team") or ""
+                    team = p.get("team") or "Unknown"
                     proj = p["proj"]
+                    # Type-based default positions for INSERT-only; existing rows keep Yahoo-synced positions
+                    default_positions = ["SP"] if p["type"] == "pitcher" else ["Util"]
 
                     # Build upsert values — only write stats that exist in the model
                     upsert_vals: dict = {
                         "player_id":   mlbam_id,
                         "player_name": p.get("name", ""),
                         "team":        team,
+                        "positions":   default_positions,
                         "cat_scores":  cat_scores,
                         "prior_source": "fangraphs_ros",
                         "update_method": "ensemble_blend",
@@ -5067,7 +5087,7 @@ class DailyIngestionOrchestrator:
 
                     conflict_set = {
                         k: v for k, v in upsert_vals.items()
-                        if k not in ("player_id", "created_at")
+                        if k not in ("player_id", "created_at", "positions")
                     }
 
                     stmt = pg_insert(PlayerProjection.__table__).values(
