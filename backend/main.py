@@ -733,6 +733,86 @@ async def get_all_table_counts(user: str = Depends(verify_admin_api_key)):
         db.close()
 
 
+@app.get("/admin/diagnostics/field-coverage")
+async def get_field_coverage(user: str = Depends(verify_admin_api_key)):
+    """
+    Diagnostic endpoint to verify K-33/K-34 field population.
+
+    Returns non-null counts for scarcity_rank (position_eligibility),
+    quality_score (probable_pitchers), w_runs/w_qs (player_rolling_stats),
+    and z_r/z_k_p (player_scores). Use this to confirm backfill jobs ran
+    successfully in production.
+    """
+    from backend.models import SessionLocal
+    from sqlalchemy import text
+    from zoneinfo import ZoneInfo
+    db = SessionLocal()
+    try:
+        fields = {}
+
+        # position_eligibility
+        row = db.execute(text("""
+            SELECT
+              COUNT(*) AS total,
+              COUNT(scarcity_rank) AS scarcity_rank_populated,
+              COUNT(league_rostered_pct) AS league_rostered_pct_populated
+            FROM position_eligibility
+        """)).fetchone()
+        fields["position_eligibility"] = {
+            "total": row[0],
+            "scarcity_rank_populated": row[1],
+            "league_rostered_pct_populated": row[2],
+        }
+
+        # probable_pitchers
+        row = db.execute(text("""
+            SELECT
+              COUNT(*) AS total,
+              COUNT(quality_score) AS quality_score_populated
+            FROM probable_pitchers
+        """)).fetchone()
+        fields["probable_pitchers"] = {
+            "total": row[0],
+            "quality_score_populated": row[1],
+        }
+
+        # player_rolling_stats
+        row = db.execute(text("""
+            SELECT
+              COUNT(*) AS total,
+              COUNT(w_runs) AS w_runs_populated,
+              COUNT(w_qs) AS w_qs_populated
+            FROM player_rolling_stats
+        """)).fetchone()
+        fields["player_rolling_stats"] = {
+            "total": row[0],
+            "w_runs_populated": row[1],
+            "w_qs_populated": row[2],
+        }
+
+        # player_scores
+        row = db.execute(text("""
+            SELECT
+              COUNT(*) AS total,
+              COUNT(z_r) AS z_r_populated,
+              COUNT(z_k_p) AS z_k_p_populated
+            FROM player_scores
+        """)).fetchone()
+        fields["player_scores"] = {
+            "total": row[0],
+            "z_r_populated": row[1],
+            "z_k_p_populated": row[2],
+        }
+
+        return {
+            "status": "ok",
+            "as_of": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+            "fields": fields,
+        }
+    finally:
+        db.close()
+
+
 @app.post("/admin/run-migration-v27")
 async def run_migration_v27(user: str = Depends(verify_admin_api_key)):
     """
