@@ -1,11 +1,29 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-04-29 | **Architect:** Claude Code (Master Architect)
-> **Status:** Session L COMPLETE — Statcast healthy (12,323 rows), sync endpoints healthy. `scarcity_rank`/`quality_score` unverifiable from outside Railway private network — Session M adds field-coverage diagnostics endpoint. HEAD `657e962` (no new code commits). Session M in Section 4.
+> **Status:** Session M COMPLETE — `/admin/diagnostics/field-coverage` endpoint live. Suite 2454/3 skip/0 fail. HEAD `858f2fb`. Deploying now. Session N = hit endpoint + read K-33/K-34 field counts.
 
 ---
 
-## 1. Mission Accomplished — Session L (2026-04-29)
+## 1. Mission Accomplished — Session M (2026-04-29)
+
+### Session M — Field Coverage Diagnostics Endpoint
+
+**Test suite:** 2454 pass / 3 skip / 0 fail — HEAD: `858f2fb`
+
+| Step | Task | Detail | Commit |
+|------|------|--------|--------|
+| M1 | `GET /admin/diagnostics/field-coverage` | Added to `backend/main.py`. Auth: `verify_admin_api_key`. Runs 4 `text()` queries (position_eligibility, probable_pitchers, player_rolling_stats, player_scores). Returns non-null counts for all K-33/K-34 fields. 1 test added. | 858f2fb |
+
+**To verify after deploy:**
+```bash
+curl -s -H "X-API-Key: $API_KEY_USER1" https://fantasy-app-production-5079.up.railway.app/admin/diagnostics/field-coverage
+```
+Expected: `scarcity_rank_populated > 0`, `quality_score_populated > 0` once first daily sync post-deploy has run.
+
+---
+
+## 1a. Mission Accomplished — Session L (2026-04-29)
 
 ### Session L — Production Ops Verification (no code changes)
 
@@ -271,24 +289,33 @@ WHERE table_name='mlb_player_stats' AND column_name='bdl_stat_id';
 
 ---
 
-## 4. Next Session (Session M) — Scope
+## 4. Next Session (Session N) — Ops Only
 
-> Session L ops complete. One open gap: `scarcity_rank`/`quality_score` DB population unverifiable from outside Railway private network.
+> Session M deployed. Session N = read the field-coverage endpoint + interpret K-33/K-34 population counts. No code changes expected unless counts reveal a gap.
 
-### Session M — Field Coverage Diagnostics Endpoint (P0)
+### Session N Steps
 
-**M1: Add `GET /admin/diagnostics/field-coverage` to `backend/main.py`**
-- Returns non-null counts for all K-33/K-34 fields in one REST call, callable with `X-API-Key: <API_KEY_USER1>` from outside Railway.
-- Auth: `Depends(verify_admin_api_key)` (same pattern as all existing admin routes).
-- Queries (all raw SQL via `text()`, no ORM overhead):
-  - `position_eligibility`: total, `scarcity_rank IS NOT NULL` count, `league_rostered_pct IS NOT NULL` count
-  - `probable_pitchers`: total, `quality_score IS NOT NULL` count
-  - `player_rolling_stats`: total, `w_runs IS NOT NULL` count, `w_qs IS NOT NULL` count
-  - `player_scores`: total, `z_r IS NOT NULL` count, `z_k_p IS NOT NULL` count
-- Response shape: `{"status": "ok", "as_of": "<ISO datetime>", "fields": { "position_eligibility": {"total": N, "scarcity_rank_populated": N, ...}, ... }}`
-- 1 test: mock `SessionLocal`, verify all keys present in response.
+**N1 — Read field-coverage after deploy:**
+```bash
+curl -s -H "X-API-Key: $API_KEY_USER1" \
+  https://fantasy-app-production-5079.up.railway.app/admin/diagnostics/field-coverage
+```
+Wait ~3 minutes after `railway up` completes before running.
 
-**Priority:** M1 only — small, self-contained, no schema changes.
+**N2 — Interpret results:**
+
+| Field | Expected (healthy) | Action if 0 |
+|-------|--------------------|-------------|
+| `scarcity_rank_populated` | > 0 (daily sync ran) | Hit `POST /test/sync/position-eligibility`; re-check |
+| `league_rostered_pct_populated` | 0 is OK (not yet implemented) | No action |
+| `quality_score_populated` | > 0 (daily sync ran) | Hit `POST /test/sync/probable-pitchers`; re-check |
+| `w_runs_populated` | > 30,000 | Rerun `scripts/backfill_v31_fast.py` against prod |
+| `z_r_populated` | > 30,000 | Rerun `scripts/backfill_v32_fast.py` against prod |
+
+**N3 — If scarcity_rank and quality_score are still 0 after triggering syncs:**
+Report back — this indicates the daily ingestion job has not run on Railway since Session H deploy and manual intervention is needed.
+
+**Priority:** N1 → N2 → N3 only if needed. Entirely ops; escalate to Claude only if counts reveal a code defect.
 
 ---
 
@@ -318,7 +345,7 @@ See full report: `reports/2026-04-28-data-quality-null-audit.md`
 
 ---
 
-*Last updated: 2026-04-29 — Session L complete (ops only, no code commits). statcast_performances healthy (12,323 rows). scarcity_rank/quality_score unverified — Session M adds field-coverage endpoint. HEAD: 657e962.*
+*Last updated: 2026-04-29 — Session M complete. HEAD: 858f2fb. Test suite: 2454 pass / 3 skip / 0 fail. /admin/diagnostics/field-coverage deployed. Session N = read field counts after deploy.*
 
 ---
 
