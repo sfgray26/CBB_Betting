@@ -5688,15 +5688,19 @@ class DailyIngestionOrchestrator:
                                 home_abbr = team_abbr if is_home else opp_abbr
                                 pf = get_park_factor(home_abbr, "era")
 
-                                # quality_score: heuristic from ERA vs league average + park factor
+                                # quality_score: heuristic from ERA vs league average + park factor.
+                                # Output range [-2.0, +2.0] to match MatchupRatingSchema contract
+                                # and two_start_detector thresholds (EXCELLENT ≥1.0, AVOID <0.0).
+                                # Internally compute raw ∈ [0,1], then scale: (raw-0.5)*4.0.
                                 pitcher_era = mlbam_to_era.get(mlbam_id) if mlbam_id else None
                                 if pitcher_era is None:
-                                    quality_score = 0.5
+                                    quality_score = 0.0  # neutral: (0.5-0.5)*4 = 0.0
                                 else:
                                     era_score = max(-0.5, min(0.5, (4.50 - pitcher_era) / 3.00))
                                     park_val = pf if pf else 1.0
                                     park_score = max(-0.25, min(0.25, (1.0 - park_val) * 0.25))
-                                    quality_score = round(max(0.0, min(1.0, 0.5 + era_score + park_score)), 2)
+                                    raw_qs = max(0.0, min(1.0, 0.5 + era_score + park_score))
+                                    quality_score = round((raw_qs - 0.5) * 4.0, 2)
 
                                 try:
                                     stmt = pg_insert(ProbablePitcherSnapshot).values(
