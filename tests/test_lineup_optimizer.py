@@ -421,15 +421,30 @@ class TestPitcherQualityMultiplier:
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
-        mock_db = MagicMock()
+        mock_pp_db = MagicMock()
         mock_rows = [SimpleNamespace(team="NYY", quality_score=2.0)]
         mock_query = MagicMock()
         mock_query.filter.return_value.all.return_value = mock_rows
-        mock_db.query.return_value = mock_query
+        mock_pp_db.query.return_value = mock_query
+        mock_pp_db.close = MagicMock()
+
+        # Mock composite_z query: empty → neutral fallback
+        mock_cz_db = MagicMock()
+        mock_cz_db.execute.return_value.fetchall.return_value = []
+        mock_cz_db.close = MagicMock()
 
         import backend.fantasy_baseball.daily_lineup_optimizer as optimizer_module
         original_session_local = optimizer_module.SessionLocal
-        optimizer_module.SessionLocal = lambda: mock_db
+
+        session_call_count = [0]
+        def mock_session_factory():
+            session_call_count[0] += 1
+            if session_call_count[0] == 1:
+                return mock_pp_db
+            else:
+                return mock_cz_db
+
+        optimizer_module.SessionLocal = mock_session_factory
 
         try:
             # Batter on BOS facing NYY ace (qs=+2.0)
@@ -470,15 +485,29 @@ class TestPitcherQualityMultiplier:
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
-        mock_db = MagicMock()
+        mock_pp_db = MagicMock()
         mock_rows = [SimpleNamespace(team="NYY", quality_score=-2.0)]
         mock_query = MagicMock()
         mock_query.filter.return_value.all.return_value = mock_rows
-        mock_db.query.return_value = mock_query
+        mock_pp_db.query.return_value = mock_query
+        mock_pp_db.close = MagicMock()
+
+        mock_cz_db = MagicMock()
+        mock_cz_db.execute.return_value.fetchall.return_value = []
+        mock_cz_db.close = MagicMock()
 
         import backend.fantasy_baseball.daily_lineup_optimizer as optimizer_module
         original_session_local = optimizer_module.SessionLocal
-        optimizer_module.SessionLocal = lambda: mock_db
+
+        session_call_count = [0]
+        def mock_session_factory():
+            session_call_count[0] += 1
+            if session_call_count[0] == 1:
+                return mock_pp_db
+            else:
+                return mock_cz_db
+
+        optimizer_module.SessionLocal = mock_session_factory
 
         try:
             roster = [
@@ -513,14 +542,28 @@ class TestPitcherQualityMultiplier:
 
         from unittest.mock import MagicMock
 
-        mock_db = MagicMock()
+        mock_pp_db = MagicMock()
         mock_query = MagicMock()
         mock_query.filter.return_value.all.return_value = []  # No pitcher data
-        mock_db.query.return_value = mock_query
+        mock_pp_db.query.return_value = mock_query
+        mock_pp_db.close = MagicMock()
+
+        mock_cz_db = MagicMock()
+        mock_cz_db.execute.return_value.fetchall.return_value = []
+        mock_cz_db.close = MagicMock()
 
         import backend.fantasy_baseball.daily_lineup_optimizer as optimizer_module
         original_session_local = optimizer_module.SessionLocal
-        optimizer_module.SessionLocal = lambda: mock_db
+
+        session_call_count = [0]
+        def mock_session_factory():
+            session_call_count[0] += 1
+            if session_call_count[0] == 1:
+                return mock_pp_db
+            else:
+                return mock_cz_db
+
+        optimizer_module.SessionLocal = mock_session_factory
 
         try:
             roster = [
@@ -555,14 +598,28 @@ class TestPitcherQualityMultiplier:
 
         from unittest.mock import MagicMock
 
-        mock_db = MagicMock()
+        mock_pp_db = MagicMock()
         mock_query = MagicMock()
         mock_query.filter.return_value.all.return_value = []
-        mock_db.query.return_value = mock_query
+        mock_pp_db.query.return_value = mock_query
+        mock_pp_db.close = MagicMock()
+
+        mock_cz_db = MagicMock()
+        mock_cz_db.execute.return_value.fetchall.return_value = []
+        mock_cz_db.close = MagicMock()
 
         import backend.fantasy_baseball.daily_lineup_optimizer as optimizer_module
         original_session_local = optimizer_module.SessionLocal
-        optimizer_module.SessionLocal = lambda: mock_db
+
+        session_call_count = [0]
+        def mock_session_factory():
+            session_call_count[0] += 1
+            if session_call_count[0] == 1:
+                return mock_pp_db
+            else:
+                return mock_cz_db
+
+        optimizer_module.SessionLocal = mock_session_factory
 
         try:
             roster = [
@@ -589,5 +646,191 @@ class TestPitcherQualityMultiplier:
             # SP should be filtered out completely
             assert len(rankings) == 1
             assert rankings[0].name == "Rafael Devers"
+        finally:
+            optimizer_module.SessionLocal = original_session_local
+
+
+class TestCompositeZBonus:
+    """Test that rank_batters applies composite_z live rolling bonus correctly."""
+
+    def test_composite_z_positive_bonus(self):
+        """Player with composite_z=2.0 should get +1.0 additive bonus."""
+        opt = _make_opt()
+        opt._api_key = "fake"
+
+        # Mock team_odds with neutral opponent
+        fake_team_odds = {
+            "NYY": {"implied_runs": 4.5, "is_home": True, "opponent": "BOS", "park_factor": 1.0},
+        }
+        opt._build_team_odds_map = lambda games: fake_team_odds
+        opt.fetch_mlb_odds = lambda *a, **kw: []
+
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        # Mock pitcher quality: neutral (qs=0.0)
+        mock_pp_db = MagicMock()
+        mock_pp_rows = [SimpleNamespace(team="BOS", quality_score=0.0)]
+        mock_pp_query = MagicMock()
+        mock_pp_query.filter.return_value.all.return_value = mock_pp_rows
+        mock_pp_db.query.return_value = mock_pp_query
+        mock_pp_db.close = MagicMock()
+
+        # Mock composite_z lookup: Aaron Judge has composite_z=2.0
+        mock_cz_db = MagicMock()
+        mock_cz_rows = [SimpleNamespace(name_key="aaron judge", composite_z=2.0)]
+        mock_cz_db.execute.return_value.fetchall.return_value = mock_cz_rows
+        mock_cz_db.close = MagicMock()
+
+        import backend.fantasy_baseball.daily_lineup_optimizer as optimizer_module
+        original_session_local = optimizer_module.SessionLocal
+
+        session_call_count = [0]
+        def mock_session_factory():
+            session_call_count[0] += 1
+            if session_call_count[0] == 1:
+                return mock_pp_db
+            else:
+                return mock_cz_db
+
+        optimizer_module.SessionLocal = mock_session_factory
+
+        try:
+            roster = [
+                {
+                    "name": "Aaron Judge",
+                    "team": "NYY",
+                    "positions": ["OF"],
+                    "status": None,
+                }
+            ]
+            projections = [{"name": "Aaron Judge", "type": "batter", "avg": 0.280}]
+
+            rankings = opt.rank_batters(roster=roster, projections=projections, game_date="2026-04-29")
+
+            assert len(rankings) == 1
+            # Baseline: 4.5 * 1.0 + 0.1 * 0.28 * 5.0 = 4.5 + 0.14 = 4.64
+            # With composite_z=2.0 bonus: 4.64 + 2.0 * 0.5 = 4.64 + 1.0 = 5.64
+            assert rankings[0].lineup_score > 5.5, "Positive composite_z should increase score"
+            assert rankings[0].lineup_score < 6.0, "Bonus should be +1.0 exactly"
+        finally:
+            optimizer_module.SessionLocal = original_session_local
+
+    def test_composite_z_negative_penalty(self):
+        """Player with composite_z=-2.0 should get -1.0 additive penalty."""
+        opt = _make_opt()
+        opt._api_key = "fake"
+
+        fake_team_odds = {
+            "BOS": {"implied_runs": 4.5, "is_home": True, "opponent": "NYY", "park_factor": 1.0},
+        }
+        opt._build_team_odds_map = lambda games: fake_team_odds
+        opt.fetch_mlb_odds = lambda *a, **kw: []
+
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        mock_pp_db = MagicMock()
+        mock_pp_rows = [SimpleNamespace(team="NYY", quality_score=0.0)]
+        mock_pp_query = MagicMock()
+        mock_pp_query.filter.return_value.all.return_value = mock_pp_rows
+        mock_pp_db.query.return_value = mock_pp_query
+        mock_pp_db.close = MagicMock()
+
+        mock_cz_db = MagicMock()
+        mock_cz_rows = [SimpleNamespace(name_key="rafael devers", composite_z=-2.0)]
+        mock_cz_db.execute.return_value.fetchall.return_value = mock_cz_rows
+        mock_cz_db.close = MagicMock()
+
+        import backend.fantasy_baseball.daily_lineup_optimizer as optimizer_module
+        original_session_local = optimizer_module.SessionLocal
+
+        session_call_count = [0]
+        def mock_session_factory():
+            session_call_count[0] += 1
+            if session_call_count[0] == 1:
+                return mock_pp_db
+            else:
+                return mock_cz_db
+
+        optimizer_module.SessionLocal = mock_session_factory
+
+        try:
+            roster = [
+                {
+                    "name": "Rafael Devers",
+                    "team": "BOS",
+                    "positions": ["3B"],
+                    "status": None,
+                }
+            ]
+            projections = [{"name": "Rafael Devers", "type": "batter", "avg": 0.280}]
+
+            rankings = opt.rank_batters(roster=roster, projections=projections, game_date="2026-04-29")
+
+            assert len(rankings) == 1
+            # Baseline: 4.5 * 1.0 + 0.1 * 0.28 * 5.0 = 4.5 + 0.14 = 4.64
+            # With composite_z=-2.0 penalty: 4.64 + (-2.0) * 0.5 = 4.64 - 1.0 = 3.64
+            assert rankings[0].lineup_score > 3.5, "Score should be baseline minus 1.0"
+            assert rankings[0].lineup_score < 4.0, "Negative composite_z should decrease score"
+        finally:
+            optimizer_module.SessionLocal = original_session_local
+
+    def test_composite_z_no_data_neutral(self):
+        """Player not in composite_z_lookup should get neutral (0.0) bonus."""
+        opt = _make_opt()
+        opt._api_key = "fake"
+
+        fake_team_odds = {
+            "NYY": {"implied_runs": 4.5, "is_home": True, "opponent": "BOS", "park_factor": 1.0},
+        }
+        opt._build_team_odds_map = lambda games: fake_team_odds
+        opt.fetch_mlb_odds = lambda *a, **kw: []
+
+        from unittest.mock import MagicMock
+
+        mock_pp_db = MagicMock()
+        mock_pp_rows = [SimpleNamespace(team="BOS", quality_score=0.0)]
+        mock_pp_query = MagicMock()
+        mock_pp_query.filter.return_value.all.return_value = mock_pp_rows
+        mock_pp_db.query.return_value = mock_pp_query
+        mock_pp_db.close = MagicMock()
+
+        # Empty composite_z lookup → no data for this player
+        mock_cz_db = MagicMock()
+        mock_cz_db.execute.return_value.fetchall.return_value = []
+        mock_cz_db.close = MagicMock()
+
+        import backend.fantasy_baseball.daily_lineup_optimizer as optimizer_module
+        original_session_local = optimizer_module.SessionLocal
+
+        session_call_count = [0]
+        def mock_session_factory():
+            session_call_count[0] += 1
+            if session_call_count[0] == 1:
+                return mock_pp_db
+            else:
+                return mock_cz_db
+
+        optimizer_module.SessionLocal = mock_session_factory
+
+        try:
+            roster = [
+                {
+                    "name": "Unknown Player",
+                    "team": "NYY",
+                    "positions": ["OF"],
+                    "status": None,
+                }
+            ]
+            projections = [{"name": "Unknown Player", "type": "batter", "avg": 0.250}]
+
+            rankings = opt.rank_batters(roster=roster, projections=projections, game_date="2026-04-29")
+
+            assert len(rankings) == 1
+            # Baseline with neutral composite_z: 4.5 * 1.0 + 0.1 * 0.25 * 5.0 = 4.5 + 0.125 = 4.625
+            # No composite_z bonus → should be exactly baseline
+            assert rankings[0].lineup_score > 4.5
+            assert rankings[0].lineup_score < 4.7
         finally:
             optimizer_module.SessionLocal = original_session_local

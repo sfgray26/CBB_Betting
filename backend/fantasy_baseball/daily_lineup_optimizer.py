@@ -514,6 +514,26 @@ class DailyLineupOptimizer:
             finally:
                 _pp_db.close()
 
+        # Pre-load composite_z live bonus from player_scores (14-day rolling window)
+        composite_z_lookup: Dict[str, float] = {}
+        _cz_db = SessionLocal()
+        try:
+            from sqlalchemy import text as _text
+            cz_rows = _cz_db.execute(_text(
+                "SELECT LOWER(pe.player_name) AS name_key, ps.composite_z "
+                "FROM position_eligibility pe "
+                "JOIN player_scores ps ON pe.bdl_player_id = ps.bdl_player_id "
+                "WHERE ps.as_of_date = (SELECT MAX(as_of_date) FROM player_scores) "
+                "  AND ps.window_days = 14 "
+                "  AND pe.bdl_player_id IS NOT NULL"
+            )).fetchall()
+            composite_z_lookup = {r.name_key: r.composite_z for r in cz_rows
+                                  if r.composite_z is not None}
+        except Exception:
+            pass  # neutral fallback for all players
+        finally:
+            _cz_db.close()
+
         proj_by_name = {p["name"].lower(): p for p in projections
                         if p.get("type") == "batter" or p.get("player_type") == "batter"}
 
@@ -562,6 +582,11 @@ class DailyLineupOptimizer:
                 # Higher qs = stronger pitcher = penalty for batters
                 pq_multiplier = max(0.5, min(1.5, 1.0 - opp_qs / 10.0))
                 lineup_score *= pq_multiplier
+
+            # Live rolling bonus: composite_z [-3,+3] * 0.5 = ±1.5 pts additive
+            # Neutral (0.0) for players with no player_scores row or unmatched name
+            cz_val = composite_z_lookup.get(name.lower(), 0.0)
+            lineup_score += cz_val * 0.5
 
             reason_parts = [f"team implied {implied_runs:.1f}R"]
             if park_factor > 1.05:
