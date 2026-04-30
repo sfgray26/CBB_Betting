@@ -412,8 +412,6 @@ def simulate_player(
         # Rate stat inputs
         ab_rate   = (rolling_row.w_ab    or 0.0) / g
         hit_rate  = (rolling_row.w_hits  or 0.0) / g
-        double_rate = (rolling_row.w_doubles or 0.0) / g
-        triple_rate = (rolling_row.w_triples or 0.0) / g
         walk_rate   = (rolling_row.w_walks   or 0.0) / g
 
         # Sim lists for counting stats
@@ -441,8 +439,6 @@ def simulate_player(
             total_k_b  = _draw_games(rng, k_b_rate,  remaining_games)
             total_ab   = _draw_games(rng, ab_rate,   remaining_games)
             total_hit  = _draw_games(rng, hit_rate,  remaining_games)
-            total_2b   = _draw_games(rng, double_rate, remaining_games)
-            total_3b   = _draw_games(rng, triple_rate, remaining_games)
             total_walk = _draw_games(rng, walk_rate,   remaining_games)
 
             avg = total_hit / total_ab if total_ab > 0 else 0.0
