@@ -467,7 +467,7 @@ async def lifespan(app: FastAPI):
                 from backend.services.odds_monitor import get_odds_monitor
                 from backend.services.recalibration import load_current_params
 
-                today_utc = datetime.utcnow().date()
+                today_utc = datetime.now(ZoneInfo("America/New_York")).date()
                 preds = db.query(Prediction).filter(Prediction.prediction_date == today_utc).all()
 
                 if preds:
@@ -1674,7 +1674,7 @@ def _odds_monitor_job():
     try:
         _local_hour = datetime.now(ZoneInfo(_tz_name)).hour
     except Exception:
-        _local_hour = datetime.utcnow().hour  # fallback if tzdata missing
+        _local_hour = datetime.now(ZoneInfo("America/New_York")).hour  # fallback if tzdata missing
 
     if not (_start_h <= _local_hour < _end_h):
         logger.debug(
@@ -1869,7 +1869,7 @@ async def root():
         "app": "CBB Edge Analyzer",
         "version": "9.0",
         "status": "operational",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
     }
 
 
@@ -1903,8 +1903,8 @@ async def get_todays_predictions(
     db: Session = Depends(get_db)
 ):
     """Get all UPCOMING predictions from the latest analysis batch, deduplicated by game."""
-    today_utc = datetime.utcnow().date()
-    now_utc = datetime.utcnow()
+    today_utc = datetime.now(ZoneInfo("America/New_York")).date()
+    now_utc = datetime.now(ZoneInfo("America/New_York"))
 
     # run_tier priority: lower number = higher priority (nightly beats opener)
     _TIER_PRIORITY = {"nightly": 0, "opener": 1}
@@ -1954,7 +1954,7 @@ async def get_todays_predictions_all(
     Get ALL predictions for today (including games that have started).
     Used to review bets after games have begun.
     """
-    today_utc = datetime.utcnow().date()
+    today_utc = datetime.now(ZoneInfo("America/New_York")).date()
 
     # run_tier priority: lower number = higher priority (nightly beats opener)
     _TIER_PRIORITY = {"nightly": 0, "opener": 1}
@@ -2000,7 +2000,7 @@ async def get_recommended_bets(
     db: Session = Depends(get_db)
 ):
     """Get all recommended bets from the last N days"""
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(ZoneInfo("America/New_York")) - timedelta(days=days)
 
     bets = (
         db.query(Prediction)
@@ -2130,7 +2130,7 @@ async def get_optimal_parlays(
     max_daily_pct     = get_float_env("MAX_DAILY_EXPOSURE_PCT", "20.0")
     max_daily_dollars = starting_bankroll * max_daily_pct / 100.0
 
-    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = datetime.now(ZoneInfo("America/New_York")).replace(hour=0, minute=0, second=0, microsecond=0)
     already_allocated: float = (
         db.query(func.sum(BetLog.bet_size_dollars))
         .filter(BetLog.timestamp >= today_start)   # BetLog uses 'timestamp', not 'created_at'
@@ -2143,7 +2143,7 @@ async def get_optimal_parlays(
 
     if true_remaining_capacity <= 0.0:
         return {
-            "date": datetime.utcnow().date().isoformat(),
+            "date": datetime.now(ZoneInfo("America/New_York")).date().isoformat(),
             "message": "Portfolio capacity exhausted - no room for parlay sizing",
             "capital_allocated_dollars": round(already_allocated, 2),
             "max_daily_dollars": round(max_daily_dollars, 2),
@@ -2151,7 +2151,7 @@ async def get_optimal_parlays(
         }
 
     # ── Today's +EV straight bets ───────────────────────────────────────────
-    today_utc = datetime.utcnow().date()
+    today_utc = datetime.now(ZoneInfo("America/New_York")).date()
     predictions = (
         db.query(Prediction)
         .join(Game)
@@ -2303,7 +2303,7 @@ async def get_performance_by_team(
     Teams with win rates far above or below 50% and ≥ 3 bets are flagged as
     anomalies for manual review.
     """
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(ZoneInfo("America/New_York")) - timedelta(days=days)
     bets = (
         db.query(BetLog)
         .join(Game)
@@ -2415,7 +2415,7 @@ async def get_source_weights(
         "weight_barttorvik": current.get("weight_barttorvik",  0.333),
         "weight_evanmiya":   current.get("weight_evanmiya",    0.325),
     }
-    cutoff = datetime.utcnow() - timedelta(days=history_days)
+    cutoff = datetime.now(ZoneInfo("America/New_York")) - timedelta(days=history_days)
     history = (
         db.query(ModelParameter)
         .filter(
@@ -2666,8 +2666,8 @@ async def get_recent_games(
     db: Session = Depends(get_db),
 ):
     """Return recent and upcoming games, used to populate the bet-entry game selector."""
-    start = datetime.utcnow() - timedelta(days=days_back)
-    end = datetime.utcnow() + timedelta(days=days_ahead)
+    start = datetime.now(ZoneInfo("America/New_York")) - timedelta(days=days_back)
+    end = datetime.now(ZoneInfo("America/New_York")) + timedelta(days=days_ahead)
 
     games = (
         db.query(Game)
@@ -2711,7 +2711,7 @@ async def get_bet_logs(
     rows for the same game on the same day are collapsed to the first-created
     entry.  Pass dedup=false to see all raw rows.
     """
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(ZoneInfo("America/New_York")) - timedelta(days=days)
 
     query = (
         db.query(BetLog)
@@ -2850,7 +2850,7 @@ async def get_performance_history(
     db: Session = Depends(get_db),
 ):
     """Return time-series data for cumulative P&L and rolling win-rate charts."""
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(ZoneInfo("America/New_York")) - timedelta(days=days)
 
     bets = (
         db.query(BetLog)
@@ -2951,7 +2951,7 @@ async def discord_test(user: str = Depends(verify_admin_api_key)):
             "description": "Bot connected successfully. Notifications are working.",
             "color": 0x2ECC71,
             "footer": {"text": f"Triggered by {user}"},
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
         }]
     }
     ok = _post(payload)
@@ -2985,8 +2985,8 @@ async def discord_send_todays_bets(
     """
     from backend.services.discord_notifier import send_todays_bets as _send, _channel_id
 
-    today_utc = datetime.utcnow().date()
-    now_utc = datetime.utcnow()
+    today_utc = datetime.now(ZoneInfo("America/New_York")).date()
+    now_utc = datetime.now(ZoneInfo("America/New_York"))
 
     predictions = (
         db.query(Prediction)
@@ -3147,7 +3147,7 @@ async def recalibration_audit(
 
     # Check last recalibration date
     last_recal = current_ha.effective_date if current_ha else None
-    days_since = (datetime.utcnow() - last_recal).days if last_recal else None
+    days_since = (datetime.now(ZoneInfo("America/New_York")) - last_recal).days if last_recal else None
 
     return {
         "settled_bets": settled_with_pred,
@@ -3183,7 +3183,7 @@ async def debug_duplicate_bets(
     """
     from sqlalchemy import func, cast, Date as SADate
 
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(ZoneInfo("America/New_York")) - timedelta(days=days)
 
     # Fetch all paper trade bet logs in the window
     bets = (
@@ -3248,7 +3248,7 @@ async def debug_bets_last_24h(
     """
     from datetime import timedelta
 
-    since = datetime.utcnow() - timedelta(hours=24)
+    since = datetime.now(ZoneInfo("America/New_York")) - timedelta(hours=24)
 
     predictions = (
         db.query(Prediction, Game)
@@ -3294,7 +3294,7 @@ async def cleanup_duplicate_bets(
 
     By default dry_run=true - set dry_run=false to actually delete.
     """
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = datetime.now(ZoneInfo("America/New_York")) - timedelta(days=days)
 
     bets = (
         db.query(BetLog)
@@ -3485,7 +3485,7 @@ async def acknowledge_alert(
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
     alert.acknowledged = True
-    alert.acknowledged_at = datetime.utcnow()
+    alert.acknowledged_at = datetime.now(ZoneInfo("America/New_York"))
     db.commit()
     return {"message": "Alert acknowledged", "alert_id": alert_id}
 
@@ -4152,7 +4152,7 @@ async def get_ratings_status(user: str = Depends(verify_admin_api_key)):
         ),
         "cache_age_hours": round(
             (
-                (__import__("datetime").datetime.utcnow() - service.cache_timestamp).total_seconds() / 3600
+                (__import__("datetime").datetime.now(ZoneInfo("America/New_York")) - service.cache_timestamp).total_seconds() / 3600
                 if service.cache_timestamp else 0
             ),
             2,
@@ -5990,7 +5990,7 @@ async def get_fantasy_waiver_recommendations(
         def _fetch_mlb_probable_starts(start_date: str, end_date: str) -> dict:
             """Return {pitcher_full_name_lower: starts_count} via public MLB Stats API (6h cached)."""
             import httpx as _httpx
-            _now = datetime.utcnow()
+            _now = datetime.now(ZoneInfo("America/New_York"))
             if _STARTS_CACHE.get("data") and _STARTS_CACHE.get("fetched_at"):
                 age_h = (_now - _STARTS_CACHE["fetched_at"]).total_seconds() / 3600
                 if age_h < 6:
