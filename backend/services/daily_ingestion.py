@@ -989,6 +989,20 @@ class DailyIngestionOrchestrator:
                 }
 
         self._scheduler.start()
+        # Ensure the unique index on probable_pitchers(game_date, team) exists so that
+        # on_conflict_do_update(index_elements=["game_date", "team"]) never fails silently.
+        try:
+            _db = SessionLocal()
+            try:
+                _db.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS _pp_date_team_uc "
+                    "ON probable_pitchers (game_date, team)"
+                ))
+                _db.commit()
+            finally:
+                _db.close()
+        except Exception as _exc:
+            logger.warning("probable_pitchers index ensure failed (non-fatal): %s", _exc)
         # Populate next_run now that jobs are scheduled
         for job_id in _all_job_ids:
             self._job_status[job_id]["next_run"] = self._get_next_run(job_id)
@@ -5739,7 +5753,11 @@ class DailyIngestionOrchestrator:
                                         updated_at=now_et(),
                                     )
                                     stmt = stmt.on_conflict_do_update(
-                                        constraint="_pp_date_team_uc",
+                                        # Use index_elements (more robust than constraint= which
+                                        # requires the exact named constraint to exist in production).
+                                        # Works as long as a unique index on (game_date, team) exists,
+                                        # which is ensured by _ensure_probable_pitchers_index() at startup.
+                                        index_elements=["game_date", "team"],
                                         set_={
                                             "opponent": stmt.excluded.opponent,
                                             "is_home": stmt.excluded.is_home,
