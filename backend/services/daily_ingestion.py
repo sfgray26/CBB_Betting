@@ -5622,7 +5622,7 @@ class DailyIngestionOrchestrator:
                                 WHERE innings_pitched > 0
                                   AND era IS NOT NULL
                             ) s
-                            JOIN player_id_mapping m ON m.bdl_id = s.bdl_player_id::text
+                            JOIN player_id_mapping m ON m.bdl_id = s.bdl_player_id
                             WHERE s.rn <= 10
                               AND m.mlbam_id IS NOT NULL
                             GROUP BY m.mlbam_id
