@@ -5434,6 +5434,32 @@ class DailyIngestionOrchestrator:
                 self._record_job_run("position_eligibility", "error", 0)
                 return {"status": "error", "records": 0, "elapsed_ms": 0}
 
+            # The roster endpoint (teams/roster) does NOT include Yahoo's ownership
+            # block, so _parse_player() always returns percent_owned=0.0 for rostered
+            # players. Fetch real ownership % from the ADP/players endpoint separately.
+            ownership_by_key: dict[str, float] = {}
+            try:
+                adp_players = await asyncio.to_thread(
+                    yahoo.get_adp_and_injury_feed,
+                    pages=10,
+                    count_per_page=25,
+                )
+                ownership_by_key = {
+                    p["player_key"]: p["percent_owned"]
+                    for p in adp_players
+                    if p.get("player_key") and isinstance(p.get("percent_owned"), (int, float))
+                }
+                logger.info(
+                    "_sync_position_eligibility: Loaded ownership data for %d players",
+                    len(ownership_by_key),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "_sync_position_eligibility: Failed to fetch ownership feed (%s) "
+                    "-- league_rostered_pct will be NULL",
+                    exc,
+                )
+
             db = SessionLocal()
             records_processed = 0
             seen_keys = set()
@@ -5489,6 +5515,9 @@ class DailyIngestionOrchestrator:
                         multi_count = len([p for p in positions if p.upper() != "UTIL"])
 
                         # Upsert: ON CONFLICT (yahoo_player_key) DO UPDATE
+                        # ownership_by_key is pre-loaded from ADP feed (has real % data).
+                        # player_data.get("percent_owned") is always 0.0 from roster endpoint.
+                        rostered_pct = ownership_by_key.get(player_key) or None
                         stmt = pg_insert(PositionEligibility.__table__).values(
                             yahoo_player_key=player_key,
                             bdl_player_id=None,
@@ -5499,7 +5528,7 @@ class DailyIngestionOrchestrator:
                             player_type=ptype,
                             multi_eligibility_count=multi_count,
                             scarcity_rank=scarcity_rank,
-                            league_rostered_pct=player_data.get("percent_owned") or None,
+                            league_rostered_pct=rostered_pct,
                             fetched_at=now,
                             updated_at=now,
                             **flags,
@@ -5511,7 +5540,7 @@ class DailyIngestionOrchestrator:
                                 "player_type": ptype,
                                 "multi_eligibility_count": multi_count,
                                 "scarcity_rank": scarcity_rank,
-                                "league_rostered_pct": player_data.get("percent_owned") or None,
+                                "league_rostered_pct": rostered_pct,
                                 "updated_at": now,
                                 **flags,
                             },
@@ -5605,7 +5634,11 @@ class DailyIngestionOrchestrator:
                     len(recent_starter_candidates),
                 )
 
-                # Build rolling ERA lookup: mlbam_id -> avg ERA over last 10 starts with IP > 0
+                # Build rolling ERA lookup: mlbam_id -> avg ERA over last 10 starts
+                # NOTE: innings_pitched is stored as String(10) (e.g. "6.2") -- do NOT
+                # compare it with > 0 (varchar vs integer throws in PostgreSQL).
+                # Filtering on era IS NOT NULL is sufficient: ERA is only non-null when
+                # the player actually pitched (BDL only sets ERA for pitching game-logs).
                 mlbam_to_era: dict[int, float] = {}
                 try:
                     era_rows = db.execute(
@@ -5619,8 +5652,7 @@ class DailyIngestionOrchestrator:
                                            ORDER BY game_date DESC
                                        ) AS rn
                                 FROM mlb_player_stats
-                                WHERE innings_pitched > 0
-                                  AND era IS NOT NULL
+                                WHERE era IS NOT NULL
                             ) s
                             JOIN player_id_mapping m ON m.bdl_id = s.bdl_player_id
                             WHERE s.rn <= 10
