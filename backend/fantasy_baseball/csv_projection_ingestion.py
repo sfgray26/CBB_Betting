@@ -566,7 +566,7 @@ if __name__ == "__main__":
         )
 
         print(f"\n{'='*60}")
-        print(f"Steamer Projection Ingestion Result")
+        print("Steamer Projection Ingestion Result")
         print(f"{'='*60}")
         print(f"Status:    {result['status']}")
         print(f"Batters:   {result.get('batters_fetched', 0)} fetched, "

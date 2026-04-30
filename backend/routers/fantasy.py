@@ -1569,14 +1569,6 @@ async def get_fantasy_waiver_recommendations(
     _il_info: dict = {"used": 0, "total": 2, "available": 0}
     _faab_balance: Optional[float] = None
 
-    _YAHOO_CAT_TO_BOARD = {
-        "R": "r", "H": "h", "HR": "hr", "RBI": "rbi", "TB": "tb",
-        "SB": "nsb", "AVG": "avg", "OPS": "ops",
-        "W": "w", "L": "l", "K": "k_pit", "SO": "k_pit",
-        "SV": "nsv", "ERA": "era", "WHIP": "whip",
-        "QS": "qs", "K9": "k9", "K/9": "k9",
-    }
-
     try:
         client = get_yahoo_client()
         my_team_key = os.getenv("YAHOO_TEAM_KEY", "")
@@ -2115,7 +2107,6 @@ async def get_waiver_recommendations(
                 pass
 
         try:
-            from backend.schemas import CategoryDeficitOut
             _sb = client.get_scoreboard()
             _my_matchup_teams: list = []
             for _matchup_teams in _iter_scoreboard_matchup_teams(_sb):
