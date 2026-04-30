@@ -494,6 +494,26 @@ class DailyLineupOptimizer:
         games = self.fetch_mlb_odds(game_date)
         team_odds = self._build_team_odds_map(games)
 
+        # Pre-load pitcher quality scores for today's games
+        pitcher_quality: Dict[str, float] = {}
+        target_date = self._parse_game_date(game_date)
+        if target_date is not None:
+            from backend.models import ProbablePitcherSnapshot
+            _pp_db = SessionLocal()
+            try:
+                pp_rows = _pp_db.query(
+                    ProbablePitcherSnapshot.team,
+                    ProbablePitcherSnapshot.quality_score,
+                ).filter(
+                    ProbablePitcherSnapshot.game_date == target_date,
+                    ProbablePitcherSnapshot.quality_score.isnot(None),
+                ).all()
+                pitcher_quality = {r.team: r.quality_score for r in pp_rows}
+            except Exception:
+                pass  # neutral fallback for all batters
+            finally:
+                _pp_db.close()
+
         proj_by_name = {p["name"].lower(): p for p in projections
                         if p.get("type") == "batter" or p.get("player_type") == "batter"}
 
@@ -534,6 +554,14 @@ class DailyLineupOptimizer:
                 + proj_avg * 5.0
             )
             lineup_score = base_score + stat_bonus * 0.1
+
+            # Pitcher quality adjustment (we've already filtered out pitchers above)
+            opp_team = team_odds.get(team, {}).get("opponent", "")
+            opp_qs = pitcher_quality.get(opp_team)  # None = no data
+            if opp_qs is not None:
+                # Higher qs = stronger pitcher = penalty for batters
+                pq_multiplier = max(0.5, min(1.5, 1.0 - opp_qs / 10.0))
+                lineup_score *= pq_multiplier
 
             reason_parts = [f"team implied {implied_runs:.1f}R"]
             if park_factor > 1.05:

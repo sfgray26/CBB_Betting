@@ -395,3 +395,199 @@ def test_smart_lineup_assignments_include_positions(monkeypatch):
     assert warnings == []
     assert assignments[0]["positions"] == ["1B"]
     assert assignments[0]["slot"] == "1B"
+
+
+# ---------------------------------------------------------------------------
+# Pitcher Quality Multiplier Tests
+# ---------------------------------------------------------------------------
+
+class TestPitcherQualityMultiplier:
+    """Test that rank_batters applies pitcher quality multiplier correctly."""
+
+    def test_ace_pitcher_reduces_batter_score(self):
+        """Ace pitcher (qs=+2.0) should reduce batter score by 20% (multiplier=0.8)."""
+        opt = _make_opt()
+        opt._api_key = "fake"
+
+        # Mock team_odds with opponent info
+        fake_team_odds = {
+            "BOS": {"implied_runs": 4.5, "is_home": True, "opponent": "NYY", "park_factor": 1.0},
+            "NYY": {"implied_runs": 4.5, "is_home": False, "opponent": "BOS", "park_factor": 1.0},
+        }
+        opt._build_team_odds_map = lambda games: fake_team_odds
+        opt.fetch_mlb_odds = lambda *a, **kw: []
+
+        # Mock ProbablePitcherSnapshot query: NYY has quality_score=+2.0 (ace)
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        mock_db = MagicMock()
+        mock_rows = [SimpleNamespace(team="NYY", quality_score=2.0)]
+        mock_query = MagicMock()
+        mock_query.filter.return_value.all.return_value = mock_rows
+        mock_db.query.return_value = mock_query
+
+        import backend.fantasy_baseball.daily_lineup_optimizer as optimizer_module
+        original_session_local = optimizer_module.SessionLocal
+        optimizer_module.SessionLocal = lambda: mock_db
+
+        try:
+            # Batter on BOS facing NYY ace (qs=+2.0)
+            roster = [
+                {
+                    "name": "Rafael Devers",
+                    "team": "BOS",
+                    "positions": ["3B"],
+                    "status": None,
+                }
+            ]
+            projections = [{"name": "Rafael Devers", "type": "batter", "avg": 0.280}]
+
+            rankings = opt.rank_batters(roster=roster, projections=projections, game_date="2026-04-29")
+
+            assert len(rankings) == 1
+            # Multiplier = max(0.5, min(1.5, 1.0 - 2.0/10.0)) = max(0.5, min(1.5, 0.8)) = 0.8
+            # Score should be 80% of original
+            expected_multiplier = 0.8
+            assert rankings[0].lineup_score > 0
+            # Verify score is reduced by ~20% compared to baseline (4.5 * 1.0 + 0.1 * 0.28 * 5.0 = ~4.64)
+            # With ace multiplier: ~4.64 * 0.8 = ~3.71
+            assert rankings[0].lineup_score < 4.0, "Ace pitcher should reduce batter score"
+        finally:
+            optimizer_module.SessionLocal = original_session_local
+
+    def test_weak_pitcher_boosts_batter_score(self):
+        """Weak pitcher (qs=-2.0) should boost batter score by 20% (multiplier=1.2)."""
+        opt = _make_opt()
+        opt._api_key = "fake"
+
+        fake_team_odds = {
+            "BOS": {"implied_runs": 4.5, "is_home": True, "opponent": "NYY", "park_factor": 1.0},
+        }
+        opt._build_team_odds_map = lambda games: fake_team_odds
+        opt.fetch_mlb_odds = lambda *a, **kw: []
+
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        mock_db = MagicMock()
+        mock_rows = [SimpleNamespace(team="NYY", quality_score=-2.0)]
+        mock_query = MagicMock()
+        mock_query.filter.return_value.all.return_value = mock_rows
+        mock_db.query.return_value = mock_query
+
+        import backend.fantasy_baseball.daily_lineup_optimizer as optimizer_module
+        original_session_local = optimizer_module.SessionLocal
+        optimizer_module.SessionLocal = lambda: mock_db
+
+        try:
+            roster = [
+                {
+                    "name": "Rafael Devers",
+                    "team": "BOS",
+                    "positions": ["3B"],
+                    "status": None,
+                }
+            ]
+            projections = [{"name": "Rafael Devers", "type": "batter", "avg": 0.280}]
+
+            rankings = opt.rank_batters(roster=roster, projections=projections, game_date="2026-04-29")
+
+            assert len(rankings) == 1
+            # Multiplier = max(0.5, min(1.5, 1.0 - (-2.0)/10.0)) = max(0.5, min(1.5, 1.2)) = 1.2
+            # Score should be 120% of original
+            assert rankings[0].lineup_score > 4.5, "Weak pitcher should boost batter score"
+        finally:
+            optimizer_module.SessionLocal = original_session_local
+
+    def test_no_pitcher_data_uses_neutral_multiplier(self):
+        """When no pitcher quality data exists, multiplier should be 1.0 (neutral)."""
+        opt = _make_opt()
+        opt._api_key = "fake"
+
+        fake_team_odds = {
+            "BOS": {"implied_runs": 4.5, "is_home": True, "opponent": "NYY", "park_factor": 1.0},
+        }
+        opt._build_team_odds_map = lambda games: fake_team_odds
+        opt.fetch_mlb_odds = lambda *a, **kw: []
+
+        from unittest.mock import MagicMock
+
+        mock_db = MagicMock()
+        mock_query = MagicMock()
+        mock_query.filter.return_value.all.return_value = []  # No pitcher data
+        mock_db.query.return_value = mock_query
+
+        import backend.fantasy_baseball.daily_lineup_optimizer as optimizer_module
+        original_session_local = optimizer_module.SessionLocal
+        optimizer_module.SessionLocal = lambda: mock_db
+
+        try:
+            roster = [
+                {
+                    "name": "Rafael Devers",
+                    "team": "BOS",
+                    "positions": ["3B"],
+                    "status": None,
+                }
+            ]
+            projections = [{"name": "Rafael Devers", "type": "batter", "avg": 0.280}]
+
+            rankings = opt.rank_batters(roster=roster, projections=projections, game_date="2026-04-29")
+
+            assert len(rankings) == 1
+            # No multiplier applied - score should be baseline
+            assert rankings[0].lineup_score > 4.0
+            assert rankings[0].lineup_score < 5.0
+        finally:
+            optimizer_module.SessionLocal = original_session_local
+
+    def test_pitchers_skipped_in_rank_batters(self):
+        """SP/RP/P players should be filtered out before pitcher quality logic."""
+        opt = _make_opt()
+        opt._api_key = "fake"
+
+        fake_team_odds = {
+            "NYY": {"implied_runs": 4.5, "is_home": True, "opponent": "BOS", "park_factor": 1.0},
+        }
+        opt._build_team_odds_map = lambda games: fake_team_odds
+        opt.fetch_mlb_odds = lambda *a, **kw: []
+
+        from unittest.mock import MagicMock
+
+        mock_db = MagicMock()
+        mock_query = MagicMock()
+        mock_query.filter.return_value.all.return_value = []
+        mock_db.query.return_value = mock_query
+
+        import backend.fantasy_baseball.daily_lineup_optimizer as optimizer_module
+        original_session_local = optimizer_module.SessionLocal
+        optimizer_module.SessionLocal = lambda: mock_db
+
+        try:
+            roster = [
+                {
+                    "name": "Gerrit Cole",
+                    "team": "NYY",
+                    "positions": ["SP"],
+                    "status": None,
+                },
+                {
+                    "name": "Rafael Devers",
+                    "team": "BOS",
+                    "positions": ["3B"],
+                    "status": None,
+                },
+            ]
+            projections = [
+                {"name": "Gerrit Cole", "type": "pitcher"},
+                {"name": "Rafael Devers", "type": "batter", "avg": 0.280},
+            ]
+
+            rankings = opt.rank_batters(roster=roster, projections=projections, game_date="2026-04-29")
+
+            # SP should be filtered out completely
+            assert len(rankings) == 1
+            assert rankings[0].name == "Rafael Devers"
+        finally:
+            optimizer_module.SessionLocal = original_session_local
