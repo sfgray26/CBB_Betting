@@ -644,6 +644,26 @@ class DailyLineupOptimizer:
         proj_by_name = {p["name"].lower(): p for p in projections
                         if (p.get("type") or p.get("player_type", "")) == "pitcher"}
 
+        # Pre-load composite_z live bonus for pitcher FAs (14-day rolling window)
+        composite_z_lookup: Dict[str, float] = {}
+        _cz_db = SessionLocal()
+        try:
+            from sqlalchemy import text as _text
+            cz_rows = _cz_db.execute(_text(
+                "SELECT LOWER(pe.player_name) AS name_key, ps.composite_z "
+                "FROM position_eligibility pe "
+                "JOIN player_scores ps ON pe.bdl_player_id = ps.bdl_player_id "
+                "WHERE ps.as_of_date = (SELECT MAX(as_of_date) FROM player_scores) "
+                "  AND ps.window_days = 14 "
+                "  AND pe.bdl_player_id IS NOT NULL"
+            )).fetchall()
+            composite_z_lookup = {r.name_key: r.composite_z for r in cz_rows
+                                  if r.composite_z is not None}
+        except Exception:
+            pass  # neutral fallback for all players
+        finally:
+            _cz_db.close()
+
         rankings = []
         for player in free_agents:
             status = player.get("status")
@@ -673,6 +693,10 @@ class DailyLineupOptimizer:
             k_score = min(10.0, k9 - 5.0)  # 0-10 for 5-15 K/9
             park_score = (2.0 - park_factor) * 5  # pitcher parks get bonus
             stream_score = env_score * 0.5 + k_score * 0.3 + park_score * 0.2
+
+            # Live rolling bonus: composite_z for pitchers reflects z_era, z_whip, z_k_p
+            cz_val = composite_z_lookup.get(name.lower(), 0.0)
+            stream_score += cz_val * 0.5  # ±1.5 on a ~-1 to +9 scale; fallback 0.0
 
             reason_parts = [f"opp {implied_opp_runs:.1f}R", f"K/9 {k9:.1f}"]
             if is_home:

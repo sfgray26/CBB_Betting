@@ -834,3 +834,84 @@ class TestCompositeZBonus:
             assert rankings[0].lineup_score < 4.7
         finally:
             optimizer_module.SessionLocal = original_session_local
+
+
+class TestStreamerCompositeZBonus:
+    """Test that rank_streamers applies composite_z live rolling bonus correctly."""
+
+    def _make_streamer_fa(self, name: str, team: str) -> dict:
+        return {"name": name, "team": team, "positions": ["SP"], "status": None}
+
+    def test_streamers_composite_z_positive_boost(self):
+        """Elite SP with composite_z=2.0 should get +1.0 additive bonus on stream_score."""
+        opt = _make_opt()
+        opt._api_key = "fake"
+
+        fake_team_odds = {
+            "NYM": {"implied_runs": 4.0, "is_home": True, "opponent": "MIL", "park_factor": 1.0},
+            "MIL": {"implied_runs": 4.0, "is_home": False, "opponent": "NYM", "park_factor": 1.0},
+        }
+        opt._build_team_odds_map = lambda games: fake_team_odds
+        opt.fetch_mlb_odds = lambda *a, **kw: []
+
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        mock_cz_db = MagicMock()
+        mock_cz_rows = [SimpleNamespace(name_key="kodai senga", composite_z=2.0)]
+        mock_cz_db.execute.return_value.fetchall.return_value = mock_cz_rows
+        mock_cz_db.close = MagicMock()
+
+        import backend.fantasy_baseball.daily_lineup_optimizer as optimizer_module
+        original_session_local = optimizer_module.SessionLocal
+        optimizer_module.SessionLocal = lambda: mock_cz_db
+
+        try:
+            free_agents = [self._make_streamer_fa("Kodai Senga", "NYM")]
+            projections = [{"name": "Kodai Senga", "type": "pitcher", "k9": 9.0, "era": 3.50, "k": 7.0, "ip": 6.0}]
+
+            rankings = opt.rank_streamers(free_agents=free_agents, projections=projections, game_date="2026-04-29")
+
+            assert len(rankings) == 1
+            # Baseline: env=(5.5-4.0)/2*10*0.5=3.75, k=(9-5)*0.3=1.2, park=(2-1)*5*0.2=1.0 → 5.95
+            # With composite_z=2.0: 5.95 + 2.0 * 0.5 = 6.95
+            assert rankings[0].stream_score > 6.5, "Positive composite_z should boost stream_score"
+            assert rankings[0].stream_score < 7.5, "Bonus should be +1.0 exactly"
+        finally:
+            optimizer_module.SessionLocal = original_session_local
+
+    def test_streamers_composite_z_no_data_neutral(self):
+        """SP not in composite_z_lookup should get neutral (0.0) bonus — score unchanged."""
+        opt = _make_opt()
+        opt._api_key = "fake"
+
+        fake_team_odds = {
+            "NYM": {"implied_runs": 4.0, "is_home": True, "opponent": "MIL", "park_factor": 1.0},
+            "MIL": {"implied_runs": 4.0, "is_home": False, "opponent": "NYM", "park_factor": 1.0},
+        }
+        opt._build_team_odds_map = lambda games: fake_team_odds
+        opt.fetch_mlb_odds = lambda *a, **kw: []
+
+        from unittest.mock import MagicMock
+
+        # Empty lookup → no composite_z data
+        mock_cz_db = MagicMock()
+        mock_cz_db.execute.return_value.fetchall.return_value = []
+        mock_cz_db.close = MagicMock()
+
+        import backend.fantasy_baseball.daily_lineup_optimizer as optimizer_module
+        original_session_local = optimizer_module.SessionLocal
+        optimizer_module.SessionLocal = lambda: mock_cz_db
+
+        try:
+            free_agents = [self._make_streamer_fa("Unknown Pitcher", "NYM")]
+            projections = [{"name": "Unknown Pitcher", "type": "pitcher", "k9": 9.0, "era": 3.50, "k": 7.0, "ip": 6.0}]
+
+            rankings = opt.rank_streamers(free_agents=free_agents, projections=projections, game_date="2026-04-29")
+
+            assert len(rankings) == 1
+            # Baseline without composite_z: 5.95
+            assert rankings[0].stream_score > 5.5, "No-data player should still score at baseline"
+            assert rankings[0].stream_score < 6.5, "No-data player should not receive any bonus"
+        finally:
+            optimizer_module.SessionLocal = original_session_local
