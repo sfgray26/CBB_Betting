@@ -222,7 +222,7 @@ def _validate_mlb_stats(stat) -> bool:
             ip_decimal = _parse_innings_pitched(stat.ip)
             if ip_decimal is None:
                 errors.append(f"Invalid IP format: {stat.ip}")
-        except Exception as e:
+        except Exception:
             errors.append(f"Invalid IP format: {stat.ip}")
 
     if errors:

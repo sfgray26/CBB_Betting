@@ -107,8 +107,6 @@ def _build_player_game_context(yahoo_player: Dict) -> Optional[PlayerGameContext
     """Build PlayerGameContext from Yahoo player data if available."""
     # Check if player has upcoming game info
     # Yahoo provides this in various formats - this is a minimal implementation
-    name = yahoo_player.get("name", "")
-    team = yahoo_player.get("team", "")
 
     # For MVP: return None (game context requires additional Yahoo API calls)
     # TODO: K-XX: Wire up Yahoo matchup data for game context
