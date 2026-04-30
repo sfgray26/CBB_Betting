@@ -27,7 +27,7 @@ W, L, HR_P, NSV return 0.0 placeholders until Yahoo/MLB API ingestion exists.
 """
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from backend.stat_contract import (
     BATTING_CODES,
@@ -36,6 +36,9 @@ from backend.stat_contract import (
     SCORING_CATEGORY_CODES,
 )
 from datetime import date
+
+if TYPE_CHECKING:
+    from backend.contracts import CanonicalPlayerRow
 
 
 # MLB Opening Day 2026 - season start reference point

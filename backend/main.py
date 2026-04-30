@@ -703,36 +703,6 @@ async def get_all_table_counts(user: str = Depends(verify_admin_api_key)):
         db.close()
 
 
-@app.get("/admin/audit/table-counts")
-async def get_all_table_counts(user: str = Depends(verify_admin_api_key)):
-    """
-    Factual audit of all table row counts in the public schema.
-    """
-    from backend.models import SessionLocal
-    from sqlalchemy import text
-    db = SessionLocal()
-    try:
-        # Get all table names in public schema
-        sql_tables = text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
-        tables = [r[0] for r in db.execute(sql_tables).fetchall()]
-        
-        results = {}
-        for table in tables:
-            try:
-                count_sql = text(f'SELECT count(*) FROM "{table}"')
-                count = db.execute(count_sql).scalar()
-                results[table] = count
-            except Exception as e:
-                results[table] = f"Error: {str(e)}"
-        
-        return {
-            "status": "success",
-            "table_counts": dict(sorted(results.items()))
-        }
-    finally:
-        db.close()
-
-
 @app.get("/admin/diagnostics/field-coverage")
 async def get_field_coverage(user: str = Depends(verify_admin_api_key)):
     """
@@ -999,7 +969,6 @@ async def run_migration_v27(user: str = Depends(verify_admin_api_key)):
     """
     Run v27 migration (NSB Pipeline) in production.
     """
-    import subprocess
     import sys
     try:
         # Run the script as a separate process using the app's python interpreter
@@ -1023,72 +992,6 @@ async def run_migration_v27(user: str = Depends(verify_admin_api_key)):
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
-
-@app.get("/admin/investigate/statcast-raw-columns")
-async def investigate_statcast_raw_columns(target_date: str = "2026-04-12", user: str = Depends(verify_admin_api_key)):
-    """
-    Fetch raw Statcast data for a date and return column names + first row.
-    """
-    from pybaseball import statcast
-    import pandas as pd
-    try:
-        df = await asyncio.to_thread(statcast, start_dt=target_date, end_dt=target_date)
-        if df is None or df.empty:
-            return {"status": "empty", "date": target_date}
-        
-        # Replace NaNs for JSON
-        first_row = df.head(1).replace({pd.NA: None, float('nan'): None}).to_dict(orient="records")[0]
-        
-        return {
-            "status": "success",
-            "date": target_date,
-            "columns": df.columns.tolist(),
-            "first_row_sample": first_row
-        }
-    except Exception as e:
-        return {"status": "error", "error": str(e)}
-
-@app.get("/admin/investigate/statcast-quality")
-async def investigate_statcast_quality(user: str = Depends(verify_admin_api_key)):
-    """
-    Investigate the rate of zero-quality metrics in statcast_performances.
-    """
-    from backend.models import SessionLocal, StatcastPerformance
-    from sqlalchemy import func
-    db = SessionLocal()
-    try:
-        total = db.query(StatcastPerformance).count()
-        with_ev = db.query(StatcastPerformance).filter(StatcastPerformance.exit_velocity_avg > 0).count()
-        with_xwoba = db.query(StatcastPerformance).filter(StatcastPerformance.xwoba > 0).count()
-        with_cs = db.query(StatcastPerformance).filter(StatcastPerformance.cs > 0).count()
-        with_pitches = db.query(StatcastPerformance).filter(StatcastPerformance.pitches > 0).count()
-        
-        # Sample of records with zero quality metrics
-        sample_zeros = db.query(StatcastPerformance).filter(
-            StatcastPerformance.exit_velocity_avg == 0,
-            StatcastPerformance.xwoba == 0
-        ).limit(10).all()
-
-        return {
-            "total_rows": total,
-            "with_exit_velocity": with_ev,
-            "with_xwoba": with_xwoba,
-            "with_cs": with_cs,
-            "with_pitches": with_pitches,
-            "zero_metric_rate": round((total - with_ev) * 100 / total, 1) if total > 0 else 0,
-            "sample_zeros": [
-                {
-                    "name": p.player_name,
-                    "date": str(p.game_date),
-                    "pa": p.pa,
-                    "pitches": p.pitches,
-                    "k_pit": p.k_pit
-                } for p in sample_zeros
-            ]
-        }
-    finally:
-        db.close()
 
 
 @app.get("/admin/investigate/statcast-raw-columns")
@@ -3541,7 +3444,6 @@ async def get_deployment_version(
     }
     """
     from backend.models import DeploymentVersion
-    import subprocess
 
     # Try to get from database first (authoritative)
     version = db.query(DeploymentVersion).order_by(DeploymentVersion.deployed_at.desc()).first()
@@ -3864,7 +3766,6 @@ async def backfill_all(
 
     Returns: dict with overall success status and per-script results
     """
-    import subprocess
     import sys
 
     try:

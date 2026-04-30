@@ -1,11 +1,51 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
-> **Date:** 2026-04-29 | **Architect:** Claude Code (Master Architect)
-> **Status:** Session O COMPLETE — 3 admin backfill endpoints + `scripts/backfill_scarcity_rank.py`. Suite 2457/3 skip/0 fail. HEAD pending push. Next = fire endpoints against prod, then Session P (ID bridge / quality_score wiring).
+> **Date:** 2026-04-30 | **Architect:** Claude Code (Master Architect)
+> **Status:** Sessions P–R COMPLETE + CI unblocked. Suite 2459/3 skip/0 fail. HEAD: 890ec79. Deploy pipeline unblocked — 19 flake8 F-errors fixed; `stable/cbb-prod` → `main` PR will trigger Railway deploy.
 
 ---
 
-## 1. Mission Accomplished — Session O (2026-04-29)
+## 1. Mission Accomplished — Sessions P–R (2026-04-30)
+
+### Summary of April 30 commits
+
+| Commit | Description |
+|--------|-------------|
+| `4f4e795` | `fix(ingestion)`: innings_pitched varchar→int bug fixed; `league_rostered_pct` wired from ADP feed |
+| `890ec79` | `feat(optimizer)`: composite_z live bonus wired into `rank_streamers()` (mirror of rank_batters Session R) |
+| CI fix | Fixed 19 flake8 F-errors blocking CI since Apr 13; includes 2 F821 undefined names, 3 duplicate function defs |
+
+### CI Fix Details (19 F-errors cleared)
+
+| File | Error | Fix |
+|------|-------|-----|
+| `main.py` | F811 duplicate `get_all_table_counts`, `investigate_statcast_raw_columns`, `investigate_statcast_quality` | Removed duplicates |
+| `main.py` | F811 3× inner `import subprocess` shadows module-level | Removed inner imports |
+| `csv_projection_ingestion.py`, `data_quality.py` | F541 f-string without placeholders | Removed `f` prefix |
+| `routers/fantasy.py` | F841 `_YAHOO_CAT_TO_BOARD` unused; F811 dup `CategoryDeficitOut` import | Removed both |
+| `services/cat_scores_builder.py` | F841 unused `pa` | Removed |
+| `services/daily_ingestion.py`, `scoreboard_orchestrator.py` | F841 unused `e` in except clause | Changed to `except Exception:` |
+| `services/player_mapper.py` | F841 unused `name`, `team` | Removed |
+| `services/row_projector.py` | F821 `CanonicalPlayerRow` undefined in annotation | Added `TYPE_CHECKING` import |
+| `services/scoreboard_orchestrator.py` | F821 `H2HOneWinResult` → should be `H2HWinResult` | Fixed type + imported real class |
+| `services/simulation_engine.py` | F841 `double_rate`, `triple_rate` unused (orphaned after `total_2b/3b` removed) | Removed |
+
+### Deploy path
+Railway deploys automatically when code is merged to `main` via the `Deploy to Railway` GitHub Action. A PR from `copilot/push-to-railway-task` → `main` is open and ready to merge.
+
+**To deploy after merging PR:**
+```bash
+# Optional: confirm health after Railway finishes deploying (~3-5 min)
+curl -s https://fantasy-app-production-5079.up.railway.app/health
+
+# Fire backfills (if not already done in prod)
+BASE=https://fantasy-app-production-5079.up.railway.app
+curl -s -X POST -H "X-API-Key: $API_KEY_USER1" $BASE/admin/actions/backfill-scarcity-rank | python -m json.tool
+curl -s -X POST -H "X-API-Key: $API_KEY_USER1" $BASE/admin/actions/backfill-quality-scores | python -m json.tool
+curl -s -X POST -H "X-API-Key: $API_KEY_USER1" $BASE/admin/actions/patch-null-teams | python -m json.tool
+```
+
+---
 
 ### Session O — Pipeline Data Quality Backfills
 

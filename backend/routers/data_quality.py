@@ -338,7 +338,7 @@ def run_data_quality_audit(db: Session = Depends(get_db)) -> Dict[str, Any]:
                     "priority": P0,
                     "category": A,
                     "impact_score": 9.0,
-                    "description": f"Game scheduled today but no recent player data"
+                    "description": "Game scheduled today but no recent player data"
                 })
     
     # Sort by priority then impact score
