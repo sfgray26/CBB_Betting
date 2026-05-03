@@ -811,26 +811,28 @@ class PlayerProjection(Base):
     player_name = Column(String(100), nullable=False)
     team = Column(String(10))
     positions = Column(JSON)  # List of eligible positions
-    
+    player_type = Column(String(10), nullable=True)  # M34: "hitter" | "pitcher"
+
     # Core projection stats (updated via Bayesian inference)
+    # Batting rate stats — NULL for pitchers after M34 data fix
     woba = Column(Float, default=0.320)   # Weighted on-base average
     avg = Column(Float, default=0.250)    # Batting average
     obp = Column(Float, default=0.320)    # On-base percentage
     slg = Column(Float, default=0.400)    # Slugging percentage
     ops = Column(Float, default=0.720)    # On-base plus slugging
     xwoba = Column(Float, default=0.320)  # Expected wOBA
-    
-    # Counting stats (rate stats × projected PA)
-    hr = Column(Integer, default=15)
-    r = Column(Integer, default=65)
-    rbi = Column(Integer, default=65)
-    sb = Column(Integer, default=5)
-    
-    # Pitching stats
-    era = Column(Float, default=4.00)
-    whip = Column(Float, default=1.30)
-    k_per_nine = Column(Float, default=8.5)
-    bb_per_nine = Column(Float, default=3.0)
+
+    # Batting counting stats — NULL for pitchers (M34: was default 15/65/65/5)
+    hr = Column(Integer, default=None)
+    r = Column(Integer, default=None)
+    rbi = Column(Integer, default=None)
+    sb = Column(Integer, default=None)
+
+    # Pitching stats — NULL for hitters (M34: was default 4.00/1.30/8.5/3.0)
+    era = Column(Float, default=None)
+    whip = Column(Float, default=None)
+    k_per_nine = Column(Float, default=None)
+    bb_per_nine = Column(Float, default=None)
     w = Column(Integer, default=0)
     l = Column(Integer, default=0)
     hr_pit = Column(Integer, default=0)

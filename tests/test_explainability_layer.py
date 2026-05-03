@@ -56,7 +56,6 @@ def _make_input(**overrides) -> ExplanationInput:
         z_era=None,
         z_whip=None,
         z_k_per_9=None,
-        score_confidence=0.85,
         games_in_window=12,
         signal="HOT",
         delta_z=0.4,
@@ -195,23 +194,44 @@ def test_explain_waiver_summary():
 # ---------------------------------------------------------------------------
 
 def test_confidence_narrative_high():
-    inp = _make_input(score_confidence=0.9, games_in_window=12)
+    inp = _make_input(decision_confidence=0.9, games_in_window=12)
     result = _build_confidence_narrative(inp)
     assert result.startswith("High confidence")
     assert "12" in result
 
 
-def test_confidence_narrative_moderate():
-    inp = _make_input(score_confidence=0.6, games_in_window=7)
+def test_confidence_narrative_marente():
+    inp = _make_input(decision_confidence=0.6, games_in_window=7)
     result = _build_confidence_narrative(inp)
     assert result.startswith("Moderate confidence")
 
 
 def test_confidence_narrative_low():
-    inp = _make_input(score_confidence=0.3, games_in_window=3)
+    inp = _make_input(decision_confidence=0.3, games_in_window=3)
     result = _build_confidence_narrative(inp)
     assert result.startswith("Low confidence")
     assert "3" in result
+
+
+def test_confidence_narrative_uses_decision_confidence():
+    """
+    Verify that confidence_narrative uses decision_confidence (not score_confidence).
+
+    This is a regression test for P0 Issue 1: confidence contradictions where
+    numeric confidence (0.998) contradicted text narratives ("Low confidence").
+    The fix consolidated to a single source of truth: decision_confidence.
+    """
+    # High decision_confidence should produce "High confidence" narrative
+    inp = _make_input(decision_confidence=0.95, games_in_window=15)
+    result = _build_confidence_narrative(inp)
+    assert "High confidence" in result
+    assert "15 games" in result
+
+    # Low decision_confidence should produce "Low confidence" narrative
+    inp2 = _make_input(decision_confidence=0.25, games_in_window=5)
+    result2 = _build_confidence_narrative(inp2)
+    assert "Low confidence" in result2
+    assert "5 games" in result2
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +342,88 @@ def test_explain_two_way_uses_hitter_factors():
     inp = _make_input(player_type="two_way")
     result = explain(inp)
     factor_names = [f.name for f in result.factors]
+    assert any("HR" in n or "Power" in n for n in factor_names)
+
+
+# ---------------------------------------------------------------------------
+# P0 Issue 3: Feature Guardrail tests
+# ---------------------------------------------------------------------------
+
+def test_validation_fails_pitcher_with_hitter_stats():
+    """
+    Pitcher with hitter stats (data error) should return empty factors.
+
+    Regression test for P0 Issue 3: feature leakage where pitchers showed
+    HR/RBI factors due to classification errors. The validation function
+    detects this mismatch and returns an empty result with explanatory narrative.
+    """
+    # Player misclassified as "pitcher" but has hitting stats
+    inp = _make_input(
+        player_type="pitcher",
+        z_hr=1.5,
+        z_rbi=1.2,
+        z_avg=0.8,
+        z_era=None,  # No actual pitching stats
+        z_whip=None,
+        z_k_per_9=None,
+    )
+    result = explain(inp)
+    # Should return empty factors due to validation failure
+    assert len(result.factors) == 0
+    assert "player type mismatch" in result.summary.lower()
+    assert "data inconsistency" in result.confidence_narrative.lower()
+
+
+def test_validation_fails_hitter_with_pitching_stats():
+    """
+    Hitter with pitching stats (data error) should return empty factors.
+
+    Regression test for P0 Issue 3: prevents cross-family feature leakage
+    in both directions (hitters showing ERA/WHIP factors).
+    """
+    # Player misclassified as "hitter" but has pitching stats
+    # Must explicitly override ALL hitting stats to None to trigger validation failure
+    inp = _make_input(
+        player_type="hitter",
+        z_era=-1.2,
+        z_whip=-0.8,
+        z_k_per_9=1.5,
+        # Explicitly set ALL hitting stats to None
+        z_hr=None,
+        z_rbi=None,
+        z_sb=None,
+        z_nsb=None,
+        z_avg=None,
+        z_obp=None,
+    )
+    result = explain(inp)
+    # Should return empty factors due to validation failure
+    assert len(result.factors) == 0
+    assert "player type mismatch" in result.summary.lower()
+
+
+def test_validation_passes_two_way_player():
+    """
+    Two-way players should pass validation even with mixed stats.
+
+    Two-way players (e.g., Shohei Ohtani) legitimately have both hitting
+    and pitching stats, so validation should allow them through.
+    """
+    # Two-way player with both hitting and pitching stats
+    inp = _make_input(
+        player_type="two_way",
+        z_hr=1.5,
+        z_rbi=1.2,
+        z_avg=0.8,
+        z_era=-1.2,
+        z_whip=-0.8,
+        z_k_per_9=1.5,
+    )
+    result = explain(inp)
+    # Should succeed and use hitter factors (batting is primary)
+    assert len(result.factors) > 0
+    factor_names = [f.name for f in result.factors]
+    # Two-way uses hitter factors, so should have HR factor
     assert any("HR" in n or "Power" in n for n in factor_names)
 
 

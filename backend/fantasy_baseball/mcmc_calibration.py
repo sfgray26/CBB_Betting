@@ -13,8 +13,10 @@ Key design decisions:
 """
 
 import logging
-from datetime import date, timedelta
+from functools import lru_cache
+from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -22,6 +24,12 @@ from backend.models import PlayerDailyMetric, SessionLocal
 from backend.fantasy_baseball.player_board import build_board, get_or_create_projection
 
 logger = logging.getLogger(__name__)
+
+# Cache player board for 5 minutes
+@lru_cache(maxsize=1)
+def _get_player_board_cached(cache_buster: str) -> tuple:
+    """Cached wrapper around _get_player_board()."""
+    return _get_player_board()
 
 # Category keys expected by MCMC simulator
 BATTER_CATS = ["hr", "r", "rbi", "nsb", "avg", "ops", "tb", "h"]
@@ -48,6 +56,13 @@ _PITCHER_CAT_WEIGHTS: Dict[str, float] = {
     "qs": 0.9,
     "k9": 0.8,
 }
+
+# Fallback z_scores for unknown rostered players in Tier 3.
+# get_or_create_projection() returns 0.0 for players not ranked in the board pool.
+# Any rostered player in a 12-team league is above pool average (z > 0 by selection bias).
+# Values calibrated to mid-ranked board players (~rank 100-150 batter, ~rank 80-100 pitcher).
+_FALLBACK_BATTER_Z: float = 8.0
+_FALLBACK_PITCHER_Z: float = 5.0
 
 # In-memory cache for player board (refreshed on first call)
 _player_board_cache: Optional[List[dict]] = None
@@ -117,9 +132,13 @@ def _build_proxy_cat_scores(
 ) -> Dict[str, float]:
     """
     Build proxy cat_scores from a total z-score when per-category data unavailable.
-    
-    Distributes the total z-score across categories based on position-type templates.
+
+    Returns {} when total_z is 0.0 so the MCMC simulator uses league-average
+    noise instead of deterministic all-zero scores (which bias win_prob to ~0.763).
     """
+    if total_z == 0.0:
+        return {}
+
     is_pit = _is_pitcher(positions)
     cats = PITCHER_CATS if is_pit else BATTER_CATS
     weights = _PITCHER_CAT_WEIGHTS if is_pit else _BATTER_CAT_WEIGHTS
@@ -193,7 +212,12 @@ def convert_yahoo_roster_to_mcmc_format(
     Returns:
         List of player dicts ready for mcmc_simulator.simulate_weekly_matchup()
     """
-    _, board_lookup = _get_player_board()
+    # Generate cache buster (current 5-minute window)
+    now = datetime.now(ZoneInfo("America/New_York"))
+    cache_buster = now.strftime("%Y%m%d%H%M")[:-1] + str(now.minute // 5 * 5)
+
+    # Use cached board
+    _, board_lookup = _get_player_board_cached(cache_buster)
     result: List[dict] = []
     
     for yahoo_player in roster:
@@ -222,6 +246,9 @@ def convert_yahoo_roster_to_mcmc_format(
                 # 3. Use player_board's proxy generator as last resort
                 proxy = get_or_create_projection(yahoo_player)
                 total_z = proxy.get("z_score", 0.0)
+                if total_z == 0.0:
+                    # Proxy returns 0.0 for unranked players; any rostered player is above pool average
+                    total_z = _FALLBACK_PITCHER_Z if _is_pitcher(positions) else _FALLBACK_BATTER_Z
                 cat_scores = _build_proxy_cat_scores(name, positions, total_z)
         
         # Get pitcher starts estimate

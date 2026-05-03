@@ -144,6 +144,8 @@ from backend.fantasy_baseball.yahoo_client_resilient import (
     get_resilient_yahoo_client,
 )
 from backend.fantasy_baseball.daily_lineup_optimizer import get_lineup_optimizer
+from backend.fantasy_baseball.ballpark_factors import load_park_factors
+from backend.fantasy_baseball.yahoo_id_sync import run_yahoo_id_sync_job
 
 # Logging setup
 logging.basicConfig(
@@ -426,6 +428,21 @@ async def lifespan(app: FastAPI):
             name="Async Job Queue Processor",
             replace_existing=True,
         )
+
+        # Yahoo ID sync — daily at 6 AM ET
+        scheduler.add_job(
+            _yahoo_id_sync_job_wrapper,
+            CronTrigger(hour=6, minute=0, timezone=timezone),
+            id="yahoo_id_sync",
+            name="Yahoo Player ID Sync",
+            replace_existing=True,
+        )
+
+    # Load park factors into memory before starting scheduler
+    try:
+        load_park_factors()
+    except Exception as e:
+        logger.warning(f"Could not load park factors on startup: {e}")
 
     scheduler.start()
     logger.info(
@@ -1794,6 +1811,25 @@ def _statcast_daily_ingestion_job():
             
     except Exception as e:
         logger.exception(f"Statcast daily ingestion job failed: {e}")
+
+
+def _yahoo_id_sync_job_wrapper():
+    """
+    Daily 6:00 AM Yahoo player ID sync.
+
+    Fetches all players from Yahoo fantasy league and maps Yahoo IDs to BDL player IDs.
+    Improves Yahoo roster matching accuracy for waiver recommendations and lineup optimization.
+    """
+    try:
+        logger.info("=" * 60)
+        logger.info("Starting scheduled Yahoo ID sync")
+        logger.info("=" * 60)
+
+        count = run_yahoo_id_sync_job()
+
+        logger.info(f"Yahoo ID sync completed: {count} players synced")
+    except Exception as e:
+        logger.exception(f"Yahoo ID sync job failed: {e}")
 
 
 async def _run_mlb_analysis_job():
@@ -5237,9 +5273,10 @@ async def get_fantasy_lineup_recommendations(
                 opp, start, opp_impl = _get_game_context(team)
                 team_info = team_odds.get(normalize_team_abbr(team), {})
                 _pname = a["player_name"]
+                _pkey = _name_to_player_key.get(_pname.lower().strip(), "") or None
                 batters.append(LineupPlayerOut(
-                    player_id=a["player_id"] or _pname,
-                    player_key=_name_to_player_key.get(_pname.lower().strip(), "") or None,
+                    player_id=_pkey or a["player_id"] or _pname,
+                    player_key=_pkey,
                     name=_pname,
                     team=team,
                     position=_resolve_assignment_position(a),
@@ -5274,9 +5311,10 @@ async def get_fantasy_lineup_recommendations(
             for s in solved_slots:
                 opp, start, opp_impl = _get_game_context(s.player_team)
                 team_info = team_odds.get(normalize_team_abbr(s.player_team), {})
+                _pkey = _name_to_player_key.get(s.player_name.lower().strip(), "") or None
                 batters.append(LineupPlayerOut(
-                    player_id=s.player_name,
-                    player_key=_name_to_player_key.get(s.player_name.lower().strip(), "") or None,
+                    player_id=_pkey or s.player_name,
+                    player_key=_pkey,
                     name=s.player_name,
                     team=s.player_team,
                     position=s.positions[0] if s.positions else "?",
@@ -5308,9 +5346,10 @@ async def get_fantasy_lineup_recommendations(
             opp, start, opp_impl = _get_game_context(team)
             team_info = team_odds.get(normalize_team_abbr(team), {})
             _b_name = b.get("name", "")
+            _pkey = _name_to_player_key.get(_b_name.lower().strip(), "") or None
             batters.append(LineupPlayerOut(
-                player_id=str(b.get("player_id", _b_name)),
-                player_key=_name_to_player_key.get(_b_name.lower().strip(), "") or None,
+                player_id=_pkey or str(b.get("player_id", _b_name)),
+                player_key=_pkey,
                 name=_b_name,
                 team=team,
                 position=(b.get("positions") or ["OF"])[0],
@@ -5396,6 +5435,7 @@ async def get_fantasy_lineup_recommendations(
                 logger.debug(f"  Found team {team} in team_odds: opp={opponent}, implied={opp_implied}")
             else:
                 logger.debug(f"  Team {team} NOT found in team_odds")
+            has_game = team in team_odds
 
             # Calculate SP score (0-10 scale)
             if is_sp and has_start:
@@ -5403,6 +5443,14 @@ async def get_fantasy_lineup_recommendations(
                 park_factor_score = (2.0 - park_factor) * 5  # Lower park = better
                 sp_score = min(10, opp_factor + park_factor_score)
                 logger.debug(f"  SP score calculated: {sp_score}")
+            elif not is_sp and has_game:
+                # RP value model: matchup quality drives save/hold opportunity value.
+                # Lower opponent implied runs = more team leads = more save chances.
+                # Scale: ~1 (bad matchup) to ~7 (elite closer vs weak lineup)
+                opp_factor = max(0.0, 5.0 - opp_implied)
+                park_penalty = max(0.0, (park_factor - 1.0) * 3.0)
+                sp_score = min(7.0, max(1.0, opp_factor * 0.8 + 2.0 - park_penalty))
+                logger.debug(f"  RP score calculated: {sp_score}")
 
             status = "START" if has_start else "NO_START"
             if not is_sp:

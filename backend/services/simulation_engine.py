@@ -16,6 +16,8 @@ Output: SimulationResult dataclass with P10/P25/P50/P75/P90 percentiles
 ADR-004: Never import betting_model or analysis.
 """
 
+from __future__ import annotations
+
 import random
 from dataclasses import dataclass
 from datetime import date
@@ -32,6 +34,106 @@ STARTER_APPEARANCES_FALLBACK = 12  # ~12 starts remaining for SP
 RELIEVER_APPEARANCES_FALLBACK = 30 # ~30 appearances for RP
 STARTER_APPEARANCE_INTERVAL = 5.0
 RELIEVER_APPEARANCE_RATE = 0.45
+
+# ---------------------------------------------------------------------------
+# Bayesian Shrinkage: League Priors (2026 MLB averages)
+# ---------------------------------------------------------------------------
+_PRIOR_HR_PER_GAME = 30.0 / 162.0      # ~0.185 HR/game
+_PRIOR_RBI_PER_GAME = 100.0 / 162.0    # ~0.617 RBI/game
+_PRIOR_K_PER_GAME = 200.0 / 162.0      # ~1.235 K/game
+_PRIOR_ERA = 4.50                       # league avg ERA
+_PRIOR_WHIP = 1.30                     # league avg WHIP
+
+# ---------------------------------------------------------------------------
+# Sanity Caps: Physically Plausible Limits
+# ---------------------------------------------------------------------------
+_MAX_HR_ROS = 65.0     # realistic seasonal max
+_MAX_RBI_ROS = 140.0   # realistic seasonal max
+_MIN_ERA_ROS = 1.50    # historical best seasons
+_MAX_ERA_ROS = 7.00    # realistic worst case
+_MIN_WHIP_ROS = 0.80   # historical best
+_MAX_WHIP_ROS = 2.00   # realistic worst
+
+
+# ---------------------------------------------------------------------------
+# Bayesian Shrinkage Function
+# ---------------------------------------------------------------------------
+
+def _shrink_rate(
+    observed_rate: float,
+    games_played: int,
+    prior_rate: float
+) -> float:
+    """
+    Apply empirical Bayes shrinkage to prevent extreme projections from small samples.
+
+    shrinkage_factor = min(1.0, games_played / 30)
+    shrunk_rate = prior_rate * (1 - shrinkage_factor) + observed_rate * shrinkage_factor
+
+    Args:
+        observed_rate: Current per-game rate (e.g., HR/game)
+        games_played: Number of games in sample
+        prior_rate: League average prior (e.g., 30 HR / 162 games)
+
+    Returns:
+        Shrunk rate, regressed toward league average for small samples
+    """
+    if games_played <= 0:
+        return prior_rate
+
+    shrinkage_factor = min(1.0, games_played / 30.0)
+    shrunk = prior_rate * (1.0 - shrinkage_factor) + observed_rate * shrinkage_factor
+    return max(0.0, shrunk)  # Never negative
+
+
+def _apply_sanity_caps(result: SimulationResult) -> SimulationResult:
+    """
+    Apply hard sanity caps to prevent physically impossible projections.
+
+    This is a final guardrail after shrinkage and simulation.
+    Modifies the result in-place and returns it.
+    """
+    # Cap HR projections
+    if result.proj_hr_p50 is not None:
+        result.proj_hr_p50 = min(result.proj_hr_p50, _MAX_HR_ROS)
+    if result.proj_hr_p75 is not None:
+        result.proj_hr_p75 = min(result.proj_hr_p75, _MAX_HR_ROS)
+    if result.proj_hr_p90 is not None:
+        result.proj_hr_p90 = min(result.proj_hr_p90, _MAX_HR_ROS)
+
+    # Cap RBI projections
+    if result.proj_rbi_p50 is not None:
+        result.proj_rbi_p50 = min(result.proj_rbi_p50, _MAX_RBI_ROS)
+    if result.proj_rbi_p75 is not None:
+        result.proj_rbi_p75 = min(result.proj_rbi_p75, _MAX_RBI_ROS)
+    if result.proj_rbi_p90 is not None:
+        result.proj_rbi_p90 = min(result.proj_rbi_p90, _MAX_RBI_ROS)
+
+    # Cap ERA projections (both min and max)
+    if result.proj_era_p10 is not None:
+        result.proj_era_p10 = max(_MIN_ERA_ROS, min(result.proj_era_p10, _MAX_ERA_ROS))
+    if result.proj_era_p25 is not None:
+        result.proj_era_p25 = max(_MIN_ERA_ROS, min(result.proj_era_p25, _MAX_ERA_ROS))
+    if result.proj_era_p50 is not None:
+        result.proj_era_p50 = max(_MIN_ERA_ROS, min(result.proj_era_p50, _MAX_ERA_ROS))
+    if result.proj_era_p75 is not None:
+        result.proj_era_p75 = max(_MIN_ERA_ROS, min(result.proj_era_p75, _MAX_ERA_ROS))
+    if result.proj_era_p90 is not None:
+        result.proj_era_p90 = max(_MIN_ERA_ROS, min(result.proj_era_p90, _MAX_ERA_ROS))
+
+    # Cap WHIP projections (both min and max)
+    if result.proj_whip_p10 is not None:
+        result.proj_whip_p10 = max(_MIN_WHIP_ROS, min(result.proj_whip_p10, _MAX_WHIP_ROS))
+    if result.proj_whip_p25 is not None:
+        result.proj_whip_p25 = max(_MIN_WHIP_ROS, min(result.proj_whip_p25, _MAX_WHIP_ROS))
+    if result.proj_whip_p50 is not None:
+        result.proj_whip_p50 = max(_MIN_WHIP_ROS, min(result.proj_whip_p50, _MAX_WHIP_ROS))
+    if result.proj_whip_p75 is not None:
+        result.proj_whip_p75 = max(_MIN_WHIP_ROS, min(result.proj_whip_p75, _MAX_WHIP_ROS))
+    if result.proj_whip_p90 is not None:
+        result.proj_whip_p90 = max(_MIN_WHIP_ROS, min(result.proj_whip_p90, _MAX_WHIP_ROS))
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +511,11 @@ def simulate_player(
         sb_rate  = (rolling_row.w_stolen_bases   or 0.0) / g   # legacy
         k_b_rate = (rolling_row.w_strikeouts_bat or 0.0) / g   # K (lower better)
 
+        # Apply Bayesian shrinkage to prevent extreme projections from small samples
+        hr_rate  = _shrink_rate(hr_rate,  g, _PRIOR_HR_PER_GAME)
+        rbi_rate = _shrink_rate(rbi_rate, g, _PRIOR_RBI_PER_GAME)
+        k_b_rate = _shrink_rate(k_b_rate,  g, _PRIOR_K_PER_GAME)
+
         # Rate stat inputs
         ab_rate   = (rolling_row.w_ab    or 0.0) / g
         hit_rate  = (rolling_row.w_hits  or 0.0) / g
@@ -653,6 +760,9 @@ def simulate_player(
             result.upside_p75,
             result.prob_above_median,
         ) = _compute_composite_risk(sim_composites)
+
+    # Apply sanity caps to prevent physically impossible projections
+    result = _apply_sanity_caps(result)
 
     return result
 

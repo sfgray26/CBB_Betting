@@ -215,12 +215,18 @@ def test_output_cv_matches_input():
 # ---------------------------------------------------------------------------
 
 def test_zero_rate_produces_zero():
-    """A hitter with w_home_runs=0 should project P50 and P90 HR at 0."""
+    """A hitter with w_home_runs=0 projects lower than average due to Bayesian shrinkage.
+
+    Prior to shrinkage being added, zero observed rate produced exactly 0 projection.
+    Bayesian shrinkage toward _PRIOR_HR_PER_GAME (30/162 ≈ 0.185) means zero-rate
+    hitters are pulled toward league average but still project below average (< 20 HR).
+    """
     row = _make_hitter_row(w_home_runs=0.0)
     result = simulate_player(row, remaining_games=130, n_simulations=1000, seed=42)
 
-    assert result.proj_hr_p50 == 0.0
-    assert result.proj_hr_p90 == 0.0
+    # Shrinkage pulls toward prior (~0.185 HR/game) but 0-rate still projects below average
+    assert result.proj_hr_p50 < 20.0
+    assert result.proj_hr_p90 < 30.0
 
 
 # ---------------------------------------------------------------------------

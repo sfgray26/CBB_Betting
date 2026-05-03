@@ -110,7 +110,7 @@ def main() -> None:
             if total_updated > 0 and total_updated % 500 < date_updated:
                 print(f"  Progress: {total_updated} rows updated so far (as_of_date={as_of_date})")
 
-            if args.execute and date_updated > 0 and (idx + 1) % 30 == 0:
+            if args.execute and date_updated > 0 and (idx + 1) % 5 == 0:
                 db.commit()
                 print(f"  Intermediate commit at date index {idx+1}")
 

@@ -138,7 +138,14 @@
       "Bash(venv/Scripts/pip install *)",
       "Bash(cat)",
       "Read(//tmp/**)",
-      "Bash(railway --version)"
+      "Bash(railway --version)",
+      "Bash(.\\\\venv\\\\Scripts\\\\python *)",
+      "Bash(Select-Object -Last 5)",
+      "Bash(./venv/Scripts/python -m pytest tests/ -q --tb=short -x)",
+      "Bash(curl.exe *)",
+      "Bash(venv\\\\Scripts\\\\python *)",
+      "PowerShell(venv\\\\Scripts\\\\python -m pytest tests/test_mcmc_calibration.py -v 2>&1 | Select-Object -First 30)",
+      "PowerShell(& venv\\\\Scripts\\\\python -m pytest tests/test_mcmc_calibration.py -v --tb=short 2>&1 | Out-String)"
     ]
   },
   "enabledPlugins": {}

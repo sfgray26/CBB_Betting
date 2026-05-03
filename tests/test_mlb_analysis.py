@@ -216,3 +216,133 @@ class TestCalculateEdge:
         )
         assert svc._calculate_edge(proj, {}) == 0.0
         assert svc._calculate_edge(proj, None) == 0.0
+
+    def test_calculate_edge_with_negative_ml_odds(self):
+        """_calculate_edge correctly converts negative American odds to implied prob."""
+        svc = MLBAnalysisService()
+        proj = MLBGameProjection(
+            game_id="test",
+            home_team="Yankees",
+            away_team="Red Sox",
+            game_date=date(2025, 7, 1),
+            projected_home_runs=4.75,
+            projected_away_runs=4.25,
+            projected_total=9.0,
+            projected_runline_margin=0.5,
+            home_win_prob=0.55,
+        )
+        # -130 American odds -> implied prob = 130 / (130 + 100) = 0.5652
+        market = {"ml_home_odds": -130}
+        # Edge = 0.55 - 0.5652 = -0.0152, rounded to 4 decimals
+        result = svc._calculate_edge(proj, market)
+        assert result == round(0.55 - (130 / (130 + 100)), 4)
+        assert result == -0.0152
+
+    def test_calculate_edge_with_positive_ml_odds(self):
+        """_calculate_edge correctly converts positive American odds to implied prob."""
+        svc = MLBAnalysisService()
+        proj = MLBGameProjection(
+            game_id="test",
+            home_team="Yankees",
+            away_team="Red Sox",
+            game_date=date(2025, 7, 1),
+            projected_home_runs=4.75,
+            projected_away_runs=4.25,
+            projected_total=9.0,
+            projected_runline_margin=0.5,
+            home_win_prob=0.55,
+        )
+        # +110 American odds -> implied prob = 100 / (110 + 100) = 0.4762
+        market = {"ml_home_odds": 110}
+        # Edge = 0.55 - 0.4762 = 0.0738, rounded to 4 decimals
+        result = svc._calculate_edge(proj, market)
+        assert result == round(0.55 - (100 / (110 + 100)), 4)
+        assert result == 0.0738
+
+
+# ---------------------------------------------------------------------------
+# Odds fetch tests (DB tier)
+# ---------------------------------------------------------------------------
+
+
+class TestFetchMlbOdds:
+    def test_fetch_mlb_odds_returns_empty_when_snapshot_empty(self):
+        """_fetch_mlb_odds returns {} when mlb_odds_snapshot table is empty."""
+        svc = MLBAnalysisService()
+        mock_session = MagicMock()
+        mock_query = MagicMock()
+        mock_session.query.return_value = mock_query
+        mock_query.join.return_value = mock_query
+        mock_query.order_by.return_value.all.return_value = []
+
+        from unittest.mock import patch
+        with patch("backend.models.SessionLocal", return_value=mock_session):
+            result = svc._fetch_mlb_odds()
+
+        assert result == {}
+        mock_session.close.assert_called_once()
+
+    def test_fetch_mlb_odds_returns_keyed_dict_with_fresh_data(self):
+        """_fetch_mlb_odds returns dict keyed by AwayAbbr@HomeAbbr with fresh snapshot data."""
+        svc = MLBAnalysisService()
+
+        mock_session = MagicMock()
+
+        mock_home_team_1 = MagicMock()
+        mock_home_team_1.abbreviation = "NYY"
+
+        mock_home_team_2 = MagicMock()
+        mock_home_team_2.abbreviation = "HOU"
+
+        mock_game_1 = MagicMock()
+        mock_game_1.home_team_obj = mock_home_team_1
+
+        mock_game_2 = MagicMock()
+        mock_game_2.home_team_obj = mock_home_team_2
+
+        mock_away_team_1 = MagicMock()
+        mock_away_team_1.abbreviation = "BOS"
+
+        mock_away_team_2 = MagicMock()
+        mock_away_team_2.abbreviation = "LAA"
+
+        mock_odds_1 = MagicMock()
+        mock_odds_1.game_id = 1001
+        mock_odds_1.ml_home_odds = -130
+        mock_odds_1.ml_away_odds = 110
+        mock_odds_1.spread_home = "1.5"
+        mock_odds_1.spread_home_odds = -110
+        mock_odds_1.total = "8.5"
+        mock_odds_1.vendor = "draftkings"
+
+        mock_odds_2 = MagicMock()
+        mock_odds_2.game_id = 1002
+        mock_odds_2.ml_home_odds = -145
+        mock_odds_2.ml_away_odds = 125
+        mock_odds_2.spread_home = "-1.5"
+        mock_odds_2.spread_home_odds = -105
+        mock_odds_2.total = "9.0"
+        mock_odds_2.vendor = "pinnacle"
+
+        mock_query_result = [
+            (mock_odds_1, mock_game_1, mock_away_team_1, 1),
+            (mock_odds_2, mock_game_2, mock_away_team_2, 0),
+        ]
+
+        mock_query = MagicMock()
+        mock_session.query.return_value = mock_query
+        mock_query.join.return_value = mock_query
+        mock_query.order_by.return_value.all.return_value = mock_query_result
+
+        from unittest.mock import patch
+        with patch("backend.models.SessionLocal", return_value=mock_session):
+            result = svc._fetch_mlb_odds()
+
+        assert len(result) == 2
+        assert "BOS@NYY" in result
+        assert "LAA@HOU" in result
+        assert result["BOS@NYY"]["ml_home_odds"] == -130
+        assert result["BOS@NYY"]["vendor"] == "draftkings"
+        assert result["LAA@HOU"]["ml_home_odds"] == -145
+        assert result["LAA@HOU"]["vendor"] == "pinnacle"  # preferred vendor wins
+        mock_session.close.assert_called_once()

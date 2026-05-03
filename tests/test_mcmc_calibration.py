@@ -167,3 +167,86 @@ def test_calculate_matchup_win_probability_basic():
 def test_calculate_matchup_returns_50_50_for_empty_rosters():
     result = calculate_matchup_win_probability([], [], n_sims=100, seed=42)
     assert result["win_prob"] == 0.5
+
+
+@patch("backend.fantasy_baseball.mcmc_calibration.get_or_create_projection")
+@patch("backend.fantasy_baseball.mcmc_calibration._get_player_z_score_from_db")
+@patch("backend.fantasy_baseball.mcmc_calibration._get_player_board")
+def test_tier3_fallback_produces_nonzero_cat_scores(mock_board, mock_db_z, mock_proj):
+    """Unknown Tier-3 players must not get all-zero cat_scores."""
+    mock_board.return_value = ([], {})          # Empty board — no Tier 1 match
+    mock_db_z.return_value = None               # No DB data — no Tier 2 match
+    mock_proj.return_value = {"z_score": 0.0, "cat_scores": {}}  # Tier 3 returns z=0
+
+    batter = [{"name": "Ghost Batter", "positions": ["OF"]}]
+    pitcher = [{"name": "Ghost Pitcher", "positions": ["SP"]}]
+
+    batter_result = convert_yahoo_roster_to_mcmc_format(batter)
+    pitcher_result = convert_yahoo_roster_to_mcmc_format(pitcher)
+
+    assert len(batter_result) == 1
+    assert len(pitcher_result) == 1
+
+    # After fix: fallback z_score > 0 distributes non-zero values across all categories
+    batter_scores = batter_result[0]["cat_scores"]
+    pitcher_scores = pitcher_result[0]["cat_scores"]
+
+    assert any(v != 0.0 for v in batter_scores.values()), (
+        "Unknown batter should use _FALLBACK_BATTER_Z, not zero"
+    )
+    assert any(v != 0.0 for v in pitcher_scores.values()), (
+        "Unknown pitcher should use _FALLBACK_PITCHER_Z, not zero"
+    )
+
+    # Batter should only have batter categories; pitcher only pitcher categories
+    assert all(cat in BATTER_CATS for cat in batter_scores)
+    assert all(cat in PITCHER_CATS for cat in pitcher_scores)
+
+
+@patch("backend.fantasy_baseball.mcmc_calibration.get_or_create_projection")
+@patch("backend.fantasy_baseball.mcmc_calibration._get_player_z_score_from_db")
+@patch("backend.fantasy_baseball.mcmc_calibration._get_player_board")
+def test_win_prob_not_frozen_at_0763(mock_board, mock_db_z, mock_proj):
+    """Regression: constant win_prob=0.763 caused by all-zero opponent cat_scores.
+
+    Scenario: my player has a strong board entry; all opponent players are
+    unknown (Tier 3, z=0 before fix). After fix, opponent gets fallback z_score
+    so win_prob must move away from the frozen 0.763 value.
+    """
+    strong_player = {
+        "name": "Star Batter",
+        "z_score": 18.0,
+        "cat_scores": {
+            "hr": 0.9, "r": 1.0, "rbi": 0.95,
+            "nsb": 0.4, "avg": 0.5, "ops": 0.7,
+            "tb": 0.6, "h": 0.4,
+        },
+    }
+    mock_board.return_value = (
+        [strong_player],
+        {"star batter": strong_player},
+    )
+    mock_db_z.return_value = None
+    mock_proj.return_value = {"z_score": 0.0, "cat_scores": {}}
+
+    my_roster = [{"name": "Star Batter", "positions": ["OF"]}]
+    opp_roster = [
+        {"name": "Unknown Opp 1", "positions": ["OF"]},
+        {"name": "Unknown Opp 2", "positions": ["1B"]},
+        {"name": "Unknown Opp 3", "positions": ["2B"]},
+    ]
+
+    result = calculate_matchup_win_probability(
+        my_roster=my_roster,
+        opponent_roster=opp_roster,
+        n_sims=1000,
+        seed=42,
+    )
+
+    assert result["win_prob"] != pytest.approx(0.763, abs=0.001), (
+        "win_prob frozen at 0.763 — opponent still has all-zero cat_scores"
+    )
+    # With 1 strong player (z=18) vs 3 fallback-z opponents (8 each, total z=24),
+    # my team should LOSE more often (opponent has more total signal)
+    assert result["win_prob"] < 0.5
+    assert result["win_prob"] > 0.05  # But not absurdly weak

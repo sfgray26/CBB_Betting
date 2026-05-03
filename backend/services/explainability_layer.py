@@ -49,7 +49,6 @@ class ExplanationInput:
     z_era: Optional[float]
     z_whip: Optional[float]
     z_k_per_9: Optional[float]
-    score_confidence: float
     games_in_window: int
 
     # From player_momentum
@@ -358,13 +357,13 @@ def _build_summary(inp: ExplanationInput, factors: list) -> str:
 
 def _build_confidence_narrative(inp: ExplanationInput) -> str:
     """
-    Generate confidence narrative from games_in_window and score_confidence.
+    Generate confidence narrative from games_in_window and decision_confidence.
     confidence >= 0.8 and games >= 10 -> "High confidence ({games} games, strong data)"
     confidence >= 0.5 -> "Moderate confidence ({games} games)"
     else -> "Low confidence ({games} games, limited data)"
     """
     games = inp.games_in_window
-    conf = inp.score_confidence
+    conf = inp.decision_confidence
     if conf >= 0.8 and games >= 10:
         return "High confidence ({} games, strong data)".format(games)
     if conf >= 0.5:
@@ -411,6 +410,40 @@ def _build_track_record_narrative(inp: ExplanationInput) -> Optional[str]:
     return "Poor track record (MAE={:.2f} over {} games) -- use with caution".format(mae, games)
 
 
+def _validate_player_type_consistency(inp: ExplanationInput) -> bool:
+    """
+    Return False if player_type contradicts available stats.
+
+    Hitters: must have at least one of [z_hr, z_rbi, z_sb, z_avg, z_ops]
+    Pitchers: must have at least one of [z_era, z_whip, z_k_per_9]
+
+    This prevents cross-family feature leakage (e.g., pitchers showing HR/RBI factors).
+    """
+    pt = (inp.player_type or "unknown").lower()
+
+    if pt == "hitter":
+        has_hitter_stats = any([
+            inp.z_hr is not None,
+            inp.z_rbi is not None,
+            inp.z_sb is not None,
+            inp.z_nsb is not None,
+            inp.z_avg is not None,
+            inp.z_obp is not None,
+        ])
+        return has_hitter_stats
+
+    if pt == "pitcher":
+        has_pitcher_stats = any([
+            inp.z_era is not None,
+            inp.z_whip is not None,
+            inp.z_k_per_9 is not None,
+        ])
+        return has_pitcher_stats
+
+    # two_way or unknown: allow through
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -421,6 +454,21 @@ def explain(inp: ExplanationInput) -> ExplanationResult:
     Dispatches to _build_hitter_factors or _build_pitcher_factors based on player_type.
     Two-way players use hitter factors (batting is primary).
     """
+    # Validate player type consistency to prevent feature leakage
+    if not _validate_player_type_consistency(inp):
+        # Return empty result with explanatory narrative when validation fails
+        return ExplanationResult(
+            decision_id=inp.decision_id,
+            bdl_player_id=inp.bdl_player_id,
+            as_of_date=inp.as_of_date,
+            decision_type=inp.decision_type,
+            summary="Unable to generate explanation due to player type mismatch.",
+            factors=[],
+            confidence_narrative="Unable to assess confidence due to data inconsistency.",
+            risk_narrative=None,
+            track_record_narrative=None,
+        )
+
     ptype = inp.player_type.lower() if inp.player_type else "unknown"
 
     if ptype == "pitcher":

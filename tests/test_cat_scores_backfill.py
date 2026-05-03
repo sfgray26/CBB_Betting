@@ -90,15 +90,18 @@ def test_classify_pitcher():
 
 
 def test_classify_ambiguous():
-    assert classify_player([], 4.00, 0, 0) is None
+    # M34: era=4.00 is a real ERA value (batters have era=NULL post-M34)
+    assert classify_player([], 4.00, 0, 0) == "pitcher"
     assert classify_player([], None, 2, 5) is None
 
 
 def test_classify_mixed_position():
-    # Two-way player with non-default ERA → pitcher
+    # M34: mixed position — ERA present is the pitcher signal (batters have era=NULL)
     assert classify_player(["P", "1B"], 3.50, 10, 30) == "pitcher"
-    # Two-way player with default ERA → batter (default to batting value)
-    assert classify_player(["P", "OF"], 4.00, 20, 60) == "batter"
+    # Two-way player with ERA → pitcher (post-M34 batters have era=NULL, not era=4.00)
+    assert classify_player(["P", "OF"], 4.00, 20, 60) == "pitcher"
+    # True two-way batter: no ERA, has batter positions
+    assert classify_player(["P", "OF"], None, 20, 60) == "batter"
 
 
 def test_compute_cat_scores_batters(in_memory_db):

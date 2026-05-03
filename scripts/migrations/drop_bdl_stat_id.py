@@ -9,6 +9,13 @@ Run via: railway run python scripts/migrations/drop_bdl_stat_id.py
 """
 import os
 import sys
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 import psycopg2
 
 url = os.environ.get("DATABASE_URL")

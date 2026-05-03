@@ -223,12 +223,21 @@ def test_simulate_player_spread_p90_greater_than_p10():
 
 
 def test_simulate_player_zero_rate_gives_near_zero_projection():
-    """Player with w_home_runs=0 should produce near-zero HR projections."""
+    """
+    Player with w_home_runs=0 should produce HR projections regressed toward league average.
+
+    Bayesian shrinkage prevents impossible projections from small samples.
+    With 0 HR observed, the rate is shrunk toward the league prior (~0.185 HR/game).
+    Over 130 games ROS, this projects to ~24 HR total, with P50 around 12-13 HR.
+    """
     row = _make_hitter(w_home_runs=0.0)
     result = simulate_player(row, remaining_games=130, seed=42)
-    # With mu=0, _sample_positive always returns 0 -> all percentiles exactly 0
-    assert result.proj_hr_p50 == 0.0
-    assert result.proj_hr_p90 == 0.0
+    # Shrinkage prevents staying at 0 - regresses toward league average
+    assert result.proj_hr_p50 > 10.0, f"Expected P50 > 10 HR due to shrinkage, got {result.proj_hr_p50}"
+    assert result.proj_hr_p50 < 20.0, f"Expected P50 < 20 HR, got {result.proj_hr_p50}"
+    # Verify bounded projection (not stuck at 0, not wildly high)
+    assert result.proj_hr_p10 > 5.0
+    assert result.proj_hr_p90 < 25.0
 
 
 def test_simulate_player_avg_between_0_and_1():
@@ -397,16 +406,28 @@ def test_simulate_player_unknown_type_returns_all_none():
 # ===========================================================================
 
 def test_simulate_player_higher_rate_gives_higher_p50():
-    """Player with 2x HR rate should produce approximately 2x proj_hr_p50 (seed=42)."""
+    """
+    Player with 2x HR rate should produce higher proj_hr_p50, but compressed by shrinkage.
+
+    Bayesian shrinkage regresses both rates toward the league average, so the difference
+    between 2 HR/14g and 4 HR/14g is compressed compared to raw rates.
+    With 14 games, shrinkage_factor = 14/30 = 0.467, so both rates are pulled toward
+    the league prior (~0.185 HR/g), reducing the ratio from 2.0x to ~1.3-1.4x.
+    """
     row_base   = _make_hitter(w_home_runs=2.0, games_in_window=14)
     row_double = _make_hitter(w_home_runs=4.0, games_in_window=14)
 
     r_base   = simulate_player(row_base,   remaining_games=130, seed=42)
     r_double = simulate_player(row_double, remaining_games=130, seed=42)
 
-    # P50 should scale roughly proportionally (allow 30% tolerance for Monte Carlo variance)
-    assert r_double.proj_hr_p50 > r_base.proj_hr_p50 * 1.5, (
-        f"Expected double HR player to have >1.5x P50: "
+    # Higher rate should still give higher projection (just compressed by shrinkage)
+    assert r_double.proj_hr_p50 > r_base.proj_hr_p50, (
+        f"Expected double HR player to have higher P50: "
+        f"base={r_base.proj_hr_p50:.2f} double={r_double.proj_hr_p50:.2f}"
+    )
+    # With shrinkage, expect ~1.3-1.4x ratio (not 1.5x) for 14-game sample
+    assert r_double.proj_hr_p50 > r_base.proj_hr_p50 * 1.2, (
+        f"Expected double HR player to have >1.2x P50 (compressed by shrinkage): "
         f"base={r_base.proj_hr_p50:.2f} double={r_double.proj_hr_p50:.2f}"
     )
 

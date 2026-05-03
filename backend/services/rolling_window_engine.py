@@ -174,6 +174,26 @@ def compute_rolling_window(
     if not window_rows:
         return None
 
+    # Dedup guard: keep ONE row per game_date (the one with the highest id).
+    # The mlb_player_stats unique constraint is on (bdl_player_id, game_id), NOT
+    # (bdl_player_id, game_date). On 4 dates in 2026 the BDL API returned two
+    # different game_ids for the same game, producing 78 duplicate (player, date)
+    # pairs. Without this guard the accumulator loop double-counts AB, hits, RBI etc.
+    # Legitimate doubleheaders (rare) produce two rows with DIFFERENT stats and are
+    # preserved by this logic since max(id) keeps the most recently ingested row —
+    # and true doubleheaders on the same date should both accumulate. However, since
+    # we cannot distinguish a doubleheader from a duplicate API game_id, we conserva-
+    # tively keep only the highest-id row per date. This matches the dedup script in
+    # scripts/dedup_mlb_player_stats.py which applies the same strategy to the DB.
+    if len(window_rows) > 1:
+        best: dict = {}  # game_date -> (days_back, row)
+        for days_back, row in window_rows:
+            gd = row.game_date
+            existing = best.get(gd)
+            if existing is None or row.id > existing[1].id:
+                best[gd] = (days_back, row)
+        window_rows = list(best.values())
+
     # Batting accumulators
     sum_w_ab = 0.0
     sum_w_hits = 0.0

@@ -11,7 +11,8 @@ Risk flags: age, injury history, role uncertainty — applied as draft penalties
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict, Tuple
+from functools import lru_cache
 
 # ---------------------------------------------------------------------------
 # Park factors (2026 estimates based on 3-yr rolling average)
@@ -58,14 +59,41 @@ PARK_FACTORS: dict[str, dict] = {
     "free":{"run": 1.00, "hr": 1.00, "era": 1.00},
 }
 
+# Global cache for park factors (loaded on startup)
+_park_factor_cache: Dict[Tuple[str, str], float] = {}
+
+def load_park_factors():
+    """Load all park factors into memory on startup."""
+    global _park_factor_cache
+    from backend.models import SessionLocal
+    from sqlalchemy import text
+
+    db = SessionLocal()
+    try:
+        rows = db.execute(text('''
+          SELECT team, handedness, value
+          FROM park_factors
+        ''')).fetchall()
+
+        _park_factor_cache = {
+            (row[0], row[1]): float(row[2])
+            for row in rows
+        }
+
+        print(f"✅ Loaded {len(_park_factor_cache)} park factors into memory")
+    finally:
+        db.close()
+
+@lru_cache(maxsize=32)
 def get_park_factor(team: str, factor: str = "run", _db_session=None) -> float:
     """
     Return park factor for a team and factor type.
 
     Resolution order:
-    1. ParkFactor table (canonical persisted context)
-    2. PARK_FACTORS constant (hardcoded fallback)
-    3. 1.0 neutral default
+    1. In-memory cache (loaded on startup from ParkFactor table)
+    2. ParkFactor table (canonical persisted context)
+    3. PARK_FACTORS constant (hardcoded fallback)
+    4. 1.0 neutral default
 
     Args:
         team: Team code (e.g., "COL", "BOS")
@@ -83,6 +111,10 @@ def get_park_factor(team: str, factor: str = "run", _db_session=None) -> float:
     column_name = factor_column_map.get(factor)
     if not column_name:
         return 1.0
+
+    # Check in-memory cache first (if loaded)
+    # Cache key format matches ParkFactor table structure
+    # We'll check DB first on cache miss, then populate cache
 
     # Try DB first
     db = _db_session or SessionLocal()

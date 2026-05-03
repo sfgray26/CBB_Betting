@@ -150,74 +150,73 @@ class SmartBatterRanking:
     # Category fit
     category_fit: float = 0.0  # How well player fills team needs
     
+    # Live rolling signal
+    composite_z: float = 0.0   # 14-day composite z-score from player_scores
+    
     # Final score
     smart_score: float = 0.0
     
     def calculate_score(self, category_needs: List[CategoryNeed] = None):
-        """Calculate composite smart score."""
-        # Base projection score (standardized)
-        base_score = (
-            self.proj_hr * 2.0 +
-            self.proj_r * 0.3 +
-            self.proj_rbi * 0.3 +
-            self.proj_sb * 0.5 +
-            (self.proj_avg - 0.250) * 50 +
-            (self.proj_ops - 0.750) * 30
+        """Calculate composite smart score using 70/30 talent-prior model.
+
+        TALENT PRIOR (70%): per-game normalized ROS projections + live composite_z
+        MATCHUP MODIFIER (30%): environment + platoon + pitcher quality + category fit
+        """
+        _GAMES_ROS = 130
+
+        # --- TALENT PRIOR ---
+        has_proj = (self.proj_hr > 0 or self.proj_r > 0 or self.proj_rbi > 0
+                    or self.proj_avg > 0.0)
+        if has_proj:
+            talent_prior = (
+                self.proj_hr * 2.0 / _GAMES_ROS
+                + self.proj_r * 0.3 / _GAMES_ROS
+                + self.proj_rbi * 0.3 / _GAMES_ROS
+                + self.proj_sb * 0.5 / _GAMES_ROS
+                + self.proj_avg * 5.0     # rate stat — intentionally not per-game divided
+            ) * 10 + self.composite_z * 1.0
+        else:
+            # No projections: composite_z is sole talent signal
+            talent_prior = 12.0 + self.composite_z * 2.0
+
+        # --- MATCHUP MODIFIER ---
+        # Game environment
+        env_modifier = (
+            (self.implied_team_runs - 4.5) * 0.5
+            + (self.park_factor - 1.0) * 2.0
+            + (0.2 if self.is_home else 0.0)
         )
-        
-        # Game environment boost
-        env_boost = (self.implied_team_runs - 4.5) * 2  # Higher runs = better
-        park_boost = (self.park_factor - 1.0) * 5  # Hitter parks
-        home_boost = 0.5 if self.is_home else 0.0
-        
-        # Weather boost (NEW)
-        weather_boost = 0.0
+        # Weather
         if self.weather:
-            weather_boost = (self.weather.hitter_friendly_score - 5.0) * 0.5
-        
-        # HR factor boost for power hitters
-        hr_weather_boost = 0.0
-        if self.hr_factor != 1.0 and self.proj_hr > 0.2:  # Power hitter
-            hr_weather_boost = (self.hr_factor - 1.0) * self.proj_hr * 10
-        
-        # Combine environment factors
-        total_env_boost = env_boost + park_boost + home_boost + weather_boost + hr_weather_boost
-        
+            env_modifier += (self.weather.hitter_friendly_score - 5.0) * 0.1
+        if self.hr_factor != 1.0 and self.proj_hr > 0.2:
+            env_modifier += (self.hr_factor - 1.0) * 0.5
+
         # Platoon advantage
-        platoon_boost = 0.0
+        platoon_modifier = 0.0
         if self.platoon and self.opposing_pitcher:
             opp_hand = self.opposing_pitcher.handedness
             if opp_hand == Handedness.L:
-                platoon_boost = self.platoon.vs_lhp * 10  # wOBA scaled
+                platoon_modifier = self.platoon.vs_lhp * 5.0
             elif opp_hand == Handedness.R:
-                platoon_boost = self.platoon.vs_rhp * 10
-        
-        # Opposing pitcher difficulty
-        pitcher_penalty = 0.0
+                platoon_modifier = self.platoon.vs_rhp * 5.0
+
+        # Opposing pitcher quality (high quality_score = bad for batters)
+        pitcher_modifier = 0.0
         if self.opposing_pitcher:
-            # Facing an ace = penalty (negative), facing weak SP = bonus (positive)
-            # quality_score: 0-10 (10 = ace), so ace gives negative, weak gives positive
-            pitcher_penalty = (5.0 - self.opposing_pitcher.quality_score) * 0.5
-        
-        # Category need fit
-        cat_boost = 0.0
+            pitcher_modifier = (5.0 - self.opposing_pitcher.quality_score) * 0.15
+
+        # Category fit (minor contribution within the 30% matchup bucket)
+        cat_modifier = 0.0
         if category_needs:
             for need in category_needs:
-                if need.needed > 0:  # Need more of this category
+                if need.needed > 0:
                     cat_contribution = self._category_contribution(need.category)
-                    cat_boost += cat_contribution * need.urgency * 2
-        
-        self.smart_score = (
-            base_score * 0.35 +
-            total_env_boost * 0.20 +
-            platoon_boost * 0.15 +
-            pitcher_penalty * 0.10 +
-            cat_boost * 0.20
-        )
-        # Apply baseline offset to ensure active players outscore EMPTY (0.0)
-        # Worst-case score ~ -6.0; +6.0 shift ensures minimum positive score
-        self.smart_score += 6.0
+                    cat_modifier += cat_contribution * need.urgency * 0.1
 
+        matchup_modifier = env_modifier + platoon_modifier + pitcher_modifier + cat_modifier
+
+        self.smart_score = talent_prior * 0.7 + matchup_modifier * 0.3 + 6.0
         return self.smart_score
     
     def _category_contribution(self, category: str) -> float:
@@ -363,6 +362,7 @@ class SmartLineupSelector:
                 hr_factor=hr_factor,
                 platoon=platoon,
                 opposing_pitcher=opp_pitcher,
+                composite_z=getattr(base, "composite_z", 0.0),
             )
             
             # Fill in SB from projections if available

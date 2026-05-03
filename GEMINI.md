@@ -6,6 +6,40 @@ You are **Gemini CLI — DevOps Lead**.
 - **NOT Permitted:** Writing `.py`, `.ts`, `.tsx`, `.js`, or CI/CD pipelines
 - **Escalate ALL code tasks to Claude Code**
 
+---
+
+## ⚠️ WINDOWS POWERSHELL — CRITICAL COMMAND PATTERNS
+
+**You run on Windows PowerShell. These mistakes have caused failures before. Memorize them.**
+
+| Wrong (will break) | Correct |
+|---|---|
+| `python -m pytest ...` | `.\venv\Scripts\python -m pytest ...` |
+| `python -m py_compile ...` | `.\venv\Scripts\python -m py_compile ...` |
+| `curl -s https://...` | `curl.exe -s https://...` (curl is aliased to Invoke-WebRequest in PS) |
+| `grep keyword file` | `Select-String -Pattern keyword -Path file` |
+| `cat file` | `Get-Content file` |
+
+**Never use bare `curl` or `python` in PowerShell. They silently alias to the wrong tools
+and cause timeouts or "no module" errors.**
+
+---
+
+## ⚠️ POST-DEPLOY TIMING — DO NOT WAIT INDEFINITELY
+
+After `railway up --detach`:
+1. The upload completes in < 2 minutes (you'll see "Uploaded" confirmation)
+2. Build takes 3–8 minutes on Railway servers
+3. **Do NOT idle after `railway up --detach`.** Check build status after 3 minutes:
+   ```
+   curl.exe -s https://fantasy-app-production-5079.up.railway.app/health | python -m json.tool
+   ```
+   If `"status": "healthy"` → deploy complete, proceed to post-deploy verification.
+   If connection refused → still building, check Railway dashboard build log URL (printed by `railway up`).
+4. **Maximum wait:** 15 minutes. If still not healthy after 15 min → tail logs and escalate to Claude.
+
+---
+
 ## Railway Auth & Tokens
 
 The `RAILWAY_API_TOKEN` in `.env` is a **workspace token** (scopes to all projects in the workspace). It works for:

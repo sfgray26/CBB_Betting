@@ -127,6 +127,7 @@ LOCK_IDS = {
     "savant_ingestion":      100_032,  # Phase 9: Statcast leaderboard ingestion
     "bdl_injuries":          100_033,  # Phase 1: BDL injury ingestion
     "yahoo_id_sync":         100_034,  # Yahoo ID mapping sync
+    "cat_scores_backfill":   100_035,  # Session U: bootstrap cat_scores from DB stats
 }
 
 
@@ -904,6 +905,17 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # cat_scores bootstrap backfill: daily 6:30 AM ET (after projection_cat_scores at 5:30 AM)
+        # Fallback: reads raw stat columns from player_projections and writes cat_scores z-scores
+        # for any row still empty after the FanGraphs-based job above.
+        self._scheduler.add_job(
+            self._run_cat_scores_backfill,
+            CronTrigger(hour=6, minute=30, timezone=tz),
+            id="cat_scores_backfill",
+            name="cat_scores Bootstrap Backfill",
+            replace_existing=True,
+        )
+
         # Projection freshness SLA gate: hourly
         self._scheduler.add_job(
             self._check_projection_freshness,
@@ -972,8 +984,8 @@ class DailyIngestionOrchestrator:
                         "backtesting", "explainability", "snapshot",
                         "mlb_odds", "statcast",
                         "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
-                        "ensemble_update", "projection_cat_scores", "projection_freshness",
-                        "yahoo_id_sync",
+                        "ensemble_update", "projection_cat_scores", "cat_scores_backfill",
+                        "projection_freshness", "yahoo_id_sync",
                         "player_id_mapping", "position_eligibility",
                         "probable_pitchers_morning", "probable_pitchers_afternoon", "probable_pitchers_evening"]
         if _fantasy_leagues:
@@ -1044,7 +1056,18 @@ class DailyIngestionOrchestrator:
             "probable_pitchers_afternoon": self._sync_probable_pitchers,
             "probable_pitchers_evening":   self._sync_probable_pitchers,
             "bdl_injuries":          self._ingest_bdl_injuries,
-            "projection_freshness":  self._check_projection_freshness,
+            "projection_cat_scores":  self._update_projection_cat_scores,
+            "cat_scores_backfill":    self._run_cat_scores_backfill,
+            "projection_freshness":   self._check_projection_freshness,
+            "statsapi_supplement":    self._supplement_statsapi_counting_stats,
+            "mlb_odds":               self._poll_mlb_odds,
+            "rolling_z":              self._calc_rolling_zscores,
+            "clv":                    self._compute_clv,
+            "cleanup":                self._cleanup_old_metrics,
+            "valuation_cache":        self._refresh_valuation_cache,
+            "fangraphs_ros":          self._fetch_fangraphs_ros,
+            "yahoo_adp_injury":       self._poll_yahoo_adp_injury,
+            "ensemble_update":        self._update_ensemble_blend,
         }
         handler = _handlers.get(job_id)
         if handler is None:
@@ -3992,7 +4015,6 @@ class DailyIngestionOrchestrator:
                         z_era=score_row.z_era,
                         z_whip=score_row.z_whip,
                         z_k_per_9=score_row.z_k_per_9,
-                        score_confidence=score_row.confidence if score_row.confidence is not None else 0.0,
                         games_in_window=score_row.games_in_window if score_row.games_in_window is not None else 0,
                         signal=momentum_row.signal if momentum_row else "STABLE",
                         delta_z=momentum_row.delta_z if momentum_row and momentum_row.delta_z is not None else 0.0,
@@ -5077,6 +5099,7 @@ class DailyIngestionOrchestrator:
                         "player_name": p.get("name", ""),
                         "team":        team,
                         "positions":   default_positions,
+                        "player_type": "pitcher" if p["type"] == "pitcher" else "hitter",
                         "cat_scores":  cat_scores,
                         "prior_source": "fangraphs_ros",
                         "update_method": "ensemble_blend",
@@ -5085,18 +5108,27 @@ class DailyIngestionOrchestrator:
                     }
                     if p["type"] == "batter":
                         upsert_vals.update({
-                            "hr":  int(max(0, proj.get("hr", 15))),
-                            "r":   int(max(0, proj.get("r", 65))),
-                            "rbi": int(max(0, proj.get("rbi", 65))),
-                            "sb":  int(max(0, proj.get("nsb", 5))),
+                            "hr":  int(max(0, proj.get("hr", 0))),
+                            "r":   int(max(0, proj.get("r", 0))),
+                            "rbi": int(max(0, proj.get("rbi", 0))),
+                            "sb":  int(max(0, proj.get("nsb", 0))),
                             "avg": round(float(proj.get("avg", 0.250)), 3),
                             "ops": round(float(proj.get("ops", 0.720)), 3),
+                            # Null out pitching cols — batters have no ERA/WHIP
+                            "era":        None,
+                            "whip":       None,
+                            "k_per_nine": None,
                         })
                     else:
                         upsert_vals.update({
                             "era":        round(float(proj.get("era", 4.00)), 2),
                             "whip":       round(float(proj.get("whip", 1.30)), 2),
                             "k_per_nine": round(float(proj.get("k9", 8.5)), 2),
+                            # Null out batting counting cols — pitchers have no HR/RBI
+                            "hr":  None,
+                            "r":   None,
+                            "rbi": None,
+                            "sb":  None,
                         })
 
                     conflict_set = {
@@ -5151,6 +5183,55 @@ class DailyIngestionOrchestrator:
         return await _with_advisory_lock(
             LOCK_IDS["projection_cat_scores"], "projection_cat_scores", _run
         )
+
+    async def _run_cat_scores_backfill(self) -> dict:
+        """Bootstrap cat_scores from existing DB stat columns (lock 100_035, 6:30 AM ET).
+
+        Runs after _update_projection_cat_scores (5:30 AM). Fills any PlayerProjection
+        rows that still have cat_scores=NULL or {} using the raw r/hr/era/whip columns
+        already in player_projections. This is a fallback for when the FanGraphs RoS
+        cache is empty or stale.
+
+        Calls run_backfill(db, force=False) -- skips rows already populated.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.services.cat_scores_builder import run_backfill
+
+            db = SessionLocal()
+            try:
+                logger.info("[CAT_SCORES] Backfill job starting (force=True)")
+                result = run_backfill(db, force=True)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.info(
+                    "[CAT_SCORES] Backfill complete: updated=%d skipped=%d ambiguous=%d "
+                    "remaining_empty=%d elapsed=%dms",
+                    result.get("cat_scores_updated", 0),
+                    result.get("skipped_already_filled", 0),
+                    result.get("ambiguous_rows", 0),
+                    result.get("verify_remaining_empty", 0),
+                    elapsed,
+                )
+                updated = result.get("cat_scores_updated", 0)
+                self._record_job_run("cat_scores_backfill", "success", updated)
+                return {"status": "success", "records": updated, "elapsed_ms": elapsed}
+            except Exception as exc:
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.error("[CAT_SCORES] Backfill failed: %s", exc)
+                self._record_job_run("cat_scores_backfill", "error", 0)
+                return {"status": "error", "records": 0, "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+        try:
+            return await _with_advisory_lock(
+                LOCK_IDS["cat_scores_backfill"], "cat_scores_backfill", _run
+            )
+        except Exception as exc:
+            logger.error("[CAT_SCORES] Backfill job failed: %s", exc)
+            self._record_job_run("cat_scores_backfill", "error", 0)
+            return {"status": "error", "records": 0, "elapsed_ms": 0}
 
     async def _check_projection_freshness(self) -> dict:
         """
@@ -5949,12 +6030,58 @@ class DailyIngestionOrchestrator:
                         continue
 
                 db.commit()
+
+                # Supplemental: patch remaining NULL mlbam_ids via statcast_performances name match.
+                # statcast_performances.player_id IS the MLBAM ID (already in DB — no API call needed).
+                # DISTINCT ON latest game_date gives one canonical row per player name.
+                # Only patches rows where pybaseball lookup returned nothing (mlbam_id IS NULL).
+                statcast_patched = 0
+                try:
+                    patch_result = db.execute(
+                        text("""
+                            UPDATE player_id_mapping pim
+                            SET mlbam_id = sp.mlbam_id,
+                                source = 'statcast_fallback',
+                                resolution_confidence = 0.85
+                            FROM (
+                                SELECT DISTINCT ON (LOWER(player_name))
+                                       LOWER(player_name) AS norm_name,
+                                       player_id::integer AS mlbam_id
+                                FROM statcast_performances
+                                WHERE player_id ~ '^[0-9]+$'
+                                ORDER BY LOWER(player_name), game_date DESC
+                            ) sp
+                            WHERE pim.mlbam_id IS NULL
+                              AND LOWER(pim.full_name) = sp.norm_name
+                        """)
+                    )
+                    statcast_patched = patch_result.rowcount
+                    db.commit()
+                    if statcast_patched > 0:
+                        mlbam_found += statcast_patched
+                        logger.info(
+                            "_sync_player_id_mapping: Statcast fallback patched %d additional mlbam_ids",
+                            statcast_patched,
+                        )
+                except Exception as exc:
+                    db.rollback()
+                    logger.warning(
+                        "_sync_player_id_mapping: Statcast fallback patch failed (%s) -- continuing",
+                        exc,
+                    )
+
                 elapsed = int((time.monotonic() - t0) * 1000)
                 logger.info("SYNC JOB SUCCESS: _sync_player_id_mapping - Processed %d records in %d ms", records_processed, elapsed)
-                logger.info("SYNC JOB SUCCESS: _sync_player_id_mapping - Found %d MLBAM IDs (%.1f%%)", mlbam_found, 100*mlbam_found/records_processed if records_processed else 0)
+                logger.info("SYNC JOB SUCCESS: _sync_player_id_mapping - Found %d MLBAM IDs (%.1f%%) (%d via statcast fallback)", mlbam_found, 100*mlbam_found/records_processed if records_processed else 0, statcast_patched)
                 logger.info("SYNC JOB EXIT: _sync_player_id_mapping - Completed successfully")
                 self._record_job_run("player_id_mapping", "success", records_processed)
-                return {"status": "success", "records": records_processed, "mlbam_found": mlbam_found, "elapsed_ms": elapsed}
+                return {
+                    "status": "success",
+                    "records": records_processed,
+                    "mlbam_found": mlbam_found,
+                    "statcast_patched": statcast_patched,
+                    "elapsed_ms": elapsed,
+                }
 
             except Exception as exc:
                 db.rollback()

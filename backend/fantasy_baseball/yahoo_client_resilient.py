@@ -35,7 +35,8 @@ import asyncio
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from collections import OrderedDict
 from urllib.parse import urlencode, urlparse, parse_qs
 
 import requests
@@ -62,6 +63,60 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 _token_lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# In-memory TTL cache for Yahoo API responses (fix 30s timeouts)
+# ---------------------------------------------------------------------------
+class YahooAPICache:
+    """Thread-safe in-memory cache with TTL for Yahoo API responses."""
+
+    def __init__(self, default_ttl_seconds: int = 300):
+        self._cache: OrderedDict[str, Tuple[dict, float]] = OrderedDict()
+        self._default_ttl = default_ttl_seconds
+        self._lock = threading.RLock()
+        self._max_size = 256  # Prevent unbounded memory growth
+
+    def get(self, key: str) -> Optional[dict]:
+        """Get cached response if still fresh."""
+        with self._lock:
+            if key not in self._cache:
+                return None
+
+            data, expiry = self._cache[key]
+            if time.time() > expiry:
+                # Expired - remove and return None
+                del self._cache[key]
+                return None
+
+            # Move to end (LRU eviction)
+            self._cache.move_to_end(key)
+            return data
+
+    def put(self, key: str, data: dict, ttl_seconds: Optional[int] = None) -> None:
+        """Cache response with TTL."""
+        ttl = ttl_seconds or self._default_ttl
+        expiry = time.time() + ttl
+
+        with self._lock:
+            # Evict oldest if at capacity
+            if len(self._cache) >= self._max_size:
+                self._cache.popitem(last=False)
+
+            self._cache[key] = (data, expiry)
+
+    def clear(self) -> None:
+        """Clear all cached responses."""
+        with self._lock:
+            self._cache.clear()
+
+    def get_stats(self) -> dict:
+        """Return cache statistics for monitoring."""
+        with self._lock:
+            return {
+                "size": len(self._cache),
+                "max_size": self._max_size,
+                "keys": list(self._cache.keys()),
+            }
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -116,6 +171,7 @@ class YahooFantasyClient:
         self._token_expiry: float = 0.0
         self._session = requests.Session()
         self._cb = _CoreCircuitBreaker(failure_threshold=3, recovery_timeout=60, window_seconds=300)
+        self._cache = YahooAPICache(default_ttl_seconds=300)  # 5-minute default TTL
 
         # Log credential status (masked)
         client_id_status = f"{self.client_id[:10]}..." if len(self.client_id) > 10 else "NOT_SET"
@@ -230,7 +286,18 @@ class YahooFantasyClient:
     # ------------------------------------------------------------------
 
     def _get(self, path: str, params: Optional[dict] = None) -> dict:
-        """GET from Yahoo API with circuit breaker and timeout."""
+        """GET from Yahoo API with circuit breaker, timeout, and caching."""
+        # Generate cache key from URL + params
+        cache_key = self._make_cache_key(path, params)
+
+        # Check cache first
+        cached_data = self._cache.get(cache_key)
+        if cached_data is not None:
+            logger.debug(f"Cache HIT for {path}")
+            return cached_data
+
+        # Cache miss - proceed with API call
+        logger.debug(f"Cache MISS for {path}")
         if not self._cb.should_allow_request():
             raise YahooAPIError("Yahoo API circuit breaker is OPEN — service temporarily unavailable", 503)
 
@@ -269,7 +336,13 @@ class YahooFantasyClient:
                         resp.status_code,
                     )
                 self._cb.record_success()
-                return resp.json()
+                data = resp.json()
+
+                # Cache the response with smart TTL
+                ttl_seconds = self._get_ttl_for_endpoint(path)
+                self._cache.put(cache_key, data, ttl_seconds)
+
+                return data
             except YahooAPIError:
                 raise
             except Exception:
@@ -278,6 +351,48 @@ class YahooFantasyClient:
                 raise
 
         raise YahooAPIError("Yahoo API failed after 3 attempts")
+
+    def _make_cache_key(self, path: str, params: Optional[dict]) -> str:
+        """Generate a cache key from path and params."""
+        import hashlib
+        import json
+
+        # Normalize path
+        normalized_path = path.strip().lstrip('/')
+
+        # Sort params for consistent keys
+        if params:
+            sorted_params = sorted(params.items())
+            params_str = json.dumps(sorted_params, sort_keys=True)
+        else:
+            params_str = ""
+
+        # Create hash
+        key_str = f"{normalized_path}?{params_str}"
+        return hashlib.md5(key_str.encode()).hexdigest()
+
+    def _get_ttl_for_endpoint(self, path: str) -> int:
+        """Return smart TTL based on endpoint type."""
+        path_lower = path.lower()
+
+        # Scoreboards change frequently - 2 minute TTL
+        if "scoreboard" in path_lower or "standings" in path_lower:
+            return 120
+
+        # Rosters - 5 minute TTL (default)
+        if "roster" in path_lower or "team" in path_lower:
+            return 300
+
+        # Player stats - 10 minute TTL
+        if "player" in path_lower and ("stats" in path_lower or "performance" in path_lower):
+            return 600
+
+        # League settings - 1 hour TTL (rarely changes)
+        if "settings" in path_lower or "league" in path_lower:
+            return 3600
+
+        # Default 5 minutes
+        return 300
 
     # ------------------------------------------------------------------
     # Internal helpers

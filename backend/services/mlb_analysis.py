@@ -355,37 +355,87 @@ class MLBAnalysisService:
 
     def _fetch_mlb_odds(self) -> dict[str, dict]:
         """
-        Fetch current MLB runline odds from The Odds API.
+        Fetch current MLB runline odds from mlb_odds_snapshot table.
 
-        Returns dict keyed by "AwayTeam@HomeTeam" -> full bookmaker payload.
-        Reuses the same baseball_mlb endpoint as daily_ingestion.py.
-        Returns empty dict on any failure (graceful degradation).
+        Returns dict keyed by "AwayTeam@HomeTeam" -> flat BDL odds dict.
+        Queries the DB for the most recent snapshot per game, prefers vendor
+        by quality order. Returns empty dict on any failure (graceful degradation).
         """
-        api_key = os.getenv("THE_ODDS_API_KEY")
-        if not api_key:
-            return {}
+        from backend.models import SessionLocal, MLBOddsSnapshot, MLBGameLog, MLBTeam
+
+        preferred_vendors = ["pinnacle", "draftkings", "fanduel", "betmgm", "caesars"]
         try:
-            import requests
-            resp = requests.get(
-                "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds",
-                params={
-                    "apiKey": api_key,
-                    "regions": os.getenv("ODDS_API_REGIONS", "us,eu"),
-                    "markets": "spreads,totals,h2h",
-                    "oddsFormat": "american",
-                },
-                timeout=10,
+            db = SessionLocal()
+            from sqlalchemy import func, case, literal_column
+
+            max_window_subq = (
+                db.query(
+                    MLBOddsSnapshot.game_id,
+                    func.max(MLBOddsSnapshot.snapshot_window).label("max_window")
+                )
+                .group_by(MLBOddsSnapshot.game_id)
+                .subquery()
             )
-            resp.raise_for_status()
-            games = resp.json()
+
+            vendor_priority = case(
+                *[(literal_column(f"'{v}'"), i) for i, v in enumerate(preferred_vendors)],
+                else_=len(preferred_vendors)
+            )
+
+            latest_odds_q = (
+                db.query(
+                    MLBOddsSnapshot,
+                    MLBGameLog,
+                    MLBTeam,
+                    vendor_priority.label("vendor_priority")
+                )
+                .join(MLBGameLog, MLBOddsSnapshot.game_id == MLBGameLog.game_id)
+                .join(MLBTeam, MLBGameLog.away_team_id == MLBTeam.team_id)
+                .join(
+                    max_window_subq,
+                    (MLBOddsSnapshot.game_id == max_window_subq.c.game_id) &
+                    (MLBOddsSnapshot.snapshot_window == max_window_subq.c.max_window)
+                )
+                .order_by(MLBOddsSnapshot.game_id, "vendor_priority")
+                .all()
+            )
+
             result: dict[str, dict] = {}
-            for g in (games if isinstance(games, list) else []):
-                key = f"{g.get('away_team', '')}@{g.get('home_team', '')}"
-                result[key] = g
+            seen_games = set()
+
+            for row in latest_odds_q:
+                odds = row[0]
+                game = row[1]
+                away_team = row[2]
+
+                if odds.game_id in seen_games:
+                    continue
+
+                home_team = game.home_team_obj
+                if not home_team:
+                    continue
+
+                seen_games.add(odds.game_id)
+                key = f"{away_team.abbreviation}@{home_team.abbreviation}"
+                result[key] = {
+                    "ml_home_odds": odds.ml_home_odds,
+                    "ml_away_odds": odds.ml_away_odds,
+                    "spread_home": odds.spread_home,
+                    "spread_home_odds": odds.spread_home_odds,
+                    "total": odds.total,
+                    "vendor": odds.vendor
+                }
+
+            logger.debug(
+                "mlb_analysis: loaded odds for %d games from mlb_odds_snapshot",
+                len(result)
+            )
             return result
         except Exception as exc:
-            logger.warning("mlb_analysis: odds fetch failed: %s", exc)
+            logger.warning("mlb_analysis: odds DB fetch failed: %s", exc)
             return {}
+        finally:
+            db.close()
 
     # ------------------------------------------------------------------ #
     # Edge calculation                                                     #
@@ -396,28 +446,22 @@ class MLBAnalysisService:
         Edge = projected_win_prob - market_implied_win_prob on the runline.
 
         Positive = our model thinks home team is more likely to cover -1.5
-        than the market implies. Uses the first bookmaker's spreads market
-        for the home team outcome.
+        than the market implies. Uses ml_home_odds from the flat BDL structure.
 
         Returns 0.0 when no market data is available.
         """
-        if not market:
+        if not market or "ml_home_odds" not in market or market["ml_home_odds"] == 0:
             return 0.0
+
         try:
-            for bookmaker in market.get("bookmakers", []):
-                for mkt in bookmaker.get("markets", []):
-                    if mkt.get("key") == "spreads":
-                        for outcome in mkt.get("outcomes", []):
-                            if outcome.get("name") == projection.home_team:
-                                american_odds = outcome.get("price", -110)
-                                if american_odds < 0:
-                                    market_prob = abs(american_odds) / (abs(american_odds) + 100)
-                                else:
-                                    market_prob = 100 / (american_odds + 100)
-                                return round(projection.home_win_prob - market_prob, 4)
+            american_odds = market["ml_home_odds"]
+            if american_odds < 0:
+                market_prob = abs(american_odds) / (abs(american_odds) + 100)
+            else:
+                market_prob = 100 / (american_odds + 100)
+            return round(projection.home_win_prob - market_prob, 4)
         except Exception:
-            pass
-        return 0.0
+            return 0.0
 
     # ------------------------------------------------------------------ #
     # Internal helpers                                                     #

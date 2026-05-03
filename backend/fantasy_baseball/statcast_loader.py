@@ -199,6 +199,124 @@ def _float(val) -> float:
         return 0.0
 
 
+def _load_from_db(season: int = 2026) -> tuple:
+    """
+    Load batter and pitcher metrics from statcast_batter_metrics /
+    statcast_pitcher_metrics tables (populated daily by savant_ingestion at 6 AM).
+
+    Returns (batters_dict, pitchers_dict) keyed by stripped lowercase name.
+    Returns ({}, {}) on any error so callers can fall through gracefully.
+    """
+    from backend.fantasy_baseball.advanced_metrics import StatcastBatter, StatcastPitcher
+    try:
+        import unicodedata, re as _re
+        _sfx = _re.compile(r"\s+(Jr\.?|Sr\.?|II+|III+|IV|V)$", _re.IGNORECASE)
+
+        def _key(name: str) -> str:
+            nfkd = unicodedata.normalize("NFKD", name)
+            ascii_ = "".join(c for c in nfkd if not unicodedata.combining(c))
+            return " ".join(_sfx.sub("", ascii_.strip()).lower().split())
+
+        from sqlalchemy import text as _text
+        from backend.models import SessionLocal
+        db = SessionLocal()
+        try:
+            # --- Batters ---
+            # Join with statcast_performances to compute xwoba_diff (xwOBA - wOBA).
+            # statcast_batter_metrics has xwoba but not woba; statcast_performances
+            # has per-game woba that we aggregate into a season mean.
+            batter_rows = db.execute(_text("""
+                SELECT
+                    sbm.player_name,
+                    sbm.xwoba,
+                    sbm.barrel_percent,
+                    sbm.hard_hit_percent,
+                    sbm.avg_exit_velocity,
+                    sbm.whiff_percent,
+                    sp_agg.avg_woba
+                FROM statcast_batter_metrics sbm
+                LEFT JOIN (
+                    SELECT player_id, AVG(woba) AS avg_woba
+                    FROM statcast_performances
+                    WHERE woba > 0
+                    GROUP BY player_id
+                ) sp_agg ON sp_agg.player_id = sbm.mlbam_id
+                WHERE sbm.season = :season
+            """), {"season": season}).fetchall()
+
+            batters: dict = {}
+            for row in batter_rows:
+                xwoba = _float(row.xwoba)
+                avg_woba = _float(row.avg_woba) if row.avg_woba else xwoba
+                xwoba_diff = xwoba - avg_woba
+                b = StatcastBatter(
+                    name=row.player_name,
+                    xwoba=xwoba,
+                    xwoba_diff=xwoba_diff,
+                    barrel_pct=_float(row.barrel_percent),
+                    exit_velo_avg=_float(row.avg_exit_velocity),
+                    hard_hit_pct=_float(row.hard_hit_percent),
+                    swstr_pct=_float(row.whiff_percent),
+                    regression_up=xwoba_diff < -0.020,
+                    regression_down=xwoba_diff > 0.030,
+                )
+                batters[_key(row.player_name)] = b
+
+            # --- Pitchers ---
+            # xera_diff = xERA - ERA: positive means ERA should rise (BUY_LOW for opposing
+            # batters; pitcher got lucky with low ERA vs poor underlying metrics).
+            pitcher_rows = db.execute(_text("""
+                SELECT
+                    spm.player_name,
+                    spm.xera,
+                    spm.xwoba,
+                    spm.barrel_percent_allowed,
+                    spm.hard_hit_percent_allowed,
+                    spm.avg_exit_velocity_allowed,
+                    spm.whiff_percent,
+                    spm.k_percent,
+                    (
+                        SELECT CASE WHEN SUM(sp.ip) > 0 THEN ROUND(SUM(sp.er)::numeric / SUM(sp.ip) * 9, 2) END
+                        FROM statcast_performances sp
+                        WHERE sp.player_id = spm.mlbam_id AND sp.ip > 0
+                    ) AS computed_era
+                FROM statcast_pitcher_metrics spm
+                WHERE spm.season = :season
+            """), {"season": season}).fetchall()
+
+            pitchers: dict = {}
+            for row in pitcher_rows:
+                xera = _float(row.xera)
+                era = _float(row.computed_era) if row.computed_era else None
+                xera_diff = (xera - era) if era else 0.0
+                p = StatcastPitcher(
+                    name=row.player_name,
+                    xera=xera,
+                    xera_diff=xera_diff,
+                    xwoba_allowed=_float(row.xwoba),
+                    barrel_allowed_pct=_float(row.barrel_percent_allowed),
+                    hard_hit_allowed_pct=_float(row.hard_hit_percent_allowed),
+                    exit_velo_allowed=_float(row.avg_exit_velocity_allowed),
+                    whiff_pct=_float(row.whiff_percent),
+                    luck_regression=(xera_diff > 0.40),
+                )
+                pitchers[_key(row.player_name)] = p
+
+            if batters or pitchers:
+                logger.info(
+                    "statcast_loader DB tier: %d batters, %d pitchers from statcast_*_metrics",
+                    len(batters), len(pitchers),
+                )
+            return batters, pitchers
+
+        finally:
+            db.close()
+
+    except Exception as exc:
+        logger.warning("statcast_loader DB tier failed (non-fatal): %s", exc)
+        return {}, {}
+
+
 def _ensure_loaded() -> None:
     """Load caches if empty or stale (TTL expired)."""
     global _loaded_at
@@ -210,7 +328,14 @@ def _ensure_loaded() -> None:
     year = 2026
     batters: dict[str, StatcastBatter] = {}
 
-    # --- Tier 0: pybaseball JSON cache (24h, 400+ players) ---
+    # --- Tier 0: DB tables (statcast_batter_metrics / statcast_pitcher_metrics) ---
+    # Populated daily at 6 AM by _ingest_savant_leaderboards. This is the primary
+    # source on Railway where the CSV/JSON cache paths are ephemeral.
+    # NOTE: DB tier applied AFTER all lower-tier sources (see below) to ensure
+    # it takes priority over pybaseball/CSV data.
+    _db_batters, _db_pitchers = _load_from_db(season=year)
+
+    # --- Tier 1: pybaseball JSON cache (24h, 400+ players) ---
     try:
         from backend.fantasy_baseball.pybaseball_loader import (
             fetch_all_statcast_leaderboards,
@@ -220,7 +345,7 @@ def _ensure_loaded() -> None:
         pb = load_pybaseball_batters(year=2025)
         if pb:
             batters.update(pb)
-            logger.info(f"Tier 0: {len(pb)} pybaseball batters loaded")
+            logger.info(f"Tier 1: {len(pb)} pybaseball batters loaded")
     except Exception as e:
         logger.warning(f"pybaseball batter tier skipped: {e}")
 
@@ -238,6 +363,11 @@ def _ensure_loaded() -> None:
                 logger.info(f"Loaded {len(parsed)} Savant batters from {p.name}")
                 break
 
+    # --- DB tier override (applies AFTER pybaseball/CSV to take priority) ---
+    if _db_batters:
+        batters.update(_db_batters)
+        logger.info(f"DB tier override: {len(_db_batters)} batters from statcast_batter_metrics")
+
     # Sample CSV fallback
     if not batters:
         sample = DATA_DIR / "advanced_batting_2026.csv"
@@ -254,13 +384,16 @@ def _ensure_loaded() -> None:
     # --- Pitchers ---
     pitchers: dict[str, StatcastPitcher] = {}
 
-    # --- Tier 0: pybaseball JSON cache (batters already triggered the fetch above) ---
+    # NOTE: DB tier applied AFTER all lower-tier sources (see below) to ensure
+    # it takes priority over pybaseball/CSV data.
+
+    # --- Tier 1: pybaseball JSON cache (batters already triggered the fetch above) ---
     try:
         from backend.fantasy_baseball.pybaseball_loader import load_pybaseball_pitchers
         pb_p = load_pybaseball_pitchers(year=2025)
         if pb_p:
             pitchers.update(pb_p)
-            logger.info(f"Tier 0: {len(pb_p)} pybaseball pitchers loaded")
+            logger.info(f"Tier 1: {len(pb_p)} pybaseball pitchers loaded")
     except Exception as e:
         logger.warning(f"pybaseball pitcher tier skipped: {e}")
 
@@ -276,6 +409,11 @@ def _ensure_loaded() -> None:
                 pitchers.update(parsed)
                 logger.info(f"Loaded {len(parsed)} Savant pitchers from {p.name}")
                 break
+
+    # --- DB tier override (applies AFTER pybaseball/CSV to take priority) ---
+    if _db_pitchers:
+        pitchers.update(_db_pitchers)
+        logger.info(f"DB tier override: {len(_db_pitchers)} pitchers from statcast_pitcher_metrics")
 
     if not pitchers:
         sample = DATA_DIR / "advanced_pitching_2026.csv"

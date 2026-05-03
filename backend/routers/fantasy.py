@@ -1737,20 +1737,12 @@ async def get_fantasy_waiver_recommendations(
 
         from backend.fantasy_baseball.player_board import get_or_create_projection as _get_proj
 
-        # Load Statcast / FanGraphs caches for waiver enrichment (PR-15)
-        _waiver_sc_batters: dict = {}
-        _waiver_sc_pitchers: dict = {}
-        try:
-            from backend.fantasy_baseball.pybaseball_loader import (
-                load_pybaseball_batters as _load_bat,
-                load_pybaseball_pitchers as _load_pit,
-                match_yahoo_to_statcast as _match_sc,
-            )
-            from backend.fantasy_baseball.statcast_loader import build_statcast_signals as _build_sc_sig
-            _waiver_sc_batters = _load_bat(2026)
-            _waiver_sc_pitchers = _load_pit(2026)
-        except Exception:
-            pass
+        # Load Statcast from database (uses fixed queries from Bugs 2 & 3)
+        from backend.fantasy_baseball.statcast_loader import (
+            get_statcast_batter as _get_sc_bat,
+            get_statcast_pitcher as _get_sc_pit,
+            build_statcast_signals as _build_sc_sig,
+        )
 
         def _hot_cold_flag(cat_contributions: dict) -> Optional[str]:
             scores = list(cat_contributions.values())
@@ -1853,37 +1845,32 @@ async def get_fantasy_waiver_recommendations(
             _status = p.get("status") or None
             _injury_note = p.get("injury_note") or None
 
-            # Statcast enrichment for waiver player (PR-15, non-blocking)
+            # Statcast enrichment for waiver player (uses fixed statcast_loader)
             _sc_dict: dict | None = None
             _sc_sigs: list[str] = []
             _fa_is_pitcher = positions[0] in ("SP", "RP", "P") if positions else False
             try:
-                if name and _waiver_sc_batters and not _fa_is_pitcher:
-                    _ck = _match_sc(name, _waiver_sc_batters)
-                    if _ck:
-                        _sb = _waiver_sc_batters[_ck]
+                if not _fa_is_pitcher:
+                    _sb = _get_sc_bat(name)
+                    if _sb:
                         _sc_dict = {
                             "xwoba": round(_sb.xwoba, 3) if _sb.xwoba else None,
-                            "xwoba_diff": round(_sb.xwoba_diff, 3) if _sb.xwoba_diff else None,
-                            "barrel_pct": round(_sb.barrel_pct, 1) if _sb.barrel_pct else None,
-                            "exit_velo_avg": round(_sb.exit_velo_avg, 1) if _sb.exit_velo_avg else None,
-                            "hard_hit_pct": round(_sb.hard_hit_pct, 1) if _sb.hard_hit_pct else None,
-                            "wrc_plus": round(_sb.wrc_plus, 0) if _sb.wrc_plus else None,
-                            "regression_up": _sb.regression_up,
-                            "regression_down": _sb.regression_down,
+                            "xwoba_diff": round(_sb.xwoba_diff, 3) if _sb.xwoba_diff is not None else None,
+                            "barrel_pct": round(_sb.barrel_pct, 1) if _sb.barrel_pct is not None else None,
+                            "exit_velo_avg": round(_sb.exit_velo_avg, 1) if _sb.exit_velo_avg is not None else None,
+                            "hard_hit_pct": round(_sb.hard_hit_pct, 1) if _sb.hard_hit_pct is not None else None,
+                            "wrc_plus": round(_sb.wrc_plus, 0) if _sb.wrc_plus is not None else None,
                         }
-                elif name and _waiver_sc_pitchers and _fa_is_pitcher:
-                    _ck = _match_sc(name, _waiver_sc_pitchers)
-                    if _ck:
-                        _sp = _waiver_sc_pitchers[_ck]
+                else:
+                    _sp = _get_sc_pit(name)
+                    if _sp:
                         _sc_dict = {
-                            "xera": round(_sp.xera, 2) if _sp.xera else None,
-                            "xera_diff": round(_sp.xera_diff, 2) if _sp.xera_diff else None,
-                            "stuff_plus": round(_sp.stuff_plus, 0) if _sp.stuff_plus else None,
-                            "whiff_pct": round(_sp.whiff_pct, 1) if _sp.whiff_pct else None,
-                            "barrel_allowed_pct": round(_sp.barrel_allowed_pct, 1) if _sp.barrel_allowed_pct else None,
-                            "xwoba_allowed": round(_sp.xwoba_allowed, 3) if _sp.xwoba_allowed else None,
-                            "luck_regression": _sp.luck_regression,
+                            "xera": round(_sp.xera, 2) if _sp.xera is not None else None,
+                            "xera_diff": round(_sp.xera_diff, 2) if _sp.xera_diff is not None else None,
+                            "stuff_plus": round(_sp.stuff_plus, 0) if _sp.stuff_plus is not None else None,
+                            "whiff_pct": round(_sp.whiff_pct, 1) if _sp.whiff_pct is not None else None,
+                            "barrel_allowed_pct": round(_sp.barrel_allowed_pct, 1) if _sp.barrel_allowed_pct is not None else None,
+                            "xwoba_allowed": round(_sp.xwoba_allowed, 3) if _sp.xwoba_allowed is not None else None,
                         }
                 if name:
                     _sigs, _ = _build_sc_sig(name, _fa_is_pitcher, p.get("percent_owned", 100.0))
@@ -1904,9 +1891,11 @@ async def get_fantasy_waiver_recommendations(
                 hot_cold=_hc,
                 status=_status,
                 injury_note=_injury_note,
+                injury_status=p.get("injury_status"),
                 stats=_translated_stats,
                 statcast_stats=_sc_dict,
                 statcast_signals=_sc_sigs,
+                quality_score=None,  # TODO: populate from ProbablePitcherSnapshot for pitchers
             )
 
         # Fetch MLB probable starts and populate starts_this_week for ALL SP pitchers
@@ -2095,6 +2084,7 @@ async def get_waiver_recommendations(
     week_end = today + timedelta(days=(6 - today.weekday()))
 
     matchup_opponent = "TBD"
+    opponent_team_key = ""
     category_deficits: list = []
     recommendations: list = []
 
@@ -2134,6 +2124,7 @@ async def get_waiver_recommendations(
                     )
                     if _opp_tuple is not None:
                         matchup_opponent = _opp_tuple[1] or "TBD"
+                        opponent_team_key = _opp_tuple[0] or ""
                         _my_matchup_teams = [_my_tuple, _opp_tuple]
                     break
 
@@ -2314,6 +2305,21 @@ async def get_waiver_recommendations(
                 "percent_owned": rp.get("percent_owned", rp.get("owned_pct", 0.0)),
             })
 
+        opponent_roster_scored: list = []
+        if opponent_team_key:
+            try:
+                _opp_players = client.get_roster(opponent_team_key)
+                for _rp in _opp_players:
+                    _bp = _get_proj(_rp)
+                    opponent_roster_scored.append({
+                        "name": (_rp.get("name") or "").strip(),
+                        "positions": _rp.get("positions") or [],
+                        "cat_scores": _bp.get("cat_scores") or {},
+                        "starts_this_week": int(_rp.get("starts_this_week", 1)),
+                    })
+            except Exception as exc:
+                logger.warning("opponent_roster fetch failed (non-fatal): %s", exc)
+
         def _weakest_safe_to_drop(target_positions: list) -> Optional[dict]:
             candidates = [
                 rp for rp in my_roster_scored
@@ -2482,7 +2488,6 @@ async def get_waiver_recommendations(
                     "cat_scores": dict(fa.category_contributions),
                     "starts_this_week": fa.starts_this_week,
                 }
-                # DEBUG: Log MCMC inputs to diagnose flatlining
                 logger.debug(
                     "[MCMC_DEBUG] fa.name=%s, cat_scores=%s, starts=%s",
                     fa.name, fa.category_contributions, fa.starts_this_week
@@ -2492,19 +2497,21 @@ async def get_waiver_recommendations(
                     sum(1 for p in my_roster_scored if p.get("cat_scores")),
                     len(my_roster_scored)
                 )
-                # NOTE: opponent_roster=[] is a known limitation causing inflated win probabilities.
-                # TODO: Fetch opponent roster from Yahoo API to enable true head-to-head simulation.
                 _mcmc = _sim_move(
                     my_roster=my_roster_scored,
-                    opponent_roster=[],
+                    opponent_roster=opponent_roster_scored,
                     add_player=_add_for_mcmc,
                     drop_player_name=drop_candidate["name"],
                     n_sims=1000,
                 )
-                logger.debug(
-                    "[MCMC_DEBUG] result: mcmc_enabled=%s, win_prob_before=%.3f, win_prob_after=%.3f, gain=%.3f",
-                    _mcmc.get("mcmc_enabled"), _mcmc.get("win_prob_before"),
-                    _mcmc.get("win_prob_after"), _mcmc.get("win_prob_gain")
+                logger.info(
+                    "[MCMC] %s: enabled=%s win_prob %.3f->%.3f gain=%.3f opp_roster=%d",
+                    fa.name,
+                    _mcmc.get("mcmc_enabled"),
+                    _mcmc.get("win_prob_before", 0.0),
+                    _mcmc.get("win_prob_after", 0.0),
+                    _mcmc.get("win_prob_gain", 0.0),
+                    len(opponent_roster_scored),
                 )
                 if _mcmc.get("mcmc_enabled") and abs(_mcmc["win_prob_gain"]) >= 0.005:
                     wp_before_pct = round(_mcmc["win_prob_before"] * 100)
@@ -2514,8 +2521,8 @@ async def get_waiver_recommendations(
                         f" Win prob: {wp_before_pct}% -> {wp_after_pct}%"
                         f" ({wp_gain_pct:+d}%)."
                     )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("[MCMC] sim failed for %s: %s", fa.name, exc)
 
             # When MCMC produced a verdict, never surface a move that the
             # simulator says hurts the matchup. z-score-driven gains can

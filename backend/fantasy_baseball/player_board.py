@@ -1133,6 +1133,24 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
                 if projection_row:
                     logger.info(f"[player_board] Name-based Steamer match: {name} -> {projection_row.player_name}")
 
+        # Unconditional name-based fallback: catches Steamer players where
+        # PlayerIDMapping has no entry for this Yahoo ID. Without this, 617
+        # players backfilled by M34 (cat_scores in player_projections) are
+        # never found for FA waiver candidates missing from PlayerIDMapping.
+        if not projection_row and name and db is not None:
+            try:
+                projection_row = db.query(PlayerProjection).filter(
+                    PlayerProjection.player_name == name
+                ).first()
+                if not projection_row:
+                    projection_row = db.query(PlayerProjection).filter(
+                        PlayerProjection.player_name.ilike(f"%{name}%")
+                    ).first()
+                if projection_row:
+                    logger.debug(f"[player_board] Direct name fallback match: {name} -> {projection_row.player_name}")
+            except Exception as _ne:
+                logger.debug(f"[player_board] Direct name fallback failed for {name}: {_ne}")
+
     except Exception as e:
         logger.debug(f"[player_board] DB query failed for {name}: {e}")
 

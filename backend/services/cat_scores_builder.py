@@ -97,20 +97,35 @@ def compute_cat_scores(players: list[dict], weights: dict) -> None:
 # Player classification
 # ---------------------------------------------------------------------------
 
-def classify_player(positions: list | str | None, era: float | None,
-                   hr: int | None, r_val: int | None) -> str | None:
-    """Classify a player as 'batter', 'pitcher', or None (ambiguous).
+def classify_player(
+    positions: list | str | None,
+    era: float | None,
+    hr: int | None,
+    r_val: int | None,
+    player_type: str | None = None,
+) -> str | None:
+    """Classify a player as 'batter' or 'pitcher'.
+
+    Primary signal: player_type column (set by M34 migration and projection jobs).
+    Fallback: position codes, then stats heuristic.
 
     Args:
         positions: List or comma-separated string of position codes
-        era: Pitcher ERA (4.00 is the default placeholder)
-        hr: Home run count (batter signal)
-        r_val: Run count (batter signal)
+        era: Pitcher ERA (NULL for hitters post-M34)
+        hr: Home run count (NULL for pitchers post-M34)
+        r_val: Run count (NULL for pitchers post-M34)
+        player_type: Explicit type from player_projections.player_type column
 
     Returns:
         'batter', 'pitcher', or None if truly ambiguous
     """
-    # Normalize positions to set
+    # M34: trust the DB column first — it's set by the migration and projection jobs
+    if player_type in ("hitter", "batter"):
+        return "batter"
+    if player_type == "pitcher":
+        return "pitcher"
+
+    # Fallback: position codes
     if isinstance(positions, str):
         positions = [p.strip() for p in positions.split(",") if p.strip()]
     pos_set = {str(p).upper() for p in (positions or [])}
@@ -123,19 +138,15 @@ def classify_player(positions: list | str | None, era: float | None,
     if has_pit and not has_bat:
         return "pitcher"
     if has_bat and has_pit:
-        # Mixed — ERA != default or k_per_nine != default → pitcher
-        if era is not None and abs(float(era) - 4.00) > 0.01:
+        # Mixed — non-null ERA is a pitcher signal (post-M34 batters have NULL ERA)
+        if era is not None:
             return "pitcher"
         return "batter"
 
-    # No position info — stats heuristic
-    era_is_default = era is None or abs(float(era or 4.00) - 4.00) < 0.01
-    hr_is_high = (hr or 0) > 5
-    r_is_high = (r_val or 0) > 30
-
-    if not era_is_default:
+    # Last resort: stats heuristic (pre-M34 rows only)
+    if era is not None:
         return "pitcher"
-    if hr_is_high or r_is_high:
+    if (hr or 0) > 5 or (r_val or 0) > 30:
         return "batter"
     return None  # ambiguous
 
@@ -173,7 +184,7 @@ def run_backfill(db: Session, force: bool = False) -> dict[str, Any]:
             "SELECT player_id, team, positions, hr, r, rbi, sb, "
             "       avg, slg, ops, era, whip, k_per_nine, "
             "       w, l, qs, hr_pit, k_pit, nsv, "
-            "       cat_scores "
+            "       cat_scores, player_type "
             "FROM player_projections"
         )
     ).mappings().fetchall()
@@ -204,7 +215,10 @@ def run_backfill(db: Session, force: bool = False) -> dict[str, Any]:
     for row in rows:
         avg = float(row["avg"] or 0.250)
         slg = float(row["slg"] or 0.400)
-        ptype = classify_player(row["positions"], row["era"], row["hr"], row["r"])
+        ptype = classify_player(
+            row["positions"], row["era"], row["hr"], row["r"],
+            player_type=row.get("player_type"),
+        )
 
         if ptype == "batter":
             proj = {
