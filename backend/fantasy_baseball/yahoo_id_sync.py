@@ -70,15 +70,23 @@ def sync_yahoo_player_ids() -> int:
 
             if player_id:
                 # Upsert to player_id_mapping
+                # P0 FIX: Use bdl_id column (not player_id) for player_id_mapping table
+                # Also populate full_name and normalized_name for future lookups
+                normalized = name.lower().strip()
                 db.execute(text('''
-                  INSERT INTO player_id_mapping (yahoo_id, player_id, updated_at)
-                  VALUES (:yahoo_id, :player_id, :updated_at)
-                  ON CONFLICT (player_id) DO UPDATE
+                  INSERT INTO player_id_mapping (yahoo_id, bdl_id, full_name, normalized_name, source, updated_at)
+                  VALUES (:yahoo_id, :bdl_id, :full_name, :normalized_name, :source, :updated_at)
+                  ON CONFLICT (bdl_id) DO UPDATE
                   SET yahoo_id = EXCLUDED.yahoo_id,
+                      full_name = EXCLUDED.full_name,
+                      normalized_name = EXCLUDED.normalized_name,
                       updated_at = EXCLUDED.updated_at
                 '''), {
                     'yahoo_id': yahoo_id,
-                    'player_id': player_id,
+                    'bdl_id': player_id,
+                    'full_name': name,
+                    'normalized_name': normalized,
+                    'source': 'yahoo',
                     'updated_at': datetime.now(ZoneInfo("America/New_York"))
                 })
 
@@ -96,27 +104,32 @@ def sync_yahoo_player_ids() -> int:
         db.close()
 
 def _lookup_bdl_id(db, name: str, team: str | None) -> int | None:
-    """Lookup BDL player_id by name and team."""
-    # Try exact name match first
+    """
+    Lookup BDL player_id from player_id_mapping table.
+
+    P0 FIX: Use player_id_mapping instead of mlb_player_stats.
+    - mlb_player_stats has no 'name' column (uses bdl_player_id)
+    - player_id_mapping has full_name and normalized_name for lookups
+    """
+    # Try exact full_name match first
     result = db.execute(text('''
-      SELECT player_id FROM mlb_player_stats
-      WHERE name = :name
+      SELECT bdl_id FROM player_id_mapping
+      WHERE full_name = :name
       LIMIT 1
     '''), {'name': name}).fetchone()
 
     if result:
         return result[0]
 
-    # Try name + team match
-    if team:
-        result = db.execute(text('''
-          SELECT player_id FROM mlb_player_stats
-          WHERE name = :name AND team = :team
-          LIMIT 1
-        '''), {'name': name, 'team': team}).fetchone()
+    # Try normalized_name match (case-insensitive)
+    result = db.execute(text('''
+      SELECT bdl_id FROM player_id_mapping
+      WHERE normalized_name = LOWER(:name)
+      LIMIT 1
+    '''), {'name': name}).fetchone()
 
-        if result:
-            return result[0]
+    if result:
+        return result[0]
 
     # Not found - return None (will be filled by BDL sync job)
     return None
