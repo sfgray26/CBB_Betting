@@ -10,14 +10,14 @@ from typing import Dict, List, Optional
 
 from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
 from backend.fantasy_baseball.smart_lineup_selector import CategoryNeed
-from backend.stat_contract import BATTING_CODES, YAHOO_ID_INDEX
+from backend.stat_contract import BATTING_CODES, PITCHING_CODES, SCORING_CATEGORY_CODES, YAHOO_ID_INDEX
 
 logger = logging.getLogger(__name__)
 
-
-# Filter YAHOO_ID_INDEX to only batting category stat_ids
-_BATTING_YAHOO_IDS = {sid: code for sid, code in YAHOO_ID_INDEX.items() if code in BATTING_CODES}
-YAHOO_STAT_MAP = dict(_BATTING_YAHOO_IDS)
+# P0 FIX: Use full YAHOO_ID_INDEX (both batting + pitching) instead of filtering to only batting
+# Previous: _BATTING_YAHOO_IDS = {sid: code for sid, code in YAHOO_ID_INDEX.items() if code in BATTING_CODES}
+# This caused opponent pitching stats (W, K, SV, ERA, WHIP) to be ignored, showing as 0.0
+YAHOO_STAT_MAP = dict(YAHOO_ID_INDEX)
 
 
 @dataclass
@@ -146,7 +146,9 @@ class CategoryTracker:
         """Calculate category needs from current stats."""
         needs = []
 
-        for category in sorted(BATTING_CODES):
+        # P0 FIX: Use all SCORING_CATEGORY_CODES (batting + pitching), not just BATTING_CODES
+        # Previous version only processed batting stats, ignoring opponent pitching data
+        for category in sorted(SCORING_CATEGORY_CODES):
             my_val = my_stats.get(category, 0.0)
             opp_val = opp_stats.get(category, 0.0)
 
