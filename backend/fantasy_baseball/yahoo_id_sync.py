@@ -38,12 +38,11 @@ def sync_yahoo_player_ids() -> int:
     try:
         # Get all players from league
         league_key = "mlb.l.72586"
-        league_national_key = f"{league_key}.l.{client.league_id}"
 
-        logger.info(f"Fetching players from {league_national_key}")
+        logger.info(f"Fetching players from {league_key}")
 
-        # Use league players endpoint
-        players_data = client.get_league_players(league_national_key)
+        # Use league rosters endpoint
+        players_data = client.get_league_rosters(league_key)
 
         if not players_data:
             logger.warning(f"No players returned from {league_national_key}")
