@@ -11,6 +11,22 @@ logger = logging.getLogger(__name__)
 
 ADVISORY_LOCK_ID = 100_034
 
+
+def _try_advisory_lock(db, lock_id: int) -> bool:
+    """
+    Try to acquire a PostgreSQL advisory lock.
+
+    Returns True if lock acquired, False if already held.
+    """
+    result = db.execute(text(f"SELECT pg_try_advisory_lock({lock_id})")).scalar()
+    return bool(result)
+
+
+def _release_advisory_lock(db, lock_id: int):
+    """Release a PostgreSQL advisory lock."""
+    db.execute(text(f"SELECT pg_advisory_unlock({lock_id})"))
+
+
 def sync_yahoo_player_ids() -> int:
     """
     Fetch all players from Yahoo fantasy league and map to BDL IDs.
@@ -108,19 +124,22 @@ def _lookup_bdl_id(db, name: str, team: str | None) -> int | None:
 
 def run_yahoo_id_sync_job():
     """Run Yahoo ID sync with advisory lock."""
-    from backend.services.daily_ingestion import try_advisory_lock, release_advisory_lock
+    db = SessionLocal()
 
-    if try_advisory_lock(ADVISORY_LOCK_ID):
-        try:
-            logger.info("Starting Yahoo ID sync job")
-            count = sync_yahoo_player_ids()
-            logger.info(f"Yahoo ID sync complete: {count} players")
-            return count
-        finally:
-            release_advisory_lock(ADVISORY_LOCK_ID)
-    else:
-        logger.warning("Yahoo ID sync already running")
-        return 0
+    try:
+        if _try_advisory_lock(db, ADVISORY_LOCK_ID):
+            try:
+                logger.info("Starting Yahoo ID sync job")
+                count = sync_yahoo_player_ids()
+                logger.info(f"Yahoo ID sync complete: {count} players")
+                return count
+            finally:
+                _release_advisory_lock(db, ADVISORY_LOCK_ID)
+        else:
+            logger.warning("Yahoo ID sync already running")
+            return 0
+    finally:
+        db.close()
 
 if __name__ == "__main__":
     import sys

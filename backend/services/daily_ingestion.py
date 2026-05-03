@@ -2449,7 +2449,7 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            from backend.services.scoring_engine import compute_league_zscores, compute_league_params
+            from backend.services.scoring_engine import compute_league_zscores, compute_league_params, apply_position_scarcity_adjustment
 
             as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
 
@@ -2488,6 +2488,10 @@ class DailyIngestionOrchestrator:
                         )
 
                     score_results = compute_league_zscores(rows, as_of_date, window_days)
+
+                    # P1: Apply position scarcity adjustments to scores
+                    position_map = self._build_position_map(as_of_date)
+                    score_results = apply_position_scarcity_adjustment(score_results, position_map)
 
                     # H2 fix: capture league-level means/stds from the 14d window
                     # for downstream simulation composite risk metrics.
@@ -4030,6 +4034,9 @@ class DailyIngestionOrchestrator:
                         upside_p75=sim_row.upside_p75 if sim_row else None,
                         backtest_composite_mae=bt_row.composite_mae if bt_row else None,
                         backtest_games=bt_row.games_played if bt_row else None,
+                        # P2: Injury risk modeling fields
+                        remaining_games=sim_row.remaining_games if sim_row else None,
+                        injury_risk_multiplier=sim_row.injury_risk_multiplier if sim_row else None,
                     ))
 
                 # Step 4: generate explanations (CPU-bound -- offload to thread pool)
@@ -6133,3 +6140,37 @@ class DailyIngestionOrchestrator:
             )
         except Exception as exc:
             logger.warning("Discord alert failed: %s", exc)
+
+    def _build_position_map(self, as_of_date: date) -> dict[int, list[str]]:
+        """
+        Build position mapping for position scarcity adjustment.
+
+        Queries PlayerProjection to get positions JSON for each player,
+        returns dict mapping player_id -> list of positions.
+
+        Args:
+            as_of_date: Date to query projections for
+
+        Returns:
+            Dictionary {player_id: ["SS", "OF", ...]} or empty dict if no data
+        """
+        try:
+            from backend.models import PlayerProjection
+
+            projections = self.db.query(PlayerProjection.positions).filter(
+                PlayerProjection.as_of_date == as_of_date
+            ).all()
+
+            position_map = {}
+            for proj in projections:
+                if proj.positions and proj.player_id:
+                    # Parse JSON positions list
+                    positions_list = proj.positions if isinstance(proj.positions, list) else []
+                    position_map[proj.player_id] = positions_list
+
+            logger.info(f"Built position map for {len(position_map)} players")
+            return position_map
+
+        except Exception as exc:
+            logger.warning(f"Could not build position map: {exc}")
+            return {}

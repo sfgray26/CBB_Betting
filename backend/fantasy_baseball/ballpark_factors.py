@@ -71,14 +71,17 @@ def load_park_factors():
     db = SessionLocal()
     try:
         rows = db.execute(text('''
-          SELECT team, handedness, value
+          SELECT park_name, run_factor, hr_factor, era_factor
           FROM park_factors
         ''')).fetchall()
 
-        _park_factor_cache = {
-            (row[0], row[1]): float(row[2])
-            for row in rows
-        }
+        # Build cache: {('run', 'COL'): 1.38, ('hr', 'COL'): 1.30, ('era', 'COL'): 1.28, ...}
+        _park_factor_cache = {}
+        for row in rows:
+            park_name = row[0]
+            _park_factor_cache[('run', park_name)] = float(row[1])
+            _park_factor_cache[('hr', park_name)] = float(row[2])
+            _park_factor_cache[('era', park_name)] = float(row[3])
 
         print(f"✅ Loaded {len(_park_factor_cache)} park factors into memory")
     finally:
@@ -105,16 +108,17 @@ def get_park_factor(team: str, factor: str = "run", _db_session=None) -> float:
     """
     from backend.models import ParkFactor, SessionLocal
 
+    # Check in-memory cache first (format: {('run', 'COL'): 1.38, ('hr', 'COL'): 1.30, ...})
+    cache_key = (factor, team)
+    if cache_key in _park_factor_cache:
+        return _park_factor_cache[cache_key]
+
     # Map ballpark_factors naming to ParkFactor column names
     factor_column_map = {"run": "run_factor", "hr": "hr_factor", "era": "era_factor"}
 
     column_name = factor_column_map.get(factor)
     if not column_name:
         return 1.0
-
-    # Check in-memory cache first (if loaded)
-    # Cache key format matches ParkFactor table structure
-    # We'll check DB first on cache miss, then populate cache
 
     # Try DB first
     db = _db_session or SessionLocal()

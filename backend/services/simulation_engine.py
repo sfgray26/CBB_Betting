@@ -150,6 +150,7 @@ class SimulationResult:
     remaining_games: int
     n_simulations: int          # always 1000
     player_type: str            # "hitter" | "pitcher" | "two_way" | "unknown"
+    injury_risk_multiplier: float = 1.0  # P2: Injury risk multiplier [0.70, 1.00]
 
     # Hitter stat percentiles (None for pure pitchers / unknown)
     # Counting stats
@@ -342,6 +343,104 @@ def _estimate_pitching_appearances(ip_per_appearance: float, remaining_team_game
     return max(1, int(round(remaining_team_games * RELIEVER_APPEARANCE_RATE)))
 
 
+def _calculate_injury_risk_multiplier(
+    bdl_player_id: int,
+    db: Session,
+    as_of_date: date
+) -> float:
+    """
+    Calculate injury risk multiplier based on recent IL stints.
+
+    P2 Injury Risk Modeling: Reduces projected ROS games for players with
+    recent IL stints to prevent unrealistic projections for injured players.
+
+    Formula:
+        injury_risk_multiplier = 1.0 - (IL_stint_penalty * recent_stint_factor)
+
+    Where:
+        - IL_stint_penalty = 0.15 per IL stint (max 0.30 total)
+        - recent_stint_factor = 1.0 if IL stint in last 30 days, 0.5 if 31-60 days ago
+
+    Examples:
+        - Healthy player (no IL stints): multiplier = 1.00
+        - 1 IL stint (active): multiplier = 0.85
+        - 2 IL stints (both active): multiplier = 0.70
+        - IL stint 45 days ago (returned): multiplier = 0.925
+
+    Args:
+        bdl_player_id: Player identifier
+        db: Database session
+        as_of_date: Reference date for calculating recency
+
+    Returns:
+        float: Multiplier in [0.70, 1.00] range
+               1.00 = no injury risk
+               0.70 = high injury risk (2+ IL stints)
+
+    P2 Scope Notes:
+        - Only IL statuses count (15-Day-IL, 60-Day-IL, 10-Day-IL)
+        - DTD (day-to-day) explicitly excluded
+        - IL stints older than 60 days ignored
+        - Age-based modeling deferred (P2.5 - requires birth_date field)
+        - Surgery tracking deferred (P3 - requires schema extension)
+    """
+    try:
+        # Import here to avoid circular dependency
+        from backend.models import IngestedInjury
+
+        # Look back 60 days for IL stints
+        from datetime import timedelta
+        cutoff_date = as_of_date - timedelta(days=60)
+
+        # Query for IL stints in the last 60 days
+        # Only count "IL" statuses (exclude DTD)
+        il_stints = db.query(IngestedInjury).filter(
+            IngestedInjury.bdl_player_id == bdl_player_id,
+            IngestedInjury.injury_date >= cutoff_date,
+            IngestedInjury.injury_status.like('%IL%')
+        ).all()
+
+        if not il_stints:
+            # No IL stints - no injury risk adjustment
+            return 1.0
+
+        # Calculate penalty based on recency and count
+        total_penalty = 0.0
+        today = as_of_date
+
+        for stint in il_stints:
+            # Calculate days since injury
+            days_since_injury = (today - stint.injury_date.date()).days
+
+            # Determine recency factor
+            if days_since_injury <= 30:
+                # Active or very recent IL stint - full penalty
+                recency_factor = 1.0
+            elif days_since_injury <= 60:
+                # Returned from IL within 30-60 days - half penalty
+                recency_factor = 0.5
+            else:
+                # Older than 60 days - ignore (shouldn't happen due to filter, but safety check)
+                continue
+
+            # Add penalty for this stint
+            total_penalty += 0.15 * recency_factor
+
+        # Cap total penalty at 0.30 (max 30% reduction)
+        total_penalty = min(total_penalty, 0.30)
+
+        # Calculate and return multiplier
+        multiplier = 1.0 - total_penalty
+
+        # Ensure multiplier is in valid range [0.70, 1.00]
+        return max(0.70, min(1.00, multiplier))
+
+    except Exception:
+        # Database error or other issue - fail safely with no adjustment
+        # This ensures simulation doesn't break due to injury lookup failure
+        return 1.0
+
+
 def _calculate_player_remaining_games(
     bdl_player_id: int,
     player_type: str,
@@ -401,6 +500,15 @@ def _calculate_player_remaining_games(
         # Calculate remaining games
         remaining = MLB_SEASON_GAMES - games_played
 
+        # P2: Apply injury risk multiplier
+        # Reduces projected ROS games for players with recent IL stints
+        injury_multiplier = _calculate_injury_risk_multiplier(
+            bdl_player_id=bdl_player_id,
+            db=db,
+            as_of_date=as_of_date
+        )
+        remaining = int(remaining * injury_multiplier)
+
         # For pitchers, convert to starts/appearances
         if player_type == "pitcher":
             # SP assumption: ~1 start every 5 team games
@@ -427,6 +535,7 @@ def _calculate_player_remaining_games(
 def simulate_player(
     rolling_row,
     remaining_games: int = HITTER_GAMES_FALLBACK,
+    injury_risk_multiplier: float = 1.0,
     n_simulations: int = N_SIMULATIONS,
     seed: Optional[int] = None,
     league_means: Optional[dict] = None,
@@ -490,6 +599,7 @@ def simulate_player(
         remaining_games=remaining_games,
         n_simulations=n_simulations,
         player_type=player_type,
+        injury_risk_multiplier=injury_risk_multiplier,
     )
 
     if player_type == "unknown":
@@ -829,9 +939,21 @@ def simulate_all_players(
         else:
             player_remaining = remaining_games
 
+        # P2: Calculate injury risk multiplier for narrative purposes
+        # Only calculate if we have DB access (remaining_games was None case)
+        if db is not None and (as_of_date or row.as_of_date):
+            injury_multiplier = _calculate_injury_risk_multiplier(
+                bdl_player_id=row.bdl_player_id,
+                db=db,
+                as_of_date=as_of_date or row.as_of_date,
+            )
+        else:
+            injury_multiplier = 1.0
+
         r = simulate_player(
             row,
             remaining_games=player_remaining,
+            injury_risk_multiplier=injury_multiplier,
             n_simulations=n_simulations,
             seed=None,
             league_means=league_means,

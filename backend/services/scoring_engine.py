@@ -96,6 +96,127 @@ _CATEGORY_WEIGHTS: dict[str, float] = {
     "z_era": 0.9, "z_whip": 0.9, "z_k_per_9": 0.8,
 }
 
+# ---------------------------------------------------------------------------
+# Position Scarcity Multipliers (P1 Fantasy Baseball Enhancement)
+# ---------------------------------------------------------------------------
+
+# Position scarcity based on 12-team league replacement levels
+# Scarcity = how hard it is to find a replacement player off waivers
+# Higher multiplier = scarcer position = player gets value boost
+_POSITION_SCARCITY_MULTIPLIERS: dict[str, float] = {
+    # Hitters (scarcest to deepest)
+    "SS": 1.15,   # Shortstop is scarcest middle infield position
+    "2B": 1.10,   # Second base is scarce
+    "C": 1.20,    # Catcher is scarcest (defensive demands limit pool)
+    "3B": 1.05,   # Third base is moderately scarce
+    "OF": 1.00,   # Outfield is baseline (deep position pool)
+    "1B": 0.95,   # First base is deepest (many DH types play here)
+    "DH": 0.90,    # Designated hitter has no defensive value
+    # Pitchers
+    "SP": 1.00,   # Starting pitcher baseline
+    "RP": 1.00,   # Relief pitcher baseline
+}
+
+def _get_position_scarcity_multiplier(primary_position: Optional[str]) -> float:
+    """
+    Return position scarcity multiplier for fantasy baseball value adjustment.
+
+    Players at scarcer positions (SS, C, 2B) receive a value boost because
+    replacement players are harder to find on waivers. This corrects the system
+    tendency to rank Nick Castellanos (OF) equal to Trea Turner (SS) when they have
+    identical stats.
+
+    Args:
+        primary_position: Player's primary position ("SS", "OF", "C", etc.)
+
+    Returns:
+        Multiplier 0.90-1.20. Returns 1.0 for unknown/None positions.
+    """
+    if not primary_position:
+        return 1.0
+
+    # Handle outfield positions (LF, CF, RF) as "OF"
+    if primary_position in ["LF", "CF", "RF"]:
+        primary_position = "OF"
+
+    return _POSITION_SCARCITY_MULTIPLIERS.get(primary_position, 1.0)
+
+
+def apply_position_scarcity_adjustment(
+    results: list[PlayerScoreResult],
+    position_map: dict[int, list[str]]  # player_id -> ["SS", "OF", ...]
+) -> list[PlayerScoreResult]:
+    """
+    Apply position scarcity multipliers to player scores.
+
+    P1 Fantasy Baseball Enhancement: Players at scarcer positions (SS, C, 2B)
+    receive a value boost because replacement players are harder to find.
+
+    Args:
+        results: List of PlayerScoreResult objects from compute_league_zscores
+        position_map: Dictionary mapping player_id to list of positions
+
+    Returns:
+        Same list with position_adjusted_score and position_scarcity_multiplier populated
+    """
+    for result in results:
+        positions = position_map.get(result.bdl_player_id, [])
+
+        # Determine primary_position (prioritize scarcest positions)
+        primary_position = _determine_primary_position(positions)
+        result.primary_position = primary_position
+
+        # Calculate multiplier
+        multiplier = _get_position_scarcity_multiplier(primary_position)
+        result.position_scarcity_multiplier = multiplier
+
+        # Apply adjustment (cap at 100 to prevent scores > 100)
+        result.position_adjusted_score = min(100.0, result.score_0_100 * multiplier)
+
+    return results
+
+
+def _determine_primary_position(positions: list[str]) -> Optional[str]:
+    """
+    Determine primary position from list of eligible positions.
+
+    Prioritizes scarcest positions for fantasy baseball value assessment:
+    C > SS > 2B > 3B > OF > 1B > DH (for hitters)
+    SP > RP (for pitchers)
+
+    Args:
+        positions: List of position strings ["SS", "OF", "C", etc.]
+
+    Returns:
+        Single primary position string or None if empty list
+    """
+    if not positions:
+        return None
+
+    # Define position priority (scarcest first)
+    hitter_priority = ["C", "SS", "2B", "3B", "OF", "1B", "DH"]
+    pitcher_priority = ["SP", "RP"]
+
+    # Check if any hitting positions exist
+    has_hitting = any(p in hitter_priority for p in positions)
+    has_pitching = any(p in pitcher_priority for p in positions)
+
+    if has_hitting:
+        # Return scarcest hitting position
+        for pos in hitter_priority:
+            if pos in positions:
+                return pos
+    elif has_pitching:
+        # Return scarcest pitching position
+        for pos in pitcher_priority:
+            if pos in positions:
+                return pos
+
+    # Fallback to first position or OF for outfielders
+    if "OF" in positions:
+        return "OF"
+    return positions[0] if positions else None
+
 
 # ---------------------------------------------------------------------------
 # Result dataclass
@@ -107,6 +228,7 @@ class PlayerScoreResult:
     as_of_date: date
     window_days: int
     player_type: str          # "hitter" | "pitcher" | "two_way"
+    primary_position: Optional[str] = None  # "SS", "OF", "C", etc. for position scarcity
     games_in_window: int
 
     # Per-category Z-scores (None if category not applicable or < MIN_SAMPLE)
@@ -131,8 +253,11 @@ class PlayerScoreResult:
 
     composite_z: float = 0.0   # mean of all applicable non-None Z-scores
     score_0_100: float = 50.0  # percentile rank 0-100 within player_type
-    confidence:  float = 0.0   # games_in_window / window_days, capped at 1.0
+    confidence: float = 0.0   # games_in_window / window_days, capped at 1.0
 
+    # P1: Position scarcity adjustment
+    position_adjusted_score: float = 0.0  # score_0_100 * position_scarcity_multiplier
+    position_scarcity_multiplier: float = 1.0  # multiplier based on primary_position
 
 # ---------------------------------------------------------------------------
 # Internal helpers

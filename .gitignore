@@ -101,3 +101,4 @@ reports/GEMINI_YAHOO_PIPELINE_PAYLOADS.
 .kimi/
 kimi-mcp-config.json
 mcp-shared-config.json
+.env.backup
