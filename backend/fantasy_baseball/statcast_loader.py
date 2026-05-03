@@ -276,7 +276,11 @@ def _load_from_db(season: int = 2026) -> tuple:
                     spm.whiff_percent,
                     spm.k_percent,
                     (
-                        SELECT CASE WHEN SUM(sp.ip) > 0 THEN ROUND(SUM(sp.er)::numeric / SUM(sp.ip) * 9, 2) END
+                        SELECT CASE
+                            WHEN SUM(sp.ip) > 0
+                            THEN ROUND((SUM(sp.er)::numeric / NULLIF(SUM(sp.ip), 0)) * 9, 2)
+                            ELSE NULL
+                        END
                         FROM statcast_performances sp
                         WHERE sp.player_id = spm.mlbam_id AND sp.ip > 0
                     ) AS computed_era
