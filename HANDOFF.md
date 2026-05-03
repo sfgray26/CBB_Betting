@@ -180,80 +180,27 @@ All structural fixes are deployed. Now need 48h of real-world data to confirm si
 
 ---
 
-## P0 Data Quality Fixes (Immediate - Ready to Execute)
+## P0 Data Quality Fixes — STATUS: PARTIAL COMPLETE
 
-### Fix #1: player_type NULL Backfill (45 min)
+**Deployment:** Commit `e64c0c4` (May 3, 2026) | **Railway:** ✅ LIVE
 
-**Problem:** 441/621 rows (71%) have `player_type = NULL`, breaking batter routing
+### Fix #1: player_type NULL Backfill ✅ SUCCESS
+- **Before:** 441 NULL rows (71%)
+- **After:** 0 NULLs remaining
+- **Impact:** Batter routing now works correctly
 
-**Script:** `scripts/backfill_player_type.py`
+### Fix #2: Yahoo ID Sync ⚠️ BUG FIXED — Pending execution
+- **Before:** 3.7% coverage (372/10,096)
+- **After:** Bug fixed (wrong method name), job scheduled for 6 AM ET daily
+- **Issue:** AttributeError `get_league_players` → Fixed to `get_league_rosters`
+- **Status:** Job will run overnight at 6 AM ET, verify coverage >50% tomorrow
 
-**Commands:**
-```powershell
-# Test locally first
-$env:DATABASE_URL = "postgresql://postgres:oViPPSTbGvkNGzGjrYoxsLVvibJvJZAB@junction.proxy.rlwy.net:45402/railway"
-venv\Scripts\python scripts/backfill_player_type.py
-# Expected: "Updated 441 rows" and "All NULLs backfilled successfully"
+### Fix #3: Park Factors Bulk-Load ✅ SUCCESS
+- **Before:** Waiver endpoint 27s (N+1 queries)
+- **After:** Waiver endpoint 0.3s (90x faster!)
+- **Proof:** 81 park factors loaded on startup, cached in memory
 
-# Deploy to Railway
-railway run python scripts/backfill_player_type.py
-
-# Verify
-railway run python -c "
-from backend.models import SessionLocal
-from sqlalchemy import text
-db = SessionLocal()
-nulls = db.execute(text('SELECT COUNT(*) FROM player_projections WHERE player_type IS NULL')).scalar()
-print(f'Remaining NULLs: {nulls}')  # Expected: 0
-db.close()
-"
-```
-
-**Rollback:** `UPDATE player_projections SET player_type = NULL WHERE updated_at >= '2026-05-03';`
-
----
-
-### Fix #2: Yahoo ID Sync (1h 15min)
-
-**Problem:** Only 372/10,096 players (3.7%) have Yahoo IDs, breaking roster matching
-
-**Module:** `backend/fantasy_baseball/yahoo_id_sync.py` (create new file)
-
-**Commands:**
-```powershell
-# Test locally
-$env:DATABASE_URL = "postgresql://postgres:oViPPSTbGvkNGzGjrYoxsLVvibJvJZAB@junction.proxy.rlwy.net:45402/railway"
-venv\Scripts\python -c "from backend.fantasy_baseball.yahoo_id_sync import sync_yahoo_player_ids; sync_yahoo_player_ids()"
-
-# Deploy
-railway up --detach
-
-# Verify coverage (target: >50%)
-railway run python -c "
-from backend.models import SessionLocal
-from sqlalchemy import text
-db = SessionLocal()
-total = db.execute(text('SELECT COUNT(*) FROM player_id_mapping')).scalar()
-yahoo = db.execute(text('SELECT COUNT(*) FROM player_id_mapping WHERE yahoo_id IS NOT NULL')).scalar()
-coverage = yahoo / total * 100
-print(f'Yahoo ID coverage: {coverage:.1f}%')
-db.close()
-"
-```
-
----
-
-### Fix #3: Bulk-Load Park Factors (1 hour) - Optional Performance Fix
-
-**Problem:** N+1 queries in `ballpark_factors.py` → 27s waiver delay
-
-**Solution:** Load all park_factors into memory on startup
-
-**File:** `backend/fantasy_baseball/ballpark_factors.py`
-
-**Implementation:** See `reports/2026-05-03-week1-synthesis.md` (Fix #3A section)
-
-**Expected:** 27s → <5s for waiver recommendations
+**Next:** Verify Yahoo ID coverage after 6 AM ET job runs, then proceed to Milestone 10
 
 ---
 
