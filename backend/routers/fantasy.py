@@ -2142,8 +2142,8 @@ async def get_waiver_recommendations(
                         _my_matchup_teams = [_my_tuple, _opp_tuple]
                     break
 
+            _sid_map: dict = dict(_YAHOO_STAT_FALLBACK)
             if _my_matchup_teams:
-                _sid_map: dict = dict(_YAHOO_STAT_FALLBACK)
 
                 def _rec_stats_dict(raw_stats_list: list) -> dict:
                     out: dict = {}
@@ -2255,9 +2255,9 @@ async def get_waiver_recommendations(
                 z_score = float(z_score[0]) if z_score else 0.0
             else:
                 z_score = float(z_score) if z_score is not None else 0.0
+            cat_scores = bp.get("cat_scores") or {}
             need_score = z_score
             if _need_vector is not None:
-                cat_scores = bp.get("cat_scores") or {}
                 if cat_scores:
                     try:
                         from backend.fantasy_baseball.category_aware_scorer import (
@@ -2267,6 +2267,64 @@ async def get_waiver_recommendations(
                         need_score = _cns(cat_scores, z_score, category_deficits, n_cats)
                     except Exception:
                         pass  # fallback to z_score if scorer unavailable
+
+            # Translate raw Yahoo stat_ids → display names using _sid_map.
+            # stats dict is populated by get_free_agents() via get_players_stats_batch().
+            _raw_stats: dict = p.get("stats") or {}
+            _translated_stats: dict = {}
+            for _sk, _sv in _raw_stats.items():
+                _tk = _sid_map.get(_sk, _sk)
+                if isinstance(_tk, str) and _tk.isdigit():
+                    continue
+                _translated_stats[_tk] = _sv
+
+            # Statcast enrichment — mirrors _to_waiver_player in the waiver list endpoint.
+            _fa_is_pitcher = positions[0] in ("SP", "RP", "P") if positions else False
+            _sc_sigs: list = []
+            _sc_dict: Optional[dict] = None
+            try:
+                from backend.fantasy_baseball.statcast_loader import (
+                    get_statcast_batter as _get_sc_bat,
+                    get_statcast_pitcher as _get_sc_pit,
+                )
+                if not _fa_is_pitcher:
+                    _sb_sc = _get_sc_bat(name)
+                    if _sb_sc:
+                        _sc_dict = {
+                            "xwoba": round(_sb_sc.xwoba, 3) if _sb_sc.xwoba else None,
+                            "xwoba_diff": round(_sb_sc.xwoba_diff, 3) if _sb_sc.xwoba_diff is not None else None,
+                            "barrel_pct": round(_sb_sc.barrel_pct, 1) if _sb_sc.barrel_pct is not None else None,
+                            "exit_velo_avg": round(_sb_sc.exit_velo_avg, 1) if _sb_sc.exit_velo_avg is not None else None,
+                            "hard_hit_pct": round(_sb_sc.hard_hit_pct, 1) if _sb_sc.hard_hit_pct is not None else None,
+                            "wrc_plus": round(_sb_sc.wrc_plus, 0) if _sb_sc.wrc_plus is not None else None,
+                        }
+                else:
+                    _sp_sc = _get_sc_pit(name)
+                    if _sp_sc:
+                        _sc_dict = {
+                            "xera": round(_sp_sc.xera, 2) if _sp_sc.xera is not None else None,
+                            "xera_diff": round(_sp_sc.xera_diff, 2) if _sp_sc.xera_diff is not None else None,
+                            "stuff_plus": round(_sp_sc.stuff_plus, 0) if _sp_sc.stuff_plus is not None else None,
+                            "whiff_pct": round(_sp_sc.whiff_pct, 1) if _sp_sc.whiff_pct is not None else None,
+                            "barrel_allowed_pct": round(_sp_sc.barrel_allowed_pct, 1) if _sp_sc.barrel_allowed_pct is not None else None,
+                            "xwoba_allowed": round(_sp_sc.xwoba_allowed, 3) if _sp_sc.xwoba_allowed is not None else None,
+                        }
+                if name:
+                    _sc_sigs, _ = build_statcast_signals(name, _fa_is_pitcher, p.get("percent_owned", 100.0))
+            except Exception:
+                pass
+
+            # hot_cold derived from category z-scores
+            _hc: Optional[str] = None
+            if cat_scores:
+                try:
+                    _contribs = {k: float(v) for k, v in cat_scores.items() if isinstance(v, (int, float))}
+                    if _contribs:
+                        _avg = sum(_contribs.values()) / len(_contribs)
+                        _hc = "HOT" if _avg > 0.4 else ("COLD" if _avg < -0.3 else None)
+                except Exception:
+                    pass
+
             # Populate quality_score for pitcher FA candidates only
             is_pitcher_fa = positions and positions[0] in ("SP", "RP", "P")
             qs = _pitcher_quality.get(name.lower()) if is_pitcher_fa else None
@@ -2276,10 +2334,14 @@ async def get_waiver_recommendations(
                 team=p.get("team") or "",
                 position=positions[0] if positions else "?",
                 need_score=round(need_score, 3),
-                category_contributions=bp.get("cat_scores", {}) if bp else {},
+                category_contributions=cat_scores,
                 owned_pct=p.get("percent_owned", 0.0),
                 starts_this_week=p.get("starts_this_week", 0),
                 quality_score=qs,
+                stats=_translated_stats,
+                statcast_signals=_sc_sigs,
+                statcast_stats=_sc_dict,
+                hot_cold=_hc,
             )
 
         scored_fas = sorted(

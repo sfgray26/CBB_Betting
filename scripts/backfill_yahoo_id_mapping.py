@@ -75,7 +75,7 @@ def lookup_bdl_id_by_name(session: Session, normalized_name: str) -> Optional[in
         text("""
             SELECT player_id
             FROM player_projections
-            WHERE LOWER(REPLACE(player_name, ' ', '-') = :normalized_name
+            WHERE LOWER(player_name) = :normalized_name
             LIMIT 1
         """),
         {"normalized_name": normalized_name}
@@ -97,39 +97,66 @@ def upsert_yahoo_player(
     bdl_id: Optional[int] = None,
     normalized_name: Optional[str] = None
 ) -> bool:
-    """Upsert a Yahoo player into player_id_mapping."""
+    """Upsert a Yahoo player into player_id_mapping.
 
+    Strategy (handles both unique constraints — yahoo_key and bdl_id):
+    1. If bdl_id is provided, UPDATE the row that already has this bdl_id
+       to add/overwrite yahoo fields (handles pre-existing BDL-sourced rows).
+    2. If no row matched by bdl_id (rowcount==0), INSERT with ON CONFLICT
+       (yahoo_key) DO UPDATE to handle duplicate position-bucket fetches.
+    Both paths recover via session.rollback() on failure so the session
+    stays usable for subsequent players.
+    """
+    norm = normalized_name or normalize_name(player_name)
+    params = {
+        "yahoo_key": player_key,
+        "yahoo_id": yahoo_id,
+        "bdl_id": bdl_id,
+        "full_name": player_name,
+        "normalized_name": norm,
+    }
     try:
-        # Check if row exists
-        existing = session.query(PlayerIDMapping).filter(
-            PlayerIDMapping.yahoo_id == yahoo_id
-        ).first()
-
-        if existing:
-            # Update existing row
-            existing.source = 'yahoo'
-            existing.updated_at = text('NOW()')
-            if bdl_id and not existing.bdl_id:
-                existing.bdl_id = bdl_id
-            if normalized_name and not existing.normalized_name:
-                existing.normalized_name = normalized_name
-            logger.debug(f"Updated existing yahoo_id={yahoo_id}")
-        else:
-            # Insert new row
-            mapping = PlayerIDMapping(
-                yahoo_id=yahoo_id,
-                yahoo_key=player_key,
-                bdl_id=bdl_id,
-                full_name=player_name,
-                normalized_name=normalized_name or normalize_name(player_name),
-                source='yahoo'
+        # Step 1: if we have a bdl_id, try to claim an existing row by bdl_id
+        if bdl_id is not None:
+            result = session.execute(
+                text("""
+                    UPDATE player_id_mapping SET
+                        yahoo_key       = :yahoo_key,
+                        yahoo_id        = :yahoo_id,
+                        full_name       = COALESCE(:full_name, full_name),
+                        normalized_name = COALESCE(:normalized_name, normalized_name),
+                        source          = 'yahoo',
+                        updated_at      = NOW()
+                    WHERE bdl_id = :bdl_id
+                """),
+                params
             )
-            session.add(mapping)
-            logger.debug(f"Inserted new yahoo_id={yahoo_id}")
+            if result.rowcount > 0:
+                logger.debug(f"Updated by bdl_id={bdl_id} → yahoo_key={player_key}")
+                return True
 
+        # Step 2: INSERT, handling conflicts on yahoo_key (duplicate positions)
+        session.execute(
+            text("""
+                INSERT INTO player_id_mapping
+                    (yahoo_key, yahoo_id, bdl_id, full_name, normalized_name, source, created_at, updated_at)
+                VALUES
+                    (:yahoo_key, :yahoo_id, :bdl_id, :full_name, :normalized_name, 'yahoo', NOW(), NOW())
+                ON CONFLICT (yahoo_key) DO UPDATE SET
+                    yahoo_id        = EXCLUDED.yahoo_id,
+                    full_name       = EXCLUDED.full_name,
+                    normalized_name = EXCLUDED.normalized_name,
+                    bdl_id          = COALESCE(EXCLUDED.bdl_id, player_id_mapping.bdl_id),
+                    source          = 'yahoo',
+                    updated_at      = NOW()
+            """),
+            params
+        )
+        logger.debug(f"Inserted/updated via yahoo_key={player_key}")
         return True
     except Exception as e:
-        logger.error(f"Failed to upsert yahoo_id={yahoo_id}: {e}")
+        logger.error(f"Failed to upsert yahoo_key={player_key}: {e}")
+        session.rollback()   # reset aborted transaction so session stays usable
         return False
 
 def fetch_and_process_rosters(client: ResilientYahooClient, session: Session, batch_size: int = 100) -> int:
@@ -144,7 +171,8 @@ def fetch_and_process_rosters(client: ResilientYahooClient, session: Session, ba
 
         for player_dict in roster:
             player_key = player_dict.get('player_key')
-            player_name = player_dict.get('name', {}).get('full', '')
+            _name_raw = player_dict.get('name', '')
+            player_name = _name_raw if isinstance(_name_raw, str) else (_name_raw.get('full', '') if isinstance(_name_raw, dict) else '')
 
             if not player_key:
                 continue
@@ -201,7 +229,8 @@ def fetch_and_process_free_agents(client: ResilientYahooClient, session: Session
 
                 for player_dict in players:
                     player_key = player_dict.get('player_key')
-                    player_name = player_dict.get('name', {}).get('full', '')
+                    _name_raw = player_dict.get('name', '')
+                    player_name = _name_raw if isinstance(_name_raw, str) else (_name_raw.get('full', '') if isinstance(_name_raw, dict) else '')
 
                     if not player_key:
                         continue
@@ -301,8 +330,6 @@ def run(dry_run: bool = False) -> None:
             conn.execute(text("SELECT pg_advisory_unlock(100017)"))
             sys.exit(1)
 
-    # Final lock release
-    conn.execute(text("SELECT pg_advisory_unlock(100017)"))
     print("Lock released.")
 
     # Verify results

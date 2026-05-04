@@ -31,9 +31,9 @@ def test_handler_rejects_negative_mcmc_win_prob_gain():
         / "fantasy.py"
     ).read_text(encoding="utf-8")
 
-    assert '_mcmc.get("mcmc_enabled") and _mcmc.get("win_prob_gain", 0.0) < 0' in src, (
+    assert '_mcmc.get("mcmc_enabled") and _mcmc.get("win_prob_gain", 0.0) <= 0' in src, (
         "fantasy waiver recommendations handler must skip MCMC-enabled "
-        "moves with negative win_prob_gain"
+        "moves with non-positive win_prob_gain (zero or negative gain is not actionable)"
     )
 
 
