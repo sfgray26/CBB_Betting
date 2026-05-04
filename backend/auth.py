@@ -36,7 +36,14 @@ def get_valid_api_keys() -> Dict[str, str]:
     return keys
 
 
-VALID_API_KEYS = get_valid_api_keys()
+_VALID_API_KEYS: Dict[str, str] | None = None
+
+
+def _get_cached_keys() -> Dict[str, str]:
+    global _VALID_API_KEYS
+    if _VALID_API_KEYS is None:
+        _VALID_API_KEYS = get_valid_api_keys()
+    return _VALID_API_KEYS
 
 
 async def verify_api_key(api_key: str = Security(API_KEY_HEADER)) -> str:
@@ -55,14 +62,15 @@ async def verify_api_key(api_key: str = Security(API_KEY_HEADER)) -> str:
             headers={"WWW-Authenticate": "ApiKey"},
         )
     
-    if api_key not in VALID_API_KEYS:
+    valid_keys = _get_cached_keys()
+    if api_key not in valid_keys:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key",
             headers={"WWW-Authenticate": "ApiKey"},
         )
     
-    return VALID_API_KEYS[api_key]
+    return valid_keys[api_key]
 
 
 async def verify_admin_api_key(user: str = Security(verify_api_key)) -> str:
