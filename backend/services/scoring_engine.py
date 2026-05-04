@@ -22,6 +22,7 @@ Hard stops
 - No position-level Z-scores (deferred -- position not yet in schema).
 - No datetime.utcnow() usage.
 """
+from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
@@ -228,8 +229,8 @@ class PlayerScoreResult:
     as_of_date: date
     window_days: int
     player_type: str          # "hitter" | "pitcher" | "two_way"
-    primary_position: Optional[str] = None  # "SS", "OF", "C", etc. for position scarcity
     games_in_window: int
+    primary_position: Optional[str] = None  # "SS", "OF", "C", etc. for position scarcity
 
     # Per-category Z-scores (None if category not applicable or < MIN_SAMPLE)
     # Batting

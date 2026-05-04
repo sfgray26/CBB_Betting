@@ -101,9 +101,9 @@ class ExplanationResult:
     summary: str                        # one-sentence headline
     factors: list                       # list[ExplanationFactor], ranked by abs(weight) desc
     confidence_narrative: str
-    risk_narrative: Optional[str]
-    track_record_narrative: Optional[str]
-    injury_risk_narrative: Optional[str]  # P2: Injury risk narrative
+    risk_narrative: Optional[str] = None
+    track_record_narrative: Optional[str] = None
+    injury_risk_narrative: Optional[str] = None  # P2: Injury risk narrative
 
 
 # ---------------------------------------------------------------------------
