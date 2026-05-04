@@ -21,26 +21,27 @@ def verify_opponent_stats():
     print(f"Timestamp: {datetime.now().isoformat()}")
     print()
 
-    # Call the daily briefing endpoint
+    # Call the daily briefing endpoint (requires date parameter)
+    today = datetime.now().strftime("%Y-%m-%d")
     try:
         response = requests.get(
-            "https://fantasy-app-production-5079.up.railway.app/api/fantasy/briefing",
+            f"https://fantasy-app-production-5079.up.railway.app/api/fantasy/briefing/{today}",
             timeout=30
         )
         response.raise_for_status()
         data = response.json()
     except Exception as e:
-        print(f"❌ FAILED to fetch daily briefing: {e}")
+        print(f"FAILED to fetch daily briefing: {e}")
         return False
 
     # Check category standings
     categories = data.get("categories", [])
 
     if not categories:
-        print("❌ FAILED: No categories in response")
+        print("FAILED: No categories in response")
         return False
 
-    print(f"✅ Found {len(categories)} categories in daily briefing")
+    print(f"OK: Found {len(categories)} categories in daily briefing")
     print()
 
     # Verify each category has opponent data
@@ -52,7 +53,7 @@ def verify_opponent_stats():
         opponent_val = cat.get("opponent", 0.0)
         current_val = cat.get("current", 0.0)
 
-        status = "❌" if opponent_val == 0.0 else "✅"
+        status = "FAIL" if opponent_val == 0.0 else "OK"
         zero_opponent_count += 1 if opponent_val == 0.0 else 0
         non_zero_opponent_count += 1 if opponent_val > 0.0 else 0
 
@@ -69,7 +70,7 @@ def verify_opponent_stats():
     pitching_found = [cat for cat in categories if cat.get("category") in pitching_cats]
 
     if len(pitching_found) == 0:
-        print("❌ FAILED: No pitching categories found")
+        print("FAILED: No pitching categories found")
         return False
 
     print("=== Pitching Categories (main fix) ===")
@@ -79,16 +80,16 @@ def verify_opponent_stats():
         opponent_val = cat.get("opponent", 0.0)
         is_zero = opponent_val == 0.0
         all_pitching_non_zero = all_pitching_non_zero and not is_zero
-        status = "❌" if is_zero else "✅"
+        status = "FAIL" if is_zero else "OK"
         print(f"{status} {category_name}: opponent={opponent_val}")
 
     print()
     if all_pitching_non_zero:
-        print("🎉 SUCCESS: All pitching categories have non-zero opponent values!")
-        print("✅ P0 fix verified - opponent stats pipeline working correctly")
+        print("SUCCESS: All pitching categories have non-zero opponent values!")
+        print("P0 fix verified - opponent stats pipeline working correctly")
         return True
     else:
-        print("⚠️  PARTIAL: Some pitching categories still show opponent=0.0")
+        print("PARTIAL: Some pitching categories still show opponent=0.0")
         print("This may be expected if opponent team has no data for those categories")
         return True  # Still consider it a pass if the fix is working
 

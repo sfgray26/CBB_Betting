@@ -511,6 +511,151 @@ def test_simulate_all_players_mixed_types():
 
 
 # ===========================================================================
+# P2: Injury Risk Modeling Tests
+# ===========================================================================
+
+def test_injury_risk_multiplier_no_injuries(db_session):
+    """Player with no IL stints should have multiplier = 1.0."""
+    from backend.services.simulation_engine import _calculate_injury_risk_multiplier
+    from datetime import date
+
+    multiplier = _calculate_injury_risk_multiplier(
+        bdl_player_id=999,  # Non-existent player ID
+        db=db_session,
+        as_of_date=date(2026, 5, 3),
+    )
+    assert multiplier == 1.0  # No injuries = no reduction
+
+
+def test_injury_risk_multiplier_one_il_stint_active(db_session):
+    """Player with 1 active IL stint should have multiplier = 0.85."""
+    from backend.services.simulation_engine import _calculate_injury_risk_multiplier
+    from backend.models import IngestedInjury
+    from datetime import date, timedelta
+
+    # Create a test IL stint from 5 days ago
+    injury = IngestedInjury(
+        bdl_player_id=12345,
+        injury_date=date(2026, 5, 3) - timedelta(days=5),
+        injury_status="15-Day-IL",
+        injury_type="Hamstring",
+        raw_payload={},
+    )
+    db_session.add(injury)
+    db_session.commit()
+
+    multiplier = _calculate_injury_risk_multiplier(
+        bdl_player_id=12345,
+        db=db_session,
+        as_of_date=date(2026, 5, 3),
+    )
+    # 1 stint × 0.15 penalty × 1.0 recency (last 30 days) = 0.85
+    assert multiplier == 0.85
+
+
+def test_injury_risk_multiplier_two_il_stints_active(db_session):
+    """Player with 2 active IL stints should have multiplier = 0.70 (capped)."""
+    from backend.services.simulation_engine import _calculate_injury_risk_multiplier
+    from backend.models import IngestedInjury
+    from datetime import date, timedelta
+
+    # Create 2 test IL stints
+    injury1 = IngestedInjury(
+        bdl_player_id=23456,
+        injury_date=date(2026, 5, 3) - timedelta(days=10),
+        injury_status="60-Day-IL",
+        injury_type="Knee",
+        raw_payload={},
+    )
+    injury2 = IngestedInjury(
+        bdl_player_id=23456,
+        injury_date=date(2026, 5, 3) - timedelta(days=25),
+        injury_status="10-Day-IL",
+        injury_type="Ankle",
+        raw_payload={},
+    )
+    db_session.add(injury1)
+    db_session.add(injury2)
+    db_session.commit()
+
+    multiplier = _calculate_injury_risk_multiplier(
+        bdl_player_id=23456,
+        db=db_session,
+        as_of_date=date(2026, 5, 3),
+    )
+    # 2 stints × 0.15 = 0.30 penalty, capped at 0.30, so multiplier = 0.70
+    assert multiplier == 0.70
+
+
+def test_injury_risk_multiplier_il_stint_45_days_ago(db_session):
+    """Player with IL stint 45 days ago should have multiplier = 0.925."""
+    from backend.services.simulation_engine import _calculate_injury_risk_multiplier
+    from backend.models import IngestedInjury
+    from datetime import date, timedelta
+
+    # Create a test IL stint from 45 days ago
+    injury = IngestedInjury(
+        bdl_player_id=34567,
+        injury_date=date(2026, 5, 3) - timedelta(days=45),
+        injury_status="15-Day-IL",
+        injury_type="Shoulder",
+        raw_payload={},
+    )
+    db_session.add(injury)
+    db_session.commit()
+
+    multiplier = _calculate_injury_risk_multiplier(
+        bdl_player_id=34567,
+        db=db_session,
+        as_of_date=date(2026, 5, 3),
+    )
+    # 1 stint × 0.15 penalty × 0.5 recency (31-60 days) = 0.075 penalty
+    # multiplier = 1.0 - 0.075 = 0.925
+    assert abs(multiplier - 0.925) < 0.001  # Allow for floating point precision
+
+
+def test_remaining_games_reduced_by_injury_risk(db_session):
+    """Integration test: verify remaining_games is reduced when injury multiplier < 1.0."""
+    from backend.services.simulation_engine import simulate_player, _calculate_injury_risk_multiplier
+    from datetime import date
+
+    # Create a test player with an IL stint
+    from backend.models import IngestedInjury
+    injury = IngestedInjury(
+        bdl_player_id=45678,
+        injury_date=date(2026, 5, 3) - timedelta(days=10),
+        injury_status="15-Day-IL",
+        injury_type="Hamstring",
+        raw_payload={},
+    )
+    db_session.add(injury)
+    db_session.commit()
+
+    # Mock player with 50 games played
+    mock_player = _make_hitter(bdl_player_id=45678, games_in_window=10, w_ab=40.0)
+
+    # Calculate injury multiplier
+    injury_multiplier = _calculate_injury_risk_multiplier(
+        bdl_player_id=45678,
+        db=db_session,
+        as_of_date=date(2026, 5, 3),
+    )
+
+    # Simulate with injury multiplier
+    result = simulate_player(
+        mock_player,
+        remaining_games=112,  # 162 - 50 games played
+        injury_risk_multiplier=injury_multiplier,
+        n_simulations=100,
+        seed=42,
+    )
+
+    # Expected: 112 × 0.85 = 95.2 → 95 games (int rounds down)
+    assert result.remaining_games == 95
+    assert result.injury_risk_multiplier == 0.85
+
+
+# ===========================================================================
 # Constants
 # ===========================================================================
 

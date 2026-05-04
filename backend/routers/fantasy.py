@@ -97,6 +97,67 @@ router = APIRouter()
 # Module-level MLB probable-starts cache (shared state — same pattern as main.py)
 _STARTS_CACHE: dict = {}
 
+
+def _fetch_probable_starts_map(start_date: str, end_date: str) -> dict:
+    """Return {pitcher_full_name_lower: starts_count} via public MLB Stats API (6h cached).
+
+    Module-level so both the waiver-wire and recommendations endpoints share the
+    same cache.  Keys are lowercase full names; values are integer start counts.
+    """
+    import httpx as _httpx
+    _now = datetime.utcnow()
+    if _STARTS_CACHE.get("data") and _STARTS_CACHE.get("fetched_at"):
+        age_h = (_now - _STARTS_CACHE["fetched_at"]).total_seconds() / 3600
+        if age_h < 6:
+            return _STARTS_CACHE["data"]
+    url = (
+        "https://statsapi.mlb.com/api/v1/schedule"
+        f"?sportId=1&startDate={start_date}&endDate={end_date}"
+        "&gameType=R&hydrate=probablePitcher"
+    )
+    try:
+        resp = _httpx.get(url, timeout=8.0)
+        resp.raise_for_status()
+    except Exception as _e:
+        logger.warning("MLB Stats API schedule fetch failed: %s", _e)
+        return _STARTS_CACHE.get("data") or {}
+    starts: dict = {}
+    for date_entry in resp.json().get("dates", []):
+        for game in date_entry.get("games", []):
+            for side in ("home", "away"):
+                pitcher = (game.get("teams", {})
+                           .get(side, {})
+                           .get("probablePitcher", {}))
+                pname = (pitcher.get("fullName") or "").strip().lower()
+                if pname:
+                    starts[pname] = starts.get(pname, 0) + 1
+    _STARTS_CACHE["data"] = starts
+    _STARTS_CACHE["fetched_at"] = _now
+    return starts
+
+
+def _populate_starts_this_week(players: list, starts_map: dict) -> None:
+    """Mutate each SP dict in *players* to add ``starts_this_week`` from *starts_map*.
+
+    Uses difflib fuzzy matching at ≥0.90 ratio as a fallback for name variations.
+    Non-SP positions are left unchanged.
+    """
+    import difflib as _difflib
+    for _fa in players:
+        if "SP" not in (_fa.get("positions") or []):
+            continue
+        _name = (_fa.get("name") or "").strip().lower()
+        _starts = starts_map.get(_name, 0)
+        if _starts == 0 and starts_map:
+            _best = max(
+                starts_map.keys(),
+                key=lambda k: _difflib.SequenceMatcher(None, _name, k).ratio(),
+                default=None,
+            )
+            if _best and _difflib.SequenceMatcher(None, _name, _best).ratio() >= 0.90:
+                _starts = starts_map[_best]
+        _fa["starts_this_week"] = _starts
+
 # Shared fallback for Yahoo numeric stat category IDs.
 _YAHOO_STAT_FALLBACK: dict = dict(YAHOO_ID_INDEX)
 
@@ -1900,63 +1961,16 @@ async def get_fantasy_waiver_recommendations(
 
         # Fetch MLB probable starts and populate starts_this_week for ALL SP pitchers
         # BEFORE creating top_available — April 21 Issue 2 fix (starts_this_week was 0 for all)
-        import difflib as _difflib_starts
         from datetime import date as _dt, timedelta as _td
         _today = date_type.today()
         _week_end_ts = _today + _td(days=6)
 
-        def _fetch_mlb_probable_starts(start_date: str, end_date: str) -> dict:
-            """Return {pitcher_full_name_lower: starts_count} via public MLB Stats API (6h cached)."""
-            import httpx as _httpx
-            _now = datetime.utcnow()
-            if _STARTS_CACHE.get("data") and _STARTS_CACHE.get("fetched_at"):
-                age_h = (_now - _STARTS_CACHE["fetched_at"]).total_seconds() / 3600
-                if age_h < 6:
-                    return _STARTS_CACHE["data"]
-            url = (
-                "https://statsapi.mlb.com/api/v1/schedule"
-                f"?sportId=1&startDate={start_date}&endDate={end_date}"
-                "&gameType=R&hydrate=probablePitcher"
-            )
-            try:
-                resp = _httpx.get(url, timeout=8.0)
-                resp.raise_for_status()
-            except Exception as _e:
-                logger.warning("MLB Stats API schedule fetch failed: %s", _e)
-                return _STARTS_CACHE.get("data") or {}
-            starts: dict = {}
-            for date_entry in resp.json().get("dates", []):
-                for game in date_entry.get("games", []):
-                    for side in ("home", "away"):
-                        pitcher = (game.get("teams", {})
-                                   .get(side, {})
-                                   .get("probablePitcher", {}))
-                        pname = (pitcher.get("fullName") or "").strip().lower()
-                        if pname:
-                            starts[pname] = starts.get(pname, 0) + 1
-            _STARTS_CACHE["data"] = starts
-            _STARTS_CACHE["fetched_at"] = _now
-            return starts
-
-        starts_map = _fetch_mlb_probable_starts(
+        starts_map = _fetch_probable_starts_map(
             _today.strftime("%Y-%m-%d"), _week_end_ts.strftime("%Y-%m-%d")
         )
 
         # Populate starts_this_week for ALL SP pitchers in free_agents
-        for _fa in free_agents:
-            if "SP" in (_fa.get("positions") or []):
-                _sp_name = (_fa.get("name") or "").strip().lower()
-                _starts = starts_map.get(_sp_name, 0)
-                # Fuzzy match if no exact match (handles name variations)
-                if _starts == 0 and starts_map:
-                    _best = max(
-                        starts_map.keys(),
-                        key=lambda k: _difflib_starts.SequenceMatcher(None, _sp_name, k).ratio(),
-                        default=None,
-                    )
-                    if _best and _difflib_starts.SequenceMatcher(None, _sp_name, _best).ratio() >= 0.90:
-                        _starts = starts_map[_best]
-                _fa["starts_this_week"] = _starts
+        _populate_starts_this_week(free_agents, starts_map)
 
         top_available = [_to_waiver_player(p) for p in free_agents]
         if min_z_score is not None:
@@ -2189,6 +2203,20 @@ async def get_waiver_recommendations(
 
         free_agents = client.get_free_agents(count=40)
 
+        # Populate starts_this_week for SP free agents before scoring.
+        # Uses the module-level _STARTS_CACHE so the MLB Stats API is called
+        # at most once per 6 hours across both waiver endpoints.
+        try:
+            from datetime import date as _fa_dt, timedelta as _fa_td
+            _fa_today = _fa_dt.today()
+            _fa_week_end = _fa_today + _fa_td(days=6)
+            _fa_starts_map = _fetch_probable_starts_map(
+                _fa_today.strftime("%Y-%m-%d"), _fa_week_end.strftime("%Y-%m-%d")
+            )
+            _populate_starts_this_week(free_agents, _fa_starts_map)
+        except Exception as _fa_se:
+            logger.warning("starts_this_week population failed in recommendations (non-fatal): %s", _fa_se)
+
         # Bulk quality_score lookup for pitcher FA candidates (enrichment only).
         # Queries probable_pitchers for today+next 7 days, keyed by pitcher_name.
         # Non-fatal: any exception leaves the dict empty (quality_score stays None).
@@ -2250,7 +2278,7 @@ async def get_waiver_recommendations(
                 need_score=round(need_score, 3),
                 category_contributions=bp.get("cat_scores", {}) if bp else {},
                 owned_pct=p.get("percent_owned", 0.0),
-                starts_this_week=0,
+                starts_this_week=p.get("starts_this_week", 0),
                 quality_score=qs,
             )
 
@@ -2376,6 +2404,17 @@ async def get_waiver_recommendations(
         for fa in scored_fas[:15]:
             if len(recommendations) >= 5:
                 break
+
+            # Skip zero-evidence proxy players — no projections or cat_scores means
+            # the gain calculation is unreliable (all such players share z_score=0.0,
+            # producing clone recommendations driven solely by the drop candidate score
+            # rather than any genuine player quality signal).
+            if not fa.category_contributions and fa.need_score == 0.0:
+                logger.debug(
+                    "[waiver_recs] skipping zero-evidence FA: %s (%s) — no cat_scores or z_score",
+                    fa.name, fa.position,
+                )
+                continue
 
             fa_positions = [fa.position] if fa.position != "?" else []
             if fa.position in ("SP", "RP", "P"):
@@ -2528,7 +2567,10 @@ async def get_waiver_recommendations(
             # simulator says hurts the matchup. z-score-driven gains can
             # disagree with simulated win probability (e.g. category
             # tradeoffs); trust the simulator when it ran.
-            if _mcmc.get("mcmc_enabled") and _mcmc.get("win_prob_gain", 0.0) < 0:
+            # When MCMC ran and produced a non-positive win-probability gain,
+            # never surface the move: a zero-gain swap wastes a roster spot and
+            # a negative-gain swap actively hurts the matchup.
+            if _mcmc.get("mcmc_enabled") and _mcmc.get("win_prob_gain", 0.0) <= 0:
                 continue
 
             recommendations.append(RosterMoveRecommendation(
