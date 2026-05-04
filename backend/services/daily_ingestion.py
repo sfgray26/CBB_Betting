@@ -128,6 +128,7 @@ LOCK_IDS = {
     "bdl_injuries":          100_033,  # Phase 1: BDL injury ingestion
     "yahoo_id_sync":         100_034,  # Yahoo ID mapping sync
     "cat_scores_backfill":   100_035,  # Session U: bootstrap cat_scores from DB stats
+    "ros_projection_refresh": 100_036,  # P0-A: Refresh player_projections from RoS cache
 }
 
 
@@ -855,6 +856,17 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # P0-B FIX: Statcast leaderboard ingestion: daily 2 AM ET
+        # Fetches Statcast leaderboards from Baseball Savant (xwOBA, barrel%, xERA, etc.)
+        # This was missing from scheduler registration, causing stale statcast_performances
+        self._scheduler.add_job(
+            self._ingest_savant_leaderboards,
+            CronTrigger(hour=2, minute=0, timezone=tz),
+            id="savant_ingestion",
+            name="Statcast Leaderboard Ingestion",
+            replace_existing=True,
+        )
+
         # Player valuation cache: daily 6 AM ET
         # Only runs if FANTASY_LEAGUES env var is set (comma-separated league keys)
         _fantasy_leagues = os.getenv("FANTASY_LEAGUES", "")
@@ -873,6 +885,16 @@ class DailyIngestionOrchestrator:
             CronTrigger(hour=3, minute=0, timezone=tz),
             id="fangraphs_ros",
             name="FanGraphs RoS Fetch",
+            replace_existing=True,
+        )
+
+        # P0-A FIX: RoS projection refresh: daily 3:30 AM ET (after fangraphs_ros at 3 AM)
+        # Refreshes player_projections table with fresh RoS projection values
+        self._scheduler.add_job(
+            self._refresh_ros_projections,
+            CronTrigger(hour=3, minute=30, timezone=tz),
+            id="ros_projection_refresh",
+            name="RoS Projection Refresh",
             replace_existing=True,
         )
 
@@ -982,8 +1004,8 @@ class DailyIngestionOrchestrator:
         _all_job_ids = ["mlb_game_log", "mlb_box_stats", "rolling_windows", "player_scores",
                         "vorp", "player_momentum", "ros_simulation", "decision_optimization",
                         "backtesting", "explainability", "snapshot",
-                        "mlb_odds", "statcast",
-                        "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
+                        "mlb_odds", "statcast", "savant_ingestion",
+                        "rolling_z", "clv", "cleanup", "fangraphs_ros", "ros_projection_refresh", "yahoo_adp_injury",
                         "ensemble_update", "projection_cat_scores", "cat_scores_backfill",
                         "projection_freshness", "yahoo_id_sync",
                         "player_id_mapping", "position_eligibility",
@@ -1066,6 +1088,8 @@ class DailyIngestionOrchestrator:
             "cleanup":                self._cleanup_old_metrics,
             "valuation_cache":        self._refresh_valuation_cache,
             "fangraphs_ros":          self._fetch_fangraphs_ros,
+            "ros_projection_refresh": self._refresh_ros_projections,
+            "yahoo_id_sync":          self._sync_yahoo_id_mapping,
             "yahoo_adp_injury":       self._poll_yahoo_adp_injury,
             "ensemble_update":        self._update_ensemble_blend,
         }
@@ -4764,6 +4788,216 @@ class DailyIngestionOrchestrator:
             return {"status": status, "bat_rows": bat_count, "pit_rows": pit_count, "elapsed_ms": elapsed}
 
         return await _with_advisory_lock(LOCK_IDS["fangraphs_ros"], "fangraphs_ros", _run)
+
+    async def _refresh_ros_projections(self) -> dict:
+        """Refresh player_projections table from RoS cache (lock 100_036).
+
+        P0-A FIX: Projections were stale (March 9) because the RoS cache was not
+        being used to update player_projections base columns (hr, r, rbi, sb, avg, ops,
+        era, whip, k_per_nine, w, sv, k_pit).
+
+        Runs at 3:30 AM ET, 30 minutes after fangraphs_ros populates the RoS cache.
+        Reads the ensemble blend from RoS cache and upserts player_projections with
+        fresh projection values.
+
+        Does NOT update cat_scores (that happens at 5:30 AM via projection_cat_scores).
+
+        Success criteria:
+            SELECT MAX(updated_at) FROM player_projections;
+            → Should return today's date after first 3:30 AM ET run.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.fantasy_baseball.fangraphs_loader import compute_ensemble_blend
+
+            # --- 1. Load RoS cache (must be populated by fangraphs_ros at 3 AM) ---
+            bat_raw = _ROS_CACHE.get("bat")
+            pit_raw = _ROS_CACHE.get("pit")
+
+            if not bat_raw and not pit_raw:
+                persisted_bat, persisted_pit, persisted_at = _load_persisted_ros_cache()
+
+                if not persisted_bat and not persisted_pit:
+                    logger.warning("ros_projection_refresh: no RoS cache available — skipping")
+                    self._record_job_run("ros_projection_refresh", "skipped")
+                    return {"status": "skipped", "reason": "no_ros_cache", "updated": 0, "inserted": 0, "elapsed_ms": 0}
+
+                bat_raw = persisted_bat
+                pit_raw = persisted_pit
+
+            # --- 2. Compute ensemble blend (same as projection_cat_scores) ---
+            BAT_STAT_COLS = ["HR", "R", "RBI", "SB", "SO", "AVG", "OPS", "SLG", "PA"]
+            PIT_STAT_COLS = ["W", "SV", "SO", "ERA", "WHIP", "GS", "K/9", "IP"]
+
+            bat_blend = compute_ensemble_blend(bat_raw or {}, stat_columns=BAT_STAT_COLS) if bat_raw else None
+            pit_blend = compute_ensemble_blend(pit_raw or {}, stat_columns=PIT_STAT_COLS) if pit_raw else None
+
+            if bat_blend is None and pit_blend is None:
+                logger.error("ros_projection_refresh: blend produced no data")
+                self._record_job_run("ros_projection_refresh", "failed")
+                return {"status": "failed", "reason": "blend_failed", "updated": 0, "inserted": 0, "elapsed_ms": 0}
+
+            # --- 3. Build normalized_name → mlbam_id lookup ---
+            db = SessionLocal()
+            try:
+                id_map_rows = (
+                    db.query(PlayerIDMapping.normalized_name, PlayerIDMapping.mlbam_id)
+                    .filter(PlayerIDMapping.mlbam_id.isnot(None))
+                    .all()
+                )
+                name_to_mlbam: dict[str, str] = {
+                    r.normalized_name: str(r.mlbam_id)
+                    for r in id_map_rows
+                    if r.normalized_name
+                }
+
+                # --- 4. Upsert batter projections ---
+                now = datetime.now(ZoneInfo("America/New_York"))
+                updated = 0
+                inserted = 0
+                skipped = 0
+
+                if bat_blend is not None:
+                    for _, row in bat_blend.iterrows():
+                        fg_id = str(row.get("player_id", ""))
+                        mlbam_id = name_to_mlbam.get(fg_id)
+
+                        if not mlbam_id:
+                            skipped += 1
+                            continue
+
+                        # Check if row exists (update vs insert)
+                        existing = db.query(PlayerProjection).filter(
+                            PlayerProjection.player_id == mlbam_id
+                        ).first()
+
+                        pa = float(row.get("PA", 500) or 500) or 500.0
+                        avg = float(row.get("AVG", 0.250) or 0.250)
+                        slg = float(row.get("SLG", 0.400) or 0.400)
+                        ab_est = pa * 0.87
+
+                        upsert_vals = {
+                            "player_id": mlbam_id,
+                            "player_name": str(row.get("name", "")),
+                            "team": (str(row.get("team", "") or "")).upper().strip(),
+                            "player_type": "hitter",
+                            "hr": int(max(0, float(row.get("HR", 0) or 0))),
+                            "r": int(max(0, float(row.get("R", 0) or 0))),
+                            "rbi": int(max(0, float(row.get("RBI", 0) or 0))),
+                            "sb": int(max(0, float(row.get("SB", 0) or 0))),
+                            "avg": round(avg, 3),
+                            "ops": round(float(row.get("OPS", 0.720) or 0.720), 3),
+                            "woba": round(avg * 1.25 + 0.12, 3),  # Approximate wOBA from AVG
+                            "xwoba": round(avg * 1.25 + 0.12, 3),
+                            "era": None,
+                            "whip": None,
+                            "k_per_nine": None,
+                            "prior_source": "fangraphs_ros",
+                            "update_method": "ensemble_blend",
+                            "updated_at": now,
+                        }
+
+                        if existing:
+                            # Update existing row
+                            for k, v in upsert_vals.items():
+                                if k not in ("player_id", "player_name", "created_at"):
+                                    setattr(existing, k, v)
+                            updated += 1
+                        else:
+                            # Insert new row
+                            upsert_vals["positions"] = ["Util"]
+                            upsert_vals["cat_scores"] = {}
+                            upsert_vals["created_at"] = now
+                            new_row = PlayerProjection(**upsert_vals)
+                            db.add(new_row)
+                            inserted += 1
+
+                # --- 5. Upsert pitcher projections ---
+                if pit_blend is not None:
+                    for _, row in pit_blend.iterrows():
+                        fg_id = str(row.get("player_id", ""))
+                        mlbam_id = name_to_mlbam.get(fg_id)
+
+                        if not mlbam_id:
+                            skipped += 1
+                            continue
+
+                        existing = db.query(PlayerProjection).filter(
+                            PlayerProjection.player_id == mlbam_id
+                        ).first()
+
+                        ip = float(row.get("IP", 0) or 0)
+                        k = float(row.get("SO", 0) or 0)
+                        k9_val = float(row.get("K/9", 0) or 0) or ((k / ip * 9) if ip > 0 else 0.0)
+                        gs = float(row.get("GS", 0) or 0)
+
+                        upsert_vals = {
+                            "player_id": mlbam_id,
+                            "player_name": str(row.get("name", "")),
+                            "team": (str(row.get("team", "") or "")).upper().strip(),
+                            "player_type": "pitcher",
+                            "hr": None,
+                            "r": None,
+                            "rbi": None,
+                            "sb": None,
+                            "avg": None,
+                            "ops": None,
+                            "woba": None,
+                            "xwoba": None,
+                            "era": round(float(row.get("ERA", 4.5) or 4.5), 2),
+                            "whip": round(float(row.get("WHIP", 1.3) or 1.3), 2),
+                            "k_per_nine": round(k9_val, 2),
+                            "w": int(max(0, float(row.get("W", 0) or 0))),
+                            "l": 0,
+                            "hr_pit": 0,
+                            "k_pit": int(k),
+                            "qs": round(gs * 0.55) if gs >= 10 else 0,
+                            "nsv": int(max(0, float(row.get("SV", 0) or 0))),
+                            "prior_source": "fangraphs_ros",
+                            "update_method": "ensemble_blend",
+                            "updated_at": now,
+                        }
+
+                        if existing:
+                            for k, v in upsert_vals.items():
+                                if k not in ("player_id", "player_name", "created_at"):
+                                    setattr(existing, k, v)
+                            updated += 1
+                        else:
+                            upsert_vals["positions"] = ["SP"]
+                            upsert_vals["cat_scores"] = {}
+                            upsert_vals["created_at"] = now
+                            new_row = PlayerProjection(**upsert_vals)
+                            db.add(new_row)
+                            inserted += 1
+
+                db.commit()
+
+            except Exception as exc:
+                db.rollback()
+                logger.error("ros_projection_refresh DB write failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("ros_projection_refresh", "failed")
+                return {"status": "failed", "error": str(exc), "updated": 0, "inserted": 0, "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.info(
+                "ros_projection_refresh: updated=%d inserted=%d skipped=%d elapsed=%dms",
+                updated, inserted, skipped, elapsed,
+            )
+            self._record_job_run("ros_projection_refresh", "success", updated + inserted)
+            return {
+                "status": "success",
+                "updated": updated,
+                "inserted": inserted,
+                "skipped": skipped,
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["ros_projection_refresh"], "ros_projection_refresh", _run)
 
     async def _update_ensemble_blend(self) -> dict:
         """Compute weighted ensemble blend and persist to PlayerDailyMetric (lock 100_014).
