@@ -195,6 +195,7 @@ def test_load_from_db_builds_statcastbatter_from_rows(monkeypatch):
         barrel_percent = 11.2
         hard_hit_percent = 43.5
         avg_exit_velocity = 91.8
+        sprint_speed = 28.5
         whiff_percent = 22.0
         avg_woba = 0.310
 

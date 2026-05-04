@@ -408,7 +408,7 @@ class WaiverPlayerOut(BaseModel):
     starts_this_week: int = 0
     statcast_signals: List[str] = []
     projected_saves: float = 0.0
-    projected_points: float = 0.0         # Safe default prevents frontend NaN
+    projected_points: Optional[float] = None  # None = no projection available (not zero)
     hot_cold: Optional[str] = None        # "HOT" | "COLD" | None
     status: Optional[str] = None          # Yahoo status: Active, DTD, IL, etc.
     injury_note: Optional[str] = None     # Yahoo injury note text
@@ -417,7 +417,7 @@ class WaiverPlayerOut(BaseModel):
     statcast_stats: Optional[dict] = None   # PR-15: raw Statcast/FanGraphs metrics (xwOBA, barrel%, etc.)
     quality_score: Optional[float] = None   # Pitcher matchup quality [-2.0 to +2.0]. None when not a pitcher FA candidate.
 
-    @field_validator("need_score", "owned_pct", "projected_saves", "projected_points", mode="before")
+    @field_validator("need_score", "owned_pct", "projected_saves", mode="before")
     @classmethod
     def default_floats(cls, v):
         """Ensure None becomes 0.0 to prevent NaN in frontend."""

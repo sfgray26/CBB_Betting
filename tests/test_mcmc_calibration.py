@@ -103,8 +103,8 @@ def test_convert_yahoo_roster_skips_empty_names():
     assert result[0]["name"] == "Valid Player"
 
 
-@patch("backend.fantasy_baseball.mcmc_calibration._get_player_board")
-def test_convert_uses_board_when_available(mock_get_board):
+@patch("backend.fantasy_baseball.mcmc_calibration._get_player_board_cached")
+def test_convert_uses_board_when_available(mock_get_board_cached):
     # Setup mock board
     mock_board = [
         {
@@ -114,7 +114,7 @@ def test_convert_uses_board_when_available(mock_get_board):
         }
     ]
     mock_lookup = {"mike trout": mock_board[0]}
-    mock_get_board.return_value = (mock_board, mock_lookup)
+    mock_get_board_cached.return_value = (mock_board, mock_lookup)
     
     yahoo_roster = [{"name": "Mike Trout", "positions": ["OF"]}]
     

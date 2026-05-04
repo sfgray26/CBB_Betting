@@ -184,7 +184,7 @@ def test_orchestrator_get_status_returns_all_jobs():
         "projection_freshness",
         "player_id_mapping", "position_eligibility",
         "probable_pitchers_morning", "probable_pitchers_afternoon", "probable_pitchers_evening",
-        "yahoo_id_sync",
+        "yahoo_id_sync", "ros_projection_refresh", "savant_ingestion",
     }
     assert expected_jobs == set(status.keys())
     for job_id, info in status.items():

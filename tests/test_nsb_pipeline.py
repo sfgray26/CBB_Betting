@@ -252,27 +252,31 @@ def test_composite_z_excludes_z_sb_when_both_populated():
     ]
     results = compute_league_zscores(rows, AS_OF, WINDOW, winsorize=False)
 
-    # The composite is a weighted sum of all applicable non-None hitter Z's
-    # EXCEPT z_sb (P1-4/P1-5: weighted sum, not normalized mean). We reconstruct
+    # The composite is a weighted mean of all applicable non-None hitter Z's
+    # EXCEPT z_sb (P0-2 fix: weighted mean, not sum). We reconstruct
     # that expected value from the persisted fields and confirm:
     #   (a) z_sb and z_nsb are both populated
-    #   (b) composite_z equals the weighted sum of {z_hr, z_rbi, z_nsb, z_avg, z_obp}
+    #   (b) composite_z equals the weighted mean of {z_hr, z_rbi, z_nsb, z_avg, z_obp}
     #       filtered to non-None values -- i.e. z_sb was NOT mixed in.
     composite_keys = ["z_hr", "z_rbi", "z_nsb", "z_avg", "z_obp"]  # z_sb deliberately absent
     for r in results:
         assert r.z_sb is not None,  "z_sb should be computed (still persisted)"
         assert r.z_nsb is not None, "z_nsb should be computed"
 
-        # Weighted sum: each key gets its _CATEGORY_WEIGHTS factor (default 1.0)
+        # Weighted mean: each key gets its _CATEGORY_WEIGHTS factor (default 1.0)
         expected_kv_pairs = [
             (k, getattr(r, k))
             for k in composite_keys
             if getattr(r, k) is not None
         ]
-        expected_composite = sum(
-            _CATEGORY_WEIGHTS.get(k, 1.0) * v
-            for k, v in expected_kv_pairs
-        ) if expected_kv_pairs else 0.0
+        if expected_kv_pairs:
+            _total_w = sum(_CATEGORY_WEIGHTS.get(k, 1.0) for k, _ in expected_kv_pairs)
+            expected_composite = (
+                sum(_CATEGORY_WEIGHTS.get(k, 1.0) * v for k, v in expected_kv_pairs) / _total_w
+                if _total_w > 0 else 0.0
+            )
+        else:
+            expected_composite = 0.0
         assert r.composite_z == pytest.approx(expected_composite, abs=1e-9), (
             f"composite_z must exclude z_sb. Got {r.composite_z}, expected {expected_composite} "
             f"(kv_pairs={expected_kv_pairs})."

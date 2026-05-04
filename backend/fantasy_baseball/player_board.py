@@ -22,6 +22,7 @@ Run this module standalone to see rankings:
 
 import json
 import logging
+import math
 import statistics
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
@@ -626,7 +627,9 @@ def _zscore(value: float, values: list[float], direction: int = 1) -> float:
     if len(values) < 2:
         return 0.0
     mean = statistics.mean(values)
-    std = statistics.stdev(values)
+    # Use population std (ddof=0) to match scoring_engine.py — consistent scale
+    n = len(values)
+    std = math.sqrt(sum((x - mean) ** 2 for x in values) / n)
     if std < 1e-9:
         return 0.0
     return ((value - mean) / std) * direction

@@ -278,11 +278,10 @@ def test_z_capped_at_minus_3():
 
 def test_composite_z_is_weighted_sum():
     """
-    Hitter with non-None category Z-scores -> composite = weighted SUM (no division).
+    Hitter with non-None category Z-scores -> composite = weighted MEAN.
 
-    P1-4/P1-5 design: weighted SUM, not normalized mean, so two-way players
-    are valued higher for contributing to more categories, and specialists are
-    appropriately lower for having fewer non-None categories. z_sb excluded.
+    P0-2 fix: weighted mean (sum / total_weight) so two-way players
+    are comparable to specialists. z_sb excluded.
     """
     # 6 identical hitters except pid=6 has different values in all categories
     base = [
@@ -305,15 +304,15 @@ def test_composite_z_is_weighted_sum():
     assert all(v is not None for v in [z_hr, z_rbi, z_sb, z_avg, z_obp]), \
         f"Expected all 5 hitter Z-scores, got {[z_hr, z_rbi, z_sb, z_avg, z_obp]}"
 
-    # P1-4/P1-5: weighted SUM (no normalization)
+    # P0-2 fix: weighted MEAN (sum / total_weight)
     # Category weights from scoring_engine._CATEGORY_WEIGHTS
     # Note: z_obp is NOT in _CATEGORY_WEIGHTS, so defaults to 1.0
     from backend.services.scoring_engine import _CATEGORY_WEIGHTS
+    _kv = [("z_hr", z_hr), ("z_rbi", z_rbi), ("z_avg", z_avg), ("z_obp", z_obp)]
+    _total_w = sum(_CATEGORY_WEIGHTS.get(k, 1.0) for k, _ in _kv)
     expected_composite = (
-        _CATEGORY_WEIGHTS.get("z_hr", 1.0) * z_hr +
-        _CATEGORY_WEIGHTS.get("z_rbi", 1.0) * z_rbi +
-        _CATEGORY_WEIGHTS.get("z_avg", 1.0) * z_avg +
-        _CATEGORY_WEIGHTS.get("z_obp", 1.0) * z_obp  # z_obp defaults to 1.0
+        sum(_CATEGORY_WEIGHTS.get(k, 1.0) * v for k, v in _kv) / _total_w
+        if _total_w > 0 else 0.0
     )
     assert math.isclose(r.composite_z, expected_composite, rel_tol=1e-9), (
         f"composite_z mismatch: {r.composite_z} != {expected_composite}"

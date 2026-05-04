@@ -325,9 +325,9 @@ class YahooFantasyClient:
                     # Token may have just expired mid-request
                     self._refresh_access_token()
                     continue
-                if resp.status_code == 999:
+                if resp.status_code in (429, 999):
                     wait = 2 ** attempt
-                    logger.warning(f"Yahoo rate limit hit, waiting {wait}s")
+                    logger.warning(f"Yahoo rate limit ({resp.status_code}), waiting {wait}s")
                     time.sleep(wait)
                     continue
                 if resp.status_code != 200:
@@ -821,7 +821,15 @@ class YahooFantasyClient:
         """
         if not player_keys:
             return {}
-        keys_str = ",".join(player_keys[:25])
+        if len(player_keys) > 25:
+            # Yahoo enforces a hard limit of 25 keys per batch request.
+            # Chunk and merge to avoid silent data loss.
+            merged: dict = {}
+            for i in range(0, len(player_keys), 25):
+                chunk = player_keys[i:i + 25]
+                merged.update(self.get_players_stats_batch(chunk, stat_type))
+            return merged
+        keys_str = ",".join(player_keys)
         data = self._get(
             f"league/{self.league_key}/players;player_keys={keys_str}/stats;type={stat_type}"
         )

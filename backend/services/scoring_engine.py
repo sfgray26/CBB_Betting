@@ -519,12 +519,13 @@ def compute_league_zscores(
             for k in applicable_keys
             if k not in _COMPOSITE_EXCLUDED and getattr(result, k) is not None
         ]
-        # Weighted SUM (P1-4/P1-5): no normalization so two-way players (Ohtani)
-        # are valued higher for contributing to more categories, and specialists
-        # are appropriately lower for fewer non-None categories.
+        # Weighted MEAN: divide by total weight so composite_z is comparable
+        # across player types (two-way players, specialists). Matches models.py
+        # docstring: "mean of all applicable non-None per-category Z-scores".
+        _total_w = sum(_CATEGORY_WEIGHTS.get(k, 1.0) for k, _ in kv_pairs)
         result.composite_z = (
-            sum(_CATEGORY_WEIGHTS.get(k, 1.0) * v for k, v in kv_pairs)
-            if kv_pairs else 0.0
+            sum(_CATEGORY_WEIGHTS.get(k, 1.0) * v for k, v in kv_pairs) / _total_w
+            if kv_pairs and _total_w > 0 else 0.0
         )
 
         # Step 4: confidence = min(1.0, games_in_window / window_days)

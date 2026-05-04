@@ -30,6 +30,13 @@ import os
 import time
 import random
 
+_ET = ZoneInfo("America/New_York")
+
+
+def _now_et() -> datetime:
+    """ET-aware now() for SQLAlchemy column defaults (replaces _now_et)."""
+    return datetime.now(_ET)
+
 # Try to load dotenv, but don't fail if not installed
 try:
     from dotenv import load_dotenv
@@ -159,8 +166,8 @@ class Game(Base):
     predictions = relationship("Prediction", back_populates="game")
     bet_logs = relationship("BetLog", back_populates="game")
     
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_now_et)
+    updated_at = Column(DateTime, default=_now_et, onupdate=_now_et)
 
 
 class Prediction(Base):
@@ -175,7 +182,7 @@ class Prediction(Base):
     model_version = Column(String, default="v7.0")
     prediction_date = Column(Date, nullable=False, index=True, default=date.today)
     run_tier = Column(String, default="nightly", nullable=False)  # "opener" | "nightly" | "closing"
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=_now_et, index=True)
     
     # Ratings used (for auditing)
     kenpom_home = Column(Float)
@@ -242,7 +249,7 @@ class BetLog(Base):
     prediction_id = Column(Integer, ForeignKey("predictions.id"))
     
     # Bet details
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
+    timestamp = Column(DateTime, default=_now_et, index=True)
     pick = Column(String, nullable=False)  # "Duke -4.5" or "UNC/Duke U145.5"
     bet_type = Column(String)  # "spread", "total", "moneyline"
     odds_taken = Column(Float, nullable=False)  # American odds
@@ -289,14 +296,14 @@ class ModelParameter(Base):
     __tablename__ = "model_parameters"
 
     id = Column(Integer, primary_key=True, index=True)
-    effective_date = Column(DateTime, default=datetime.utcnow, index=True)
+    effective_date = Column(DateTime, default=_now_et, index=True)
     parameter_name = Column(String, nullable=False)
     parameter_value = Column(Float)
     parameter_value_json = Column(JSON)  # For complex params like weights
     reason = Column(String)  # "quarterly_recalibration", "manual_adjustment", etc.
     changed_by = Column(String)  # "auto" or user identifier
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_now_et)
 
 
 class PerformanceSnapshot(Base):
@@ -305,7 +312,7 @@ class PerformanceSnapshot(Base):
     __tablename__ = "performance_snapshots"
 
     id = Column(Integer, primary_key=True, index=True)
-    snapshot_date = Column(DateTime, default=datetime.utcnow, index=True)
+    snapshot_date = Column(DateTime, default=_now_et, index=True)
     period_type = Column(String)  # "daily", "weekly", "monthly", "quarterly"
     period_start = Column(DateTime)
     period_end = Column(DateTime)
@@ -346,14 +353,14 @@ class DataFetch(Base):
     __tablename__ = "data_fetches"
 
     id = Column(Integer, primary_key=True, index=True)
-    fetch_time = Column(DateTime, default=datetime.utcnow, index=True)
+    fetch_time = Column(DateTime, default=_now_et, index=True)
     data_source = Column(String, nullable=False, index=True)  # "kenpom", "odds_api", etc.
     success = Column(Boolean, nullable=False)
     records_fetched = Column(Integer)
     error_message = Column(Text)
     response_time_ms = Column(Integer)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_now_et)
 
 
 class ClosingLine(Base):
@@ -363,7 +370,7 @@ class ClosingLine(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     game_id = Column(Integer, ForeignKey("games.id"), nullable=False, index=True)
-    captured_at = Column(DateTime, default=datetime.utcnow, index=True)
+    captured_at = Column(DateTime, default=_now_et, index=True)
 
     spread = Column(Float)        # Home team spread (negative = home favourite)
     spread_odds = Column(Integer)  # American odds for the home spread
@@ -409,7 +416,7 @@ class TeamProfile(Base):
     def_ft_rate = Column(Float)   # Opponent FT rate allowed
     def_three_par = Column(Float) # Opponent 3PA rate allowed
 
-    fetched_at = Column(DateTime, default=datetime.utcnow)
+    fetched_at = Column(DateTime, default=_now_et)
 
     __table_args__ = (
         UniqueConstraint(
@@ -425,7 +432,7 @@ class DBAlert(Base):
     __tablename__ = "alerts"
 
     id = Column(Integer, primary_key=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=_now_et, index=True)
     alert_type = Column(String(50), nullable=False, index=True)
     severity = Column(String(20), nullable=False)   # INFO | WARNING | CRITICAL
     message = Column(Text, nullable=False)
@@ -447,8 +454,8 @@ class FantasyDraftSession(Base):
     num_rounds = Column(Integer, nullable=False, default=23)
     current_pick = Column(Integer, nullable=False, default=1)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_now_et)
+    updated_at = Column(DateTime, default=_now_et, onupdate=_now_et)
 
     picks = relationship("FantasyDraftPick", back_populates="session",
                          cascade="all, delete-orphan")
@@ -473,7 +480,7 @@ class FantasyDraftPick(Base):
     player_tier = Column(Integer)
     player_adp = Column(Float)
     player_z_score = Column(Float)
-    picked_at = Column(DateTime, default=datetime.utcnow)
+    picked_at = Column(DateTime, default=_now_et)
 
     session = relationship("FantasyDraftSession", back_populates="picks")
 
@@ -494,8 +501,8 @@ class FantasyLineup(Base):
     projected_points = Column(Float)
     actual_points = Column(Float)
     notes = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_now_et)
+    updated_at = Column(DateTime, default=_now_et, onupdate=_now_et)
 
     __table_args__ = (
         UniqueConstraint("lineup_date", "platform", name="_lineup_date_platform_uc"),
@@ -541,7 +548,7 @@ class PlayerDailyMetric(Base):
     blend_whip = Column(Float)
 
     data_source = Column(String(50))
-    fetched_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    fetched_at = Column(DateTime, nullable=False, default=_now_et)
 
     __table_args__ = (
         UniqueConstraint("player_id", "metric_date", "sport",
@@ -566,7 +573,7 @@ class ProjectionSnapshot(Base):
 
     total_players = Column(Integer)
     significant_changes = Column(Integer)   # rows where |delta| > threshold
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=_now_et)
 
 
 class ProjectionCacheEntry(Base):
@@ -577,9 +584,9 @@ class ProjectionCacheEntry(Base):
     id = Column(Integer, primary_key=True)
     cache_key = Column(String(100), nullable=False, unique=True, index=True)
     payload = Column(JSONB, nullable=False, default=dict)
-    fetched_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    fetched_at = Column(DateTime, nullable=False, default=_now_et)
+    created_at = Column(DateTime, nullable=False, default=_now_et)
+    updated_at = Column(DateTime, nullable=False, default=_now_et, onupdate=_now_et)
 
 
 class PlayerValuationCache(Base):
@@ -596,7 +603,7 @@ class PlayerValuationCache(Base):
     target_date = Column(Date, nullable=False)
     league_key = Column(String(100), nullable=False)
     report = Column(JSONB, nullable=False)
-    computed_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    computed_at = Column(DateTime, nullable=False, default=_now_et)
     invalidated_at = Column(DateTime, nullable=True)
     data_as_of = Column(DateTime, nullable=False)
 
@@ -683,7 +690,7 @@ class StatcastPerformance(Base):
     pitches = Column(Integer, default=0) # Total pitches thrown
     
     # Metadata
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_now_et)
     
     # Unique constraint: one record per player per day
     __table_args__ = (
@@ -716,6 +723,7 @@ class StatcastBatterMetrics(Base):
     hard_hit_percent = Column(Float)  # Hard hit rate (95+ mph)
     avg_exit_velocity = Column(Float)  # Average exit velocity
     max_exit_velocity = Column(Float)  # Max exit velocity
+    sprint_speed = Column(Float, nullable=True)  # ft/sec, from Savant sprint speed leaderboard
 
     # Plate Discipline
     whiff_percent = Column(Float)  # Whiff rate
@@ -772,6 +780,8 @@ class StatcastPitcherMetrics(Base):
     bb_percent = Column(Float)  # Walk rate
     k_9 = Column(Float)  # K per 9 innings
     whiff_percent = Column(Float)  # Whiff rate generated
+    stuff_plus = Column(Float, nullable=True)  # Stuff+ metric (100 = avg)
+    location_plus = Column(Float, nullable=True)  # Location+ (command)
 
     # Traditional Stats (for direct projection when Steamer missing)
     w = Column(Integer)  # Wins
@@ -851,8 +861,8 @@ class PlayerProjection(Base):
     cat_scores = Column(JSONB, default=dict)  # Dict of category -> z-score
     
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_now_et)
+    updated_at = Column(DateTime, default=_now_et, onupdate=_now_et)
 
 
 class PatternDetectionAlert(Base):
@@ -896,7 +906,7 @@ class PatternDetectionAlert(Base):
     resolution_notes = Column(Text)
     
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_now_et)
     alerted_at = Column(DateTime, nullable=True)  # When Discord alert sent
 
 
@@ -937,7 +947,7 @@ class DataIngestionLog(Base):
     summary_stats = Column(JSONB, default=dict)  # Job-specific stats
     
     # Timestamps
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=_now_et)
     completed_at = Column(DateTime, nullable=True)
     
     # Error tracking
@@ -1015,8 +1025,8 @@ class UserPreferences(Base):
     })
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_now_et)
+    updated_at = Column(DateTime, default=_now_et, onupdate=_now_et)
 
 
 # ---------------------------------------------------------------------------
@@ -1045,7 +1055,7 @@ class MLBTeam(Base):
     slug         = Column(String(50), nullable=False)         # "los-angeles-angels"
     league       = Column(String(10), nullable=False)         # "National" | "American"
     division     = Column(String(10), nullable=False)         # "East" | "Central" | "West"
-    ingested_at  = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    ingested_at  = Column(DateTime(timezone=True), nullable=False, default=_now_et)
 
     # Relationships
     home_games = relationship("MLBGameLog", foreign_keys="MLBGameLog.home_team_id", back_populates="home_team_obj")
@@ -1083,9 +1093,9 @@ class MLBGameLog(Base):
     attendance   = Column(Integer)                            # NULL pre-game; 0 in API pre-game
     period       = Column(Integer)                            # Current/final inning
     raw_payload  = Column(JSONB, nullable=False)              # Full BDL MLBGame dict (dual-write)
-    ingested_at  = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at   = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow,
-                          onupdate=datetime.utcnow)
+    ingested_at  = Column(DateTime(timezone=True), nullable=False, default=_now_et)
+    updated_at   = Column(DateTime(timezone=True), nullable=False, default=_now_et,
+                          onupdate=_now_et)
 
     # Relationships
     home_team_obj  = relationship("MLBTeam", foreign_keys=[home_team_id], back_populates="home_games")
@@ -1199,7 +1209,7 @@ class MLBPlayerStats(Base):
 
     # Audit columns
     raw_payload     = Column(JSON, nullable=False)             # Full BDL dict (dual-write)
-    ingested_at     = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    ingested_at     = Column(DateTime(timezone=True), nullable=False, default=_now_et)
 
     __table_args__ = (
         UniqueConstraint("bdl_player_id", "game_id", name="_mps_player_game_uc"),
@@ -1327,7 +1337,7 @@ class PlayerRollingStats(Base):
     computed_at     = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
+        default=_now_et,
     )
 
     __table_args__ = (
@@ -1401,7 +1411,7 @@ class PlayerScore(Base):
     computed_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
+        default=_now_et,
     )
 
     __table_args__ = (
@@ -1448,7 +1458,7 @@ class PlayerMomentum(Base):
     computed_at     = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
+        default=_now_et,
     )
 
     __table_args__ = (
@@ -1544,7 +1554,7 @@ class SimulationResult(Base):
     computed_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=datetime.utcnow,
+        default=_now_et,
     )
 
     __table_args__ = (
@@ -1828,8 +1838,8 @@ class ProbablePitcherSnapshot(Base):
     quality_score = Column(Float, nullable=True)  # Precomputed matchup rating (-2.0 to +2.0)
 
     # Audit
-    fetched_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    fetched_at = Column(DateTime(timezone=True), nullable=False, default=_now_et)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now_et, onupdate=_now_et)
 
     __table_args__ = (
         UniqueConstraint("game_date", "team", name="_pp_date_team_uc"),
@@ -1850,7 +1860,7 @@ class WeatherForecast(Base):
     id = Column(Integer, primary_key=True)
     game_date = Column(Date, nullable=False, index=True)
     park_name = Column(String(100), nullable=False)
-    forecast_date = Column(Date, nullable=False, default=datetime.utcnow)
+    forecast_date = Column(Date, nullable=False, default=_now_et)
 
     temperature_high = Column(Float)  # Celsius
     temperature_low = Column(Float)
@@ -1860,7 +1870,7 @@ class WeatherForecast(Base):
     precipitation_probability = Column(Integer)  # Percentage
     conditions = Column(String(100))  # Rain, Cloudy, Sunny, etc.
 
-    fetched_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    fetched_at = Column(DateTime(timezone=True), nullable=False, default=_now_et)
 
     __table_args__ = (
         UniqueConstraint("game_date", "park_name", "forecast_date", name="_wf_game_park_date_uc"),
@@ -1890,7 +1900,7 @@ class ParkFactor(Base):
     data_source = Column(String(50))  # fangraphs, baseball-reference, etc.
     season = Column(Integer)
 
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now_et, onupdate=_now_et)
 
 
 class DeploymentVersion(Base):
@@ -1904,9 +1914,9 @@ class DeploymentVersion(Base):
     id = Column(Integer, primary_key=True)
     git_commit_sha = Column(String(100), nullable=False, unique=True)
     git_commit_date = Column(String(50))
-    build_timestamp = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    build_timestamp = Column(DateTime(timezone=True), nullable=False, default=_now_et)
     app_version = Column(String(50), default="dev")
-    deployed_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    deployed_at = Column(DateTime(timezone=True), nullable=False, default=_now_et)
 
 
 class IngestedInjury(Base):
@@ -1941,9 +1951,9 @@ class IngestedInjury(Base):
 
     # Audit columns
     raw_payload = Column(JSONB, nullable=False)  # Full BDL MLBInjury dict
-    ingested_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, index=True)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow,
-                       onupdate=datetime.utcnow)
+    ingested_at = Column(DateTime(timezone=True), nullable=False, default=_now_et, index=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now_et,
+                       onupdate=_now_et)
 
     __table_args__ = (
         UniqueConstraint("bdl_player_id", "injury_status", "injury_type", name="_ii_player_status_type_uc"),

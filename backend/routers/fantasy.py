@@ -1537,6 +1537,7 @@ async def get_daily_briefing(
                             "exit_velo_avg": round(sb.exit_velo_avg, 1) if sb.exit_velo_avg else None,
                             "hard_hit_pct": round(sb.hard_hit_pct, 1) if sb.hard_hit_pct else None,
                             "wrc_plus": round(sb.wrc_plus, 0) if sb.wrc_plus else None,
+                            "sprint_speed": round(sb.sprint_speed, 1) if sb.sprint_speed else None,
                         }
                 elif is_pit and _br_pit:
                     ck = _ms(name, _br_pit)
@@ -1545,6 +1546,7 @@ async def get_daily_briefing(
                         card["statcast_stats"] = {
                             "xera": round(sp.xera, 2) if sp.xera else None,
                             "stuff_plus": round(sp.stuff_plus, 0) if sp.stuff_plus else None,
+                            "location_plus": round(sp.location_plus, 0) if sp.location_plus else None,
                             "whiff_pct": round(sp.whiff_pct, 1) if sp.whiff_pct else None,
                             "fb_velo_avg": round(sp.fb_velo_avg, 1) if sp.fb_velo_avg else None,
                         }
@@ -1921,6 +1923,7 @@ async def get_fantasy_waiver_recommendations(
                             "exit_velo_avg": round(_sb.exit_velo_avg, 1) if _sb.exit_velo_avg is not None else None,
                             "hard_hit_pct": round(_sb.hard_hit_pct, 1) if _sb.hard_hit_pct is not None else None,
                             "wrc_plus": round(_sb.wrc_plus, 0) if _sb.wrc_plus is not None else None,
+                            "sprint_speed": round(_sb.sprint_speed, 1) if _sb.sprint_speed is not None else None,
                         }
                 else:
                     _sp = _get_sc_pit(name)
@@ -1929,6 +1932,7 @@ async def get_fantasy_waiver_recommendations(
                             "xera": round(_sp.xera, 2) if _sp.xera is not None else None,
                             "xera_diff": round(_sp.xera_diff, 2) if _sp.xera_diff is not None else None,
                             "stuff_plus": round(_sp.stuff_plus, 0) if _sp.stuff_plus is not None else None,
+                            "location_plus": round(_sp.location_plus, 0) if _sp.location_plus is not None else None,
                             "whiff_pct": round(_sp.whiff_pct, 1) if _sp.whiff_pct is not None else None,
                             "barrel_allowed_pct": round(_sp.barrel_allowed_pct, 1) if _sp.barrel_allowed_pct is not None else None,
                             "xwoba_allowed": round(_sp.xwoba_allowed, 3) if _sp.xwoba_allowed is not None else None,
@@ -2525,7 +2529,10 @@ async def get_waiver_recommendations(
                             f"projected z={fa.need_score:+.1f}{signal_text}. "
                             f"No {pos_label} to drop suggested; check bench."
                         ),
-                        category_targets=[],
+                        category_targets=[
+                            k for k, v in (fa.category_contributions or {}).items()
+                            if isinstance(v, (int, float)) and v > 0
+                        ],
                         need_score=round(adjusted_need, 3),
                         confidence=0.5 if not _get_proj({"player_key": fa.player_id, "name": fa.name}).get("is_proxy") else 0.3,
                         statcast_signals=fa_signals,
@@ -2641,7 +2648,10 @@ async def get_waiver_recommendations(
                 drop_player_name=drop_candidate["name"],
                 drop_player_position=drop_candidate["positions"][0] if drop_candidate["positions"] else "?",
                 rationale=rationale,
-                category_targets=[],
+                category_targets=[
+                    k for k, v in (fa.category_contributions or {}).items()
+                    if isinstance(v, (int, float)) and v > 0
+                ],
                 need_score=round(gain, 3),
                 confidence=confidence,
                 statcast_signals=fa_signals,
