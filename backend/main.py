@@ -438,12 +438,6 @@ async def lifespan(app: FastAPI):
             replace_existing=True,
         )
 
-    # Load park factors into memory before starting scheduler
-    try:
-        load_park_factors()
-    except Exception as e:
-        logger.warning(f"Could not load park factors on startup: {e}")
-
     scheduler.start()
     logger.info(
         "Scheduler started: cbb_active=%s, fantasy_active=%s",
@@ -604,6 +598,17 @@ async def lifespan(app: FastAPI):
             logger.error("Lifespan: Catch-up analysis failed: %s", catchup_exc, exc_info=True)
 
     asyncio.create_task(_startup_catchup())
+
+    # Load park factors into memory in the background (non-blocking).
+    # Falls back to hardcoded PARK_FACTORS dict if this fails.
+    async def _load_park_factors_bg():
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, load_park_factors)
+        except Exception as _pf_exc:
+            logger.warning("Could not load park factors on startup: %s", _pf_exc)
+
+    asyncio.create_task(_load_park_factors_bg())
 
     yield
 
