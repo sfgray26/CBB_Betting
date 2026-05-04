@@ -8,7 +8,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
+
+# Install core requirements
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Explicitly install performance-critical async packages
+# (Railway's bulk install sometimes times out silently)
+RUN pip install --no-cache-dir asyncpg msgpack
 
 COPY . .
 
