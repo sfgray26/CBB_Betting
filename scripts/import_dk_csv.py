@@ -105,7 +105,9 @@ def import_csv(file_path):
     print(f"\n{summary}")
     
     # Notify Discord via OpenClaw CLI
-    os.system(f'openclaw message send --channel discord --target "1477436117426110615" --message "{summary}"')
+    # PAUSED (2026-04-21): OpenClaw Discord notifications disabled.
+    # os.system(f'openclaw message send --channel discord --target "1477436117426110615" --message "{summary}"')
+    print(f"[PAUSED] Would send Discord summary")
 
 if __name__ == "__main__":
     import_csv("draftkings_history.csv")

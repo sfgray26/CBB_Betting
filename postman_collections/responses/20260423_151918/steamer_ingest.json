@@ -1,0 +1,8 @@
+﻿{
+    "status":  "success",
+    "batters_fetched":  303,
+    "pitchers_fetched":  250,
+    "resolved":  390,
+    "written":  388,
+    "message":  "Ingested 388 Steamer projections (192 batters, 198 pitchers)"
+}

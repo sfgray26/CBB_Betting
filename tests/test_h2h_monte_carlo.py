@@ -90,11 +90,12 @@ def test_h2h_simulator_even_matchup():
 
     result = sim.simulate_week(my_roster, opponent_roster, n_sims=1000)
 
-    # Should be close to 71% win probability (binomial distribution: P(X>=6) where n=13, p=0.5)
-    # This is counterintuitive but correct: even when evenly matched, variance favors 6+ wins
-    assert 0.65 <= result.win_probability <= 0.80
+    # With 18 categories, WIN_THRESHOLD=10. For evenly matched teams (p=0.5 per category),
+    # P(X >= 10) where X ~ Binomial(18, 0.5) is approximately 24%. This is correct:
+    # when evenly matched, you need more than half the categories to win, which is unlikely.
+    assert 0.15 <= result.win_probability <= 0.35
     # All categories should be swing (close to 50%)
-    assert len(result.swing_categories) >= 5
+    assert len(result.swing_categories) >= 10
 
 
 def test_h2h_simulator_performance():

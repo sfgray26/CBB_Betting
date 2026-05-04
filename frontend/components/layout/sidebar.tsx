@@ -13,6 +13,7 @@ import {
   Activity,
   Radio,
   ShieldAlert,
+  User,
 } from 'lucide-react'
 
 const SHOW_BRACKET = false
@@ -51,6 +52,14 @@ const navSections = [
     ],
     soon: true,
     hidden: !SHOW_BRACKET,
+  },
+  {
+    label: 'Fantasy',
+    items: [
+      { href: '/decisions', label: 'Daily Decisions', icon: User },
+    ],
+    soon: false,
+    hidden: false,
   },
   {
     label: 'Admin',

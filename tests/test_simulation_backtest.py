@@ -29,32 +29,48 @@ def _make_hitter_row(
     as_of_date=None,
     games_in_window=10,
     w_games=10,
+    w_runs=None,
     w_home_runs=3.0,
     w_rbi=10.0,
     w_stolen_bases=2.0,
     w_ab=40.0,
     w_hits=12.0,
+    w_tb=None,
+    w_doubles=None,
+    w_triples=None,
+    w_walks=None,
+    w_net_stolen_bases=None,
+    w_strikeouts_bat=None,
     w_ip=None,
     w_strikeouts_pit=None,
     w_earned_runs=None,
     w_hits_allowed=None,
     w_walks_allowed=None,
+    w_qs=None,
 ):
     row = MagicMock()
     row.bdl_player_id = bdl_player_id
     row.as_of_date = as_of_date or date(2026, 4, 12)
     row.games_in_window = games_in_window
     row.w_games = w_games
+    row.w_runs = w_runs
     row.w_home_runs = w_home_runs
     row.w_rbi = w_rbi
     row.w_stolen_bases = w_stolen_bases
     row.w_ab = w_ab
     row.w_hits = w_hits
+    row.w_tb = w_tb
+    row.w_doubles = w_doubles
+    row.w_triples = w_triples
+    row.w_walks = w_walks
+    row.w_net_stolen_bases = w_net_stolen_bases
+    row.w_strikeouts_bat = w_strikeouts_bat
     row.w_ip = w_ip
     row.w_strikeouts_pit = w_strikeouts_pit
     row.w_earned_runs = w_earned_runs
     row.w_hits_allowed = w_hits_allowed
     row.w_walks_allowed = w_walks_allowed
+    row.w_qs = w_qs
     return row
 
 
@@ -68,7 +84,20 @@ def _make_pitcher_row(
     w_earned_runs=10.0,
     w_hits_allowed=20.0,
     w_walks_allowed=8.0,
+    w_qs=None,
+    w_k_per_9=None,
     w_ab=None,
+    w_runs=None,
+    w_home_runs=None,
+    w_rbi=None,
+    w_stolen_bases=None,
+    w_hits=None,
+    w_tb=None,
+    w_doubles=None,
+    w_triples=None,
+    w_walks=None,
+    w_net_stolen_bases=None,
+    w_strikeouts_bat=None,
 ):
     row = MagicMock()
     row.bdl_player_id = bdl_player_id
@@ -76,15 +105,24 @@ def _make_pitcher_row(
     row.games_in_window = games_in_window
     row.w_games = w_games
     row.w_ab = w_ab
-    row.w_hits = None
-    row.w_home_runs = None
-    row.w_rbi = None
-    row.w_stolen_bases = None
+    row.w_runs = w_runs
+    row.w_home_runs = w_home_runs
+    row.w_rbi = w_rbi
+    row.w_stolen_bases = w_stolen_bases
+    row.w_hits = w_hits
+    row.w_tb = w_tb
+    row.w_doubles = w_doubles
+    row.w_triples = w_triples
+    row.w_walks = w_walks
+    row.w_net_stolen_bases = w_net_stolen_bases
+    row.w_strikeouts_bat = w_strikeouts_bat
     row.w_ip = w_ip
     row.w_strikeouts_pit = w_strikeouts_pit
     row.w_earned_runs = w_earned_runs
     row.w_hits_allowed = w_hits_allowed
     row.w_walks_allowed = w_walks_allowed
+    row.w_qs = w_qs
+    row.w_k_per_9 = w_k_per_9
     return row
 
 
@@ -177,12 +215,18 @@ def test_output_cv_matches_input():
 # ---------------------------------------------------------------------------
 
 def test_zero_rate_produces_zero():
-    """A hitter with w_home_runs=0 should project P50 and P90 HR at 0."""
+    """A hitter with w_home_runs=0 projects lower than average due to Bayesian shrinkage.
+
+    Prior to shrinkage being added, zero observed rate produced exactly 0 projection.
+    Bayesian shrinkage toward _PRIOR_HR_PER_GAME (30/162 ≈ 0.185) means zero-rate
+    hitters are pulled toward league average but still project below average (< 20 HR).
+    """
     row = _make_hitter_row(w_home_runs=0.0)
     result = simulate_player(row, remaining_games=130, n_simulations=1000, seed=42)
 
-    assert result.proj_hr_p50 == 0.0
-    assert result.proj_hr_p90 == 0.0
+    # Shrinkage pulls toward prior (~0.185 HR/game) but 0-rate still projects below average
+    assert result.proj_hr_p50 < 20.0
+    assert result.proj_hr_p90 < 30.0
 
 
 # ---------------------------------------------------------------------------

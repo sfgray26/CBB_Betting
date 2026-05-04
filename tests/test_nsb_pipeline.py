@@ -27,6 +27,7 @@ from backend.services.scoring_engine import (
     PITCHER_CATEGORIES,
     PlayerScoreResult,
     _COMPOSITE_EXCLUDED,
+    _CATEGORY_WEIGHTS,
     compute_league_zscores,
     compute_league_params,
 )
@@ -40,7 +41,7 @@ WINDOW = 7
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _stat_row(pid, gd, ab=4, hits=1, sb=0, cs=None, **kw):
+def _stat_row(pid, gd, ab=4, hits=1, sb=0, cs=None, runs=1, **kw):
     """ORM stub for MLBPlayerStats with optional caught_stealing override."""
     return SimpleNamespace(
         bdl_player_id=pid,
@@ -50,6 +51,7 @@ def _stat_row(pid, gd, ab=4, hits=1, sb=0, cs=None, **kw):
         doubles=0,
         triples=0,
         home_runs=0,
+        runs=runs,
         rbi=0,
         walks=0,
         strikeouts_bat=0,
@@ -134,7 +136,7 @@ def test_rolling_engine_missing_cs_attribute_treated_as_zero():
     row = SimpleNamespace(
         bdl_player_id=7,
         game_date=AS_OF,
-        ab=4, hits=2, doubles=0, triples=0, home_runs=0, rbi=0, walks=0,
+        ab=4, hits=2, doubles=0, triples=0, home_runs=0, runs=1, rbi=0, walks=0,
         strikeouts_bat=0, stolen_bases=2,
         # NO caught_stealing attribute at all
         innings_pitched=None, hits_allowed=None, runs_allowed=None,
@@ -152,7 +154,7 @@ def test_rolling_engine_pure_pitcher_has_null_nsb_fields():
         bdl_player_id=99,
         game_date=AS_OF,
         ab=None, hits=None, doubles=None, triples=None, home_runs=None,
-        rbi=None, walks=None, strikeouts_bat=None, stolen_bases=None,
+        runs=None, rbi=None, walks=None, strikeouts_bat=None, stolen_bases=None,
         caught_stealing=None,
         innings_pitched="5.0", hits_allowed=4, runs_allowed=2,
         earned_runs=2, walks_allowed=1, strikeouts_pit=6,
@@ -250,28 +252,43 @@ def test_composite_z_excludes_z_sb_when_both_populated():
     ]
     results = compute_league_zscores(rows, AS_OF, WINDOW, winsorize=False)
 
-    # The composite must be the mean of all applicable non-None hitter Z's
-    # EXCEPT z_sb. We reconstruct that expected value from the persisted
-    # fields and confirm:
+    # The composite is a weighted mean of all applicable non-None hitter Z's
+    # EXCEPT z_sb (P0-2 fix: weighted mean, not sum). We reconstruct
+    # that expected value from the persisted fields and confirm:
     #   (a) z_sb and z_nsb are both populated
-    #   (b) composite_z equals the mean of {z_hr, z_rbi, z_nsb, z_avg, z_obp}
+    #   (b) composite_z equals the weighted mean of {z_hr, z_rbi, z_nsb, z_avg, z_obp}
     #       filtered to non-None values -- i.e. z_sb was NOT mixed in.
     composite_keys = ["z_hr", "z_rbi", "z_nsb", "z_avg", "z_obp"]  # z_sb deliberately absent
     for r in results:
         assert r.z_sb is not None,  "z_sb should be computed (still persisted)"
         assert r.z_nsb is not None, "z_nsb should be computed"
 
-        expected_parts = [getattr(r, k) for k in composite_keys if getattr(r, k) is not None]
-        expected_composite = sum(expected_parts) / len(expected_parts)
+        # Weighted mean: each key gets its _CATEGORY_WEIGHTS factor (default 1.0)
+        expected_kv_pairs = [
+            (k, getattr(r, k))
+            for k in composite_keys
+            if getattr(r, k) is not None
+        ]
+        if expected_kv_pairs:
+            _total_w = sum(_CATEGORY_WEIGHTS.get(k, 1.0) for k, _ in expected_kv_pairs)
+            expected_composite = (
+                sum(_CATEGORY_WEIGHTS.get(k, 1.0) * v for k, v in expected_kv_pairs) / _total_w
+                if _total_w > 0 else 0.0
+            )
+        else:
+            expected_composite = 0.0
         assert r.composite_z == pytest.approx(expected_composite, abs=1e-9), (
             f"composite_z must exclude z_sb. Got {r.composite_z}, expected {expected_composite} "
-            f"(parts={expected_parts})."
+            f"(kv_pairs={expected_kv_pairs})."
         )
 
         # And crucially: if z_sb WERE included, the composite would differ
         # (z_sb != z_nsb because CS > 0 -> ranks differ). Confirm the guard.
-        with_sb_parts = expected_parts + [r.z_sb]
-        would_be_with_sb = sum(with_sb_parts) / len(with_sb_parts)
+        with_sb_kv_pairs = expected_kv_pairs + [("z_sb", r.z_sb)]
+        would_be_with_sb = sum(
+            _CATEGORY_WEIGHTS.get(k, 1.0) * v
+            for k, v in with_sb_kv_pairs
+        )
         # Degenerate case where z_sb happens to equal the current composite is fine;
         # what we care about is that the actual composite matches the WITHOUT-z_sb
         # computation above. (The previous assertion already establishes that.)

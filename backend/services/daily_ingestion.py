@@ -22,7 +22,7 @@ from typing import Optional, Any
 from zoneinfo import ZoneInfo
 
 import requests
-from sqlalchemy import text, func
+from sqlalchemy import text, func, or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -43,6 +43,7 @@ from backend.models import (
     PlayerScore,
     PlayerMomentum,
     PlayerIDMapping,
+    PlayerProjection,
     SimulationResult as SimulationResultORM,
     DecisionResult as DecisionResultORM,
     BacktestResult as BacktestResultORM,
@@ -51,6 +52,7 @@ from backend.models import (
     PositionEligibility,
     ProbablePitcherSnapshot,
     DataIngestionLog,
+    IngestedInjury,
     engine,
 )
 from backend.services.explainability_layer import ExplanationInput, explain_batch
@@ -67,7 +69,7 @@ from backend.services.backtesting_harness import (
     save_golden_baseline,
     BASELINE_PATH,
 )
-from backend.services.simulation_engine import simulate_all_players, REMAINING_GAMES_DEFAULT
+from backend.services.simulation_engine import simulate_all_players, MLB_SEASON_GAMES
 from backend.services.decision_engine import (
     PlayerDecisionInput,
     optimize_lineup,
@@ -121,8 +123,12 @@ LOCK_IDS = {
     "probable_pitchers":     100_028,
     "player_id_mapping":     100_029,
     "vorp":                  100_030,
+    "projection_cat_scores": 100_031,
+    "savant_ingestion":      100_032,  # Phase 9: Statcast leaderboard ingestion
+    "bdl_injuries":          100_033,  # Phase 1: BDL injury ingestion
+    "yahoo_id_sync":         100_034,  # Yahoo ID mapping sync
+    "cat_scores_backfill":   100_035,  # Session U: bootstrap cat_scores from DB stats
     "ros_projection_refresh": 100_036,  # P0-A: Refresh player_projections from RoS cache
-    "yahoo_id_sync":         100_034,  # P0-C: Yahoo ID mapping sync
 }
 
 
@@ -684,6 +690,16 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # BDL injury ingestion: hourly (every hour)
+        # Keeps injury list fresh for lineup decisions. Uses lock 100_033.
+        self._scheduler.add_job(
+            self._ingest_bdl_injuries,
+            IntervalTrigger(hours=1),
+            id="bdl_injuries",
+            name="BDL Injury Ingestion",
+            replace_existing=True,
+        )
+
         # Supplement BDL counting stats with MLB Stats API: daily 2:30 AM ET
         # Fills NULL ab/h/r/doubles/triples/so/sb/cs from statsapi.boxscore_data().
         # Runs after mlb_box_stats (2 AM) and before rolling_windows (3 AM).
@@ -803,6 +819,16 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Phase 9: Savant leaderboard ingestion: daily 6 AM ET
+        # Fetches Statcast leaderboards (xwOBA, barrel%, xERA) for proxy projections
+        self._scheduler.add_job(
+            self._ingest_savant_leaderboards,
+            CronTrigger(hour=6, minute=0, timezone=tz),
+            id="savant_ingestion",
+            name="Savant Leaderboard Ingestion",
+            replace_existing=True,
+        )
+
         # Rolling z-scores: daily 4 AM ET
         self._scheduler.add_job(
             self._calc_rolling_zscores,
@@ -827,6 +853,17 @@ class DailyIngestionOrchestrator:
             CronTrigger(hour=3, minute=30, timezone=tz),
             id="cleanup",
             name="Old Metric Cleanup",
+            replace_existing=True,
+        )
+
+        # P0-B FIX: Statcast leaderboard ingestion: daily 2 AM ET
+        # Fetches Statcast leaderboards from Baseball Savant (xwOBA, barrel%, xERA, etc.)
+        # This was missing from scheduler registration, causing stale statcast_performances
+        self._scheduler.add_job(
+            self._ingest_savant_leaderboards,
+            CronTrigger(hour=2, minute=0, timezone=tz),
+            id="savant_ingestion",
+            name="Statcast Leaderboard Ingestion",
             replace_existing=True,
         )
 
@@ -878,12 +915,25 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
-        # P0-C: Yahoo ID sync: daily 7:30 AM ET (after ensemble blend, before market open)
+        # Per-category z-score computation: daily 5:30 AM ET (after ensemble_update at 5 AM)
+        # Reads FanGraphs RoS blend → computes 9 batting + 9 pitching cat z-scores
+        # → upserts PlayerProjection.cat_scores and team field.
         self._scheduler.add_job(
-            self._sync_yahoo_id_mapping,
-            CronTrigger(hour=7, minute=30, timezone=tz),
-            id="yahoo_id_sync",
-            name="Yahoo ID Mapping Sync",
+            self._update_projection_cat_scores,
+            CronTrigger(hour=5, minute=30, timezone=tz),
+            id="projection_cat_scores",
+            name="PlayerProjection cat_scores Update",
+            replace_existing=True,
+        )
+
+        # cat_scores bootstrap backfill: daily 6:30 AM ET (after projection_cat_scores at 5:30 AM)
+        # Fallback: reads raw stat columns from player_projections and writes cat_scores z-scores
+        # for any row still empty after the FanGraphs-based job above.
+        self._scheduler.add_job(
+            self._run_cat_scores_backfill,
+            CronTrigger(hour=6, minute=30, timezone=tz),
+            id="cat_scores_backfill",
+            name="cat_scores Bootstrap Backfill",
             replace_existing=True,
         )
 
@@ -893,6 +943,17 @@ class DailyIngestionOrchestrator:
             IntervalTrigger(hours=1),
             id="projection_freshness",
             name="Projection Freshness Check",
+            replace_existing=True,
+        )
+
+        # Yahoo ID mapping sync: daily 4:30 AM ET
+        # Syncs yahoo_id/yahoo_key from Yahoo Fantasy API to player_id_mapping
+        # Runs before player_id_mapping (BDL) at 7 AM and before VORP computation
+        self._scheduler.add_job(
+            self._sync_yahoo_id_mapping,
+            CronTrigger(hour=4, minute=30, timezone=tz),
+            id="yahoo_id_sync",
+            name="Yahoo ID Mapping Sync",
             replace_existing=True,
         )
 
@@ -942,9 +1003,10 @@ class DailyIngestionOrchestrator:
         _all_job_ids = ["mlb_game_log", "mlb_box_stats", "rolling_windows", "player_scores",
                         "vorp", "player_momentum", "ros_simulation", "decision_optimization",
                         "backtesting", "explainability", "snapshot",
-                        "mlb_odds", "statcast",
-                        "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
-                        "ensemble_update", "projection_freshness", "ros_projection_refresh", "yahoo_id_sync",
+                        "mlb_odds", "statcast", "savant_ingestion",
+                        "rolling_z", "clv", "cleanup", "fangraphs_ros", "ros_projection_refresh", "yahoo_adp_injury",
+                        "ensemble_update", "projection_cat_scores", "cat_scores_backfill",
+                        "projection_freshness", "yahoo_id_sync",
                         "player_id_mapping", "position_eligibility",
                         "probable_pitchers_morning", "probable_pitchers_afternoon", "probable_pitchers_evening"]
         if _fantasy_leagues:
@@ -960,6 +1022,20 @@ class DailyIngestionOrchestrator:
                 }
 
         self._scheduler.start()
+        # Ensure the unique index on probable_pitchers(game_date, team) exists so that
+        # on_conflict_do_update(index_elements=["game_date", "team"]) never fails silently.
+        try:
+            _db = SessionLocal()
+            try:
+                _db.execute(text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS _pp_date_team_uc "
+                    "ON probable_pitchers (game_date, team)"
+                ))
+                _db.commit()
+            finally:
+                _db.close()
+        except Exception as _exc:
+            logger.warning("probable_pitchers index ensure failed (non-fatal): %s", _exc)
         # Populate next_run now that jobs are scheduled
         for job_id in _all_job_ids:
             self._job_status[job_id]["next_run"] = self._get_next_run(job_id)
@@ -985,6 +1061,7 @@ class DailyIngestionOrchestrator:
             "mlb_game_log":    self._ingest_mlb_game_log,
             "mlb_box_stats":   self._ingest_mlb_box_stats,
             "statcast":        self._update_statcast,
+            "savant_ingestion": self._ingest_savant_leaderboards,  # Phase 9
             "rolling_windows": self._compute_rolling_windows,
             "player_scores":   self._compute_player_scores,
             "vorp":            self._compute_vorp,
@@ -999,8 +1076,21 @@ class DailyIngestionOrchestrator:
             "probable_pitchers_morning":   self._sync_probable_pitchers,
             "probable_pitchers_afternoon": self._sync_probable_pitchers,
             "probable_pitchers_evening":   self._sync_probable_pitchers,
+            "bdl_injuries":          self._ingest_bdl_injuries,
+            "projection_cat_scores":  self._update_projection_cat_scores,
+            "cat_scores_backfill":    self._run_cat_scores_backfill,
+            "projection_freshness":   self._check_projection_freshness,
+            "statsapi_supplement":    self._supplement_statsapi_counting_stats,
+            "mlb_odds":               self._poll_mlb_odds,
+            "rolling_z":              self._calc_rolling_zscores,
+            "clv":                    self._compute_clv,
+            "cleanup":                self._cleanup_old_metrics,
+            "valuation_cache":        self._refresh_valuation_cache,
+            "fangraphs_ros":          self._fetch_fangraphs_ros,
             "ros_projection_refresh": self._refresh_ros_projections,
-            "yahoo_id_sync": self._sync_yahoo_id_mapping,
+            "yahoo_id_sync":          self._sync_yahoo_id_mapping,
+            "yahoo_adp_injury":       self._poll_yahoo_adp_injury,
+            "ensemble_update":        self._update_ensemble_blend,
         }
         handler = _handlers.get(job_id)
         if handler is None:
@@ -1526,7 +1616,6 @@ class DailyIngestionOrchestrator:
 
                     payload = stat.model_dump()
                     stmt = pg_insert(MLBPlayerStats.__table__).values(
-                        bdl_stat_id=stat.id,
                         bdl_player_id=stat.bdl_player_id,
                         game_id=stat.game_id,
                         game_date=game_date,
@@ -1562,7 +1651,6 @@ class DailyIngestionOrchestrator:
                     ).on_conflict_do_update(
                         constraint="_mps_player_game_uc",
                         set_=dict(
-                            bdl_stat_id=stat.id,
                             season=stat.season if stat.season is not None else 2026,
                             ab=stat.ab,
                             runs=stat.r,
@@ -1632,6 +1720,340 @@ class DailyIngestionOrchestrator:
 
         return await _with_advisory_lock(LOCK_IDS["mlb_box_stats"], "mlb_box_stats", _run)
 
+    async def _ingest_bdl_injuries(self) -> dict:
+        """
+        Hourly MLB injury ingestion from BDL /mlb/v1/player_injuries (lock 100_033).
+
+        Fetches the full active injury list and upserts into ingested_injuries.
+        Injuries are tracked by (bdl_player_id, injury_status, injury_type) as the
+        natural key. When a player recovers, BDL stops returning their injury entry,
+        and a separate cleanup job handles deletion.
+
+        This job runs hourly to keep the injury list fresh for lineup decisions.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.services.balldontlie import BallDontLieClient
+            try:
+                bdl = BallDontLieClient()
+            except ValueError as exc:
+                logger.error("bdl_injuries: BDL init failed -- %s", exc)
+                self._record_job_run("bdl_injuries", "skipped")
+                return {"status": "skipped", "records": 0, "elapsed_ms": 0}
+
+            # Fetch all active injuries
+            injuries = await asyncio.to_thread(bdl.get_mlb_injuries)
+
+            if not injuries:
+                logger.info("bdl_injuries: 0 injuries returned from BDL -- healthy league or API error")
+                self._record_job_run("bdl_injuries", "success", 0)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                return {"status": "success", "records": 0, "elapsed_ms": elapsed}
+
+            now = now_et()
+            rows_upserted = 0
+            db = SessionLocal()
+            try:
+                for injury in injuries:
+                    if injury.player is None:
+                        logger.warning("bdl_injuries: skipping injury with no player object")
+                        continue
+
+                    # Parse ISO 8601 dates from BDL
+                    injury_date = None
+                    if injury.date:
+                        try:
+                            injury_date = datetime.fromisoformat(injury.date.replace("Z", "+00:00"))
+                        except Exception as exc:
+                            logger.warning("bdl_injuries: failed to parse injury_date %s: %s", injury.date, exc)
+
+                    return_date = None
+                    if injury.return_date:
+                        try:
+                            return_date = datetime.fromisoformat(injury.return_date.replace("Z", "+00:00"))
+                        except Exception as exc:
+                            logger.warning("bdl_injuries: failed to parse return_date %s: %s", injury.return_date, exc)
+
+                    payload = injury.model_dump()
+                    stmt = pg_insert(IngestedInjury.__table__).values(
+                        bdl_player_id=injury.player.id,
+                        player_name=injury.player.full_name or "",
+                        injury_date=injury_date,
+                        return_date=return_date,
+                        injury_type=injury.type,
+                        injury_detail=injury.detail,
+                        injury_side=injury.side,
+                        injury_status=injury.status,
+                        long_comment=injury.long_comment,
+                        short_comment=injury.short_comment,
+                        raw_payload=payload,
+                        ingested_at=now,
+                    ).on_conflict_do_update(
+                        constraint="_ii_player_status_type_uc",
+                        set_=dict(
+                            player_name=injury.player.full_name or "",
+                            injury_date=injury_date,
+                            return_date=return_date,
+                            injury_detail=injury.detail,
+                            injury_side=injury.side,
+                            long_comment=injury.long_comment,
+                            short_comment=injury.short_comment,
+                            raw_payload=payload,
+                            ingested_at=now,
+                        ),
+                    )
+                    db.execute(stmt)
+                    rows_upserted += 1
+
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                logger.error("bdl_injuries DB write failed: %s", exc, exc_info=True)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("bdl_injuries", "failed")
+                return {
+                    "status": "failed",
+                    "records": rows_upserted,
+                    "elapsed_ms": elapsed,
+                    "error_message": str(exc),
+                    "error_details": [{
+                        "type": exc.__class__.__name__,
+                        "message": str(exc),
+                        "traceback": traceback.format_exc(),
+                    }],
+                }
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.info(
+                "bdl_injuries: %d injuries upserted in %dms",
+                rows_upserted, elapsed,
+            )
+            self._record_job_run("bdl_injuries", "success", rows_upserted)
+            return {
+                "status": "success",
+                "records": rows_upserted,
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["bdl_injuries"], "bdl_injuries", _run)
+
+    async def _sync_yahoo_id_mapping(self) -> dict:
+        """
+        Sync Yahoo player IDs to player_id_mapping table (lock 100_034).
+
+        Builds an in-memory index of all BDL players (~10,000), enumerates
+        active fantasy players via Yahoo API (rosters + free agents), matches
+        by normalized name, and upserts yahoo_id/yahoo_key to player_id_mapping.
+
+        This unblocks projection resolution, VORP computation, and z-score
+        pipeline which all rely on yahoo_id for player lookups.
+
+        Matching strategy:
+          1. Build BDL player index keyed by normalized full_name
+          2. Enumerate all Yahoo players (league rosters + free agents by position)
+          3. Exact match on normalized name first
+          4. Fuzzy match (threshold 85) for ambiguous cases
+          5. Upsert to player_id_mapping with yahoo_id + yahoo_key
+
+        Rate limiting: 500ms delay between Yahoo API calls to avoid 429s.
+        """
+        import re
+        from backend.fantasy_baseball.mlb_boxscore import normalize_name
+        from backend.services.balldontlie import BallDontLieClient
+        from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
+
+        t0 = time.monotonic()
+
+        async def _run():
+            # Build BDL name index (in-memory dict for fast lookup)
+            logger.info("yahoo_id_sync: Building BDL player index...")
+            try:
+                bdl = BallDontLieClient()
+                bdl_players = await asyncio.to_thread(bdl.get_all_mlb_players)
+                bdl_index = {
+                    normalize_name(p.full_name): {
+                        "bdl_id": p.id,
+                        "full_name": p.full_name,
+                    }
+                    for p in bdl_players
+                }
+                logger.info("yahoo_id_sync: BDL index built with %d players", len(bdl_index))
+            except Exception as exc:
+                logger.error("yahoo_id_sync: BDL index build failed -- %s", exc)
+                self._record_job_run("yahoo_id_sync", "skipped")
+                return {"status": "skipped", "records": 0, "elapsed_ms": 0}
+
+            # Enumerate Yahoo players
+            logger.info("yahoo_id_sync: Enumerating Yahoo players...")
+            yahoo_players = []
+
+            try:
+                yahoo = YahooFantasyClient()
+                league_key = yahoo.get_my_team_key().split(".t.")[0]  # Extract league key (format: game.l.league.t.team)
+
+                # Get all league rosters (~25 players x 12 teams = ~300 players)
+                logger.info("yahoo_id_sync: Fetching league rosters...")
+                roster_players = await asyncio.to_thread(yahoo.get_league_rosters, league_key)
+                yahoo_players.extend(roster_players)
+                logger.info("yahoo_id_sync: Got %d roster players", len(roster_players))
+                await asyncio.sleep(0.5)  # Rate limit
+
+                # Get free agents for each position
+                positions = ["C", "1B", "2B", "3B", "SS", "OF", "DH", "SP", "RP"]
+                for pos in positions:
+                    logger.info("yahoo_id_sync: Fetching free agents for position=%s", pos)
+                    fa_players = await asyncio.to_thread(yahoo.get_free_agents, position=pos, start=0, count=25)
+                    yahoo_players.extend(fa_players)
+                    await asyncio.sleep(0.5)  # Rate limit between calls
+
+            except Exception as exc:
+                logger.error("yahoo_id_sync: Yahoo enumeration failed -- %s", exc)
+                self._record_job_run("yahoo_id_sync", "failed")
+                return {
+                    "status": "failed",
+                    "records": 0,
+                    "elapsed_ms": int((time.monotonic() - t0) * 1000),
+                    "error_message": str(exc),
+                }
+
+            # Deduplicate Yahoo players by player_id
+            seen_ids = set()
+            unique_yahoo_players = []
+            for yp in yahoo_players:
+                pid = yp.get("player_id")
+                if pid and pid not in seen_ids:
+                    seen_ids.add(pid)
+                    unique_yahoo_players.append(yp)
+
+            logger.info("yahoo_id_sync: %d unique Yahoo players after dedup", len(unique_yahoo_players))
+
+            # Match and prepare updates
+            db = SessionLocal()
+            updates = 0
+            matched = 0
+            unmatched = []
+
+            try:
+                for yp in unique_yahoo_players:
+                    yahoo_id = yp.get("player_id")
+                    yahoo_key = yp.get("player_key")
+                    name = yp.get("name", "")
+
+                    if not yahoo_id or not yahoo_key or not name:
+                        continue
+
+                    norm_name = normalize_name(name)
+
+                    # Exact match first
+                    if norm_name in bdl_index:
+                        bdl_data = bdl_index[norm_name]
+                        bdl_id = bdl_data["bdl_id"]
+
+                        # Priority 1: Check if row exists with this yahoo_key (update it)
+                        existing_by_yahoo = db.query(PlayerIDMapping).filter(
+                            PlayerIDMapping.yahoo_key == yahoo_key
+                        ).first()
+
+                        if existing_by_yahoo:
+                            # Check if target bdl_id is already used by another row
+                            existing_by_bdl = db.query(PlayerIDMapping).filter(
+                                PlayerIDMapping.bdl_id == bdl_id
+                            ).first()
+
+                            if existing_by_bdl and existing_by_bdl.id != existing_by_yahoo.id:
+                                # bdl_id already taken by a different row - skip to avoid constraint violation
+                                logger.warning(
+                                    "yahoo_id_sync: Skipping update for yahoo_key=%s (bdl_id=%d already used by row id=%d)",
+                                    yahoo_key, bdl_id, existing_by_bdl.id
+                                )
+                                unmatched.append({"name": name, "yahoo_id": yahoo_id, "reason": "bdl_id_conflict"})
+                            else:
+                                # Safe to update - bdl_id is either free or already assigned to this row
+                                existing_by_yahoo.bdl_id = bdl_id
+                                existing_by_yahoo.yahoo_id = str(yahoo_id)
+                                existing_by_yahoo.full_name = name
+                                existing_by_yahoo.normalized_name = norm_name
+                                existing_by_yahoo.source = "yahoo_sync"
+                                existing_by_yahoo.resolution_confidence = 1.0
+                                existing_by_yahoo.updated_at = now_et()
+                        else:
+                            # Priority 2: Check if row exists by bdl_id (from pybaseball seeding)
+                            existing_by_bdl = db.query(PlayerIDMapping).filter(
+                                PlayerIDMapping.bdl_id == bdl_id
+                            ).first()
+
+                            if existing_by_bdl:
+                                # Update existing row with Yahoo IDs (only if yahoo_key not taken)
+                                existing_by_bdl.yahoo_id = str(yahoo_id)
+                                existing_by_bdl.yahoo_key = yahoo_key
+                                existing_by_bdl.full_name = name
+                                existing_by_bdl.normalized_name = norm_name
+                                existing_by_bdl.source = "yahoo_sync"
+                                existing_by_bdl.resolution_confidence = 1.0
+                                existing_by_bdl.updated_at = now_et()
+                            else:
+                                # Insert new row with ON CONFLICT on yahoo_key
+                                stmt = pg_insert(PlayerIDMapping.__table__).values(
+                                    yahoo_id=str(yahoo_id),
+                                    yahoo_key=yahoo_key,
+                                    bdl_id=bdl_id,
+                                    full_name=name,
+                                    normalized_name=norm_name,
+                                    source="yahoo_sync",
+                                    resolution_confidence=1.0,
+                                    updated_at=now_et(),
+                                ).on_conflict_do_update(
+                                    constraint="_pim_yahoo_key_uc",
+                                    set_=dict(
+                                        yahoo_id=str(yahoo_id),
+                                        full_name=name,
+                                        normalized_name=norm_name,
+                                        updated_at=now_et(),
+                                    ),
+                                )
+                                db.execute(stmt)
+                        matched += 1
+                        updates += 1
+                    else:
+                        unmatched.append({"name": name, "yahoo_id": yahoo_id})
+
+                db.commit()
+            except Exception as exc:
+                db.rollback()
+                logger.error("yahoo_id_sync: DB write failed -- %s", exc, exc_info=True)
+                self._record_job_run("yahoo_id_sync", "failed")
+                return {
+                    "status": "failed",
+                    "records": updates,
+                    "elapsed_ms": int((time.monotonic() - t0) * 1000),
+                    "error_message": str(exc),
+                }
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.info(
+                "yahoo_id_sync: %d matched, %d unmatched, %d upserts in %dms",
+                matched, len(unmatched), updates, elapsed,
+            )
+
+            if unmatched:
+                logger.debug("yahoo_id_sync: Unmatched players (first 10): %s", unmatched[:10])
+
+            self._record_job_run("yahoo_id_sync", "success", updates)
+            return {
+                "status": "success",
+                "records": updates,
+                "matched": matched,
+                "unmatched": len(unmatched),
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["yahoo_id_sync"], "yahoo_id_sync", _run)
+
     async def _supplement_statsapi_counting_stats(self) -> dict:
         """
         Supplement BDL per-game stats with counting stats from MLB Stats API
@@ -1669,12 +2091,22 @@ class DailyIngestionOrchestrator:
 
             db = SessionLocal()
             try:
-                # Find rows needing supplementation (ab IS NULL = BDL didn't provide counting stats)
+                # Find rows needing supplementation: any counting stat is NULL.
+                # BDL may return ab but leave runs/hits/etc null for some games.
                 rows_needing_fill = (
                     db.query(MLBPlayerStats)
                     .filter(
                         MLBPlayerStats.game_date.in_(target_dates),
-                        MLBPlayerStats.ab.is_(None),
+                        or_(
+                            MLBPlayerStats.ab.is_(None),
+                            MLBPlayerStats.runs.is_(None),
+                            MLBPlayerStats.hits.is_(None),
+                            MLBPlayerStats.doubles.is_(None),
+                            MLBPlayerStats.triples.is_(None),
+                            MLBPlayerStats.home_runs.is_(None),
+                            MLBPlayerStats.rbi.is_(None),
+                            MLBPlayerStats.stolen_bases.is_(None),
+                        ),
                     )
                     .all()
                 )
@@ -1871,7 +2303,7 @@ class DailyIngestionOrchestrator:
         async def _run():
             from backend.services.rolling_window_engine import compute_all_rolling_windows
 
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
             lookback_start = as_of_date - timedelta(days=30)
 
             db = SessionLocal()
@@ -1936,12 +2368,14 @@ class DailyIngestionOrchestrator:
                         w_doubles=res.w_doubles,
                         w_triples=res.w_triples,
                         w_home_runs=res.w_home_runs,
+                        w_runs=res.w_runs,
                         w_rbi=res.w_rbi,
                         w_walks=res.w_walks,
                         w_strikeouts_bat=res.w_strikeouts_bat,
                         w_stolen_bases=res.w_stolen_bases,
                         w_caught_stealing=res.w_caught_stealing,
                         w_net_stolen_bases=res.w_net_stolen_bases,
+                        w_tb=res.w_tb,
                         w_avg=res.w_avg,
                         w_obp=res.w_obp,
                         w_slg=res.w_slg,
@@ -1951,6 +2385,7 @@ class DailyIngestionOrchestrator:
                         w_hits_allowed=res.w_hits_allowed,
                         w_walks_allowed=res.w_walks_allowed,
                         w_strikeouts_pit=res.w_strikeouts_pit,
+                        w_qs=res.w_qs,
                         w_era=res.w_era,
                         w_whip=res.w_whip,
                         w_k_per_9=res.w_k_per_9,
@@ -1965,12 +2400,14 @@ class DailyIngestionOrchestrator:
                             w_doubles=res.w_doubles,
                             w_triples=res.w_triples,
                             w_home_runs=res.w_home_runs,
+                            w_runs=res.w_runs,
                             w_rbi=res.w_rbi,
                             w_walks=res.w_walks,
                             w_strikeouts_bat=res.w_strikeouts_bat,
                             w_stolen_bases=res.w_stolen_bases,
                             w_caught_stealing=res.w_caught_stealing,
                             w_net_stolen_bases=res.w_net_stolen_bases,
+                            w_tb=res.w_tb,
                             w_avg=res.w_avg,
                             w_obp=res.w_obp,
                             w_slg=res.w_slg,
@@ -1980,6 +2417,7 @@ class DailyIngestionOrchestrator:
                             w_hits_allowed=res.w_hits_allowed,
                             w_walks_allowed=res.w_walks_allowed,
                             w_strikeouts_pit=res.w_strikeouts_pit,
+                            w_qs=res.w_qs,
                             w_era=res.w_era,
                             w_whip=res.w_whip,
                             w_k_per_9=res.w_k_per_9,
@@ -2023,8 +2461,8 @@ class DailyIngestionOrchestrator:
 
         Algorithm:
           1. For each window_days in [7, 14, 30]:
-             a. Query all player_rolling_stats WHERE as_of_date = yesterday AND window_days = N
-             b. Call compute_league_zscores(rows, yesterday, N)
+             a. Query all player_rolling_stats WHERE as_of_date = today AND window_days = N
+             b. Call compute_league_zscores(rows, today, N)
              c. Upsert each PlayerScoreResult to player_scores table
           2. Anomaly: WARN if 0 players scored for any window
           3. Return scored counts per window
@@ -2034,9 +2472,9 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            from backend.services.scoring_engine import compute_league_zscores, compute_league_params
+            from backend.services.scoring_engine import compute_league_zscores, compute_league_params, apply_position_scarcity_adjustment
 
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
 
             scored_7d = 0
             scored_14d = 0
@@ -2074,6 +2512,10 @@ class DailyIngestionOrchestrator:
 
                     score_results = compute_league_zscores(rows, as_of_date, window_days)
 
+                    # P1: Apply position scarcity adjustments to scores
+                    position_map = self._build_position_map(as_of_date)
+                    score_results = apply_position_scarcity_adjustment(score_results, position_map)
+
                     # H2 fix: capture league-level means/stds from the 14d window
                     # for downstream simulation composite risk metrics.
                     if window_days == 14 and rows:
@@ -2097,11 +2539,18 @@ class DailyIngestionOrchestrator:
                                 z_rbi=res.z_rbi,
                                 z_sb=res.z_sb,
                                 z_nsb=res.z_nsb,
+                                z_r=res.z_r,
+                                z_h=res.z_h,
+                                z_tb=res.z_tb,
+                                z_k_b=res.z_k_b,
                                 z_avg=res.z_avg,
                                 z_obp=res.z_obp,
+                                z_ops=res.z_ops,
                                 z_era=res.z_era,
                                 z_whip=res.z_whip,
                                 z_k_per_9=res.z_k_per_9,
+                                z_k_p=res.z_k_p,
+                                z_qs=res.z_qs,
                                 composite_z=res.composite_z,
                                 score_0_100=res.score_0_100,
                                 confidence=res.confidence,
@@ -2115,11 +2564,18 @@ class DailyIngestionOrchestrator:
                                     z_rbi=res.z_rbi,
                                     z_sb=res.z_sb,
                                     z_nsb=res.z_nsb,
+                                    z_r=res.z_r,
+                                    z_h=res.z_h,
+                                    z_tb=res.z_tb,
+                                    z_k_b=res.z_k_b,
                                     z_avg=res.z_avg,
                                     z_obp=res.z_obp,
+                                    z_ops=res.z_ops,
                                     z_era=res.z_era,
                                     z_whip=res.z_whip,
                                     z_k_per_9=res.z_k_per_9,
+                                    z_k_p=res.z_k_p,
+                                    z_qs=res.z_qs,
                                     composite_z=res.composite_z,
                                     score_0_100=res.score_0_100,
                                     confidence=res.confidence,
@@ -2283,8 +2739,8 @@ class DailyIngestionOrchestrator:
         Runs after _compute_player_scores (4 AM) so player_scores is current.
 
         Algorithm:
-          1. Query player_scores WHERE as_of_date = yesterday AND window_days = 14
-          2. Query player_scores WHERE as_of_date = yesterday AND window_days = 30
+          1. Query player_scores WHERE as_of_date = today AND window_days = 14
+          2. Query player_scores WHERE as_of_date = today AND window_days = 30
           3. compute_all_momentum(scores_14d, scores_30d)
           4. Upsert each MomentumResult to player_momentum ON CONFLICT (_pm_player_date_uc)
           5. WARN if 0 results (off-day or scoring pipeline missing)
@@ -2299,7 +2755,7 @@ class DailyIngestionOrchestrator:
             from collections import Counter
             from backend.services.momentum_engine import compute_all_momentum
 
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
 
             db = SessionLocal()
             results = []
@@ -2426,9 +2882,9 @@ class DailyIngestionOrchestrator:
         Runs after _compute_player_momentum (5 AM) so momentum layer is current.
 
         Algorithm:
-          1. Query player_rolling_stats WHERE as_of_date = yesterday AND window_days = 14
-          2. simulate_all_players(rows, remaining_games=REMAINING_GAMES_DEFAULT)
-             -> list[SimulationResult dataclass]
+          1. Query player_rolling_stats WHERE as_of_date = today AND window_days = 14
+          2. simulate_all_players(rows, remaining_games=None, db=db, as_of_date=as_of_date)
+             -> Player-specific remaining_games calculated from MLBPlayerStats
           3. Upsert each result to simulation_results ON CONFLICT (_sr_player_date_uc)
           4. WARN if 0 players simulated (off-day or rolling_windows pipeline missing)
           5. Return {"as_of_date": str(yesterday), "players_simulated": n}
@@ -2438,7 +2894,7 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
             now = datetime.now(ZoneInfo("America/New_York"))
 
             db = SessionLocal()
@@ -2466,10 +2922,12 @@ class DailyIngestionOrchestrator:
                 sim_results = await asyncio.to_thread(
                     simulate_all_players,
                     rolling_rows,
-                    REMAINING_GAMES_DEFAULT,
+                    None,  # remaining_games=None triggers player-specific calculation
                     1000,
                     self._league_means,
                     self._league_stds,
+                    db,  # Pass DB session for games_played queries
+                    as_of_date,  # Pass reference date
                 )
 
                 if not sim_results:
@@ -2599,14 +3057,13 @@ class DailyIngestionOrchestrator:
             self._record_job_run("ros_simulation", "success", n)
             logger.info(
                 "ros_simulation: %d players simulated for as_of_date=%s "
-                "remaining_games=%d elapsed_ms=%d",
-                n, as_of_date, REMAINING_GAMES_DEFAULT, elapsed,
+                "(player-specific remaining_games) elapsed_ms=%d",
+                n, as_of_date, elapsed,
             )
             return {
                 "status": "success",
                 "as_of_date": str(as_of_date),
                 "players_simulated": n,
-                "remaining_games": REMAINING_GAMES_DEFAULT,
                 "elapsed_ms": elapsed,
             }
 
@@ -2619,9 +3076,9 @@ class DailyIngestionOrchestrator:
         Runs after _run_ros_simulation (6 AM) so simulation_results is current.
 
         Algorithm:
-          1. Query player_scores WHERE as_of_date = yesterday AND window_days = 14
-          2. Query player_momentum WHERE as_of_date = yesterday (join on bdl_player_id)
-          3. Query simulation_results WHERE as_of_date = yesterday (join on bdl_player_id)
+          1. Query player_scores WHERE as_of_date = today AND window_days = 14
+          2. Query player_momentum WHERE as_of_date = today (join on bdl_player_id)
+          3. Query simulation_results WHERE as_of_date = today (join on bdl_player_id)
           4. Build PlayerDecisionInput list from joined data
           5. Call optimize_lineup(players) and optimize_waivers(players, waiver_pool=[])
           6. Upsert DecisionResult ORM rows ON CONFLICT _dr_date_type_player_uc DO UPDATE
@@ -2632,7 +3089,7 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
             now = datetime.now(ZoneInfo("America/New_York"))
 
             db = SessionLocal()
@@ -2701,11 +3158,24 @@ class DailyIngestionOrchestrator:
                     }
 
                 # Step 4: build lookup dicts for join
+                score_by_id    = {r.bdl_player_id: r for r in score_rows}
                 momentum_by_id = {r.bdl_player_id: r for r in momentum_rows}
                 sim_by_id      = {r.bdl_player_id: r for r in sim_rows}
 
                 # H1 fix: fetch real position eligibility from Yahoo roster
                 # via the PlayerIDMapping cross-reference table.
+                def _normalize_identity_name(name: str) -> str:
+                    if not name:
+                        return ""
+                    normalized = unicodedata.normalize("NFKD", name).lower().strip()
+                    for suffix in (" jr.", " sr.", " ii", " iii", " iv", " jr", " sr"):
+                        if normalized.endswith(suffix):
+                            normalized = normalized[: -len(suffix)].strip()
+                    normalized = normalized.replace(".", "")
+                    while "  " in normalized:
+                        normalized = normalized.replace("  ", " ")
+                    return normalized.strip()
+
                 yahoo_positions_by_bdl: dict[int, list[str]] = {}
                 try:
                     from backend.fantasy_baseball.yahoo_client_resilient import (
@@ -2719,25 +3189,56 @@ class DailyIngestionOrchestrator:
                         p["player_key"]: p.get("positions", [])
                         for p in roster if p.get("player_key")
                     }
+                    yahoo_key_to_name = {
+                        p["player_key"]: p.get("name", "")
+                        for p in roster if p.get("player_key")
+                    }
 
                     # Resolve yahoo_key -> bdl_id via PlayerIDMapping
                     if yahoo_key_to_pos:
                         mappings = (
-                            db.query(PlayerIDMapping.yahoo_key, PlayerIDMapping.bdl_id)
+                            db.query(
+                                PlayerIDMapping.yahoo_key,
+                                PlayerIDMapping.bdl_id,
+                                PlayerIDMapping.normalized_name,
+                                PlayerIDMapping.full_name,
+                            )
                             .filter(
                                 PlayerIDMapping.yahoo_key.in_(list(yahoo_key_to_pos.keys())),
                                 PlayerIDMapping.bdl_id.isnot(None),
                             )
                             .all()
                         )
-                        for ykey, bdl_id in mappings:
+                        rejected_mapping_count = 0
+                        for ykey, bdl_id, mapping_normalized_name, mapping_full_name in mappings:
                             positions = yahoo_key_to_pos.get(ykey, [])
+                            roster_name = yahoo_key_to_name.get(ykey, "")
+                            roster_normalized = _normalize_identity_name(roster_name)
+                            mapping_normalized = _normalize_identity_name(
+                                mapping_normalized_name or mapping_full_name or ""
+                            )
+                            if (
+                                roster_normalized
+                                and mapping_normalized
+                                and roster_normalized != mapping_normalized
+                            ):
+                                rejected_mapping_count += 1
+                                logger.warning(
+                                    "decision_optimization: rejecting yahoo_key %s due to name mismatch "
+                                    "(roster='%s', mapping='%s', bdl_id=%s)",
+                                    ykey,
+                                    roster_name,
+                                    mapping_full_name,
+                                    bdl_id,
+                                )
+                                continue
                             if positions:
                                 yahoo_positions_by_bdl[bdl_id] = positions
 
                     logger.info(
-                        "decision_optimization: resolved %d/%d roster players to BDL IDs",
-                        len(yahoo_positions_by_bdl), len(roster),
+                        "decision_optimization: resolved %d/%d roster players to BDL IDs "
+                        "(rejected_mismatches=%d)",
+                        len(yahoo_positions_by_bdl), len(roster), rejected_mapping_count,
                     )
                 except Exception as exc:
                     logger.warning(
@@ -2746,8 +3247,29 @@ class DailyIngestionOrchestrator:
                         exc,
                     )
 
+                # Filter player_scores to roster only for lineup optimization
+                # Lineup decisions should only include actual roster players
+                roster_bdl_ids = set(yahoo_positions_by_bdl.keys())
+                if roster_bdl_ids:
+                    roster_score_rows = [s for s in score_rows if s.bdl_player_id in roster_bdl_ids]
+                    logger.info(
+                        "decision_optimization: filtered to %d/%d roster players for lineup optimization",
+                        len(roster_score_rows), len(score_rows),
+                    )
+                else:
+                    # Fail closed: roster resolution failed, skip lineup optimization
+                    # We do NOT fall back to all player_scores — lineup recommendations
+                    # must only reflect the user's actual roster
+                    logger.error(
+                        "decision_optimization: roster BDL IDs empty — skipping lineup optimization "
+                        "(roster resolution failed or no players mapped to BDL IDs). "
+                        "Lineup decisions require successful Yahoo roster fetch and PlayerIDMapping entries."
+                    )
+                    # Set empty players list; optimize_lineup will return empty results
+                    roster_score_rows = []
+
                 players = []
-                for score in score_rows:
+                for score in roster_score_rows:
                     pid = score.bdl_player_id
                     mom  = momentum_by_id.get(pid)
                     sim  = sim_by_id.get(pid)
@@ -2784,6 +3306,16 @@ class DailyIngestionOrchestrator:
                         proj_whip_p50=sim.proj_whip_p50 if sim else None,
                         downside_p25=sim.downside_p25  if sim else None,
                         upside_p75=sim.upside_p75      if sim else None,
+                        # P0-3: Pitcher z-scores from player_scores
+                        z_k_p=score.z_k_p,
+                        z_era=score.z_era,
+                        z_whip=score.z_whip,
+                        # Hitter z-scores from player_scores (category-aware scoring)
+                        z_hr=score.z_hr,
+                        z_rbi=score.z_rbi,
+                        z_nsb=score.z_nsb,
+                        z_r=score.z_r,
+                        z_ops=score.z_ops,
                     ))
 
                 # Step 5: run decision engine (CPU-bound -- offload to thread pool)
@@ -2852,6 +3384,7 @@ class DailyIngestionOrchestrator:
 
                     fa_skipped = 0
                     fa_fuzzy_resolved = 0
+                    fa_missing_model_data = 0
                     for fa in free_agents:
                         fa_bdl_id = fa_bdl_map.get(fa.get("player_key"))
                         if fa_bdl_id is None:
@@ -2873,6 +3406,20 @@ class DailyIngestionOrchestrator:
                                     fa_name, len(candidates),
                                 )
                                 continue
+                        fa_score = score_by_id.get(fa_bdl_id)
+                        fa_sim = sim_by_id.get(fa_bdl_id)
+                        fa_mom = momentum_by_id.get(fa_bdl_id)
+                        if fa_score is None or fa_sim is None:
+                            fa_missing_model_data += 1
+                            logger.debug(
+                                "decision_optimization: FA '%s' skipped due to missing modeled data "
+                                "(bdl_id=%s, has_score=%s, has_sim=%s)",
+                                fa.get("name", str(fa_bdl_id)),
+                                fa_bdl_id,
+                                fa_score is not None,
+                                fa_sim is not None,
+                            )
+                            continue
                         fa_positions = fa.get("positions", [])
                         if not fa_positions:
                             fa_positions = ["Util"]
@@ -2890,15 +3437,34 @@ class DailyIngestionOrchestrator:
                             name=fa.get("name", str(fa_bdl_id)),
                             player_type=fa_type,
                             eligible_positions=fa_positions,
-                            score_0_100=0.0,
-                            composite_z=0.0,
-                            momentum_signal="STABLE",
-                            delta_z=0.0,
+                            score_0_100=fa_score.score_0_100 or 0.0,
+                            composite_z=fa_score.composite_z or 0.0,
+                            momentum_signal=fa_mom.signal if fa_mom else "STABLE",
+                            delta_z=fa_mom.delta_z if fa_mom else 0.0,
+                            proj_hr_p50=fa_sim.proj_hr_p50,
+                            proj_rbi_p50=fa_sim.proj_rbi_p50,
+                            proj_sb_p50=fa_sim.proj_sb_p50,
+                            proj_avg_p50=fa_sim.proj_avg_p50,
+                            proj_k_p50=fa_sim.proj_k_p50,
+                            proj_era_p50=fa_sim.proj_era_p50,
+                            proj_whip_p50=fa_sim.proj_whip_p50,
+                            downside_p25=fa_sim.downside_p25,
+                            upside_p75=fa_sim.upside_p75,
+                            # P0-3: Pitcher z-scores from player_scores
+                            z_k_p=fa_score.z_k_p,
+                            z_era=fa_score.z_era,
+                            z_whip=fa_score.z_whip,
+                            # Hitter z-scores from player_scores (category-aware scoring)
+                            z_hr=fa_score.z_hr,
+                            z_rbi=fa_score.z_rbi,
+                            z_nsb=fa_score.z_nsb,
+                            z_r=fa_score.z_r,
+                            z_ops=fa_score.z_ops,
                         ))
                     logger.info(
                         "decision_optimization: built waiver pool with %d candidates "
-                        "(fuzzy_resolved=%d, skipped=%d, fetched=%d)",
-                        len(waiver_pool), fa_fuzzy_resolved, fa_skipped, len(free_agents),
+                        "(fuzzy_resolved=%d, skipped=%d, missing_model_data=%d, fetched=%d)",
+                        len(waiver_pool), fa_fuzzy_resolved, fa_skipped, fa_missing_model_data, len(free_agents),
                     )
                     if fa_skipped > 0 and len(free_agents) > 0:
                         logger.warning(
@@ -2919,10 +3485,31 @@ class DailyIngestionOrchestrator:
                     optimize_waivers, players, waiver_pool, as_of_date
                 )
 
-                all_results = lineup_results + waiver_results
+                # Filter low-quality waiver recommendations before persisting
+                # Threshold: value_gain > 0.10 to exclude zero/negative value adds
+                waiver_results_filtered = [
+                    r for r in waiver_results
+                    if r.value_gain is not None and r.value_gain > 0.10
+                ]
+                logger.info(
+                    "decision_optimization: filtered %d/%d waiver recommendations "
+                    "with value_gain > 0.10",
+                    len(waiver_results_filtered), len(waiver_results),
+                )
+
+                all_results = lineup_results + waiver_results_filtered
 
                 # Step 6: upsert DecisionResult rows
                 try:
+                    db.query(DecisionExplanationORM).filter(
+                        DecisionExplanationORM.as_of_date == as_of_date,
+                        DecisionExplanationORM.decision_type.in_(["lineup", "waiver"]),
+                    ).delete(synchronize_session=False)
+                    db.query(DecisionResultORM).filter(
+                        DecisionResultORM.as_of_date == as_of_date,
+                        DecisionResultORM.decision_type.in_(["lineup", "waiver"]),
+                    ).delete(synchronize_session=False)
+
                     for res in all_results:
                         stmt = pg_insert(DecisionResultORM.__table__).values(
                             as_of_date=res.as_of_date,
@@ -2970,7 +3557,7 @@ class DailyIngestionOrchestrator:
 
             elapsed = int((time.monotonic() - t0) * 1000)
             n_lineup = len(lineup_results)
-            n_waiver = len(waiver_results)
+            n_waiver = len(waiver_results_filtered)
             self._record_job_run("decision_optimization", "success", n_lineup + n_waiver)
             logger.info(
                 "decision_optimization: %d lineup + %d waiver decisions for as_of_date=%s "
@@ -2994,8 +3581,8 @@ class DailyIngestionOrchestrator:
         Runs after _run_decision_optimization (7 AM) so the full pipeline is current.
 
         Algorithm:
-          1. Compute as_of_date = yesterday
-          2. Query simulation_results WHERE as_of_date = yesterday AND window_days = 14
+          1. Compute as_of_date = today
+          2. Query simulation_results WHERE as_of_date = today AND window_days = 14
           3. For each sim_row, query mlb_player_stats for the 14-day actuals window
           4. Aggregate actuals: sum HR/RBI/SB/K, mean AVG, IP-weighted ERA/WHIP
           5. Build BacktestInput list and call evaluate_cohort via asyncio.to_thread
@@ -3009,7 +3596,7 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
             window_start = as_of_date - timedelta(days=14)
             now = datetime.now(ZoneInfo("America/New_York"))
 
@@ -3018,7 +3605,7 @@ class DailyIngestionOrchestrator:
 
             db = SessionLocal()
             try:
-                # Step 1: fetch simulation_results for yesterday (14d window)
+                # Step 1: fetch simulation_results for today (14d window)
                 try:
                     sim_rows = (
                         db.query(SimulationResultORM)
@@ -3133,10 +3720,10 @@ class DailyIngestionOrchestrator:
                             actual_era  = era_sum  / total_ip
                             actual_whip = whip_sum / total_ip
 
-                    # H3 fix: scale ROS projections (130-game totals) down to
+                    # H3 fix: scale ROS projections (player-specific totals) down to
                     # match the 14-day actual window. Without this, MAE compares
                     # season totals to ~10-game sums and produces garbage values.
-                    remaining = sim.remaining_games or REMAINING_GAMES_DEFAULT
+                    remaining = sim.remaining_games or MLB_SEASON_GAMES
                     scale = games_played / remaining if remaining > 0 and games_played > 0 else 0.0
 
                     def _scale(val):
@@ -3282,7 +3869,7 @@ class DailyIngestionOrchestrator:
         Runs after _run_backtesting (8 AM) so all P14-P18 signals are current.
 
         Algorithm:
-          1. Query decision_results WHERE as_of_date = yesterday
+          1. Query decision_results WHERE as_of_date = today
           2. For each decision, join player_scores (14d), player_momentum,
              simulation_results, backtest_results, and PlayerIDMapping for names
           3. Build ExplanationInput dataclasses; skip if player_scores row missing
@@ -3295,12 +3882,12 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
             now = datetime.now(ZoneInfo("America/New_York"))
 
             db = SessionLocal()
             try:
-                # Step 1: fetch all decision_results for yesterday
+                # Step 1: fetch all decision_results for today
                 try:
                     decision_rows = (
                         db.query(DecisionResultORM)
@@ -3455,7 +4042,6 @@ class DailyIngestionOrchestrator:
                         z_era=score_row.z_era,
                         z_whip=score_row.z_whip,
                         z_k_per_9=score_row.z_k_per_9,
-                        score_confidence=score_row.confidence if score_row.confidence is not None else 0.0,
                         games_in_window=score_row.games_in_window if score_row.games_in_window is not None else 0,
                         signal=momentum_row.signal if momentum_row else "STABLE",
                         delta_z=momentum_row.delta_z if momentum_row and momentum_row.delta_z is not None else 0.0,
@@ -3471,6 +4057,9 @@ class DailyIngestionOrchestrator:
                         upside_p75=sim_row.upside_p75 if sim_row else None,
                         backtest_composite_mae=bt_row.composite_mae if bt_row else None,
                         backtest_games=bt_row.games_played if bt_row else None,
+                        # P2: Injury risk modeling fields
+                        remaining_games=sim_row.remaining_games if sim_row else None,
+                        injury_risk_multiplier=sim_row.injury_risk_multiplier if sim_row else None,
                     ))
 
                 # Step 4: generate explanations (CPU-bound -- offload to thread pool)
@@ -3562,7 +4151,7 @@ class DailyIngestionOrchestrator:
         Runs after _run_explainability (9 AM) -- final stage of the daily pipeline.
 
         Algorithm:
-          1. Compute as_of_date = yesterday
+          1. Compute as_of_date = today
           2. Query count metrics from all 6 phase tables for that date
           3. Compute regression detection vs. historical average composite_mae
           4. Fetch top 5 lineup + top 3 waiver player IDs from decision_results
@@ -3575,7 +4164,7 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            as_of_date = datetime.now(ZoneInfo("America/New_York")).date() - timedelta(days=1)
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
             now = datetime.now(ZoneInfo("America/New_York"))
 
             db = SessionLocal()
@@ -3798,6 +4387,80 @@ class DailyIngestionOrchestrator:
                 return {"status": "failed", "records": 0, "error": str(exc), "elapsed_ms": elapsed}
 
         return await _with_advisory_lock(LOCK_IDS["statcast"], "statcast", _run)
+
+    async def _ingest_savant_leaderboards(self) -> dict:
+        """
+        Phase 9: Fetch Statcast leaderboards from Baseball Savant CSV endpoints.
+
+        Ingests aggregated season stats (xwOBA, barrel%, xERA, etc.) into
+        statcast_batter_metrics and statcast_pitcher_metrics tables.
+
+        These metrics power the Statcast Proxy Engine for generating projections
+        when Steamer data is missing or outdated.
+
+        Returns stats dict with status and record counts.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            try:
+                from backend.fantasy_baseball.savant_ingestion import SavantIngestionAgent
+                db = SessionLocal()
+
+                agent = SavantIngestionAgent(db, season=2026)
+                result = await asyncio.to_thread(agent.run_daily_ingestion)
+
+                elapsed = int((time.monotonic() - t0) * 1000)
+
+                if result.get("status") == "success":
+                    batters = result.get("batters", {})
+                    pitchers = result.get("pitchers", {})
+                    b_total = batters.get("inserted", 0) + batters.get("updated", 0)
+                    p_total = pitchers.get("inserted", 0) + pitchers.get("updated", 0)
+
+                    logger.info(
+                        "_ingest_savant_leaderboards: success — %d batters (%d new), %d pitchers (%d new)",
+                        b_total, batters.get("inserted", 0),
+                        p_total, pitchers.get("inserted", 0)
+                    )
+                    self._record_job_run("savant_ingestion", "success", b_total + p_total)
+
+                    return {
+                        "status": "success",
+                        "batters": b_total,
+                        "pitchers": p_total,
+                        "elapsed_ms": elapsed,
+                    }
+                elif result.get("status") == "skipped":
+                    logger.info("_ingest_savant_leaderboards: skipped (lock held)")
+                    self._record_job_run("savant_ingestion", "skipped")
+                    return {"status": "skipped", "elapsed_ms": elapsed}
+                else:
+                    err_type = result.get("error", "unknown")
+                    err_msg = result.get("message") or "no detail"
+                    logger.error(
+                        "_ingest_savant_leaderboards: failed — %s: %s",
+                        err_type, err_msg
+                    )
+                    self._record_job_run("savant_ingestion", "failed")
+                    return {
+                        "status": "failed",
+                        "error": f"{err_type}: {err_msg}",
+                        "elapsed_ms": elapsed,
+                    }
+
+            except Exception as exc:
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.exception("_ingest_savant_leaderboards: unhandled error -- %s", exc)
+                self._record_job_run("savant_ingestion", "failed")
+                return {"status": "failed", "error": str(exc), "elapsed_ms": elapsed}
+            finally:
+                try:
+                    db.close()
+                except Exception as db_exc:
+                    logger.warning("_ingest_savant_leaderboards: db.close() failed: %s", db_exc)
+
+        return await _with_advisory_lock(LOCK_IDS["savant_ingestion"], "savant_ingestion", _run)
 
     async def _calc_rolling_zscores(self) -> dict:
         """
@@ -4125,6 +4788,216 @@ class DailyIngestionOrchestrator:
 
         return await _with_advisory_lock(LOCK_IDS["fangraphs_ros"], "fangraphs_ros", _run)
 
+    async def _refresh_ros_projections(self) -> dict:
+        """Refresh player_projections table from RoS cache (lock 100_036).
+
+        P0-A FIX: Projections were stale (March 9) because the RoS cache was not
+        being used to update player_projections base columns (hr, r, rbi, sb, avg, ops,
+        era, whip, k_per_nine, w, sv, k_pit).
+
+        Runs at 3:30 AM ET, 30 minutes after fangraphs_ros populates the RoS cache.
+        Reads the ensemble blend from RoS cache and upserts player_projections with
+        fresh projection values.
+
+        Does NOT update cat_scores (that happens at 5:30 AM via projection_cat_scores).
+
+        Success criteria:
+            SELECT MAX(updated_at) FROM player_projections;
+            → Should return today's date after first 3:30 AM ET run.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.fantasy_baseball.fangraphs_loader import compute_ensemble_blend
+
+            # --- 1. Load RoS cache (must be populated by fangraphs_ros at 3 AM) ---
+            bat_raw = _ROS_CACHE.get("bat")
+            pit_raw = _ROS_CACHE.get("pit")
+
+            if not bat_raw and not pit_raw:
+                persisted_bat, persisted_pit, persisted_at = _load_persisted_ros_cache()
+
+                if not persisted_bat and not persisted_pit:
+                    logger.warning("ros_projection_refresh: no RoS cache available — skipping")
+                    self._record_job_run("ros_projection_refresh", "skipped")
+                    return {"status": "skipped", "reason": "no_ros_cache", "updated": 0, "inserted": 0, "elapsed_ms": 0}
+
+                bat_raw = persisted_bat
+                pit_raw = persisted_pit
+
+            # --- 2. Compute ensemble blend (same as projection_cat_scores) ---
+            BAT_STAT_COLS = ["HR", "R", "RBI", "SB", "SO", "AVG", "OPS", "SLG", "PA"]
+            PIT_STAT_COLS = ["W", "SV", "SO", "ERA", "WHIP", "GS", "K/9", "IP"]
+
+            bat_blend = compute_ensemble_blend(bat_raw or {}, stat_columns=BAT_STAT_COLS) if bat_raw else None
+            pit_blend = compute_ensemble_blend(pit_raw or {}, stat_columns=PIT_STAT_COLS) if pit_raw else None
+
+            if bat_blend is None and pit_blend is None:
+                logger.error("ros_projection_refresh: blend produced no data")
+                self._record_job_run("ros_projection_refresh", "failed")
+                return {"status": "failed", "reason": "blend_failed", "updated": 0, "inserted": 0, "elapsed_ms": 0}
+
+            # --- 3. Build normalized_name → mlbam_id lookup ---
+            db = SessionLocal()
+            try:
+                id_map_rows = (
+                    db.query(PlayerIDMapping.normalized_name, PlayerIDMapping.mlbam_id)
+                    .filter(PlayerIDMapping.mlbam_id.isnot(None))
+                    .all()
+                )
+                name_to_mlbam: dict[str, str] = {
+                    r.normalized_name: str(r.mlbam_id)
+                    for r in id_map_rows
+                    if r.normalized_name
+                }
+
+                # --- 4. Upsert batter projections ---
+                now = datetime.now(ZoneInfo("America/New_York"))
+                updated = 0
+                inserted = 0
+                skipped = 0
+
+                if bat_blend is not None:
+                    for _, row in bat_blend.iterrows():
+                        fg_id = str(row.get("player_id", ""))
+                        mlbam_id = name_to_mlbam.get(fg_id)
+
+                        if not mlbam_id:
+                            skipped += 1
+                            continue
+
+                        # Check if row exists (update vs insert)
+                        existing = db.query(PlayerProjection).filter(
+                            PlayerProjection.player_id == mlbam_id
+                        ).first()
+
+                        pa = float(row.get("PA", 500) or 500) or 500.0
+                        avg = float(row.get("AVG", 0.250) or 0.250)
+                        slg = float(row.get("SLG", 0.400) or 0.400)
+                        ab_est = pa * 0.87
+
+                        upsert_vals = {
+                            "player_id": mlbam_id,
+                            "player_name": str(row.get("name", "")),
+                            "team": (str(row.get("team", "") or "")).upper().strip(),
+                            "player_type": "hitter",
+                            "hr": int(max(0, float(row.get("HR", 0) or 0))),
+                            "r": int(max(0, float(row.get("R", 0) or 0))),
+                            "rbi": int(max(0, float(row.get("RBI", 0) or 0))),
+                            "sb": int(max(0, float(row.get("SB", 0) or 0))),
+                            "avg": round(avg, 3),
+                            "ops": round(float(row.get("OPS", 0.720) or 0.720), 3),
+                            "woba": round(avg * 1.25 + 0.12, 3),  # Approximate wOBA from AVG
+                            "xwoba": round(avg * 1.25 + 0.12, 3),
+                            "era": None,
+                            "whip": None,
+                            "k_per_nine": None,
+                            "prior_source": "fangraphs_ros",
+                            "update_method": "ensemble_blend",
+                            "updated_at": now,
+                        }
+
+                        if existing:
+                            # Update existing row
+                            for k, v in upsert_vals.items():
+                                if k not in ("player_id", "player_name", "created_at"):
+                                    setattr(existing, k, v)
+                            updated += 1
+                        else:
+                            # Insert new row
+                            upsert_vals["positions"] = ["Util"]
+                            upsert_vals["cat_scores"] = {}
+                            upsert_vals["created_at"] = now
+                            new_row = PlayerProjection(**upsert_vals)
+                            db.add(new_row)
+                            inserted += 1
+
+                # --- 5. Upsert pitcher projections ---
+                if pit_blend is not None:
+                    for _, row in pit_blend.iterrows():
+                        fg_id = str(row.get("player_id", ""))
+                        mlbam_id = name_to_mlbam.get(fg_id)
+
+                        if not mlbam_id:
+                            skipped += 1
+                            continue
+
+                        existing = db.query(PlayerProjection).filter(
+                            PlayerProjection.player_id == mlbam_id
+                        ).first()
+
+                        ip = float(row.get("IP", 0) or 0)
+                        k = float(row.get("SO", 0) or 0)
+                        k9_val = float(row.get("K/9", 0) or 0) or ((k / ip * 9) if ip > 0 else 0.0)
+                        gs = float(row.get("GS", 0) or 0)
+
+                        upsert_vals = {
+                            "player_id": mlbam_id,
+                            "player_name": str(row.get("name", "")),
+                            "team": (str(row.get("team", "") or "")).upper().strip(),
+                            "player_type": "pitcher",
+                            "hr": None,
+                            "r": None,
+                            "rbi": None,
+                            "sb": None,
+                            "avg": None,
+                            "ops": None,
+                            "woba": None,
+                            "xwoba": None,
+                            "era": round(float(row.get("ERA", 4.5) or 4.5), 2),
+                            "whip": round(float(row.get("WHIP", 1.3) or 1.3), 2),
+                            "k_per_nine": round(k9_val, 2),
+                            "w": int(max(0, float(row.get("W", 0) or 0))),
+                            "l": 0,
+                            "hr_pit": 0,
+                            "k_pit": int(k),
+                            "qs": round(gs * 0.55) if gs >= 10 else 0,
+                            "nsv": int(max(0, float(row.get("SV", 0) or 0))),
+                            "prior_source": "fangraphs_ros",
+                            "update_method": "ensemble_blend",
+                            "updated_at": now,
+                        }
+
+                        if existing:
+                            for k, v in upsert_vals.items():
+                                if k not in ("player_id", "player_name", "created_at"):
+                                    setattr(existing, k, v)
+                            updated += 1
+                        else:
+                            upsert_vals["positions"] = ["SP"]
+                            upsert_vals["cat_scores"] = {}
+                            upsert_vals["created_at"] = now
+                            new_row = PlayerProjection(**upsert_vals)
+                            db.add(new_row)
+                            inserted += 1
+
+                db.commit()
+
+            except Exception as exc:
+                db.rollback()
+                logger.error("ros_projection_refresh DB write failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("ros_projection_refresh", "failed")
+                return {"status": "failed", "error": str(exc), "updated": 0, "inserted": 0, "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.info(
+                "ros_projection_refresh: updated=%d inserted=%d skipped=%d elapsed=%dms",
+                updated, inserted, skipped, elapsed,
+            )
+            self._record_job_run("ros_projection_refresh", "success", updated + inserted)
+            return {
+                "status": "success",
+                "updated": updated,
+                "inserted": inserted,
+                "skipped": skipped,
+                "elapsed_ms": elapsed,
+            }
+
+        return await _with_advisory_lock(LOCK_IDS["ros_projection_refresh"], "ros_projection_refresh", _run)
+
     async def _update_ensemble_blend(self) -> dict:
         """Compute weighted ensemble blend and persist to PlayerDailyMetric (lock 100_014).
 
@@ -4298,6 +5171,308 @@ class DailyIngestionOrchestrator:
 
         return await _with_advisory_lock(LOCK_IDS["ensemble_update"], "ensemble_update", _run)
 
+    async def _update_projection_cat_scores(self) -> dict:
+        """Compute per-category z-scores from FanGraphs RoS blend and write to
+        PlayerProjection.cat_scores + team (lock 100_031).
+
+        Runs at 5:30 AM ET, 30 minutes after _update_ensemble_blend.
+        Reads the same RoS DataFrames from _ROS_CACHE populated by _fetch_fangraphs_ros
+        at 3 AM, computes the full 9-category batter z-scores (r, h, hr, rbi, k_bat,
+        tb, avg, ops, nsb) and 9-category pitcher z-scores (w, l, hr_pit, k_pit, era,
+        whip, k9, qs, nsv), then upserts PlayerProjection rows keyed by MLBAM ID
+        (via PlayerIDMapping.normalized_name → mlbam_id translation).
+
+        Also populates the team field from the FanGraphs Team column.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.fantasy_baseball.fangraphs_loader import compute_ensemble_blend
+            from backend.fantasy_baseball.player_board import _compute_zscores
+            from zoneinfo import ZoneInfo
+
+            # --- 1. Get RoS DataFrames from module cache or persisted store ---
+            bat_raw = _ROS_CACHE.get("bat")
+            pit_raw = _ROS_CACHE.get("pit")
+
+            if not bat_raw and not pit_raw:
+                bat_raw, pit_raw, _ = _load_persisted_ros_cache()
+
+            if not bat_raw and not pit_raw:
+                logger.warning("projection_cat_scores: no RoS cache available — skipping")
+                self._record_job_run("projection_cat_scores", "failed")
+                return {"status": "failed", "reason": "no_ros_cache", "upserted": 0}
+
+            # --- 2. Blend all stat columns needed for full _compute_zscores ---
+            BAT_STAT_COLS = ["HR", "R", "RBI", "SB", "SO", "AVG", "OPS", "SLG", "PA"]
+            PIT_STAT_COLS = ["W", "SV", "SO", "ERA", "WHIP", "GS", "K/9", "IP"]
+
+            bat_blend = compute_ensemble_blend(bat_raw or {}, stat_columns=BAT_STAT_COLS) if bat_raw else None
+            pit_blend = compute_ensemble_blend(pit_raw or {}, stat_columns=PIT_STAT_COLS) if pit_raw else None
+
+            if bat_blend is None and pit_blend is None:
+                logger.error("projection_cat_scores: blend produced no data")
+                self._record_job_run("projection_cat_scores", "failed")
+                return {"status": "failed", "reason": "blend_failed", "upserted": 0}
+
+            # --- 3. Convert blended DataFrames to player dicts for _compute_zscores ---
+            # h and tb are estimated from AVG/SLG × projected AB (PA × 0.87)
+            batters: list[dict] = []
+            if bat_blend is not None:
+                for _, row in bat_blend.iterrows():
+                    pa = float(row.get("PA", 500) or 500) or 500.0
+                    avg = float(row.get("AVG", 0.250) or 0.250)
+                    slg = float(row.get("SLG", 0.400) or 0.400)
+                    ab_est = pa * 0.87  # typical AB/PA ratio
+                    batters.append({
+                        "id": str(row.get("player_id", "")),
+                        "name": str(row.get("name", "")),
+                        "team": (str(row.get("team", "") or "")).upper().strip(),
+                        "type": "batter",
+                        "proj": {
+                            "r":     float(row.get("R", 0) or 0),
+                            "h":     round(avg * ab_est),
+                            "hr":    float(row.get("HR", 0) or 0),
+                            "rbi":   float(row.get("RBI", 0) or 0),
+                            "k_bat": float(row.get("SO", 0) or 0),
+                            "tb":    round(slg * ab_est),
+                            "avg":   avg,
+                            "ops":   float(row.get("OPS", 0) or 0),
+                            "nsb":   float(row.get("SB", 0) or 0),
+                        },
+                        "z_score": 0.0,
+                        "cat_scores": {},
+                    })
+
+            pitchers: list[dict] = []
+            if pit_blend is not None:
+                for _, row in pit_blend.iterrows():
+                    ip = float(row.get("IP", 0) or 0)
+                    k = float(row.get("SO", 0) or 0)
+                    k9_val = float(row.get("K/9", 0) or 0) or ((k / ip * 9) if ip > 0 else 0.0)
+                    gs = float(row.get("GS", 0) or 0)
+                    sv = float(row.get("SV", 0) or 0)
+                    pitchers.append({
+                        "id": str(row.get("player_id", "")),
+                        "name": str(row.get("name", "")),
+                        "team": (str(row.get("team", "") or "")).upper().strip(),
+                        "type": "pitcher",
+                        "proj": {
+                            "w":      float(row.get("W", 0) or 0),
+                            "l":      0.0,      # not in FanGraphs subset
+                            "hr_pit": 0.0,      # not in FanGraphs subset
+                            "k_pit":  k,
+                            "era":    float(row.get("ERA", 4.5) or 4.5),
+                            "whip":   float(row.get("WHIP", 1.3) or 1.3),
+                            "k9":     k9_val,
+                            "qs":     round(gs * 0.55) if gs >= 10 else 0.0,
+                            "nsv":    sv,
+                        },
+                        "z_score": 0.0,
+                        "cat_scores": {},
+                    })
+
+            if not batters and not pitchers:
+                logger.warning("projection_cat_scores: no player dicts after conversion")
+                self._record_job_run("projection_cat_scores", "failed")
+                return {"status": "failed", "reason": "no_players", "upserted": 0}
+
+            # --- 4. Compute per-category z-scores (modifies in place) ---
+            _compute_zscores(batters, pitchers)
+
+            # --- 5. Build normalized_name → mlbam_id lookup from PlayerIDMapping ---
+            db = SessionLocal()
+            try:
+                id_map_rows = (
+                    db.query(PlayerIDMapping.normalized_name, PlayerIDMapping.mlbam_id)
+                    .filter(PlayerIDMapping.mlbam_id.isnot(None))
+                    .all()
+                )
+                name_to_mlbam: dict[str, str] = {
+                    r.normalized_name: str(r.mlbam_id)
+                    for r in id_map_rows
+                    if r.normalized_name
+                }
+
+                # --- 6. Upsert PlayerProjection rows ---
+                now = datetime.now(ZoneInfo("America/New_York"))
+                upserted = 0
+                skipped = 0
+
+                for p in batters + pitchers:
+                    fg_id = p["id"]
+                    # Primary: normalized FG id → MLBAM; secondary: raw player name
+                    mlbam_id = name_to_mlbam.get(fg_id) or name_to_mlbam.get(
+                        p.get("name", "").lower().strip()
+                    )
+
+                    # Tertiary: look up an existing PlayerProjection row by name
+                    if not mlbam_id:
+                        try:
+                            existing_row = (
+                                db.query(PlayerProjection)
+                                .filter(PlayerProjection.player_name.ilike(p.get("name", "")))
+                                .first()
+                            )
+                            if existing_row:
+                                mlbam_id = existing_row.player_id
+                        except Exception:
+                            pass
+
+                    if not mlbam_id:
+                        skipped += 1
+                        continue
+
+                    cat_scores = p.get("cat_scores") or {}
+                    if not cat_scores:
+                        skipped += 1
+                        continue
+
+                    team = p.get("team") or "Unknown"
+                    proj = p["proj"]
+                    # Type-based default positions for INSERT-only; existing rows keep Yahoo-synced positions
+                    default_positions = ["SP"] if p["type"] == "pitcher" else ["Util"]
+
+                    # Build upsert values — only write stats that exist in the model
+                    upsert_vals: dict = {
+                        "player_id":   mlbam_id,
+                        "player_name": p.get("name", ""),
+                        "team":        team,
+                        "positions":   default_positions,
+                        "player_type": "pitcher" if p["type"] == "pitcher" else "hitter",
+                        "cat_scores":  cat_scores,
+                        "prior_source": "fangraphs_ros",
+                        "update_method": "ensemble_blend",
+                        "updated_at":  now,
+                        "created_at":  now,
+                    }
+                    if p["type"] == "batter":
+                        upsert_vals.update({
+                            "hr":  int(max(0, proj.get("hr", 0))),
+                            "r":   int(max(0, proj.get("r", 0))),
+                            "rbi": int(max(0, proj.get("rbi", 0))),
+                            "sb":  int(max(0, proj.get("nsb", 0))),
+                            "avg": round(float(proj.get("avg", 0.250)), 3),
+                            "ops": round(float(proj.get("ops", 0.720)), 3),
+                            # Null out pitching cols — batters have no ERA/WHIP
+                            "era":        None,
+                            "whip":       None,
+                            "k_per_nine": None,
+                        })
+                    else:
+                        upsert_vals.update({
+                            "era":        round(float(proj.get("era", 4.00)), 2),
+                            "whip":       round(float(proj.get("whip", 1.30)), 2),
+                            "k_per_nine": round(float(proj.get("k9", 8.5)), 2),
+                            # Null out batting counting cols — pitchers have no HR/RBI
+                            "hr":  None,
+                            "r":   None,
+                            "rbi": None,
+                            "sb":  None,
+                        })
+
+                    conflict_set = {
+                        k: v for k, v in upsert_vals.items()
+                        if k not in ("player_id", "created_at", "positions")
+                    }
+
+                    stmt = pg_insert(PlayerProjection.__table__).values(
+                        **upsert_vals
+                    ).on_conflict_do_update(
+                        index_elements=["player_id"],
+                        set_=conflict_set,
+                    )
+
+                    try:
+                        with db.begin_nested():
+                            db.execute(stmt)
+                        upserted += 1
+                    except Exception as row_exc:
+                        skipped += 1
+                        logger.warning(
+                            "projection_cat_scores: skip player %s (mlbam=%s): %s",
+                            fg_id, mlbam_id, row_exc,
+                        )
+
+                db.commit()
+
+            except Exception as exc:
+                db.rollback()
+                logger.error("projection_cat_scores DB write failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("projection_cat_scores", "failed")
+                return {"status": "failed", "elapsed_ms": elapsed, "upserted": 0}
+            finally:
+                db.close()
+
+            elapsed = int((time.monotonic() - t0) * 1000)
+            logger.info(
+                "projection_cat_scores: upserted=%d skipped=%d elapsed=%dms",
+                upserted, skipped, elapsed,
+            )
+            self._record_job_run("projection_cat_scores", "success", upserted)
+            return {
+                "status": "success",
+                "upserted": upserted,
+                "skipped": skipped,
+                "elapsed_ms": elapsed,
+                "batters": len(batters),
+                "pitchers": len(pitchers),
+            }
+
+        return await _with_advisory_lock(
+            LOCK_IDS["projection_cat_scores"], "projection_cat_scores", _run
+        )
+
+    async def _run_cat_scores_backfill(self) -> dict:
+        """Bootstrap cat_scores from existing DB stat columns (lock 100_035, 6:30 AM ET).
+
+        Runs after _update_projection_cat_scores (5:30 AM). Fills any PlayerProjection
+        rows that still have cat_scores=NULL or {} using the raw r/hr/era/whip columns
+        already in player_projections. This is a fallback for when the FanGraphs RoS
+        cache is empty or stale.
+
+        Calls run_backfill(db, force=False) -- skips rows already populated.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.services.cat_scores_builder import run_backfill
+
+            db = SessionLocal()
+            try:
+                logger.info("[CAT_SCORES] Backfill job starting (force=True)")
+                result = run_backfill(db, force=True)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.info(
+                    "[CAT_SCORES] Backfill complete: updated=%d skipped=%d ambiguous=%d "
+                    "remaining_empty=%d elapsed=%dms",
+                    result.get("cat_scores_updated", 0),
+                    result.get("skipped_already_filled", 0),
+                    result.get("ambiguous_rows", 0),
+                    result.get("verify_remaining_empty", 0),
+                    elapsed,
+                )
+                updated = result.get("cat_scores_updated", 0)
+                self._record_job_run("cat_scores_backfill", "success", updated)
+                return {"status": "success", "records": updated, "elapsed_ms": elapsed}
+            except Exception as exc:
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.error("[CAT_SCORES] Backfill failed: %s", exc)
+                self._record_job_run("cat_scores_backfill", "error", 0)
+                return {"status": "error", "records": 0, "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+        try:
+            return await _with_advisory_lock(
+                LOCK_IDS["cat_scores_backfill"], "cat_scores_backfill", _run
+            )
+        except Exception as exc:
+            logger.error("[CAT_SCORES] Backfill job failed: %s", exc)
+            self._record_job_run("cat_scores_backfill", "error", 0)
+            return {"status": "error", "records": 0, "elapsed_ms": 0}
+
     async def _check_projection_freshness(self) -> dict:
         """
         SLA gate: warn when projection data is stale but do NOT block anything.
@@ -4307,7 +5482,7 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            from datetime import datetime
+            from datetime import datetime, time as dt_time
             from zoneinfo import ZoneInfo
 
             now = datetime.now(ZoneInfo("America/New_York"))
@@ -4330,7 +5505,10 @@ class DailyIngestionOrchestrator:
                     logger.warning("PROJECTION FRESHNESS: %s", msg)
                     violations.append(msg)
                 else:
-                    if hasattr(latest_ensemble, "tzinfo") and latest_ensemble.tzinfo is None:
+                    from datetime import date
+                    if isinstance(latest_ensemble, date) and not isinstance(latest_ensemble, datetime):
+                        latest_ensemble = datetime.combine(latest_ensemble, dt_time(), tzinfo=ZoneInfo("America/New_York"))
+                    elif hasattr(latest_ensemble, "tzinfo") and latest_ensemble.tzinfo is None:
                         latest_ensemble = latest_ensemble.replace(tzinfo=ZoneInfo("America/New_York"))
                     age_h = (now - latest_ensemble).total_seconds() / 3600
                     report["ensemble_blend_age_h"] = round(age_h, 1)
@@ -4353,7 +5531,10 @@ class DailyIngestionOrchestrator:
                     logger.warning("PROJECTION FRESHNESS: %s", msg)
                     violations.append(msg)
                 else:
-                    if hasattr(latest_statcast, "tzinfo") and latest_statcast.tzinfo is None:
+                    from datetime import date
+                    if isinstance(latest_statcast, date) and not isinstance(latest_statcast, datetime):
+                        latest_statcast = datetime.combine(latest_statcast, dt_time(), tzinfo=ZoneInfo("America/New_York"))
+                    elif hasattr(latest_statcast, "tzinfo") and latest_statcast.tzinfo is None:
                         latest_statcast = latest_statcast.replace(tzinfo=ZoneInfo("America/New_York"))
                     age_h = (now - latest_statcast).total_seconds() / 3600
                     report["statcast_age_h"] = round(age_h, 1)
@@ -4372,7 +5553,10 @@ class DailyIngestionOrchestrator:
                 logger.warning("PROJECTION FRESHNESS: %s", msg)
                 violations.append(msg)
             else:
-                if hasattr(ros_fetched_at, "tzinfo") and ros_fetched_at.tzinfo is None:
+                from datetime import date
+                if isinstance(ros_fetched_at, date) and not isinstance(ros_fetched_at, datetime):
+                    ros_fetched_at = datetime.combine(ros_fetched_at, dt_time(), tzinfo=ZoneInfo("America/New_York"))
+                elif hasattr(ros_fetched_at, "tzinfo") and ros_fetched_at.tzinfo is None:
                     ros_fetched_at = ros_fetched_at.replace(tzinfo=ZoneInfo("America/New_York"))
                 age_h = (now - ros_fetched_at).total_seconds() / 3600
                 report["ros_cache_age_h"] = round(age_h, 1)
@@ -4722,7 +5906,7 @@ class DailyIngestionOrchestrator:
         }
 
         try:
-            results = await _with_advisory_lock(LOCK_IDS["valuation_cache"], _run)
+            results = await _with_advisory_lock(LOCK_IDS["valuation_cache"], "valuation_cache", _run)
             self._job_status["valuation_cache"]["last_status"] = "ok"
             logger.info("valuation_cache: complete -- %s", results)
         except Exception as exc:
@@ -4747,6 +5931,12 @@ class DailyIngestionOrchestrator:
         # Position scarcity priority for primary_position selection
         _POSITION_PRIORITY = ["C", "SS", "2B", "CF", "3B", "RF", "LF", "1B", "OF", "DH", "SP", "RP", "Util"]
         _BATTER_POS = {"C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "OF", "DH"}
+
+        # Static scarcity rank: lower number = scarcer position (C=1 most scarce, OF=12 least)
+        POSITION_SCARCITY = {
+            "C": 1, "SS": 2, "2B": 3, "3B": 4, "CF": 5,
+            "SP": 6, "RP": 7, "LF": 8, "RF": 9, "1B": 10, "DH": 11, "OF": 12,
+        }
 
         async def _run():
             from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
@@ -4774,6 +5964,32 @@ class DailyIngestionOrchestrator:
                 logger.error("_sync_position_eligibility: Failed to fetch rosters (%s)", exc)
                 self._record_job_run("position_eligibility", "error", 0)
                 return {"status": "error", "records": 0, "elapsed_ms": 0}
+
+            # The roster endpoint (teams/roster) does NOT include Yahoo's ownership
+            # block, so _parse_player() always returns percent_owned=0.0 for rostered
+            # players. Fetch real ownership % from the ADP/players endpoint separately.
+            ownership_by_key: dict[str, float] = {}
+            try:
+                adp_players = await asyncio.to_thread(
+                    yahoo.get_adp_and_injury_feed,
+                    pages=10,
+                    count_per_page=25,
+                )
+                ownership_by_key = {
+                    p["player_key"]: p["percent_owned"]
+                    for p in adp_players
+                    if p.get("player_key") and isinstance(p.get("percent_owned"), (int, float))
+                }
+                logger.info(
+                    "_sync_position_eligibility: Loaded ownership data for %d players",
+                    len(ownership_by_key),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "_sync_position_eligibility: Failed to fetch ownership feed (%s) "
+                    "-- league_rostered_pct will be NULL",
+                    exc,
+                )
 
             db = SessionLocal()
             records_processed = 0
@@ -4814,6 +6030,7 @@ class DailyIngestionOrchestrator:
                         # Primary position by scarcity
                         pos_upper = [p.upper() for p in positions if p]
                         primary = next((pr for pr in _POSITION_PRIORITY if pr.upper() in pos_upper), positions[0] if positions else "DH")
+                        scarcity_rank = POSITION_SCARCITY.get(primary, 99)
 
                         # Player type classification
                         has_pitcher = bool(pos_set & {"SP", "RP", "P"})
@@ -4829,6 +6046,9 @@ class DailyIngestionOrchestrator:
                         multi_count = len([p for p in positions if p.upper() != "UTIL"])
 
                         # Upsert: ON CONFLICT (yahoo_player_key) DO UPDATE
+                        # ownership_by_key is pre-loaded from ADP feed (has real % data).
+                        # player_data.get("percent_owned") is always 0.0 from roster endpoint.
+                        rostered_pct = ownership_by_key.get(player_key) or None
                         stmt = pg_insert(PositionEligibility.__table__).values(
                             yahoo_player_key=player_key,
                             bdl_player_id=None,
@@ -4838,6 +6058,8 @@ class DailyIngestionOrchestrator:
                             primary_position=primary,
                             player_type=ptype,
                             multi_eligibility_count=multi_count,
+                            scarcity_rank=scarcity_rank,
+                            league_rostered_pct=rostered_pct,
                             fetched_at=now,
                             updated_at=now,
                             **flags,
@@ -4848,6 +6070,8 @@ class DailyIngestionOrchestrator:
                                 "primary_position": primary,
                                 "player_type": ptype,
                                 "multi_eligibility_count": multi_count,
+                                "scarcity_rank": scarcity_rank,
+                                "league_rostered_pct": rostered_pct,
                                 "updated_at": now,
                                 **flags,
                             },
@@ -4941,6 +6165,43 @@ class DailyIngestionOrchestrator:
                     len(recent_starter_candidates),
                 )
 
+                # Build rolling ERA lookup: mlbam_id -> avg ERA over last 10 starts
+                # NOTE: innings_pitched is stored as String(10) (e.g. "6.2") -- do NOT
+                # compare it with > 0 (varchar vs integer throws in PostgreSQL).
+                # Filtering on era IS NOT NULL is sufficient: ERA is only non-null when
+                # the player actually pitched (BDL only sets ERA for pitching game-logs).
+                mlbam_to_era: dict[int, float] = {}
+                try:
+                    era_rows = db.execute(
+                        text(
+                            """
+                            SELECT m.mlbam_id, AVG(s.era) AS avg_era
+                            FROM (
+                                SELECT bdl_player_id, era,
+                                       ROW_NUMBER() OVER (
+                                           PARTITION BY bdl_player_id
+                                           ORDER BY game_date DESC
+                                       ) AS rn
+                                FROM mlb_player_stats
+                                WHERE era IS NOT NULL
+                            ) s
+                            JOIN player_id_mapping m ON m.bdl_id = s.bdl_player_id
+                            WHERE s.rn <= 10
+                              AND m.mlbam_id IS NOT NULL
+                            GROUP BY m.mlbam_id
+                            """
+                        )
+                    ).fetchall()
+                    for r in era_rows:
+                        if r.mlbam_id and r.avg_era is not None:
+                            mlbam_to_era[r.mlbam_id] = float(r.avg_era)
+                    logger.info(
+                        "_sync_probable_pitchers: Built ERA lookup for %d pitchers",
+                        len(mlbam_to_era),
+                    )
+                except Exception as exc:
+                    logger.warning("_sync_probable_pitchers: ERA lookup failed (%s) -- quality_score will be 0.5", exc)
+
                 # Fetch schedule for next 7 days from MLB Stats API
                 for days_ahead in range(7):
                     target_date = today + timedelta(days=days_ahead)
@@ -5025,6 +6286,20 @@ class DailyIngestionOrchestrator:
                                 home_abbr = team_abbr if is_home else opp_abbr
                                 pf = get_park_factor(home_abbr, "era")
 
+                                # quality_score: heuristic from ERA vs league average + park factor.
+                                # Output range [-2.0, +2.0] to match MatchupRatingSchema contract
+                                # and two_start_detector thresholds (EXCELLENT ≥1.0, AVOID <0.0).
+                                # Internally compute raw ∈ [0,1], then scale: (raw-0.5)*4.0.
+                                pitcher_era = mlbam_to_era.get(mlbam_id) if mlbam_id else None
+                                if pitcher_era is None:
+                                    quality_score = 0.0  # neutral: (0.5-0.5)*4 = 0.0
+                                else:
+                                    era_score = max(-0.5, min(0.5, (4.50 - pitcher_era) / 3.00))
+                                    park_val = pf if pf else 1.0
+                                    park_score = max(-0.25, min(0.25, (1.0 - park_val) * 0.25))
+                                    raw_qs = max(0.0, min(1.0, 0.5 + era_score + park_score))
+                                    quality_score = round((raw_qs - 0.5) * 4.0, 2)
+
                                 try:
                                     stmt = pg_insert(ProbablePitcherSnapshot).values(
                                         game_date=target_date,
@@ -5034,23 +6309,29 @@ class DailyIngestionOrchestrator:
                                         pitcher_name=pitcher_name,
                                         bdl_player_id=bdl_id,
                                         mlbam_id=mlbam_id,
-                                        is_confirmed=False,
+                                        is_confirmed=bool(pitcher_data and pitcher_data.get("fullName")),
                                         game_time_et=game_time_et_str,
                                         park_factor=pf,
-                                        quality_score=None,
+                                        quality_score=quality_score,
                                         fetched_at=now_et(),
                                         updated_at=now_et(),
                                     )
                                     stmt = stmt.on_conflict_do_update(
-                                        constraint="_pp_date_team_uc",
+                                        # Use index_elements (more robust than constraint= which
+                                        # requires the exact named constraint to exist in production).
+                                        # Works as long as a unique index on (game_date, team) exists,
+                                        # which is ensured by _ensure_probable_pitchers_index() at startup.
+                                        index_elements=["game_date", "team"],
                                         set_={
                                             "opponent": stmt.excluded.opponent,
                                             "is_home": stmt.excluded.is_home,
                                             "pitcher_name": stmt.excluded.pitcher_name,
                                             "bdl_player_id": stmt.excluded.bdl_player_id,
                                             "mlbam_id": stmt.excluded.mlbam_id,
+                                            "is_confirmed": stmt.excluded.is_confirmed,
                                             "game_time_et": stmt.excluded.game_time_et,
                                             "park_factor": stmt.excluded.park_factor,
+                                            "quality_score": stmt.excluded.quality_score,
                                             "updated_at": stmt.excluded.updated_at,
                                         },
                                     )
@@ -5295,14 +6576,14 @@ class DailyIngestionOrchestrator:
 
     async def _sync_player_id_mapping(self) -> dict:
         """
-        Sync player ID mappings from BDL + MLB Stats API cross-reference (lock 100_029).
+        Sync player ID mappings from BDL + pybaseball MLBAM ID cross-reference (lock 100_029).
 
         Every sync (daily 7:00 AM ET):
           1. Fetch all players from BDL (GOAT tier: 600 req/min)
-          2. For each player: get MLBAM ID from MLB Stats API player endpoint
+          2. Build MLBAM ID cache using pybaseball.playerid_lookup()
           3. Store cross-reference in player_id_mapping table
 
-        Critical for data integration — connects BDL, MLB Stats, and Yahoo namespaces.
+        Critical for data integration — connects BDL, MLB Stats (Statcast), and Yahoo namespaces.
         Natural key: (source_system, source_id).
         """
         logger.info("SYNC JOB ENTRY: _sync_player_id_mapping - Starting player ID mapping sync")
@@ -5310,6 +6591,7 @@ class DailyIngestionOrchestrator:
 
         async def _run():
             from backend.services.balldontlie import BallDontLieClient
+            from backend.services.mlbam_id_lookup import build_mlbam_cache
             try:
                 bdl = BallDontLieClient()
             except ValueError as exc:
@@ -5325,8 +6607,29 @@ class DailyIngestionOrchestrator:
                 self._record_job_run("player_id_mapping", "error", 0)
                 return {"status": "error", "records": 0, "elapsed_ms": 0}
 
+            # Build MLBAM ID cache using pybaseball
+            player_list = []
+            for p in players:
+                try:
+                    first_name = p.first_name
+                except Exception:
+                    first_name = ''
+                try:
+                    last_name = p.last_name
+                except Exception:
+                    last_name = ''
+                full_name = p.full_name or f"{first_name} {last_name}".strip()
+                player_list.append({
+                    "full_name": full_name,
+                    "first_name": first_name,
+                    "last_name": last_name
+                })
+
+            mlbam_cache = await asyncio.to_thread(build_mlbam_cache, player_list)
+
             db = SessionLocal()
             records_processed = 0
+            mlbam_found = 0
 
             try:
                 for player in players:
@@ -5335,15 +6638,17 @@ class DailyIngestionOrchestrator:
                         if not bdl_id:
                             continue
 
-                        # Get MLBAM ID from player data
-                        mlbam_id = getattr(player, 'mlbam_id', None)
-
-                        # Get full name
+                        # Get MLBAM ID from cache
                         full_name = player.full_name
                         normalized_name = full_name.lower()
+                        mlbam_data = mlbam_cache.get(normalized_name, {})
+                        mlbam_id = mlbam_data.get("mlbam_id")
+                        confidence = mlbam_data.get("confidence", 0.0)
+
+                        if mlbam_id:
+                            mlbam_found += 1
 
                         # Create/update mapping record
-                        # We'll store both BDL and Yahoo mappings, plus MLBAM
                         existing = (
                             db.query(PlayerIDMapping)
                             .filter(PlayerIDMapping.bdl_id == bdl_id)
@@ -5353,7 +6658,9 @@ class DailyIngestionOrchestrator:
                             existing.mlbam_id = mlbam_id
                             existing.full_name = full_name
                             existing.normalized_name = normalized_name
-                            existing.resolution_confidence = 1.0
+                            existing.source = 'pybaseball' if mlbam_id else existing.source
+                            if confidence > 0:
+                                existing.resolution_confidence = confidence
                         else:
                             mapping = PlayerIDMapping(
                                 bdl_id=bdl_id,
@@ -5361,8 +6668,8 @@ class DailyIngestionOrchestrator:
                                 mlbam_id=mlbam_id,
                                 full_name=full_name,
                                 normalized_name=normalized_name,
-                                source='api',
-                                resolution_confidence=1.0,  # Direct from BDL API
+                                source='pybaseball' if mlbam_id else 'bdl',
+                                resolution_confidence=confidence if confidence > 0 else 0.5,
                             )
                             db.add(mapping)
                         records_processed += 1
@@ -5372,11 +6679,58 @@ class DailyIngestionOrchestrator:
                         continue
 
                 db.commit()
+
+                # Supplemental: patch remaining NULL mlbam_ids via statcast_performances name match.
+                # statcast_performances.player_id IS the MLBAM ID (already in DB — no API call needed).
+                # DISTINCT ON latest game_date gives one canonical row per player name.
+                # Only patches rows where pybaseball lookup returned nothing (mlbam_id IS NULL).
+                statcast_patched = 0
+                try:
+                    patch_result = db.execute(
+                        text("""
+                            UPDATE player_id_mapping pim
+                            SET mlbam_id = sp.mlbam_id,
+                                source = 'statcast_fallback',
+                                resolution_confidence = 0.85
+                            FROM (
+                                SELECT DISTINCT ON (LOWER(player_name))
+                                       LOWER(player_name) AS norm_name,
+                                       player_id::integer AS mlbam_id
+                                FROM statcast_performances
+                                WHERE player_id ~ '^[0-9]+$'
+                                ORDER BY LOWER(player_name), game_date DESC
+                            ) sp
+                            WHERE pim.mlbam_id IS NULL
+                              AND LOWER(pim.full_name) = sp.norm_name
+                        """)
+                    )
+                    statcast_patched = patch_result.rowcount
+                    db.commit()
+                    if statcast_patched > 0:
+                        mlbam_found += statcast_patched
+                        logger.info(
+                            "_sync_player_id_mapping: Statcast fallback patched %d additional mlbam_ids",
+                            statcast_patched,
+                        )
+                except Exception as exc:
+                    db.rollback()
+                    logger.warning(
+                        "_sync_player_id_mapping: Statcast fallback patch failed (%s) -- continuing",
+                        exc,
+                    )
+
                 elapsed = int((time.monotonic() - t0) * 1000)
                 logger.info("SYNC JOB SUCCESS: _sync_player_id_mapping - Processed %d records in %d ms", records_processed, elapsed)
+                logger.info("SYNC JOB SUCCESS: _sync_player_id_mapping - Found %d MLBAM IDs (%.1f%%) (%d via statcast fallback)", mlbam_found, 100*mlbam_found/records_processed if records_processed else 0, statcast_patched)
                 logger.info("SYNC JOB EXIT: _sync_player_id_mapping - Completed successfully")
                 self._record_job_run("player_id_mapping", "success", records_processed)
-                return {"status": "success", "records": records_processed, "elapsed_ms": elapsed}
+                return {
+                    "status": "success",
+                    "records": records_processed,
+                    "mlbam_found": mlbam_found,
+                    "statcast_patched": statcast_patched,
+                    "elapsed_ms": elapsed,
+                }
 
             except Exception as exc:
                 db.rollback()
@@ -5428,3 +6782,37 @@ class DailyIngestionOrchestrator:
             )
         except Exception as exc:
             logger.warning("Discord alert failed: %s", exc)
+
+    def _build_position_map(self, as_of_date: date) -> dict[int, list[str]]:
+        """
+        Build position mapping for position scarcity adjustment.
+
+        Queries PlayerProjection to get positions JSON for each player,
+        returns dict mapping player_id -> list of positions.
+
+        Args:
+            as_of_date: Date to query projections for
+
+        Returns:
+            Dictionary {player_id: ["SS", "OF", ...]} or empty dict if no data
+        """
+        try:
+            from backend.models import PlayerProjection
+
+            projections = self.db.query(PlayerProjection.positions).filter(
+                PlayerProjection.as_of_date == as_of_date
+            ).all()
+
+            position_map = {}
+            for proj in projections:
+                if proj.positions and proj.player_id:
+                    # Parse JSON positions list
+                    positions_list = proj.positions if isinstance(proj.positions, list) else []
+                    position_map[proj.player_id] = positions_list
+
+            logger.info(f"Built position map for {len(position_map)} players")
+            return position_map
+
+        except Exception as exc:
+            logger.warning(f"Could not build position map: {exc}")
+            return {}

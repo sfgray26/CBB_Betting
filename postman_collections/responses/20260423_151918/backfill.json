@@ -1,0 +1,10 @@
+﻿{
+    "status":  "success",
+    "cat_scores_updated":  0,
+    "team_updated":  0,
+    "skipped_already_filled":  625,
+    "ambiguous_rows":  0,
+    "verify_remaining_empty":  0,
+    "target_met":  true,
+    "generated_at":  "2026-04-23T15:20:12.411680-04:00"
+}

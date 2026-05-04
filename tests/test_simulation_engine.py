@@ -19,7 +19,8 @@ from backend.services.simulation_engine import (
     simulate_all_players,
     CV,
     N_SIMULATIONS,
-    REMAINING_GAMES_DEFAULT,
+    HITTER_GAMES_FALLBACK,
+    MLB_SEASON_GAMES,
 )
 
 
@@ -37,6 +38,15 @@ def _make_hitter(
     w_rbi=10.0,
     w_stolen_bases=2.0,
     w_walks=5.0,
+    w_runs=12.0,
+    w_tb=24.0,
+    w_net_stolen_bases=1.0,
+    w_strikeouts_bat=8.0,
+    w_doubles=3.0,
+    w_triples=0.5,
+    w_obp=None,
+    w_slg=None,
+    w_ops=None,
 ):
     """Return a MagicMock that looks like a PlayerRollingStats hitter row."""
     row = MagicMock()
@@ -49,11 +59,22 @@ def _make_hitter(
     row.w_rbi = w_rbi
     row.w_stolen_bases = w_stolen_bases
     row.w_walks = w_walks
+    row.w_runs = w_runs
+    row.w_tb = w_tb
+    row.w_net_stolen_bases = w_net_stolen_bases
+    row.w_strikeouts_bat = w_strikeouts_bat
+    row.w_doubles = w_doubles
+    row.w_triples = w_triples
+    row.w_obp = w_obp
+    row.w_slg = w_slg
+    row.w_ops = w_ops
     row.w_ip = None
     row.w_strikeouts_pit = None
     row.w_earned_runs = None
     row.w_hits_allowed = None
     row.w_walks_allowed = None
+    row.w_qs = None
+    row.w_k_per_9 = None
     return row
 
 
@@ -66,6 +87,8 @@ def _make_pitcher(
     w_earned_runs=8.0,
     w_hits_allowed=25.0,
     w_walks_allowed=10.0,
+    w_qs=2.0,
+    w_k_per_9=10.5,
 ):
     """Return a MagicMock that looks like a PlayerRollingStats pitcher row."""
     row = MagicMock()
@@ -83,6 +106,8 @@ def _make_pitcher(
     row.w_earned_runs = w_earned_runs
     row.w_hits_allowed = w_hits_allowed
     row.w_walks_allowed = w_walks_allowed
+    row.w_qs = w_qs
+    row.w_k_per_9 = w_k_per_9
     return row
 
 
@@ -198,12 +223,21 @@ def test_simulate_player_spread_p90_greater_than_p10():
 
 
 def test_simulate_player_zero_rate_gives_near_zero_projection():
-    """Player with w_home_runs=0 should produce near-zero HR projections."""
+    """
+    Player with w_home_runs=0 should produce HR projections regressed toward league average.
+
+    Bayesian shrinkage prevents impossible projections from small samples.
+    With 0 HR observed, the rate is shrunk toward the league prior (~0.185 HR/game).
+    Over 130 games ROS, this projects to ~24 HR total, with P50 around 12-13 HR.
+    """
     row = _make_hitter(w_home_runs=0.0)
     result = simulate_player(row, remaining_games=130, seed=42)
-    # With mu=0, _sample_positive always returns 0 -> all percentiles exactly 0
-    assert result.proj_hr_p50 == 0.0
-    assert result.proj_hr_p90 == 0.0
+    # Shrinkage prevents staying at 0 - regresses toward league average
+    assert result.proj_hr_p50 > 10.0, f"Expected P50 > 10 HR due to shrinkage, got {result.proj_hr_p50}"
+    assert result.proj_hr_p50 < 20.0, f"Expected P50 < 20 HR, got {result.proj_hr_p50}"
+    # Verify bounded projection (not stuck at 0, not wildly high)
+    assert result.proj_hr_p10 > 5.0
+    assert result.proj_hr_p90 < 25.0
 
 
 def test_simulate_player_avg_between_0_and_1():
@@ -219,6 +253,40 @@ def test_simulate_player_avg_between_0_and_1():
     ]:
         assert p is not None
         assert 0.0 <= p <= 1.0, f"AVG percentile out of range: {p}"
+
+
+def test_simulate_player_hitter_new_categories_populated():
+    """New batting categories (R, H, TB, NSB, K_B, OPS) should have percentiles."""
+    row = _make_hitter()
+    result = simulate_player(row, remaining_games=130, seed=42)
+
+    # Counting stats
+    assert result.proj_r_p50 is not None
+    assert result.proj_r_p50 > 0
+    assert result.proj_h_p50 is not None
+    assert result.proj_h_p50 > 0
+    assert result.proj_tb_p50 is not None
+    assert result.proj_tb_p50 > 0
+    assert result.proj_nsb_p50 is not None
+    assert result.proj_k_b_p50 is not None
+
+    # Rate stat
+    assert result.proj_ops_p50 is not None
+    assert result.proj_ops_p50 > 0
+
+
+def test_simulate_player_hitter_percentiles_sorted():
+    """New batting category percentiles should be sorted (P10 <= P25 <= ... <= P90)."""
+    row = _make_hitter()
+    result = simulate_player(row, remaining_games=130, seed=42)
+
+    for attr in ["proj_r", "proj_h", "proj_tb", "proj_nsb", "proj_k_b", "proj_ops"]:
+        p10 = getattr(result, f"{attr}_p10")
+        p25 = getattr(result, f"{attr}_p25")
+        p50 = getattr(result, f"{attr}_p50")
+        p75 = getattr(result, f"{attr}_p75")
+        p90 = getattr(result, f"{attr}_p90")
+        assert p10 <= p25 <= p50 <= p75 <= p90, f"{attr} percentiles not sorted"
 
 
 # ===========================================================================
@@ -270,6 +338,30 @@ def test_simulate_player_era_sorted():
     assert result.proj_era_p75 <= result.proj_era_p90
 
 
+def test_simulate_player_pitcher_new_categories_populated():
+    """New pitching categories (QS, K_9) should have percentiles."""
+    row = _make_pitcher()
+    result = simulate_player(row, remaining_games=130, seed=42)
+
+    # QS (counting stat)
+    assert result.proj_qs_p50 is not None
+    assert result.proj_qs_p50 >= 0
+
+    # K_9 (rate stat)
+    assert result.proj_k_per_9_p50 is not None
+    assert result.proj_k_per_9_p50 > 0
+
+
+def test_simulate_player_pitcher_k_per_9_sorted():
+    """K_9 percentiles should be sorted."""
+    row = _make_pitcher()
+    result = simulate_player(row, remaining_games=130, seed=42)
+    assert result.proj_k_per_9_p10 <= result.proj_k_per_9_p25
+    assert result.proj_k_per_9_p25 <= result.proj_k_per_9_p50
+    assert result.proj_k_per_9_p50 <= result.proj_k_per_9_p75
+    assert result.proj_k_per_9_p75 <= result.proj_k_per_9_p90
+
+
 # ===========================================================================
 # simulate_player -- two_way
 # ===========================================================================
@@ -314,16 +406,28 @@ def test_simulate_player_unknown_type_returns_all_none():
 # ===========================================================================
 
 def test_simulate_player_higher_rate_gives_higher_p50():
-    """Player with 2x HR rate should produce approximately 2x proj_hr_p50 (seed=42)."""
+    """
+    Player with 2x HR rate should produce higher proj_hr_p50, but compressed by shrinkage.
+
+    Bayesian shrinkage regresses both rates toward the league average, so the difference
+    between 2 HR/14g and 4 HR/14g is compressed compared to raw rates.
+    With 14 games, shrinkage_factor = 14/30 = 0.467, so both rates are pulled toward
+    the league prior (~0.185 HR/g), reducing the ratio from 2.0x to ~1.3-1.4x.
+    """
     row_base   = _make_hitter(w_home_runs=2.0, games_in_window=14)
     row_double = _make_hitter(w_home_runs=4.0, games_in_window=14)
 
     r_base   = simulate_player(row_base,   remaining_games=130, seed=42)
     r_double = simulate_player(row_double, remaining_games=130, seed=42)
 
-    # P50 should scale roughly proportionally (allow 30% tolerance for Monte Carlo variance)
-    assert r_double.proj_hr_p50 > r_base.proj_hr_p50 * 1.5, (
-        f"Expected double HR player to have >1.5x P50: "
+    # Higher rate should still give higher projection (just compressed by shrinkage)
+    assert r_double.proj_hr_p50 > r_base.proj_hr_p50, (
+        f"Expected double HR player to have higher P50: "
+        f"base={r_base.proj_hr_p50:.2f} double={r_double.proj_hr_p50:.2f}"
+    )
+    # With shrinkage, expect ~1.3-1.4x ratio (not 1.5x) for 14-game sample
+    assert r_double.proj_hr_p50 > r_base.proj_hr_p50 * 1.2, (
+        f"Expected double HR player to have >1.2x P50 (compressed by shrinkage): "
         f"base={r_base.proj_hr_p50:.2f} double={r_double.proj_hr_p50:.2f}"
     )
 
@@ -407,11 +511,157 @@ def test_simulate_all_players_mixed_types():
 
 
 # ===========================================================================
+# P2: Injury Risk Modeling Tests
+# ===========================================================================
+
+def test_injury_risk_multiplier_no_injuries(db_session):
+    """Player with no IL stints should have multiplier = 1.0."""
+    from backend.services.simulation_engine import _calculate_injury_risk_multiplier
+    from datetime import date
+
+    multiplier = _calculate_injury_risk_multiplier(
+        bdl_player_id=999,  # Non-existent player ID
+        db=db_session,
+        as_of_date=date(2026, 5, 3),
+    )
+    assert multiplier == 1.0  # No injuries = no reduction
+
+
+def test_injury_risk_multiplier_one_il_stint_active(db_session):
+    """Player with 1 active IL stint should have multiplier = 0.85."""
+    from backend.services.simulation_engine import _calculate_injury_risk_multiplier
+    from backend.models import IngestedInjury
+    from datetime import date, timedelta
+
+    # Create a test IL stint from 5 days ago
+    injury = IngestedInjury(
+        bdl_player_id=12345,
+        injury_date=date(2026, 5, 3) - timedelta(days=5),
+        injury_status="15-Day-IL",
+        injury_type="Hamstring",
+        raw_payload={},
+    )
+    db_session.add(injury)
+    db_session.commit()
+
+    multiplier = _calculate_injury_risk_multiplier(
+        bdl_player_id=12345,
+        db=db_session,
+        as_of_date=date(2026, 5, 3),
+    )
+    # 1 stint × 0.15 penalty × 1.0 recency (last 30 days) = 0.85
+    assert multiplier == 0.85
+
+
+def test_injury_risk_multiplier_two_il_stints_active(db_session):
+    """Player with 2 active IL stints should have multiplier = 0.70 (capped)."""
+    from backend.services.simulation_engine import _calculate_injury_risk_multiplier
+    from backend.models import IngestedInjury
+    from datetime import date, timedelta
+
+    # Create 2 test IL stints
+    injury1 = IngestedInjury(
+        bdl_player_id=23456,
+        injury_date=date(2026, 5, 3) - timedelta(days=10),
+        injury_status="60-Day-IL",
+        injury_type="Knee",
+        raw_payload={},
+    )
+    injury2 = IngestedInjury(
+        bdl_player_id=23456,
+        injury_date=date(2026, 5, 3) - timedelta(days=25),
+        injury_status="10-Day-IL",
+        injury_type="Ankle",
+        raw_payload={},
+    )
+    db_session.add(injury1)
+    db_session.add(injury2)
+    db_session.commit()
+
+    multiplier = _calculate_injury_risk_multiplier(
+        bdl_player_id=23456,
+        db=db_session,
+        as_of_date=date(2026, 5, 3),
+    )
+    # 2 stints × 0.15 = 0.30 penalty, capped at 0.30, so multiplier = 0.70
+    assert multiplier == 0.70
+
+
+def test_injury_risk_multiplier_il_stint_45_days_ago(db_session):
+    """Player with IL stint 45 days ago should have multiplier = 0.925."""
+    from backend.services.simulation_engine import _calculate_injury_risk_multiplier
+    from backend.models import IngestedInjury
+    from datetime import date, timedelta
+
+    # Create a test IL stint from 45 days ago
+    injury = IngestedInjury(
+        bdl_player_id=34567,
+        injury_date=date(2026, 5, 3) - timedelta(days=45),
+        injury_status="15-Day-IL",
+        injury_type="Shoulder",
+        raw_payload={},
+    )
+    db_session.add(injury)
+    db_session.commit()
+
+    multiplier = _calculate_injury_risk_multiplier(
+        bdl_player_id=34567,
+        db=db_session,
+        as_of_date=date(2026, 5, 3),
+    )
+    # 1 stint × 0.15 penalty × 0.5 recency (31-60 days) = 0.075 penalty
+    # multiplier = 1.0 - 0.075 = 0.925
+    assert abs(multiplier - 0.925) < 0.001  # Allow for floating point precision
+
+
+def test_remaining_games_reduced_by_injury_risk(db_session):
+    """Integration test: verify remaining_games is reduced when injury multiplier < 1.0."""
+    from backend.services.simulation_engine import simulate_player, _calculate_injury_risk_multiplier
+    from datetime import date
+
+    # Create a test player with an IL stint
+    from backend.models import IngestedInjury
+    injury = IngestedInjury(
+        bdl_player_id=45678,
+        injury_date=date(2026, 5, 3) - timedelta(days=10),
+        injury_status="15-Day-IL",
+        injury_type="Hamstring",
+        raw_payload={},
+    )
+    db_session.add(injury)
+    db_session.commit()
+
+    # Mock player with 50 games played
+    mock_player = _make_hitter(bdl_player_id=45678, games_in_window=10, w_ab=40.0)
+
+    # Calculate injury multiplier
+    injury_multiplier = _calculate_injury_risk_multiplier(
+        bdl_player_id=45678,
+        db=db_session,
+        as_of_date=date(2026, 5, 3),
+    )
+
+    # Simulate with injury multiplier
+    result = simulate_player(
+        mock_player,
+        remaining_games=112,  # 162 - 50 games played
+        injury_risk_multiplier=injury_multiplier,
+        n_simulations=100,
+        seed=42,
+    )
+
+    # Expected: 112 × 0.85 = 95.2 → 95 games (int rounds down)
+    assert result.remaining_games == 95
+    assert result.injury_risk_multiplier == 0.85
+
+
+# ===========================================================================
 # Constants
 # ===========================================================================
 
 def test_constants_have_expected_values():
-    """CV, N_SIMULATIONS, REMAINING_GAMES_DEFAULT must match spec."""
+    """CV, N_SIMULATIONS, MLB_SEASON_GAMES, HITTER_GAMES_FALLBACK must match spec."""
     assert CV == 0.35
     assert N_SIMULATIONS == 1000
-    assert REMAINING_GAMES_DEFAULT == 130
+    assert MLB_SEASON_GAMES == 162
+    assert HITTER_GAMES_FALLBACK == 130  # Fallback when games_played unavailable

@@ -178,8 +178,21 @@ class LineupConstraintSolver:
                 for slot in slots:
                     objective_terms.append(scaled_score * x[(pid, slot)])
         
+        # Natural-position bonus: reward placing a player in their own position slot.
+        # Bonus = 10 * (10 - scarcity_rank). C→+90, SS→+80, … OF→+40/30/20, Util→0.
+        # Scaled identically to scores (×1000 already implicit in integer domain).
+        # Max bonus (90) is small enough that a ≥91-unit real-score gap overrides it.
+        for pid in player_ids:
+            player_eligs = eligibility.get(pid, [])
+            for slot, eligible_positions, scarcity_rank in self.SLOT_CONFIG:
+                if slot == PositionSlot.UTILITY:
+                    continue
+                if any(pos in player_eligs for pos in eligible_positions):
+                    bonus = 10 * (10 - scarcity_rank)
+                    objective_terms.append(bonus * x[(pid, slot)])
+
         model.Maximize(sum(objective_terms))
-        
+
         # Solve
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = 5.0  # 5 second timeout
@@ -252,7 +265,7 @@ class LineupConstraintSolver:
                     assigned_players.add(pid)
         
         # Fill remaining slots by scarcity
-        for slot, eligible_positions, _ in self.SLOT_CONFIG:
+        for slot, eligible_positions, scarcity_rank in self.SLOT_CONFIG:
             if slot in (locked_slots or {}):
                 continue  # Already assigned
             
@@ -271,12 +284,18 @@ class LineupConstraintSolver:
                 
                 if can_fill:
                     score = player_scores.get(pid)
-                    candidates.append((pid, player, score.total_score if score else 0.0))
-            
+                    score_val = score.total_score if score else 0.0
+                    # Natural-position bonus mirrors ILP: non-Util slot + player has that pos
+                    is_natural = slot != PositionSlot.UTILITY and any(
+                        pos in player_eligible for pos in eligible_positions
+                    )
+                    natural_bonus = (10 - scarcity_rank) if is_natural else 0
+                    candidates.append((pid, player, score_val, natural_bonus))
+
             if candidates:
-                # Pick highest scorer
-                best = max(candidates, key=lambda x: x[2])
-                pid, player, score_val = best
+                # Pick highest scorer; break ties by natural-position bonus
+                best = max(candidates, key=lambda c: (c[2], c[3]))
+                pid, player, score_val, _ = best
                 
                 score = player_scores.get(pid)
                 assignments.append(PlayerSlotAssignment(

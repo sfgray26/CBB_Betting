@@ -72,6 +72,9 @@ class PlayerDecisionInput:
 
     Built by daily_ingestion._run_decision_optimization() from the join of
     player_scores + player_momentum + simulation_results for a single date.
+
+    P0-3: Pitcher z-scores (z_k_p, z_era, z_whip) added for composite calculation.
+    These are sourced from player_scores and replace raw projection normalization.
     """
     bdl_player_id: int
     name: str
@@ -89,7 +92,17 @@ class PlayerDecisionInput:
     proj_era_p50:  Optional[float] = None
     proj_whip_p50: Optional[float] = None
     downside_p25:  Optional[float] = None
-    upside_p75:    Optional[float] = None
+    upside_p75:   Optional[float] = None
+    # P0-3: Pitcher Z-scores from player_scores (used for composite calculation)
+    z_k_p:    Optional[float] = None
+    z_era:    Optional[float] = None
+    z_whip:   Optional[float] = None
+    # Hitter Z-scores from player_scores (category-aware scoring)
+    z_hr:     Optional[float] = None
+    z_rbi:    Optional[float] = None
+    z_nsb:    Optional[float] = None
+    z_r:      Optional[float] = None
+    z_ops:    Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -230,43 +243,120 @@ def _can_fill_slot(player: PlayerDecisionInput, slot: str) -> bool:
     return False
 
 
+def _derive_category_impacts(player: PlayerDecisionInput) -> dict:
+    """
+    Map PlayerDecisionInput z-score fields to a {board_key: z_score} dict.
+
+    Hitters: extracts z_hr, z_rbi, z_nsb, z_r, z_ops (if available).
+    Pitchers: extracts z_era, z_whip, z_k_p.
+    Two-way: extracts both hitter and pitcher categories.
+    """
+    pt = (player.player_type or "unknown").lower()
+    impacts: dict = {}
+
+    # Hitter categories (hitters and two-way)
+    if pt in ("hitter", "two_way"):
+        if player.z_hr is not None:
+            impacts["hr"] = float(player.z_hr)
+        if player.z_rbi is not None:
+            impacts["rbi"] = float(player.z_rbi)
+        if player.z_nsb is not None:
+            impacts["nsb"] = float(player.z_nsb)
+        if player.z_r is not None:
+            impacts["r"] = float(player.z_r)
+        if player.z_ops is not None:
+            impacts["ops"] = float(player.z_ops)
+
+    # Pitcher categories (pitchers and two-way)
+    if pt in ("pitcher", "two_way"):
+        if player.z_era is not None:
+            impacts["era"] = float(player.z_era)
+        if player.z_whip is not None:
+            impacts["whip"] = float(player.z_whip)
+        if player.z_k_p is not None:
+            impacts["k9"] = float(player.z_k_p)
+
+    return impacts
+
+
+def _category_aware_value(player: PlayerDecisionInput, need_vector) -> float:
+    """
+    Category-aware world-with value for waiver candidates.
+
+    Applies the rate-stat protection gate via score_fa_against_needs.
+    The category score is added as a bounded adjustment to composite_value so the
+    output scale stays near [0, 3], but can go negative when the penalty gate fires.
+
+    Works for both hitters and pitchers using their respective z-scores.
+    Falls back to _composite_value only if no per-category z-scores are available.
+    """
+    impacts = _derive_category_impacts(player)
+    if not impacts:
+        return _composite_value(player)
+
+    from backend.fantasy_baseball.category_aware_scorer import (
+        PlayerCategoryImpactVector,
+        score_fa_against_needs,
+    )
+    cat_score = score_fa_against_needs(
+        PlayerCategoryImpactVector(impacts=impacts),
+        need_vector,
+    )
+    # Scale cat_score (typical range ±3–10) to ±1.5 additive adjustment.
+    # Bound ensures the output stays interpretable relative to _composite_value
+    # while still producing negatives when the penalty gate fires hard.
+    cat_adj = max(-1.5, min(1.5, cat_score * 0.3))
+    return _composite_value(player) + cat_adj
+
+
 def _composite_value(player: PlayerDecisionInput) -> float:
     """
     Simple composite value metric for waiver world-with/world-without comparisons.
 
     Hitters:  HR + RBI + SB (all normalized to 0-1 then summed)
-    Pitchers: K (normalized) - ERA_penalty - WHIP_penalty
+    Pitchers: z_k_p + z_era + z_whip (P0-3: z-scores directly)
     Two-way:  average of both
+
+    Z-scores are already normalized (mean=0, typically -3 to +3).
+    z_era and z_whip are negated in scoring_engine (lower-is-better), so
+    higher z_era/z_whip means better performance.
 
     Returns a value in approximately [0, 3].
     """
     pt = (player.player_type or "unknown").lower()
+    score_anchor = (player.score_0_100 / 100.0) * 1.5
+    z_anchor = max(-1.0, min(player.composite_z, 2.0)) + 1.0
+    baseline = max(score_anchor, z_anchor / 2.0)
 
     if pt == "hitter":
         hr  = min((player.proj_hr_p50  or 0.0) / _HR_NORM,  1.0)
         rbi = min((player.proj_rbi_p50 or 0.0) / _RBI_NORM, 1.0)
         sb  = min((player.proj_sb_p50  or 0.0) / 50.0,      1.0)
-        return hr + rbi + sb
+        projection_total = hr + rbi + sb
+        return max(projection_total, baseline)
 
     if pt == "pitcher":
-        k    = min((player.proj_k_p50   or 0.0) / _K_NORM, 1.0)
-        era  = (player.proj_era_p50  or 4.50) / 9.0   # 9 ERA -> 1.0 penalty
-        whip = (player.proj_whip_p50 or 1.30) / 2.0   # 2.0 WHIP -> 1.0 penalty
-        return max(0.0, k - era + (1.0 - whip))
+        # P0-3: Use z-scores directly instead of normalizing raw projections
+        # z_k_p: higher is better (more Ks)
+        # z_era, z_whip: already negated in scoring_engine (lower ERA/WHIP = higher z)
+        z_total = (player.z_k_p or 0.0) + (player.z_era or 0.0) + (player.z_whip or 0.0)
+        # Scale z_total (roughly -9 to +9) to [0, 3] range for compatibility
+        projection_total = max(0.0, (z_total + 9.0) / 6.0)
+        return max(projection_total, baseline)
 
     if pt == "two_way":
+        # Hitter component: unchanged
         hr  = min((player.proj_hr_p50  or 0.0) / _HR_NORM,  1.0)
         rbi = min((player.proj_rbi_p50 or 0.0) / _RBI_NORM, 1.0)
         sb  = min((player.proj_sb_p50  or 0.0) / 50.0,      1.0)
-        k    = min((player.proj_k_p50   or 0.0) / _K_NORM, 1.0)
-        era  = (player.proj_era_p50  or 4.50) / 9.0
-        whip = (player.proj_whip_p50 or 1.30) / 2.0
-        hitter_val  = hr + rbi + sb
-        pitcher_val = max(0.0, k - era + (1.0 - whip))
-        return (hitter_val + pitcher_val) / 2.0
+        hitter_val = hr + rbi + sb
+        # Pitcher component: P0-3 use z-scores
+        z_total = (player.z_k_p or 0.0) + (player.z_era or 0.0) + (player.z_whip or 0.0)
+        pitcher_val = max(0.0, (z_total + 9.0) / 6.0)
+        return max((hitter_val + pitcher_val) / 2.0, baseline)
 
     # unknown player type -- fall back to score_0_100 normalized to [0, 3]
-    return (player.score_0_100 / 100.0) * 3.0
+    return baseline
 
 
 # ---------------------------------------------------------------------------
@@ -362,17 +452,22 @@ def optimize_lineup(
         pid = player.bdl_player_id
         if pid not in placed_ids:
             continue
-        if pid in bench:
-            continue   # bench players get no lineup DecisionResult row
         raw_slot = slot_lookup.get(pid)
+        is_bench_player = pid in bench
         # Normalize multi-slot keys ("OF_0" -> "OF")
-        display_slot = raw_slot.split("_")[0] if raw_slot else None
+        display_slot = "BN" if is_bench_player else (raw_slot.split("_")[0] if raw_slot else None)
         ls = _lineup_score(player)
         mb = _momentum_bonus(player.momentum_signal)
-        reasoning = (
-            f"Slot {display_slot}: score={player.score_0_100:.1f}, "
-            f"momentum={player.momentum_signal}({mb:+.0f}), z={player.composite_z:.2f}"
-        )
+        if is_bench_player:
+            reasoning = (
+                f"Bench stash: score={player.score_0_100:.1f}, "
+                f"momentum={player.momentum_signal}({mb:+.0f}), z={player.composite_z:.2f}"
+            )
+        else:
+            reasoning = (
+                f"Slot {display_slot}: score={player.score_0_100:.1f}, "
+                f"momentum={player.momentum_signal}({mb:+.0f}), z={player.composite_z:.2f}"
+            )
         results.append(DecisionResult(
             as_of_date=as_of_date,
             decision_type="lineup",
@@ -388,16 +483,68 @@ def optimize_lineup(
     return lineup, results
 
 
+def _find_weakest_for_candidate(
+    candidate: PlayerDecisionInput,
+    roster: list,
+) -> Optional[PlayerDecisionInput]:
+    """
+    Find the weakest roster player that a waiver candidate would replace.
+
+    Logic:
+    - Hitters: prefer weakest at same position, else weakest hitter overall
+    - Pitchers: prefer weakest pitcher at same role, else weakest pitcher overall
+    - Two-way: treat as hitter for replacement targeting
+    """
+    candidate_pt = (candidate.player_type or "unknown").lower()
+    candidate_positions = [p.upper() for p in (candidate.eligible_positions or [])]
+
+    hitters = [p for p in roster if (p.player_type or "unknown").lower() in ("hitter", "two_way")]
+    pitchers = [p for p in roster if (p.player_type or "unknown").lower() in ("pitcher", "two_way")]
+
+    if candidate_pt in ("hitter", "two_way"):
+        # Try to find weakest at same position first
+        for pos in candidate_positions:
+            if pos == "UTIL":
+                continue
+            same_pos = [p for p in hitters if pos in [x.upper() for x in (p.eligible_positions or [])]]
+            if same_pos:
+                return min(same_pos, key=_composite_value)
+        # Fallback: weakest hitter overall
+        return min(hitters, key=_composite_value) if hitters else None
+
+    if candidate_pt == "pitcher":
+        # Pitcher roles: SP vs RP vs P (any)
+        candidate_can_sp = "SP" in candidate_positions
+        candidate_can_rp = "RP" in candidate_positions
+        candidate_can_p = "P" in candidate_positions
+
+        sp_pool = [p for p in pitchers if "SP" in [x.upper() for x in (p.eligible_positions or [])]]
+        rp_pool = [p for p in pitchers if "RP" in [x.upper() for x in (p.eligible_positions or [])]]
+        p_pool = [p for p in pitchers if "P" in [x.upper() for x in (p.eligible_positions or [])]]
+
+        if candidate_can_sp and sp_pool:
+            return min(sp_pool, key=_composite_value)
+        if candidate_can_rp and rp_pool:
+            return min(rp_pool, key=_composite_value)
+        if candidate_can_p and p_pool:
+            return min(p_pool, key=_composite_value)
+        # Fallback: weakest pitcher overall
+        return min(pitchers, key=_composite_value) if pitchers else None
+
+    return None
+
+
 def optimize_waivers(
     roster: list,
     waiver_pool: list,
     as_of_date: Optional[date] = None,
+    need_vector=None,
 ) -> tuple:
     """
     Waiver intelligence: world-with vs world-without.
 
     For each waiver candidate, computes the value gain of adding the candidate
-    while dropping the weakest bench player on the current roster.
+    while dropping the weakest roster player at the appropriate position.
 
     Parameters
     ----------
@@ -415,19 +562,19 @@ def optimize_waivers(
     if not waiver_pool:
         return WaiverDecision(), []
 
-    # Identify weakest bench player as potential drop target
-    # (bench = all players not slotted as starters)
-    roster_sorted = sorted(roster, key=_composite_value)
-    drop_candidate = roster_sorted[0] if roster_sorted else None
-
-    if drop_candidate is None:
-        return WaiverDecision(), []
-
-    world_without_value = _composite_value(drop_candidate)
-
     recommendations: list = []
     for candidate in waiver_pool:
-        world_with_value = _composite_value(candidate)
+        # Find the specific player this candidate would replace
+        drop_target = _find_weakest_for_candidate(candidate, roster)
+
+        if drop_target is None:
+            continue
+
+        if need_vector is not None:
+            world_with_value = _category_aware_value(candidate, need_vector)
+        else:
+            world_with_value = _composite_value(candidate)
+        world_without_value = _composite_value(drop_target)
         gain = world_with_value - world_without_value
 
         # Confidence scales with score_0_100 and momentum signal
@@ -438,11 +585,11 @@ def optimize_waivers(
         reasoning = (
             f"Add {candidate.name}: value_gain={gain:+.3f}, "
             f"score={candidate.score_0_100:.1f}, momentum={candidate.momentum_signal}; "
-            f"drop {drop_candidate.name}: value={world_without_value:.3f}"
+            f"drop {drop_target.name}: value={world_without_value:.3f}"
         )
         recommendations.append(WaiverRecommendation(
             add_player_id=candidate.bdl_player_id,
-            drop_player_id=drop_candidate.bdl_player_id,
+            drop_player_id=drop_target.bdl_player_id,
             value_gain=gain,
             confidence=confidence,
             reasoning=reasoning,

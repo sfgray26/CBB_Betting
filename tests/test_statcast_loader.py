@@ -166,6 +166,76 @@ def test_unknown_player_returns_empty_signals():
     assert delta == 0.0
 
 
+# ---------------------------------------------------------------------------
+# DB tier: _load_from_db falls back gracefully when DB is unavailable
+# ---------------------------------------------------------------------------
+
+def test_load_from_db_returns_empty_dicts_on_db_error(monkeypatch):
+    """_load_from_db must return ({}, {}) when SessionLocal raises, not propagate."""
+    import backend.fantasy_baseball.statcast_loader as _mod
+
+    def _boom():
+        raise RuntimeError("no db in test")
+
+    monkeypatch.setattr("backend.models.SessionLocal", _boom)
+    batters, pitchers = _mod._load_from_db()
+    assert batters == {}
+    assert pitchers == {}
+
+
+def test_load_from_db_builds_statcastbatter_from_rows(monkeypatch):
+    """_load_from_db maps DB row fields onto StatcastBatter correctly."""
+    import types
+    import backend.fantasy_baseball.statcast_loader as _mod
+
+    # Simulate a DB row with the columns our query returns
+    class _Row:
+        player_name = "Cody Bellinger"
+        xwoba = 0.355
+        barrel_percent = 11.2
+        hard_hit_percent = 43.5
+        avg_exit_velocity = 91.8
+        sprint_speed = 28.5
+        whiff_percent = 22.0
+        avg_woba = 0.310
+
+    class _FakeResult:
+        def fetchall(self): return [_Row()]
+
+    class _FakeConn:
+        def execute(self, *a, **kw): return _FakeResult()
+        def close(self): pass
+
+    class _FakeDB(_FakeConn):
+        pass
+
+    monkeypatch.setattr("backend.models.SessionLocal", lambda: _FakeDB())
+
+    # Patch pitcher query to return nothing so test focuses on batters
+    _orig_execute = _FakeDB.execute
+    call_count = [0]
+    def _selective_execute(self, q, *a, **kw):
+        call_count[0] += 1
+        if call_count[0] == 2:  # second call = pitchers
+            class _Empty:
+                def fetchall(self): return []
+            return _Empty()
+        return _orig_execute(self, q, *a, **kw)
+    monkeypatch.setattr(_FakeDB, "execute", _selective_execute)
+
+    batters, pitchers = _mod._load_from_db()
+
+    assert "cody bellinger" in batters
+    b = batters["cody bellinger"]
+    assert b.xwoba == 0.355
+    assert b.barrel_pct == 11.2
+    assert b.hard_hit_pct == 43.5
+    xwoba_diff_expected = 0.355 - 0.310
+    assert abs(b.xwoba_diff - xwoba_diff_expected) < 1e-6
+    assert b.regression_down is True   # xwoba_diff > 0.030 → overperforming
+    assert pitchers == {}
+
+
 def test_signal_generation_never_raises_on_error():
     """Even with malformed inputs, build_statcast_signals must not raise."""
     signals, delta = build_statcast_signals("", is_pitcher=False)

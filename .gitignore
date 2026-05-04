@@ -85,3 +85,21 @@ reports/GEMINI_YAHOO_PIPELINE_PAYLOADS.
 .openclaw/telemetry_state.json
 .openclaw/workspace-state.json
 .openclaw/operational-state.json
+.openclaw/escalation_queue/
+
+# Gemini CLI — runtime state, auth, and community skills (project-specific skills
+# tracked individually: db-migrate, env-check, health-check, railway-logs)
+.gemini/oauth_creds.json
+.gemini/google_accounts.json
+.gemini/installation_id
+.gemini/projects.json
+.gemini/settings.json
+.gemini/state.json
+.gemini/trustedFolders.json
+.gemini/history/
+.gemini/tmp/
+.gemini/.gemini/
+.kimi/
+kimi-mcp-config.json
+mcp-shared-config.json
+.env.backup

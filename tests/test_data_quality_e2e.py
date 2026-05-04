@@ -39,6 +39,7 @@ def _make_hitter(
     row.window_days = 14
     row.games_in_window = games
     row.player_type = "hitter"
+    row.w_runs = None
     row.w_home_runs = hr
     row.w_rbi = rbi
     row.w_stolen_bases = sb
@@ -46,6 +47,12 @@ def _make_hitter(
     row.w_obp = obp
     row.w_ab = ab
     row.w_hits = hits
+    row.w_tb = None
+    row.w_doubles = None
+    row.w_triples = None
+    row.w_walks = None
+    row.w_net_stolen_bases = None
+    row.w_strikeouts_bat = None
     row.w_games = games
     # Pitcher fields must be None for hitter detection
     row.w_ip = None
@@ -56,6 +63,7 @@ def _make_hitter(
     row.w_earned_runs = None
     row.w_hits_allowed = None
     row.w_walks_allowed = None
+    row.w_qs = None
     return row
 
 
@@ -88,15 +96,23 @@ def _make_pitcher(
     row.w_hits_allowed = hits_allowed
     row.w_walks_allowed = walks_allowed
     row.w_strikeouts_pit = strikeouts
+    row.w_qs = None
     row.w_games = games
     # Hitter fields must be None for pitcher detection
     row.w_ab = None
+    row.w_runs = None
     row.w_home_runs = None
     row.w_rbi = None
     row.w_stolen_bases = None
     row.w_avg = None
     row.w_obp = None
     row.w_hits = None
+    row.w_tb = None
+    row.w_doubles = None
+    row.w_triples = None
+    row.w_walks = None
+    row.w_net_stolen_bases = None
+    row.w_strikeouts_bat = None
     return row
 
 
@@ -239,8 +255,10 @@ class TestSimulationEngineE2E:
             ab=40.0, hits=10.4,
         )
         result = simulate_player(row, remaining_games=130, seed=42)
-        assert 30.0 <= result.proj_hr_p50 <= 50.0, (
-            f"P50 HR = {result.proj_hr_p50}, expected [30, 50]"
+        # Bayesian shrinkage toward prior (~0.185 HR/game) reduces the effective rate
+        # from 0.3 to ~0.22, so P50 ≈ 29 HRs rather than the raw 39.
+        assert 25.0 <= result.proj_hr_p50 <= 50.0, (
+            f"P50 HR = {result.proj_hr_p50}, expected [25, 50]"
         )
 
     def test_pitcher_projections(self):
@@ -264,6 +282,22 @@ class TestSimulationEngineE2E:
         # K percentiles exist and are ordered
         assert result.proj_k_p10 is not None
         assert result.proj_k_p10 <= result.proj_k_p50 <= result.proj_k_p90
+
+    def test_pitcher_micro_sample_does_not_use_team_games_as_starts(self):
+        """One strong outing should not extrapolate to 130 pitcher appearances."""
+        row = _make_pitcher(
+            pid=5005, name="OneStartWonder", games=1,
+            era=2.00, whip=1.00, k_per_9=12.0,
+            ip=6.0, earned_runs=1.0,
+            hits_allowed=4.0, walks_allowed=2.0,
+            strikeouts=8.0,
+        )
+        result = simulate_player(row, remaining_games=130, seed=42)
+
+        assert result.proj_k_p50 is not None
+        assert result.proj_k_p50 < 300.0, (
+            f"P50 K = {result.proj_k_p50}, expected well below team-games extrapolation."
+        )
 
 
 # ===================================================================

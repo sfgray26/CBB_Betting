@@ -13,7 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.main import app
-from backend.models import DecisionResult, DecisionExplanation, get_db
+from backend.models import DecisionResult, DecisionExplanation, PlayerIDMapping, get_db
 from backend.auth import verify_api_key
 
 
@@ -33,6 +33,7 @@ def client_with_decisions():
     engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
     DecisionResult.__table__.create(bind=engine)
     DecisionExplanation.__table__.create(bind=engine)
+    PlayerIDMapping.__table__.create(bind=engine)
     SessionLocal = sessionmaker(bind=engine)
 
     # Create session and add test data
@@ -141,6 +142,16 @@ def client_with_decisions():
     ]
     for e in explanations:
         db.add(e)
+
+    # Add player ID mappings for name resolution
+    player_mappings = [
+        PlayerIDMapping(bdl_id=12345, full_name="Player One", yahoo_key=None, normalized_name="player one"),
+        PlayerIDMapping(bdl_id=67890, full_name="Player Two", yahoo_key=None, normalized_name="player two"),
+        PlayerIDMapping(bdl_id=54321, full_name="Player Three", yahoo_key=None, normalized_name="player three"),
+        PlayerIDMapping(bdl_id=11111, full_name="Player To Drop", yahoo_key=None, normalized_name="player to drop"),
+    ]
+    for m in player_mappings:
+        db.add(m)
 
     db.commit()
 
@@ -308,6 +319,20 @@ def test_get_decisions_response_contract_complete(client_with_decisions):
     assert "computed_at" not in decision
 
 
+def test_get_decisions_status_returns_breakdown(client_with_decisions):
+    response = client_with_decisions.get("/api/fantasy/decisions/status")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["verdict"] in {"healthy", "stale"}
+    assert data["decision_results"]["latest_as_of_date"] == "2026-04-15"
+    assert data["decision_results"]["total_row_count"] == 3
+    assert data["decision_results"]["breakdown_by_type"] == {
+        "lineup": 2,
+        "waiver": 1,
+    }
+
+
 def test_get_decisions_unauthorized_without_api_key(client_with_decisions):
     """Endpoint returns 401 when no API key is provided."""
     # Clear overrides to test real auth behavior
@@ -335,3 +360,56 @@ def test_get_decisions_invalid_decision_type(client_with_decisions):
     """Invalid decision_type returns 422."""
     response = client_with_decisions.get("/api/fantasy/decisions?decision_type=invalid")
     assert response.status_code == 422
+
+
+def test_get_decisions_includes_drop_player_name(client_with_decisions):
+    """API response includes resolved drop_player_name when drop_player_id is present."""
+    response = client_with_decisions.get("/api/fantasy/decisions?decision_type=waiver")
+    assert response.status_code == 200
+    data = response.json()
+
+    # The waiver decision (id=2) has drop_player_id=11111
+    # PlayerIDMapping has bdl_id=11111 -> full_name="Player To Drop"
+    # So drop_player_name should be "Player To Drop", not None
+    waiver_decision = data["decisions"][0]
+    assert "drop_player_name" in waiver_decision["decision"]
+    assert waiver_decision["decision"]["drop_player_name"] == "Player To Drop"
+    assert waiver_decision["decision"]["drop_player_id"] == 11111
+
+
+def test_get_decisions_drop_player_name_optional(client_with_decisions):
+    """drop_player_name is None when drop_player_id is None (lineup decisions)."""
+    response = client_with_decisions.get("/api/fantasy/decisions?decision_type=lineup")
+    assert response.status_code == 200
+    data = response.json()
+
+    # Lineup decisions have drop_player_id=None, so drop_player_name should be None
+    for item in data["decisions"]:
+        assert item["decision"]["drop_player_id"] is None
+        assert item["decision"]["drop_player_name"] is None
+
+
+def test_get_decisions_resolves_player_name_from_mapping(client_with_decisions):
+    """API resolves player_name from PlayerIDMapping when bdl_id matches."""
+    response = client_with_decisions.get("/api/fantasy/decisions")
+    assert response.status_code == 200
+    data = response.json()
+
+    # Verify that player names are resolved, not None
+    for item in data["decisions"]:
+        decision = item["decision"]
+        bdl_id = decision["bdl_player_id"]
+
+        # PlayerIDMapping has entries for:
+        # - 12345 -> "Player One"
+        # - 67890 -> "Player Two"
+        # - 54321 -> "Player Three"
+        if bdl_id == 12345:
+            assert decision["player_name"] == "Player One"
+        elif bdl_id == 67890:
+            assert decision["player_name"] == "Player Two"
+        elif bdl_id == 54321:
+            assert decision["player_name"] == "Player Three"
+        else:
+            # Unknown player IDs should have None player_name
+            assert decision["player_name"] is None

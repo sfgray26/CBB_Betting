@@ -4,6 +4,12 @@ MCMC Weekly Matchup Simulator
 Monte Carlo simulation of H2H fantasy baseball weekly matchup outcomes.
 Uses numpy for fast vectorized sampling — 1000 simulations in <50ms.
 
+v2 Alignment:
+- Uses v2 canonical category codes (lowercase internally)
+- 18 categories: 9 batting, 9 pitching
+- Win threshold: 10 (majority of 18)
+- All z-scores normalized so HIGHER = BETTER (LOWER_IS_BETTER inverted at input)
+
 Public API:
   simulate_weekly_matchup(my_roster, opponent_roster, ...) -> dict
   simulate_roster_move(my_roster, opponent_roster, add_player, drop_player_name, ...) -> dict
@@ -14,12 +20,13 @@ Each player dict must contain:
   starts_this_week: int          — pitcher starts this week (default 1)
   name: str
 
-Category keys (player_board convention):
-  Batting: hr, r, rbi, nsb, avg, ops, tb, h
-  Pitching: k_pit, era, whip, w, nsv, qs, k9
+Category keys (lowercase v2 canonical codes):
+  Batting (9): r, h, hr_b, rbi, k_b, tb, avg, ops, nsb
+  Pitching (9): w, l, hr_p, k_p, era, whip, k_9, qs, nsv
 
 Note: All cat_scores are z-scores where HIGHER = BETTER.
-ERA and WHIP z-scores are already inverted in the player board.
+LOWER_IS_BETTER categories (ERA, WHIP, K_B, L, HR_P) must be inverted
+before being passed to cat_scores (multiply by -1).
 """
 
 import logging
@@ -28,6 +35,8 @@ from typing import Optional
 
 import numpy as np
 
+from backend.stat_contract import SCORING_CATEGORY_CODES, LOWER_IS_BETTER
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -35,27 +44,31 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # These represent realistic week-to-week noise around each player's projection.
 # Volatile positions and sparse stat categories get higher values.
+# v2: Keys are lowercase versions of canonical codes.
 
 _PLAYER_WEEKLY_STD: dict[str, float] = {
-    # Batting — counting
-    "hr": 0.65,
+    # Batting — counting (v2 canonical codes)
     "r": 0.70,
-    "rbi": 0.70,
-    "nsb": 0.90,   # stolen bases: volatile
     "h": 0.55,
+    "hr_b": 0.65,
+    "rbi": 0.70,
+    "k_b": 0.50,   # strikeouts: volatile for batters
     "tb": 0.65,
+    "nsb": 0.90,   # stolen bases: volatile
     # Batting — rate
     "avg": 0.40,
     "ops": 0.40,
     # Pitching — counting
-    "k_pit": 0.75,
     "w": 0.85,
-    "nsv": 1.00,   # saves: binary/volatile
+    "l": 0.85,
+    "hr_p": 0.75,
+    "k_p": 0.75,
     "qs": 0.80,
-    "k9": 0.40,
+    "nsv": 1.00,   # saves: binary/volatile
     # Pitching — rate
     "era": 0.65,
     "whip": 0.55,
+    "k_9": 0.40,
 }
 
 _DEFAULT_STD = 0.60  # fallback for unknown categories
@@ -67,8 +80,12 @@ _POSITION_MULT: dict[str, float] = {
     "SP": 1.20, "RP": 1.50, "P": 1.30,
 }
 
-# Counting pitcher categories that scale with starts
-_STARTS_SCALE_CATS = frozenset({"k_pit", "w", "qs"})
+# Counting pitcher categories that scale with starts (v2 codes)
+_STARTS_SCALE_CATS = frozenset({"k_p", "w", "qs"})
+
+# v2: Mapping from canonical codes to lowercase keys used internally
+_CANONICAL_TO_LOWER = {code: code.lower() for code in SCORING_CATEGORY_CODES}
+_LOWER_TO_CANONICAL = {v: k for k, v in _CANONICAL_TO_LOWER.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +108,8 @@ def _player_std(player: dict, cat: str) -> float:
 def _roster_means_stds(roster: list[dict], cats: list[str]) -> tuple[np.ndarray, np.ndarray]:
     """
     Return (means, stds) arrays of shape (n_players, n_cats) for numpy sampling.
+
+    v2: Accepts both lowercase v2 canonical codes and legacy keys from cat_scores.
     """
     n = len(roster)
     if n == 0:
@@ -106,7 +125,10 @@ def _roster_means_stds(roster: list[dict], cats: list[str]) -> tuple[np.ndarray,
         is_pitcher = pos in ("SP", "RP", "P")
 
         for j, cat in enumerate(cats):
-            base_mean = float(cat_scores.get(cat, 0.0))
+            # Try to get the value from cat_scores with multiple key options
+            # 1. Direct match (lowercase v2 code)
+            # 2. Legacy key mapping
+            base_mean = _get_cat_score(cat_scores, cat)
 
             # Two-start pitchers: scale counting cats proportionally
             if is_pitcher and cat in _STARTS_SCALE_CATS and starts >= 2:
@@ -118,15 +140,99 @@ def _roster_means_stds(roster: list[dict], cats: list[str]) -> tuple[np.ndarray,
     return means, stds
 
 
+def _get_cat_score(cat_scores: dict, lowercase_v2_code: str) -> float:
+    """
+    Get category score from cat_scores dict, handling legacy keys.
+
+    Tries in order:
+    1. Direct lowercase v2 code (e.g., "k_p")
+    2. Legacy player_board keys (e.g., "k_pit" -> "k_p")
+    3. Canonical code (e.g., "K_P" -> "k_p")
+
+    Returns:
+        float value from cat_scores, or 0.0 if not found
+    """
+    # Direct match
+    if lowercase_v2_code in cat_scores:
+        return float(cat_scores[lowercase_v2_code])
+
+    # Legacy mappings
+    _LEGACY_INPUT_MAP = {
+        "k_p": ["k_pit"],
+        "k_9": ["k9"],
+        "hr_b": ["hr"],  # Legacy batting HR
+    }
+
+    legacy_keys = _LEGACY_INPUT_MAP.get(lowercase_v2_code, [])
+    for legacy_key in legacy_keys:
+        if legacy_key in cat_scores:
+            return float(cat_scores[legacy_key])
+
+    # Try uppercase version (canonical code)
+    canonical_upper = lowercase_v2_code.upper()
+    if canonical_upper in cat_scores:
+        return float(cat_scores[canonical_upper])
+
+    return 0.0
+
+
 def _detect_categories(rosters: list[list[dict]]) -> list[str]:
-    """Auto-detect categories present across all rosters."""
+    """
+    Auto-detect categories present across all rosters.
+
+    v2: Returns lowercase v2 canonical codes. Accepts both canonical
+    and legacy keys from input rosters, normalizing to lowercase.
+    """
     all_cats: set[str] = set()
     for roster in rosters:
         for p in roster:
-            all_cats.update((p.get("cat_scores") or {}).keys())
-    # Remove noise keys
-    all_cats.discard("l")  # losses — infrequent Yahoo cat, skip
+            cat_scores = p.get("cat_scores") or {}
+            for key in cat_scores.keys():
+                # Normalize to lowercase v2 code
+                # Handle legacy keys: "k_pit" -> "k_p", "hr" -> "hr_b", etc.
+                normalized = _normalize_category_key(key)
+                all_cats.add(normalized)
+
     return sorted(all_cats)
+
+
+def _normalize_category_key(key: str) -> str:
+    """
+    Normalize a category key to lowercase v2 canonical code.
+
+    Handles:
+    - Canonical codes (e.g., "HR_B") -> lowercase ("hr_b")
+    - Legacy player_board keys (e.g., "k_pit" -> "k_p", "hr" -> "hr_b")
+    - Already lowercase keys -> returned as-is if valid
+
+    Returns:
+        Lowercase v2 canonical code
+    """
+    key_lower = key.lower()
+
+    # Legacy mapping table
+    _LEGACY_MAP = {
+        "k_pit": "k_p",
+        "k9": "k_9",
+        "hr": "hr_b",  # Legacy batting HR
+        "sb": "nsb",   # Legacy SB (now NSV for pitching)
+    }
+
+    # Check legacy map first
+    if key_lower in _LEGACY_MAP:
+        return _LEGACY_MAP[key_lower]
+
+    # If already a valid lowercase canonical code, return it
+    if key_lower in _CANONICAL_TO_LOWER.values():
+        return key_lower
+
+    # Fallback: try to match against canonical codes case-insensitively
+    for canonical in SCORING_CATEGORY_CODES:
+        if canonical.lower() == key_lower:
+            return canonical.lower()
+
+    # Unknown key - return as-is (will be filtered or use default std)
+    return key_lower
 
 
 # ---------------------------------------------------------------------------
@@ -143,14 +249,17 @@ def simulate_weekly_matchup(
     """
     Monte Carlo simulation of one week's H2H matchup.
 
+    v2: Uses lowercase v2 canonical codes. Win threshold = 10 (majority of 18).
+
     Parameters
     ----------
     my_roster / opponent_roster:
         Lists of player dicts. Each dict needs cat_scores, positions, starts_this_week.
+        cat_scores keys are normalized to lowercase v2 codes internally.
         Pass an empty list [] for opponent to compare against a league-average opponent
         (all cat z-scores = 0, representing the statistical mean).
     categories:
-        Category keys to simulate. Auto-detected from rosters if None.
+        Category keys to simulate (lowercase v2 codes). Auto-detected from rosters if None.
     n_sims:
         Monte Carlo iterations. 1000 is fast (<50ms) and stable.
     seed:
@@ -159,12 +268,12 @@ def simulate_weekly_matchup(
     Returns
     -------
     dict with keys:
-        win_prob              float       fraction of sims where my team wins
-        category_win_probs    dict        per-category win fraction
+        win_prob              float       fraction of sims where my team wins (10+ cats)
+        category_win_probs    dict        per-category win fraction (lowercase v2 keys)
         expected_cats_won     float       expected categories won per matchup
         n_sims                int
         elapsed_ms            float
-        categories_simulated  list[str]
+        categories_simulated  list[str]   lowercase v2 codes
     """
     t0 = time.perf_counter()
     rng = np.random.default_rng(seed)
@@ -203,7 +312,7 @@ def simulate_weekly_matchup(
         avg_std = np.full(n_cats, 2.0)  # team-level noise for 12-player average opponent
         opp_totals = rng.normal(0.0, avg_std, size=(n_sims, n_cats))
 
-    # All cats: higher is better (z-scores already inverted for ERA/WHIP)
+    # All cats: higher is better (LOWER_IS_BETTER z-scores inverted at input)
     cat_wins = (my_totals > opp_totals).astype(float)   # (n_sims, n_cats)
 
     cat_win_probs = {
@@ -211,7 +320,12 @@ def simulate_weekly_matchup(
         for j, cat in enumerate(categories)
     }
     total_cat_wins = cat_wins.sum(axis=1)   # (n_sims,)
-    matchup_wins = (total_cat_wins > n_cats / 2.0).astype(float)
+
+    # v2: Dynamic win threshold = majority of categories simulated
+    # If all 18 categories: need 10+ (majority)
+    # If partial categories: need more than half
+    win_threshold = n_cats / 2.0
+    matchup_wins = (total_cat_wins > win_threshold).astype(float)
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
 

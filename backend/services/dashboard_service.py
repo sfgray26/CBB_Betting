@@ -284,6 +284,8 @@ class DashboardService:
             
             # Define required positions for Yahoo H2H
             required_positions = ["C", "1B", "2B", "3B", "SS", "OF", "OF", "OF", "Util"]
+            _of_positions = {"OF", "LF", "CF", "RF"}
+            _all_hitter_positions = {"C", "1B", "2B", "3B", "SS", "OF", "LF", "CF", "RF", "DH"}
             
             # Get active players (not on IL)
             active_players = [
@@ -297,10 +299,13 @@ class DashboardService:
             
             for req_pos in required_positions:
                 # Find a player eligible for this position
+                # Yahoo returns LF/CF/RF as distinct positions; any fills an OF slot
+                player_positions = lambda p: set(p.get("positions", []))
                 eligible = [
                     p for p in active_players 
-                    if req_pos in p.get("positions", []) or 
-                    (req_pos == "Util" and any(pos in ["C", "1B", "2B", "3B", "SS", "OF"] for pos in p.get("positions", [])))
+                    if req_pos in p.get("positions", []) or
+                    (req_pos == "OF" and player_positions(p) & _of_positions) or
+                    (req_pos == "Util" and player_positions(p) & _all_hitter_positions)
                 ]
                 
                 if eligible:
@@ -501,7 +506,7 @@ class DashboardService:
                     name=fa.get("name", "Unknown"),
                     team=fa.get("team", ""),
                     positions=fa.get("positions", []),
-                    percent_owned=float(fa.get("percent_owned", 0.0)),
+                    percent_owned=float(fa.get("percent_owned", fa.get("owned_pct", 0.0))),
                     priority_score=priority_score,
                     tier=tier,
                     reason=reason,

@@ -273,13 +273,15 @@ def test_z_capped_at_minus_3():
 
 
 # ===========================================================================
-# 9. composite_z is mean of applicable non-None Z-scores
+# 9. composite_z is weighted SUM of applicable non-None Z-scores (P1-4/P1-5)
 # ===========================================================================
 
-def test_composite_z_is_mean_of_applicable():
+def test_composite_z_is_weighted_sum():
     """
-    Hitter with 5 non-None category Z-scores -> composite = mean of those 5.
-    Uses controlled values so we can predict composite_z precisely.
+    Hitter with non-None category Z-scores -> composite = weighted MEAN.
+
+    P0-2 fix: weighted mean (sum / total_weight) so two-way players
+    are comparable to specialists. z_sb excluded.
     """
     # 6 identical hitters except pid=6 has different values in all categories
     base = [
@@ -293,10 +295,25 @@ def test_composite_z_is_mean_of_applicable():
     r = _result_for(results, pid=6)
 
     # All five hitter categories should be non-None
-    z_vals = [r.z_hr, r.z_rbi, r.z_sb, r.z_avg, r.z_obp]
-    assert all(v is not None for v in z_vals), f"Expected all 5 hitter Z-scores, got {z_vals}"
+    # Note: z_sb is EXCLUDED from composite (P27 fix)
+    z_hr = r.z_hr
+    z_rbi = r.z_rbi
+    z_sb = r.z_sb  # Computed but excluded from composite
+    z_avg = r.z_avg
+    z_obp = r.z_obp
+    assert all(v is not None for v in [z_hr, z_rbi, z_sb, z_avg, z_obp]), \
+        f"Expected all 5 hitter Z-scores, got {[z_hr, z_rbi, z_sb, z_avg, z_obp]}"
 
-    expected_composite = sum(z_vals) / len(z_vals)
+    # P0-2 fix: weighted MEAN (sum / total_weight)
+    # Category weights from scoring_engine._CATEGORY_WEIGHTS
+    # Note: z_obp is NOT in _CATEGORY_WEIGHTS, so defaults to 1.0
+    from backend.services.scoring_engine import _CATEGORY_WEIGHTS
+    _kv = [("z_hr", z_hr), ("z_rbi", z_rbi), ("z_avg", z_avg), ("z_obp", z_obp)]
+    _total_w = sum(_CATEGORY_WEIGHTS.get(k, 1.0) for k, _ in _kv)
+    expected_composite = (
+        sum(_CATEGORY_WEIGHTS.get(k, 1.0) * v for k, v in _kv) / _total_w
+        if _total_w > 0 else 0.0
+    )
     assert math.isclose(r.composite_z, expected_composite, rel_tol=1e-9), (
         f"composite_z mismatch: {r.composite_z} != {expected_composite}"
     )

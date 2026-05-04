@@ -1,0 +1,150 @@
+﻿{
+    "success":  true,
+    "message":  "Optimized lineup for 2026-04-23 (Note: Data from 2026-04-23, not requested 2026-04-23)",
+    "target_date":  "2026-04-23",
+    "starters":  [
+                     {
+                         "player_key":  "469.p.66369",
+                         "player_name":  "Munetaka Murakami",
+                         "assigned_slot":  "1B",
+                         "lineup_score":  97.5,
+                         "reasoning":  "Score 97.5 (player_scores), eligible for 1B"
+                     },
+                     {
+                         "player_key":  "469.p.12401",
+                         "player_name":  "Gavin Williams",
+                         "assigned_slot":  "SP",
+                         "lineup_score":  96.2,
+                         "reasoning":  "Score 96.2 (player_scores), eligible for SP"
+                     },
+                     {
+                         "player_key":  "469.p.10752",
+                         "player_name":  "Ildemaro Vargas",
+                         "assigned_slot":  "2B",
+                         "lineup_score":  95.3,
+                         "reasoning":  "Score 95.3 (player_scores), eligible for 2B"
+                     },
+                     {
+                         "player_key":  "469.p.10214",
+                         "player_name":  "Edwin DÃ­az",
+                         "assigned_slot":  "RP",
+                         "lineup_score":  95.0,
+                         "reasoning":  "Score 95.0 (projection_fallback), eligible for RP"
+                     },
+                     {
+                         "player_key":  "469.p.10423",
+                         "player_name":  "Michael Soroka",
+                         "assigned_slot":  "SP",
+                         "lineup_score":  91.9,
+                         "reasoning":  "Score 91.9 (player_scores), eligible for SP"
+                     },
+                     {
+                         "player_key":  "469.p.60188",
+                         "player_name":  "Spencer Arrighetti",
+                         "assigned_slot":  "P",
+                         "lineup_score":  90.6,
+                         "reasoning":  "Score 90.6 (player_scores), eligible for P"
+                     },
+                     {
+                         "player_key":  "469.p.12588",
+                         "player_name":  "Seiya Suzuki",
+                         "assigned_slot":  "OF",
+                         "lineup_score":  85.3,
+                         "reasoning":  "Score 85.3 (player_scores), eligible for OF"
+                     },
+                     {
+                         "player_key":  "469.p.12024",
+                         "player_name":  "Jordan Walker",
+                         "assigned_slot":  "OF",
+                         "lineup_score":  84.8,
+                         "reasoning":  "Score 84.8 (player_scores), eligible for OF"
+                     },
+                     {
+                         "player_key":  "469.p.11417",
+                         "player_name":  "Geraldo Perdomo",
+                         "assigned_slot":  "SS",
+                         "lineup_score":  83.8,
+                         "reasoning":  "Score 83.8 (player_scores), eligible for SS"
+                     },
+                     {
+                         "player_key":  "469.p.10918",
+                         "player_name":  "Pete Alonso",
+                         "assigned_slot":  "Util",
+                         "lineup_score":  83.6,
+                         "reasoning":  "Score 83.6 (player_scores), eligible for Util"
+                     },
+                     {
+                         "player_key":  "469.p.9876",
+                         "player_name":  "Brandon Nimmo",
+                         "assigned_slot":  "OF",
+                         "lineup_score":  72.9,
+                         "reasoning":  "Score 72.9 (player_scores), eligible for OF"
+                     },
+                     {
+                         "player_key":  "469.p.60120",
+                         "player_name":  "MoisÃ©s Ballesteros",
+                         "assigned_slot":  "C",
+                         "lineup_score":  50.0,
+                         "reasoning":  "Score 50.0 (proxy_projection), eligible for C"
+                     },
+                     {
+                         "player_key":  "469.p.9402",
+                         "player_name":  "Caleb Thielbar",
+                         "assigned_slot":  "RP",
+                         "lineup_score":  50.0,
+                         "reasoning":  "Score 50.0 (player_scores), eligible for RP"
+                     }
+                 ],
+    "bench":  [
+                  {
+                      "player_key":  "469.p.11706",
+                      "player_name":  "Cristopher SÃ¡nchez",
+                      "assigned_slot":  "BN",
+                      "lineup_score":  80.07,
+                      "reasoning":  "Bench: score 80.1"
+                  },
+                  {
+                      "player_key":  "469.p.12449",
+                      "player_name":  "Vinnie Pasquantino",
+                      "assigned_slot":  "BN",
+                      "lineup_score":  71.1,
+                      "reasoning":  "Bench: score 71.1"
+                  },
+                  {
+                      "player_key":  "469.p.10148",
+                      "player_name":  "Blake Snell",
+                      "assigned_slot":  "BN",
+                      "lineup_score":  66.74,
+                      "reasoning":  "Bench: score 66.7"
+                  },
+                  {
+                      "player_key":  "469.p.9590",
+                      "player_name":  "Byron Buxton",
+                      "assigned_slot":  "BN",
+                      "lineup_score":  65.2,
+                      "reasoning":  "Bench: score 65.2"
+                  },
+                  {
+                      "player_key":  "469.p.12468",
+                      "player_name":  "Eury PÃ©rez",
+                      "assigned_slot":  "BN",
+                      "lineup_score":  60.27,
+                      "reasoning":  "Bench: score 60.3"
+                  }
+              ],
+    "unrostered":  [
+                       "469.p.12157",
+                       "469.p.64330",
+                       "469.p.11064",
+                       "469.p.10626",
+                       "469.p.12046"
+                   ],
+    "total_lineup_score":  1076.9,
+    "freshness":  {
+                      "primary_source":  "yahoo",
+                      "fetched_at":  null,
+                      "computed_at":  "2026-04-23T11:45:20.392455-04:00",
+                      "staleness_threshold_minutes":  60,
+                      "is_stale":  false
+                  }
+}

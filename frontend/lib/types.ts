@@ -287,3 +287,68 @@ export interface DashboardResponse {
   timestamp: string
   data: DashboardData
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Fantasy Baseball Decision Types (Layer 3F)
+// ═════════════════════════════════════════════════════════════════════════════
+
+export interface FactorDetail {
+  name: string
+  value: string | null
+  label: string | null
+  weight: number | null
+  narrative: string | null
+}
+
+export interface DecisionResultOut {
+  bdl_player_id: number
+  player_name: string | null
+  as_of_date: string
+  decision_type: 'lineup' | 'waiver'
+  target_slot: string | null
+  drop_player_id: number | null
+  drop_player_name: string | null
+  lineup_score: number | null
+  value_gain: number | null
+  confidence: number
+  reasoning: string | null
+}
+
+export interface DecisionExplanationOut {
+  summary: string
+  factors: FactorDetail[]
+  confidence_narrative: string | null
+  risk_narrative: string | null
+  track_record_narrative: string | null
+}
+
+export interface DecisionWithExplanation {
+  decision: DecisionResultOut
+  explanation: DecisionExplanationOut | null
+}
+
+export interface DecisionsResponse {
+  decisions: DecisionWithExplanation[]
+  count: number
+  as_of_date: string
+  decision_type: 'lineup' | 'waiver' | null
+}
+
+// Decision pipeline status for the decisions page status block
+export interface DecisionPipelineStatus {
+  verdict: 'healthy' | 'stale' | 'partial' | 'missing'
+  message: string
+  checked_at: string
+  decision_results: {
+    latest_as_of_date: string | null
+    total_row_count: number | null
+    breakdown_by_type: {
+      lineup: number | null
+      waiver: number | null
+    } | null
+  }
+  decision_explanations: {
+    latest_as_of_date: string | null
+    total_row_count: number | null
+  }
+}

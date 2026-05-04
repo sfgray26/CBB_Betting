@@ -175,6 +175,33 @@ Any other string → 1.0× (no penalty; fallback "Sanity check unavailable" uses
 
 ---
 
+## MCP Tool Permissions (Per Agent)
+
+> Last updated: 2026-04-28 after Kimi CLI infrastructure setup.
+
+Model Context Protocol (MCP) servers extend agent capabilities. Each agent has a scoped allowlist.
+
+| MCP Server | Claude Code | Gemini CLI | Kimi CLI | Rationale |
+|-----------|:-----------:|:----------:|:--------:|-----------|
+| **Railway** | ✅ | ✅ | ⚠️ | Gemini's primary swimlane; Kimi read-only research use |
+| **PostgreSQL** | ✅ | ✅ (read-only) | ✅ (read-only) | `--access-mode=restricted` REQUIRED for Gemini/Kimi |
+| **GitHub** | ✅ | ❌ | ⚠️ | Gemini banned from code-adjacent ops per EMAC-075 |
+| **Context7** | ✅ | ✅ | ✅ | Read-only docs — safe for all |
+| **Sequential Thinking** | ✅ | ✅ | ✅ | Reasoning aid — safe for all |
+| **BallDon'tLie** | ✅ | ⚠️ (ad-hoc only) | ✅ | Gemini: no bulk ingestion; Kimi: research |
+
+**Gemini CLI constraints:**
+- All MCP tools run with `trust: false` (confirmation required per call)
+- PostgreSQL MCP MUST use `--access-mode=restricted`
+- Never use GitHub MCP (PRs/issues are code-adjacent)
+
+**Kimi CLI constraints:**
+- Read-only database access for audits only
+- No production data modification via MCP
+- BDL MCP for research queries, not pipeline ingestion
+
+---
+
 ## Swarm Boundaries (Non-Negotiable)
 
 1. **No ghost changes.** Every modification justified in HANDOFF.md. No silent edits.

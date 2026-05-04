@@ -22,6 +22,7 @@ Hard stops
 - No position-level Z-scores (deferred -- position not yet in schema).
 - No datetime.utcnow() usage.
 """
+from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
@@ -40,18 +41,25 @@ from typing import Optional
 # via _COMPOSITE_EXCLUDED below. z_nsb (Net SB = SB - CS) is the canonical
 # H2H One Win basestealing category and drives the composite.
 HITTER_CATEGORIES: dict[str, tuple[str, bool]] = {
-    "z_hr":  ("w_home_runs",     False),
-    "z_rbi": ("w_rbi",           False),
-    "z_sb":  ("w_stolen_bases",  False),      # legacy -- excluded from composite
-    "z_nsb": ("w_net_stolen_bases", False),   # P27 canonical basestealing Z
-    "z_avg": ("w_avg",           False),
-    "z_obp": ("w_obp",           False),
+    "z_r":    ("w_runs",              False),  # V31: Runs
+    "z_h":    ("w_hits",              False),  # V31: Hits
+    "z_hr":   ("w_home_runs",         False),
+    "z_rbi":  ("w_rbi",               False),
+    "z_sb":   ("w_stolen_bases",      False),   # legacy -- excluded from composite
+    "z_nsb":  ("w_net_stolen_bases",  False),   # P27 canonical basestealing Z
+    "z_k_b":  ("w_strikeouts_bat",    True),    # V31: Batting K (lower is better)
+    "z_tb":   ("w_tb",                False),  # V31: Total Bases
+    "z_avg":  ("w_avg",               False),
+    "z_obp":  ("w_obp",               False),
+    "z_ops":  ("w_ops",               False),  # V31: OPS
 }
 
 PITCHER_CATEGORIES: dict[str, tuple[str, bool]] = {
     "z_era":     ("w_era",         True),   # lower ERA is better -> negate Z
     "z_whip":    ("w_whip",        True),   # lower WHIP is better -> negate Z
     "z_k_per_9": ("w_k_per_9",     False),
+    "z_k_p":     ("w_strikeouts_pit", False),  # V31: Pitching K
+    "z_qs":      ("w_qs",          False),  # V31: Quality Starts
 }
 
 # Combined for iteration convenience
@@ -66,10 +74,149 @@ _ALL_CATEGORIES: dict[str, tuple[str, bool]] = {
 _COMPOSITE_EXCLUDED: frozenset = frozenset({"z_sb"})
 
 # Minimum number of players with a non-null value before computing Z for a category
-MIN_SAMPLE: int = 5
+MIN_SAMPLE: int = 3  # Minimum players to compute any z-score
+# Low threshold ensures early-season rankings exist
+# Consumers should use 'confidence' field to filter uncertain values
 
 # Cap Z-scores at this absolute value to reduce outlier distortion
 Z_CAP: float = 3.0
+
+
+# Category weights based on scarcity (inverse of league average SD)
+# Categories with higher variance get higher weights
+_CATEGORY_WEIGHTS: dict[str, float] = {
+    # Batting - counting stats
+    "z_r": 1.0, "z_h": 1.0, "z_hr": 1.2, "z_rbi": 1.1,
+    "z_tb": 1.0, "z_nsb": 1.3,  # NSB scarcest (highest variance)
+    "z_k_b": 0.9,   # K is rate-like, less variance
+    # Batting - rate stats (more stable, lower weight)
+    "z_avg": 0.8, "z_ops": 0.9,
+    # Pitching - counting stats
+    "z_k_p": 1.1, "z_qs": 1.0, "z_nsv": 1.3,  # NSV scarcest
+    # Pitching - rate stats
+    "z_era": 0.9, "z_whip": 0.9, "z_k_per_9": 0.8,
+}
+
+# ---------------------------------------------------------------------------
+# Position Scarcity Multipliers (P1 Fantasy Baseball Enhancement)
+# ---------------------------------------------------------------------------
+
+# Position scarcity based on 12-team league replacement levels
+# Scarcity = how hard it is to find a replacement player off waivers
+# Higher multiplier = scarcer position = player gets value boost
+_POSITION_SCARCITY_MULTIPLIERS: dict[str, float] = {
+    # Hitters (scarcest to deepest)
+    "SS": 1.15,   # Shortstop is scarcest middle infield position
+    "2B": 1.10,   # Second base is scarce
+    "C": 1.20,    # Catcher is scarcest (defensive demands limit pool)
+    "3B": 1.05,   # Third base is moderately scarce
+    "OF": 1.00,   # Outfield is baseline (deep position pool)
+    "1B": 0.95,   # First base is deepest (many DH types play here)
+    "DH": 0.90,    # Designated hitter has no defensive value
+    # Pitchers
+    "SP": 1.00,   # Starting pitcher baseline
+    "RP": 1.00,   # Relief pitcher baseline
+}
+
+def _get_position_scarcity_multiplier(primary_position: Optional[str]) -> float:
+    """
+    Return position scarcity multiplier for fantasy baseball value adjustment.
+
+    Players at scarcer positions (SS, C, 2B) receive a value boost because
+    replacement players are harder to find on waivers. This corrects the system
+    tendency to rank Nick Castellanos (OF) equal to Trea Turner (SS) when they have
+    identical stats.
+
+    Args:
+        primary_position: Player's primary position ("SS", "OF", "C", etc.)
+
+    Returns:
+        Multiplier 0.90-1.20. Returns 1.0 for unknown/None positions.
+    """
+    if not primary_position:
+        return 1.0
+
+    # Handle outfield positions (LF, CF, RF) as "OF"
+    if primary_position in ["LF", "CF", "RF"]:
+        primary_position = "OF"
+
+    return _POSITION_SCARCITY_MULTIPLIERS.get(primary_position, 1.0)
+
+
+def apply_position_scarcity_adjustment(
+    results: list[PlayerScoreResult],
+    position_map: dict[int, list[str]]  # player_id -> ["SS", "OF", ...]
+) -> list[PlayerScoreResult]:
+    """
+    Apply position scarcity multipliers to player scores.
+
+    P1 Fantasy Baseball Enhancement: Players at scarcer positions (SS, C, 2B)
+    receive a value boost because replacement players are harder to find.
+
+    Args:
+        results: List of PlayerScoreResult objects from compute_league_zscores
+        position_map: Dictionary mapping player_id to list of positions
+
+    Returns:
+        Same list with position_adjusted_score and position_scarcity_multiplier populated
+    """
+    for result in results:
+        positions = position_map.get(result.bdl_player_id, [])
+
+        # Determine primary_position (prioritize scarcest positions)
+        primary_position = _determine_primary_position(positions)
+        result.primary_position = primary_position
+
+        # Calculate multiplier
+        multiplier = _get_position_scarcity_multiplier(primary_position)
+        result.position_scarcity_multiplier = multiplier
+
+        # Apply adjustment (cap at 100 to prevent scores > 100)
+        result.position_adjusted_score = min(100.0, result.score_0_100 * multiplier)
+
+    return results
+
+
+def _determine_primary_position(positions: list[str]) -> Optional[str]:
+    """
+    Determine primary position from list of eligible positions.
+
+    Prioritizes scarcest positions for fantasy baseball value assessment:
+    C > SS > 2B > 3B > OF > 1B > DH (for hitters)
+    SP > RP (for pitchers)
+
+    Args:
+        positions: List of position strings ["SS", "OF", "C", etc.]
+
+    Returns:
+        Single primary position string or None if empty list
+    """
+    if not positions:
+        return None
+
+    # Define position priority (scarcest first)
+    hitter_priority = ["C", "SS", "2B", "3B", "OF", "1B", "DH"]
+    pitcher_priority = ["SP", "RP"]
+
+    # Check if any hitting positions exist
+    has_hitting = any(p in hitter_priority for p in positions)
+    has_pitching = any(p in pitcher_priority for p in positions)
+
+    if has_hitting:
+        # Return scarcest hitting position
+        for pos in hitter_priority:
+            if pos in positions:
+                return pos
+    elif has_pitching:
+        # Return scarcest pitching position
+        for pos in pitcher_priority:
+            if pos in positions:
+                return pos
+
+    # Fallback to first position or OF for outfielders
+    if "OF" in positions:
+        return "OF"
+    return positions[0] if positions else None
 
 
 # ---------------------------------------------------------------------------
@@ -83,22 +230,35 @@ class PlayerScoreResult:
     window_days: int
     player_type: str          # "hitter" | "pitcher" | "two_way"
     games_in_window: int
+    primary_position: Optional[str] = None  # "SS", "OF", "C", etc. for position scarcity
 
     # Per-category Z-scores (None if category not applicable or < MIN_SAMPLE)
+    # Batting
+    z_r:       Optional[float] = None    # V31: Runs
+    z_h:       Optional[float] = None    # V31: Hits
     z_hr:      Optional[float] = None
     z_rbi:     Optional[float] = None
     z_sb:      Optional[float] = None   # legacy -- excluded from composite_z
     z_nsb:     Optional[float] = None   # P27 Net SB (SB - CS) -- enters composite
+    z_k_b:     Optional[float] = None    # V31: Batting K (lower is better)
+    z_tb:      Optional[float] = None    # V31: Total Bases
     z_avg:     Optional[float] = None
     z_obp:     Optional[float] = None
+    z_ops:     Optional[float] = None    # V31: OPS
+    # Pitching
     z_era:     Optional[float] = None
     z_whip:    Optional[float] = None
     z_k_per_9: Optional[float] = None
+    z_k_p:     Optional[float] = None    # V31: Pitching K
+    z_qs:      Optional[float] = None    # V31: Quality Starts
 
     composite_z: float = 0.0   # mean of all applicable non-None Z-scores
     score_0_100: float = 50.0  # percentile rank 0-100 within player_type
-    confidence:  float = 0.0   # games_in_window / window_days, capped at 1.0
+    confidence: float = 0.0   # games_in_window / window_days, capped at 1.0
 
+    # P1: Position scarcity adjustment
+    position_adjusted_score: float = 0.0  # score_0_100 * position_scarcity_multiplier
+    position_scarcity_multiplier: float = 1.0  # multiplier based on primary_position
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -347,15 +507,26 @@ def compute_league_zscores(
             z_val = category_z_lookup[z_key].get(pid)  # None if not computed
             setattr(result, z_key, z_val)
 
-        # Step 3: composite_z = mean of all applicable non-None Z-scores.
+        # Step 3: composite_z = weighted sum of all applicable non-None Z-scores.
+        # P1-4/P1-5 FIX: Weighted sum (no normalization)
+        # - Specialists not diluted by mean (P1-4)
+        # - Two-way players fairly valued for extra categories (P1-5)
         # P27: z_sb is excluded (superseded by z_nsb) to avoid double-counting
         # basestealing in the 5-category hitter composite.
-        non_none = [
-            getattr(result, k)
+        # Build list of (key, value) pairs for non-None scores
+        kv_pairs = [
+            (k, getattr(result, k))
             for k in applicable_keys
             if k not in _COMPOSITE_EXCLUDED and getattr(result, k) is not None
         ]
-        result.composite_z = sum(non_none) / len(non_none) if non_none else 0.0
+        # Weighted MEAN: divide by total weight so composite_z is comparable
+        # across player types (two-way players, specialists). Matches models.py
+        # docstring: "mean of all applicable non-None per-category Z-scores".
+        _total_w = sum(_CATEGORY_WEIGHTS.get(k, 1.0) for k, _ in kv_pairs)
+        result.composite_z = (
+            sum(_CATEGORY_WEIGHTS.get(k, 1.0) * v for k, v in kv_pairs) / _total_w
+            if kv_pairs and _total_w > 0 else 0.0
+        )
 
         # Step 4: confidence = min(1.0, games_in_window / window_days)
         result.confidence = min(1.0, row.games_in_window / window_days)
@@ -391,9 +562,11 @@ def compute_league_params(
     """
     # Map z_key -> short key used by simulation_engine
     _Z_TO_SHORT = {
-        "z_hr": "hr", "z_rbi": "rbi", "z_sb": "sb", "z_nsb": "nsb",
-        "z_avg": "avg", "z_obp": "obp",
-        "z_era": "era", "z_whip": "whip", "z_k_per_9": "k",
+        "z_r": "r", "z_h": "h", "z_hr": "hr", "z_rbi": "rbi",
+        "z_sb": "sb", "z_nsb": "nsb", "z_k_b": "k_b", "z_tb": "tb",
+        "z_avg": "avg", "z_obp": "obp", "z_ops": "ops",
+        "z_era": "era", "z_whip": "whip", "z_k_per_9": "k_per_9",
+        "z_k_p": "k_p", "z_qs": "qs",
     }
 
     league_means: dict[str, float] = {}

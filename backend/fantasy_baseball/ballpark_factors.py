@@ -11,7 +11,8 @@ Risk flags: age, injury history, role uncertainty — applied as draft penalties
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Dict, Tuple
+from functools import lru_cache
 
 # ---------------------------------------------------------------------------
 # Park factors (2026 estimates based on 3-yr rolling average)
@@ -58,14 +59,44 @@ PARK_FACTORS: dict[str, dict] = {
     "free":{"run": 1.00, "hr": 1.00, "era": 1.00},
 }
 
+# Global cache for park factors (loaded on startup)
+_park_factor_cache: Dict[Tuple[str, str], float] = {}
+
+def load_park_factors():
+    """Load all park factors into memory on startup."""
+    global _park_factor_cache
+    from backend.models import SessionLocal
+    from sqlalchemy import text
+
+    db = SessionLocal()
+    try:
+        rows = db.execute(text('''
+          SELECT park_name, run_factor, hr_factor, era_factor
+          FROM park_factors
+        ''')).fetchall()
+
+        # Build cache: {('run', 'COL'): 1.38, ('hr', 'COL'): 1.30, ('era', 'COL'): 1.28, ...}
+        _park_factor_cache = {}
+        for row in rows:
+            park_name = row[0]
+            _park_factor_cache[('run', park_name)] = float(row[1])
+            _park_factor_cache[('hr', park_name)] = float(row[2])
+            _park_factor_cache[('era', park_name)] = float(row[3])
+
+        print(f"✅ Loaded {len(_park_factor_cache)} park factors into memory")
+    finally:
+        db.close()
+
+@lru_cache(maxsize=32)
 def get_park_factor(team: str, factor: str = "run", _db_session=None) -> float:
     """
     Return park factor for a team and factor type.
 
     Resolution order:
-    1. ParkFactor table (canonical persisted context)
-    2. PARK_FACTORS constant (hardcoded fallback)
-    3. 1.0 neutral default
+    1. In-memory cache (loaded on startup from ParkFactor table)
+    2. ParkFactor table (canonical persisted context)
+    3. PARK_FACTORS constant (hardcoded fallback)
+    4. 1.0 neutral default
 
     Args:
         team: Team code (e.g., "COL", "BOS")
@@ -76,6 +107,11 @@ def get_park_factor(team: str, factor: str = "run", _db_session=None) -> float:
         Park factor value (1.0 = neutral)
     """
     from backend.models import ParkFactor, SessionLocal
+
+    # Check in-memory cache first (format: {('run', 'COL'): 1.38, ('hr', 'COL'): 1.30, ...})
+    cache_key = (factor, team)
+    if cache_key in _park_factor_cache:
+        return _park_factor_cache[cache_key]
 
     # Map ballpark_factors naming to ParkFactor column names
     factor_column_map = {"run": "run_factor", "hr": "hr_factor", "era": "era_factor"}

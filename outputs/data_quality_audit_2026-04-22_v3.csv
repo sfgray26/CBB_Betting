@@ -1,0 +1,1380 @@
+﻿priority,category,impact_score,issue_type,player_name,player_id,team,pa,expected_value,actual_value,description
+
+P1,B,7.0,empty_projection_active_player,545361,545361,,55,"{category: z_score, ...}",{},Active player (PA=55) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,695578,695578,,57,"{category: z_score, ...}",{},Active player (PA=57) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,701398,701398,,51,"{category: z_score, ...}",{},Active player (PA=51) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,669364,669364,,54,"{category: z_score, ...}",{},Active player (PA=54) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,608070,608070,,54,"{category: z_score, ...}",{},Active player (PA=54) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,671056,671056,,51,"{category: z_score, ...}",{},Active player (PA=51) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,686469,686469,,51,"{category: z_score, ...}",{},Active player (PA=51) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,592450,592450,,51,"{category: z_score, ...}",{},Active player (PA=51) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,663586,663586,,52,"{category: z_score, ...}",{},Active player (PA=52) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,691406,691406,,51,"{category: z_score, ...}",{},Active player (PA=51) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,682829,682829,,53,"{category: z_score, ...}",{},Active player (PA=53) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,683002,683002,,59,"{category: z_score, ...}",{},Active player (PA=59) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,677951,677951,,52,"{category: z_score, ...}",{},Active player (PA=52) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,677594,677594,,51,"{category: z_score, ...}",{},Active player (PA=51) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,686948,686948,,52,"{category: z_score, ...}",{},Active player (PA=52) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,701762,701762,,59,"{category: z_score, ...}",{},Active player (PA=59) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,672580,672580,,53,"{category: z_score, ...}",{},Active player (PA=53) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,805300,805300,,55,"{category: z_score, ...}",{},Active player (PA=55) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,670770,670770,,51,"{category: z_score, ...}",{},Active player (PA=51) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,680757,680757,,52,"{category: z_score, ...}",{},Active player (PA=52) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,607043,607043,,52,"{category: z_score, ...}",{},Active player (PA=52) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,670541,670541,,55,"{category: z_score, ...}",{},Active player (PA=55) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,621566,621566,,52,"{category: z_score, ...}",{},Active player (PA=52) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,621493,621493,,58,"{category: z_score, ...}",{},Active player (PA=58) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,691016,691016,,58,"{category: z_score, ...}",{},Active player (PA=58) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,665833,665833,,52,"{category: z_score, ...}",{},Active player (PA=52) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,802139,802139,,51,"{category: z_score, ...}",{},Active player (PA=51) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,669127,669127,,55,"{category: z_score, ...}",{},Active player (PA=55) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,608324,608324,,51,"{category: z_score, ...}",{},Active player (PA=51) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,805779,805779,,54,"{category: z_score, ...}",{},Active player (PA=54) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,514888,514888,,51,"{category: z_score, ...}",{},Active player (PA=51) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,624413,624413,,53,"{category: z_score, ...}",{},Active player (PA=53) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,666176,666176,,55,"{category: z_score, ...}",{},Active player (PA=55) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,663728,663728,,54,"{category: z_score, ...}",{},Active player (PA=54) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,663538,663538,,53,"{category: z_score, ...}",{},Active player (PA=53) has empty cat_scores - breaks waiver scoring
+
+P1,B,7.0,empty_projection_active_player,687263,687263,,56,"{category: z_score, ...}",{},Active player (PA=56) has empty cat_scores - breaks waiver scoring
+
+P2,C,4.0,null_team_field,682177,682177,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,667670,667670,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,666181,666181,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,621438,621438,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,666310,666310,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,668904,668904,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,545361,545361,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,686797,686797,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,695506,695506,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,687363,687363,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,593871,593871,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,670242,670242,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,650333,650333,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,660844,660844,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,682668,682668,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,695578,695578,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,686894,686894,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,641355,641355,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,595879,595879,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,677800,677800,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,608369,608369,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,642715,642715,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,701398,701398,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,592518,592518,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,808982,808982,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,666464,666464,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,519317,519317,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,681082,681082,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,650489,650489,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,669364,669364,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,694497,694497,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,664023,664023,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,664761,664761,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,665487,665487,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,681807,681807,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,694384,694384,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,673962,673962,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,596115,596115,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,694377,694377,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,666023,666023,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663604,663604,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,630105,630105,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,689414,689414,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,608070,608070,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,671056,671056,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,687462,687462,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,664040,664040,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,641584,641584,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663616,663616,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,575929,575929,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,691594,691594,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,676914,676914,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,621439,621439,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,686469,686469,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,700250,700250,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,592450,592450,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,645277,645277,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,678489,678489,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,593428,593428,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,683737,683737,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,687401,687401,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,624585,624585,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,669477,669477,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,641933,641933,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663368,663368,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,592206,592206,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,660821,660821,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,807799,807799,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,676475,676475,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,642708,642708,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,694208,694208,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,680977,680977,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,810938,810938,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,691777,691777,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,681715,681715,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,669701,669701,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663586,663586,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,686555,686555,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,671289,671289,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,665966,665966,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,641857,641857,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,702222,702222,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,688363,688363,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,669003,669003,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,691406,691406,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,666126,666126,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,647304,647304,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,682829,682829,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,668901,668901,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,672016,672016,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,668715,668715,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,660670,660670,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,802415,802415,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,672960,672960,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,808959,808959,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,691781,691781,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,679529,679529,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,518692,518692,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,572233,572233,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,666152,666152,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,666018,666018,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,547180,547180,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,700932,700932,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,642086,642086,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,686668,686668,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,683002,683002,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,670623,670623,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,677951,677951,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,671732,671732,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,677594,677594,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,650859,650859,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,681297,681297,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,693304,693304,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,686948,686948,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,656941,656941,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,693307,693307,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,656716,656716,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,609280,609280,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,672820,672820,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,680777,680777,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,686217,686217,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,571448,571448,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,605170,605170,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,701762,701762,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,695600,695600,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,681481,681481,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,669357,669357,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,672580,672580,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663993,663993,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,678246,678246,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,668804,668804,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,683357,683357,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,694212,694212,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,643446,643446,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,672724,672724,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,691718,691718,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,671277,671277,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,805300,805300,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,800050,800050,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,680574,680574,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,682622,682622,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,677950,677950,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,641343,641343,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,670042,670042,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,694671,694671,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,669236,669236,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,670770,670770,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,666139,666139,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,680757,680757,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,641487,641487,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,607043,607043,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,687637,687637,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,669394,669394,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,682985,682985,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,670541,670541,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,621566,621566,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,621493,621493,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,521692,521692,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,664056,664056,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,677942,677942,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,668930,668930,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,571970,571970,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,666182,666182,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,543760,543760,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,702332,702332,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,678882,678882,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,606466,606466,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,666969,666969,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,643217,643217,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,690976,690976,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,694388,694388,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,681198,681198,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,676391,676391,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,680776,680776,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,691723,691723,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,665489,665489,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,691016,691016,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,643376,643376,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,701538,701538,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,608348,608348,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,656484,656484,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,676609,676609,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,665833,665833,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,662139,662139,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,668885,668885,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,802139,802139,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663968,663968,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,669127,669127,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,673357,673357,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,664728,664728,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,665926,665926,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,678391,678391,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,683083,683083,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,695734,695734,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,681351,681351,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,701675,701675,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,657757,657757,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,664983,664983,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,592626,592626,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,665019,665019,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663757,663757,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,696100,696100,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,805367,805367,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,672275,672275,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663697,663697,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,608324,608324,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,672695,672695,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,596142,596142,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,500743,500743,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,624424,624424,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,676694,676694,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663647,663647,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,624428,624428,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,643289,643289,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,657656,657656,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,686527,686527,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,695336,695336,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,696285,696285,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,805779,805779,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,542303,542303,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,650490,650490,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,545121,545121,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,681393,681393,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,671218,671218,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,514888,514888,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,624413,624413,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,687597,687597,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,682877,682877,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,695657,695657,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,660162,660162,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,656775,656775,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,686780,686780,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,553993,553993,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,656555,656555,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663886,663886,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,660271,660271,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,699912,699912,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,605137,605137,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,805808,805808,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,664954,664954,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,670764,670764,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,691785,691785,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,671976,671976,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,678554,678554,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,666176,666176,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,690993,690993,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,573262,573262,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663656,663656,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,665804,665804,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,665862,665862,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,682626,682626,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663728,663728,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,672515,672515,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,665750,665750,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,677649,677649,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,656811,656811,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,682663,682663,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,661388,661388,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,682998,682998,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,807713,807713,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,683146,683146,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,596019,596019,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,672761,672761,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,666211,666211,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,803011,803011,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,592885,592885,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,677592,677592,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,602104,602104,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,702284,702284,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,682928,682928,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,666160,666160,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,807712,807712,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,677587,677587,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,804606,804606,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,687859,687859,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,691720,691720,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,669224,669224,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,678662,678662,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,681624,681624,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,607208,607208,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,673237,673237,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,656305,656305,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,678009,678009,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,664770,664770,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,664702,664702,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,691740,691740,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,668939,668939,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663538,663538,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,687263,687263,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663743,663743,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,701807,701807,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,621020,621020,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,700337,700337,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,646240,646240,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,694374,694374,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,606192,606192,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,592663,592663,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,666397,666397,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,669257,669257,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,680728,680728,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,672640,672640,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,680779,680779,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,664034,664034,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,543510,543510,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,691026,691026,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,665161,665161,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,668227,668227,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,621043,621043,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,701358,701358,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,682657,682657,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,691023,691023,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,671739,671739,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,701350,701350,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,660688,660688,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,543807,543807,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,650402,650402,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,677588,677588,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,669016,669016,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,543877,543877,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,656537,656537,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,669134,669134,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,808975,808975,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,665877,665877,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,643396,643396,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,657041,657041,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663698,663698,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,663837,663837,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,673548,673548,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,676356,676356,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,678218,678218,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,686452,686452,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,680700,680700,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,595978,595978,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,543309,543309,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,695020,695020,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,545341,545341,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,624641,624641,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,665561,665561,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,686681,686681,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,687093,687093,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,655316,655316,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,687221,687221,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,650391,650391,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,677956,677956,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,C,4.0,null_team_field,687957,687957,,,<team_abbrev>,NULL,Player has null/empty team field - breaks team-based filters
+
+P2,B,4.0,empty_projection_bench_player,682177,682177,,30,"{category: z_score, ...}",{},Bench player (PA=30) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,667670,667670,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,666181,666181,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,621438,621438,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,666310,666310,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,668904,668904,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,686797,686797,,42,"{category: z_score, ...}",{},Bench player (PA=42) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,695506,695506,,35,"{category: z_score, ...}",{},Bench player (PA=35) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,687363,687363,,26,"{category: z_score, ...}",{},Bench player (PA=26) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,593871,593871,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,670242,670242,,33,"{category: z_score, ...}",{},Bench player (PA=33) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,650333,650333,,39,"{category: z_score, ...}",{},Bench player (PA=39) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,660844,660844,,26,"{category: z_score, ...}",{},Bench player (PA=26) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,682668,682668,,32,"{category: z_score, ...}",{},Bench player (PA=32) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,686894,686894,,23,"{category: z_score, ...}",{},Bench player (PA=23) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,641355,641355,,48,"{category: z_score, ...}",{},Bench player (PA=48) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,595879,595879,,36,"{category: z_score, ...}",{},Bench player (PA=36) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,677800,677800,,43,"{category: z_score, ...}",{},Bench player (PA=43) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,608369,608369,,45,"{category: z_score, ...}",{},Bench player (PA=45) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,642715,642715,,45,"{category: z_score, ...}",{},Bench player (PA=45) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,592518,592518,,43,"{category: z_score, ...}",{},Bench player (PA=43) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,808982,808982,,42,"{category: z_score, ...}",{},Bench player (PA=42) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,666464,666464,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,519317,519317,,42,"{category: z_score, ...}",{},Bench player (PA=42) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,681082,681082,,33,"{category: z_score, ...}",{},Bench player (PA=33) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,650489,650489,,25,"{category: z_score, ...}",{},Bench player (PA=25) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,694497,694497,,42,"{category: z_score, ...}",{},Bench player (PA=42) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,664023,664023,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,664761,664761,,40,"{category: z_score, ...}",{},Bench player (PA=40) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,665487,665487,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,681807,681807,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,694384,694384,,49,"{category: z_score, ...}",{},Bench player (PA=49) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,673962,673962,,43,"{category: z_score, ...}",{},Bench player (PA=43) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,596115,596115,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,694377,694377,,43,"{category: z_score, ...}",{},Bench player (PA=43) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,666023,666023,,22,"{category: z_score, ...}",{},Bench player (PA=22) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,663604,663604,,32,"{category: z_score, ...}",{},Bench player (PA=32) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,630105,630105,,36,"{category: z_score, ...}",{},Bench player (PA=36) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,689414,689414,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,687462,687462,,33,"{category: z_score, ...}",{},Bench player (PA=33) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,664040,664040,,44,"{category: z_score, ...}",{},Bench player (PA=44) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,641584,641584,,24,"{category: z_score, ...}",{},Bench player (PA=24) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,663616,663616,,27,"{category: z_score, ...}",{},Bench player (PA=27) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,575929,575929,,41,"{category: z_score, ...}",{},Bench player (PA=41) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,691594,691594,,25,"{category: z_score, ...}",{},Bench player (PA=25) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,676914,676914,,24,"{category: z_score, ...}",{},Bench player (PA=24) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,621439,621439,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,700250,700250,,44,"{category: z_score, ...}",{},Bench player (PA=44) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,645277,645277,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,678489,678489,,38,"{category: z_score, ...}",{},Bench player (PA=38) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,593428,593428,,42,"{category: z_score, ...}",{},Bench player (PA=42) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,683737,683737,,41,"{category: z_score, ...}",{},Bench player (PA=41) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,687401,687401,,26,"{category: z_score, ...}",{},Bench player (PA=26) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,624585,624585,,37,"{category: z_score, ...}",{},Bench player (PA=37) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,669477,669477,,40,"{category: z_score, ...}",{},Bench player (PA=40) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,663368,663368,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,592206,592206,,25,"{category: z_score, ...}",{},Bench player (PA=25) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,660821,660821,,42,"{category: z_score, ...}",{},Bench player (PA=42) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,807799,807799,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,676475,676475,,49,"{category: z_score, ...}",{},Bench player (PA=49) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,642708,642708,,38,"{category: z_score, ...}",{},Bench player (PA=38) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,694208,694208,,23,"{category: z_score, ...}",{},Bench player (PA=23) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,680977,680977,,29,"{category: z_score, ...}",{},Bench player (PA=29) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,810938,810938,,29,"{category: z_score, ...}",{},Bench player (PA=29) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,691777,691777,,48,"{category: z_score, ...}",{},Bench player (PA=48) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,681715,681715,,25,"{category: z_score, ...}",{},Bench player (PA=25) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,669701,669701,,37,"{category: z_score, ...}",{},Bench player (PA=37) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,686555,686555,,26,"{category: z_score, ...}",{},Bench player (PA=26) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,671289,671289,,35,"{category: z_score, ...}",{},Bench player (PA=35) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,665966,665966,,26,"{category: z_score, ...}",{},Bench player (PA=26) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,641857,641857,,27,"{category: z_score, ...}",{},Bench player (PA=27) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,702222,702222,,33,"{category: z_score, ...}",{},Bench player (PA=33) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,688363,688363,,35,"{category: z_score, ...}",{},Bench player (PA=35) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,669003,669003,,35,"{category: z_score, ...}",{},Bench player (PA=35) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,666126,666126,,37,"{category: z_score, ...}",{},Bench player (PA=37) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,647304,647304,,43,"{category: z_score, ...}",{},Bench player (PA=43) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,668901,668901,,31,"{category: z_score, ...}",{},Bench player (PA=31) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,672016,672016,,34,"{category: z_score, ...}",{},Bench player (PA=34) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,668715,668715,,39,"{category: z_score, ...}",{},Bench player (PA=39) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,660670,660670,,50,"{category: z_score, ...}",{},Bench player (PA=50) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,802415,802415,,50,"{category: z_score, ...}",{},Bench player (PA=50) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,672960,672960,,42,"{category: z_score, ...}",{},Bench player (PA=42) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,808959,808959,,50,"{category: z_score, ...}",{},Bench player (PA=50) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,691781,691781,,45,"{category: z_score, ...}",{},Bench player (PA=45) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,679529,679529,,40,"{category: z_score, ...}",{},Bench player (PA=40) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,518692,518692,,40,"{category: z_score, ...}",{},Bench player (PA=40) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,572233,572233,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,666152,666152,,26,"{category: z_score, ...}",{},Bench player (PA=26) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,666018,666018,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,547180,547180,,44,"{category: z_score, ...}",{},Bench player (PA=44) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,700932,700932,,34,"{category: z_score, ...}",{},Bench player (PA=34) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,642086,642086,,32,"{category: z_score, ...}",{},Bench player (PA=32) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,686668,686668,,37,"{category: z_score, ...}",{},Bench player (PA=37) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,670623,670623,,49,"{category: z_score, ...}",{},Bench player (PA=49) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,671732,671732,,49,"{category: z_score, ...}",{},Bench player (PA=49) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,650859,650859,,32,"{category: z_score, ...}",{},Bench player (PA=32) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,681297,681297,,29,"{category: z_score, ...}",{},Bench player (PA=29) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,693304,693304,,30,"{category: z_score, ...}",{},Bench player (PA=30) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,656941,656941,,48,"{category: z_score, ...}",{},Bench player (PA=48) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,693307,693307,,43,"{category: z_score, ...}",{},Bench player (PA=43) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,656716,656716,,22,"{category: z_score, ...}",{},Bench player (PA=22) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,609280,609280,,23,"{category: z_score, ...}",{},Bench player (PA=23) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,672820,672820,,26,"{category: z_score, ...}",{},Bench player (PA=26) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,680777,680777,,32,"{category: z_score, ...}",{},Bench player (PA=32) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,686217,686217,,38,"{category: z_score, ...}",{},Bench player (PA=38) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,571448,571448,,39,"{category: z_score, ...}",{},Bench player (PA=39) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,605170,605170,,42,"{category: z_score, ...}",{},Bench player (PA=42) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,695600,695600,,40,"{category: z_score, ...}",{},Bench player (PA=40) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,681481,681481,,32,"{category: z_score, ...}",{},Bench player (PA=32) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,669357,669357,,38,"{category: z_score, ...}",{},Bench player (PA=38) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,663993,663993,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,678246,678246,,48,"{category: z_score, ...}",{},Bench player (PA=48) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,668804,668804,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,683357,683357,,41,"{category: z_score, ...}",{},Bench player (PA=41) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,694212,694212,,35,"{category: z_score, ...}",{},Bench player (PA=35) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,643446,643446,,48,"{category: z_score, ...}",{},Bench player (PA=48) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,672724,672724,,34,"{category: z_score, ...}",{},Bench player (PA=34) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,691718,691718,,46,"{category: z_score, ...}",{},Bench player (PA=46) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,671277,671277,,38,"{category: z_score, ...}",{},Bench player (PA=38) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,800050,800050,,45,"{category: z_score, ...}",{},Bench player (PA=45) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,680574,680574,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,682622,682622,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,677950,677950,,32,"{category: z_score, ...}",{},Bench player (PA=32) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,641343,641343,,37,"{category: z_score, ...}",{},Bench player (PA=37) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,670042,670042,,39,"{category: z_score, ...}",{},Bench player (PA=39) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,694671,694671,,35,"{category: z_score, ...}",{},Bench player (PA=35) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,669236,669236,,44,"{category: z_score, ...}",{},Bench player (PA=44) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,666139,666139,,34,"{category: z_score, ...}",{},Bench player (PA=34) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,641487,641487,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,687637,687637,,37,"{category: z_score, ...}",{},Bench player (PA=37) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,669394,669394,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,682985,682985,,46,"{category: z_score, ...}",{},Bench player (PA=46) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,521692,521692,,46,"{category: z_score, ...}",{},Bench player (PA=46) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,664056,664056,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,677942,677942,,31,"{category: z_score, ...}",{},Bench player (PA=31) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,668930,668930,,41,"{category: z_score, ...}",{},Bench player (PA=41) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,571970,571970,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,666182,666182,,45,"{category: z_score, ...}",{},Bench player (PA=45) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,543760,543760,,41,"{category: z_score, ...}",{},Bench player (PA=41) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,702332,702332,,42,"{category: z_score, ...}",{},Bench player (PA=42) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,678882,678882,,38,"{category: z_score, ...}",{},Bench player (PA=38) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,606466,606466,,43,"{category: z_score, ...}",{},Bench player (PA=43) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,666969,666969,,44,"{category: z_score, ...}",{},Bench player (PA=44) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,643217,643217,,37,"{category: z_score, ...}",{},Bench player (PA=37) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,690976,690976,,30,"{category: z_score, ...}",{},Bench player (PA=30) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,694388,694388,,32,"{category: z_score, ...}",{},Bench player (PA=32) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,681198,681198,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,676391,676391,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,680776,680776,,35,"{category: z_score, ...}",{},Bench player (PA=35) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,691723,691723,,30,"{category: z_score, ...}",{},Bench player (PA=30) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,665489,665489,,48,"{category: z_score, ...}",{},Bench player (PA=48) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,643376,643376,,27,"{category: z_score, ...}",{},Bench player (PA=27) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,701538,701538,,50,"{category: z_score, ...}",{},Bench player (PA=50) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,608348,608348,,32,"{category: z_score, ...}",{},Bench player (PA=32) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,656484,656484,,24,"{category: z_score, ...}",{},Bench player (PA=24) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,676609,676609,,40,"{category: z_score, ...}",{},Bench player (PA=40) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,662139,662139,,36,"{category: z_score, ...}",{},Bench player (PA=36) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,668885,668885,,34,"{category: z_score, ...}",{},Bench player (PA=34) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,663968,663968,,25,"{category: z_score, ...}",{},Bench player (PA=25) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,673357,673357,,40,"{category: z_score, ...}",{},Bench player (PA=40) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,664728,664728,,32,"{category: z_score, ...}",{},Bench player (PA=32) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,665926,665926,,40,"{category: z_score, ...}",{},Bench player (PA=40) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,678391,678391,,31,"{category: z_score, ...}",{},Bench player (PA=31) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,683083,683083,,40,"{category: z_score, ...}",{},Bench player (PA=40) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,695734,695734,,49,"{category: z_score, ...}",{},Bench player (PA=49) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,681351,681351,,44,"{category: z_score, ...}",{},Bench player (PA=44) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,701675,701675,,24,"{category: z_score, ...}",{},Bench player (PA=24) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,657757,657757,,40,"{category: z_score, ...}",{},Bench player (PA=40) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,664983,664983,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,592626,592626,,31,"{category: z_score, ...}",{},Bench player (PA=31) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,665019,665019,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,663757,663757,,38,"{category: z_score, ...}",{},Bench player (PA=38) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,696100,696100,,44,"{category: z_score, ...}",{},Bench player (PA=44) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,805367,805367,,46,"{category: z_score, ...}",{},Bench player (PA=46) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,672275,672275,,23,"{category: z_score, ...}",{},Bench player (PA=23) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,663697,663697,,22,"{category: z_score, ...}",{},Bench player (PA=22) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,672695,672695,,42,"{category: z_score, ...}",{},Bench player (PA=42) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,596142,596142,,36,"{category: z_score, ...}",{},Bench player (PA=36) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,500743,500743,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,624424,624424,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,676694,676694,,22,"{category: z_score, ...}",{},Bench player (PA=22) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,663647,663647,,30,"{category: z_score, ...}",{},Bench player (PA=30) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,624428,624428,,32,"{category: z_score, ...}",{},Bench player (PA=32) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,643289,643289,,40,"{category: z_score, ...}",{},Bench player (PA=40) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,657656,657656,,43,"{category: z_score, ...}",{},Bench player (PA=43) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,686527,686527,,30,"{category: z_score, ...}",{},Bench player (PA=30) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,695336,695336,,22,"{category: z_score, ...}",{},Bench player (PA=22) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,696285,696285,,40,"{category: z_score, ...}",{},Bench player (PA=40) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,542303,542303,,40,"{category: z_score, ...}",{},Bench player (PA=40) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,650490,650490,,49,"{category: z_score, ...}",{},Bench player (PA=49) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,545121,545121,,43,"{category: z_score, ...}",{},Bench player (PA=43) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,681393,681393,,43,"{category: z_score, ...}",{},Bench player (PA=43) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,671218,671218,,34,"{category: z_score, ...}",{},Bench player (PA=34) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,687597,687597,,22,"{category: z_score, ...}",{},Bench player (PA=22) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,682877,682877,,41,"{category: z_score, ...}",{},Bench player (PA=41) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,695657,695657,,45,"{category: z_score, ...}",{},Bench player (PA=45) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,660162,660162,,42,"{category: z_score, ...}",{},Bench player (PA=42) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,656775,656775,,39,"{category: z_score, ...}",{},Bench player (PA=39) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,686780,686780,,23,"{category: z_score, ...}",{},Bench player (PA=23) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,553993,553993,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,656555,656555,,39,"{category: z_score, ...}",{},Bench player (PA=39) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,663886,663886,,34,"{category: z_score, ...}",{},Bench player (PA=34) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,660271,660271,,44,"{category: z_score, ...}",{},Bench player (PA=44) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,699912,699912,,44,"{category: z_score, ...}",{},Bench player (PA=44) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,605137,605137,,45,"{category: z_score, ...}",{},Bench player (PA=45) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,805808,805808,,46,"{category: z_score, ...}",{},Bench player (PA=46) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,664954,664954,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,670764,670764,,41,"{category: z_score, ...}",{},Bench player (PA=41) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,691785,691785,,30,"{category: z_score, ...}",{},Bench player (PA=30) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,671976,671976,,22,"{category: z_score, ...}",{},Bench player (PA=22) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,678554,678554,,31,"{category: z_score, ...}",{},Bench player (PA=31) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,690993,690993,,34,"{category: z_score, ...}",{},Bench player (PA=34) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,573262,573262,,38,"{category: z_score, ...}",{},Bench player (PA=38) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,663656,663656,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,665804,665804,,24,"{category: z_score, ...}",{},Bench player (PA=24) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,665862,665862,,41,"{category: z_score, ...}",{},Bench player (PA=41) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,682626,682626,,35,"{category: z_score, ...}",{},Bench player (PA=35) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,672515,672515,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,665750,665750,,39,"{category: z_score, ...}",{},Bench player (PA=39) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,677649,677649,,33,"{category: z_score, ...}",{},Bench player (PA=33) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,656811,656811,,39,"{category: z_score, ...}",{},Bench player (PA=39) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,682663,682663,,48,"{category: z_score, ...}",{},Bench player (PA=48) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,661388,661388,,38,"{category: z_score, ...}",{},Bench player (PA=38) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,682998,682998,,38,"{category: z_score, ...}",{},Bench player (PA=38) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,807713,807713,,25,"{category: z_score, ...}",{},Bench player (PA=25) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,683146,683146,,31,"{category: z_score, ...}",{},Bench player (PA=31) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,596019,596019,,46,"{category: z_score, ...}",{},Bench player (PA=46) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,672761,672761,,29,"{category: z_score, ...}",{},Bench player (PA=29) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,666211,666211,,33,"{category: z_score, ...}",{},Bench player (PA=33) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,803011,803011,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,592885,592885,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,677592,677592,,24,"{category: z_score, ...}",{},Bench player (PA=24) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,602104,602104,,29,"{category: z_score, ...}",{},Bench player (PA=29) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,702284,702284,,48,"{category: z_score, ...}",{},Bench player (PA=48) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,682928,682928,,49,"{category: z_score, ...}",{},Bench player (PA=49) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,666160,666160,,41,"{category: z_score, ...}",{},Bench player (PA=41) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,807712,807712,,45,"{category: z_score, ...}",{},Bench player (PA=45) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,677587,677587,,41,"{category: z_score, ...}",{},Bench player (PA=41) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,804606,804606,,42,"{category: z_score, ...}",{},Bench player (PA=42) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,687859,687859,,37,"{category: z_score, ...}",{},Bench player (PA=37) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,691720,691720,,40,"{category: z_score, ...}",{},Bench player (PA=40) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,669224,669224,,32,"{category: z_score, ...}",{},Bench player (PA=32) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,678662,678662,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,681624,681624,,45,"{category: z_score, ...}",{},Bench player (PA=45) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,607208,607208,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,673237,673237,,28,"{category: z_score, ...}",{},Bench player (PA=28) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,656305,656305,,44,"{category: z_score, ...}",{},Bench player (PA=44) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,678009,678009,,23,"{category: z_score, ...}",{},Bench player (PA=23) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,664770,664770,,28,"{category: z_score, ...}",{},Bench player (PA=28) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,664702,664702,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,691740,691740,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,668939,668939,,22,"{category: z_score, ...}",{},Bench player (PA=22) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,663743,663743,,28,"{category: z_score, ...}",{},Bench player (PA=28) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,701807,701807,,32,"{category: z_score, ...}",{},Bench player (PA=32) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,621020,621020,,46,"{category: z_score, ...}",{},Bench player (PA=46) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,700337,700337,,31,"{category: z_score, ...}",{},Bench player (PA=31) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,646240,646240,,44,"{category: z_score, ...}",{},Bench player (PA=44) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,694374,694374,,28,"{category: z_score, ...}",{},Bench player (PA=28) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,606192,606192,,37,"{category: z_score, ...}",{},Bench player (PA=37) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,592663,592663,,25,"{category: z_score, ...}",{},Bench player (PA=25) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,666397,666397,,42,"{category: z_score, ...}",{},Bench player (PA=42) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,669257,669257,,44,"{category: z_score, ...}",{},Bench player (PA=44) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,680728,680728,,26,"{category: z_score, ...}",{},Bench player (PA=26) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,672640,672640,,46,"{category: z_score, ...}",{},Bench player (PA=46) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,680779,680779,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,664034,664034,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,543510,543510,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,691026,691026,,38,"{category: z_score, ...}",{},Bench player (PA=38) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,665161,665161,,22,"{category: z_score, ...}",{},Bench player (PA=22) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,668227,668227,,50,"{category: z_score, ...}",{},Bench player (PA=50) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,621043,621043,,44,"{category: z_score, ...}",{},Bench player (PA=44) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,701358,701358,,47,"{category: z_score, ...}",{},Bench player (PA=47) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,682657,682657,,41,"{category: z_score, ...}",{},Bench player (PA=41) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,691023,691023,,50,"{category: z_score, ...}",{},Bench player (PA=50) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,671739,671739,,33,"{category: z_score, ...}",{},Bench player (PA=33) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,701350,701350,,46,"{category: z_score, ...}",{},Bench player (PA=46) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,660688,660688,,22,"{category: z_score, ...}",{},Bench player (PA=22) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,543807,543807,,23,"{category: z_score, ...}",{},Bench player (PA=23) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,650402,650402,,50,"{category: z_score, ...}",{},Bench player (PA=50) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,677588,677588,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,669016,669016,,36,"{category: z_score, ...}",{},Bench player (PA=36) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,543877,543877,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,656537,656537,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,669134,669134,,25,"{category: z_score, ...}",{},Bench player (PA=25) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,808975,808975,,23,"{category: z_score, ...}",{},Bench player (PA=23) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,665877,665877,,23,"{category: z_score, ...}",{},Bench player (PA=23) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,643396,643396,,22,"{category: z_score, ...}",{},Bench player (PA=22) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,657041,657041,,30,"{category: z_score, ...}",{},Bench player (PA=30) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,663698,663698,,27,"{category: z_score, ...}",{},Bench player (PA=27) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,663837,663837,,23,"{category: z_score, ...}",{},Bench player (PA=23) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,673548,673548,,43,"{category: z_score, ...}",{},Bench player (PA=43) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,676356,676356,,26,"{category: z_score, ...}",{},Bench player (PA=26) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,678218,678218,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,686452,686452,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,680700,680700,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,595978,595978,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,543309,543309,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,695020,695020,,22,"{category: z_score, ...}",{},Bench player (PA=22) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,545341,545341,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,624641,624641,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,665561,665561,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,686681,686681,,27,"{category: z_score, ...}",{},Bench player (PA=27) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,687093,687093,,22,"{category: z_score, ...}",{},Bench player (PA=22) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,655316,655316,,22,"{category: z_score, ...}",{},Bench player (PA=22) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,687221,687221,,20,"{category: z_score, ...}",{},Bench player (PA=20) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,650391,650391,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,677956,677956,,23,"{category: z_score, ...}",{},Bench player (PA=23) has empty cat_scores - limits streamer pool
+
+P2,B,4.0,empty_projection_bench_player,687957,687957,,21,"{category: z_score, ...}",{},Bench player (PA=21) has empty cat_scores - limits streamer pool
+

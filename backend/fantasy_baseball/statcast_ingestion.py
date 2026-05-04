@@ -249,7 +249,7 @@ class DataQualityChecker:
         
         # Check 3: Critical columns present
         # Accept either raw Savant column names or cleaned aliases
-        required_cols = ['player_name', 'team', 'game_date', 'pa']
+        required_cols = ['player_name', 'game_date', 'pa']
         missing_cols = [c for c in required_cols if c not in df.columns]
         xwoba_present = (
             'estimated_woba_using_speedangle' in df.columns

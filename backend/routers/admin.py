@@ -12,6 +12,7 @@ from typing import Optional
 import logging
 import os
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from backend.models import (
     get_db,
@@ -701,6 +702,429 @@ async def ingestion_status(user: str = Depends(verify_api_key)):
     return {"enabled": True, "jobs": _ingestion_orchestrator.get_status()}
 
 
+@router.post("/admin/sync-yahoo-ids")
+async def manual_yahoo_id_sync(user: str = Depends(verify_admin_api_key)):
+    """
+    Manually trigger Yahoo ID sync job (admin only).
+
+    Syncs yahoo_id/yahoo_key from Yahoo Fantasy API to player_id_mapping
+    by matching normalized names against BDL player index. Returns
+    match statistics and any errors encountered.
+
+    Runs synchronously and returns results immediately.
+    """
+    from backend.main import _ingestion_orchestrator
+    if _ingestion_orchestrator is None:
+        raise HTTPException(status_code=503, detail="Ingestion orchestrator not initialized")
+
+    logger.info("Manual Yahoo ID sync triggered by %s", user)
+    try:
+        result = await _ingestion_orchestrator._sync_yahoo_id_mapping()
+        return {
+            "triggered_by": user,
+            "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+            "result": result,
+        }
+    except Exception as exc:
+        logger.error("Manual Yahoo ID sync failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/admin/refresh-valuation-cache")
+async def manual_refresh_valuation_cache(user: str = Depends(verify_admin_api_key)):
+    """
+    Manually trigger player valuation cache refresh (admin only).
+
+    Runs _refresh_valuation_cache() for all leagues in FANTASY_LEAGUES env var.
+    Advisory lock 100_011 prevents concurrent runs.
+    """
+    from backend.main import _ingestion_orchestrator
+    if _ingestion_orchestrator is None:
+        raise HTTPException(status_code=503, detail="Ingestion orchestrator not initialized")
+
+    logger.info("Manual valuation cache refresh triggered by %s", user)
+    try:
+        await _ingestion_orchestrator._refresh_valuation_cache()
+        return {
+            "triggered_by": user,
+            "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+            "status": "ok",
+        }
+    except Exception as exc:
+        logger.error("Manual valuation cache refresh failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/admin/audit/stub-projections")
+async def audit_stub_projections(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Audit player_projections for stub/default contamination (read-only).
+
+    Returns counts and samples for:
+    - batter stubs (hr=15, r=65, rbi=65, sb=5, avg=0.250, ops=0.720)
+    - pitcher stubs (era=4.0, whip=1.30, w=0, qs=0, k_pit=0)
+    - zombie rows (match BOTH patterns)
+    - prior_source breakdown
+    - linked rows (joined to player_id_mapping where yahoo_key IS NOT NULL)
+    - safe-delete candidates (zombie OR prior_source IN stub/default)
+    """
+    BATTER = """
+        hr = 15 AND r = 65 AND rbi = 65 AND sb = 5
+        AND ABS(avg - 0.250) < 0.001 AND ABS(ops - 0.720) < 0.001
+    """
+    PITCHER = """
+        ABS(era - 4.0) < 0.001 AND ABS(whip - 1.3) < 0.001
+        AND w = 0 AND qs = 0 AND k_pit = 0
+    """
+
+    total = db.execute(text("SELECT COUNT(*) FROM player_projections")).scalar()
+    batter_count = db.execute(text(f"SELECT COUNT(*) FROM player_projections WHERE {BATTER}")).scalar()
+    pitcher_count = db.execute(text(f"SELECT COUNT(*) FROM player_projections WHERE {PITCHER}")).scalar()
+    zombie_count = db.execute(text(f"SELECT COUNT(*) FROM player_projections WHERE ({BATTER}) AND ({PITCHER})")).scalar()
+    stub_src_count = db.execute(text(
+        "SELECT COUNT(*) FROM player_projections WHERE prior_source IN ('stub','default')"
+    )).scalar()
+    linked_count = db.execute(text("""
+        SELECT COUNT(DISTINCT pp.id)
+        FROM player_projections pp
+        JOIN player_id_mapping pim
+          ON pp.player_id = pim.yahoo_id OR pp.player_id = pim.yahoo_key
+        WHERE pim.yahoo_key IS NOT NULL
+    """)).scalar()
+    safe_delete_count = db.execute(text(f"""
+        SELECT COUNT(*) FROM player_projections
+        WHERE (({BATTER}) AND ({PITCHER}))
+           OR prior_source IN ('stub', 'default')
+    """)).scalar()
+
+    src_rows = db.execute(text(
+        "SELECT prior_source, COUNT(*) AS cnt FROM player_projections GROUP BY prior_source ORDER BY cnt DESC"
+    )).fetchall()
+
+    zombie_samples = []
+    if zombie_count > 0:
+        rows = db.execute(text(f"""
+            SELECT id, player_id, player_name, team, prior_source, update_method,
+                   hr, r, rbi, sb, avg, ops, era, whip, w, qs, k_pit
+            FROM player_projections
+            WHERE ({BATTER}) AND ({PITCHER})
+            LIMIT 5
+        """)).fetchall()
+        zombie_samples = [
+            {"id": r[0], "player_id": r[1], "player_name": r[2], "team": r[3],
+             "prior_source": r[4], "update_method": r[5],
+             "hr": r[6], "r": r[7], "rbi": r[8], "sb": r[9],
+             "avg": r[10], "ops": r[11], "era": r[12], "whip": r[13],
+             "w": r[14], "qs": r[15], "k_pit": r[16]}
+            for r in rows
+        ]
+
+    stub_samples = []
+    if stub_src_count > 0:
+        rows = db.execute(text("""
+            SELECT id, player_id, player_name, team, prior_source, update_method,
+                   hr, r, rbi, avg, era, whip
+            FROM player_projections
+            WHERE prior_source IN ('stub', 'default')
+            LIMIT 5
+        """)).fetchall()
+        stub_samples = [
+            {"id": r[0], "player_id": r[1], "player_name": r[2], "team": r[3],
+             "prior_source": r[4], "update_method": r[5],
+             "hr": r[6], "r": r[7], "rbi": r[8], "avg": r[9],
+             "era": r[10], "whip": r[11]}
+            for r in rows
+        ]
+
+    return {
+        "total_rows": total,
+        "batter_stubs": batter_count,
+        "pitcher_stubs": pitcher_count,
+        "zombie_rows": zombie_count,
+        "stub_source_rows": stub_src_count,
+        "linked_to_yahoo_key": linked_count,
+        "safe_delete_candidates": safe_delete_count,
+        "steamer_rows_preserved": total - safe_delete_count,
+        "prior_source_breakdown": {str(r[0]): r[1] for r in src_rows},
+        "zombie_samples": zombie_samples,
+        "stub_source_samples": stub_samples,
+    }
+
+
+@router.post("/admin/purge-stub-projections")
+async def purge_stub_projections(
+    dry_run: bool = True,
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Purge zombie rows from player_projections (admin only).
+
+    Zombie = matches BOTH batter defaults (hr=15,r=65,rbi=65,sb=5,avg=0.25,ops=0.72)
+    AND pitcher defaults (era=4.0,whip=1.3,w=0,qs=0,k_pit=0) AND team IS NULL.
+
+    Pass ?dry_run=false to execute. Default is dry-run (safe to call repeatedly).
+    Audit baseline 2026-04-28: 24 rows.
+    """
+    ZOMBIE_WHERE = """
+        hr = 15 AND r = 65 AND rbi = 65 AND sb = 5
+        AND ABS(avg - 0.250) < 0.001 AND ABS(ops - 0.720) < 0.001
+        AND ABS(era - 4.0) < 0.001 AND ABS(whip - 1.3) < 0.001
+        AND w = 0 AND qs = 0 AND k_pit = 0
+        AND team IS NULL
+    """
+
+    count = db.execute(text(f"SELECT COUNT(*) FROM player_projections WHERE {ZOMBIE_WHERE}")).scalar()
+
+    samples = db.execute(text(f"""
+        SELECT id, player_name, player_id, prior_source
+        FROM player_projections WHERE {ZOMBIE_WHERE}
+        ORDER BY id LIMIT 10
+    """)).fetchall()
+    sample_list = [
+        {"id": r[0], "player_name": r[1], "player_id": r[2], "prior_source": r[3]}
+        for r in samples
+    ]
+
+    if dry_run:
+        return {
+            "mode": "dry_run",
+            "rows_to_delete": count,
+            "samples": sample_list,
+        }
+
+    deleted = db.execute(text(f"DELETE FROM player_projections WHERE {ZOMBIE_WHERE}")).rowcount
+    db.commit()
+    logger.info("purge_stub_projections: deleted %d zombie rows (triggered by %s)", deleted, user)
+    return {
+        "mode": "execute",
+        "rows_deleted": deleted,
+        "samples": sample_list,
+        "next_step": "POST /api/admin/data-quality/backfill-cat-scores?force=true",
+    }
+
+
+@router.get("/admin/db/constraints")
+async def get_table_constraints(
+    table_name: str = "player_id_mapping",
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """Return all constraint names for a given table (admin only)."""
+    rows = db.execute(text("""
+        SELECT tc.constraint_name, tc.constraint_type,
+               string_agg(kcu.column_name, ',' ORDER BY kcu.ordinal_position) AS columns
+        FROM information_schema.table_constraints tc
+        JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema = kcu.table_schema
+        WHERE tc.table_name = :tname
+          AND tc.table_schema = 'public'
+        GROUP BY tc.constraint_name, tc.constraint_type
+        ORDER BY tc.constraint_type, tc.constraint_name
+    """), {"tname": table_name}).fetchall()
+    return {
+        "table": table_name,
+        "constraints": [
+            {"name": r[0], "type": r[1], "columns": r[2].split(",") if r[2] else []}
+            for r in rows
+        ],
+    }
+
+
+@router.get("/admin/player-id-mapping/conflicts")
+async def get_player_id_mapping_conflicts(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Check player_id_mapping for unique constraint violations.
+
+    Returns:
+    - bdl_id_conflicts: bdl_ids appearing in multiple rows
+    - yahoo_key_conflicts: yahoo_keys appearing in multiple rows
+    - sample_conflict_rows: detailed rows for a specific conflict
+    - overall_counts: total counts for each column
+    """
+    from backend.models import PlayerIDMapping
+
+    # Check for duplicate bdl_ids
+    bdl_conflicts = db.execute(text("""
+        SELECT bdl_id, COUNT(*) as cnt
+        FROM player_id_mapping
+        WHERE bdl_id IS NOT NULL
+        GROUP BY bdl_id
+        HAVING COUNT(*) > 1
+        ORDER BY cnt DESC
+        LIMIT 20
+    """)).fetchall()
+
+    bdl_conflict_list = [{"bdl_id": row[0], "count": row[1]} for row in bdl_conflicts]
+
+    # Check for duplicate yahoo_keys
+    yahoo_conflicts = db.execute(text("""
+        SELECT yahoo_key, COUNT(*) as cnt
+        FROM player_id_mapping
+        WHERE yahoo_key IS NOT NULL
+        GROUP BY yahoo_key
+        HAVING COUNT(*) > 1
+        ORDER BY cnt DESC
+        LIMIT 20
+    """)).fetchall()
+
+    yahoo_conflict_list = [{"yahoo_key": row[0], "count": row[1]} for row in yahoo_conflicts]
+
+    # Get sample conflict rows if bdl_id conflicts exist
+    sample_rows = []
+    if bdl_conflict_list:
+        sample_bdl_id = bdl_conflict_list[0]["bdl_id"]
+        sample_rows = db.execute(text("""
+            SELECT id, yahoo_key, yahoo_id, bdl_id, full_name, source
+            FROM player_id_mapping
+            WHERE bdl_id = :bdl_id
+            ORDER BY id
+        """), {"bdl_id": sample_bdl_id}).fetchall()
+        sample_rows = [
+            {
+                "id": row[0],
+                "yahoo_key": row[1],
+                "yahoo_id": row[2],
+                "bdl_id": row[3],
+                "full_name": row[4],
+                "source": row[5],
+            }
+            for row in sample_rows
+        ]
+
+    # Overall counts
+    counts = db.execute(text("""
+        SELECT
+            COUNT(*) as total,
+            COUNT(yahoo_key) as with_yahoo_key,
+            COUNT(bdl_id) as with_bdl_id,
+            COUNT(yahoo_id) as with_yahoo_id
+        FROM player_id_mapping
+    """)).fetchone()
+
+    overall = {
+        "total": counts[0],
+        "with_yahoo_key": counts[1],
+        "with_bdl_id": counts[2],
+        "with_yahoo_id": counts[3],
+    }
+
+    return {
+        "bdl_id_conflicts": bdl_conflict_list,
+        "yahoo_key_conflicts": yahoo_conflict_list,
+        "sample_conflict_rows": sample_rows,
+        "overall_counts": overall,
+    }
+
+
+@router.post("/admin/backfill-numeric-names")
+async def backfill_numeric_player_names(
+    limit: int = Query(100, ge=1, le=500),
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Backfill numeric player names in player_projections table.
+
+    Finds projections with numeric names (e.g., "695578") and resolves them
+    using BDL player search by player_id.
+
+    Returns statistics on resolved/failed/skipped players.
+    """
+    from backend.services.balldontlie import BallDontLieClient
+    from backend.models import PlayerProjection, PlayerIDMapping
+
+    logger.info("Numeric name backfill triggered by %s, limit=%d", user, limit)
+
+    # Find numeric-name projections
+    numeric_players = db.execute(text("""
+        SELECT DISTINCT pp.id, pp.player_id, pp.player_name
+        FROM player_projections pp
+        WHERE pp.player_name ~ '^[0-9]+$'
+        LIMIT :limit
+    """), {"limit": limit}).fetchall()
+
+    total = len(numeric_players)
+    resolved = 0
+    failed = 0
+    skipped = 0
+
+    if total == 0:
+        return {
+            "status": "complete",
+            "total": 0,
+            "resolved": 0,
+            "failed": 0,
+            "skipped": 0,
+            "message": "No numeric names found",
+        }
+
+    bdl = BallDontLieClient()
+
+    for pp_id, player_id, numeric_name in numeric_players:
+        try:
+            # BDL lookup by player_id
+            bdl_player = bdl.get_mlb_player(player_id)
+
+            if bdl_player and bdl_player.full_name:
+                real_name = " ".join(bdl_player.full_name.strip().split())
+
+                # Update projection
+                db.execute(text("""
+                    UPDATE player_projections
+                    SET player_name = :name, updated_at = NOW()
+                    WHERE id = :pp_id
+                """), {"name": real_name, "pp_id": pp_id})
+
+                # Upsert player_id_mapping
+                db.execute(text("""
+                    INSERT INTO player_id_mapping (yahoo_id, mlb_id, bdl_id, player_name)
+                    VALUES (:yahoo_id, :mlb_id, :bdl_id, :name)
+                    ON CONFLICT (yahoo_id) DO UPDATE SET
+                        mlb_id = EXCLUDED.mlb_id,
+                        bdl_id = EXCLUDED.bdl_id,
+                        player_name = EXCLUDED.player_name
+                """), {
+                    "yahoo_id": player_id,
+                    "mlb_id": getattr(bdl_player, "mlb_id", None),
+                    "bdl_id": bdl_player.id,
+                    "name": real_name,
+                })
+
+                resolved += 1
+                logger.info("Resolved %s: %s -> %s", player_id, numeric_name, real_name)
+            else:
+                logger.warning("BDL lookup failed for %s", player_id)
+                failed += 1
+        except Exception as exc:
+            logger.error("Failed to resolve %s: %s", player_id, exc)
+            failed += 1
+
+    db.commit()
+
+    # Check remaining numeric names
+    remaining = db.execute(text("""
+        SELECT COUNT(*) FILTER (WHERE player_name ~ '^[0-9]+$') AS numeric_names
+        FROM player_projections
+    """)).fetchone()[0]
+
+    return {
+        "status": "complete",
+        "total": total,
+        "resolved": resolved,
+        "failed": failed,
+        "skipped": skipped,
+        "remaining_numeric_names": remaining,
+    }
+
+
 @router.get("/admin/portfolio/status")
 async def get_portfolio_status(
     user: str = Depends(verify_api_key),
@@ -805,7 +1229,7 @@ async def check_databases(user: str = Depends(verify_api_key)):
                     table_count = result.scalar()
 
                     # Check for migration tables
-                    target_tables = ['position_eligibility', 'probable_pitchers']
+                    target_tables = ['position_eligibility', 'probable_pitchers', 'ingested_injuries', 'player_valuation_cache']
                     found_tables = []
                     table_details = []
 
@@ -844,6 +1268,78 @@ async def check_databases(user: str = Depends(verify_api_key)):
         'current_host': parsed.hostname,
         'databases': databases_info
     }
+
+
+@router.get("/admin/probable-pitchers/status")
+async def get_probable_pitchers_status(
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """Return probable_pitchers table status: total rows, today/tomorrow counts, is_confirmed counts."""
+    from datetime import date, timedelta
+
+    result = {}
+
+    # Total rows
+    total = db.execute(text("SELECT COUNT(*) FROM probable_pitchers")).scalar()
+    result["total_rows"] = total
+
+    # Today and tomorrow
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+
+    today_count = db.execute(
+        text("SELECT COUNT(*) FROM probable_pitchers WHERE game_date = :today"),
+        {"today": today}
+    ).scalar()
+    tomorrow_count = db.execute(
+        text("SELECT COUNT(*) FROM probable_pitchers WHERE game_date = :tomorrow"),
+        {"tomorrow": tomorrow}
+    ).scalar()
+
+    result["today"] = {
+        "date": str(today),
+        "total": today_count,
+    }
+    result["tomorrow"] = {
+        "date": str(tomorrow),
+        "total": tomorrow_count,
+    }
+
+    # is_confirmed counts
+    confirmed_today = db.execute(
+        text("SELECT COUNT(*) FROM probable_pitchers WHERE game_date = :today AND is_confirmed = true"),
+        {"today": today}
+    ).scalar()
+    confirmed_tomorrow = db.execute(
+        text("SELECT COUNT(*) FROM probable_pitchers WHERE game_date = :tomorrow AND is_confirmed = true"),
+        {"tomorrow": tomorrow}
+    ).scalar()
+
+    result["today"]["confirmed"] = confirmed_today
+    result["tomorrow"]["confirmed"] = confirmed_tomorrow
+
+    # Recent sample rows
+    if total > 0:
+        recent = db.execute(text("""
+            SELECT game_date, team, pitcher_name, is_confirmed, opponent
+            FROM probable_pitchers
+            WHERE game_date >= :today
+            ORDER BY game_date, team
+            LIMIT 5
+        """), {"today": today}).fetchall()
+        result["sample_rows"] = [
+            {
+                "game_date": str(r[0]),
+                "team": r[1],
+                "pitcher_name": r[2],
+                "is_confirmed": bool(r[3]),
+                "opponent": r[4]
+            }
+            for r in recent
+        ]
+
+    return result
 
 
 @router.get("/admin/odds-monitor/status")
@@ -1245,7 +1741,7 @@ async def admin_reload_fantasy_board():
 
 
 @router.post("/admin/pybaseball/refresh")
-async def admin_refresh_pybaseball(year: int = 2025, user: str = Depends(verify_admin_api_key)):
+async def admin_refresh_pybaseball(year: int = 2026, user: str = Depends(verify_admin_api_key)):
     """Force-refresh pybaseball Statcast cache and invalidate in-memory statcast_loader cache."""
     from backend.fantasy_baseball.pybaseball_loader import fetch_all_statcast_leaderboards
     import backend.fantasy_baseball.statcast_loader as _sc
@@ -1495,3 +1991,276 @@ async def run_migration_v28(user: str = Depends(verify_admin_api_key), db: Sessi
 
     results["verification"] = verification
     return results
+
+
+@router.post("/admin/migrate/v31")
+async def run_migration_v31(user: str = Depends(verify_admin_api_key), db: Session = Depends(get_db)):
+    """
+    Run V31 Rolling Stats Expansion migration.
+
+    Adds to player_rolling_stats:
+    - w_runs (decay-weighted runs scored)
+    - w_tb (decay-weighted total bases)
+    - w_qs (decay-weighted quality starts)
+    """
+    from sqlalchemy import text
+
+    results = {"steps": []}
+
+    # Columns to add to player_rolling_stats
+    columns = [
+        ("w_runs", "V31 Decay-weighted runs scored over the rolling window. Source: mlb_player_stats.runs (BDL). Drives z_runs for the R (Runs) batting category."),
+        ("w_tb", "V31 Decay-weighted total bases over the rolling window. Computed as singles + 2*doubles + 3*triples + 4*home_runs per game. Drives z_tb for the TB (Total Bases) batting category."),
+        ("w_qs", "V31 Decay-weighted quality starts over the rolling window. A quality start is IP >= 6.0 AND ER <= 3. Drives z_qs for the QS (Quality Starts) pitching category."),
+    ]
+
+    for col_name, comment in columns:
+        try:
+            # Check if column exists
+            check_col = text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'player_rolling_stats'
+                AND column_name = :col_name
+            """)
+            result = db.execute(check_col, {"col_name": col_name}).fetchone()
+
+            if result and result[0]:
+                results["steps"].append({col_name: "already exists"})
+            else:
+                # Add column
+                db.execute(text(f"""
+                    ALTER TABLE player_rolling_stats
+                    ADD COLUMN {col_name} DOUBLE PRECISION
+                """))
+                db.commit()
+                results["steps"].append({col_name: "created"})
+        except Exception as e:
+            results["steps"].append({col_name: f"error: {e}"})
+
+    # Verify migration
+    verification = {}
+    for col_name, _ in columns:
+        result = db.execute(text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'player_rolling_stats' AND column_name = :col_name
+        """), {"col_name": col_name}).fetchone()
+        verification[col_name] = "EXISTS" if result else "MISSING"
+
+    results["verification"] = verification
+    return results
+
+
+@router.post("/admin/migrate/v32")
+async def run_migration_v32(user: str = Depends(verify_admin_api_key), db: Session = Depends(get_db)):
+    """
+    Run V32 Z-Score Expansion migration.
+
+    Adds to player_scores:
+    - z_r (league Z of w_runs)
+    - z_h (league Z of w_hits)
+    - z_tb (league Z of w_tb)
+    - z_k_b (league Z of w_strikeouts_bat, lower-is-better)
+    - z_ops (league Z of w_ops)
+    - z_k_p (league Z of w_strikeouts_pit)
+    - z_qs (league Z of w_qs)
+    """
+    from sqlalchemy import text
+
+    results = {"steps": []}
+
+    # Columns to add to player_scores
+    columns = [
+        ("z_r", "V31 League Z-score of w_runs (decay-weighted runs scored). For the R (Runs) batting category."),
+        ("z_h", "V31 League Z-score of w_hits (decay-weighted hits). For the H (Hits) batting category."),
+        ("z_tb", "V31 League Z-score of w_tb (decay-weighted total bases). For the TB (Total Bases) batting category."),
+        ("z_k_b", "V31 League Z-score of w_strikeouts_bat (decay-weighted batter K). For the K_B (Batting Strikeouts) category. Lower-is-better: Z is negated."),
+        ("z_ops", "V31 League Z-score of w_ops (decay-weighted OBP + SLG). For the OPS (On-Base Plus Slugging) batting category."),
+        ("z_k_p", "V31 League Z-score of w_strikeouts_pit (decay-weighted pitcher K). For the K_P (Pitching Strikeouts) category."),
+        ("z_qs", "V31 League Z-score of w_qs (decay-weighted quality starts). For the QS (Quality Starts) pitching category. QS = IP>=6 AND ER<=3."),
+    ]
+
+    for col_name, comment in columns:
+        try:
+            # Check if column exists
+            check_col = text("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'player_scores'
+                AND column_name = :col_name
+            """)
+            result = db.execute(check_col, {"col_name": col_name}).fetchone()
+
+            if result and result[0]:
+                results["steps"].append({col_name: "already exists"})
+            else:
+                # Add column
+                db.execute(text(f"""
+                    ALTER TABLE player_scores
+                    ADD COLUMN {col_name} DOUBLE PRECISION
+                """))
+                db.commit()
+                results["steps"].append({col_name: "created"})
+        except Exception as e:
+            results["steps"].append({col_name: f"error: {e}"})
+
+    # Verify migration
+    verification = {}
+    for col_name, _ in columns:
+        result = db.execute(text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'player_scores' AND column_name = :col_name
+        """), {"col_name": col_name}).fetchone()
+        verification[col_name] = "EXISTS" if result else "MISSING"
+
+    results["verification"] = verification
+    return results
+
+
+@router.get("/admin/pipeline/box-stats-health")
+async def get_box_stats_pipeline_health(
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_admin_api_key),
+):
+    """
+    Diagnose rolling window null root cause.
+
+    Reports row counts + null rates for the box stats pipeline:
+      mlb_game_log -> mlb_player_stats -> player_rolling_stats -> player_scores
+    """
+    from zoneinfo import ZoneInfo
+
+    today = datetime.now(ZoneInfo("America/New_York")).date()
+    cutoff_30d = today - timedelta(days=30)
+
+    result: dict = {"as_of": str(today)}
+
+    # ---- mlb_game_log -------------------------------------------------------
+    try:
+        gl_total = db.execute(text("SELECT COUNT(*) FROM mlb_game_log")).scalar() or 0
+        gl_recent = db.execute(
+            text("SELECT COUNT(*) FROM mlb_game_log WHERE game_date >= :cutoff"),
+            {"cutoff": cutoff_30d},
+        ).scalar() or 0
+        gl_sample = db.execute(
+            text(
+                "SELECT game_id, game_date FROM mlb_game_log "
+                "ORDER BY game_date DESC LIMIT 5"
+            )
+        ).fetchall()
+        result["mlb_game_log"] = {
+            "total_rows": gl_total,
+            "last_30d_rows": gl_recent,
+            "recent_game_ids": [{"game_id": r[0], "game_date": str(r[1])} for r in gl_sample],
+        }
+    except Exception as exc:
+        result["mlb_game_log"] = {"error": str(exc)}
+
+    # ---- mlb_player_stats ---------------------------------------------------
+    try:
+        ps_total = db.execute(text("SELECT COUNT(*) FROM mlb_player_stats")).scalar() or 0
+        ps_recent = db.execute(
+            text("SELECT COUNT(*) FROM mlb_player_stats WHERE game_date >= :cutoff"),
+            {"cutoff": cutoff_30d},
+        ).scalar() or 0
+        ps_ab_null = db.execute(
+            text("SELECT COUNT(*) FROM mlb_player_stats WHERE game_date >= :cutoff AND ab IS NULL"),
+            {"cutoff": cutoff_30d},
+        ).scalar() or 0
+        ps_ip_null = db.execute(
+            text("SELECT COUNT(*) FROM mlb_player_stats WHERE game_date >= :cutoff AND innings_pitched IS NULL"),
+            {"cutoff": cutoff_30d},
+        ).scalar() or 0
+        ps_both_null = db.execute(
+            text(
+                "SELECT COUNT(*) FROM mlb_player_stats "
+                "WHERE game_date >= :cutoff AND ab IS NULL AND innings_pitched IS NULL"
+            ),
+            {"cutoff": cutoff_30d},
+        ).scalar() or 0
+        ps_dates = db.execute(
+            text("SELECT MIN(game_date), MAX(game_date) FROM mlb_player_stats")
+        ).fetchone()
+        result["mlb_player_stats"] = {
+            "total_rows": ps_total,
+            "last_30d_rows": ps_recent,
+            "date_range": {"min": str(ps_dates[0]), "max": str(ps_dates[1])} if ps_dates and ps_dates[0] else None,
+            "ab_null_pct": round(100.0 * ps_ab_null / ps_recent, 1) if ps_recent else None,
+            "ip_null_pct": round(100.0 * ps_ip_null / ps_recent, 1) if ps_recent else None,
+            "both_null_pct": round(100.0 * ps_both_null / ps_recent, 1) if ps_recent else None,
+        }
+    except Exception as exc:
+        result["mlb_player_stats"] = {"error": str(exc)}
+
+    # ---- player_rolling_stats -----------------------------------------------
+    try:
+        prs_total = db.execute(text("SELECT COUNT(*) FROM player_rolling_stats")).scalar() or 0
+        prs_latest_date = db.execute(
+            text("SELECT MAX(as_of_date) FROM player_rolling_stats")
+        ).scalar()
+        prs_by_window: dict = {}
+        prs_w_ab_null = 0
+        prs_ip_null_prs = 0
+        if prs_latest_date:
+            for w in [7, 14, 30]:
+                cnt = db.execute(
+                    text(
+                        "SELECT COUNT(*) FROM player_rolling_stats "
+                        "WHERE as_of_date = :d AND window_days = :w"
+                    ),
+                    {"d": prs_latest_date, "w": w},
+                ).scalar() or 0
+                prs_by_window[w] = cnt
+            prs_w_ab_null = db.execute(
+                text(
+                    "SELECT COUNT(*) FROM player_rolling_stats "
+                    "WHERE as_of_date = :d AND window_days = 14 AND w_ab IS NULL"
+                ),
+                {"d": prs_latest_date},
+            ).scalar() or 0
+            prs_ip_null_prs = db.execute(
+                text(
+                    "SELECT COUNT(*) FROM player_rolling_stats "
+                    "WHERE as_of_date = :d AND window_days = 14 AND w_ip IS NULL"
+                ),
+                {"d": prs_latest_date},
+            ).scalar() or 0
+        result["player_rolling_stats"] = {
+            "total_rows": prs_total,
+            "latest_as_of_date": str(prs_latest_date) if prs_latest_date else None,
+            "row_counts_by_window": prs_by_window,
+            "w14_w_ab_null_count": prs_w_ab_null,
+            "w14_w_ip_null_count": prs_ip_null_prs,
+        }
+    except Exception as exc:
+        result["player_rolling_stats"] = {"error": str(exc)}
+
+    # ---- player_scores ------------------------------------------------------
+    try:
+        sc_total = db.execute(text("SELECT COUNT(*) FROM player_scores")).scalar() or 0
+        sc_latest_date = db.execute(
+            text("SELECT MAX(as_of_date) FROM player_scores")
+        ).scalar()
+        result["player_scores"] = {
+            "total_rows": sc_total,
+            "latest_as_of_date": str(sc_latest_date) if sc_latest_date else None,
+        }
+    except Exception as exc:
+        result["player_scores"] = {"error": str(exc)}
+
+    # ---- verdict ------------------------------------------------------------
+    issues = []
+    mps = result.get("mlb_player_stats", {})
+    prs = result.get("player_rolling_stats", {})
+    if mps.get("last_30d_rows", 0) == 0:
+        issues.append("mlb_player_stats EMPTY -- box stats never ingested")
+    elif mps.get("both_null_pct") == 100.0:
+        issues.append("mlb_player_stats: 100% rows have ab=NULL AND ip=NULL -- BDL field mapping broken")
+    if prs.get("total_rows", 0) == 0:
+        issues.append("player_rolling_stats EMPTY -- rolling window job never ran or found no stat rows")
+    elif prs_by_window and prs.get("w14_w_ab_null_count", 0) == prs_by_window.get(14, -1) > 0:
+        issues.append("player_rolling_stats w14: all w_ab null -- batters not contributing")
+
+    result["verdict"] = "healthy" if not issues else "; ".join(issues)
+
+    return result

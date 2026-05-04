@@ -555,11 +555,15 @@ def perform_sanity_check(
 ) -> str:
     """
     Backward-compatible synchronous wrapper for integrity checks.
-    
+
+    PAUSED (2026-04-21): OpenClaw is on hold until the baseball module is
+    fully implemented. Returns CONFIRMED without side effects to prevent
+    escalation queue and report generation.
+
     Used by:
     - backend/services/scout.py
     - backend/services/analysis.py
-    
+
     Args:
         home_team: Home team name
         away_team: Away team name
@@ -567,51 +571,12 @@ def perform_sanity_check(
         search_results: Search results text to analyze
         is_elite_eight_or_later: Whether this is a tournament game
         game_key: Unique game identifier for escalation
-    
+
     Returns:
-        Verdict string: "CONFIRMED", "CAUTION", "VOLATILE", "ABORT", or "RED FLAG"
+        "CONFIRMED" — OpenClaw paused, no escalation queue writes.
     """
-    # Parse recommended units from verdict
-    units_match = re.search(r'(\d+\.?\d*)u', verdict)
-    recommended_units = float(units_match.group(1)) if units_match else 0.0
-    
-    # Run check
-    checker = get_openclaw_lite()
-    result = checker._check_integrity_heuristic_sync(
-        search_text=search_results,
-        home_team=home_team,
-        away_team=away_team,
-        recommended_units=recommended_units,
-        is_elite_eight_or_later=is_elite_eight_or_later
-    )
-    
-    # Handle high-stakes escalation (fire and forget)
-    needs_escalation = (
-        recommended_units >= OpenClawLite.HIGH_STAKES_UNITS or
-        is_elite_eight_or_later or
-        "VOLATILE" in result.verdict
-    )
-    
-    if needs_escalation:
-        reason = []
-        if recommended_units >= OpenClawLite.HIGH_STAKES_UNITS:
-            reason.append(f"high stakes ({recommended_units}u)")
-        if is_elite_eight_or_later:
-            reason.append("tournament game")
-        if "VOLATILE" in result.verdict:
-            reason.append("volatile verdict")
-        
-        game_key = game_key or f"{away_team}@{home_team}"
-        checker.escalation_queue.enqueue(
-            game_key=game_key,
-            home_team=home_team,
-            away_team=away_team,
-            recommended_units=recommended_units,
-            integrity_verdict=result.verdict,
-            reason="; ".join(reason)
-        )
-    
-    return result.verdict
+    logger.info("perform_sanity_check skipped — OpenClaw paused")
+    return "CONFIRMED"
 
 
 async def async_perform_sanity_check(
@@ -624,23 +589,14 @@ async def async_perform_sanity_check(
 ) -> str:
     """
     Async version of perform_sanity_check for concurrent processing.
-    
+
+    PAUSED (2026-04-21): OpenClaw is on hold until the baseball module is
+    fully implemented. Returns CONFIRMED without side effects.
+
     Use this in async contexts (like analysis.py integrity sweep).
     """
-    units_match = re.search(r'(\d+\.?\d*)u', verdict)
-    recommended_units = float(units_match.group(1)) if units_match else 0.0
-    
-    checker = get_openclaw_lite()
-    result = await checker.check_integrity(
-        search_text=search_results,
-        home_team=home_team,
-        away_team=away_team,
-        recommended_units=recommended_units,
-        is_elite_eight_or_later=is_elite_eight_or_later,
-        game_key=game_key or f"{away_team}@{home_team}"
-    )
-    
-    return result.verdict
+    logger.info("async_perform_sanity_check skipped — OpenClaw paused")
+    return "CONFIRMED"
 
 
 # ============================================================================
@@ -661,30 +617,39 @@ def escalate_if_needed(
     is_neutral: bool = False
 ) -> Optional[str]:
     """
-    Manually trigger escalation for a game.
-    
-    Returns queue_id if escalated, None otherwise.
+    Manually trigger escalation for a game when stakes are high.
+
+    Escalation criteria:
+      - recommended_units >= 1.5
+      - neutral site game
+      - VOLATILE integrity verdict
+
+    Returns:
+        queue_id if escalated, None otherwise.
     """
     needs_escalation = (
-        recommended_units >= OpenClawLite.HIGH_STAKES_UNITS or
-        "VOLATILE" in (integrity_verdict or "")
+        recommended_units >= 1.5
+        or is_neutral
+        or (integrity_verdict and "VOLATILE" in integrity_verdict)
     )
-    
+
     if not needs_escalation:
         return None
-    
-    reason = []
-    if recommended_units >= OpenClawLite.HIGH_STAKES_UNITS:
-        reason.append(f"high stakes ({recommended_units}u)")
-    if "VOLATILE" in (integrity_verdict or ""):
-        reason.append("volatile verdict")
-    
+
     queue = get_escalation_queue()
+    reason_parts = []
+    if recommended_units >= 1.5:
+        reason_parts.append(f"high stakes ({recommended_units}u)")
+    if is_neutral:
+        reason_parts.append("neutral site")
+    if integrity_verdict and "VOLATILE" in integrity_verdict:
+        reason_parts.append("volatile verdict")
+
     return queue.enqueue(
         game_key=game_key,
         home_team=home_team,
         away_team=away_team,
         recommended_units=recommended_units,
         integrity_verdict=integrity_verdict,
-        reason="; ".join(reason)
+        reason="; ".join(reason_parts),
     )

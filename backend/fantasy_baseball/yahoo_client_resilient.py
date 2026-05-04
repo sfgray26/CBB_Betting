@@ -28,13 +28,15 @@ import os
 import re
 import threading
 import time
+import unicodedata
 import webbrowser
 from dataclasses import dataclass
 import asyncio
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from collections import OrderedDict
 from urllib.parse import urlencode, urlparse, parse_qs
 
 import requests
@@ -61,6 +63,60 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 _token_lock = threading.Lock()
+
+# ---------------------------------------------------------------------------
+# In-memory TTL cache for Yahoo API responses (fix 30s timeouts)
+# ---------------------------------------------------------------------------
+class YahooAPICache:
+    """Thread-safe in-memory cache with TTL for Yahoo API responses."""
+
+    def __init__(self, default_ttl_seconds: int = 300):
+        self._cache: OrderedDict[str, Tuple[dict, float]] = OrderedDict()
+        self._default_ttl = default_ttl_seconds
+        self._lock = threading.RLock()
+        self._max_size = 256  # Prevent unbounded memory growth
+
+    def get(self, key: str) -> Optional[dict]:
+        """Get cached response if still fresh."""
+        with self._lock:
+            if key not in self._cache:
+                return None
+
+            data, expiry = self._cache[key]
+            if time.time() > expiry:
+                # Expired - remove and return None
+                del self._cache[key]
+                return None
+
+            # Move to end (LRU eviction)
+            self._cache.move_to_end(key)
+            return data
+
+    def put(self, key: str, data: dict, ttl_seconds: Optional[int] = None) -> None:
+        """Cache response with TTL."""
+        ttl = ttl_seconds or self._default_ttl
+        expiry = time.time() + ttl
+
+        with self._lock:
+            # Evict oldest if at capacity
+            if len(self._cache) >= self._max_size:
+                self._cache.popitem(last=False)
+
+            self._cache[key] = (data, expiry)
+
+    def clear(self) -> None:
+        """Clear all cached responses."""
+        with self._lock:
+            self._cache.clear()
+
+    def get_stats(self) -> dict:
+        """Return cache statistics for monitoring."""
+        with self._lock:
+            return {
+                "size": len(self._cache),
+                "max_size": self._max_size,
+                "keys": list(self._cache.keys()),
+            }
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -115,6 +171,7 @@ class YahooFantasyClient:
         self._token_expiry: float = 0.0
         self._session = requests.Session()
         self._cb = _CoreCircuitBreaker(failure_threshold=3, recovery_timeout=60, window_seconds=300)
+        self._cache = YahooAPICache(default_ttl_seconds=300)  # 5-minute default TTL
 
         # Log credential status (masked)
         client_id_status = f"{self.client_id[:10]}..." if len(self.client_id) > 10 else "NOT_SET"
@@ -174,6 +231,10 @@ class YahooFantasyClient:
             raise YahooAuthError(
                 "No refresh token stored. Run: python -m backend.fantasy_baseball.yahoo_client_resilient --auth"
             )
+
+        # Diagnostic: small sleep to avoid 429 if called in tight loop
+        time.sleep(2)
+
         response = requests.post(
             YAHOO_TOKEN_URL,
             data={
@@ -225,7 +286,18 @@ class YahooFantasyClient:
     # ------------------------------------------------------------------
 
     def _get(self, path: str, params: Optional[dict] = None) -> dict:
-        """GET from Yahoo API with circuit breaker and timeout."""
+        """GET from Yahoo API with circuit breaker, timeout, and caching."""
+        # Generate cache key from URL + params
+        cache_key = self._make_cache_key(path, params)
+
+        # Check cache first
+        cached_data = self._cache.get(cache_key)
+        if cached_data is not None:
+            logger.debug(f"Cache HIT for {path}")
+            return cached_data
+
+        # Cache miss - proceed with API call
+        logger.debug(f"Cache MISS for {path}")
         if not self._cb.should_allow_request():
             raise YahooAPIError("Yahoo API circuit breaker is OPEN — service temporarily unavailable", 503)
 
@@ -253,9 +325,9 @@ class YahooFantasyClient:
                     # Token may have just expired mid-request
                     self._refresh_access_token()
                     continue
-                if resp.status_code == 999:
+                if resp.status_code in (429, 999):
                     wait = 2 ** attempt
-                    logger.warning(f"Yahoo rate limit hit, waiting {wait}s")
+                    logger.warning(f"Yahoo rate limit ({resp.status_code}), waiting {wait}s")
                     time.sleep(wait)
                     continue
                 if resp.status_code != 200:
@@ -264,7 +336,13 @@ class YahooFantasyClient:
                         resp.status_code,
                     )
                 self._cb.record_success()
-                return resp.json()
+                data = resp.json()
+
+                # Cache the response with smart TTL
+                ttl_seconds = self._get_ttl_for_endpoint(path)
+                self._cache.put(cache_key, data, ttl_seconds)
+
+                return data
             except YahooAPIError:
                 raise
             except Exception:
@@ -273,6 +351,48 @@ class YahooFantasyClient:
                 raise
 
         raise YahooAPIError("Yahoo API failed after 3 attempts")
+
+    def _make_cache_key(self, path: str, params: Optional[dict]) -> str:
+        """Generate a cache key from path and params."""
+        import hashlib
+        import json
+
+        # Normalize path
+        normalized_path = path.strip().lstrip('/')
+
+        # Sort params for consistent keys
+        if params:
+            sorted_params = sorted(params.items())
+            params_str = json.dumps(sorted_params, sort_keys=True)
+        else:
+            params_str = ""
+
+        # Create hash
+        key_str = f"{normalized_path}?{params_str}"
+        return hashlib.md5(key_str.encode()).hexdigest()
+
+    def _get_ttl_for_endpoint(self, path: str) -> int:
+        """Return smart TTL based on endpoint type."""
+        path_lower = path.lower()
+
+        # Scoreboards change frequently - 2 minute TTL
+        if "scoreboard" in path_lower or "standings" in path_lower:
+            return 120
+
+        # Rosters - 5 minute TTL (default)
+        if "roster" in path_lower or "team" in path_lower:
+            return 300
+
+        # Player stats - 10 minute TTL
+        if "player" in path_lower and ("stats" in path_lower or "performance" in path_lower):
+            return 600
+
+        # League settings - 1 hour TTL (rarely changes)
+        if "settings" in path_lower or "league" in path_lower:
+            return 3600
+
+        # Default 5 minutes
+        return 300
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -665,6 +785,10 @@ class YahooFantasyClient:
         requested". Stats are fetched separately via get_players_stats_batch()
         and merged in as a best-effort enrichment step so a stats API failure
         cannot take down the waiver surface.
+
+        FIX (April 21, 2026): out=ownership is NOT a valid subresource on
+        league/.../players and causes a 400 error. Ownership data is fetched
+        via get_players_stats_batch() in the best-effort enrichment step below.
         """
         params = {"status": "A", "start": start, "count": count, "sort": "AR"}
         if position:
@@ -697,7 +821,15 @@ class YahooFantasyClient:
         """
         if not player_keys:
             return {}
-        keys_str = ",".join(player_keys[:25])
+        if len(player_keys) > 25:
+            # Yahoo enforces a hard limit of 25 keys per batch request.
+            # Chunk and merge to avoid silent data loss.
+            merged: dict = {}
+            for i in range(0, len(player_keys), 25):
+                chunk = player_keys[i:i + 25]
+                merged.update(self.get_players_stats_batch(chunk, stat_type))
+            return merged
+        keys_str = ",".join(player_keys)
         data = self._get(
             f"league/{self.league_key}/players;player_keys={keys_str}/stats;type={stat_type}"
         )
@@ -720,6 +852,12 @@ class YahooFantasyClient:
                                     sid = s.get("stat_id")
                                     if sid is not None:
                                         stats_raw[str(sid)] = s.get("value", "")
+            if player_key and not stats_raw:
+                logger.warning(
+                    "get_players_stats_batch: %s returned empty stats_raw "
+                    "(likely IL-status response variant or malformed stats block); skipping",
+                    player_key,
+                )
             if player_key and stats_raw:
                 result[player_key] = stats_raw
         return result
@@ -1020,8 +1158,217 @@ class YahooFantasyClient:
         txns = []
         count = int(txns_raw.get("count", 0))
         for i in range(count):
-            txns.append(txns_raw[str(i)].get("transaction", {}))
+            txn = txns_raw[str(i)].get("transaction", {})
+            # Yahoo sometimes returns transaction as a list of single-key dicts
+            # that needs to be flattened (same pattern as _league_section)
+            if isinstance(txn, list):
+                txn = self._flatten_league_section(txn)
+            txns.append(txn)
         return txns
+
+    def get_matchup_stats(self, week: Optional[int] = None, my_team_key: Optional[str] = None) -> dict:
+        """Fetch current matchup stats for my team and opponent.
+
+        Returns dict with:
+            - my_stats: Dict[str, float] keyed by canonical category code
+            - opp_stats: Dict[str, float] keyed by canonical category code
+            - opponent_name: str
+
+        Phase 4.5a Priority 1: Live Yahoo data for scoreboard.
+        """
+        from backend.stat_contract import load_contract
+
+        if my_team_key is None:
+            my_team_key = self.get_my_team_key()
+
+        matchups = self.get_scoreboard(week=week)
+        
+        # DIAGNOSTIC: log raw matchups to see why we can't find our team
+        logger.info("get_matchup_stats: found %d matchups", len(matchups))
+        if matchups:
+            logger.info("get_matchup_stats: first matchup keys: %s", list(matchups[0].keys()))
+            if "teams" in matchups[0]:
+                logger.info("get_matchup_stats: first matchup teams raw: %s", str(matchups[0]["teams"])[:500])
+
+        # Find my matchup
+        my_matchup = None
+        for matchup in matchups:
+            # Handle nested teams structure: matchup["0"].teams or matchup["teams"]
+            teams_wrapper = matchup.get("teams", {})
+            if not teams_wrapper and "0" in matchup:
+                # Some Yahoo API versions wrap teams inside an indexed "0" block
+                inner_0 = matchup["0"]
+                if isinstance(inner_0, dict):
+                    teams_wrapper = inner_0.get("teams", {})
+            
+            if isinstance(teams_wrapper, dict):
+                # Check both "0" and "1" team keys. Yahoo wraps the team dict in a "team" key
+                # in some response shapes, so unwrap that if present.
+                for team_key_str in ["0", "1"]:
+                    raw_team = teams_wrapper.get(team_key_str, {})
+                    # Unwrap the intermediate "team" layer if present (see _nested_scoreboard fixture)
+                    if isinstance(raw_team, dict) and "team" in raw_team and "team_key" not in raw_team:
+                        team_contents = raw_team["team"]
+                        if isinstance(team_contents, list) and len(team_contents) > 0:
+                            # team_contents[0] is a list: [{team_key}, {name}, {team_id}]
+                            meta_list = team_contents[0] if isinstance(team_contents[0], list) else []
+                            if len(meta_list) > 0:
+                                first_meta = meta_list[0] if isinstance(meta_list[0], dict) else {}
+                                if isinstance(first_meta, dict) and "team_key" in first_meta:
+                                    if first_meta["team_key"] == my_team_key:
+                                        my_matchup = matchup
+                                        # Promote unwrapped structure so the stats extraction loop below can access it
+                                        teams_wrapper[team_key_str] = team_contents
+                                        if "teams" not in my_matchup:
+                                            my_matchup["teams"] = teams_wrapper
+                                        break
+                    elif isinstance(raw_team, dict) and raw_team.get("team_key") == my_team_key:
+                        my_matchup = matchup
+                        if "teams" not in my_matchup:
+                            my_matchup["teams"] = teams_wrapper
+                        break
+            if my_matchup:
+                break
+
+        if not my_matchup:
+            # Return empty stats if matchup not found
+            return {"my_stats": {}, "opp_stats": {}, "opponent_name": "Unknown"}
+
+        # Extract team stats
+        teams = my_matchup.get("teams", {})
+        my_stats_raw = {}
+        opp_stats_raw = {}
+        opponent_name = "Unknown"
+
+        # Yahoo stat_id to canonical code mapping
+        # AUTHORITATIVE MAPPING verified against Yahoo Fantasy Baseball UI (April 22, 2026)
+        # Batting order: H/AB, R, H, HR, RBI, K, TB, AVG, OPS, NSB
+        # Pitching order: IP, W, L, HR, K, ERA, WHIP, K/9, QS, NSV
+        yahoo_to_canonical = {
+            # BATTING STATS (in Yahoo display order)
+            "60": "H_AB",     # Hits/At Bats (display field, e.g., "48/218")
+            "7": "R",         # Runs
+            "8": "H",         # Hits
+            "12": "HR_B",     # Home Runs (batters)
+            "13": "RBI",      # Runs Batted In
+            "21": "K_B",      # Strikeouts (batters) — SWAPPED with TB (was 23)
+            "23": "TB",       # Total Bases — SWAPPED with K_B (was 21)
+            "3": "AVG",       # Batting Average
+            "55": "OPS",      # On-base Plus Slugging
+            "62": "NSB",      # Net Stolen Bases
+            
+            # PITCHING STATS (in Yahoo display order)
+            "50": "IP",       # Innings Pitched
+            "28": "W",        # Wins
+            "29": "L",        # Losses
+            "38": "HR_P",     # Home Runs Allowed (pitchers)
+            "42": "K_P",      # Strikeouts (pitchers)
+            "26": "ERA",      # Earned Run Average
+            "27": "WHIP",     # Walks + Hits per IP
+            "57": "K_9",      # Strikeouts per 9 innings
+            "83": "QS",       # Quality Starts — SWAPPED with NSV (was 85)
+            "85": "NSV",      # Net Saves — SWAPPED with QS (was 83)
+        }
+
+        # Process both teams
+        for team_key in ["0", "1"]:
+            team = teams.get(team_key, {})
+
+            # Handle wrapped team structure: {"team": [[{team_key}, {name}, {team_id}], {team_stats}]}
+            # This occurs when the opponent team wasn't unwrapped during matchup finding.
+            if isinstance(team, dict) and "team" in team and "team_key" not in team:
+                team_contents = team["team"]
+                if isinstance(team_contents, list) and len(team_contents) >= 2:
+                    team_meta = team_contents[0] if isinstance(team_contents[0], list) else []
+                    if len(team_meta) >= 3:
+                        team_stats_dict = team_contents[1] if isinstance(team_contents[1], dict) else {}
+                        team = {
+                            "team_key": team_meta[0].get("team_key") if isinstance(team_meta[0], dict) else None,
+                            "name": team_meta[1].get("name") if isinstance(team_meta[1], dict) else None,
+                            "team_stats": team_stats_dict.get("team_stats") if isinstance(team_stats_dict, dict) else {},
+                        }
+                    else:
+                        team = {}
+                else:
+                    team = {}
+            # Handle pre-unwrapped team structure from the my_team_key lookup above.
+            # The fixture shape is: [[{team_key}, {name}, {team_id}], {team_stats}]
+            elif isinstance(team, list) and len(team) >= 2:
+                team_meta = team[0] if isinstance(team[0], list) else []
+                if len(team_meta) >= 3:
+                    team_stats_dict = team[1] if isinstance(team[1], dict) else {}
+                    team = {
+                        "team_key": team_meta[0].get("team_key") if isinstance(team_meta[0], dict) else None,
+                        "name": team_meta[1].get("name") if isinstance(team_meta[1], dict) else None,
+                        "team_stats": team_stats_dict.get("team_stats") if isinstance(team_stats_dict, dict) else {},
+                    }
+                else:
+                    team = {}
+            elif not isinstance(team, dict):
+                team = {}
+
+            team_key_value = team.get("team_key")
+            is_my_team = (team_key_value == my_team_key)
+
+            if not is_my_team:
+                opponent_name = team.get("name", "Unknown")
+
+            # Extract stats from team_stats or team_points
+            team_stats = team.get("team_stats", {})
+            if not team_stats:
+                team_stats = team.get("team_points", {})
+
+            stats = {}
+            # Yahoo's authoritative payload wraps stats in a nested list:
+            #   team_stats = {"stats": [{"stat": {"stat_id": "7", "value": "48"}}, ...]}
+            # A legacy flat-dict variant exists in some cached fixtures; preserve
+            # it as an elif fallback so old tests/fixtures still parse.
+            raw_stats_list = None
+            if isinstance(team_stats, dict):
+                raw_stats_list = team_stats.get("stats")
+
+            if isinstance(raw_stats_list, list):
+                for entry in raw_stats_list:
+                    if not isinstance(entry, dict):
+                        continue
+                    stat_obj = entry.get("stat")
+                    if not isinstance(stat_obj, dict):
+                        continue
+                    stat_id_str = str(stat_obj.get("stat_id", ""))
+                    stat_value = stat_obj.get("value")
+                    if stat_id_str not in yahoo_to_canonical:
+                        continue
+                    canonical = yahoo_to_canonical[stat_id_str]
+                    if canonical == "H_AB":
+                        stats[canonical] = str(stat_value)
+                    else:
+                        try:
+                            stats[canonical] = float(stat_value)
+                        except (ValueError, TypeError):
+                            continue
+            elif isinstance(team_stats, dict):
+                # Legacy flat-dict variant.
+                for stat_id_str, stat_value in team_stats.items():
+                    if stat_id_str in yahoo_to_canonical:
+                        canonical = yahoo_to_canonical[stat_id_str]
+                        if canonical == "H_AB":
+                            stats[canonical] = str(stat_value)
+                        else:
+                            try:
+                                stats[canonical] = float(stat_value)
+                            except (ValueError, TypeError):
+                                continue
+
+            if is_my_team:
+                my_stats_raw = stats
+            else:
+                opp_stats_raw = stats
+
+        return {
+            "my_stats": my_stats_raw,
+            "opp_stats": opp_stats_raw,
+            "opponent_name": opponent_name,
+        }
 
     # ------------------------------------------------------------------
     # Parsing helpers
@@ -1135,12 +1482,24 @@ class YahooFantasyClient:
             else:
                 owned_pct = YahooFantasyClient._safe_float(owned_raw, 0.0)
 
-        # Extract name with defensive handling
+        # Extract name with defensive handling and UTF-8 encoding
         name = meta.get("full_name")
         if not name and isinstance(meta.get("name"), dict):
             name = meta["name"].get("full")
         if not name:
             name = meta.get("name", "Unknown")
+        
+        # Ensure UTF-8 encoding: decode if bytes, normalize if string
+        if isinstance(name, bytes):
+            try:
+                name = name.decode("utf-8")
+            except UnicodeDecodeError:
+                name = name.decode("utf-8", errors="replace")
+        elif isinstance(name, str):
+            # Normalize unicode: NFKD decomposition then recomposition (NFC)
+            # This ensures "Díaz" stays as "Díaz" (not decomposed)
+            name = unicodedata.normalize("NFC", name)
+        
         # Strip injury descriptions occasionally appended by Yahoo to the name field
         # e.g. "Jason Adam Quadriceps" -> "Jason Adam"
         if isinstance(name, str):

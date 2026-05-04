@@ -1,0 +1,1014 @@
+﻿{
+    "week_end":  "2026-04-26",
+    "matchup_opponent":  "Bartolo\u0027s Colon",
+    "category_deficits":  [
+                              {
+                                  "category":  "H_AB",
+                                  "my_total":  0.0,
+                                  "opponent_total":  0.0,
+                                  "deficit":  0.0,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "R",
+                                  "my_total":  16.0,
+                                  "opponent_total":  20.0,
+                                  "deficit":  4.0,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "H",
+                                  "my_total":  21.0,
+                                  "opponent_total":  30.0,
+                                  "deficit":  9.0,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "HR_B",
+                                  "my_total":  5.0,
+                                  "opponent_total":  6.0,
+                                  "deficit":  1.0,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "RBI",
+                                  "my_total":  12.0,
+                                  "opponent_total":  12.0,
+                                  "deficit":  0.0,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "K_B",
+                                  "my_total":  20.0,
+                                  "opponent_total":  20.0,
+                                  "deficit":  0.0,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "TB",
+                                  "my_total":  44.0,
+                                  "opponent_total":  51.0,
+                                  "deficit":  7.0,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "AVG",
+                                  "my_total":  0.259,
+                                  "opponent_total":  0.294,
+                                  "deficit":  0.034999999999999976,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "OPS",
+                                  "my_total":  0.914,
+                                  "opponent_total":  0.911,
+                                  "deficit":  -0.0030000000000000027,
+                                  "winning":  true
+                              },
+                              {
+                                  "category":  "NSB",
+                                  "my_total":  0.0,
+                                  "opponent_total":  1.0,
+                                  "deficit":  1.0,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "IP",
+                                  "my_total":  10.2,
+                                  "opponent_total":  24.2,
+                                  "deficit":  14.0,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "W",
+                                  "my_total":  1.0,
+                                  "opponent_total":  3.0,
+                                  "deficit":  2.0,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "L",
+                                  "my_total":  1.0,
+                                  "opponent_total":  0.0,
+                                  "deficit":  1.0,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "HR_P",
+                                  "my_total":  2.0,
+                                  "opponent_total":  3.0,
+                                  "deficit":  1.0,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "K_P",
+                                  "my_total":  6.0,
+                                  "opponent_total":  25.0,
+                                  "deficit":  19.0,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "ERA",
+                                  "my_total":  8.44,
+                                  "opponent_total":  3.65,
+                                  "deficit":  4.789999999999999,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "WHIP",
+                                  "my_total":  2.34,
+                                  "opponent_total":  1.42,
+                                  "deficit":  0.9199999999999999,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "K_9",
+                                  "my_total":  5.06,
+                                  "opponent_total":  9.12,
+                                  "deficit":  4.06,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "QS",
+                                  "my_total":  0.0,
+                                  "opponent_total":  1.0,
+                                  "deficit":  1.0,
+                                  "winning":  false
+                              },
+                              {
+                                  "category":  "NSV",
+                                  "my_total":  2.0,
+                                  "opponent_total":  1.0,
+                                  "deficit":  -1.0,
+                                  "winning":  true
+                              }
+                          ],
+    "top_available":  [
+                          {
+                              "player_id":  "469.p.10326",
+                              "name":  "Seth Lugo",
+                              "team":  "KC",
+                              "position":  "SP",
+                              "need_score":  1.918,
+                              "category_contributions":  {
+                                                             "W":  0.915,
+                                                             "WHIP":  0.021,
+                                                             "QS":  0.981
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  1,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  "HOT",
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "31.1",
+                                            "W":  "1",
+                                            "L":  "1",
+                                            "HR_P":  "0",
+                                            "K_P":  "28",
+                                            "ERA":  "1.15",
+                                            "WHIP":  "0.93",
+                                            "K_9":  "8.04",
+                                            "QS":  "4",
+                                            "NSV":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.60295",
+                              "name":  "Will Warren",
+                              "team":  "NYY",
+                              "position":  "SP",
+                              "need_score":  0.691,
+                              "category_contributions":  {
+                                                             "W":  0.129,
+                                                             "QS":  0.562
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  1,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "25.1",
+                                            "W":  "2",
+                                            "L":  "0",
+                                            "HR_P":  "3",
+                                            "K_P":  "31",
+                                            "ERA":  "2.49",
+                                            "WHIP":  "1.11",
+                                            "K_9":  "11.01",
+                                            "QS":  "1",
+                                            "NSV":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.60650",
+                              "name":  "Landen Roupp",
+                              "team":  "SF",
+                              "position":  "SP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  1,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "27.2",
+                                            "W":  "4",
+                                            "L":  "1",
+                                            "HR_P":  "0",
+                                            "K_P":  "31",
+                                            "ERA":  "2.28",
+                                            "WHIP":  "1.01",
+                                            "K_9":  "10.08",
+                                            "QS":  "3",
+                                            "NSV":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.12500",
+                              "name":  "Randy VÃ¡squez",
+                              "team":  "SD",
+                              "position":  "SP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "28.2",
+                                            "W":  "2",
+                                            "L":  "0",
+                                            "HR_P":  "1",
+                                            "K_P":  "30",
+                                            "ERA":  "1.88",
+                                            "WHIP":  "1.08",
+                                            "K_9":  "9.42",
+                                            "QS":  "3",
+                                            "NSV":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.11489",
+                              "name":  "Aaron Ashby",
+                              "team":  "MIL",
+                              "position":  "RP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "15.0",
+                                            "W":  "5",
+                                            "L":  "0",
+                                            "HR_P":  "1",
+                                            "K_P":  "24",
+                                            "ERA":  "3.00",
+                                            "WHIP":  "1.40",
+                                            "K_9":  "14.40",
+                                            "QS":  "0",
+                                            "NSV":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.10176",
+                              "name":  "Antonio Senzatela",
+                              "team":  "COL",
+                              "position":  "SP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  1.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "16.1",
+                                            "W":  "1",
+                                            "L":  "0",
+                                            "HR_P":  "0",
+                                            "K_P":  "17",
+                                            "ERA":  "0.55",
+                                            "WHIP":  "0.73",
+                                            "K_9":  "9.37",
+                                            "QS":  "0",
+                                            "NSV":  "1"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.60232",
+                              "name":  "Dalton Rushing",
+                              "team":  "LAD",
+                              "position":  "C",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "H_AB":  "12/29",
+                                            "R":  "10",
+                                            "H":  "12",
+                                            "HR_B":  "7",
+                                            "RBI":  "13",
+                                            "K_B":  "8",
+                                            "TB":  "35",
+                                            "AVG":  ".414",
+                                            "OPS":  "1.659",
+                                            "NSB":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.11453",
+                              "name":  "Rico Garcia",
+                              "team":  "BAL",
+                              "position":  "RP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "12.0",
+                                            "W":  "2",
+                                            "L":  "0",
+                                            "HR_P":  "1",
+                                            "K_P":  "13",
+                                            "ERA":  "0.75",
+                                            "WHIP":  "0.42",
+                                            "K_9":  "9.75",
+                                            "QS":  "0",
+                                            "NSV":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.12695",
+                              "name":  "Louis Varland",
+                              "team":  "TOR",
+                              "position":  "RP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  1.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "13.0",
+                                            "W":  "1",
+                                            "L":  "1",
+                                            "HR_P":  "0",
+                                            "K_P":  "19",
+                                            "ERA":  "0.00",
+                                            "WHIP":  "0.85",
+                                            "K_9":  "13.15",
+                                            "QS":  "0",
+                                            "NSV":  "1"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.10985",
+                              "name":  "Tyler Kinley",
+                              "team":  "ATL",
+                              "position":  "RP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "11.0",
+                                            "W":  "3",
+                                            "L":  "0",
+                                            "HR_P":  "0",
+                                            "K_P":  "10",
+                                            "ERA":  "0.82",
+                                            "WHIP":  "0.82",
+                                            "K_9":  "8.18",
+                                            "QS":  "0",
+                                            "NSV":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.10864",
+                              "name":  "Tony Santillan",
+                              "team":  "CIN",
+                              "position":  "RP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  1.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "10.2",
+                                            "W":  "1",
+                                            "L":  "0",
+                                            "HR_P":  "0",
+                                            "K_P":  "12",
+                                            "ERA":  "0.00",
+                                            "WHIP":  "0.84",
+                                            "K_9":  "10.13",
+                                            "QS":  "0",
+                                            "NSV":  "1"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.9595",
+                              "name":  "Dominic Smith",
+                              "team":  "ATL",
+                              "position":  "1B",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "H_AB":  "19/55",
+                                            "R":  "10",
+                                            "H":  "19",
+                                            "HR_B":  "4",
+                                            "RBI":  "17",
+                                            "K_B":  "7",
+                                            "TB":  "33",
+                                            "AVG":  ".345",
+                                            "OPS":  ".962",
+                                            "NSB":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.10557",
+                              "name":  "Mickey Moniak",
+                              "team":  "COL",
+                              "position":  "LF",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "H_AB":  "18/63",
+                                            "R":  "11",
+                                            "H":  "18",
+                                            "HR_B":  "6",
+                                            "RBI":  "13",
+                                            "K_B":  "15",
+                                            "TB":  "41",
+                                            "AVG":  ".286",
+                                            "OPS":  ".964",
+                                            "NSB":  "1"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.12582",
+                              "name":  "Daylen Lile",
+                              "team":  "WSH",
+                              "position":  "LF",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "H_AB":  "29/103",
+                                            "R":  "15",
+                                            "H":  "29",
+                                            "HR_B":  "3",
+                                            "RBI":  "13",
+                                            "K_B":  "16",
+                                            "TB":  "45",
+                                            "AVG":  ".282",
+                                            "OPS":  ".770",
+                                            "NSB":  "-1"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.12387",
+                              "name":  "Caleb Kilian",
+                              "team":  "SF",
+                              "position":  "RP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "11.0",
+                                            "W":  "1",
+                                            "L":  "0",
+                                            "HR_P":  "1",
+                                            "K_P":  "14",
+                                            "ERA":  "0.82",
+                                            "WHIP":  "0.82",
+                                            "K_9":  "11.45",
+                                            "QS":  "0",
+                                            "NSV":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.11322",
+                              "name":  "Daniel Lynch IV",
+                              "team":  "KC",
+                              "position":  "RP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "9.0",
+                                            "W":  "0",
+                                            "L":  "0",
+                                            "HR_P":  "0",
+                                            "K_P":  "12",
+                                            "ERA":  "1.00",
+                                            "WHIP":  "0.56",
+                                            "K_9":  "12.00",
+                                            "QS":  "0",
+                                            "NSV":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.11400",
+                              "name":  "Tyler Phillips",
+                              "team":  "MIA",
+                              "position":  "RP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  1.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "15.0",
+                                            "W":  "0",
+                                            "L":  "0",
+                                            "HR_P":  "0",
+                                            "K_P":  "18",
+                                            "ERA":  "0.60",
+                                            "WHIP":  "1.20",
+                                            "K_9":  "10.80",
+                                            "QS":  "0",
+                                            "NSV":  "1"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.11083",
+                              "name":  "Casey Mize",
+                              "team":  "DET",
+                              "position":  "SP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "28.2",
+                                            "W":  "2",
+                                            "L":  "1",
+                                            "HR_P":  "2",
+                                            "K_P":  "32",
+                                            "ERA":  "2.51",
+                                            "WHIP":  "1.15",
+                                            "K_9":  "10.05",
+                                            "QS":  "3",
+                                            "NSV":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.12275",
+                              "name":  "Dylan Lee",
+                              "team":  "ATL",
+                              "position":  "RP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "11.0",
+                                            "W":  "1",
+                                            "L":  "0",
+                                            "HR_P":  "0",
+                                            "K_P":  "9",
+                                            "ERA":  "0.82",
+                                            "WHIP":  "0.64",
+                                            "K_9":  "7.36",
+                                            "QS":  "0",
+                                            "NSV":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.12059",
+                              "name":  "John King",
+                              "team":  "MIA",
+                              "position":  "RP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "10.0",
+                                            "W":  "1",
+                                            "L":  "0",
+                                            "HR_P":  "1",
+                                            "K_P":  "11",
+                                            "ERA":  "0.90",
+                                            "WHIP":  "0.60",
+                                            "K_9":  "9.90",
+                                            "QS":  "0",
+                                            "NSV":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.66156",
+                              "name":  "Anthony Nunez",
+                              "team":  "BAL",
+                              "position":  "RP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "12.1",
+                                            "W":  "1",
+                                            "L":  "0",
+                                            "HR_P":  "2",
+                                            "K_P":  "15",
+                                            "ERA":  "1.46",
+                                            "WHIP":  "0.65",
+                                            "K_9":  "10.95",
+                                            "QS":  "0",
+                                            "NSV":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.63647",
+                              "name":  "Grant Wolfram",
+                              "team":  "BAL",
+                              "position":  "RP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "10.0",
+                                            "W":  "1",
+                                            "L":  "0",
+                                            "HR_P":  "0",
+                                            "K_P":  "16",
+                                            "ERA":  "2.70",
+                                            "WHIP":  "1.20",
+                                            "K_9":  "14.40",
+                                            "QS":  "0",
+                                            "NSV":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.12617",
+                              "name":  "Davis Martin",
+                              "team":  "CWS",
+                              "position":  "SP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  1,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  0.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "25.0",
+                                            "W":  "3",
+                                            "L":  "1",
+                                            "HR_P":  "2",
+                                            "K_P":  "19",
+                                            "ERA":  "2.16",
+                                            "WHIP":  "1.00",
+                                            "K_9":  "6.84",
+                                            "QS":  "3",
+                                            "NSV":  "0"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.12658",
+                              "name":  "Huascar BrazobÃ¡n",
+                              "team":  "NYM",
+                              "position":  "SP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  -1.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "10.2",
+                                            "W":  "1",
+                                            "L":  "0",
+                                            "HR_P":  "0",
+                                            "K_P":  "10",
+                                            "ERA":  "0.00",
+                                            "WHIP":  "0.94",
+                                            "K_9":  "8.44",
+                                            "QS":  "0",
+                                            "NSV":  "-1"
+                                        },
+                              "statcast_stats":  null
+                          },
+                          {
+                              "player_id":  "469.p.10469",
+                              "name":  "Tyler Alexander",
+                              "team":  "TEX",
+                              "position":  "SP",
+                              "need_score":  0.0,
+                              "category_contributions":  {
+
+                                                         },
+                              "owned_pct":  0.0,
+                              "starts_this_week":  0,
+                              "statcast_signals":  [
+
+                                                   ],
+                              "projected_saves":  2.0,
+                              "projected_points":  0.0,
+                              "hot_cold":  null,
+                              "status":  null,
+                              "injury_note":  null,
+                              "injury_status":  null,
+                              "stats":  {
+                                            "IP":  "13.1",
+                                            "W":  "0",
+                                            "L":  "0",
+                                            "HR_P":  "0",
+                                            "K_P":  "12",
+                                            "ERA":  "0.68",
+                                            "WHIP":  "1.13",
+                                            "K_9":  "8.10",
+                                            "QS":  "0",
+                                            "NSV":  "2"
+                                        },
+                              "statcast_stats":  null
+                          }
+                      ],
+    "two_start_pitchers":  [
+
+                           ],
+    "pagination":  {
+                       "page":  1,
+                       "per_page":  25,
+                       "has_next":  true
+                   },
+    "urgent_alert":  null,
+    "closer_alert":  "NO_CLOSERS",
+    "il_slots_used":  2,
+    "il_slots_available":  0,
+    "faab_balance":  null
+}

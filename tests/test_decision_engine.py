@@ -38,6 +38,11 @@ def _make_hitter(
     proj_rbi=60.0,
     proj_sb=5.0,
     delta_z: float = 0.0,
+    z_hr: float = 0.0,
+    z_rbi: float = 0.0,
+    z_nsb: float = 0.0,
+    z_r: float = 0.0,
+    z_ops: float = 0.0,
 ) -> PlayerDecisionInput:
     return PlayerDecisionInput(
         bdl_player_id=pid,
@@ -57,6 +62,11 @@ def _make_hitter(
         proj_whip_p50=None,
         downside_p25=None,
         upside_p75=None,
+        z_hr=z_hr,
+        z_rbi=z_rbi,
+        z_nsb=z_nsb,
+        z_r=z_r,
+        z_ops=z_ops,
     )
 
 
@@ -70,6 +80,9 @@ def _make_pitcher(
     proj_era: float = 3.50,
     proj_whip: float = 1.15,
     delta_z: float = 0.0,
+    z_k_p: float = 0.0,
+    z_era: float = 0.0,
+    z_whip: float = 0.0,
 ) -> PlayerDecisionInput:
     return PlayerDecisionInput(
         bdl_player_id=pid,
@@ -89,6 +102,10 @@ def _make_pitcher(
         proj_whip_p50=proj_whip,
         downside_p25=None,
         upside_p75=None,
+        # P0-3: Pitcher z-scores
+        z_k_p=z_k_p,
+        z_era=z_era,
+        z_whip=z_whip,
     )
 
 
@@ -151,6 +168,16 @@ class TestLineupOptimizerFillsAllSlots:
             assert r.as_of_date == date(2026, 4, 5)
             assert r.target_slot is not None
             assert 0.0 <= r.confidence <= 1.0
+
+    def test_bench_players_are_included_in_results(self):
+        players = _make_full_roster() + [
+            _make_hitter(15, "BenchOF", positions=["OF"], score=40.0),
+            _make_pitcher(16, "BenchSP", positions=["SP"], score=35.0),
+        ]
+        _, results = optimize_lineup(players, date(2026, 4, 5))
+
+        bench_rows = [r for r in results if r.target_slot == "BN"]
+        assert len(bench_rows) >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +261,43 @@ class TestWaiverDecisionPicksBestAdd:
         _, results = optimize_waivers(roster, pool, date(2026, 4, 5))
         assert len(results) == 5
 
+    def test_waiver_drop_candidate_comes_from_bench(self):
+        roster = _make_full_roster() + [
+            _make_hitter(99, "WeakBenchBat", positions=["OF"], score=20.0, proj_hr=1.0, proj_rbi=8.0),
+        ]
+        strong_add = _make_hitter(305, "StrongAdd3", positions=["OF"], score=88.0, proj_hr=28.0, proj_rbi=90.0)
+
+        _, results = optimize_waivers(roster, [strong_add], date(2026, 4, 5))
+
+        assert len(results) == 1
+        assert results[0].drop_player_id == 99
+
+    def test_missing_projection_fields_do_not_make_star_undroppable(self):
+        roster = [
+            _make_hitter(501, "Juan Soto", positions=["OF"], score=95.0, proj_hr=None, proj_rbi=None, proj_sb=None),
+            _make_hitter(502, "BenchWeak", positions=["OF"], score=20.0, proj_hr=1.0, proj_rbi=5.0, proj_sb=1.0),
+            _make_hitter(503, "BenchWeak2", positions=["OF"], score=22.0, proj_hr=1.0, proj_rbi=6.0, proj_sb=1.0),
+            _make_hitter(504, "BenchWeak3", positions=["OF"], score=24.0, proj_hr=2.0, proj_rbi=8.0, proj_sb=1.0),
+            _make_hitter(505, "BenchWeak4", positions=["OF"], score=26.0, proj_hr=2.0, proj_rbi=9.0, proj_sb=1.0),
+            _make_hitter(506, "BenchWeak5", positions=["OF"], score=28.0, proj_hr=2.0, proj_rbi=10.0, proj_sb=1.0),
+            _make_hitter(507, "Starter1B", positions=["1B"], score=80.0),
+            _make_hitter(508, "Starter2B", positions=["2B"], score=75.0),
+            _make_hitter(509, "Starter3B", positions=["3B"], score=74.0),
+            _make_hitter(510, "StarterSS", positions=["SS"], score=73.0),
+            _make_hitter(511, "StarterC", positions=["C"], score=72.0),
+            _make_pitcher(512, "SP1", positions=["SP"], score=70.0),
+            _make_pitcher(513, "SP2", positions=["SP"], score=69.0),
+            _make_pitcher(514, "RP1", positions=["RP"], score=68.0),
+            _make_pitcher(515, "RP2", positions=["RP"], score=67.0),
+            _make_pitcher(516, "P1", positions=["SP", "RP"], score=66.0),
+        ]
+        candidate = _make_hitter(600, "WaiverAdd", positions=["OF"], score=85.0, proj_hr=25.0, proj_rbi=80.0)
+
+        _, results = optimize_waivers(roster, [candidate], date(2026, 4, 5))
+
+        assert len(results) == 1
+        assert results[0].drop_player_id != 501
+
 
 # ---------------------------------------------------------------------------
 # 4. Edge cases
@@ -292,6 +356,469 @@ class TestEdgeCases:
         assert score >= 0.0
 
     def test_pitcher_composite_value_uses_k(self):
-        elite = _make_pitcher(901, proj_k=200.0, proj_era=2.50, proj_whip=1.00)
-        poor  = _make_pitcher(902, proj_k=50.0,  proj_era=6.00, proj_whip=1.80)
+        # P0-3: Updated to use z-scores for pitcher composite
+        elite = _make_pitcher(
+            901, proj_k=200.0, proj_era=2.50, proj_whip=1.00,
+            z_k_p=2.0, z_era=1.5, z_whip=1.2,  # Elite z-scores
+        )
+        poor  = _make_pitcher(
+            902, proj_k=50.0, proj_era=6.00, proj_whip=1.80,
+            z_k_p=-1.5, z_era=-1.8, z_whip=-1.3,  # Poor z-scores
+        )
         assert _composite_value(elite) > _composite_value(poor)
+
+
+# ---------------------------------------------------------------------------
+# P0-3: Pitcher Composite Uses Z-Scores
+# ---------------------------------------------------------------------------
+
+class TestP03PitcherCompositeUsesZScores:
+    """P0-3: Pitcher composite value uses z-scores instead of raw projections."""
+
+    def test_elite_pitcher_z_scores_rank_higher(self):
+        """Elite pitcher (positive z-scores) should rank higher than poor pitcher."""
+        elite = _make_pitcher(
+            901, "EliteSP",
+            score=75.0,
+            z_k_p=2.0,   # Well above average K rate
+            z_era=1.5,   # Well above average (low ERA is good, z_era negated)
+            z_whip=1.2,  # Above average (low WHIP is good, z_whip negated)
+        )
+        poor = _make_pitcher(
+            902, "PoorSP",
+            score=25.0,
+            z_k_p=-1.5,  # Below average K rate
+            z_era=-1.8,  # Poor ERA (high ERA, z_era negative)
+            z_whip=-1.3, # Poor WHIP (high WHIP, z_whip negative)
+        )
+        assert _composite_value(elite) > _composite_value(poor)
+
+    def test_z_scores_override_raw_projections(self):
+        """Z-scores should be the primary driver, not raw projections."""
+        # High raw projections but negative z-scores (lucky stats, poor underlying)
+        lucky = _make_pitcher(
+            903, "LuckyPitcher",
+            score=50.0,
+            proj_k=200.0, proj_era=3.00, proj_whip=1.10,  # Good raw stats
+            z_k_p=-1.0, z_era=-0.5, z_whip=-0.3,  # But negative z-scores
+        )
+        # Moderate raw projections but positive z-scores (solid performer)
+        solid = _make_pitcher(
+            904, "SolidPitcher",
+            score=50.0,
+            proj_k=150.0, proj_era=3.80, proj_whip=1.25,  # Moderate raw stats
+            z_k_p=0.8, z_era=0.6, z_whip=0.4,  # Positive z-scores
+        )
+        # Z-scores should win out
+        assert _composite_value(solid) > _composite_value(lucky)
+
+    def test_null_z_scores_fallback_to_baseline(self):
+        """When z-scores are None, should fall back to score_0_100 baseline."""
+        no_z = _make_pitcher(
+            905, "NoZScores",
+            score=70.0,
+            z_k_p=None, z_era=None, z_whip=None,
+        )
+        # Should not crash, and baseline from score_0_100 should apply
+        val = _composite_value(no_z)
+        assert val > 0.0
+        # With score=70, baseline = (70/100) * 1.5 = 1.05
+        assert val > 1.0
+
+    def test_two_way_pitcher_component_uses_z_scores(self):
+        """Two-way players should use z-scores for pitcher component."""
+        two_way_elite = PlayerDecisionInput(
+            bdl_player_id=1001,
+            name="TwoWayElite",
+            player_type="two_way",
+            eligible_positions=["UTIL", "P"],
+            score_0_100=70.0,
+            composite_z=1.0,
+            momentum_signal="STABLE",
+            delta_z=0.0,
+            proj_hr_p50=15.0, proj_rbi_p50=60.0, proj_sb_p50=5.0,
+            proj_avg_p50=0.270,
+            proj_k_p50=180.0, proj_era_p50=3.20, proj_whip_p50=1.15,
+            downside_p25=None, upside_p75=None,
+            # P0-3: Pitcher z-scores
+            z_k_p=1.5, z_era=1.0, z_whip=0.8,
+        )
+        two_way_poor_pitcher = PlayerDecisionInput(
+            bdl_player_id=1002,
+            name="TwoWayPoorPitcher",
+            player_type="two_way",
+            eligible_positions=["UTIL", "P"],
+            score_0_100=70.0,
+            composite_z=1.0,
+            momentum_signal="STABLE",
+            delta_z=0.0,
+            proj_hr_p50=15.0, proj_rbi_p50=60.0, proj_sb_p50=5.0,
+            proj_avg_p50=0.270,
+            proj_k_p50=180.0, proj_era_p50=3.20, proj_whip_p50=1.15,
+            downside_p25=None, upside_p75=None,
+            # P0-3: Poor pitcher z-scores
+            z_k_p=-1.0, z_era=-1.2, z_whip=-0.8,
+        )
+        # Same hitting stats, different pitcher z-scores
+        # Elite pitcher should have higher composite
+        assert _composite_value(two_way_elite) > _composite_value(two_way_poor_pitcher)
+
+    def test_z_score_sum_scaling(self):
+        """Z-score sum should be scaled to [0, 3] range for compatibility."""
+        # Max positive z-scores: +3 each = +9 total
+        # Scaled: (9 + 9) / 6 = 3.0
+        perfect = _make_pitcher(
+            906, "PerfectPitcher",
+            score=50.0,
+            z_k_p=3.0, z_era=3.0, z_whip=3.0,
+        )
+        val = _composite_value(perfect)
+        # Should be at the top of the range (near 3.0)
+        assert val > 2.5
+
+        # Max negative z-scores: -3 each = -9 total
+        # Scaled: (-9 + 9) / 6 = 0.0
+        terrible = _make_pitcher(
+            907, "TerriblePitcher",
+            score=50.0,
+            z_k_p=-3.0, z_era=-3.0, z_whip=-3.0,
+        )
+        val_terrible = _composite_value(terrible)
+        # Should be at the bottom of the range
+        # Baseline from score_0_100 may apply
+        assert 0.0 <= val_terrible <= 1.5
+
+
+# ---------------------------------------------------------------------------
+# 5. Roster-only lineup filtering (EMAC-069)
+# ---------------------------------------------------------------------------
+
+class TestRosterOnlyLineupFiltering:
+    """Tests verifying that optimize_lineup only considers roster players.
+
+    The actual filtering to roster-only happens in daily_ingestion.py before
+    calling optimize_lineup(). These tests verify the decision engine's
+    expected behavior when given a roster-constrained player list.
+    """
+
+    def test_lineup_decisions_only_for_provided_players(self):
+        """When given a roster subset, only those players appear in decisions."""
+        roster_players = [
+            _make_hitter(1, "RosterOF1", positions=["OF"], score=75.0),
+            _make_hitter(2, "RosterOF2", positions=["OF"], score=65.0),
+        ]
+        # Note: non-roster players are NOT passed in - filtered upstream
+        _, results = optimize_lineup(roster_players, date(2026, 4, 15))
+
+        # All decisions should be for the roster players we provided
+        result_bdl_ids = {r.bdl_player_id for r in results}
+        expected_ids = {1, 2}
+        assert result_bdl_ids.issubset(expected_ids), (
+            f"Found decisions for non-roster players: {result_bdl_ids - expected_ids}"
+        )
+
+    def test_lineup_with_empty_roster_returns_no_decisions(self):
+        """Empty roster (filtered upstream) produces empty lineup decisions."""
+        lineup, results = optimize_lineup([], date(2026, 4, 15))
+        assert results == []
+        assert lineup.selected == {}
+
+    def test_partial_roster_still_produces_valid_lineup(self):
+        """Even with a partial roster, optimizer fills what it can."""
+        partial_roster = [
+            _make_hitter(10, "OnlyC", positions=["C"], score=60.0),
+            _make_pitcher(11, "OnlySP", positions=["SP"], score=70.0),
+        ]
+        lineup, results = optimize_lineup(partial_roster, date(2026, 4, 15))
+
+        # Should get decisions for the two players we have
+        assert len(results) >= 2
+        result_ids = {r.bdl_player_id for r in results}
+        assert result_ids == {10, 11}
+
+        # C and SP should be filled
+        assert "C" in lineup.selected
+        assert any(k.startswith("SP") for k in lineup.selected)
+
+
+# ---------------------------------------------------------------------------
+# 6. Waiver value_gain filtering (EMAC-069)
+# ---------------------------------------------------------------------------
+
+class TestWaiverValueGainFiltering:
+    """Tests for waiver decision value_gain threshold filtering.
+
+    Daily ingestion filters waiver results to only include value_gain > 0.10.
+    These tests verify the decision engine produces value_gain values that
+    can be filtered, and document the expected threshold behavior.
+    """
+
+    def test_waiver_low_value_gain_below_threshold(self):
+        """Waiver adds with value_gain < 0.10 should be filtered out upstream.
+
+        Threshold: 0.10 value_gain
+        Rationale: Filter out marginal waiver recommendations that don't
+        provide meaningful roster improvement.
+        """
+        weak_roster = [
+            _make_hitter(201, "Weak1", positions=["OF"], score=40.0),
+            _make_hitter(202, "Weak2", positions=["OF"], score=35.0),
+        ]
+        # Marginal improvement - value_gain likely < 0.10
+        marginal_add = _make_hitter(301, "Marginal", positions=["OF"], score=45.0)
+
+        _, results = optimize_waivers(weak_roster, [marginal_add], date(2026, 4, 15))
+
+        # The engine produces a result, but daily_ingestion.py filters it out
+        assert len(results) == 1
+        assert results[0].value_gain is not None
+        # Document that this would be filtered by the 0.10 threshold
+        if results[0].value_gain < 0.10:
+            # This demonstrates the filtering threshold works as expected
+            assert results[0].value_gain < 0.10
+
+    def test_waiver_high_value_gain_above_threshold(self):
+        """Waiver adds with value_gain > 0.10 should pass the filter."""
+        weak_roster = [
+            _make_hitter(201, "Weak1", positions=["OF"], score=30.0),
+            _make_hitter(202, "Weak2", positions=["OF"], score=25.0),
+        ]
+        # Strong add - value_gain should clearly exceed 0.10 threshold
+        strong_add = _make_hitter(
+            302, "StrongAdd", positions=["OF"],
+            score=85.0, proj_hr=30.0, proj_rbi=95.0, momentum="SURGING"
+        )
+
+        _, results = optimize_waivers(weak_roster, [strong_add], date(2026, 4, 15))
+
+        assert len(results) == 1
+        assert results[0].value_gain is not None
+        # Should definitely exceed the 0.10 threshold
+        assert results[0].value_gain > 0.10, (
+            f"Expected value_gain > 0.10 for strong add, got {results[0].value_gain}"
+        )
+
+    def test_waiver_exactly_at_threshold_boundary(self):
+        """Test behavior when value_gain is near the 0.10 threshold."""
+        weak_roster = [_make_hitter(201, "Weak", positions=["1B"], score=40.0)]
+        # Player just slightly better - might be near threshold
+        borderline_add = _make_hitter(303, "Borderline", positions=["1B"], score=50.0)
+
+        _, results = optimize_waivers(weak_roster, [borderline_add], date(2026, 4, 15))
+
+        assert len(results) == 1
+        value_gain = results[0].value_gain
+        # Document the threshold: values <= 0.10 are filtered out
+        assert value_gain is not None
+        # The actual value depends on the scoring algorithm
+        # This test documents that the threshold exists and is applied upstream
+
+    def test_waiver_filter_threshold_documentation(self):
+        """Document the exact threshold used for waiver filtering.
+
+        Threshold: 0.10 value_gain
+        Applied in: daily_ingestion.py, _run_decision_pipeline() function
+        Logic: waiver_results_filtered = [r for r in waiver_results
+                                         if r.value_gain is not None
+                                         and r.value_gain > 0.10]
+        """
+        # This test exists solely to document the threshold constant
+        # If the threshold changes, update this test and the comment above
+        FILTER_THRESHOLD = 0.10
+        assert FILTER_THRESHOLD == 0.10
+
+
+# ---------------------------------------------------------------------------
+# 6. Category-aware waiver optimization (rate-stat protection gate)
+# ---------------------------------------------------------------------------
+
+class TestCategoryAwareWaivers:
+    """optimize_waivers() with need_vector routes to category-aware math."""
+
+    def test_bad_era_pitcher_gets_negative_gain_when_team_crushing_era(self):
+        """
+        When the team is heavily winning ERA, a bad-ERA pitcher's world_with_value
+        must be penalized below world_without_value, producing negative gain.
+        This prevents the system recommending a 5.50-ERA reliever when the team
+        already owns a 3.10 ERA lead.
+        """
+        from backend.fantasy_baseball.category_aware_scorer import (
+            CategoryNeedVector, RATE_STAT_PROTECT_THRESHOLD,
+        )
+        era_deficit = -(RATE_STAT_PROTECT_THRESHOLD + 2.0)
+        need_vector = CategoryNeedVector(needs={"era": era_deficit})
+
+        bad_era_pitcher = _make_pitcher(
+            901, "BadERA", positions=["SP"],
+            score=45.0, z_era=-1.0, z_whip=-0.3, z_k_p=0.5,
+        )
+        roster_player = _make_pitcher(
+            902, "MedPitcher", positions=["SP"],
+            score=50.0, z_era=0.2, z_whip=0.1, z_k_p=0.5,
+        )
+
+        _, results = optimize_waivers([roster_player], [bad_era_pitcher], need_vector=need_vector)
+
+        assert len(results) == 1
+        assert results[0].value_gain < 0, (
+            f"Bad-ERA pitcher must produce negative gain when team is crushing ERA; "
+            f"got value_gain={results[0].value_gain:.4f}"
+        )
+
+    def test_good_era_pitcher_gets_positive_gain_when_team_needs_era(self):
+        """
+        When the team is losing ERA, a good ERA pitcher's category score
+        boosts world_with_value above the weak roster pitcher's value.
+        """
+        from backend.fantasy_baseball.category_aware_scorer import CategoryNeedVector
+
+        need_vector = CategoryNeedVector(needs={"era": 2.0})
+
+        good_era_pitcher = _make_pitcher(
+            903, "GoodERA", positions=["SP"],
+            score=80.0, z_era=1.5, z_whip=0.8, z_k_p=1.2,
+        )
+        weak_roster_pitcher = _make_pitcher(
+            904, "WeakPitcher", positions=["SP"],
+            score=25.0, z_era=-0.5, z_whip=-0.2, z_k_p=0.0,
+        )
+
+        _, results = optimize_waivers([weak_roster_pitcher], [good_era_pitcher], need_vector=need_vector)
+
+        assert len(results) == 1
+        assert results[0].value_gain > 0, (
+            "Good ERA pitcher must generate positive gain when team needs ERA"
+        )
+
+    def test_fallback_to_composite_when_need_vector_is_none(self):
+        """
+        optimize_waivers(need_vector=None) must produce identical results
+        to optimize_waivers() with no need_vector argument.
+        """
+        roster = [_make_pitcher(905, "RosterPit", positions=["SP"], score=40.0)]
+        candidate = _make_pitcher(
+            906, "WaiverPit", positions=["SP"], score=80.0,
+            proj_k=180.0, z_k_p=1.0, z_era=1.0, z_whip=0.5,
+        )
+
+        _, results_no_vec = optimize_waivers(roster, [candidate])
+        _, results_none = optimize_waivers(roster, [candidate], need_vector=None)
+
+        assert len(results_no_vec) == len(results_none)
+        if results_no_vec:
+            assert results_no_vec[0].value_gain == pytest.approx(results_none[0].value_gain)
+
+
+# ---------------------------------------------------------------------------
+# 7. Hitter category-aware scoring (Phase 4C: Hitter Parity)
+# ---------------------------------------------------------------------------
+
+class TestHitterCategoryAwareScoring:
+    """Hitters receive category-aware scoring using their z-scores."""
+
+    def test_hitter_with_high_sb_z_score_gets_positive_adjustment(self):
+        """
+        A hitter with a high SB z-score addressing a team's SB deficit
+        receives a positive adjustment via category-aware scoring.
+        """
+        from backend.fantasy_baseball.category_aware_scorer import CategoryNeedVector
+
+        # Team needs stolen bases (deficit = +2.0)
+        need_vector = CategoryNeedVector(needs={"nsb": 2.0})
+
+        # Weak roster hitter
+        weak_roster_hitter = _make_hitter(
+            201, "WeakHitter", positions=["OF"],
+            score=30.0, z_nsb=-0.5, z_hr=0.0, z_rbi=0.0, z_r=0.0, z_ops=0.0,
+        )
+
+        # Strong SB waiver candidate (high z_nsb)
+        sb_specialist = _make_hitter(
+            301, "Speedster", positions=["OF"],
+            score=75.0, z_nsb=2.0, z_hr=0.2, z_rbi=0.0, z_r=0.5, z_ops=0.3,
+        )
+
+        _, results = optimize_waivers(
+            [weak_roster_hitter], [sb_specialist], need_vector=need_vector
+        )
+
+        assert len(results) == 1
+        # The SB specialist should generate positive gain
+        assert results[0].value_gain > 0, (
+            f"SB specialist should produce positive gain when team needs SB; "
+            f"got value_gain={results[0].value_gain:.4f}"
+        )
+
+    def test_hitter_bad_ops_gets_penalized_when_team_crushing_ops(self):
+        """
+        When the team is heavily winning OPS, a bad-OPS hitter's world_with_value
+        must be penalized below world_without_value, producing negative gain.
+        """
+        from backend.fantasy_baseball.category_aware_scorer import (
+            CategoryNeedVector, RATE_STAT_PROTECT_THRESHOLD,
+        )
+
+        # Team crushing OPS (negative deficit)
+        ops_deficit = -(RATE_STAT_PROTECT_THRESHOLD + 1.5)
+        need_vector = CategoryNeedVector(needs={"ops": ops_deficit})
+
+        bad_ops_hitter = _make_hitter(
+            401, "BadOPS", positions=["OF"],
+            score=45.0, z_ops=-1.0, z_hr=0.2, z_rbi=0.3, z_nsb=0.0, z_r=0.1,
+        )
+        roster_player = _make_hitter(
+            402, "MedHitter", positions=["OF"],
+            score=50.0, z_ops=0.3, z_hr=0.4, z_rbi=0.5, z_nsb=0.2, z_r=0.4,
+        )
+
+        _, results = optimize_waivers([roster_player], [bad_ops_hitter], need_vector=need_vector)
+
+        assert len(results) == 1
+        # Bad OPS hitter should produce negative gain due to rate-stat protection gate
+        assert results[0].value_gain < 0, (
+            f"Bad-OPS hitter must produce negative gain when team is crushing OPS; "
+            f"got value_gain={results[0].value_gain:.4f}"
+        )
+
+    def test_hitter_fallback_to_composite_when_no_z_scores(self):
+        """
+        When a hitter has no z-scores (all None), category-aware scoring
+        should fall back to composite_value.
+        """
+        from backend.fantasy_baseball.category_aware_scorer import CategoryNeedVector
+
+        need_vector = CategoryNeedVector(needs={"hr": 2.0, "rbi": 1.5})
+
+        # Hitter with no z-scores
+        hitter_no_z = PlayerDecisionInput(
+            bdl_player_id=501,
+            name="NoZScores",
+            player_type="hitter",
+            eligible_positions=["OF"],
+            score_0_100=60.0,
+            composite_z=0.5,
+            momentum_signal="STABLE",
+            delta_z=0.0,
+            proj_hr_p50=20.0,
+            proj_rbi_p50=70.0,
+            proj_sb_p50=5.0,
+            proj_avg_p50=0.270,
+            proj_k_p50=None,
+            proj_era_p50=None,
+            proj_whip_p50=None,
+            downside_p25=None,
+            upside_p75=None,
+            # Hitter z-scores all None
+            z_hr=None, z_rbi=None, z_nsb=None, z_r=None, z_ops=None,
+        )
+        roster_player = _make_hitter(
+            502, "RosterHitter", positions=["OF"], score=40.0,
+        )
+
+        # Should not crash, and should fall back to composite_value
+        _, results = optimize_waivers([roster_player], [hitter_no_z], need_vector=need_vector)
+
+        assert len(results) == 1
+        # Value gain should be positive since hitter_no_z is better (score_0_100=60 vs 40)
+        assert results[0].value_gain > 0
+

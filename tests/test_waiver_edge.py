@@ -1,7 +1,35 @@
 """Tests for WaiverEdgeDetector."""
 import pytest
 from unittest.mock import MagicMock, patch
-from backend.services.waiver_edge_detector import WaiverEdgeDetector
+from backend.services.waiver_edge_detector import (
+    WaiverEdgeDetector,
+    drop_candidate_value,
+    is_protected_drop_candidate,
+    long_term_hold_floor,
+)
+
+
+def test_long_term_hold_floor_uses_role_certainty_not_acquisition():
+    """Regression: long_term_hold_floor must read risk_profile.role_certainty.
+
+    A prior bug accessed `.acquisition` on the RiskProfile dataclass, which
+    only exposes role_certainty/health_history. Production emitted
+    `'RiskProfile' object has no attribute 'acquisition'` on
+    /api/fantasy/waiver/recommendations. Fixed in commit 9147f83.
+    """
+    eury = {
+        "name": "Eury Perez",
+        "positions": ["SP"],
+        "z_score": 0.8,
+        "tier": 4,
+        "adp": 118.0,
+        "percent_owned": 74.0,
+    }
+
+    floor = long_term_hold_floor(eury)
+
+    assert isinstance(floor, float)
+    assert floor >= 2.25
 
 
 def _make_player(name, positions, cat_scores, is_undroppable=False):
@@ -65,14 +93,17 @@ class TestWaiverEdgeDetector:
         fa_2b = _make_player("Westburg", ["2B"], {"hr": 1.5}, )
 
         det = WaiverEdgeDetector(mcmc_simulator=None)
-        with patch.object(det, "_fetch_fas", return_value=[fa_2b]):
+        # Mock scarcity lookup to empty so test uses _FALLBACK_RANK (2B=rank 3, multiplier 1.50)
+        with patch.object(det, "_fetch_fas", return_value=[fa_2b]), \
+             patch.object(WaiverEdgeDetector, "_load_scarcity_lookup", return_value={}):
             moves = det.get_top_moves(dead_roster, opp_roster, n_candidates=5)
         assert len(moves) == 1
-        # need_score should be boosted by 1.25x relative to un-boosted version
+        # need_score = base × scarcity_multiplier(2B=rank3=1.50) × dead-2B-boost(1.25)
         base_score = det._score_fa_against_deficits(
             fa_2b, det._compute_deficits(dead_roster, opp_roster)
         )
-        assert moves[0]["need_score"] == pytest.approx(base_score * 1.25)
+        scarcity_mult = 1.0 + (13 - 3) * 0.05  # 2B rank=3 -> 1.50
+        assert moves[0]["need_score"] == pytest.approx(base_score * scarcity_mult * 1.25)
 
     def test_empty_free_agents_returns_empty(self):
         det = WaiverEdgeDetector(mcmc_simulator=None)
@@ -90,3 +121,133 @@ class TestWaiverEdgeDetector:
             moves = det.get_top_moves(my_roster, opp_roster, n_candidates=5)
         assert len(moves) == 1
         assert moves[0]["mcmc_enabled"] is False
+
+    def test_get_top_moves_enriches_raw_yahoo_players(self):
+        raw_fa = {
+            "name": "Michael Wacha",
+            "player_key": "469.p.9329",
+            "positions": ["SP"],
+            "percent_owned": 44.2,
+        }
+        raw_my_roster = [{
+            "name": "Weak Starter",
+            "positions": ["SP"],
+            "selected_position": "SP",
+            "is_undroppable": False,
+        }]
+        raw_opp_roster = [{
+            "name": "Opponent Starter",
+            "positions": ["SP"],
+            "selected_position": "SP",
+            "is_undroppable": False,
+        }]
+
+        def _proj(player):
+            lookup = {
+                "Michael Wacha": {"name": "Michael Wacha", "positions": ["SP"], "team": "KC", "z_score": 1.7, "cat_scores": {"era": 1.2}},
+                "Weak Starter": {"name": "Weak Starter", "positions": ["SP"], "team": "NYY", "z_score": -0.8, "cat_scores": {"era": -0.2}},
+                "Opponent Starter": {"name": "Opponent Starter", "positions": ["SP"], "team": "BOS", "z_score": 0.9, "cat_scores": {"era": 1.0}},
+            }
+            return lookup[player["name"]]
+
+        det = WaiverEdgeDetector(mcmc_simulator=None)
+        with patch.object(det, "_fetch_fas", return_value=[raw_fa]):
+            with patch("backend.fantasy_baseball.player_board.get_or_create_projection", side_effect=_proj):
+                moves = det.get_top_moves(raw_my_roster, raw_opp_roster, n_candidates=5)
+
+        assert len(moves) == 1
+        assert moves[0]["need_score"] > 0
+        assert moves[0]["add_player"]["percent_owned"] == pytest.approx(44.2)
+        assert moves[0]["add_player"]["cat_scores"] == {"era": 1.2}
+
+    def test_get_top_moves_falls_back_to_z_score_without_deficits(self):
+        raw_fa = {
+            "name": "Fallback Bat",
+            "player_key": "469.p.9999",
+            "positions": ["OF"],
+            "percent_owned": 12.0,
+        }
+        raw_my_roster = [{
+            "name": "Roster Bat",
+            "positions": ["OF"],
+            "selected_position": "OF",
+            "is_undroppable": False,
+        }]
+
+        def _proj(player):
+            lookup = {
+                "Fallback Bat": {"name": "Fallback Bat", "positions": ["OF"], "team": "SEA", "z_score": 2.3, "cat_scores": {"hr": 1.1}},
+                "Roster Bat": {"name": "Roster Bat", "positions": ["OF"], "team": "SEA", "z_score": 0.2, "cat_scores": {}},
+            }
+            return lookup[player["name"]]
+
+        det = WaiverEdgeDetector(mcmc_simulator=None)
+        with patch.object(det, "_fetch_fas", return_value=[raw_fa]):
+            with patch("backend.fantasy_baseball.player_board.get_or_create_projection", side_effect=_proj):
+                moves = det.get_top_moves(raw_my_roster, [], n_candidates=5)
+
+        assert len(moves) == 1
+        assert moves[0]["need_score"] == pytest.approx(2.3)
+
+    def test_drop_candidate_value_respects_long_term_hold_floor(self):
+        juan_soto = {
+            "name": "Juan Soto",
+            "positions": ["OF"],
+            "z_score": 1.4,
+            "tier": 1,
+            "adp": 2.0,
+            "percent_owned": 99.0,
+        }
+
+        assert is_protected_drop_candidate(juan_soto) is True
+        score = drop_candidate_value(juan_soto)[0]  # Tuple: (primary_score, ...)
+        assert score >= 4.5
+
+    def test_locked_high_upside_pitcher_is_protected_from_drop(self):
+        det = WaiverEdgeDetector()
+        roster = [
+            {
+                "name": "Eury Pérez",
+                "positions": ["SP"],
+                "selected_position": "SP",
+                "status": "SP",
+                "z_score": 0.8,
+                "tier": 4,
+                "adp": 118.0,
+                "percent_owned": 74.0,
+            }
+        ]
+
+        assert is_protected_drop_candidate(roster[0]) is True
+        assert det._weakest_droppable_at(roster, ["SP"]) is None
+
+    def test_detector_prefers_streamer_drop_over_core_asset(self):
+        det = WaiverEdgeDetector()
+        roster = [
+            {
+                "name": "Eury Pérez",
+                "positions": ["SP"],
+                "selected_position": "SP",
+                "status": "SP",
+                "z_score": 0.8,
+                "tier": 4,
+                "adp": 118.0,
+                "percent_owned": 74.0,
+            },
+            {
+                "name": "Back-end Streamer",
+                "positions": ["SP"],
+                "selected_position": "SP",
+                "status": "SP",
+                "z_score": -0.9,
+                "tier": 10,
+                "adp": 9999.0,
+                "percent_owned": 18.0,
+            },
+        ]
+
+        result = det._weakest_droppable_at(roster, ["SP"])
+
+        assert result is not None
+        assert result["name"] == "Back-end Streamer"
+

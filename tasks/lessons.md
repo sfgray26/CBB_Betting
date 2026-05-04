@@ -68,8 +68,40 @@
 
 ## Fantasy Baseball
 
+### Exact Yahoo keys still need identity validation
+- **Lesson**: A matching `player_id_mapping.yahoo_key` is not sufficient to trust roster membership for lineup decisions. Stale or incorrect Yahoo-to-BDL rows can still point at the wrong BDL player. Validate the mapped player's normalized name against the live Yahoo roster name before admitting that BDL ID into lineup optimization.
+- **Context**: Decisions page showed non-roster players (for example, Shane Smith) because roster filtering trusted a bad `yahoo_key -> bdl_id` mapping row. The fix rejects mismatched names during `daily_ingestion` roster resolution.
+
+### Per-date decision snapshots must replace, not accumulate
+- **Lesson**: `decision_results` is effectively a daily snapshot, not an append-only event stream. Rerunning decision optimization for the same `as_of_date` must delete stale lineup/waiver rows before inserting fresh ones, otherwise impossible duplicate slots and removed players persist in the UI.
+- **Context**: The lineup page showed two `Util` rows and two `P` rows after reruns because rows were upserted by `(as_of_date, decision_type, bdl_player_id)` without clearing players that dropped out of the latest optimized lineup.
+
 ### Existing backend module
 - `backend/fantasy_baseball/` has a rich set of modules: `player_board.py`, `draft_engine.py`, `projections_loader.py`, `daily_lineup_optimizer.py`, `keeper_engine.py`, `yahoo_client.py`, `qwen_advisor.py`.
 - Yahoo API credentials are already in `.env.example`.
 - `player_board.get_board()` returns a list of player dicts sorted by rank; each has `id`, `name`, `team`, `positions`, `type`, `tier`, `rank`, `adp`, `proj`, `z_score`, `cat_scores`.
 - When adding fantasy API routes, wire directly to these modules — do NOT reimplement ranking logic.
+
+### Waiver drop logic must blend short-term output with hold value
+- **Lesson**: Waiver recommendations cannot compare a free agent only against a roster player's current z-score or recent signal. Drop logic needs a long-term hold floor from projection metadata such as tier, ADP, ownership, and locked-upside risk profiles, or it will recommend shallow recency-biased cuts.
+- **Context**: April 20 fantasy UAT surfaced risky suggestions like dropping Eury Perez for a short-term streamer and concern about elite players like Juan Soto being treated as disposable after a short slump.
+
+### Roster optimize identity should key off yahoo_key first
+- **Lesson**: `/api/fantasy/roster/optimize` cannot rely on the numeric Yahoo tail alone when resolving roster players to `PlayerIDMapping`. The stable linkage is `yahoo_key` first, with name-validated fallback paths; otherwise valid roster players miss `player_scores` and collapse to neutral fallback scoring.
+- **Context**: April 20 optimizer triage showed live responses where every player returned `lineup_score: 50.0` because full roster keys were not matching the canonical identity table reliably.
+
+### Gemini swimlane violations must be treated as unreviewed patches
+- **Lesson**: If Gemini reports Python code edits, do not treat them as ready-to-deploy fixes. Gemini is restricted from runtime code changes in this repo; any such edits need architect review plus targeted tests before they can enter a deployment bundle.
+- **Context**: April 20 post-deploy triage included Gemini edits to `row_projector.py`, `category_math.py`, and `scoreboard_orchestrator.py`. The patch compiled but immediately failed `tests/test_scoreboard_orchestrator.py` with `ValueError: Denominator must be positive for OPS, got 0.0`.
+
+### ROW projection helpers must preserve default games_remaining behavior
+- **Lesson**: Do not coerce an omitted `games_remaining` input to `{}` before calling `compute_row_projection()`. The projector treats missing games as zero, so converting `None` to an empty dict silently zeroes every player projection and collapses ratio denominators like `OPS` to 0.
+- **Context**: April 20 scoreboard triage showed `GET /api/fantasy/scoreboard` failing with `ValueError: Denominator must be positive for OPS, got 0.0` because `_project_row_from_player_scores()` replaced the projector's default one-game fallback with an empty dict.
+
+### Read endpoints need schema-tolerant fallbacks for evolving analytics tables
+- **Lesson**: Endpoints that expose derived analytics tables should not hard-crash when production lags the newest ORM model by a nullable column or two. For read-only paths like `player_scores`, add a schema-inspected fallback query so old tables degrade to 200/404 instead of 500.
+- **Context**: April 20 UAT showed `GET /api/fantasy/players/1/scores` returning `ProgrammingError` in production even though the logical outcome should have been 200 or 404.
+
+### Daily lineup APIs need a schedule fallback and contract shims
+- **Lesson**: Fantasy lineup endpoints cannot treat missing live odds as "no games today" when persisted probable-pitcher snapshots already provide enough schedule context to keep `has_game`, opponent, and park data alive. When admin/Postman contracts are already in use, preserve compatibility aliases and fields (`/admin/audit-tables`, `connected`, degraded status payloads) instead of forcing clients to rediscover renamed shapes.
+- **Context**: April 21 production-regression triage showed lineup payloads collapsing to `implied_runs=4.5`, `park_factor=1.0`, `position="?"`, `has_game=false` for every batter, while admin checks failed because legacy route/field names had drifted.

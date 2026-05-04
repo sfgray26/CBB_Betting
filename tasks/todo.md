@@ -4,6 +4,66 @@
 > Canonical source: `HANDOFF.md`
 > This file is the execution board for the current phase. If this tracker and HANDOFF disagree, HANDOFF wins.
 
+## Current Session Override — 2026-04-20 Fantasy Endpoint Repair
+
+Status: COMPLETE locally.
+
+Plan:
+- [x] Repair `/api/fantasy/roster/optimize` identity resolution so roster players map to `PlayerIDMapping` by canonical `yahoo_key` before looser fallbacks.
+- [x] Replace flat `50.0` optimize fallbacks with projection-driven fallback scores when `player_scores` rows are missing or stale.
+- [x] Fix the reviewed scoreboard crash path by preserving default games-remaining behavior and supplying safe ratio components when row projections are sparse.
+- [x] Fix `/api/fantasy/roster` import drift in `player_mapper` and restore full-key Yahoo roster lookups.
+- [x] Harden `/api/fantasy/players/{id}/scores` against legacy `player_scores` table shapes.
+- [x] Harden `/api/fantasy/decisions/status` SQL row/date handling.
+- [x] Validate with `py_compile` and targeted `pytest`.
+
+Review:
+- Root cause for the scoreboard 500 was not the raw ratio math itself; `_project_row_from_player_scores()` was coercing omitted `games_remaining` into `{}`, which caused every player to project `0` games and collapsed ratio denominators to zero.
+- Root cause for the roster 500 was stale mapper code importing `PlayerIdMap` instead of the live `PlayerIDMapping` model.
+- Root cause for the player-scores 500 was schema brittleness: ORM reads exploded when `player_scores` in production did not exactly match the newest model shape.
+- Targeted validation now passes: `76 passed, 0 failed` across scoreboard, player-mapper, decisions, and player-scores slices.
+
+---
+
+## Current Session Override — 2026-04-21 Postman P0/P1 Regression Fixes
+
+Status: COMPLETE locally. Deploy pending.
+
+Plan:
+- [x] Map the broken routes exposed by the 2026-04-20 Postman captures and confirm which were already fixed in prior commits (9147f83 landed the RiskProfile.acquisition fix before this session started).
+- [x] Hoist `player_mapper` imports to module top in `backend/routers/fantasy.py` so the ImportError surfaces at deploy time instead of per-request.
+- [x] Fix briefing semantic breakage: prefer `opposing_pitcher.team` over hard-coded `"TBD"`; route no-game players to MONITOR instead of START; reword smart-selector warning so it does not contradict the routing.
+- [x] Add MCMC negative-win-prob-gain guard in waiver recommendations.
+- [x] Drop untranslated numeric Yahoo stat_ids from waiver output (root cause of the `"38": "0"` leak) while preserving stat_contract v2 canonicals.
+- [x] Add regression tests (tests/test_waiver_edge.py, tests/test_daily_briefing_no_game_contract.py, tests/test_waiver_recommendations_gates.py).
+- [x] Run py_compile + targeted pytest + full suite to confirm no regressions.
+- [x] Update HANDOFF.md with a cold-start Gemini deploy/validation prompt.
+
+Review:
+- Key finding: several of the defects listed in the raw Postman capture were **already fixed** in local commits (9147f83) that had not yet deployed; the captures were pre-deploy snapshots. Git archaeology avoided re-implementing fixes that already existed.
+- The P1-7 "stat contract leakage" turned out to be mostly a naming misreading: `K_P`, `K_B`, `K_9`, `NSV`, `QS`, `OBP`, `ERA`, `WHIP`, `IP` are **valid stat_contract v2 canonical codes**, not leakage. The genuine leak was the bare numeric stat_id `"38"` (a non-scoring Yahoo stat not in `YAHOO_ID_INDEX`) surviving `sid_map.get(k, k)` untranslated. Fix is surgical: drop keys that are still all-digits after translation.
+- Full suite: **2285 passed, 1 failed, 3 skipped**. The single failure (`test_composite_z_excludes_z_sb_when_both_populated`) is **pre-existing** — reproduces on clean HEAD. Queued for a separate NSB composite fix cycle.
+- No Python edits to the smart-selector method stubs needed because the briefing-side routing change carries the correct behavior; the smart-selector change is purely the warning-string rewording.
+
+---
+
+## Current Session Override — 2026-04-21 Lineup/Admin Regression Repair
+
+Status: COMPLETE locally.
+
+Plan:
+- [x] Trace why lineup payloads collapsed to neutral defaults (`4.5`, `1.0`, `?`, all-bench).
+- [x] Restore schedule context when live odds are unavailable by falling back to persisted probable-pitcher snapshots.
+- [x] Preserve smart-selector position eligibility in lineup API payloads.
+- [x] Restore admin compatibility fields / aliases for Yahoo test, odds monitor status, and audit tables.
+- [x] Add focused regression tests and validate with `py_compile` + targeted `pytest`.
+
+Review:
+- Root cause for the lineup blindness was not just the route layer; the lineup optimizer returned `[]` whenever Odds API coverage was absent, even though persisted probable-pitcher snapshots already carried enough schedule context to keep `has_game`, opponent, and park context alive.
+- Root cause for `position="?"` was the smart-selector response shape: assignments carried slot/name/team/score but dropped eligible positions before the API serializer built `LineupPlayerOut`.
+- Root cause for the admin failures was mixed contract drift: `/admin/yahoo/test` no longer emitted `connected`, `/admin/audit-tables` no longer existed as a legacy alias, and `/admin/odds-monitor/status` could 500 when Odds API configuration was missing.
+- Targeted validation now passes: `12 passed, 0 failed` across `tests/test_lineup_optimizer.py` and `tests/test_admin_version.py`.
+
 ---
 
 ## Operating Rule

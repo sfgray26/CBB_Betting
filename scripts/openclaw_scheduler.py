@@ -149,22 +149,11 @@ def main():
         print("Error: Can only run one task at a time")
         return 1
     
-    # Log startup
-    logger.info(f"OpenClaw Scheduler starting at {datetime.now(timezone.utc).isoformat()}")
-    logger.info(f"Task: morning-brief={args.morning_brief}, telemetry={args.telemetry_check}, live={args.live_monitor}")
-    
-    # Run appropriate task
-    if args.morning_brief:
-        exit_code = asyncio.run(run_morning_brief())
-    elif args.telemetry_check:
-        exit_code = asyncio.run(run_telemetry_check(force_summary=args.force_summary))
-    elif args.live_monitor:
-        exit_code = asyncio.run(run_live_monitor())
-    else:
-        exit_code = 1
-    
-    logger.info(f"Scheduler exiting with code {exit_code}")
-    return exit_code
+    # PAUSED (2026-04-21): OpenClaw is on hold until the baseball module is
+    # fully implemented. All scheduled tasks are disabled.
+    print("OpenClaw Scheduler is paused. Re-enable when baseball module is complete.")
+    logger.info("OpenClaw Scheduler paused — baseball module not yet complete")
+    return 0
 
 
 if __name__ == "__main__":

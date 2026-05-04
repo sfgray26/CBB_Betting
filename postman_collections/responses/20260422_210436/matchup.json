@@ -1,0 +1,53 @@
+﻿{
+    "week":  5,
+    "my_team":  {
+                    "team_key":  "469.l.72586.t.7",
+                    "team_name":  "Lindor Truffles",
+                    "stats":  {
+                                  "R":  12,
+                                  "H":  12,
+                                  "HR_B":  4,
+                                  "RBI":  9,
+                                  "K_B":  15,
+                                  "TB":  27,
+                                  "AVG":  ".194",
+                                  "OPS":  ".773",
+                                  "NSB":  1,
+                                  "W":  1,
+                                  "L":  1,
+                                  "HR_P":  0,
+                                  "K_P":  4,
+                                  "ERA":  "6.14",
+                                  "WHIP":  "1.91",
+                                  "K_9":  "4.91",
+                                  "QS":  0,
+                                  "NSV":  2
+                              }
+                },
+    "opponent":  {
+                     "team_key":  "469.l.72586.t.2",
+                     "team_name":  "Bartolo\u0027s Colon",
+                     "stats":  {
+                                   "R":  17,
+                                   "H":  25,
+                                   "HR_B":  5,
+                                   "RBI":  11,
+                                   "K_B":  16,
+                                   "TB":  43,
+                                   "AVG":  ".278",
+                                   "OPS":  ".883",
+                                   "NSB":  0,
+                                   "W":  2,
+                                   "L":  0,
+                                   "HR_P":  3,
+                                   "K_P":  22,
+                                   "ERA":  "3.04",
+                                   "WHIP":  "1.35",
+                                   "K_9":  "8.37",
+                                   "QS":  1,
+                                   "NSV":  2
+                               }
+                 },
+    "is_playoffs":  false,
+    "message":  null
+}

@@ -1,0 +1,1272 @@
+{
+  "info": {
+    "name": "CBB Edge - MLB Platform UAT Collection",
+    "description": "Comprehensive API testing collection for manual UAT of the MLB Fantasy + Betting platform. Organized by functional area with pre-configured authentication and test data.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0",
+    "_postman_id": "cbb-edge-uat-v1"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://fantasy-app-production-5079.up.railway.app",
+      "type": "string",
+      "description": "Production Railway URL - update with your actual deployment"
+    },
+    {
+      "key": "apiKey",
+      "value": "{{API_KEY_USER1}}",
+      "type": "secret",
+      "description": "API authentication key from .env"
+    },
+    {
+      "key": "leagueId",
+      "value": "72586",
+      "type": "string",
+      "description": "Yahoo Fantasy League ID"
+    },
+    {
+      "key": "teamKey",
+      "value": "{{teamKey}}",
+      "type": "string",
+      "description": "Yahoo team key (e.g., 469.l.72586.t.1)"
+    },
+    {
+      "key": "todayDate",
+      "value": "{{$timestamp}}",
+      "type": "string",
+      "description": "Today's date for dynamic queries"
+    }
+  ],
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "value",
+        "value": "{{apiKey}}",
+        "type": "string"
+      },
+      {
+        "key": "key",
+        "value": "X-API-Key",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Auto-set today's date in ET timezone",
+          "const today = new Date();",
+          "const etOffset = today.getTimezoneOffset() * 60000;",
+          "const etDate = new Date(today.getTime() - etOffset);",
+          "pm.variables.set('todayDate', etDate.toISOString().split('T')[0]);",
+          "",
+          "// Log environment info",
+          "console.log('Testing against:', pm.variables.get('baseUrl'));",
+          "console.log('Date (ET):', pm.variables.get('todayDate'));"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "0_Health_Check",
+      "item": [
+        {
+          "name": "Root Endpoint",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/"
+            },
+            "description": "Root endpoint - should return API name and version"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Returns API info', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('name');",
+                  "    pm.expect(json).to.have.property('version');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health"
+            },
+            "description": "Health check endpoint - verifies API is running"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Returns healthy status', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('status', 'healthy');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1_Fantasy_Baseball",
+      "item": [
+        {
+          "name": "Draft Board",
+          "item": [
+            {
+              "name": "Get Full Draft Board",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/draft-board?limit=200",
+                  "query": [
+                    {
+                      "key": "position",
+                      "value": "OF",
+                      "disabled": true
+                    },
+                    {
+                      "key": "player_type",
+                      "value": "batter",
+                      "disabled": true
+                    },
+                    {
+                      "key": "tier_max",
+                      "value": "3",
+                      "disabled": true
+                    },
+                    {
+                      "key": "limit",
+                      "value": "200"
+                    }
+                  ]
+                },
+                "description": "Get ranked fantasy draft board with Steamer/ZiPS projections"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "pm.test('Returns players array', () => {",
+                      "    const json = pm.response.json();",
+                      "    pm.expect(json).to.have.property('players');",
+                      "    pm.expect(json.players).to.be.an('array');",
+                      "});",
+                      "pm.test('Player has required fields', () => {",
+                      "    const json = pm.response.json();",
+                      "    if (json.players.length > 0) {",
+                      "        const player = json.players[0];",
+                      "        pm.expect(player).to.have.property('player_id');",
+                      "        pm.expect(player).to.have.property('name');",
+                      "        pm.expect(player).to.have.property('position');",
+                      "        pm.expect(player).to.have.property('tier');",
+                      "    }",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Player Detail",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/player/{{playerId}}",
+                  "variable": [
+                    {
+                      "key": "playerId",
+                      "value": "1",
+                      "description": "Yahoo Player ID or BDL ID"
+                    }
+                  ]
+                },
+                "description": "Get detailed info for a single player including projections"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Roster Management",
+          "item": [
+            {
+              "name": "Get My Roster",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/roster"
+                },
+                "description": "Get current roster with player counts by slot, eligibility, and metadata"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "pm.test('Returns roster structure', () => {",
+                      "    const json = pm.response.json();",
+                      "    pm.expect(json).to.have.property('slots');",
+                      "    pm.expect(json).to.have.property('players');",
+                      "    pm.expect(json).to.have.property('metadata');",
+                      "});",
+                      "// Save first player ID for later tests",
+                      "try {",
+                      "    const json = pm.response.json();",
+                      "    if (json.players && json.players.length > 0) {",
+                      "        pm.variables.set('testPlayerId', json.players[0].player_id);",
+                      "        console.log('Saved testPlayerId:', json.players[0].player_id);",
+                      "    }",
+                      "} catch(e) { console.log('Could not save player ID'); }"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Roster Move (Add/Drop)",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"moves\": [\n    {\n      \"type\": \"add\",\n      \"player_id\": \"{{testPlayerId}}\",\n      \"target_slot\": \"BN\"\n    }\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/roster/move"
+                },
+                "description": "Execute roster moves (add/drop/swap). Validation only - use Yahoo app to confirm."
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200 or 422 (validation)', () => {",
+                      "    pm.expect(pm.response.code).to.be.oneOf([200, 422]);",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Optimize Roster",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"date\": \"{{todayDate}}\",\n  \"force_stale\": false\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/roster/optimize"
+                },
+                "description": "Get optimal roster recommendation for a given date"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200 or 503 (stale projections)', () => {",
+                      "    pm.expect(pm.response.code).to.be.oneOf([200, 503]);",
+                      "});",
+                      "pm.test('Returns optimization result', () => {",
+                      "    const json = pm.response.json();",
+                      "    pm.expect(json).to.have.property('recommended_moves');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Lineup Management",
+          "item": [
+            {
+              "name": "Get Daily Lineup",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/lineup/{{todayDate}}"
+                },
+                "description": "Get lineup for a specific date with starters, bench, and recommendations"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "pm.test('Returns lineup structure', () => {",
+                      "    const json = pm.response.json();",
+                      "    pm.expect(json).to.have.property('date');",
+                      "    pm.expect(json).to.have.property('slots');",
+                      "    pm.expect(json).to.have.property('metadata');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Saved Lineup",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/saved-lineup/{{todayDate}}"
+                },
+                "description": "Get the saved lineup for a date"
+              },
+              "response": []
+            },
+            {
+              "name": "Save Lineup",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"date\": \"{{todayDate}}\",\n  \"lineup\": [\n    {\"slot\": \"C\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"1B\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"2B\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"3B\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"SS\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"OF\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"OF\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"Util\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"P\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"P\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"P\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"P\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"P\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"P\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"BN\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"BN\", \"player_id\": \"test_player_id\"},\n    {\"slot\": \"BN\", \"player_id\": \"test_player_id\"}\n  ],\n  \"force_stale\": false\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/lineup"
+                },
+                "description": "Save a lineup configuration for a date"
+              },
+              "response": []
+            },
+            {
+              "name": "Apply Lineup to Yahoo",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"date\": \"{{todayDate}}\",\n  \"confirm\": false\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/lineup/apply"
+                },
+                "description": "Apply saved lineup to actual Yahoo roster (dry-run with confirm=false)"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Waiver Wire",
+          "item": [
+            {
+              "name": "Get Waiver Wire",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/waiver?position=ALL&player_type=ALL",
+                  "query": [
+                    {
+                      "key": "position",
+                      "value": "ALL",
+                      "description": "Filter by position"
+                    },
+                    {
+                      "key": "player_type",
+                      "value": "ALL",
+                      "description": "batter, pitcher, or ALL"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "50",
+                      "description": "Max results",
+                      "disabled": true
+                    }
+                  ]
+                },
+                "description": "Get waiver wire recommendations with marginal value"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "pm.test('Returns waiver targets', () => {",
+                      "    const json = pm.response.json();",
+                      "    pm.expect(json).to.have.property('players');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Waiver Recommendations",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/waiver/recommendations"
+                },
+                "description": "Get AI-powered waiver recommendations with rationale"
+              },
+              "response": []
+            },
+            {
+              "name": "Simulate Waiver Add",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"player_id_to_add\": \"{{testPlayerId}}\",\n  \"player_id_to_drop\": null,\n  \"faab_bid\": 0\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/waiver/add"
+                },
+                "description": "Preview impact of a waiver add (no actual transaction)"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Matchup",
+          "item": [
+            {
+              "name": "Get Current Matchup",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/matchup",
+                  "query": [
+                    {
+                      "key": "week",
+                      "value": "",
+                      "disabled": true
+                    }
+                  ]
+                },
+                "description": "Get current H2H matchup with scoreboard, projections, and win probability"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "pm.test('Returns matchup structure', () => {",
+                      "    const json = pm.response.json();",
+                      "    pm.expect(json).to.have.property('my_team');",
+                      "    pm.expect(json).to.have.property('opponent_team');",
+                      "    pm.expect(json).to.have.property('categories');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Simulate Matchup",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"simulations\": 1000,\n  \"scoring_period\": 1\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/matchup/simulate"
+                },
+                "description": "Run Monte Carlo simulation of matchup outcome"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Player Scores",
+          "item": [
+            {
+              "name": "Get Player Scores",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/players/{{testPlayerId}}/scores",
+                  "query": [
+                    {
+                      "key": "period",
+                      "value": "season",
+                      "description": "season, week_7, week_14, etc."
+                    }
+                  ]
+                },
+                "description": "Get detailed player scores with category breakdowns"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Decisions",
+          "item": [
+            {
+              "name": "Get Decisions",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/decisions",
+                  "query": [
+                    {
+                      "key": "limit",
+                      "value": "20"
+                    }
+                  ]
+                },
+                "description": "Get lineup/waiver decisions with explanations"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "pm.test('Returns decisions array', () => {",
+                      "    const json = pm.response.json();",
+                      "    pm.expect(json).to.have.property('decisions');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Decision Pipeline Status",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/decisions/status"
+                },
+                "description": "Get status of decision pipeline and freshness"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Daily Briefing",
+          "item": [
+            {
+              "name": "Get Daily Briefing",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/briefing/{{todayDate}}"
+                },
+                "description": "Get daily briefing with probable pitchers, injuries, weather, and recommendations"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "pm.test('Returns briefing structure', () => {",
+                      "    const json = pm.response.json();",
+                      "    pm.expect(json).to.have.property('date');",
+                      "    pm.expect(json).to.have.property('probable_pitchers');",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Yahoo Diagnostics",
+          "item": [
+            {
+              "name": "Yahoo API Diagnostics",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/yahoo-diag"
+                },
+                "description": "Get Yahoo API connection status and last sync times"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Player Valuations",
+          "item": [
+            {
+              "name": "Get Player Valuations",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/players/valuations"
+                },
+                "description": "Get rest-of-season player valuations"
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2_Scoreboard",
+      "item": [
+        {
+          "name": "Get Scoreboard",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/scoreboard"
+            },
+            "description": "Get comprehensive matchup scoreboard with categories, scores, and projections"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Returns scoreboard structure', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('my_team');",
+                  "    pm.expect(json).to.have.property('opponent');",
+                  "    pm.expect(json).to.have.property('categories');",
+                  "    pm.expect(json).to.have.property('metadata');",
+                  "});",
+                  "pm.test('Category structure is valid', () => {",
+                  "    const json = pm.response.json();",
+                  "    if (json.categories && json.categories.length > 0) {",
+                  "        const cat = json.categories[0];",
+                  "        pm.expect(cat).to.have.property('code');",
+                  "        pm.expect(cat).to.have.property('my_score');",
+                  "        pm.expect(cat).to.have.property('opponent_score');",
+                  "        pm.expect(cat).to.have.property('winner');",
+                  "        pm.expect(cat).to.have.property('projection');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3_Budget",
+      "item": [
+        {
+          "name": "Get Budget Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/budget"
+            },
+            "description": "Get FAAB budget and acquisition count for current week"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Returns budget structure', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('remaining_budget');",
+                  "    pm.expect(json).to.have.property('acquisitions_this_week');",
+                  "    pm.expect(json).to.have.property('max_acquisitions');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4_Dashboard",
+      "item": [
+        {
+          "name": "Get Dashboard Data",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard"
+            },
+            "description": "Get season-level dashboard with standings, streaks, and summaries"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Streaks",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/streaks"
+            },
+            "description": "Get hot/cold streaks for your roster"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Waiver Targets",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/dashboard/waiver-targets"
+            },
+            "description": "Get top waiver targets from past week"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "5_User_Preferences",
+      "item": [
+        {
+          "name": "Get Preferences",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/user/preferences"
+            },
+            "description": "Get user preferences and settings"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Preferences",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"key\": \"test_pref\",\n  \"value\": \"test_value\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/user/preferences"
+            },
+            "description": "Update a user preference"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "6_Admin_Endpoints",
+      "item": [
+        {
+          "name": "System Status",
+          "item": [
+            {
+              "name": "Ingestion Status",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/ingestion/status"
+                },
+                "description": "Get status of all ingestion jobs and data freshness"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "pm.test('Returns ingestion status', () => {",
+                      "    const json = pm.response.json();",
+                      "    pm.expect(json).to.be.an('object');",
+                      "});",
+                      "// Log freshness violations for UAT notes",
+                      "try {",
+                      "    const json = pm.response.json();",
+                      "    if (json.projection_freshness && json.projection_freshness.violations) {",
+                      "        console.log('Freshness violations:', json.projection_freshness.violations);",
+                      "    }",
+                      "} catch(e) {}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Scheduler Status",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/scheduler/status"
+                },
+                "description": "Get APScheduler job status"
+              },
+              "response": []
+            },
+            {
+              "name": "Portfolio Status",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/portfolio/status"
+                },
+                "description": "Get betting portfolio status (if CBB model active)"
+              },
+              "response": []
+            },
+            {
+              "name": "Odds Monitor Status",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/odds-monitor/status"
+                },
+                "description": "Get odds monitor status and line movements"
+              },
+              "response": []
+            },
+            {
+              "name": "Ratings Status",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/ratings/status"
+                },
+                "description": "Get ratings service status (KenPom/BartTorvik/EvanMiya)"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Yahoo Admin",
+          "item": [
+            {
+              "name": "Yahoo Connection Test",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/yahoo/test"
+                },
+                "description": "Test Yahoo API connection and token validity"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "pm.test('Returns connection status', () => {",
+                      "    const json = pm.response.json();",
+                      "    pm.expect(json).to.have.property('connected');",
+                      "    if (json.connected) {",
+                      "        console.log('Yahoo API: CONNECTED');",
+                      "    } else {",
+                      "        console.log('Yahoo API: FAILED - ' + (json.error || 'Unknown error'));",
+                      "    }",
+                      "});"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Get Roster Raw",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/yahoo/roster-raw"
+                },
+                "description": "Get raw Yahoo roster response for debugging"
+              },
+              "response": []
+            },
+            {
+              "name": "Get Roster Parsed",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/yahoo/roster"
+                },
+                "description": "Get parsed Yahoo roster with player mappings"
+              },
+              "response": []
+            },
+            {
+              "name": "Reload Draft Board",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/fantasy/reload-board"
+                },
+                "description": "Force reload draft board from projections"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Database Admin",
+          "item": [
+            {
+              "name": "Audit Tables",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/audit-tables"
+                },
+                "description": "Get row counts and freshness for all tables"
+              },
+              "response": [],
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Status code is 200', () => {",
+                      "    pm.response.to.have.status(200);",
+                      "});",
+                      "pm.test('Returns table audit', () => {",
+                      "    const json = pm.response.json();",
+                      "    pm.expect(json).to.have.property('tables');",
+                      "});",
+                      "// Log empty or concerning tables for UAT notes",
+                      "try {",
+                      "    const json = pm.response.json();",
+                      "    if (json.tables) {",
+                      "        const emptyTables = json.tables.filter(t => t.row_count === 0);",
+                      "        if (emptyTables.length > 0) {",
+                      "            console.log('EMPTY TABLES:', emptyTables.map(t => t.name).join(', '));",
+                      "        }",
+                      "    }",
+                      "} catch(e) {}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Check Databases",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/check-databases"
+                },
+                "description": "Verify database connectivity and integrity"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Backfill Operations",
+          "item": [
+            {
+              "name": "Backfill Player ID Mapping",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/backfill/player-id-mapping"
+                },
+                "description": "Backfill player ID mappings from BDL/Yahoo"
+              },
+              "response": []
+            },
+            {
+              "name": "Backfill Positions",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/backfill/positions"
+                },
+                "description": "Backfill position eligibility data"
+              },
+              "response": []
+            },
+            {
+              "name": "Backfill Statcast",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/backfill/statcast"
+                },
+                "description": "Backfill Statcast data from pybaseball"
+              },
+              "response": []
+            },
+            {
+              "name": "Backfill All",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/backfill/all"
+                },
+                "description": "Run all backfill operations (WARNING: long-running)"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Job Queue",
+          "item": [
+            {
+              "name": "Get Job Status",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/fantasy/jobs/{{jobId}}",
+                  "variable": [
+                    {
+                      "key": "jobId",
+                      "value": "latest",
+                      "description": "Job ID or 'latest'"
+                    }
+                  ]
+                },
+                "description": "Get status of an async job"
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7_CBB_Edge_Legacy",
+      "item": [
+        {
+          "name": "Predictions",
+          "item": [
+            {
+              "name": "Today's Predictions",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/predictions/today"
+                },
+                "description": "Get CBB predictions for today (ARCHIVED - CBB season closed)"
+              },
+              "response": []
+            },
+            {
+              "name": "Today's Bets",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/predictions/bets"
+                },
+                "description": "Get today's recommended bets (ARCHIVED)"
+              },
+              "response": []
+            }
+          ]
+        },
+        {
+          "name": "Performance",
+          "item": [
+            {
+              "name": "Performance Summary",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/performance/summary"
+                },
+                "description": "Get CBB betting performance summary (ARCHIVED)"
+              },
+              "response": []
+            },
+            {
+              "name": "CLV Analysis",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/performance/clv-analysis"
+                },
+                "description": "Get closing line value analysis (ARCHIVED)"
+              },
+              "response": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -10,7 +10,8 @@ from __future__ import annotations
 from typing import List, Literal, Optional
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from backend.contracts import FreshnessMetadata
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +322,14 @@ class LineupPlayerOut(BaseModel):
             return "Active" if v else "Inactive"
         return v
 
+    # Consumer-facing alias for `status`. Frontend reads `lineup_status`; `status`
+    # kept alongside for backward compatibility with legacy consumers.
+    lineup_status: Optional[str] = None
+    # Positional eligibility from Yahoo roster metadata.
+    eligible_positions: Optional[List[str]] = None
+    # game_time is an alias of start_time; consumers on the roster contract read this key.
+    game_time: Optional[datetime] = None
+
     class Config:
         # Serialize datetime as ISO 8601 with Z suffix for proper timezone handling
         json_encoders = {datetime: lambda v: v.strftime("%Y-%m-%dT%H:%M:%SZ") if v else None}
@@ -354,6 +363,14 @@ class StartingPitcherOut(BaseModel):
                 return 1.0  # Neutral park
             return 0.0
         return v
+
+    # has_game mirrors the batter-side contract. Pitchers with no scheduled start
+    # still appear in the list (status="NO_START") but has_game=False.
+    has_game: bool = False
+    # is_two_start: True when pitcher has 2 probable starts this scoring week.
+    is_two_start: bool = False
+    # game_time alias matches the batter contract key.
+    game_time: Optional[datetime] = None
 
     class Config:
         # Serialize datetime as ISO 8601 with Z suffix for proper timezone handling
@@ -391,14 +408,16 @@ class WaiverPlayerOut(BaseModel):
     starts_this_week: int = 0
     statcast_signals: List[str] = []
     projected_saves: float = 0.0
-    projected_points: float = 0.0         # Safe default prevents frontend NaN
+    projected_points: Optional[float] = None  # None = no projection available (not zero)
     hot_cold: Optional[str] = None        # "HOT" | "COLD" | None
     status: Optional[str] = None          # Yahoo status: Active, DTD, IL, etc.
     injury_note: Optional[str] = None     # Yahoo injury note text
     injury_status: Optional[str] = None   # Explicit injury status pass-through
     stats: dict = {}                        # K-24: actual season stats from Yahoo (stat_id→value)
-    
-    @field_validator("need_score", "owned_pct", "projected_saves", "projected_points", mode="before")
+    statcast_stats: Optional[dict] = None   # PR-15: raw Statcast/FanGraphs metrics (xwOBA, barrel%, etc.)
+    quality_score: Optional[float] = None   # Pitcher matchup quality [-2.0 to +2.0]. None when not a pitcher FA candidate.
+
+    @field_validator("need_score", "owned_pct", "projected_saves", mode="before")
     @classmethod
     def default_floats(cls, v):
         """Ensure None becomes 0.0 to prevent NaN in frontend."""
@@ -448,6 +467,22 @@ class RosterMoveRecommendation(BaseModel):
     category_win_probs: dict = {}           # Per-category win probability after move
     mcmc_enabled: bool = False              # True if MCMC simulation ran successfully
 
+    quality_score: Optional[float] = None   # Pitcher matchup quality [-2.0 to +2.0]. None when not a pitcher FA candidate.
+
+    @field_validator("need_score", mode="before")
+    @classmethod
+    def _coerce_need_score(cls, v):
+        # Upstream scoring code has leaked (score, tiebreak) tuples into this
+        # scalar field, causing sorted() to raise "'>' not supported between
+        # instances of 'float' and 'tuple'". Take the first element for tuples;
+        # fall back to 0.0 for anything else non-numeric.
+        if isinstance(v, tuple):
+            return float(v[0]) if v else 0.0
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
 
 class WaiverRecommendationsResponse(BaseModel):
     """Response for GET /api/fantasy/waiver/recommendations."""
@@ -468,16 +503,24 @@ class MatchupSimulateRequest(BaseModel):
     n_sims: int = 1000
     week: Optional[str] = None  # ISO week label (informational only)
 
+    @field_validator("my_roster", "opponent_roster")
+    @classmethod
+    def validate_roster_not_empty(cls, v: List[dict]) -> List[dict]:
+        """Ensure both rosters contain at least one player."""
+        if len(v) == 0:
+            raise ValueError("Roster cannot be empty. Each roster must contain at least one player.")
+        return v
+
 
 # ---------------------------------------------------------------------------
 # EMAC-076: Yahoo Roster, Matchup, Lineup Apply
 # ---------------------------------------------------------------------------
 
 class RosterPlayerOut(BaseModel):
-    player_key: str
-    name: str
+    player_key: str = Field(alias="yahoo_player_key")
+    name: str = Field(alias="player_name")
     team: Optional[str] = None
-    positions: List[str] = []
+    positions: List[str] = Field(default=[], alias="eligible_positions")
     status: Optional[str] = None              # Yahoo status: Active, IL, DTD, etc.
     injury_note: Optional[str] = None
     injury_status: Optional[str] = None       # Explicit injury status pass-through
@@ -486,6 +529,12 @@ class RosterPlayerOut(BaseModel):
     is_proxy: bool = False
     cat_scores: dict = {}
     selected_position: Optional[str] = None  # Yahoo lineup slot: IL, BN, C, 1B, OF, etc.
+    season_stats: Optional[dict] = None      # PR-13: Season-to-date stats
+    rolling_14d: Optional[dict] = None       # PR-14: 14-day rolling stats
+    statcast_stats: Optional[dict] = None    # PR-15: Statcast/FanGraphs advanced metrics
+    statcast_signals: Optional[List[str]] = None  # PR-15: BUY_LOW, SELL_HIGH, BREAKOUT, etc.
+
+    model_config = ConfigDict(populate_by_name=True)  # Allow both original and alias names
     
     @field_validator("z_score", mode="before")
     @classmethod
@@ -516,6 +565,7 @@ class RosterResponse(BaseModel):
     team_key: str
     players: List[RosterPlayerOut]
     count: int
+    freshness: Optional[FreshnessMetadata] = None
 
 
 class MatchupTeamOut(BaseModel):
@@ -805,10 +855,12 @@ class PlayerScoresResponse(BaseModel):
 class DecisionResultOut(BaseModel):
     """P17 Decision Engine result -- lineup or waiver optimization output."""
     bdl_player_id: int
+    player_name: Optional[str] = None
     as_of_date: date
     decision_type: Literal["lineup", "waiver"]
     target_slot: Optional[str] = None
     drop_player_id: Optional[int] = None
+    drop_player_name: Optional[str] = None
     lineup_score: Optional[float] = None
     value_gain: Optional[float] = None
     confidence: float
@@ -845,5 +897,27 @@ class DecisionsResponse(BaseModel):
     count: int
     as_of_date: date
     decision_type: Optional[Literal["lineup", "waiver"]] = None
+
+
+class DecisionTypeBreakdown(BaseModel):
+    """Row counts by decision type."""
+    lineup: Optional[int] = None
+    waiver: Optional[int] = None
+
+
+class DecisionResultsStatus(BaseModel):
+    """Status of decision_results table."""
+    latest_as_of_date: Optional[str] = None
+    total_row_count: Optional[int] = None
+    breakdown_by_type: Optional[DecisionTypeBreakdown] = None
+
+
+class DecisionPipelineStatus(BaseModel):
+    """Decision pipeline freshness and coverage observability (P17-P19)."""
+    verdict: Literal["healthy", "stale", "partial", "missing"]
+    message: str
+    checked_at: str
+    decision_results: DecisionResultsStatus
+
 
 

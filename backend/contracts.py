@@ -12,8 +12,10 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from zoneinfo import ZoneInfo
+
+from backend.stat_contract import SCORING_CATEGORY_CODES, LOWER_IS_BETTER, BATTING_CODES
 
 
 def _now_et() -> datetime:
@@ -181,3 +183,281 @@ class ExecutionDecision(BaseModel):
 
     class Config:
         frozen = True
+
+
+# ---------------------------------------------------------------------------
+# UI Contracts — Pydantic models for frontend-bound data
+# These contracts define the authoritative shapes for all UI-bound data.
+# All category-keyed dicts use canonical codes from the loaded stat contract.
+# ---------------------------------------------------------------------------
+
+# P0-1: CategoryStatusTag
+class CategoryStatusTag(str, Enum):
+    """Classification of a scoring category's matchup status.
+
+    Threshold definitions (for L3/L4 classification logic):
+    - LOCKED_WIN:   Monte Carlo win probability > 90%
+    - LOCKED_LOSS:  Monte Carlo win probability < 10%
+    - LEANING_WIN:  65% < win probability <= 90%
+    - LEANING_LOSS: 10% <= win probability < 35%
+    - BUBBLE:       35% <= win probability <= 65%
+    """
+    LOCKED_WIN = "locked_win"
+    LOCKED_LOSS = "locked_loss"
+    LEANING_WIN = "leaning_win"
+    LEANING_LOSS = "leaning_loss"
+    BUBBLE = "bubble"
+
+
+# P0-2: IPPaceFlag + ConstraintBudget
+class IPPaceFlag(str, Enum):
+    """Weekly innings pitched pace relative to league minimum."""
+    BEHIND = "BEHIND"
+    ON_TRACK = "ON_TRACK"
+    AHEAD = "AHEAD"
+
+
+class ConstraintBudget(BaseModel):
+    """Current constraint state for the global header. Fields map to GH-6 through GH-14."""
+    acquisitions_used: int
+    acquisitions_remaining: int
+    acquisition_limit: int
+    acquisition_warning: bool
+    il_used: int
+    il_total: int
+    ip_accumulated: float
+    ip_minimum: float
+    ip_pace: IPPaceFlag
+    as_of: datetime
+
+    class Config:
+        frozen = True
+
+
+# P0-3: FreshnessMetadata
+class FreshnessMetadata(BaseModel):
+    """Per-response freshness annotation. Every API response must include this."""
+    primary_source: str
+    fetched_at: Optional[datetime]
+    computed_at: datetime
+    staleness_threshold_minutes: int
+    is_stale: bool
+
+    class Config:
+        frozen = True
+
+
+# P0-4: CategoryStats
+class CategoryStats(BaseModel):
+    """Stats for a single time window across all scoring categories."""
+    values: Dict[str, Optional[float]]
+
+    @field_validator("values")
+    @classmethod
+    def validate_category_keys(cls, v: Dict[str, Optional[float]]) -> Dict[str, Optional[float]]:
+        actual = set(v.keys())
+        missing = SCORING_CATEGORY_CODES - actual
+        if missing:
+            raise ValueError(f"Missing scoring categories: {missing}")
+        extra = actual - SCORING_CATEGORY_CODES
+        if extra:
+            raise ValueError(f"Unexpected category keys: {extra}")
+        return v
+
+    class Config:
+        frozen = True
+
+
+# P0-5: MatchupScoreboardRow + MatchupScoreboardResponse
+class MatchupScoreboardRow(BaseModel):
+    """One row per scoring category on the matchup scoreboard. Fields map to MS-1 through MS-12."""
+    category: str                        # MS-1: canonical code (e.g. "HR_B", not "HR")
+    category_label: str                  # MS-1: short_label from contract (e.g. "HR")
+    is_lower_better: bool                # From contract direction field
+    is_batting: bool                     # True if batting, False if pitching
+    my_current: float                    # MS-2
+    opp_current: float                   # MS-3
+    current_margin: float                # MS-4: signed (positive = winning, respects direction)
+    # --- Phase 2/3 fields: Optional until ROW projections + Monte Carlo are wired ---
+    my_projected_final: Optional[float] = None  # MS-5
+    opp_projected_final: Optional[float] = None # MS-6
+    projected_margin: Optional[float] = None    # MS-7
+    status: Optional[CategoryStatusTag] = None  # MS-8
+    flip_probability: Optional[float] = None    # MS-9
+    delta_to_flip: Optional[str] = None         # MS-10
+    games_remaining: Optional[int] = None       # MS-11
+    ip_context: Optional[str] = None            # MS-12
+
+    class Config:
+        frozen = True
+
+
+class MatchupScoreboardResponse(BaseModel):
+    """Full matchup scoreboard. Returned by GET /api/fantasy/scoreboard."""
+    week: int
+    opponent_name: str
+    categories_won: int                         # MS-13
+    categories_lost: int                        # MS-13
+    categories_tied: int                        # MS-13
+    projected_won: Optional[int] = None         # MS-14
+    projected_lost: Optional[int] = None        # MS-14
+    projected_tied: Optional[int] = None        # MS-14
+    overall_win_probability: Optional[float] = None  # MS-15
+    rows: List[MatchupScoreboardRow]            # 18 rows, one per scoring category
+    budget: ConstraintBudget
+    freshness: FreshnessMetadata
+
+    class Config:
+        frozen = True
+
+
+class BudgetResponse(BaseModel):
+    """Budget constraint state. Returned by GET /api/fantasy/budget."""
+    budget: ConstraintBudget
+    freshness: FreshnessMetadata
+
+    class Config:
+        frozen = True
+
+
+# P0-6: CanonicalPlayerRow + PlayerGameContext
+class PlayerGameContext(BaseModel):
+    """Today's game context for a player."""
+    opponent: str
+    home_away: str                               # "home" or "away"
+    game_time: Optional[datetime] = None
+    # Pitcher-specific
+    projected_k: Optional[float] = None          # PR-7
+    projected_era_impact: Optional[float] = None # PR-8
+    # Hitter-specific
+    opposing_sp_name: Optional[str] = None       # PR-11
+    opposing_sp_handedness: Optional[str] = None # PR-11: "L" or "R"
+    projected_impact: Optional[float] = None     # PR-12
+
+    class Config:
+        frozen = True
+
+
+class CanonicalPlayerRow(BaseModel):
+    """Universal player representation. Fields map to PR-1 through PR-22."""
+    # Identity
+    player_name: str                             # PR-1
+    team: str                                    # PR-2
+    eligible_positions: List[str]                # PR-3
+    # Status
+    status: str                                  # PR-4: playing|not_playing|probable|IL|minors
+    game_context: Optional[PlayerGameContext] = None  # PR-5 through PR-12
+    # Stats by window (keyed by canonical codes via CategoryStats validator)
+    season_stats: Optional[CategoryStats] = None    # PR-13
+    rolling_7d: Optional[CategoryStats] = None      # PR-14
+    rolling_14d: Optional[CategoryStats] = None     # 14-day rolling (ROW projection input)
+    rolling_15d: Optional[CategoryStats] = None     # PR-15
+    rolling_30d: Optional[CategoryStats] = None     # PR-16
+    ros_projection: Optional[CategoryStats] = None  # PR-17
+    row_projection: Optional[CategoryStats] = None  # PR-18 (Phase 2 deliverable)
+    # Metadata
+    ownership_pct: Optional[float] = None            # PR-19
+    injury_status: Optional[str] = None              # PR-20
+    injury_return_timeline: Optional[str] = None     # PR-21
+    freshness: FreshnessMetadata                     # PR-22
+    # Internal IDs (not displayed)
+    yahoo_player_key: Optional[str] = None
+    bdl_player_id: Optional[int] = None
+    mlbam_id: Optional[int] = None
+
+    class Config:
+        frozen = True
+
+
+# P0-7: CategoryMathResult + CategoryMathSummary
+class CategoryMathResult(BaseModel):
+    """Margin and delta-to-flip for a single scoring category."""
+    canonical_code: str                 # v2 canonical code (e.g., "R", "ERA", "AVG")
+    margin: float                       # Positive = winning, negative = losing
+    delta_to_flip: float                # Change needed to reverse winner
+    is_winning: bool                    # True if margin > 0
+    display_delta: Optional[str] = None  # Human-readable delta string (computed property)
+
+    class Config:
+        frozen = True
+
+
+class CategoryMathSummary(BaseModel):
+    """Batch category math results for all 18 scoring categories."""
+    results: Dict[str, CategoryMathResult]  # Keyed by canonical_code
+    categories_won: int                     # Count of categories with margin > 0
+    categories_lost: int                    # Count of categories with margin < 0
+    categories_tied: int                    # Count of categories with margin == 0
+
+    class Config:
+        frozen = True
+
+
+# P0-8: RosterResponse (CanonicalPlayerRow version)
+class CanonicalRosterResponse(BaseModel):
+    """Full roster response with CanonicalPlayerRow format. Returned by GET /api/fantasy/roster."""
+    team_key: str
+    players: List[CanonicalPlayerRow]
+    count: int
+    freshness: FreshnessMetadata
+
+    class Config:
+        frozen = True
+
+
+# P0-9: RosterMoveRequest + RosterMoveResponse
+class RosterMoveRequest(BaseModel):
+    """Request to move a player to a new roster slot."""
+    player_key: str
+    target_position: str  # 'C','1B','2B','3B','SS','LF','CF','RF','OF','Util','SP','RP','P','BN','IL','IL60'
+
+
+class RosterMoveResponse(BaseModel):
+    """Response from roster move operation."""
+    success: bool
+    player_key: str
+    from_position: Optional[str] = None
+    to_position: str
+    message: str
+    warnings: List[str] = Field(default_factory=list)
+    freshness: FreshnessMetadata
+
+    class Config:
+        frozen = True
+
+
+# P0-10: RosterOptimizeRequest + RosterOptimizeResponse
+class PlayerSlotAssignment(BaseModel):
+    """Slot assignment for a single player."""
+    player_key: str
+    player_name: str
+    assigned_slot: str  # 'C','1B','2B','3B','SS','OF','Util','SP','RP','P','BN'
+    lineup_score: float
+    reasoning: str
+
+    class Config:
+        frozen = True
+
+
+class RosterOptimizeRequest(BaseModel):
+    """Request to optimize roster lineup."""
+    target_date: Optional[str] = None  # YYYY-MM-DD, defaults to today
+
+    class Config:
+        frozen = True
+
+
+class RosterOptimizeResponse(BaseModel):
+    """Response from roster optimization."""
+    success: bool
+    message: str
+    target_date: str
+    starters: List[PlayerSlotAssignment]
+    bench: List[PlayerSlotAssignment]
+    unrostered: List[str]  # player_keys that couldn't fit
+    total_lineup_score: float
+    freshness: FreshnessMetadata
+
+    class Config:
+        frozen = True
+

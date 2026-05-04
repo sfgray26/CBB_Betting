@@ -1,0 +1,7 @@
+﻿{
+    "status":  "success",
+    "fetched":  36,
+    "resolved":  25,
+    "written":  25,
+    "message":  "Backfilled 25 player projections from CSV"
+}

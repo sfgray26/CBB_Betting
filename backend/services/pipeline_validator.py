@@ -111,9 +111,11 @@ def pipeline_health_summary(checks: list[TableHealth]) -> dict:
     """Summarize into JSON-serializable dict with overall_healthy flag."""
     healthy = [c for c in checks if c.is_healthy]
     unhealthy = [c for c in checks if not c.is_healthy]
+    overall_healthy = len(unhealthy) == 0
 
     return {
-        "overall_healthy": len(unhealthy) == 0,
+        "overall": overall_healthy,        # backward-compat alias; was null after tables dict→list refactor
+        "overall_healthy": overall_healthy,
         "healthy_count": len(healthy),
         "unhealthy_count": len(unhealthy),
         "tables": [

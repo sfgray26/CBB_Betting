@@ -1,0 +1,272 @@
+{
+  "date": "2026-04-22",
+  "generated_at": "2026-04-22T21:43:27.130218",
+  "strategy": "standard",
+  "risk_profile": "BALANCED",
+  "overall_confidence": 0.25,
+  "summary": {
+    "total_decisions": 23,
+    "easy_decisions": 0,
+    "tough_decisions": 5,
+    "monitor_count": 8
+  },
+  "categories": [
+    {
+      "name": "Runs",
+      "category": "R",
+      "current": 0.0,
+      "opponent": 0.0,
+      "status": "TIED",
+      "urgency": 0
+    },
+    {
+      "name": "Hits",
+      "category": "H",
+      "current": 0.0,
+      "opponent": 0.0,
+      "status": "TIED",
+      "urgency": 0
+    },
+    {
+      "name": "Home Runs",
+      "category": "HR",
+      "current": 0.0,
+      "opponent": 0.0,
+      "status": "TIED",
+      "urgency": 0
+    },
+    {
+      "name": "RBI",
+      "category": "RBI",
+      "current": 0.0,
+      "opponent": 0.0,
+      "status": "TIED",
+      "urgency": 0
+    },
+    {
+      "name": "Stolen Bases",
+      "category": "SB",
+      "current": 0.0,
+      "opponent": 0.0,
+      "status": "TIED",
+      "urgency": 0
+    },
+    {
+      "name": "Batting Average",
+      "category": "AVG",
+      "current": 0.0,
+      "opponent": 0.0,
+      "status": "TIED",
+      "urgency": 0
+    },
+    {
+      "name": "Wins",
+      "category": "W",
+      "current": 0.0,
+      "opponent": 0.0,
+      "status": "TIED",
+      "urgency": 0
+    },
+    {
+      "name": "K",
+      "category": "K",
+      "current": 0.0,
+      "opponent": 0.0,
+      "status": "TIED",
+      "urgency": 0
+    },
+    {
+      "name": "Saves",
+      "category": "SV",
+      "current": 0.0,
+      "opponent": 0.0,
+      "status": "TIED",
+      "urgency": 0
+    },
+    {
+      "name": "ERA",
+      "category": "ERA",
+      "current": 0.0,
+      "opponent": 0.0,
+      "status": "TIED",
+      "urgency": 0
+    },
+    {
+      "name": "WHIP",
+      "category": "WHIP",
+      "current": 0.0,
+      "opponent": 0.0,
+      "status": "TIED",
+      "urgency": 0
+    }
+  ],
+  "starters": [
+    {
+      "emoji": "✅",
+      "name": "Byron Buxton",
+      "team": "MIN",
+      "vs": "TBD",
+      "recommendation": "START",
+      "confidence": 28,
+      "rating": "NEUTRAL",
+      "factors": []
+    },
+    {
+      "emoji": "✅",
+      "name": "Moisés Ballesteros",
+      "team": "CHC",
+      "vs": "TBD",
+      "recommendation": "START",
+      "confidence": 25,
+      "rating": "NEUTRAL",
+      "factors": [
+        "❄️ Low run env (3.0)"
+      ]
+    },
+    {
+      "emoji": "✅",
+      "name": "Pete Crow-Armstrong",
+      "team": "CHC",
+      "vs": "TBD",
+      "recommendation": "START",
+      "confidence": 25,
+      "rating": "NEUTRAL",
+      "factors": [
+        "❄️ Low run env (3.0)"
+      ]
+    },
+    {
+      "emoji": "✅",
+      "name": "Seiya Suzuki",
+      "team": "CHC",
+      "vs": "TBD",
+      "recommendation": "START",
+      "confidence": 25,
+      "rating": "NEUTRAL",
+      "factors": [
+        "❄️ Low run env (3.0)"
+      ]
+    },
+    {
+      "emoji": "✅",
+      "name": "Juan Soto",
+      "team": "NYM",
+      "vs": "TBD",
+      "recommendation": "START",
+      "confidence": 25,
+      "rating": "NEUTRAL",
+      "factors": [
+        "❄️ Low run env (3.0)"
+      ]
+    }
+  ],
+  "bench": [],
+  "monitor": [
+    {
+      "emoji": "⏳",
+      "name": "Pete Alonso",
+      "team": "BAL",
+      "vs": "TBD",
+      "recommendation": "MONITOR",
+      "confidence": 50,
+      "rating": "NEUTRAL",
+      "factors": [
+        "No game today"
+      ]
+    },
+    {
+      "emoji": "⏳",
+      "name": "Hyeseong Kim",
+      "team": "LAD",
+      "vs": "TBD",
+      "recommendation": "MONITOR",
+      "confidence": 50,
+      "rating": "NEUTRAL",
+      "factors": [
+        "No game today"
+      ]
+    },
+    {
+      "emoji": "⏳",
+      "name": "Munetaka Murakami",
+      "team": "CWS",
+      "vs": "TBD",
+      "recommendation": "MONITOR",
+      "confidence": 50,
+      "rating": "NEUTRAL",
+      "factors": [
+        "No game today"
+      ]
+    },
+    {
+      "emoji": "⏳",
+      "name": "Geraldo Perdomo",
+      "team": "ARI",
+      "vs": "TBD",
+      "recommendation": "MONITOR",
+      "confidence": 50,
+      "rating": "NEUTRAL",
+      "factors": [
+        "No game today"
+      ]
+    },
+    {
+      "emoji": "⏳",
+      "name": "Jordan Walker",
+      "team": "STL",
+      "vs": "TBD",
+      "recommendation": "MONITOR",
+      "confidence": 50,
+      "rating": "NEUTRAL",
+      "factors": [
+        "No game today"
+      ]
+    },
+    {
+      "emoji": "⏳",
+      "name": "Cam Smith",
+      "team": "HOU",
+      "vs": "TBD",
+      "recommendation": "MONITOR",
+      "confidence": 50,
+      "rating": "NEUTRAL",
+      "factors": [
+        "No game today"
+      ]
+    },
+    {
+      "emoji": "⏳",
+      "name": "Brandon Nimmo",
+      "team": "TEX",
+      "vs": "TBD",
+      "recommendation": "MONITOR",
+      "confidence": 50,
+      "rating": "NEUTRAL",
+      "factors": [
+        "No game today"
+      ]
+    },
+    {
+      "emoji": "⏳",
+      "name": "Vinnie Pasquantino",
+      "team": "KC",
+      "vs": "TBD",
+      "recommendation": "MONITOR",
+      "confidence": 50,
+      "rating": "NEUTRAL",
+      "factors": [
+        "No game today"
+      ]
+    }
+  ],
+  "alerts": [
+    "Low confidence starters: Byron Buxton, Moisés Ballesteros, Pete Crow-Armstrong",
+    "Pete Alonso: No game scheduled — monitor before lock",
+    "Hyeseong Kim: No game scheduled — monitor before lock",
+    "Munetaka Murakami: No game scheduled — monitor before lock"
+  ],
+  "_meta": {
+    "decisions_recorded": true,
+    "decisions_count": 23
+  }
+}

@@ -35,31 +35,6 @@ from backend.utils.env_utils import get_float_env
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# The Odds API — MLB games
-# ---------------------------------------------------------------------------
-ODDS_API_BASE = "https://api.the-odds-api.com/v4"
-MLB_SPORT = "baseball_mlb"
-
-# MLB team abbreviation -> full name normalization map (Odds API uses full names)
-_TEAM_ABBREV = {
-    "NYY": "New York Yankees", "BOS": "Boston Red Sox", "TOR": "Toronto Blue Jays",
-    "BAL": "Baltimore Orioles", "TB": "Tampa Bay Rays",
-    "CLE": "Cleveland Guardians", "CWS": "Chicago White Sox", "DET": "Detroit Tigers",
-    "KC": "Kansas City Royals", "MIN": "Minnesota Twins",
-    "HOU": "Houston Astros", "TEX": "Texas Rangers", "SEA": "Seattle Mariners",
-    "OAK": "Oakland Athletics", "LAA": "Los Angeles Angels",
-    "NYM": "New York Mets", "PHI": "Philadelphia Phillies", "ATL": "Atlanta Braves",
-    "MIA": "Miami Marlins", "WSH": "Washington Nationals",
-    "MIL": "Milwaukee Brewers", "CHC": "Chicago Cubs", "STL": "St. Louis Cardinals",
-    "CIN": "Cincinnati Reds", "PIT": "Pittsburgh Pirates",
-    "LAD": "Los Angeles Dodgers", "SF": "San Francisco Giants",
-    "SD": "San Diego Padres", "COL": "Colorado Rockies",
-    "ARI": "Arizona Diamondbacks",
-}
-# Reverse: full name -> abbreviation (use Yahoo's preferred abbreviations)
-_FULL_TO_ABBREV: Dict[str, str] = {v: k for k, v in _TEAM_ABBREV.items()}
-
 # Additional aliases for common alternate abbreviations
 _TEAM_ALIASES = {
     "TBR": "TB",  # Tampa Bay Rays (ESPN/Odds API style)
@@ -131,6 +106,7 @@ class BatterRanking:
     lineup_score: float = 0.0   # composite daily score
     reason: str = ""
     has_game: bool = False      # Whether team plays today
+    composite_z: float = 0.0   # Live 14-day rolling z-score (from player_scores)
 
 
 @dataclass
@@ -170,11 +146,14 @@ class LineupSlotResult:
 # multi-eligible players (e.g. Castro 2B/3B) cover whatever gap remains.
 # ---------------------------------------------------------------------------
 _DEFAULT_BATTER_SLOTS: List[Tuple[str, List[str]]] = [
+    # Scarcity-first order: C and SS are rarest, fill them before 1B.
+    # Multi-eligible players (e.g. 1B/SS) are then free to cover the scarcer slots
+    # rather than being wasted on the abundant 1B position.
     ("C",    ["C"]),
-    ("1B",   ["1B"]),
+    ("SS",   ["SS"]),
     ("2B",   ["2B"]),
     ("3B",   ["3B"]),
-    ("SS",   ["SS"]),
+    ("1B",   ["1B"]),
     ("OF",   ["OF", "LF", "CF", "RF"]),
     ("OF",   ["OF", "LF", "CF", "RF"]),
     ("OF",   ["OF", "LF", "CF", "RF"]),
@@ -184,6 +163,55 @@ _DEFAULT_BATTER_SLOTS: List[Tuple[str, List[str]]] = [
 # Statuses that mean "occupying an IL slot, not an active roster spot"
 _INACTIVE_STATUSES = frozenset({"IL", "IL10", "IL60", "NA", "OUT"})
 
+# Static scarcity rank: lower = scarcer. Mirrors POSITION_SCARCITY in
+# daily_ingestion._sync_position_eligibility (kept in sync manually).
+_POSITION_SCARCITY: dict[str, int] = {
+    "C": 1, "SS": 2, "2B": 3, "3B": 4, "CF": 5,
+    "SP": 6, "RP": 7, "LF": 8, "RF": 9, "1B": 10, "DH": 11, "OF": 12,
+}
+
+
+def _get_scarcity_rank(db, primary_position: str) -> int:
+    """
+    Return the scarcity_rank for a position, lowest = most scarce (C=1).
+
+    Strategy:
+      1. Query position_eligibility for the median scarcity_rank among all
+         players at this primary_position (single query, cached per call site).
+      2. Fall back to _POSITION_SCARCITY static dict if DB returns nothing.
+      3. Fall back to 13 (least scarce) if position unknown.
+
+    Integration point: call this from assign_lineup_slots() when two players
+    are equally eligible for a slot and one should prefer their natural position
+    over Util. Example:
+        if score_a == score_b:
+            rank_a = _get_scarcity_rank(db, player_a.primary_position)
+            rank_b = _get_scarcity_rank(db, player_b.primary_position)
+            winner = player_a if rank_a < rank_b else player_b
+    """
+    if primary_position in _POSITION_SCARCITY:
+        static_rank = _POSITION_SCARCITY[primary_position]
+    else:
+        static_rank = 13
+
+    if db is None:
+        return static_rank
+
+    try:
+        from backend.models import PositionEligibility
+        from sqlalchemy import func
+        result = (
+            db.query(func.min(PositionEligibility.scarcity_rank))
+            .filter(
+                PositionEligibility.primary_position == primary_position,
+                PositionEligibility.scarcity_rank.isnot(None),
+            )
+            .scalar()
+        )
+        return int(result) if result is not None else static_rank
+    except Exception:
+        return static_rank
+
 
 class DailyLineupOptimizer:
     """
@@ -192,7 +220,6 @@ class DailyLineupOptimizer:
     """
 
     def __init__(self):
-        self._api_key = os.getenv("THE_ODDS_API_KEY", "")
         self._odds_cache: Dict[str, List[MLBGameOdds]] = {}
 
     # ------------------------------------------------------------------
@@ -201,113 +228,192 @@ class DailyLineupOptimizer:
 
     def fetch_mlb_odds(self, game_date: Optional[str] = None) -> List[MLBGameOdds]:
         """
-        Fetch today's MLB game odds from The Odds API.
+        Fetch MLB game odds from mlb_odds_snapshot table.
 
         Returns list of MLBGameOdds with implied run totals computed.
-        Falls back to empty list if API key missing or request fails.
+        Falls back to _load_schedule_fallback_games() on errors.
         """
-        if not self._api_key:
-            logger.warning("THE_ODDS_API_KEY not set — lineup optimizer running without odds data")
+        from backend.models import SessionLocal, MLBOddsSnapshot, MLBGameLog, MLBTeam
+        from sqlalchemy import func, case
+        from sqlalchemy.orm import aliased
+
+        target_date = self._parse_game_date(game_date)
+        if target_date is None:
             return []
 
         cache_key = game_date or "today"
         if cache_key in self._odds_cache:
             return self._odds_cache[cache_key]
 
+        db = SessionLocal()
         try:
-            resp = requests.get(
-                f"{ODDS_API_BASE}/sports/{MLB_SPORT}/odds",
-                params={
-                    "apiKey": self._api_key,
-                    "regions": "us",
-                    "markets": "spreads,totals,h2h",
-                    "oddsFormat": "american",
-                    "commenceTimeTo": f"{game_date}T23:59:59Z" if game_date else None,
-                    "commenceTimeFrom": f"{game_date}T00:00:00Z" if game_date else None,
-                },
-                timeout=10,
+            AwayTeam = aliased(MLBTeam)
+            HomeTeam = aliased(MLBTeam)
+
+            max_window_subq = (
+                db.query(
+                    MLBOddsSnapshot.game_id,
+                    func.max(MLBOddsSnapshot.snapshot_window).label("max_window")
+                )
+                .group_by(MLBOddsSnapshot.game_id)
+                .subquery()
             )
-            if resp.status_code != 200:
-                logger.warning("Odds API returned %d for MLB odds", resp.status_code)
-                return []
 
-            games_raw = resp.json()
-            games = []
-            for g in games_raw:
-                game = self._parse_game_odds(g)
-                if game:
-                    games.append(game)
+            vendor_priority = case(
+                {"pinnacle": 0, "draftkings": 1, "fanduel": 2, "betmgm": 3, "caesars": 4},
+                value=MLBOddsSnapshot.vendor,
+                else_=5
+            )
 
+            rows = (
+                db.query(
+                    MLBOddsSnapshot,
+                    AwayTeam.abbreviation.label("away_abbr"),
+                    AwayTeam.display_name.label("away_name"),
+                    HomeTeam.abbreviation.label("home_abbr"),
+                    HomeTeam.display_name.label("home_name"),
+                    MLBGameLog.raw_payload['date'].astext.label("game_time_raw"),
+                    vendor_priority.label("vp")
+                )
+                .join(
+                    max_window_subq,
+                    (MLBOddsSnapshot.game_id == max_window_subq.c.game_id) &
+                    (MLBOddsSnapshot.snapshot_window == max_window_subq.c.max_window)
+                )
+                .join(MLBGameLog, MLBOddsSnapshot.game_id == MLBGameLog.game_id)
+                .join(AwayTeam, MLBGameLog.away_team_id == AwayTeam.team_id)
+                .join(HomeTeam, MLBGameLog.home_team_id == HomeTeam.team_id)
+                .filter(MLBGameLog.game_date == target_date)
+                .order_by(MLBOddsSnapshot.game_id, "vp")
+                .all()
+            )
+
+            seen: set[int] = set()
+            games: List[MLBGameOdds] = []
+            for odds, away_abbr, away_name, home_abbr, home_name, game_time_raw, _ in rows:
+                if odds.game_id in seen:
+                    continue
+                seen.add(odds.game_id)
+
+                total_f = float(odds.total) if odds.total else None
+                spread_f = float(odds.spread_home) if odds.spread_home else None
+                implied_h, implied_a = None, None
+                if total_f is not None:
+                    implied_h, implied_a = self._implied_runs(total_f, spread_f or 0.0)
+
+                games.append(MLBGameOdds(
+                    game_id=str(odds.game_id),
+                    commence_time=game_time_raw or str(target_date),
+                    home_team=home_name,
+                    away_team=away_name,
+                    home_abbrev=home_abbr,
+                    away_abbrev=away_abbr,
+                    spread_home=spread_f,
+                    total=total_f,
+                    moneyline_home=float(odds.ml_home_odds) if odds.ml_home_odds else None,
+                    moneyline_away=float(odds.ml_away_odds) if odds.ml_away_odds else None,
+                    implied_home_runs=implied_h,
+                    implied_away_runs=implied_a,
+                    park_factor=_PARK_FACTORS.get(home_abbr, 1.0),
+                ))
+
+            logger.info(
+                "lineup_optimizer: loaded odds for %d games from DB (%s)",
+                len(games),
+                target_date.isoformat()
+            )
             self._odds_cache[cache_key] = games
-            matchup_str = ", ".join(f"{g.away_abbrev}@{g.home_abbrev}" for g in games)
-            logger.info("Odds API [%s]: %d games — %s", game_date or "today", len(games), matchup_str or "NONE")
-            if not games:
-                logger.warning("Odds API returned 0 games for %s — check API key / coverage", game_date or "today")
             return games
 
         except Exception as exc:
-            logger.warning("Failed to fetch MLB odds: %s", exc)
+            logger.warning("lineup_optimizer: DB odds fetch failed: %s", exc)
+            fallback_games = self._load_schedule_fallback_games(game_date)
+            if fallback_games:
+                self._odds_cache[cache_key] = fallback_games
+            return fallback_games
+        finally:
+            db.close()
+
+    def _load_schedule_fallback_games(self, game_date: Optional[str]) -> List[MLBGameOdds]:
+        """Build synthetic game context from persisted probable-pitcher snapshots."""
+        from backend.models import ProbablePitcherSnapshot
+
+        target_date = self._parse_game_date(game_date)
+        if target_date is None:
             return []
 
-    def _parse_game_odds(self, raw: dict) -> Optional[MLBGameOdds]:
-        """Parse raw Odds API game dict into MLBGameOdds."""
-        home_name = raw.get("home_team", "")
-        away_name = raw.get("away_team", "")
-        home_abbrev = _FULL_TO_ABBREV.get(home_name, home_name[:3].upper())
-        away_abbrev = _FULL_TO_ABBREV.get(away_name, away_name[:3].upper())
-        
-        logger.debug(f"[ODDS_PARSE] {away_name} @ {home_name} -> {away_abbrev} @ {home_abbrev}")
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(
+                    ProbablePitcherSnapshot.team,
+                    ProbablePitcherSnapshot.opponent,
+                    ProbablePitcherSnapshot.is_home,
+                    ProbablePitcherSnapshot.park_factor,
+                )
+                .filter(ProbablePitcherSnapshot.game_date == target_date)
+                .all()
+            )
+        except Exception as exc:
+            logger.warning("Failed to load probable-pitcher schedule fallback: %s", exc)
+            return []
+        finally:
+            db.close()
 
-        game = MLBGameOdds(
-            game_id=raw.get("id", ""),
-            commence_time=raw.get("commence_time", ""),
-            home_team=home_name,
-            away_team=away_name,
-            home_abbrev=home_abbrev,
-            away_abbrev=away_abbrev,
-            park_factor=_PARK_FACTORS.get(home_abbrev, 1.0),
-        )
+        synthetic_games: Dict[str, MLBGameOdds] = {}
+        for row in rows:
+            if hasattr(row, "team"):
+                team = row.team
+                opponent = row.opponent
+                is_home = row.is_home
+                park_factor = row.park_factor
+            else:
+                team, opponent, is_home, park_factor = row
+            team_norm = normalize_team_abbr(team)
+            opp_norm = normalize_team_abbr(opponent)
+            if not team_norm or not opp_norm or is_home is None:
+                continue
 
-        # Parse bookmaker odds — prefer DraftKings > FanDuel > first available
-        bookmakers = raw.get("bookmakers", [])
-        preferred_order = ["draftkings", "fanduel", "bovada"]
-        bm_data = None
-        for pref in preferred_order:
-            bm_data = next((b for b in bookmakers if b.get("key") == pref), None)
-            if bm_data:
-                break
-        if not bm_data and bookmakers:
-            bm_data = bookmakers[0]
+            home_team = team_norm if is_home else opp_norm
+            away_team = opp_norm if is_home else team_norm
+            game_key = f"{away_team}@{home_team}"
+            home_park_factor = park_factor or _PARK_FACTORS.get(home_team, 1.0)
+            neutral_total = max(7.0, min(11.5, round(9.0 * home_park_factor, 2)))
+            implied_home_runs = round(min(7.0, max(2.5, neutral_total / 2.0 + 0.15)), 2)
+            implied_away_runs = round(min(7.0, max(2.5, neutral_total - implied_home_runs)), 2)
 
-        if bm_data:
-            for market in bm_data.get("markets", []):
-                mtype = market.get("key")
-                outcomes = market.get("outcomes", [])
-                if mtype == "totals" and outcomes:
-                    # Find "Over" — total is the point value
-                    for o in outcomes:
-                        if o.get("name") == "Over":
-                            game.total = float(o.get("point", 0))
-                            break
-                elif mtype == "spreads":
-                    for o in outcomes:
-                        if o.get("name") == home_name:
-                            game.spread_home = float(o.get("point", 0))
-                            break
-                elif mtype == "h2h":
-                    for o in outcomes:
-                        if o.get("name") == home_name:
-                            game.moneyline_home = float(o.get("price", 0))
-                        elif o.get("name") == away_name:
-                            game.moneyline_away = float(o.get("price", 0))
-
-        # Compute implied team runs
-        if game.total is not None:
-            game.implied_home_runs, game.implied_away_runs = self._implied_runs(
-                game.total, game.spread_home or 0.0
+            synthetic_games[game_key] = MLBGameOdds(
+                game_id=f"snapshot:{target_date.isoformat()}:{game_key}",
+                commence_time="",
+                home_team=home_team,
+                away_team=away_team,
+                home_abbrev=home_team,
+                away_abbrev=away_team,
+                implied_home_runs=implied_home_runs,
+                implied_away_runs=implied_away_runs,
+                park_factor=home_park_factor,
             )
 
-        return game
+        games = list(synthetic_games.values())
+        if games:
+            logger.info(
+                "Lineup optimizer using probable-pitcher schedule fallback for %s (%d games)",
+                target_date.isoformat(),
+                len(games),
+            )
+        return games
+
+    @staticmethod
+    def _parse_game_date(game_date: Optional[str]) -> Optional[date]:
+        """Parse a game date string in YYYY-MM-DD format using ET as default."""
+        if game_date:
+            try:
+                return datetime.fromisoformat(game_date).date()
+            except ValueError:
+                logger.warning("Could not parse game_date '%s' for schedule fallback", game_date)
+                return None
+        return datetime.now(ZoneInfo("America/New_York")).date()
+
 
     @staticmethod
     def _implied_runs(total: float, spread_home: float) -> Tuple[float, float]:
@@ -352,6 +458,46 @@ class DailyLineupOptimizer:
         games = self.fetch_mlb_odds(game_date)
         team_odds = self._build_team_odds_map(games)
 
+        # Pre-load pitcher quality scores for today's games
+        pitcher_quality: Dict[str, float] = {}
+        target_date = self._parse_game_date(game_date)
+        if target_date is not None:
+            from backend.models import ProbablePitcherSnapshot
+            _pp_db = SessionLocal()
+            try:
+                pp_rows = _pp_db.query(
+                    ProbablePitcherSnapshot.team,
+                    ProbablePitcherSnapshot.quality_score,
+                ).filter(
+                    ProbablePitcherSnapshot.game_date == target_date,
+                    ProbablePitcherSnapshot.quality_score.isnot(None),
+                ).all()
+                pitcher_quality = {r.team: r.quality_score for r in pp_rows}
+            except Exception:
+                pass  # neutral fallback for all batters
+            finally:
+                _pp_db.close()
+
+        # Pre-load composite_z live bonus from player_scores (14-day rolling window)
+        composite_z_lookup: Dict[str, float] = {}
+        _cz_db = SessionLocal()
+        try:
+            from sqlalchemy import text as _text
+            cz_rows = _cz_db.execute(_text(
+                "SELECT LOWER(pe.player_name) AS name_key, ps.composite_z "
+                "FROM position_eligibility pe "
+                "JOIN player_scores ps ON pe.bdl_player_id = ps.bdl_player_id "
+                "WHERE ps.as_of_date = (SELECT MAX(as_of_date) FROM player_scores) "
+                "  AND ps.window_days = 14 "
+                "  AND pe.bdl_player_id IS NOT NULL"
+            )).fetchall()
+            composite_z_lookup = {r.name_key: r.composite_z for r in cz_rows
+                                  if r.composite_z is not None}
+        except Exception:
+            pass  # neutral fallback for all players
+        finally:
+            _cz_db.close()
+
         proj_by_name = {p["name"].lower(): p for p in projections
                         if p.get("type") == "batter" or p.get("player_type") == "batter"}
 
@@ -378,20 +524,42 @@ class DailyLineupOptimizer:
             park_factor = odds_data.get("park_factor", 1.0)
             has_game = team in team_odds  # True if team has a game today
 
-            # Composite lineup score
-            # Weights: implied_runs (environment) + projected stats
-            base_score = implied_runs * park_factor
-            # Use player's actual projected AVG (default to 0 if missing, not 0.250)
-            # The 0.250 * 5.0 was adding 1.25 to every score, causing identical scores
-            proj_avg = proj.get("avg", 0.0)
-            stat_bonus = (
-                proj.get("hr", 0) * 2.0
-                + proj.get("r", 0) * 0.3
-                + proj.get("rbi", 0) * 0.3
-                + proj.get("nsb", 0) * 0.5
-                + proj_avg * 5.0
+            # 70/30 Talent-Prior scoring model
+            # TALENT PRIOR (70%): per-game normalized ROS projections + live composite_z
+            # MATCHUP MODIFIER (30%): daily environment (run environment, park, home, opp pitcher)
+            _GAMES_ROS = 130  # approx remaining games (mid-April baseline)
+            cz_val = composite_z_lookup.get(name.lower(), 0.0)
+            has_proj = bool(proj)
+            if has_proj:
+                # Per-game normalized Steamer counting stats + rate contribution
+                # avg * 5.0 is NOT per-game — intentional: rate stat contributes ~13-15 of ~20 range
+                talent_prior = (
+                    proj.get("hr", 0) * 2.0 / _GAMES_ROS
+                    + proj.get("r", 0) * 0.3 / _GAMES_ROS
+                    + proj.get("rbi", 0) * 0.3 / _GAMES_ROS
+                    + proj.get("nsb", 0) * 0.5 / _GAMES_ROS
+                    + proj.get("avg", 0.0) * 5.0
+                ) * 10 + cz_val * 1.0
+            else:
+                # No Steamer data: composite_z is the sole talent signal.
+                # Floor of 12.0 so that elite players (cz≥2.5) beat replacement-level
+                # players who do have projections (~14-16 range).
+                talent_prior = 12.0 + cz_val * 2.0
+
+            # MATCHUP MODIFIER (30%): daily environment
+            opp_team = team_odds.get(team, {}).get("opponent", "")
+            opp_qs = pitcher_quality.get(opp_team)  # None = no data
+            matchup_modifier = (
+                (implied_runs - 4.5) * 0.5       # run environment vs league avg
+                + (park_factor - 1.0) * 2.0      # hitter-friendly park bonus
+                + (0.2 if is_home else 0.0)       # marginal home-field edge
             )
-            lineup_score = base_score + stat_bonus * 0.1
+            if opp_qs is not None:
+                # Positive quality_score = better pitcher = reduces batter score.
+                # Negative = weak pitcher = boosts batter score.
+                matchup_modifier -= opp_qs * 0.15
+
+            lineup_score = talent_prior * 0.7 + matchup_modifier * 0.3 + 6.0
 
             reason_parts = [f"team implied {implied_runs:.1f}R"]
             if park_factor > 1.05:
@@ -416,6 +584,7 @@ class DailyLineupOptimizer:
                 lineup_score=round(lineup_score, 3),
                 reason=", ".join(reason_parts),
                 has_game=has_game,
+                composite_z=cz_val,
             ))
 
         rankings.sort(key=lambda x: x.lineup_score, reverse=True)
@@ -449,6 +618,26 @@ class DailyLineupOptimizer:
         proj_by_name = {p["name"].lower(): p for p in projections
                         if (p.get("type") or p.get("player_type", "")) == "pitcher"}
 
+        # Pre-load composite_z live bonus for pitcher FAs (14-day rolling window)
+        composite_z_lookup: Dict[str, float] = {}
+        _cz_db = SessionLocal()
+        try:
+            from sqlalchemy import text as _text
+            cz_rows = _cz_db.execute(_text(
+                "SELECT LOWER(pe.player_name) AS name_key, ps.composite_z "
+                "FROM position_eligibility pe "
+                "JOIN player_scores ps ON pe.bdl_player_id = ps.bdl_player_id "
+                "WHERE ps.as_of_date = (SELECT MAX(as_of_date) FROM player_scores) "
+                "  AND ps.window_days = 14 "
+                "  AND pe.bdl_player_id IS NOT NULL"
+            )).fetchall()
+            composite_z_lookup = {r.name_key: r.composite_z for r in cz_rows
+                                  if r.composite_z is not None}
+        except Exception:
+            pass  # neutral fallback for all players
+        finally:
+            _cz_db.close()
+
         rankings = []
         for player in free_agents:
             status = player.get("status")
@@ -478,6 +667,10 @@ class DailyLineupOptimizer:
             k_score = min(10.0, k9 - 5.0)  # 0-10 for 5-15 K/9
             park_score = (2.0 - park_factor) * 5  # pitcher parks get bonus
             stream_score = env_score * 0.5 + k_score * 0.3 + park_score * 0.2
+
+            # Live rolling bonus: composite_z for pitchers reflects z_era, z_whip, z_k_p
+            cz_val = composite_z_lookup.get(name.lower(), 0.0)
+            stream_score += cz_val * 0.5  # ±1.5 on a ~-1 to +9 scale; fallback 0.0
 
             reason_parts = [f"opp {implied_opp_runs:.1f}R", f"K/9 {k9:.1f}"]
             if is_home:
@@ -513,6 +706,7 @@ class DailyLineupOptimizer:
         projections: List[dict],
         game_date: Optional[str] = None,
         slot_config: Optional[List[Tuple[str, List[str]]]] = None,
+        db=None,
     ) -> Tuple[List[LineupSlotResult], List[str]]:
         """
         Fill Yahoo lineup slots using greedy scarcity-first constraint solving.
@@ -555,33 +749,50 @@ class DailyLineupOptimizer:
         slot_results: List[LineupSlotResult] = []
         warnings: List[str] = []
 
-        for slot_label, eligible_positions in slots:
-            best: Optional[BatterRanking] = None
+        # Sort key: lineup_score DESC, scarcity_rank ASC (tiebreaker only).
+        # _get_scarcity_rank falls back to _POSITION_SCARCITY when db is None.
+        def _slot_sort_key(b: BatterRanking) -> tuple:
+            primary = b.positions[0] if b.positions else "OF"
+            return (-b.lineup_score, _get_scarcity_rank(db, primary))
 
-            # Pass 1: find best eligible player WITH a game today
+        for slot_label, eligible_positions in slots:
+            # Collect all eligible candidates, split by off-day status
+            in_game: List[BatterRanking] = []
+            off_day_eligible: List[BatterRanking] = []
+
             for b in ranked:
                 if b.name in assigned:
                     continue
                 if not any(pos in b.positions for pos in eligible_positions):
                     continue
                 if apply_offday_filter and not _has_game(b.team):
+                    # Log data quality issue: player has no game when expected
+                    import json
+                    logger.info(json.dumps({
+                        "event": "data_quality_issue",
+                        "issue_type": "matchup_detection_miss",
+                        "player_name": b.name,
+                        "team": b.team,
+                        "game_date": game_date,
+                        "team_odds_keys": list(team_odds.keys()),
+                        "odds_api_games_count": len(games) if games else 0
+                    }))
+                    off_day_eligible.append(b)
                     continue
-                best = b
-                break
+                in_game.append(b)
 
-            # Pass 2: no in-game player found — fall back to any eligible player
-            if best is None:
-                for b in ranked:
-                    if b.name in assigned:
-                        continue
-                    if not any(pos in b.positions for pos in eligible_positions):
-                        continue
-                    best = b
-                    if apply_offday_filter:
-                        warnings.append(
-                            f"{slot_label}: {b.name} ({b.team}) has no game today — verify schedule"
-                        )
-                    break
+            # Pass 1 → prefer in-game; Pass 2 → fall back to off-day
+            candidates = in_game if in_game else off_day_eligible
+            using_offday_fallback = not in_game and bool(off_day_eligible) and apply_offday_filter
+
+            # Pick best: lineup_score DESC, scarcity_rank ASC as tiebreaker
+            candidates.sort(key=_slot_sort_key)
+            best: Optional[BatterRanking] = candidates[0] if candidates else None
+
+            if best is not None and using_offday_fallback:
+                warnings.append(
+                    f"{slot_label}: {best.name} ({best.team}) has no game today — verify schedule"
+                )
 
             if best is None:
                 warnings.append(f"No eligible active player found for {slot_label} slot")
@@ -621,6 +832,81 @@ class DailyLineupOptimizer:
                     status=b.status,
                     reason=b.reason,
                 ))
+
+        # ---- POST-GREEDY SWAP-IMPROVEMENT PASS ---------------------------------
+        # After the greedy assigns slots, check if any bench player scores higher
+        # than the player currently in an active slot they are eligible for.
+        # Repeatedly swapping such pairs ensures no high-value player sits on bench
+        # when a weaker player occupies a slot they could fill.
+        #
+        # This corrects cases where scarcity-first ordering still wastes a
+        # multi-eligible player (e.g. a 1B/SS assigned to 1B, leaving a weaker
+        # player at SS while a better 1B-eligible player sits on bench).
+        #
+        # Only active→bench swaps change total score (active↔active swaps cancel).
+        # Run until convergence (typically ≤2 iterations for a 25-player roster).
+        slot_label_to_eligible: dict = {
+            label: eligible_pos for label, eligible_pos in slots
+        }
+        ranked_by_name: dict = {b.name: b for b in ranked}
+
+        swap_improved = True
+        while swap_improved:
+            swap_improved = False
+            for i, active in enumerate(slot_results):
+                if active.slot == "BN" or active.player_name == "EMPTY":
+                    continue
+                active_eligible_pos = slot_label_to_eligible.get(active.slot, [])
+
+                for j, bench in enumerate(slot_results):
+                    if bench.slot != "BN":
+                        continue
+                    if bench.lineup_score <= active.lineup_score:
+                        continue
+                    # Don't promote an off-day bench player over an in-game active player
+                    if apply_offday_filter and not bench.has_game and active.has_game:
+                        continue
+
+                    bench_player = ranked_by_name.get(bench.player_name)
+                    if bench_player is None:
+                        continue
+                    if not any(pos in bench_player.positions for pos in active_eligible_pos):
+                        continue
+
+                    # Perform swap
+                    logger.debug(
+                        "swap-improve: %s (%.2f) → %s, %s (%.2f) → BN",
+                        bench_player.name, bench_player.lineup_score, active.slot,
+                        active.player_name, active.lineup_score,
+                    )
+                    slot_results[i] = LineupSlotResult(
+                        slot=active.slot,
+                        player_name=bench_player.name,
+                        player_team=bench_player.team,
+                        positions=bench_player.positions,
+                        lineup_score=bench_player.lineup_score,
+                        implied_runs=bench_player.implied_team_runs,
+                        park_factor=bench_player.park_factor,
+                        has_game=_has_game(bench_player.team),
+                        status=bench_player.status,
+                        reason=bench_player.reason,
+                    )
+                    slot_results[j] = LineupSlotResult(
+                        slot="BN",
+                        player_name=active.player_name,
+                        player_team=active.player_team,
+                        positions=active.positions,
+                        lineup_score=active.lineup_score,
+                        implied_runs=active.implied_runs,
+                        park_factor=active.park_factor,
+                        has_game=active.has_game,
+                        status=active.status,
+                        reason=active.reason,
+                    )
+                    swap_improved = True
+                    break
+                if swap_improved:
+                    break
 
         return slot_results, warnings
 
@@ -676,11 +962,15 @@ class DailyLineupOptimizer:
                 # Check if this player matches a probable starter
                 is_probable = self._is_probable_starter(player_name, team, opponent, probable_pitchers)
                 
-                # FALLBACK: If no probable pitchers returned (spring training/offseason),
-                # assume all SPs on roster with a game are potential starters
+                # FALLBACK 1: dict completely empty — no data at all (spring training / offseason)
                 if not probable_pitchers and has_game:
                     is_probable = True
                     logger.debug(f"No probable pitchers available, assuming {player_name} ({team}) is a starter")
+                # FALLBACK 2: dict has data for some teams but NOT this team — no signal,
+                # default to start rather than falsely showing NO_START
+                elif probable_pitchers and team not in probable_pitchers and has_game:
+                    is_probable = True
+                    logger.debug(f"No probable pitcher data for {team} — defaulting {player_name} to has_start=True")
                 
                 has_start = has_game and is_probable
             else:

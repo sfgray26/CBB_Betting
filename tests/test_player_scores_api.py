@@ -9,7 +9,7 @@ from datetime import date
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from backend.main import app
@@ -266,6 +266,68 @@ def test_get_player_scores_response_contract_complete(client_with_scores):
     # No internal fields exposed
     assert "id" not in score
     assert "computed_at" not in score
+
+
+def test_get_player_scores_falls_back_on_legacy_table_shape():
+    temp_db = tempfile.NamedTemporaryFile(mode="w", suffix=".db", delete=False)
+    temp_db.close()
+    db_path = Path(temp_db.name)
+
+    engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE player_scores (
+                id INTEGER PRIMARY KEY,
+                bdl_player_id INTEGER NOT NULL,
+                as_of_date DATE NOT NULL,
+                window_days INTEGER NOT NULL,
+                player_type VARCHAR(20),
+                games_in_window INTEGER,
+                composite_z FLOAT,
+                score_0_100 FLOAT,
+                z_hr FLOAT,
+                z_rbi FLOAT,
+                z_nsb FLOAT,
+                z_avg FLOAT,
+                z_obp FLOAT
+            )
+        """))
+        conn.execute(
+            text("""
+                INSERT INTO player_scores (
+                    id, bdl_player_id, as_of_date, window_days, player_type,
+                    games_in_window, composite_z, score_0_100, z_hr, z_rbi, z_nsb, z_avg, z_obp
+                ) VALUES (
+                    1, 12345, '2026-04-15', 14, 'hitter',
+                    12, 1.4821, 91.4, 1.72, 1.31, 0.88, 1.09, 1.41
+                )
+            """),
+        )
+
+    SessionLocal = sessionmaker(bind=engine)
+
+    def override_get_db():
+        try:
+            yield SessionLocal()
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[verify_api_key] = mock_verify_api_key
+
+    client = TestClient(app)
+    response = client.get("/api/fantasy/players/12345/scores")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["score"]["confidence"] == 0.0
+    assert data["score"]["category_scores"]["z_era"] is None
+
+    app.dependency_overrides = {}
+    try:
+        db_path.unlink()
+    except Exception:
+        pass
 
 
 def test_get_player_scores_z_sb_not_exposed(client_with_scores):

@@ -1,0 +1,1 @@
+﻿from sqlalchemy import create_engine, text; import os; engine = create_engine(os.getenv("DATABASE_URL")); sql = open("update_schema.sql").read(); [engine.connect().execute(text(s)) for s in sql.split(";") if s.strip()]; print("Migration applied")

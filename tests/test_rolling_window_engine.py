@@ -29,7 +29,7 @@ def _stat_row(
     game_date: date,
     # Batting
     ab=None, hits=None, doubles=None, triples=None, home_runs=None,
-    rbi=None, walks=None, strikeouts_bat=None, stolen_bases=None,
+    rbi=None, runs=None, walks=None, strikeouts_bat=None, stolen_bases=None,
     # Pitching
     innings_pitched=None, hits_allowed=None, runs_allowed=None,
     earned_runs=None, walks_allowed=None, strikeouts_pit=None,
@@ -44,6 +44,7 @@ def _stat_row(
         triples=triples,
         home_runs=home_runs,
         rbi=rbi,
+        runs=runs,
         walks=walks,
         strikeouts_bat=strikeouts_bat,
         stolen_bases=stolen_bases,
@@ -432,3 +433,189 @@ def test_parse_ip_six_two_is_not_six_point_two():
     result = parse_ip("6.2")
     assert result != pytest.approx(6.2)
     assert result == pytest.approx(6 + 2 / 3, rel=1e-6)
+
+
+# ===========================================================================
+# V31: Runs (R) category
+# ===========================================================================
+
+def test_w_runs_accumulates_runs_scored():
+    """w_runs should accumulate decay-weighted runs scored."""
+    row = _stat_row(100, TODAY, ab=4, hits=2, runs=1)
+    result = compute_rolling_window([row], as_of_date=TODAY, window_days=7)
+
+    assert result.w_runs == pytest.approx(1.0)
+
+
+def test_w_runs_decay_applied():
+    """w_runs should apply decay weighting to older games."""
+    today_row = _stat_row(100, TODAY, ab=4, hits=2, runs=2)
+    old_row = _stat_row(100, TODAY - timedelta(days=3), ab=3, hits=1, runs=1)
+
+    result = compute_rolling_window([today_row, old_row], as_of_date=TODAY, window_days=7)
+
+    w_today = 0.95 ** 0   # = 1.0
+    w_old = 0.95 ** 3     # ~= 0.857375
+    expected = w_today * 2 + w_old * 1
+    assert result.w_runs == pytest.approx(expected, rel=1e-6)
+
+
+# ===========================================================================
+# V31: Total Bases (TB) category
+# ===========================================================================
+
+def test_w_tb_single():
+    """Single counts as 1 TB."""
+    row = _stat_row(100, TODAY, ab=1, hits=1, doubles=0, triples=0, home_runs=0)
+    result = compute_rolling_window([row], as_of_date=TODAY, window_days=7)
+    assert result.w_tb == pytest.approx(1.0)
+
+
+def test_w_tb_double():
+    """Double counts as 2 TB."""
+    row = _stat_row(100, TODAY, ab=1, hits=1, doubles=1, triples=0, home_runs=0)
+    result = compute_rolling_window([row], as_of_date=TODAY, window_days=7)
+    assert result.w_tb == pytest.approx(2.0)
+
+
+def test_w_tb_triple():
+    """Triple counts as 3 TB."""
+    row = _stat_row(100, TODAY, ab=1, hits=1, doubles=0, triples=1, home_runs=0)
+    result = compute_rolling_window([row], as_of_date=TODAY, window_days=7)
+    assert result.w_tb == pytest.approx(3.0)
+
+
+def test_w_tb_home_run():
+    """Home run counts as 4 TB."""
+    row = _stat_row(100, TODAY, ab=1, hits=1, doubles=0, triples=0, home_runs=1)
+    result = compute_rolling_window([row], as_of_date=TODAY, window_days=7)
+    assert result.w_tb == pytest.approx(4.0)
+
+
+def test_w_tb_mixed_hits():
+    """TB = singles + 2*doubles + 3*triples + 4*HR."""
+    # 3 singles = 3 TB, 1 double = 2 TB, 1 triple = 3 TB, 1 HR = 4 TB -> total 12 TB
+    row = _stat_row(
+        100, TODAY,
+        ab=6, hits=6, doubles=1, triples=1, home_runs=1,
+    )
+    result = compute_rolling_window([row], as_of_date=TODAY, window_days=7)
+    # singles = hits - doubles - triples - HR = 6 - 1 - 1 - 1 = 3
+    expected_tb = 3 * 1 + 1 * 2 + 1 * 3 + 1 * 4  # = 12
+    assert result.w_tb == pytest.approx(expected_tb)
+
+
+def test_w_tb_decay_applied():
+    """w_tb should apply decay weighting to older games."""
+    today_row = _stat_row(100, TODAY, ab=4, hits=2, home_runs=1)  # 1 singles + 1 HR = 5 TB
+    old_row = _stat_row(100, TODAY - timedelta(days=5), ab=4, hits=1, doubles=1)  # 1 double = 2 TB
+
+    result = compute_rolling_window([today_row, old_row], as_of_date=TODAY, window_days=7)
+
+    w_today = 0.95 ** 0
+    w_old = 0.95 ** 5
+    expected = w_today * 5 + w_old * 2
+    assert result.w_tb == pytest.approx(expected, rel=1e-6)
+
+
+# ===========================================================================
+# V31: Quality Starts (QS) category
+# ===========================================================================
+
+def test_w_qs_quality_start():
+    """Quality start: IP >= 6 AND ER <= 3."""
+    row = _stat_row(
+        200, TODAY,
+        innings_pitched="6.0", earned_runs=2,  # Meets QS criteria
+        hits_allowed=5, walks_allowed=1, strikeouts_pit=5,
+    )
+    result = compute_rolling_window([row], as_of_date=TODAY, window_days=7)
+    assert result.w_qs == pytest.approx(1.0)
+
+
+def test_w_qs_ip_too_low():
+    """IP < 6 does NOT qualify as a QS regardless of ER."""
+    row = _stat_row(
+        200, TODAY,
+        innings_pitched="5.2", earned_runs=0,  # Great game but only 5.2 IP
+        hits_allowed=2, walks_allowed=0, strikeouts_pit=8,
+    )
+    result = compute_rolling_window([row], as_of_date=TODAY, window_days=7)
+    assert result.w_qs == pytest.approx(0.0)
+
+
+def test_w_qs_too_many_runs():
+    """ER > 3 does NOT qualify as a QS regardless of IP."""
+    row = _stat_row(
+        200, TODAY,
+        innings_pitched="7.0", earned_runs=4,  # 7 IP but 4 ER
+        hits_allowed=6, walks_allowed=2, strikeouts_pit=5,
+    )
+    result = compute_rolling_window([row], as_of_date=TODAY, window_days=7)
+    assert result.w_qs == pytest.approx(0.0)
+
+
+def test_w_qs_exactly_6_ip_3_er():
+    """Boundary case: IP=6.0 AND ER=3 IS a quality start."""
+    row = _stat_row(
+        200, TODAY,
+        innings_pitched="6.0", earned_runs=3,  # Exactly meets criteria
+        hits_allowed=5, walks_allowed=1, strikeouts_pit=4,
+    )
+    result = compute_rolling_window([row], as_of_date=TODAY, window_days=7)
+    assert result.w_qs == pytest.approx(1.0)
+
+
+def test_w_qs_exactly_6_ip_4_er():
+    """Boundary case: IP=6.0 AND ER=4 is NOT a quality start."""
+    row = _stat_row(
+        200, TODAY,
+        innings_pitched="6.0", earned_runs=4,  # Fails by 1 ER
+        hits_allowed=6, walks_allowed=2, strikeouts_pit=4,
+    )
+    result = compute_rolling_window([row], as_of_date=TODAY, window_days=7)
+    assert result.w_qs == pytest.approx(0.0)
+
+
+def test_w_qs_ip_5_point_2():
+    """Boundary case: IP=5.2 (5.667) is less than 6, not a QS."""
+    row = _stat_row(
+        200, TODAY,
+        innings_pitched="5.2", earned_runs=1,  # Good ERA but short outing
+        hits_allowed=4, walks_allowed=1, strikeouts_pit=6,
+    )
+    result = compute_rolling_window([row], as_of_date=TODAY, window_days=7)
+    assert result.w_qs == pytest.approx(0.0)
+
+
+def test_w_qs_decay_applied():
+    """w_qs should apply decay weighting to older games."""
+    qs_row = _stat_row(
+        200, TODAY,
+        innings_pitched="7.0", earned_runs=2,
+    )
+    non_qs_row = _stat_row(
+        200, TODAY - timedelta(days=2),
+        innings_pitched="6.0", earned_runs=4,  # Not a QS
+    )
+
+    result = compute_rolling_window([qs_row, non_qs_row], as_of_date=TODAY, window_days=7)
+
+    w_today = 0.95 ** 0
+    w_old = 0.95 ** 2
+    expected = w_today * 1 + w_old * 0  # Only today's game is a QS
+    assert result.w_qs == pytest.approx(expected, rel=1e-6)
+
+
+def test_w_qs_multiple_games():
+    """Multiple quality starts should accumulate with decay."""
+    games = [
+        _stat_row(200, TODAY - timedelta(days=i), innings_pitched="7.0", earned_runs=2)
+        for i in range(5)  # 5 QS in a row
+    ]
+
+    result = compute_rolling_window(games, as_of_date=TODAY, window_days=7)
+
+    # Sum of decay weights: 0.95^0 + 0.95^1 + 0.95^2 + 0.95^3 + 0.95^4
+    expected = sum(0.95 ** i for i in range(5))
+    assert result.w_qs == pytest.approx(expected, rel=1e-6)

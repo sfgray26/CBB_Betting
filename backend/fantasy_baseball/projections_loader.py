@@ -324,21 +324,31 @@ def _apply_adp(players: list[dict], adp_map: dict[str, float]) -> None:
     2. Last name + first initial match (handles abbreviated first names)
     """
     # Pre-build first_initial_last_name -> adp_id map for fallback lookups
+    # When collisions occur, use first 3 letters of first name for disambiguation
     initial_map: dict[str, str] = {}
     for adp_id in adp_map:
         parts = adp_id.split("_")
         if len(parts) >= 2:
-            first_initial = parts[0][0] if parts[0] else ""
+            first_name = parts[0]
+            first_initial = first_name[0] if first_name else ""
             last_name = parts[-1]
             key = f"{first_initial}_{last_name}"
+
             if key not in initial_map:
                 initial_map[key] = adp_id
             else:
-                logger.warning(
-                    "ADP initial-fallback collision: key %r claimed by %r, ignoring %r -- "
-                    "both players will attempt exact match only",
-                    key, initial_map[key], adp_id,
-                )
+                # Collision detected: use more specific key (first 3 chars of first name)
+                first_three = first_name[:3] if len(first_name) >= 3 else first_name
+                specific_key = f"{first_three}_{last_name}"
+                # Only log if the specific key also collides (rare)
+                if specific_key in initial_map:
+                    logger.warning(
+                        "ADP initial-fallback collision: key %r claimed by %r, ignoring %r -- "
+                        "both players will attempt exact match only",
+                        key, initial_map[key], adp_id,
+                    )
+                else:
+                    initial_map[specific_key] = adp_id
 
     matched_exact = 0
     matched_fallback = 0
@@ -355,12 +365,22 @@ def _apply_adp(players: list[dict], adp_map: dict[str, float]) -> None:
         # Pass 2: last name + first initial fallback
         parts = pid.split("_")
         if len(parts) >= 2:
-            first_initial = parts[0][0] if parts[0] else ""
+            first_name = parts[0]
+            first_initial = first_name[0] if first_name else ""
             last_name = parts[-1]
             key = f"{first_initial}_{last_name}"
+
+            # Try simple key first, then specific key for disambiguated players
             if key in initial_map:
                 p["adp"] = adp_map[initial_map[key]]
                 matched_fallback += 1
+            else:
+                # Try specific key (first 3 letters) for collision cases
+                first_three = first_name[:3] if len(first_name) >= 3 else first_name
+                specific_key = f"{first_three}_{last_name}"
+                if specific_key in initial_map:
+                    p["adp"] = adp_map[initial_map[specific_key]]
+                    matched_fallback += 1
 
     total = matched_exact + matched_fallback
     logger.info(

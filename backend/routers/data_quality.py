@@ -1,0 +1,427 @@
+"""Data quality monitoring dashboard for fantasy baseball platform."""
+import logging
+from datetime import datetime, timedelta, date
+from typing import Dict, Any, List
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Depends
+from sqlalchemy import func, and_, or_, text
+from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
+
+from backend.models import (
+    get_db,
+    PlayerProjection,
+    MLBGameLog,
+    MLBPlayerStats,
+    StatcastPerformance,
+    DataIngestionLog,
+)
+
+router = APIRouter(prefix="/api/admin/data-quality", tags=["admin"])
+
+
+@router.get("/summary")
+def get_data_quality_summary(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """
+    Aggregate health metrics across all data sources.
+    
+    Returns 6 key metrics with red/yellow/green status indicators:
+    1. Matchup detection rate (games today)
+    2. Statcast coverage (% active players with xwOBA)
+    3. Null field counts (players with missing data)
+    4. Pipeline staleness (hours since last projection update)
+    5. Data ingestion failure rate (last 7 days)
+    6. Projection coverage (% players with cat_scores)
+    """
+    now = datetime.now(ZoneInfo("UTC"))
+    cutoff_naive = (now - timedelta(days=7)).replace(tzinfo=None)
+
+    # Metric 1: Matchup detection rate
+    today_et = datetime.now(ZoneInfo("America/New_York")).date()
+    games_today = db.query(func.count(MLBGameLog.game_id)).filter(
+        MLBGameLog.game_date == today_et
+    ).scalar() or 0
+
+    # Metric 2: Statcast coverage
+    # PlayerProjection.updated_at is naive DateTime — compare against naive cutoff
+    active_players = db.query(func.count(PlayerProjection.id)).filter(
+        PlayerProjection.updated_at > cutoff_naive
+    ).scalar() or 0
+
+    statcast_covered = db.query(
+        func.count(func.distinct(StatcastPerformance.player_id))
+    ).filter(
+        StatcastPerformance.game_date > today_et - timedelta(days=7)
+    ).scalar() or 0
+
+    statcast_coverage_pct = (
+        (statcast_covered / active_players * 100) if active_players > 0 else 0.0
+    )
+
+    # Metric 3: Null field counts
+    null_teams = db.query(func.count(PlayerProjection.id)).filter(
+        PlayerProjection.team.is_(None)
+    ).scalar() or 0
+
+    # Metric 4: Pipeline staleness
+    last_projection_update = db.query(func.max(PlayerProjection.updated_at)).scalar()
+    if last_projection_update and last_projection_update.tzinfo is None:
+        last_projection_update = last_projection_update.replace(tzinfo=ZoneInfo("UTC"))
+    staleness_hours = (
+        (now - last_projection_update).total_seconds() / 3600
+        if last_projection_update
+        else 999
+    )
+
+    # Metric 5: Data ingestion failure rate (last 7 days)
+    # DataIngestionLog.started_at is naive DateTime — compare against naive cutoff
+    total_jobs = db.query(func.count(DataIngestionLog.id)).filter(
+        DataIngestionLog.started_at > cutoff_naive
+    ).scalar() or 1
+
+    failed_jobs = db.query(func.count(DataIngestionLog.id)).filter(
+        DataIngestionLog.started_at > cutoff_naive,
+        DataIngestionLog.status == "failed",
+    ).scalar() or 0
+    
+    failure_rate_pct = (failed_jobs / total_jobs * 100) if total_jobs > 0 else 0.0
+    
+    # Metric 6: Projection coverage
+    total_projections = db.query(func.count(PlayerProjection.id)).scalar() or 0
+
+    # Count projections with empty cat_scores using standard null/empty check
+    # PostgreSQL: CAST(jsonb_col AS TEXT) safely converts NULL and {} to strings
+    try:
+        empty_cat_scores_query = text("""
+            SELECT COUNT(*) FROM player_projections
+            WHERE cat_scores IS NULL OR CAST(cat_scores AS TEXT) = '{}'
+        """)
+        empty_cat_scores = db.execute(empty_cat_scores_query).scalar() or 0
+    except Exception as sql_err:
+        logger.warning("data_quality: empty_cat_scores query failed: %s", sql_err)
+        empty_cat_scores = 0
+    
+    projection_coverage_pct = (
+        ((total_projections - empty_cat_scores) / total_projections * 100)
+        if total_projections > 0
+        else 0.0
+    )
+    
+    return {
+        "matchup_detection": {
+            "games_today": games_today,
+            "status": (
+                "green" if games_today > 10
+                else "yellow" if games_today > 0
+                else "red"
+            ),
+        },
+        "statcast_coverage": {
+            "pct": round(statcast_coverage_pct, 1),
+            "covered": statcast_covered,
+            "total": active_players,
+            "status": (
+                "green" if statcast_coverage_pct > 85
+                else "yellow" if statcast_coverage_pct > 60
+                else "red"
+            ),
+        },
+        "null_fields": {
+            "null_teams": null_teams,
+            "status": (
+                "green" if null_teams < 10
+                else "yellow" if null_teams < 50
+                else "red"
+            ),
+        },
+        "pipeline_staleness": {
+            "hours": round(staleness_hours, 1),
+            "last_update": (
+                last_projection_update.isoformat() if last_projection_update else None
+            ),
+            "status": (
+                "green" if staleness_hours < 12
+                else "yellow" if staleness_hours < 36
+                else "red"
+            ),
+        },
+        "ingestion_failure_rate": {
+            "pct": round(failure_rate_pct, 1),
+            "failed": failed_jobs,
+            "total": total_jobs,
+            "status": (
+                "green" if failure_rate_pct < 5
+                else "yellow" if failure_rate_pct < 15
+                else "red"
+            ),
+        },
+        "projection_coverage": {
+            "pct": round(projection_coverage_pct, 1),
+            "with_projections": total_projections - empty_cat_scores,
+            "total": total_projections,
+            "status": (
+                "green" if projection_coverage_pct > 90
+                else "yellow" if projection_coverage_pct > 80
+                else "red"
+            ),
+        },
+        "generated_at": now.isoformat(),
+    }
+
+
+@router.get("/audit")
+def run_data_quality_audit(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """
+    Run comprehensive data quality audit and return detailed issue list.
+    
+    This endpoint runs the same logic as scripts/audit_data_quality.py but
+    returns JSON instead of CSV. Runs inside Railway network so DB access works.
+    
+    Returns:
+        - issues: List of all data quality issues found
+        - summary: Counts by priority/category
+        - generated_at: Timestamp
+    """
+    all_issues = []
+    
+    # Priority levels
+    P0, P1, P2, P3 = "P0", "P1", "P2", "P3"
+    # Root cause categories
+    A, B, C, D, E = "A", "B", "C", "D", "E"
+    
+    # === Audit 1: Null team fields ===
+    null_team_players = db.query(PlayerProjection).filter(
+        or_(
+            PlayerProjection.team.is_(None),
+            PlayerProjection.team == ""
+        )
+    ).limit(100).all()
+    
+    for player in null_team_players:
+        all_issues.append({
+            "issue_type": "null_team_field",
+            "player_name": player.player_name,
+            "player_id": player.player_id,
+            "team": None,
+            "pa": None,
+            "expected_value": "<team_abbrev>",
+            "actual_value": player.team or "NULL",
+            "priority": P2,
+            "category": C,
+            "impact_score": 3.0,
+            "description": "Player has null/empty team field"
+        })
+    
+    # === Audit 2: Empty projections for active players ===
+    week_ago = datetime.now(ZoneInfo("UTC")) - timedelta(days=7)
+
+    # Use standard null/empty check for cat_scores with safe CAST to TEXT
+    try:
+        empty_cats_query = text("""
+            SELECT id FROM player_projections
+            WHERE updated_at > :week_ago
+            AND (cat_scores IS NULL OR CAST(cat_scores AS TEXT) = '{}')
+            LIMIT 100
+        """)
+        empty_cat_ids = [row[0] for row in db.execute(empty_cats_query, {"week_ago": week_ago}).fetchall()]
+    except Exception as sql_err:
+        logger.warning("data_quality: empty_cats_query failed: %s", sql_err)
+        empty_cat_ids = []
+    players_with_empty_cats = db.query(PlayerProjection).filter(
+        PlayerProjection.id.in_(empty_cat_ids)
+    ).all()
+    
+    for player in players_with_empty_cats:
+        pa = player.sample_size or 0
+        
+        if pa > 50:  # Active player
+            all_issues.append({
+                "issue_type": "empty_projection_active_player",
+                "player_name": player.player_name,
+                "player_id": player.player_id,
+                "team": player.team,
+                "pa": pa,
+                "expected_value": "{category: z_score, ...}",
+                "actual_value": "{}",
+                "priority": P1,
+                "category": B,
+                "impact_score": 7.0 + (1.0 if pa > 200 else 0.0),
+                "description": f"Active player (PA={pa}) has empty cat_scores"
+            })
+        elif pa > 10:  # Bench/streamer
+            all_issues.append({
+                "issue_type": "empty_projection_bench_player",
+                "player_name": player.player_name,
+                "player_id": player.player_id,
+                "team": player.team,
+                "pa": pa,
+                "expected_value": "{category: z_score, ...}",
+                "actual_value": "{}",
+                "priority": P2,
+                "category": B,
+                "impact_score": 4.0,
+                "description": f"Bench player (PA={pa}) has empty cat_scores"
+            })
+    
+    # === Audit 3: Missing Statcast data for active players ===
+    today_date = date.today()
+    week_ago_date = today_date - timedelta(days=7)
+    
+    # Get players with recent stats
+    active_players = db.query(
+        MLBPlayerStats.player_name,
+        MLBPlayerStats.bdl_player_id,
+        MLBPlayerStats.team,
+        func.sum(MLBPlayerStats.pa).label("total_pa")
+    ).filter(
+        MLBPlayerStats.game_date > week_ago_date
+    ).group_by(
+        MLBPlayerStats.player_name,
+        MLBPlayerStats.bdl_player_id,
+        MLBPlayerStats.team
+    ).having(
+        func.sum(MLBPlayerStats.pa) > 50
+    ).limit(200).all()
+    
+    for player in active_players:
+        # Skip if bdl_player_id is None
+        if player.bdl_player_id is None:
+            continue
+
+        has_statcast = db.query(StatcastPerformance).filter(
+            StatcastPerformance.player_id == str(player.bdl_player_id),
+            StatcastPerformance.game_date > week_ago_date
+        ).first()
+
+        if not has_statcast:
+            all_issues.append({
+                "issue_type": "missing_statcast_data",
+                "player_name": player.player_name,
+                "player_id": str(player.bdl_player_id),
+                "team": player.team,
+                "pa": player.total_pa,
+                "expected_value": "xwOBA, barrel%, exit_velo",
+                "actual_value": "NULL",
+                "priority": P2,
+                "category": B,
+                "impact_score": 5.0,
+                "description": f"Active player (PA={player.total_pa}) missing Statcast"
+            })
+    
+    # === Audit 4: Matchup detection issues ===
+    today_et = datetime.now(ZoneInfo("America/New_York")).date()
+    games_today = db.query(MLBGameLog).filter(
+        MLBGameLog.game_date == today_et
+    ).limit(50).all()
+    
+    if len(games_today) >= 5:  # Only audit if games scheduled
+        for game in games_today:
+            home_team = game.home_team
+            
+            # Check if recent player data exists
+            home_players = db.query(MLBPlayerStats).filter(
+                MLBPlayerStats.team == home_team,
+                MLBPlayerStats.game_date > today_et - timedelta(days=3)
+            ).limit(5).all()
+            
+            if not home_players:
+                all_issues.append({
+                    "issue_type": "matchup_detection_false_negative",
+                    "player_name": f"{home_team} players",
+                    "player_id": "N/A",
+                    "team": home_team,
+                    "pa": None,
+                    "expected_value": f"has_game=True (vs {game.away_team})",
+                    "actual_value": "no recent stats found",
+                    "priority": P0,
+                    "category": A,
+                    "impact_score": 9.0,
+                    "description": f"Game scheduled today but no recent player data"
+                })
+    
+    # Sort by priority then impact score
+    priority_order = {P0: 0, P1: 1, P2: 2, P3: 3}
+    all_issues.sort(
+        key=lambda x: (priority_order.get(x["priority"], 4), -x["impact_score"])
+    )
+    
+    # Calculate summary stats
+    priority_counts = {P0: 0, P1: 0, P2: 0, P3: 0}
+    category_counts = {A: 0, B: 0, C: 0, D: 0, E: 0}
+    
+    for issue in all_issues:
+        priority_counts[issue["priority"]] = priority_counts.get(issue["priority"], 0) + 1
+        category_counts[issue["category"]] = category_counts.get(issue["category"], 0) + 1
+    
+    return {
+        "issues": all_issues,
+        "summary": {
+            "total_issues": len(all_issues),
+            "by_priority": {k: v for k, v in priority_counts.items() if v > 0},
+            "by_category": {k: v for k, v in category_counts.items() if v > 0},
+            "top_5": all_issues[:5] if all_issues else []
+        },
+        "generated_at": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# One-shot backfill endpoint — runs inside Railway network (has internal DB access)
+# ---------------------------------------------------------------------------
+
+@router.post("/backfill-cat-scores")
+def backfill_cat_scores(
+    force: bool = False,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    """Compute and write cat_scores z-scores for PlayerProjection rows.
+
+    This endpoint runs on the production server inside Railway's network, giving
+    it direct access to the internal Postgres instance.
+
+    Query params:
+        force (bool, default False): When False (default), rows that already
+            have a non-empty cat_scores JSONB value are skipped — safe to call
+            repeatedly from cron. When True, ALL rows are recomputed and
+            overwritten; use this after upstream stat-source changes (e.g., a
+            new Steamer ingestion or a bug fix in the proj dict assembly) so
+            stale z-scores are flushed.
+
+    Verification query is included in the response:
+        remaining_empty = SELECT COUNT(*) WHERE cat_scores::text = '{}'
+
+    Delegates to backend.services.cat_scores_builder.run_backfill for the
+    actual computation logic, enabling integration testing.
+    """
+    from backend.services.cat_scores_builder import run_backfill
+    return run_backfill(db, force=force)
+
+
+@router.post("/ingest-csv-projections")
+def ingest_csv_projections(db: Session = Depends(get_db)) -> Dict[str, Any]:
+    """Ingest projections from CSV file to PlayerProjection table.
+
+    Fallback for when FanGraphs 403 errors block automated scraping.
+    Reads from data/projections/fangraphs_ros.csv (or fangraphs_ros_sample.csv for testing).
+
+    This endpoint runs on the production server inside Railway's network, giving
+    it direct access to the internal Postgres instance. Safe to call multiple times —
+    existing rows are updated with new projection values.
+
+    Returns dict with status and counts:
+        status: "success" | "partial" | "failed"
+        fetched: projections loaded from CSV
+        resolved: player IDs matched via PlayerIDMapping
+        written: rows to database
+    """
+    from pathlib import Path
+    from backend.fantasy_baseball.csv_projection_ingestion import run_csv_backfill
+
+    # Try main file first, then sample
+    csv_path = Path("data/projections/fangraphs_ros.csv")
+    if not csv_path.exists():
+        csv_path = Path("data/projections/fangraphs_ros_sample.csv")
+
+    return run_csv_backfill(db, csv_path if csv_path.exists() else None)

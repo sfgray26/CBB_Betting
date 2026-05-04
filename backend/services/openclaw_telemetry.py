@@ -466,23 +466,24 @@ class TelemetryDashboard:
 async def check_system_health(force_summary: bool = False) -> bool:
     """
     Check system health and send alert if needed.
-    
-    This is the main entry point for telemetry checks.
-    
+
+    PAUSED (2026-04-21): OpenClaw telemetry and Discord health alerts are
+    disabled to reduce noise while the baseball module is being implemented.
+
     Args:
-        force_summary: Send daily summary even if no issues
-    
+        force_summary: Ignored while paused.
+
     Returns:
-        True if message was sent
+        False — OpenClaw is paused.
     """
-    dashboard = TelemetryDashboard()
-    return await dashboard.check_and_alert(force_summary=force_summary)
+    logger.info("OpenClaw telemetry check skipped — paused until baseball module is complete")
+    return False
 
 
 def check_system_health_sync(force_summary: bool = False) -> bool:
     """Synchronous wrapper for check_system_health."""
-    import asyncio
-    return asyncio.run(check_system_health(force_summary=force_summary))
+    logger.info("OpenClaw telemetry check skipped — paused until baseball module is complete")
+    return False
 
 
 # ---------------------------------------------------------------------------

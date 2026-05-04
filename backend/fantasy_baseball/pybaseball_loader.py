@@ -34,6 +34,75 @@ _SUFFIX_STRIP = re.compile(r"\s+(Jr\.?|Sr\.?|II+|III+|IV|V)$", re.IGNORECASE)
 
 
 # ---------------------------------------------------------------------------
+# User-Agent patch for FanGraphs (blocks requests without browser UA)
+# ---------------------------------------------------------------------------
+
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Cache-Control": "max-age=0",
+}
+
+# Module-level storage for original requests.get
+_original_requests_get = None
+
+
+def _patch_pybaseball_user_agent() -> None:
+    """
+    Monkey-patch requests.get to inject browser headers for pybaseball.
+
+    FanGraphs blocks requests with default python-requests User-Agent.
+    This patch applies at module import time, before any network calls.
+
+    The patch is applied to the requests module directly since pybaseball
+    uses requests.get() without session configuration.
+    """
+    global _original_requests_get
+
+    try:
+        import requests
+
+        # Only patch once globally
+        if not hasattr(requests, "_pybaseball_patched"):
+            requests._pybaseball_patched = True
+
+            # Store the REAL original get (before any patches)
+            if _original_requests_get is None:
+                _original_requests_get = requests.get
+
+            # Define patched function with closure over original
+            def _patched_get(url, params=None, **kwargs):
+                """Wrapper that injects full browser headers."""
+                # Merge browser headers with any user-provided headers
+                headers = _BROWSER_HEADERS.copy()
+                headers.update(kwargs.pop('headers', {}))
+                # Call the REAL original get
+                return _original_requests_get(url, params=params, headers=headers, **kwargs)
+
+            # Apply patch
+            requests.get = _patched_get
+
+            logger.info("pybaseball: patched requests.get with browser headers")
+    except Exception as e:
+        logger.debug("pybaseball User-Agent patch skipped: %s", e)
+
+
+_patch_pybaseball_user_agent()
+
+
+# ---------------------------------------------------------------------------
 # Name normalization
 # ---------------------------------------------------------------------------
 
