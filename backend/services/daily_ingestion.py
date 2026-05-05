@@ -720,6 +720,54 @@ def _update_sprint_speeds(db, season: int = 2026) -> int:
         return 0
 
 
+def _validate_statcast_coverage(db, table: str, column: str, threshold: float = 0.70) -> bool:
+    """
+    PR 2.3 — check null-rate for a Statcast column and update the corresponding
+    feature flag in-place.
+
+    Returns True when coverage >= threshold, False otherwise.
+    Failure is logged and returns True (optimistic — don't disable on transient error).
+    """
+    try:
+        from sqlalchemy import text
+
+        flag_name = f"statcast_{column}_enabled"
+
+        result = db.execute(
+            text(f"SELECT COUNT(*) FROM {table}")  # noqa: S608  # table is internal constant
+        ).scalar()
+        total = result or 0
+
+        non_null = db.execute(
+            text(f"SELECT COUNT(*) FROM {table} WHERE {column} IS NOT NULL")  # noqa: S608
+        ).scalar() or 0
+
+        rate = non_null / total if total else 0.0
+        covered = rate >= threshold
+
+        if not covered:
+            logger.error(
+                "_validate_statcast_coverage: %s.%s coverage %.1f%% below %.0f%% — disabling flag %s",
+                table, column, rate * 100, threshold * 100, flag_name,
+            )
+        else:
+            logger.info(
+                "_validate_statcast_coverage: %s.%s coverage %.1f%% OK",
+                table, column, rate * 100,
+            )
+
+        db.execute(
+            text("UPDATE feature_flags SET enabled = :enabled WHERE flag_name = :name"),
+            {"enabled": covered, "name": flag_name},
+        )
+        db.commit()
+        return covered
+
+    except Exception as exc:
+        logger.warning("_validate_statcast_coverage: check failed (%s) — keeping flag state", exc)
+        return True
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
@@ -4736,11 +4784,18 @@ class DailyIngestionOrchestrator:
                         sprint_updated,
                     )
 
+                    # PR 2.3: Validate coverage and auto-toggle feature flag
+                    sprint_ok = await asyncio.to_thread(
+                        _validate_statcast_coverage,
+                        db, "statcast_batter_metrics", "sprint_speed",
+                    )
+
                     return {
                         "status": "success",
                         "batters": b_total,
                         "pitchers": p_total,
                         "sprint_speed_updated": sprint_updated,
+                        "sprint_speed_flag_enabled": sprint_ok,
                         "elapsed_ms": elapsed,
                     }
                 elif result.get("status") == "skipped":
