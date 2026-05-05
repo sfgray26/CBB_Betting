@@ -131,6 +131,7 @@ LOCK_IDS = {
     "ros_projection_refresh": 100_036,  # P0-A: Refresh player_projections from RoS cache
     "yahoo_id_sync":         100_034,  # P0-C: Yahoo ID mapping sync
     "opportunity_update":    100_037,  # PR 3.4: Playing-time opportunity signals
+    "market_signals_update": 100_038,  # PR 4.2: Yahoo ownership-based market intelligence
 }
 
 
@@ -919,7 +920,18 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
-        # Explainability: daily 9 AM ET (after backtesting at 8 AM)
+        # Market signals: daily 8:30 AM ET (after backtesting at 8 AM)
+        # Computes Yahoo ownership-based market intelligence (ownership_velocity, market_score).
+        # LOG ONLY — results stored in player_market_signals but NOT used in ranking yet.
+        self._scheduler.add_job(
+            self._compute_market_signals,
+            CronTrigger(hour=8, minute=30, timezone=tz),
+            id="market_signals_update",
+            name="Market Signals Computation",
+            replace_existing=True,
+        )
+
+        # Explainability: daily 9 AM ET (after market_signals at 8:30 AM)
         # Generates human-readable decision traces from all P14-P18 signals.
         self._scheduler.add_job(
             self._run_explainability,
@@ -3224,6 +3236,273 @@ class DailyIngestionOrchestrator:
                 db.close()
 
         return await _with_advisory_lock(LOCK_IDS["opportunity_update"], "opportunity_update", _run)
+
+    async def _compute_market_signals(self) -> dict:
+        """
+        Daily Yahoo ownership-based market intelligence computation (lock 100_038, 8:30 AM ET).
+
+        Runs after _run_backtesting (8 AM) so player data is fresh.
+
+        LOG ONLY — results are upserted to player_market_signals but NOT used in
+        ranking yet (see PR 4.5 / feature flag market_signals_enabled).
+
+        Algorithm:
+          1. Fetch current Yahoo percent_owned for all tracked players
+          2. Look up historical ownership from player_market_signals (7d/30d ago)
+          3. Fetch skill_gap and confidence from player_scores
+          4. Compute ownership_velocity, ownership_deltas, add_drop_ratio, market_score
+          5. UPSERT each result to player_market_signals
+          6. Log summary: total players, avg_market_score, tag distribution
+
+        ADR-004: Never import betting_model or analysis here.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            from backend.services.market_engine import (
+                compute_ownership_velocity,
+                compute_ownership_deltas,
+                compute_add_drop_ratio,
+                compute_market_score,
+                MarketResult,
+            )
+            from backend.fantasy_baseball.yahoo_client_resilient import ResilientYahooClient
+
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
+
+            db = SessionLocal()
+            try:
+                # Step 1: Fetch all tracked players with their BDL IDs
+                players = db.execute(
+                    text(
+                        """
+                        SELECT DISTINCT bdl_id
+                        FROM player_id_mapping
+                        WHERE bdl_id IS NOT NULL
+                        """
+                    )
+                ).fetchall()
+
+                if not players:
+                    logger.warning(
+                        "market_signals_update: 0 players found in player_id_mapping"
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("market_signals_update", "warning")
+                    return {
+                        "status": "warning",
+                        "as_of_date": str(as_of_date),
+                        "total": 0,
+                        "elapsed_ms": elapsed,
+                    }
+
+                bdl_ids = [int(r[0]) for r in players]
+
+                # Step 2: Fetch current Yahoo ownership data
+                # For now, we'll use ADP-based estimates as a fallback
+                # TODO: PR 4.2.1 - Implement direct Yahoo API ownership fetch
+                yahoo_client = ResilientYahooClient()
+                adp_data = yahoo_client._load_adp_data()
+
+                ownership_map = {}
+                for bdl_id in bdl_ids:
+                    # Map BDL ID to player name for ADP lookup
+                    player_row = db.execute(
+                        text(
+                            """
+                            SELECT name
+                            FROM player_id_mapping
+                            WHERE bdl_id = :bdl_id
+                            LIMIT 1
+                            """
+                        ),
+                        {"bdl_id": bdl_id},
+                    ).fetchone()
+
+                    if player_row:
+                        player_name = player_row[0]
+                        estimated = yahoo_client._estimate_ownership_from_adp(
+                            player_name, adp_data
+                        )
+                        ownership_map[bdl_id] = estimated
+
+                # Step 3: Look up historical ownership from player_market_signals
+                # Query for 7d and 30d ago
+                date_7d_ago = as_of_date - timedelta(days=7)
+                date_30d_ago = as_of_date - timedelta(days=30)
+
+                historical = db.execute(
+                    text(
+                        """
+                        SELECT bdl_player_id, as_of_date, yahoo_owned_pct
+                        FROM player_market_signals
+                        WHERE as_of_date IN (:date_7d, :date_30d)
+                        """
+                    ),
+                    {"date_7d": date_7d_ago, "date_30d": date_30d_ago},
+                ).fetchall()
+
+                hist_7d = {r[0]: r[2] for r in historical if r[1] == date_7d_ago}
+                hist_30d = {r[0]: r[2] for r in historical if r[1] == date_30d_ago}
+
+                # Step 4: Fetch skill_gap_percentile and confidence from player_scores
+                scores = db.execute(
+                    text(
+                        """
+                        SELECT bdl_player_id, skill_gap_percentile, confidence
+                        FROM player_scores
+                        WHERE as_of_date = :today
+                        """
+                    ),
+                    {"today": as_of_date},
+                ).fetchall()
+
+                scores_map = {r[0]: (r[1], r[2]) for r in scores}
+
+                # Step 5: Compute market signals for each player
+                results = []
+                for bdl_id in bdl_ids:
+                    current_owned = ownership_map.get(bdl_id)
+                    owned_7d_ago = hist_7d.get(bdl_id)
+                    owned_30d_ago = hist_30d.get(bdl_id)
+
+                    if current_owned is None:
+                        continue
+
+                    # Compute ownership metrics
+                    velocity = compute_ownership_velocity(current_owned, owned_7d_ago)
+                    delta_7d, delta_30d = compute_ownership_deltas(
+                        current_owned, owned_7d_ago, owned_30d_ago
+                    )
+
+                    # Add/drop ratio - set to None initially (requires time-series data)
+                    add_drop_ratio_val = None  # TODO: Implement when add/drop rate data available
+
+                    # Compute market score if we have skill data
+                    market_result: MarketResult = None
+                    skill_data = scores_map.get(bdl_id)
+
+                    if skill_data:
+                        skill_gap_pct, confidence = skill_data
+                        if skill_gap_pct is not None:
+                            # Use skill_gap_percentile as proxy for skill_gap (informational only)
+                            market_result = compute_market_score(
+                                skill_gap=0.0,  # informational, not used in formula
+                                skill_gap_percentile=skill_gap_pct,
+                                ownership_velocity=velocity,
+                                owned_pct=current_owned,
+                                confidence=confidence or 1.0,
+                            )
+
+                    results.append(
+                        {
+                            "bdl_id": bdl_id,
+                            "as_of": as_of_date,
+                            "yahoo_owned_pct": current_owned,
+                            "yahoo_owned_pct_7d_ago": owned_7d_ago,
+                            "yahoo_owned_pct_30d_ago": owned_30d_ago,
+                            "ownership_delta_7d": delta_7d,
+                            "ownership_delta_30d": delta_30d,
+                            "ownership_velocity": velocity,
+                            "add_rate_7d": None,
+                            "drop_rate_7d": None,
+                            "add_drop_ratio": add_drop_ratio_val,
+                            "market_score": market_result.market_score if market_result else None,
+                            "market_tag": market_result.market_tag if market_result else None,
+                            "market_urgency": market_result.market_urgency if market_result else None,
+                        }
+                    )
+
+                # Step 6: UPSERT to player_market_signals
+                upserted = 0
+                for res in results:
+                    try:
+                        db.execute(
+                            text(
+                                """
+                                INSERT INTO player_market_signals (
+                                    bdl_player_id, as_of_date,
+                                    yahoo_owned_pct, yahoo_owned_pct_7d_ago, yahoo_owned_pct_30d_ago,
+                                    ownership_delta_7d, ownership_delta_30d, ownership_velocity,
+                                    add_rate_7d, drop_rate_7d, add_drop_ratio,
+                                    market_score, market_tag, market_urgency,
+                                    fetched_at
+                                ) VALUES (
+                                    :bdl_id, :as_of,
+                                    :yahoo_owned, :yahoo_7d, :yahoo_30d,
+                                    :delta_7d, :delta_30d, :velocity,
+                                    :add_rate, :drop_rate, :add_drop_ratio,
+                                    :market_score, :market_tag, :market_urgency,
+                                    NOW()
+                                )
+                                ON CONFLICT (bdl_player_id, as_of_date) DO UPDATE SET
+                                    yahoo_owned_pct = EXCLUDED.yahoo_owned_pct,
+                                    yahoo_owned_pct_7d_ago = EXCLUDED.yahoo_owned_pct_7d_ago,
+                                    yahoo_owned_pct_30d_ago = EXCLUDED.yahoo_owned_pct_30d_ago,
+                                    ownership_delta_7d = EXCLUDED.ownership_delta_7d,
+                                    ownership_delta_30d = EXCLUDED.ownership_delta_30d,
+                                    ownership_velocity = EXCLUDED.ownership_velocity,
+                                    add_rate_7d = EXCLUDED.add_rate_7d,
+                                    drop_rate_7d = EXCLUDED.drop_rate_7d,
+                                    add_drop_ratio = EXCLUDED.add_drop_ratio,
+                                    market_score = EXCLUDED.market_score,
+                                    market_tag = EXCLUDED.market_tag,
+                                    market_urgency = EXCLUDED.market_urgency,
+                                    fetched_at = NOW()
+                                """
+                            ),
+                            res,
+                        )
+                        upserted += 1
+                    except Exception as exc:
+                        logger.warning(
+                            "market_signals_update: upsert failed for bdl_player_id=%s: %s",
+                            res["bdl_id"], exc,
+                        )
+
+                db.commit()
+
+                # Summary stats
+                avg_score = (
+                    sum(r["market_score"] for r in results if r["market_score"])
+                    / len([r for r in results if r["market_score"]])
+                    if results
+                    else 0.0
+                )
+
+                tag_counts = {}
+                for r in results:
+                    if r["market_tag"]:
+                        tag_counts[r["market_tag"]] = tag_counts.get(r["market_tag"], 0) + 1
+
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.info(
+                    "market_signals_update: computed %d players, upserted %d, "
+                    "avg_market_score=%.2f, tag_distribution=%s, elapsed_ms=%d",
+                    len(results), upserted, avg_score, tag_counts, elapsed,
+                )
+                self._record_job_run("market_signals_update", "success")
+                return {
+                    "status": "success",
+                    "as_of_date": str(as_of_date),
+                    "total": len(results),
+                    "upserted": upserted,
+                    "avg_market_score": round(avg_score, 2),
+                    "tag_distribution": tag_counts,
+                    "elapsed_ms": elapsed,
+                }
+
+            except Exception as exc:
+                db.rollback()
+                logger.error("market_signals_update: job failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("market_signals_update", "failed")
+                return {"status": "failed", "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+        return await _with_advisory_lock(LOCK_IDS["market_signals_update"], "market_signals_update", _run)
 
     async def _run_ros_simulation(self) -> dict:
         """
