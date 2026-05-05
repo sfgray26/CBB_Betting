@@ -229,6 +229,58 @@ class WaiverEdgeDetector:
             logger.debug("_load_scarcity_lookup: DB query failed (%s) -- using _POS_GROUP fallback", exc)
             return {}
 
+    def _load_market_scores(self, bdl_ids: list[int]) -> dict[int, float]:
+        """PR 4.5: Bulk-load market_score from player_market_signals for the given BDL IDs.
+        Returns {bdl_id: market_score}. Defaults to 50.0 (neutral) when not found."""
+        if not bdl_ids:
+            return {}
+        try:
+            from datetime import date
+            from backend.models import SessionLocal
+            from sqlalchemy import text
+
+            today = date.today()
+            db = SessionLocal()
+            try:
+                rows = db.execute(
+                    text(
+                        """
+                        SELECT bdl_player_id, market_score
+                        FROM player_market_signals
+                        WHERE bdl_player_id = ANY(:bdl_ids)
+                          AND as_of_date = :today
+                        """
+                    ),
+                    {"bdl_ids": bdl_ids, "today": today},
+                ).fetchall()
+                # Default to 50.0 (neutral) for missing players
+                return {r[0]: r[1] for r in rows} if rows else {}
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("_load_market_scores: DB query failed (%s)", exc)
+            return {}
+
+    @staticmethod
+    def _yahoo_id_to_bdl_id(yahoo_id: int) -> Optional[int]:
+        """Map Yahoo player_id to BDL ID via player_id_mapping.
+        Returns None if not found."""
+        try:
+            from backend.models import SessionLocal
+            from sqlalchemy import text
+
+            db = SessionLocal()
+            try:
+                row = db.execute(
+                    text("SELECT bdl_id FROM player_id_mapping WHERE yahoo_id = :yahoo_id"),
+                    {"yahoo_id": yahoo_id},
+                ).fetchone()
+                return int(row[0]) if row else None
+            finally:
+                db.close()
+        except Exception:
+            return None
+
     def get_top_moves(self, my_roster, opponent_roster, n_candidates=10, force_refresh=False):
         free_agents = self._enrich_players(self._fetch_fas(force_refresh))
         if not free_agents:
@@ -241,6 +293,22 @@ class WaiverEdgeDetector:
         # Bulk-load scarcity_rank for all FA candidates in a single query.
         fa_keys = [fa.get("player_key") or fa.get("id") or "" for fa in free_agents[:40]]
         scarcity_lookup = self._load_scarcity_lookup([k for k in fa_keys if k])
+
+        # PR 4.5: Load market_score as tertiary tiebreaker
+        from backend.services.config_service import is_flag_enabled
+        use_market_signals = is_flag_enabled("market_signals_enabled")
+        market_lookup = {}
+        if use_market_signals:
+            bdl_ids = []
+            for fa in free_agents[:40]:
+                # Map Yahoo player_key to BDL ID
+                yahoo_id = fa.get("player_id")  # Yahoo player_id (integer)
+                if yahoo_id:
+                    bdl_id = self._yahoo_id_to_bdl_id(yahoo_id)
+                    if bdl_id:
+                        bdl_ids.append(bdl_id)
+            if bdl_ids:
+                market_lookup = self._load_market_scores(bdl_ids)
 
         moves = []
         for fa in free_agents[:40]:
@@ -261,6 +329,15 @@ class WaiverEdgeDetector:
                 scarcity_rank = _FALLBACK_RANK.get(fa_pos, 13)
             scarcity_multiplier = max(1.0, 1.0 + (13 - scarcity_rank) * 0.05)
             score *= scarcity_multiplier
+
+            # PR 4.5: Load market_score as tertiary tiebreaker
+            market_score = 50.0  # Default to neutral
+            if use_market_signals:
+                yahoo_id = fa.get("player_id")
+                if yahoo_id:
+                    bdl_id = self._yahoo_id_to_bdl_id(yahoo_id)
+                    if bdl_id:
+                        market_score = market_lookup.get(bdl_id, 50.0)
             if score <= 0 and not has_deficit_signal:
                 score = float(fa.get("z_score") or 0.0)
             fa_positions = fa.get("positions") or []
@@ -269,6 +346,7 @@ class WaiverEdgeDetector:
                 "add_player": fa,
                 "drop_player_name": drop_candidate.get("name", "") if drop_candidate else "",
                 "need_score": score,
+                "market_score": market_score,  # PR 4.5: Tertiary tiebreaker
                 "win_prob_before": 0.5,
                 "win_prob_after": 0.5,
                 "win_prob_gain": 0.0,
@@ -294,7 +372,8 @@ class WaiverEdgeDetector:
                 except Exception as e:
                     logger.warning("MCMC enrichment failed for %s: %s", fa.get("name"), e)
             moves.append(move)
-        moves.sort(key=lambda m: (m["win_prob_gain"], m["need_score"]), reverse=True)
+        # PR 4.5: Sort with market_score as tertiary tiebreaker (higher = better buy signal)
+        moves.sort(key=lambda m: (m["win_prob_gain"], m["need_score"], m["market_score"]), reverse=True)
         return moves[:n_candidates]
 
     def _enrich_players(self, players: list[dict]) -> list[dict]:
