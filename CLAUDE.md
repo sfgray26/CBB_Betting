@@ -108,12 +108,28 @@ LIVE NOW:
                           Do NOT use for any new MLB feature — route all MLB odds through BDL.
   OpenWeatherMap        — Park weather (park_weather.py)
 
+SAVANT PITCH QUALITY:
+  savant_pitch_quality  — In-house 100-centered Baseball Savant pitcher score for
+                          waiver/breakout detection. Implemented behind disabled
+                          feature flags; not a FanGraphs Stuff+/Location+ clone.
+                          See backend/fantasy_baseball/savant_pitch_quality.py and
+                          HANDOFF.md before activating waiver or projection behavior.
+
+AGENT RESEARCH MCP:
+  BallDontLie MCP       — Official hosted MCP at https://mcp.balldontlie.io/mcp.
+                          Available to agents as @balldontlie for ad-hoc endpoint discovery,
+                          payload inspection, odds/injury/stat checks, and cross-sport research.
+                          Do not replace backend/services/balldontlie.py with MCP for production
+                          ingestion; keep direct REST + Pydantic contracts for runtime jobs.
+
 CANCELLED:
   BallDontLie NCAAB     — Subscription ended with CBB season
   OddsAPI Champion      — Downgraded to Basic plan
 
 DO NOT REPLACE:
   pybaseball/Statcast   — BDL does not expose xwOBA/barrel%/exit velocity. Keep forever.
+  savant_pitch_quality  — Production runtime must use project-owned scripts/services;
+                          MCP is for research and validation only.
 ```
 
 ---

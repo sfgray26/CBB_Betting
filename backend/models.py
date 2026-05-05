@@ -803,6 +803,48 @@ class StatcastPitcherMetrics(Base):
     )
 
 
+class SavantPitchQualityScore(Base):
+    """
+    In-house Baseball Savant pitcher quality score for waiver/breakout detection.
+
+    This is distinct from FanGraphs Stuff+/Location+. Scores are 100-centered and
+    persisted separately so projection and waiver integrations can be enabled
+    only after backfill validation.
+    """
+
+    __tablename__ = "savant_pitch_quality_scores"
+
+    id = Column(Integer, primary_key=True, index=True)
+    player_id = Column(String(50), nullable=False, index=True)
+    player_name = Column(String(100), nullable=False)
+    team = Column(String(10))
+    season = Column(Integer, nullable=False, index=True)
+    as_of_date = Column(Date, nullable=False, index=True)
+
+    savant_pitch_quality = Column(Float, nullable=False)
+    arsenal_quality = Column(Float)
+    bat_missing_skill = Column(Float)
+    contact_suppression = Column(Float)
+    command_stability = Column(Float)
+    trend_adjustment = Column(Float)
+    sample_confidence = Column(Float)
+
+    signals = Column(JSONB, nullable=False, default=list)
+    inputs = Column(JSONB, nullable=False, default=dict)
+
+    created_at = Column(DateTime(timezone=True), default=_now_et)
+    updated_at = Column(DateTime(timezone=True), default=_now_et, onupdate=_now_et)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "player_id", "season", "as_of_date",
+            name="uq_savant_pitch_quality_player_season_date",
+        ),
+        Index("idx_spq_score_date", "as_of_date", "savant_pitch_quality"),
+        Index("idx_spq_player_season", "player_id", "season"),
+    )
+
+
 class PlayerProjection(Base):
     """
     Live-updated player projections using Bayesian inference.

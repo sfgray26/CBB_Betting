@@ -1,8 +1,8 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-05-05 | **Architect:** Claude Code (Master Architect)
-> **Status:** EPIC 2 sprint_speed ✅ LIVE. Stuff+/Location+ deferred P2 (FanGraphs/Cloudflare blocks Railway). Phase 4 pending Codex verification.
-> **HEAD:** `417f1fb` `fix(fangraphs-scraper): Apply browser UA patch before pybaseball fetch` (LATEST)
+> **Status:** EPIC 2 sprint_speed ✅ LIVE. Stuff+/Location+ deferred P2. Savant Pitch Quality implemented behind disabled flags.
+> **HEAD:** Run `git log --oneline -1` for latest branch commit; Savant Pitch Quality implemented in current branch.
 > **Deploy status:** ✅ LIVE — `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}`.
 
 ---
@@ -21,6 +21,7 @@
 | EPIC 2: fangraphs_scraper.py | ✅ Code correct — 21 tests passing |
 | EPIC 2: DB columns added | ✅ stuff_plus / location_plus in statcast_pitcher_metrics |
 | EPIC 2: Feature flags | ✅ Disabled (statcast_stuff_plus_enabled=false) |
+| Savant Pitch Quality | ✅ IMPLEMENTED — in-house Savant pitcher breakout score, inactive until DB migration/backfill/validation |
 | Phase 4 handoff SQL corrected | ✅ feature_flags not threshold_config |
 | Team role change: Codex replaces Gemini for blocking DevOps | ✅ Approved |
 | Full test suite | ✅ 2604 passed / 4 skipped |
@@ -47,6 +48,22 @@
 | Bug 3: xera_diff=0 — ERA null for all pitchers | Computed ERA subquery from statcast_performances | `0426b7e` | ✅ Deployed |
 
 **Statcast ingestion confirmed**: 723 records/day, `is_valid: true, error_count: 0`
+
+**New Savant Pitch Quality path (May 5):**
+- Design: `docs/superpowers/specs/2026-05-05-savant-pitch-quality-design.md`
+- Plan: `docs/superpowers/plans/2026-05-05-savant-pitch-quality.md`
+- Calculator: `backend/fantasy_baseball/savant_pitch_quality.py`
+- ORM table: `SavantPitchQualityScore` → `savant_pitch_quality_scores`
+- Migration: `scripts/migration_savant_pitch_quality.py`
+- Backfill: `scripts/backfill_savant_pitch_quality.py`
+- Flags: `scripts/seed_savant_pitch_quality_flags.py`
+
+Feature flags default disabled:
+- `savant_pitch_quality_enabled=false`
+- `savant_pitch_quality_waiver_signals_enabled=false`
+- `savant_pitch_quality_projection_adjustments_enabled=false`
+
+Purpose: replace the blocked automated FanGraphs Stuff+/Location+ path for waiver/breakout detection with a transparent Savant-native 100-centered score. This does **not** activate production waiver or projection behavior until migration, backfill, distribution validation, and explicit flag enablement.
 
 ---
 
@@ -167,6 +184,54 @@ FanGraphs routes `leaders-legacy.aspx` through Cloudflare with IP-reputation blo
 3. **FanGraphs API subscription** — Paid API access bypasses Cloudflare. ~$80/year.
 
 **Do not:** spend more time on Cloudflare bypass (UA tricks, rotating proxies, cloudscraper) — these fail at the IP-reputation layer regardless.
+
+### Savant Pitch Quality (FanGraphs replacement path — inactive)
+
+**Status:** Code implemented, DB rollout pending.
+
+The platform now has a Savant-native pitcher quality score for waiver and breakout detection:
+
+```text
+savant_pitch_quality =
+  35% arsenal_quality
+  30% bat_missing_skill
+  20% contact_suppression
+  15% command_stability
+  + trend_adjustment
+  x sample_confidence
+```
+
+Signals produced by the calculator:
+- `BREAKOUT_ARM`
+- `SKILL_CHANGE`
+- `STREAMER_UPSIDE`
+- `WATCHLIST`
+- `RATIO_RISK`
+
+**Agent routing:**
+- Claude: owns architecture review, final activation decision, and any waiver/projection integration.
+- Codex: may run migration/backfill/verification and implement bounded calculator/script fixes.
+- Kimi: may use MLB MCP/Savant research to audit endpoint fields and score validity.
+- Gemini: may run only pre-approved Railway scripts; no code edits.
+
+**Railway rollout commands when approved:**
+```powershell
+railway run python scripts/migration_savant_pitch_quality.py
+railway run python scripts/seed_savant_pitch_quality_flags.py
+railway run python scripts/backfill_savant_pitch_quality.py
+```
+
+**Validation queries after backfill:**
+```sql
+SELECT COUNT(*) FROM savant_pitch_quality_scores WHERE season = 2026;
+SELECT player_name, savant_pitch_quality, sample_confidence, signals
+FROM savant_pitch_quality_scores
+WHERE season = 2026
+ORDER BY as_of_date DESC, savant_pitch_quality DESC
+LIMIT 20;
+```
+
+**Gate:** Keep all three `savant_pitch_quality_*` feature flags disabled until distribution and known-player sanity checks pass.
 
 ---
 
