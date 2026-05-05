@@ -59,20 +59,25 @@ Should see: `idx_market_signals_player_date`, `idx_market_signals_date_score`
 
 The feature flags control whether market signals affect scoring. We seed them as FALSE initially (log-only mode).
 
+**IMPORTANT:** These flags live in `feature_flags`, NOT `threshold_config`. The code checks them via
+`config_service.is_flag_enabled()` which reads `feature_flags.enabled` (boolean column).
+The v33 migration may have already seeded them — `ON CONFLICT DO NOTHING` is safe either way.
+
 ```sql
-INSERT INTO threshold_config (key, value, description)
+INSERT INTO feature_flags (flag_name, enabled, rollout_pct, description)
 VALUES
-  ('market_signals_enabled', 'false', 'PR 4: Market score tiebreaker in waiver recommendations'),
-  ('opportunity_enabled', 'false', 'PR 3: Opportunity adjustment in player_scores')
-ON CONFLICT (key) DO NOTHING;
+  ('market_signals_enabled', false, 0, 'PR 4: Market score tiebreaker in waiver recommendations'),
+  ('opportunity_enabled',    false, 0, 'PR 3: Opportunity adjustment in player_scores')
+ON CONFLICT (flag_name) DO NOTHING;
 ```
 
 **Verify seeded:**
 ```sql
-SELECT key, value, description FROM threshold_config WHERE key LIKE '%_enabled';
+SELECT flag_name, enabled, rollout_pct FROM feature_flags
+WHERE flag_name IN ('market_signals_enabled', 'opportunity_enabled');
 ```
 
-Expected: 2 rows with `value = 'false'`
+Expected: 2 rows with `enabled = false`
 
 ---
 
@@ -150,7 +155,7 @@ After completion, report back with:
 - idx_market_signals_player_date: [CREATED/MISSING]
 - idx_market_signals_date_score: [CREATED/MISSING]
 
-### Feature Flags (threshold_config)
+### Feature Flags (feature_flags table)
 - market_signals_enabled: [false/true] [SEEDED/MISSING]
 - opportunity_enabled: [false/true] [SEEDED/MISSING]
 
@@ -199,8 +204,8 @@ After completion, report back with:
 - Verify dependencies: `pip list | grep -i pytest`
 
 **If feature flags already exist:**
-- The `ON CONFLICT DO NOTHING` clause is safe
-- Verify current values: `SELECT key, value FROM threshold_config WHERE key LIKE '%_enabled';`
+- The `ON CONFLICT DO NOTHING` clause is safe (v33 migration may have already seeded them)
+- Verify current values: `SELECT flag_name, enabled FROM feature_flags WHERE flag_name LIKE '%_enabled';`
 
 **If lock ID is taken:**
 - Check if job is already running: `SELECT * FROM pg_locks WHERE classid = 100_038;`

@@ -721,6 +721,79 @@ def _update_sprint_speeds(db, season: int = 2026) -> int:
         return 0
 
 
+def _update_pitcher_advanced(db, season: int = 2026) -> dict:
+    """
+    PR 2.x — Fetch Stuff+ and Location+ from Baseball Savant and update statcast_pitcher_metrics.
+
+    Returns dict with keys:
+        updated_stuff (int): rows updated with stuff_plus
+        updated_location (int): rows updated with location_plus
+        total (int): total pitchers fetched
+
+    Any failure is logged and returns zeros so the caller (savant_ingestion job)
+    is never disrupted.
+    """
+    try:
+        from backend.ingestion.savant_scraper import fetch_pitcher_advanced
+        from sqlalchemy import text
+
+        df = fetch_pitcher_advanced(year=season)
+        if df.empty:
+            logger.warning("_update_pitcher_advanced: no data returned from Savant (empty DF)")
+            return {"updated_stuff": 0, "updated_location": 0, "total": 0}
+
+        updated_stuff = 0
+        updated_location = 0
+
+        for _, row in df.iterrows():
+            mlbam_id_str = str(int(row["mlbam_id"]))
+            stuff_plus = row.get("stuff_plus")
+            location_plus = row.get("location_plus")
+
+            # Update stuff_plus if not NULL
+            if pd.notna(stuff_plus):
+                result = db.execute(
+                    text(
+                        "UPDATE statcast_pitcher_metrics "
+                        "SET stuff_plus = :stuff "
+                        "WHERE mlbam_id = :mlbam_id AND season = :season"
+                    ),
+                    {"stuff": float(stuff_plus), "mlbam_id": mlbam_id_str, "season": season},
+                )
+                updated_stuff += result.rowcount
+
+            # Update location_plus if not NULL
+            if pd.notna(location_plus):
+                result = db.execute(
+                    text(
+                        "UPDATE statcast_pitcher_metrics "
+                        "SET location_plus = :loc "
+                        "WHERE mlbam_id = :mlbam_id AND season = :season"
+                    ),
+                    {"loc": float(location_plus), "mlbam_id": mlbam_id_str, "season": season},
+                )
+                updated_location += result.rowcount
+
+        db.commit()
+        logger.info(
+            "_update_pitcher_advanced: updated stuff_plus=%d, location_plus=%d / %d pitchers",
+            updated_stuff, updated_location, len(df)
+        )
+        return {
+            "updated_stuff": updated_stuff,
+            "updated_location": updated_location,
+            "total": len(df)
+        }
+
+    except Exception as exc:
+        logger.warning("_update_pitcher_advanced: failed, metrics not updated: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return {"updated_stuff": 0, "updated_location": 0, "total": 0}
+
+
 def _validate_statcast_coverage(db, table: str, column: str, threshold: float = 0.70) -> bool:
     """
     PR 2.3 — check null-rate for a Statcast column and update the corresponding
@@ -5063,10 +5136,28 @@ class DailyIngestionOrchestrator:
                         sprint_updated,
                     )
 
-                    # PR 2.3: Validate coverage and auto-toggle feature flag
+                    # PR 2.x: Update stuff_plus and location_plus from Savant pitching leaderboard
+                    pitcher_advanced = await asyncio.to_thread(
+                        _update_pitcher_advanced, db, season=2026
+                    )
+                    logger.info(
+                        "_ingest_savant_leaderboards: pitcher advanced updated: stuff_plus=%d, location_plus=%d",
+                        pitcher_advanced["updated_stuff"],
+                        pitcher_advanced["updated_location"],
+                    )
+
+                    # PR 2.3: Validate coverage and auto-toggle feature flags
                     sprint_ok = await asyncio.to_thread(
                         _validate_statcast_coverage,
                         db, "statcast_batter_metrics", "sprint_speed",
+                    )
+                    stuff_ok = await asyncio.to_thread(
+                        _validate_statcast_coverage,
+                        db, "statcast_pitcher_metrics", "stuff_plus",
+                    )
+                    location_ok = await asyncio.to_thread(
+                        _validate_statcast_coverage,
+                        db, "statcast_pitcher_metrics", "location_plus",
                     )
 
                     return {
@@ -5074,7 +5165,10 @@ class DailyIngestionOrchestrator:
                         "batters": b_total,
                         "pitchers": p_total,
                         "sprint_speed_updated": sprint_updated,
+                        "pitcher_advanced_updated": pitcher_advanced,
                         "sprint_speed_flag_enabled": sprint_ok,
+                        "stuff_plus_flag_enabled": stuff_ok,
+                        "location_plus_flag_enabled": location_ok,
                         "elapsed_ms": elapsed,
                     }
                 elif result.get("status") == "skipped":

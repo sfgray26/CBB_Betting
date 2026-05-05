@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 import requests
 
-from backend.ingestion.savant_scraper import fetch_sprint_speed, _empty_df, _parse_csv
+from backend.ingestion.savant_scraper import fetch_sprint_speed, _empty_df, _parse_sprint_speed_csv as _parse_csv
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +170,6 @@ def test_parse_csv_drops_rows_with_null_id():
 
 
 def test_empty_df_has_correct_schema():
-    df = _empty_df()
+    df = _empty_df(columns=["mlbam_id", "player_name", "sprint_speed"])
     assert list(df.columns) == ["mlbam_id", "player_name", "sprint_speed"]
     assert len(df) == 0

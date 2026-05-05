@@ -1,8 +1,10 @@
 """
-PR 2.1 — Baseball Savant sprint speed scraper.
+PR 2.x — Baseball Savant scrapers for advanced metrics.
 
-Fetches the sprint speed leaderboard CSV from baseballsavant.mlb.com and
-returns a tidy DataFrame keyed by MLBAM player ID.
+Fetches leaderboards from baseballsavant.mlb.com for:
+  - Sprint speed (batter running speed)
+  - Stuff+ (pitcher quality metric)
+  - Location+ (pitcher command metric)
 
 Failure contract: any HTTP or parse error returns an empty DataFrame and
 logs a warning — callers must not crash if this returns empty.
@@ -20,6 +22,12 @@ logger = logging.getLogger(__name__)
 _SPRINT_SPEED_URL = (
     "https://baseballsavant.mlb.com/leaderboard/sprint_speed"
     "?year={year}&position=&team=&min=0&csv=true"
+)
+
+# Stuff+ and Location+ are available from the pitching leaderboard
+_PITCHING_LEADERBOARD_URL = (
+    "https://baseballsavant.mlb.com/leaderboard/pitching"
+    "?year={year}&position=P&team=&min=0&csv=true"
 )
 
 _BROWSER_HEADERS = {
@@ -53,21 +61,45 @@ def fetch_sprint_speed(year: int = 2026) -> pd.DataFrame:
     try:
         resp = requests.get(url, headers=_BROWSER_HEADERS, timeout=_TIMEOUT_SECONDS)
         resp.raise_for_status()
-        return _parse_csv(resp.text)
+        return _parse_sprint_speed_csv(resp.text)
     except requests.RequestException as exc:
         logger.warning("savant_scraper: HTTP error fetching sprint speed: %s", exc)
     except Exception as exc:
         logger.warning("savant_scraper: unexpected error fetching sprint speed: %s", exc)
-    return _empty_df()
+    return _empty_df(columns=["mlbam_id", "player_name", "sprint_speed"])
 
 
-def _parse_csv(csv_text: str) -> pd.DataFrame:
+def fetch_pitcher_advanced(year: int = 2026) -> pd.DataFrame:
+    """
+    Fetch the Baseball Savant pitching leaderboard for `year`.
+
+    Returns a DataFrame with columns:
+        mlbam_id       int   — MLB Advanced Media player ID
+        player_name    str   — "Last, First" format from Savant
+        stuff_plus     float — Pitching quality metric (100 = avg)
+        location_plus  float — Command metric (100 = avg)
+
+    Returns an empty DataFrame (same columns, zero rows) on any failure.
+    """
+    url = _PITCHING_LEADERBOARD_URL.format(year=year)
+    try:
+        resp = requests.get(url, headers=_BROWSER_HEADERS, timeout=_TIMEOUT_SECONDS)
+        resp.raise_for_status()
+        return _parse_pitching_csv(resp.text)
+    except requests.RequestException as exc:
+        logger.warning("savant_scraper: HTTP error fetching pitching advanced: %s", exc)
+    except Exception as exc:
+        logger.warning("savant_scraper: unexpected error fetching pitching advanced: %s", exc)
+    return _empty_df(columns=["mlbam_id", "player_name", "stuff_plus", "location_plus"])
+
+
+def _parse_sprint_speed_csv(csv_text: str) -> pd.DataFrame:
     """Parse Savant sprint speed CSV into the canonical three-column DataFrame."""
     # on_bad_lines='skip' tolerates player names with embedded commas or extra fields
     df = pd.read_csv(io.StringIO(csv_text), on_bad_lines="skip")
 
     if df.empty:
-        return _empty_df()
+        return _empty_df(columns=["mlbam_id", "player_name", "sprint_speed"])
 
     # Savant CSV columns vary slightly by year; try common names
     id_col = _find_column(df, ("player_id", "mlbam_id", "batter", "pitcher", "id"))
@@ -93,6 +125,39 @@ def _parse_csv(csv_text: str) -> pd.DataFrame:
     return out.reset_index(drop=True)
 
 
+def _parse_pitching_csv(csv_text: str) -> pd.DataFrame:
+    """Parse Savant pitching CSV into Stuff+/Location+ DataFrame."""
+    # on_bad_lines='skip' tolerates player names with embedded commas or extra fields
+    df = pd.read_csv(io.StringIO(csv_text), on_bad_lines="skip")
+
+    if df.empty:
+        return _empty_df(columns=["mlbam_id", "player_name", "stuff_plus", "location_plus"])
+
+    # Savant CSV columns vary; try common names for Stuff+ and Location+
+    id_col = _find_column(df, ("player_id", "mlbam_id", "pitcher", "id"))
+    name_col = _find_column(df, ("player_name", "name", "last_name,first_name"))
+    stuff_col = _find_column(df, ("stuff_plus", "Stuff+", "stuff+"))
+    loc_col = _find_column(df, ("location_plus", "Location+", "location+"))
+
+    if id_col is None:
+        raise ValueError(
+            f"Could not locate player_id column in Savant pitching CSV. "
+            f"Found: {list(df.columns)}"
+        )
+
+    # Stuff+ and Location+ are optional — return NULL if not found
+    out = pd.DataFrame({
+        "mlbam_id": pd.to_numeric(df[id_col], errors="coerce"),
+        "player_name": df[name_col].astype(str) if name_col else "",
+        "stuff_plus": pd.to_numeric(df[stuff_col], errors="coerce") if stuff_col else None,
+        "location_plus": pd.to_numeric(df[loc_col], errors="coerce") if loc_col else None,
+    })
+
+    out = out.dropna(subset=["mlbam_id"])
+    out["mlbam_id"] = out["mlbam_id"].astype(int)
+    return out.reset_index(drop=True)
+
+
 def _find_column(df: pd.DataFrame, candidates: tuple) -> str | None:
     """Return the first column name from candidates that exists in df."""
     lower_map = {c.lower(): c for c in df.columns}
@@ -102,5 +167,5 @@ def _find_column(df: pd.DataFrame, candidates: tuple) -> str | None:
     return None
 
 
-def _empty_df() -> pd.DataFrame:
-    return pd.DataFrame(columns=["mlbam_id", "player_name", "sprint_speed"])
+def _empty_df(columns: list) -> pd.DataFrame:
+    return pd.DataFrame(columns=columns)
