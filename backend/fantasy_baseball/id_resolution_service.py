@@ -33,8 +33,14 @@ from backend.models import IdentityQuarantine, PlayerIdentity
 
 
 def _normalize_name(name: str) -> str:
-    """Return NFC-normalised, lower-cased, stripped name."""
-    return unicodedata.normalize("NFC", name).lower().strip()
+    """Return accent-stripped, lower-cased, stripped name.
+
+    Uses NFKD decomposition to remove combining characters (accents) so that
+    'José Ramírez' and 'Jose Ramirez' resolve to the same key ('jose ramirez').
+    This matches FanGraphs/Steamer ASCII names against Yahoo-sourced accented names.
+    """
+    nfkd = unicodedata.normalize("NFKD", name)
+    return "".join(c for c in nfkd if not unicodedata.combining(c)).lower().strip()
 
 
 def _top_candidates(
