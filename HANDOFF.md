@@ -1,8 +1,8 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-05-05 | **Architect:** Claude Code (Master Architect)
-> **Status:** Phase 4 (Market Signals Engine) COMPLETE. Ready for DevOps deployment verification.
-> **HEAD:** `8ee4c8c` `feat(pr-4.5): Market score tiebreaker in waiver edge detector` (LATEST)
+> **Status:** EPIC 2 (Stuff+/Location+) code complete. Phase 4 awaiting Codex Railway verification.
+> **HEAD:** `c213ba2` `feat(pr-2.x): Stuff+ and Location+ ingestion from Baseball Savant` (LATEST)
 > **Deploy status:** ✅ LIVE — `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}`.
 
 ---
@@ -16,7 +16,13 @@
 | PR 4.3/4.4: Market engine | ✅ 29 tests passing (pure computation module) |
 | PR 4.2: Market signals job | ✅ Scheduled 8:30 AM ET (lock 100_038) |
 | PR 4.5: Market score tiebreaker | ✅ Integrated into waiver_edge_detector |
-| Test suite | ✅ 43 tests passing (29 market_engine + 14 waiver_edge) |
+| EPIC 2: Stuff+/Location+ pipeline | ✅ COMPLETE — `c213ba2` |
+| PR 2.x: fetch_pitcher_advanced() | ✅ savant_scraper.py extended |
+| PR 2.x: _update_pitcher_advanced() | ✅ Wired into daily savant job |
+| PR 2.x: Tests (11) | ✅ 11/11 passing |
+| Phase 4 handoff SQL corrected | ✅ feature_flags not threshold_config |
+| Team role change: Codex replaces Gemini for blocking DevOps | ✅ Approved |
+| Full test suite | ✅ 2604 passed / 4 skipped |
 
 **Phase 4 Deliverables:**
 - Pure computation module (`backend/services/market_engine.py`) — ownership_velocity, ownership_deltas, add_drop_ratio, market_score (0-100)
@@ -142,9 +148,9 @@ All structural fixes are deployed. Now need 48h of real-world data to confirm si
 
 ## Delegation Queue (P0 — Week 1 Priority)
 
-### 🔧 Task 0: Phase 4 Deployment Verification (NEW — May 5, 2026)
-**Assigned:** Gemini CLI (DevOps)
-**Status:** ⏳ PENDING
+### 🔧 Task 0: Phase 4 + EPIC 2 Deployment (NEW — May 5, 2026)
+**Assigned:** Codex (Implementation Lead + Deployment Verification)
+**Status:** ⏳ PENDING — Gemini removed from blocking DevOps ownership
 **Estimated time:** 30 minutes
 
 **Context:**
@@ -235,6 +241,58 @@ Phase 4 (Market Signals Engine) is complete but requires DevOps verification bef
 ```
 
 **Escalation:** If migration fails or tests don't pass on Railway, report specific error messages for Architect review.
+
+---
+
+### 🔧 Task 0b: EPIC 2 Railway DB Migration + Backfill (NEW — May 5, 2026)
+**Assigned:** Codex (Implementation Lead)
+**Status:** ⏳ PENDING — code committed `c213ba2`, needs Railway execution
+
+**Context:**
+EPIC 2 (Stuff+/Location+) scraper and daily job are complete and committed. The DB columns
+don't exist yet in Railway — the migration must run before any data lands.
+
+**Step 1: Apply column migration**
+```bash
+railway run python -c "
+import psycopg2, os
+conn = psycopg2.connect(os.environ['DATABASE_URL'])
+cur = conn.cursor()
+cur.execute('ALTER TABLE statcast_pitcher_metrics ADD COLUMN IF NOT EXISTS stuff_plus FLOAT')
+cur.execute('ALTER TABLE statcast_pitcher_metrics ADD COLUMN IF NOT EXISTS location_plus FLOAT')
+conn.commit()
+cur.close(); conn.close()
+print('Migration complete.')
+"
+```
+Or run: `railway run python -c "$(cat scripts/migration_add_statcast_advanced.sql)"` (pure SQL variant).
+
+**Step 2: Run backfill**
+```bash
+railway run python scripts/backfill_statcast_pitcher_advanced.py
+```
+Expected: logged coverage ≥ 70% for both stuff_plus and location_plus.
+
+**Step 3: Seed feature flags**
+```bash
+railway run python scripts/seed_statcast_advanced_flags.py
+```
+Expected: "Successfully seeded 4 feature flags"
+
+**Step 4: Verify**
+```sql
+SELECT COUNT(*) FILTER (WHERE stuff_plus IS NOT NULL), COUNT(*)
+FROM statcast_pitcher_metrics WHERE season = 2026;
+```
+Expected: non-zero / total ≥ 70%.
+
+**Success criteria:**
+- [ ] `statcast_pitcher_metrics.stuff_plus` column exists
+- [ ] `statcast_pitcher_metrics.location_plus` column exists
+- [ ] Backfill logged ≥ 70% coverage
+- [ ] Feature flags seeded (statcast_stuff_plus_enabled=false, statcast_location_plus_enabled=false)
+
+**Escalate to Architect if:** migration errors, coverage < 30%, or Savant returns empty CSV.
 
 ---
 
@@ -378,7 +436,7 @@ $env:DATABASE_URL = "postgresql://postgres:oViPPSTbGvkNGzGjrYoxsLVvibJvJZAB@junc
 
 ## Technical Reference
 
-**Advisory Locks** (next available: 100_039):
+**Advisory Locks** (next available: 100_039 — no new locks this session):
 - 100_001 mlb_odds | 100_002 statcast | 100_003 rolling_z | 100_004 cbb_ratings
 - 100_005 clv | 100_006 cleanup | 100_007 waiver_scan | 100_008 mlb_brief
 - 100_009 openclaw_perf | 100_010 openclaw_sweep
