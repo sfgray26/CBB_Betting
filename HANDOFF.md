@@ -1,8 +1,8 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-05-05 | **Architect:** Claude Code (Master Architect)
-> **Status:** EPIC 2 (Stuff+/Location+) code complete. Phase 4 awaiting Codex Railway verification.
-> **HEAD:** `c213ba2` `feat(pr-2.x): Stuff+ and Location+ ingestion from Baseball Savant` (LATEST)
+> **Status:** EPIC 2 sprint_speed ✅ LIVE. Stuff+/Location+ deferred P2 (FanGraphs/Cloudflare blocks Railway). Phase 4 pending Codex verification.
+> **HEAD:** `417f1fb` `fix(fangraphs-scraper): Apply browser UA patch before pybaseball fetch` (LATEST)
 > **Deploy status:** ✅ LIVE — `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}`.
 
 ---
@@ -16,10 +16,11 @@
 | PR 4.3/4.4: Market engine | ✅ 29 tests passing (pure computation module) |
 | PR 4.2: Market signals job | ✅ Scheduled 8:30 AM ET (lock 100_038) |
 | PR 4.5: Market score tiebreaker | ✅ Integrated into waiver_edge_detector |
-| EPIC 2: Stuff+/Location+ pipeline | ✅ COMPLETE — `c213ba2` |
-| PR 2.x: fetch_pitcher_advanced() | ✅ savant_scraper.py extended |
-| PR 2.x: _update_pitcher_advanced() | ✅ Wired into daily savant job |
-| PR 2.x: Tests (11) | ✅ 11/11 passing |
+| EPIC 2: sprint_speed ingestion | ✅ LIVE (Savant — no Cloudflare) |
+| EPIC 2: Stuff+/Location+ pipeline | ⚠️ P2 DEFERRED — FanGraphs/Cloudflare blocks Railway IP |
+| EPIC 2: fangraphs_scraper.py | ✅ Code correct — 21 tests passing |
+| EPIC 2: DB columns added | ✅ stuff_plus / location_plus in statcast_pitcher_metrics |
+| EPIC 2: Feature flags | ✅ Disabled (statcast_stuff_plus_enabled=false) |
 | Phase 4 handoff SQL corrected | ✅ feature_flags not threshold_config |
 | Team role change: Codex replaces Gemini for blocking DevOps | ✅ Approved |
 | Full test suite | ✅ 2604 passed / 4 skipped |
@@ -143,6 +144,29 @@ All structural fixes are deployed. Now need 48h of real-world data to confirm si
 
 **Gate**: Do NOT proceed to frontend dashboard signal display until both conditions confirmed.
 
+
+---
+
+## Known Blockers — Infrastructure
+
+### Stuff+ / Location+ (FanGraphs/Cloudflare — P2)
+
+**Status:** Code complete, data unavailable from Railway.
+
+FanGraphs routes `leaders-legacy.aspx` through Cloudflare with IP-reputation blocking. Railway's IP range is blocked regardless of User-Agent headers. The UA patch (`_patch_pybaseball_user_agent`) applies and executes, but Cloudflare returns 403 before the response reaches the application layer.
+
+**Confirmed:** `pybaseball_loader.py` also fails to fetch live FanGraphs data from Railway — it works via 24-hour file cache seeded from developer machines.
+
+**Impact:** `PLUS_STUFF` signal never fires. This was already the case before EPIC 2 (columns existed in ORM, never populated). Not a regression.
+
+**Feature flags:** `statcast_stuff_plus_enabled=false`, `statcast_location_plus_enabled=false` — safe to leave disabled.
+
+**P2 resolution options (pick one when signal becomes needed):**
+1. **Manual CSV snapshot** — User downloads FanGraphs pitching leaderboard CSV from browser monthly → drops at `data/fangraphs_pitcher_quality_YYYY.csv` → backfill script reads it. Requires ~15 lines added to `fangraphs_scraper.py`.
+2. **Savant proxy** — Replace with Savant-native metrics (xERA, barrel%, whiff%) which don't require FanGraphs. Good proxy but not Stuff+/Location+ specifically.
+3. **FanGraphs API subscription** — Paid API access bypasses Cloudflare. ~$80/year.
+
+**Do not:** spend more time on Cloudflare bypass (UA tricks, rotating proxies, cloudscraper) — these fail at the IP-reputation layer regardless.
 
 ---
 
