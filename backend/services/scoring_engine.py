@@ -548,6 +548,46 @@ def compute_league_zscores(
     return results
 
 
+def apply_opportunity_adjustment(
+    score_results: list[PlayerScoreResult],
+    opportunity_lookup: dict[int, tuple[float, float]],
+) -> list[PlayerScoreResult]:
+    """
+    Apply a bounded, confidence-weighted opportunity modifier to composite_z.
+
+    PR 3.5 — feature-flagged; callers must check is_flag_enabled("opportunity_enabled")
+    before calling this function. The flag is checked by the caller (daily_ingestion)
+    so this function remains a pure transform.
+
+    Modifier formula (per ARCHITECTURE PRINCIPLES §2):
+        opportunity_adj = clamp(opportunity_z * 0.15, -0.30, +0.20)
+        opportunity_adj *= opportunity_confidence
+        composite_z    *= (1 + opportunity_adj)
+
+    Max effect: +20% boost (everyday leadoff) / -30% dampen (IL/benched).
+    Confidence gates: low PA window → modifier approaches zero.
+
+    Parameters
+    ----------
+    score_results       : list of PlayerScoreResult from compute_league_zscores()
+    opportunity_lookup  : {bdl_player_id → (opportunity_z, opportunity_confidence)}
+                          Pre-fetched from player_opportunity by the caller.
+                          Missing players receive (0.0, 0.0) → no adjustment.
+
+    Returns
+    -------
+    The same list with composite_z modified in-place. score_0_100 is NOT
+    recomputed here — caller should re-rank after applying all adjustments.
+    """
+    for res in score_results:
+        opp_z, opp_conf = opportunity_lookup.get(res.bdl_player_id, (0.0, 0.0))
+        if opp_conf <= 0.0:
+            continue
+        adj = max(-0.30, min(0.20, opp_z * 0.15)) * opp_conf
+        res.composite_z *= (1.0 + adj)
+    return score_results
+
+
 def compute_league_params(
     rolling_rows: list,
 ) -> tuple[dict[str, float], dict[str, float]]:

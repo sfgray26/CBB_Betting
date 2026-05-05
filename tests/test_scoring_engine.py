@@ -16,6 +16,7 @@ from backend.services.scoring_engine import (
     Z_CAP,
     PlayerScoreResult,
     compute_league_zscores,
+    apply_opportunity_adjustment,
 )
 
 
@@ -575,3 +576,84 @@ def test_player_type_detected_correctly():
     assert r_hitter.player_type == "hitter"
     assert r_pitcher.player_type == "pitcher"
     assert r_two_way.player_type == "two_way"
+
+
+# ---------------------------------------------------------------------------
+# apply_opportunity_adjustment (PR 3.5)
+# ---------------------------------------------------------------------------
+
+def _make_score_result(pid: int, composite_z: float, player_type: str = "hitter") -> PlayerScoreResult:
+    from datetime import date
+    r = PlayerScoreResult(
+        bdl_player_id=pid,
+        as_of_date=date(2026, 5, 5),
+        window_days=14,
+        player_type=player_type,
+        games_in_window=14,
+    )
+    r.composite_z = composite_z
+    r.score_0_100 = 50.0
+    r.confidence = 1.0
+    return r
+
+
+def test_opportunity_adjustment_no_lookup_no_change():
+    res = _make_score_result(1, composite_z=1.0)
+    original_z = res.composite_z
+    apply_opportunity_adjustment([res], {})
+    assert res.composite_z == pytest.approx(original_z)
+
+
+def test_opportunity_adjustment_positive_z_increases_composite():
+    res = _make_score_result(1, composite_z=1.0)
+    lookup = {1: (2.0, 1.0)}  # opp_z=2.0 → adj = clamp(2*0.15, -0.3, 0.2) = 0.2
+    apply_opportunity_adjustment([res], lookup)
+    assert res.composite_z == pytest.approx(1.0 * 1.2)
+
+
+def test_opportunity_adjustment_negative_z_decreases_composite():
+    res = _make_score_result(1, composite_z=1.0)
+    lookup = {1: (-3.0, 1.0)}  # opp_z=-3 → adj = clamp(-0.45, -0.3, 0.2) = -0.3
+    apply_opportunity_adjustment([res], lookup)
+    assert res.composite_z == pytest.approx(1.0 * 0.7)
+
+
+def test_opportunity_adjustment_capped_at_plus_twenty_pct():
+    res = _make_score_result(1, composite_z=2.0)
+    lookup = {1: (10.0, 1.0)}  # extreme opp_z capped at +0.2
+    apply_opportunity_adjustment([res], lookup)
+    assert res.composite_z == pytest.approx(2.0 * 1.2)
+
+
+def test_opportunity_adjustment_capped_at_minus_thirty_pct():
+    res = _make_score_result(1, composite_z=2.0)
+    lookup = {1: (-10.0, 1.0)}  # extreme negative capped at -0.3
+    apply_opportunity_adjustment([res], lookup)
+    assert res.composite_z == pytest.approx(2.0 * 0.7)
+
+
+def test_opportunity_adjustment_zero_confidence_no_change():
+    res = _make_score_result(1, composite_z=1.5)
+    lookup = {1: (5.0, 0.0)}  # high opp_z but zero confidence
+    original_z = res.composite_z
+    apply_opportunity_adjustment([res], lookup)
+    assert res.composite_z == pytest.approx(original_z)
+
+
+def test_opportunity_adjustment_partial_confidence_scales_modifier():
+    res = _make_score_result(1, composite_z=1.0)
+    # opp_z=2.0 → unclamped adj=0.3, clamped to 0.2; conf=0.5 → final adj=0.1
+    lookup = {1: (2.0, 0.5)}
+    apply_opportunity_adjustment([res], lookup)
+    assert res.composite_z == pytest.approx(1.0 * 1.1)
+
+
+def test_opportunity_adjustment_multiple_players_independent():
+    r1 = _make_score_result(1, composite_z=1.0)
+    r2 = _make_score_result(2, composite_z=1.0)
+    r3 = _make_score_result(3, composite_z=1.0)  # not in lookup
+    lookup = {1: (2.0, 1.0), 2: (-3.0, 1.0)}
+    apply_opportunity_adjustment([r1, r2, r3], lookup)
+    assert r1.composite_z == pytest.approx(1.2)
+    assert r2.composite_z == pytest.approx(0.7)
+    assert r3.composite_z == pytest.approx(1.0)  # unchanged

@@ -347,6 +347,38 @@ def _extract_blend_rows(blend_df: Any, metric_map: dict[str, str]) -> tuple[list
 
 
 # ---------------------------------------------------------------------------
+# PR 3.5: Opportunity lookup helper (fetches from player_opportunity table)
+# ---------------------------------------------------------------------------
+
+def _fetch_opportunity_lookup(
+    db,
+    as_of_date,
+) -> dict[int, tuple[float, float]]:
+    """
+    Pre-fetch today's opportunity signals for all players.
+
+    Returns {bdl_player_id: (opportunity_z, opportunity_confidence)}.
+    Falls back to empty dict on any DB error — scoring continues unmodified.
+    """
+    try:
+        rows = db.execute(
+            text(
+                """
+                SELECT bdl_player_id, opportunity_z, opportunity_confidence
+                FROM player_opportunity
+                WHERE as_of_date = :as_of
+                  AND opportunity_confidence > 0
+                """
+            ),
+            {"as_of": as_of_date},
+        ).fetchall()
+        return {int(r[0]): (float(r[1] or 0.0), float(r[2] or 0.0)) for r in rows}
+    except Exception:
+        logger.warning("_fetch_opportunity_lookup: query failed; skipping opportunity adjustment")
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Advisory lock helper
 # ---------------------------------------------------------------------------
 
@@ -2494,7 +2526,13 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            from backend.services.scoring_engine import compute_league_zscores, compute_league_params, apply_position_scarcity_adjustment
+            from backend.services.scoring_engine import (
+                compute_league_zscores,
+                compute_league_params,
+                apply_position_scarcity_adjustment,
+                apply_opportunity_adjustment,
+            )
+            from backend.services.config_service import is_flag_enabled
 
             as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
 
@@ -2537,6 +2575,11 @@ class DailyIngestionOrchestrator:
                     # P1: Apply position scarcity adjustments to scores
                     position_map = self._build_position_map(as_of_date)
                     score_results = apply_position_scarcity_adjustment(score_results, position_map)
+
+                    # PR 3.5: Apply opportunity adjustment (feature-flagged, default OFF)
+                    if is_flag_enabled("opportunity_enabled"):
+                        opp_lookup = _fetch_opportunity_lookup(db, as_of_date)
+                        score_results = apply_opportunity_adjustment(score_results, opp_lookup)
 
                     # H2 fix: capture league-level means/stds from the 14d window
                     # for downstream simulation composite risk metrics.
