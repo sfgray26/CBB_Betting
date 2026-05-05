@@ -4,8 +4,8 @@ Ballpark Factors + Player Risk Flags
 Ballpark factors affect pitcher ERA/WHIP projections and batter HR/R projections.
 Used by the recommender to adjust raw z-scores for park context.
 
-Source: 5-year park factor averages (ESPN/Baseball Reference consensus).
-Scale: 100 = neutral, >100 = hitter friendly, <100 = pitcher friendly.
+Canonical source: Baseball Savant Statcast park factors.
+Scale: 1.00 = neutral, >1.00 = hitter friendly, <1.00 = pitcher friendly.
 
 Risk flags: age, injury history, role uncertainty — applied as draft penalties.
 """
@@ -15,10 +15,14 @@ from typing import Optional, Dict, Tuple
 from functools import lru_cache
 
 # ---------------------------------------------------------------------------
-# Park factors (2026 estimates based on 3-yr rolling average)
+# Legacy fallback park factors.
+#
+# Runtime should prefer the park_factors table seeded from the versioned
+# Baseball Savant snapshot. These constants remain as a cold-start fallback
+# for teams not present in the current Savant rolling-year table.
 # run_factor: affects R, H, AVG, OPS for batters
 # hr_factor:  affects HR for batters; HR allowed for pitchers
-# era_factor: affects ERA/WHIP for pitchers (inverse of batter factor)
+# era_factor: affects ERA/WHIP for pitchers
 # ---------------------------------------------------------------------------
 
 PARK_FACTORS: dict[str, dict] = {
@@ -62,26 +66,59 @@ PARK_FACTORS: dict[str, dict] = {
 # Global cache for park factors (loaded on startup)
 _park_factor_cache: Dict[Tuple[str, str], float] = {}
 
+FACTOR_COLUMN_MAP = {
+    "run": "run_factor",
+    "hr": "hr_factor",
+    "hits": "hits_factor",
+    "era": "era_factor",
+    "whip": "whip_factor",
+    "woba": "woba_factor",
+    "wobacon": "wobacon_factor",
+    "xwobacon": "xwobacon_factor",
+    "obp": "obp_factor",
+    "bb": "bb_factor",
+    "so": "so_factor",
+    "bacon": "bacon_factor",
+    "singles": "singles_factor",
+    "doubles": "doubles_factor",
+    "triples": "triples_factor",
+    "hardhit": "hardhit_factor",
+}
+
 def load_park_factors():
     """Load all park factors into memory on startup."""
     global _park_factor_cache
     from backend.models import SessionLocal
     from sqlalchemy import text
 
+    columns = ", ".join(FACTOR_COLUMN_MAP.values())
     db = SessionLocal()
     try:
-        rows = db.execute(text('''
-          SELECT park_name, run_factor, hr_factor, era_factor
-          FROM park_factors
-        ''')).fetchall()
+        try:
+            rows = db.execute(text(f'''
+              SELECT park_name, team, {columns}
+              FROM park_factors
+            ''')).mappings().fetchall()
+        except Exception:
+            db.rollback()
+            rows = db.execute(text('''
+              SELECT park_name, NULL AS team, run_factor, hr_factor, era_factor
+              FROM park_factors
+            ''')).mappings().fetchall()
 
-        # Build cache: {('run', 'COL'): 1.38, ('hr', 'COL'): 1.30, ('era', 'COL'): 1.28, ...}
+        # Build cache: {('run', 'COL'): 1.25, ('hr', 'COL'): 1.05, ...}
         _park_factor_cache = {}
         for row in rows:
-            park_name = row[0]
-            _park_factor_cache[('run', park_name)] = float(row[1])
-            _park_factor_cache[('hr', park_name)] = float(row[2])
-            _park_factor_cache[('era', park_name)] = float(row[3])
+            lookup_keys = {row["park_name"]}
+            if row["team"]:
+                lookup_keys.add(row["team"])
+
+            for factor, column_name in FACTOR_COLUMN_MAP.items():
+                value = row.get(column_name, 1.0)
+                if value is None:
+                    value = 1.0
+                for lookup_key in lookup_keys:
+                    _park_factor_cache[(factor, lookup_key)] = float(value)
 
         print(f"✅ Loaded {len(_park_factor_cache)} park factors into memory")
     finally:
@@ -100,32 +137,59 @@ def get_park_factor(team: str, factor: str = "run", _db_session=None) -> float:
 
     Args:
         team: Team code (e.g., "COL", "BOS")
-        factor: One of "run", "hr", "era" (defaults to "run")
+        factor: Factor key such as "run", "hr", "era", "woba", "so"
         _db_session: Optional session for DB queries (for testing)
 
     Returns:
         Park factor value (1.0 = neutral)
     """
-    from backend.models import ParkFactor, SessionLocal
+    from backend.models import SessionLocal
+    from sqlalchemy import text
 
     # Check in-memory cache first (format: {('run', 'COL'): 1.38, ('hr', 'COL'): 1.30, ...})
     cache_key = (factor, team)
     if cache_key in _park_factor_cache:
         return _park_factor_cache[cache_key]
 
-    # Map ballpark_factors naming to ParkFactor column names
-    factor_column_map = {"run": "run_factor", "hr": "hr_factor", "era": "era_factor"}
-
-    column_name = factor_column_map.get(factor)
+    column_name = FACTOR_COLUMN_MAP.get(factor)
     if not column_name:
         return 1.0
 
     # Try DB first
     db = _db_session or SessionLocal()
     try:
-        db_factor = db.query(ParkFactor).filter_by(park_name=team).first()
-        if db_factor:
-            return getattr(db_factor, column_name, 1.0)
+        try:
+            row = db.execute(
+                text(
+                    f"""
+                    SELECT {column_name} AS factor
+                    FROM park_factors
+                    WHERE park_name = :team OR team = :team
+                    LIMIT 1
+                    """
+                ),
+                {"team": team},
+            ).mappings().first()
+        except Exception:
+            db.rollback()
+            try:
+                row = db.execute(
+                    text(
+                        f"""
+                        SELECT {column_name} AS factor
+                        FROM park_factors
+                        WHERE park_name = :team
+                        LIMIT 1
+                        """
+                    ),
+                    {"team": team},
+                ).mappings().first()
+            except Exception:
+                db.rollback()
+                row = None
+
+        if row:
+            return row["factor"] or 1.0
     finally:
         if not _db_session:
             db.close()
@@ -137,7 +201,7 @@ def get_park_factor(team: str, factor: str = "run", _db_session=None) -> float:
 def park_adjusted_era(raw_era: float, team: str) -> float:
     """Adjust ERA for ballpark context."""
     pf = get_park_factor(team, "era")
-    return raw_era / pf if pf > 0 else raw_era
+    return raw_era * pf if pf > 0 else raw_era
 
 
 def park_adjusted_hr(raw_hr: int, team: str, is_batter: bool = True) -> float:

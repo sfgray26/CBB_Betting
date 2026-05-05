@@ -8,9 +8,14 @@ categories the team is already winning (ERA, WHIP, AVG, OPS, K/9).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
 
 from backend.services.config_service import get_threshold as _get_threshold
+
+try:
+    from backend.fantasy_baseball.team_context import TeamContext as _TeamContext
+except ImportError:
+    _TeamContext = None  # type: ignore
 
 # Rate stats where adding a player with a bad z-score dilutes the team's lead.
 # All keys are lowercase board keys matching PlayerProjection.cat_scores.
@@ -92,6 +97,7 @@ def compute_need_score(
     player_z_score: float,
     category_deficits: list,
     n_cats: int,
+    team_context: Optional[object] = None,  # TeamContext when available
 ) -> float:
     """Unified need_score computation for waiver and recommendations endpoints.
 
@@ -145,6 +151,25 @@ def compute_need_score(
         # Normalize per-category and blend: 40% generic z + 60% matchup-specific
         n_cats_safe = max(1, n_cats)
         blended_score = 0.4 * player_z_score + 0.6 * (cat_score / n_cats_safe)
+
+        if team_context is not None and hasattr(team_context, "rate_pa_denominator"):
+            # Apply roster-depth scaling to the matchup-specific component only.
+            # Deeper rosters (>3600 PA) dilute each add's rate impact slightly;
+            # shallower rosters (<3600 PA) amplify it. Capped [0.8, 1.2].
+            pa_denom = float(getattr(team_context, "rate_pa_denominator", 0.0))
+            ip_denom = float(getattr(team_context, "rate_ip_denominator", 0.0))
+
+            if pa_denom > 0:
+                depth_factor = max(0.8, min(1.2, 3600.0 / pa_denom))
+            elif ip_denom > 0:
+                depth_factor = max(0.8, min(1.2, 900.0 / ip_denom))
+            else:
+                depth_factor = 1.0
+
+            # Re-decompose blended_score: scale only the 60% matchup component.
+            matchup_component = blended_score - 0.4 * player_z_score
+            blended_score = 0.4 * player_z_score + depth_factor * matchup_component
+
         return float(blended_score)
     except Exception:
         # Fallback to plain z_score if scorer fails

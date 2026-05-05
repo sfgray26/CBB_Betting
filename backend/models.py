@@ -1931,6 +1931,14 @@ class ParkFactor(Base):
 
     id = Column(Integer, primary_key=True)
     park_name = Column(String(100), nullable=False, unique=True)
+    venue_name = Column(String(100))
+    team = Column(String(10), index=True)
+    venue_id = Column(Integer, index=True)
+    rolling_years = Column(Integer)
+    bat_side = Column(String(10))
+    condition = Column(String(30))
+    year_range = Column(String(20))
+    source_url = Column(Text)
 
     # Factors: 1.0 = neutral, > 1.0 = hitter-friendly, < 1.0 = pitcher-friendly
     hr_factor = Column(Float, nullable=False, default=1.0)
@@ -1938,6 +1946,18 @@ class ParkFactor(Base):
     hits_factor = Column(Float, nullable=False, default=1.0)
     era_factor = Column(Float, nullable=False, default=1.0)
     whip_factor = Column(Float, nullable=False, default=1.0)
+    woba_factor = Column(Float, nullable=False, default=1.0)
+    wobacon_factor = Column(Float, nullable=False, default=1.0)
+    xwobacon_factor = Column(Float, nullable=False, default=1.0)
+    obp_factor = Column(Float, nullable=False, default=1.0)
+    bb_factor = Column(Float, nullable=False, default=1.0)
+    so_factor = Column(Float, nullable=False, default=1.0)
+    bacon_factor = Column(Float, nullable=False, default=1.0)
+    singles_factor = Column(Float, nullable=False, default=1.0)
+    doubles_factor = Column(Float, nullable=False, default=1.0)
+    triples_factor = Column(Float, nullable=False, default=1.0)
+    hardhit_factor = Column(Float, nullable=False, default=1.0)
+    n_pa = Column(Integer)
 
     data_source = Column(String(50))  # fangraphs, baseball-reference, etc.
     season = Column(Integer)
@@ -2001,4 +2021,244 @@ class IngestedInjury(Base):
         UniqueConstraint("bdl_player_id", "injury_status", "injury_type", name="_ii_player_status_type_uc"),
         Index("idx_ingested_injuries_active", "ingested_at", "injury_status"),
         Index("idx_ingested_injuries_player", "bdl_player_id", "ingested_at"),
+    )
+
+
+# ── V35: Canonical Projection System (Sprint 1a) ─────────────────────────────
+
+
+class CanonicalProjection(Base):
+    """
+    V35: Single source of truth for all projection consumption.
+
+    No downstream service (WaiverValuationService, DashboardService, etc.)
+    should query PlayerProjection directly after this table is populated.
+
+    source_engine values: BAYESIAN | SAVANT_ADJUSTED | STATIC_BOARD | FALLBACK_MARCEL
+    player_type values:   BATTER | PITCHER
+    """
+    __tablename__ = "canonical_projections"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    projection_id = Column(String(36), nullable=False, unique=True, index=True)  # UUID
+
+    # Identity — player_id links to player_id_mapping.mlbam_id (canonical int)
+    player_id = Column(Integer, nullable=False, index=True)
+    player_type = Column(String(10), nullable=False)          # BATTER | PITCHER
+    source_engine = Column(String(25), nullable=False)        # BAYESIAN | SAVANT_ADJUSTED | STATIC_BOARD | FALLBACK_MARCEL
+    projection_date = Column(Date, nullable=False, index=True)
+    season = Column(Integer, nullable=False)
+    source_ids = Column(JSONB, default=list)                  # Ordered upstream source identifiers
+
+    # Playing time (nullable — batters have PA/AB, pitchers have IP)
+    projected_pa = Column(Float, nullable=True)
+    projected_ab = Column(Float, nullable=True)
+    projected_ip = Column(Float, nullable=True)
+
+    # Projected counting stats — batters
+    proj_hr = Column(Integer, nullable=True)
+    proj_sb = Column(Integer, nullable=True)
+    proj_r = Column(Integer, nullable=True)
+    proj_rbi = Column(Integer, nullable=True)
+
+    # Projected counting stats — pitchers
+    proj_w = Column(Integer, nullable=True)
+    proj_sv = Column(Integer, nullable=True)
+    proj_k = Column(Integer, nullable=True)
+
+    # Projected rate stats — batters
+    proj_avg = Column(Float, nullable=True)
+    proj_obp = Column(Float, nullable=True)
+    proj_slg = Column(Float, nullable=True)
+    proj_ops = Column(Float, nullable=True)
+
+    # Projected rate stats — pitchers
+    proj_era = Column(Float, nullable=True)
+    proj_whip = Column(Float, nullable=True)
+    proj_k9 = Column(Float, nullable=True)
+
+    # Core advanced stats — batters (from StatcastBatterMetrics / FanGraphs)
+    woba = Column(Float, nullable=True)
+    xwoba = Column(Float, nullable=True)
+    wrc_plus = Column(Float, nullable=True)
+    iso = Column(Float, nullable=True)
+    bb_pct = Column(Float, nullable=True)
+    k_pct = Column(Float, nullable=True)
+    barrel_pct = Column(Float, nullable=True)
+    hardhit_pct = Column(Float, nullable=True)
+    xslg = Column(Float, nullable=True)
+    xba = Column(Float, nullable=True)
+
+    # Core advanced stats — pitchers (from StatcastPitcherMetrics / FanGraphs)
+    era = Column(Float, nullable=True)
+    whip = Column(Float, nullable=True)
+    k9 = Column(Float, nullable=True)
+    fip = Column(Float, nullable=True)
+    xfip = Column(Float, nullable=True)
+    siera = Column(Float, nullable=True)
+    xera = Column(Float, nullable=True)
+    csw_pct = Column(Float, nullable=True)
+    swstr_pct = Column(Float, nullable=True)
+    chase_pct = Column(Float, nullable=True)
+    savant_pitch_quality_score = Column(Float, nullable=True)
+
+    # Confidence & explainability
+    confidence_score = Column(Float, nullable=True)     # 0.0–1.0 composite scalar
+    sample_size = Column(Float, nullable=True)          # PA or IP in underlying data
+    shrinkage_applied = Column(Float, nullable=True)    # 0.0–1.0 degree of regression to mean
+    prior_value = Column(Float, nullable=True)          # Raw prior before update
+    posterior_value = Column(Float, nullable=True)      # Final projected value (canonical)
+    explainability_metadata = Column(JSONB, default=dict)  # calculation_steps, data_lineage
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now_et)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now_et, onupdate=_now_et)
+
+    __table_args__ = (
+        Index("idx_cp_player_date", "player_id", "projection_date"),
+        Index("idx_cp_season_engine", "season", "source_engine"),
+        Index("idx_cp_type_confidence", "player_type", "confidence_score"),
+    )
+
+    category_impacts = relationship("CategoryImpact", back_populates="projection", cascade="all, delete-orphan")
+    divergence_flags = relationship("DivergenceFlag", back_populates="projection", cascade="all, delete-orphan")
+
+
+class CategoryImpact(Base):
+    """
+    V35: Per-category impact for a CanonicalProjection (1:N).
+
+    Stores context-agnostic baselines using league-average denominator weighting.
+    Matchup-specific deltas are computed at runtime by WaiverValuationService (Phase B).
+
+    category values: R | HR | RBI | SB | AVG | OBP | OPS | W | K | SV | ERA | WHIP | K9
+    denominator_weight = 1.0 for counting stats; < 1.0 for rate stats (weighted by PA/IP share).
+    """
+    __tablename__ = "category_impacts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    canonical_projection_id = Column(
+        Integer, ForeignKey("canonical_projections.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    category = Column(String(20), nullable=False)           # e.g. "HR", "AVG", "ERA"
+    projected_value = Column(Float, nullable=True)
+    z_score = Column(Float, nullable=True)
+    generic_marginal_impact = Column(Float, nullable=True)
+    denominator_weight = Column(Float, nullable=True)       # 1.0 for counting stats
+
+    __table_args__ = (
+        Index("idx_ci_projection_category", "canonical_projection_id", "category"),
+        Index("idx_ci_category_impact", "category", "generic_marginal_impact"),
+    )
+
+    projection = relationship("CanonicalProjection", back_populates="category_impacts")
+
+
+class DivergenceFlag(Base):
+    """
+    V35: Sabermetric divergence flags emitted by SabermetricDivergenceAnalyzer (1:N).
+
+    flag_type values:
+      XWOBA_VS_WOBA | XERA_VS_ERA | FIP_VS_ERA | SIERA_VS_ERA | XSLG_VS_SLG |
+      BARREL_HARDHIT_BUY | SAVANT_PITCH_SELL | LUCK_REGRESSION |
+      ARSENAL_QUALITY | PLATE_DISCIPLINE_MISMATCH |
+      STALE_ADVANCED_METRICS | UNRESOLVED_IDENTITY
+
+    severity values: INFO | WARNING | CRITICAL
+    """
+    __tablename__ = "divergence_flags"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    canonical_projection_id = Column(
+        Integer, ForeignKey("canonical_projections.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    flag_type = Column(String(50), nullable=False)
+    severity = Column(String(10), nullable=False)           # INFO | WARNING | CRITICAL
+    metric_a = Column(Float, nullable=True)                 # First metric in the comparison
+    metric_b = Column(Float, nullable=True)                 # Second metric
+    delta_value = Column(Float, nullable=True)              # abs(metric_a - metric_b)
+    threshold_used = Column(Float, nullable=True)
+    adjustment_applied = Column(Text, nullable=True)        # Human-readable description
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now_et)
+
+    __table_args__ = (
+        Index("idx_df_projection", "canonical_projection_id"),
+        Index("idx_df_severity", "severity", "flag_type"),
+    )
+
+    projection = relationship("CanonicalProjection", back_populates="divergence_flags")
+
+
+class PlayerIdentity(Base):
+    """
+    V35: Strict cross-system identity mapping (Sprint 1a ID hardening).
+
+    Provides exact-match resolution across id namespaces. Fuzzy/ambiguous
+    entries go to IdentityQuarantine instead — never into this table.
+
+    Resolution order enforced by IdentityResolutionService:
+      1. yahoo_guid  (exact)
+      2. mlbam_id    (exact)
+      3. fangraphs_id (exact)
+      4. normalized_name (exact after unicodedata.normalize + lower)
+      5. → IdentityQuarantine (PENDING_REVIEW)
+
+    Relationship to PlayerIDMapping: PlayerIDMapping predates this table and
+    remains the source for Yahoo/MLBAM/BDL cross-references. PlayerIdentity
+    adds FanGraphs ID and is the target for canonical projection joins.
+    """
+    __tablename__ = "player_identities"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    yahoo_guid = Column(String(50), nullable=True, unique=True, index=True)   # "469.p.7590"
+    yahoo_id = Column(String(20), nullable=True, unique=True, index=True)     # "7590"
+    mlbam_id = Column(Integer, nullable=True, unique=True, index=True)
+    fangraphs_id = Column(String(30), nullable=True, unique=True, index=True)
+    full_name = Column(String(150), nullable=False)
+    normalized_name = Column(String(150), nullable=False, index=True)
+    birth_year = Column(Integer, nullable=True)    # Disambiguation for common names
+    active = Column(Boolean, default=True, nullable=False)
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now_et)
+    updated_at = Column(DateTime(timezone=True), nullable=True, onupdate=_now_et)
+
+    __table_args__ = (
+        Index("idx_pi_normalized", "normalized_name"),
+        Index("idx_pi_fangraphs", "fangraphs_id"),
+    )
+
+
+class IdentityQuarantine(Base):
+    """
+    V35: Staging area for unresolved player identity matches.
+
+    Any automated ingestion pipeline that cannot find an exact match in
+    PlayerIdentity inserts a row here and skips the player in production flows.
+    Human or high-confidence deterministic approval required before the player
+    is promoted to PlayerIdentity and re-processed.
+
+    incoming_provider values: FANGRAPHS | STATCAST | YAHOO | BDL | MANUAL
+    status values:            PENDING_REVIEW | APPROVED | REJECTED
+    """
+    __tablename__ = "identity_quarantine"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    incoming_provider = Column(String(30), nullable=False)    # FANGRAPHS | STATCAST | YAHOO | BDL | MANUAL
+    incoming_raw_name = Column(String(150), nullable=False)
+    incoming_raw_id = Column(String(50), nullable=True)       # ID as received from provider
+    proposed_player_id = Column(Integer, nullable=True)       # Proposed player_identities.id
+    match_score = Column(Float, nullable=True)                # 0.0–1.0 fuzzy similarity
+    match_candidates = Column(JSONB, default=list)            # Top-N candidates with scores
+    status = Column(String(20), nullable=False, default="PENDING_REVIEW", index=True)
+    resolution_notes = Column(Text, nullable=True)
+    resolved_by = Column(String(100), nullable=True)          # "human" | "auto_high_confidence"
+
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now_et, index=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("idx_iq_status_created", "status", "created_at"),
+        Index("idx_iq_provider_name", "incoming_provider", "incoming_raw_name"),
     )

@@ -260,3 +260,98 @@ class TestMultiCategoryAndEdgeCases:
             CategoryNeedVector(needs={"hr": 1.0}),
         )
         assert isinstance(score, float)
+
+
+# ---------------------------------------------------------------------------
+# compute_need_score() with optional team_context
+# ---------------------------------------------------------------------------
+
+from backend.fantasy_baseball.team_context import TeamContext
+from backend.fantasy_baseball.category_aware_scorer import compute_need_score
+
+
+class TestComputeNeedScoreWithTeamContext:
+    """Tests for compute_need_score() with team_context parameter."""
+
+    def _make_deficits(self):
+        """Return a minimal CategoryDeficitOut list for testing."""
+        from backend.schemas import CategoryDeficitOut
+        return [CategoryDeficitOut(
+            category="HR",
+            deficit=1.5,
+            my_total=5.0,
+            opponent_total=3.5,
+            winning=False,
+        )]
+
+    def test_no_team_context_unchanged(self):
+        """When team_context=None, output equals existing behaviour."""
+        cat_scores = {"hr": 1.2, "r": 0.8}
+        result_no_ctx = compute_need_score(cat_scores, 1.0, self._make_deficits(), 10)
+        result_with_none = compute_need_score(cat_scores, 1.0, self._make_deficits(), 10, team_context=None)
+        assert result_no_ctx == result_with_none
+
+    def test_team_context_accepted_without_error(self):
+        """compute_need_score accepts TeamContext without raising."""
+        ctx = TeamContext.build(
+            roster_player_ids=[1, 2, 3],
+            projected_pa_by_player={1: 500, 2: 400, 3: 550},
+            projected_ip_by_player={},
+        )
+        result = compute_need_score({"hr": 1.5}, 1.0, self._make_deficits(), 10, team_context=ctx)
+        assert isinstance(result, float)
+
+    def test_shallow_roster_depth_factor_above_1(self):
+        """Shallow PA pool (1000 PA) -> depth_factor > 1 -> matchup component scaled up."""
+        ctx = TeamContext.build(
+            roster_player_ids=[1],
+            projected_pa_by_player={1: 1000.0},  # depth_factor = 3600/1000 = 3.6, capped at 1.2
+            projected_ip_by_player={},
+        )
+        base = compute_need_score({"hr": 1.5}, 1.0, self._make_deficits(), 10, team_context=None)
+        with_ctx = compute_need_score({"hr": 1.5}, 1.0, self._make_deficits(), 10, team_context=ctx)
+        # shallow roster -> depth_factor = 1.2 -> matchup component scaled up -> with_ctx >= base
+        assert with_ctx >= base
+
+    def test_deep_roster_depth_factor_below_1(self):
+        """Deep PA pool (9000 PA) -> depth_factor < 1 -> matchup component scaled down."""
+        ctx = TeamContext.build(
+            roster_player_ids=list(range(18)),
+            projected_pa_by_player={i: 500.0 for i in range(18)},  # 9000 PA -> depth = 0.4, capped at 0.8
+            projected_ip_by_player={},
+        )
+        base = compute_need_score({"hr": 1.5}, 1.0, self._make_deficits(), 10, team_context=None)
+        with_ctx = compute_need_score({"hr": 1.5}, 1.0, self._make_deficits(), 10, team_context=ctx)
+        assert with_ctx <= base
+
+    def test_league_avg_pool_near_base(self):
+        """PA pool of ~3600 -> depth_factor ~1.0 -> result very close to base."""
+        ctx = TeamContext.build(
+            roster_player_ids=list(range(9)),
+            projected_pa_by_player={i: 400.0 for i in range(9)},  # 3600 total -> depth_factor = 1.0
+            projected_ip_by_player={},
+        )
+        base = compute_need_score({"hr": 1.5}, 1.0, self._make_deficits(), 10, team_context=None)
+        with_ctx = compute_need_score({"hr": 1.5}, 1.0, self._make_deficits(), 10, team_context=ctx)
+        assert abs(with_ctx - base) < 0.05  # effectively identical
+
+    def test_pitcher_ip_depth_factor_used_when_no_pa(self):
+        """When PA denominator is 0 but IP denominator set, uses IP depth factor."""
+        ctx = TeamContext.build(
+            roster_player_ids=[10],
+            projected_pa_by_player={},
+            projected_ip_by_player={10: 500.0},  # 500 IP -> depth = 900/500 = 1.8, capped at 1.2
+        )
+        result = compute_need_score({"era": -0.5}, 0.5, self._make_deficits(), 10, team_context=ctx)
+        assert isinstance(result, float)
+
+    def test_zero_denominators_gives_depth_factor_1(self):
+        """Empty roster -> depth_factor = 1.0 -> same as no team_context."""
+        ctx = TeamContext.build(
+            roster_player_ids=[],
+            projected_pa_by_player={},
+            projected_ip_by_player={},
+        )
+        base = compute_need_score({"hr": 1.0}, 1.0, self._make_deficits(), 10, team_context=None)
+        with_ctx = compute_need_score({"hr": 1.0}, 1.0, self._make_deficits(), 10, team_context=ctx)
+        assert base == with_ctx

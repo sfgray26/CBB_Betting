@@ -115,6 +115,15 @@ SAVANT PITCH QUALITY:
                           See backend/fantasy_baseball/savant_pitch_quality.py and
                           HANDOFF.md before activating waiver or projection behavior.
 
+SAVANT PARK FACTORS:
+  park_factors           — Baseball Savant Statcast park factors are canonical for
+                          projection context. Snapshot lives at
+                          data/park_factors/savant_park_factors_2025_3yr.json.
+                          Savant 100-index values are normalized to 1.00 factors
+                          by backend/fantasy_baseball/savant_park_factors.py.
+                          Roll out with migration_savant_park_factors.py then
+                          seed_savant_park_factors.py before relying on DB lookup.
+
 AGENT RESEARCH MCP:
   BallDontLie MCP       — Official hosted MCP at https://mcp.balldontlie.io/mcp.
                           Available to agents as @balldontlie for ad-hoc endpoint discovery,
@@ -168,10 +177,15 @@ railway run python -c "from backend.fantasy_baseball.yahoo_client_resilient impo
 ## Advisory Lock IDs (daily_ingestion.py — do not reuse taken IDs)
 
 ```
-100_001 mlb_odds | 100_002 statcast | 100_003 rolling_z | 100_004 cbb_ratings
-100_005 clv      | 100_006 cleanup  | 100_007 waiver_scan | 100_008 mlb_brief
-100_009 openclaw_perf | 100_010 openclaw_sweep
-100_011 scarcity_index_recalc | 100_012 two_start_sp_identification
-100_013 projection_model_update | 100_014 probable_pitcher_sync | 100_015 waiver_priority_snapshot
-Next available: 100_016
+100_001 mlb_odds        | 100_002 statcast          | 100_003 rolling_z         | 100_004 cbb_ratings
+100_005 clv             | 100_006 cleanup           | 100_007 waiver_scan        | 100_008 mlb_brief
+100_009 openclaw_perf   | 100_010 openclaw_sweep    | 100_011 valuation_cache    | 100_012 fangraphs_ros
+100_013 yahoo_adp_injury| 100_014 ensemble_update   | 100_015 projection_freshness| 100_016 mlb_game_log
+100_017 mlb_box_stats   | 100_018 rolling_windows   | 100_019 player_scores      | 100_020 player_momentum
+100_021 ros_simulation  | 100_022 decision_optimization | 100_023 backtesting    | 100_024 explainability
+100_025 snapshot        | 100_026 statsapi_supplement | 100_027 position_eligibility | 100_028 probable_pitchers
+100_029 player_id_mapping | 100_030 vorp            | 100_031 projection_cat_scores | 100_032 savant_ingestion
+100_033 bdl_injuries    | 100_034 yahoo_id_sync     | 100_035 cat_scores_backfill | 100_036 ros_projection_refresh
+100_037 opportunity_update | 100_038 market_signals_update | 100_039 matchup_context_update | 100_040 canonical_projection_refresh
+Next available: 100_041
 ```

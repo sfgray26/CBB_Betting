@@ -536,9 +536,12 @@ def test_injury_risk_multiplier_one_il_stint_active(db_session):
     # Create a test IL stint from 5 days ago
     injury = IngestedInjury(
         bdl_player_id=12345,
+        player_name="Test Player One",
         injury_date=date(2026, 5, 3) - timedelta(days=5),
         injury_status="15-Day-IL",
         injury_type="Hamstring",
+        long_comment="Test injury for pytest.",
+        short_comment="Hamstring strain.",
         raw_payload={},
     )
     db_session.add(injury)
@@ -562,16 +565,22 @@ def test_injury_risk_multiplier_two_il_stints_active(db_session):
     # Create 2 test IL stints
     injury1 = IngestedInjury(
         bdl_player_id=23456,
+        player_name="Test Player Two",
         injury_date=date(2026, 5, 3) - timedelta(days=10),
         injury_status="60-Day-IL",
         injury_type="Knee",
+        long_comment="Test injury for pytest.",
+        short_comment="Knee strain.",
         raw_payload={},
     )
     injury2 = IngestedInjury(
         bdl_player_id=23456,
+        player_name="Test Player Two",
         injury_date=date(2026, 5, 3) - timedelta(days=25),
         injury_status="10-Day-IL",
         injury_type="Ankle",
+        long_comment="Test injury for pytest.",
+        short_comment="Ankle sprain.",
         raw_payload={},
     )
     db_session.add(injury1)
@@ -596,9 +605,12 @@ def test_injury_risk_multiplier_il_stint_45_days_ago(db_session):
     # Create a test IL stint from 45 days ago
     injury = IngestedInjury(
         bdl_player_id=34567,
+        player_name="Test Player Three",
         injury_date=date(2026, 5, 3) - timedelta(days=45),
         injury_status="15-Day-IL",
         injury_type="Shoulder",
+        long_comment="Test injury for pytest.",
+        short_comment="Shoulder soreness.",
         raw_payload={},
     )
     db_session.add(injury)
@@ -617,15 +629,18 @@ def test_injury_risk_multiplier_il_stint_45_days_ago(db_session):
 def test_remaining_games_reduced_by_injury_risk(db_session):
     """Integration test: verify remaining_games is reduced when injury multiplier < 1.0."""
     from backend.services.simulation_engine import simulate_player, _calculate_injury_risk_multiplier
-    from datetime import date
+    from datetime import date, timedelta
 
     # Create a test player with an IL stint
     from backend.models import IngestedInjury
     injury = IngestedInjury(
         bdl_player_id=45678,
+        player_name="Test Player Four",
         injury_date=date(2026, 5, 3) - timedelta(days=10),
         injury_status="15-Day-IL",
         injury_type="Hamstring",
+        long_comment="Test injury for pytest.",
+        short_comment="Hamstring tightness.",
         raw_payload={},
     )
     db_session.add(injury)

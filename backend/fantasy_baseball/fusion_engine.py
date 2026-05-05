@@ -669,6 +669,59 @@ class PitcherCountingStatFormulas:
         return round(ip * hr_per_nine / 9)
 
 
+def to_season_counts(
+    result: "FusionResult",
+    projected_pa: float,
+    projected_ip: float,
+    board_proj: dict,
+) -> dict:
+    """
+    Translate fusion rate stats to canonical season counting-stat totals.
+
+    Hybrid provenance (per architecture decision 2026-05-05):
+      proj_hr  — Bayesian: hr_per_pa * projected_pa (rounded)
+      proj_sb  — Bayesian: sb_per_pa * projected_pa (rounded)
+      proj_r   — Static board passthrough (lineup-context-dependent)
+      proj_rbi — Static board passthrough (lineup-context-dependent)
+      proj_w   — Formula: PitcherCountingStatFormulas.project_wins(era, ip)
+      proj_sv  — Static board passthrough (closer-role-dependent)
+      proj_k   — Formula: k_per_nine * projected_ip / 9 (rounded)
+
+    Args:
+        result: FusionResult from fuse_batter_projection or fuse_pitcher_projection.
+        projected_pa: Full-season projected plate appearances (batters).
+        projected_ip: Full-season projected innings pitched (pitchers).
+        board_proj: Raw proj dict from player_board (contains r, rbi, sv passthrough values).
+
+    Returns:
+        dict with keys: proj_hr, proj_sb, proj_r, proj_rbi, proj_w, proj_sv, proj_k.
+        All values are int. Missing board passthrough keys default to 0.
+    """
+    proj = result.proj
+
+    proj_hr = max(0, round((proj.get("hr_per_pa") or 0.0) * projected_pa))
+    proj_sb = max(0, round((proj.get("sb_per_pa") or 0.0) * projected_pa))
+
+    proj_r = int(board_proj.get("r") or 0)
+    proj_rbi = int(board_proj.get("rbi") or 0)
+    proj_sv = int(board_proj.get("sv") or 0)
+
+    era = proj.get("era") or PitcherCountingStatFormulas.LEAGUE_ERA
+    proj_w = PitcherCountingStatFormulas.project_wins(era, projected_ip)
+
+    proj_k = max(0, round((proj.get("k_per_nine") or 0.0) * projected_ip / 9))
+
+    return {
+        "proj_hr": proj_hr,
+        "proj_sb": proj_sb,
+        "proj_r": proj_r,
+        "proj_rbi": proj_rbi,
+        "proj_w": proj_w,
+        "proj_sv": proj_sv,
+        "proj_k": proj_k,
+    }
+
+
 # Public API for external modules
 __all__ = [
     'StabilizationPoints',
@@ -678,4 +731,5 @@ __all__ = [
     'fuse_pitcher_projection',
     'FusionResult',
     'PitcherCountingStatFormulas',
+    'to_season_counts',
 ]

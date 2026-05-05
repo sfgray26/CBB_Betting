@@ -32,6 +32,8 @@ from apscheduler.triggers.interval import IntervalTrigger
 from backend.models import (
     SessionLocal,
     PlayerDailyMetric,
+    PlayerIdentity,
+    IdentityQuarantine,
     ProjectionSnapshot,
     PlayerValuationCache,
     ProjectionCacheEntry,
@@ -132,6 +134,8 @@ LOCK_IDS = {
     "yahoo_id_sync":         100_034,  # P0-C: Yahoo ID mapping sync
     "opportunity_update":    100_037,  # PR 3.4: Playing-time opportunity signals
     "market_signals_update": 100_038,  # PR 4.2: Yahoo ownership-based market intelligence
+    "matchup_context_update": 100_039,  # PR 5.2: daily hitter matchup context
+    "canonical_projection_refresh": 100_040,  # Sprint 2: assemble CanonicalProjection table
 }
 
 
@@ -1004,6 +1008,28 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Canonical projection refresh: daily 11 PM ET (after Statcast ingestion).
+        # Assembles CanonicalProjection rows from static board + Statcast metrics.
+        # Gated by CANONICAL_PROJECTION_V1 feature flag (default disabled).
+        self._scheduler.add_job(
+            self._refresh_canonical_projections,
+            CronTrigger(hour=23, minute=0, timezone=tz),
+            id="canonical_projection_refresh",
+            name="Canonical Projection Refresh",
+            replace_existing=True,
+        )
+
+        # Matchup context: daily 10:30 AM ET (after probable pitchers sync).
+        # Computes per-player environmental signals (platoon, park, weather, bullpen).
+        # Gated by feature.matchup_enabled — stored in matchup_context, not applied yet.
+        self._scheduler.add_job(
+            self._compute_matchup_context,
+            CronTrigger(hour=10, minute=30, timezone=tz),
+            id="matchup_context_update",
+            name="Matchup Context Computation",
+            replace_existing=True,
+        )
+
         # Explainability: daily 9 AM ET (after market_signals at 8:30 AM)
         # Generates human-readable decision traces from all P14-P18 signals.
         self._scheduler.add_job(
@@ -1042,13 +1068,14 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
-        # Phase 9: Savant leaderboard ingestion: daily 6 AM ET
-        # Fetches Statcast leaderboards (xwOBA, barrel%, xERA) for proxy projections
+        # Phase 9 / P0-B FIX: Savant leaderboard ingestion: daily 2 AM ET (moved from 6 AM)
+        # Runs before the 3 AM FanGraphs RoS fetch so Savant metrics are fresh for the
+        # morning projection pipeline. The original 6 AM registration was superseded by this fix.
         self._scheduler.add_job(
             self._ingest_savant_leaderboards,
-            CronTrigger(hour=6, minute=0, timezone=tz),
+            CronTrigger(hour=2, minute=0, timezone=tz),
             id="savant_ingestion",
-            name="Savant Leaderboard Ingestion",
+            name="Statcast Leaderboard Ingestion",
             replace_existing=True,
         )
 
@@ -1076,26 +1103,6 @@ class DailyIngestionOrchestrator:
             CronTrigger(hour=3, minute=30, timezone=tz),
             id="cleanup",
             name="Old Metric Cleanup",
-            replace_existing=True,
-        )
-
-        # P0-B FIX: Statcast leaderboard ingestion: daily 2 AM ET
-        # Fetches Statcast leaderboards from Baseball Savant (xwOBA, barrel%, xERA, etc.)
-        # This was missing from scheduler registration, causing stale statcast_performances
-        self._scheduler.add_job(
-            self._ingest_savant_leaderboards,
-            CronTrigger(hour=2, minute=0, timezone=tz),
-            id="savant_ingestion",
-            name="Statcast Leaderboard Ingestion",
-            replace_existing=True,
-        )
-
-        # P0-A: RoS projection refresh: daily 3:35 AM ET (35 minutes after RoS fetch at 3 AM)
-        self._scheduler.add_job(
-            self._refresh_ros_projections,
-            CronTrigger(hour=3, minute=35, timezone=tz),
-            id="ros_projection_refresh",
-            name="RoS Projection Refresh",
             replace_existing=True,
         )
 
@@ -1241,7 +1248,8 @@ class DailyIngestionOrchestrator:
                         "ensemble_update", "projection_cat_scores", "cat_scores_backfill",
                         "projection_freshness", "yahoo_id_sync",
                         "player_id_mapping", "position_eligibility",
-                        "probable_pitchers_morning", "probable_pitchers_afternoon", "probable_pitchers_evening"]
+                        "probable_pitchers_morning", "probable_pitchers_afternoon", "probable_pitchers_evening",
+                        "canonical_projection_refresh"]
         if _fantasy_leagues:
             _all_job_ids.append("valuation_cache")
         for job_id in _all_job_ids:
@@ -1324,6 +1332,7 @@ class DailyIngestionOrchestrator:
             "yahoo_id_sync":          self._sync_yahoo_id_mapping,
             "yahoo_adp_injury":       self._poll_yahoo_adp_injury,
             "ensemble_update":        self._update_ensemble_blend,
+            "canonical_projection_refresh": self._refresh_canonical_projections,
         }
         handler = _handlers.get(job_id)
         if handler is None:
@@ -3576,6 +3585,280 @@ class DailyIngestionOrchestrator:
                 db.close()
 
         return await _with_advisory_lock(LOCK_IDS["market_signals_update"], "market_signals_update", _run)
+
+    async def _refresh_canonical_projections(self) -> dict:
+        """
+        Assemble CanonicalProjection rows from static board + Statcast metrics (lock 100_040, 11 PM ET).
+
+        Runs after Statcast ingestion so the batter/pitcher metrics tables are fresh.
+        Gated by feature flag CANONICAL_PROJECTION_V1 (default disabled — enable after
+        production validation of ProjectionAssemblyService output).
+
+        On each run, upserts one CanonicalProjection row per resolved board player
+        (players without a PlayerIdentity match are skipped — identity_miss count logged).
+        Also writes CategoryImpact rows (z-scores across the full player pool).
+
+        ADR-004: Never import betting_model here.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.services.config_service import is_flag_enabled
+            from backend.fantasy_baseball.projection_assembly_service import assemble_projections
+
+            if not is_flag_enabled("CANONICAL_PROJECTION_V1"):
+                logger.info(
+                    "canonical_projection_refresh: CANONICAL_PROJECTION_V1 disabled — skipping"
+                )
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("canonical_projection_refresh", "skipped", 0)
+                return {"status": "skipped", "reason": "feature_flag_disabled", "elapsed_ms": elapsed}
+
+            try:
+                result = assemble_projections(season=2026)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.info(
+                    "canonical_projection_refresh: assembled=%d identity_misses=%d upserted=%d errors=%d elapsed=%dms",
+                    result.get("assembled", 0),
+                    result.get("identity_misses", 0),
+                    result.get("upserted", 0),
+                    result.get("errors", 0),
+                    elapsed,
+                )
+                self._record_job_run(
+                    "canonical_projection_refresh", "success", result.get("upserted", 0)
+                )
+                return {**result, "elapsed_ms": elapsed}
+            except Exception as exc:
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.error("canonical_projection_refresh: failed (%s)", exc)
+                self._record_job_run("canonical_projection_refresh", "error", 0)
+                return {"status": "error", "error": str(exc), "elapsed_ms": elapsed}
+
+        return await _with_advisory_lock(
+            LOCK_IDS["canonical_projection_refresh"], "canonical_projection_refresh", _run
+        )
+
+    async def _compute_matchup_context(self) -> dict:
+        """
+        Daily hitter matchup context computation (lock 100_039, 10:30 AM ET).
+
+        Runs after probable pitcher sync so today's starters are current.
+        Computes per-player environmental signals (platoon splits, park factor,
+        weather, bullpen quality) and upserts matchup_z + matchup_confidence
+        into the matchup_context table.
+
+        LOG ONLY — boost is gated by feature.matchup_enabled in the optimizer.
+
+        Algorithm:
+          1. Fetch today's MLB schedule from BDL → team → (opponent, home_team) map
+          2. Join player_id_mapping × statcast_batter_metrics to get player teams
+          3. compute_baselines(db) once for the full run
+          4. For each player with a game: collect_matchup_context() + compute_matchup_z()
+          5. UPSERT to matchup_context ON CONFLICT (bdl_player_id, game_date)
+          6. Log: processed / skipped / errors
+
+        ADR-004: Never import betting_model or analysis here.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.services.matchup_engine import (
+                collect_matchup_context,
+                compute_matchup_z,
+                compute_baselines,
+            )
+            from backend.services.balldontlie import BallDontLieClient
+
+            game_date = datetime.now(ZoneInfo("America/New_York")).date()
+            date_str = game_date.isoformat()
+
+            db = SessionLocal()
+            try:
+                # Step 1: Today's schedule → team → (opponent_abbrev, home_abbrev)
+                bdl = BallDontLieClient()
+                games = bdl.get_mlb_games(date_str)
+                team_game_map: dict = {}
+                for game in games:
+                    home = game.home_team.abbreviation
+                    away = game.away_team.abbreviation
+                    team_game_map[home] = (away, home)
+                    team_game_map[away] = (home, home)
+
+                if not team_game_map:
+                    logger.info(
+                        "matchup_context_update: no games on %s, skipping", date_str
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("matchup_context_update", "skipped")
+                    return {
+                        "status": "skipped",
+                        "reason": "no_games",
+                        "elapsed_ms": elapsed,
+                    }
+
+                # Step 2: Player → team via statcast_batter_metrics (season 2026)
+                player_team_rows = db.execute(
+                    text("""
+                        SELECT pim.bdl_id, sbm.team
+                        FROM player_id_mapping pim
+                        JOIN statcast_batter_metrics sbm
+                          ON pim.mlbam_id = CAST(sbm.mlbam_id AS INTEGER)
+                        WHERE pim.bdl_id IS NOT NULL
+                          AND sbm.team IS NOT NULL
+                          AND sbm.season = 2026
+                    """)
+                ).fetchall()
+
+                if not player_team_rows:
+                    logger.warning(
+                        "matchup_context_update: no player-team mappings found in "
+                        "statcast_batter_metrics for season 2026"
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("matchup_context_update", "warning")
+                    return {
+                        "status": "warning",
+                        "reason": "no_player_team_map",
+                        "elapsed_ms": elapsed,
+                    }
+
+                # Step 3: Baselines computed once for the full run
+                baselines = compute_baselines(db)
+
+                # Step 4: Per-player matchup context
+                now_et = datetime.now(ZoneInfo("America/New_York"))
+                processed = 0
+                skipped = 0
+                errors = 0
+
+                for bdl_id, team_abbrev in player_team_rows:
+                    if team_abbrev not in team_game_map:
+                        skipped += 1
+                        continue
+
+                    opponent_team, home_team = team_game_map[team_abbrev]
+
+                    try:
+                        ctx = collect_matchup_context(
+                            int(bdl_id), game_date, opponent_team, home_team, db
+                        )
+                        result = compute_matchup_z(ctx, baselines)
+
+                        db.execute(
+                            text("""
+                                INSERT INTO matchup_context (
+                                    bdl_player_id, game_date, opponent_team,
+                                    opponent_starter_name, opponent_starter_hand,
+                                    opponent_starter_era, opponent_starter_whip,
+                                    opponent_starter_k_per_nine,
+                                    opponent_bullpen_era, opponent_bullpen_whip,
+                                    home_team, park_factor_runs, park_factor_hr,
+                                    weather_temp_f, weather_wind_mph,
+                                    weather_wind_direction,
+                                    hitter_woba_vs_hand, hitter_k_pct_vs_hand,
+                                    hitter_iso_vs_hand,
+                                    matchup_score, matchup_z, matchup_confidence,
+                                    fetched_at
+                                ) VALUES (
+                                    :bdl_player_id, :game_date, :opponent_team,
+                                    :opp_name, :opp_hand,
+                                    :opp_era, :opp_whip, :opp_k9,
+                                    :bull_era, :bull_whip,
+                                    :home_team, :pf_runs, :pf_hr,
+                                    :temp_f, :wind_mph, :wind_dir,
+                                    :woba_h, :kpct_h, :iso_h,
+                                    :m_score, :m_z, :m_conf,
+                                    :fetched_at
+                                )
+                                ON CONFLICT (bdl_player_id, game_date) DO UPDATE SET
+                                    opponent_team           = EXCLUDED.opponent_team,
+                                    opponent_starter_name   = EXCLUDED.opponent_starter_name,
+                                    opponent_starter_hand   = EXCLUDED.opponent_starter_hand,
+                                    opponent_starter_era    = EXCLUDED.opponent_starter_era,
+                                    opponent_starter_whip   = EXCLUDED.opponent_starter_whip,
+                                    opponent_starter_k_per_nine =
+                                        EXCLUDED.opponent_starter_k_per_nine,
+                                    opponent_bullpen_era    = EXCLUDED.opponent_bullpen_era,
+                                    opponent_bullpen_whip   = EXCLUDED.opponent_bullpen_whip,
+                                    home_team               = EXCLUDED.home_team,
+                                    park_factor_runs        = EXCLUDED.park_factor_runs,
+                                    park_factor_hr          = EXCLUDED.park_factor_hr,
+                                    weather_temp_f          = EXCLUDED.weather_temp_f,
+                                    weather_wind_mph        = EXCLUDED.weather_wind_mph,
+                                    weather_wind_direction  = EXCLUDED.weather_wind_direction,
+                                    hitter_woba_vs_hand     = EXCLUDED.hitter_woba_vs_hand,
+                                    hitter_k_pct_vs_hand    = EXCLUDED.hitter_k_pct_vs_hand,
+                                    hitter_iso_vs_hand      = EXCLUDED.hitter_iso_vs_hand,
+                                    matchup_score           = EXCLUDED.matchup_score,
+                                    matchup_z               = EXCLUDED.matchup_z,
+                                    matchup_confidence      = EXCLUDED.matchup_confidence,
+                                    fetched_at              = EXCLUDED.fetched_at
+                            """),
+                            {
+                                "bdl_player_id": int(bdl_id),
+                                "game_date":     game_date,
+                                "opponent_team": opponent_team,
+                                "opp_name":  ctx.pitcher.name if ctx.pitcher else None,
+                                "opp_hand":  ctx.pitcher.hand if ctx.pitcher else None,
+                                "opp_era":   ctx.pitcher.era if ctx.pitcher else None,
+                                "opp_whip":  ctx.pitcher.whip if ctx.pitcher else None,
+                                "opp_k9":    ctx.pitcher.k_per_nine if ctx.pitcher else None,
+                                "bull_era":  ctx.bullpen.era if ctx.bullpen else None,
+                                "bull_whip": ctx.bullpen.whip if ctx.bullpen else None,
+                                "home_team": home_team,
+                                "pf_runs":   ctx.park_factor_runs,
+                                "pf_hr":     ctx.park_factor_hr,
+                                "temp_f":    ctx.weather.temp_f if ctx.weather else None,
+                                "wind_mph":  ctx.weather.wind_mph if ctx.weather else None,
+                                "wind_dir":  ctx.weather.wind_direction if ctx.weather else None,
+                                "woba_h":    ctx.splits.woba_vs_hand if ctx.splits else None,
+                                "kpct_h":    ctx.splits.k_pct_vs_hand if ctx.splits else None,
+                                "iso_h":     ctx.splits.iso_vs_hand if ctx.splits else None,
+                                "m_score":   result.matchup_score,
+                                "m_z":       result.matchup_z,
+                                "m_conf":    result.matchup_confidence,
+                                "fetched_at": now_et,
+                            },
+                        )
+                        db.commit()
+                        processed += 1
+
+                    except Exception as exc:
+                        db.rollback()
+                        logger.warning(
+                            "matchup_context_update: player %s failed: %s", bdl_id, exc
+                        )
+                        errors += 1
+
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("matchup_context_update", "success")
+                logger.info(
+                    "matchup_context_update: processed=%d skipped=%d errors=%d "
+                    "elapsed_ms=%d",
+                    processed, skipped, errors, elapsed,
+                )
+                return {
+                    "status": "success",
+                    "game_date": date_str,
+                    "processed": processed,
+                    "skipped": skipped,
+                    "errors": errors,
+                    "elapsed_ms": elapsed,
+                }
+
+            except Exception as exc:
+                db.rollback()
+                logger.error("matchup_context_update: job failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("matchup_context_update", "failed")
+                return {"status": "failed", "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+        return await _with_advisory_lock(
+            LOCK_IDS["matchup_context_update"], "matchup_context_update", _run
+        )
 
     async def _run_ros_simulation(self) -> dict:
         """
@@ -6049,18 +6332,42 @@ class DailyIngestionOrchestrator:
                         p.get("name", "").lower().strip()
                     )
 
-                    # Tertiary: look up an existing PlayerProjection row by name
+                    # Tertiary: resolve via PlayerIdentity (exact normalized name match);
+                    # unresolvable names are routed to identity_quarantine.
                     if not mlbam_id:
-                        try:
-                            existing_row = (
-                                db.query(PlayerProjection)
-                                .filter(PlayerProjection.player_name.ilike(p.get("name", "")))
+                        raw_name = p.get("name", "")
+                        if raw_name:
+                            import unicodedata as _ud
+                            norm = _ud.normalize("NFC", raw_name).lower().strip()
+                            identity_row = (
+                                db.query(PlayerIdentity)
+                                .filter(PlayerIdentity.normalized_name == norm)
                                 .first()
                             )
-                            if existing_row:
-                                mlbam_id = existing_row.player_id
-                        except Exception:
-                            pass
+                            if identity_row and identity_row.mlbam_id:
+                                mlbam_id = identity_row.mlbam_id
+                            else:
+                                # Route to quarantine; skip this player this cycle.
+                                existing_q = (
+                                    db.query(IdentityQuarantine)
+                                    .filter(
+                                        IdentityQuarantine.incoming_provider == "FANGRAPHS",
+                                        IdentityQuarantine.incoming_raw_name == raw_name,
+                                        IdentityQuarantine.status == "PENDING_REVIEW",
+                                    )
+                                    .first()
+                                )
+                                if existing_q is None:
+                                    db.add(IdentityQuarantine(
+                                        incoming_provider="FANGRAPHS",
+                                        incoming_raw_name=raw_name,
+                                        incoming_raw_id=fg_id,
+                                        status="PENDING_REVIEW",
+                                    ))
+                                    try:
+                                        db.flush()
+                                    except Exception:
+                                        db.rollback()
 
                     if not mlbam_id:
                         skipped += 1
@@ -6261,16 +6568,20 @@ class DailyIngestionOrchestrator:
                         violations.append(msg)
 
                 # --- statcast SLA (6 hours) ---
+                # _update_statcast writes to statcast_batter_metrics / statcast_pitcher_metrics,
+                # NOT to player_daily_metrics. Query those tables directly.
                 SLA_STATCAST_H = 6
                 result = db.execute(
                     text(
-                        "SELECT MAX(metric_date) FROM player_daily_metrics "
-                        "WHERE data_source = 'statcast'"
+                        "SELECT GREATEST("
+                        "  (SELECT MAX(last_updated) FROM statcast_batter_metrics),"
+                        "  (SELECT MAX(last_updated) FROM statcast_pitcher_metrics)"
+                        ")"
                     )
                 )
                 latest_statcast = result.scalar()
                 if latest_statcast is None:
-                    msg = "statcast: no rows found — statcast ingestion may not have run yet"
+                    msg = "statcast: no rows found in statcast_batter_metrics or statcast_pitcher_metrics — savant ingestion may not have run yet"
                     logger.warning("PROJECTION FRESHNESS: %s", msg)
                     violations.append(msg)
                 else:
