@@ -70,6 +70,19 @@ Expected behavior:
 
 Do not enable `savant_pitch_quality_*` flags unless Claude explicitly approves activation.
 
+## Pre-Approved Savant Park Factor Ops
+These scripts are code-owned by Claude/Codex. Gemini may run them on Railway when explicitly assigned, but must not edit them.
+
+```powershell
+railway run python scripts/migration_savant_park_factors.py
+railway run python scripts/seed_savant_park_factors.py
+```
+
+Expected behavior:
+- migration logs `Savant park factor migration ready: columns/indexes verified`
+- seed logs inserted/updated counts and `Snapshot rows loaded: 28`
+- no feature flag is required; these rows replace legacy constants as canonical DB context.
+
 ## Critical Env Vars
 | Var | Expected | Notes |
 |-----|----------|-------|

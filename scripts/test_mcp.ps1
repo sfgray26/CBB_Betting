@@ -110,12 +110,30 @@ try {
 Write-Host ""
 
 # -----------------------------------------------------------------------------
-# 7. Check npm packages
+# 7. Check BallDontLie MCP reachability
+# -----------------------------------------------------------------------------
+Write-Host "--- BallDontLie MCP Endpoint ---" -ForegroundColor Cyan
+if ($env:BALLDONTLIE_API_KEY) {
+    try {
+        $headers = @{ Authorization = $env:BALLDONTLIE_API_KEY }
+        $body = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
+        $resp = Invoke-WebRequest -Uri "https://mcp.balldontlie.io/mcp" -Method POST -Headers $headers -Body $body -ContentType "application/json" -TimeoutSec 15 -UseBasicParsing
+        Write-Host "  BallDontLie MCP: HTTP $($resp.StatusCode) OK" -ForegroundColor Green
+    } catch {
+        $status = if ($_.Exception.Response) { $_.Exception.Response.StatusCode.Value__ } else { "N/A" }
+        Write-Host "  BallDontLie MCP: HTTP $status" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "  BallDontLie MCP: skipped (BALLDONTLIE_API_KEY not set)" -ForegroundColor Yellow
+}
+Write-Host ""
+
+# -----------------------------------------------------------------------------
+# 8. Check npm packages
 # -----------------------------------------------------------------------------
 Write-Host "--- npm Package Cache ---" -ForegroundColor Cyan
 $packages = @(
     "@modelcontextprotocol/server-sequential-thinking",
-    "@balldontlie/mcp-server",
     "@railway/mcp-server"
 )
 foreach ($pkg in $packages) {
@@ -129,7 +147,7 @@ foreach ($pkg in $packages) {
 Write-Host ""
 
 # -----------------------------------------------------------------------------
-# 8. Interactive test commands
+# 9. Interactive test commands
 # -----------------------------------------------------------------------------
 Write-Host "=== Interactive Test Commands ===" -ForegroundColor Cyan
 Write-Host "Run these manually to verify end-to-end MCP functionality:" -ForegroundColor DarkGray

@@ -145,7 +145,13 @@
       "Bash(curl.exe *)",
       "Bash(venv\\\\Scripts\\\\python *)",
       "PowerShell(venv\\\\Scripts\\\\python -m pytest tests/test_mcmc_calibration.py -v 2>&1 | Select-Object -First 30)",
-      "PowerShell(& venv\\\\Scripts\\\\python -m pytest tests/test_mcmc_calibration.py -v --tb=short 2>&1 | Out-String)"
+      "PowerShell(& venv\\\\Scripts\\\\python -m pytest tests/test_mcmc_calibration.py -v --tb=short 2>&1 | Out-String)",
+      "Bash(where psql *)",
+      "PowerShell(venv\\\\Scripts\\\\python -m pytest tests/test_mcmc_calibration.py tests/test_mcmc_simulator.py tests/test_mcmc_simulator_v2.py tests/test_statcast_loader.py -q --tb=short 2>&1 | Select-Object -Last 30)",
+      "PowerShell(venv\\\\Scripts\\\\python -m pytest tests/test_mcmc_calibration.py tests/test_mcmc_simulator.py tests/test_mcmc_simulator_v2.py tests/test_statcast_loader.py -q --tb=short 2>&1 | Select-Object -Last 10)",
+      "PowerShell(venv\\\\Scripts\\\\python -m pytest tests/test_savant_scraper.py -q --tb=short 2>&1)",
+      "PowerShell(venv\\\\Scripts\\\\python -m pytest tests/test_daily_ingestion.py -q --tb=short 2>&1 | Select-Object -Last 15)",
+      "PowerShell(venv\\\\Scripts\\\\python -m pytest tests/ -q --tb=short 2>&1 | Select-Object -Last 15)"
     ]
   },
   "enabledPlugins": {}
