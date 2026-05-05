@@ -40,10 +40,10 @@ def _load_statcast_mlbam_set(engine):
     """Return set of mlbam_ids that have any statcast metrics row."""
     with engine.connect() as conn:
         batters = conn.execute(text(
-            "SELECT player_id FROM statcast_batter_metrics"
+            "SELECT mlbam_id FROM statcast_batter_metrics"
         )).fetchall()
         pitchers = conn.execute(text(
-            "SELECT player_id FROM statcast_pitcher_metrics"
+            "SELECT mlbam_id FROM statcast_pitcher_metrics"
         )).fetchall()
     return {r[0] for r in batters} | {r[0] for r in pitchers}
 
