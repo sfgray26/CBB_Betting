@@ -30,7 +30,7 @@ _BROWSER_HEADERS = {
     ),
     "Accept": "text/csv,text/html,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
+    # Omit Accept-Encoding to avoid Brotli (br) responses that requests can't decode
     "Connection": "keep-alive",
     "Referer": "https://baseballsavant.mlb.com/",
 }
@@ -63,7 +63,8 @@ def fetch_sprint_speed(year: int = 2026) -> pd.DataFrame:
 
 def _parse_csv(csv_text: str) -> pd.DataFrame:
     """Parse Savant sprint speed CSV into the canonical three-column DataFrame."""
-    df = pd.read_csv(io.StringIO(csv_text))
+    # on_bad_lines='skip' tolerates player names with embedded commas or extra fields
+    df = pd.read_csv(io.StringIO(csv_text), on_bad_lines="skip")
 
     if df.empty:
         return _empty_df()
