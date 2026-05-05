@@ -74,12 +74,12 @@ _ALL_CATEGORIES: dict[str, tuple[str, bool]] = {
 _COMPOSITE_EXCLUDED: frozenset = frozenset({"z_sb"})
 
 # Minimum number of players with a non-null value before computing Z for a category
-MIN_SAMPLE: int = 3  # Minimum players to compute any z-score
-# Low threshold ensures early-season rankings exist
-# Consumers should use 'confidence' field to filter uncertain values
+# Low threshold ensures early-season rankings exist; consumers use 'confidence' to filter.
+from backend.services.config_service import get_threshold as _get_threshold
+MIN_SAMPLE: int = _get_threshold("scoring.min_sample", default=3)
 
 # Cap Z-scores at this absolute value to reduce outlier distortion
-Z_CAP: float = 3.0
+Z_CAP: float = _get_threshold("scoring.z_cap", default=3.0)
 
 
 # Category weights based on scarcity (inverse of league average SD)

@@ -10,13 +10,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict
 
+from backend.services.config_service import get_threshold as _get_threshold
+
 # Rate stats where adding a player with a bad z-score dilutes the team's lead.
 # All keys are lowercase board keys matching PlayerProjection.cat_scores.
 RATE_STAT_CATS: frozenset = frozenset({"avg", "ops", "era", "whip", "k9"})
 
 # How far ahead the team must be (|deficit| > threshold) before the gate fires.
 # deficit is expressed in z-score units (negative = team leading).
-RATE_STAT_PROTECT_THRESHOLD: float = 0.5
+RATE_STAT_PROTECT_THRESHOLD: float = _get_threshold("scoring.rate_stat_protect", default=0.5)
 
 # Multiplier applied to the absolute deficit when the gate fires.
 # Produces a negative score: player_z * |deficit| * MULTIPLIER.
