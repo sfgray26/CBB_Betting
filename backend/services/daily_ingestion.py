@@ -675,6 +675,52 @@ def _persist_ingestion_log(
 
 
 # ---------------------------------------------------------------------------
+# PR 2.2 — Sprint-speed pipeline helper
+# ---------------------------------------------------------------------------
+
+def _update_sprint_speeds(db, season: int = 2026) -> int:
+    """
+    Fetch the Baseball Savant sprint speed CSV and update statcast_batter_metrics.
+
+    Returns the number of rows updated. Any failure is logged and returns 0
+    so the caller (savant_ingestion job) is never disrupted.
+    """
+    try:
+        from backend.ingestion.savant_scraper import fetch_sprint_speed
+        from sqlalchemy import text
+
+        df = fetch_sprint_speed(year=season)
+        if df.empty:
+            logger.warning("_update_sprint_speeds: no data returned from Savant (empty DF)")
+            return 0
+
+        updated = 0
+        for _, row in df.iterrows():
+            mlbam_id_str = str(int(row["mlbam_id"]))
+            result = db.execute(
+                text(
+                    "UPDATE statcast_batter_metrics "
+                    "SET sprint_speed = :speed "
+                    "WHERE mlbam_id = :mlbam_id AND season = :season"
+                ),
+                {"speed": float(row["sprint_speed"]), "mlbam_id": mlbam_id_str, "season": season},
+            )
+            updated += result.rowcount
+
+        db.commit()
+        logger.info("_update_sprint_speeds: updated %d / %d players", updated, len(df))
+        return updated
+
+    except Exception as exc:
+        logger.warning("_update_sprint_speeds: failed, sprint_speed not updated: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return 0
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -2012,6 +2058,8 @@ class DailyIngestionOrchestrator:
                         ).first()
 
                         if existing_by_yahoo:
+                            # Flush pending inserts so in-transaction rows are visible
+                            db.flush()
                             # Check if target bdl_id is already used by another row
                             existing_by_bdl = db.query(PlayerIDMapping).filter(
                                 PlayerIDMapping.bdl_id == bdl_id
@@ -2034,6 +2082,8 @@ class DailyIngestionOrchestrator:
                                 existing_by_yahoo.resolution_confidence = 1.0
                                 existing_by_yahoo.updated_at = now_et()
                         else:
+                            # Flush pending inserts so in-transaction rows are visible
+                            db.flush()
                             # Priority 2: Check if row exists by bdl_id (from pybaseball seeding)
                             existing_by_bdl = db.query(PlayerIDMapping).filter(
                                 PlayerIDMapping.bdl_id == bdl_id
@@ -4677,10 +4727,20 @@ class DailyIngestionOrchestrator:
                     )
                     self._record_job_run("savant_ingestion", "success", b_total + p_total)
 
+                    # PR 2.2: Update sprint_speed from Savant leaderboard CSV
+                    sprint_updated = await asyncio.to_thread(
+                        _update_sprint_speeds, db, season=2026
+                    )
+                    logger.info(
+                        "_ingest_savant_leaderboards: sprint_speed updated for %d players",
+                        sprint_updated,
+                    )
+
                     return {
                         "status": "success",
                         "batters": b_total,
                         "pitchers": p_total,
+                        "sprint_speed_updated": sprint_updated,
                         "elapsed_ms": elapsed,
                     }
                 elif result.get("status") == "skipped":
@@ -5061,6 +5121,7 @@ class DailyIngestionOrchestrator:
 
         async def _run():
             from backend.fantasy_baseball.fangraphs_loader import compute_ensemble_blend
+            from backend.fantasy_baseball.mlb_boxscore import normalize_name as _norm
 
             # --- 1. Load RoS cache (must be populated by fangraphs_ros at 3 AM) ---
             bat_raw = _ROS_CACHE.get("bat")
@@ -5111,8 +5172,9 @@ class DailyIngestionOrchestrator:
 
                 if bat_blend is not None:
                     for _, row in bat_blend.iterrows():
-                        fg_id = str(row.get("player_id", ""))
-                        mlbam_id = name_to_mlbam.get(fg_id)
+                        # name_to_mlbam is keyed by normalized_name, not FanGraphs player_id
+                        player_name = str(row.get("name", "") or "")
+                        mlbam_id = name_to_mlbam.get(_norm(player_name)) if player_name else None
 
                         if not mlbam_id:
                             skipped += 1
@@ -5167,8 +5229,9 @@ class DailyIngestionOrchestrator:
                 # --- 5. Upsert pitcher projections ---
                 if pit_blend is not None:
                     for _, row in pit_blend.iterrows():
-                        fg_id = str(row.get("player_id", ""))
-                        mlbam_id = name_to_mlbam.get(fg_id)
+                        # name_to_mlbam is keyed by normalized_name, not FanGraphs player_id
+                        player_name = str(row.get("name", "") or "")
+                        mlbam_id = name_to_mlbam.get(_norm(player_name)) if player_name else None
 
                         if not mlbam_id:
                             skipped += 1
@@ -5850,6 +5913,7 @@ class DailyIngestionOrchestrator:
 
         async def _run():
             from backend.fantasy_baseball.fangraphs_loader import compute_ensemble_blend
+            from backend.fantasy_baseball.mlb_boxscore import normalize_name as _norm
 
             # --- 1. Load RoS cache (must be populated by fangraphs_ros at 3 AM) ---
             bat_raw = _ROS_CACHE.get("bat")
@@ -5900,8 +5964,9 @@ class DailyIngestionOrchestrator:
 
                 if bat_blend is not None:
                     for _, row in bat_blend.iterrows():
-                        fg_id = str(row.get("player_id", ""))
-                        mlbam_id = name_to_mlbam.get(fg_id)
+                        # name_to_mlbam is keyed by normalized_name, not FanGraphs player_id
+                        player_name = str(row.get("name", "") or "")
+                        mlbam_id = name_to_mlbam.get(_norm(player_name)) if player_name else None
 
                         if not mlbam_id:
                             skipped += 1
@@ -5956,8 +6021,9 @@ class DailyIngestionOrchestrator:
                 # --- 5. Upsert pitcher projections ---
                 if pit_blend is not None:
                     for _, row in pit_blend.iterrows():
-                        fg_id = str(row.get("player_id", ""))
-                        mlbam_id = name_to_mlbam.get(fg_id)
+                        # name_to_mlbam is keyed by normalized_name, not FanGraphs player_id
+                        player_name = str(row.get("name", "") or "")
+                        mlbam_id = name_to_mlbam.get(_norm(player_name)) if player_name else None
 
                         if not mlbam_id:
                             skipped += 1
