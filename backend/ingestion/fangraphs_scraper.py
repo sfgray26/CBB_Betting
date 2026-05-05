@@ -31,6 +31,11 @@ def fetch_pitcher_quality(season: int = 2026) -> pd.DataFrame:
     Returns empty DataFrame (same columns, zero rows) on any error.
     """
     try:
+        # FanGraphs 403s cloud IPs without a browser UA — apply the same patch
+        # that pybaseball_loader uses for the draft analytics pipeline.
+        from backend.fantasy_baseball.pybaseball_loader import _patch_pybaseball_user_agent
+        _patch_pybaseball_user_agent()
+
         from pybaseball import fg_pitching_data, playerid_reverse_lookup
 
         raw = fg_pitching_data(season, season, qual=0)
