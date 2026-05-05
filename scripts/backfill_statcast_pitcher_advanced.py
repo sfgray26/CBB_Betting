@@ -1,7 +1,7 @@
 """
 PR 2.x — Backfill stuff_plus and location_plus for the 2026 season.
 
-Fetches the Baseball Savant pitching leaderboard CSV and updates
+Fetches Stuff+, Location+, Pitching+ from FanGraphs via pybaseball and updates
 statcast_pitcher_metrics.stuff_plus and statcast_pitcher_metrics.location_plus
 for every matched pitcher.
 
@@ -40,18 +40,18 @@ def get_db_url() -> str:
 def backfill(year: int = 2026) -> None:
     import psycopg2
 
-    from backend.ingestion.savant_scraper import fetch_pitcher_advanced
+    from backend.ingestion.fangraphs_scraper import fetch_pitcher_quality
 
     url = get_db_url()
 
-    logger.info("Fetching pitching advanced leaderboard for %d...", year)
-    df = fetch_pitcher_advanced(year=year)
+    logger.info("Fetching FanGraphs pitcher quality metrics for %d...", year)
+    df = fetch_pitcher_quality(season=year)
 
     if df.empty:
-        logger.error("No pitching advanced data returned — aborting backfill.")
+        logger.error("No pitcher quality data returned from FanGraphs -- aborting backfill.")
         sys.exit(1)
 
-    logger.info("Fetched %d pitchers from Savant.", len(df))
+    logger.info("Fetched %d pitchers from FanGraphs.", len(df))
 
     conn = psycopg2.connect(url)
     conn.autocommit = False

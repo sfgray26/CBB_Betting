@@ -723,7 +723,7 @@ def _update_sprint_speeds(db, season: int = 2026) -> int:
 
 def _update_pitcher_advanced(db, season: int = 2026) -> dict:
     """
-    PR 2.x — Fetch Stuff+ and Location+ from Baseball Savant and update statcast_pitcher_metrics.
+    PR 2.x — Fetch Stuff+ and Location+ from FanGraphs via pybaseball and update statcast_pitcher_metrics.
 
     Returns dict with keys:
         updated_stuff (int): rows updated with stuff_plus
@@ -734,12 +734,12 @@ def _update_pitcher_advanced(db, season: int = 2026) -> dict:
     is never disrupted.
     """
     try:
-        from backend.ingestion.savant_scraper import fetch_pitcher_advanced
+        from backend.ingestion.fangraphs_scraper import fetch_pitcher_quality
         from sqlalchemy import text
 
-        df = fetch_pitcher_advanced(year=season)
+        df = fetch_pitcher_quality(season=season)
         if df.empty:
-            logger.warning("_update_pitcher_advanced: no data returned from Savant (empty DF)")
+            logger.warning("_update_pitcher_advanced: no data returned from FanGraphs (empty DF)")
             return {"updated_stuff": 0, "updated_location": 0, "total": 0}
 
         updated_stuff = 0
@@ -5136,7 +5136,7 @@ class DailyIngestionOrchestrator:
                         sprint_updated,
                     )
 
-                    # PR 2.x: Update stuff_plus and location_plus from Savant pitching leaderboard
+                    # PR 2.x: Update stuff_plus and location_plus from FanGraphs via pybaseball
                     pitcher_advanced = await asyncio.to_thread(
                         _update_pitcher_advanced, db, season=2026
                     )
