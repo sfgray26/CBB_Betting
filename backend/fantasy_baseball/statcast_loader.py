@@ -274,11 +274,13 @@ def _load_from_db(season: int = 2026) -> tuple:
                     spm.hard_hit_percent_allowed,
                     spm.avg_exit_velocity_allowed,
                     spm.whiff_percent,
+                    spm.stuff_plus,
+                    spm.location_plus,
                     spm.k_percent,
                     (
                         SELECT CASE
                             WHEN SUM(sp.ip) > 0
-                            THEN ROUND((SUM(sp.er)::numeric / NULLIF(SUM(sp.ip), 0)) * 9, 2)
+                            THEN ROUND(((SUM(sp.er)::numeric / NULLIF(SUM(sp.ip), 0)) * 9)::numeric, 2)
                             ELSE NULL
                         END
                         FROM statcast_performances sp
@@ -532,6 +534,9 @@ def build_statcast_signals(
             if metrics.breakout_candidate:
                 signals.append("BREAKOUT")
 
+            if metrics.stuff_plus is not None and metrics.stuff_plus >= 110:
+                signals.append("PLUS_STUFF")
+
         else:
             metrics = get_statcast_batter(player_name)
             if metrics is None:
@@ -549,6 +554,9 @@ def build_statcast_signals(
                 is_breakout, _ = is_breakout_candidate_batter(metrics, age=_DEFAULT_AGE)
                 if is_breakout:
                     signals.append("BREAKOUT")
+
+            if metrics.sprint_speed is not None and metrics.sprint_speed >= 28.0:
+                signals.append("ELITE_SPEED")
 
     except Exception as exc:
         logger.debug(f"Statcast signal build failed for {player_name}: {exc}")
