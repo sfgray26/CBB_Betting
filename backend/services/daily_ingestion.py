@@ -130,6 +130,7 @@ LOCK_IDS = {
     "cat_scores_backfill":   100_035,  # Session U: bootstrap cat_scores from DB stats
     "ros_projection_refresh": 100_036,  # P0-A: Refresh player_projections from RoS cache
     "yahoo_id_sync":         100_034,  # P0-C: Yahoo ID mapping sync
+    "opportunity_update":    100_037,  # PR 3.4: Playing-time opportunity signals
 }
 
 
@@ -749,6 +750,16 @@ class DailyIngestionOrchestrator:
             CronTrigger(hour=5, minute=0, timezone=tz),
             id="player_momentum",
             name="Player Momentum Signal Computation",
+            replace_existing=True,
+        )
+
+        # Opportunity update: daily 5:30 AM ET (after player_momentum at 5 AM)
+        # LOG ONLY — computes playing-time signals; does not affect scoring yet.
+        self._scheduler.add_job(
+            self._compute_opportunity,
+            CronTrigger(hour=5, minute=30, timezone=tz),
+            id="opportunity_update",
+            name="Player Opportunity Signal Computation",
             replace_existing=True,
         )
 
@@ -2885,6 +2896,193 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["player_momentum"], "player_momentum", _run)
+
+    async def _compute_opportunity(self) -> dict:
+        """
+        Daily playing-time opportunity computation (lock 100_037, 5:30 AM ET).
+
+        Runs after _compute_player_momentum (5 AM) so the scoring pipeline is current.
+
+        LOG ONLY — results are upserted to player_opportunity but NOT used in
+        scoring yet (see PR 3.5 / feature flag opportunity_enabled).
+
+        Algorithm:
+          1. Query distinct (bdl_player_id, player_type) from player_projections
+             WHERE player_type IS NOT NULL
+          2. compute_all_opportunity(player_rows, as_of_date, db)
+          3. UPSERT each OpportunityMetrics to player_opportunity
+          4. Log summary: total players, avg_opportunity_z
+
+        ADR-004: Never import betting_model or analysis here.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            from backend.services.opportunity_engine import compute_all_opportunity
+
+            as_of_date = datetime.now(ZoneInfo("America/New_York")).date()
+
+            db = SessionLocal()
+            try:
+                # Query all players with a known type
+                rows = db.execute(
+                    text(
+                        """
+                        SELECT DISTINCT pim.bdl_id, pp.player_type
+                        FROM player_projections pp
+                        JOIN player_id_mapping pim ON pim.espn_id = pp.player_id
+                        WHERE pp.player_type IS NOT NULL
+                          AND pim.bdl_id IS NOT NULL
+                        """
+                    )
+                ).fetchall()
+
+                if not rows:
+                    logger.warning(
+                        "opportunity_update: 0 players found for as_of_date=%s -- "
+                        "player_id_mapping may not be populated",
+                        as_of_date,
+                    )
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("opportunity_update", "warning")
+                    return {
+                        "status": "warning",
+                        "as_of_date": str(as_of_date),
+                        "total": 0,
+                        "elapsed_ms": elapsed,
+                    }
+
+                player_rows = [(int(r[0]), str(r[1])) for r in rows]
+                results = compute_all_opportunity(player_rows, as_of_date, db)
+
+                if not results:
+                    logger.warning(
+                        "opportunity_update: 0 results computed for as_of_date=%s",
+                        as_of_date,
+                    )
+
+                # UPSERT each result to player_opportunity
+                upserted = 0
+                for res in results:
+                    try:
+                        stmt = pg_insert(
+                            text("player_opportunity").columns  # use raw table via text
+                        )
+                        db.execute(
+                            text(
+                                """
+                                INSERT INTO player_opportunity (
+                                    bdl_player_id, as_of_date,
+                                    pa_per_game, ab_per_game,
+                                    games_played_14d, games_started_14d, games_started_pct,
+                                    lineup_slot_avg, lineup_slot_mode, lineup_slot_entropy,
+                                    pa_vs_lhp_14d, pa_vs_rhp_14d, platoon_ratio, platoon_risk_score,
+                                    appearances_14d, saves_14d, holds_14d, role_certainty_score,
+                                    days_since_last_game, il_stint_flag,
+                                    opportunity_score, opportunity_z, opportunity_confidence,
+                                    fetched_at
+                                ) VALUES (
+                                    :bdl_id, :as_of,
+                                    :pa_per_game, :ab_per_game,
+                                    :games_played, :games_started, :started_pct,
+                                    :slot_avg, :slot_mode, :slot_entropy,
+                                    :pa_lhp, :pa_rhp, :platoon_ratio, :platoon_risk,
+                                    :appearances, :saves, :holds, :role_cert,
+                                    :days_since, :il_flag,
+                                    :opp_score, :opp_z, :opp_conf,
+                                    NOW()
+                                )
+                                ON CONFLICT (bdl_player_id, as_of_date) DO UPDATE SET
+                                    pa_per_game           = EXCLUDED.pa_per_game,
+                                    ab_per_game           = EXCLUDED.ab_per_game,
+                                    games_played_14d      = EXCLUDED.games_played_14d,
+                                    games_started_14d     = EXCLUDED.games_started_14d,
+                                    games_started_pct     = EXCLUDED.games_started_pct,
+                                    lineup_slot_avg       = EXCLUDED.lineup_slot_avg,
+                                    lineup_slot_mode      = EXCLUDED.lineup_slot_mode,
+                                    lineup_slot_entropy   = EXCLUDED.lineup_slot_entropy,
+                                    pa_vs_lhp_14d         = EXCLUDED.pa_vs_lhp_14d,
+                                    pa_vs_rhp_14d         = EXCLUDED.pa_vs_rhp_14d,
+                                    platoon_ratio         = EXCLUDED.platoon_ratio,
+                                    platoon_risk_score    = EXCLUDED.platoon_risk_score,
+                                    appearances_14d       = EXCLUDED.appearances_14d,
+                                    saves_14d             = EXCLUDED.saves_14d,
+                                    holds_14d             = EXCLUDED.holds_14d,
+                                    role_certainty_score  = EXCLUDED.role_certainty_score,
+                                    days_since_last_game  = EXCLUDED.days_since_last_game,
+                                    il_stint_flag         = EXCLUDED.il_stint_flag,
+                                    opportunity_score     = EXCLUDED.opportunity_score,
+                                    opportunity_z         = EXCLUDED.opportunity_z,
+                                    opportunity_confidence= EXCLUDED.opportunity_confidence,
+                                    fetched_at            = NOW()
+                                """
+                            ),
+                            {
+                                "bdl_id": res.bdl_player_id,
+                                "as_of": res.as_of_date,
+                                "pa_per_game": res.pa_per_game,
+                                "ab_per_game": res.ab_per_game,
+                                "games_played": res.games_played_14d,
+                                "games_started": res.games_started_14d,
+                                "started_pct": res.games_started_pct,
+                                "slot_avg": res.lineup_slot_avg,
+                                "slot_mode": res.lineup_slot_mode,
+                                "slot_entropy": res.lineup_slot_entropy,
+                                "pa_lhp": res.pa_vs_lhp_14d,
+                                "pa_rhp": res.pa_vs_rhp_14d,
+                                "platoon_ratio": res.platoon_ratio,
+                                "platoon_risk": res.platoon_risk_score,
+                                "appearances": res.appearances_14d,
+                                "saves": res.saves_14d,
+                                "holds": res.holds_14d,
+                                "role_cert": res.role_certainty_score,
+                                "days_since": res.days_since_last_game,
+                                "il_flag": res.il_stint_flag,
+                                "opp_score": res.opportunity_score,
+                                "opp_z": res.opportunity_z,
+                                "opp_conf": res.opportunity_confidence,
+                            },
+                        )
+                        upserted += 1
+                    except Exception as exc:
+                        logger.warning(
+                            "opportunity_update: upsert failed for bdl_player_id=%s: %s",
+                            res.bdl_player_id, exc,
+                        )
+
+                db.commit()
+
+                avg_z = (
+                    sum(r.opportunity_z for r in results) / len(results)
+                    if results else 0.0
+                )
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.info(
+                    "opportunity_update: computed %d players, upserted %d, "
+                    "avg_opportunity_z=%.3f, elapsed_ms=%d",
+                    len(results), upserted, avg_z, elapsed,
+                )
+                self._record_job_run("opportunity_update", "success")
+                return {
+                    "status": "success",
+                    "as_of_date": str(as_of_date),
+                    "total": len(results),
+                    "upserted": upserted,
+                    "avg_opportunity_z": round(avg_z, 4),
+                    "elapsed_ms": elapsed,
+                }
+
+            except Exception as exc:
+                db.rollback()
+                logger.error("opportunity_update: job failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("opportunity_update", "failed")
+                return {"status": "failed", "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+        return await _with_advisory_lock(LOCK_IDS["opportunity_update"], "opportunity_update", _run)
 
     async def _run_ros_simulation(self) -> dict:
         """
