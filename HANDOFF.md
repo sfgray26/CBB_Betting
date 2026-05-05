@@ -1,15 +1,31 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
-> **Date:** 2026-05-03 | **Architect:** Claude Code (Master Architect)
-> **Status:** Signal validation PASSED. ADP collision FIXED. Full test suite GREEN. Ready for UI work.
-> **HEAD:** `9426f69` `fix(lineup): game_time UTC, SP start detection, batter player_id` (LATEST)
+> **Date:** 2026-05-05 | **Architect:** Claude Code (Master Architect)
+> **Status:** Phase 4 (Market Signals Engine) COMPLETE. Ready for DevOps deployment verification.
+> **HEAD:** `8ee4c8c` `feat(pr-4.5): Market score tiebreaker in waiver edge detector` (LATEST)
 > **Deploy status:** ✅ LIVE — `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}`.
 
 ---
 
 ## Executive Summary
 
-**Completed this session (May 2, 2026):**
+**Completed this session (May 5, 2026):**
+| Item | Result |
+|------|--------|
+| Phase 4: Market Signals Engine | ✅ COMPLETE — All 4 PRs implemented |
+| PR 4.3/4.4: Market engine | ✅ 29 tests passing (pure computation module) |
+| PR 4.2: Market signals job | ✅ Scheduled 8:30 AM ET (lock 100_038) |
+| PR 4.5: Market score tiebreaker | ✅ Integrated into waiver_edge_detector |
+| Test suite | ✅ 43 tests passing (29 market_engine + 14 waiver_edge) |
+
+**Phase 4 Deliverables:**
+- Pure computation module (`backend/services/market_engine.py`) — ownership_velocity, ownership_deltas, add_drop_ratio, market_score (0-100)
+- Daily job (8:30 AM ET) — computes Yahoo ownership-based market intelligence
+- Tiebreaker integration — market_score as tertiary sort key in waiver recommendations
+- Confidence gating — low sample sizes dampen contrarian signals
+- Feature flags — `market_signals_enabled` = false, `opportunity_enabled` = false
+
+**Previous session (May 2-3, 2026):**
 | Item | Result |
 |------|--------|
 | M34 migration (junction DB) | ✅ Gemini ran successfully — 441 hitters + 176 pitchers classified |
@@ -125,6 +141,102 @@ All structural fixes are deployed. Now need 48h of real-world data to confirm si
 ---
 
 ## Delegation Queue (P0 — Week 1 Priority)
+
+### 🔧 Task 0: Phase 4 Deployment Verification (NEW — May 5, 2026)
+**Assigned:** Gemini CLI (DevOps)
+**Status:** ⏳ PENDING
+**Estimated time:** 30 minutes
+
+**Context:**
+Phase 4 (Market Signals Engine) is complete but requires DevOps verification before production activation.
+
+**Tasks:**
+1. **Run migration on Railway:**
+   ```bash
+   railway ssh
+   python scripts/migration_player_market_signals.py
+   ```
+   Expected output: "PR 4.1 migration ready." Verify table created:
+   ```sql
+   SELECT table_name FROM information_schema.tables
+   WHERE table_name = 'player_market_signals';
+   ```
+
+2. **Seed feature flags in threshold_config:**
+   ```sql
+   INSERT INTO threshold_config (key, value, description)
+   VALUES
+     ('market_signals_enabled', 'false', 'PR 4: Market score tiebreaker in waiver recommendations'),
+     ('opportunity_enabled', 'false', 'PR 3: Opportunity adjustment in player_scores')
+   ON CONFLICT (key) DO NOTHING;
+   ```
+   Verify:
+   ```sql
+   SELECT key, value FROM threshold_config WHERE key LIKE '%_enabled';
+   ```
+
+3. **Verify daily job scheduler:**
+   - Check that lock ID 100_038 is registered: `grep "market_signals_update" backend/services/daily_ingestion.py`
+   - Verify job scheduled for 8:30 AM ET: `grep -A5 "market_signals_update" backend/services/daily_ingestion.py | grep "8:30"`
+   - Check logs for job execution: `railway logs --filter "market_signals_update"`
+
+4. **Run tests on Railway:**
+   ```bash
+   railway ssh
+   python -m pytest tests/test_market_engine.py tests/test_waiver_edge.py -v --tb=short
+   ```
+   Expected: All 43 tests passing (29 market_engine + 14 waiver_edge)
+
+5. **Verify advisory lock:**
+   ```sql
+   SELECT pg_try_advisory_lock(100_038);
+   -- Should return 't' (true)
+   SELECT pg_advisory_unlock(100_038);
+   ```
+
+**Success criteria:**
+- [ ] Migration runs without errors
+- [ ] player_market_signals table exists
+- [ ] Feature flags seeded correctly
+- [ ] All 43 tests pass on Railway
+- [ ] Lock ID 100_038 available
+- [ ] Daily job scheduled (will run at next 8:30 AM ET)
+
+**Report template:**
+```markdown
+## Phase 4 Deployment Verification Report
+
+**Date:** 2026-05-05
+**Engineer:** Gemini CLI
+
+### Migration Status
+- player_market_signals table: [CREATED/FAILED]
+- Indexes created: [YES/NO]
+
+### Feature Flags
+- market_signals_enabled: [SEEDED/MISSING]
+- opportunity_enabled: [SEEDED/MISSING]
+
+### Test Results
+- test_market_engine.py: [X/29] passing
+- test_waiver_edge.py: [X/14] passing
+- Total: [X/43] passing
+
+### Scheduler Verification
+- Lock ID 100_038: [AVAILABLE/TAKEN]
+- Job scheduled: [YES/NO]
+- Next run: [8:30 AM ET tomorrow]
+
+### Issues Found
+[None or list of issues]
+
+### Recommendation
+[PROCEED TO PRODUCTION / NEEDS FIXES]
+```
+
+**Escalation:** If migration fails or tests don't pass on Railway, report specific error messages for Architect review.
+
+---
 
 ### ✅ Task 1: Fantasy Feature Verification
 **Assigned:** Gemini CLI (DevOps)
@@ -266,12 +378,14 @@ $env:DATABASE_URL = "postgresql://postgres:oViPPSTbGvkNGzGjrYoxsLVvibJvJZAB@junc
 
 ## Technical Reference
 
-**Advisory Locks** (next available: 100_016):
+**Advisory Locks** (next available: 100_039):
 - 100_001 mlb_odds | 100_002 statcast | 100_003 rolling_z | 100_004 cbb_ratings
 - 100_005 clv | 100_006 cleanup | 100_007 waiver_scan | 100_008 mlb_brief
 - 100_009 openclaw_perf | 100_010 openclaw_sweep
 - 100_011 scarcity_index_recalc | 100_012 two_start_sp_identification
 - 100_013 projection_model_update | 100_014 probable_pitcher_sync | 100_015 waiver_priority_snapshot
+- 100_016 ros_projection_refresh | 100_034 yahoo_id_sync | 100_036 ros_projection_refresh
+- 100_037 opportunity_update | 100_038 market_signals_update
 
 **Key Files**:
 - `backend/main.py` - FastAPI app, scheduler jobs
@@ -279,6 +393,9 @@ $env:DATABASE_URL = "postgresql://postgres:oViPPSTbGvkNGzGjrYoxsLVvibJvJZAB@junc
 - `backend/services/mlb_analysis.py` - MLB betting analysis
 - `backend/services/daily_lineup_optimizer.py` - Daily lineup optimization
 - `backend/services/balldontlie.py` - BDL client (GOAT MLB tier)
+- `backend/services/market_engine.py` - NEW: Market signals pure computation (PR 4.3/4.4)
+- `backend/services/opportunity_engine.py` - NEW: Playing-time opportunity scoring (PR 3.2/3.3)
+- `backend/services/waiver_edge_detector.py` - UPDATED: Market score tiebreaker (PR 4.5)
 
 **Documentation Links**:
 - [MLB Fantasy Roadmap](docs/MLB_FANTASY_ROADMAP.md)
