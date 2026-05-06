@@ -182,9 +182,10 @@ def test_orchestrator_get_status_returns_all_jobs():
         "rolling_z", "clv", "cleanup", "fangraphs_ros", "yahoo_adp_injury",
         "ensemble_update", "projection_cat_scores", "cat_scores_backfill",
         "projection_freshness",
-        "player_id_mapping", "position_eligibility",
+        "player_id_mapping", "position_eligibility", "bdl_injuries",
         "probable_pitchers_morning", "probable_pitchers_afternoon", "probable_pitchers_evening",
         "yahoo_id_sync", "ros_projection_refresh", "savant_ingestion",
+        "opportunity_update", "market_signals_update", "matchup_context_update",
         "canonical_projection_refresh",
     }
     assert expected_jobs == set(status.keys())
