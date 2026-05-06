@@ -6018,6 +6018,7 @@ class DailyIngestionOrchestrator:
                 updated = 0
                 inserted = 0
                 skipped = 0
+                bat_processed_ids: set[str] = set()
 
                 if bat_blend is not None:
                     for _, row in bat_blend.iterrows():
@@ -6081,6 +6082,10 @@ class DailyIngestionOrchestrator:
                             new_row = PlayerProjection(**upsert_vals)
                             db.add(new_row)
                             inserted += 1
+                        if mlbam_id:
+                            bat_processed_ids.add(mlbam_id)
+
+                db.flush()  # Ensure batter inserts visible within transaction (two-way player dedup)
 
                 # --- 5. Upsert pitcher projections ---
                 if pit_blend is not None:
@@ -6136,7 +6141,15 @@ class DailyIngestionOrchestrator:
                             "updated_at": now,
                         }
 
-                        if existing:
+                        if existing and mlbam_id in bat_processed_ids:
+                            # Two-way player: merge pitcher stats without overwriting batting stats
+                            _pit_cols = {"era", "whip", "k_per_nine", "w", "l", "hr_pit", "k_pit", "qs", "nsv", "prior_source", "update_method", "updated_at"}
+                            for k, v in upsert_vals.items():
+                                if k in _pit_cols and v is not None:
+                                    setattr(existing, k, v)
+                            existing.player_type = "both"
+                            updated += 1
+                        elif existing:
                             for k, v in upsert_vals.items():
                                 if k not in ("player_id", "player_name", "created_at"):
                                     setattr(existing, k, v)
@@ -6902,6 +6915,7 @@ class DailyIngestionOrchestrator:
                 updated = 0
                 inserted = 0
                 skipped = 0
+                bat_processed_ids: set[str] = set()
 
                 if bat_blend is not None:
                     for _, row in bat_blend.iterrows():
@@ -6965,6 +6979,10 @@ class DailyIngestionOrchestrator:
                             new_row = PlayerProjection(**upsert_vals)
                             db.add(new_row)
                             inserted += 1
+                        if mlbam_id:
+                            bat_processed_ids.add(mlbam_id)
+
+                db.flush()  # Ensure batter inserts visible within transaction (two-way player dedup)
 
                 # --- 5. Upsert pitcher projections ---
                 if pit_blend is not None:
@@ -7020,7 +7038,15 @@ class DailyIngestionOrchestrator:
                             "updated_at": now,
                         }
 
-                        if existing:
+                        if existing and mlbam_id in bat_processed_ids:
+                            # Two-way player: merge pitcher stats without overwriting batting stats
+                            _pit_cols = {"era", "whip", "k_per_nine", "w", "l", "hr_pit", "k_pit", "qs", "nsv", "prior_source", "update_method", "updated_at"}
+                            for k, v in upsert_vals.items():
+                                if k in _pit_cols and v is not None:
+                                    setattr(existing, k, v)
+                            existing.player_type = "both"
+                            updated += 1
+                        elif existing:
                             for k, v in upsert_vals.items():
                                 if k not in ("player_id", "player_name", "created_at"):
                                     setattr(existing, k, v)
