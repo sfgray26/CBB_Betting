@@ -281,6 +281,79 @@ class WaiverEdgeDetector:
         except Exception:
             return None
 
+    @staticmethod
+    def _bulk_yahoo_to_mlbam(yahoo_ids: list) -> dict:
+        """Bulk-map Yahoo player IDs to MLBAM IDs via player_id_mapping.
+        Returns {yahoo_id: mlbam_id}. Empty dict on any DB error."""
+        if not yahoo_ids:
+            return {}
+        try:
+            from backend.models import SessionLocal
+            from sqlalchemy import text
+
+            db = SessionLocal()
+            try:
+                rows = db.execute(
+                    text(
+                        "SELECT yahoo_id, mlbam_id FROM player_id_mapping "
+                        "WHERE yahoo_id = ANY(:ids) AND mlbam_id IS NOT NULL"
+                    ),
+                    {"ids": list(yahoo_ids)},
+                ).fetchall()
+                return {int(r[0]): int(r[1]) for r in rows}
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.debug("_bulk_yahoo_to_mlbam failed (%s)", exc)
+            return {}
+
+    @staticmethod
+    def _build_canonical_team_context(roster: list) -> Optional[object]:
+        """Build TeamContext from roster Yahoo IDs using CanonicalProjection data.
+
+        Returns TeamContext if CANONICAL_PROJECTION_V1 is enabled and roster has
+        resolvable players; returns None on any failure (never raises).
+        """
+        try:
+            from backend.models import SessionLocal
+            from backend.fantasy_baseball.waiver_valuation_service import WaiverValuationService
+            from backend.fantasy_baseball.id_resolution_service import get_quarantined_identity_ids
+
+            roster_yahoo_ids = []
+            for p in roster:
+                yid = p.get("player_id") or p.get("id")
+                if yid:
+                    try:
+                        roster_yahoo_ids.append(int(yid))
+                    except (ValueError, TypeError):
+                        pass
+
+            if not roster_yahoo_ids:
+                return None
+
+            yahoo_to_mlbam = WaiverEdgeDetector._bulk_yahoo_to_mlbam(roster_yahoo_ids)
+            roster_mlbam_ids = list(yahoo_to_mlbam.values())
+            if not roster_mlbam_ids:
+                return None
+
+            db = SessionLocal()
+            try:
+                quarantined_ids = get_quarantined_identity_ids(db)
+                svc = WaiverValuationService(db)
+                ctx = svc.build_team_context(roster_mlbam_ids, quarantined_ids=quarantined_ids)
+                logger.info(
+                    "Canonical TeamContext: pa_denom=%.0f ip_denom=%.0f quarantined=%d",
+                    ctx.rate_pa_denominator,
+                    ctx.rate_ip_denominator,
+                    len(ctx.quarantined_player_ids),
+                )
+                return ctx
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning("_build_canonical_team_context failed (%s) -- no depth scaling", exc)
+            return None
+
     def get_top_moves(self, my_roster, opponent_roster, n_candidates=10, force_refresh=False):
         free_agents = self._enrich_players(self._fetch_fas(force_refresh))
         if not free_agents:
@@ -309,6 +382,26 @@ class WaiverEdgeDetector:
                         bdl_ids.append(bdl_id)
             if bdl_ids:
                 market_lookup = self._load_market_scores(bdl_ids)
+
+        # CANONICAL_PROJECTION_V1: build TeamContext for roster-depth-aware scoring.
+        # depth_factor adjusts the matchup need_score: shallow rosters (injured players,
+        # IL-heavy) → factor > 1.0 (each FA adds more marginal value); deep rosters → < 1.0.
+        # Falls back to depth_factor=1.0 on any failure — never blocks waiver recommendations.
+        use_canonical = is_flag_enabled("CANONICAL_PROJECTION_V1")
+        team_context = None
+        batter_depth_factor = 1.0
+        pitcher_depth_factor = 1.0
+        if use_canonical:
+            team_context = self._build_canonical_team_context(my_roster)
+            if team_context is not None:
+                pa_denom = float(getattr(team_context, "rate_pa_denominator", 0.0))
+                ip_denom = float(getattr(team_context, "rate_ip_denominator", 0.0))
+                if pa_denom > 0:
+                    batter_depth_factor = max(0.8, min(1.2, 3600.0 / pa_denom))
+                if ip_denom > 0:
+                    pitcher_depth_factor = max(0.8, min(1.2, 900.0 / ip_denom))
+
+        _PITCHER_POSITIONS = frozenset({"SP", "RP", "P"})
 
         moves = []
         for fa in free_agents[:40]:
@@ -340,6 +433,15 @@ class WaiverEdgeDetector:
                         market_score = market_lookup.get(bdl_id, 50.0)
             if score <= 0 and not has_deficit_signal:
                 score = float(fa.get("z_score") or 0.0)
+
+            # CANONICAL_PROJECTION_V1: apply roster-depth factor to the matchup component.
+            # Amplifies FA value when team is IL-heavy/shallow; dampens when roster is deep.
+            applied_depth_factor = 1.0
+            if team_context is not None:
+                fa_is_pitcher = bool(_PITCHER_POSITIONS.intersection(fa.get("positions") or []))
+                applied_depth_factor = pitcher_depth_factor if fa_is_pitcher else batter_depth_factor
+                score *= applied_depth_factor
+
             fa_positions = fa.get("positions") or []
             drop_candidate = self._weakest_droppable_at(my_roster, fa_positions)
             move = {
@@ -347,6 +449,7 @@ class WaiverEdgeDetector:
                 "drop_player_name": drop_candidate.get("name", "") if drop_candidate else "",
                 "need_score": score,
                 "market_score": market_score,  # PR 4.5: Tertiary tiebreaker
+                "canonical_depth_factor": applied_depth_factor,  # 1.0 when flag disabled
                 "win_prob_before": 0.5,
                 "win_prob_after": 0.5,
                 "win_prob_gain": 0.0,
