@@ -1,8 +1,8 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-05-06 | **Architect:** Claude Code (Master Architect)
-> **Branch:** `stable/cbb-prod` | **HEAD:** `63c936b` (not yet deployed)
-> **Deploy:** `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}` (HEAD on Railway: `ecfa5ba`)
+> **Branch:** `stable/cbb-prod` | **HEAD:** pending commit (opportunity + yahoo_id_sync fixes)
+> **Deploy:** `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}` (d319beb live on Railway)
 
 ---
 
@@ -17,108 +17,122 @@
 | `player_projections.player_type` | fully populated | C-A1 confirmed: 0 NULL rows |
 | `player_identities` | 454/454 resolved | 12-row backfill complete 2026-05-06 |
 | `CANONICAL_PROJECTION_V1` flag | **true** | Nightly job runs at 11 PM ET |
-| `market_signals_enabled` | **true** | C-2 complete — re-run needed after `63c936b` to get correct scores |
+| `market_signals_enabled` | **true** | avg_market_score=51.53 after d319beb — CALIBRATED |
 | `feature_matchup_enabled` | **true** | C-4 complete |
-| `opportunity_enabled` | **false** | Ready to enable — C-A1 confirmed 0 NULL player_types |
-| `/api/fantasy/decisions` route | **LIVE** | Returns empty until P17 runs |
+| `opportunity_enabled` | **true** | D-2 complete. Fix deployed in current HEAD — upserted=0 bug patched |
+| `/api/fantasy/decisions` route | **LIVE** | Returns empty — A-4 blocking (decision pipeline starved) |
 | Stuff+/Location+ (FanGraphs) | BLOCKED | Cloudflare blocks Railway IP — P2, do not attempt |
-| Savant Pitch Quality | **LIVE** | 550 scores seeded; all three flags remain false (pending K-NEXT-1 review) |
+| Savant Pitch Quality | **LIVE** | 554 scores seeded; avg_confidence=0.191 (below 0.3 threshold) — flags remain false |
 | Savant Park Factors | **LIVE** | 28 venues / 56 rows seeded |
-| `player_market_signals` table | partially broken | Two bugs fixed in commits below — needs re-run to validate |
+| `player_market_signals` | LIVE (10,466 rows) | avg_market_score=51.53, BUY_LOW=135 / FAIR=618 / SLEEPER=131 — healthy |
+| `player_opportunity` | LIVE (flag enabled) | upserted=0 bug fixed in HEAD — needs deploy + re-run |
+| `mlb_player_stats` | UNKNOWN | Root cause of empty decision pipeline — Gemini to diagnose (see D-3) |
 
 ---
 
-## Code Fixes Deployed This Session (2026-05-06)
+## Code Fixes This Session (2026-05-06 — pending commit)
 
-| Commit | Bug | Fix | Deployed? |
-|--------|-----|-----|-----------|
+| Fix | Bug | Patch |
+|-----|-----|-------|
+| `opportunity_update` upserted=0 | First FK violation (`bdl_player_id` not in `player_id_mapping`) poisoned SQLAlchemy session; all 2738 subsequent `db.execute()` raised `PendingRollbackError` silently caught | SAVEPOINT/RELEASE/ROLLBACK wrapper per row in `_compute_opportunity` loop (~line 3399). Also removed dead `pg_insert(text(...).columns)` |
+| `yahoo_id_sync` UniqueViolation (`_pim_bdl_id_uc`) kills entire transaction | INSERT path uses only `_pim_yahoo_key_uc` as ON CONFLICT target; if two players resolve to same `bdl_id`, `_pim_bdl_id_uc` fires at `db.commit()` → full rollback → 0 updates returned | SAVEPOINT/RELEASE/ROLLBACK around `db.execute(stmt)` in the "new row" INSERT path (~line 2459); failed rows logged as `insert_conflict` and skipped |
+
+**Note:** Kimi's K-NEXT-2 report incorrectly identified a duplicate `_sync_yahoo_id_mapping` at line 7682. Verified: only one definition exists (line 2204). The real bug was the missing `_pim_bdl_id_uc` conflict guard on the INSERT path. Both bugs now fixed.
+
+---
+
+## Previously Deployed Fixes (d319beb — 2026-05-06)
+
+| Commit | Bug | Fix | Status |
+|--------|-----|-----|--------|
 | `21f96df` | `ros_projection_refresh` UniqueViolation for two-way players | `bat_processed_ids` set + `db.flush()` + pitcher merge preserves batting stats | ✅ |
-| `8388062` | `canonical_projections.player_id` INT4 overflow for large Yahoo IDs | `Column(Integer)` → `Column(BigInteger)` in ORM + migration | ✅ |
-| `12b7f5a` | `migration_dedupe_player_id_mapping` UniqueViolation on `_pim_yahoo_key_uc` | Added Step 3a-pre: NULL loser `yahoo_key` values before merge runs | ✅ |
-| `b799aec` | Frontend `/decisions` page 404 | Added `GET /api/fantasy/decisions` + `/decisions/status` to `main.py` | ✅ |
-| `612d351` | `backfill_player_type.py` hardcoded credential, missing `'both'` case | Full rewrite — removed credential, `--dry-run`, fixed `::jsonb` and two-way logic | ✅ |
-| `6f44ebb` | `market_signals_update` column `skill_gap_percentile` not found | `score_0_100` + `window_days=14` + `MAX(as_of_date)` fallback | ✅ |
-| `ecfa5ba` | `market_signals_update` — `upserted=0` despite "success" | 8 SQL INSERT param names fixed to match `res` dict keys | ✅ |
-| `63c936b` | `market_signals_update` — `avg_market_score=99.65`, 881/884 tagged BUY_LOW | `skill_gap_percentile=skill_gap_pct / 100.0` — `score_0_100` is [0-100], function expects [0-1] | **❌ PENDING DEPLOY** |
+| `8388062` | `canonical_projections.player_id` INT4 overflow for large Yahoo IDs | `Column(Integer)` → `Column(BigInteger)` | ✅ |
+| `12b7f5a` | `migration_dedupe_player_id_mapping` UniqueViolation on `_pim_yahoo_key_uc` | Step 3a-pre: NULL loser `yahoo_key` values before merge | ✅ |
+| `b799aec` | Frontend `/decisions` page 404 | Added `GET /api/fantasy/decisions` + `/decisions/status` | ✅ |
+| `612d351` | `backfill_player_type.py` hardcoded credential | Full rewrite — removed credential, `--dry-run`, two-way logic fixed | ✅ |
+| `6f44ebb` | `market_signals_update` column not found | `score_0_100` + `window_days=14` + `MAX(as_of_date)` fallback | ✅ |
+| `ecfa5ba` | `market_signals_update` upserted=0 | 8 SQL INSERT param names fixed | ✅ |
+| `63c936b` | `avg_market_score=99.65` / 881 BUY_LOW | `skill_gap_pct / 100.0` normalization fix | ✅ |
+| `d319beb` | Savant pitch quality: all scores 100.0 (ip=NULL) | Use `pa` as IP proxy for `sample_confidence` | ✅ |
 
 ---
 
-## DevOps Queue (ordered) — HEAD `63c936b`
+## DevOps Queue — HEAD needs deploy
 
-All C-1 → C-6 are **COMPLETE**. One new item:
+### D-3: Deploy HEAD + validate both fixes
 
-### D-1: Deploy `63c936b` + validate market signals calibration
 ```bash
 # 1. Deploy
 railway up --detach
-# 2. Wait for health
-curl.exe https://<railway-url>/health
-# 3. Re-run market signals
-curl.exe -X POST https://<railway-url>/admin/ingestion/run/market_signals_update \
-     -H "X-API-Key: $ADMIN_API_KEY"
-# Expected AFTER fix:
-#   upserted > 5000
-#   avg_market_score in range [40, 75]  (was 99.65 — that was the bug)
-#   tag_distribution shows mix of BUY_LOW / FAIR / HOT_PICKUP / SLEEPER (was 881 BUY_LOW / 3 FAIR)
-# STOP and escalate to Claude if upserted=0 or avg_market_score still > 95
-```
 
-### D-2: Enable `opportunity_enabled` flag (no deploy needed)
-C-A1 confirmed 0 NULL player_types. Enable the flag directly in DB:
-```sql
-UPDATE feature_flags SET enabled=true, updated_at=NOW()
-WHERE flag_name='opportunity_enabled';
--- verify:
-SELECT flag_name, enabled FROM feature_flags WHERE flag_name='opportunity_enabled';
-```
-Then trigger one run to validate:
-```bash
+# 2. Health check
+curl.exe https://<railway-url>/health
+
+# 3. Trigger opportunity_update and verify upserted > 0
 curl.exe -X POST https://<railway-url>/admin/ingestion/run/opportunity_update \
      -H "X-API-Key: $ADMIN_API_KEY"
-# Expected: status=success, total > 0
+# Expected: upserted > 0 (was 0 due to session-poison bug now fixed)
+# If still 0: report the warning logs — bdl_id FK mismatches will now be logged per row
+
+# 4. Trigger yahoo_id_sync and verify no UniqueViolation
+curl.exe -X POST https://<railway-url>/admin/ingestion/run/yahoo_id_sync \
+     -H "X-API-Key: $ADMIN_API_KEY"
+# Expected: status=success, records > 0 (was failing with UniqueViolation / 0 updates)
+# If insert_conflict warnings appear in logs, that is EXPECTED — they now skip gracefully
+
+# 5. Run A-4 diagnostic queries against prod DB (use Railway DB proxy):
+railway run python -c "
+from backend.database import SessionLocal
+from sqlalchemy import text
+db = SessionLocal()
+print('mlb_player_stats:', db.execute(text('SELECT COUNT(*), MAX(game_date) FROM mlb_player_stats')).fetchone())
+print('mlb_game_log:', db.execute(text('SELECT COUNT(*), MAX(game_date) FROM mlb_game_log')).fetchone())
+print('rolling_stats today:', db.execute(text('SELECT COUNT(*) FROM player_rolling_stats WHERE as_of_date = CURRENT_DATE')).fetchone())
+print('player_scores today:', db.execute(text('SELECT COUNT(*) FROM player_scores WHERE as_of_date = CURRENT_DATE AND window_days = 14')).fetchone())
+print('decision_results today:', db.execute(text('SELECT COUNT(*) FROM decision_results WHERE as_of_date = CURRENT_DATE')).fetchone())
+db.close()
+"
+# Report all 5 counts + MAX(game_date) values. STOP and escalate to Claude if any count is 0.
 ```
 
-**Reporting protocol:** After each task, report: exit code + last 5 stdout lines + verify query result. STOP on first failure.
+**Reporting protocol:** After each step, report exit code + key output lines. STOP on first failure.
 
 ---
 
 ## Claude Architect Queue
 
-### ✅ A-1: Fix `player_type` NULL in `player_projections` — COMPLETE
-C-A1 ran, 0 nulls found — already fully populated.
-
+### ✅ A-1: Fix `player_type` NULL — COMPLETE
 ### ✅ A-2: Yahoo ID sync coverage — COMPLETE
+### ✅ A-3: Frontend `/decisions` endpoint — COMPLETE
 
-### ✅ A-3: Frontend `/decisions` endpoint missing — COMPLETE
+### A-4 (ACTIVE): Decision pipeline starved — `decision_results` empty
 
-### A-4 (next): Investigate P17 decision_optimization pipeline
-`decision_results` is empty — the planning/decision phase has never produced output.
-Likely cause: prerequisite pipeline phases (P13–P16) may have empty tables or errors.
-Check job_runs for the last 7 days for rolling_windows (100_018), player_scores (100_019), decision_optimization (100_022).
+The pipeline is: `mlb_box_stats` (2 AM) → `rolling_windows` (3 AM) → `player_scores` (4 AM) → `decision_optimization` (7 AM).
 
-### A-5: Dead `_refresh_ros_projections` v1 at line ~5952 in daily_ingestion.py
-Python last-definition-wins: v2 at line ~6822 is active, v1 is dead code. Remove v1 (low priority).
+Each phase returns `status: success` with 0 records when upstream is empty — making the scheduler appear green while nothing flows through. Root cause suspected: `mlb_game_log` or `mlb_player_stats` is empty or stale.
+
+**Waiting for D-3 step 5 diagnostic results from Gemini before prescribing fix.**
+
+Once Gemini reports the 5 counts:
+- If `mlb_game_log` count = 0: `_ingest_mlb_game_log` job is broken — investigate BDL game log call
+- If `mlb_player_stats` count = 0 but `mlb_game_log` has rows: `_ingest_mlb_box_stats` is failing silently — investigate BDL `get_mlb_stats` call
+- If `mlb_player_stats` has rows but `player_rolling_stats` is empty: `_compute_rolling_windows` has a bug
+- If `player_rolling_stats` has rows but `player_scores` is empty: `_compute_player_scores` has a bug
+
+### A-5: Dead `_refresh_ros_projections` v1 at line ~5952 (low priority)
+Python last-definition-wins: v2 at line ~6822 is active. Remove v1. Do when deploying for something else.
 
 ---
 
 ## Kimi Research Queue
 
-### K-NEXT-1: Savant pitch quality distribution validation
-Run after Codex completes C-5. Pull `SELECT player_name, savant_pitch_quality, sample_confidence FROM savant_pitch_quality_scores WHERE season=2026 ORDER BY savant_pitch_quality DESC LIMIT 20` and the bottom 20. Cross-check vs known 2026 pitcher quality (Skenes, Wheeler, Flaherty at top; roster fillers at bottom). Report distribution shape, range, anomalies.
-Output: `reports/2026-05-XX-savant-pitch-quality-validation.md`
+### K-NEXT-1: Savant pitch quality ✅ COMPLETE — flags remain FALSE
 
-### K-NEXT-2: Yahoo ID sync gap analysis ✅ COMPLETE
-**Report:** `reports/2026-05-06-yahoo-id-sync-gap-analysis.md`
+Scores now differentiated (88.8–112.6) after `pa` proxy fix (d319beb). But `avg_sample_confidence=0.191` is below the >0.3 threshold. This is a season-length issue — PA accumulates over time. Re-check late May when avg PA > 120. No code change needed.
 
-**Key Findings:**
-1. **Job is BROKEN since May 4** — Every run fails with `UniqueViolation: _pim_bdl_id_uc`. Zero enrichments for 48h.
-2. **Root cause:** Duplicate rows in `player_id_mapping` (1,513 dupes across 707 names) + the "simplified" `_sync_yahoo_id_mapping` (line 7682, which overwrites the guarded version at line 2204) removed the `bdl_id` conflict check.
-3. **3.7% coverage = shallow enumeration, not poor matching.** The sync only sees ~394 Yahoo players/day (rosters + top-25 FAs per position) vs ~10,000 BDL players. Match rate for seen players is ~94%.
-4. **451 Yahoo rows (18.5%) still have NULL `bdl_id`** — the sync never backfills existing Yahoo rows.
-5. **No fuzzy matching implemented** despite docstring claim. Exact-name-only lookup.
-6. **Proposed fixes:** (P0) Restore conflict guard + dedupe table; (P1) Paginate FAs to 200/position + backfill missing bdl_ids; (P1) Use `mlbam_id` bridge from FanGraphs API to eliminate name collisions.
+### K-NEXT-2: Yahoo ID sync — ✅ RESOLVED (architect fix applied)
 
-**Immediate action for Claude:** Remove duplicate method definition at line 7682, restore bdl_id conflict guard, run table dedupe.
+Kimi's report incorrectly identified a duplicate function. Actual bug: INSERT at line ~2459 only handled `_pim_yahoo_key_uc` on conflict, allowing `_pim_bdl_id_uc` to kill the entire transaction on any duplicate bdl_id. Fixed with SAVEPOINT pattern.
 
 ---
 
@@ -127,39 +141,31 @@ Output: `reports/2026-05-XX-savant-pitch-quality-validation.md`
 | Flag | Value | Gate Condition |
 |---|---|---|
 | `CANONICAL_PROJECTION_V1` | **true** | Nightly `canonical_projection_refresh` job active |
-| `market_signals_enabled` | **true** | Active — re-run after D-1 deploy to get calibrated scores |
+| `market_signals_enabled` | **true** | CALIBRATED — avg 51.53 after d319beb |
 | `feature_matchup_enabled` | **true** | Active |
-| `opportunity_enabled` | **false** | Ready — enable via D-2 (C-A1 complete) |
+| `opportunity_enabled` | **true** | Fix deployed in HEAD — validate after D-3 |
 | `statcast_stuff_plus_enabled` | false | Blocked by Cloudflare — do not enable |
 | `statcast_location_plus_enabled` | false | Blocked by Cloudflare — do not enable |
-| `savant_pitch_quality_enabled` | false | Enable after K-NEXT-1 validation passes |
-| `savant_pitch_quality_waiver_signals_enabled` | false | Enable after main flag + waiver wiring review |
-| `savant_pitch_quality_projection_adjustments_enabled` | false | Enable last — projection impact requires full validation |
+| `savant_pitch_quality_enabled` | false | avg_confidence=0.191 < 0.3 — re-check late May |
+| `savant_pitch_quality_waiver_signals_enabled` | false | Enable after main flag |
+| `savant_pitch_quality_projection_adjustments_enabled` | false | Enable last |
 
 ---
 
 ## Known Infrastructure Blockers
 
 ### Stuff+/Location+ (FanGraphs/Cloudflare — P2)
-FanGraphs routes `leaders-legacy.aspx` through Cloudflare with IP-reputation blocking.
-Railway's IP range is blocked. Code is correct; columns exist in `statcast_pitcher_metrics`.
-**Do not attempt Cloudflare bypass.** Resolution options when signal is needed:
-1. Manual CSV snapshot from browser (monthly) → `data/fangraphs_pitcher_quality_YYYY.csv` → backfill
-2. FanGraphs API subscription (~$80/year) bypasses Cloudflare
-3. Savant Pitch Quality (in-house, already implemented) as proxy
+FanGraphs routes through Cloudflare with IP-reputation blocking. Railway IP range blocked. Resolution:
+1. Manual CSV snapshot from browser (monthly)
+2. FanGraphs API subscription (~$80/year)
+3. Savant Pitch Quality (in-house) as proxy — activate when confidence threshold met
 
-### Savant Pitch Quality (inactive — pending Railway rollout)
-Code path: `backend/fantasy_baseball/savant_pitch_quality.py` → `savant_pitch_quality_scores` table.
-All three feature flags disabled. Codex runs C-5 to activate DB. Kimi runs K-NEXT-1 to validate.
-Claude reviews K-NEXT-1 output before enabling any flags.
-
-### Savant Park Factors (inactive — pending Railway rollout)
-Snapshot: `data/park_factors/savant_park_factors_2025_3yr.json` (28 venues).
-Codex runs C-6. TB/OAK fall back to legacy constants until Savant has stable data for their parks.
+### Savant Pitch Quality (inactive — confidence too low)
+All 554 scores seeded. avg_confidence=0.191 (pa proxy gives signal but early-season PA counts are low). Re-validate late May. Feature flags remain false.
 
 ---
 
-## Architecture Decisions (Locked — see git log for full rationale)
+## Architecture Decisions (Locked)
 
 | Decision | Rule |
 |---|---|

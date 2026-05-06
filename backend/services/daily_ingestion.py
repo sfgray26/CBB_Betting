@@ -2456,7 +2456,18 @@ class DailyIngestionOrchestrator:
                                         updated_at=now_et(),
                                     ),
                                 )
-                                db.execute(stmt)
+                                db.execute(text("SAVEPOINT sp_yahoo_ins"))
+                                try:
+                                    db.execute(stmt)
+                                    db.execute(text("RELEASE SAVEPOINT sp_yahoo_ins"))
+                                except Exception as row_exc:
+                                    db.execute(text("ROLLBACK TO SAVEPOINT sp_yahoo_ins"))
+                                    logger.warning(
+                                        "yahoo_id_sync: insert conflict for %s (bdl_id=%s): %s -- skipping",
+                                        name, bdl_id, row_exc,
+                                    )
+                                    unmatched.append({"name": name, "yahoo_id": yahoo_id, "reason": "insert_conflict"})
+                                    continue
                         matched += 1
                         updates += 1
                     else:
@@ -3398,9 +3409,7 @@ class DailyIngestionOrchestrator:
                 upserted = 0
                 for res in results:
                     try:
-                        stmt = pg_insert(
-                            text("player_opportunity").columns  # use raw table via text
-                        )
+                        db.execute(text("SAVEPOINT sp_opp"))
                         db.execute(
                             text(
                                 """
@@ -3476,8 +3485,10 @@ class DailyIngestionOrchestrator:
                                 "opp_conf": res.opportunity_confidence,
                             },
                         )
+                        db.execute(text("RELEASE SAVEPOINT sp_opp"))
                         upserted += 1
                     except Exception as exc:
+                        db.execute(text("ROLLBACK TO SAVEPOINT sp_opp"))
                         logger.warning(
                             "opportunity_update: upsert failed for bdl_player_id=%s: %s",
                             res.bdl_player_id, exc,
