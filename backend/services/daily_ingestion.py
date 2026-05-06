@@ -3408,8 +3408,10 @@ class DailyIngestionOrchestrator:
                 # UPSERT each result to player_opportunity
                 upserted = 0
                 for res in results:
+                    _sp_created = False
                     try:
                         db.execute(text("SAVEPOINT sp_opp"))
+                        _sp_created = True
                         db.execute(
                             text(
                                 """
@@ -3488,7 +3490,13 @@ class DailyIngestionOrchestrator:
                         db.execute(text("RELEASE SAVEPOINT sp_opp"))
                         upserted += 1
                     except Exception as exc:
-                        db.execute(text("ROLLBACK TO SAVEPOINT sp_opp"))
+                        if _sp_created:
+                            try:
+                                db.execute(text("ROLLBACK TO SAVEPOINT sp_opp"))
+                            except Exception:
+                                db.rollback()
+                        else:
+                            db.rollback()
                         logger.warning(
                             "opportunity_update: upsert failed for bdl_player_id=%s: %s",
                             res.bdl_player_id, exc,

@@ -417,7 +417,11 @@ def aggregate_player_opportunity(
                 )
 
     except Exception:
-        # Graceful degradation: return partial metrics rather than crashing
+        # Restore session to clean state so subsequent players can still query
+        try:
+            db.rollback()
+        except Exception:
+            pass
         import logging
         logging.getLogger(__name__).warning(
             "opportunity_engine: DB query failed for bdl_player_id=%s as_of=%s",
