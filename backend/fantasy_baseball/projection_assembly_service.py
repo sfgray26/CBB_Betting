@@ -268,6 +268,13 @@ class ProjectionAssemblyService:
         proj_obp = fproj.get("obp")
         proj_slg = fproj.get("slg")
         proj_ops = fproj.get("ops")
+        proj_ab = pa * 0.88 if pa else None  # ~88% of PA are AB (walk-adjusted)
+
+        # xwOBA likelihood metadata — store woba_blend when fusion engine computed it
+        explain_extra: dict = {}
+        if result.xwoba_likelihood_applied and "woba_blend" in fproj:
+            explain_extra["xwoba_likelihood_applied"] = True
+            explain_extra["woba_blend"] = round(fproj["woba_blend"], 4)
 
         # Upsert
         self._delete_existing(player_id, projection_date)
@@ -280,7 +287,7 @@ class ProjectionAssemblyService:
             projection_date=projection_date,
             season=self.season,
             projected_pa=pa,
-            projected_ab=pa * 0.88 if pa else None,  # ~88% of PA are AB (walk-adjusted)
+            projected_ab=proj_ab,
             proj_hr=counts.get("proj_hr"),
             proj_sb=counts.get("proj_sb"),
             proj_r=counts.get("proj_r"),
@@ -301,10 +308,20 @@ class ProjectionAssemblyService:
                 "source": result.source,
                 "components_fused": result.components_fused,
                 "xwoba_override_detected": result.xwoba_override_detected,
+                **explain_extra,
             },
         )
         self.db.add(row)
         self.db.flush()  # populate row.id for FK
+
+        # Marginal math numerators/denominators for rate categories.
+        # AVG: hits / AB — num = avg * ab, den = ab
+        # OBP: times on base / PA (hits as proxy) — num = obp * pa, den = pa
+        marginal_data: dict[str, tuple[float, float]] = {}
+        if proj_avg and proj_ab:
+            marginal_data["AVG"] = (proj_avg * proj_ab, proj_ab)
+        if proj_obp and pa:
+            marginal_data["OBP"] = (proj_obp * pa, pa)
 
         # Category impacts
         batter_values = {
@@ -316,7 +333,7 @@ class ProjectionAssemblyService:
             "OBP": proj_obp,
             "OPS": proj_ops,
         }
-        impacts = self._build_category_impacts(row.id, player_type, batter_values, z_pool)
+        impacts = self._build_category_impacts(row.id, player_type, batter_values, z_pool, marginal_data=marginal_data)
         for impact in impacts:
             self.db.add(impact)
 
@@ -391,10 +408,20 @@ class ProjectionAssemblyService:
                 "source": result.source,
                 "components_fused": result.components_fused,
                 "xera_override_detected": result.xwoba_override_detected,
+                "xera_likelihood_applied": result.xera_likelihood_applied,
             },
         )
         self.db.add(row)
         self.db.flush()
+
+        # Marginal math numerators/denominators for pitcher rate categories.
+        # ERA: earned_runs / IP — num = era * ip / 9, den = ip
+        # WHIP: (H+BB) / IP — num = whip * ip, den = ip
+        marginal_data: dict[str, tuple[float, float]] = {}
+        if proj_era and ip:
+            marginal_data["ERA"] = (proj_era * ip / 9.0, ip)
+        if proj_whip and ip:
+            marginal_data["WHIP"] = (proj_whip * ip, ip)
 
         pitcher_values = {
             "W": float(counts.get("proj_w") or 0),
@@ -404,7 +431,7 @@ class ProjectionAssemblyService:
             "WHIP": proj_whip,
             "K9": proj_k9,
         }
-        impacts = self._build_category_impacts(row.id, player_type, pitcher_values, z_pool)
+        impacts = self._build_category_impacts(row.id, player_type, pitcher_values, z_pool, marginal_data=marginal_data)
         for impact in impacts:
             self.db.add(impact)
 
@@ -601,8 +628,19 @@ class ProjectionAssemblyService:
         player_type: str,
         values: dict,
         z_pool: dict,
+        marginal_data: dict | None = None,
     ) -> list:
-        """Build CategoryImpact rows for all relevant categories."""
+        """Build CategoryImpact rows for all relevant categories.
+
+        Args:
+            projection_id: FK to canonical_projections.id
+            player_type: "BATTER" or "PITCHER"
+            values: {category: projected_value} dict
+            z_pool: {category_lower: (mean, std)} for z-score computation
+            marginal_data: optional {category: (numerator, denominator)} for rate categories.
+                Populated in projected_numerator/projected_denominator columns to enable
+                true marginal rate-stat math in CategoryAwareScorer.
+        """
         # Negative categories: lower is better -- flip direction
         NEGATIVE_CATS = {"ERA", "WHIP"}
 
@@ -617,6 +655,17 @@ class ProjectionAssemblyService:
             # denominator_weight: 1.0 for counting stats, placeholder 1.0 for rate stats
             denominator_weight = 1.0
 
+            # Marginal numerator/denominator for rate categories
+            proj_num: float | None = None
+            proj_den: float | None = None
+            if marginal_data and category in marginal_data:
+                raw = marginal_data[category]
+                if raw is not None and len(raw) == 2:
+                    n, d = raw
+                    if n is not None and d is not None and d > 0:
+                        proj_num = round(float(n), 4)
+                        proj_den = round(float(d), 4)
+
             impact = CategoryImpact(
                 canonical_projection_id=projection_id,
                 category=category,
@@ -624,6 +673,8 @@ class ProjectionAssemblyService:
                 z_score=z,
                 generic_marginal_impact=z,  # placeholder; matchup-specific delta at runtime
                 denominator_weight=denominator_weight,
+                projected_numerator=proj_num,
+                projected_denominator=proj_den,
             )
             impacts.append(impact)
         return impacts
