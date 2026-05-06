@@ -330,32 +330,26 @@ def aggregate_player_opportunity(
 
     try:
         # Resolve bdl_player_id → MLBAM player_id for statcast lookup
-        id_row = db.execute(
-            text(
-                "SELECT mlbam_id, espn_id FROM player_id_mapping WHERE bdl_id = :bdl"
-            ),
-            {"bdl": bdl_player_id},
-        ).fetchone()
-
-        if id_row is None or id_row[0] is None:
-            # No MLBAM mapping → cannot query statcast_performances
-            return metrics
-
-        mlbam_id = str(id_row[0])
-
-        # Query per-game stats from statcast_performances
+        # Query per-game stats from mlb_player_stats (bdl_player_id direct — no MLBAM join needed).
+        # PA = ab + walks (BDL doesn't expose PA directly; misses HBP/SF/SH but <5% error).
+        # ip_flag = 1.0 if pitcher appeared, 0.0 otherwise (innings_pitched is a string e.g. "6.2").
         rows = db.execute(
             text(
                 """
-                SELECT game_date, pa, ab, ip
-                FROM statcast_performances
-                WHERE player_id = :pid
+                SELECT game_date,
+                       COALESCE(ab, 0) + COALESCE(walks, 0) AS pa,
+                       COALESCE(ab, 0) AS ab,
+                       CASE WHEN innings_pitched IS NOT NULL
+                                 AND innings_pitched NOT IN ('', '0', '0.0')
+                            THEN 1.0 ELSE 0.0 END AS ip_flag
+                FROM mlb_player_stats
+                WHERE bdl_player_id = :bdl_id
                   AND game_date > :cutoff
                   AND game_date <= :as_of
                 ORDER BY game_date DESC
                 """
             ),
-            {"pid": mlbam_id, "cutoff": cutoff, "as_of": as_of_date},
+            {"bdl_id": bdl_player_id, "cutoff": cutoff, "as_of": as_of_date},
         ).fetchall()
 
         if rows:
@@ -380,20 +374,28 @@ def aggregate_player_opportunity(
                 appearances = sum(1 for r in rows if (r[3] or 0.0) > 0)
                 metrics.appearances_14d = appearances
 
-        # Pitcher role certainty from season save totals
+        # Pitcher role certainty from season save totals (needs MLBAM ID for statcast_pitcher_metrics)
         if player_type in ("pitcher", "two_way"):
-            sv_row = db.execute(
-                text(
-                    """
-                    SELECT sv, k_pit, ip
-                    FROM statcast_pitcher_metrics
-                    WHERE mlbam_id = :pid
-                      AND season = :season
-                    LIMIT 1
-                    """
-                ),
-                {"pid": mlbam_id, "season": as_of_date.year},
+            id_row = db.execute(
+                text("SELECT mlbam_id FROM player_id_mapping WHERE bdl_id = :bdl"),
+                {"bdl": bdl_player_id},
             ).fetchone()
+            mlbam_id = str(id_row[0]) if (id_row and id_row[0]) else None
+
+            sv_row = None
+            if mlbam_id:
+                sv_row = db.execute(
+                    text(
+                        """
+                        SELECT sv, k_pit, ip
+                        FROM statcast_pitcher_metrics
+                        WHERE mlbam_id = :pid
+                          AND season = :season
+                        LIMIT 1
+                        """
+                    ),
+                    {"pid": mlbam_id, "season": as_of_date.year},
+                ).fetchone()
 
             if sv_row and sv_row[2] and sv_row[2] > 0:
                 # season_sv_pct = sv / (ip / 1.0) as a proxy for closure rate
