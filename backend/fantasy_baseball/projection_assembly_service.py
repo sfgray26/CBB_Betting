@@ -116,6 +116,7 @@ class ProjectionAssemblyService:
             "total": 0,
             "assembled": 0,
             "identity_misses": 0,
+            "mlbam_null_fallback": 0,  # resolved by name but no MLBAM id — STATIC_BOARD only
             "upserted": 0,
             "errors": 0,
         }
@@ -132,7 +133,7 @@ class ProjectionAssemblyService:
         players_in_batch = 0
         for player in board:
             try:
-                upserted = self._process_player(player, projection_date, z_pool)
+                upserted = self._process_player(player, projection_date, z_pool, summary)
                 if upserted is None:
                     summary["identity_misses"] += 1
                     continue
@@ -169,17 +170,43 @@ class ProjectionAssemblyService:
         player: dict,
         projection_date: date,
         z_pool: dict,
+        summary: dict,
     ) -> Optional[int]:
         """
         Assemble one CanonicalProjection row and its CategoryImpact children.
-        Returns the canonical_projection.id on success, None on identity miss.
+        Returns the canonical_projection.id on success, None on true identity miss.
+
+        Identity miss: no PlayerIdentity row exists for the player name at all.
+        MLBAM-null fallback: PlayerIdentity row exists but mlbam_id is NULL.
+          → assembled as STATIC_BOARD using -(yahoo_id) as the player_id namespace.
+          → increments summary["mlbam_null_fallback"] (informational, not a gate failure).
         Uses a savepoint so a single-player failure rolls back cleanly.
         """
         name = player.get("name", "")
         normalized = _normalize_name(name)
-        mlbam_id = self._resolve_mlbam_id(self.db, normalized)
-        if mlbam_id is None:
+
+        identity_row = self._resolve_identity_row(self.db, normalized)
+        if identity_row is None:
             logger.debug("Identity miss for player: %s (normalized: %s)", name, normalized)
+            return None
+
+        # Determine canonical player_id and Statcast lookup key
+        mlbam_id: Optional[int] = identity_row.mlbam_id
+        if mlbam_id is not None:
+            player_id = mlbam_id
+        elif identity_row.yahoo_id is not None:
+            # No MLBAM mapping — use -(yahoo_id) as a distinct negative namespace.
+            # Statcast enrichment is skipped; source_engine will be STATIC_BOARD.
+            player_id = -(int(identity_row.yahoo_id))
+            mlbam_id = None  # explicitly None so Statcast lookups are skipped
+            summary["mlbam_null_fallback"] += 1
+            logger.debug(
+                "MLBAM-null fallback for %s: yahoo_id=%s → player_id=%s",
+                name, identity_row.yahoo_id, player_id,
+            )
+        else:
+            # No usable ID at all — cannot write to canonical_projections
+            logger.warning("No usable ID (mlbam_id=None, yahoo_id=None) for %s — skipping", name)
             return None
 
         player_type_raw = player.get("type", "batter")
@@ -189,9 +216,9 @@ class ProjectionAssemblyService:
         sp = self.db.begin_nested()
         try:
             if player_type == "BATTER":
-                cp_id = self._assemble_batter(mlbam_id, player_type, board_proj, projection_date, z_pool)
+                cp_id = self._assemble_batter(player_id, mlbam_id, player_type, board_proj, projection_date, z_pool)
             else:
-                cp_id = self._assemble_pitcher(mlbam_id, player_type, board_proj, projection_date, z_pool)
+                cp_id = self._assemble_pitcher(player_id, mlbam_id, player_type, board_proj, projection_date, z_pool)
             sp.commit()
             return cp_id
         except Exception:
@@ -200,14 +227,16 @@ class ProjectionAssemblyService:
 
     def _assemble_batter(
         self,
-        mlbam_id: int,
+        player_id: int,
+        mlbam_id: Optional[int],
         player_type: str,
         board_proj: dict,
         projection_date: date,
         z_pool: dict,
     ) -> int:
         pa = float(board_proj.get("pa", 0) or 0)
-        metrics = self._get_statcast_batter(mlbam_id)
+        # mlbam_id may be None for Yahoo-only players — skip Statcast lookup safely
+        metrics = self._get_statcast_batter(mlbam_id) if mlbam_id is not None else None
         sample_size = int(metrics.pa) if (metrics and metrics.pa) else 0
 
         steamer = self._build_batter_steamer(board_proj)
@@ -231,11 +260,11 @@ class ProjectionAssemblyService:
         proj_ops = fproj.get("ops")
 
         # Upsert
-        self._delete_existing(mlbam_id, projection_date)
+        self._delete_existing(player_id, projection_date)
 
         row = CanonicalProjection(
             projection_id=str(uuid.uuid4()),
-            player_id=mlbam_id,
+            player_id=player_id,
             player_type=player_type,
             source_engine=source_engine,
             projection_date=projection_date,
@@ -285,14 +314,16 @@ class ProjectionAssemblyService:
 
     def _assemble_pitcher(
         self,
-        mlbam_id: int,
+        player_id: int,
+        mlbam_id: Optional[int],
         player_type: str,
         board_proj: dict,
         projection_date: date,
         z_pool: dict,
     ) -> int:
         ip = float(board_proj.get("ip", 0) or 0)
-        metrics = self._get_statcast_pitcher(mlbam_id)
+        # mlbam_id may be None for Yahoo-only players — skip Statcast lookup safely
+        metrics = self._get_statcast_pitcher(mlbam_id) if mlbam_id is not None else None
         sample_size = int(metrics.ip) if (metrics and metrics.ip) else 0
 
         steamer = self._build_pitcher_steamer(board_proj)
@@ -313,11 +344,11 @@ class ProjectionAssemblyService:
         proj_whip = fproj.get("whip")
         proj_k9 = fproj.get("k_per_nine")
 
-        self._delete_existing(mlbam_id, projection_date)
+        self._delete_existing(player_id, projection_date)
 
         row = CanonicalProjection(
             projection_id=str(uuid.uuid4()),
-            player_id=mlbam_id,
+            player_id=player_id,
             player_type=player_type,
             source_engine=source_engine,
             projection_date=projection_date,
@@ -358,11 +389,11 @@ class ProjectionAssemblyService:
 
         return row.id
 
-    def _delete_existing(self, mlbam_id: int, projection_date: date) -> None:
+    def _delete_existing(self, player_id: int, projection_date: date) -> None:
         existing = (
             self.db.query(CanonicalProjection)
             .filter(
-                CanonicalProjection.player_id == mlbam_id,
+                CanonicalProjection.player_id == player_id,
                 CanonicalProjection.projection_date == projection_date,
             )
             .first()
@@ -375,16 +406,23 @@ class ProjectionAssemblyService:
     # Identity + Statcast lookups
     # ------------------------------------------------------------------
 
-    def _resolve_mlbam_id(self, session: Session, normalized_name: str) -> Optional[int]:
-        """Query PlayerIdentity by normalized_name, return mlbam_id (int). None on miss."""
-        row = (
+    def _resolve_identity_row(self, session: Session, normalized_name: str) -> Optional[PlayerIdentity]:
+        """
+        Query PlayerIdentity by normalized_name. Returns the full row or None if not found.
+
+        Callers should handle the case where row.mlbam_id is None (Yahoo-only players)
+        by falling back to -(yahoo_id) as the canonical player_id namespace.
+        """
+        return (
             session.query(PlayerIdentity)
             .filter(PlayerIdentity.normalized_name == normalized_name)
             .first()
         )
-        if row is None:
-            return None
-        return row.mlbam_id
+
+    def _resolve_mlbam_id(self, session: Session, normalized_name: str) -> Optional[int]:
+        """Deprecated: use _resolve_identity_row() instead. Returns mlbam_id or None."""
+        row = self._resolve_identity_row(session, normalized_name)
+        return row.mlbam_id if row is not None else None
 
     def _get_statcast_batter(self, mlbam_id: int) -> Optional[StatcastBatterMetrics]:
         """Query StatcastBatterMetrics by str(mlbam_id) for current season."""

@@ -429,7 +429,7 @@ class TestProjectionAssemblyServiceRun:
         svc = self._make_svc()
         with patch("backend.fantasy_baseball.projection_assembly_service.get_board", return_value=[]):
             summary = svc.run(projection_date=date(2026, 5, 5))
-        assert set(summary.keys()) == {"total", "assembled", "identity_misses", "upserted", "errors"}
+        assert set(summary.keys()) == {"total", "assembled", "identity_misses", "mlbam_null_fallback", "upserted", "errors"}
 
     def test_empty_board_returns_zero_counts(self):
         svc = self._make_svc()
