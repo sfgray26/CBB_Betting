@@ -3625,16 +3625,21 @@ class DailyIngestionOrchestrator:
                 hist_7d = {r[0]: r[2] for r in historical if r[1] == date_7d_ago}
                 hist_30d = {r[0]: r[2] for r in historical if r[1] == date_30d_ago}
 
-                # Step 4: Fetch skill_gap_percentile and confidence from player_scores
+                # Step 4: Fetch score_0_100 (percentile rank) and confidence from player_scores.
+                # Use latest available date in case today's scoring job hasn't run yet.
+                # Filter window_days=14 to get one row per player.
                 scores = db.execute(
                     text(
                         """
-                        SELECT bdl_player_id, skill_gap_percentile, confidence
+                        SELECT bdl_player_id, score_0_100, confidence
                         FROM player_scores
-                        WHERE as_of_date = :today
+                        WHERE as_of_date = (
+                            SELECT MAX(as_of_date) FROM player_scores WHERE window_days = 14
+                        )
+                          AND window_days = 14
                         """
                     ),
-                    {"today": as_of_date},
+                    {},
                 ).fetchall()
 
                 scores_map = {r[0]: (r[1], r[2]) for r in scores}
