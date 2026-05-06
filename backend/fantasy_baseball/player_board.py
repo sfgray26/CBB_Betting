@@ -782,6 +782,21 @@ def get_board(apply_park_factors: bool = True) -> list[dict]:
     return _BOARD
 
 
+def reset_board_cache() -> None:
+    """Clear the in-memory board cache so the next get_board() call reloads from disk.
+
+    Called by /admin/board/refresh when new Steamer CSVs are dropped to data/projections/.
+    Safe to call at any time -- next request rebuilds the board automatically.
+    """
+    global _BOARD
+    _BOARD = None
+    try:
+        from backend.fantasy_baseball.projections_loader import load_full_board
+        load_full_board.cache_clear()
+    except Exception:
+        pass
+
+
 def get_player_by_name(name: str) -> Optional[dict]:
     board = get_board()
     name_lower = name.lower()

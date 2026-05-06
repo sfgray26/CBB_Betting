@@ -3434,6 +3434,14 @@ async def force_capture_lines(user: str = Depends(verify_admin_api_key)):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.post("/admin/board/refresh")
+async def admin_board_refresh(user: str = Depends(verify_admin_api_key)):
+    """Clear in-memory player board cache. Call after dropping new Steamer CSVs to data/projections/."""
+    from backend.fantasy_baseball.player_board import reset_board_cache
+    reset_board_cache()
+    return {"status": "ok", "message": "Board cache cleared -- next request reloads from disk"}
+
+
 @app.delete("/admin/bets/{bet_id}")
 async def delete_bet_log(
     bet_id: int,
