@@ -1363,6 +1363,8 @@ class DailyIngestionOrchestrator:
                         "projection_freshness", "yahoo_id_sync",
                         "player_id_mapping", "position_eligibility",
                         "probable_pitchers_morning", "probable_pitchers_afternoon", "probable_pitchers_evening",
+                        "bdl_injuries",
+                        "opportunity_update", "market_signals_update", "matchup_context_update",
                         "canonical_projection_refresh"]
         if _fantasy_leagues:
             _all_job_ids.append("valuation_cache")
@@ -1445,7 +1447,10 @@ class DailyIngestionOrchestrator:
             "ros_projection_refresh": self._refresh_ros_projections,
             "yahoo_id_sync":          self._sync_yahoo_id_mapping,
             "yahoo_adp_injury":       self._poll_yahoo_adp_injury,
-            "ensemble_update":        self._update_ensemble_blend,
+            "ensemble_update":              self._update_ensemble_blend,
+            "opportunity_update":           self._compute_opportunity,
+            "market_signals_update":        self._compute_market_signals,
+            "matchup_context_update":       self._compute_matchup_context,
             "canonical_projection_refresh": self._refresh_canonical_projections,
         }
         handler = _handlers.get(job_id)
