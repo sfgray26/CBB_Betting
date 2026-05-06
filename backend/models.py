@@ -2145,6 +2145,8 @@ class CategoryImpact(Base):
     z_score = Column(Float, nullable=True)
     generic_marginal_impact = Column(Float, nullable=True)
     denominator_weight = Column(Float, nullable=True)       # 1.0 for counting stats
+    projected_numerator = Column(Float, nullable=True)
+    projected_denominator = Column(Float, nullable=True)
 
     __table_args__ = (
         Index("idx_ci_projection_category", "canonical_projection_id", "category"),

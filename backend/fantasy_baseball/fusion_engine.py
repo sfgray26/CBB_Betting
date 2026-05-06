@@ -92,7 +92,9 @@ class FusionResult:
         proj: Fused projection dictionary with all rate stats
         source: Data source label ('fusion', 'steamer', 'statcast_shrunk', 'population_prior')
         components_fused: Number of components that underwent Marcel update
-        xwoba_override_detected: Whether xwOBA/xERA divergence was detected (metadata only)
+        xwoba_override_detected: Whether xwOBA/xERA divergence was detected
+        xwoba_likelihood_applied: Whether the batter xwOBA likelihood modifier populated proj['woba_blend']
+        xera_likelihood_applied: Whether the pitcher xERA likelihood modifier adjusted proj['era']
 
     Note: cat_scores are NOT computed here. Use pre-computed DB z-scores from
     PlayerProjection.cat_scores when available; otherwise accept z_score=0.0.
@@ -102,6 +104,8 @@ class FusionResult:
     source: str
     components_fused: int
     xwoba_override_detected: bool
+    xwoba_likelihood_applied: bool = False
+    xera_likelihood_applied: bool = False
 
 
 def marcel_update(
@@ -185,13 +189,12 @@ def _safe_num(obj: Any, key: str) -> Optional[float]:
 
 def _should_apply_xwoba_override(statcast: Dict[str, Any]) -> bool:
     """
-    Detect if xwOBA override should be applied (metadata only).
+    Detect whether the batter xwOBA likelihood modifier should activate.
 
     When xwOBA differs significantly from actual wOBA, it suggests the player's
-    performance was unsustainable (lucky or unlucky). This function detects
-    that condition for metadata reporting; it does NOT swap the prior source.
-
-    Future enhancement: use xwOBA as prior source instead of Steamer when True.
+    performance was unsustainable (lucky or unlucky). This flag is consumed by
+    fuse_batter_projection() to emit a Statcast-informed wOBA blend when sample
+    size is sufficient.
 
     Args:
         statcast: Statcast data dict containing 'xwoba' and 'woba'
@@ -213,13 +216,12 @@ def _should_apply_xwoba_override(statcast: Dict[str, Any]) -> bool:
 
 def _should_apply_xera_override(statcast: Dict[str, Any]) -> bool:
     """
-    Detect if xERA override should be applied for pitchers (metadata only).
+    Detect whether the pitcher xERA likelihood modifier should activate.
 
     When xERA differs significantly from actual ERA, it suggests the pitcher's
-    performance was unsustainable. This function detects that condition for
-    metadata reporting; it does NOT swap the prior source.
-
-    Future enhancement: use xERA as prior source instead of Steamer when True.
+    performance was unsustainable. This flag is consumed by
+    fuse_pitcher_projection() to blend the fused ERA toward xERA when sample
+    size is sufficient.
 
     Args:
         statcast: Statcast data dict containing 'xera' and 'era'
@@ -255,7 +257,9 @@ def fuse_batter_projection(
 
     xwOBA Override Detection:
         If |xwOBA - wOBA| > 0.030, the override flag is set in metadata.
-        Future enhancement: swap prior source to xwOBA when override detected.
+        xwOBA Likelihood Modifier (active): when override detected and sample_size >= 50 PA,
+        blends wOBA proxy with xwOBA (80/20). Stored in proj['woba_blend'] to avoid
+        double-counting with Marcel update. Sets xwoba_likelihood_applied=True in result.
 
     Args:
         steamer: Steamer projection dict with rate stats (avg, obp, slg, k_percent, bb_percent, hr_per_pa, sb_per_pa)
@@ -373,11 +377,30 @@ def fuse_batter_projection(
     if 'ops' not in proj and 'obp' in proj and 'slg' in proj:
         proj['ops'] = proj['obp'] + proj['slg']
 
+    # xwOBA Likelihood Modifier: when xwOBA diverges from wOBA by >0.030
+    # AND sample_size >= 50 PA, blend the fused wOBA proxy toward xwOBA.
+    # This activates the "Future enhancement" noted in _should_apply_xwoba_override().
+    xwoba_likelihood_applied = False
+    if xwoba_override and has_statcast and sample_size >= 50:
+        xwoba_val = _safe_num(statcast, 'xwoba')
+        if xwoba_val is not None:
+            # Store xwOBA-adjusted estimate as an additional projection field.
+            # We do NOT modify avg/obp/slg directly to avoid double-counting with
+            # the Marcel update above. Instead we emit 'woba_blend' as a signal.
+            # Downstream (projection_assembly_service.py) can use this field.
+            current_obp = proj.get('obp', PopulationPrior.BATTER_OBP)
+            current_slg = proj.get('slg', PopulationPrior.BATTER_SLG)
+            # wOBA proxy: empirical linear approximation (FanGraphs linear weights)
+            woba_proxy = 0.72 * current_obp + 0.28 * current_slg
+            proj['woba_blend'] = round(0.80 * woba_proxy + 0.20 * xwoba_val, 4)
+            xwoba_likelihood_applied = True
+
     return FusionResult(
         proj=proj,
         source=source,
         components_fused=components_fused,
-        xwoba_override_detected=xwoba_override
+        xwoba_override_detected=xwoba_override,
+        xwoba_likelihood_applied=xwoba_likelihood_applied,
     )
 
 
@@ -397,7 +420,8 @@ def fuse_pitcher_projection(
 
     xERA Override Detection:
         If |xERA - ERA| > 0.50, the override flag is set in metadata.
-        Future enhancement: swap prior source to xERA when override detected.
+        xERA Likelihood Modifier (active): when override detected and sample_size >= 20 IP,
+        blends proj['era'] = 0.80*fused_era + 0.20*xera. Sets xera_likelihood_applied=True.
 
     Args:
         steamer: Steamer projection dict with era, whip, k_percent, bb_percent, k_per_nine, bb_per_nine
@@ -503,11 +527,23 @@ def fuse_pitcher_projection(
         proj['k_per_nine'] = prior.PITCHER_K_PER_NINE
         proj['bb_per_nine'] = prior.PITCHER_BB_PER_NINE
 
+    # xERA Likelihood Modifier: when xERA diverges from ERA by >0.50
+    # AND sample_size >= 20 IP, blend the fused ERA toward xERA.
+    xera_likelihood_applied = False
+    if xera_override and has_statcast and sample_size >= 20:
+        xera_val = _safe_num(statcast, 'xera')
+        if xera_val is not None and 'era' in proj:
+            # Direct ERA adjustment: ERA is already a core projection output.
+            # 80% Marcel-fused ERA + 20% Statcast xERA signal.
+            proj['era'] = round(0.80 * proj['era'] + 0.20 * xera_val, 4)
+            xera_likelihood_applied = True
+
     return FusionResult(
         proj=proj,
         source=source,
         components_fused=components_fused,
-        xwoba_override_detected=xera_override
+        xwoba_override_detected=xera_override,
+        xera_likelihood_applied=xera_likelihood_applied,
     )
 
 

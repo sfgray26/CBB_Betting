@@ -21,6 +21,7 @@ import pytest
 from backend.fantasy_baseball.category_aware_scorer import (
     CategoryNeedVector,
     PlayerCategoryImpactVector,
+    marginal_rate_impact,
     score_fa_against_needs,
     RATE_STAT_PROTECT_THRESHOLD,
     RATE_STAT_PENALTY_MULTIPLIER,
@@ -355,3 +356,47 @@ class TestComputeNeedScoreWithTeamContext:
         base = compute_need_score({"hr": 1.0}, 1.0, self._make_deficits(), 10, team_context=None)
         with_ctx = compute_need_score({"hr": 1.0}, 1.0, self._make_deficits(), 10, team_context=ctx)
         assert base == with_ctx
+
+
+def test_marginal_rate_impact_avg_positive():
+    """Adding a .340 hitter to a .265 team should yield positive marginal z."""
+    z = marginal_rate_impact("avg", 1500, 5660, 68, 200, 0.025)
+    assert z > 0, f"Expected positive marginal z, got {z}"
+
+
+def test_marginal_rate_impact_era_positive():
+    """Adding a high-ERA pitcher to a good-ERA team should yield negative marginal z."""
+    z = marginal_rate_impact("era", 250, 750, 45, 90, 0.60)
+    assert z < 0, f"Expected negative marginal z for adding bad pitcher, got {z}"
+
+
+def test_marginal_rate_impact_zero_denominator():
+    """Returns 0.0 when denominators are zero."""
+    z = marginal_rate_impact("avg", 0, 0, 68, 200, 0.025)
+    assert z == 0.0
+
+
+def test_compute_need_score_uses_marginal_stats():
+    """compute_need_score uses marginal_stats to override rate cat z-scores."""
+    from backend.schemas import CategoryDeficitOut
+
+    player_cat_scores = {"avg": -0.5, "hr": 1.2}
+    category_deficits = [
+        CategoryDeficitOut(category="avg", my_total=0.250, opponent_total=0.258, deficit=0.8, winning=False),
+        CategoryDeficitOut(category="hr", my_total=10.0, opponent_total=10.5, deficit=0.5, winning=False),
+    ]
+
+    score_no_marginal = compute_need_score(player_cat_scores, 0.5, category_deficits, 5)
+
+    marginal_stats = {
+        "avg": {"team_num": 1200.0, "team_den": 4800.0, "player_num": 72.0, "player_den": 200.0}
+    }
+    score_with_marginal = compute_need_score(
+        player_cat_scores,
+        0.5,
+        category_deficits,
+        5,
+        marginal_stats=marginal_stats,
+    )
+
+    assert score_with_marginal > score_no_marginal

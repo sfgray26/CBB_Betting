@@ -283,6 +283,22 @@ class TestBatterFusionFourState:
 
         assert result.xwoba_override_detected is False
 
+    def test_xwoba_likelihood_applied_when_divergence_detected(self):
+        """xwoba_likelihood_applied=True and woba_blend in proj when |xwOBA-wOBA|>0.030 and PA>=50"""
+        steamer = {'avg': 0.270, 'obp': 0.340, 'slg': 0.450, 'k_percent': 0.22, 'bb_percent': 0.08, 'hr_per_pa': 0.035, 'sb_per_pa': 0.01}
+        statcast = {'avg': 0.300, 'obp': 0.370, 'slg': 0.500, 'k_percent': 0.18, 'bb_percent': 0.10, 'xwoba': 0.390, 'woba': 0.350}
+        result = fuse_batter_projection(steamer, statcast, sample_size=150)
+        assert result.xwoba_likelihood_applied is True
+        assert 'woba_blend' in result.proj
+
+    def test_xwoba_likelihood_not_applied_small_sample(self):
+        """xwoba_likelihood_applied=False when PA < 50, even with divergence"""
+        steamer = {'avg': 0.270, 'obp': 0.340, 'slg': 0.450, 'k_percent': 0.22, 'bb_percent': 0.08, 'hr_per_pa': 0.035, 'sb_per_pa': 0.01}
+        statcast = {'avg': 0.300, 'obp': 0.370, 'slg': 0.500, 'k_percent': 0.18, 'bb_percent': 0.10, 'xwoba': 0.390, 'woba': 0.350}
+        result = fuse_batter_projection(steamer, statcast, sample_size=30)
+        assert result.xwoba_likelihood_applied is False
+        assert 'woba_blend' not in result.proj
+
 
 class TestPitcherFusionFourState:
     """Test four-state logic for pitcher projections."""
@@ -387,6 +403,20 @@ class TestPitcherFusionFourState:
 
         assert result.xwoba_override_detected is False
 
+    def test_xera_likelihood_applied_when_divergence_detected(self):
+        """xera_likelihood_applied=True and proj['era'] adjusted when |xERA-ERA|>0.50 and IP>=20"""
+        steamer = {'era': 4.50, 'whip': 1.35, 'k_percent': 0.22, 'bb_percent': 0.07, 'k_per_nine': 8.5, 'bb_per_nine': 3.0}
+        statcast = {'era': 5.20, 'whip': 1.50, 'k_percent': 0.20, 'bb_percent': 0.08, 'xera': 3.80}
+        result = fuse_pitcher_projection(steamer, statcast, sample_size=60)
+        assert result.xera_likelihood_applied is True
+        assert result.proj['era'] < fuse_pitcher_projection(steamer, {**statcast, 'xera': statcast['era']}, sample_size=60).proj['era'] + 0.5
+
+    def test_xera_likelihood_not_applied_small_sample(self):
+        steamer = {'era': 4.50, 'whip': 1.35, 'k_percent': 0.22, 'bb_percent': 0.07, 'k_per_nine': 8.5, 'bb_per_nine': 3.0}
+        statcast = {'era': 5.20, 'whip': 1.50, 'k_percent': 0.20, 'bb_percent': 0.08, 'xera': 3.80}
+        result = fuse_pitcher_projection(steamer, statcast, sample_size=10)
+        assert result.xera_likelihood_applied is False
+
 
 class TestFusionResult:
     """Test FusionResult dataclass."""
@@ -404,8 +434,8 @@ class TestFusionResult:
         assert result.source == 'fusion'
         assert result.components_fused == 5
         assert result.xwoba_override_detected is False
-        assert result.components_fused == 5
-        assert result.xwoba_override_detected is False
+        assert result.xwoba_likelihood_applied is False
+        assert result.xera_likelihood_applied is False
 
 
 class TestMathematicalProperties:

@@ -14,7 +14,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from backend.models import CanonicalProjection
+from backend.models import CanonicalProjection, SavantPitchQualityScore
 from backend.fantasy_baseball.team_context import TeamContext
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,14 @@ _PITCHER_RATE_CATS: tuple[str, ...] = ("ERA", "WHIP", "K9")
 # For ERA and WHIP lower is better -- flip sign when computing surplus.
 _LOWER_IS_BETTER: frozenset[str] = frozenset({"ERA", "WHIP"})
 
+# Pitch quality bonus: (score - 100) / QUALITY_SCALE * QUALITY_MAX_BONUS.
+# Score of 130 → +0.15 bonus; score of 70 → -0.15 penalty.
+_QUALITY_SCALE: float = 30.0
+_QUALITY_MAX_BONUS: float = 0.15
+
+# Minimum season for pitch quality score lookup (avoid stale data from prior seasons).
+_CURRENT_MLB_SEASON: int = 2026
+
 
 class WaiverValuationService:
     def __init__(self, db: Session):
@@ -62,6 +70,25 @@ class WaiverValuationService:
             .order_by(CanonicalProjection.projection_date.desc())
             .first()
         )
+
+    def _get_pitch_quality_score(self, mlbam_id: int) -> Optional[float]:
+        """Return the most recent savant_pitch_quality score for a pitcher, or None.
+
+        Queries savant_pitch_quality_scores by player_id (String field containing MLBAM ID)
+        for the current season. Returns the 100-centered score, or None if unavailable.
+        """
+        row = (
+            self.db.query(SavantPitchQualityScore)
+            .filter(
+                SavantPitchQualityScore.player_id == str(mlbam_id),
+                SavantPitchQualityScore.season == _CURRENT_MLB_SEASON,
+            )
+            .order_by(SavantPitchQualityScore.as_of_date.desc())
+            .first()
+        )
+        if row is None:
+            return None
+        return float(row.savant_pitch_quality)
 
     # ------------------------------------------------------------------
     # Public API
@@ -238,11 +265,27 @@ class WaiverValuationService:
             category_deltas[cat] = raw_delta
             surplus_score += raw_delta
 
+        # ---- Savant pitch quality bonus (pitcher add only) ----
+        # Adjusts surplus_score by ±15% based on 100-centered pitch quality signal.
+        # Positive score > 100 = above-average stuff/command → bonus.
+        # Score < 100 → penalty. Clamped to [-0.15, +0.15] via _QUALITY_SCALE.
+        pitch_quality_bonus: float = 0.0
+        if add_is_pitcher:
+            pq_score = self._get_pitch_quality_score(add_mlbam_id)
+            if pq_score is not None:
+                pitch_quality_bonus = (pq_score - 100.0) / _QUALITY_SCALE * _QUALITY_MAX_BONUS
+                surplus_score += pitch_quality_bonus
+                logger.debug(
+                    "Pitch quality bonus for player %s: score=%.1f bonus=%.4f",
+                    add_mlbam_id, pq_score, pitch_quality_bonus,
+                )
+
         return {
             "add_player_id": add_mlbam_id,
             "drop_player_id": drop_mlbam_id,
             "category_deltas": category_deltas,
             "surplus_score": surplus_score,
+            "pitch_quality_bonus": pitch_quality_bonus,
             "data_source": "canonical",
         }
 

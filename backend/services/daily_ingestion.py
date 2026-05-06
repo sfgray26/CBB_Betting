@@ -6757,6 +6757,56 @@ class DailyIngestionOrchestrator:
                     logger.warning("PROJECTION FRESHNESS: %s", msg)
                     violations.append(msg)
 
+            # --- canonical_projections SLA (26 hours) ---
+            # Only checked when CANONICAL_PROJECTION_V1 flag is enabled.
+            # If stale, automatically triggers a canonical_projection_refresh job
+            # to re-assemble projections without requiring manual intervention.
+            SLA_CANONICAL_H = 26
+            canonical_flag_enabled = False
+            try:
+                _db2 = SessionLocal()
+                try:
+                    ff_row = _db2.execute(
+                        text(
+                            "SELECT enabled FROM feature_flags "
+                            "WHERE flag_name = 'CANONICAL_PROJECTION_V1' LIMIT 1"
+                        )
+                    ).fetchone()
+                    canonical_flag_enabled = bool(ff_row and ff_row[0])
+
+                    if canonical_flag_enabled:
+                        result = _db2.execute(
+                            text(
+                                "SELECT MAX(projection_date) FROM canonical_projections "
+                                "WHERE season = 2026"
+                            )
+                        )
+                        latest_canonical = result.scalar()
+                        if latest_canonical is None:
+                            msg = "canonical_projections: no rows for 2026 — canonical_projection_refresh may not have run yet"
+                            logger.warning("PROJECTION FRESHNESS: %s", msg)
+                            violations.append(msg)
+                            report["canonical_trigger"] = "scheduled"
+                            asyncio.create_task(self._refresh_canonical_projections())
+                        else:
+                            from datetime import date as _date_type
+                            if isinstance(latest_canonical, _date_type) and not isinstance(latest_canonical, datetime):
+                                latest_canonical = datetime.combine(latest_canonical, dt_time(), tzinfo=ZoneInfo("America/New_York"))
+                            elif hasattr(latest_canonical, "tzinfo") and latest_canonical.tzinfo is None:
+                                latest_canonical = latest_canonical.replace(tzinfo=ZoneInfo("America/New_York"))
+                            age_h = (now - latest_canonical).total_seconds() / 3600
+                            report["canonical_projections_age_h"] = round(age_h, 1)
+                            if age_h > SLA_CANONICAL_H:
+                                msg = f"canonical_projections stale: {age_h:.1f}h > SLA {SLA_CANONICAL_H}h — auto-triggering refresh"
+                                logger.warning("PROJECTION FRESHNESS: %s", msg)
+                                violations.append(msg)
+                                report["canonical_trigger"] = "scheduled"
+                                asyncio.create_task(self._refresh_canonical_projections())
+                finally:
+                    _db2.close()
+            except Exception as _e:
+                logger.warning("PROJECTION FRESHNESS: canonical check error: %s", _e)
+
             elapsed = round((time.monotonic() - t0) * 1000)
             report["elapsed_ms"] = elapsed
             report["violation_count"] = len(violations)
