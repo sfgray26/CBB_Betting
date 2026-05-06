@@ -2043,7 +2043,8 @@ class CanonicalProjection(Base):
     projection_id = Column(String(36), nullable=False, unique=True, index=True)  # UUID
 
     # Identity — player_id links to player_id_mapping.mlbam_id (canonical int)
-    player_id = Column(Integer, nullable=False, index=True)
+    # BigInteger required: Yahoo fallback IDs like -(yahoo_id) can exceed INT4 range (~2.1B)
+    player_id = Column(BigInteger, nullable=False, index=True)
     player_type = Column(String(10), nullable=False)          # BATTER | PITCHER
     source_engine = Column(String(25), nullable=False)        # BAYESIAN | SAVANT_ADJUSTED | STATIC_BOARD | FALLBACK_MARCEL
     projection_date = Column(Date, nullable=False, index=True)
