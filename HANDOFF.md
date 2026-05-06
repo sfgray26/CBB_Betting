@@ -1,8 +1,8 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-05-06 | **Architect:** Claude Code (Master Architect)
-> **Branch:** `stable/cbb-prod` | **HEAD:** `612d351`
-> **Deploy:** `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}`
+> **Branch:** `stable/cbb-prod` | **HEAD:** `63c936b` (not yet deployed)
+> **Deploy:** `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}` (HEAD on Railway: `ecfa5ba`)
 
 ---
 
@@ -11,114 +11,71 @@
 | Component | Status | Notes |
 |---|---|---|
 | Railway deployment | LIVE | FastAPI + uvicorn, us-west1 |
-| `canonical_projections` | LIVE (445 rows) | SAVANT_ADJUSTED=234, STATIC_BOARD=211 — 0 errors after BIGINT fix |
+| `canonical_projections` | LIVE (822 rows) | SAVANT_ADJUSTED=469, STATIC_BOARD=353 — 0 errors |
 | `category_impacts` | LIVE (5,350 rows) | Per-category z-scores + marginal numerator/denominator columns |
 | `player_projections` (FanGraphs RoS) | LIVE (9,686 rows) | prior_source=fangraphs_ros, updated 2026-05-06 15:15 ET |
-| `player_projections.player_type` | ~71% NULL | Backfill script ready (A-1) — DevOps to run |
+| `player_projections.player_type` | fully populated | C-A1 confirmed: 0 NULL rows |
 | `player_identities` | 454/454 resolved | 12-row backfill complete 2026-05-06 |
 | `CANONICAL_PROJECTION_V1` flag | **true** | Nightly job runs at 11 PM ET |
-| `market_signals_enabled` | false | Pending: C-7 → C-2 |
-| `feature_matchup_enabled` | false | Pending: C-3 → C-4 |
-| `opportunity_enabled` | false | Unblock after A-1 (player_type backfill) runs |
-| `/api/fantasy/decisions` route | **LIVE** | Commit `b799aec` — was 404, now serves stored decisions |
+| `market_signals_enabled` | **true** | C-2 complete — re-run needed after `63c936b` to get correct scores |
+| `feature_matchup_enabled` | **true** | C-4 complete |
+| `opportunity_enabled` | **false** | Ready to enable — C-A1 confirmed 0 NULL player_types |
+| `/api/fantasy/decisions` route | **LIVE** | Returns empty until P17 runs |
 | Stuff+/Location+ (FanGraphs) | BLOCKED | Cloudflare blocks Railway IP — P2, do not attempt |
-| Savant Pitch Quality | Code done, DB pending | Pending Codex migration (Task C-5) |
-| Savant Park Factors | Code done, DB pending | Pending Codex migration (Task C-6) |
+| Savant Pitch Quality | **LIVE** | 550 scores seeded; all three flags remain false (pending K-NEXT-1 review) |
+| Savant Park Factors | **LIVE** | 28 venues / 56 rows seeded |
+| `player_market_signals` table | partially broken | Two bugs fixed in commits below — needs re-run to validate |
 
 ---
 
 ## Code Fixes Deployed This Session (2026-05-06)
 
-All bugs listed here are fixed and deployed. **No code action needed — just run the rollout steps below.**
-
-| Commit | Bug | Fix |
-|--------|-----|-----|
-| `21f96df` | `ros_projection_refresh` UniqueViolation for two-way players (Ohtani, etc.) | `bat_processed_ids` set + `db.flush()` + pitcher merge preserves batting stats |
-| `8388062` | `canonical_projections.player_id` INT4 overflow for large Yahoo IDs | `Column(Integer)` → `Column(BigInteger)` in ORM + migration script |
-| `12b7f5a` | `migration_dedupe_player_id_mapping` UniqueViolation on `_pim_yahoo_key_uc` | Added Step 3a-pre: NULL loser `yahoo_key` values before merge runs |
-| `b799aec` | Frontend `/decisions` page calling routes that returned 404 | Added `GET /api/fantasy/decisions` and `GET /api/fantasy/decisions/status` to `main.py` |
-| `612d351` | `backfill_player_type.py` had hardcoded DB credential, missing `'both'` case, bad `::jsonb` cast | Full rewrite — removed credential, added `--dry-run`, fixed `::jsonb` and two-way logic |
-| earlier | `yahoo_id_sync` UniqueViolation every run (48h outage) | Removed duplicate `_sync_yahoo_id_mapping` v2 (no conflict guard); v1 (guarded) is canonical |
-| earlier | Yahoo sync covered only ~3.7% of BDL universe | FA enumeration paginated to 200/position (was 25) |
-| earlier | `market_signals_update`: `column "name" does not exist` | `SELECT name` → `SELECT full_name` in `_compute_market_signals` |
-| earlier | `opportunity_update`: `column "espn_id" does not exist` | Fixed JOIN to use `pim.mlbam_id::text = pp.player_id` |
+| Commit | Bug | Fix | Deployed? |
+|--------|-----|-----|-----------|
+| `21f96df` | `ros_projection_refresh` UniqueViolation for two-way players | `bat_processed_ids` set + `db.flush()` + pitcher merge preserves batting stats | ✅ |
+| `8388062` | `canonical_projections.player_id` INT4 overflow for large Yahoo IDs | `Column(Integer)` → `Column(BigInteger)` in ORM + migration | ✅ |
+| `12b7f5a` | `migration_dedupe_player_id_mapping` UniqueViolation on `_pim_yahoo_key_uc` | Added Step 3a-pre: NULL loser `yahoo_key` values before merge runs | ✅ |
+| `b799aec` | Frontend `/decisions` page 404 | Added `GET /api/fantasy/decisions` + `/decisions/status` to `main.py` | ✅ |
+| `612d351` | `backfill_player_type.py` hardcoded credential, missing `'both'` case | Full rewrite — removed credential, `--dry-run`, fixed `::jsonb` and two-way logic | ✅ |
+| `6f44ebb` | `market_signals_update` column `skill_gap_percentile` not found | `score_0_100` + `window_days=14` + `MAX(as_of_date)` fallback | ✅ |
+| `ecfa5ba` | `market_signals_update` — `upserted=0` despite "success" | 8 SQL INSERT param names fixed to match `res` dict keys | ✅ |
+| `63c936b` | `market_signals_update` — `avg_market_score=99.65`, 881/884 tagged BUY_LOW | `skill_gap_percentile=skill_gap_pct / 100.0` — `score_0_100` is [0-100], function expects [0-1] | **❌ PENDING DEPLOY** |
 
 ---
 
-## Codex DevOps Queue (ordered)
+## DevOps Queue (ordered) — HEAD `63c936b`
 
-### ✅ C-1: BIGINT migration — COMPLETE
-`canonical_projections.player_id` is now BIGINT in production. 445 upserted, 0 errors verified.
+All C-1 → C-6 are **COMPLETE**. One new item:
 
-### C-7: Dedupe player_id_mapping — RETRY NEEDED
-Fix committed (`12b7f5a`). Previous run failed on `_pim_yahoo_key_uc`; root cause fixed.
+### D-1: Deploy `63c936b` + validate market signals calibration
 ```bash
-railway run python scripts/migration_dedupe_player_id_mapping.py --dry-run
-# Confirm dry-run shows "Step 3a-pre" in output (the new NULL-losers step)
-railway run python scripts/migration_dedupe_player_id_mapping.py
-# Expected: SUCCESS, rows_before=11036, merged_count≈109, no UniqueViolation
-# Sanity:
-#   SELECT COUNT(*), COUNT(DISTINCT normalized_name) FROM player_id_mapping;
-#   SELECT COUNT(*) FROM player_id_mapping WHERE yahoo_id IS NOT NULL AND bdl_id IS NULL;
-#   -- target: orphans < 50 (was 451)
-```
-**STOP if UniqueViolation recurs on a different key — escalate to Claude with the key name.**
-
-### C-A1: Backfill player_type (after C-7)
-```bash
-railway run python scripts/backfill_player_type.py --dry-run
-# Confirm: shows ~9,000+ rows with sensible hitter/pitcher/both split
-railway run python scripts/backfill_player_type.py
-# Expected: "DONE — updated N rows" where N > 8000
-# Then enable opportunity flag:
-# UPDATE feature_flags SET enabled=true WHERE flag_name='opportunity_enabled';
-```
-
-### C-7b: Trigger yahoo_id_sync (after C-7)
-```bash
-curl -X POST https://<railway-url>/admin/ingestion/run/yahoo_id_sync \
+# 1. Deploy
+railway up --detach
+# 2. Wait for health
+curl.exe https://<railway-url>/health
+# 3. Re-run market signals
+curl.exe -X POST https://<railway-url>/admin/ingestion/run/market_signals_update \
      -H "X-API-Key: $ADMIN_API_KEY"
-# Expected: {"status":"success","matched":>=600,"unmatched":<200}
-# First successful run validates the 48h outage fix
+# Expected AFTER fix:
+#   upserted > 5000
+#   avg_market_score in range [40, 75]  (was 99.65 — that was the bug)
+#   tag_distribution shows mix of BUY_LOW / FAIR / HOT_PICKUP / SLEEPER (was 881 BUY_LOW / 3 FAIR)
+# STOP and escalate to Claude if upserted=0 or avg_market_score still > 95
 ```
 
-### C-2: Enable market signals (after C-7)
+### D-2: Enable `opportunity_enabled` flag (no deploy needed)
+C-A1 confirmed 0 NULL player_types. Enable the flag directly in DB:
+```sql
+UPDATE feature_flags SET enabled=true, updated_at=NOW()
+WHERE flag_name='opportunity_enabled';
+-- verify:
+SELECT flag_name, enabled FROM feature_flags WHERE flag_name='opportunity_enabled';
+```
+Then trigger one run to validate:
 ```bash
-railway connect postgres
-# in psql:
-UPDATE feature_flags SET enabled=true, updated_at=NOW() WHERE flag_name='market_signals_enabled';
-# wait 90s for config cache TTL, then:
-curl -X POST https://<railway-url>/admin/ingestion/run/market_signals_update \
+curl.exe -X POST https://<railway-url>/admin/ingestion/run/opportunity_update \
      -H "X-API-Key: $ADMIN_API_KEY"
-# Expected: {"status": "success", "updated": <N>}
-```
-
-### C-3: Seed matchup context flag
-```bash
-railway run python scripts/seed_matchup_context_flag.py
-# Expected: "Seeded feature_matchup_enabled=false" (or "already exists, skipped")
-```
-
-### C-4: Enable matchup context (after C-3 + one successful cron run)
-```bash
-railway connect postgres
-# in psql:
-UPDATE feature_flags SET enabled=true, updated_at=NOW() WHERE flag_name='feature_matchup_enabled';
-```
-
-### C-5: Savant pitch quality rollout
-```bash
-railway run python scripts/migration_savant_pitch_quality.py
-railway run python scripts/seed_savant_pitch_quality_flags.py
-railway run python scripts/backfill_savant_pitch_quality.py
-# Verify: SELECT COUNT(*) FROM savant_pitch_quality_scores WHERE season = 2026; -- > 200
-```
-
-### C-6: Savant park factors rollout
-```bash
-railway run python scripts/migration_savant_park_factors.py
-railway run python scripts/seed_savant_park_factors.py
-# Verify: SELECT COUNT(*) FROM park_factors; -- >= 28
+# Expected: status=success, total > 0
 ```
 
 **Reporting protocol:** After each task, report: exit code + last 5 stdout lines + verify query result. STOP on first failure.
@@ -127,22 +84,20 @@ railway run python scripts/seed_savant_park_factors.py
 
 ## Claude Architect Queue
 
-### ✅ A-1: Fix `player_type` NULL in `player_projections` — SCRIPT READY
-`scripts/backfill_player_type.py` rewritten and committed (`612d351`). Handed to DevOps as C-A1.
+### ✅ A-1: Fix `player_type` NULL in `player_projections` — COMPLETE
+C-A1 ran, 0 nulls found — already fully populated.
 
 ### ✅ A-2: Yahoo ID sync coverage — COMPLETE
-Root cause found (K-NEXT-2), duplicate method removed, pagination fix deployed. Validate via C-7b.
 
 ### ✅ A-3: Frontend `/decisions` endpoint missing — COMPLETE
-`GET /api/fantasy/decisions` and `GET /api/fantasy/decisions/status` added to `main.py` (`b799aec`).
-Joins `decision_results` + `decision_explanations` + `player_id_mapping` name lookup.
-Returns `{decisions: [{decision, explanation}], count, as_of_date, decision_type}`.
-Note: `decision_results` is populated by the P17 decision optimization job — rows will be empty
-until that pipeline phase has run at least once.
 
-### A-4 (P1): Sprint 3 — Lineup UI data binding
-Wire `game_time`, `player_id`, `SP` scores into lineup optimizer API response.
-Prerequisite: C-A1 (player_type backfill) confirmed in production.
+### A-4 (next): Investigate P17 decision_optimization pipeline
+`decision_results` is empty — the planning/decision phase has never produced output.
+Likely cause: prerequisite pipeline phases (P13–P16) may have empty tables or errors.
+Check job_runs for the last 7 days for rolling_windows (100_018), player_scores (100_019), decision_optimization (100_022).
+
+### A-5: Dead `_refresh_ros_projections` v1 at line ~5952 in daily_ingestion.py
+Python last-definition-wins: v2 at line ~6822 is active, v1 is dead code. Remove v1 (low priority).
 
 ---
 
@@ -172,14 +127,14 @@ Output: `reports/2026-05-XX-savant-pitch-quality-validation.md`
 | Flag | Value | Gate Condition |
 |---|---|---|
 | `CANONICAL_PROJECTION_V1` | **true** | Nightly `canonical_projection_refresh` job active |
-| `market_signals_enabled` | false | Enable after C-2 confirmed success |
-| `feature_matchup_enabled` | false | Enable after C-3/C-4 and one clean cron run |
+| `market_signals_enabled` | **true** | Active — re-run after D-1 deploy to get calibrated scores |
+| `feature_matchup_enabled` | **true** | Active |
+| `opportunity_enabled` | **false** | Ready — enable via D-2 (C-A1 complete) |
 | `statcast_stuff_plus_enabled` | false | Blocked by Cloudflare — do not enable |
 | `statcast_location_plus_enabled` | false | Blocked by Cloudflare — do not enable |
 | `savant_pitch_quality_enabled` | false | Enable after K-NEXT-1 validation passes |
 | `savant_pitch_quality_waiver_signals_enabled` | false | Enable after main flag + waiver wiring review |
 | `savant_pitch_quality_projection_adjustments_enabled` | false | Enable last — projection impact requires full validation |
-| `opportunity_enabled` | false | Enable when A-1 (player_type backfill) is complete |
 
 ---
 
