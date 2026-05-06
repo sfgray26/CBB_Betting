@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from backend.services.retry_logic import sync_retry
+from backend.services.season_config import get_current_season
 
 logger = logging.getLogger(__name__)
 
@@ -316,7 +317,7 @@ def _maybe_enrich_sprint_speed(year: int, batter_path: Path, now: float) -> None
 # Main fetch function
 # ---------------------------------------------------------------------------
 
-def fetch_all_statcast_leaderboards(year: int = 2025, force_refresh: bool = False) -> None:
+def fetch_all_statcast_leaderboards(year: Optional[int] = None, force_refresh: bool = False) -> None:
     """
     Fetch FanGraphs batting + pitching leaderboards via pybaseball and write
     24-hour JSON caches under data/cache/.
@@ -324,6 +325,7 @@ def fetch_all_statcast_leaderboards(year: int = 2025, force_refresh: bool = Fals
     Safe to call if pybaseball is not installed — logs a warning and returns.
     Idempotent within the TTL window unless force_refresh=True.
     """
+    year = year if year is not None else get_current_season()
     try:
         import pybaseball
     except ImportError:
@@ -370,10 +372,11 @@ def fetch_all_statcast_leaderboards(year: int = 2025, force_refresh: bool = Fals
 # Cache loaders
 # ---------------------------------------------------------------------------
 
-def load_pybaseball_batters(year: int = 2025) -> dict:
+def load_pybaseball_batters(year: Optional[int] = None) -> dict:
     """Load pybaseball batter cache from disk. Returns empty dict on any failure."""
     from backend.fantasy_baseball.advanced_metrics import StatcastBatter
 
+    year = year if year is not None else get_current_season()
     path = CACHE_DIR / f"pybaseball_batting_{year}.json"
     if not path.exists():
         return {}
@@ -392,10 +395,11 @@ def load_pybaseball_batters(year: int = 2025) -> dict:
         return {}
 
 
-def load_pybaseball_pitchers(year: int = 2025) -> dict:
+def load_pybaseball_pitchers(year: Optional[int] = None) -> dict:
     """Load pybaseball pitcher cache from disk. Returns empty dict on any failure."""
     from backend.fantasy_baseball.advanced_metrics import StatcastPitcher
 
+    year = year if year is not None else get_current_season()
     path = CACHE_DIR / f"pybaseball_pitching_{year}.json"
     if not path.exists():
         return {}

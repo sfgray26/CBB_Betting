@@ -26,6 +26,7 @@ from backend.fantasy_baseball.advanced_metrics import (
     is_breakout_candidate_batter,
     calculate_injury_risk_score,
 )
+from backend.services.season_config import get_current_season
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +200,7 @@ def _float(val) -> float:
         return 0.0
 
 
-def _load_from_db(season: int = 2026) -> tuple:
+def _load_from_db(season: Optional[int] = None) -> tuple:
     """
     Load batter and pitcher metrics from statcast_batter_metrics /
     statcast_pitcher_metrics tables (populated daily by savant_ingestion at 6 AM).
@@ -208,6 +209,8 @@ def _load_from_db(season: int = 2026) -> tuple:
     Returns ({}, {}) on any error so callers can fall through gracefully.
     """
     from backend.fantasy_baseball.advanced_metrics import StatcastBatter, StatcastPitcher
+
+    season = season if season is not None else get_current_season()
     try:
         import unicodedata, re as _re
         _sfx = _re.compile(r"\s+(Jr\.?|Sr\.?|II+|III+|IV|V)$", _re.IGNORECASE)
@@ -331,7 +334,7 @@ def _ensure_loaded() -> None:
         return
 
     # --- Batters ---
-    year = 2026
+    year = get_current_season()
     batters: dict[str, StatcastBatter] = {}
 
     # --- Tier 0: DB tables (statcast_batter_metrics / statcast_pitcher_metrics) ---
@@ -347,8 +350,8 @@ def _ensure_loaded() -> None:
             fetch_all_statcast_leaderboards,
             load_pybaseball_batters,
         )
-        fetch_all_statcast_leaderboards(year=2025)
-        pb = load_pybaseball_batters(year=2025)
+        fetch_all_statcast_leaderboards(year=year)
+        pb = load_pybaseball_batters(year=year)
         if pb:
             batters.update(pb)
             logger.info(f"Tier 1: {len(pb)} pybaseball batters loaded")
@@ -396,7 +399,7 @@ def _ensure_loaded() -> None:
     # --- Tier 1: pybaseball JSON cache (batters already triggered the fetch above) ---
     try:
         from backend.fantasy_baseball.pybaseball_loader import load_pybaseball_pitchers
-        pb_p = load_pybaseball_pitchers(year=2025)
+        pb_p = load_pybaseball_pitchers(year=year)
         if pb_p:
             pitchers.update(pb_p)
             logger.info(f"Tier 1: {len(pb_p)} pybaseball pitchers loaded")

@@ -78,6 +78,7 @@ from backend.services.decision_engine import (
     optimize_waivers,
 )
 from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
+from backend.services.season_config import get_current_season
 from backend.utils.time_utils import now_et, today_et
 
 logger = logging.getLogger(__name__)
@@ -683,13 +684,14 @@ def _persist_ingestion_log(
 # PR 2.2 — Sprint-speed pipeline helper
 # ---------------------------------------------------------------------------
 
-def _update_sprint_speeds(db, season: int = 2026) -> int:
+def _update_sprint_speeds(db, season: Optional[int] = None) -> int:
     """
     Fetch the Baseball Savant sprint speed CSV and update statcast_batter_metrics.
 
     Returns the number of rows updated. Any failure is logged and returns 0
     so the caller (savant_ingestion job) is never disrupted.
     """
+    season = season if season is not None else get_current_season()
     try:
         from backend.ingestion.savant_scraper import fetch_sprint_speed
         from sqlalchemy import text
@@ -725,7 +727,7 @@ def _update_sprint_speeds(db, season: int = 2026) -> int:
         return 0
 
 
-def _update_pitcher_advanced(db, season: int = 2026) -> dict:
+def _update_pitcher_advanced(db, season: Optional[int] = None) -> dict:
     """
     PR 2.x — Fetch Stuff+ and Location+ from FanGraphs via pybaseball and update statcast_pitcher_metrics.
 
@@ -737,6 +739,7 @@ def _update_pitcher_advanced(db, season: int = 2026) -> dict:
     Any failure is logged and returns zeros so the caller (savant_ingestion job)
     is never disrupted.
     """
+    season = season if season is not None else get_current_season()
     try:
         from backend.ingestion.fangraphs_scraper import fetch_pitcher_quality
         from sqlalchemy import text
@@ -798,7 +801,7 @@ def _update_pitcher_advanced(db, season: int = 2026) -> dict:
         return {"updated_stuff": 0, "updated_location": 0, "total": 0}
 
 
-def _update_pitch_quality_scores(db, season: int = 2026) -> int:
+def _update_pitch_quality_scores(db, season: Optional[int] = None) -> int:
     """
     Compute and upsert savant_pitch_quality_scores from fresh statcast_pitcher_metrics.
 
@@ -808,6 +811,7 @@ def _update_pitch_quality_scores(db, season: int = 2026) -> int:
     Returns the number of rows upserted.  Any failure is logged and returns 0
     so the caller (savant_ingestion job) is never disrupted.
     """
+    season = season if season is not None else get_current_season()
     try:
         from datetime import date as _date
 
@@ -1971,7 +1975,7 @@ class DailyIngestionOrchestrator:
                         bdl_player_id=stat.bdl_player_id,
                         game_id=stat.game_id,
                         game_date=game_date,
-                        season=stat.season if stat.season is not None else 2026,
+                        season=stat.season if stat.season is not None else get_current_season(),
                         # Batting
                         ab=stat.ab,
                         runs=stat.r,
@@ -2003,7 +2007,7 @@ class DailyIngestionOrchestrator:
                     ).on_conflict_do_update(
                         constraint="_mps_player_game_uc",
                         set_=dict(
-                            season=stat.season if stat.season is not None else 2026,
+                            season=stat.season if stat.season is not None else get_current_season(),
                             ab=stat.ab,
                             runs=stat.r,
                             hits=stat.h,
@@ -3725,7 +3729,7 @@ class DailyIngestionOrchestrator:
                 return {"status": "skipped", "reason": "feature_flag_disabled", "elapsed_ms": elapsed}
 
             try:
-                result = assemble_projections(season=2026)
+                result = assemble_projections(season=get_current_season())
                 elapsed = int((time.monotonic() - t0) * 1000)
                 logger.info(
                     "canonical_projection_refresh: assembled=%d identity_misses=%d upserted=%d errors=%d elapsed=%dms",
@@ -3807,7 +3811,8 @@ class DailyIngestionOrchestrator:
                         "elapsed_ms": elapsed,
                     }
 
-                # Step 2: Player → team via statcast_batter_metrics (season 2026)
+                current_season = get_current_season()
+                # Step 2: Player → team via statcast_batter_metrics (current season)
                 player_team_rows = db.execute(
                     text("""
                         SELECT pim.bdl_id, sbm.team
@@ -3816,14 +3821,16 @@ class DailyIngestionOrchestrator:
                           ON pim.mlbam_id = CAST(sbm.mlbam_id AS INTEGER)
                         WHERE pim.bdl_id IS NOT NULL
                           AND sbm.team IS NOT NULL
-                          AND sbm.season = 2026
-                    """)
+                          AND sbm.season = :season
+                    """),
+                    {"season": current_season},
                 ).fetchall()
 
                 if not player_team_rows:
                     logger.warning(
                         "matchup_context_update: no player-team mappings found in "
-                        "statcast_batter_metrics for season 2026"
+                        "statcast_batter_metrics for season %d",
+                        current_season,
                     )
                     elapsed = int((time.monotonic() - t0) * 1000)
                     self._record_job_run("matchup_context_update", "warning")
@@ -5501,8 +5508,9 @@ class DailyIngestionOrchestrator:
             try:
                 from backend.fantasy_baseball.savant_ingestion import SavantIngestionAgent
                 db = SessionLocal()
+                current_season = get_current_season()
 
-                agent = SavantIngestionAgent(db, season=2026)
+                agent = SavantIngestionAgent(db, season=current_season)
                 result = await asyncio.to_thread(agent.run_daily_ingestion)
 
                 elapsed = int((time.monotonic() - t0) * 1000)
@@ -5522,7 +5530,7 @@ class DailyIngestionOrchestrator:
 
                     # PR 2.2: Update sprint_speed from Savant leaderboard CSV
                     sprint_updated = await asyncio.to_thread(
-                        _update_sprint_speeds, db, season=2026
+                        _update_sprint_speeds, db, season=current_season
                     )
                     logger.info(
                         "_ingest_savant_leaderboards: sprint_speed updated for %d players",
@@ -5531,7 +5539,7 @@ class DailyIngestionOrchestrator:
 
                     # PR 2.x: Update stuff_plus and location_plus from FanGraphs via pybaseball
                     pitcher_advanced = await asyncio.to_thread(
-                        _update_pitcher_advanced, db, season=2026
+                        _update_pitcher_advanced, db, season=current_season
                     )
                     logger.info(
                         "_ingest_savant_leaderboards: pitcher advanced updated: stuff_plus=%d, location_plus=%d",
@@ -5555,7 +5563,7 @@ class DailyIngestionOrchestrator:
 
                     # PR 2.4: Compute and upsert savant_pitch_quality_scores
                     pitch_quality_upserted = await asyncio.to_thread(
-                        _update_pitch_quality_scores, db, season=2026
+                        _update_pitch_quality_scores, db, season=current_season
                     )
                     logger.info(
                         "_ingest_savant_leaderboards: pitch_quality_scores upserted for %d pitchers",
