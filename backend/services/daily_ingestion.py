@@ -3714,9 +3714,9 @@ class DailyIngestionOrchestrator:
                                     fetched_at
                                 ) VALUES (
                                     :bdl_id, :as_of,
-                                    :yahoo_owned, :yahoo_7d, :yahoo_30d,
-                                    :delta_7d, :delta_30d, :velocity,
-                                    :add_rate, :drop_rate, :add_drop_ratio,
+                                    :yahoo_owned_pct, :yahoo_owned_pct_7d_ago, :yahoo_owned_pct_30d_ago,
+                                    :ownership_delta_7d, :ownership_delta_30d, :ownership_velocity,
+                                    :add_rate_7d, :drop_rate_7d, :add_drop_ratio,
                                     :market_score, :market_tag, :market_urgency,
                                     NOW()
                                 )
