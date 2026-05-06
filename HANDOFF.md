@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-05-06 | **Architect:** Claude Code (Master Architect)
-> **Branch:** `stable/cbb-prod` | **HEAD:** `ae1f823`
+> **Branch:** `stable/cbb-prod` | **HEAD:** see latest commit
 > **Deploy:** `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}`
 
 ---
@@ -37,6 +37,22 @@ Verify: `SELECT pg_typeof(player_id) FROM canonical_projections LIMIT 1;` → `b
 
 ---
 
+## Code Fixes Deployed This Session (2026-05-06)
+
+The following bugs are fixed in the latest `stable/cbb-prod` push. **No action needed — code is already deployed. Just run the rollout steps below.**
+
+| Bug | Fix |
+|-----|-----|
+| `yahoo_id_sync` `UniqueViolation: _pim_bdl_id_uc` on every run (48h outage) | Deleted v2 duplicate `_sync_yahoo_id_mapping` that lacked conflict guard; v1 (with guard) is now the only definition |
+| Yahoo sync covered only ~3.7% of BDL universe | FA enumeration now paginated: up to 200 per position (was 25), ~2,000+ unique Yahoo players |
+| `market_signals_update` aborted: `column "name" does not exist` | Fixed `SELECT name` → `SELECT full_name` in `_compute_market_signals` |
+| `opportunity_update` aborted: `column "espn_id" does not exist` | Fixed JOIN `pim.espn_id = pp.player_id` → `pim.mlbam_id::text = pp.player_id` |
+| HANDOFF.md C-2/C-4 used wrong column (`flag_value`) and wrong header (`X-Admin-API-Key`) | Corrected to `enabled` and `X-API-Key` throughout |
+
+New file: `scripts/migration_dedupe_player_id_mapping.py` — dedupes `player_id_mapping` (1,513 dupe rows, 707 shared names). Run as C-7 below.
+
+---
+
 ## Codex DevOps Queue (ordered — complete P0 before proceeding)
 
 ### C-1 (P0): BIGINT migration
@@ -45,14 +61,33 @@ railway run python scripts/migration_canonical_player_id_bigint.py
 # verify: SELECT pg_typeof(player_id) FROM canonical_projections LIMIT 1; -- bigint
 ```
 
-### C-2: Enable market signals (after C-1)
+### C-7: Dedupe player_id_mapping (after C-1, before C-2)
+```bash
+railway run python scripts/migration_dedupe_player_id_mapping.py --dry-run
+# Review output: rows_before, rows_after, merged_count, name_conflicts_skipped, orphans_remaining
+# If merged_count > 2000: ABORT, do not run without Architect review
+railway run python scripts/migration_dedupe_player_id_mapping.py
+# Sanity: SELECT COUNT(*), COUNT(DISTINCT normalized_name) FROM player_id_mapping;
+#         SELECT COUNT(*) FROM player_id_mapping WHERE yahoo_id IS NOT NULL AND bdl_id IS NULL;
+#         -- target: orphans < 50 (was 451)
+```
+
+### C-7b: Trigger yahoo_id_sync (after C-7, to validate fix)
+```bash
+curl -X POST https://<railway-url>/admin/ingestion/run/yahoo_id_sync \
+     -H "X-API-Key: $ADMIN_API_KEY"
+# Expected: {"status":"success","matched":>=600,"unmatched":<200,"backfilled":<500}
+# Was broken for 48+ hours — first successful run after this deploy proves the fix
+```
+
+### C-2: Enable market signals (after C-7)
 ```bash
 railway connect postgres
 # in psql:
-UPDATE feature_flags SET flag_value='true', updated_at=NOW() WHERE flag_name='market_signals_enabled';
+UPDATE feature_flags SET enabled=true, updated_at=NOW() WHERE flag_name='market_signals_enabled';
 # wait 90s for config cache TTL, then:
 curl -X POST https://<railway-url>/admin/ingestion/run/market_signals_update \
-     -H "X-Admin-API-Key: $ADMIN_API_KEY"
+     -H "X-API-Key: $ADMIN_API_KEY"
 # Expected: {"status": "success", "updated": <N>}
 ```
 
@@ -66,7 +101,7 @@ railway run python scripts/seed_matchup_context_flag.py
 ```bash
 railway connect postgres
 # in psql:
-UPDATE feature_flags SET flag_value='true', updated_at=NOW() WHERE flag_name='feature_matchup_enabled';
+UPDATE feature_flags SET enabled=true, updated_at=NOW() WHERE flag_name='feature_matchup_enabled';
 ```
 
 ### C-5: Savant pitch quality rollout
@@ -118,11 +153,18 @@ Prerequisite: A-1 and A-2 resolved first.
 Run after Codex completes C-5. Pull `SELECT player_name, savant_pitch_quality, sample_confidence FROM savant_pitch_quality_scores WHERE season=2026 ORDER BY savant_pitch_quality DESC LIMIT 20` and the bottom 20. Cross-check vs known 2026 pitcher quality (Skenes, Wheeler, Flaherty at top; roster fillers at bottom). Report distribution shape, range, anomalies.
 Output: `reports/2026-05-XX-savant-pitch-quality-validation.md`
 
-### K-NEXT-2: Yahoo ID sync gap analysis
-Inspect `_sync_yahoo_id_mapping()` in `backend/services/daily_ingestion.py`. Identify why
-coverage is 3.7% — name normalization failures? `player_id_mapping` gaps? Missing BDL entries?
-Propose fix: fuzzy threshold, BDL name normalization, or manual map patch.
-Output: `reports/2026-05-XX-yahoo-id-sync-gap-analysis.md`
+### K-NEXT-2: Yahoo ID sync gap analysis ✅ COMPLETE
+**Report:** `reports/2026-05-06-yahoo-id-sync-gap-analysis.md`
+
+**Key Findings:**
+1. **Job is BROKEN since May 4** — Every run fails with `UniqueViolation: _pim_bdl_id_uc`. Zero enrichments for 48h.
+2. **Root cause:** Duplicate rows in `player_id_mapping` (1,513 dupes across 707 names) + the "simplified" `_sync_yahoo_id_mapping` (line 7682, which overwrites the guarded version at line 2204) removed the `bdl_id` conflict check.
+3. **3.7% coverage = shallow enumeration, not poor matching.** The sync only sees ~394 Yahoo players/day (rosters + top-25 FAs per position) vs ~10,000 BDL players. Match rate for seen players is ~94%.
+4. **451 Yahoo rows (18.5%) still have NULL `bdl_id`** — the sync never backfills existing Yahoo rows.
+5. **No fuzzy matching implemented** despite docstring claim. Exact-name-only lookup.
+6. **Proposed fixes:** (P0) Restore conflict guard + dedupe table; (P1) Paginate FAs to 200/position + backfill missing bdl_ids; (P1) Use `mlbam_id` bridge from FanGraphs API to eliminate name collisions.
+
+**Immediate action for Claude:** Remove duplicate method definition at line 7682, restore bdl_id conflict guard, run table dedupe.
 
 ---
 
