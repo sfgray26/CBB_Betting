@@ -1,0 +1,16 @@
+[
+  {
+    "name": "playwright_response",
+    "ok": false,
+    "rows": 0,
+    "err": "Page.goto: Timeout 60000ms exceeded.\nCall log:\n  - navigating to \"https://www.fangraphs.com/projections?pos=all&stats=bat&type=rostest&team=0&lg=all\", waiting until \"networkidle\"\n",
+    "extra": {}
+  },
+  {
+    "name": "requests_with_cookies",
+    "ok": false,
+    "rows": 0,
+    "err": "name 'requests' is not defined",
+    "extra": {}
+  }
+]

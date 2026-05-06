@@ -151,7 +151,12 @@
       "PowerShell(venv\\\\Scripts\\\\python -m pytest tests/test_mcmc_calibration.py tests/test_mcmc_simulator.py tests/test_mcmc_simulator_v2.py tests/test_statcast_loader.py -q --tb=short 2>&1 | Select-Object -Last 10)",
       "PowerShell(venv\\\\Scripts\\\\python -m pytest tests/test_savant_scraper.py -q --tb=short 2>&1)",
       "PowerShell(venv\\\\Scripts\\\\python -m pytest tests/test_daily_ingestion.py -q --tb=short 2>&1 | Select-Object -Last 15)",
-      "PowerShell(venv\\\\Scripts\\\\python -m pytest tests/ -q --tb=short 2>&1 | Select-Object -Last 15)"
+      "PowerShell(venv\\\\Scripts\\\\python -m pytest tests/ -q --tb=short 2>&1 | Select-Object -Last 15)",
+      "Bash(sed 's/id=\"//')",
+      "Bash(sed 's/\"//')",
+      "Bash(sed 's/.*id=\"//')",
+      "Bash(sed 's/\".*//')",
+      "Bash(awk '/add_job/,/replace_existing=True/ {print}' \"C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge\\\\backend\\\\services\\\\daily_ingestion.py\")"
     ]
   },
   "enabledPlugins": {}
