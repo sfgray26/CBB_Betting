@@ -130,6 +130,31 @@ FROM (
 ) sub;
 """
 
+# Step 3a-pre: NULL out yahoo_key on non-keeper rows within safe_names groups.
+# Required BEFORE the COALESCE merge to prevent temporary _pim_yahoo_key_uc violations:
+# the merge sets keeper.yahoo_key = best_yahoo_key (copied from the loser), but the loser
+# still exists in the table at that point, so two rows would momentarily share the same
+# yahoo_key value. Clearing the loser's yahoo_key first resolves the conflict.
+SQL_NAME_CLEAR_LOSER_KEYS = """
+WITH ranked AS (
+    SELECT id,
+           ROW_NUMBER() OVER (
+               PARTITION BY normalized_name
+               ORDER BY
+                   (bdl_id IS NOT NULL) DESC,
+                   (mlbam_id IS NOT NULL) DESC,
+                   (yahoo_key IS NOT NULL) DESC,
+                   updated_at DESC NULLS LAST,
+                   id ASC
+           ) AS rn
+    FROM player_id_mapping
+    WHERE normalized_name IN :safe_names
+)
+UPDATE player_id_mapping
+SET yahoo_key = NULL
+WHERE id IN (SELECT id FROM ranked WHERE rn > 1);
+"""
+
 # Step 3a: COALESCE-merge richest values into the keeper row (grouped by normalized_name)
 # Parameterized via Python string format -- called per batch after filtering safe groups
 SQL_NAME_MERGE_TEMPLATE = """
@@ -261,6 +286,15 @@ def run(engine, dry_run=False):
 
         name_deleted = 0
         if safe_names:
+            # Step 3a-pre: NULL out yahoo_key on loser rows to prevent temporary
+            # _pim_yahoo_key_uc violations when the keeper is updated below.
+            print("[Step 3a-pre] Clearing yahoo_key on non-keeper rows to avoid constraint conflicts...")
+            conn.execute(
+                text(SQL_NAME_CLEAR_LOSER_KEYS),
+                {"safe_names": tuple(safe_names)},
+            )
+            print("  OK: loser yahoo_key values cleared")
+
             # Step 3a: COALESCE-merge by normalized_name (safe groups only)
             print("[Step 3a] Merging fields into normalized_name keepers...")
             conn.execute(
