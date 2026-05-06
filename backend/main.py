@@ -5699,6 +5699,174 @@ async def get_canonical_projections(
         for r in rows
     ]
 
+
+
+@app.get("/api/fantasy/decisions/status")
+async def get_fantasy_decisions_status(
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Return freshness / health summary for the decision pipeline.
+    Frontend: GET /api/fantasy/decisions/status → DecisionPipelineStatus
+    """
+    from backend.models import DecisionResult as _DR, DecisionExplanation as _DE
+    from datetime import datetime, timedelta
+
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+
+    # --- decision_results stats ---
+    dr_latest = db.query(func.max(_DR.as_of_date)).scalar()
+    dr_total = None
+    dr_breakdown = None
+    if dr_latest:
+        dr_total = db.query(func.count(_DR.id)).filter(_DR.as_of_date == dr_latest).scalar()
+        rows = db.query(_DR.decision_type, func.count(_DR.id)).filter(
+            _DR.as_of_date == dr_latest
+        ).group_by(_DR.decision_type).all()
+        dr_breakdown = {r[0]: r[1] for r in rows}
+
+    # --- decision_explanations stats ---
+    de_latest = db.query(func.max(_DE.as_of_date)).scalar()
+    de_total = None
+    if de_latest:
+        de_total = db.query(func.count(_DE.id)).filter(_DE.as_of_date == de_latest).scalar()
+
+    # --- verdict ---
+    if dr_latest is None:
+        verdict = "missing"
+        message = "No decision results available yet."
+    else:
+        age_h = (now_et.date() - dr_latest).days * 24
+        if age_h <= 26:
+            verdict = "healthy"
+            message = f"Decision pipeline healthy — latest data: {dr_latest}"
+        elif age_h <= 72:
+            verdict = "stale"
+            message = f"Decision data is {age_h}h old (expected daily refresh)."
+        else:
+            verdict = "missing"
+            message = f"Decision data is {age_h}h old — pipeline may be broken."
+
+    return {
+        "verdict": verdict,
+        "message": message,
+        "checked_at": now_et.isoformat(),
+        "decision_results": {
+            "latest_as_of_date": str(dr_latest) if dr_latest else None,
+            "total_row_count": dr_total,
+            "breakdown_by_type": {
+                "lineup": dr_breakdown.get("lineup") if dr_breakdown else None,
+                "waiver": dr_breakdown.get("waiver") if dr_breakdown else None,
+            } if dr_breakdown else None,
+        },
+        "decision_explanations": {
+            "latest_as_of_date": str(de_latest) if de_latest else None,
+            "total_row_count": de_total,
+        },
+    }
+
+
+@app.get("/api/fantasy/decisions")
+async def get_fantasy_decisions(
+    decision_type: Optional[str] = Query(None, description="Filter: 'lineup' or 'waiver'"),
+    as_of_date: Optional[str] = Query(None, description="YYYY-MM-DD; defaults to latest available date"),
+    limit: int = Query(50, ge=1, le=200),
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Return stored decision records with explanations.
+    Frontend: GET /api/fantasy/decisions → DecisionsResponse
+    """
+    from backend.models import DecisionResult as _DR, DecisionExplanation as _DE, PlayerIDMapping as _PIM
+
+    # Resolve target date
+    if as_of_date:
+        try:
+            from datetime import date as _date_type
+            target_date = _date_type.fromisoformat(as_of_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="as_of_date must be YYYY-MM-DD")
+    else:
+        target_date = db.query(func.max(_DR.as_of_date)).scalar()
+        if target_date is None:
+            return {
+                "decisions": [],
+                "count": 0,
+                "as_of_date": None,
+                "decision_type": decision_type,
+            }
+
+    # Query decision_results
+    q = db.query(_DR).filter(_DR.as_of_date == target_date)
+    if decision_type in ("lineup", "waiver"):
+        q = q.filter(_DR.decision_type == decision_type)
+    q = q.order_by(_DR.confidence.desc()).limit(limit)
+    dr_rows = q.all()
+
+    if not dr_rows:
+        return {
+            "decisions": [],
+            "count": 0,
+            "as_of_date": str(target_date),
+            "decision_type": decision_type,
+        }
+
+    # Batch-load player names from player_id_mapping (by bdl_id)
+    all_bdl_ids = set()
+    for dr in dr_rows:
+        all_bdl_ids.add(dr.bdl_player_id)
+        if dr.drop_player_id:
+            all_bdl_ids.add(dr.drop_player_id)
+    pim_rows = db.query(_PIM.bdl_id, _PIM.full_name).filter(
+        _PIM.bdl_id.in_(list(all_bdl_ids))
+    ).all()
+    bdl_to_name: dict = {r.bdl_id: r.full_name for r in pim_rows}
+
+    # Batch-load explanations keyed by decision_id
+    dr_ids = [dr.id for dr in dr_rows]
+    de_rows = db.query(_DE).filter(_DE.decision_id.in_(dr_ids)).all()
+    decision_id_to_explanation: dict = {de.decision_id: de for de in de_rows}
+
+    # Assemble response
+    decisions_out = []
+    for dr in dr_rows:
+        de = decision_id_to_explanation.get(dr.id)
+        decision_dict = {
+            "bdl_player_id": dr.bdl_player_id,
+            "player_name": bdl_to_name.get(dr.bdl_player_id),
+            "as_of_date": str(dr.as_of_date),
+            "decision_type": dr.decision_type,
+            "target_slot": dr.target_slot,
+            "drop_player_id": dr.drop_player_id,
+            "drop_player_name": bdl_to_name.get(dr.drop_player_id) if dr.drop_player_id else None,
+            "lineup_score": dr.lineup_score,
+            "value_gain": dr.value_gain,
+            "confidence": dr.confidence,
+            "reasoning": dr.reasoning,
+        }
+        explanation_dict = None
+        if de:
+            explanation_dict = {
+                "summary": de.summary,
+                "factors": de.factors_json or [],
+                "confidence_narrative": de.confidence_narrative,
+                "risk_narrative": de.risk_narrative,
+                "track_record_narrative": de.track_record_narrative,
+            }
+        decisions_out.append({
+            "decision": decision_dict,
+            "explanation": explanation_dict,
+        })
+
+    return {
+        "decisions": decisions_out,
+        "count": len(decisions_out),
+        "as_of_date": str(target_date),
+        "decision_type": decision_type,
+    }
+
 
 @app.get("/api/fantasy/waiver", response_model=WaiverWireResponse)
 async def get_fantasy_waiver_recommendations(
