@@ -34,6 +34,7 @@ from backend.models import (
     CanonicalProjection,
     CategoryImpact,
     PlayerIdentity,
+    PlayerProjection,
     StatcastBatterMetrics,
     StatcastPitcherMetrics,
     SessionLocal,
@@ -234,6 +235,15 @@ class ProjectionAssemblyService:
         projection_date: date,
         z_pool: dict,
     ) -> int:
+        # Sprint 5: prefer live DB counting stats over March CSV when fangraphs_ros has run
+        live_proj = self._get_live_projection(mlbam_id, "")
+        if live_proj is not None and live_proj.hr is not None:
+            board_proj = dict(board_proj)
+            board_proj["hr"] = live_proj.hr or board_proj.get("hr", 0)
+            board_proj["r"] = live_proj.r or board_proj.get("r", 0)
+            board_proj["rbi"] = live_proj.rbi or board_proj.get("rbi", 0)
+            board_proj["sb"] = live_proj.sb or board_proj.get("sb", 0)
+
         pa = float(board_proj.get("pa", 0) or 0)
         # mlbam_id may be None for Yahoo-only players — skip Statcast lookup safely
         metrics = self._get_statcast_batter(mlbam_id) if mlbam_id is not None else None
@@ -321,6 +331,17 @@ class ProjectionAssemblyService:
         projection_date: date,
         z_pool: dict,
     ) -> int:
+        # Sprint 5: prefer live DB counting stats over March CSV when fangraphs_ros has run
+        live_proj = self._get_live_projection(mlbam_id, "")
+        if live_proj is not None:
+            board_proj = dict(board_proj)
+            if live_proj.w is not None:
+                board_proj["w"] = live_proj.w
+            if live_proj.k_pit is not None:
+                board_proj["k"] = live_proj.k_pit
+            if live_proj.nsv is not None:
+                board_proj["sv"] = live_proj.nsv
+
         ip = float(board_proj.get("ip", 0) or 0)
         # mlbam_id may be None for Yahoo-only players — skip Statcast lookup safely
         metrics = self._get_statcast_pitcher(mlbam_id) if mlbam_id is not None else None
@@ -445,6 +466,41 @@ class ProjectionAssemblyService:
             )
             .first()
         )
+
+    def _get_live_projection(
+        self, mlbam_id: Optional[int], player_name: str
+    ) -> Optional[PlayerProjection]:
+        """Return a PlayerProjection row if one exists with update_method != 'prior'.
+
+        Only non-prior rows are trusted over the static March CSV board.
+        'prior' means the row was seeded from the March CSV and has not been
+        updated by fangraphs_ros or a Bayesian pass yet -- treat as no override.
+
+        Returns None when:
+          - No row exists for the player.
+          - Row exists but update_method == 'prior' (stale -- treat as no override).
+          - Any DB error (never raises).
+        """
+        try:
+            if mlbam_id is not None:
+                row = (
+                    self.db.query(PlayerProjection)
+                    .filter(PlayerProjection.player_id == str(mlbam_id))
+                    .first()
+                )
+                if row is not None:
+                    return row if row.update_method != "prior" else None
+            # Fallback: exact name match (players without MLBAM mapping)
+            row = (
+                self.db.query(PlayerProjection)
+                .filter(PlayerProjection.player_name.ilike(f"%{player_name}%"))
+                .first()
+            )
+            if row is not None:
+                return row if row.update_method != "prior" else None
+        except Exception as exc:
+            logger.debug("_get_live_projection failed for %s: %s", player_name, exc)
+        return None
 
     # ------------------------------------------------------------------
     # Steamer dict builders

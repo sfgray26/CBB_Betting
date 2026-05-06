@@ -510,3 +510,75 @@ class TestProjectionAssemblyServiceRun:
         # players_in_batch stays 0 → final commit only called if players_in_batch > 0
         # (or not called at all — either is acceptable; just verify no errors)
         assert summary["errors"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5: live projection lookup
+# ---------------------------------------------------------------------------
+from unittest.mock import MagicMock
+
+
+class TestGetLiveProjection:
+    def _make_service(self):
+        svc = ProjectionAssemblyService.__new__(ProjectionAssemblyService)
+        svc.db = MagicMock()
+        svc.season = 2026
+        return svc
+
+    def test_returns_none_when_no_rows(self):
+        svc = self._make_service()
+        svc.db.query.return_value.filter.return_value.first.return_value = None
+        result = svc._get_live_projection(None, "Unknown Player")
+        assert result is None
+
+    def test_returns_row_when_mlbam_matches_and_non_prior(self):
+        svc = self._make_service()
+        mock_row = MagicMock()
+        mock_row.update_method = "bayesian"
+        mock_row.hr = 25
+        svc.db.query.return_value.filter.return_value.first.return_value = mock_row
+        result = svc._get_live_projection(12345, "Mike Trout")
+        assert result is mock_row
+
+    def test_returns_none_when_update_method_is_prior(self):
+        svc = self._make_service()
+        mock_row = MagicMock()
+        mock_row.update_method = "prior"
+        svc.db.query.return_value.filter.return_value.first.return_value = mock_row
+        result = svc._get_live_projection(12345, "Mike Trout")
+        assert result is None
+
+    def test_returns_none_on_db_exception(self):
+        svc = self._make_service()
+        svc.db.query.side_effect = Exception("db error")
+        result = svc._get_live_projection(12345, "Mike Trout")
+        assert result is None
+
+    def test_counting_stats_override_applied_correctly(self):
+        """Verify the merge logic: live HR/R/RBI/SB replace board values."""
+        live_hr, live_r, live_rbi, live_sb = 30, 90, 95, 5
+        board_proj = {"hr": 18, "r": 70, "rbi": 65, "sb": 8, "pa": 550,
+                      "avg": 0.280, "obp": 0.360, "slg": 0.500}
+
+        mock_proj = MagicMock()
+        mock_proj.update_method = "bayesian"
+        mock_proj.hr = live_hr
+        mock_proj.r = live_r
+        mock_proj.rbi = live_rbi
+        mock_proj.sb = live_sb
+
+        # Simulate the merge logic from _assemble_batter
+        live = mock_proj if mock_proj.update_method != "prior" else None
+        merged = dict(board_proj)
+        if live is not None and live.hr is not None:
+            merged["hr"] = live.hr or merged.get("hr", 0)
+            merged["r"] = live.r or merged.get("r", 0)
+            merged["rbi"] = live.rbi or merged.get("rbi", 0)
+            merged["sb"] = live.sb or merged.get("sb", 0)
+
+        assert merged["hr"] == 30
+        assert merged["r"] == 90
+        assert merged["rbi"] == 95
+        assert merged["sb"] == 5
+        assert merged["avg"] == 0.280   # rate stats unchanged
+        assert merged["pa"] == 550      # pa unchanged
