@@ -3673,7 +3673,7 @@ class DailyIngestionOrchestrator:
                             # Use skill_gap_percentile as proxy for skill_gap (informational only)
                             market_result = compute_market_score(
                                 skill_gap=0.0,  # informational, not used in formula
-                                skill_gap_percentile=skill_gap_pct,
+                                skill_gap_percentile=skill_gap_pct / 100.0,  # score_0_100 → [0,1]
                                 ownership_velocity=velocity,
                                 owned_pct=current_owned,
                                 confidence=confidence or 1.0,
