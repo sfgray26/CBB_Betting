@@ -6023,7 +6023,14 @@ class DailyIngestionOrchestrator:
                     for _, row in bat_blend.iterrows():
                         # name_to_mlbam is keyed by normalized_name, not FanGraphs player_id
                         player_name = str(row.get("name", "") or "")
-                        mlbam_id = name_to_mlbam.get(_norm(player_name)) if player_name else None
+                        # Trust blend mlbam_id (from FanGraphs xMLBAMID) over stale name->mapping lookup
+                        try:
+                            _raw_mid = row.get("mlbam_id")
+                            mlbam_id = str(int(_raw_mid)) if (_raw_mid is not None and int(_raw_mid) > 0) else None
+                        except (TypeError, ValueError):
+                            mlbam_id = None
+                        if not mlbam_id and player_name:
+                            mlbam_id = name_to_mlbam.get(_norm(player_name))
 
                         if not mlbam_id:
                             skipped += 1
@@ -6080,7 +6087,14 @@ class DailyIngestionOrchestrator:
                     for _, row in pit_blend.iterrows():
                         # name_to_mlbam is keyed by normalized_name, not FanGraphs player_id
                         player_name = str(row.get("name", "") or "")
-                        mlbam_id = name_to_mlbam.get(_norm(player_name)) if player_name else None
+                        # Trust blend mlbam_id (from FanGraphs xMLBAMID) over stale name->mapping lookup
+                        try:
+                            _raw_mid = row.get("mlbam_id")
+                            mlbam_id = str(int(_raw_mid)) if (_raw_mid is not None and int(_raw_mid) > 0) else None
+                        except (TypeError, ValueError):
+                            mlbam_id = None
+                        if not mlbam_id and player_name:
+                            mlbam_id = name_to_mlbam.get(_norm(player_name))
 
                         if not mlbam_id:
                             skipped += 1
@@ -6893,7 +6907,14 @@ class DailyIngestionOrchestrator:
                     for _, row in bat_blend.iterrows():
                         # name_to_mlbam is keyed by normalized_name, not FanGraphs player_id
                         player_name = str(row.get("name", "") or "")
-                        mlbam_id = name_to_mlbam.get(_norm(player_name)) if player_name else None
+                        # Trust blend mlbam_id (from FanGraphs xMLBAMID) over stale name->mapping lookup
+                        try:
+                            _raw_mid = row.get("mlbam_id")
+                            mlbam_id = str(int(_raw_mid)) if (_raw_mid is not None and int(_raw_mid) > 0) else None
+                        except (TypeError, ValueError):
+                            mlbam_id = None
+                        if not mlbam_id and player_name:
+                            mlbam_id = name_to_mlbam.get(_norm(player_name))
 
                         if not mlbam_id:
                             skipped += 1
@@ -6950,7 +6971,14 @@ class DailyIngestionOrchestrator:
                     for _, row in pit_blend.iterrows():
                         # name_to_mlbam is keyed by normalized_name, not FanGraphs player_id
                         player_name = str(row.get("name", "") or "")
-                        mlbam_id = name_to_mlbam.get(_norm(player_name)) if player_name else None
+                        # Trust blend mlbam_id (from FanGraphs xMLBAMID) over stale name->mapping lookup
+                        try:
+                            _raw_mid = row.get("mlbam_id")
+                            mlbam_id = str(int(_raw_mid)) if (_raw_mid is not None and int(_raw_mid) > 0) else None
+                        except (TypeError, ValueError):
+                            mlbam_id = None
+                        if not mlbam_id and player_name:
+                            mlbam_id = name_to_mlbam.get(_norm(player_name))
 
                         if not mlbam_id:
                             skipped += 1
