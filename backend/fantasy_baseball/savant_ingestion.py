@@ -220,6 +220,7 @@ class SavantIngestionAgent:
                 "bb_percent": self._savant_float(row.get("bb_percent", "")),
                 "k_9": self._savant_float(row.get("k_9", "")),
                 "whiff_percent": self._savant_float(row.get("whiff_percent", "")),
+                "pa": self._savant_int(row.get("pa", "")),
                 "w": self._savant_int(row.get("w", "")),
                 "l": self._savant_int(row.get("l", "")),
                 "qs": self._savant_int(row.get("qs", "")),
@@ -358,6 +359,7 @@ class SavantIngestionAgent:
                 existing.l = m.get("l")
                 existing.qs = m.get("qs")
                 existing.ip = m.get("ip")
+                existing.pa = m.get("pa")
                 existing.era = m.get("era")
                 existing.whip = m.get("whip")
                 existing.sv = m.get("sv")
@@ -385,6 +387,7 @@ class SavantIngestionAgent:
                     l=m.get("l"),
                     qs=m.get("qs"),
                     ip=m.get("ip"),
+                    pa=m.get("pa"),
                     era=m.get("era"),
                     whip=m.get("whip"),
                     sv=m.get("sv"),

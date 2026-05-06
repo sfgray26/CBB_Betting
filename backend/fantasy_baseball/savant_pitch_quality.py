@@ -27,6 +27,7 @@ class SavantPitcherInput:
     k_9: float | None = None
     whiff_percent: float | None = None
     ip: float | None = None
+    pa: int | None = None   # batters faced — used as IP proxy when ip is NULL
     pitches: int | None = None
     era: float | None = None
     whip: float | None = None
@@ -158,7 +159,10 @@ def _trend_adjustment(pitcher: SavantPitcherInput) -> float:
 
 
 def _sample_confidence(pitcher: SavantPitcherInput) -> float:
-    ip_conf = _clamp((pitcher.ip or 0.0) / 40.0, 0.0, 1.0)
+    ip_val = pitcher.ip
+    if ip_val is None and pitcher.pa is not None and pitcher.pa > 0:
+        ip_val = pitcher.pa / 4.3  # ~4.3 batters faced per inning
+    ip_conf = _clamp((ip_val or 0.0) / 40.0, 0.0, 1.0)
     pitch_conf = _clamp((pitcher.pitches or 0) / 650.0, 0.0, 1.0)
     return _clamp((ip_conf * 0.45) + (pitch_conf * 0.55), 0.0, 1.0)
 

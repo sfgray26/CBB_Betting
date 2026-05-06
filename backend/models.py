@@ -787,7 +787,8 @@ class StatcastPitcherMetrics(Base):
     w = Column(Integer)  # Wins
     l = Column(Integer)  # Losses
     qs = Column(Integer)  # Quality starts
-    ip = Column(Float)  # Innings pitched
+    ip = Column(Float)  # Innings pitched (NULL from Savant — use pa as proxy)
+    pa = Column(Integer, nullable=True)  # Batters faced (populated from Savant; use as IP proxy when ip is NULL)
     era = Column(Float)  # ERA
     whip = Column(Float)  # WHIP
     sv = Column(Float)  # Saves

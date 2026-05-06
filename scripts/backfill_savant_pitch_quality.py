@@ -67,6 +67,7 @@ def _fetch_pitchers(cur, season: int, as_of_date) -> list[SavantPitcherInput]:
             k_9,
             whiff_percent,
             ip,
+            pa,
             CAST(COALESCE(ip, 0) * 16 AS integer) AS pitches,
             era,
             whip
@@ -93,6 +94,7 @@ def _fetch_pitchers(cur, season: int, as_of_date) -> list[SavantPitcherInput]:
             k_9,
             whiff_percent,
             ip,
+            pa,
             pitches,
             era,
             whip,
@@ -114,6 +116,7 @@ def _fetch_pitchers(cur, season: int, as_of_date) -> list[SavantPitcherInput]:
                 k_9=k_9,
                 whiff_percent=whiff_percent,
                 ip=ip,
+                pa=pa,
                 pitches=pitches,
                 era=era,
                 whip=whip,
