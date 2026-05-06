@@ -261,6 +261,44 @@ class WaiverEdgeDetector:
             logger.warning("_load_market_scores: DB query failed (%s)", exc)
             return {}
 
+    def _load_matchup_scores(self, bdl_ids: list) -> dict:
+        """Sprint 4: Bulk-load today's matchup context for given BDL player IDs.
+
+        Returns {bdl_id: {"matchup_z": float, "matchup_score": float, "matchup_confidence": float}}.
+        Empty dict on any failure -- never blocks waiver recommendations.
+        """
+        if not bdl_ids:
+            return {}
+        try:
+            from datetime import date as _date
+            from backend.models import SessionLocal
+            from sqlalchemy import text
+
+            today = _date.today()
+            db = SessionLocal()
+            try:
+                rows = db.execute(
+                    text(
+                        "SELECT bdl_player_id, matchup_z, matchup_score, matchup_confidence "
+                        "FROM matchup_context "
+                        "WHERE bdl_player_id = ANY(:ids) AND game_date = :today"
+                    ),
+                    {"ids": list(bdl_ids), "today": today},
+                ).fetchall()
+                return {
+                    r[0]: {
+                        "matchup_z": float(r[1]) if r[1] is not None else 0.0,
+                        "matchup_score": float(r[2]) if r[2] is not None else 50.0,
+                        "matchup_confidence": float(r[3]) if r[3] is not None else 0.0,
+                    }
+                    for r in rows
+                }
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.debug("_load_matchup_scores failed (%s)", exc)
+            return {}
+
     @staticmethod
     def _yahoo_id_to_bdl_id(yahoo_id: int) -> Optional[int]:
         """Map Yahoo player_id to BDL ID via player_id_mapping.
@@ -367,21 +405,29 @@ class WaiverEdgeDetector:
         fa_keys = [fa.get("player_key") or fa.get("id") or "" for fa in free_agents[:40]]
         scarcity_lookup = self._load_scarcity_lookup([k for k in fa_keys if k])
 
-        # PR 4.5: Load market_score as tertiary tiebreaker
         from backend.services.config_service import is_flag_enabled
+
+        # Build single BDL ID map for all FAs -- reused by market signals + matchup context.
+        fa_bdl_map: dict = {}  # yahoo_id -> bdl_id
+        for fa in free_agents[:40]:
+            yahoo_id = fa.get("player_id")
+            if yahoo_id:
+                bdl_id = self._yahoo_id_to_bdl_id(yahoo_id)
+                if bdl_id:
+                    fa_bdl_map[yahoo_id] = bdl_id
+        bdl_id_list = list(fa_bdl_map.values())
+
+        # PR 4.5: Load market_score as tertiary tiebreaker
         use_market_signals = is_flag_enabled("market_signals_enabled")
-        market_lookup = {}
-        if use_market_signals:
-            bdl_ids = []
-            for fa in free_agents[:40]:
-                # Map Yahoo player_key to BDL ID
-                yahoo_id = fa.get("player_id")  # Yahoo player_id (integer)
-                if yahoo_id:
-                    bdl_id = self._yahoo_id_to_bdl_id(yahoo_id)
-                    if bdl_id:
-                        bdl_ids.append(bdl_id)
-            if bdl_ids:
-                market_lookup = self._load_market_scores(bdl_ids)
+        market_lookup: dict = {}
+        if use_market_signals and bdl_id_list:
+            market_lookup = self._load_market_scores(bdl_id_list)
+
+        # Sprint 4: Load today's matchup context for all FA batters
+        use_matchup_context = is_flag_enabled("feature_matchup_enabled")
+        matchup_lookup: dict = {}
+        if use_matchup_context and bdl_id_list:
+            matchup_lookup = self._load_matchup_scores(bdl_id_list)
 
         # CANONICAL_PROJECTION_V1: build TeamContext for roster-depth-aware scoring.
         # depth_factor adjusts the matchup need_score: shallow rosters (injured players,
@@ -423,22 +469,38 @@ class WaiverEdgeDetector:
             scarcity_multiplier = max(1.0, 1.0 + (13 - scarcity_rank) * 0.05)
             score *= scarcity_multiplier
 
-            # PR 4.5: Load market_score as tertiary tiebreaker
-            market_score = 50.0  # Default to neutral
-            if use_market_signals:
-                yahoo_id = fa.get("player_id")
-                if yahoo_id:
-                    bdl_id = self._yahoo_id_to_bdl_id(yahoo_id)
-                    if bdl_id:
-                        market_score = market_lookup.get(bdl_id, 50.0)
+            # Resolve BDL ID for this FA (pre-built above -- single query per call, not N+1)
+            fa_yahoo_id = fa.get("player_id")
+            fa_bdl_id = fa_bdl_map.get(fa_yahoo_id) if fa_yahoo_id else None
+
+            # PR 4.5: Market score as tertiary tiebreaker
+            market_score = market_lookup.get(fa_bdl_id, 50.0) if fa_bdl_id else 50.0
+
             if score <= 0 and not has_deficit_signal:
                 score = float(fa.get("z_score") or 0.0)
+
+            # Sprint 4: Apply matchup context addend for batters only.
+            # Hitter matchup context (opponent ERA/WHIP/park/splits) is only meaningful
+            # for batting categories. Skip pitchers -- their matchup is opponent lineup quality,
+            # which is a separate model (not yet implemented).
+            fa_is_pitcher = bool(_PITCHER_POSITIONS.intersection(fa.get("positions") or []))
+            matchup_row = matchup_lookup.get(fa_bdl_id, {}) if fa_bdl_id else {}
+            matchup_z = matchup_row.get("matchup_z", 0.0) or 0.0
+            matchup_score_val = matchup_row.get("matchup_score", 50.0) or 50.0
+            matchup_confidence = matchup_row.get("matchup_confidence", 0.0) or 0.0
+            if (
+                use_matchup_context
+                and not fa_is_pitcher
+                and matchup_confidence >= 0.3
+            ):
+                # Confidence-weighted addend: at z=2.0, conf=1.0 -> +1.0 to score.
+                # At z=-2.0, conf=1.0 -> -1.0 (bad matchup dampens recommendation).
+                score += matchup_z * matchup_confidence * 0.5
 
             # CANONICAL_PROJECTION_V1: apply roster-depth factor to the matchup component.
             # Amplifies FA value when team is IL-heavy/shallow; dampens when roster is deep.
             applied_depth_factor = 1.0
             if team_context is not None:
-                fa_is_pitcher = bool(_PITCHER_POSITIONS.intersection(fa.get("positions") or []))
                 applied_depth_factor = pitcher_depth_factor if fa_is_pitcher else batter_depth_factor
                 score *= applied_depth_factor
 
@@ -448,8 +510,11 @@ class WaiverEdgeDetector:
                 "add_player": fa,
                 "drop_player_name": drop_candidate.get("name", "") if drop_candidate else "",
                 "need_score": score,
-                "market_score": market_score,  # PR 4.5: Tertiary tiebreaker
-                "canonical_depth_factor": applied_depth_factor,  # 1.0 when flag disabled
+                "market_score": market_score,
+                "canonical_depth_factor": applied_depth_factor,
+                "matchup_z": matchup_z if not fa_is_pitcher else 0.0,
+                "matchup_score": matchup_score_val if not fa_is_pitcher else 50.0,
+                "matchup_confidence": matchup_confidence if not fa_is_pitcher else 0.0,
                 "win_prob_before": 0.5,
                 "win_prob_after": 0.5,
                 "win_prob_gain": 0.0,
