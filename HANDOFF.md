@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-05-06 | **Architect:** Claude Code (Master Architect)
-> **Branch:** `stable/cbb-prod` | **HEAD:** see latest commit
+> **Branch:** `stable/cbb-prod` | **HEAD:** `612d351`
 > **Deploy:** `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}`
 
 ---
@@ -11,73 +11,75 @@
 | Component | Status | Notes |
 |---|---|---|
 | Railway deployment | LIVE | FastAPI + uvicorn, us-west1 |
-| `canonical_projections` | LIVE (445 rows) | SAVANT_ADJUSTED=234, STATIC_BOARD=211 |
-| `category_impacts` | LIVE (5,350 rows) | Per-category z-scores |
-| `player_projections` (FanGraphs RoS) | LIVE (9,686 rows) | Updated 2026-05-06 15:15:53 |
+| `canonical_projections` | LIVE (445 rows) | SAVANT_ADJUSTED=234, STATIC_BOARD=211 — 0 errors after BIGINT fix |
+| `category_impacts` | LIVE (5,350 rows) | Per-category z-scores + marginal numerator/denominator columns |
+| `player_projections` (FanGraphs RoS) | LIVE (9,686 rows) | prior_source=fangraphs_ros, updated 2026-05-06 15:15 ET |
+| `player_projections.player_type` | ~71% NULL | Backfill script ready (A-1) — DevOps to run |
 | `player_identities` | 454/454 resolved | 12-row backfill complete 2026-05-06 |
 | `CANONICAL_PROJECTION_V1` flag | **true** | Nightly job runs at 11 PM ET |
-| `market_signals_enabled` | false | Pending Codex enable (Task C-2) |
-| `feature_matchup_enabled` | false | Pending Codex seed + enable (Task C-3/C-4) |
-| Stuff+/Location+ (FanGraphs) | BLOCKED | Cloudflare blocks Railway IP — P2 |
+| `market_signals_enabled` | false | Pending: C-7 → C-2 |
+| `feature_matchup_enabled` | false | Pending: C-3 → C-4 |
+| `opportunity_enabled` | false | Unblock after A-1 (player_type backfill) runs |
+| `/api/fantasy/decisions` route | **LIVE** | Commit `b799aec` — was 404, now serves stored decisions |
+| Stuff+/Location+ (FanGraphs) | BLOCKED | Cloudflare blocks Railway IP — P2, do not attempt |
 | Savant Pitch Quality | Code done, DB pending | Pending Codex migration (Task C-5) |
 | Savant Park Factors | Code done, DB pending | Pending Codex migration (Task C-6) |
 
 ---
 
-## P0 BLOCKING — Must Run Before Next Nightly Job
-
-`canonical_projections.player_id` is `INTEGER` in the production DB. Commit `8388062` fixed the ORM to `BigInteger`. The migration script is written but not yet run. Until it runs, 9 Yahoo-ID-only players (Johnny Brito, JP France, Kenny Hernandez, Brent Honeywell Jr., etc.) fail assembly with `NumericValueOutOfRange`.
-
-**Codex: run this first, before anything else:**
-```
-railway run python scripts/migration_canonical_player_id_bigint.py
-```
-Expected output: `"player_id column altered to BIGINT -- done"`
-Verify: `SELECT pg_typeof(player_id) FROM canonical_projections LIMIT 1;` → `bigint`
-
----
-
 ## Code Fixes Deployed This Session (2026-05-06)
 
-The following bugs are fixed in the latest `stable/cbb-prod` push. **No action needed — code is already deployed. Just run the rollout steps below.**
+All bugs listed here are fixed and deployed. **No code action needed — just run the rollout steps below.**
 
-| Bug | Fix |
-|-----|-----|
-| `yahoo_id_sync` `UniqueViolation: _pim_bdl_id_uc` on every run (48h outage) | Deleted v2 duplicate `_sync_yahoo_id_mapping` that lacked conflict guard; v1 (with guard) is now the only definition |
-| Yahoo sync covered only ~3.7% of BDL universe | FA enumeration now paginated: up to 200 per position (was 25), ~2,000+ unique Yahoo players |
-| `market_signals_update` aborted: `column "name" does not exist` | Fixed `SELECT name` → `SELECT full_name` in `_compute_market_signals` |
-| `opportunity_update` aborted: `column "espn_id" does not exist` | Fixed JOIN `pim.espn_id = pp.player_id` → `pim.mlbam_id::text = pp.player_id` |
-| HANDOFF.md C-2/C-4 used wrong column (`flag_value`) and wrong header (`X-Admin-API-Key`) | Corrected to `enabled` and `X-API-Key` throughout |
-
-New file: `scripts/migration_dedupe_player_id_mapping.py` — dedupes `player_id_mapping` (1,513 dupe rows, 707 shared names). Run as C-7 below.
+| Commit | Bug | Fix |
+|--------|-----|-----|
+| `21f96df` | `ros_projection_refresh` UniqueViolation for two-way players (Ohtani, etc.) | `bat_processed_ids` set + `db.flush()` + pitcher merge preserves batting stats |
+| `8388062` | `canonical_projections.player_id` INT4 overflow for large Yahoo IDs | `Column(Integer)` → `Column(BigInteger)` in ORM + migration script |
+| `12b7f5a` | `migration_dedupe_player_id_mapping` UniqueViolation on `_pim_yahoo_key_uc` | Added Step 3a-pre: NULL loser `yahoo_key` values before merge runs |
+| `b799aec` | Frontend `/decisions` page calling routes that returned 404 | Added `GET /api/fantasy/decisions` and `GET /api/fantasy/decisions/status` to `main.py` |
+| `612d351` | `backfill_player_type.py` had hardcoded DB credential, missing `'both'` case, bad `::jsonb` cast | Full rewrite — removed credential, added `--dry-run`, fixed `::jsonb` and two-way logic |
+| earlier | `yahoo_id_sync` UniqueViolation every run (48h outage) | Removed duplicate `_sync_yahoo_id_mapping` v2 (no conflict guard); v1 (guarded) is canonical |
+| earlier | Yahoo sync covered only ~3.7% of BDL universe | FA enumeration paginated to 200/position (was 25) |
+| earlier | `market_signals_update`: `column "name" does not exist` | `SELECT name` → `SELECT full_name` in `_compute_market_signals` |
+| earlier | `opportunity_update`: `column "espn_id" does not exist` | Fixed JOIN to use `pim.mlbam_id::text = pp.player_id` |
 
 ---
 
-## Codex DevOps Queue (ordered — complete P0 before proceeding)
+## Codex DevOps Queue (ordered)
 
-### C-1 (P0): BIGINT migration
-```bash
-railway run python scripts/migration_canonical_player_id_bigint.py
-# verify: SELECT pg_typeof(player_id) FROM canonical_projections LIMIT 1; -- bigint
-```
+### ✅ C-1: BIGINT migration — COMPLETE
+`canonical_projections.player_id` is now BIGINT in production. 445 upserted, 0 errors verified.
 
-### C-7: Dedupe player_id_mapping (after C-1, before C-2)
+### C-7: Dedupe player_id_mapping — RETRY NEEDED
+Fix committed (`12b7f5a`). Previous run failed on `_pim_yahoo_key_uc`; root cause fixed.
 ```bash
 railway run python scripts/migration_dedupe_player_id_mapping.py --dry-run
-# Review output: rows_before, rows_after, merged_count, name_conflicts_skipped, orphans_remaining
-# If merged_count > 2000: ABORT, do not run without Architect review
+# Confirm dry-run shows "Step 3a-pre" in output (the new NULL-losers step)
 railway run python scripts/migration_dedupe_player_id_mapping.py
-# Sanity: SELECT COUNT(*), COUNT(DISTINCT normalized_name) FROM player_id_mapping;
-#         SELECT COUNT(*) FROM player_id_mapping WHERE yahoo_id IS NOT NULL AND bdl_id IS NULL;
-#         -- target: orphans < 50 (was 451)
+# Expected: SUCCESS, rows_before=11036, merged_count≈109, no UniqueViolation
+# Sanity:
+#   SELECT COUNT(*), COUNT(DISTINCT normalized_name) FROM player_id_mapping;
+#   SELECT COUNT(*) FROM player_id_mapping WHERE yahoo_id IS NOT NULL AND bdl_id IS NULL;
+#   -- target: orphans < 50 (was 451)
+```
+**STOP if UniqueViolation recurs on a different key — escalate to Claude with the key name.**
+
+### C-A1: Backfill player_type (after C-7)
+```bash
+railway run python scripts/backfill_player_type.py --dry-run
+# Confirm: shows ~9,000+ rows with sensible hitter/pitcher/both split
+railway run python scripts/backfill_player_type.py
+# Expected: "DONE — updated N rows" where N > 8000
+# Then enable opportunity flag:
+# UPDATE feature_flags SET enabled=true WHERE flag_name='opportunity_enabled';
 ```
 
-### C-7b: Trigger yahoo_id_sync (after C-7, to validate fix)
+### C-7b: Trigger yahoo_id_sync (after C-7)
 ```bash
 curl -X POST https://<railway-url>/admin/ingestion/run/yahoo_id_sync \
      -H "X-API-Key: $ADMIN_API_KEY"
-# Expected: {"status":"success","matched":>=600,"unmatched":<200,"backfilled":<500}
-# Was broken for 48+ hours — first successful run after this deploy proves the fix
+# Expected: {"status":"success","matched":>=600,"unmatched":<200}
+# First successful run validates the 48h outage fix
 ```
 
 ### C-2: Enable market signals (after C-7)
@@ -125,25 +127,22 @@ railway run python scripts/seed_savant_park_factors.py
 
 ## Claude Architect Queue
 
-### A-1 (P0): Fix `player_type` NULL in `player_projections`
-71% of rows have `NULL player_type`. The `ProjectionAssemblyService` cannot classify
-these players correctly. Write `scripts/backfill_player_type.py`:
-- Infer from `positions` array: any of `('SP','RP','P')` → `'pitcher'`; else → `'batter'`; both → `'both'`
-- Run locally to verify, then hand to Codex for Railway execution.
+### ✅ A-1: Fix `player_type` NULL in `player_projections` — SCRIPT READY
+`scripts/backfill_player_type.py` rewritten and committed (`612d351`). Handed to DevOps as C-A1.
 
-### A-2 (P0): Investigate Yahoo ID sync coverage
-`_sync_yahoo_id_mapping()` achieves ~3.7% coverage. Most waiver FAs never get BDL ID
-enrichment, so market signals and matchup context are silently skipped for them.
-Assign K-NEXT-2 to Kimi first (root cause analysis), then implement fix.
+### ✅ A-2: Yahoo ID sync coverage — COMPLETE
+Root cause found (K-NEXT-2), duplicate method removed, pagination fix deployed. Validate via C-7b.
 
-### A-3 (P1): Resolve frontend waiver endpoint mismatch
-Frontend calls: `GET /api/fantasy/decisions?decision_type=waiver`
-Backend serves: `GET /api/fantasy/waiver/recommendations`
-Confirm with user: add alias route OR fix Next.js call. Do not change both sides.
+### ✅ A-3: Frontend `/decisions` endpoint missing — COMPLETE
+`GET /api/fantasy/decisions` and `GET /api/fantasy/decisions/status` added to `main.py` (`b799aec`).
+Joins `decision_results` + `decision_explanations` + `player_id_mapping` name lookup.
+Returns `{decisions: [{decision, explanation}], count, as_of_date, decision_type}`.
+Note: `decision_results` is populated by the P17 decision optimization job — rows will be empty
+until that pipeline phase has run at least once.
 
-### A-4 (P1): Sprint 3 — Lineup UI data binding (Milestone 10)
+### A-4 (P1): Sprint 3 — Lineup UI data binding
 Wire `game_time`, `player_id`, `SP` scores into lineup optimizer API response.
-Prerequisite: A-1 and A-2 resolved first.
+Prerequisite: C-A1 (player_type backfill) confirmed in production.
 
 ---
 
