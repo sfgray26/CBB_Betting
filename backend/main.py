@@ -5642,6 +5642,64 @@ async def get_daily_briefing(
         raise HTTPException(status_code=500, detail=f"Briefing generation failed: {str(e)}")
 
 
+@app.get("/api/fantasy/projections/canonical")
+async def get_canonical_projections(
+    limit: int = 100,
+    player_type: Optional[str] = None,
+    min_confidence: float = 0.0,
+    db: Session = Depends(get_db),
+):
+    """Canonical projection surface for frontend consumption."""
+    from backend.models import CanonicalProjection, PlayerIdentity
+    q = db.query(CanonicalProjection)
+    if player_type:
+        q = q.filter(CanonicalProjection.player_type == player_type.upper())
+    if min_confidence > 0:
+        q = q.filter(CanonicalProjection.confidence_score >= min_confidence)
+    rows = (
+        q.order_by(CanonicalProjection.confidence_score.desc().nullslast())
+         .limit(limit)
+         .all()
+    )
+    mlbam_ids = [r.player_id for r in rows if r.player_id and r.player_id > 0]
+    identity_map: dict = {}
+    if mlbam_ids:
+        identities = (
+            db.query(PlayerIdentity)
+            .filter(PlayerIdentity.mlbam_id.in_(mlbam_ids))
+            .all()
+        )
+        identity_map = {i.mlbam_id: i.full_name for i in identities}
+    return [
+        {
+            "player_id": r.player_id,
+            "player_name": identity_map.get(r.player_id, f"player_{r.player_id}"),
+            "player_type": r.player_type,
+            "source_engine": r.source_engine,
+            "projection_date": r.projection_date.isoformat() if r.projection_date else None,
+            "confidence_score": r.confidence_score,
+            "projected_pa": r.projected_pa,
+            "projected_ip": r.projected_ip,
+            "proj_hr": r.proj_hr,
+            "proj_sb": r.proj_sb,
+            "proj_r": r.proj_r,
+            "proj_rbi": r.proj_rbi,
+            "proj_avg": r.proj_avg,
+            "proj_ops": r.proj_ops,
+            "proj_era": r.proj_era,
+            "proj_whip": r.proj_whip,
+            "proj_w": r.proj_w,
+            "proj_sv": r.proj_sv,
+            "proj_k": r.proj_k,
+            "xwoba": r.xwoba,
+            "xera": r.xera,
+            "savant_pitch_quality_score": r.savant_pitch_quality_score,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        }
+        for r in rows
+    ]
+
+
 @app.get("/api/fantasy/waiver", response_model=WaiverWireResponse)
 async def get_fantasy_waiver_recommendations(
     position: Optional[str] = Query(None),
