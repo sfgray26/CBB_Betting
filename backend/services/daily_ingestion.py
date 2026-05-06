@@ -798,6 +798,116 @@ def _update_pitcher_advanced(db, season: int = 2026) -> dict:
         return {"updated_stuff": 0, "updated_location": 0, "total": 0}
 
 
+def _update_pitch_quality_scores(db, season: int = 2026) -> int:
+    """
+    Compute and upsert savant_pitch_quality_scores from fresh statcast_pitcher_metrics.
+
+    Called at the end of the 2 AM savant leaderboard ingestion so the table
+    is always current-day rather than requiring a manual backfill script.
+
+    Returns the number of rows upserted.  Any failure is logged and returns 0
+    so the caller (savant_ingestion job) is never disrupted.
+    """
+    try:
+        from datetime import date as _date
+
+        from sqlalchemy import text
+
+        from backend.fantasy_baseball.savant_pitch_quality import (
+            SavantPitcherInput,
+            score_pitcher_population,
+        )
+
+        rows = db.execute(text("""
+            SELECT
+                mlbam_id, player_name, team, season,
+                xera, xwoba,
+                barrel_percent_allowed, hard_hit_percent_allowed,
+                avg_exit_velocity_allowed, k_percent, bb_percent,
+                k_9, whiff_percent, ip,
+                CAST(COALESCE(ip, 0) * 16 AS integer) AS pitches,
+                era, whip
+            FROM statcast_pitcher_metrics
+            WHERE season = :season
+        """), {"season": season}).fetchall()
+
+        if not rows:
+            logger.warning("_update_pitch_quality_scores: no pitcher metrics for season %d", season)
+            return 0
+
+        as_of = _date.today()
+        pitchers = [
+            SavantPitcherInput(
+                player_id=str(r[0]), player_name=r[1], team=r[2], season=int(r[3]),
+                as_of_date=as_of, xera=r[4], xwoba=r[5],
+                barrel_percent_allowed=r[6], hard_hit_percent_allowed=r[7],
+                avg_exit_velocity_allowed=r[8], k_percent=r[9], bb_percent=r[10],
+                k_9=r[11], whiff_percent=r[12], ip=r[13], pitches=r[14],
+                era=r[15], whip=r[16],
+            )
+            for r in rows
+        ]
+        scores = score_pitcher_population(pitchers)
+
+        upserted = 0
+        for score in scores:
+            db.execute(text("""
+                INSERT INTO savant_pitch_quality_scores (
+                    player_id, player_name, team, season, as_of_date,
+                    savant_pitch_quality, arsenal_quality, bat_missing_skill,
+                    contact_suppression, command_stability, trend_adjustment,
+                    sample_confidence, signals, inputs, updated_at
+                )
+                VALUES (
+                    :player_id, :player_name, :team, :season, :as_of_date,
+                    :savant_pitch_quality, :arsenal_quality, :bat_missing_skill,
+                    :contact_suppression, :command_stability, :trend_adjustment,
+                    :sample_confidence, :signals::jsonb, :inputs::jsonb, NOW()
+                )
+                ON CONFLICT (player_id, season, as_of_date) DO UPDATE SET
+                    player_name        = EXCLUDED.player_name,
+                    team               = EXCLUDED.team,
+                    savant_pitch_quality = EXCLUDED.savant_pitch_quality,
+                    arsenal_quality    = EXCLUDED.arsenal_quality,
+                    bat_missing_skill  = EXCLUDED.bat_missing_skill,
+                    contact_suppression = EXCLUDED.contact_suppression,
+                    command_stability  = EXCLUDED.command_stability,
+                    trend_adjustment   = EXCLUDED.trend_adjustment,
+                    sample_confidence  = EXCLUDED.sample_confidence,
+                    signals            = EXCLUDED.signals,
+                    inputs             = EXCLUDED.inputs,
+                    updated_at         = NOW()
+            """), {
+                "player_id":            score.player_id,
+                "player_name":          score.player_name,
+                "team":                 score.inputs.get("team"),
+                "season":               score.season,
+                "as_of_date":           score.as_of_date,
+                "savant_pitch_quality": score.savant_pitch_quality,
+                "arsenal_quality":      score.arsenal_quality,
+                "bat_missing_skill":    score.bat_missing_skill,
+                "contact_suppression":  score.contact_suppression,
+                "command_stability":    score.command_stability,
+                "trend_adjustment":     score.trend_adjustment,
+                "sample_confidence":    score.sample_confidence,
+                "signals":              __import__("json").dumps(score.signals),
+                "inputs":               __import__("json").dumps(score.inputs),
+            })
+            upserted += 1
+
+        db.commit()
+        logger.info("_update_pitch_quality_scores: upserted %d rows for season %d", upserted, season)
+        return upserted
+
+    except Exception as exc:
+        logger.warning("_update_pitch_quality_scores: failed, scores not updated: %s", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return 0
+
+
 def _validate_statcast_coverage(db, table: str, column: str, threshold: float = 0.70) -> bool:
     """
     PR 2.3 — check null-rate for a Statcast column and update the corresponding
@@ -5443,12 +5553,32 @@ class DailyIngestionOrchestrator:
                         db, "statcast_pitcher_metrics", "location_plus",
                     )
 
+                    # PR 2.4: Compute and upsert savant_pitch_quality_scores
+                    pitch_quality_upserted = await asyncio.to_thread(
+                        _update_pitch_quality_scores, db, season=2026
+                    )
+                    logger.info(
+                        "_ingest_savant_leaderboards: pitch_quality_scores upserted for %d pitchers",
+                        pitch_quality_upserted,
+                    )
+
+                    # Invalidate statcast_loader in-memory cache so the next API
+                    # request picks up the freshly written metrics immediately
+                    # rather than waiting until the 7:30 AM pybaseball job.
+                    try:
+                        from backend.fantasy_baseball import statcast_loader as _sc
+                        _sc._loaded_at = 0.0
+                        logger.debug("_ingest_savant_leaderboards: statcast_loader cache invalidated")
+                    except Exception as _cache_exc:
+                        logger.warning("_ingest_savant_leaderboards: cache invalidation failed: %s", _cache_exc)
+
                     return {
                         "status": "success",
                         "batters": b_total,
                         "pitchers": p_total,
                         "sprint_speed_updated": sprint_updated,
                         "pitcher_advanced_updated": pitcher_advanced,
+                        "pitch_quality_upserted": pitch_quality_upserted,
                         "sprint_speed_flag_enabled": sprint_ok,
                         "stuff_plus_flag_enabled": stuff_ok,
                         "location_plus_flag_enabled": location_ok,
