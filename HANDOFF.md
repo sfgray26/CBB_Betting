@@ -25,8 +25,8 @@
 | Savant Pitch Quality | **LIVE** | 554 scores seeded; avg_confidence=0.191 (below 0.3 threshold) — flags remain false |
 | Savant Park Factors | **LIVE** | 28 venues / 56 rows seeded |
 | `player_market_signals` | LIVE (10,466 rows) | avg_market_score=51.53, BUY_LOW=135 / FAIR=618 / SLEEPER=131 — healthy |
-| `player_opportunity` | LIVE (flag enabled) | upserted=0 bug fixed in HEAD — needs deploy + re-run |
-| `mlb_player_stats` | UNKNOWN | Root cause of empty decision pipeline — Gemini to diagnose (see D-3) |
+| `player_opportunity` | **LIVE + SIGNAL** | 2738 rows, avg_z=0.0 (centered), min=-0.598, max=4.082, avg_conf=0.120 |
+| `mlb_player_stats` | LIVE (15,407 rows) | Confirmed populating — now feeds opportunity engine |
 
 ---
 
@@ -57,45 +57,36 @@
 
 ---
 
-## DevOps Queue — HEAD needs deploy
+## DevOps Queue
 
-### D-3: Deploy HEAD + validate both fixes
+### D-3/D-4/D-5: COMPLETE ✅
+- opportunity_update: 2738/2738 upserted, avg_z=0.0 (centered), min=-0.598, max=4.082, avg_conf=0.120
+
+### D-6: Validate yahoo_id_sync (b82bc14 already live — no deploy needed)
+
+The previous 502 was an HTTP gateway timeout — job ran in background. The `_pim_bdl_id_uc` SAVEPOINT fix is deployed. Trigger and wait 3 min before checking:
 
 ```bash
-# 1. Deploy
-railway up --detach
-
-# 2. Health check
-curl.exe https://<railway-url>/health
-
-# 3. Trigger opportunity_update and verify upserted > 0
-curl.exe -X POST https://<railway-url>/admin/ingestion/run/opportunity_update \
-     -H "X-API-Key: $ADMIN_API_KEY"
-# Expected: upserted > 0 (was 0 due to session-poison bug now fixed)
-# If still 0: report the warning logs — bdl_id FK mismatches will now be logged per row
-
-# 4. Trigger yahoo_id_sync and verify no UniqueViolation
 curl.exe -X POST https://<railway-url>/admin/ingestion/run/yahoo_id_sync \
      -H "X-API-Key: $ADMIN_API_KEY"
-# Expected: status=success, records > 0 (was failing with UniqueViolation / 0 updates)
-# If insert_conflict warnings appear in logs, that is EXPECTED — they now skip gracefully
-
-# 5. Run A-4 diagnostic queries against prod DB (use Railway DB proxy):
+# 502 is expected (job takes >60s) — do NOT treat as failure
+# Wait 3 minutes, then check job_runs:
 railway run python -c "
 from backend.database import SessionLocal
 from sqlalchemy import text
 db = SessionLocal()
-print('mlb_player_stats:', db.execute(text('SELECT COUNT(*), MAX(game_date) FROM mlb_player_stats')).fetchone())
-print('mlb_game_log:', db.execute(text('SELECT COUNT(*), MAX(game_date) FROM mlb_game_log')).fetchone())
-print('rolling_stats today:', db.execute(text('SELECT COUNT(*) FROM player_rolling_stats WHERE as_of_date = CURRENT_DATE')).fetchone())
-print('player_scores today:', db.execute(text('SELECT COUNT(*) FROM player_scores WHERE as_of_date = CURRENT_DATE AND window_days = 14')).fetchone())
-print('decision_results today:', db.execute(text('SELECT COUNT(*) FROM decision_results WHERE as_of_date = CURRENT_DATE')).fetchone())
+rows = db.execute(text('''
+    SELECT status, records_processed, error_message, started_at
+    FROM job_runs WHERE job_name = 'yahoo_id_sync'
+    ORDER BY started_at DESC LIMIT 3
+''')).fetchall()
+for r in rows: print(r)
 db.close()
 "
-# Report all 5 counts + MAX(game_date) values. STOP and escalate to Claude if any count is 0.
+# Expected: status=success (or completed), records_processed > 0
+# insert_conflict warnings in Railway logs are EXPECTED and fine
+# STOP and escalate to Claude only if status=failed with a NEW error type
 ```
-
-**Reporting protocol:** After each step, report exit code + key output lines. STOP on first failure.
 
 ---
 
