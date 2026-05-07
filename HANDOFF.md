@@ -113,6 +113,13 @@ Once Gemini reports the 5 counts:
 ### A-5: Dead `_refresh_ros_projections` v1 at line ~5952 (low priority)
 Python last-definition-wins: v2 at line ~6822 is active. Remove v1. Do when deploying for something else.
 
+### A-6 (P1): Wire IP tracking in `/api/fantasy/budget`
+**Report:** `reports/2026-05-06-fantasy-budget-endpoint-audit.md`
+
+`acquisitions_used` and `IL_slots_used` are live via Yahoo API. `ip_accumulated` is hardcoded `0.0` with a TODO.
+**Fix:** Use `yahoo.get_matchup_stats(week=current_week)` → `my_stats["IP"]` (stat_id 50 already mapped in `yahoo_client_resilient.py`). Also fix `ip_minimum` inconsistency (90.0 in endpoint vs 18.0 in `scoreboard_orchestrator.py`).
+**Context strip:** Can be built now with `/api/fantasy/budget` as source. Use placeholder (`—`) for IP until A-6 is resolved.
+
 ---
 
 ## Kimi Research Queue

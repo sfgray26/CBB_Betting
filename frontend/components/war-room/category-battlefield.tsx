@@ -157,12 +157,11 @@ export function CategoryBattlefield({ data, simulate }: Props) {
     return m
   }, [simulate])
 
-  const allCats: { cat: RotoCategory; type: 'hitting' | 'pitching' }[] = [
-    ...BATTER_CATEGORIES.map(c => ({ cat: c as RotoCategory, type: 'hitting' as const })),
-    ...PITCHER_CATEGORIES.map(c => ({ cat: c as RotoCategory, type: 'pitching' as const })),
-  ]
-
   const filtered = useMemo(() => {
+    const allCats: { cat: RotoCategory; type: 'hitting' | 'pitching' }[] = [
+      ...BATTER_CATEGORIES.map(c => ({ cat: c as RotoCategory, type: 'hitting' as const })),
+      ...PITCHER_CATEGORIES.map(c => ({ cat: c as RotoCategory, type: 'pitching' as const })),
+    ]
     return allCats.filter(({ cat, type }) => {
       if (filter === 'hitting') return type === 'hitting'
       if (filter === 'pitching') return type === 'pitching'
@@ -172,7 +171,7 @@ export function CategoryBattlefield({ data, simulate }: Props) {
       }
       return true
     })
-  }, [filter, projMap, allCats])
+  }, [filter, projMap])
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
@@ -196,7 +195,6 @@ export function CategoryBattlefield({ data, simulate }: Props) {
 
   const hitters = sorted.filter(x => x.type === 'hitting')
   const pitchers = sorted.filter(x => x.type === 'pitching')
-  const showGrouped = filter === 'all' || filter === 'hitting' || filter === 'pitching'
 
   return (
     <div className="bg-[#202020]">
