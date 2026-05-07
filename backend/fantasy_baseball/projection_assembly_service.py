@@ -594,16 +594,29 @@ class ProjectionAssemblyService:
     def _confidence_score(self, result: FusionResult, sample_size: int) -> float:
         """
         Returns 0.0-1.0 composite confidence scalar.
-        Formula: min(1.0, sample_size / 300) * source_multiplier
+
+        Confidence blends three things:
+          - a conservative floor for real projection sources (RoS/Steamer is
+            informative even when Statcast sample_size is unavailable),
+          - sample-size confidence when PA/IP is present,
+          - component coverage for fusion rows.
+
+        This avoids treating static RoS rows and low-sample Statcast fusion rows
+        as zero-confidence blanks while still keeping population priors low.
         """
         sample_factor = min(1.0, sample_size / 300.0)
+        component_factor = min(1.0, max(0.0, float(result.components_fused or 0)) / 3.0)
+
         if result.source == "fusion":
-            source_mult = 1.0
-        elif result.source in ("steamer", "statcast_shrunk"):
-            source_mult = 0.7
+            score = 0.25 + (0.55 * sample_factor) + (0.20 * component_factor)
+        elif result.source == "statcast_shrunk":
+            score = 0.20 + (0.45 * sample_factor) + (0.15 * component_factor)
+        elif result.source == "steamer":
+            score = 0.35 + (0.35 * sample_factor)
         else:
-            source_mult = 0.4
-        return sample_factor * source_mult
+            score = 0.05 + (0.15 * sample_factor)
+
+        return max(0.0, min(1.0, score))
 
     def _shrinkage_from_result(self, result: FusionResult, sample_size: int) -> float:
         """

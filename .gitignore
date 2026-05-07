@@ -103,3 +103,6 @@ reports/GEMINI_YAHOO_PIPELINE_PAYLOADS.
 kimi-mcp-config.json
 mcp-shared-config.json
 .env.backup
+
+# Claude MCP config (contains secrets)
+.claude/mcp.json

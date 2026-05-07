@@ -37,6 +37,18 @@
 | `opportunity_update` upserted=0 | First FK violation (`bdl_player_id` not in `player_id_mapping`) poisoned SQLAlchemy session; all 2738 subsequent `db.execute()` raised `PendingRollbackError` silently caught | SAVEPOINT/RELEASE/ROLLBACK wrapper per row in `_compute_opportunity` loop (~line 3399). Also removed dead `pg_insert(text(...).columns)` |
 | `yahoo_id_sync` UniqueViolation (`_pim_bdl_id_uc`) kills entire transaction | INSERT path uses only `_pim_yahoo_key_uc` as ON CONFLICT target; if two players resolve to same `bdl_id`, `_pim_bdl_id_uc` fires at `db.commit()` → full rollback → 0 updates returned | SAVEPOINT/RELEASE/ROLLBACK around `db.execute(stmt)` in the "new row" INSERT path (~line 2459); failed rows logged as `insert_conflict` and skipped |
 
+## Codex Feature Branch Notes (2026-05-07)
+
+Branch: `codex-fantasy-predictive-quality-gates`
+
+Purpose: implement pre-merge predictive-quality hardening for Claude audit before stable/prod merge.
+
+Changes:
+- Add denominator-aware rate gates in `backend/services/scoring_engine.py`: AVG/OBP/OPS require `w_ab >= 20`; ERA/WHIP/K9 require `w_ip >= 8`. Counting stats still score in small samples.
+- Filter invalid/null market rows in `backend/services/waiver_edge_detector.py` before using market score as a waiver tiebreaker.
+- Normalize `daily_snapshots.pipeline_jobs_run` in `backend/services/snapshot_engine.py` to fantasy pipeline job names only.
+- Give canonical RoS/Steamer and component-based fusion rows bounded non-zero confidence in `backend/fantasy_baseball/projection_assembly_service.py` instead of zeroing them solely because sample size is missing.
+
 **Note:** Kimi's K-NEXT-2 report incorrectly identified a duplicate `_sync_yahoo_id_mapping` at line 7682. Verified: only one definition exists (line 2204). The real bug was the missing `_pim_bdl_id_uc` conflict guard on the INSERT path. Both bugs now fixed.
 
 ---

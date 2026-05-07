@@ -43,7 +43,7 @@ def _hitter(
         as_of_date=AS_OF,
         window_days=WINDOW,
         games_in_window=games,
-        w_ab=15.0,          # non-None marks as hitter
+        w_ab=25.0,          # non-None marks as hitter; qualifies rate stats
         w_ip=None,
         w_home_runs=hr,
         w_rbi=rbi,
@@ -71,7 +71,7 @@ def _pitcher(
         window_days=WINDOW,
         games_in_window=games,
         w_ab=None,
-        w_ip=5.0,           # non-None marks as pitcher
+        w_ip=9.0,           # non-None marks as pitcher; qualifies rate stats
         w_home_runs=None,
         w_rbi=None,
         w_stolen_bases=None,
@@ -101,8 +101,8 @@ def _two_way(
         as_of_date=AS_OF,
         window_days=WINDOW,
         games_in_window=games,
-        w_ab=10.0,
-        w_ip=3.0,
+        w_ab=25.0,
+        w_ip=9.0,
         w_home_runs=hr,
         w_rbi=rbi,
         w_stolen_bases=sb,
