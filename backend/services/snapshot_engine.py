@@ -32,6 +32,15 @@ _FANTASY_PIPELINE_JOBS: tuple[str, ...] = (
     "backtesting",
     "explainability",
     "snapshot",
+    # Sprint 4/5 pipeline jobs added 2026-05-07
+    "statcast",
+    "savant_ingestion",
+    "fangraphs_ros",
+    "waiver_scan",
+    "opportunity_update",
+    "market_signals_update",
+    "matchup_context_update",
+    "canonical_projection_refresh",
 )
 _FANTASY_PIPELINE_JOB_SET = set(_FANTASY_PIPELINE_JOBS)
 

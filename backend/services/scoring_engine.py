@@ -642,6 +642,8 @@ def compute_league_params(
     for z_key, (col_name, _is_lower_better) in _ALL_CATEGORIES.items():
         values: list[float] = []
         for row in rolling_rows:
+            if not _has_rate_denominator(row, z_key):
+                continue
             val = getattr(row, col_name, None)
             if val is not None:
                 values.append(float(val))

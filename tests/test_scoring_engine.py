@@ -16,6 +16,7 @@ from backend.services.scoring_engine import (
     Z_CAP,
     PlayerScoreResult,
     compute_league_zscores,
+    compute_league_params,
     apply_opportunity_adjustment,
 )
 
@@ -699,3 +700,61 @@ def test_opportunity_adjustment_multiple_players_independent():
     assert r1.composite_z == pytest.approx(1.2)
     assert r2.composite_z == pytest.approx(0.7)
     assert r3.composite_z == pytest.approx(1.0)  # unchanged
+
+
+# ===========================================================================
+# compute_league_params: rate denominator gate (F-1 regression guard)
+# ===========================================================================
+
+def test_compute_league_params_excludes_small_sample_era():
+    """
+    compute_league_params must apply the same rate denominator gate as
+    compute_league_zscores. A blowup ERA from a 2.2-IP outing must NOT
+    be included in the ERA pool fed to simulation_engine.
+
+    Without the gate, a 21.00 ERA row would inflate the league mean/std
+    causing the simulator to produce unrealistic distributions.
+    """
+    # 5 pitchers with normal ERA + 1 blowup with sub-threshold IP
+    good_pitchers = [
+        _pitcher(pid=i, era=3.5 + i * 0.1, whip=1.2, k9=9.0)
+        for i in range(1, 6)
+    ]
+    for p in good_pitchers:
+        p.w_ip = 12.0  # well above MIN_RATE_IP
+
+    blowup = _pitcher(pid=99, era=21.0, whip=4.5, k9=0.0)
+    blowup.w_ip = 2.2  # below MIN_RATE_IP=8.0
+
+    rows = good_pitchers + [blowup]
+    means, stds = compute_league_params(rows)
+
+    # ERA pool should exclude the blowup row
+    assert "era" in means, "ERA should appear in league params with 5 qualifying pitchers"
+    # Mean ERA of the 5 good pitchers: (3.6+3.7+3.8+3.9+4.0)/5 = 3.8
+    assert means["era"] == pytest.approx(3.8, abs=0.01), (
+        f"ERA mean should be ~3.8 (good pitchers only), got {means['era']:.3f}. "
+        "If 21.00 was included the mean would be ~6.83."
+    )
+
+
+def test_compute_league_params_excludes_small_sample_avg():
+    """AVG pool must exclude hitters with w_ab < MIN_RATE_AB."""
+    good_hitters = [
+        _hitter(pid=i, hr=5.0, rbi=20.0, sb=3.0, avg=0.270 + i * 0.005, obp=0.340)
+        for i in range(1, 6)
+    ]
+    for h in good_hitters:
+        h.w_ab = 25.0
+
+    blowup = _hitter(pid=99, hr=1.0, rbi=2.0, sb=0.0, avg=0.650, obp=0.750)
+    blowup.w_ab = 8.0  # tiny sample, .650 AVG should be excluded
+
+    rows = good_hitters + [blowup]
+    means, stds = compute_league_params(rows)
+
+    assert "avg" in means
+    # Mean AVG of the 5 good hitters: 0.270..0.290 range, well below 0.400
+    assert means["avg"] < 0.400, (
+        f"AVG mean {means['avg']:.3f} is suspiciously high -- blowup row may be included"
+    )
