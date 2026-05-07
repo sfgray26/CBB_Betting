@@ -14,6 +14,15 @@ export default function WarRoomPage() {
     refetchInterval: 5 * 60_000,
   })
 
+  // Simulate runs Monte Carlo — loads after current values; stale 5min, refresh 15min
+  const simulate = useQuery({
+    queryKey: ['matchup', 'simulate'],
+    queryFn: endpoints.simulateMatchup,
+    staleTime: 5 * 60_000,
+    refetchInterval: 15 * 60_000,
+    retry: 1,
+  })
+
   if (matchup.isLoading) {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
@@ -45,10 +54,16 @@ export default function WarRoomPage() {
         <div className="flex items-center gap-2 mb-1">
           <Swords className="h-3.5 w-3.5 text-[#FFC000]" />
           <span className="text-xs font-bold tracking-widest uppercase text-[#FFC000]">War Room</span>
+          {simulate.isLoading && (
+            <span className="ml-auto flex items-center gap-1.5 text-[#494949] text-[10px] tracking-widest uppercase">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Simulating...
+            </span>
+          )}
         </div>
 
-        <MatchupHeader data={matchup.data} />
-        <CategoryBattlefield data={matchup.data} />
+        <MatchupHeader data={matchup.data} simulate={simulate.data} />
+        <CategoryBattlefield data={matchup.data} simulate={simulate.data} />
       </div>
     </div>
   )
