@@ -59,7 +59,6 @@ const navSections = [
   {
     label: 'Fantasy',
     items: [
-      { href: '/decisions',          label: 'Daily Decisions',   icon: User },
       { href: '/war-room',           label: 'War Room',          icon: Swords },
       { href: '/war-room/streaming', label: 'Streaming Station', icon: Waves },
       { href: '/war-room/roster-lab',label: 'Roster Lab',        icon: FlaskConical },

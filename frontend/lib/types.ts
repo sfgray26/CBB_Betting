@@ -358,42 +358,45 @@ export interface DecisionPipelineStatus {
 // H2H 20-cat: batting + pitching, each category scored win/loss vs opponent
 // ═════════════════════════════════════════════════════════════════════════════
 
-// Batting categories (K = batter strikeouts — lower is better)
-export type BatterCategory = 'R' | 'H' | 'HR' | 'RBI' | 'K' | 'TB' | 'AVG' | 'OPS' | 'NSB'
+// Batting categories — canonical codes from backend/stat_contract/fantasy_stat_contract.json
+// K_B = batter Ks (lower is better); HR_B = batter HR (distinct from HR_P = pitcher HR allowed)
+export type BatterCategory = 'R' | 'H' | 'HR_B' | 'RBI' | 'K_B' | 'TB' | 'AVG' | 'OPS' | 'NSB'
 
-// Pitching categories (HRA = HR Allowed lower-is-better; PK = pitcher Ks; K9 = K/9)
-export type PitcherCategory = 'IP' | 'W' | 'L' | 'HRA' | 'PK' | 'ERA' | 'WHIP' | 'K9' | 'QS' | 'NSV'
+// Pitching categories — 9 scoring cats; IP/H_AB/GS are display-only, not scored
+// K_9 uses underscore (backend canonical code); K_P = pitcher Ks; HR_P = HR allowed
+export type PitcherCategory = 'W' | 'L' | 'HR_P' | 'K_P' | 'ERA' | 'WHIP' | 'K_9' | 'QS' | 'NSV'
 
 export type RotoCategory = BatterCategory | PitcherCategory
 
-// Human-readable label (HRA displays as "HR", PK displays as "K", K9 as "K/9")
+// Display labels (HR_B -> "HR", K_B -> "K", HR_P -> "HR", K_P -> "K", K_9 -> "K/9")
 export const CATEGORY_LABEL: Record<RotoCategory, string> = {
-  R: 'R', H: 'H', HR: 'HR', RBI: 'RBI', K: 'K', TB: 'TB', AVG: 'AVG', OPS: 'OPS', NSB: 'NSB',
-  IP: 'IP', W: 'W', L: 'L', HRA: 'HR', PK: 'K', ERA: 'ERA', WHIP: 'WHIP', K9: 'K/9', QS: 'QS', NSV: 'NSV',
+  R: 'R', H: 'H', HR_B: 'HR', RBI: 'RBI', K_B: 'K', TB: 'TB', AVG: 'AVG', OPS: 'OPS', NSB: 'NSB',
+  W: 'W', L: 'L', HR_P: 'HR', K_P: 'K', ERA: 'ERA', WHIP: 'WHIP', K_9: 'K/9', QS: 'QS', NSV: 'NSV',
 }
 
-// Lower value wins the category (batter K = Ks against you; pitching L/HRA/ERA/WHIP)
-export const LOWER_IS_BETTER: RotoCategory[] = ['K', 'L', 'HRA', 'ERA', 'WHIP']
+// Categories where lower value wins the week
+export const LOWER_IS_BETTER: RotoCategory[] = ['K_B', 'L', 'HR_P', 'ERA', 'WHIP']
 
-// Ratio stats — show number + color only, not a split bar (magnitude not comparable across teams)
-export const RATIO_CATEGORIES: RotoCategory[] = ['AVG', 'OPS', 'ERA', 'WHIP', 'K9']
+// Ratio/rate stats: display value + color only, no split bar
+export const RATIO_CATEGORIES: RotoCategory[] = ['AVG', 'OPS', 'ERA', 'WHIP', 'K_9']
 
-// Ordered display lists for the UI
-export const BATTER_CATEGORIES: BatterCategory[] = ['R', 'H', 'HR', 'RBI', 'K', 'TB', 'AVG', 'OPS', 'NSB']
-export const PITCHER_CATEGORIES: PitcherCategory[] = ['IP', 'W', 'L', 'HRA', 'PK', 'ERA', 'WHIP', 'K9', 'QS', 'NSV']
+// Ordered exactly as matchup_display_order in stat_contract
+export const BATTER_CATEGORIES: BatterCategory[] = ['R', 'H', 'HR_B', 'RBI', 'K_B', 'TB', 'AVG', 'OPS', 'NSB']
+export const PITCHER_CATEGORIES: PitcherCategory[] = ['W', 'L', 'HR_P', 'K_P', 'ERA', 'WHIP', 'K_9', 'QS', 'NSV']
 
-export interface MatchupTeamStats {
-  batting: Partial<Record<BatterCategory, number | null>>
-  pitching: Partial<Record<PitcherCategory, number | null>>
+// Matchup shapes — exactly match backend schemas.py MatchupTeamOut / MatchupResponse
+export interface MatchupTeamOut {
+  team_key: string
+  team_name: string
+  stats: Record<string, number | null>
 }
 
 export interface MatchupResponse {
-  my_stats: MatchupTeamStats
-  opp_stats: MatchupTeamStats
-  opponent_name: string
-  week: number
-  my_team_name?: string | null
-  playoff_seed?: number | null
+  week: number | null
+  my_team: MatchupTeamOut
+  opponent: MatchupTeamOut
+  is_playoffs: boolean
+  message: string | null
 }
 
 export interface CategoryProjection {
@@ -422,11 +425,14 @@ export interface LineupPlayer {
   status: PlayerStatus
 }
 
+// Matches backend DailyLineupResponse
 export interface LineupResponse {
-  lineup: LineupPlayer[]
-  warnings: string[]
-  optimizer_type: string
   date: string
+  batters: LineupPlayer[]
+  pitchers: unknown[]   // StartingPitcherOut — typed when roster-deployment is built
+  games_count: number
+  no_games_today: boolean
+  lineup_warnings: string[]
 }
 
 export interface CategoryDeficit {
