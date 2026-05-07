@@ -156,7 +156,16 @@
       "Bash(sed 's/\"//')",
       "Bash(sed 's/.*id=\"//')",
       "Bash(sed 's/\".*//')",
-      "Bash(awk '/add_job/,/replace_existing=True/ {print}' \"C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge\\\\backend\\\\services\\\\daily_ingestion.py\")"
+      "Bash(awk '/add_job/,/replace_existing=True/ {print}' \"C:\\\\Users\\\\sfgra\\\\repos\\\\Fixed\\\\cbb-edge\\\\backend\\\\services\\\\daily_ingestion.py\")",
+      "mcp__chrome-devtools__new_page",
+      "mcp__chrome-devtools__take_screenshot",
+      "mcp__chrome-devtools__take_snapshot",
+      "mcp__chrome-devtools__fill",
+      "mcp__chrome-devtools__click",
+      "mcp__chrome-devtools__navigate_page",
+      "mcp__chrome-devtools__list_console_messages",
+      "mcp__chrome-devtools__list_network_requests",
+      "mcp__chrome-devtools__get_network_request"
     ]
   },
   "enabledPlugins": {}

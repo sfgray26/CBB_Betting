@@ -6,15 +6,21 @@ import { BATTER_CATEGORIES, PITCHER_CATEGORIES, LOWER_IS_BETTER } from '@/lib/ty
 
 const ALL_SCORING: RotoCategory[] = [...BATTER_CATEGORIES, ...PITCHER_CATEGORIES]
 
+function toNum(v: number | string | null | undefined): number | null {
+  if (v === null || v === undefined || v === '' || v === '-') return null
+  const n = Number(v)
+  return isFinite(n) ? n : null
+}
+
 function computeScore(data: MatchupResponse) {
   let myWins = 0
   let oppWins = 0
   for (const cat of ALL_SCORING) {
-    const myVal = data.my_team.stats[cat] ?? null
-    const oppVal = data.opponent.stats[cat] ?? null
-    if (myVal === null || oppVal === null || myVal === oppVal) continue
+    const a = toNum(data.my_team.stats[cat])
+    const b = toNum(data.opponent.stats[cat])
+    if (a === null || b === null || a === b) continue
     const lowerBetter = LOWER_IS_BETTER.includes(cat)
-    if (lowerBetter ? myVal < oppVal : myVal > oppVal) myWins++
+    if (lowerBetter ? a < b : a > b) myWins++
     else oppWins++
   }
   return { myWins, oppWins }

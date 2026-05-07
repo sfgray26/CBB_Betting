@@ -147,6 +147,12 @@ def test_build_snapshot_returns_correct_type():
     assert isinstance(result, SnapshotResult)
 
 
+def test_build_snapshot_filters_non_fantasy_job_names():
+    inp = _make_input(pipeline_jobs_run=["mlb_odds", "player_scores", "snapshot", "mlb_odds"])
+    result = build_snapshot(inp)
+    assert result.pipeline_jobs_run == ["player_scores", "snapshot"]
+
+
 # ---------------------------------------------------------------------------
 # 10. HEALTHY health_reasons is empty list
 # ---------------------------------------------------------------------------

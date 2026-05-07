@@ -81,6 +81,21 @@ MIN_SAMPLE: int = _get_threshold("scoring.min_sample", default=3)
 # Cap Z-scores at this absolute value to reduce outlier distortion
 Z_CAP: float = _get_threshold("scoring.z_cap", default=3.0)
 
+# Minimum denominators for volatile rate categories. Counting stats can remain
+# useful in tiny windows, but rate stats need enough opportunity to avoid
+# turning one hot/cold game into a misleading predictive signal.
+MIN_RATE_AB: float = _get_threshold("scoring.min_rate_ab", default=20.0)
+MIN_RATE_IP: float = _get_threshold("scoring.min_rate_ip", default=8.0)
+
+_RATE_DENOMINATORS: dict[str, tuple[str, float]] = {
+    "z_avg": ("w_ab", MIN_RATE_AB),
+    "z_obp": ("w_ab", MIN_RATE_AB),
+    "z_ops": ("w_ab", MIN_RATE_AB),
+    "z_era": ("w_ip", MIN_RATE_IP),
+    "z_whip": ("w_ip", MIN_RATE_IP),
+    "z_k_per_9": ("w_ip", MIN_RATE_IP),
+}
+
 
 # Category weights based on scarcity (inverse of league average SD)
 # Categories with higher variance get higher weights
@@ -388,6 +403,16 @@ def _percentile_rank(player_z: float, cohort_z_scores: list[float]) -> float:
     return round(rank / n * 100.0, 1)
 
 
+def _has_rate_denominator(row, z_key: str) -> bool:
+    """Return False when a rate category lacks enough AB/IP to be predictive."""
+    denominator = _RATE_DENOMINATORS.get(z_key)
+    if denominator is None:
+        return True
+    col_name, minimum = denominator
+    value = getattr(row, col_name, None)
+    return value is not None and float(value) >= minimum
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -445,6 +470,8 @@ def compute_league_zscores(
             if is_hitter_cat and pt == "pitcher":
                 continue
             if not is_hitter_cat and pt == "hitter":
+                continue
+            if not _has_rate_denominator(row, z_key):
                 continue
             val = getattr(row, col_name, None)
             if val is not None:

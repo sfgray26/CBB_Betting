@@ -187,6 +187,20 @@ class TestConfidenceScore:
         score = svc._confidence_score(r, sample_size=0)
         assert score <= 0.4
 
+    def test_steamer_prior_has_nonzero_confidence_without_sample(self):
+        svc = ProjectionAssemblyService.__new__(ProjectionAssemblyService)
+        svc.season = 2026
+        r = _make_fusion_result(source="steamer", components_fused=0)
+        score = svc._confidence_score(r, sample_size=0)
+        assert 0.25 <= score <= 0.5
+
+    def test_fusion_components_have_bounded_confidence_without_sample(self):
+        svc = ProjectionAssemblyService.__new__(ProjectionAssemblyService)
+        svc.season = 2026
+        r = _make_fusion_result(source="fusion", components_fused=3)
+        score = svc._confidence_score(r, sample_size=0)
+        assert 0.25 <= score < 0.7
+
 
 class TestSourceEngineAssignment:
     """Verify correct source_engine strings based on data availability."""

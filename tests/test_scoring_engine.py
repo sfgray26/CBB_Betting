@@ -242,6 +242,48 @@ def test_whip_inverted_low_whip_is_positive_z():
     assert r.z_whip > 0.0, f"Low WHIP should give positive z_whip, got {r.z_whip}"
 
 
+def test_small_sample_hitter_rate_stats_are_suppressed():
+    """Tiny AB samples should not turn unsustainable AVG/OBP/OPS into rate z-scores."""
+    rows = [
+        _hitter(pid=1, hr=1.0, rbi=4.0, avg=0.650, obp=0.700, games=2),
+        _hitter(pid=2, hr=1.0, rbi=4.0, avg=0.280, obp=0.340),
+        _hitter(pid=3, hr=1.0, rbi=4.0, avg=0.270, obp=0.330),
+        _hitter(pid=4, hr=1.0, rbi=4.0, avg=0.260, obp=0.320),
+    ]
+    rows[0].w_ab = 8.0
+    rows[0].w_ops = 1.500
+    for row in rows[1:]:
+        row.w_ab = 28.0
+        row.w_ops = 0.740
+
+    results = compute_league_zscores(rows, AS_OF, WINDOW)
+    r = _result_for(results, pid=1)
+
+    assert r.z_avg is None
+    assert r.z_obp is None
+    assert r.z_ops is None
+
+
+def test_small_sample_pitcher_rate_stats_are_suppressed():
+    """Tiny IP samples should not turn blowup ERA/WHIP/K9 rows into rate z-scores."""
+    rows = [
+        _pitcher(pid=1, era=21.0, whip=4.5, k9=18.0, games=1),
+        _pitcher(pid=2, era=3.20, whip=1.10, k9=9.0),
+        _pitcher(pid=3, era=3.40, whip=1.20, k9=8.5),
+        _pitcher(pid=4, era=3.60, whip=1.25, k9=8.0),
+    ]
+    rows[0].w_ip = 2.2
+    for row in rows[1:]:
+        row.w_ip = 12.0
+
+    results = compute_league_zscores(rows, AS_OF, WINDOW)
+    r = _result_for(results, pid=1)
+
+    assert r.z_era is None
+    assert r.z_whip is None
+    assert r.z_k_per_9 is None
+
+
 # ===========================================================================
 # 7 & 8. Z capped at +/- Z_CAP
 # ===========================================================================

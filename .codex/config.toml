@@ -1,0 +1,10 @@
+[mcp_servers.jamubc-gemini-mcp-tool]
+args = ["gemini-mcp-tool"]
+command = "uvx"
+
+[mcp_servers.kimi-code]
+args = [
+    "-y",
+    "kimi-mcp-server",
+]
+command = "npx"

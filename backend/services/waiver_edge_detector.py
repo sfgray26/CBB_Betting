@@ -249,12 +249,14 @@ class WaiverEdgeDetector:
                         FROM player_market_signals
                         WHERE bdl_player_id = ANY(:bdl_ids)
                           AND as_of_date = :today
+                          AND market_score IS NOT NULL
+                          AND market_tag IS NOT NULL
                         """
                     ),
                     {"bdl_ids": bdl_ids, "today": today},
                 ).fetchall()
                 # Default to 50.0 (neutral) for missing players
-                return {r[0]: r[1] for r in rows} if rows else {}
+                return {int(r[0]): float(r[1]) for r in rows if r[1] is not None} if rows else {}
             finally:
                 db.close()
         except Exception as exc:

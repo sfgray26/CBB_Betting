@@ -12,25 +12,35 @@ import {
 } from '@/lib/types'
 import { CategoryStatusTag } from './category-status-tag'
 
-function formatStat(cat: RotoCategory, val: number | null | undefined): string {
-  if (val === null || val === undefined) return '—'
-  if (cat === 'AVG' || cat === 'OPS') return val.toFixed(3).replace(/^0/, '')
-  if (cat === 'ERA' || cat === 'WHIP' || cat === 'K_9') return val.toFixed(2)
-  return val < 0 ? String(val) : String(Math.round(val))
+function formatStat(cat: RotoCategory, val: number | string | null | undefined): string {
+  if (val === null || val === undefined || val === '' || val === '-') return '—'
+  const n = Number(val)
+  if (!isFinite(n)) return '—'
+  if (cat === 'AVG' || cat === 'OPS') return n.toFixed(3).replace(/^0/, '')
+  if (cat === 'ERA' || cat === 'WHIP' || cat === 'K_9') return n.toFixed(2)
+  return n < 0 ? String(n) : String(Math.round(n))
 }
 
-function isWinning(myVal: number | null | undefined, oppVal: number | null | undefined, lowerBetter: boolean): boolean | null {
-  if (myVal == null || oppVal == null) return null
-  if (myVal === oppVal) return null
-  return lowerBetter ? myVal < oppVal : myVal > oppVal
+function toNum(v: number | string | null | undefined): number | null {
+  if (v === null || v === undefined || v === '' || v === '-') return null
+  const n = Number(v)
+  return isFinite(n) ? n : null
 }
 
-function barMyPct(myVal: number | null | undefined, oppVal: number | null | undefined): number {
-  if (myVal == null || oppVal == null) return 50
-  if (myVal < 0 || oppVal < 0) return 50
-  const total = myVal + oppVal
+function isWinning(myVal: number | string | null | undefined, oppVal: number | string | null | undefined, lowerBetter: boolean): boolean | null {
+  const a = toNum(myVal), b = toNum(oppVal)
+  if (a == null || b == null) return null
+  if (a === b) return null
+  return lowerBetter ? a < b : a > b
+}
+
+function barMyPct(myVal: number | string | null | undefined, oppVal: number | string | null | undefined): number {
+  const a = toNum(myVal), b = toNum(oppVal)
+  if (a == null || b == null) return 50
+  if (a < 0 || b < 0) return 50
+  const total = a + b
   if (total === 0) return 50
-  return (myVal / total) * 100
+  return (a / total) * 100
 }
 
 function actionHint(proj: CategoryProjection | undefined, lowerBetter: boolean): string {
@@ -58,8 +68,8 @@ type SortMode = 'flip' | 'margin' | 'type'
 
 interface RowProps {
   cat: RotoCategory
-  myVal: number | null | undefined
-  oppVal: number | null | undefined
+  myVal: number | string | null | undefined
+  oppVal: number | string | null | undefined
   proj: CategoryProjection | undefined
 }
 

@@ -5,7 +5,7 @@ Strangler-fig extraction from backend/main.py.
 Do NOT import from other backend.routers modules here.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func, or_, and_, inspect
@@ -4288,17 +4288,155 @@ async def apply_fantasy_lineup(
 # MATCHUP SIMULATE
 # ============================================================================
 
+# cat_scores keys stored in player_projections → v2 lowercase mcmc keys
+_PROJ_TO_SIM_KEY: dict[str, str] = {
+    "r": "r", "h": "h", "hr": "hr_b", "rbi": "rbi",
+    "k_bat": "k_b", "tb": "tb", "avg": "avg", "ops": "ops", "nsb": "nsb",
+    "w": "w", "l": "l", "hr_pit": "hr_p", "k_pit": "k_p",
+    "era": "era", "whip": "whip", "k9": "k_9", "qs": "qs", "nsv": "nsv",
+}
+
+
+def _fetch_rosters_for_simulate(db: Session) -> tuple[list, list]:
+    """Build my_roster and opponent_roster dicts for simulate_weekly_matchup.
+
+    Fetches both Yahoo rosters from the scoreboard, then enriches each player
+    with cat_scores from the player_projections table. Falls back to empty
+    cat_scores when a player has no projection row.
+    """
+    try:
+        client = get_yahoo_client()
+    except YahooAuthError as exc:
+        raise HTTPException(status_code=503, detail="Yahoo not configured") from exc
+
+    my_team_key = os.getenv("YAHOO_TEAM_KEY", "") or client.get_my_team_key()
+
+    # Discover opponent team key from the scoreboard
+    opponent_team_key: Optional[str] = None
+    try:
+        matchups = client.get_scoreboard()
+        for m in matchups or []:
+            if not isinstance(m, dict):
+                continue
+            teams = m.get("teams") or m.get("0", {}).get("teams", {})
+            team_keys: list[str] = []
+            if isinstance(teams, list):
+                for item in teams:
+                    if isinstance(item, dict):
+                        inner = item.get("team", item)
+                        if isinstance(inner, list):
+                            for sub in inner:
+                                if isinstance(sub, dict) and "team_key" in sub:
+                                    team_keys.append(sub["team_key"])
+                        elif isinstance(inner, dict):
+                            if inner.get("team_key"):
+                                team_keys.append(inner["team_key"])
+            elif isinstance(teams, dict):
+                count_t = int(teams.get("count", 0))
+                for ti in range(count_t):
+                    entry = teams.get(str(ti), {})
+                    inner = entry.get("team", entry) if isinstance(entry, dict) else {}
+                    if isinstance(inner, list):
+                        for sub in inner:
+                            if isinstance(sub, dict) and "team_key" in sub:
+                                team_keys.append(sub["team_key"])
+                    elif isinstance(inner, dict) and inner.get("team_key"):
+                        team_keys.append(inner["team_key"])
+
+            is_my_matchup = any(
+                tk == my_team_key or (tk and my_team_key and (tk in my_team_key or my_team_key in tk))
+                for tk in team_keys
+            )
+            if is_my_matchup:
+                opponent_team_key = next(
+                    (
+                        tk for tk in team_keys
+                        if tk != my_team_key and not (tk and my_team_key and my_team_key in tk)
+                    ),
+                    None,
+                )
+                break
+    except Exception as _sb_err:
+        logger.warning("simulate: scoreboard lookup failed: %s", _sb_err)
+
+    # Build name→PlayerProjection map for cat_scores enrichment
+    _proj_by_name: dict[str, PlayerProjection] = {}
+    try:
+        _proj_rows = db.query(PlayerProjection).filter(
+            PlayerProjection.cat_scores.isnot(None)
+        ).all()
+        for _pr in _proj_rows:
+            if _pr.player_name:
+                _proj_by_name[_normalize_identity_name(_pr.player_name)] = _pr
+    except Exception as _db_err:
+        logger.warning("simulate: projection name-map build failed: %s", _db_err)
+
+    def _player_dict(p: dict) -> dict:
+        name = p.get("name", "")
+        positions = p.get("eligible_positions", []) or p.get("positions", [])
+        if isinstance(positions, str):
+            positions = [positions]
+        cat_scores: dict[str, float] = {}
+        proj = _proj_by_name.get(_normalize_identity_name(name))
+        if proj and proj.cat_scores:
+            for src, dest in _PROJ_TO_SIM_KEY.items():
+                val = proj.cat_scores.get(src)
+                if val is not None:
+                    cat_scores[dest] = float(val)
+        is_pitcher = any(pos in ("SP", "RP", "P") for pos in positions)
+        return {
+            "name": name,
+            "positions": positions,
+            "cat_scores": cat_scores,
+            "starts_this_week": 1 if is_pitcher else 0,
+        }
+
+    my_raw = client.get_roster(team_key=my_team_key)
+    my_roster = [_player_dict(p) for p in my_raw]
+
+    opp_roster: list = []
+    if opponent_team_key:
+        try:
+            opp_raw = client.get_roster(team_key=opponent_team_key)
+            opp_roster = [_player_dict(p) for p in opp_raw]
+        except Exception as _opp_err:
+            logger.warning("simulate: opponent roster fetch failed: %s", _opp_err)
+
+    return my_roster, opp_roster
+
+
 @router.post("/api/fantasy/matchup/simulate")
 async def simulate_matchup(
-    payload: MatchupSimulateRequest,
     user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+    payload: Optional[MatchupSimulateRequest] = Body(None),
 ):
-    """Monte Carlo simulation of a weekly H2H matchup."""
+    """Monte Carlo simulation of a weekly H2H matchup.
+
+    When called with no body (or empty rosters), fetches both rosters from
+    Yahoo and enriches with cat_scores from player_projections.
+    """
     from backend.fantasy_baseball.mcmc_simulator import simulate_weekly_matchup
+
+    if payload is None:
+        payload = MatchupSimulateRequest()
+
+    my_roster = payload.my_roster
+    opponent_roster = payload.opponent_roster
+
+    if not my_roster or not opponent_roster:
+        my_roster, opponent_roster = _fetch_rosters_for_simulate(db)
+
+    if not my_roster or not opponent_roster:
+        raise HTTPException(
+            status_code=422,
+            detail="Roster data unavailable — Yahoo or DB returned no players.",
+        )
+
     n = min(max(100, payload.n_sims), 5000)
     result = simulate_weekly_matchup(
-        my_roster=payload.my_roster,
-        opponent_roster=payload.opponent_roster,
+        my_roster=my_roster,
+        opponent_roster=opponent_roster,
         n_sims=n,
     )
     return result
