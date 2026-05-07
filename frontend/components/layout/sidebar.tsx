@@ -14,6 +14,9 @@ import {
   Radio,
   ShieldAlert,
   User,
+  Swords,
+  Waves,
+  FlaskConical,
 } from 'lucide-react'
 
 const SHOW_BRACKET = false
@@ -56,7 +59,10 @@ const navSections = [
   {
     label: 'Fantasy',
     items: [
-      { href: '/decisions', label: 'Daily Decisions', icon: User },
+      { href: '/decisions',          label: 'Daily Decisions',   icon: User },
+      { href: '/war-room',           label: 'War Room',          icon: Swords },
+      { href: '/war-room/streaming', label: 'Streaming Station', icon: Waves },
+      { href: '/war-room/roster-lab',label: 'Roster Lab',        icon: FlaskConical },
     ],
     soon: false,
     hidden: false,
@@ -125,7 +131,9 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
             <ul className="space-y-0.5">
               {section.items.map((item) => {
                 const Icon = item.icon
-                const isActive = pathname === item.href
+                const isActive = item.href === '/war-room'
+                  ? pathname === '/war-room'
+                  : pathname.startsWith(item.href)
 
                 if (section.soon) {
                   return (

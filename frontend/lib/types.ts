@@ -352,3 +352,121 @@ export interface DecisionPipelineStatus {
     total_row_count: number | null
   }
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// War Room — League Scoring Categories
+// H2H 20-cat: batting + pitching, each category scored win/loss vs opponent
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Batting categories (K = batter strikeouts — lower is better)
+export type BatterCategory = 'R' | 'H' | 'HR' | 'RBI' | 'K' | 'TB' | 'AVG' | 'OPS' | 'NSB'
+
+// Pitching categories (HRA = HR Allowed lower-is-better; PK = pitcher Ks; K9 = K/9)
+export type PitcherCategory = 'IP' | 'W' | 'L' | 'HRA' | 'PK' | 'ERA' | 'WHIP' | 'K9' | 'QS' | 'NSV'
+
+export type RotoCategory = BatterCategory | PitcherCategory
+
+// Human-readable label (HRA displays as "HR", PK displays as "K", K9 as "K/9")
+export const CATEGORY_LABEL: Record<RotoCategory, string> = {
+  R: 'R', H: 'H', HR: 'HR', RBI: 'RBI', K: 'K', TB: 'TB', AVG: 'AVG', OPS: 'OPS', NSB: 'NSB',
+  IP: 'IP', W: 'W', L: 'L', HRA: 'HR', PK: 'K', ERA: 'ERA', WHIP: 'WHIP', K9: 'K/9', QS: 'QS', NSV: 'NSV',
+}
+
+// Lower value wins the category (batter K = Ks against you; pitching L/HRA/ERA/WHIP)
+export const LOWER_IS_BETTER: RotoCategory[] = ['K', 'L', 'HRA', 'ERA', 'WHIP']
+
+// Ratio stats — show number + color only, not a split bar (magnitude not comparable across teams)
+export const RATIO_CATEGORIES: RotoCategory[] = ['AVG', 'OPS', 'ERA', 'WHIP', 'K9']
+
+// Ordered display lists for the UI
+export const BATTER_CATEGORIES: BatterCategory[] = ['R', 'H', 'HR', 'RBI', 'K', 'TB', 'AVG', 'OPS', 'NSB']
+export const PITCHER_CATEGORIES: PitcherCategory[] = ['IP', 'W', 'L', 'HRA', 'PK', 'ERA', 'WHIP', 'K9', 'QS', 'NSV']
+
+export interface MatchupTeamStats {
+  batting: Partial<Record<BatterCategory, number | null>>
+  pitching: Partial<Record<PitcherCategory, number | null>>
+}
+
+export interface MatchupResponse {
+  my_stats: MatchupTeamStats
+  opp_stats: MatchupTeamStats
+  opponent_name: string
+  week: number
+  my_team_name?: string | null
+  playoff_seed?: number | null
+}
+
+export interface CategoryProjection {
+  category: RotoCategory
+  my_proj: number | null
+  opp_proj: number | null
+  win_prob: number
+}
+
+export interface MatchupSimulateResponse {
+  win_prob: number
+  category_projections: CategoryProjection[]
+}
+
+export type PlayerStatus = 'start' | 'bench' | 'IL' | 'DTD'
+
+export interface LineupPlayer {
+  player_id: string
+  name: string
+  position: string
+  projected_points: number | null
+  team: string
+  opponent: string | null
+  game_time: string | null
+  hand: 'L' | 'R' | 'S' | null
+  status: PlayerStatus
+}
+
+export interface LineupResponse {
+  lineup: LineupPlayer[]
+  warnings: string[]
+  optimizer_type: string
+  date: string
+}
+
+export interface CategoryDeficit {
+  category: RotoCategory
+  deficit_z_score: number
+}
+
+export interface WaiverAvailablePlayer {
+  player_id: string
+  name: string
+  team: string
+  positions: string[]
+  need_score: number
+  projected_points: number | null
+  percent_owned: number | null
+  two_start: boolean
+  start1_date?: string | null
+  start1_opp?: string | null
+  start2_date?: string | null
+  start2_opp?: string | null
+  park_factor?: number | null
+  category_need_match?: RotoCategory[]
+}
+
+export interface WaiverResponse {
+  top_available: WaiverAvailablePlayer[]
+  two_start_pitchers: WaiverAvailablePlayer[]
+  category_deficits: CategoryDeficit[]
+  faab_balance: number | null
+}
+
+export interface CanonicalProjectionsResponse {
+  players: Array<{
+    player_id: string
+    name: string
+    team: string
+    positions: string[]
+    category_z_scores: Partial<Record<RotoCategory, number | null>>
+    total_z: number | null
+  }>
+  as_of_date: string
+  roster_percentiles?: Partial<Record<RotoCategory, number>>
+}
