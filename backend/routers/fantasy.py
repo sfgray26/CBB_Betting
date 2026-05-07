@@ -4391,14 +4391,21 @@ def _fetch_rosters_for_simulate(db: Session) -> tuple[list, list]:
             "starts_this_week": 1 if is_pitcher else 0,
         }
 
+    # Fetch my roster with detailed error logging
+    logger.info("simulate: fetching my roster with team_key=%s", my_team_key)
     my_raw = client.get_roster(team_key=my_team_key)
+    logger.info("simulate: get_roster returned %d players", len(my_raw) if my_raw else 0)
     my_roster = [_player_dict(p) for p in my_raw]
+    logger.info("simulate: my_roster has %d players after _player_dict conversion", len(my_roster))
 
     opp_roster: list = []
     if opponent_team_key:
         try:
+            logger.info("simulate: fetching opponent roster with team_key=%s", opponent_team_key)
             opp_raw = client.get_roster(team_key=opponent_team_key)
+            logger.info("simulate: opponent get_roster returned %d players", len(opp_raw) if opp_raw else 0)
             opp_roster = [_player_dict(p) for p in opp_raw]
+            logger.info("simulate: opp_roster has %d players after _player_dict conversion", len(opp_roster))
         except Exception as _opp_err:
             logger.warning("simulate: opponent roster fetch failed: %s", _opp_err)
 
@@ -4430,7 +4437,7 @@ async def simulate_matchup(
     if not my_roster or not opponent_roster:
         raise HTTPException(
             status_code=422,
-            detail="Roster data unavailable — Yahoo or DB returned no players.",
+            detail=f"Roster data unavailable — Yahoo returned {len(my_roster)} my players, {len(opp_roster)} opponent players. Check Yahoo API connection and team key configuration.",
         )
 
     n = min(max(100, payload.n_sims), 5000)

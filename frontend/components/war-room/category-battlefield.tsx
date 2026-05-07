@@ -185,7 +185,11 @@ export function CategoryBattlefield({ data, simulate }: Props) {
 
   const sorted = useMemo(() => {
     return [...filtered].sort((a, b) => {
-      if (sort === 'type') return 0 // already grouped by type
+      if (sort === 'type') {
+        // Group by type: hitters before pitchers
+        if (a.type !== b.type) return a.type === 'hitting' ? -1 : 1
+        return 0
+      }
       if (sort === 'flip') {
         const wpA = projMap.get(a.cat)?.win_prob ?? 0.5
         const wpB = projMap.get(b.cat)?.win_prob ?? 0.5
@@ -195,13 +199,24 @@ export function CategoryBattlefield({ data, simulate }: Props) {
       if (sort === 'margin') {
         const pA = projMap.get(a.cat)
         const pB = projMap.get(b.cat)
-        const mA = pA ? Math.abs((pA.my_proj ?? 0) - (pA.opp_proj ?? 0)) : 0
-        const mB = pB ? Math.abs((pB.my_proj ?? 0) - (pB.opp_proj ?? 0)) : 0
-        return mA - mB
+        // Use projected margin if available, otherwise fall back to current differential
+        if (pA && pB && pA.my_proj != null && pA.opp_proj != null && pB.my_proj != null && pB.opp_proj != null) {
+          const mA = Math.abs(pA.my_proj - pA.opp_proj)
+          const mB = Math.abs(pB.my_proj - pB.opp_proj)
+          return mA - mB
+        }
+        // Fallback to current stat differential
+        const myA = toNum(myStats[a.cat])
+        const oppA = toNum(oppStats[a.cat])
+        const myB = toNum(myStats[b.cat])
+        const oppB = toNum(oppStats[b.cat])
+        const diffA = (myA ?? 0) - (oppA ?? 0)
+        const diffB = (myB ?? 0) - (oppB ?? 0)
+        return Math.abs(diffA) - Math.abs(diffB)
       }
       return 0
     })
-  }, [filtered, sort, projMap])
+  }, [filtered, sort, projMap, myStats, oppStats])
 
   const hitters = sorted.filter(x => x.type === 'hitting')
   const pitchers = sorted.filter(x => x.type === 'pitching')
