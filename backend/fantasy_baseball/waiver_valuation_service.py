@@ -142,11 +142,44 @@ class WaiverValuationService:
                 pa_val = proj.projected_pa if proj.projected_pa is not None else _FALLBACK_PA
                 pa_by_player[mlbam_id] = pa_val
 
+        # Bulk-load team rate numerators/denominators from CategoryImpact
+        team_rate_numerators: dict[str, float] = {}
+        team_rate_denominators: dict[str, float] = {}
+        if resolved_ids:
+            try:
+                from backend.models import CategoryImpact
+                from sqlalchemy import func
+
+                rows = (
+                    self.db.query(
+                        CategoryImpact.category,
+                        func.sum(CategoryImpact.projected_numerator).label("total_num"),
+                        func.sum(CategoryImpact.projected_denominator).label("total_den"),
+                    )
+                    .join(CanonicalProjection, CategoryImpact.canonical_projection_id == CanonicalProjection.id)
+                    .filter(
+                        CanonicalProjection.player_id.in_(resolved_ids),
+                        CategoryImpact.projected_numerator.isnot(None),
+                    )
+                    .group_by(CategoryImpact.category)
+                    .all()
+                )
+                for r in rows:
+                    cat = r.category.lower()
+                    if r.total_num:
+                        team_rate_numerators[cat] = float(r.total_num)
+                    if r.total_den:
+                        team_rate_denominators[cat] = float(r.total_den)
+            except Exception as exc:
+                logger.warning("build_team_context: category aggregate failed (%s)", exc)
+
         return TeamContext.build(
             roster_player_ids=resolved_ids,
             projected_pa_by_player=pa_by_player,
             projected_ip_by_player=ip_by_player,
             quarantined_player_ids=_quarantined,
+            team_rate_numerators=team_rate_numerators,
+            team_rate_denominators=team_rate_denominators,
         )
 
     def add_drop_surplus(

@@ -29,6 +29,8 @@ class TeamContext:
     rate_pa_denominator: float = 0.0
     rate_ip_denominator: float = 0.0
     quarantined_player_ids: set[int] = field(default_factory=set)
+    team_rate_numerators: dict[str, float] = field(default_factory=dict)
+    team_rate_denominators: dict[str, float] = field(default_factory=dict)
 
     @classmethod
     def build(
@@ -37,6 +39,8 @@ class TeamContext:
         projected_pa_by_player: dict[int, float],
         projected_ip_by_player: dict[int, float],
         quarantined_player_ids: set[int] | None = None,
+        team_rate_numerators: dict[str, float] | None = None,
+        team_rate_denominators: dict[str, float] | None = None,
     ) -> "TeamContext":
         """
         Construct a TeamContext, computing denominators automatically.
@@ -46,6 +50,8 @@ class TeamContext:
             projected_pa_by_player: {mlbam_id -> projected PA} for each batter.
             projected_ip_by_player: {mlbam_id -> projected IP} for each pitcher.
             quarantined_player_ids: Optional set of quarantined PlayerIdentity.id values.
+            team_rate_numerators: Optional {category -> total numerator} from CategoryImpact.
+            team_rate_denominators: Optional {category -> total denominator} from CategoryImpact.
 
         Returns:
             TeamContext with denominators pre-computed.
@@ -57,6 +63,8 @@ class TeamContext:
             rate_pa_denominator=sum(projected_pa_by_player.values()),
             rate_ip_denominator=sum(projected_ip_by_player.values()),
             quarantined_player_ids=set(quarantined_player_ids or []),
+            team_rate_numerators=team_rate_numerators or {},
+            team_rate_denominators=team_rate_denominators or {},
         )
 
     def is_quarantined(self, player_id: int) -> bool:

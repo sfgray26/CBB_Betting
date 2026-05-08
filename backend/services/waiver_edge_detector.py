@@ -348,6 +348,56 @@ class WaiverEdgeDetector:
             return {}
 
     @staticmethod
+    def _bulk_fa_category_impacts(mlbam_ids: list[int]) -> dict:
+        """Bulk-load CategoryImpact numerators/denominators for FA candidates.
+
+        Returns {mlbam_id: {category_lower: {"num": float, "den": float}}}.
+        Only returns rate categories where projected_numerator is not NULL.
+        Uses the most recent CanonicalProjection per player.
+        Empty dict on any failure — never blocks waiver recommendations.
+        """
+        if not mlbam_ids:
+            return {}
+        try:
+            from backend.models import SessionLocal
+            from sqlalchemy import text
+
+            db = SessionLocal()
+            try:
+                # Use DISTINCT ON to get only the most recent projection per player
+                rows = db.execute(
+                    text("""
+                        SELECT DISTINCT ON (cp.player_id)
+                            cp.player_id,
+                            ci.category,
+                            ci.projected_numerator,
+                            ci.projected_denominator
+                        FROM canonical_projections cp
+                        JOIN category_impacts ci ON ci.canonical_projection_id = cp.id
+                        WHERE cp.player_id = ANY(:ids)
+                          AND ci.projected_numerator IS NOT NULL
+                        ORDER BY cp.player_id, cp.projection_date DESC
+                    """),
+                    {"ids": list(mlbam_ids)},
+                ).fetchall()
+
+                result: dict = {}
+                for player_id, category, num, den in rows:
+                    cat = category.lower()
+                    if player_id not in result:
+                        result[player_id] = {}
+                    result[player_id][cat] = {
+                        "num": float(num),
+                        "den": float(den) if den else 0.0,
+                    }
+                return result
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.debug("_bulk_fa_category_impacts failed (%s)", exc)
+            return {}
+
+    @staticmethod
     def _build_canonical_team_context(roster: list) -> Optional[object]:
         """Build TeamContext from roster Yahoo IDs using CanonicalProjection data.
 
@@ -419,6 +469,18 @@ class WaiverEdgeDetector:
                     fa_bdl_map[yahoo_id] = bdl_id
         bdl_id_list = list(fa_bdl_map.values())
 
+        # Build FA MLBAM map for CategoryImpact lookup (bulk — no N+1)
+        fa_yahoo_ids_int = []
+        for fa in free_agents[:40]:
+            yid = fa.get("player_id")
+            if yid:
+                try:
+                    fa_yahoo_ids_int.append(int(yid))
+                except (TypeError, ValueError):
+                    pass
+        fa_mlbam_map: dict = WaiverEdgeDetector._bulk_yahoo_to_mlbam(fa_yahoo_ids_int)
+        fa_mlbam_ids = list(fa_mlbam_map.values())
+
         # PR 4.5: Load market_score as tertiary tiebreaker
         use_market_signals = is_flag_enabled("market_signals_enabled")
         market_lookup: dict = {}
@@ -436,6 +498,12 @@ class WaiverEdgeDetector:
         # IL-heavy) → factor > 1.0 (each FA adds more marginal value); deep rosters → < 1.0.
         # Falls back to depth_factor=1.0 on any failure — never blocks waiver recommendations.
         use_canonical = is_flag_enabled("CANONICAL_PROJECTION_V1")
+
+        # Bulk load FA category impacts (rate numerators/denominators for marginal math)
+        fa_category_impacts_lookup: dict = {}
+        if use_canonical and fa_mlbam_ids:
+            fa_category_impacts_lookup = WaiverEdgeDetector._bulk_fa_category_impacts(fa_mlbam_ids)
+
         team_context = None
         batter_depth_factor = 1.0
         pitcher_depth_factor = 1.0
@@ -453,7 +521,20 @@ class WaiverEdgeDetector:
 
         moves = []
         for fa in free_agents[:40]:
-            score = self._score_fa_against_deficits(fa, deficits)
+            # Resolve FA MLBAM ID for marginal math
+            fa_yahoo_id_int = None
+            try:
+                fa_yahoo_id_int = int(fa.get("player_id")) if fa.get("player_id") else None
+            except (TypeError, ValueError):
+                pass
+            fa_mlbam_id_for_impacts = fa_mlbam_map.get(fa_yahoo_id_int) if fa_yahoo_id_int else None
+            fa_impacts = fa_category_impacts_lookup.get(fa_mlbam_id_for_impacts, {}) if fa_mlbam_id_for_impacts else {}
+
+            score = self._score_fa_against_deficits(
+                fa, deficits,
+                team_context=team_context if use_canonical else None,
+                fa_category_impacts=fa_impacts,
+            )
 
             # Scarcity multiplier: boosts need_score for players at scarcer positions.
             # Formula: 1.0 + (13 - rank) * 0.05; clamped to ≥1.0 (no penalty for common positions).
@@ -679,13 +760,53 @@ class WaiverEdgeDetector:
     def _player_value(player: dict) -> tuple:
         return drop_candidate_value(player)
 
-    def _score_fa_against_deficits(self, fa, deficits):
+    def _score_fa_against_deficits(
+        self,
+        fa: dict,
+        deficits: dict,
+        team_context: Optional[object] = None,
+        fa_category_impacts: Optional[dict] = None,
+    ) -> float:
         from backend.fantasy_baseball.category_aware_scorer import (
             CategoryNeedVector,
             PlayerCategoryImpactVector,
             score_fa_against_needs,
+            RATE_STAT_CATS,
+            RATE_STAT_LEAGUE_STD,
+            marginal_rate_impact,
         )
-        cat_scores = fa.get("cat_scores") or {}
+
+        cat_scores = dict(fa.get("cat_scores") or {})
+
+        # Build marginal_stats when we have both team numerators and FA category impacts.
+        # CategoryImpact.category is UPPERCASE in DB; RATE_STAT_CATS keys are lowercase.
+        if (
+            team_context is not None
+            and fa_category_impacts
+            and getattr(team_context, "team_rate_numerators", None)
+        ):
+            for cat in list(cat_scores.keys()):
+                if cat not in RATE_STAT_CATS:
+                    continue
+                fa_cat = fa_category_impacts.get(cat)
+                team_num = team_context.team_rate_numerators.get(cat)
+                team_den = team_context.team_rate_denominators.get(cat)
+                if fa_cat is None or team_num is None or team_den is None:
+                    continue
+                try:
+                    mz = marginal_rate_impact(
+                        category=cat,
+                        team_numerator=float(team_num),
+                        team_denominator=float(team_den),
+                        player_numerator=float(fa_cat["num"]),
+                        player_denominator=float(fa_cat["den"]),
+                        league_std=RATE_STAT_LEAGUE_STD.get(cat, 0.05),
+                    )
+                    if mz != 0.0:
+                        cat_scores[cat] = mz
+                except (KeyError, TypeError, ZeroDivisionError):
+                    pass  # Fall back to existing z-score for this category
+
         return score_fa_against_needs(
             PlayerCategoryImpactVector(impacts={k: float(v) for k, v in cat_scores.items()}),
             CategoryNeedVector(needs={k: float(v) for k, v in deficits.items()}),

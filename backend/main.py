@@ -678,6 +678,31 @@ app.include_router(data_quality.router)
 
 # --- end strangler-fig mounts ---
 
+# MCP Server — exposes FastAPI endpoints as Model Context Protocol tools.
+# Mounted at /mcp.  Test/admin routes are excluded from tool discovery.
+# noinspection PyBroadException
+try:
+    from fastapi_mcp import FastApiMCP
+
+    _mcp = FastApiMCP(
+        app,
+        name="CBB Edge API",
+        description="Fantasy baseball + CBB betting API exposed as MCP tools",
+        exclude_tags=[
+            "test",
+            "db-verify",
+            "yahoo-debug",
+            "yahoo-token",
+            "yahoo-parsing-test",
+            "yahoo-structure-dump",
+            "admin",
+        ],
+    )
+    _mcp.mount()
+    logger.info("MCP server mounted at /mcp")
+except Exception as _mcp_exc:
+    logger.warning("MCP server setup failed (non-fatal): %s", _mcp_exc)
+
 # CORS - reads ALLOWED_ORIGINS env var (comma-separated) or falls back to wildcard.
 # API key auth means wildcard origins are safe; credentials are never cookie-based.
 _raw_origins = os.getenv("ALLOWED_ORIGINS", "")
@@ -5699,7 +5724,8 @@ async def get_canonical_projections(
         for r in rows
     ]
 
-
+
+
 
 @app.get("/api/fantasy/decisions/status")
 async def get_fantasy_decisions_status(
