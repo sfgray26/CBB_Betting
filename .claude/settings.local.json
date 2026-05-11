@@ -167,7 +167,8 @@
       "mcp__chrome-devtools__list_network_requests",
       "mcp__chrome-devtools__get_network_request",
       "mcp__plugin_agentmemory_agentmemory__memory_save",
-      "mcp__chrome-devtools__evaluate_script"
+      "mcp__chrome-devtools__evaluate_script",
+      "mcp__chrome-devtools__list_pages"
     ]
   },
   "enabledPlugins": {}

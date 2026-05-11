@@ -32,6 +32,8 @@ import type {
   WaiverResponse,
   CanonicalProjectionsResponse,
   BudgetResponse,
+  RosterResponse,
+  RosterMoveResponse,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -317,4 +319,29 @@ export const endpoints = {
 
   getBudget: () =>
     apiFetch<BudgetResponse>('/api/fantasy/budget'),
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Roster management
+  // ─────────────────────────────────────────────────────────────────────────
+
+  getRoster: () =>
+    apiFetch<RosterResponse>('/api/fantasy/roster'),
+
+  movePlayer: (playerId: string, _fromSlot: string, toSlot: string) =>
+    apiFetch<RosterMoveResponse>('/api/fantasy/roster/move', {
+      method: 'POST',
+      body: JSON.stringify({ player_key: playerId, target_position: toSlot }),
+    }),
+
+  setLineup: (payload: {
+    lineup_date: string
+    platform?: string
+    positions: Record<string, string>
+    projected_points?: number | null
+    notes?: string | null
+  }) =>
+    apiFetch<{ message: string; id: number }>('/api/fantasy/lineup', {
+      method: 'POST',
+      body: JSON.stringify({ platform: 'yahoo', ...payload }),
+    }),
 }

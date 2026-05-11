@@ -32,7 +32,6 @@ from backend.models import (
     ModelParameter,
     DBAlert,
     SessionLocal,
-    PositionEligibility,
 )
 from backend.auth import verify_api_key, verify_admin_api_key
 from backend.betting_model import CBBEdgeModel
@@ -49,7 +48,7 @@ from backend.services.performance import (
     generate_daily_snapshot,
     calculate_financial_metrics,
 )
-from backend.services.alerts import check_performance_alerts, persist_alerts, run_alert_check
+from backend.services.alerts import check_performance_alerts, run_alert_check
 
 # TEST ENDPOINTS - REMOVE AFTER SYNC JOB TESTING
 from backend.test_sync_jobs import router as _test_router
@@ -122,7 +121,6 @@ from backend.schemas import (
     OutcomeResponse,
     AnalysisTriggerResponse,
     TodaysPredictionsResponse,
-    PredictionResponse,
     DailyLineupResponse,
     WaiverWireResponse,
     LineupPlayerOut,
@@ -131,11 +129,9 @@ from backend.schemas import (
     RosterResponse,
     MatchupTeamOut,
     MatchupResponse,
-    LineupApplyPlayer,
     LineupApplyRequest,
     OracleFlaggedResponse,
     OraclePredictionDetail,
-    MatchupSimulateRequest,
 )
 from backend.fantasy_baseball.yahoo_client_resilient import (
     YahooAuthError,

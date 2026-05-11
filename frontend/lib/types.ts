@@ -504,3 +504,79 @@ export interface CanonicalProjectionsResponse {
   as_of_date: string
   roster_percentiles?: Partial<Record<RotoCategory, number>>
 }
+
+// ---------------------------------------------------------------------------
+// Roster types (CanonicalRosterResponse / CanonicalPlayerRow)
+// ---------------------------------------------------------------------------
+
+export interface CategoryStats {
+  values: Record<string, number | null>
+}
+
+export interface PlayerGameContext {
+  opponent: string
+  home_away: string
+  game_time?: string | null
+  projected_k?: number | null
+  projected_era_impact?: number | null
+  opposing_sp_name?: string | null
+  opposing_sp_handedness?: string | null
+  projected_impact?: number | null
+}
+
+export interface RosterPlayer {
+  player_name: string
+  team: string
+  eligible_positions: string[]
+  status: string
+  game_context?: PlayerGameContext | null
+  season_stats?: CategoryStats | null
+  rolling_7d?: CategoryStats | null
+  rolling_14d?: CategoryStats | null
+  rolling_15d?: CategoryStats | null
+  rolling_30d?: CategoryStats | null
+  ros_projection?: CategoryStats | null
+  row_projection?: CategoryStats | null
+  ownership_pct?: number | null
+  injury_status?: string | null
+  injury_return_timeline?: string | null
+  freshness: {
+    primary_source: string
+    fetched_at?: string | null
+    computed_at: string
+    staleness_threshold_minutes: number
+    is_stale: boolean
+  }
+  yahoo_player_key?: string | null
+  bdl_player_id?: number | null
+  mlbam_id?: number | null
+}
+
+export interface RosterResponse {
+  team_key: string
+  players: RosterPlayer[]
+  count: number
+  freshness?: {
+    primary_source: string
+    fetched_at?: string | null
+    computed_at: string
+    staleness_threshold_minutes: number
+    is_stale: boolean
+  } | null
+}
+
+export interface RosterMoveResponse {
+  success: boolean
+  player_key: string
+  from_position?: string | null
+  to_position: string
+  message: string
+  warnings?: string[]
+  freshness: {
+    primary_source: string
+    fetched_at?: string | null
+    computed_at: string
+    staleness_threshold_minutes: number
+    is_stale: boolean
+  }
+}

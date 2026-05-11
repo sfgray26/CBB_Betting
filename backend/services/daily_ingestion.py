@@ -4302,12 +4302,28 @@ class DailyIngestionOrchestrator:
 
             db = SessionLocal()
             try:
+                # Determine effective date: fall back to most recent player_scores
+                # if today's scoring job hasn't run yet (off-day or early call).
+                effective_date = as_of_date
+                try:
+                    latest_ps = db.query(func.max(PlayerScore.as_of_date)).filter(
+                        PlayerScore.window_days == 14
+                    ).scalar()
+                    if latest_ps and latest_ps < as_of_date:
+                        effective_date = latest_ps
+                        logger.info(
+                            "decision_optimization: no player_scores for %s, falling back to %s",
+                            as_of_date, effective_date,
+                        )
+                except Exception:
+                    pass
+
                 # Step 1: fetch player_scores (14d window)
                 try:
                     score_rows = (
                         db.query(PlayerScore)
                         .filter(
-                            PlayerScore.as_of_date == as_of_date,
+                            PlayerScore.as_of_date == effective_date,
                             PlayerScore.window_days == 14,
                         )
                         .all()
@@ -4315,7 +4331,7 @@ class DailyIngestionOrchestrator:
                 except Exception as exc:
                     logger.error(
                         "decision_optimization: player_scores query failed for %s: %s",
-                        as_of_date, exc,
+                        effective_date, exc,
                     )
                     elapsed = int((time.monotonic() - t0) * 1000)
                     self._record_job_run("decision_optimization", "failed")
@@ -4325,13 +4341,13 @@ class DailyIngestionOrchestrator:
                 try:
                     momentum_rows = (
                         db.query(PlayerMomentum)
-                        .filter(PlayerMomentum.as_of_date == as_of_date)
+                        .filter(PlayerMomentum.as_of_date == effective_date)
                         .all()
                     )
                 except Exception as exc:
                     logger.error(
                         "decision_optimization: player_momentum query failed for %s: %s",
-                        as_of_date, exc,
+                        effective_date, exc,
                     )
                     momentum_rows = []
 
@@ -4339,13 +4355,13 @@ class DailyIngestionOrchestrator:
                 try:
                     sim_rows = (
                         db.query(SimulationResultORM)
-                        .filter(SimulationResultORM.as_of_date == as_of_date)
+                        .filter(SimulationResultORM.as_of_date == effective_date)
                         .all()
                     )
                 except Exception as exc:
                     logger.error(
                         "decision_optimization: simulation_results query failed for %s: %s",
-                        as_of_date, exc,
+                        effective_date, exc,
                     )
                     sim_rows = []
 
@@ -4353,13 +4369,13 @@ class DailyIngestionOrchestrator:
                     logger.warning(
                         "decision_optimization: 0 player_scores rows for %s -- "
                         "player_scores pipeline may not have run",
-                        as_of_date,
+                        effective_date,
                     )
                     elapsed = int((time.monotonic() - t0) * 1000)
                     self._record_job_run("decision_optimization", "no_input", 0)
                     return {
                         "status": "no_input",
-                        "as_of_date": str(as_of_date),
+                        "as_of_date": str(effective_date),
                         "lineup_decisions": 0,
                         "waiver_decisions": 0,
                         "elapsed_ms": elapsed,
@@ -4478,7 +4494,7 @@ class DailyIngestionOrchestrator:
                     self._record_job_run("decision_optimization", "no_input", 0)
                     return {
                         "status": "no_input",
-                        "as_of_date": str(as_of_date),
+                        "as_of_date": str(effective_date),
                         "lineup_decisions": 0,
                         "waiver_decisions": 0,
                         "elapsed_ms": elapsed,
@@ -4536,7 +4552,7 @@ class DailyIngestionOrchestrator:
 
                 # Step 5: run decision engine (CPU-bound -- offload to thread pool)
                 lineup_decision, lineup_results = await asyncio.to_thread(
-                    optimize_lineup, players, as_of_date
+                    optimize_lineup, players, effective_date
                 )
 
                 # M1 fix: fetch waiver pool from Yahoo free agents
@@ -4698,7 +4714,7 @@ class DailyIngestionOrchestrator:
                     )
 
                 _waiver_decision, waiver_results = await asyncio.to_thread(
-                    optimize_waivers, players, waiver_pool, as_of_date
+                    optimize_waivers, players, waiver_pool, effective_date
                 )
 
                 # Filter low-quality waiver recommendations before persisting
@@ -4718,11 +4734,11 @@ class DailyIngestionOrchestrator:
                 # Step 6: upsert DecisionResult rows
                 try:
                     db.query(DecisionExplanationORM).filter(
-                        DecisionExplanationORM.as_of_date == as_of_date,
+                        DecisionExplanationORM.as_of_date == effective_date,
                         DecisionExplanationORM.decision_type.in_(["lineup", "waiver"]),
                     ).delete(synchronize_session=False)
                     db.query(DecisionResultORM).filter(
-                        DecisionResultORM.as_of_date == as_of_date,
+                        DecisionResultORM.as_of_date == effective_date,
                         DecisionResultORM.decision_type.in_(["lineup", "waiver"]),
                     ).delete(synchronize_session=False)
 
@@ -4757,7 +4773,7 @@ class DailyIngestionOrchestrator:
                     db.rollback()
                     logger.error(
                         "decision_optimization: DB write failed for as_of_date=%s: %s",
-                        as_of_date, exc,
+                        effective_date, exc,
                     )
                     elapsed = int((time.monotonic() - t0) * 1000)
                     self._record_job_run("decision_optimization", "failed")
@@ -4778,11 +4794,11 @@ class DailyIngestionOrchestrator:
             logger.info(
                 "decision_optimization: %d lineup + %d waiver decisions for as_of_date=%s "
                 "elapsed_ms=%d",
-                n_lineup, n_waiver, as_of_date, elapsed,
+                n_lineup, n_waiver, effective_date, elapsed,
             )
             return {
                 "status": "success",
-                "as_of_date": str(as_of_date),
+                "as_of_date": str(effective_date),
                 "lineup_decisions": n_lineup,
                 "waiver_decisions": n_waiver,
                 "elapsed_ms": elapsed,
