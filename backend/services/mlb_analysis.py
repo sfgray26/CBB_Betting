@@ -464,6 +464,107 @@ class MLBAnalysisService:
             return 0.0
 
     # ------------------------------------------------------------------ #
+    # Edge verification (sprint commitment)                                  #
+    # ------------------------------------------------------------------ #
+
+    def verify_edge_calculation(self) -> dict:
+        """
+        Sanity-check edge math with known test cases.
+        Returns report dict for scheduler observability.
+        """
+        test_cases = [
+            # (home_win_prob, american_odds, expected_edge_sign)
+            (0.60, -150, "positive"),   # model 60% vs market 60% → ~0 edge
+            (0.70, -150, "positive"),   # model 70% vs market 60% → positive edge
+            (0.50, +150, "positive"),   # model 50% vs market 40% → positive edge
+            (0.40, -200, "negative"),   # model 40% vs market 66.7% → negative edge
+        ]
+        passed = 0
+        failed = 0
+        results = []
+        for home_win_prob, american_odds, expected_sign in test_cases:
+            market = {"ml_home_odds": american_odds}
+            proj = MLBGameProjection(
+                game_id="TEST",
+                home_team="H",
+                away_team="A",
+                game_date=date.today(),
+                projected_home_runs=4.0,
+                projected_away_runs=3.0,
+                projected_total=7.0,
+                projected_runline_margin=1.0,
+                home_win_prob=home_win_prob,
+            )
+            edge = self._calculate_edge(proj, market)
+            actual_sign = "positive" if edge > 0.01 else "negative" if edge < -0.01 else "neutral"
+            ok = actual_sign == expected_sign
+            if ok:
+                passed += 1
+            else:
+                failed += 1
+            results.append({
+                "home_win_prob": home_win_prob,
+                "american_odds": american_odds,
+                "expected_sign": expected_sign,
+                "actual_edge": edge,
+                "actual_sign": actual_sign,
+                "pass": ok,
+            })
+        logger.info("mlb_analysis: edge verification %d/%d passed", passed, len(test_cases))
+        return {
+            "status": "passed" if failed == 0 else "failed",
+            "passed": passed,
+            "failed": failed,
+            "results": results,
+        }
+
+    def write_projections_to_db(self, projections: list[MLBGameProjection]) -> dict:
+        """Persist projections to the mlb_projections table. Idempotent upsert."""
+        from backend.models import SessionLocal, MLBProjection
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        db = SessionLocal()
+        try:
+            rows_inserted = 0
+            for p in projections:
+                stmt = pg_insert(MLBProjection).values(
+                    game_id=p.game_id,
+                    home_team=p.home_team,
+                    away_team=p.away_team,
+                    projection_date=p.game_date,
+                    projected_home_runs=p.projected_home_runs,
+                    projected_away_runs=p.projected_away_runs,
+                    projected_total=p.projected_total,
+                    projected_runline_margin=p.projected_runline_margin,
+                    home_win_prob=p.home_win_prob,
+                    edge=p.edge,
+                    market_ml_home_odds=None,
+                    model_version=p.model_version,
+                ).on_conflict_do_update(
+                    index_elements=["game_id", "projection_date"],
+                    set_={
+                        "projected_home_runs": p.projected_home_runs,
+                        "projected_away_runs": p.projected_away_runs,
+                        "projected_total": p.projected_total,
+                        "projected_runline_margin": p.projected_runline_margin,
+                        "home_win_prob": p.home_win_prob,
+                        "edge": p.edge,
+                        "model_version": p.model_version,
+                    }
+                )
+                db.execute(stmt)
+                rows_inserted += 1
+            db.commit()
+            logger.info("mlb_analysis: persisted %d projections to DB", rows_inserted)
+            return {"status": "success", "rows_inserted": rows_inserted}
+        except Exception as exc:
+            db.rollback()
+            logger.error("mlb_analysis: DB write failed: %s", exc)
+            return {"status": "failed", "error": str(exc)}
+        finally:
+            db.close()
+
+    # ------------------------------------------------------------------ #
     # Internal helpers                                                     #
     # ------------------------------------------------------------------ #
 

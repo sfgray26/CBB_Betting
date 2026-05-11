@@ -3,24 +3,51 @@ Category-aware FA scoring engine for H2H fantasy baseball.
 
 Scores a free agent against a team's category need vector.
 The rate-stat protection gate prevents recommending players who damage
-categories the team is already winning (ERA, WHIP, AVG, OPS, K/9).
+categories the team is already winning (ERA, WHIP, AVG, OBP, OPS, K/9).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
+
+from backend.services.config_service import get_threshold as _get_threshold
+
+try:
+    from backend.fantasy_baseball.team_context import TeamContext as _TeamContext
+except ImportError:
+    _TeamContext = None  # type: ignore
 
 # Rate stats where adding a player with a bad z-score dilutes the team's lead.
 # All keys are lowercase board keys matching PlayerProjection.cat_scores.
-RATE_STAT_CATS: frozenset = frozenset({"avg", "ops", "era", "whip", "k9"})
+RATE_STAT_CATS: frozenset = frozenset({"avg", "obp", "ops", "era", "whip", "k9"})
 
 # How far ahead the team must be (|deficit| > threshold) before the gate fires.
 # deficit is expressed in z-score units (negative = team leading).
-RATE_STAT_PROTECT_THRESHOLD: float = 0.5
+RATE_STAT_PROTECT_THRESHOLD: float = _get_threshold("scoring.rate_stat_protect", default=0.5)
 
 # Multiplier applied to the absolute deficit when the gate fires.
 # Produces a negative score: player_z * |deficit| * MULTIPLIER.
 RATE_STAT_PENALTY_MULTIPLIER: float = 3.0
+
+# League-average standard deviations for rate categories (2025 MLB season approx).
+# Used to convert marginal rate deltas to z-score units in marginal_rate_impact().
+RATE_STAT_LEAGUE_STD: dict[str, float] = {
+    "avg": 0.025,
+    "obp": 0.028,
+    "ops": 0.055,
+    "era": 0.60,
+    "whip": 0.12,
+    "k9": 0.80,
+}
+
+# Category-specific numerator/denominator field names for marginal math.
+# Maps category key -> (numerator_attr, denominator_attr) on CanonicalProjection.
+MARGINAL_RATE_FIELDS: dict[str, tuple[str, str]] = {
+    "avg": ("proj_h", "proj_ab"),
+    "obp": ("proj_h", "proj_pa"),
+    "era": ("proj_er", "proj_ip"),
+    "whip": ("proj_h", "proj_ip"),
+}
 
 
 @dataclass(frozen=True)
@@ -85,11 +112,61 @@ def score_fa_against_needs(
     return float(total)
 
 
+def marginal_rate_impact(
+    category: str,
+    team_numerator: float,
+    team_denominator: float,
+    player_numerator: float,
+    player_denominator: float,
+    league_std: float,
+) -> float:
+    """Compute true marginal rate-stat impact of adding a player.
+
+    Instead of using the player's standalone z-score, computes the actual
+    change in the team's rate stat after adding the player.
+
+    Formula:
+        combined_rate = (team_numerator + player_numerator) / (team_denominator + player_denominator)
+        current_rate  = team_numerator / team_denominator
+        marginal_delta = combined_rate - current_rate
+        marginal_z = marginal_delta / league_std
+
+    For lower-is-better categories (ERA, WHIP), marginal_delta is negated so
+    that a positive z-score means the player helps the team.
+
+    Args:
+        category: Category key (e.g. 'avg', 'era', 'whip', 'obp')
+        team_numerator: Team's current projected numerator (e.g. projected_hits for AVG)
+        team_denominator: Team's current projected denominator (e.g. projected_ab for AVG)
+        player_numerator: Player's projected numerator contribution
+        player_denominator: Player's projected denominator contribution
+        league_std: League standard deviation for this rate stat (for z-score conversion)
+
+    Returns:
+        Marginal z-score impact. Positive = player helps, Negative = player hurts.
+        Returns 0.0 if denominators are zero or league_std is zero.
+    """
+    if team_denominator <= 0 or player_denominator <= 0 or league_std <= 0:
+        return 0.0
+
+    current_rate = team_numerator / team_denominator
+    combined_rate = (team_numerator + player_numerator) / (team_denominator + player_denominator)
+    marginal_delta = combined_rate - current_rate
+
+    # ERA and WHIP: lower is better, so flip sign
+    if category in RATE_STAT_CATS and category in {"era", "whip"}:
+        marginal_delta = -marginal_delta
+
+    return marginal_delta / league_std
+
+
 def compute_need_score(
     player_cat_scores: dict,
     player_z_score: float,
     category_deficits: list,
     n_cats: int,
+    team_context: Optional[object] = None,
+    marginal_stats: Optional[dict] = None,
 ) -> float:
     """Unified need_score computation for waiver and recommendations endpoints.
 
@@ -101,6 +178,8 @@ def compute_need_score(
         player_z_score: Overall z_score for the player (generic quality metric)
         category_deficits: List of CategoryDeficitOut objects from matchup analysis
         n_cats: Number of categories in the scoring system (for normalization)
+        team_context: Optional TeamContext with roster denominator context.
+        marginal_stats: Optional raw numerator/denominator data keyed by category.
 
     Returns:
         Float need_score. If category_deficits is empty/None, returns player_z_score.
@@ -131,6 +210,25 @@ def compute_need_score(
     if not needs_dict:
         return float(player_z_score)
 
+    # Override rate-stat z-scores with true marginal impact when raw stats available
+    if marginal_stats:
+        for cat in list(valid_cat_scores.keys()):
+            if cat in marginal_stats and cat in RATE_STAT_CATS:
+                ms = marginal_stats[cat]
+                try:
+                    marginal_z = marginal_rate_impact(
+                        category=cat,
+                        team_numerator=float(ms["team_num"]),
+                        team_denominator=float(ms["team_den"]),
+                        player_numerator=float(ms["player_num"]),
+                        player_denominator=float(ms["player_den"]),
+                        league_std=RATE_STAT_LEAGUE_STD.get(cat, 0.05),
+                    )
+                    if marginal_z != 0.0:
+                        valid_cat_scores[cat] = marginal_z
+                except (KeyError, TypeError, ZeroDivisionError):
+                    pass  # Fall back to existing z-score
+
     team_needs = CategoryNeedVector(needs=needs_dict)
 
     # Build PlayerCategoryImpactVector from cat_scores
@@ -143,6 +241,25 @@ def compute_need_score(
         # Normalize per-category and blend: 40% generic z + 60% matchup-specific
         n_cats_safe = max(1, n_cats)
         blended_score = 0.4 * player_z_score + 0.6 * (cat_score / n_cats_safe)
+
+        if team_context is not None and hasattr(team_context, "rate_pa_denominator"):
+            # Apply roster-depth scaling to the matchup-specific component only.
+            # Deeper rosters (>3600 PA) dilute each add's rate impact slightly;
+            # shallower rosters (<3600 PA) amplify it. Capped [0.8, 1.2].
+            pa_denom = float(getattr(team_context, "rate_pa_denominator", 0.0))
+            ip_denom = float(getattr(team_context, "rate_ip_denominator", 0.0))
+
+            if pa_denom > 0:
+                depth_factor = max(0.8, min(1.2, 3600.0 / pa_denom))
+            elif ip_denom > 0:
+                depth_factor = max(0.8, min(1.2, 900.0 / ip_denom))
+            else:
+                depth_factor = 1.0
+
+            # Re-decompose blended_score: scale only the 60% matchup component.
+            matchup_component = blended_score - 0.4 * player_z_score
+            blended_score = 0.4 * player_z_score + depth_factor * matchup_component
+
         return float(blended_score)
     except Exception:
         # Fallback to plain z_score if scorer fails

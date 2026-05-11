@@ -69,8 +69,13 @@ Write-Host "Adding PostgreSQL MCP (read-only)..." -ForegroundColor DarkGray
 $env:DATABASE_URI = $localDbUri
 kimi mcp add --transport stdio postgres-audit -- docker run -i --rm -e DATABASE_URI crystaldba/postgres-mcp --access-mode=restricted 2>$null | Out-Null
 
-# NOTE: @balldontlie/mcp-server does not exist on npm. BDL data is already
-# ingested into the Railway PostgreSQL DB — query via @postgres instead.
+# BallDontLie MCP (hosted HTTP endpoint; research/ad-hoc only, not production ingestion)
+if ($env:BALLDONTLIE_API_KEY) {
+    Write-Host "Adding BallDontLie MCP..." -ForegroundColor DarkGray
+    kimi mcp add --transport http balldontlie https://mcp.balldontlie.io/mcp --header "Authorization: $($env:BALLDONTLIE_API_KEY)" 2>$null | Out-Null
+} else {
+    Write-Host "Skipping BallDontLie MCP: BALLDONTLIE_API_KEY not set" -ForegroundColor Yellow
+}
 
 # Sequential Thinking MCP
 Write-Host "Adding Sequential Thinking MCP..." -ForegroundColor DarkGray
@@ -141,6 +146,9 @@ if (-not $env:GITHUB_PERSONAL_ACCESS_TOKEN) {
 if (-not $env:CONTEXT7_API_KEY) {
     $remaining += "Set CONTEXT7_API_KEY for higher rate limits (optional, get free key at https://context7.com/dashboard)"
 }
+if (-not $env:BALLDONTLIE_API_KEY) {
+    $remaining += "Set BALLDONTLIE_API_KEY for @balldontlie MCP research tools"
+}
 
 if ($remaining.Count -eq 0) {
     Write-Host "All required configuration complete!" -ForegroundColor Green
@@ -154,3 +162,4 @@ Write-Host ""
 Write-Host "=== Setup Complete ===" -ForegroundColor Cyan
 Write-Host "Test Gemini:  gemini -> '@railway List services'" -ForegroundColor DarkGray
 Write-Host "Test Kimi:    kimi -> '@postgres-audit List tables'" -ForegroundColor DarkGray
+Write-Host "Test BDL:     @balldontlie Get today's MLB games" -ForegroundColor DarkGray

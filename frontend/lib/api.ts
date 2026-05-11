@@ -26,6 +26,12 @@ import type {
   WaiverTarget,
   DecisionsResponse,
   DecisionPipelineStatus,
+  MatchupResponse,
+  MatchupSimulateResponse,
+  LineupResponse,
+  WaiverResponse,
+  CanonicalProjectionsResponse,
+  BudgetResponse,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -289,4 +295,26 @@ export const endpoints = {
   /** Get decision pipeline status */
   getDecisionsStatus: () =>
     apiFetch<DecisionPipelineStatus>('/api/fantasy/decisions/status'),
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // War Room — Fantasy Baseball Weekly Command Center
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  getMatchup: () =>
+    apiFetch<MatchupResponse>('/api/fantasy/matchup'),
+
+  simulateMatchup: () =>
+    apiFetch<MatchupSimulateResponse>('/api/fantasy/matchup/simulate', { method: 'POST' }),
+
+  getLineup: (date: string) =>
+    apiFetch<LineupResponse>(`/api/fantasy/lineup/${date}`),
+
+  getWaiver: (sort: 'need_score' | 'projected_points' = 'need_score') =>
+    apiFetch<WaiverResponse>(`/api/fantasy/waiver?sort=${sort}`),
+
+  getCanonicalProjections: () =>
+    apiFetch<CanonicalProjectionsResponse>('/api/fantasy/projections/canonical'),
+
+  getBudget: () =>
+    apiFetch<BudgetResponse>('/api/fantasy/budget'),
 }

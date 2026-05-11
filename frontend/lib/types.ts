@@ -352,3 +352,155 @@ export interface DecisionPipelineStatus {
     total_row_count: number | null
   }
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// War Room — League Scoring Categories
+// H2H 20-cat: batting + pitching, each category scored win/loss vs opponent
+// ═════════════════════════════════════════════════════════════════════════════
+
+// Batting categories — canonical codes from backend/stat_contract/fantasy_stat_contract.json
+// K_B = batter Ks (lower is better); HR_B = batter HR (distinct from HR_P = pitcher HR allowed)
+export type BatterCategory = 'R' | 'H' | 'HR_B' | 'RBI' | 'K_B' | 'TB' | 'AVG' | 'OPS' | 'NSB'
+
+// Pitching categories — 9 scoring cats; IP/H_AB/GS are display-only, not scored
+// K_9 uses underscore (backend canonical code); K_P = pitcher Ks; HR_P = HR allowed
+export type PitcherCategory = 'W' | 'L' | 'HR_P' | 'K_P' | 'ERA' | 'WHIP' | 'K_9' | 'QS' | 'NSV'
+
+export type RotoCategory = BatterCategory | PitcherCategory
+
+// Display labels (HR_B -> "HR", K_B -> "K", HR_P -> "HR", K_P -> "K", K_9 -> "K/9")
+export const CATEGORY_LABEL: Record<RotoCategory, string> = {
+  R: 'R', H: 'H', HR_B: 'HR', RBI: 'RBI', K_B: 'K', TB: 'TB', AVG: 'AVG', OPS: 'OPS', NSB: 'NSB',
+  W: 'W', L: 'L', HR_P: 'HR', K_P: 'K', ERA: 'ERA', WHIP: 'WHIP', K_9: 'K/9', QS: 'QS', NSV: 'NSV',
+}
+
+// Categories where lower value wins the week
+export const LOWER_IS_BETTER: RotoCategory[] = ['K_B', 'L', 'HR_P', 'ERA', 'WHIP']
+
+// Ratio/rate stats: display value + color only, no split bar
+export const RATIO_CATEGORIES: RotoCategory[] = ['AVG', 'OPS', 'ERA', 'WHIP', 'K_9']
+
+// Ordered exactly as matchup_display_order in stat_contract
+export const BATTER_CATEGORIES: BatterCategory[] = ['R', 'H', 'HR_B', 'RBI', 'K_B', 'TB', 'AVG', 'OPS', 'NSB']
+export const PITCHER_CATEGORIES: PitcherCategory[] = ['W', 'L', 'HR_P', 'K_P', 'ERA', 'WHIP', 'K_9', 'QS', 'NSV']
+
+// Matchup shapes — exactly match backend schemas.py MatchupTeamOut / MatchupResponse
+export interface MatchupTeamOut {
+  team_key: string
+  team_name: string
+  stats: Record<string, number | null>
+}
+
+export interface MatchupResponse {
+  week: number | null
+  my_team: MatchupTeamOut
+  opponent: MatchupTeamOut
+  is_playoffs: boolean
+  message: string | null
+}
+
+export interface CategoryProjection {
+  category: RotoCategory
+  my_proj: number | null
+  opp_proj: number | null
+  win_prob: number
+}
+
+export interface MatchupSimulateResponse {
+  win_prob: number
+  category_projections: CategoryProjection[]
+}
+
+export type PlayerStatus = 'start' | 'bench' | 'IL' | 'DTD'
+
+export interface LineupPlayer {
+  player_id: string
+  name: string
+  position: string
+  projected_points: number | null
+  team: string
+  opponent: string | null
+  game_time: string | null
+  hand: 'L' | 'R' | 'S' | null
+  status: PlayerStatus
+}
+
+// Matches backend DailyLineupResponse
+export interface LineupResponse {
+  date: string
+  batters: LineupPlayer[]
+  pitchers: unknown[]   // StartingPitcherOut — typed when roster-deployment is built
+  games_count: number
+  no_games_today: boolean
+  lineup_warnings: string[]
+}
+
+export interface CategoryDeficit {
+  category: RotoCategory
+  deficit_z_score: number
+}
+
+export interface WaiverAvailablePlayer {
+  player_id: string
+  name: string
+  team: string
+  positions: string[]
+  need_score: number
+  projected_points: number | null
+  percent_owned: number | null
+  two_start: boolean
+  start1_date?: string | null
+  start1_opp?: string | null
+  start2_date?: string | null
+  start2_opp?: string | null
+  park_factor?: number | null
+  category_need_match?: RotoCategory[]
+}
+
+export interface WaiverResponse {
+  top_available: WaiverAvailablePlayer[]
+  two_start_pitchers: WaiverAvailablePlayer[]
+  category_deficits: CategoryDeficit[]
+  faab_balance: number | null
+}
+
+// ---------------------------------------------------------------------------
+// Budget / Constraint State
+// ---------------------------------------------------------------------------
+
+export interface BudgetData {
+  acquisitions_used: number
+  acquisitions_remaining: number
+  acquisition_limit: number
+  acquisition_warning: boolean
+  il_used: number
+  il_total: number
+  ip_accumulated: number
+  ip_minimum: number
+  ip_pace: "BEHIND" | "ON_TRACK" | "AHEAD"
+  as_of: string
+}
+
+export interface BudgetResponse {
+  budget: BudgetData
+  freshness: {
+    primary_source: string
+    fetched_at: string
+    computed_at: string
+    staleness_threshold_minutes: number
+    is_stale: boolean
+  }
+}
+
+export interface CanonicalProjectionsResponse {
+  players: Array<{
+    player_id: string
+    name: string
+    team: string
+    positions: string[]
+    category_z_scores: Partial<Record<RotoCategory, number | null>>
+    total_z: number | null
+  }>
+  as_of_date: string
+  roster_percentiles?: Partial<Record<RotoCategory, number>>
+}

@@ -83,6 +83,20 @@ _POSITION_MULT: dict[str, float] = {
 # Counting pitcher categories that scale with starts (v2 codes)
 _STARTS_SCALE_CATS = frozenset({"k_p", "w", "qs"})
 
+# Count-based categories that must be >= 0 (saves, SB, HR can't be negative)
+# NOTE: This is a short-term fix. Normal distribution is inappropriate for count data.
+# Follow-up: migrate to Poisson or negative binomial modeling for count categories.
+_COUNT_CATEGORIES = frozenset({
+    "hr_b",      # home runs
+    "rbi",       # runs batted in
+    "nsb",       # net stolen bases
+    "w",         # pitcher wins
+    "qs",        # quality starts
+    "nsv",       # net saves
+    "k_b",       # batting strikeouts
+    "k_p",       # pitching strikeouts
+})
+
 # v2: Mapping from canonical codes to lowercase keys used internally
 _CANONICAL_TO_LOWER = {code: code.lower() for code in SCORING_CATEGORY_CODES}
 _LOWER_TO_CANONICAL = {v: k for k, v in _CANONICAL_TO_LOWER.items()}
@@ -235,6 +249,30 @@ def _normalize_category_key(key: str) -> str:
     return key_lower
 
 
+def _clamp_counts(totals: np.ndarray, categories: list[str]) -> np.ndarray:
+    """
+    Clamp count-based categories at zero (saves, SB, HR can't be negative).
+
+    NOTE: This is a short-term fix. Normal distribution is inappropriate for
+    count data—follow-up should migrate to Poisson or negative binomial models.
+    Low-count categories (saves, quality starts) should use Poisson or
+    zero-inflated Poisson. High-count categories (strikeouts, RBI) should use
+    negative binomial to handle overdispersion.
+
+    Args:
+        totals: np.ndarray of shape (n_sims, n_cats) with simulated totals
+        categories: list of category names corresponding to totals columns
+
+    Returns:
+        np.ndarray with count-based categories clamped at >= 0
+    """
+    result = totals.copy()
+    for j, cat in enumerate(categories):
+        if cat in _COUNT_CATEGORIES:
+            result[:, j] = np.maximum(result[:, j], 0.0)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -300,17 +338,17 @@ def simulate_weekly_matchup(
 
     if my_means.shape[0] > 0:
         my_noise = rng.normal(0.0, my_stds, size=(n_sims,) + my_means.shape)
-        my_totals = (my_means + my_noise).sum(axis=1)   # (n_sims, n_cats)
+        my_totals = _clamp_counts((my_means + my_noise).sum(axis=1), categories)   # (n_sims, n_cats)
     else:
         my_totals = np.zeros((n_sims, n_cats))
 
     if opp_means.shape[0] > 0:
         opp_noise = rng.normal(0.0, opp_stds, size=(n_sims,) + opp_means.shape)
-        opp_totals = (opp_means + opp_noise).sum(axis=1)  # (n_sims, n_cats)
+        opp_totals = _clamp_counts((opp_means + opp_noise).sum(axis=1), categories)  # (n_sims, n_cats)
     else:
         # Empty opponent = league average (z=0), still has week-level noise
         avg_std = np.full(n_cats, 2.0)  # team-level noise for 12-player average opponent
-        opp_totals = rng.normal(0.0, avg_std, size=(n_sims, n_cats))
+        opp_totals = _clamp_counts(rng.normal(0.0, avg_std, size=(n_sims, n_cats)), categories)
 
     # All cats: higher is better (LOWER_IS_BETTER z-scores inverted at input)
     cat_wins = (my_totals > opp_totals).astype(float)   # (n_sims, n_cats)

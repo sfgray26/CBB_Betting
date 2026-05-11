@@ -1,0 +1,91 @@
+.......................................................................s [  2%]
+........................................................................ [  5%]
+........................................................................ [  8%]
+........................................................................ [ 11%]
+........................................................................ [ 13%]
+........................................................................ [ 16%]
+........................................................................ [ 19%]
+........................................................................ [ 22%]
+........................................................................ [ 24%]
+........................................................................ [ 27%]
+........................................................................ [ 30%]
+........................................................................ [ 33%]
+........................................................................ [ 35%]
+........................................................................ [ 38%]
+........................................................................ [ 41%]
+......................ss..........s..................................... [ 44%]
+........................................................................ [ 46%]
+........................................................................ [ 49%]
+........................................................................ [ 52%]
+........................................................................ [ 55%]
+........................................................................ [ 57%]
+........................................................................ [ 60%]
+........................................................................ [ 63%]
+........................................................................ [ 66%]
+........................................................................ [ 68%]
+........................................................................ [ 71%]
+........................................................................ [ 74%]
+........................................................................ [ 77%]
+........................................................................ [ 79%]
+................................................................EEEEE... [ 82%]
+........................................................................ [ 85%]
+........................................................................ [ 88%]
+........................................................................ [ 90%]
+........................................................................ [ 93%]
+........................................................................ [ 96%]
+........................................................................ [ 99%]
+...................                                                      [100%]
+=================================== ERRORS ====================================
+__________ ERROR at setup of test_injury_risk_multiplier_no_injuries __________
+file C:\Users\sfgra\repos\Fixed\cbb-edge\tests\test_simulation_engine.py, line 517
+  def test_injury_risk_multiplier_no_injuries(db_session):
+E       fixture 'db_session' not found
+>       available fixtures: _session_event_loop, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, cov, doctest_namespace, event_loop, event_loop_policy, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, monkeypatch, no_cover, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, tests/test_simulation_engine.py::<event_loop>, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\sfgra\repos\Fixed\cbb-edge\tests\test_simulation_engine.py:517
+______ ERROR at setup of test_injury_risk_multiplier_one_il_stint_active ______
+file C:\Users\sfgra\repos\Fixed\cbb-edge\tests\test_simulation_engine.py, line 530
+  def test_injury_risk_multiplier_one_il_stint_active(db_session):
+E       fixture 'db_session' not found
+>       available fixtures: _session_event_loop, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, cov, doctest_namespace, event_loop, event_loop_policy, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, monkeypatch, no_cover, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, tests/test_simulation_engine.py::<event_loop>, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\sfgra\repos\Fixed\cbb-edge\tests\test_simulation_engine.py:530
+_____ ERROR at setup of test_injury_risk_multiplier_two_il_stints_active ______
+file C:\Users\sfgra\repos\Fixed\cbb-edge\tests\test_simulation_engine.py, line 556
+  def test_injury_risk_multiplier_two_il_stints_active(db_session):
+E       fixture 'db_session' not found
+>       available fixtures: _session_event_loop, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, cov, doctest_namespace, event_loop, event_loop_policy, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, monkeypatch, no_cover, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, tests/test_simulation_engine.py::<event_loop>, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\sfgra\repos\Fixed\cbb-edge\tests\test_simulation_engine.py:556
+_____ ERROR at setup of test_injury_risk_multiplier_il_stint_45_days_ago ______
+file C:\Users\sfgra\repos\Fixed\cbb-edge\tests\test_simulation_engine.py, line 590
+  def test_injury_risk_multiplier_il_stint_45_days_ago(db_session):
+E       fixture 'db_session' not found
+>       available fixtures: _session_event_loop, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, cov, doctest_namespace, event_loop, event_loop_policy, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, monkeypatch, no_cover, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, tests/test_simulation_engine.py::<event_loop>, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\sfgra\repos\Fixed\cbb-edge\tests\test_simulation_engine.py:590
+________ ERROR at setup of test_remaining_games_reduced_by_injury_risk ________
+file C:\Users\sfgra\repos\Fixed\cbb-edge\tests\test_simulation_engine.py, line 617
+  def test_remaining_games_reduced_by_injury_risk(db_session):
+E       fixture 'db_session' not found
+>       available fixtures: _session_event_loop, anyio_backend, anyio_backend_name, anyio_backend_options, cache, capfd, capfdbinary, caplog, capsys, capsysbinary, cov, doctest_namespace, event_loop, event_loop_policy, free_tcp_port, free_tcp_port_factory, free_udp_port, free_udp_port_factory, monkeypatch, no_cover, pytestconfig, record_property, record_testsuite_property, record_xml_attribute, recwarn, tests/test_simulation_engine.py::<event_loop>, tmp_path, tmp_path_factory, tmpdir, tmpdir_factory, unused_tcp_port, unused_tcp_port_factory, unused_udp_port, unused_udp_port_factory
+>       use 'pytest --fixtures [testpath]' for help on them.
+
+C:\Users\sfgra\repos\Fixed\cbb-edge\tests\test_simulation_engine.py:617
+============================== warnings summary ===============================
+venv\Lib\site-packages\starlette\formparsers.py:10
+  C:\Users\sfgra\repos\Fixed\cbb-edge\venv\Lib\site-packages\starlette\formparsers.py:10: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+ERROR tests/test_simulation_engine.py::test_injury_risk_multiplier_no_injuries
+ERROR tests/test_simulation_engine.py::test_injury_risk_multiplier_one_il_stint_active
+ERROR tests/test_simulation_engine.py::test_injury_risk_multiplier_two_il_stints_active
+ERROR tests/test_simulation_engine.py::test_injury_risk_multiplier_il_stint_45_days_ago
+ERROR tests/test_simulation_engine.py::test_remaining_games_reduced_by_injury_risk
+2602 passed, 4 skipped, 1 warning, 5 errors in 290.13s (0:04:50)

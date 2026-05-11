@@ -54,6 +54,35 @@ It does **NOT** work for account-level commands like `railway list` or `railway 
 - Deploy: `railway up` (ONLY after pre-deploy skill passes)
 - Run migration: `railway run python scripts/<migration>.py`
 
+## Pre-Approved Savant Pitch Quality Ops
+These scripts are code-owned by Claude/Codex. Gemini may run them on Railway when explicitly assigned, but must not edit them.
+
+```powershell
+railway run python scripts/migration_savant_pitch_quality.py
+railway run python scripts/seed_savant_pitch_quality_flags.py
+railway run python scripts/backfill_savant_pitch_quality.py
+```
+
+Expected behavior:
+- migration logs `savant_pitch_quality migration ready.`
+- flags remain disabled by default
+- backfill writes `savant_pitch_quality_scores`
+
+Do not enable `savant_pitch_quality_*` flags unless Claude explicitly approves activation.
+
+## Pre-Approved Savant Park Factor Ops
+These scripts are code-owned by Claude/Codex. Gemini may run them on Railway when explicitly assigned, but must not edit them.
+
+```powershell
+railway run python scripts/migration_savant_park_factors.py
+railway run python scripts/seed_savant_park_factors.py
+```
+
+Expected behavior:
+- migration logs `Savant park factor migration ready: columns/indexes verified`
+- seed logs inserted/updated counts and `Snapshot rows loaded: 28`
+- no feature flag is required; these rows replace legacy constants as canonical DB context.
+
 ## Critical Env Vars
 | Var | Expected | Notes |
 |-----|----------|-------|
@@ -68,6 +97,8 @@ It does **NOT** work for account-level commands like `railway list` or `railway 
 ## MCP Tools Available
 - `@railway` — Deployment, logs, service management, domain generation
 - `@postgres-readonly` — Read-only database queries and schema inspection
+- `@balldontlie` — Direct BALLDONTLIE API research queries via official hosted MCP. Use for ad-hoc sports data checks only; do not use as a production ingestion path.
+- MLB/Savant MCP research is for endpoint/field validation only. Production Savant Pitch Quality runtime uses repo scripts, not MCP.
 
 ## When to Use Which Skill
 | Situation | Skill |

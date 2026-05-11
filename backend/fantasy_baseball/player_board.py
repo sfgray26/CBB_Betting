@@ -27,7 +27,10 @@ import statistics
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 
+from backend.fantasy_baseball.id_resolution_service import IdentityResolutionService, _normalize_name
+
 logger = logging.getLogger(__name__)
+_IDENTITY_RESOLUTION_SERVICE = IdentityResolutionService()
 
 # Import the fusion engine for Bayesian projection combination
 from backend.fantasy_baseball.fusion_engine import (
@@ -779,6 +782,21 @@ def get_board(apply_park_factors: bool = True) -> list[dict]:
     return _BOARD
 
 
+def reset_board_cache() -> None:
+    """Clear the in-memory board cache so the next get_board() call reloads from disk.
+
+    Called by /admin/board/refresh when new Steamer CSVs are dropped to data/projections/.
+    Safe to call at any time -- next request rebuilds the board automatically.
+    """
+    global _BOARD
+    _BOARD = None
+    try:
+        from backend.fantasy_baseball.projections_loader import load_full_board
+        load_full_board.cache_clear()
+    except Exception:
+        pass
+
+
 def get_player_by_name(name: str) -> Optional[dict]:
     board = get_board()
     name_lower = name.lower()
@@ -994,12 +1012,13 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
         board-compatible dict with at minimum: name, z_score, positions,
         cat_scores, type, proj, and fusion metadata.
     """
-    from backend.models import get_db, PlayerProjection, PlayerIDMapping
+    from backend.models import get_db, PlayerIdentity, PlayerProjection, PlayerIDMapping
     from backend.services.cat_scores_builder import (
         BATTER_WEIGHTS, PITCHER_WEIGHTS, compute_cat_scores
     )
 
     name = (yahoo_player.get("name") or "").strip()
+    name_normalized = _normalize_name(name) if name else None
     player_key = yahoo_player.get("player_key") or ""
 
     # 1. Check runtime cache first (avoids repeated lookups).
@@ -1100,6 +1119,7 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
     db = None
     db_gen = None
     projection_row = None
+    identity_row = None
     mlbam_id = None
     try:
         db_gen = get_db()
@@ -1113,46 +1133,39 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
             if id_mapping:
                 mlbam_id = id_mapping.mlbam_id or id_mapping.bdl_id
 
-        # If no mlbam_id yet, try name-based lookup
-        if not mlbam_id and name:
-            name_normalized = name.lower().strip()
-            mapping = db.query(PlayerIDMapping).filter(
-                PlayerIDMapping.normalized_name == name_normalized
-            ).first()
-            if mapping and mapping.mlbam_id:
-                mlbam_id = str(mapping.mlbam_id)
+        if name:
+            resolved_identity_id = _IDENTITY_RESOLUTION_SERVICE.resolve(
+                db,
+                yahoo_guid=player_key or None,
+                yahoo_id=yahoo_id,
+                full_name=name,
+                provider="YAHOO",
+                raw_id=player_key or yahoo_id or None,
+            )
+            if resolved_identity_id is not None:
+                identity_row = db.query(PlayerIdentity).filter(
+                    PlayerIdentity.id == resolved_identity_id,
+                ).first()
+            elif name_normalized:
+                identity_row = db.query(PlayerIdentity).filter(
+                    PlayerIdentity.normalized_name == name_normalized
+                ).first()
+            if identity_row and identity_row.mlbam_id and not mlbam_id:
+                mlbam_id = str(identity_row.mlbam_id)
 
         if mlbam_id:
             # Query PlayerProjection for Steamer data
             projection_row = db.query(PlayerProjection).filter(
                 PlayerProjection.player_id == str(mlbam_id)
             ).first()
-
-            # Also try name-based lookup if ID lookup failed
-            if not projection_row and name:
-                projection_row = db.query(PlayerProjection).filter(
-                    PlayerProjection.player_name.ilike(f"%{name}%")
-                ).first()
-                if projection_row:
-                    logger.info(f"[player_board] Name-based Steamer match: {name} -> {projection_row.player_name}")
-
-        # Unconditional name-based fallback: catches Steamer players where
-        # PlayerIDMapping has no entry for this Yahoo ID. Without this, 617
-        # players backfilled by M34 (cat_scores in player_projections) are
-        # never found for FA waiver candidates missing from PlayerIDMapping.
-        if not projection_row and name and db is not None:
-            try:
-                projection_row = db.query(PlayerProjection).filter(
-                    PlayerProjection.player_name == name
-                ).first()
-                if not projection_row:
-                    projection_row = db.query(PlayerProjection).filter(
-                        PlayerProjection.player_name.ilike(f"%{name}%")
-                    ).first()
-                if projection_row:
-                    logger.debug(f"[player_board] Direct name fallback match: {name} -> {projection_row.player_name}")
-            except Exception as _ne:
-                logger.debug(f"[player_board] Direct name fallback failed for {name}: {_ne}")
+        if not projection_row and identity_row:
+            projection_row = db.query(PlayerProjection).filter(
+                PlayerProjection.player_name == identity_row.full_name
+            ).first()
+            if projection_row:
+                logger.debug(
+                    f"[player_board] Identity-based exact match: {name} -> {projection_row.player_name}"
+                )
 
     except Exception as e:
         logger.debug(f"[player_board] DB query failed for {name}: {e}")

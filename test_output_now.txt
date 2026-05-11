@@ -1,0 +1,92 @@
+.......................................................................s [  2%]
+........................................................................ [  5%]
+........................................................................ [  8%]
+........................................................................ [ 11%]
+........................................................................ [ 14%]
+........................................................................ [ 17%]
+........................................................................ [ 20%]
+........................................................................ [ 23%]
+........................................................................ [ 26%]
+........................................................................ [ 29%]
+........................................................................ [ 32%]
+........................................................................ [ 35%]
+........................................................................ [ 37%]
+................................F....................................... [ 40%]
+..............................................................ss........ [ 43%]
+..s..................................................................... [ 46%]
+................................................F....................... [ 49%]
+........................................................................ [ 52%]
+....F................................................................... [ 55%]
+........................................................................ [ 58%]
+........................................................................ [ 61%]
+........................................................................ [ 64%]
+........................................................................ [ 67%]
+........................................................................ [ 70%]
+........................................................................ [ 72%]
+........................................................................ [ 75%]
+........................................................................ [ 78%]
+........F............................................................... [ 81%]
+........................................................................ [ 84%]
+...............................F........................................ [ 87%]
+........................................................................ [ 90%]
+........................................................................ [ 93%]
+........................................................................ [ 96%]
+........................................................................ [ 99%]
+...................                                                      [100%]
+================================== FAILURES ===================================
+________________ test_orchestrator_get_status_returns_all_jobs ________________
+tests\test_ingestion_orchestrator.py:189: in test_orchestrator_get_status_returns_all_jobs
+    assert expected_jobs == set(status.keys())
+E   AssertionError: assert {'backtesting..._update', ...} == {'backtesting..._update', ...}
+E     Extra items in the right set:
+E     'ros_projection_refresh'
+E     'savant_ingestion'
+E     Use -v to get more diff
+___________________ test_convert_uses_board_when_available ____________________
+tests\test_mcmc_calibration.py:124: in test_convert_uses_board_when_available
+    assert result[0]["cat_scores"] == {"hr": 0.8, "r": 0.9, "rbi": 0.85}
+E   AssertionError: assert {'avg': 0.238...': 0.271, ...} == {'hr': 0.8, '..., 'rbi': 0.85}
+E     Differing items:
+E     {'r': -1.2} != {'r': 0.9}
+E     {'rbi': -1.094} != {'rbi': 0.85}
+E     {'hr': 0.024} != {'hr': 0.8}
+E     Left contains 6 more items:
+E     {'avg': 0.238,
+E      'h': -1.7,...
+E     
+E     ...Full output truncated (5 lines hidden), use '-vv' to show
+_____________ test_composite_z_excludes_z_sb_when_both_populated ______________
+tests\test_nsb_pipeline.py:276: in test_composite_z_excludes_z_sb_when_both_populated
+    assert r.composite_z == pytest.approx(expected_composite, abs=1e-9), (
+E   AssertionError: composite_z must exclude z_sb. Got -0.39261093141288694, expected -0.9030051422496399 (kv_pairs=[('z_nsb', -1.4638501094227998), ('z_obp', 1.0)]).
+E   assert -0.39261093141288694 == -0.9030051422496399 ▒ 1.0e-09
+E     comparison failed
+E     Obtained: -0.39261093141288694
+E     Expected: -0.9030051422496399 ▒ 1.0e-09
+______________________ test_composite_z_is_weighted_sum _______________________
+tests\test_scoring_engine.py:318: in test_composite_z_is_weighted_sum
+    assert math.isclose(r.composite_z, expected_composite, rel_tol=1e-9), (
+E   AssertionError: composite_z mismatch: 3.0000000000000004 != 12.3
+E   assert False
+E    +  where False = <built-in function isclose>(3.0000000000000004, 12.3, rel_tol=1e-09)
+E    +    where <built-in function isclose> = math.isclose
+E    +    and   3.0000000000000004 = PlayerScoreResult(bdl_player_id=6, as_of_date=datetime.date(2026, 4, 5), window_days=7, player_type='hitter', games_in...00004, score_0_100=100.0, confidence=0.7142857142857143, position_adjusted_score=0.0, position_scarcity_multiplier=1.0).composite_z
+______________ test_load_from_db_builds_statcastbatter_from_rows ______________
+tests\test_statcast_loader.py:227: in test_load_from_db_builds_statcastbatter_from_rows
+    assert "cody bellinger" in batters
+E   AssertionError: assert 'cody bellinger' in {}
+------------------------------ Captured log call ------------------------------
+WARNING  backend.fantasy_baseball.statcast_loader:statcast_loader.py:326 statcast_loader DB tier failed (non-fatal): '_Row' object has no attribute 'sprint_speed'
+============================== warnings summary ===============================
+venv\Lib\site-packages\starlette\formparsers.py:10
+  C:\Users\sfgra\repos\Fixed\cbb-edge\venv\Lib\site-packages\starlette\formparsers.py:10: PendingDeprecationWarning: Please use `import python_multipart` instead.
+    import multipart
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_ingestion_orchestrator.py::test_orchestrator_get_status_returns_all_jobs
+FAILED tests/test_mcmc_calibration.py::test_convert_uses_board_when_available
+FAILED tests/test_nsb_pipeline.py::test_composite_z_excludes_z_sb_when_both_populated
+FAILED tests/test_scoring_engine.py::test_composite_z_is_weighted_sum - Asser...
+FAILED tests/test_statcast_loader.py::test_load_from_db_builds_statcastbatter_from_rows
+5 failed, 2458 passed, 4 skipped, 1 warning in 289.67s (0:04:49)

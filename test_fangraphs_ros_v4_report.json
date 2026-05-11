@@ -1,0 +1,67 @@
+[
+  {
+    "name": "api_steamerr_bat",
+    "ok": true,
+    "rows": 4308,
+    "err": "",
+    "extra": {
+      "cols": [
+        "Team",
+        "ShortName",
+        "G",
+        "AB",
+        "PA",
+        "H",
+        "1B",
+        "2B",
+        "3B",
+        "HR",
+        "R",
+        "RBI",
+        "BB",
+        "IBB",
+        "SO"
+      ],
+      "sample": null
+    }
+  },
+  {
+    "name": "api_steamerr_pit",
+    "ok": true,
+    "rows": 5383,
+    "err": "",
+    "extra": {
+      "cols": [
+        "Team",
+        "ShortName",
+        "W",
+        "L",
+        "GS",
+        "G",
+        "SV",
+        "HLD",
+        "BS",
+        "IP",
+        "TBF",
+        "H",
+        "R",
+        "ER",
+        "HR"
+      ]
+    }
+  },
+  {
+    "name": "pybaseball_batting_stats",
+    "ok": false,
+    "rows": 0,
+    "err": "Error accessing 'https://www.fangraphs.com/leaders-legacy.aspx'. Received status code 403",
+    "extra": {}
+  },
+  {
+    "name": "playwright_steamerr",
+    "ok": false,
+    "rows": 0,
+    "err": "no captures",
+    "extra": {}
+  }
+]

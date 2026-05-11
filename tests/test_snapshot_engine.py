@@ -147,6 +147,12 @@ def test_build_snapshot_returns_correct_type():
     assert isinstance(result, SnapshotResult)
 
 
+def test_build_snapshot_filters_non_fantasy_job_names():
+    inp = _make_input(pipeline_jobs_run=["mlb_odds", "player_scores", "snapshot", "mlb_odds"])
+    result = build_snapshot(inp)
+    assert result.pipeline_jobs_run == ["player_scores", "snapshot"]
+
+
 # ---------------------------------------------------------------------------
 # 10. HEALTHY health_reasons is empty list
 # ---------------------------------------------------------------------------
@@ -202,3 +208,41 @@ def test_multiple_degraded_reasons():
     # regression + no decisions should both appear; no_explanations skipped since n_decisions=0
     assert any("regression" in r.lower() for r in result.health_reasons)
     assert any("decisions" in r.lower() for r in result.health_reasons)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 4/5 job names pass through (F-2 regression guard)
+# ---------------------------------------------------------------------------
+
+def test_sprint4_jobs_are_not_filtered_out():
+    """Sprint 4/5 fantasy pipeline jobs must survive _normalize_pipeline_jobs_run.
+
+    opportunity_update, market_signals_update, matchup_context_update, and
+    canonical_projection_refresh were added to _FANTASY_PIPELINE_JOB_SET on
+    2026-05-07. Before that fix they were silently stripped from pipeline_jobs_run,
+    making daily snapshots look like the pipeline ran fewer jobs than it did.
+    """
+    sprint4_jobs = [
+        "opportunity_update",
+        "market_signals_update",
+        "matchup_context_update",
+        "canonical_projection_refresh",
+    ]
+    inp = _make_input(pipeline_jobs_run=sprint4_jobs + ["mlb_odds"])
+    result = build_snapshot(inp)
+    for job in sprint4_jobs:
+        assert job in result.pipeline_jobs_run, (
+            f"Sprint 4/5 job '{job}' was filtered out of pipeline_jobs_run"
+        )
+    assert "mlb_odds" not in result.pipeline_jobs_run
+
+
+def test_statcast_savant_fangraphs_jobs_pass_through():
+    """Data-ingestion jobs that feed the fantasy pipeline must appear in the snapshot."""
+    data_jobs = ["statcast", "savant_ingestion", "fangraphs_ros", "waiver_scan"]
+    inp = _make_input(pipeline_jobs_run=data_jobs)
+    result = build_snapshot(inp)
+    for job in data_jobs:
+        assert job in result.pipeline_jobs_run, (
+            f"Data pipeline job '{job}' was filtered out of pipeline_jobs_run"
+        )

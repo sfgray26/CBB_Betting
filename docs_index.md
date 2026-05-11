@@ -11,6 +11,18 @@ Two production systems sharing a FastAPI + PostgreSQL + Railway backend:
 - **CBB Edge Betting Analyzer (V9.1)** — NCAA D1 basketball positive-EV bet finder
 - **Fantasy Baseball Platform (2026 Season)** — Yahoo H2H lineup optimization, waiver intelligence
 
+## Production Environment
+
+| Resource | Value | Notes |
+|----------|-------|-------|
+| **Production URL** | `https://observant-benevolence-production.up.railway.app/` | Live FastAPI deployment |
+| **API Auth** | `API_KEY_USER1` header | Required for all protected endpoints |
+| **UI Inspection** | Chrome DevTools MCP available | Use for frontend debugging, DOM inspection, network analysis |
+| **Database** | Railway PostgreSQL | Connection via `DATABASE_URL` env var |
+
+**Claude:** DevTools MCP is configured in `~/.claude.json` (project-level). Use it to inspect the live UI without guessing markup structure.
+**Kimi:** DevTools MCP can be added via `kimi mcp add --transport stdio chrome-devtools -- npx chrome-devtools-mcp@latest`
+
 ---
 
 ## Agent Roles & Swimlanes

@@ -16,6 +16,8 @@ from backend.services.scoring_engine import (
     Z_CAP,
     PlayerScoreResult,
     compute_league_zscores,
+    compute_league_params,
+    apply_opportunity_adjustment,
 )
 
 
@@ -42,7 +44,7 @@ def _hitter(
         as_of_date=AS_OF,
         window_days=WINDOW,
         games_in_window=games,
-        w_ab=15.0,          # non-None marks as hitter
+        w_ab=25.0,          # non-None marks as hitter; qualifies rate stats
         w_ip=None,
         w_home_runs=hr,
         w_rbi=rbi,
@@ -70,7 +72,7 @@ def _pitcher(
         window_days=WINDOW,
         games_in_window=games,
         w_ab=None,
-        w_ip=5.0,           # non-None marks as pitcher
+        w_ip=9.0,           # non-None marks as pitcher; qualifies rate stats
         w_home_runs=None,
         w_rbi=None,
         w_stolen_bases=None,
@@ -100,8 +102,8 @@ def _two_way(
         as_of_date=AS_OF,
         window_days=WINDOW,
         games_in_window=games,
-        w_ab=10.0,
-        w_ip=3.0,
+        w_ab=25.0,
+        w_ip=9.0,
         w_home_runs=hr,
         w_rbi=rbi,
         w_stolen_bases=sb,
@@ -239,6 +241,48 @@ def test_whip_inverted_low_whip_is_positive_z():
     r = _result_for(results, pid=6)
     assert r.z_whip is not None
     assert r.z_whip > 0.0, f"Low WHIP should give positive z_whip, got {r.z_whip}"
+
+
+def test_small_sample_hitter_rate_stats_are_suppressed():
+    """Tiny AB samples should not turn unsustainable AVG/OBP/OPS into rate z-scores."""
+    rows = [
+        _hitter(pid=1, hr=1.0, rbi=4.0, avg=0.650, obp=0.700, games=2),
+        _hitter(pid=2, hr=1.0, rbi=4.0, avg=0.280, obp=0.340),
+        _hitter(pid=3, hr=1.0, rbi=4.0, avg=0.270, obp=0.330),
+        _hitter(pid=4, hr=1.0, rbi=4.0, avg=0.260, obp=0.320),
+    ]
+    rows[0].w_ab = 8.0
+    rows[0].w_ops = 1.500
+    for row in rows[1:]:
+        row.w_ab = 28.0
+        row.w_ops = 0.740
+
+    results = compute_league_zscores(rows, AS_OF, WINDOW)
+    r = _result_for(results, pid=1)
+
+    assert r.z_avg is None
+    assert r.z_obp is None
+    assert r.z_ops is None
+
+
+def test_small_sample_pitcher_rate_stats_are_suppressed():
+    """Tiny IP samples should not turn blowup ERA/WHIP/K9 rows into rate z-scores."""
+    rows = [
+        _pitcher(pid=1, era=21.0, whip=4.5, k9=18.0, games=1),
+        _pitcher(pid=2, era=3.20, whip=1.10, k9=9.0),
+        _pitcher(pid=3, era=3.40, whip=1.20, k9=8.5),
+        _pitcher(pid=4, era=3.60, whip=1.25, k9=8.0),
+    ]
+    rows[0].w_ip = 2.2
+    for row in rows[1:]:
+        row.w_ip = 12.0
+
+    results = compute_league_zscores(rows, AS_OF, WINDOW)
+    r = _result_for(results, pid=1)
+
+    assert r.z_era is None
+    assert r.z_whip is None
+    assert r.z_k_per_9 is None
 
 
 # ===========================================================================
@@ -575,3 +619,142 @@ def test_player_type_detected_correctly():
     assert r_hitter.player_type == "hitter"
     assert r_pitcher.player_type == "pitcher"
     assert r_two_way.player_type == "two_way"
+
+
+# ---------------------------------------------------------------------------
+# apply_opportunity_adjustment (PR 3.5)
+# ---------------------------------------------------------------------------
+
+def _make_score_result(pid: int, composite_z: float, player_type: str = "hitter") -> PlayerScoreResult:
+    from datetime import date
+    r = PlayerScoreResult(
+        bdl_player_id=pid,
+        as_of_date=date(2026, 5, 5),
+        window_days=14,
+        player_type=player_type,
+        games_in_window=14,
+    )
+    r.composite_z = composite_z
+    r.score_0_100 = 50.0
+    r.confidence = 1.0
+    return r
+
+
+def test_opportunity_adjustment_no_lookup_no_change():
+    res = _make_score_result(1, composite_z=1.0)
+    original_z = res.composite_z
+    apply_opportunity_adjustment([res], {})
+    assert res.composite_z == pytest.approx(original_z)
+
+
+def test_opportunity_adjustment_positive_z_increases_composite():
+    res = _make_score_result(1, composite_z=1.0)
+    lookup = {1: (2.0, 1.0)}  # opp_z=2.0 → adj = clamp(2*0.15, -0.3, 0.2) = 0.2
+    apply_opportunity_adjustment([res], lookup)
+    assert res.composite_z == pytest.approx(1.0 * 1.2)
+
+
+def test_opportunity_adjustment_negative_z_decreases_composite():
+    res = _make_score_result(1, composite_z=1.0)
+    lookup = {1: (-3.0, 1.0)}  # opp_z=-3 → adj = clamp(-0.45, -0.3, 0.2) = -0.3
+    apply_opportunity_adjustment([res], lookup)
+    assert res.composite_z == pytest.approx(1.0 * 0.7)
+
+
+def test_opportunity_adjustment_capped_at_plus_twenty_pct():
+    res = _make_score_result(1, composite_z=2.0)
+    lookup = {1: (10.0, 1.0)}  # extreme opp_z capped at +0.2
+    apply_opportunity_adjustment([res], lookup)
+    assert res.composite_z == pytest.approx(2.0 * 1.2)
+
+
+def test_opportunity_adjustment_capped_at_minus_thirty_pct():
+    res = _make_score_result(1, composite_z=2.0)
+    lookup = {1: (-10.0, 1.0)}  # extreme negative capped at -0.3
+    apply_opportunity_adjustment([res], lookup)
+    assert res.composite_z == pytest.approx(2.0 * 0.7)
+
+
+def test_opportunity_adjustment_zero_confidence_no_change():
+    res = _make_score_result(1, composite_z=1.5)
+    lookup = {1: (5.0, 0.0)}  # high opp_z but zero confidence
+    original_z = res.composite_z
+    apply_opportunity_adjustment([res], lookup)
+    assert res.composite_z == pytest.approx(original_z)
+
+
+def test_opportunity_adjustment_partial_confidence_scales_modifier():
+    res = _make_score_result(1, composite_z=1.0)
+    # opp_z=2.0 → unclamped adj=0.3, clamped to 0.2; conf=0.5 → final adj=0.1
+    lookup = {1: (2.0, 0.5)}
+    apply_opportunity_adjustment([res], lookup)
+    assert res.composite_z == pytest.approx(1.0 * 1.1)
+
+
+def test_opportunity_adjustment_multiple_players_independent():
+    r1 = _make_score_result(1, composite_z=1.0)
+    r2 = _make_score_result(2, composite_z=1.0)
+    r3 = _make_score_result(3, composite_z=1.0)  # not in lookup
+    lookup = {1: (2.0, 1.0), 2: (-3.0, 1.0)}
+    apply_opportunity_adjustment([r1, r2, r3], lookup)
+    assert r1.composite_z == pytest.approx(1.2)
+    assert r2.composite_z == pytest.approx(0.7)
+    assert r3.composite_z == pytest.approx(1.0)  # unchanged
+
+
+# ===========================================================================
+# compute_league_params: rate denominator gate (F-1 regression guard)
+# ===========================================================================
+
+def test_compute_league_params_excludes_small_sample_era():
+    """
+    compute_league_params must apply the same rate denominator gate as
+    compute_league_zscores. A blowup ERA from a 2.2-IP outing must NOT
+    be included in the ERA pool fed to simulation_engine.
+
+    Without the gate, a 21.00 ERA row would inflate the league mean/std
+    causing the simulator to produce unrealistic distributions.
+    """
+    # 5 pitchers with normal ERA + 1 blowup with sub-threshold IP
+    good_pitchers = [
+        _pitcher(pid=i, era=3.5 + i * 0.1, whip=1.2, k9=9.0)
+        for i in range(1, 6)
+    ]
+    for p in good_pitchers:
+        p.w_ip = 12.0  # well above MIN_RATE_IP
+
+    blowup = _pitcher(pid=99, era=21.0, whip=4.5, k9=0.0)
+    blowup.w_ip = 2.2  # below MIN_RATE_IP=8.0
+
+    rows = good_pitchers + [blowup]
+    means, stds = compute_league_params(rows)
+
+    # ERA pool should exclude the blowup row
+    assert "era" in means, "ERA should appear in league params with 5 qualifying pitchers"
+    # Mean ERA of the 5 good pitchers: (3.6+3.7+3.8+3.9+4.0)/5 = 3.8
+    assert means["era"] == pytest.approx(3.8, abs=0.01), (
+        f"ERA mean should be ~3.8 (good pitchers only), got {means['era']:.3f}. "
+        "If 21.00 was included the mean would be ~6.83."
+    )
+
+
+def test_compute_league_params_excludes_small_sample_avg():
+    """AVG pool must exclude hitters with w_ab < MIN_RATE_AB."""
+    good_hitters = [
+        _hitter(pid=i, hr=5.0, rbi=20.0, sb=3.0, avg=0.270 + i * 0.005, obp=0.340)
+        for i in range(1, 6)
+    ]
+    for h in good_hitters:
+        h.w_ab = 25.0
+
+    blowup = _hitter(pid=99, hr=1.0, rbi=2.0, sb=0.0, avg=0.650, obp=0.750)
+    blowup.w_ab = 8.0  # tiny sample, .650 AVG should be excluded
+
+    rows = good_hitters + [blowup]
+    means, stds = compute_league_params(rows)
+
+    assert "avg" in means
+    # Mean AVG of the 5 good hitters: 0.270..0.290 range, well below 0.400
+    assert means["avg"] < 0.400, (
+        f"AVG mean {means['avg']:.3f} is suspiciously high -- blowup row may be included"
+    )

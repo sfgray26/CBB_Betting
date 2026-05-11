@@ -11,7 +11,9 @@ from backend.fantasy_baseball.fusion_engine import (
     marcel_update,
     fuse_batter_projection,
     fuse_pitcher_projection,
-    FusionResult
+    FusionResult,
+    to_season_counts,
+    PitcherCountingStatFormulas,
 )
 
 
@@ -281,6 +283,22 @@ class TestBatterFusionFourState:
 
         assert result.xwoba_override_detected is False
 
+    def test_xwoba_likelihood_applied_when_divergence_detected(self):
+        """xwoba_likelihood_applied=True and woba_blend in proj when |xwOBA-wOBA|>0.030 and PA>=50"""
+        steamer = {'avg': 0.270, 'obp': 0.340, 'slg': 0.450, 'k_percent': 0.22, 'bb_percent': 0.08, 'hr_per_pa': 0.035, 'sb_per_pa': 0.01}
+        statcast = {'avg': 0.300, 'obp': 0.370, 'slg': 0.500, 'k_percent': 0.18, 'bb_percent': 0.10, 'xwoba': 0.390, 'woba': 0.350}
+        result = fuse_batter_projection(steamer, statcast, sample_size=150)
+        assert result.xwoba_likelihood_applied is True
+        assert 'woba_blend' in result.proj
+
+    def test_xwoba_likelihood_not_applied_small_sample(self):
+        """xwoba_likelihood_applied=False when PA < 50, even with divergence"""
+        steamer = {'avg': 0.270, 'obp': 0.340, 'slg': 0.450, 'k_percent': 0.22, 'bb_percent': 0.08, 'hr_per_pa': 0.035, 'sb_per_pa': 0.01}
+        statcast = {'avg': 0.300, 'obp': 0.370, 'slg': 0.500, 'k_percent': 0.18, 'bb_percent': 0.10, 'xwoba': 0.390, 'woba': 0.350}
+        result = fuse_batter_projection(steamer, statcast, sample_size=30)
+        assert result.xwoba_likelihood_applied is False
+        assert 'woba_blend' not in result.proj
+
 
 class TestPitcherFusionFourState:
     """Test four-state logic for pitcher projections."""
@@ -385,6 +403,20 @@ class TestPitcherFusionFourState:
 
         assert result.xwoba_override_detected is False
 
+    def test_xera_likelihood_applied_when_divergence_detected(self):
+        """xera_likelihood_applied=True and proj['era'] adjusted when |xERA-ERA|>0.50 and IP>=20"""
+        steamer = {'era': 4.50, 'whip': 1.35, 'k_percent': 0.22, 'bb_percent': 0.07, 'k_per_nine': 8.5, 'bb_per_nine': 3.0}
+        statcast = {'era': 5.20, 'whip': 1.50, 'k_percent': 0.20, 'bb_percent': 0.08, 'xera': 3.80}
+        result = fuse_pitcher_projection(steamer, statcast, sample_size=60)
+        assert result.xera_likelihood_applied is True
+        assert result.proj['era'] < fuse_pitcher_projection(steamer, {**statcast, 'xera': statcast['era']}, sample_size=60).proj['era'] + 0.5
+
+    def test_xera_likelihood_not_applied_small_sample(self):
+        steamer = {'era': 4.50, 'whip': 1.35, 'k_percent': 0.22, 'bb_percent': 0.07, 'k_per_nine': 8.5, 'bb_per_nine': 3.0}
+        statcast = {'era': 5.20, 'whip': 1.50, 'k_percent': 0.20, 'bb_percent': 0.08, 'xera': 3.80}
+        result = fuse_pitcher_projection(steamer, statcast, sample_size=10)
+        assert result.xera_likelihood_applied is False
+
 
 class TestFusionResult:
     """Test FusionResult dataclass."""
@@ -402,8 +434,8 @@ class TestFusionResult:
         assert result.source == 'fusion'
         assert result.components_fused == 5
         assert result.xwoba_override_detected is False
-        assert result.components_fused == 5
-        assert result.xwoba_override_detected is False
+        assert result.xwoba_likelihood_applied is False
+        assert result.xera_likelihood_applied is False
 
 
 class TestMathematicalProperties:
@@ -447,6 +479,93 @@ class TestMathematicalProperties:
         # Results should be symmetric around midpoint
         midpoint = (0.250 + 0.350) / 2
         assert abs(result1 - midpoint) == abs(result2 - midpoint)
+
+
+class TestToSeasonCounts:
+    """Tests for to_season_counts() hybrid counting-stat translation."""
+
+    def _batter_result(self, hr_per_pa=0.05, sb_per_pa=0.01):
+        """Helper: FusionResult with batter rate stats."""
+        return FusionResult(
+            proj={"hr_per_pa": hr_per_pa, "sb_per_pa": sb_per_pa,
+                  "avg": 0.280, "obp": 0.350, "slg": 0.480},
+            source="fusion",
+            components_fused=3,
+            xwoba_override_detected=False,
+        )
+
+    def _pitcher_result(self, era=3.80, k_per_nine=9.5):
+        """Helper: FusionResult with pitcher rate stats."""
+        return FusionResult(
+            proj={"era": era, "k_per_nine": k_per_nine,
+                  "whip": 1.20, "k_percent": 0.28},
+            source="fusion",
+            components_fused=2,
+            xwoba_override_detected=False,
+        )
+
+    def test_proj_hr_derived_from_rate(self):
+        result = self._batter_result(hr_per_pa=0.05)
+        counts = to_season_counts(result, projected_pa=600, projected_ip=0, board_proj={"r": 100, "rbi": 95})
+        assert counts["proj_hr"] == 30  # 0.05 * 600
+
+    def test_proj_sb_derived_from_rate(self):
+        result = self._batter_result(sb_per_pa=0.02)
+        counts = to_season_counts(result, projected_pa=500, projected_ip=0, board_proj={})
+        assert counts["proj_sb"] == 10  # 0.02 * 500
+
+    def test_proj_r_passthrough(self):
+        result = self._batter_result()
+        counts = to_season_counts(result, projected_pa=550, projected_ip=0, board_proj={"r": 85, "rbi": 72})
+        assert counts["proj_r"] == 85
+
+    def test_proj_rbi_passthrough(self):
+        result = self._batter_result()
+        counts = to_season_counts(result, projected_pa=550, projected_ip=0, board_proj={"r": 85, "rbi": 72})
+        assert counts["proj_rbi"] == 72
+
+    def test_proj_sv_passthrough(self):
+        result = self._pitcher_result()
+        counts = to_season_counts(result, projected_pa=0, projected_ip=70, board_proj={"sv": 35})
+        assert counts["proj_sv"] == 35
+
+    def test_proj_k_derived_from_k9(self):
+        result = self._pitcher_result(k_per_nine=9.0)
+        counts = to_season_counts(result, projected_pa=0, projected_ip=180, board_proj={})
+        # 9.0 * 180 / 9 = 180
+        assert counts["proj_k"] == 180
+
+    def test_proj_w_uses_formula(self):
+        result = self._pitcher_result(era=4.50)
+        counts = to_season_counts(result, projected_pa=0, projected_ip=180, board_proj={})
+        # At league-average ERA (4.50), wins ~ 50% of decisions
+        # decisions = round(180 / 8.5) = 21; wins = round(21 * 0.50) = 11 (approx)
+        assert 8 <= counts["proj_w"] <= 14
+
+    def test_missing_board_keys_default_zero(self):
+        result = self._batter_result()
+        counts = to_season_counts(result, projected_pa=600, projected_ip=0, board_proj={})
+        assert counts["proj_r"] == 0
+        assert counts["proj_rbi"] == 0
+        assert counts["proj_sv"] == 0
+
+    def test_projected_hr_never_negative(self):
+        result = self._batter_result(hr_per_pa=-0.01)  # bad data
+        counts = to_season_counts(result, projected_pa=600, projected_ip=0, board_proj={})
+        assert counts["proj_hr"] >= 0
+
+    def test_none_rate_treated_as_zero(self):
+        result = FusionResult(
+            proj={"hr_per_pa": None, "sb_per_pa": None, "k_per_nine": None, "era": None},
+            source="population_prior",
+            components_fused=0,
+            xwoba_override_detected=False,
+        )
+        counts = to_season_counts(result, projected_pa=500, projected_ip=100, board_proj={})
+        assert counts["proj_hr"] == 0
+        assert counts["proj_sb"] == 0
+        assert counts["proj_k"] == 0
+        assert counts["proj_w"] >= 0  # formula uses league-average ERA fallback
 
 
 if __name__ == '__main__':

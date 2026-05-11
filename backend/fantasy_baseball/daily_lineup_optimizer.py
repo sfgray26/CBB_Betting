@@ -27,6 +27,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from backend.models import SessionLocal
+from backend.services.config_service import get_threshold as _thresh_cfg, is_flag_enabled as _is_flag
 from backend.services.probable_pitcher_fallback import (
     infer_probable_pitcher_map,
     load_probable_pitchers_from_snapshot,
@@ -498,6 +499,40 @@ class DailyLineupOptimizer:
         finally:
             _cz_db.close()
 
+        # Pre-load matchup context boost (PR 5.5, gated by feature.matchup_enabled)
+        matchup_lookup: Dict[str, Tuple[float, float]] = {}  # name.lower() → (m_z, m_conf)
+        _use_matchup = False
+        _boost_cap = 0.2
+        _z_scale = 0.1
+        try:
+            _use_matchup = _is_flag("feature.matchup_enabled")
+        except Exception:
+            pass
+
+        if _use_matchup and target_date is not None:
+            _boost_cap = _thresh_cfg("matchup.boost.cap", default=0.2)
+            _z_scale = _thresh_cfg("matchup.boost.z_scale", default=0.1)
+            _mq_db = SessionLocal()
+            try:
+                from sqlalchemy import text as _mq_text
+                mq_rows = _mq_db.execute(_mq_text("""
+                    SELECT LOWER(pim.full_name) AS name_key,
+                           mc.matchup_z,
+                           mc.matchup_confidence
+                    FROM matchup_context mc
+                    JOIN player_id_mapping pim ON mc.bdl_player_id = pim.bdl_id
+                    WHERE mc.game_date = :gd
+                      AND mc.matchup_confidence IS NOT NULL
+                """), {"gd": target_date}).fetchall()
+                matchup_lookup = {
+                    r.name_key: (r.matchup_z, r.matchup_confidence)
+                    for r in mq_rows
+                }
+            except Exception:
+                pass  # neutral fallback — no boost applied
+            finally:
+                _mq_db.close()
+
         proj_by_name = {p["name"].lower(): p for p in projections
                         if p.get("type") == "batter" or p.get("player_type") == "batter"}
 
@@ -560,6 +595,14 @@ class DailyLineupOptimizer:
                 matchup_modifier -= opp_qs * 0.15
 
             lineup_score = talent_prior * 0.7 + matchup_modifier * 0.3 + 6.0
+
+            # PR 5.5 — Bounded matchup context boost (feature-flagged OFF by default)
+            if _use_matchup:
+                m_z, m_conf = matchup_lookup.get(name.lower(), (0.0, 0.0))
+                matchup_boost = (
+                    max(-_boost_cap, min(_boost_cap, m_z * _z_scale)) * m_conf
+                )
+                lineup_score = lineup_score * (1 + matchup_boost)
 
             reason_parts = [f"team implied {implied_runs:.1f}R"]
             if park_factor > 1.05:

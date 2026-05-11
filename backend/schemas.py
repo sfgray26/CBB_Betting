@@ -497,19 +497,15 @@ class WaiverRecommendationsResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class MatchupSimulateRequest(BaseModel):
-    """Request body for POST /api/fantasy/matchup/simulate."""
-    my_roster: List[dict]
-    opponent_roster: List[dict]
+    """Request body for POST /api/fantasy/matchup/simulate.
+
+    my_roster and opponent_roster are optional — when omitted the endpoint
+    self-serves both rosters from Yahoo + the player_projections DB table.
+    """
+    my_roster: List[dict] = Field(default_factory=list)
+    opponent_roster: List[dict] = Field(default_factory=list)
     n_sims: int = 1000
     week: Optional[str] = None  # ISO week label (informational only)
-
-    @field_validator("my_roster", "opponent_roster")
-    @classmethod
-    def validate_roster_not_empty(cls, v: List[dict]) -> List[dict]:
-        """Ensure both rosters contain at least one player."""
-        if len(v) == 0:
-            raise ValueError("Roster cannot be empty. Each roster must contain at least one player.")
-        return v
 
 
 # ---------------------------------------------------------------------------

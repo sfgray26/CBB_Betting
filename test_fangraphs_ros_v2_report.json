@@ -1,0 +1,71 @@
+[
+  {
+    "name": "api_full_params",
+    "ok": false,
+    "rows": 0,
+    "err": "500 Server Error: Internal Server Error for url: https://www.fangraphs.com/api/projections?type=rostest&stats=bat&pos=all&team=0&players=0&lg=all&z=1778066783",
+    "extra": {}
+  },
+  {
+    "name": "api_pitchers",
+    "ok": false,
+    "rows": 0,
+    "err": "500 Server Error: Internal Server Error for url: https://www.fangraphs.com/api/projections?type=rostest&stats=pit&pos=all&team=0&players=0&lg=all&z=1778066783",
+    "extra": {}
+  },
+  {
+    "name": "pybaseball_no_season",
+    "ok": false,
+    "rows": 0,
+    "err": "Error accessing 'https://www.fangraphs.com/leaders-legacy.aspx'. Received status code 403",
+    "extra": {}
+  },
+  {
+    "name": "pybaseball_projections",
+    "ok": false,
+    "rows": 0,
+    "err": "projections_fangraphs_batters not found",
+    "extra": {}
+  },
+  {
+    "name": "playwright_v2",
+    "ok": false,
+    "rows": 0,
+    "err": "no API calls intercepted",
+    "extra": {}
+  },
+  {
+    "name": "mlb_statsapi",
+    "ok": true,
+    "rows": 1,
+    "err": "",
+    "extra": {
+      "sample": {
+        "id": 545361,
+        "fullName": "Mike Trout",
+        "firstName": "Michael",
+        "lastName": "Trout",
+        "primaryNumber": "27",
+        "currentTeam": {
+          "id": 108
+        },
+        "primaryPosition": {
+          "code": "8",
+          "abbreviation": "CF"
+        },
+        "useName": "Mike",
+        "boxscoreName": "Trout",
+        "nickName": "Kiiiiid",
+        "mlbDebutDate": "2011-07-08",
+        "nameFirstLast": "Mike Trout",
+        "nameSlug": "mike-trout-545361",
+        "firstLastName": "Mike Trout",
+        "lastFirstName": "Trout, Mike",
+        "lastInitName": "Trout, M",
+        "initLastName": "M Trout",
+        "fullFMLName": "Michael Nelson Trout",
+        "fullLFMName": "Trout, Michael Nelson"
+      }
+    }
+  }
+]

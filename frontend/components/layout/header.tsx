@@ -18,6 +18,11 @@ const PAGE_TITLES: Record<string, string> = {
   '/today': "Today's Bets",
   '/live-slate': 'Live Slate',
   '/odds-monitor': 'Odds Monitor',
+  // Fantasy War Room
+  '/decisions': 'Daily Decisions',
+  '/war-room': 'War Room',
+  '/war-room/streaming': 'Streaming Station',
+  '/war-room/roster-lab': 'Roster Lab',
 }
 
 interface HeaderProps {

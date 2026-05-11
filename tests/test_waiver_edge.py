@@ -251,3 +251,66 @@ class TestWaiverEdgeDetector:
         assert result is not None
         assert result["name"] == "Back-end Streamer"
 
+
+# ---------------------------------------------------------------------------
+# Sprint 4: matchup context
+# ---------------------------------------------------------------------------
+
+
+class TestLoadMatchupScores:
+    # _load_matchup_scores does `from backend.models import SessionLocal` inside
+    # the function body, so the correct patch target is backend.models.SessionLocal.
+
+    def test_returns_empty_on_empty_ids(self):
+        det = WaiverEdgeDetector.__new__(WaiverEdgeDetector)
+        result = det._load_matchup_scores([])
+        assert result == {}
+
+    def test_returns_empty_on_db_error(self):
+        det = WaiverEdgeDetector.__new__(WaiverEdgeDetector)
+        with patch("backend.models.SessionLocal",
+                   side_effect=Exception("db down")):
+            result = det._load_matchup_scores([123])
+        assert result == {}
+
+    def test_maps_bdl_id_to_matchup_fields(self):
+        det = WaiverEdgeDetector.__new__(WaiverEdgeDetector)
+        mock_db = MagicMock()
+        row = (101, 1.5, 80.0, 0.85)
+        mock_db.execute.return_value.fetchall.return_value = [row]
+        with patch("backend.models.SessionLocal",
+                   return_value=mock_db):
+            result = det._load_matchup_scores([101])
+        assert 101 in result
+        assert result[101]["matchup_z"] == 1.5
+        assert result[101]["matchup_score"] == 80.0
+        assert result[101]["matchup_confidence"] == 0.85
+
+    def test_none_values_coerced_to_defaults(self):
+        det = WaiverEdgeDetector.__new__(WaiverEdgeDetector)
+        mock_db = MagicMock()
+        row = (202, None, None, None)
+        mock_db.execute.return_value.fetchall.return_value = [row]
+        with patch("backend.models.SessionLocal",
+                   return_value=mock_db):
+            result = det._load_matchup_scores([202])
+        assert result[202]["matchup_z"] == 0.0
+        assert result[202]["matchup_score"] == 50.0
+        assert result[202]["matchup_confidence"] == 0.0
+
+
+class TestLoadMarketScores:
+    def test_null_market_rows_are_ignored(self):
+        det = WaiverEdgeDetector.__new__(WaiverEdgeDetector)
+        mock_db = MagicMock()
+        mock_db.execute.return_value.fetchall.return_value = [
+            (101, None),
+            (202, 81.5),
+        ]
+
+        with patch("backend.models.SessionLocal", return_value=mock_db):
+            result = det._load_market_scores([101, 202])
+
+        assert 101 not in result
+        assert result[202] == pytest.approx(81.5)
+

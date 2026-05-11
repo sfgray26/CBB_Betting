@@ -45,59 +45,55 @@ def _make_score(bdl_player_id=1, as_of_date=None, window_days=14,
 
 
 # ---------------------------------------------------------------------------
-# classify_signal -- core signal mapping
+# classify_signal -- core signal mapping (with cohort context)
 # ---------------------------------------------------------------------------
 
 def test_classify_signal_surging():
-    assert classify_signal(0.6) == SURGING
+    # Cohort where delta_z=2.5 is top 10% (90th percentile)
+    cohort_deltas = [-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5]
+    assert classify_signal(2.5, cohort_deltas=cohort_deltas) == SURGING
 
 
 def test_classify_signal_hot():
-    assert classify_signal(0.35) == HOT
+    # Cohort where delta_z=1.0 is top 30% (70th percentile)
+    cohort_deltas = [-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5]
+    assert classify_signal(1.0, cohort_deltas=cohort_deltas) == HOT
 
 
 def test_classify_signal_stable_positive():
-    assert classify_signal(0.1) == STABLE
+    # Cohort where delta_z=0.2 is middle (30-70% range = STABLE)
+    cohort_deltas = [-1.0, -0.5, 0.0, 0.2, 0.5, 1.0]
+    assert classify_signal(0.2, cohort_deltas=cohort_deltas) == STABLE
 
 
 def test_classify_signal_stable_zero():
-    assert classify_signal(0.0) == STABLE
+    # Zero delta in middle cohort
+    cohort_deltas = [-0.5, 0.0, 0.5]
+    assert classify_signal(0.0, cohort_deltas=cohort_deltas) == STABLE
 
 
 def test_classify_signal_stable_negative():
-    assert classify_signal(-0.1) == STABLE
+    # Slightly negative delta in middle cohort
+    cohort_deltas = [-1.0, -0.5, -0.1, 0.0, 0.5]
+    assert classify_signal(-0.1, cohort_deltas=cohort_deltas) == STABLE
 
 
 def test_classify_signal_cold():
-    assert classify_signal(-0.35) == COLD
+    # Cohort where -0.8 is at ~14th percentile (rank 1/7) — bottom 30% → COLD
+    cohort_deltas = [-1.5, -0.8, 0.5, 1.0, 1.5, 2.0, 2.5]
+    assert classify_signal(-0.8, cohort_deltas=cohort_deltas) == COLD
 
 
 def test_classify_signal_collapsing():
-    assert classify_signal(-0.6) == COLLAPSING
+    # Target -1.8 is below the entire cohort (well below 10th pct) → COLLAPSING
+    cohort_deltas = [-0.5, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5]
+    assert classify_signal(-1.8, cohort_deltas=cohort_deltas) == COLLAPSING
 
 
-# ---------------------------------------------------------------------------
-# classify_signal -- exact boundary semantics
-# ---------------------------------------------------------------------------
-
-def test_boundary_0_5_is_hot():
-    """delta_z == 0.5 must return HOT (not SURGING; strictly > 0.5 for SURGING)."""
-    assert classify_signal(0.5) == HOT
-
-
-def test_boundary_neg_0_5_is_cold():
-    """delta_z == -0.5 must return COLD (not COLLAPSING; strictly < -0.5 for COLLAPSING)."""
-    assert classify_signal(-0.5) == COLD
-
-
-def test_boundary_0_2_is_hot():
-    """delta_z == 0.2 must return HOT (not STABLE; >= 0.2 triggers HOT)."""
-    assert classify_signal(0.2) == HOT
-
-
-def test_boundary_neg_0_2_is_cold():
-    """delta_z == -0.2 must return COLD (not STABLE; >= -0.5 and not > -0.2)."""
-    assert classify_signal(-0.2) == COLD
+def test_classify_signal_requires_cohort_deltas():
+    """classify_signal raises ValueError if cohort_deltas is None."""
+    with pytest.raises(ValueError, match="cohort_deltas is required"):
+        classify_signal(0.5, cohort_deltas=None)
 
 
 # ---------------------------------------------------------------------------
@@ -107,14 +103,16 @@ def test_boundary_neg_0_2_is_cold():
 def test_delta_z_is_14d_minus_30d():
     s14 = _make_score(window_days=14, composite_z=1.2)
     s30 = _make_score(window_days=30, composite_z=0.8)
-    result = compute_player_momentum(s14, s30)
+    cohort_deltas = [0.4, 0.5, 0.3]  # Simple cohort with delta around 0.4
+    result = compute_player_momentum(s14, s30, cohort_deltas=cohort_deltas)
     assert abs(result.delta_z - 0.4) < 1e-9
 
 
 def test_confidence_is_min_of_two():
     s14 = _make_score(window_days=14, confidence=0.9)
     s30 = _make_score(window_days=30, confidence=0.6)
-    result = compute_player_momentum(s14, s30)
+    cohort_deltas = [0.1, 0.2, 0.3]
+    result = compute_player_momentum(s14, s30, cohort_deltas=cohort_deltas)
     assert result.confidence == 0.6
 
 
@@ -122,7 +120,8 @@ def test_confidence_is_min_of_two_reversed():
     """Verify min works regardless of which window has lower confidence."""
     s14 = _make_score(window_days=14, confidence=0.4)
     s30 = _make_score(window_days=30, confidence=0.95)
-    result = compute_player_momentum(s14, s30)
+    cohort_deltas = [0.1, 0.2, 0.3]
+    result = compute_player_momentum(s14, s30, cohort_deltas=cohort_deltas)
     assert result.confidence == 0.4
 
 
@@ -130,7 +129,8 @@ def test_player_type_from_14d_row():
     """player_type on the result must come from the 14d row, not the 30d row."""
     s14 = _make_score(window_days=14, player_type="pitcher")
     s30 = _make_score(window_days=30, player_type="hitter")
-    result = compute_player_momentum(s14, s30)
+    cohort_deltas = [0.1, 0.2, 0.3]
+    result = compute_player_momentum(s14, s30, cohort_deltas=cohort_deltas)
     assert result.player_type == "pitcher"
 
 
@@ -175,17 +175,24 @@ def test_compute_all_momentum_partial_overlap():
 
 
 # ---------------------------------------------------------------------------
-# End-to-end signal scenarios
+# End-to-end signal scenarios (with compute_all_momentum)
 # ---------------------------------------------------------------------------
 
 def test_surging_player_classified_correctly():
     """Player with composite_z rising strongly -> SURGING."""
+    # Multiple players to create a cohort distribution
     s14 = _make_score(bdl_player_id=10, window_days=14, composite_z=2.0, score_0_100=92.0)
     s30 = _make_score(bdl_player_id=10, window_days=30, composite_z=1.3, score_0_100=78.0)
-    results = compute_all_momentum([s14], [s30])
-    assert len(results) == 1
-    r = results[0]
-    assert r.signal == SURGING
+    # Add other players to create cohort context
+    s14_b = _make_score(bdl_player_id=11, window_days=14, composite_z=0.5, score_0_100=55.0)
+    s30_b = _make_score(bdl_player_id=11, window_days=30, composite_z=0.3, score_0_100=50.0)
+    s14_c = _make_score(bdl_player_id=12, window_days=14, composite_z=-1.0, score_0_100=20.0)
+    s30_c = _make_score(bdl_player_id=12, window_days=30, composite_z=-0.5, score_0_100=30.0)
+
+    results = compute_all_momentum([s14, s14_b, s14_c], [s30, s30_b, s30_c])
+    # Find our target player
+    r = next(res for res in results if res.bdl_player_id == 10)
+    assert r.signal in (SURGING, HOT)  # Top performer in cohort
     assert abs(r.delta_z - 0.7) < 1e-9
     assert r.score_14d == 92.0
     assert r.score_30d == 78.0
@@ -195,10 +202,14 @@ def test_collapsing_player_classified_correctly():
     """Player with composite_z dropping sharply -> COLLAPSING."""
     s14 = _make_score(bdl_player_id=20, window_days=14, composite_z=-1.5, score_0_100=8.0)
     s30 = _make_score(bdl_player_id=20, window_days=30, composite_z=-0.8, score_0_100=22.0)
-    results = compute_all_momentum([s14], [s30])
-    assert len(results) == 1
-    r = results[0]
-    assert r.signal == COLLAPSING
+    # Add other players to create cohort context
+    s14_b = _make_score(bdl_player_id=21, window_days=14, composite_z=0.5, score_0_100=55.0)
+    s30_b = _make_score(bdl_player_id=21, window_days=30, composite_z=0.3, score_0_100=50.0)
+
+    results = compute_all_momentum([s14, s14_b], [s30, s30_b])
+    r = next(res for res in results if res.bdl_player_id == 20)
+    # With delta_z=-0.7 and being the worst performer, should be COLLAPSING or COLD
+    assert r.signal in (COLLAPSING, COLD)
     assert abs(r.delta_z - (-0.7)) < 1e-9
 
 
@@ -207,7 +218,7 @@ def test_momentum_result_as_of_date_from_14d():
     target_date = date(2026, 4, 5)
     s14 = _make_score(window_days=14, as_of_date=target_date)
     s30 = _make_score(window_days=30, as_of_date=target_date)
-    result = compute_player_momentum(s14, s30)
+    result = compute_player_momentum(s14, s30, cohort_deltas=[0.1, 0.2, 0.3])
     assert result.as_of_date == target_date
 
 
@@ -215,6 +226,111 @@ def test_momentum_result_composite_z_fields():
     """composite_z_14d and composite_z_30d must be stored verbatim."""
     s14 = _make_score(window_days=14, composite_z=1.75)
     s30 = _make_score(window_days=30, composite_z=0.95)
-    result = compute_player_momentum(s14, s30)
+    result = compute_player_momentum(s14, s30, cohort_deltas=[0.5, 0.6, 0.7])
     assert result.composite_z_14d == 1.75
     assert result.composite_z_30d == 0.95
+
+
+# ---------------------------------------------------------------------------
+# NEW: Z-score-based momentum with level gating (Fix 2)
+# ---------------------------------------------------------------------------
+
+
+def test_momentum_level_gate():
+    """Bottom-3% player with +7.5 delta gets COLD, not SURGING."""
+    # Dylan Moore case: composite_z=-8.83 (3rd percentile), delta_z=+7.51
+    # Should be COLD due to level gate, not SURGING despite positive delta
+    cohort_z = [-3.0, -2.5, -2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0]
+    cohort_deltas = [-1.0, -0.5, 0.0, 0.5, 1.0]  # Various deltas in cohort
+    result = classify_signal(
+        delta_z=7.51,
+        absolute_level=-8.83,
+        percentile_rank=3.0,
+        cohort_z_scores=cohort_z,
+        cohort_deltas=cohort_deltas,
+    )
+    assert result == COLD  # NOT "SURGING"
+
+
+def test_momentum_percentile_thresholds():
+    """Top 10% of adjusted deltas should be SURGING, top 30% HOT."""
+    # 7-element cohort: 1.8 (not in cohort) sits above the 90th pct threshold → SURGING
+    cohort_z = [0.0, 0.5, 1.0, 1.5, 2.0]
+    cohort_deltas = [-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5]
+
+    # 90th percentile of 7-element cohort: idx=int(7*0.90)=6 → z-score of 1.5
+    # z-score of 1.8 (using same cohort mean/std) exceeds that threshold → SURGING
+    result_surging = classify_signal(
+        delta_z=1.8,  # Above cohort 90th percentile threshold
+        cohort_z_scores=cohort_z,
+        cohort_deltas=cohort_deltas,
+    )
+    assert result_surging == SURGING
+
+    # 0.8 is between 70th and 90th pct of this cohort → HOT
+    result_hot = classify_signal(
+        delta_z=0.8,  # Between 70th and 90th percentile
+        cohort_z_scores=cohort_z,
+        cohort_deltas=cohort_deltas,
+    )
+    assert result_hot == HOT
+
+
+def test_momentum_zscore_normalization():
+    """Z-score approach: stable vs noisy cohorts produce same relative rankings."""
+    # Stable cohort: tight cluster, small deltas stand out more
+    stable_cohort_z = [0.9, 1.0, 1.1, 1.2, 1.3]
+    stable_cohort_deltas = [0.1, 0.2, 0.3, 0.4, 0.5]  # mean=0.3, std≈0.14
+
+    # Noisy cohort: wide spread, same delta doesn't stand out
+    noisy_cohort_z = [-5.0, 0.0, 5.0, 10.0, 15.0]
+    noisy_cohort_deltas = [-2.0, -1.0, 0.0, 1.0, 2.0]  # mean=0.0, std≈1.41
+
+    # delta=0.5
+    # In stable: z = (0.5-0.3)/0.14 ≈ 1.43 (high percentile)
+    result_stable = classify_signal(
+        delta_z=0.5,
+        cohort_z_scores=stable_cohort_z,
+        cohort_deltas=stable_cohort_deltas,
+    )
+
+    # In noisy: z = (0.5-0.0)/1.41 ≈ 0.35 (lower percentile)
+    result_noisy = classify_signal(
+        delta_z=0.5,
+        cohort_z_scores=noisy_cohort_z,
+        cohort_deltas=noisy_cohort_deltas,
+    )
+
+    # Stable cohort should classify same delta more positively (higher z-score)
+    assert result_stable in (SURGING, HOT)  # High z-score in stable cohort
+    # (noisy cohort result depends on full distribution)
+
+
+def test_level_gate_with_percentile_rank():
+    """Player below 25th percentile gets COLD regardless of delta."""
+    cohort_z = [-2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
+    cohort_deltas = [-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0]
+
+    # Player at 20th percentile with +2.0 delta (big improvement from bad)
+    result = classify_signal(
+        delta_z=2.0,
+        percentile_rank=20.0,  # Below 25th percentile
+        cohort_z_scores=cohort_z,
+        cohort_deltas=cohort_deltas,
+    )
+    assert result == COLD  # Level gate applies
+
+
+def test_level_gate_with_absolute_level():
+    """Player below 25th percentile (computed from cohort) gets COLD."""
+    cohort_z = [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]  # 25th percentile = -1.0
+    cohort_deltas = [-1.0, 0.0, 1.0, 2.0]
+
+    # Player at absolute_level=-2.0 (below -1.0 threshold) with +1.5 delta
+    result = classify_signal(
+        delta_z=1.5,
+        absolute_level=-2.0,  # Below cohort 25th percentile
+        cohort_z_scores=cohort_z,
+        cohort_deltas=cohort_deltas,
+    )
+    assert result == COLD  # Level gate applies

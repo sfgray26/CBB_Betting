@@ -18,6 +18,33 @@ from datetime import date
 from typing import Optional
 
 
+# Snapshot health is for the fantasy decision pipeline. Other successful jobs
+# may share the scheduler status dict, but persisting them here makes fantasy
+# monitoring look degraded or unrelated.
+_FANTASY_PIPELINE_JOBS: tuple[str, ...] = (
+    "mlb_game_log",
+    "mlb_box_stats",
+    "rolling_windows",
+    "player_scores",
+    "player_momentum",
+    "ros_simulation",
+    "decision_optimization",
+    "backtesting",
+    "explainability",
+    "snapshot",
+    # Sprint 4/5 pipeline jobs added 2026-05-07
+    "statcast",
+    "savant_ingestion",
+    "fangraphs_ros",
+    "waiver_scan",
+    "opportunity_update",
+    "market_signals_update",
+    "matchup_context_update",
+    "canonical_projection_refresh",
+)
+_FANTASY_PIPELINE_JOB_SET = set(_FANTASY_PIPELINE_JOBS)
+
+
 # ---------------------------------------------------------------------------
 # Input dataclass -- all fields assembled upstream by the DB orchestrator
 # ---------------------------------------------------------------------------
@@ -128,10 +155,17 @@ def _build_summary(inp: SnapshotInput, health: str, reasons: list) -> str:
     )
 
 
+def _normalize_pipeline_jobs_run(jobs: list) -> list:
+    """Return unique fantasy pipeline job names in canonical order."""
+    seen = {job for job in jobs if job in _FANTASY_PIPELINE_JOB_SET}
+    return [job for job in _FANTASY_PIPELINE_JOBS if job in seen]
+
+
 def build_snapshot(inp: SnapshotInput) -> SnapshotResult:
     """Compute health, build summary, return SnapshotResult."""
     health, reasons = _check_health(inp)
     summary = _build_summary(inp, health, reasons)
+    pipeline_jobs_run = _normalize_pipeline_jobs_run(inp.pipeline_jobs_run)
 
     return SnapshotResult(
         as_of_date=inp.as_of_date,
@@ -145,7 +179,7 @@ def build_snapshot(inp: SnapshotInput) -> SnapshotResult:
         regression_detected=inp.regression_detected,
         top_lineup_player_ids=inp.top_lineup_player_ids,
         top_waiver_player_ids=inp.top_waiver_player_ids,
-        pipeline_jobs_run=inp.pipeline_jobs_run,
+        pipeline_jobs_run=pipeline_jobs_run,
         pipeline_health=health,
         health_reasons=reasons,
         summary=summary,

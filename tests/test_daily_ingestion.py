@@ -162,11 +162,11 @@ async def test_secondary_name_lookup_resolves_mismatched_fg_id():
 
 @pytest.mark.asyncio
 async def test_tertiary_projection_fallback_uses_existing_row():
-    """Tertiary path: MLBAM dict empty; PlayerProjection row found by name → uses existing id."""
+    """Tertiary path: MLBAM dict empty; PlayerIdentity row found by normalized name → uses mlbam_id."""
     cap = _Capturing()
     orch = _make_orch()
     existing = MagicMock()
-    existing.player_id = "mlbam_fallback_999"
+    existing.mlbam_id = "mlbam_fallback_999"
     db = _make_db(id_rows=[], proj_row=existing)
 
     with patch("backend.services.daily_ingestion._ROS_CACHE", {"bat": True, "pit": None}), \

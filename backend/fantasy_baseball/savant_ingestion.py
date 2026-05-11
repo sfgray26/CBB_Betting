@@ -10,7 +10,7 @@ Steamer data is missing or outdated.
 Usage:
     from backend.fantasy_baseball.savant_ingestion import SavantIngestionAgent
 
-    agent = SavantIngestionAgent(db, season=2026)
+    agent = SavantIngestionAgent(db)
     stats = agent.run_daily_ingestion()
 
 Schedule:
@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 from zoneinfo import ZoneInfo
 
 from backend.models import StatcastBatterMetrics, StatcastPitcherMetrics
+from backend.services.season_config import get_current_season
 
 logger = logging.getLogger(__name__)
 
@@ -75,16 +76,16 @@ class SavantIngestionAgent:
         "w,l,qs,ip,era,whip,sv,h,hr,k"
     )
 
-    def __init__(self, db: Session, season: int = 2026):
+    def __init__(self, db: Session, season: Optional[int] = None):
         """
         Initialize the Savant ingestion agent.
 
         Args:
             db: SQLAlchemy database session
-            season: MLB season year (default 2026)
+            season: MLB season year (defaults to CURRENT_MLB_SEASON or 2026)
         """
         self.db = db
-        self.season = season
+        self.season = season if season is not None else get_current_season()
 
     @staticmethod
     def _savant_float(value: str) -> Optional[float]:
@@ -219,6 +220,7 @@ class SavantIngestionAgent:
                 "bb_percent": self._savant_float(row.get("bb_percent", "")),
                 "k_9": self._savant_float(row.get("k_9", "")),
                 "whiff_percent": self._savant_float(row.get("whiff_percent", "")),
+                "pa": self._savant_int(row.get("pa", "")),
                 "w": self._savant_int(row.get("w", "")),
                 "l": self._savant_int(row.get("l", "")),
                 "qs": self._savant_int(row.get("qs", "")),
@@ -357,6 +359,7 @@ class SavantIngestionAgent:
                 existing.l = m.get("l")
                 existing.qs = m.get("qs")
                 existing.ip = m.get("ip")
+                existing.pa = m.get("pa")
                 existing.era = m.get("era")
                 existing.whip = m.get("whip")
                 existing.sv = m.get("sv")
@@ -384,6 +387,7 @@ class SavantIngestionAgent:
                     l=m.get("l"),
                     qs=m.get("qs"),
                     ip=m.get("ip"),
+                    pa=m.get("pa"),
                     era=m.get("era"),
                     whip=m.get("whip"),
                     sv=m.get("sv"),
@@ -546,7 +550,7 @@ class SavantIngestionAgent:
             self._release_advisory_lock()
 
 
-def run_savant_ingestion(db: Session, season: int = 2026) -> dict[str, Any]:
+def run_savant_ingestion(db: Session, season: Optional[int] = None) -> dict[str, Any]:
     """
     Convenience function to run Savant ingestion.
 

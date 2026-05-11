@@ -1,0 +1,50 @@
+[
+  {
+    "strategy": "pybaseball",
+    "success": false,
+    "rows": 0,
+    "error": "FangraphsDataTable.fetch() got an unexpected keyword argument 'season'",
+    "extra": {},
+    "timestamp": "2026-05-06T07:23:16.013809"
+  },
+  {
+    "strategy": "direct_api",
+    "success": false,
+    "rows": 0,
+    "error": "500 Server Error: Internal Server Error for url: https://www.fangraphs.com/api/projections?type=rostest&stats=bat&pos=all",
+    "extra": {},
+    "timestamp": "2026-05-06T07:23:16.277985"
+  },
+  {
+    "strategy": "cloudscraper",
+    "success": false,
+    "rows": 0,
+    "error": "500 Server Error: Internal Server Error for url: https://www.fangraphs.com/api/projections?type=rostest&stats=bat&pos=all",
+    "extra": {},
+    "timestamp": "2026-05-06T07:23:16.549667"
+  },
+  {
+    "strategy": "playwright",
+    "success": false,
+    "rows": 0,
+    "error": "Page.goto: Timeout 60000ms exceeded.\nCall log:\n  - navigating to \"https://www.fangraphs.com/projections?pos=all&stats=bat&type=rostest\", waiting until \"networkidle\"\n",
+    "extra": {},
+    "timestamp": "2026-05-06T07:24:20.206804"
+  },
+  {
+    "strategy": "playwright_api",
+    "success": false,
+    "rows": 0,
+    "error": "500 ",
+    "extra": {},
+    "timestamp": "2026-05-06T07:24:22.982865"
+  },
+  {
+    "strategy": "pybaseball_direct",
+    "success": false,
+    "rows": 0,
+    "error": "import failed: No module named 'pybaseball.fangraphs'",
+    "extra": {},
+    "timestamp": "2026-05-06T07:24:22.982865"
+  }
+]

@@ -407,10 +407,12 @@ def _calculate_injury_risk_multiplier(
         # Calculate penalty based on recency and count
         total_penalty = 0.0
         today = as_of_date
+        from datetime import datetime as _dt_type
 
         for stint in il_stints:
-            # Calculate days since injury
-            days_since_injury = (today - stint.injury_date.date()).days
+            # Normalize to date: DB returns date or timezone-aware datetime
+            injury_d = stint.injury_date.date() if isinstance(stint.injury_date, _dt_type) else stint.injury_date
+            days_since_injury = (today - injury_d).days
 
             # Determine recency factor
             if days_since_injury <= 30:
@@ -575,6 +577,8 @@ def simulate_player(
     Covers 15 of 18 v2 categories (W, L, HR_P deferred - not available in rolling stats).
     """
     rng = random.Random(seed)
+    # Apply injury risk multiplier to effective remaining games before simulation
+    remaining_games = int(remaining_games * injury_risk_multiplier)
     # M3 fix: use decay-weighted game count for consistent rate derivation.
     # Fall back to raw games_in_window for rows computed before w_games was added.
     _wg = getattr(rolling_row, 'w_games', None)

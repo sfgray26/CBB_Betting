@@ -106,7 +106,7 @@ def _get_player_z_score_from_db(
         metric = (
             db.query(PlayerDailyMetric)
             .filter(
-                PlayerDailyMetric.player_name.ilike(player_name),
+                PlayerDailyMetric.player_name == player_name,
                 PlayerDailyMetric.sport == "mlb",
                 PlayerDailyMetric.metric_date >= recent_cutoff,
             )

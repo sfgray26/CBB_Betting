@@ -103,6 +103,7 @@ from backend.routers import data_quality
 from backend.services.recalibration import compute_dynamic_weights
 from backend.services.discord_notifier import send_todays_bets
 from backend.services.sentinel import run_nightly_health_check
+from backend.services.health_monitor import check_pipeline_health, CRITICAL_CHAIN
 from backend.services.dk_import import (
     parse_dk_csv, preview_import, apply_import,
     preview_direct_import, apply_direct_import,
@@ -400,15 +401,9 @@ async def lifespan(app: FastAPI):
         )
 
     if cbb_active:
-        # Tournament bracket release notifier - runs daily 6 PM ET, Mar 14-20
-        scheduler.add_job(
-            _tournament_bracket_job,
-            CronTrigger(hour=18, minute=0, timezone=timezone),
-            id="tournament_bracket_notifier",
-            name="Tournament Bracket Release Notifier",
-            replace_existing=True,
-        )
-
+        # CBB tournament season is closed. Keep the legacy notifier function for
+        # archival reference, but do not register tournament_bracket_notifier on
+        # startup during the MLB fantasy platform pivot.
         # Weekly model parameter recalibration - Sunday 5 AM ET
         # Note: recalibration and sentinel both run at 5:00 AM; they are independent.
         scheduler.add_job(
@@ -677,6 +672,31 @@ app.include_router(_constraint_migration_router, prefix="/admin", tags=["admin"]
 app.include_router(data_quality.router)
 
 # --- end strangler-fig mounts ---
+
+# MCP Server — exposes FastAPI endpoints as Model Context Protocol tools.
+# Mounted at /mcp.  Test/admin routes are excluded from tool discovery.
+# noinspection PyBroadException
+try:
+    from fastapi_mcp import FastApiMCP
+
+    _mcp = FastApiMCP(
+        app,
+        name="CBB Edge API",
+        description="Fantasy baseball + CBB betting API exposed as MCP tools",
+        exclude_tags=[
+            "test",
+            "db-verify",
+            "yahoo-debug",
+            "yahoo-token",
+            "yahoo-parsing-test",
+            "yahoo-structure-dump",
+            "admin",
+        ],
+    )
+    _mcp.mount()
+    logger.info("MCP server mounted at /mcp")
+except Exception as _mcp_exc:
+    logger.warning("MCP server setup failed (non-fatal): %s", _mcp_exc)
 
 # CORS - reads ALLOWED_ORIGINS env var (comma-separated) or falls back to wildcard.
 # API key auth means wildcard origins are safe; credentials are never cookie-based.
@@ -1547,6 +1567,38 @@ def _tournament_bracket_job():
         logger.exception("Tournament bracket job failed")
 
 
+def _mlb_analysis_job():
+    """
+    MLB nightly analysis job (EMAC-080).
+
+    Runs daily at 10:00 AM ET. Fetches today's MLB schedule, projects runs
+    for each game, fetches market odds, calculates edge, and persists
+    projections to the mlb_projections table.
+    """
+    import asyncio
+    from datetime import date
+    from backend.services.mlb_analysis import MLBAnalysisService
+
+    try:
+        service = MLBAnalysisService()
+        projections = asyncio.get_event_loop().run_until_complete(
+            service.run_analysis(target_date=date.today())
+        )
+        if projections:
+            write_result = service.write_projections_to_db(projections)
+            verify_result = service.verify_edge_calculation()
+            logger.info(
+                "MLB analysis job: %d projections, DB write=%s, edge verify=%s",
+                len(projections),
+                write_result.get("status"),
+                verify_result.get("status"),
+            )
+        else:
+            logger.info("MLB analysis job: no games to project today")
+    except Exception:
+        logger.warning("MLB analysis job failed", exc_info=True)
+
+
 @app.get("/api/tournament/bracket-projection")
 async def get_bracket_projection(
     n_sims: int = Query(default=10000, ge=1000, le=50000),
@@ -1554,115 +1606,18 @@ async def get_bracket_projection(
     db: Session = Depends(get_db),
 ):
     """
-    Monte Carlo NCAA Tournament bracket projection.
+    Retired NCAA Tournament bracket projection endpoint.
 
-    Uses the V9.1 tournament module (composite KenPom+BartTorvik ratings,
-    round-specific SD multipliers, historical seed upset blending).
-
-    Falls back to data/bracket_2026.json when BALLDONTLIE_API_KEY is not set,
-    so the endpoint always returns a result during tournament weeks.
-
-    Query parameters:
-      n_sims: Number of Monte Carlo simulations (1,000 - 50,000; default 10,000).
+    CBB tournament simulation is closed for the season and must not import or
+    execute bracket modules during the MLB fantasy platform pivot.
     """
-    import json as _json
-    from pathlib import Path as _Path
-    from backend.tournament.matchup_predictor import TournamentTeam
-    from backend.tournament.bracket_simulator import run_monte_carlo
-
-    REGIONS = ["east", "south", "west", "midwest"]
-    BRACKET_JSON = _Path(__file__).resolve().parent.parent / "data" / "bracket_2026.json"
-
-    # --- 1. Build bracket from pre-built JSON (always available) ---
-    if not BRACKET_JSON.exists():
-        raise HTTPException(
-            status_code=503,
-            detail="bracket_2026.json not found. Re-deploy or run build_bracket_from_db.py.",
-        )
-
-    with open(BRACKET_JSON, encoding="utf-8") as _f:
-        raw = _json.load(_f)
-
-    bracket: dict = {}
-    for region in REGIONS:
-        if region not in raw:
-            continue
-        bracket[region] = [
-            TournamentTeam(
-                name=t["name"],
-                seed=t["seed"],
-                region=region,
-                composite_rating=t.get("composite_rating", 0.0),
-                kp_adj_em=t.get("kp_adj_em"),
-                bt_adj_em=t.get("bt_adj_em"),
-                pace=t.get("pace", 68.0),
-                three_pt_rate=t.get("three_pt_rate", 0.35),
-                def_efg_pct=t.get("def_efg_pct", 0.50),
-                conference=t.get("conference", ""),
-                tournament_exp=t.get("tournament_exp", 0.70),
-            )
-            for t in raw[region]
-        ]
-
-    if len(bracket) < 4:
-        raise HTTPException(
-            status_code=503,
-            detail=f"bracket_2026.json is incomplete ({len(bracket)}/4 regions).",
-        )
-
-    # --- 2. Run Monte Carlo simulation ---
-    try:
-        results = run_monte_carlo(bracket, n_sims=n_sims, n_workers=2, base_seed=42)
-    except Exception as exc:
-        logger.error("Bracket Monte Carlo failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Simulation error: {exc}")
-
-    # --- 3. Build response ---
-    all_teams = [t for teams in bracket.values() for t in teams]
-    seed_map = {t.name: t.seed for t in all_teams}
-    region_map = {t.name: t.region for t in all_teams}
-
-    sorted_champ = sorted(results.championship.items(), key=lambda x: -x[1])
-    projected_champion = sorted_champ[0][0] if sorted_champ else None
-
-    top_f4 = sorted(results.final_four.items(), key=lambda x: -x[1])[:4]
-    projected_final_four = [t for t, _ in top_f4]
-
-    upset_alerts = [
-        {
-            "team": t.name,
-            "seed": t.seed,
-            "region": t.region,
-            "r64_win_prob": round(results.round_of_32.get(t.name, 0) * 100, 1),
-        }
-        for t in all_teams
-        if t.seed >= 10 and results.round_of_32.get(t.name, 0) >= 0.35
-    ]
-
-    advancement_probs = {
-        t: {
-            "seed": seed_map.get(t, 0),
-            "region": region_map.get(t, ""),
-            "r32_pct": round(results.round_of_32.get(t, 0) * 100, 1),
-            "s16_pct": round(results.sweet_sixteen.get(t, 0) * 100, 1),
-            "e8_pct": round(results.elite_eight.get(t, 0) * 100, 1),
-            "f4_pct": round(results.final_four.get(t, 0) * 100, 1),
-            "runner_up_pct": round(results.runner_up.get(t, 0) * 100, 1),
-            "champion_pct": round(results.championship.get(t, 0) * 100, 1),
-        }
-        for t in results.championship
-    }
-
-    return {
-        "n_sims": results.n_sims,
-        "data_source": "bracket_2026.json (V9.1 composite ratings)",
-        "projected_champion": projected_champion,
-        "projected_final_four": projected_final_four,
-        "upset_alerts": upset_alerts,
-        "advancement_probs": advancement_probs,
-        "avg_upsets_per_tournament": round(results.avg_upsets_per_tournament, 1),
-        "avg_championship_margin": round(results.avg_championship_margin, 1),
-    }
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "NCAA Tournament bracket projection is retired for the closed CBB "
+            "season. Use MLB fantasy and betting endpoints for active workflows."
+        ),
+    )
 
 
 def _daily_snapshot_job():
@@ -1916,11 +1871,10 @@ async def root():
 
 @app.get("/health")
 async def health_check(db: Session = Depends(get_db)):
-    """Health check endpoint"""
+    """Health check endpoint with pipeline summary"""
     health = {"status": "healthy", "database": "connected", "scheduler": "running"}
 
     try:
-        # CHANGE THIS LINE: Wrap the string in text()
         db.execute(text("SELECT 1"))
     except Exception as e:
         logger.error(f"Health check database error: {e}")
@@ -1931,7 +1885,89 @@ async def health_check(db: Session = Depends(get_db)):
         health["status"] = "degraded"
         health["scheduler"] = "stopped"
 
+    # Add pipeline summary
+    try:
+        pipeline = check_pipeline_health(db)
+        health["pipeline_summary"] = pipeline["summary"]
+        # Overall status is degraded if any critical chain job is not healthy
+        if pipeline["summary"]["stale"] > 0 or pipeline["summary"]["failed"] > 0:
+            health["status"] = "degraded"
+    except Exception as e:
+        logger.error(f"Pipeline health check error: {e}")
+        health["pipeline_summary"] = {"error": str(e)}
+
     return health
+
+
+@app.get("/health/pipeline")
+async def health_pipeline(db: Session = Depends(get_db)):
+    """
+    Detailed pipeline health endpoint.
+
+    Returns per-job status with last run times and thresholds.
+    Returns 503 if any critical chain job is stale or failed.
+    No authentication required for uptime monitoring.
+    """
+    try:
+        pipeline = check_pipeline_health(db)
+        summary = pipeline["summary"]
+
+        # Check if any critical chain job is stale or failed
+        critical_unhealthy = False
+        for job_name, job_info in pipeline["jobs"].items():
+            if job_name in CRITICAL_CHAIN and job_info["status"] in ("stale", "failed"):
+                critical_unhealthy = True
+                break
+
+        if critical_unhealthy:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Critical pipeline jobs unhealthy: {summary['stale']} stale, {summary['failed']} failed"
+            )
+
+        return pipeline
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Pipeline health check error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/health/db")
+async def health_db(db: Session = Depends(get_db)):
+    """
+    Database health check with table row counts.
+
+    Returns connection status and row counts for key tables.
+    No authentication required for uptime monitoring.
+    """
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Database connection failed: {e}")
+
+    # Get row counts for key tables
+    tables = {
+        "games": "games",
+        "predictions": "predictions",
+        "data_ingestion_logs": "data_ingestion_logs",
+        "mlb_players": "mlb_players",
+        "mlb_matchups": "mlb_matchups",
+    }
+
+    counts = {}
+    for name, table in tables.items():
+        try:
+            result = db.execute(text(f"SELECT COUNT(*) FROM {table}"))
+            counts[name] = result.scalar() or 0
+        except Exception as e:
+            counts[name] = f"error: {e}"
+
+    return {
+        "status": "connected",
+        "checked_at": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+        "table_counts": counts,
+    }
 
 
 # ============================================================================
@@ -3432,6 +3468,14 @@ async def force_capture_lines(user: str = Depends(verify_admin_api_key)):
         return {"message": "Line capture complete", **results}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/admin/board/refresh")
+async def admin_board_refresh(user: str = Depends(verify_admin_api_key)):
+    """Clear in-memory player board cache. Call after dropping new Steamer CSVs to data/projections/."""
+    from backend.fantasy_baseball.player_board import reset_board_cache
+    reset_board_cache()
+    return {"status": "ok", "message": "Board cache cleared -- next request reloads from disk"}
 
 
 @app.delete("/admin/bets/{bet_id}")
@@ -5104,6 +5148,24 @@ async def sync_keepers_pre_draft(
     }
 
 
+@app.get("/api/fantasy/lineup/current", response_model=DailyLineupResponse)
+async def get_fantasy_lineup_current(
+    use_smart_selector: bool = True,
+    force_stale: bool = Query(True, description="Allow lineup generation even when projection freshness SLA is violated."),
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """Return daily lineup recommendations for today (ET)."""
+    from backend.utils.time_utils import today_et
+    _today = today_et().strftime("%Y-%m-%d")
+    return await get_fantasy_lineup_recommendations(
+        lineup_date=_today,
+        use_smart_selector=use_smart_selector,
+        force_stale=force_stale,
+        db=db,
+        user=user,
+    )
+
 @app.get("/api/fantasy/lineup/{lineup_date}", response_model=DailyLineupResponse)
 async def get_fantasy_lineup_recommendations(
     lineup_date: str,
@@ -5632,6 +5694,233 @@ async def get_daily_briefing(
     except Exception as e:
         logger.exception("Failed to generate briefing")
         raise HTTPException(status_code=500, detail=f"Briefing generation failed: {str(e)}")
+
+
+@app.get("/api/fantasy/projections/canonical")
+async def get_canonical_projections(
+    limit: int = 100,
+    player_type: Optional[str] = None,
+    min_confidence: float = 0.0,
+    db: Session = Depends(get_db),
+):
+    """Canonical projection surface for frontend consumption."""
+    from backend.models import CanonicalProjection, PlayerIdentity
+    q = db.query(CanonicalProjection)
+    if player_type:
+        q = q.filter(CanonicalProjection.player_type == player_type.upper())
+    if min_confidence > 0:
+        q = q.filter(CanonicalProjection.confidence_score >= min_confidence)
+    rows = (
+        q.order_by(CanonicalProjection.confidence_score.desc().nullslast())
+         .limit(limit)
+         .all()
+    )
+    mlbam_ids = [r.player_id for r in rows if r.player_id and r.player_id > 0]
+    identity_map: dict = {}
+    if mlbam_ids:
+        identities = (
+            db.query(PlayerIdentity)
+            .filter(PlayerIdentity.mlbam_id.in_(mlbam_ids))
+            .all()
+        )
+        identity_map = {i.mlbam_id: i.full_name for i in identities}
+    return [
+        {
+            "player_id": r.player_id,
+            "player_name": identity_map.get(r.player_id, f"player_{r.player_id}"),
+            "player_type": r.player_type,
+            "source_engine": r.source_engine,
+            "projection_date": r.projection_date.isoformat() if r.projection_date else None,
+            "confidence_score": r.confidence_score,
+            "projected_pa": r.projected_pa,
+            "projected_ip": r.projected_ip,
+            "proj_hr": r.proj_hr,
+            "proj_sb": r.proj_sb,
+            "proj_r": r.proj_r,
+            "proj_rbi": r.proj_rbi,
+            "proj_avg": r.proj_avg,
+            "proj_ops": r.proj_ops,
+            "proj_era": r.proj_era,
+            "proj_whip": r.proj_whip,
+            "proj_w": r.proj_w,
+            "proj_sv": r.proj_sv,
+            "proj_k": r.proj_k,
+            "xwoba": r.xwoba,
+            "xera": r.xera,
+            "savant_pitch_quality_score": r.savant_pitch_quality_score,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        }
+        for r in rows
+    ]
+
+
+
+
+@app.get("/api/fantasy/decisions/status")
+async def get_fantasy_decisions_status(
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Return freshness / health summary for the decision pipeline.
+    Frontend: GET /api/fantasy/decisions/status → DecisionPipelineStatus
+    """
+    from backend.models import DecisionResult as _DR, DecisionExplanation as _DE
+    from datetime import datetime, timedelta
+
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+
+    # --- decision_results stats ---
+    dr_latest = db.query(func.max(_DR.as_of_date)).scalar()
+    dr_total = None
+    dr_breakdown = None
+    if dr_latest:
+        dr_total = db.query(func.count(_DR.id)).filter(_DR.as_of_date == dr_latest).scalar()
+        rows = db.query(_DR.decision_type, func.count(_DR.id)).filter(
+            _DR.as_of_date == dr_latest
+        ).group_by(_DR.decision_type).all()
+        dr_breakdown = {r[0]: r[1] for r in rows}
+
+    # --- decision_explanations stats ---
+    de_latest = db.query(func.max(_DE.as_of_date)).scalar()
+    de_total = None
+    if de_latest:
+        de_total = db.query(func.count(_DE.id)).filter(_DE.as_of_date == de_latest).scalar()
+
+    # --- verdict ---
+    if dr_latest is None:
+        verdict = "missing"
+        message = "No decision results available yet."
+    else:
+        age_h = (now_et.date() - dr_latest).days * 24
+        if age_h <= 26:
+            verdict = "healthy"
+            message = f"Decision pipeline healthy — latest data: {dr_latest}"
+        elif age_h <= 72:
+            verdict = "stale"
+            message = f"Decision data is {age_h}h old (expected daily refresh)."
+        else:
+            verdict = "missing"
+            message = f"Decision data is {age_h}h old — pipeline may be broken."
+
+    return {
+        "verdict": verdict,
+        "message": message,
+        "checked_at": now_et.isoformat(),
+        "decision_results": {
+            "latest_as_of_date": str(dr_latest) if dr_latest else None,
+            "total_row_count": dr_total,
+            "breakdown_by_type": {
+                "lineup": dr_breakdown.get("lineup") if dr_breakdown else None,
+                "waiver": dr_breakdown.get("waiver") if dr_breakdown else None,
+            } if dr_breakdown else None,
+        },
+        "decision_explanations": {
+            "latest_as_of_date": str(de_latest) if de_latest else None,
+            "total_row_count": de_total,
+        },
+    }
+
+
+@app.get("/api/fantasy/decisions")
+async def get_fantasy_decisions(
+    decision_type: Optional[str] = Query(None, description="Filter: 'lineup' or 'waiver'"),
+    as_of_date: Optional[str] = Query(None, description="YYYY-MM-DD; defaults to latest available date"),
+    limit: int = Query(50, ge=1, le=200),
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Return stored decision records with explanations.
+    Frontend: GET /api/fantasy/decisions → DecisionsResponse
+    """
+    from backend.models import DecisionResult as _DR, DecisionExplanation as _DE, PlayerIDMapping as _PIM
+
+    # Resolve target date
+    if as_of_date:
+        try:
+            from datetime import date as _date_type
+            target_date = _date_type.fromisoformat(as_of_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="as_of_date must be YYYY-MM-DD")
+    else:
+        target_date = db.query(func.max(_DR.as_of_date)).scalar()
+        if target_date is None:
+            return {
+                "decisions": [],
+                "count": 0,
+                "as_of_date": None,
+                "decision_type": decision_type,
+            }
+
+    # Query decision_results
+    q = db.query(_DR).filter(_DR.as_of_date == target_date)
+    if decision_type in ("lineup", "waiver"):
+        q = q.filter(_DR.decision_type == decision_type)
+    q = q.order_by(_DR.confidence.desc()).limit(limit)
+    dr_rows = q.all()
+
+    if not dr_rows:
+        return {
+            "decisions": [],
+            "count": 0,
+            "as_of_date": str(target_date),
+            "decision_type": decision_type,
+        }
+
+    # Batch-load player names from player_id_mapping (by bdl_id)
+    all_bdl_ids = set()
+    for dr in dr_rows:
+        all_bdl_ids.add(dr.bdl_player_id)
+        if dr.drop_player_id:
+            all_bdl_ids.add(dr.drop_player_id)
+    pim_rows = db.query(_PIM.bdl_id, _PIM.full_name).filter(
+        _PIM.bdl_id.in_(list(all_bdl_ids))
+    ).all()
+    bdl_to_name: dict = {r.bdl_id: r.full_name for r in pim_rows}
+
+    # Batch-load explanations keyed by decision_id
+    dr_ids = [dr.id for dr in dr_rows]
+    de_rows = db.query(_DE).filter(_DE.decision_id.in_(dr_ids)).all()
+    decision_id_to_explanation: dict = {de.decision_id: de for de in de_rows}
+
+    # Assemble response
+    decisions_out = []
+    for dr in dr_rows:
+        de = decision_id_to_explanation.get(dr.id)
+        decision_dict = {
+            "bdl_player_id": dr.bdl_player_id,
+            "player_name": bdl_to_name.get(dr.bdl_player_id),
+            "as_of_date": str(dr.as_of_date),
+            "decision_type": dr.decision_type,
+            "target_slot": dr.target_slot,
+            "drop_player_id": dr.drop_player_id,
+            "drop_player_name": bdl_to_name.get(dr.drop_player_id) if dr.drop_player_id else None,
+            "lineup_score": dr.lineup_score,
+            "value_gain": dr.value_gain,
+            "confidence": dr.confidence,
+            "reasoning": dr.reasoning,
+        }
+        explanation_dict = None
+        if de:
+            explanation_dict = {
+                "summary": de.summary,
+                "factors": de.factors_json or [],
+                "confidence_narrative": de.confidence_narrative,
+                "risk_narrative": de.risk_narrative,
+                "track_record_narrative": de.track_record_narrative,
+            }
+        decisions_out.append({
+            "decision": decision_dict,
+            "explanation": explanation_dict,
+        })
+
+    return {
+        "decisions": decisions_out,
+        "count": len(decisions_out),
+        "as_of_date": str(target_date),
+        "decision_type": decision_type,
+    }
 
 
 @app.get("/api/fantasy/waiver", response_model=WaiverWireResponse)
@@ -7705,33 +7994,6 @@ async def investigate_ops_whip_root_cause():
 
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
-
-
-@app.post("/api/fantasy/matchup/simulate")
-async def simulate_matchup(
-    payload: MatchupSimulateRequest,
-    user: str = Depends(verify_api_key),
-):
-    """
-    Monte Carlo simulation of a weekly H2H matchup.
-
-    Pass my_roster and opponent_roster as lists of player dicts with:
-      cat_scores: {hr: float, r: float, ...}  -- z-scores per category
-      positions: [str]                          -- position eligibility
-      starts_this_week: int                     -- pitcher starts (default 1)
-      name: str
-
-    Returns win probability and per-category breakdown.
-    n_sims is capped at 5000 for latency safety.
-    """
-    from backend.fantasy_baseball.mcmc_simulator import simulate_weekly_matchup
-    n = min(max(100, payload.n_sims), 5000)
-    result = simulate_weekly_matchup(
-        my_roster=payload.my_roster,
-        opponent_roster=payload.opponent_roster,
-        n_sims=n,
-    )
-    return result
 
 
 @app.post("/admin/fantasy/reload-board", dependencies=[Depends(verify_admin_api_key)])

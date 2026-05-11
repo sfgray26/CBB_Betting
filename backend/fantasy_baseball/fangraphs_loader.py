@@ -4,8 +4,15 @@ FanGraphs Rest-of-Season (RoS) Projection Loader
 Fetches daily RoS projections from FanGraphs for four systems:
   ATC (30%), THE BAT (30%), Steamer (20%), ZiPS DC (20%)
 
-Uses cloudscraper to bypass Cloudflare protection.
-Handles "Last, First" name format for internal player_key compatibility.
+Uses the FanGraphs JSON API endpoint (not HTML scraping):
+  GET https://www.fangraphs.com/api/projections?type={system}&stats={bat|pit}&pos=all&team=0&lg=all&playerid=0
+
+Each row includes:
+  - PlayerName: "First Last" format (no "Last, First" conversion needed)
+  - playerid:   FanGraphs player ID string
+  - xMLBAMID:   MLBAM integer ID (direct bridge to player_identities.mlbam_id)
+  - All standard stat columns (HR, R, RBI, SB, AVG, OBP, SLG for batters;
+    W, SV, SO, ERA, WHIP, K/9, IP for pitchers)
 
 Lock ID: 100_012 (reserved in daily_ingestion.py)
 Cadence: Daily 3 AM ET
@@ -15,10 +22,10 @@ See reports/K25_FANGRAPHS_COLUMN_MAP.md for column spec.
 
 import logging
 import time
-from io import StringIO
 from typing import Optional
 
 import pandas as pd
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -27,44 +34,38 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 SYSTEMS = {
-    "atc":      {"weight": 0.30, "type_param": "atc"},
-    "thebat":   {"weight": 0.30, "type_param": "thebat"},
-    "steamer":  {"weight": 0.20, "type_param": "steamerr"},   # Note: "steamerr" for RoS
-    "zips":     {"weight": 0.20, "type_param": "zipsdc"},
+    # All use Rest-of-Season (RoS) type codes.
+    # Critical: Steamer RoS is "steamerr" (double-r); all others use "r" prefix.
+    "steamer":  {"weight": 0.30, "type_param": "steamerr"},
+    "atc":      {"weight": 0.30, "type_param": "ratcdc"},
+    "thebat":   {"weight": 0.25, "type_param": "rthebat"},
+    "zips":     {"weight": 0.15, "type_param": "rzipsdc"},
 }
 
-_BASE_URL = "https://www.fangraphs.com/projections.aspx"
+_API_URL = "https://www.fangraphs.com/api/projections"
 
-# K-25: All systems use "SO" for strikeouts (not "K")
-# K-25: All systems use "Last, First" name format
+_REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Referer": "https://www.fangraphs.com/projections",
+}
 
-# Batting columns we care about (intersection set)
-_BAT_COLS = {"Name", "Team", "PA", "HR", "R", "RBI", "SB", "SO", "AVG", "OBP", "SLG", "OPS"}
-# Pitching columns we care about
-_PIT_COLS = {"Name", "Team", "IP", "W", "SV", "SO", "ERA", "WHIP", "GS", "BB", "K/9"}
-
-
-def _normalize_name(name: str) -> str:
-    """Convert 'Last, First' FanGraphs format to 'First Last'.
-
-    >>> _normalize_name("Ohtani, Shohei")
-    'Shohei Ohtani'
-    >>> _normalize_name("Mike Trout")
-    'Mike Trout'
-    """
-    if not name:
-        return ""
-    name = name.strip()
-    if "," in name:
-        parts = [p.strip() for p in name.split(",", 1)]
-        return f"{parts[1]} {parts[0]}"
-    return name
+# Batting columns we keep from the API response
+_BAT_COLS = {"PlayerName", "playerid", "xMLBAMID", "Team", "PA", "HR", "R", "RBI", "SB", "SO", "AVG", "OBP", "SLG", "OPS"}
+# Pitching columns we keep
+_PIT_COLS = {"PlayerName", "playerid", "xMLBAMID", "Team", "IP", "W", "SV", "SO", "ERA", "WHIP", "K/9", "GS", "BB"}
 
 
 def _make_player_id(name: str) -> str:
-    """Normalize player name to stable ASCII key — mirrors projections_loader._make_player_id."""
+    """Normalize player name to stable ASCII key — mirrors projections_loader._make_player_id.
+
+    Used as a secondary merge key. Primary key is now mlbam_id via xMLBAMID.
+    """
     import re
-    name = _normalize_name(name)
     if not name:
         return ""
     # Strip generational suffixes
@@ -82,69 +83,43 @@ def _make_player_id(name: str) -> str:
             .replace(",", "").replace("-", "_"))
 
 
-def _fetch_projection_html(system: str, stat_type: str) -> Optional[str]:
-    """Fetch a single FanGraphs projection page via cloudscraper.
+def _fetch_projection_json(system: str, stat_type: str) -> Optional[list]:
+    """Fetch projection data from FanGraphs JSON API.
 
     Args:
         system: type param value (e.g. 'atc', 'thebat', 'steamerr', 'zipsdc')
         stat_type: 'bat' or 'pit'
 
     Returns:
-        HTML string, or None on failure.
+        List of dicts (one per player), or None on failure.
     """
+    params = {
+        "type": system,
+        "stats": stat_type,
+        "pos": "all",
+        "team": "0",
+        "lg": "all",
+        "playerid": "0",
+    }
     try:
-        import cloudscraper
-    except ImportError:
-        logger.error("cloudscraper not installed — cannot fetch FanGraphs projections")
-        return None
-
-    url = (f"{_BASE_URL}?pos=all&stats={stat_type}&type={system}"
-           f"&team=0&lg=all&players=0")
-
-    scraper = cloudscraper.create_scraper(
-        browser={"browser": "chrome", "platform": "windows", "desktop": True}
-    )
-    try:
-        resp = scraper.get(url, timeout=45)
+        resp = requests.get(
+            _API_URL,
+            params=params,
+            headers=_REQUEST_HEADERS,
+            timeout=30,
+        )
         resp.raise_for_status()
-        return resp.text
+        data = resp.json()
+        if not isinstance(data, list) or len(data) == 0:
+            logger.warning("FanGraphs API returned empty/unexpected response for %s/%s", system, stat_type)
+            return None
+        return data
+    except requests.exceptions.Timeout:
+        logger.error("FanGraphs API timeout for %s/%s", system, stat_type)
+        return None
     except Exception as e:
-        logger.error("FanGraphs fetch failed for %s/%s: %s", system, stat_type, e)
+        logger.error("FanGraphs API fetch failed for %s/%s: %s", system, stat_type, e)
         return None
-
-
-def _parse_table(html: str) -> Optional[pd.DataFrame]:
-    """Extract the main projection table from FanGraphs HTML."""
-    try:
-        from bs4 import BeautifulSoup
-    except ImportError:
-        logger.error("beautifulsoup4 not installed — cannot parse FanGraphs HTML")
-        return None
-
-    soup = BeautifulSoup(html, "html.parser")
-
-    # FanGraphs uses rgMasterTable for projection tables
-    table = soup.find("table", {"class": "rgMasterTable"})
-    if table is None:
-        # Fallback: look for any large data table
-        tables = soup.find_all("table")
-        for t in tables:
-            rows = t.find_all("tr")
-            if len(rows) > 20:
-                table = t
-                break
-
-    if table is None:
-        logger.warning("No projection table found in FanGraphs HTML")
-        return None
-
-    try:
-        dfs = pd.read_html(StringIO(str(table)))
-        if dfs:
-            return dfs[0]
-    except Exception as e:
-        logger.error("pd.read_html failed: %s", e)
-    return None
 
 
 def fetch_system_projections(
@@ -158,37 +133,36 @@ def fetch_system_projections(
         stat_type: 'bat' or 'pit'
 
     Returns:
-        DataFrame with normalized 'Name' column (First Last) and 'player_id' key,
-        or None on failure.
+        DataFrame with PlayerName, player_id (name-derived key), mlbam_id (from xMLBAMID),
+        and all standard projection stat columns. None on failure.
     """
     cfg = SYSTEMS.get(system_key)
     if not cfg:
         logger.error("Unknown projection system: %s", system_key)
         return None
 
-    html = _fetch_projection_html(cfg["type_param"], stat_type)
-    if not html:
+    rows = _fetch_projection_json(cfg["type_param"], stat_type)
+    if not rows:
         return None
 
-    df = _parse_table(html)
-    if df is None or df.empty:
-        logger.warning("Empty projection table for %s/%s", system_key, stat_type)
+    df = pd.DataFrame(rows)
+
+    if "PlayerName" not in df.columns:
+        logger.warning("No 'PlayerName' column in %s/%s response", system_key, stat_type)
         return None
 
-    # Ensure Name column exists
-    if "Name" not in df.columns:
-        logger.warning("No 'Name' column in %s/%s table", system_key, stat_type)
-        return None
+    # Expose mlbam_id as a first-class column (primary identity bridge)
+    df["mlbam_id"] = pd.to_numeric(df.get("xMLBAMID"), errors="coerce").astype("Int64")
 
-    # Normalize names: "Last, First" -> "First Last"
-    df["Name"] = df["Name"].apply(_normalize_name)
-    df["player_id"] = df["Name"].apply(_make_player_id)
+    # Derive name-based player_id for secondary merge compatibility
+    df["Name"] = df["PlayerName"]
+    df["player_id"] = df["PlayerName"].apply(_make_player_id)
     df["system"] = system_key
 
-    # Column-intersection: keep only columns we have, log missing ones
+    # Keep only the columns we use to avoid memory bloat
     expected = _BAT_COLS if stat_type == "bat" else _PIT_COLS
     available = set(df.columns)
-    missing = expected - available
+    missing = expected - available - {"PlayerName", "player_id", "mlbam_id", "Name", "xMLBAMID"}
     if missing:
         logger.warning(
             "%s/%s missing columns %s — affected stats will be NaN",
@@ -196,7 +170,7 @@ def fetch_system_projections(
         )
 
     logger.info(
-        "Fetched %d %s projections from %s RoS",
+        "Fetched %d %s projections from %s RoS (JSON API)",
         len(df), stat_type, system_key,
     )
     return df
@@ -240,31 +214,43 @@ def compute_ensemble_blend(
         stat_columns: list of numeric column names to blend (e.g. ['HR', 'RBI', 'AVG'])
 
     Returns:
-        DataFrame with player_id + blended stat columns, or None if no data.
+        DataFrame with player_id + mlbam_id + blended stat columns, or None if no data.
+        mlbam_id is the primary identity key (from FanGraphs xMLBAMID field).
+        player_id is a secondary name-derived key for backward compatibility.
     """
     if not projections:
         return None
 
-    # Collect per-system data keyed by player_id
-    all_players: dict[str, dict] = {}  # player_id -> {name, stats per system}
+    # Key by mlbam_id when available, fall back to player_id (name-derived)
+    all_players: dict = {}  # key -> {name, mlbam_id, player_id, stats per system}
 
     for system_key, df in projections.items():
         weight = SYSTEMS[system_key]["weight"]
         for _, row in df.iterrows():
-            pid = row.get("player_id", "")
-            if not pid:
+            # Primary key: MLBAM ID (reliable); fallback: name-derived player_id
+            mlbam_raw = row.get("mlbam_id")
+            try:
+                mlbam_int = int(mlbam_raw) if mlbam_raw is not None and not pd.isna(mlbam_raw) else None
+            except (TypeError, ValueError):
+                mlbam_int = None
+
+            pid_name = row.get("player_id", "")
+            merge_key = f"mlbam:{mlbam_int}" if mlbam_int else f"name:{pid_name}"
+            if not merge_key or merge_key in ("mlbam:None", "name:"):
                 continue
-            if pid not in all_players:
-                all_players[pid] = {
-                    "player_id": pid,
-                    "name": row.get("Name", ""),
+
+            if merge_key not in all_players:
+                all_players[merge_key] = {
+                    "player_id": pid_name,
+                    "mlbam_id": mlbam_int,
+                    "name": row.get("Name", row.get("PlayerName", "")),
                     "team": row.get("Team", ""),
                     "_weights": 0.0,
                 }
                 for col in stat_columns:
-                    all_players[pid][col] = 0.0
+                    all_players[merge_key][col] = 0.0
 
-            entry = all_players[pid]
+            entry = all_players[merge_key]
             for col in stat_columns:
                 val = pd.to_numeric(row.get(col, 0), errors="coerce")
                 if pd.isna(val):

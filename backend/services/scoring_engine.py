@@ -74,12 +74,27 @@ _ALL_CATEGORIES: dict[str, tuple[str, bool]] = {
 _COMPOSITE_EXCLUDED: frozenset = frozenset({"z_sb"})
 
 # Minimum number of players with a non-null value before computing Z for a category
-MIN_SAMPLE: int = 3  # Minimum players to compute any z-score
-# Low threshold ensures early-season rankings exist
-# Consumers should use 'confidence' field to filter uncertain values
+# Low threshold ensures early-season rankings exist; consumers use 'confidence' to filter.
+from backend.services.config_service import get_threshold as _get_threshold
+MIN_SAMPLE: int = _get_threshold("scoring.min_sample", default=3)
 
 # Cap Z-scores at this absolute value to reduce outlier distortion
-Z_CAP: float = 3.0
+Z_CAP: float = _get_threshold("scoring.z_cap", default=3.0)
+
+# Minimum denominators for volatile rate categories. Counting stats can remain
+# useful in tiny windows, but rate stats need enough opportunity to avoid
+# turning one hot/cold game into a misleading predictive signal.
+MIN_RATE_AB: float = _get_threshold("scoring.min_rate_ab", default=20.0)
+MIN_RATE_IP: float = _get_threshold("scoring.min_rate_ip", default=8.0)
+
+_RATE_DENOMINATORS: dict[str, tuple[str, float]] = {
+    "z_avg": ("w_ab", MIN_RATE_AB),
+    "z_obp": ("w_ab", MIN_RATE_AB),
+    "z_ops": ("w_ab", MIN_RATE_AB),
+    "z_era": ("w_ip", MIN_RATE_IP),
+    "z_whip": ("w_ip", MIN_RATE_IP),
+    "z_k_per_9": ("w_ip", MIN_RATE_IP),
+}
 
 
 # Category weights based on scarcity (inverse of league average SD)
@@ -388,6 +403,16 @@ def _percentile_rank(player_z: float, cohort_z_scores: list[float]) -> float:
     return round(rank / n * 100.0, 1)
 
 
+def _has_rate_denominator(row, z_key: str) -> bool:
+    """Return False when a rate category lacks enough AB/IP to be predictive."""
+    denominator = _RATE_DENOMINATORS.get(z_key)
+    if denominator is None:
+        return True
+    col_name, minimum = denominator
+    value = getattr(row, col_name, None)
+    return value is not None and float(value) >= minimum
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -445,6 +470,8 @@ def compute_league_zscores(
             if is_hitter_cat and pt == "pitcher":
                 continue
             if not is_hitter_cat and pt == "hitter":
+                continue
+            if not _has_rate_denominator(row, z_key):
                 continue
             val = getattr(row, col_name, None)
             if val is not None:
@@ -548,6 +575,46 @@ def compute_league_zscores(
     return results
 
 
+def apply_opportunity_adjustment(
+    score_results: list[PlayerScoreResult],
+    opportunity_lookup: dict[int, tuple[float, float]],
+) -> list[PlayerScoreResult]:
+    """
+    Apply a bounded, confidence-weighted opportunity modifier to composite_z.
+
+    PR 3.5 — feature-flagged; callers must check is_flag_enabled("opportunity_enabled")
+    before calling this function. The flag is checked by the caller (daily_ingestion)
+    so this function remains a pure transform.
+
+    Modifier formula (per ARCHITECTURE PRINCIPLES §2):
+        opportunity_adj = clamp(opportunity_z * 0.15, -0.30, +0.20)
+        opportunity_adj *= opportunity_confidence
+        composite_z    *= (1 + opportunity_adj)
+
+    Max effect: +20% boost (everyday leadoff) / -30% dampen (IL/benched).
+    Confidence gates: low PA window → modifier approaches zero.
+
+    Parameters
+    ----------
+    score_results       : list of PlayerScoreResult from compute_league_zscores()
+    opportunity_lookup  : {bdl_player_id → (opportunity_z, opportunity_confidence)}
+                          Pre-fetched from player_opportunity by the caller.
+                          Missing players receive (0.0, 0.0) → no adjustment.
+
+    Returns
+    -------
+    The same list with composite_z modified in-place. score_0_100 is NOT
+    recomputed here — caller should re-rank after applying all adjustments.
+    """
+    for res in score_results:
+        opp_z, opp_conf = opportunity_lookup.get(res.bdl_player_id, (0.0, 0.0))
+        if opp_conf <= 0.0:
+            continue
+        adj = max(-0.30, min(0.20, opp_z * 0.15)) * opp_conf
+        res.composite_z *= (1.0 + adj)
+    return score_results
+
+
 def compute_league_params(
     rolling_rows: list,
 ) -> tuple[dict[str, float], dict[str, float]]:
@@ -575,6 +642,8 @@ def compute_league_params(
     for z_key, (col_name, _is_lower_better) in _ALL_CATEGORIES.items():
         values: list[float] = []
         for row in rolling_rows:
+            if not _has_rate_denominator(row, z_key):
+                continue
             val = getattr(row, col_name, None)
             if val is not None:
                 values.append(float(val))
