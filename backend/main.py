@@ -8017,37 +8017,6 @@ async def investigate_ops_whip_root_cause():
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@app.post("/api/fantasy/matchup/simulate")
-async def simulate_matchup(
-    payload: MatchupSimulateRequest,
-    user: str = Depends(verify_api_key),
-):
-    """
-    Monte Carlo simulation of a weekly H2H matchup.
-
-    Pass my_roster and opponent_roster as lists of player dicts with:
-      cat_scores: {hr: float, r: float, ...}  -- z-scores per category
-      positions: [str]                          -- position eligibility
-      starts_this_week: int                     -- pitcher starts (default 1)
-      name: str
-
-    Returns win probability and per-category breakdown.
-    n_sims is capped at 5000 for latency safety.
-    """
-    from backend.fantasy_baseball.mcmc_simulator import simulate_weekly_matchup
-    n = min(max(100, payload.n_sims), 5000)
-    try:
-        result = simulate_weekly_matchup(
-            my_roster=payload.my_roster,
-            opponent_roster=payload.opponent_roster,
-            n_sims=n,
-        )
-        return result
-    except Exception as exc:
-        logger.error("simulate_matchup failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Simulation failed: {exc}")
-
-
 @app.post("/admin/fantasy/reload-board", dependencies=[Depends(verify_admin_api_key)])
 async def admin_reload_fantasy_board():
     """
