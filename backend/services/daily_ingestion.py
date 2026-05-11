@@ -4357,9 +4357,9 @@ class DailyIngestionOrchestrator:
                         as_of_date,
                     )
                     elapsed = int((time.monotonic() - t0) * 1000)
-                    self._record_job_run("decision_optimization", "success", 0)
+                    self._record_job_run("decision_optimization", "no_input", 0)
                     return {
-                        "status": "success",
+                        "status": "no_input",
                         "as_of_date": str(as_of_date),
                         "lineup_decisions": 0,
                         "waiver_decisions": 0,
@@ -4474,8 +4474,16 @@ class DailyIngestionOrchestrator:
                         "(roster resolution failed or no players mapped to BDL IDs). "
                         "Lineup decisions require successful Yahoo roster fetch and PlayerIDMapping entries."
                     )
-                    # Set empty players list; optimize_lineup will return empty results
-                    roster_score_rows = []
+                    # Fail closed: roster resolution failed, record no_input and exit early
+                    elapsed = int((time.monotonic() - t0) * 1000)
+                    self._record_job_run("decision_optimization", "no_input", 0)
+                    return {
+                        "status": "no_input",
+                        "as_of_date": str(as_of_date),
+                        "lineup_decisions": 0,
+                        "waiver_decisions": 0,
+                        "elapsed_ms": elapsed,
+                    }
 
                 players = []
                 for score in roster_score_rows:
