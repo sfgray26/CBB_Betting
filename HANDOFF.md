@@ -146,6 +146,28 @@ Kimi's report incorrectly identified a duplicate function. Actual bug: INSERT at
 
 ---
 
+## K-1 UI UAT FINDINGS (2026-05-07)
+
+Production UI audit completed. Full report: `reports/2026-05-07-ui-uat-audit.md`
+
+### P0 (Blocking) — Requires Claude Code attention
+1. **CORS on `POST /api/fantasy/matchup/simulate`** — War Room simulation feature is completely broken. No `Access-Control-Allow-Origin` header on the POST response.
+2. **Streaming page infinite loading** — `GET /api/fantasy/waiver` returns 200 in 164ms, but the React component never exits "Loading waiver data..." state.
+3. **Dashboard empty despite API data** — `GET /api/dashboard` returns 200 with waiver targets, injury flags, and lineup stats; main content area renders blank.
+4. **`/api/fantasy/lineup/current` always 422** — Returns `lineup_date must be YYYY-MM-DD` even when the parameter is provided correctly in query string, body, or omitted.
+
+### P1 (Degraded)
+5. **Budget API not integrated into UI** — `/api/fantasy/budget` is healthy (576ms) but no frontend page calls it; no budget panel exists.
+6. **Matchup API latency ~3,182ms** — Exceeds 2s threshold. No loading skeleton visible during fetch.
+7. **My Roster & Waiver Wire are placeholders** — "COMING NEXT" pages only.
+8. **Favicon 404** on every page load.
+
+### P2 (Polish)
+9. Login form API key input lacks `id`/`name` attribute (accessibility warning).
+10. `ip_accumulated` mocked at `0.0` — no UI impact since budget is not displayed.
+
+---
+
 ## Feature Flag State
 
 | Flag | Value | Gate Condition |
