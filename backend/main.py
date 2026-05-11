@@ -8036,12 +8036,16 @@ async def simulate_matchup(
     """
     from backend.fantasy_baseball.mcmc_simulator import simulate_weekly_matchup
     n = min(max(100, payload.n_sims), 5000)
-    result = simulate_weekly_matchup(
-        my_roster=payload.my_roster,
-        opponent_roster=payload.opponent_roster,
-        n_sims=n,
-    )
-    return result
+    try:
+        result = simulate_weekly_matchup(
+            my_roster=payload.my_roster,
+            opponent_roster=payload.opponent_roster,
+            n_sims=n,
+        )
+        return result
+    except Exception as exc:
+        logger.error("simulate_matchup failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Simulation failed: {exc}")
 
 
 @app.post("/admin/fantasy/reload-board", dependencies=[Depends(verify_admin_api_key)])

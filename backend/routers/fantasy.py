@@ -4455,16 +4455,20 @@ async def simulate_matchup(
     if not my_roster or not opponent_roster:
         raise HTTPException(
             status_code=422,
-            detail=f"Roster data unavailable — Yahoo returned {len(my_roster)} my players, {len(opp_roster)} opponent players. Check Yahoo API connection and team key configuration.",
+            detail=f"Roster data unavailable — Yahoo returned {len(my_roster)} my players, {len(opponent_roster)} opponent players. Check Yahoo API connection and team key configuration.",
         )
 
     n = min(max(100, payload.n_sims), 5000)
-    result = simulate_weekly_matchup(
-        my_roster=my_roster,
-        opponent_roster=opponent_roster,
-        n_sims=n,
-    )
-    return result
+    try:
+        result = simulate_weekly_matchup(
+            my_roster=my_roster,
+            opponent_roster=opponent_roster,
+            n_sims=n,
+        )
+        return result
+    except Exception as exc:
+        logger.error("simulate_matchup failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Simulation failed: {exc}")
 
 
 # ============================================================================
