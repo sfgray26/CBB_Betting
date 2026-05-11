@@ -4460,6 +4460,19 @@ async def simulate_matchup(
 
     n = min(max(100, payload.n_sims), 5000)
     try:
+        # Auto-fetch rosters from Yahoo if not provided and auto_fetch is enabled
+        if payload.auto_fetch_rosters and (not my_roster or not opponent_roster):
+            client = await get_yahoo_client()
+            fetched_my, fetched_opp = await _fetch_rosters_for_simulate(client)
+            if not my_roster and fetched_my:
+                my_roster = fetched_my
+            if not opponent_roster and fetched_opp:
+                opponent_roster = fetched_opp
+        if not my_roster or not opponent_roster:
+            raise HTTPException(
+                status_code=400,
+                detail="Roster data required. Either provide my_roster/opponent_roster or set auto_fetch_rosters=true with Yahoo auth."
+            )
         result = simulate_weekly_matchup(
             my_roster=my_roster,
             opponent_roster=opponent_roster,

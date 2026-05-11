@@ -1,12 +1,16 @@
 'use client'
 
-import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useQuery, useMutation } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
-import { Loader2, AlertCircle, Swords } from 'lucide-react'
+import { Loader2, AlertCircle, Swords, Play } from 'lucide-react'
 import { MatchupHeader } from '@/components/war-room/matchup-header'
 import { CategoryBattlefield } from '@/components/war-room/category-battlefield'
+import type { MatchupSimulateResponse } from '@/lib/types'
 
 export default function WarRoomPage() {
+  const [simulateData, setSimulateData] = useState<MatchupSimulateResponse | undefined>(undefined)
+
   const matchup = useQuery({
     queryKey: ['matchup'],
     queryFn: endpoints.getMatchup,
@@ -14,14 +18,16 @@ export default function WarRoomPage() {
     refetchInterval: 5 * 60_000,
   })
 
-  // Simulate runs Monte Carlo — loads after current values; stale 5min, refresh 15min
-  const simulate = useQuery({
-    queryKey: ['matchup', 'simulate'],
-    queryFn: endpoints.simulateMatchup,
-    staleTime: 5 * 60_000,
-    refetchInterval: 15 * 60_000,
-    retry: 1,
+  const simulateMutation = useMutation({
+    mutationFn: endpoints.simulateMatchup,
+    onSuccess: (data) => {
+      setSimulateData(data)
+    },
   })
+
+  const handleSimulate = () => {
+    simulateMutation.mutate()
+  }
 
   if (matchup.isLoading) {
     return (
@@ -54,16 +60,37 @@ export default function WarRoomPage() {
         <div className="flex items-center gap-2 mb-1">
           <Swords className="h-3.5 w-3.5 text-[#FFC000]" />
           <span className="text-xs font-bold tracking-widest uppercase text-[#FFC000]">War Room</span>
-          {simulate.isLoading && (
-            <span className="ml-auto flex items-center gap-1.5 text-[#494949] text-[10px] tracking-widest uppercase">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Simulating...
-            </span>
-          )}
+
+          {/* Run Simulation button */}
+          <button
+            onClick={handleSimulate}
+            disabled={simulateMutation.isPending}
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-[#FFC000] hover:bg-[#E5AC00] disabled:bg-[#494949] disabled:cursor-not-allowed text-black text-[10px] font-bold tracking-widest uppercase transition-colors"
+          >
+            {simulateMutation.isPending ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Simulating...
+              </>
+            ) : (
+              <>
+                <Play className="h-3 w-3" />
+                Run Simulation
+              </>
+            )}
+          </button>
         </div>
 
-        <MatchupHeader data={matchup.data} simulate={simulate.data} />
-        <CategoryBattlefield data={matchup.data} simulate={simulate.data} />
+        {/* Simulation error message */}
+        {simulateMutation.isError && (
+          <div className="flex items-center gap-2 text-rose-500 text-xs bg-[#202020] px-3 py-2">
+            <AlertCircle className="h-3.5 w-3.5" />
+            <span>{simulateMutation.error?.message ?? 'Simulation failed'}</span>
+          </div>
+        )}
+
+        <MatchupHeader data={matchup.data} simulate={simulateData} />
+        <CategoryBattlefield data={matchup.data} simulate={simulateData} />
       </div>
     </div>
   )
