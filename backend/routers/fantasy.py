@@ -5511,7 +5511,7 @@ async def get_constraint_budget(
             ip_accumulated = float(my_stats.get("IP", 0.0))
     except (YahooAuthError, YahooAPIError, Exception):
         pass  # Fall back to 0.0
-    ip_minimum = 90.0  # Yahoo H2H standard
+    ip_minimum = 19.0  # Yahoo H2H standard (innings pitched per week)
 
     budget = compute_budget_state(
         acquisitions_used=acquisitions_used,
