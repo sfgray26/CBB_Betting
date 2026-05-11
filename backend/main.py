@@ -103,6 +103,7 @@ from backend.routers import data_quality
 from backend.services.recalibration import compute_dynamic_weights
 from backend.services.discord_notifier import send_todays_bets
 from backend.services.sentinel import run_nightly_health_check
+from backend.services.health_monitor import check_pipeline_health, CRITICAL_CHAIN
 from backend.services.dk_import import (
     parse_dk_csv, preview_import, apply_import,
     preview_direct_import, apply_direct_import,
@@ -400,15 +401,9 @@ async def lifespan(app: FastAPI):
         )
 
     if cbb_active:
-        # Tournament bracket release notifier - runs daily 6 PM ET, Mar 14-20
-        scheduler.add_job(
-            _tournament_bracket_job,
-            CronTrigger(hour=18, minute=0, timezone=timezone),
-            id="tournament_bracket_notifier",
-            name="Tournament Bracket Release Notifier",
-            replace_existing=True,
-        )
-
+        # CBB tournament season is closed. Keep the legacy notifier function for
+        # archival reference, but do not register tournament_bracket_notifier on
+        # startup during the MLB fantasy platform pivot.
         # Weekly model parameter recalibration - Sunday 5 AM ET
         # Note: recalibration and sentinel both run at 5:00 AM; they are independent.
         scheduler.add_job(
@@ -1611,115 +1606,18 @@ async def get_bracket_projection(
     db: Session = Depends(get_db),
 ):
     """
-    Monte Carlo NCAA Tournament bracket projection.
+    Retired NCAA Tournament bracket projection endpoint.
 
-    Uses the V9.1 tournament module (composite KenPom+BartTorvik ratings,
-    round-specific SD multipliers, historical seed upset blending).
-
-    Falls back to data/bracket_2026.json when BALLDONTLIE_API_KEY is not set,
-    so the endpoint always returns a result during tournament weeks.
-
-    Query parameters:
-      n_sims: Number of Monte Carlo simulations (1,000 - 50,000; default 10,000).
+    CBB tournament simulation is closed for the season and must not import or
+    execute bracket modules during the MLB fantasy platform pivot.
     """
-    import json as _json
-    from pathlib import Path as _Path
-    from backend.tournament.matchup_predictor import TournamentTeam
-    from backend.tournament.bracket_simulator import run_monte_carlo
-
-    REGIONS = ["east", "south", "west", "midwest"]
-    BRACKET_JSON = _Path(__file__).resolve().parent.parent / "data" / "bracket_2026.json"
-
-    # --- 1. Build bracket from pre-built JSON (always available) ---
-    if not BRACKET_JSON.exists():
-        raise HTTPException(
-            status_code=503,
-            detail="bracket_2026.json not found. Re-deploy or run build_bracket_from_db.py.",
-        )
-
-    with open(BRACKET_JSON, encoding="utf-8") as _f:
-        raw = _json.load(_f)
-
-    bracket: dict = {}
-    for region in REGIONS:
-        if region not in raw:
-            continue
-        bracket[region] = [
-            TournamentTeam(
-                name=t["name"],
-                seed=t["seed"],
-                region=region,
-                composite_rating=t.get("composite_rating", 0.0),
-                kp_adj_em=t.get("kp_adj_em"),
-                bt_adj_em=t.get("bt_adj_em"),
-                pace=t.get("pace", 68.0),
-                three_pt_rate=t.get("three_pt_rate", 0.35),
-                def_efg_pct=t.get("def_efg_pct", 0.50),
-                conference=t.get("conference", ""),
-                tournament_exp=t.get("tournament_exp", 0.70),
-            )
-            for t in raw[region]
-        ]
-
-    if len(bracket) < 4:
-        raise HTTPException(
-            status_code=503,
-            detail=f"bracket_2026.json is incomplete ({len(bracket)}/4 regions).",
-        )
-
-    # --- 2. Run Monte Carlo simulation ---
-    try:
-        results = run_monte_carlo(bracket, n_sims=n_sims, n_workers=2, base_seed=42)
-    except Exception as exc:
-        logger.error("Bracket Monte Carlo failed: %s", exc, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Simulation error: {exc}")
-
-    # --- 3. Build response ---
-    all_teams = [t for teams in bracket.values() for t in teams]
-    seed_map = {t.name: t.seed for t in all_teams}
-    region_map = {t.name: t.region for t in all_teams}
-
-    sorted_champ = sorted(results.championship.items(), key=lambda x: -x[1])
-    projected_champion = sorted_champ[0][0] if sorted_champ else None
-
-    top_f4 = sorted(results.final_four.items(), key=lambda x: -x[1])[:4]
-    projected_final_four = [t for t, _ in top_f4]
-
-    upset_alerts = [
-        {
-            "team": t.name,
-            "seed": t.seed,
-            "region": t.region,
-            "r64_win_prob": round(results.round_of_32.get(t.name, 0) * 100, 1),
-        }
-        for t in all_teams
-        if t.seed >= 10 and results.round_of_32.get(t.name, 0) >= 0.35
-    ]
-
-    advancement_probs = {
-        t: {
-            "seed": seed_map.get(t, 0),
-            "region": region_map.get(t, ""),
-            "r32_pct": round(results.round_of_32.get(t, 0) * 100, 1),
-            "s16_pct": round(results.sweet_sixteen.get(t, 0) * 100, 1),
-            "e8_pct": round(results.elite_eight.get(t, 0) * 100, 1),
-            "f4_pct": round(results.final_four.get(t, 0) * 100, 1),
-            "runner_up_pct": round(results.runner_up.get(t, 0) * 100, 1),
-            "champion_pct": round(results.championship.get(t, 0) * 100, 1),
-        }
-        for t in results.championship
-    }
-
-    return {
-        "n_sims": results.n_sims,
-        "data_source": "bracket_2026.json (V9.1 composite ratings)",
-        "projected_champion": projected_champion,
-        "projected_final_four": projected_final_four,
-        "upset_alerts": upset_alerts,
-        "advancement_probs": advancement_probs,
-        "avg_upsets_per_tournament": round(results.avg_upsets_per_tournament, 1),
-        "avg_championship_margin": round(results.avg_championship_margin, 1),
-    }
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "NCAA Tournament bracket projection is retired for the closed CBB "
+            "season. Use MLB fantasy and betting endpoints for active workflows."
+        ),
+    )
 
 
 def _daily_snapshot_job():
@@ -1973,11 +1871,10 @@ async def root():
 
 @app.get("/health")
 async def health_check(db: Session = Depends(get_db)):
-    """Health check endpoint"""
+    """Health check endpoint with pipeline summary"""
     health = {"status": "healthy", "database": "connected", "scheduler": "running"}
 
     try:
-        # CHANGE THIS LINE: Wrap the string in text()
         db.execute(text("SELECT 1"))
     except Exception as e:
         logger.error(f"Health check database error: {e}")
@@ -1988,7 +1885,89 @@ async def health_check(db: Session = Depends(get_db)):
         health["status"] = "degraded"
         health["scheduler"] = "stopped"
 
+    # Add pipeline summary
+    try:
+        pipeline = check_pipeline_health(db)
+        health["pipeline_summary"] = pipeline["summary"]
+        # Overall status is degraded if any critical chain job is not healthy
+        if pipeline["summary"]["stale"] > 0 or pipeline["summary"]["failed"] > 0:
+            health["status"] = "degraded"
+    except Exception as e:
+        logger.error(f"Pipeline health check error: {e}")
+        health["pipeline_summary"] = {"error": str(e)}
+
     return health
+
+
+@app.get("/health/pipeline")
+async def health_pipeline(db: Session = Depends(get_db)):
+    """
+    Detailed pipeline health endpoint.
+
+    Returns per-job status with last run times and thresholds.
+    Returns 503 if any critical chain job is stale or failed.
+    No authentication required for uptime monitoring.
+    """
+    try:
+        pipeline = check_pipeline_health(db)
+        summary = pipeline["summary"]
+
+        # Check if any critical chain job is stale or failed
+        critical_unhealthy = False
+        for job_name, job_info in pipeline["jobs"].items():
+            if job_name in CRITICAL_CHAIN and job_info["status"] in ("stale", "failed"):
+                critical_unhealthy = True
+                break
+
+        if critical_unhealthy:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Critical pipeline jobs unhealthy: {summary['stale']} stale, {summary['failed']} failed"
+            )
+
+        return pipeline
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Pipeline health check error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/health/db")
+async def health_db(db: Session = Depends(get_db)):
+    """
+    Database health check with table row counts.
+
+    Returns connection status and row counts for key tables.
+    No authentication required for uptime monitoring.
+    """
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Database connection failed: {e}")
+
+    # Get row counts for key tables
+    tables = {
+        "games": "games",
+        "predictions": "predictions",
+        "data_ingestion_logs": "data_ingestion_logs",
+        "mlb_players": "mlb_players",
+        "mlb_matchups": "mlb_matchups",
+    }
+
+    counts = {}
+    for name, table in tables.items():
+        try:
+            result = db.execute(text(f"SELECT COUNT(*) FROM {table}"))
+            counts[name] = result.scalar() or 0
+        except Exception as e:
+            counts[name] = f"error: {e}"
+
+    return {
+        "status": "connected",
+        "checked_at": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+        "table_counts": counts,
+    }
 
 
 # ============================================================================

@@ -1,9 +1,19 @@
 """
 DailyIngestionOrchestrator — EPIC-2 data pipeline coordinator.
 
-Owns all MLB/CBB data polling jobs that run independently of the nightly
-CBB analysis scheduler. Each job acquires a PostgreSQL advisory lock before
-running, which prevents duplicate execution across Railway replicas.
+Owns the active MLB fantasy/baseball data polling jobs that run independently
+of the legacy CBB betting scheduler. Each job acquires a PostgreSQL advisory
+lock before running, which prevents duplicate execution across Railway replicas.
+
+Sport boundaries:
+- MLB-active: game logs, box stats, injuries, StatsAPI supplements, rolling
+  windows, player scores, VORP, momentum, opportunity, simulations, decision
+  optimization, backtesting, market signals, canonical projections, matchup
+  context, explainability, snapshots, MLB odds, Statcast/Savant, FanGraphs RoS,
+  Yahoo fantasy sync, player ID mapping, position eligibility, probable pitchers.
+- CBB-legacy: CLV attribution snapshots and OpenClaw CBB monitoring hooks remain
+  labeled here for archival betting attribution only; they are not fantasy
+  baseball pipeline stages.
 
 ADR-001: Every job MUST use _with_advisory_lock.
 ADR-004: This file is additive only. Never import betting_model or analysis.
@@ -967,8 +977,10 @@ def _validate_statcast_coverage(db, table: str, column: str, threshold: float = 
 class DailyIngestionOrchestrator:
     """
     Coordinates background data-ingestion jobs on their own AsyncIOScheduler.
-    Registered separately from the main CBB scheduler so ingestion can be
-    disabled without affecting the nightly analysis pipeline.
+
+    This orchestrator is now MLB-first. Its scheduled jobs feed fantasy baseball
+    and MLB betting workflows unless a method docstring explicitly marks the
+    method as CBB-legacy.
     """
 
     def __init__(self):
@@ -7203,7 +7215,10 @@ class DailyIngestionOrchestrator:
 
     async def _compute_clv(self) -> dict:
         """
-        Run nightly CLV attribution and persist a ProjectionSnapshot summary.
+        CBB-legacy: run nightly CLV attribution and persist a ProjectionSnapshot summary.
+
+        This stage belongs to archived CBB betting performance attribution, not
+        the MLB fantasy decision pipeline.
         Delegates computation to compute_daily_clv_attribution() in clv.py.
         """
         t0 = time.monotonic()
@@ -7964,7 +7979,7 @@ class DailyIngestionOrchestrator:
 
     def _start_openclaw_monitoring(self) -> None:
         """
-        Initialize OpenClaw Phase 1 monitoring (Performance Monitor + Pattern Detector).
+        CBB-legacy: initialize OpenClaw Phase 1 monitoring.
         
         This is read-only monitoring that does NOT violate the Guardian freeze.
         Self-improvement features (Phase 4) remain disabled until Apr 7, 2026.
@@ -7974,7 +7989,7 @@ class DailyIngestionOrchestrator:
             
             self._openclaw = OpenClawScheduler(
                 scheduler=self._scheduler,
-                sport='cbb',  # Primary focus during tournament season
+                sport='cbb',
                 discord_hook=self._send_discord_alert if os.getenv('DISCORD_ALERTS_ENABLED') else None
             )
             self._openclaw.start_monitoring()

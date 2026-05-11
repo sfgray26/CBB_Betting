@@ -51,7 +51,6 @@ def start_edge_scheduler() -> None:
         _morning_briefing_job,
         _end_of_day_results_job,
         _weekly_recalibration_job,
-        _tournament_bracket_job,
         _mlb_analysis_job,
     )
     from backend.utils.env_utils import get_float_env  # noqa: PLC0415
@@ -86,9 +85,8 @@ def start_edge_scheduler() -> None:
                       id="end_of_day_results", name="End-of-Day Results Summary", replace_existing=True)
     scheduler.add_job(_weekly_recalibration_job, CronTrigger(day_of_week="sun", hour=5, minute=0, timezone=tz),
                       id="weekly_recalibration", name="Weekly Model Parameter Recalibration", replace_existing=True)
-    scheduler.add_job(_tournament_bracket_job, CronTrigger(hour=18, minute=0, timezone=tz),
-                      id="tournament_bracket_notifier", name="Tournament Bracket Release Notifier",
-                      replace_existing=True)
+    # CBB tournament season is closed. Do not register the bracket notifier from
+    # this standalone scheduler; MLB analysis remains active below.
     scheduler.add_job(_mlb_analysis_job, CronTrigger(hour=10, minute=0, timezone=tz),
                       id="mlb_analysis", name="MLB Nightly Analysis + Projection", replace_existing=True)
 
