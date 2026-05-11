@@ -1016,6 +1016,24 @@ async def sync_keepers_pre_draft(
 # LINEUP
 # ============================================================================
 
+@router.get("/api/fantasy/lineup/current", response_model=DailyLineupResponse)
+async def get_fantasy_lineup_current(
+    use_smart_selector: bool = True,
+    force_stale: bool = Query(True, description="Allow lineup generation even when projection freshness SLA is violated."),
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """Return daily lineup recommendations for today (ET)."""
+    from datetime import date as date_type
+    _today = today_et().strftime("%Y-%m-%d")
+    return await get_fantasy_lineup_recommendations(
+        lineup_date=_today,
+        use_smart_selector=use_smart_selector,
+        force_stale=force_stale,
+        db=db,
+        user=user,
+    )
+
 @router.get("/api/fantasy/lineup/{lineup_date}", response_model=DailyLineupResponse)
 async def get_fantasy_lineup_recommendations(
     lineup_date: str,
