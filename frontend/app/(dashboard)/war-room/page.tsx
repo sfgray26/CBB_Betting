@@ -33,8 +33,8 @@ export default function WarRoomPage() {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center">
         <div className="flex items-center gap-3 text-[#7D7D7D]">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          <span className="text-xs tracking-widest uppercase">Loading matchup...</span>
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <span className="text-base tracking-widest uppercase">Loading matchup...</span>
         </div>
       </div>
     )
@@ -44,8 +44,8 @@ export default function WarRoomPage() {
     return (
       <div className="min-h-screen bg-black p-6">
         <div className="flex items-center gap-2 text-rose-500">
-          <AlertCircle className="h-4 w-4" />
-          <span className="text-sm font-mono">{matchup.error?.message ?? 'Failed to load matchup'}</span>
+          <AlertCircle className="h-6 w-6" />
+          <span className="text-base font-mono">{matchup.error?.message ?? 'Failed to load matchup'}</span>
         </div>
       </div>
     )
@@ -55,26 +55,26 @@ export default function WarRoomPage() {
 
   return (
     <div className="min-h-screen bg-black">
-      <div className="max-w-2xl mx-auto p-6 space-y-3">
-        {/* Page label */}
-        <div className="flex items-center gap-2 mb-1">
-          <Swords className="h-3.5 w-3.5 text-[#FFC000]" />
-          <span className="text-xs font-bold tracking-widest uppercase text-[#FFC000]">War Room</span>
+      <div className="max-w-6xl mx-auto p-6 lg:p-8 space-y-6">
+        {/* Page header row */}
+        <div className="flex items-center gap-3 mb-2">
+          <Swords className="h-6 w-6 text-[#FFC000]" />
+          <span className="text-lg font-bold tracking-widest uppercase text-[#FFC000]">War Room</span>
 
           {/* Run Simulation button */}
           <button
             onClick={handleSimulate}
             disabled={simulateMutation.isPending}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-[#FFC000] hover:bg-[#E5AC00] disabled:bg-[#494949] disabled:cursor-not-allowed text-black text-[10px] font-bold tracking-widest uppercase transition-colors"
+            className="ml-auto flex items-center gap-2 px-5 py-2.5 bg-[#FFC000] hover:bg-[#E5AC00] disabled:bg-[#494949] disabled:cursor-not-allowed text-black text-sm font-bold tracking-widest uppercase transition-colors rounded-sm"
           >
             {simulateMutation.isPending ? (
               <>
-                <Loader2 className="h-3 w-3 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
                 Simulating...
               </>
             ) : (
               <>
-                <Play className="h-3 w-3" />
+                <Play className="h-4 w-4" />
                 Run Simulation
               </>
             )}
@@ -83,8 +83,8 @@ export default function WarRoomPage() {
 
         {/* Simulation error message */}
         {simulateMutation.isError && (
-          <div className="flex items-center gap-2 text-rose-500 text-xs bg-[#202020] px-3 py-2">
-            <AlertCircle className="h-3.5 w-3.5" />
+          <div className="flex items-center gap-2 text-rose-500 text-sm bg-[#202020] px-4 py-3 rounded-sm">
+            <AlertCircle className="h-5 w-5" />
             <span>{simulateMutation.error?.message ?? 'Simulation failed'}</span>
           </div>
         )}

@@ -4453,25 +4453,28 @@ async def simulate_matchup(
         my_roster, opponent_roster = _fetch_rosters_for_simulate(db)
 
     if not my_roster or not opponent_roster:
+        my_count = len(my_roster) if my_roster else 0
+        opp_count = len(opponent_roster) if opponent_roster else 0
         raise HTTPException(
             status_code=422,
-            detail=f"Roster data unavailable — Yahoo returned {len(my_roster)} my players, {len(opponent_roster)} opponent players. Check Yahoo API connection and team key configuration.",
+            detail=f"Roster data unavailable — Yahoo returned {my_count} my players, {opp_count} opponent players. Check Yahoo API connection and team key configuration.",
         )
 
     n = min(max(100, payload.n_sims), 5000)
     try:
         # Auto-fetch rosters from Yahoo if not provided and auto_fetch is enabled
         if payload.auto_fetch_rosters and (not my_roster or not opponent_roster):
-            client = await get_yahoo_client()
-            fetched_my, fetched_opp = await _fetch_rosters_for_simulate(client)
+            fetched_my, fetched_opp = _fetch_rosters_for_simulate(db)
             if not my_roster and fetched_my:
                 my_roster = fetched_my
             if not opponent_roster and fetched_opp:
                 opponent_roster = fetched_opp
         if not my_roster or not opponent_roster:
+            my_count = len(my_roster) if my_roster else 0
+            opp_count = len(opponent_roster) if opponent_roster else 0
             raise HTTPException(
                 status_code=400,
-                detail="Roster data required. Either provide my_roster/opponent_roster or set auto_fetch_rosters=true with Yahoo auth."
+                detail=f"Roster data required — currently have {my_count} my players, {opp_count} opponent players. Either provide my_roster/opponent_roster or set auto_fetch_rosters=true with Yahoo auth."
             )
         result = simulate_weekly_matchup(
             my_roster=my_roster,

@@ -506,6 +506,7 @@ class MatchupSimulateRequest(BaseModel):
     opponent_roster: List[dict] = Field(default_factory=list)
     n_sims: int = 1000
     week: Optional[str] = None  # ISO week label (informational only)
+    auto_fetch_rosters: bool = False  # If true, force refresh rosters from Yahoo
 
 
 # ---------------------------------------------------------------------------
