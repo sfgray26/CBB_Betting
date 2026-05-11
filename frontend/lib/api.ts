@@ -31,6 +31,7 @@ import type {
   LineupResponse,
   WaiverResponse,
   CanonicalProjectionsResponse,
+  BudgetResponse,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -313,4 +314,7 @@ export const endpoints = {
 
   getCanonicalProjections: () =>
     apiFetch<CanonicalProjectionsResponse>('/api/fantasy/projections/canonical'),
+
+  getBudget: () =>
+    apiFetch<BudgetResponse>('/api/fantasy/budget'),
 }

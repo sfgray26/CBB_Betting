@@ -6,6 +6,7 @@ import type { DashboardData, LineupGap, InjuryFlag, WaiverTarget, StreakPlayer }
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
+import { BudgetPanel } from "@/components/dashboard/budget-panel"
 import {
   AlertCircle,
   TrendingUp,
@@ -22,6 +23,13 @@ export default function DashboardPage() {
     staleTime: 2 * 60_000,
     refetchInterval: 5 * 60_000,
     placeholderData: keepPreviousData,
+  })
+
+  const { data: budgetResponse } = useQuery({
+    queryKey: ['budget'],
+    queryFn: endpoints.getBudget,
+    staleTime: 5 * 60_000,
+    refetchInterval: 10 * 60_000,
   })
 
   const dashboard: DashboardData | null = response?.success ? response.data : null
@@ -113,6 +121,11 @@ export default function DashboardPage() {
           hot={dashboard.hot_streaks}
           cold={dashboard.cold_streaks}
         />
+
+        {/* Constraint Budget */}
+        {budgetResponse?.budget && (
+          <BudgetPanel budget={budgetResponse.budget} />
+        )}
 
         {/* Two-Start Pitchers */}
         {dashboard.two_start_pitchers?.length > 0 && (

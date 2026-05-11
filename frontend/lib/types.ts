@@ -464,6 +464,34 @@ export interface WaiverResponse {
   faab_balance: number | null
 }
 
+// ---------------------------------------------------------------------------
+// Budget / Constraint State
+// ---------------------------------------------------------------------------
+
+export interface BudgetData {
+  acquisitions_used: number
+  acquisitions_remaining: number
+  acquisition_limit: number
+  acquisition_warning: boolean
+  il_used: number
+  il_total: number
+  ip_accumulated: number
+  ip_minimum: number
+  ip_pace: "BEHIND" | "ON_TRACK" | "AHEAD"
+  as_of: string
+}
+
+export interface BudgetResponse {
+  budget: BudgetData
+  freshness: {
+    primary_source: string
+    fetched_at: string
+    computed_at: string
+    staleness_threshold_minutes: number
+    is_stale: boolean
+  }
+}
+
 export interface CanonicalProjectionsResponse {
   players: Array<{
     player_id: string
