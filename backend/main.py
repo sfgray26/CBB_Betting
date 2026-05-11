@@ -1572,6 +1572,38 @@ def _tournament_bracket_job():
         logger.exception("Tournament bracket job failed")
 
 
+def _mlb_analysis_job():
+    """
+    MLB nightly analysis job (EMAC-080).
+
+    Runs daily at 10:00 AM ET. Fetches today's MLB schedule, projects runs
+    for each game, fetches market odds, calculates edge, and persists
+    projections to the mlb_projections table.
+    """
+    import asyncio
+    from datetime import date
+    from backend.services.mlb_analysis import MLBAnalysisService
+
+    try:
+        service = MLBAnalysisService()
+        projections = asyncio.get_event_loop().run_until_complete(
+            service.run_analysis(target_date=date.today())
+        )
+        if projections:
+            write_result = service.write_projections_to_db(projections)
+            verify_result = service.verify_edge_calculation()
+            logger.info(
+                "MLB analysis job: %d projections, DB write=%s, edge verify=%s",
+                len(projections),
+                write_result.get("status"),
+                verify_result.get("status"),
+            )
+        else:
+            logger.info("MLB analysis job: no games to project today")
+    except Exception:
+        logger.warning("MLB analysis job failed", exc_info=True)
+
+
 @app.get("/api/tournament/bracket-projection")
 async def get_bracket_projection(
     n_sims: int = Query(default=10000, ge=1000, le=50000),

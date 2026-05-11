@@ -44,10 +44,10 @@ try:
 except ImportError:
     pass  # Railway provides env vars directly
 
-# 2. Sync URL — used by background scripts, migrations, and legacy sync code.
+# 2. Sync URL - used by background scripts, migrations, and legacy sync code.
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres@127.0.0.1:5432/cbb_edge")
 
-# 3. Async URL — swaps psycopg2 driver for asyncpg.
+# 3. Async URL - swaps psycopg2 driver for asyncpg.
 #    Falls back gracefully if DATABASE_URL is not set (e.g. test environments).
 _ASYNC_DATABASE_URL = DATABASE_URL.replace(
     "postgresql://", "postgresql+asyncpg://"
@@ -85,7 +85,7 @@ try:
 except Exception as _async_engine_exc:  # noqa: BLE001
     import logging as _logging
     _logging.getLogger(__name__).warning(
-        "asyncpg not available — async DB engine disabled (%s). "
+        "asyncpg not available - async DB engine disabled (%s). "
         "Install asyncpg to enable the async hot path.",
         _async_engine_exc,
     )
@@ -100,14 +100,14 @@ Base = declarative_base()
 def get_db():
     """
     Sync session dependency with retry on transient connection failures.
-    
+
     Implements exponential backoff with jitter to prevent thundering herd
     connection pool stampedes under load.
     """
     db = None
     base_delay = 0.5  # Base delay in seconds
     max_delay = 5.0   # Cap delay at 5 seconds
-    
+
     for attempt in range(3):
         try:
             db = SessionLocal()
@@ -156,16 +156,16 @@ class Game(Base):
     away_team = Column(String, nullable=False)
     venue = Column(String)
     is_neutral = Column(Boolean, default=False)
-    
+
     # Actual results (filled after game)
     home_score = Column(Integer)
     away_score = Column(Integer)
     completed = Column(Boolean, default=False)
-    
+
     # Relationships
     predictions = relationship("Prediction", back_populates="game")
     bet_logs = relationship("BetLog", back_populates="game")
-    
+
     created_at = Column(DateTime, default=_now_et)
     updated_at = Column(DateTime, default=_now_et, onupdate=_now_et)
 
@@ -177,13 +177,13 @@ class Prediction(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     game_id = Column(Integer, ForeignKey("games.id"), nullable=False, index=True)
-    
+
     # Model metadata
     model_version = Column(String, default="v7.0")
     prediction_date = Column(Date, nullable=False, index=True, default=date.today)
     run_tier = Column(String, default="nightly", nullable=False)  # "opener" | "nightly" | "closing"
     created_at = Column(DateTime, default=_now_et, index=True)
-    
+
     # Ratings used (for auditing)
     kenpom_home = Column(Float)
     kenpom_away = Column(Float)
@@ -191,7 +191,7 @@ class Prediction(Base):
     barttorvik_away = Column(Float)
     evanmiya_home = Column(Float)
     evanmiya_away = Column(Float)
-    
+
     # Model outputs
     projected_margin = Column(Float)  # Positive = home favored
     adjusted_sd = Column(Float)
@@ -199,7 +199,7 @@ class Prediction(Base):
     lower_ci_prob = Column(Float)  # Lower 95% CI
     upper_ci_prob = Column(Float)  # Upper 95% CI
 
-    # Actual outcome — populated by update_completed_games() after game finishes.
+    # Actual outcome - populated by update_completed_games() after game finishes.
     # NULL while game is pending.  home_score - away_score (positive = home won).
     actual_margin = Column(Float)
 
@@ -214,14 +214,14 @@ class Prediction(Base):
     snr = Column(Float)
     snr_kelly_scalar = Column(Float)
     integrity_verdict = Column(String)
-    
+
     # Verdict
     verdict = Column(String, nullable=False, index=True)  # "PASS" or "Bet X units..."
     pass_reason = Column(String)  # If PASS, why?
-    
+
     # Full analysis (for debugging)
     full_analysis = Column(JSON)
-    
+
     # Data quality
     data_freshness_tier = Column(String)  # Tier 1/2/3
     penalties_applied = Column(JSON)  # Dict of penalty types & values
@@ -229,7 +229,7 @@ class Prediction(Base):
     # K-14: which simulation engine produced this prediction
     pricing_engine = Column(String(20))  # 'markov' | 'gaussian' | None
 
-    # K-15: Oracle Validation — divergence from rating-system consensus
+    # K-15: Oracle Validation - divergence from rating-system consensus
     oracle_flag = Column(Boolean)         # True when z-score ≥ time-weighted threshold
     oracle_result = Column(JSON)          # OracleResult.to_dict() snapshot
 
@@ -247,13 +247,13 @@ class BetLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     game_id = Column(Integer, ForeignKey("games.id"), nullable=False, index=True)
     prediction_id = Column(Integer, ForeignKey("predictions.id"))
-    
+
     # Bet details
     timestamp = Column(DateTime, default=_now_et, index=True)
     pick = Column(String, nullable=False)  # "Duke -4.5" or "UNC/Duke U145.5"
     bet_type = Column(String)  # "spread", "total", "moneyline"
     odds_taken = Column(Float, nullable=False)  # American odds
-    
+
     # Sizing
     bankroll_at_bet = Column(Float)
     kelly_full = Column(Float)
@@ -261,31 +261,31 @@ class BetLog(Base):
     bet_size_pct = Column(Float)  # % of bankroll
     bet_size_units = Column(Float)  # In "units" (1 unit = 1% starting bankroll)
     bet_size_dollars = Column(Float)  # Actual $ amount
-    
+
     # Model at time of bet
     model_prob = Column(Float)
     lower_ci_prob = Column(Float)
     point_edge = Column(Float)
     conservative_edge = Column(Float)
-    
+
     # Outcome (filled after game)
     outcome = Column(Integer)  # 1=win, 0=loss, null=pending
     profit_loss_units = Column(Float)
     profit_loss_dollars = Column(Float)
-    
+
     # CLV tracking
     closing_line = Column(Float)  # American odds at close
     clv_points = Column(Float)  # Points gained vs close
     clv_prob = Column(Float)  # Probability edge vs close
-    
+
     # Flags
     is_backfill = Column(Boolean, default=False)  # Historical simulation
     is_paper_trade = Column(Boolean, default=False)  # Not real money
     executed = Column(Boolean, default=False)  # Actually placed
-    
+
     # Notes
     notes = Column(Text)
-    
+
     # Relationship
     game = relationship("Game", back_populates="bet_logs")
 
@@ -302,7 +302,7 @@ class ModelParameter(Base):
     parameter_value_json = Column(JSON)  # For complex params like weights
     reason = Column(String)  # "quarterly_recalibration", "manual_adjustment", etc.
     changed_by = Column(String)  # "auto" or user identifier
-    
+
     created_at = Column(DateTime, default=_now_et)
 
 
@@ -316,31 +316,31 @@ class PerformanceSnapshot(Base):
     period_type = Column(String)  # "daily", "weekly", "monthly", "quarterly"
     period_start = Column(DateTime)
     period_end = Column(DateTime)
-    
+
     # Aggregate stats
     total_bets = Column(Integer)
     total_wins = Column(Integer)
     total_losses = Column(Integer)
     win_rate = Column(Float)
-    
+
     # Financial
     total_risked = Column(Float)
     total_profit_loss = Column(Float)
     roi = Column(Float)
-    
+
     # CLV
     mean_clv = Column(Float)
     median_clv = Column(Float)
-    
+
     # Calibration
     calibration_error = Column(Float)  # MAE between predicted prob and actual
     calibration_bins = Column(JSON)  # {bin: {predicted: X, actual: Y, count: N}}
-    
+
     # Model performance
     mean_edge = Column(Float)
     bets_recommended = Column(Integer)
     pass_rate = Column(Float)
-    
+
     # By system
     kenpom_mae = Column(Float)
     barttorvik_mae = Column(Float)
@@ -410,7 +410,7 @@ class TeamProfile(Base):
     ft_rate = Column(Float)       # FT attempts / FGA (offensive)
     three_par = Column(Float)     # 3PA / FGA (offensive)
 
-    # Defensive four factors — the data the Markov engine was previously blind to
+    # Defensive four factors - the data the Markov engine was previously blind to
     def_efg_pct = Column(Float)   # Opponent eFG% allowed
     def_to_pct = Column(Float)    # Opponent TO rate forced
     def_ft_rate = Column(Float)   # Opponent FT rate allowed
@@ -529,7 +529,7 @@ class PlayerDailyMetric(Base):
     z_score_total = Column(Float)
     z_score_recent = Column(Float)
 
-    # Statcast 2.0 (MLB only — always NULL for CBB rows)
+    # Statcast 2.0 (MLB only - always NULL for CBB rows)
     blast_pct = Column(Float)
     bat_speed = Column(Float)
     squared_up_pct = Column(Float)
@@ -540,7 +540,7 @@ class PlayerDailyMetric(Base):
     # Flexible rolling windows: {"7d": {"avg": 0.310, ...}, "30d": {...}}
     rolling_window = Column(JSONB, nullable=False, default=dict)
 
-    # Ensemble RoS blend columns (Phase 2.2 — ATC/BAT/Steamer/ZiPS weighted average)
+    # Ensemble RoS blend columns (Phase 2.2 - ATC/BAT/Steamer/ZiPS weighted average)
     blend_hr = Column(Float)
     blend_rbi = Column(Float)
     blend_avg = Column(Float)
@@ -628,27 +628,27 @@ if __name__ == "__main__":
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# FANTASY BASEBALL — LIVE DATA MODELS (Added March 26, 2026)
+# FANTASY BASEBALL - LIVE DATA MODELS (Added March 26, 2026)
 # ═════════════════════════════════════════════════════════════════════════════
 
 class StatcastPerformance(Base):
     """
     Daily Statcast performance data from Baseball Savant.
-    
+
     Stores granular hitting/pitching metrics for each player each day.
     Used for Bayesian projection updates and pattern detection.
     """
-    
+
     __tablename__ = "statcast_performances"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    
+
     # Player identification
     player_id = Column(String(50), nullable=False, index=True)
     player_name = Column(String(100), nullable=False)
     team = Column(String(10), nullable=False)
     game_date = Column(Date, nullable=False, index=True)
-    
+
     # Plate appearances and counting stats
     pa = Column(Integer, default=0)  # Plate appearances
     ab = Column(Integer, default=0)  # At-bats
@@ -663,35 +663,35 @@ class StatcastPerformance(Base):
     hbp = Column(Integer, default=0) # Hit by pitch
     sb = Column(Integer, default=0)  # Stolen bases
     cs = Column(Integer, default=0)  # Caught stealing
-    
+
     # Statcast quality metrics
     exit_velocity_avg = Column(Float, default=0.0)
     launch_angle_avg = Column(Float, default=0.0)
     hard_hit_pct = Column(Float, default=0.0)  # 95+ mph
     barrel_pct = Column(Float, default=0.0)    # Ideal combination
-    
+
     # Expected stats
     xba = Column(Float, default=0.0)   # Expected batting average
     xslg = Column(Float, default=0.0)  # Expected slugging
     xwoba = Column(Float, default=0.0) # Expected weighted on-base average
-    
+
     # Calculated traditional stats
     avg = Column(Float, default=0.0)   # Batting average
     obp = Column(Float, default=0.0)   # On-base percentage
     slg = Column(Float, default=0.0)   # Slugging percentage
     ops = Column(Float, default=0.0)   # On-base plus slugging
     woba = Column(Float, default=0.0)  # Weighted on-base average
-    
+
     # Pitching stats (if applicable)
     ip = Column(Float, default=0.0)    # Innings pitched
     er = Column(Integer, default=0)    # Earned runs
     k_pit = Column(Integer, default=0) # Strikeouts (pitching)
     bb_pit = Column(Integer, default=0) # Walks (pitching)
     pitches = Column(Integer, default=0) # Total pitches thrown
-    
+
     # Metadata
     created_at = Column(DateTime, default=_now_et)
-    
+
     # Unique constraint: one record per player per day
     __table_args__ = (
         UniqueConstraint('player_id', 'game_date', name='uq_player_date'),
@@ -787,7 +787,7 @@ class StatcastPitcherMetrics(Base):
     w = Column(Integer)  # Wins
     l = Column(Integer)  # Losses
     qs = Column(Integer)  # Quality starts
-    ip = Column(Float)  # Innings pitched (NULL from Savant — use pa as proxy)
+    ip = Column(Float)  # Innings pitched (NULL from Savant - use pa as proxy)
     pa = Column(Integer, nullable=True)  # Batters faced (populated from Savant; use as IP proxy when ip is NULL)
     era = Column(Float)  # ERA
     whip = Column(Float)  # WHIP
@@ -849,16 +849,16 @@ class SavantPitchQualityScore(Base):
 class PlayerProjection(Base):
     """
     Live-updated player projections using Bayesian inference.
-    
+
     Combines prior (Steamer/ZiPS) with likelihood (recent performance)
     using shrinkage priors. Early season = trust prior more.
     Late season = trust recent data more.
     """
-    
+
     __tablename__ = "player_projections"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    
+
     # Player identification
     player_id = Column(String(50), nullable=False, unique=True, index=True)
     player_name = Column(String(100), nullable=False)
@@ -867,7 +867,7 @@ class PlayerProjection(Base):
     player_type = Column(String(10), nullable=True)  # M34: "hitter" | "pitcher"
 
     # Core projection stats (updated via Bayesian inference)
-    # Batting rate stats — NULL for pitchers after M34 data fix
+    # Batting rate stats - NULL for pitchers after M34 data fix
     woba = Column(Float, default=0.320)   # Weighted on-base average
     avg = Column(Float, default=0.250)    # Batting average
     obp = Column(Float, default=0.320)    # On-base percentage
@@ -875,13 +875,13 @@ class PlayerProjection(Base):
     ops = Column(Float, default=0.720)    # On-base plus slugging
     xwoba = Column(Float, default=0.320)  # Expected wOBA
 
-    # Batting counting stats — NULL for pitchers (M34: was default 15/65/65/5)
+    # Batting counting stats - NULL for pitchers (M34: was default 15/65/65/5)
     hr = Column(Integer, default=None)
     r = Column(Integer, default=None)
     rbi = Column(Integer, default=None)
     sb = Column(Integer, default=None)
 
-    # Pitching stats — NULL for hitters (M34: was default 4.00/1.30/8.5/3.0)
+    # Pitching stats - NULL for hitters (M34: was default 4.00/1.30/8.5/3.0)
     era = Column(Float, default=None)
     whip = Column(Float, default=None)
     k_per_nine = Column(Float, default=None)
@@ -899,10 +899,10 @@ class PlayerProjection(Base):
     sample_size = Column(Integer, default=0)  # PA in recent sample
     prior_source = Column(String(50), default='steamer')  # steamer, zips, thebat
     update_method = Column(String(50), default='prior')  # prior, bayesian, manual
-    
+
     # Category scores (for H2H leagues)
     cat_scores = Column(JSONB, default=dict)  # Dict of category -> z-score
-    
+
     # Timestamps
     created_at = Column(DateTime, default=_now_et)
     updated_at = Column(DateTime, default=_now_et, onupdate=_now_et)
@@ -911,43 +911,43 @@ class PlayerProjection(Base):
 class PatternDetectionAlert(Base):
     """
     MLB-specific pattern detection alerts from OpenClaw.
-    
+
     Detects: Pitcher fatigue, bullpen overuse, platoon splits,
     travel fatigue, weather impacts, etc.
     """
-    
+
     __tablename__ = "pattern_detection_alerts"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    
+
     # Alert classification
     pattern_type = Column(String(50), nullable=False, index=True)
     # pitcher_fatigue, bullpen_overuse, platoon_split, travel_fatigue,
     # weather_impact, lineup_rest, etc.
-    
+
     severity = Column(String(20), nullable=False)  # LOW, MEDIUM, HIGH, CRITICAL
     confidence = Column(Float, default=0.5)  # 0.0 to 1.0
-    
+
     # Affected entities
     player_id = Column(String(50), nullable=True, index=True)
     player_name = Column(String(100))
     team = Column(String(10), nullable=True, index=True)
     game_date = Column(Date, nullable=False, index=True)
-    
+
     # Alert details
     title = Column(String(200), nullable=False)
     description = Column(Text)
     betting_implication = Column(Text)  # How to exploit this edge
-    
+
     # Detection metadata
     detection_data = Column(JSONB, default=dict)  # Raw data that triggered alert
     data_sources = Column(JSON, default=list)  # List of sources
-    
+
     # Status
     is_active = Column(Boolean, default=True)
     resolved_at = Column(DateTime, nullable=True)
     resolution_notes = Column(Text)
-    
+
     # Timestamps
     created_at = Column(DateTime, default=_now_et)
     alerted_at = Column(DateTime, nullable=True)  # When Discord alert sent
@@ -956,43 +956,43 @@ class PatternDetectionAlert(Base):
 class DataIngestionLog(Base):
     """
     Audit log for all data ingestion operations.
-    
+
     Tracks: Statcast pulls, projection updates, pattern detection runs.
     Used for monitoring, debugging, and performance analysis.
     """
-    
+
     __tablename__ = "data_ingestion_logs"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    
+
     # Job classification
     job_type = Column(String(50), nullable=False, index=True)
     # statcast_daily, bayesian_update, pattern_detection, etc.
-    
+
     target_date = Column(Date, nullable=False, index=True)
-    
+
     # Status
     status = Column(String(20), nullable=False)  # SUCCESS, PARTIAL, FAILED
-    
+
     # Metrics
     records_processed = Column(Integer, default=0)
     records_failed = Column(Integer, default=0)
     processing_time_seconds = Column(Float)
-    
+
     # Quality metrics
     validation_errors = Column(Integer, default=0)
     validation_warnings = Column(Integer, default=0)
     data_quality_score = Column(Float)  # 0-1 overall quality
-    
+
     # Details
     error_details = Column(JSONB, default=list)  # List of error dicts
     warning_details = Column(JSONB, default=list)  # List of warning dicts
     summary_stats = Column(JSONB, default=dict)  # Job-specific stats
-    
+
     # Timestamps
     started_at = Column(DateTime, default=_now_et)
     completed_at = Column(DateTime, nullable=True)
-    
+
     # Error tracking
     error_message = Column(Text, nullable=True)
     stack_trace = Column(Text, nullable=True)
@@ -1001,19 +1001,19 @@ class DataIngestionLog(Base):
 class UserPreferences(Base):
     """
     User-customizable settings for the fantasy baseball dashboard.
-    
+
     Stores notification preferences, dashboard layout configuration,
     and projection blending weights.
     """
-    
+
     __tablename__ = "user_preferences"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    
+
     # User identification (Yahoo user ID or internal user ID)
     user_id = Column(String(100), nullable=False, unique=True, index=True)
     user_email = Column(String(255), nullable=True)
-    
+
     # Notification settings
     notifications = Column(JSONB, nullable=False, default=lambda: {
         "lineup_deadline": True,
@@ -1025,7 +1025,7 @@ class UserPreferences(Base):
         "discord_user_id": None,
         "email_enabled": False,
     })
-    
+
     # Dashboard layout configuration
     dashboard_layout = Column(JSONB, nullable=False, default=lambda: {
         "panels": [
@@ -1039,7 +1039,7 @@ class UserPreferences(Base):
         "refresh_interval_seconds": 300,  # 5 minutes
         "theme": "dark",  # dark, light, system
     })
-    
+
     # Projection blending weights (must sum to 1.0)
     projection_weights = Column(JSONB, nullable=False, default=lambda: {
         "steamer": 0.30,
@@ -1048,7 +1048,7 @@ class UserPreferences(Base):
         "atc": 0.15,
         "the_bat": 0.10,
     })
-    
+
     # Streak calculation preferences
     streak_settings = Column(JSONB, nullable=False, default=lambda: {
         "hot_threshold": 0.5,  # z-score threshold for "hot"
@@ -1056,7 +1056,7 @@ class UserPreferences(Base):
         "min_sample_days": 7,  # Minimum days for streak calculation
         "rolling_windows": [7, 14, 30],  # Days to calculate trends
     })
-    
+
     # Waiver wire preferences
     waiver_preferences = Column(JSONB, nullable=False, default=lambda: {
         "min_percent_owned": 0,  # Show players with >X% ownership
@@ -1073,7 +1073,7 @@ class UserPreferences(Base):
 
 
 # ---------------------------------------------------------------------------
-# MLB Phase 2 — Game Log Ingestion (P7)
+# MLB Phase 2 - Game Log Ingestion (P7)
 # Three-table schema: dimension (mlb_team) -> fact (mlb_game_log) -> snapshot (mlb_odds_snapshot)
 # All tables use natural-key upserts (idempotent), dual-write raw_payload JSONB.
 # ---------------------------------------------------------------------------
@@ -1264,7 +1264,7 @@ class MLBPlayerStats(Base):
 
 class PlayerIDMapping(Base):
     """
-    Cross-system player identity mapping table (P10 — Phase 2 identity resolution).
+    Cross-system player identity mapping table (P10 - Phase 2 identity resolution).
 
     Maps Yahoo player keys, BDL player IDs, and mlbam IDs to a single canonical
     row per player. Seeded via pybaseball.playerid_lookup() + manual overrides.
@@ -1275,9 +1275,9 @@ class PlayerIDMapping(Base):
       3. Manual override (source='manual') takes precedence in conflicts
 
     Key design decisions (from K-B spec):
-      - yahoo_key is "469.p.7590" format — game_id.p.yahoo_id
-      - yahoo_id "7590" is proprietary — NOT mlbam_id
-      - bdl_id is BDL internal integer — NOT mlbam_id
+      - yahoo_key is "469.p.7590" format - game_id.p.yahoo_id
+      - yahoo_id "7590" is proprietary - NOT mlbam_id
+      - bdl_id is BDL internal integer - NOT mlbam_id
       - mlbam_id is the canonical cross-platform identifier
       - normalized_name enables fuzzy matching across systems (Unicode-normalized)
     """
@@ -1285,8 +1285,8 @@ class PlayerIDMapping(Base):
     __tablename__ = "player_id_mapping"
 
     id                   = Column(Integer, primary_key=True, autoincrement=True)
-    yahoo_key            = Column(String(50), nullable=True)    # "469.p.7590" — unique per player
-    yahoo_id             = Column(String(20), nullable=True)    # "7590" — proprietary Yahoo ID
+    yahoo_key            = Column(String(50), nullable=True)    # "469.p.7590" - unique per player
+    yahoo_id             = Column(String(20), nullable=True)    # "7590" - proprietary Yahoo ID
     mlbam_id             = Column(Integer, nullable=True)       # MLB Advanced Media canonical ID
     bdl_id               = Column(Integer, nullable=True)       # BDL player.id internal
     full_name            = Column(String(150), nullable=False)
@@ -1305,7 +1305,7 @@ class PlayerIDMapping(Base):
     last_verified        = Column(Date, nullable=True)
 
     __table_args__ = (
-        # Partial unique indexes — each external ID is unique where present
+        # Partial unique indexes - each external ID is unique where present
         UniqueConstraint("yahoo_key", name="_pim_yahoo_key_uc"),
         UniqueConstraint("bdl_id", name="_pim_bdl_id_uc"),
         Index("idx_pim_mlbam",       "mlbam_id"),
@@ -1349,14 +1349,14 @@ class PlayerRollingStats(Base):
     w_doubles       = Column(Float, nullable=True)
     w_triples       = Column(Float, nullable=True)
     w_home_runs     = Column(Float, nullable=True)
-    w_runs          = Column(Float, nullable=True)   # sum(weight × runs) — for R category
+    w_runs          = Column(Float, nullable=True)   # sum(weight × runs) - for R category
     w_rbi           = Column(Float, nullable=True)
     w_walks         = Column(Float, nullable=True)
     w_strikeouts_bat = Column(Float, nullable=True)
     w_stolen_bases  = Column(Float, nullable=True)
     w_caught_stealing  = Column(Float, nullable=True)  # P27 NSB support
     w_net_stolen_bases = Column(Float, nullable=True)  # P27 w_stolen_bases - w_caught_stealing
-    w_tb              = Column(Float, nullable=True)  # sum(weight × total_bases) — for TB category
+    w_tb              = Column(Float, nullable=True)  # sum(weight × total_bases) - for TB category
 
     # Batting derived rates (computed from weighted sums)
     w_avg           = Column(Float, nullable=True)   # w_hits / w_ab
@@ -1370,7 +1370,7 @@ class PlayerRollingStats(Base):
     w_hits_allowed  = Column(Float, nullable=True)
     w_walks_allowed = Column(Float, nullable=True)
     w_strikeouts_pit = Column(Float, nullable=True)
-    w_qs            = Column(Float, nullable=True)   # sum(weight × quality_starts) — IP≥6, ER≤3
+    w_qs            = Column(Float, nullable=True)   # sum(weight × quality_starts) - IP≥6, ER≤3
 
     # Pitching derived rates
     w_era           = Column(Float, nullable=True)   # 9 * w_earned_runs / w_ip
@@ -1778,7 +1778,7 @@ class DailySnapshot(Base):
 
 
 # ═════════════════════════════════════════════════════════════════════════════════════════════
-# H2H ONE WIN UI DATA LAYER (Phase 1 — S27, Apr 8, 2026)
+# H2H ONE WIN UI DATA LAYER (Phase 1 - S27, Apr 8, 2026)
 # ════════════════════════════════════════════════════════════════════════════════════════════════════
 # Note: PositionEligibility table requires separate ingestion from Yahoo Fantasy API.
 # The 'eligible_positions' field in Yahoo responses includes LF/CF/RF but needs
@@ -1794,7 +1794,7 @@ class PositionEligibility(Base):
     Keyed on yahoo_player_key (unique per player in Yahoo ecosystem).
     bdl_player_id is populated later via PlayerIDMapping.
 
-    CF scarcity is significantly higher than LF/RF in H2H One Win —
+    CF scarcity is significantly higher than LF/RF in H2H One Win -
     this table enables scarcity index calculations with OF sub-position granularity.
 
     Seeded from Yahoo Fantasy API 'eligible_positions' field via backfill_positions.py.
@@ -1812,7 +1812,7 @@ class PositionEligibility(Base):
     first_name = Column(String(50))
     last_name = Column(String(50))
 
-    # Position-specific flags — ALL positions in ONE row
+    # Position-specific flags - ALL positions in ONE row
     can_play_c = Column(Boolean, nullable=False, default=False)
     can_play_1b = Column(Boolean, nullable=False, default=False)
     can_play_2b = Column(Boolean, nullable=False, default=False)
@@ -1986,7 +1986,7 @@ class IngestedInjury(Base):
     """
     MLB injury reports ingested from BDL /mlb/v1/player_injuries (Phase 1).
 
-    Natural key: (bdl_player_id, status) — tracks active IL list. DTD entries
+    Natural key: (bdl_player_id, status) - tracks active IL list. DTD entries
     may have duplicate player_ids (multi-injury) but status separates them.
 
     Active injuries are upserted hourly; inactive injuries expire when no longer
@@ -2043,7 +2043,7 @@ class CanonicalProjection(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     projection_id = Column(String(36), nullable=False, unique=True, index=True)  # UUID
 
-    # Identity — player_id links to player_id_mapping.mlbam_id (canonical int)
+    # Identity - player_id links to player_id_mapping.mlbam_id (canonical int)
     # BigInteger required: Yahoo fallback IDs like -(yahoo_id) can exceed INT4 range (~2.1B)
     player_id = Column(BigInteger, nullable=False, index=True)
     player_type = Column(String(10), nullable=False)          # BATTER | PITCHER
@@ -2052,34 +2052,34 @@ class CanonicalProjection(Base):
     season = Column(Integer, nullable=False)
     source_ids = Column(JSONB, default=list)                  # Ordered upstream source identifiers
 
-    # Playing time (nullable — batters have PA/AB, pitchers have IP)
+    # Playing time (nullable - batters have PA/AB, pitchers have IP)
     projected_pa = Column(Float, nullable=True)
     projected_ab = Column(Float, nullable=True)
     projected_ip = Column(Float, nullable=True)
 
-    # Projected counting stats — batters
+    # Projected counting stats - batters
     proj_hr = Column(Integer, nullable=True)
     proj_sb = Column(Integer, nullable=True)
     proj_r = Column(Integer, nullable=True)
     proj_rbi = Column(Integer, nullable=True)
 
-    # Projected counting stats — pitchers
+    # Projected counting stats - pitchers
     proj_w = Column(Integer, nullable=True)
     proj_sv = Column(Integer, nullable=True)
     proj_k = Column(Integer, nullable=True)
 
-    # Projected rate stats — batters
+    # Projected rate stats - batters
     proj_avg = Column(Float, nullable=True)
     proj_obp = Column(Float, nullable=True)
     proj_slg = Column(Float, nullable=True)
     proj_ops = Column(Float, nullable=True)
 
-    # Projected rate stats — pitchers
+    # Projected rate stats - pitchers
     proj_era = Column(Float, nullable=True)
     proj_whip = Column(Float, nullable=True)
     proj_k9 = Column(Float, nullable=True)
 
-    # Core advanced stats — batters (from StatcastBatterMetrics / FanGraphs)
+    # Core advanced stats - batters (from StatcastBatterMetrics / FanGraphs)
     woba = Column(Float, nullable=True)
     xwoba = Column(Float, nullable=True)
     wrc_plus = Column(Float, nullable=True)
@@ -2091,7 +2091,7 @@ class CanonicalProjection(Base):
     xslg = Column(Float, nullable=True)
     xba = Column(Float, nullable=True)
 
-    # Core advanced stats — pitchers (from StatcastPitcherMetrics / FanGraphs)
+    # Core advanced stats - pitchers (from StatcastPitcherMetrics / FanGraphs)
     era = Column(Float, nullable=True)
     whip = Column(Float, nullable=True)
     k9 = Column(Float, nullable=True)
@@ -2105,9 +2105,9 @@ class CanonicalProjection(Base):
     savant_pitch_quality_score = Column(Float, nullable=True)
 
     # Confidence & explainability
-    confidence_score = Column(Float, nullable=True)     # 0.0–1.0 composite scalar
+    confidence_score = Column(Float, nullable=True)     # 0.0-1.0 composite scalar
     sample_size = Column(Float, nullable=True)          # PA or IP in underlying data
-    shrinkage_applied = Column(Float, nullable=True)    # 0.0–1.0 degree of regression to mean
+    shrinkage_applied = Column(Float, nullable=True)    # 0.0-1.0 degree of regression to mean
     prior_value = Column(Float, nullable=True)          # Raw prior before update
     posterior_value = Column(Float, nullable=True)      # Final projected value (canonical)
     explainability_metadata = Column(JSONB, default=dict)  # calculation_steps, data_lineage
@@ -2200,7 +2200,7 @@ class PlayerIdentity(Base):
     V35: Strict cross-system identity mapping (Sprint 1a ID hardening).
 
     Provides exact-match resolution across id namespaces. Fuzzy/ambiguous
-    entries go to IdentityQuarantine instead — never into this table.
+    entries go to IdentityQuarantine instead - never into this table.
 
     Resolution order enforced by IdentityResolutionService:
       1. yahoo_guid  (exact)
@@ -2234,6 +2234,36 @@ class PlayerIdentity(Base):
     )
 
 
+class MLBProjection(Base):
+    """
+    MLB nightly game projections from mlb_analysis.py (EMAC-080).
+
+    One row per game per projection date. Natural key: (game_id, projection_date).
+    Written by the MLB analysis scheduler job after run_analysis() completes.
+    """
+    __tablename__ = "mlb_projections"
+
+    id                    = Column(BigInteger, primary_key=True, autoincrement=True)
+    game_id               = Column(String(50), nullable=False)
+    home_team             = Column(String(100), nullable=False)
+    away_team             = Column(String(100), nullable=False)
+    projection_date       = Column(Date, nullable=False, index=True)
+    projected_home_runs = Column(Float, nullable=False)
+    projected_away_runs   = Column(Float, nullable=False)
+    projected_total       = Column(Float, nullable=False)
+    projected_runline_margin = Column(Float, nullable=False)
+    home_win_prob         = Column(Float, nullable=False)
+    edge                  = Column(Float, nullable=False, default=0.0)
+    market_ml_home_odds   = Column(Float, nullable=True)
+    model_version         = Column(String(20), nullable=False, default="v1.0-mlb")
+    created_at            = Column(DateTime(timezone=True), nullable=False, default=_now_et)
+
+    __table_args__ = (
+        UniqueConstraint("game_id", "projection_date", name="_mlb_proj_game_date_uc"),
+        Index("idx_mlb_proj_date", "projection_date"),
+    )
+
+
 class IdentityQuarantine(Base):
     """
     V35: Staging area for unresolved player identity matches.
@@ -2253,7 +2283,7 @@ class IdentityQuarantine(Base):
     incoming_raw_name = Column(String(150), nullable=False)
     incoming_raw_id = Column(String(50), nullable=True)       # ID as received from provider
     proposed_player_id = Column(Integer, nullable=True)       # Proposed player_identities.id
-    match_score = Column(Float, nullable=True)                # 0.0–1.0 fuzzy similarity
+    match_score = Column(Float, nullable=True)                # 0.0-1.0 fuzzy similarity
     match_candidates = Column(JSONB, default=list)            # Top-N candidates with scores
     status = Column(String(20), nullable=False, default="PENDING_REVIEW", index=True)
     resolution_notes = Column(Text, nullable=True)
