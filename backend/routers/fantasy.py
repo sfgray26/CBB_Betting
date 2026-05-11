@@ -5498,8 +5498,15 @@ async def get_constraint_budget(
     except (YahooAuthError, YahooAPIError):
         pass  # Fall back to 0
 
-    # 3. IP tracking - still mock (requires matchup week logic + stat aggregation)
-    ip_accumulated = 0.0  # TODO: Wire to player_rolling_stats or Yahoo matchup stats
+    # 3. IP tracking - wired to Yahoo matchup stats (A-6 fix)
+    ip_accumulated = 0.0
+    try:
+        matchup_stats = client.get_matchup_stats(my_team_key=team_key)
+        if matchup_stats:
+            my_stats = matchup_stats.get("my_team", {})
+            ip_accumulated = float(my_stats.get("IP", 0.0))
+    except (YahooAuthError, YahooAPIError, Exception):
+        pass  # Fall back to 0.0
     ip_minimum = 90.0  # Yahoo H2H standard
 
     budget = compute_budget_state(
