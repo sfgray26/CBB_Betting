@@ -1,7 +1,7 @@
 # Core Framework
 fastapi==0.109.0
 uvicorn[standard]==0.46.0
-pydantic==2.5.3
+pydantic>=2.7.0,<3.0.0
 pydantic-settings>=2.5.2
 fastapi-mcp>=0.4.0
 
