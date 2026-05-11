@@ -3,7 +3,7 @@ import sqlalchemy
 from sqlalchemy import text
 
 def run_sql_diagnostics():
-    url = os.environ.get('DATABASE_URL')
+    url = os.environ.get('DATABASE_URL'); url = url.replace('postgres-ygnv.railway.internal', 'postgres-ygnv-production.up.railway.app')
     if not url:
         print("Error: DATABASE_URL not set")
         return
@@ -58,3 +58,4 @@ def run_sql_diagnostics():
 
 if __name__ == "__main__":
     run_sql_diagnostics()
+
