@@ -5509,13 +5509,19 @@ async def get_constraint_budget(
     # 3. IP tracking - wired to Yahoo matchup stats (A-6 fix)
     ip_accumulated = 0.0
     try:
-        matchup_stats = client.get_matchup_stats(my_team_key=team_key)
+        # Calculate current week for accurate stats (same logic as matchup endpoint)
+        from backend.services.scoreboard_orchestrator import MLB_OPENING_DATE_2026
+        days_since_opening = (now_et.date() - MLB_OPENING_DATE_2026).days
+        current_week = max(1, min(25, (days_since_opening // 7) + 1))
+
+        matchup_stats = client.get_matchup_stats(week=current_week, my_team_key=team_key)
         if matchup_stats:
             my_stats = matchup_stats.get("my_team", {})
             ip_accumulated = float(my_stats.get("IP", 0.0))
-    except (YahooAuthError, YahooAPIError, Exception):
+    except (YahooAuthError, YahooAPIError, Exception) as exc:
+        logger.warning("budget: failed to fetch IP from matchup stats: %s", exc)
         pass  # Fall back to 0.0
-    ip_minimum = 19.0  # Yahoo H2H standard (innings pitched per week)
+    ip_minimum = 18.0  # Yahoo H2H standard (innings pitched per week) - matches scoreboard_orchestrator.py
 
     budget = compute_budget_state(
         acquisitions_used=acquisitions_used,
