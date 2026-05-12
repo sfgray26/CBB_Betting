@@ -633,8 +633,6 @@ def simulate_player(
         # Rate stat inputs
         ab_rate   = (rolling_row.w_ab    or 0.0) / g
         hit_rate  = (rolling_row.w_hits  or 0.0) / g
-        double_rate = (rolling_row.w_doubles or 0.0) / g
-        triple_rate = (rolling_row.w_triples or 0.0) / g
         walk_rate   = (rolling_row.w_walks   or 0.0) / g
 
         # Sim lists for counting stats

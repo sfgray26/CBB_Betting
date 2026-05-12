@@ -214,6 +214,7 @@ def run_backfill(db: Session, force: bool = False) -> dict[str, Any]:
     for row in rows:
         avg = float(row["avg"] or 0.250)
         slg = float(row["slg"] or 0.400)
+        ab = 550.0  # Default AB for projections
         ptype = classify_player(
             row["positions"], row["era"], row["hr"], row["r"],
             player_type=row.get("player_type"),

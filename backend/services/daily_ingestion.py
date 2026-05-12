@@ -6173,7 +6173,6 @@ class DailyIngestionOrchestrator:
                             PlayerProjection.player_id == mlbam_id
                         ).first()
 
-                        pa = float(row.get("PA", 500) or 500) or 500.0
                         avg = float(row.get("AVG", 0.250) or 0.250)
 
                         upsert_vals = {
@@ -6542,6 +6541,8 @@ class DailyIngestionOrchestrator:
                 for _, row in bat_blend.iterrows():
                     pa = float(row.get("PA", 500) or 500) or 500.0
                     avg = float(row.get("AVG", 0.250) or 0.250)
+                    slg = float(row.get("SLG", 0.400) or 0.400)
+                    ab_est = pa * 0.87  # typical AB/PA ratio
                     batters.append({
                         "id": str(row.get("player_id", "")),
                         "name": str(row.get("name", "")),
