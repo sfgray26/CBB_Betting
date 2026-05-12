@@ -5460,6 +5460,7 @@ async def get_matchup_scoreboard(
 
 @router.get("/api/fantasy/budget")
 async def get_constraint_budget(
+    user: str = Depends(verify_api_key),
     db: Session = Depends(get_db),
 ) -> Dict:
     """

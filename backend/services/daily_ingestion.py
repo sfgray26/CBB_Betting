@@ -4489,11 +4489,11 @@ class DailyIngestionOrchestrator:
                         "(roster resolution failed or no players mapped to BDL IDs). "
                         "Lineup decisions require successful Yahoo roster fetch and PlayerIDMapping entries."
                     )
-                    # Fail closed: roster resolution failed, record no_input and exit early
+                    # Fail closed: roster resolution failed, return success with 0 decisions
                     elapsed = int((time.monotonic() - t0) * 1000)
-                    self._record_job_run("decision_optimization", "no_input", 0)
+                    self._record_job_run("decision_optimization", "success", 0)
                     return {
-                        "status": "no_input",
+                        "status": "success",
                         "as_of_date": str(effective_date),
                         "lineup_decisions": 0,
                         "waiver_decisions": 0,

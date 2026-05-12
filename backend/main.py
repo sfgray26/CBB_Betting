@@ -1947,8 +1947,9 @@ async def health_db(db: Session = Depends(get_db)):
         "games": "games",
         "predictions": "predictions",
         "data_ingestion_logs": "data_ingestion_logs",
-        "mlb_players": "mlb_players",
-        "mlb_matchups": "mlb_matchups",
+        "mlb_player_stats": "mlb_player_stats",
+        "matchup_context": "matchup_context",
+        "player_id_mapping": "player_id_mapping",
     }
 
     counts = {}

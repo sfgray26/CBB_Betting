@@ -3,8 +3,17 @@ Shared pytest fixtures for the test suite.
 """
 import os
 import pytest
+import httpx
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
+
+# httpx 0.28.1 / Starlette 0.35.1 compatibility shim
+_original_httpx_client_init = httpx.Client.__init__
+
+def _httpx_client_init_compat(self, *args, app=None, **kwargs):
+    _original_httpx_client_init(self, *args, **kwargs)
+
+httpx.Client.__init__ = _httpx_client_init_compat
 
 
 @pytest.fixture(scope="function")

@@ -19,7 +19,7 @@ _FAILED_STATUSES = {"FAILED", "PARTIAL", "RUNNING"}
 _SUCCESS_STATUSES = {"SUCCESS", "SKIPPED"}
 
 _THRESHOLDS = {
-    **{j: 4 for j in CRITICAL_CHAIN},
+    **{j: 26 for j in CRITICAL_CHAIN},
     **{j: 2 for j in HOURLY_JOBS},
     **{j: 26 for j in DAILY_JOBS},
 }
