@@ -320,7 +320,7 @@ def simulate_weekly_matchup(
         categories = _detect_categories([my_roster, opponent_roster])
 
     if not categories:
-        # No category data — return 50/50
+        # No category data — return 50/50 with empty category_projections
         return {
             "win_prob": 0.5,
             "category_win_probs": {},
@@ -328,6 +328,7 @@ def simulate_weekly_matchup(
             "n_sims": 0,
             "elapsed_ms": 0.0,
             "categories_simulated": [],
+            "category_projections": [],
         }
 
     my_means, my_stds = _roster_means_stds(my_roster, categories)
@@ -367,6 +368,18 @@ def simulate_weekly_matchup(
 
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
+    # Build category_projections array for frontend compatibility
+    # Frontend expects: {category: string, my_proj: number, opp_proj: number, win_prob: number}
+    category_projections = [
+        {
+            "category": cat.upper(),
+            "my_proj": round(float(my_totals[:, j].mean()), 2),
+            "opp_proj": round(float(opp_totals[:, j].mean()), 2),
+            "win_prob": round(float(cat_wins[:, j].mean()), 4),
+        }
+        for j, cat in enumerate(categories)
+    ]
+
     return {
         "win_prob": round(float(matchup_wins.mean()), 4),
         "category_win_probs": cat_win_probs,
@@ -374,6 +387,7 @@ def simulate_weekly_matchup(
         "n_sims": n_sims,
         "elapsed_ms": round(elapsed_ms, 1),
         "categories_simulated": categories,
+        "category_projections": category_projections,
     }
 
 
