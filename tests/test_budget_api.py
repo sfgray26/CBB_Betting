@@ -14,8 +14,11 @@ def fantasy_client():
     with patch("backend.schedulers.fantasy_scheduler.start_fantasy_scheduler"):
         with patch("backend.schedulers.fantasy_scheduler.stop_fantasy_scheduler"):
             from backend.fantasy_app import app
+            from backend.auth import verify_api_key
+            app.dependency_overrides[verify_api_key] = lambda: "test_user"
             with TestClient(app) as client:
                 yield client
+            app.dependency_overrides.clear()
 
 
 class TestBudgetEndpoint:
