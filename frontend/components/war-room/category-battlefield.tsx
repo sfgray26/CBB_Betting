@@ -42,13 +42,13 @@ function barMyPct(myVal: number | string | null | undefined, oppVal: number | st
   return (a / total) * 100
 }
 
-function statusLabel(winProb: number | null): { text: string; color: string } {
-  if (winProb === null) return { text: '—', color: 'text-[#494949]' }
-  if (winProb > 0.85) return { text: 'SAFE', color: 'text-emerald-400' }
-  if (winProb > 0.65) return { text: 'LEAD', color: 'text-[#FFC000]' }
-  if (winProb >= 0.35 && winProb <= 0.65) return { text: 'BUBBLE', color: 'text-amber-400' }
-  if (winProb >= 0.15) return { text: 'BEHIND', color: 'text-orange-400' }
-  return { text: 'LOST', color: 'text-rose-400' }
+function statusLabel(winProb: number | null): { text: string; color: string; description: string } {
+  if (winProb === null) return { text: '—', color: 'text-[#494949]', description: 'No simulation data' }
+  if (winProb > 0.85) return { text: 'SAFE', color: 'text-emerald-400', description: `${Math.round(winProb * 100)}% win prob - Safe lead` }
+  if (winProb > 0.65) return { text: 'LEAD', color: 'text-[#FFC000]', description: `${Math.round(winProb * 100)}% win prob - Leaning ahead` }
+  if (winProb >= 0.35 && winProb <= 0.65) return { text: 'BUBBLE', color: 'text-amber-400', description: `${Math.round(winProb * 100)}% win prob - Could go either way` }
+  if (winProb >= 0.15) return { text: 'BEHIND', color: 'text-orange-400', description: `${Math.round(winProb * 100)}% win prob - Leaning behind` }
+  return { text: 'LOST', color: 'text-rose-400', description: `${Math.round(winProb * 100)}% win prob - Unlikely to win` }
 }
 
 function actionHint(proj: CategoryProjection | undefined, lowerBetter: boolean): string {
@@ -146,7 +146,10 @@ function CategoryRow({ cat, myVal, oppVal, proj }: RowProps) {
 
       {/* Status tag */}
       <div className="w-16 flex justify-end flex-shrink-0">
-        <span className={cn('text-xs font-bold tracking-wider uppercase', status.color)}>
+        <span
+          className={cn('text-xs font-bold tracking-wider uppercase', status.color)}
+          title={status.description}
+        >
           {status.text}
         </span>
       </div>
@@ -231,6 +234,15 @@ export function CategoryBattlefield({ data, simulate }: Props) {
     <div className="bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg">
       {/* Controls */}
       <div className="flex items-center justify-between gap-4 px-6 pt-5 pb-4 border-b border-[#2A2A2A]">
+        {/* Bubble ratings legend */}
+        <div className="flex items-center gap-3 text-xs">
+          <span className="text-[#494949] font-semibold tracking-widest uppercase">Win Prob:</span>
+          <span className="text-emerald-400">SAFE &gt;85%</span>
+          <span className="text-[#FFC000]">LEAD 65-85%</span>
+          <span className="text-amber-400">BUBBLE 35-65%</span>
+          <span className="text-orange-400">BEHIND 15-35%</span>
+          <span className="text-rose-400">LOST &lt;15%</span>
+        </div>
         <div className="flex gap-2">
           {(['all', 'bubbles', 'hitting', 'pitching'] as FilterChip[]).map(chip => (
             <button

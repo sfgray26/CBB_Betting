@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-05-12 | **Architect:** Claude Code (Master Architect)
-> **Branch:** `stable/cbb-prod` | **HEAD:** pending commit (opportunity + yahoo_id_sync + draft_board_leak fixes)
+> **Branch:** `stable/cbb-prod` | **HEAD:** f6e5a6f (draft board fallback fix)
 > **Deploy:** `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}` (d319beb live on Railway)
 
 ---
@@ -36,7 +36,7 @@
 |-----|-----|-------|
 | `opportunity_update` upserted=0 | First FK violation (`bdl_player_id` not in `player_id_mapping`) poisoned SQLAlchemy session; all 2738 subsequent `db.execute()` raised `PendingRollbackError` silently caught | SAVEPOINT/RELEASE/ROLLBACK wrapper per row in `_compute_opportunity` loop (~line 3399). Also removed dead `pg_insert(text(...).columns)` |
 | `yahoo_id_sync` UniqueViolation (`_pim_bdl_id_uc`) kills entire transaction | INSERT path uses only `_pim_yahoo_key_uc` as ON CONFLICT target; if two players resolve to same `bdl_id`, `_pim_bdl_id_uc` fires at `db.commit()` → full rollback → 0 updates returned | SAVEPOINT/RELEASE/ROLLBACK around `db.execute(stmt)` in the "new row" INSERT path (~line 2459); failed rows logged as `insert_conflict` and skipped |
-| Draft board data leak in waiver targets | `get_or_create_projection()` checked draft board (hardcoded player rankings) BEFORE database, returning "Gavin Williams" draft data instead of real Steamer/Statcast projections from DB | Commented out draft board fallback in `player_board.py` lines 1030-1063; function now queries DB first, draft board only used as fallback (currently disabled) |
+| ✅ Draft board data leak in waiver targets | `get_or_create_projection()` checked draft board (hardcoded player rankings) BEFORE database, returning "Gavin Williams" draft data instead of real Steamer/Statcast projections from DB | Commented out draft board fallback in `player_board.py` lines 1030-1063; function now queries DB first. Commit 2f6f1f7 pushed. |
 
 ## Codex Feature Branch Notes (2026-05-07)
 
@@ -132,18 +132,46 @@ Python last-definition-wins: v2 at line ~6822 is active. Remove v1. Do when depl
 **Fix:** Use `yahoo.get_matchup_stats(week=current_week)` → `my_stats["IP"]` (stat_id 50 already mapped in `yahoo_client_resilient.py`). Also fix `ip_minimum` inconsistency (90.0 in endpoint vs 18.0 in `scoreboard_orchestrator.py`).
 **Context strip:** Can be built now with `/api/fantasy/budget` as source. Use placeholder (`—`) for IP until A-6 is resolved.
 
-### A-7 (P2): UI clarity issues — INVESTIGATING (2026-05-12)
+### A-7 (P2): UI clarity issues — ✅ COMPLETE (2026-05-12)
 **Report:** User screenshots showing dashboard confusion
 
 **Issues identified:**
 1. **Running counts lack context** — Just shows numbers without category names or whether higher/lower is better
 2. **Bubble ratings unclear** — Visual bubbles don't communicate what they represent (z-scores? win probabilities?)
-3. **Waiver targets always showing "Gavin Williams"** — ✅ FIXED (2026-05-12): Draft board data leak in `get_or_create_projection()` was returning hardcoded draft rankings instead of real DB projections. Commented out draft board fallback in `player_board.py` lines 1030-1063.
+3. **✅ Waiver targets not showing diverse players** — FIXED (2026-05-12): Two-phase fix applied:
+   - Commit 2f6f1f7: Disabled draft board fallback that was overriding DB data
+   - Commit f6e5a6f: Re-enabled draft board fallback ONLY for players not in database
+   
+   **Result:**
+   - Players in database (Gavin Williams) → use real Steamer/Statcast projections ✅
+   - Players NOT in database (Christopher Sanchez) → use draft board fallback ✅
+   - Tested: Christopher Sanchez (Cy Young contender) now appears with tier 2, ADP 28 ✅
 
-**Remaining work:**
-- Improve running counts UI: Add category labels, indicators for good/bad (green/red arrows), league context
-- Clarify bubble ratings: Add tooltip or legend explaining what the size/color means
-- Verify waiver targets now show diverse players after fix
+**UI Fixes Applied (2026-05-12):**
+
+**1. Running Counts (Category Deficits) — FIXED**
+   - Added category labels using CATEGORY_LABEL mapping (HR_B → HR, K_B → K, etc.)
+   - Added color-coded arrows: green (TrendingUp) for ahead, red (TrendingDown) for behind
+   - Correct direction logic for LOWER_IS_BETTER categories (K_B, L, HR_P, ERA, WHIP):
+     - Negative z-score = good (ahead) for lower-is-better
+     - Positive z-score = good (ahead) for higher-is-better
+   - Added explanatory text: "(Negative = behind league average)"
+
+**2. Bubble Ratings — FIXED**
+   - Added tooltips to status tags showing exact win probability:
+     - SAFE: "85% win prob - Safe lead"
+     - LEAD: "70% win prob - Leaning ahead"
+     - BUBBLE: "50% win prob - Could go either way"
+     - BEHIND: "30% win prob - Leaning behind"
+     - LOST: "10% win prob - Unlikely to win"
+   - Added visual legend above category battlefield showing ranges:
+     - SAFE >85% | LEAD 65-85% | BUBBLE 35-65% | BEHIND 15-35% | LOST <15%
+
+**Files modified:**
+- `frontend/app/(dashboard)/war-room/streaming/page.tsx` — Category deficits display
+- `frontend/components/war-room/category-battlefield.tsx` — Status tooltips + legend
+
+**Result:** Running counts now show direction (good/bad) with visual indicators; bubble ratings are self-explanatory with tooltips and legend.
 
 ---
 
