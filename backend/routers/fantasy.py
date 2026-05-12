@@ -4333,34 +4333,29 @@ def _fetch_rosters_for_simulate(db: Session) -> tuple[list, list]:
     opponent_team_key: Optional[str] = None
     try:
         matchups = client.get_scoreboard()
+
+        def _extract_team_keys(obj, depth=0) -> list[str]:
+            """Recursively find all team_key values in a Yahoo response structure."""
+            if depth > 5:
+                return []
+            keys: list[str] = []
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    if k == "team_key" and isinstance(v, str):
+                        keys.append(v)
+                    else:
+                        keys.extend(_extract_team_keys(v, depth + 1))
+            elif isinstance(obj, list):
+                for item in obj:
+                    keys.extend(_extract_team_keys(item, depth + 1))
+            return keys
+
         for m in matchups or []:
             if not isinstance(m, dict):
                 continue
-            teams = m.get("teams") or m.get("0", {}).get("teams", {})
-            team_keys: list[str] = []
-            if isinstance(teams, list):
-                for item in teams:
-                    if isinstance(item, dict):
-                        inner = item.get("team", item)
-                        if isinstance(inner, list):
-                            for sub in inner:
-                                if isinstance(sub, dict) and "team_key" in sub:
-                                    team_keys.append(sub["team_key"])
-                        elif isinstance(inner, dict):
-                            if inner.get("team_key"):
-                                team_keys.append(inner["team_key"])
-            elif isinstance(teams, dict):
-                count_t = int(teams.get("count", 0))
-                for ti in range(count_t):
-                    entry = teams.get(str(ti), {})
-                    inner = entry.get("team", entry) if isinstance(entry, dict) else {}
-                    if isinstance(inner, list):
-                        for sub in inner:
-                            if isinstance(sub, dict) and "team_key" in sub:
-                                team_keys.append(sub["team_key"])
-                    elif isinstance(inner, dict) and inner.get("team_key"):
-                        team_keys.append(inner["team_key"])
-
+            team_keys = _extract_team_keys(m)
+            if not team_keys:
+                continue
             is_my_matchup = any(
                 tk == my_team_key or (tk and my_team_key and (tk in my_team_key or my_team_key in tk))
                 for tk in team_keys
@@ -4373,6 +4368,7 @@ def _fetch_rosters_for_simulate(db: Session) -> tuple[list, list]:
                     ),
                     None,
                 )
+                logger.info("simulate: found opponent_team_key=%s from scoreboard", opponent_team_key)
                 break
     except Exception as _sb_err:
         logger.warning("simulate: scoreboard lookup failed: %s", _sb_err)
