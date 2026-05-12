@@ -45,7 +45,7 @@ def sync_yahoo_player_ids() -> int:
         players_data = client.get_league_rosters(league_key)
 
         if not players_data:
-            logger.warning(f"No players returned from {league_national_key}")
+            logger.warning(f"No players returned from {league_key}")
             return 0
 
         synced = 0

@@ -32,7 +32,7 @@ from backend.services.row_simulation_bridge import (
     summarize_simulation_bundles,
 )
 from backend.services.constraint_helpers import classify_ip_pace
-from backend.fantasy_baseball.h2h_monte_carlo import H2HOneWinSimulator
+from backend.fantasy_baseball.h2h_monte_carlo import H2HOneWinSimulator, H2HWinResult
 from backend.contracts import (
     MatchupScoreboardRow,
     MatchupScoreboardResponse,
@@ -174,7 +174,7 @@ def build_scoreboard_rows(
     my_row: ROWProjectionResult,
     opp_row: ROWProjectionResult,
     category_math: Dict[str, CategoryMathResult],
-    monte_carlo_result: Optional["H2HOneWinResult"] = None,
+    monte_carlo_result: Optional["H2HWinResult"] = None,
     ip_accumulated: float = 0.0,
     ip_minimum: float = 18.0,
     games_remaining: int = 0,
@@ -353,7 +353,7 @@ def assemble_matchup_scoreboard(
             my_finals_sim, opp_finals_sim, n_sims=n_monte_carlo_sims
         )
         overall_win_prob = monte_carlo_result.win_probability
-    except Exception as e:
+    except Exception:
         # Monte Carlo is optional — scoreboard still useful without it
         pass
 

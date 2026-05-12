@@ -662,8 +662,6 @@ def simulate_player(
             total_k_b  = _draw_games(rng, k_b_rate,  remaining_games)
             total_ab   = _draw_games(rng, ab_rate,   remaining_games)
             total_hit  = _draw_games(rng, hit_rate,  remaining_games)
-            total_2b   = _draw_games(rng, double_rate, remaining_games)
-            total_3b   = _draw_games(rng, triple_rate, remaining_games)
             total_walk = _draw_games(rng, walk_rate,   remaining_games)
 
             avg = total_hit / total_ab if total_ab > 0 else 0.0

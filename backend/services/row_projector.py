@@ -35,6 +35,7 @@ from backend.stat_contract import (
     PITCHING_CODES,
     SCORING_CATEGORY_CODES,
 )
+from backend.contracts import CanonicalPlayerRow
 from datetime import date
 
 
@@ -501,7 +502,7 @@ def _blended_daily_rate(
 
 
 def compute_row_projection_from_canonical_rows(
-    roster_rows: List["CanonicalPlayerRow"],
+    roster_rows: List[CanonicalPlayerRow],
     games_remaining: Dict[str, int],
     season_stats_by_player: Optional[Dict[str, Dict[str, float]]] = None,
 ) -> ROWProjectionResult:
@@ -523,8 +524,6 @@ def compute_row_projection_from_canonical_rows(
     -------
     ROWProjectionResult with all 18 categories projected.
     """
-    from backend.contracts import CanonicalPlayerRow
-
     # Extract rolling stats into the format expected by compute_row_projection
     rolling_by_player = {}
     for row in roster_rows:

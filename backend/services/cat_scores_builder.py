@@ -210,7 +210,6 @@ def run_backfill(db: Session, force: bool = False) -> dict[str, Any]:
     # 2. Classify rows
     # ------------------------------------------------------------------
     batters, pitchers, ambiguous = [], [], []
-    pa, ab = 550.0, 550.0 * 0.87
 
     for row in rows:
         avg = float(row["avg"] or 0.250)

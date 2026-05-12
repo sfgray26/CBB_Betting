@@ -355,7 +355,6 @@ class YahooFantasyClient:
     def _make_cache_key(self, path: str, params: Optional[dict]) -> str:
         """Generate a cache key from path and params."""
         import hashlib
-        import json
 
         # Normalize path
         normalized_path = path.strip().lstrip('/')
