@@ -1,6 +1,6 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
-> **Date:** 2026-05-06 | **Architect:** Claude Code (Master Architect)
+> **Date:** 2026-05-12 | **Architect:** Claude Code (Master Architect)
 > **Branch:** `stable/cbb-prod` | **HEAD:** pending commit (opportunity + yahoo_id_sync fixes)
 > **Deploy:** `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}` (d319beb live on Railway)
 
@@ -20,7 +20,7 @@
 | `market_signals_enabled` | **true** | avg_market_score=51.53 after d319beb — CALIBRATED |
 | `feature_matchup_enabled` | **true** | C-4 complete |
 | `opportunity_enabled` | **true** | D-2 complete. Fix deployed in current HEAD — upserted=0 bug patched |
-| `/api/fantasy/decisions` route | **LIVE** | Returns empty — A-4 blocking (decision pipeline starved) |
+| `/api/fantasy/decisions` route | **LIVE** | Returns ~800 daily decisions — A-4 resolved (pipeline working) |
 | Stuff+/Location+ (FanGraphs) | BLOCKED | Cloudflare blocks Railway IP — P2, do not attempt |
 | Savant Pitch Quality | **LIVE** | 554 scores seeded; avg_confidence=0.191 (below 0.3 threshold) — flags remain false |
 | Savant Park Factors | **LIVE** | 28 venues / 56 rows seeded |
@@ -108,19 +108,18 @@ db.close()
 ### ✅ A-2: Yahoo ID sync coverage — COMPLETE
 ### ✅ A-3: Frontend `/decisions` endpoint — COMPLETE
 
-### A-4 (ACTIVE): Decision pipeline starved — `decision_results` empty
+### ✅ A-4: Decision pipeline starved — RESOLVED (2026-05-11)
 
-The pipeline is: `mlb_box_stats` (2 AM) → `rolling_windows` (3 AM) → `player_scores` (4 AM) → `decision_optimization` (7 AM).
+**Verdict:** Phantom problem — pipeline is working correctly.
 
-Each phase returns `status: success` with 0 records when upstream is empty — making the scheduler appear green while nothing flows through. Root cause suspected: `mlb_game_log` or `mlb_player_stats` is empty or stale.
+**Diagnostic Results (2026-05-11):**
+- `mlb_game_log`: 609 rows ✅
+- `mlb_player_stats`: 17,459 rows ✅
+- `player_rolling_stats`: 102,040 rows ✅
+- `player_scores`: 99,037 rows ✅
+- `decision_results`: 832 rows ✅
 
-**Waiting for D-3 step 5 diagnostic results from Gemini before prescribing fix.**
-
-Once Gemini reports the 5 counts:
-- If `mlb_game_log` count = 0: `_ingest_mlb_game_log` job is broken — investigate BDL game log call
-- If `mlb_player_stats` count = 0 but `mlb_game_log` has rows: `_ingest_mlb_box_stats` is failing silently — investigate BDL `get_mlb_stats` call
-- If `mlb_player_stats` has rows but `player_rolling_stats` is empty: `_compute_rolling_windows` has a bug
-- If `player_rolling_stats` has rows but `player_scores` is empty: `_compute_player_scores` has a bug
+**Root Cause:** HANDOFF.md claim that "decision_results table is empty" was outdated. The pipeline has been functional since at least 2026-05-06. `/api/fantasy/decisions` endpoint returns live recommendations (~800 daily decision results).
 
 ### A-5: Dead `_refresh_ros_projections` v1 at line ~5952 (low priority)
 Python last-definition-wins: v2 at line ~6822 is active. Remove v1. Do when deploying for something else.
