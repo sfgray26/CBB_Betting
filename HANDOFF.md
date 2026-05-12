@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-05-12 | **Architect:** Claude Code (Master Architect)
-> **Branch:** `stable/cbb-prod` | **HEAD:** pending commit (opportunity + yahoo_id_sync fixes)
+> **Branch:** `stable/cbb-prod` | **HEAD:** pending commit (opportunity + yahoo_id_sync + draft_board_leak fixes)
 > **Deploy:** `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}` (d319beb live on Railway)
 
 ---
@@ -30,12 +30,13 @@
 
 ---
 
-## Code Fixes This Session (2026-05-06 — pending commit)
+## Code Fixes This Session (2026-05-12)
 
 | Fix | Bug | Patch |
 |-----|-----|-------|
 | `opportunity_update` upserted=0 | First FK violation (`bdl_player_id` not in `player_id_mapping`) poisoned SQLAlchemy session; all 2738 subsequent `db.execute()` raised `PendingRollbackError` silently caught | SAVEPOINT/RELEASE/ROLLBACK wrapper per row in `_compute_opportunity` loop (~line 3399). Also removed dead `pg_insert(text(...).columns)` |
 | `yahoo_id_sync` UniqueViolation (`_pim_bdl_id_uc`) kills entire transaction | INSERT path uses only `_pim_yahoo_key_uc` as ON CONFLICT target; if two players resolve to same `bdl_id`, `_pim_bdl_id_uc` fires at `db.commit()` → full rollback → 0 updates returned | SAVEPOINT/RELEASE/ROLLBACK around `db.execute(stmt)` in the "new row" INSERT path (~line 2459); failed rows logged as `insert_conflict` and skipped |
+| Draft board data leak in waiver targets | `get_or_create_projection()` checked draft board (hardcoded player rankings) BEFORE database, returning "Gavin Williams" draft data instead of real Steamer/Statcast projections from DB | Commented out draft board fallback in `player_board.py` lines 1030-1063; function now queries DB first, draft board only used as fallback (currently disabled) |
 
 ## Codex Feature Branch Notes (2026-05-07)
 
@@ -130,6 +131,19 @@ Python last-definition-wins: v2 at line ~6822 is active. Remove v1. Do when depl
 `acquisitions_used` and `IL_slots_used` are live via Yahoo API. `ip_accumulated` is hardcoded `0.0` with a TODO.
 **Fix:** Use `yahoo.get_matchup_stats(week=current_week)` → `my_stats["IP"]` (stat_id 50 already mapped in `yahoo_client_resilient.py`). Also fix `ip_minimum` inconsistency (90.0 in endpoint vs 18.0 in `scoreboard_orchestrator.py`).
 **Context strip:** Can be built now with `/api/fantasy/budget` as source. Use placeholder (`—`) for IP until A-6 is resolved.
+
+### A-7 (P2): UI clarity issues — INVESTIGATING (2026-05-12)
+**Report:** User screenshots showing dashboard confusion
+
+**Issues identified:**
+1. **Running counts lack context** — Just shows numbers without category names or whether higher/lower is better
+2. **Bubble ratings unclear** — Visual bubbles don't communicate what they represent (z-scores? win probabilities?)
+3. **Waiver targets always showing "Gavin Williams"** — ✅ FIXED (2026-05-12): Draft board data leak in `get_or_create_projection()` was returning hardcoded draft rankings instead of real DB projections. Commented out draft board fallback in `player_board.py` lines 1030-1063.
+
+**Remaining work:**
+- Improve running counts UI: Add category labels, indicators for good/bad (green/red arrows), league context
+- Clarify bubble ratings: Add tooltip or legend explaining what the size/color means
+- Verify waiver targets now show diverse players after fix
 
 ---
 
