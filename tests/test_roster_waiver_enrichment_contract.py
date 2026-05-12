@@ -376,6 +376,8 @@ def test_get_matchup_stats_parses_nested_team_stats_structure(fantasy_client, mo
         my_key, opp_key, my_sids, opp_sids,
     )
 
+    monkeypatch.setenv("YAHOO_CLIENT_ID", "test_client_id")
+    monkeypatch.setenv("YAHOO_CLIENT_SECRET", "test_client_secret")
     real_client = YahooFantasyClient()
     with patch.object(real_client, "get_my_team_key", return_value=my_key):
         with patch.object(real_client, "get_scoreboard", return_value=_nested_scoreboard(

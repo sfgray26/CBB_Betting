@@ -168,7 +168,11 @@
       "mcp__chrome-devtools__get_network_request",
       "mcp__plugin_agentmemory_agentmemory__memory_save",
       "mcp__chrome-devtools__evaluate_script",
-      "mcp__chrome-devtools__list_pages"
+      "mcp__chrome-devtools__list_pages",
+      "Bash(timeout 3)",
+      "Bash(set)",
+      "Bash(findstr API_KEY)",
+      "Bash(psql *)"
     ]
   },
   "enabledPlugins": {}

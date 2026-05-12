@@ -6,7 +6,7 @@ Tests for GET /budget.
 
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 @pytest.fixture
@@ -23,6 +23,18 @@ def fantasy_client():
 
 class TestBudgetEndpoint:
     """Tests for GET /budget endpoint."""
+
+    @pytest.fixture(autouse=True)
+    def mock_yahoo_client(self):
+        """Patch get_yahoo_client so tests run without real Yahoo credentials."""
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = []
+        mock_client.get_matchup_stats.return_value = {
+            "my_team": {"IP": 45.0}
+        }
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            with patch("backend.services.constraint_helpers.count_weekly_acquisitions", return_value=5):
+                yield mock_client
 
     def test_budget_response_structure(self, fantasy_client):
         """Budget response has all required fields."""
