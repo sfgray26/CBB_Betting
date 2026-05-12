@@ -1027,47 +1027,12 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
     if player_key and player_key in _projection_cache and not yahoo_player.get("cat_scores"):
         return _projection_cache[player_key]
 
-    # 2. DISABLED: Draft board fallback was interfering with real DB projections
-    # The draft board should ONLY be used when NO real data exists in the database.
-    # Skip the draft board checks entirely - go straight to DB queries.
-    # This fixes the "Gavin Williams always appearing" bug where draft board data
-    # was being returned instead of real Steamer/Statcast projections from the DB.
+    # 2. Check board by exact name match ONLY if database lookup fails
+    # This is a fallback for players not in the database (e.g., Christopher Sanchez)
+    # IMPORTANT: Database check happens first (below), draft board is only for missing DB data
 
-    # # 2. Check board by exact name match
-    # board = get_board()
-    # board_by_name = {p["name"].lower(): p for p in board}
-    # entry = board_by_name.get(name.lower())
-    # if entry:
-    #     if player_key:
-    #         _projection_cache[player_key] = entry
-    #     return entry
-
-    # # 3. Fuzzy name match — handles "José" vs "Jose", suffixes, etc.
-    # import difflib as _difflib
-    # name_lower = name.lower()
-    # clean_name = "".join(c for c in name_lower if c.isalnum() or c == " ")
-    # for board_name, board_entry in board_by_name.items():
-    #     clean_board = "".join(c for c in board_name if c.isalnum() or c == " ")
-    #     if clean_board == clean_name:
-    #         if player_key:
-    #             _projection_cache[player_key] = board_entry
-    #         return board_entry
-
-    # # 3b. Similarity match — handles "Christopher" vs "Cristopher", etc.
-    # best_ratio = 0.0
-    # best_entry = None
-    # for board_name, board_entry in board_by_name.items():
-    #     clean_board = "".join(c for c in board_name if c.isalnum() or c == " ")
-    #     ratio = _difflib.SequenceMatcher(None, clean_name, clean_board).ratio()
-    #     if ratio > best_ratio:
-    #         best_ratio = ratio
-    #         best_entry = board_entry
-    # if best_ratio >= 0.90 and best_entry is not None:
-    #     if player_key:
-    #         _projection_cache[player_key] = best_entry
-    #     return best_entry
-
-    # 3. Use Bayesian fusion with real data sources from database
+    # NOTE: We skip draft board check here and do it AFTER database query
+    # This ensures real DB projections are always preferred over draft board data
     positions = yahoo_player.get("positions") or []
     primary_pos = positions[0] if positions else ""
 
@@ -1286,6 +1251,49 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
     # backfill runs compute_cat_scores() against the full player pool.
     cat_scores = {}
     z_score = 0.0
+
+    # DRAFT BOARD FALLBACK: Only use if we have NO real data from database
+    # This ensures players like Christopher Sanchez (not in DB) still get some projection
+    # while preventing Gavin Williams draft data from overriding real DB projections.
+    if not projection_cat_scores and not steamer_data and not statcast_data:
+        # No database data found - use draft board as fallback
+        logger.info(f"[player_board] No DB data for {name}, checking draft board fallback")
+
+        board = get_board()
+        board_by_name = {p["name"].lower(): p for p in board}
+        entry = board_by_name.get(name.lower())
+
+        if entry:
+            logger.info(f"[player_board] Using draft board fallback for {name}")
+            if player_key:
+                _projection_cache[player_key] = entry
+            return entry
+
+        # Try fuzzy match for draft board
+        import difflib as _difflib
+        clean_name = "".join(c for c in name.lower() if c.isalnum() or c == " ")
+        for board_name, board_entry in board_by_name.items():
+            clean_board = "".join(c for c in board_name if c.isalnum() or c == " ")
+            if clean_board == clean_name:
+                logger.info(f"[player_board] Using draft board fuzzy match for {name}")
+                if player_key:
+                    _projection_cache[player_key] = board_entry
+                return board_entry
+
+        # Similarity match for draft board
+        best_ratio = 0.0
+        best_entry = None
+        for board_name, board_entry in board_by_name.items():
+            clean_board = "".join(c for c in board_name if c.isalnum() or c == " ")
+            ratio = _difflib.SequenceMatcher(None, clean_name, clean_board).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_entry = board_entry
+        if best_ratio >= 0.90 and best_entry is not None:
+            logger.info(f"[player_board] Using draft board similarity match for {name} (ratio={best_ratio:.2f})")
+            if player_key:
+                _projection_cache[player_key] = best_entry
+            return best_entry
 
     # Log which fusion path was taken
     logger.info(f"[player_board] Fusion for {name}: source={fusion_result.source}, "
