@@ -4332,7 +4332,7 @@ def _fetch_rosters_for_simulate(db: Session) -> tuple[list, list]:
             keys: list[str] = []
             if isinstance(obj, dict):
                 for k, v in obj.items():
-                    if k == "team_key" and isinstance(v, str):
+                    if (k == "team_key" or k == "winner_team_key") and isinstance(v, str):
                         keys.append(v)
                     else:
                         keys.extend(_extract_team_keys(v, depth + 1))
