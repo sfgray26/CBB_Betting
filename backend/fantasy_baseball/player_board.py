@@ -1116,6 +1116,73 @@ def _lookup_projection_by_name(db, name: str):
     return None
 
 
+def _lookup_canonical_by_name(db, name: str, player_type: str):
+    """Return (CanonicalProjection, [CategoryImpact]) for a SAVANT_ADJUSTED row, or None.
+
+    Bridges through PlayerIdentity because CanonicalProjection has no player_name.
+    Tries mlbam_id first, then negative yahoo_id fallback namespace.
+    """
+    from backend.models import CanonicalProjection, CategoryImpact, PlayerIdentity
+
+    norm = _normalize_name(name) if name else ""
+    if not norm or not db:
+        return None
+
+    identity_row = (
+        db.query(PlayerIdentity)
+        .filter(PlayerIdentity.normalized_name == norm)
+        .first()
+    )
+    if not identity_row:
+        return None
+
+    candidate_ids = []
+    if identity_row.mlbam_id:
+        candidate_ids.append(identity_row.mlbam_id)
+    if identity_row.yahoo_id:
+        candidate_ids.append(-(int(identity_row.yahoo_id)))
+
+    if not candidate_ids:
+        return None
+
+    cp = (
+        db.query(CanonicalProjection)
+        .filter(
+            CanonicalProjection.player_id.in_(candidate_ids),
+            CanonicalProjection.player_type == player_type.upper(),
+            CanonicalProjection.source_engine == "SAVANT_ADJUSTED",
+        )
+        .order_by(CanonicalProjection.projection_date.desc())
+        .first()
+    )
+    if cp is None:
+        return None
+
+    impacts = (
+        db.query(CategoryImpact)
+        .filter(CategoryImpact.canonical_projection_id == cp.id)
+        .all()
+    )
+    return cp, impacts
+
+
+# CategoryImpact.category → player_board cat_scores key mappings
+_CI_BATTER_MAP = {"R": "r", "HR": "hr", "RBI": "rbi", "SB": "sb", "AVG": "avg", "OPS": "ops"}
+_CI_PITCHER_MAP = {"W": "w", "K": "k_pit", "SV": "sv", "ERA": "era", "WHIP": "whip", "K9": "k9"}
+# Note: k_bat, tb, nsb, l, hr_pit, qs are not emitted by ProjectionAssemblyService yet.
+
+
+def _category_impacts_to_cat_scores(impacts, player_type: str) -> dict:
+    """Convert CategoryImpact rows to player_board-compatible cat_scores dict."""
+    impact_map = _CI_BATTER_MAP if player_type == "batter" else _CI_PITCHER_MAP
+    cat_scores: dict = {}
+    for impact in impacts:
+        board_key = impact_map.get(impact.category)
+        if board_key is not None and impact.z_score is not None:
+            cat_scores[board_key] = round(impact.z_score, 3)
+    return cat_scores
+
+
 def get_or_create_projection(yahoo_player: dict) -> dict:
     """
     Return a board-compatible dict using Bayesian fusion (four-state logic).
@@ -1313,6 +1380,51 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
         if player_key:
             _projection_cache[player_key] = proxy
         return proxy
+
+    # FAST PATH 2: SAVANT_ADJUSTED CanonicalProjection
+    # PlayerProjection had no curated cat_scores — try the Statcast-fused table.
+    # Covers ~238 players (48% of top-500 fantasy-relevant players).
+    # Missing categories: k_bat, tb, nsb, l, hr_pit, qs (not yet in CategoryImpact).
+    if db is not None:
+        try:
+            canonical_result = _lookup_canonical_by_name(db, name, player_type)
+            if canonical_result is not None:
+                cp, impacts = canonical_result
+                sa_cat_scores = _category_impacts_to_cat_scores(impacts, player_type)
+                if sa_cat_scores:
+                    logger.info(
+                        "[player_board] SAVANT_ADJUSTED fast path: %s → %s cats",
+                        name, list(sa_cat_scores.keys()),
+                    )
+                    if db_gen is not None:
+                        try:
+                            next(db_gen)
+                        except (StopIteration, Exception):
+                            pass
+                    proxy = {
+                        "id": player_key or name.lower().replace(" ", "_"),
+                        "name": name,
+                        "team": yahoo_player.get("team") or yahoo_player.get("editorial_team_abbr") or "",
+                        "positions": positions,
+                        "type": player_type,
+                        "tier": 10,
+                        "rank": 9999,
+                        "adp": 9999.0,
+                        "z_score": sum(sa_cat_scores.values()),
+                        "cat_scores": sa_cat_scores,
+                        "proj": {},
+                        "is_keeper": False,
+                        "keeper_round": None,
+                        "is_proxy": True,
+                        "fusion_source": "savant_adjusted_db",
+                        "components_fused": 2,
+                        "xwoba_override": False,
+                    }
+                    if player_key:
+                        _projection_cache[player_key] = proxy
+                    return proxy
+        except Exception as _cp_err:
+            logger.debug("[player_board] CanonicalProjection lookup failed for %s: %s", name, _cp_err)
 
     # Always invoke helpers — they handle None inputs gracefully and the
     # tests rely on these being patchable as the entry points.
