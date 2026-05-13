@@ -145,6 +145,7 @@ LOCK_IDS = {
     "market_signals_update": 100_038,  # PR 4.2: Yahoo ownership-based market intelligence
     "matchup_context_update": 100_039,  # PR 5.2: daily hitter matchup context
     "canonical_projection_refresh": 100_040,  # Sprint 2: assemble CanonicalProjection table
+    "bridge_mapping_to_identities": 100_041,  # Coverage: seed player_identities from player_id_mapping
 }
 
 
@@ -1311,6 +1312,17 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Bridge mapping → identities: 5:00 AM ET (after yahoo_id_sync at 4:30 AM)
+        # Seeds player_identities from player_id_mapping so canonical_projections
+        # pipeline can generate SAVANT_ADJUSTED cat_scores for these players.
+        self._scheduler.add_job(
+            self._bridge_mapping_to_identities,
+            CronTrigger(hour=5, minute=0, timezone=tz),
+            id="bridge_mapping_to_identities",
+            name="Bridge Mapping to Identities",
+            replace_existing=True,
+        )
+
         # Player ID mapping sync: 7:00 AM ET (before probable_pitchers needs IDs)
         self._scheduler.add_job(
             self._sync_player_id_mapping,
@@ -1452,6 +1464,7 @@ class DailyIngestionOrchestrator:
             "market_signals_update":        self._compute_market_signals,
             "matchup_context_update":       self._compute_matchup_context,
             "canonical_projection_refresh": self._refresh_canonical_projections,
+            "bridge_mapping_to_identities": self._bridge_mapping_to_identities,
         }
         handler = _handlers.get(job_id)
         if handler is None:
@@ -2507,6 +2520,77 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["yahoo_id_sync"], "yahoo_id_sync", _run)
+
+    async def _bridge_mapping_to_identities(self) -> dict:
+        """
+        Create player_identities rows for any player in player_id_mapping
+        that lacks one (lock 100_041, 5:00 AM ET after yahoo_id_sync at 4:30 AM).
+
+        Seeds the identity table so canonical_projections (Statcast-adjusted)
+        can process these players on its nightly 11 PM run.
+        """
+        from backend.models import PlayerIDMapping, PlayerIdentity
+        from backend.fantasy_baseball.id_resolution_service import _normalize_name
+
+        t0 = time.monotonic()
+
+        async def _run():
+            db_gen = get_db()
+            db = next(db_gen)
+            try:
+                existing_norms = {
+                    r.normalized_name
+                    for r in db.query(PlayerIdentity.normalized_name).all()
+                }
+
+                created = 0
+                skipped = 0
+
+                rows = db.query(PlayerIDMapping).filter(
+                    PlayerIDMapping.yahoo_key.isnot(None),
+                    PlayerIDMapping.full_name.isnot(None),
+                ).all()
+
+                for row in rows:
+                    norm = _normalize_name(row.full_name or "")
+                    if not norm or norm in existing_norms:
+                        skipped += 1
+                        continue
+
+                    new_identity = PlayerIdentity(
+                        yahoo_guid=row.yahoo_key,
+                        yahoo_id=row.yahoo_id,
+                        full_name=row.full_name,
+                        normalized_name=norm,
+                        active=True,
+                    )
+                    try:
+                        db.add(new_identity)
+                        db.flush()
+                        existing_norms.add(norm)
+                        created += 1
+                    except Exception as _e:
+                        db.rollback()
+                        logger.debug("bridge_mapping: skip %s — %s", row.full_name, _e)
+                        skipped += 1
+
+                db.commit()
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.info("bridge_mapping_to_identities: created=%d skipped=%d elapsed_ms=%d", created, skipped, elapsed)
+                self._record_job_run("bridge_mapping_to_identities", "success")
+                return {"status": "success", "created": created, "skipped": skipped, "elapsed_ms": elapsed}
+            except Exception as exc:
+                db.rollback()
+                logger.error("bridge_mapping_to_identities: failed — %s", exc, exc_info=True)
+                self._record_job_run("bridge_mapping_to_identities", "failed")
+                return {"status": "failed", "error": str(exc)}
+            finally:
+                try:
+                    next(db_gen)
+                except (StopIteration, Exception):
+                    pass
+
+        return await _with_advisory_lock(LOCK_IDS["bridge_mapping_to_identities"], "bridge_mapping_to_identities", _run)
 
     async def _supplement_statsapi_counting_stats(self) -> dict:
         """
@@ -7158,26 +7242,20 @@ class DailyIngestionOrchestrator:
 
             # The roster endpoint (teams/roster) does NOT include Yahoo's ownership
             # block, so _parse_player() always returns percent_owned=0.0 for rostered
-            # players. Fetch real ownership % from the ADP/players endpoint separately.
-            ownership_by_key: dict[str, float] = {}
+            # players. Enrich with real ownership % via the global players endpoint.
             try:
-                adp_players = await asyncio.to_thread(
-                    yahoo.get_adp_and_injury_feed,
-                    pages=10,
-                    count_per_page=25,
+                await asyncio.to_thread(yahoo._enrich_ownership_batch, all_players)
+                enriched_count = sum(
+                    1 for p in all_players if p.get("percent_owned", 0.0) > 0.0
                 )
-                ownership_by_key = {
-                    p["player_key"]: p["percent_owned"]
-                    for p in adp_players
-                    if p.get("player_key") and isinstance(p.get("percent_owned"), (int, float))
-                }
                 logger.info(
-                    "_sync_position_eligibility: Loaded ownership data for %d players",
-                    len(ownership_by_key),
+                    "_sync_position_eligibility: Enriched ownership for %d/%d players",
+                    enriched_count,
+                    len(all_players),
                 )
             except Exception as exc:
                 logger.warning(
-                    "_sync_position_eligibility: Failed to fetch ownership feed (%s) "
+                    "_sync_position_eligibility: Ownership enrichment failed (%s) "
                     "-- league_rostered_pct will be NULL",
                     exc,
                 )
@@ -7237,9 +7315,8 @@ class DailyIngestionOrchestrator:
                         multi_count = len([p for p in positions if p.upper() != "UTIL"])
 
                         # Upsert: ON CONFLICT (yahoo_player_key) DO UPDATE
-                        # ownership_by_key is pre-loaded from ADP feed (has real % data).
-                        # player_data.get("percent_owned") is always 0.0 from roster endpoint.
-                        rostered_pct = ownership_by_key.get(player_key) or None
+                        # player_data now carries real percent_owned after _enrich_ownership_batch.
+                        rostered_pct = player_data.get("percent_owned") or None
                         stmt = pg_insert(PositionEligibility.__table__).values(
                             yahoo_player_key=player_key,
                             bdl_player_id=None,
