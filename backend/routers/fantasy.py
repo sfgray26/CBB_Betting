@@ -14,6 +14,7 @@ from sqlalchemy.orm import aliased
 from typing import List, Optional, Literal, Dict
 import logging
 import os
+import difflib as _difflib
 import json as _json
 import asyncio
 import unicodedata
@@ -4382,7 +4383,12 @@ def _fetch_rosters_for_simulate(db: Session) -> tuple[list, list]:
         if isinstance(positions, str):
             positions = [positions]
         cat_scores: dict[str, float] = {}
-        proj = _proj_by_name.get(_normalize_identity_name(name))
+        _norm_name = _normalize_identity_name(name)
+        proj = _proj_by_name.get(_norm_name)
+        if proj is None and _proj_by_name:
+            _fuzzy = _difflib.get_close_matches(_norm_name, _proj_by_name.keys(), n=1, cutoff=0.85)
+            if _fuzzy:
+                proj = _proj_by_name[_fuzzy[0]]
         if proj and proj.cat_scores:
             for src, dest in _PROJ_TO_SIM_KEY.items():
                 val = proj.cat_scores.get(src)
