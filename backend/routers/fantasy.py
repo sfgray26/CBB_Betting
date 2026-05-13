@@ -4437,7 +4437,11 @@ async def simulate_matchup(
     opponent_roster = payload.opponent_roster
 
     if not my_roster or not opponent_roster:
-        my_roster, opponent_roster = _fetch_rosters_for_simulate(db)
+        try:
+            my_roster, opponent_roster = _fetch_rosters_for_simulate(db)
+        except Exception as _fetch_exc:
+            logger.warning("simulate_matchup: roster fetch failed: %s", _fetch_exc)
+            raise HTTPException(status_code=503, detail=f"Failed to fetch roster data: {_fetch_exc}")
 
     if not my_roster or not opponent_roster:
         my_count = len(my_roster) if my_roster else 0
