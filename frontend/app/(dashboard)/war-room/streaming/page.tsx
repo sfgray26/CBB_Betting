@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import { Loader2, AlertCircle, Zap, TrendingUp, TrendingDown } from 'lucide-react'
 import type { WaiverAvailablePlayer, CategoryDeficit } from '@/lib/types'
-import { LOWER_IS_BETTER, CATEGORY_LABEL } from '@/lib/types'
+import { CATEGORY_LABEL } from '@/lib/types'
 
 export default function StreamingStationPage() {
   const waiver = useQuery({
@@ -75,26 +75,24 @@ export default function StreamingStationPage() {
           <p className="text-[10px] font-semibold tracking-widest uppercase text-[#494949] mb-2">
             Category Deficits
             <span className="text-[#7D7D7D] font-normal ml-2">
-              (Negative = behind league average)
+              (vs opponent this week)
             </span>
           </p>
           <div className="flex flex-wrap gap-2">
             {category_deficits.map((d: CategoryDeficit) => {
-              // For LOWER_IS_BETTER categories, negative z-score is good (ahead)
-              // For other categories, positive z-score is good (ahead)
-              const lowerBetter = LOWER_IS_BETTER.includes(d.category as any)
-              const isAhead = lowerBetter ? d.deficit_z_score < 0 : d.deficit_z_score > 0
+              const isAhead = d.winning
               const scoreColor = isAhead ? 'text-emerald-400' : 'text-rose-400'
               const ArrowIcon = isAhead ? TrendingUp : TrendingDown
+              const sign = d.deficit > 0 ? '+' : ''
 
               return (
                 <span
                   key={d.category}
                   className="px-2 py-1 bg-[#1A1A1A] border border-[#303030] text-xs font-mono flex items-center gap-1.5"
                 >
-                  <span className="text-[#7D7D7D]">{CATEGORY_LABEL[d.category as keyof typeof CATEGORY_LABEL]}</span>
+                  <span className="text-[#7D7D7D]">{CATEGORY_LABEL[d.category as keyof typeof CATEGORY_LABEL] ?? d.category}</span>
                   <span className={scoreColor}>
-                    {d.deficit_z_score.toFixed(2)}z
+                    {sign}{d.deficit.toFixed(1)}
                   </span>
                   <ArrowIcon className={`h-3 w-3 ${scoreColor} shrink-0`} />
                 </span>
@@ -156,7 +154,7 @@ function WaiverPlayerRow({
       <div className="min-w-0">
         <span className="text-white text-sm font-medium truncate">{player.name}</span>
         <span className="text-[#7D7D7D] text-xs ml-2">{player.team}</span>
-        <span className="text-[#494949] text-xs ml-2">{player.positions.join('/')}</span>
+        <span className="text-[#494949] text-xs ml-2">{(player.positions ?? (player.position ? [player.position] : [])).join('/')}</span>
       </div>
       <div className="flex items-center gap-3 shrink-0 ml-3">
         {player.percent_owned != null && (

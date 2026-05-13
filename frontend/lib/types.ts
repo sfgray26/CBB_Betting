@@ -436,32 +436,55 @@ export interface LineupResponse {
 }
 
 export interface CategoryDeficit {
-  category: RotoCategory
-  deficit_z_score: number
+  category: string
+  my_total: number
+  opponent_total: number
+  deficit: number
+  winning: boolean
 }
 
 export interface WaiverAvailablePlayer {
   player_id: string
   name: string
   team: string
-  positions: string[]
+  position: string
+  positions?: string[]
   need_score: number
   projected_points: number | null
   percent_owned: number | null
-  two_start: boolean
+  owned_pct?: number
+  two_start?: boolean
   start1_date?: string | null
   start1_opp?: string | null
   start2_date?: string | null
   start2_opp?: string | null
   park_factor?: number | null
-  category_need_match?: RotoCategory[]
+  category_need_match?: string[]
+  category_contributions?: Record<string, number>
+  starts_this_week?: number
+  hot_cold?: 'HOT' | 'COLD' | null
+  status?: string | null
+  injury_note?: string | null
+  injury_status?: string | null
+  statcast_signals?: string[]
+  statcast_stats?: Record<string, number> | null
+  quality_score?: number | null
+  projected_saves?: number
+  stats?: Record<string, number | null>
 }
 
 export interface WaiverResponse {
+  week_end?: string
+  matchup_opponent?: string
   top_available: WaiverAvailablePlayer[]
   two_start_pitchers: WaiverAvailablePlayer[]
   category_deficits: CategoryDeficit[]
   faab_balance: number | null
+  il_slots_used?: number
+  il_slots_available?: number
+  urgent_alert?: { message: string; player_name: string } | null
+  closer_alert?: 'NO_CLOSERS' | 'LOW_CLOSERS' | null
+  pagination?: { page: number; per_page: number; has_next: boolean } | null
 }
 
 // ---------------------------------------------------------------------------
