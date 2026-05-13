@@ -5516,7 +5516,7 @@ async def get_constraint_budget(
 
         matchup_stats = client.get_matchup_stats(week=current_week, my_team_key=team_key)
         if matchup_stats:
-            my_stats = matchup_stats.get("my_team", {})
+            my_stats = matchup_stats.get("my_stats", {})
             ip_accumulated = float(my_stats.get("IP", 0.0))
     except (YahooAuthError, YahooAPIError, Exception) as exc:
         logger.warning("budget: failed to fetch IP from matchup stats: %s", exc)
