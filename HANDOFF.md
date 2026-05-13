@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-05-13 | **Architect:** Claude Code (Master Architect)
-> **Branch:** `stable/cbb-prod` | **HEAD:** 56555da (Phase 2 simulation integrity + Waiver Wire page)
+> **Branch:** `stable/cbb-prod` | **HEAD:** 72ff2c3 (Player coverage fix — name-based fallback + bridge job)
 > **Deploy:** `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}` (d319beb live on Railway)
 
 ---
@@ -40,6 +40,18 @@
 | Ownership always 0% | `get_free_agents` fetched from `league/{lk}/players` without `out=ownership` (Yahoo 400). Secondary batch call to `players;player_keys/ownership` needed | `yahoo_client_resilient.py`. Commit 425f9d6 |
 | Simulate roster fetch unhandled exception | `_fetch_rosters_for_simulate` called outside try/except — Yahoo auth error would bypass CORS middleware | Added try/except around roster fetch in `simulate_matchup`. Commit ff2c8b9 |
 | K-1 P0 streaming/dashboard/lineup 422 | All three verified RESOLVED by prior session's code (A-7 streaming fix, dashboard page rewrite, FastAPI static-route priority) | No code change needed |
+
+---
+
+## Phase 3 Fixes (2026-05-13 — player coverage)
+
+| Fix | Bug | Patch |
+|-----|-----|-------|
+| Name-based `player_projections` fallback | `get_or_create_projection` had no fallback to query `player_projections` (9,728 rows) by name when identity chain failed — Cristopher Sanchez and other top players got hardcoded draft board estimates instead of real FanGraphs RoS data | Added `_lookup_projection_by_name(db, name)` with difflib fuzzy match (0.85) in `player_board.py`. Commit 148b896 |
+| Coverage audit + API endpoint | No way to measure what % of top players had real vs fallback data | New `scripts/audit_player_coverage.py` + `GET /api/fantasy/coverage` endpoint. Commit 243a87e |
+| Bridge mapping → identities job | `player_identities` table was never auto-populated — new players only added when Yahoo ID sync matched an existing identity entry, blocking SAVANT_ADJUSTED pipeline | New daily `_bridge_mapping_to_identities` job (lock 100_041, 5:00 AM ET) creates `player_identities` rows from `player_id_mapping`. Commit 72ff2c3 |
+
+**Note on Task 2 (canonical projections preference):** `CanonicalProjection` model has no `cat_scores` column — it stores raw Statcast stats + uses `CategoryImpact` rows for z-scores, and uses `source_engine` (not `provenance`). The plan's Task 2 was based on incorrect schema assumptions. Skipped — add as future task after confirming `CategoryImpact`-based cat_scores assembly.
 
 ---
 
@@ -206,6 +218,22 @@ Scores now differentiated (88.8–112.6) after `pa` proxy fix (d319beb). But `av
 
 Kimi's report incorrectly identified a duplicate function. Actual bug: INSERT at line ~2459 only handled `_pim_yahoo_key_uc` on conflict, allowing `_pim_bdl_id_uc` to kill the entire transaction on any duplicate bdl_id. Fixed with SAVEPOINT pattern.
 
+### K-NEXT-3: Ownership 0% audit + fix — ✅ COMPLETE (Kimi implemented 2026-05-13)
+
+**Live inspection confirmed:** All players show `0% owned` on roster, dashboard, and waiver pages. API returns `"ownership_pct": 0.0` for every player.
+
+**Root cause:** Yahoo's `team/{team_key}/roster/players` and `league/{league_key}/players` endpoints do **not** include ownership data. The only working endpoint is the global `players;player_keys={keys}/ownership`.
+
+**Fixes applied (commits pending):**
+1. **`backend/fantasy_baseball/yahoo_client_resilient.py`** — Extracted reusable `_enrich_ownership_batch(players)` helper with proper >25 player chunking. Wired into both `get_roster()` and `get_free_agents()`. Fixes the `player_keys[:25]` cap from `425f9d6`.
+2. **`backend/services/daily_ingestion.py`** — Replaced broken `get_adp_and_injury_feed()` ownership source in `_sync_position_eligibility` with `_enrich_ownership_batch(all_players)`.
+3. **`frontend/app/(dashboard)/war-room/streaming/page.tsx`** — Added null-guards on `d.deficit` and `player.need_score` before `.toFixed()` calls to prevent the client-side `TypeError` crash.
+4. **`backend/routers/fantasy.py`** — Task 4 (PositionEligibility fallback) was already implemented by Claude in `243a87e`.
+
+**Validation:** `py_compile` clean on all modified files. `115` targeted pytest cases green (`test_yahoo_client_ownership`, `test_roster_waiver_enrichment_contract`, `test_waiver_integration`, `test_waiver_edge`, `test_ui_contracts`, `test_daily_ingestion`, `test_ingestion_orchestrator`).
+
+**Note:** Live production still shows `0% owned` because the deployed backend is on commit `d319beb` (per HANDOFF.md deploy line), which predates these fixes. A deploy is required for changes to take effect.
+
 ---
 
 ## K-1 UI UAT FINDINGS (2026-05-07)
@@ -284,5 +312,6 @@ All 554 scores seeded. avg_confidence=0.191 (pa proxy gives signal but early-sea
 100_029 player_id_mapping | 100_030 vorp            | 100_031 projection_cat_scores | 100_032 savant_ingestion
 100_033 bdl_injuries    | 100_034 yahoo_id_sync     | 100_035 cat_scores_backfill | 100_036 ros_projection_refresh
 100_037 opportunity_update | 100_038 market_signals_update | 100_039 matchup_context_update | 100_040 canonical_projection_refresh
-Next available: 100_041
+100_041 bridge_mapping_to_identities (5:00 AM ET — seeds player_identities from player_id_mapping)
+Next available: 100_042
 ```
