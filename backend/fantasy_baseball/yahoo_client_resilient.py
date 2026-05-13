@@ -719,7 +719,12 @@ class YahooFantasyClient:
                 if player_id not in players_by_key:
                     players_by_key[player_id] = p
         
-        return list(players_by_key.values())
+        players = list(players_by_key.values())
+
+        # Best-effort: enrich with ownership % via the global players endpoint.
+        self._enrich_ownership_batch(players)
+
+        return players
 
     @staticmethod
     def _extract_selected_position(player_data) -> Optional[str]:
@@ -811,11 +816,24 @@ class YahooFantasyClient:
             logger.warning("get_free_agents stats batch failed (non-fatal): %s", _stats_err)
 
         # Best-effort: enrich with ownership % via the global players endpoint.
-        # league/players does not support out=ownership (causes 400).
-        # players;player_keys=.../ownership is valid on the global players collection.
+        self._enrich_ownership_batch(players)
+
+        return players
+
+    def _enrich_ownership_batch(self, players: list[dict]) -> None:
+        """Mutate *players* in place with real ownership % from Yahoo global endpoint.
+
+        Uses: players;player_keys={k1},{k2},.../ownership
+        Yahoo enforces max 25 player_keys per batch request.
+        """
+        player_keys = [p["player_key"] for p in players if p.get("player_key")]
+        if not player_keys:
+            return
+
         try:
-            if player_keys:
-                keys_str = ",".join(player_keys[:25])  # Yahoo hard limit of 25
+            for i in range(0, len(player_keys), 25):
+                chunk_keys = player_keys[i : i + 25]
+                keys_str = ",".join(chunk_keys)
                 own_data = self._get(f"players;player_keys={keys_str}/ownership")
                 own_block = own_data.get("fantasy_content", {}).get("players", {})
                 for raw_entry in own_block.values():
@@ -824,25 +842,30 @@ class YahooFantasyClient:
                     player_entry = raw_entry.get("player", [])
                     pk = None
                     pct = None
-                    for chunk in (player_entry if isinstance(player_entry, list) else [player_entry]):
+                    for chunk in (
+                        player_entry if isinstance(player_entry, list) else [player_entry]
+                    ):
                         if isinstance(chunk, dict):
                             if "player_key" in chunk:
                                 pk = chunk["player_key"]
                             own = chunk.get("ownership", {})
                             if own:
-                                pct_block = own.get("percent_rostered") or own.get("percent_owned")
+                                pct_block = own.get("percent_rostered") or own.get(
+                                    "percent_owned"
+                                )
                                 if isinstance(pct_block, dict):
                                     pct = self._safe_float(pct_block.get("value", 0), 0.0)
                                 elif pct_block is not None:
                                     pct = self._safe_float(pct_block, 0.0)
                     if pk and pct is not None and pct > 0.0:
                         for p in players:
-                            if p.get("player_key") == pk and p.get("percent_owned", 0.0) == 0.0:
+                            if (
+                                p.get("player_key") == pk
+                                and p.get("percent_owned", 0.0) == 0.0
+                            ):
                                 p["percent_owned"] = pct
-        except Exception as _own_err:
-            logger.warning("get_free_agents ownership batch failed (non-fatal): %s", _own_err)
-
-        return players
+        except Exception as exc:
+            logger.warning("_enrich_ownership_batch failed (non-fatal): %s", exc)
 
     def get_players_stats_batch(self, player_keys: list, stat_type: str = "season") -> dict:
         """Fetch season stats for a batch of players via the supported batch stats endpoint.

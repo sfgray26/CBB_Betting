@@ -83,7 +83,8 @@ export default function StreamingStationPage() {
               const isAhead = d.winning
               const scoreColor = isAhead ? 'text-emerald-400' : 'text-rose-400'
               const ArrowIcon = isAhead ? TrendingUp : TrendingDown
-              const sign = d.deficit > 0 ? '+' : ''
+              const deficitVal = d.deficit ?? 0
+              const sign = deficitVal > 0 ? '+' : ''
 
               return (
                 <span
@@ -92,7 +93,7 @@ export default function StreamingStationPage() {
                 >
                   <span className="text-[#7D7D7D]">{CATEGORY_LABEL[d.category as keyof typeof CATEGORY_LABEL] ?? d.category}</span>
                   <span className={scoreColor}>
-                    {sign}{d.deficit.toFixed(1)}
+                    {sign}{deficitVal.toFixed(1)}
                   </span>
                   <ArrowIcon className={`h-3 w-3 ${scoreColor} shrink-0`} />
                 </span>
@@ -161,7 +162,7 @@ function WaiverPlayerRow({
           <span className="text-[#7D7D7D] text-xs">{player.percent_owned.toFixed(0)}%</span>
         )}
         <span className="text-[#FFC000] text-xs font-mono">
-          {player.need_score.toFixed(1)}
+          {player.need_score != null ? player.need_score.toFixed(1) : '-'}
         </span>
       </div>
     </div>
