@@ -34,6 +34,7 @@ import type {
   BudgetResponse,
   RosterResponse,
   RosterMoveResponse,
+  RosterOptimizeResponse,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -331,6 +332,12 @@ export const endpoints = {
     apiFetch<RosterMoveResponse>('/api/fantasy/roster/move', {
       method: 'POST',
       body: JSON.stringify({ player_key: playerId, target_position: toSlot }),
+    }),
+
+  optimizeRoster: (targetDate?: string) =>
+    apiFetch<RosterOptimizeResponse>('/api/fantasy/roster/optimize', {
+      method: 'POST',
+      body: JSON.stringify(targetDate ? { target_date: targetDate } : {}),
     }),
 
   setLineup: (payload: {

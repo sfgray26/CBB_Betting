@@ -360,6 +360,8 @@ class CanonicalPlayerRow(BaseModel):
     injury_status: Optional[str] = None              # PR-20
     injury_return_timeline: Optional[str] = None     # PR-21
     freshness: FreshnessMetadata                     # PR-22
+    # Current roster slot (Yahoo selected_position: BN, SP, RP, C, 1B, OF, IL, etc.)
+    current_slot: Optional[str] = None
     # Internal IDs (not displayed)
     yahoo_player_key: Optional[str] = None
     bdl_player_id: Optional[int] = None

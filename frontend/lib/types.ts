@@ -552,6 +552,7 @@ export interface RosterPlayer {
   team: string
   eligible_positions: string[]
   status: string
+  current_slot?: string | null
   game_context?: PlayerGameContext | null
   season_stats?: CategoryStats | null
   rolling_7d?: CategoryStats | null
@@ -595,6 +596,31 @@ export interface RosterMoveResponse {
   to_position: string
   message: string
   warnings?: string[]
+  freshness: {
+    primary_source: string
+    fetched_at?: string | null
+    computed_at: string
+    staleness_threshold_minutes: number
+    is_stale: boolean
+  }
+}
+
+export interface PlayerSlotAssignment {
+  player_key: string
+  player_name: string
+  assigned_slot: string
+  lineup_score: number
+  reasoning: string
+}
+
+export interface RosterOptimizeResponse {
+  success: boolean
+  message: string
+  target_date: string
+  starters: PlayerSlotAssignment[]
+  bench: PlayerSlotAssignment[]
+  unrostered: string[]
+  total_lineup_score: number
   freshness: {
     primary_source: string
     fetched_at?: string | null

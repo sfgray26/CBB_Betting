@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
-import type { RosterPlayer, RosterMoveResponse } from '@/lib/types'
+import type { RosterPlayer, RosterMoveResponse, RosterOptimizeResponse, BudgetData } from '@/lib/types'
 import {
   Users,
   Loader2,
@@ -14,6 +14,15 @@ import {
   TrendingUp,
   Clock,
   BarChart3,
+  Sparkles,
+  Flame,
+  Snowflake,
+  Calendar,
+  CalendarOff,
+  AlertTriangle,
+  X,
+  DollarSign,
+  Gauge,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -21,10 +30,8 @@ import { cn } from '@/lib/utils'
 // Constants
 // ───────────────────────────────────────────────────────────────────────────
 
-const VALID_POSITIONS = [
-  'C', '1B', '2B', '3B', 'SS', 'OF', 'Util',
-  'SP', 'RP', 'P', 'BN', 'IL', 'IL60',
-]
+// Positions that every player can be moved to regardless of eligibility
+const UNIVERSAL_SLOTS = ['BN', 'IL', 'IL60']
 
 const BATTER_DISPLAY = ['HR_B', 'RBI', 'AVG', 'OPS', 'NSB', 'R', 'TB', 'K_B']
 const PITCHER_DISPLAY = ['ERA', 'WHIP', 'K_P', 'W', 'QS', 'K_9', 'L', 'HR_P']
@@ -45,24 +52,361 @@ const STATUS_LABELS: Record<string, string> = {
   minors: 'Minors',
 }
 
+const SLOT_COLORS: Record<string, string> = {
+  BN: 'bg-[#2A2A2A] text-[#969696]',
+  IL: 'bg-rose-900/30 text-rose-400',
+  IL60: 'bg-rose-900/30 text-rose-400',
+  SP: 'bg-blue-900/30 text-blue-400',
+  RP: 'bg-purple-900/30 text-purple-400',
+  P: 'bg-purple-900/30 text-purple-400',
+}
+
+type ViewMode = 'season' | '7d' | '14d' | '30d' | 'ros'
+type SortMode = 'default' | 'name' | 'ros_value'
+type PosFilter = 'All' | 'SP' | 'RP' | 'OF' | '1B' | '2B' | '3B' | 'SS' | 'C'
+
 // ───────────────────────────────────────────────────────────────────────────
 // Helpers
 // ───────────────────────────────────────────────────────────────────────────
 
-function getStat(stats: Record<string, number | null> | undefined, key: string): string {
-  if (!stats) return '-'
-  const v = stats[key]
+function getStatWindow(player: RosterPlayer, mode: ViewMode) {
+  switch (mode) {
+    case 'season': return player.season_stats?.values
+    case '7d': return player.rolling_7d?.values
+    case '14d': return player.rolling_14d?.values
+    case '30d': return player.rolling_30d?.values
+    case 'ros': return player.ros_projection?.values
+    default: return player.season_stats?.values
+  }
+}
+
+function getStat(values: Record<string, number | null> | undefined, key: string): string {
+  if (!values) return '-'
+  const v = values[key]
   if (v === null || v === undefined) return '-'
   if (key === 'AVG' || key === 'OPS') return v.toFixed(3).replace(/^0\./, '.')
   if (key === 'ERA' || key === 'WHIP') return v.toFixed(2)
+  if (key === 'K_9') return v.toFixed(1)
   return String(Math.round(v))
 }
 
-function formatCategoryLabel(code: string): string {
-  return code
-    .replace('_B', '')
-    .replace('_P', '')
-    .replace('_', '/')
+function formatCat(code: string): string {
+  const labels: Record<string, string> = {
+    HR_B: 'HR', K_B: 'K', K_P: 'K', HR_P: 'HR', K_9: 'K/9', NSB: 'NSB',
+  }
+  return labels[code] ?? code.replace(/_[BP]$/, '')
+}
+
+function rosValueScore(player: RosterPlayer): number {
+  const vals = player.ros_projection?.values
+  if (!vals) return -999
+  const RATE_CATS = ['AVG', 'OPS', 'ERA', 'WHIP', 'K_9']
+  return Object.entries(vals)
+    .filter(([k]) => !RATE_CATS.includes(k))
+    .reduce((sum, [, v]) => sum + (v ?? 0), 0)
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Sub-components
+// ───────────────────────────────────────────────────────────────────────────
+
+function ViewToggle({ mode, onChange }: { mode: ViewMode; onChange: (m: ViewMode) => void }) {
+  const options: { value: ViewMode; label: string }[] = [
+    { value: 'season', label: 'Season' },
+    { value: '7d', label: '7D' },
+    { value: '14d', label: '14D' },
+    { value: '30d', label: '30D' },
+    { value: 'ros', label: 'RoS Proj' },
+  ]
+  return (
+    <div className="flex items-center gap-1 bg-[#181818] border border-[#2A2A2A] rounded-lg p-1">
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          onClick={() => onChange(opt.value)}
+          className={cn(
+            'text-[10px] px-3 py-1.5 rounded font-semibold tracking-wider uppercase transition-colors',
+            mode === opt.value
+              ? opt.value === 'ros'
+                ? 'bg-[#FFC000] text-black'
+                : 'bg-[#2A2A2A] text-white border border-[#494949]'
+              : 'text-[#494949] hover:text-[#969696]',
+          )}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function GamePill({ player }: { player: RosterPlayer }) {
+  if (player.game_context) {
+    const timeStr = player.game_context.game_time
+      ? new Date(player.game_context.game_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+      : null
+    return (
+      <span className="flex items-center gap-1 text-[10px] bg-emerald-900/20 text-emerald-400 border border-emerald-800/30 rounded px-1.5 py-0.5 font-medium">
+        <Calendar className="h-2.5 w-2.5" />
+        vs {player.game_context.opponent}
+        {timeStr ? ` · ${timeStr}` : ''}
+      </span>
+    )
+  }
+  return (
+    <span className="flex items-center gap-1 text-[10px] text-[#494949] border border-[#2A2A2A] rounded px-1.5 py-0.5">
+      <CalendarOff className="h-2.5 w-2.5" />
+      No Game
+    </span>
+  )
+}
+
+function SlotPill({ slot }: { slot?: string | null }) {
+  if (!slot) return null
+  const colorClass = SLOT_COLORS[slot] ?? 'bg-[#2A2A2A] text-[#969696]'
+  return (
+    <span className={cn('text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold', colorClass)}>
+      {slot}
+    </span>
+  )
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Budget Panel
+// ───────────────────────────────────────────────────────────────────────────
+
+function BudgetPanel({ budget }: { budget: BudgetData }) {
+  const acqPct = budget.acquisition_limit > 0
+    ? Math.min(100, (budget.acquisitions_used / budget.acquisition_limit) * 100)
+    : 0
+  const ipPct = budget.ip_minimum > 0
+    ? Math.min(100, (budget.ip_accumulated / budget.ip_minimum) * 100)
+    : 0
+  const paceColor = budget.ip_pace === 'BEHIND'
+    ? 'text-rose-400'
+    : budget.ip_pace === 'AHEAD'
+      ? 'text-emerald-400'
+      : 'text-amber-400'
+
+  return (
+    <div className="bg-[#202020] rounded-lg p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <Gauge className="h-3.5 w-3.5 text-[#FFC000]" />
+        <p className="text-xs font-semibold tracking-widest uppercase text-[#7D7D7D]">
+          Constraints
+        </p>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        {/* FAAB */}
+        <div>
+          <div className="flex items-center gap-1 mb-1">
+            <DollarSign className="h-3 w-3 text-[#7D7D7D]" />
+            <p className="text-[9px] text-[#494949] uppercase tracking-wider">FAAB</p>
+          </div>
+          <p className={cn(
+            'text-sm font-bold tabular-nums',
+            budget.acquisition_warning ? 'text-amber-400' : 'text-white',
+          )}>
+            ${budget.acquisitions_remaining}
+            <span className="text-[10px] text-[#494949] font-normal ml-1">remaining</span>
+          </p>
+        </div>
+
+        {/* Acquisitions */}
+        <div>
+          <p className="text-[9px] text-[#494949] uppercase tracking-wider mb-1">Acquisitions</p>
+          <div className="flex items-center gap-1.5">
+            <div className="flex-1 h-1.5 bg-[#2A2A2A] rounded-full overflow-hidden">
+              <div
+                className={cn('h-full rounded-full', acqPct >= 80 ? 'bg-rose-500' : acqPct >= 60 ? 'bg-amber-400' : 'bg-emerald-500')}
+                style={{ width: `${acqPct}%` }}
+              />
+            </div>
+            <span className={cn('text-xs font-bold tabular-nums', budget.acquisition_warning ? 'text-amber-400' : 'text-white')}>
+              {budget.acquisitions_used}/{budget.acquisition_limit}
+            </span>
+          </div>
+        </div>
+
+        {/* IP Pace */}
+        <div>
+          <p className="text-[9px] text-[#494949] uppercase tracking-wider mb-1">IP Pace</p>
+          <div className="flex items-center gap-1.5">
+            <div className="flex-1 h-1.5 bg-[#2A2A2A] rounded-full overflow-hidden">
+              <div
+                className="h-full rounded-full bg-blue-500"
+                style={{ width: `${ipPct}%` }}
+              />
+            </div>
+            <span className={cn('text-xs font-bold tabular-nums', paceColor)}>
+              {budget.ip_pace}
+            </span>
+          </div>
+        </div>
+
+        {/* IL */}
+        <div>
+          <p className="text-[9px] text-[#494949] uppercase tracking-wider mb-1">IL Slots</p>
+          <p className="text-sm font-bold text-white tabular-nums">
+            {budget.il_used}<span className="text-[#494949] font-normal">/{budget.il_total}</span>
+            {budget.il_used < budget.il_total && (
+              <span className="text-[10px] text-emerald-400 font-semibold ml-1">
+                {budget.il_total - budget.il_used} open
+              </span>
+            )}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Category Summary (active starters only, rate stats computed where possible)
+// ───────────────────────────────────────────────────────────────────────────
+
+function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewMode: ViewMode }) {
+  // Only sum players not on IL or benched (use current_slot as signal; fall back to status)
+  const activePlayers = players.filter((p) => {
+    const slot = p.current_slot?.toUpperCase()
+    if (slot === 'BN' || slot === 'IL' || slot === 'IL60') return false
+    return p.status !== 'IL'
+  })
+
+  const totals: Record<string, number> = {}
+  for (const player of activePlayers) {
+    const vals = getStatWindow(player, viewMode)
+    if (!vals) continue
+    for (const [key, val] of Object.entries(vals)) {
+      if (val !== null && val !== undefined) {
+        if (!totals[key]) totals[key] = 0
+        if (!['AVG', 'ERA', 'WHIP', 'OPS', 'K_9'].includes(key)) {
+          totals[key] += val
+        }
+      }
+    }
+  }
+
+  // Approximate weighted AVG: median of individual averages (true weighted needs H+AB which aren't exposed)
+  const avgValues = activePlayers
+    .map((p) => getStatWindow(p, viewMode)?.['AVG'])
+    .filter((v): v is number => v != null && v > 0)
+  const medianAvg = avgValues.length > 0
+    ? avgValues.sort((a, b) => a - b)[Math.floor(avgValues.length / 2)]
+    : null
+
+  const eraValues = activePlayers
+    .map((p) => {
+      const vals = getStatWindow(p, viewMode)
+      const isPitcher = p.eligible_positions.some((pos) => ['SP', 'RP', 'P'].includes(pos))
+      return isPitcher ? vals?.['ERA'] : null
+    })
+    .filter((v): v is number => v != null && v > 0)
+  const medianEra = eraValues.length > 0
+    ? eraValues.sort((a, b) => a - b)[Math.floor(eraValues.length / 2)]
+    : null
+
+  const whipValues = activePlayers
+    .map((p) => {
+      const vals = getStatWindow(p, viewMode)
+      const isPitcher = p.eligible_positions.some((pos) => ['SP', 'RP', 'P'].includes(pos))
+      return isPitcher ? vals?.['WHIP'] : null
+    })
+    .filter((v): v is number => v != null && v > 0)
+  const medianWhip = whipValues.length > 0
+    ? whipValues.sort((a, b) => a - b)[Math.floor(whipValues.length / 2)]
+    : null
+
+  const allCats = [...BATTER_DISPLAY, ...PITCHER_DISPLAY]
+  const RATE_CATS = ['AVG', 'ERA', 'WHIP', 'OPS', 'K_9']
+
+  function getDisplayVal(cat: string): string {
+    if (cat === 'AVG') return medianAvg != null ? medianAvg.toFixed(3).replace(/^0\./, '.') : '–'
+    if (cat === 'ERA') return medianEra != null ? medianEra.toFixed(2) : '–'
+    if (cat === 'WHIP') return medianWhip != null ? medianWhip.toFixed(2) : '–'
+    if (RATE_CATS.includes(cat)) return '–'
+    return (totals[cat] ?? 0).toLocaleString()
+  }
+
+  return (
+    <div className="bg-[#202020] rounded-lg p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <BarChart3 className="h-3.5 w-3.5 text-[#FFC000]" />
+          <p className="text-xs font-semibold tracking-widest uppercase text-[#7D7D7D]">
+            Category Totals
+          </p>
+        </div>
+        <p className="text-[9px] text-[#494949]">
+          Active starters · {activePlayers.length} players · Rate stats = median
+        </p>
+      </div>
+      <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-9 gap-3">
+        {allCats.map((cat) => (
+          <div key={cat} className="text-center">
+            <p className="text-[10px] text-[#494949] uppercase tracking-wider">
+              {formatCat(cat)}
+            </p>
+            <p className="text-sm font-bold text-white tabular-nums">
+              {getDisplayVal(cat)}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Optimize Panel
+// ───────────────────────────────────────────────────────────────────────────
+
+function OptimizePanel({
+  data,
+  onApplyMove,
+  onClose,
+  isApplying,
+}: {
+  data: RosterOptimizeResponse
+  onApplyMove: (playerKey: string, slot: string) => void
+  onClose: () => void
+  isApplying: boolean
+}) {
+  return (
+    <div className="bg-[#181818] border border-[#FFC000]/30 rounded-lg p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-[#FFC000]" />
+          <p className="text-xs font-bold tracking-widest uppercase text-[#FFC000]">
+            Optimized Lineup — {data.target_date}
+          </p>
+        </div>
+        <button onClick={onClose} className="text-[#494949] hover:text-white transition-colors">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+      <p className="text-xs text-[#7D7D7D]">{data.message}</p>
+
+      <div className="grid sm:grid-cols-2 gap-2">
+        {[...data.starters, ...data.bench].map((assignment) => (
+          <div key={assignment.player_key} className="flex items-center gap-3 bg-[#202020] rounded px-3 py-2">
+            <SlotPill slot={assignment.assigned_slot} />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-semibold text-white truncate">{assignment.player_name}</p>
+              <p className="text-[10px] text-[#494949] truncate">{assignment.reasoning}</p>
+            </div>
+            <button
+              onClick={() => onApplyMove(assignment.player_key, assignment.assigned_slot)}
+              disabled={isApplying}
+              className="text-[10px] text-[#FFC000] hover:text-amber-300 font-semibold whitespace-nowrap disabled:opacity-50"
+            >
+              Apply
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -71,10 +415,12 @@ function formatCategoryLabel(code: string): string {
 
 function PlayerCard({
   player,
+  viewMode,
   onMove,
   isMoving,
 }: {
   player: RosterPlayer
+  viewMode: ViewMode
   onMove: (playerId: string, toSlot: string) => void
   isMoving: boolean
 }) {
@@ -83,6 +429,10 @@ function PlayerCard({
   const eligible = player.eligible_positions ?? []
   const isPitcher = eligible.some((p) => ['SP', 'RP', 'P'].includes(p))
   const displayCats = isPitcher ? PITCHER_DISPLAY : BATTER_DISPLAY
+  const statValues = getStatWindow(player, viewMode)
+
+  // Move dropdown: eligible positions + universal slots, deduplicated
+  const moveOptions = Array.from(new Set([...eligible, ...UNIVERSAL_SLOTS]))
 
   const handleMoveClick = () => {
     if (!selectedSlot || !player.yahoo_player_key) return
@@ -92,163 +442,100 @@ function PlayerCard({
 
   const statusClass = STATUS_COLORS[player.status] ?? STATUS_COLORS.playing
   const statusLabel = STATUS_LABELS[player.status] ?? player.status
+  const isRoS = viewMode === 'ros'
+  const hasRoS = !!player.ros_projection?.values && Object.values(player.ros_projection.values).some((v) => v != null)
 
   return (
-    <div className="bg-[#202020] rounded-lg p-4 flex flex-col sm:flex-row sm:items-start gap-4">
-      {/* Identity */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <p className="text-sm font-bold text-white truncate">{player.player_name}</p>
-          <span
-            className={cn(
+    <div className={cn(
+      'bg-[#202020] rounded-lg p-4 flex flex-col gap-3',
+      isRoS && hasRoS && 'border-l-2 border-[#FFC000]/40',
+    )}>
+      {/* Identity row */}
+      <div className="flex items-start gap-3 flex-wrap sm:flex-nowrap">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-bold text-white">{player.player_name}</p>
+            <SlotPill slot={player.current_slot} />
+            <span className={cn(
               'text-[10px] px-1.5 py-0.5 rounded border font-semibold uppercase tracking-wider',
               statusClass,
-            )}
-          >
-            {statusLabel}
-          </span>
-        </div>
-        <p className="text-xs text-[#7D7D7D] mt-0.5">
-          {player.team}
-          {player.ownership_pct !== null && player.ownership_pct !== undefined
-            ? ` · ${player.ownership_pct.toFixed(0)}% owned`
-            : ''}
-        </p>
-        <div className="flex flex-wrap gap-1 mt-2">
-          {eligible.map((pos) => (
-            <span
-              key={pos}
-              className="text-[10px] px-1.5 py-0.5 bg-[#2A2A2A] text-[#969696] rounded"
-            >
-              {pos}
+            )}>
+              {statusLabel}
             </span>
-          ))}
+            <GamePill player={player} />
+          </div>
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            <span className="text-xs text-[#7D7D7D]">{player.team}</span>
+            {player.ownership_pct != null && player.ownership_pct > 0 && (
+              <span className="text-[10px] text-[#494949]">{player.ownership_pct.toFixed(0)}% owned</span>
+            )}
+            {eligible.map((pos) => (
+              <span key={pos} className="text-[10px] px-1.5 py-0.5 bg-[#2A2A2A] text-[#969696] rounded">
+                {pos}
+              </span>
+            ))}
+          </div>
+          {player.injury_status && (
+            <p className="text-xs text-rose-400 mt-1.5 flex items-center gap-1">
+              <ShieldAlert className="h-3 w-3" />
+              {player.injury_status}
+              {player.injury_return_timeline ? ` · ${player.injury_return_timeline}` : ''}
+            </p>
+          )}
         </div>
-        {player.injury_status && (
-          <p className="text-xs text-rose-400 mt-2 flex items-center gap-1">
-            <ShieldAlert className="h-3 w-3" />
-            {player.injury_status}
-            {player.injury_return_timeline ? ` (${player.injury_return_timeline})` : ''}
-          </p>
-        )}
-        {player.game_context && (
-          <p className="text-[10px] text-[#494949] mt-1">
-            vs {player.game_context.opponent} ({player.game_context.home_away})
-            {player.game_context.game_time ? ` · ${new Date(player.game_context.game_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
-          </p>
-        )}
+
+        {/* Move controls */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <select
+            value={selectedSlot}
+            onChange={(e) => setSelectedSlot(e.target.value)}
+            className="bg-[#2A2A2A] text-xs text-white border border-[#494949] rounded px-2 py-1.5 focus:outline-none focus:border-[#FFC000] min-w-[90px]"
+          >
+            <option value="">Move to…</option>
+            {moveOptions.map((pos) => (
+              <option key={pos} value={pos}>{pos}</option>
+            ))}
+          </select>
+          <button
+            onClick={handleMoveClick}
+            disabled={!selectedSlot || isMoving}
+            className={cn(
+              'p-1.5 rounded transition-colors',
+              selectedSlot && !isMoving
+                ? 'bg-[#FFC000] text-black hover:bg-amber-300'
+                : 'bg-[#2A2A2A] text-[#494949] cursor-not-allowed',
+            )}
+            title="Move player"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
 
-      {/* Stats */}
-      <div className="flex-shrink-0">
-        <div className="grid grid-cols-4 sm:grid-cols-8 gap-x-3 gap-y-1">
-          {displayCats.map((cat) => (
-            <div key={cat} className="text-center">
-              <p className="text-[9px] text-[#494949] uppercase tracking-wider">
-                {formatCategoryLabel(cat)}
-              </p>
-              <p className="text-xs font-semibold text-white tabular-nums">
-                {getStat(player.season_stats?.values, cat)}
-              </p>
-            </div>
-          ))}
-        </div>
-        {player.rolling_14d && (
-          <div className="mt-1.5 pt-1.5 border-t border-[#2A2A2A]">
-            <div className="grid grid-cols-4 sm:grid-cols-8 gap-x-3 gap-y-1">
-              {displayCats.map((cat) => (
-                <div key={`${cat}-14d`} className="text-center">
-                  <p className="text-[9px] text-[#494949] uppercase tracking-wider">
-                    {formatCategoryLabel(cat)}14
-                  </p>
-                  <p className="text-xs font-semibold text-[#969696] tabular-nums">
-                    {getStat(player.rolling_14d?.values, cat)}
-                  </p>
-                </div>
-              ))}
-            </div>
+      {/* Stats grid */}
+      <div>
+        {isRoS && !hasRoS ? (
+          <p className="text-[10px] text-[#494949] italic">RoS projection not available for this player</p>
+        ) : (
+          <div className="grid grid-cols-4 sm:grid-cols-8 gap-x-3 gap-y-1">
+            {displayCats.map((cat) => (
+              <div key={cat} className="text-center">
+                <p className={cn(
+                  'text-[9px] uppercase tracking-wider',
+                  isRoS ? 'text-[#FFC000]/60' : 'text-[#494949]',
+                )}>
+                  {formatCat(cat)}
+                </p>
+                <p className={cn(
+                  'text-xs font-semibold tabular-nums',
+                  isRoS ? 'text-[#FFC000]' : 'text-white',
+                )}>
+                  {getStat(statValues, cat)}
+                </p>
+              </div>
+            ))}
           </div>
         )}
-      </div>
-
-      {/* Move controls */}
-      <div className="flex-shrink-0 flex items-center gap-2">
-        <select
-          value={selectedSlot}
-          onChange={(e) => setSelectedSlot(e.target.value)}
-          className="bg-[#2A2A2A] text-xs text-white border border-[#494949] rounded px-2 py-1.5 focus:outline-none focus:border-[#FFC000] min-w-[90px]"
-        >
-          <option value="">Move to…</option>
-          {VALID_POSITIONS.map((pos) => (
-            <option key={pos} value={pos}>
-              {pos}
-            </option>
-          ))}
-        </select>
-        <button
-          onClick={handleMoveClick}
-          disabled={!selectedSlot || isMoving}
-          className={cn(
-            'p-1.5 rounded transition-colors',
-            selectedSlot && !isMoving
-              ? 'bg-[#FFC000] text-black hover:bg-amber-300'
-              : 'bg-[#2A2A2A] text-[#494949] cursor-not-allowed',
-          )}
-          title="Move player"
-        >
-          <ChevronRight className="h-3.5 w-3.5" />
-        </button>
-      </div>
-    </div>
-  )
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// Category Summary
-// ───────────────────────────────────────────────────────────────────────────
-
-function CategorySummary({ players }: { players: RosterPlayer[] }) {
-  const allSeasonStats = players
-    .filter((p) => p.season_stats?.values)
-    .map((p) => p.season_stats!.values)
-
-  const totals: Record<string, number> = {}
-  for (const stats of allSeasonStats) {
-    for (const [key, val] of Object.entries(stats)) {
-      if (val !== null && val !== undefined) {
-        if (!totals[key]) totals[key] = 0
-        // Skip rate stats for simple summation
-        if (!['AVG', 'ERA', 'WHIP', 'OPS', 'K_9'].includes(key)) {
-          totals[key] += val
-        }
-      }
-    }
-  }
-
-  const allCats = [...BATTER_DISPLAY, ...PITCHER_DISPLAY]
-
-  return (
-    <div className="bg-[#202020] rounded-lg p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <BarChart3 className="h-3.5 w-3.5 text-[#FFC000]" />
-        <p className="text-xs font-semibold tracking-widest uppercase text-[#7D7D7D]">
-          Category Contributions
-        </p>
-      </div>
-      <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-9 gap-3">
-        {allCats.map((cat) => {
-          const isRate = ['AVG', 'OPS', 'ERA', 'WHIP', 'K_9'].includes(cat)
-          return (
-            <div key={cat} className="text-center">
-              <p className="text-[10px] text-[#494949] uppercase tracking-wider">
-                {formatCategoryLabel(cat)}
-              </p>
-              <p className="text-sm font-bold text-white tabular-nums">
-                {isRate ? '-' : (totals[cat] ?? 0).toLocaleString()}
-              </p>
-            </div>
-          )
-        })}
       </div>
     </div>
   )
@@ -258,15 +545,27 @@ function CategorySummary({ players }: { players: RosterPlayer[] }) {
 // Main Page
 // ───────────────────────────────────────────────────────────────────────────
 
+const POSITION_FILTERS: PosFilter[] = ['All', 'SP', 'RP', 'OF', '1B', '2B', '3B', 'SS', 'C']
+
 export default function RosterPage() {
   const queryClient = useQueryClient()
+  const [viewMode, setViewMode] = useState<ViewMode>('season')
+  const [sortMode, setSortMode] = useState<SortMode>('default')
+  const [posFilter, setPosFilter] = useState<PosFilter>('All')
   const [moveError, setMoveError] = useState<string | null>(null)
   const [moveSuccess, setMoveSuccess] = useState<string | null>(null)
+  const [optimizeResult, setOptimizeResult] = useState<RosterOptimizeResponse | null>(null)
 
   const roster = useQuery({
     queryKey: ['roster'],
     queryFn: endpoints.getRoster,
     staleTime: 5 * 60_000,
+  })
+
+  const budget = useQuery({
+    queryKey: ['budget'],
+    queryFn: endpoints.getBudget,
+    staleTime: 10 * 60_000,
   })
 
   const moveMutation = useMutation({
@@ -284,6 +583,16 @@ export default function RosterPage() {
     },
   })
 
+  const optimizeMutation = useMutation({
+    mutationFn: () => endpoints.optimizeRoster(),
+    onSuccess: (data: RosterOptimizeResponse) => {
+      setOptimizeResult(data)
+    },
+    onError: (err: Error) => {
+      setMoveError(`Optimize failed: ${err.message}`)
+    },
+  })
+
   const handleMove = useCallback(
     (playerId: string, toSlot: string) => {
       setMoveError(null)
@@ -293,7 +602,7 @@ export default function RosterPage() {
     [moveMutation],
   )
 
-  // Loading state
+  // ── Loading / Error / Empty states ──────────────────────────────────────
   if (roster.isLoading) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
@@ -305,7 +614,6 @@ export default function RosterPage() {
     )
   }
 
-  // Error state
   if (roster.isError) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
@@ -317,10 +625,7 @@ export default function RosterPage() {
           <p className="text-[#969696] text-sm">
             {roster.error instanceof Error ? roster.error.message : 'Unknown error'}
           </p>
-          <button
-            onClick={() => roster.refetch()}
-            className="mt-4 text-xs text-[#FFC000] hover:text-amber-300 font-semibold"
-          >
+          <button onClick={() => roster.refetch()} className="mt-4 text-xs text-[#FFC000] hover:text-amber-300 font-semibold">
             Retry
           </button>
         </div>
@@ -330,67 +635,95 @@ export default function RosterPage() {
 
   const data = roster.data
 
-  // Empty state
   if (!data || data.players.length === 0) {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-2">
           <Users className="h-3.5 w-3.5 text-[#FFC000]" />
-          <span className="text-xs font-bold tracking-widest uppercase text-[#FFC000]">
-            My Roster
-          </span>
+          <span className="text-xs font-bold tracking-widest uppercase text-[#FFC000]">My Roster</span>
         </div>
         <div className="bg-[#202020] rounded-lg p-8 text-center">
-          <p className="text-xs font-semibold tracking-widest uppercase text-[#494949]">
-            Empty Roster
-          </p>
-          <p className="text-[#7D7D7D] text-sm mt-2">
-            No players found on your roster.
-          </p>
+          <p className="text-xs font-semibold tracking-widest uppercase text-[#494949]">Empty Roster</p>
+          <p className="text-[#7D7D7D] text-sm mt-2">No players found on your roster.</p>
         </div>
       </div>
     )
   }
 
-  // Group players by status
-  const ilPlayers = data.players.filter((p) => p.status === 'IL')
-  const activePlayers = data.players.filter(
-    (p) => p.status === 'playing' || p.status === 'probable',
-  )
-  const otherPlayers = data.players.filter(
-    (p) => p.status !== 'IL' && p.status !== 'playing' && p.status !== 'probable',
-  )
+  // ── Filter + sort ────────────────────────────────────────────────────────
+  const filteredSorted = useMemo(() => {
+    let players = [...data.players]
+
+    if (posFilter !== 'All') {
+      players = players.filter((p) =>
+        p.eligible_positions.some((pos) => pos === posFilter || pos.startsWith(posFilter))
+      )
+    }
+
+    if (sortMode === 'name') {
+      players.sort((a, b) => a.player_name.localeCompare(b.player_name))
+    } else if (sortMode === 'ros_value') {
+      players.sort((a, b) => rosValueScore(b) - rosValueScore(a))
+    }
+
+    return players
+  }, [data.players, posFilter, sortMode])
+
+  // Group players by status (only when default sort)
+  const useGrouped = sortMode === 'default' && posFilter === 'All'
+  const ilPlayers = filteredSorted.filter((p) => p.status === 'IL')
+  const activePlayers = filteredSorted.filter((p) => p.status === 'playing' || p.status === 'probable')
+  const otherPlayers = filteredSorted.filter((p) => p.status !== 'IL' && p.status !== 'playing' && p.status !== 'probable')
+
+  // Human-readable team label
+  const teamLabel = (() => {
+    const match = data.team_key.match(/\.t\.(\d+)$/)
+    return match ? `Team ${match[1]}` : data.team_key
+  })()
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2">
           <Users className="h-3.5 w-3.5 text-[#FFC000]" />
-          <span className="text-xs font-bold tracking-widest uppercase text-[#FFC000]">
-            My Roster
-          </span>
+          <span className="text-xs font-bold tracking-widest uppercase text-[#FFC000]">My Roster</span>
+          <span className="text-[10px] text-[#494949]">· {teamLabel} · {data.count} players</span>
         </div>
-        <div className="flex items-center gap-3 text-[10px] text-[#494949] tracking-wider uppercase">
-          <span>{data.count} players</span>
-          <span>·</span>
-          <span className="font-mono">{data.team_key}</span>
+        <div className="flex items-center gap-2 flex-wrap">
           {data.freshness?.computed_at && (
-            <>
-              <span>·</span>
-              <span className="flex items-center gap-1">
-                <Clock className="h-3 w-3" />
-                {new Date(data.freshness.computed_at).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
-              </span>
-            </>
+            <span className="flex items-center gap-1 text-[10px] text-[#494949]">
+              <Clock className="h-3 w-3" />
+              {new Date(data.freshness.computed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </span>
           )}
+          <button
+            onClick={() => optimizeMutation.mutate()}
+            disabled={optimizeMutation.isPending}
+            className={cn(
+              'flex items-center gap-1.5 text-[10px] px-3 py-1.5 rounded font-semibold tracking-wider uppercase transition-colors',
+              optimizeMutation.isPending
+                ? 'bg-[#2A2A2A] text-[#494949] cursor-not-allowed'
+                : 'bg-[#FFC000] text-black hover:bg-amber-300',
+            )}
+          >
+            {optimizeMutation.isPending
+              ? <><Loader2 className="h-3 w-3 animate-spin" /> Optimizing…</>
+              : <><Sparkles className="h-3 w-3" /> Optimize Lineup</>
+            }
+          </button>
         </div>
       </div>
 
-      {/* Move feedback */}
+      {/* Staleness warning */}
+      {data.freshness?.is_stale && (
+        <div className="bg-amber-900/20 border border-amber-700/40 rounded-lg p-3 flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0" />
+          <span className="text-sm text-amber-300">Roster data may be stale — last fetched over an hour ago.</span>
+        </div>
+      )}
+
+      {/* Feedback banners */}
       {moveError && (
         <div className="bg-rose-900/20 border border-rose-800/50 rounded-lg p-3 flex items-center gap-2">
           <AlertCircle className="h-4 w-4 text-rose-400 flex-shrink-0" />
@@ -404,63 +737,143 @@ export default function RosterPage() {
         </div>
       )}
 
+      {/* Optimize result panel */}
+      {optimizeResult && (
+        <OptimizePanel
+          data={optimizeResult}
+          onApplyMove={handleMove}
+          onClose={() => setOptimizeResult(null)}
+          isApplying={moveMutation.isPending}
+        />
+      )}
+
+      {/* Budget panel */}
+      {budget.data && <BudgetPanel budget={budget.data.budget} />}
+
       {/* Category summary */}
-      <CategorySummary players={data.players} />
+      <CategorySummary players={data.players} viewMode={viewMode} />
 
-      {/* Active Players */}
-      {activePlayers.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
-            <p className="text-xs font-semibold tracking-widest uppercase text-[#7D7D7D]">
-              Active · {activePlayers.length}
-            </p>
+      {/* View toggle + sort + filter controls */}
+      <div className="flex flex-col sm:flex-row gap-3 flex-wrap">
+        <ViewToggle mode={viewMode} onChange={setViewMode} />
+
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Sort */}
+          <div className="flex items-center gap-1 bg-[#181818] border border-[#2A2A2A] rounded-lg p-1">
+            {([['default', 'Default'], ['name', 'A–Z'], ['ros_value', 'RoS Value']] as const).map(([val, label]) => (
+              <button
+                key={val}
+                onClick={() => setSortMode(val)}
+                className={cn(
+                  'text-[10px] px-2.5 py-1.5 rounded font-semibold tracking-wider uppercase transition-colors',
+                  sortMode === val ? 'bg-[#2A2A2A] text-white border border-[#494949]' : 'text-[#494949] hover:text-[#969696]',
+                )}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-          {activePlayers.map((player) => (
-            <PlayerCard
-              key={player.yahoo_player_key ?? player.player_name}
-              player={player}
-              onMove={handleMove}
-              isMoving={moveMutation.isPending}
-            />
-          ))}
-        </div>
-      )}
 
-      {/* IL Players */}
-      {ilPlayers.length > 0 && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <ShieldAlert className="h-3.5 w-3.5 text-rose-400" />
-            <p className="text-xs font-semibold tracking-widest uppercase text-rose-400">
-              Injured List · {ilPlayers.length}
-            </p>
+          {/* Position filter */}
+          <div className="flex items-center gap-1 flex-wrap">
+            {POSITION_FILTERS.map((pos) => (
+              <button
+                key={pos}
+                onClick={() => setPosFilter(pos)}
+                className={cn(
+                  'text-[10px] px-2.5 py-1 rounded font-semibold tracking-wider transition-colors',
+                  posFilter === pos
+                    ? 'bg-[#2A2A2A] text-white border border-[#494949]'
+                    : 'text-[#494949] hover:text-[#969696]',
+                )}
+              >
+                {pos}
+              </button>
+            ))}
           </div>
-          {ilPlayers.map((player) => (
-            <PlayerCard
-              key={player.yahoo_player_key ?? player.player_name}
-              player={player}
-              onMove={handleMove}
-              isMoving={moveMutation.isPending}
-            />
-          ))}
         </div>
-      )}
+      </div>
 
-      {/* Other / Not Active */}
-      {otherPlayers.length > 0 && (
+      {/* Player list */}
+      {useGrouped ? (
+        <>
+          {activePlayers.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
+                <p className="text-xs font-semibold tracking-widest uppercase text-[#7D7D7D]">
+                  Active · {activePlayers.length}
+                </p>
+              </div>
+              {activePlayers.map((player) => (
+                <PlayerCard
+                  key={player.yahoo_player_key ?? player.player_name}
+                  player={player}
+                  viewMode={viewMode}
+                  onMove={handleMove}
+                  isMoving={moveMutation.isPending}
+                />
+              ))}
+            </div>
+          )}
+
+          {ilPlayers.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-3.5 w-3.5 text-rose-400" />
+                <p className="text-xs font-semibold tracking-widest uppercase text-rose-400">
+                  Injured List · {ilPlayers.length}
+                </p>
+              </div>
+              {ilPlayers.map((player) => (
+                <PlayerCard
+                  key={player.yahoo_player_key ?? player.player_name}
+                  player={player}
+                  viewMode={viewMode}
+                  onMove={handleMove}
+                  isMoving={moveMutation.isPending}
+                />
+              ))}
+            </div>
+          )}
+
+          {otherPlayers.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <CalendarOff className="h-3.5 w-3.5 text-[#494949]" />
+                <p className="text-xs font-semibold tracking-widest uppercase text-[#494949]">
+                  Not Active · {otherPlayers.length}
+                </p>
+              </div>
+              {otherPlayers.map((player) => (
+                <PlayerCard
+                  key={player.yahoo_player_key ?? player.player_name}
+                  player={player}
+                  viewMode={viewMode}
+                  onMove={handleMove}
+                  isMoving={moveMutation.isPending}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
         <div className="space-y-3">
-          <p className="text-xs font-semibold tracking-widest uppercase text-[#494949]">
-            Not Active · {otherPlayers.length}
-          </p>
-          {otherPlayers.map((player) => (
-            <PlayerCard
-              key={player.yahoo_player_key ?? player.player_name}
-              player={player}
-              onMove={handleMove}
-              isMoving={moveMutation.isPending}
-            />
-          ))}
+          {filteredSorted.length === 0 ? (
+            <div className="bg-[#202020] rounded-lg p-8 text-center">
+              <p className="text-[#494949] text-sm">No players match this filter.</p>
+            </div>
+          ) : (
+            filteredSorted.map((player) => (
+              <PlayerCard
+                key={player.yahoo_player_key ?? player.player_name}
+                player={player}
+                viewMode={viewMode}
+                onMove={handleMove}
+                isMoving={moveMutation.isPending}
+              />
+            ))
+          )}
         </div>
       )}
     </div>
