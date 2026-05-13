@@ -10,6 +10,37 @@
   --surface: 240 3.7% 15.9%;
   --border: 240 3.7% 25%;
   --muted: 240 5% 64.9%;
+
+  /* ═══════════════════════════════════════════════════════════════════
+     Design System v2 — Fantasy Baseball Color Tokens
+     Added 2026-05-13. These layer on top of existing vars.
+     ═══════════════════════════════════════════════════════════════════ */
+
+  /* Foundation */
+  --bg-base: #0c0c10;
+  --bg-surface: #16161e;
+  --bg-elevated: #1f1f2a;
+  --bg-inset: #0a0a0f;
+  --border-subtle: #272733;
+  --border-default: #3a3a4d;
+  --border-focus: #6b6b8a;
+
+  /* Text */
+  --text-primary: #e8e8f0;
+  --text-secondary: #a0a0b8;
+  --text-tertiary: #6b6b8a;
+  --text-muted: #4a4a60;
+
+  /* Status — continuous gradient SAFE → LOST */
+  --status-safe: #22c55e;
+  --status-lead: #84cc16;
+  --status-bubble: #f59e0b;
+  --status-behind: #f97316;
+  --status-lost: #ef4444;
+
+  /* Accent */
+  --accent-gold: #FFC000;
+  --accent-gold-dim: #b38900;
 }
 
 html,

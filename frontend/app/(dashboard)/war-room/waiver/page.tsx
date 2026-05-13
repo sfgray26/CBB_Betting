@@ -43,14 +43,14 @@ function fmtStat(catKey: string, val: number): string {
 }
 
 function NeedBar({ score }: { score: number }) {
-  const pct = Math.min(100, Math.max(0, score * 100))
-  const color = score >= 0.7 ? 'bg-emerald-400' : score >= 0.4 ? 'bg-amber-400' : 'bg-zinc-600'
+  const pct = Math.min(100, Math.max(0, score * 10)) // scale: 0-10 → 0-100%
+  const color = score >= 7.0 ? 'bg-status-safe' : score >= 4.0 ? 'bg-status-bubble' : 'bg-text-muted'
   return (
     <div className="flex items-center gap-2">
-      <div className="flex-1 h-1.5 bg-[#2A2A2A] rounded-full overflow-hidden">
-        <div className={cn('h-full rounded-full', color)} style={{ width: `${pct}%` }} />
+      <div className="flex-1 h-1.5 bg-bg-inset rounded-full overflow-hidden">
+        <div className={cn('h-full rounded-full transition-all duration-700 ease-out', color)} style={{ width: `${pct}%` }} />
       </div>
-      <span className="text-xs text-white tabular-nums w-8 text-right">
+      <span className="text-xs text-text-primary tabular-nums w-8 text-right">
         {score.toFixed(2)}
       </span>
     </div>
@@ -58,24 +58,25 @@ function NeedBar({ score }: { score: number }) {
 }
 
 function OwnershipBadge({ pct }: { pct: number | null | undefined }) {
-  if (pct === null || pct === undefined) {
-    return <span className="text-[10px] text-[#494949]">— owned</span>
+  if (pct === null || pct === undefined || pct === 0) {
+    return <span className="text-[10px] text-text-muted">— owned</span>
   }
   return (
     <span className={cn(
       'text-[10px] tabular-nums',
-      pct >= 70 ? 'text-amber-400' : pct >= 30 ? 'text-[#969696]' : 'text-[#494949]',
+      pct >= 70 ? 'text-status-bubble' : pct >= 30 ? 'text-text-secondary' : 'text-text-muted',
     )}>
       {pct.toFixed(0)}% owned
     </span>
   )
 }
 
-function HotColdBadge({ hotCold }: { hotCold?: string | null }) {
-  if (!hotCold) return null
+function HotColdBadge({ hotCold, rankPercentile }: { hotCold?: string | null; rankPercentile?: number }) {
+  // Design System v2: gate badges to top 20% to prevent inflation
+  if (!hotCold || (rankPercentile ?? 100) < 80) return null
   if (hotCold === 'HOT') {
     return (
-      <span className="flex items-center gap-0.5 text-[10px] text-orange-400 font-semibold">
+      <span className="flex items-center gap-0.5 text-[10px] text-status-behind font-semibold">
         <Flame className="h-3 w-3" /> HOT
       </span>
     )
@@ -284,8 +285,8 @@ export default function WaiverPage() {
   if (isLoading) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="flex items-center gap-2 text-[#7D7D7D]">
-          <Loader2 className="h-5 w-5 animate-spin text-[#FFC000]" />
+        <div className="flex items-center gap-2 text-text-secondary">
+          <Loader2 className="h-5 w-5 animate-spin text-accent-gold" />
           <span className="text-sm">Loading waiver wire…</span>
         </div>
       </div>
@@ -295,15 +296,15 @@ export default function WaiverPage() {
   if (isError) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="bg-[#202020] rounded-lg p-6 max-w-md w-full">
-          <div className="flex items-center gap-2 text-rose-400 mb-2">
+        <div className="bg-bg-surface border border-border-subtle rounded-lg p-6 max-w-md w-full">
+          <div className="flex items-center gap-2 text-status-lost mb-2">
             <AlertCircle className="h-5 w-5" />
             <span className="text-sm font-semibold">Failed to load waiver wire</span>
           </div>
-          <p className="text-[#969696] text-sm">
+          <p className="text-text-secondary text-sm">
             {error instanceof Error ? error.message : 'Unknown error'}
           </p>
-          <button onClick={() => refetch()} className="mt-4 text-xs text-[#FFC000] hover:text-amber-300 font-semibold">
+          <button onClick={() => refetch()} className="mt-4 text-xs text-accent-gold hover:text-amber-300 font-semibold">
             Retry
           </button>
         </div>
@@ -319,8 +320,8 @@ export default function WaiverPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2">
-          <ListFilter className="h-3.5 w-3.5 text-[#FFC000]" />
-          <span className="text-xs font-bold tracking-widest uppercase text-[#FFC000]">
+          <ListFilter className="h-3.5 w-3.5 text-accent-gold" />
+          <span className="text-xs font-bold tracking-widest uppercase text-accent-gold">
             Waiver Wire
           </span>
         </div>
@@ -335,15 +336,15 @@ export default function WaiverPage() {
 
       {/* Alerts */}
       {data?.urgent_alert && (
-        <div className="bg-amber-900/20 border border-amber-700/40 rounded-lg p-3 flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0" />
-          <span className="text-sm text-amber-300">{data.urgent_alert.message}</span>
+        <div className="bg-status-bubble/10 border border-status-bubble/30 rounded-lg p-3 flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-status-bubble flex-shrink-0" />
+          <span className="text-sm text-status-bubble">{data.urgent_alert.message}</span>
         </div>
       )}
       {data?.closer_alert === 'NO_CLOSERS' && (
-        <div className="bg-rose-900/20 border border-rose-700/40 rounded-lg p-3 flex items-center gap-2">
-          <AlertCircle className="h-4 w-4 text-rose-400 flex-shrink-0" />
-          <span className="text-sm text-rose-300">
+        <div className="bg-status-lost/10 border border-status-lost/30 rounded-lg p-3 flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 text-status-lost flex-shrink-0" />
+          <span className="text-sm text-status-lost">
             No closers on your roster — consider adding saves coverage.
           </span>
         </div>
@@ -395,8 +396,8 @@ export default function WaiverPage() {
       {twoStarters.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center gap-2">
-            <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
-            <p className="text-xs font-semibold tracking-widest uppercase text-emerald-400">
+            <TrendingUp className="h-3.5 w-3.5 text-status-safe" />
+            <p className="text-xs font-semibold tracking-widest uppercase text-status-safe">
               Two-Start Pitchers · {twoStarters.length}
             </p>
           </div>
@@ -413,8 +414,8 @@ export default function WaiverPage() {
           </p>
         </div>
         {topAvailable.length === 0 ? (
-          <div className="bg-[#202020] rounded-lg p-8 text-center">
-            <p className="text-[#494949] text-sm">No players match this filter.</p>
+          <div className="bg-bg-surface border border-border-subtle rounded-lg p-8 text-center">
+            <p className="text-text-muted text-sm">No players match this filter.</p>
           </div>
         ) : (
           topAvailable.map((p) => <PlayerRow key={p.player_id} player={p} />)

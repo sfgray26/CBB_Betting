@@ -252,9 +252,9 @@ export function CategoryBattlefield({ data, simulate }: Props) {
   const pitchers = sorted.filter(x => x.type === 'pitching')
 
   return (
-    <div className="bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg">
+    <div className="bg-bg-surface border border-border-subtle rounded-lg">
       {/* Controls */}
-      <div className="flex items-center justify-between gap-4 px-6 pt-5 pb-4 border-b border-[#2A2A2A]">
+      <div className="flex items-center justify-between gap-4 px-6 pt-5 pb-4 border-b border-border-subtle">
         {/* Bubble ratings legend */}
         <div className="flex items-center gap-3 text-xs">
           <span className="text-text-muted font-semibold tracking-widest uppercase">Win Prob:</span>
@@ -272,8 +272,8 @@ export function CategoryBattlefield({ data, simulate }: Props) {
               className={cn(
                 'px-4 py-2 text-xs font-semibold tracking-widest uppercase transition-colors rounded-sm',
                 filter === chip
-                  ? 'bg-[#FFC000] text-black'
-                  : 'text-[#494949] hover:text-[#7D7D7D] bg-[#252525]',
+                  ? 'bg-accent-gold text-black'
+                  : 'text-text-muted hover:text-text-secondary bg-bg-elevated',
               )}
             >
               {chip === 'all' ? 'ALL' : chip === 'bubbles' ? 'BUBBLES' : chip === 'hitting' ? 'HITTING' : 'PITCHING'}
@@ -306,7 +306,7 @@ export function CategoryBattlefield({ data, simulate }: Props) {
       {filter === 'bubbles' ? (
         <div className="px-6 pb-5">
           {sorted.length === 0 ? (
-            <p className="text-sm text-[#494949] py-6 text-center">
+            <p className="text-sm text-text-muted py-6 text-center">
               {simulate ? 'No bubble categories — projections are decisive.' : 'Run simulation to see bubble categories.'}
             </p>
           ) : (

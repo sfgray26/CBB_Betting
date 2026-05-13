@@ -35,11 +35,11 @@ const BATTER_DISPLAY = ['HR_B', 'RBI', 'AVG', 'OPS', 'NSB', 'R', 'TB', 'K_B']
 const PITCHER_DISPLAY = ['ERA', 'WHIP', 'K_P', 'W', 'QS', 'K_9', 'L', 'HR_P']
 
 const STATUS_COLORS: Record<string, string> = {
-  playing: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-  probable: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-  not_playing: 'bg-rose-500/20 text-rose-400 border-rose-500/30',
-  IL: 'bg-rose-600/20 text-rose-500 border-rose-600/30',
-  minors: 'bg-zinc-600/20 text-zinc-400 border-zinc-600/30',
+  playing: 'bg-status-safe/10 text-status-safe border-status-safe/30',
+  probable: 'bg-status-bubble/10 text-status-bubble border-status-bubble/30',
+  not_playing: 'bg-status-lost/10 text-status-lost border-status-lost/30',
+  IL: 'bg-status-lost/10 text-status-lost border-status-lost/30',
+  minors: 'bg-text-muted/10 text-text-muted border-text-muted/30',
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -51,9 +51,9 @@ const STATUS_LABELS: Record<string, string> = {
 }
 
 const SLOT_COLORS: Record<string, string> = {
-  BN: 'bg-[#2A2A2A] text-[#969696]',
-  IL: 'bg-rose-900/30 text-rose-400',
-  IL60: 'bg-rose-900/30 text-rose-400',
+  BN: 'bg-bg-elevated text-text-secondary',
+  IL: 'bg-status-lost/10 text-status-lost',
+  IL60: 'bg-status-lost/10 text-status-lost',
   SP: 'bg-blue-900/30 text-blue-400',
   RP: 'bg-purple-900/30 text-purple-400',
   P: 'bg-purple-900/30 text-purple-400',
@@ -117,7 +117,7 @@ function ViewToggle({ mode, onChange }: { mode: ViewMode; onChange: (m: ViewMode
     { value: 'ros', label: 'RoS Proj' },
   ]
   return (
-    <div className="flex items-center gap-1 bg-[#181818] border border-[#2A2A2A] rounded-lg p-1">
+    <div className="flex items-center gap-1 bg-bg-surface border border-border-subtle rounded-lg p-1">
       {options.map((opt) => (
         <button
           key={opt.value}
@@ -126,9 +126,9 @@ function ViewToggle({ mode, onChange }: { mode: ViewMode; onChange: (m: ViewMode
             'text-[10px] px-3 py-1.5 rounded font-semibold tracking-wider uppercase transition-colors',
             mode === opt.value
               ? opt.value === 'ros'
-                ? 'bg-[#FFC000] text-black'
-                : 'bg-[#2A2A2A] text-white border border-[#494949]'
-              : 'text-[#494949] hover:text-[#969696]',
+                ? 'bg-accent-gold text-black'
+                : 'bg-bg-elevated text-text-primary border border-border-default'
+              : 'text-text-muted hover:text-text-secondary',
           )}
         >
           {opt.label}
@@ -144,7 +144,7 @@ function GamePill({ player }: { player: RosterPlayer }) {
       ? new Date(player.game_context.game_time).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
       : null
     return (
-      <span className="flex items-center gap-1 text-[10px] bg-emerald-900/20 text-emerald-400 border border-emerald-800/30 rounded px-1.5 py-0.5 font-medium">
+      <span className="flex items-center gap-1 text-[10px] bg-status-safe/10 text-status-safe border border-status-safe/20 rounded px-1.5 py-0.5 font-medium">
         <Calendar className="h-2.5 w-2.5" />
         vs {player.game_context.opponent}
         {timeStr ? ` · ${timeStr}` : ''}
@@ -152,7 +152,7 @@ function GamePill({ player }: { player: RosterPlayer }) {
     )
   }
   return (
-    <span className="flex items-center gap-1 text-[10px] text-[#494949] border border-[#2A2A2A] rounded px-1.5 py-0.5">
+    <span className="flex items-center gap-1 text-[10px] text-text-muted border border-border-subtle rounded px-1.5 py-0.5">
       <CalendarOff className="h-2.5 w-2.5" />
       No Game
     </span>
@@ -189,38 +189,38 @@ function BudgetPanel({ budget }: { budget: BudgetData }) {
   const movesWarning = budget.acquisition_warning || movesLeft <= 1
 
   return (
-    <div className="bg-[#202020] rounded-lg p-4">
+    <div className="bg-bg-surface border border-border-subtle rounded-lg p-4">
       <div className="flex items-center gap-2 mb-3">
-        <Gauge className="h-3.5 w-3.5 text-[#FFC000]" />
-        <p className="text-xs font-semibold tracking-widest uppercase text-[#7D7D7D]">
+        <Gauge className="h-3.5 w-3.5 text-accent-gold" />
+        <p className="text-xs font-semibold tracking-widest uppercase text-text-secondary">
           Constraints
         </p>
       </div>
       <div className="grid grid-cols-3 gap-4">
         {/* Weekly Moves */}
         <div>
-          <p className="text-[9px] text-[#494949] uppercase tracking-wider mb-1">Weekly Moves</p>
+          <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">Weekly Moves</p>
           <div className="flex items-center gap-1.5 mb-1">
-            <div className="flex-1 h-1.5 bg-[#2A2A2A] rounded-full overflow-hidden">
+            <div className="flex-1 h-1.5 bg-bg-inset rounded-full overflow-hidden">
               <div
-                className={cn('h-full rounded-full', acqPct >= 80 ? 'bg-rose-500' : acqPct >= 60 ? 'bg-amber-400' : 'bg-emerald-500')}
+                className={cn('h-full rounded-full', acqPct >= 80 ? 'bg-status-lost' : acqPct >= 60 ? 'bg-status-bubble' : 'bg-status-safe')}
                 style={{ width: `${acqPct}%` }}
               />
             </div>
-            <span className={cn('text-xs font-bold tabular-nums', movesWarning ? 'text-amber-400' : 'text-white')}>
+            <span className={cn('text-xs font-bold tabular-nums', movesWarning ? 'text-status-bubble' : 'text-text-primary')}>
               {budget.acquisitions_used}/{budget.acquisition_limit}
             </span>
           </div>
-          <p className={cn('text-[10px]', movesWarning ? 'text-amber-400 font-semibold' : 'text-[#494949]')}>
+          <p className={cn('text-[10px]', movesWarning ? 'text-status-bubble font-semibold' : 'text-text-muted')}>
             {movesLeft} remaining
           </p>
         </div>
 
         {/* IP Pace */}
         <div>
-          <p className="text-[9px] text-[#494949] uppercase tracking-wider mb-1">IP Pace</p>
+          <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">IP Pace</p>
           <div className="flex items-center gap-1.5 mb-1">
-            <div className="flex-1 h-1.5 bg-[#2A2A2A] rounded-full overflow-hidden">
+            <div className="flex-1 h-1.5 bg-bg-inset rounded-full overflow-hidden">
               <div
                 className="h-full rounded-full bg-blue-500"
                 style={{ width: `${ipPct}%` }}
@@ -230,19 +230,19 @@ function BudgetPanel({ budget }: { budget: BudgetData }) {
               {budget.ip_pace}
             </span>
           </div>
-          <p className="text-[10px] text-[#494949]">
+          <p className="text-[10px] text-text-muted">
             {budget.ip_accumulated.toFixed(1)} / {budget.ip_minimum} IP
           </p>
         </div>
 
         {/* IL */}
         <div>
-          <p className="text-[9px] text-[#494949] uppercase tracking-wider mb-1">IL Slots</p>
-          <p className="text-sm font-bold text-white tabular-nums">
-            {budget.il_used}<span className="text-[#494949] font-normal">/{budget.il_total}</span>
+          <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">IL Slots</p>
+          <p className="text-sm font-bold text-text-primary tabular-nums">
+            {budget.il_used}<span className="text-text-muted font-normal">/{budget.il_total}</span>
           </p>
           {budget.il_used < budget.il_total && (
-            <p className="text-[10px] text-emerald-400 font-semibold mt-0.5">
+            <p className="text-[10px] text-status-safe font-semibold mt-0.5">
               {budget.il_total - budget.il_used} open
             </p>
           )}
@@ -282,21 +282,21 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
     const hasAnyZ = allCats.some((cat) => (zSums[cat]?.length ?? 0) > 0)
     if (!hasAnyZ) {
       return (
-        <div className="bg-[#202020] rounded-lg p-4 text-center">
-          <p className="text-xs text-[#494949]">No RoS projections available for active starters.</p>
+        <div className="bg-bg-surface border border-border-subtle rounded-lg p-4 text-center">
+          <p className="text-xs text-text-muted">No RoS projections available for active starters.</p>
         </div>
       )
     }
     return (
-      <div className="bg-[#202020] rounded-lg p-4">
+      <div className="bg-bg-surface border border-border-subtle rounded-lg p-4">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <TrendingUp className="h-3.5 w-3.5 text-[#FFC000]" />
-            <p className="text-xs font-semibold tracking-widest uppercase text-[#FFC000]">
+            <TrendingUp className="h-3.5 w-3.5 text-accent-gold" />
+            <p className="text-xs font-semibold tracking-widest uppercase text-accent-gold">
               Projected Team Edge
             </p>
           </div>
-          <p className="text-[9px] text-[#494949]">
+          <p className="text-[9px] text-text-muted">
             Z-scores vs. league avg · green = strength · red = weakness
           </p>
         </div>
@@ -305,8 +305,8 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
             const vals = zSums[cat]
             if (!vals || vals.length === 0) return (
               <div key={cat} className="text-center">
-                <p className="text-[10px] text-[#494949] uppercase tracking-wider">{formatCat(cat)}</p>
-                <p className="text-sm font-bold text-[#2A2A2A]">–</p>
+                <p className="text-[10px] text-text-muted uppercase tracking-wider">{formatCat(cat)}</p>
+                <p className="text-sm font-bold text-bg-elevated">–</p>
               </div>
             )
             // Rate cats: average z; counting cats: sum z
@@ -314,17 +314,17 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
               ? vals.reduce((a, b) => a + b, 0) / vals.length
               : vals.reduce((a, b) => a + b, 0)
             const color = z >= 1.5
-              ? 'text-emerald-400'
+              ? 'text-status-safe'
               : z >= 0.3
-                ? 'text-emerald-600'
+                ? 'text-status-lead'
                 : z <= -1.5
-                  ? 'text-rose-400'
+                  ? 'text-status-lost'
                   : z <= -0.3
-                    ? 'text-rose-600'
-                    : 'text-[#7D7D7D]'
+                    ? 'text-status-behind'
+                    : 'text-text-secondary'
             return (
               <div key={cat} className="text-center">
-                <p className="text-[10px] text-[#494949] uppercase tracking-wider">{formatCat(cat)}</p>
+                <p className="text-[10px] text-text-muted uppercase tracking-wider">{formatCat(cat)}</p>
                 <p className={cn('text-sm font-bold tabular-nums', color)}>
                   {z > 0 ? '+' : ''}{z.toFixed(1)}
                 </p>
@@ -332,7 +332,7 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
             )
           })}
         </div>
-        <p className="text-[9px] text-[#494949] mt-2">
+        <p className="text-[9px] text-text-muted mt-2">
           Counting cats: sum of player z-scores · Rate cats: avg z-score of starters
         </p>
       </div>
@@ -417,25 +417,25 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
   }
 
   return (
-    <div className="bg-[#202020] rounded-lg p-4">
+    <div className="bg-bg-surface border border-border-subtle rounded-lg p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <BarChart3 className="h-3.5 w-3.5 text-[#FFC000]" />
-          <p className="text-xs font-semibold tracking-widest uppercase text-[#7D7D7D]">
+          <BarChart3 className="h-3.5 w-3.5 text-accent-gold" />
+          <p className="text-xs font-semibold tracking-widest uppercase text-text-secondary">
             Category Totals
           </p>
         </div>
-        <p className="text-[9px] text-[#494949]">
+        <p className="text-[9px] text-text-muted">
           Active starters · {activePlayers.length} players · Rate stats = median
         </p>
       </div>
       <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-9 gap-3">
         {allCats.map((cat) => (
           <div key={cat} className="text-center">
-            <p className="text-[10px] text-[#494949] uppercase tracking-wider">
+            <p className="text-[10px] text-text-muted uppercase tracking-wider">
               {formatCat(cat)}
             </p>
-            <p className="text-sm font-bold text-white tabular-nums">
+            <p className="text-sm font-bold text-text-primary tabular-nums">
               {getDisplayVal(cat)}
             </p>
           </div>
@@ -461,28 +461,28 @@ function MatchupStrip({ scoreboard }: { scoreboard: ScoreboardResponse }) {
   const winPct = overall_win_probability != null ? Math.round(overall_win_probability * 100) : null
 
   return (
-    <div className="bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg p-4">
+    <div className="bg-bg-surface border border-border-subtle rounded-lg p-4">
       <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div className="flex items-center gap-2">
-          <Swords className="h-3.5 w-3.5 text-[#FFC000]" />
-          <p className="text-xs font-semibold tracking-widest uppercase text-[#7D7D7D]">
+          <Swords className="h-3.5 w-3.5 text-accent-gold" />
+          <p className="text-xs font-semibold tracking-widest uppercase text-text-secondary">
             This Week · vs {opponent_name}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
-            <span className="text-xs font-bold text-emerald-400">{categories_won}W</span>
-            <span className="text-[10px] text-[#494949]">·</span>
-            <span className="text-xs font-bold text-rose-400">{categories_lost}L</span>
-            <span className="text-[10px] text-[#494949]">·</span>
-            <span className="text-xs font-bold text-amber-400">{categories_tied}T</span>
+            <span className="text-xs font-bold text-status-safe">{categories_won}W</span>
+            <span className="text-[10px] text-text-muted">·</span>
+            <span className="text-xs font-bold text-status-lost">{categories_lost}L</span>
+            <span className="text-[10px] text-text-muted">·</span>
+            <span className="text-xs font-bold text-status-bubble">{categories_tied}T</span>
           </div>
           {winPct != null && (
             <span className={cn(
               'text-[10px] font-semibold px-2 py-0.5 rounded border',
-              winPct >= 65 ? 'text-emerald-400 border-emerald-800/40 bg-emerald-900/20' :
-              winPct <= 35 ? 'text-rose-400 border-rose-800/40 bg-rose-900/20' :
-              'text-amber-400 border-amber-800/40 bg-amber-900/20',
+              winPct >= 65 ? 'text-status-safe border-status-safe/30 bg-status-safe/10' :
+              winPct <= 35 ? 'text-status-lost border-status-lost/30 bg-status-lost/10' :
+              'text-status-bubble border-status-bubble/30 bg-status-bubble/10',
             )}>
               {winPct}% win prob
             </span>
@@ -504,11 +504,11 @@ function MatchupStrip({ scoreboard }: { scoreboard: ScoreboardResponse }) {
             return Math.round(v).toString()
           }
           const outcomeBg = outcome === 'W'
-            ? 'bg-emerald-900/30 border-emerald-800/40'
+            ? 'bg-status-safe/10 border-status-safe/30'
             : outcome === 'L'
-              ? 'bg-rose-900/30 border-rose-800/40'
-              : 'bg-amber-900/20 border-amber-800/30'
-          const outcomeText = outcome === 'W' ? 'text-emerald-400' : outcome === 'L' ? 'text-rose-400' : 'text-amber-400'
+              ? 'bg-status-lost/10 border-status-lost/30'
+              : 'bg-status-bubble/10 border-status-bubble/30'
+          const outcomeText = outcome === 'W' ? 'text-status-safe' : outcome === 'L' ? 'text-status-lost' : 'text-status-bubble'
 
           // Flip logic for lower-is-better cats so red always = bad for me
           const myStr = fmtStat(my)
@@ -517,22 +517,22 @@ function MatchupStrip({ scoreboard }: { scoreboard: ScoreboardResponse }) {
 
           return (
             <div key={row.category} className={cn('rounded p-1.5 border text-center', outcomeBg)}>
-              <p className="text-[9px] text-[#7D7D7D] uppercase tracking-wider leading-none mb-1">
+              <p className="text-[9px] text-text-secondary uppercase tracking-wider leading-none mb-1">
                 {row.category_label || formatCat(row.category)}
               </p>
               <div className={cn('text-[10px] font-bold leading-none', outcomeText)}>
                 {outcome}
               </div>
-              <p className="text-[9px] text-[#494949] leading-none mt-1">
-                <span className={myIsAhead ? 'text-white' : ''}>{myStr}</span>
-                <span className="mx-0.5 text-[#2A2A2A]">·</span>
+              <p className="text-[9px] text-text-muted leading-none mt-1">
+                <span className={myIsAhead ? 'text-text-primary' : ''}>{myStr}</span>
+                <span className="mx-0.5 text-border-subtle">·</span>
                 {oppStr}
               </p>
             </div>
           )
         })}
       </div>
-      <p className="text-[9px] text-[#494949] mt-2">Me · Opponent · W/L based on current stats</p>
+      <p className="text-[9px] text-text-muted mt-2">Me · Opponent · W/L based on current stats</p>
     </div>
   )
 }
@@ -553,32 +553,32 @@ function OptimizePanel({
   isApplying: boolean
 }) {
   return (
-    <div className="bg-[#181818] border border-[#FFC000]/30 rounded-lg p-4 space-y-4">
+    <div className="bg-bg-surface border border-accent-gold/30 rounded-lg p-4 space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-[#FFC000]" />
-          <p className="text-xs font-bold tracking-widest uppercase text-[#FFC000]">
+          <Sparkles className="h-4 w-4 text-accent-gold" />
+          <p className="text-xs font-bold tracking-widest uppercase text-accent-gold">
             Optimized Lineup — {data.target_date}
           </p>
         </div>
-        <button onClick={onClose} className="text-[#494949] hover:text-white transition-colors">
+        <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">
           <X className="h-4 w-4" />
         </button>
       </div>
-      <p className="text-xs text-[#7D7D7D]">{data.message}</p>
+      <p className="text-xs text-text-secondary">{data.message}</p>
 
       <div className="grid sm:grid-cols-2 gap-2">
         {[...data.starters, ...data.bench].map((assignment) => (
-          <div key={assignment.player_key} className="flex items-center gap-3 bg-[#202020] rounded px-3 py-2">
+          <div key={assignment.player_key} className="flex items-center gap-3 bg-bg-elevated rounded px-3 py-2">
             <SlotPill slot={assignment.assigned_slot} />
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-white truncate">{assignment.player_name}</p>
-              <p className="text-[10px] text-[#494949] truncate">{assignment.reasoning}</p>
+              <p className="text-xs font-semibold text-text-primary truncate">{assignment.player_name}</p>
+              <p className="text-[10px] text-text-muted truncate">{assignment.reasoning}</p>
             </div>
             <button
               onClick={() => onApplyMove(assignment.player_key, assignment.assigned_slot)}
               disabled={isApplying}
-              className="text-[10px] text-[#FFC000] hover:text-amber-300 font-semibold whitespace-nowrap disabled:opacity-50"
+              className="text-[10px] text-accent-gold hover:text-amber-300 font-semibold whitespace-nowrap disabled:opacity-50"
             >
               Apply
             </button>
@@ -627,14 +627,14 @@ function PlayerCard({
 
   return (
     <div className={cn(
-      'bg-[#202020] rounded-lg p-4 flex flex-col gap-3',
-      isRoS && hasRoS && 'border-l-2 border-[#FFC000]/40',
+      'bg-bg-surface border border-border-subtle rounded-lg p-4 flex flex-col gap-3 hover:bg-bg-elevated transition-colors duration-150',
+      isRoS && hasRoS && 'border-l-2 border-accent-gold/40',
     )}>
       {/* Identity row */}
       <div className="flex items-start gap-3 flex-wrap sm:flex-nowrap">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <p className="text-sm font-bold text-white">{player.player_name}</p>
+            <p className="text-sm font-bold text-text-primary">{player.player_name}</p>
             <SlotPill slot={player.current_slot} />
             <span className={cn(
               'text-[10px] px-1.5 py-0.5 rounded border font-semibold uppercase tracking-wider',
@@ -645,18 +645,18 @@ function PlayerCard({
             <GamePill player={player} />
           </div>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
-            <span className="text-xs text-[#7D7D7D]">{player.team}</span>
+            <span className="text-xs text-text-secondary">{player.team}</span>
             {player.ownership_pct != null && player.ownership_pct > 0 && (
-              <span className="text-[10px] text-[#494949]">{player.ownership_pct.toFixed(0)}% owned</span>
+              <span className="text-[10px] text-text-muted">{player.ownership_pct.toFixed(0)}% owned</span>
             )}
             {eligible.map((pos) => (
-              <span key={pos} className="text-[10px] px-1.5 py-0.5 bg-[#2A2A2A] text-[#969696] rounded">
+              <span key={pos} className="text-[10px] px-1.5 py-0.5 bg-bg-elevated text-text-secondary rounded">
                 {pos}
               </span>
             ))}
           </div>
           {player.injury_status && (
-            <p className="text-xs text-rose-400 mt-1.5 flex items-center gap-1">
+            <p className="text-xs text-status-lost mt-1.5 flex items-center gap-1">
               <ShieldAlert className="h-3 w-3" />
               {player.injury_status}
               {player.injury_return_timeline ? ` · ${player.injury_return_timeline}` : ''}
@@ -669,11 +669,11 @@ function PlayerCard({
           <select
             value={selectedSlot}
             onChange={(e) => setSelectedSlot(e.target.value)}
-            className="bg-[#2A2A2A] text-xs text-white border border-[#494949] rounded px-2 py-1.5 focus:outline-none focus:border-[#FFC000] min-w-[90px]"
+            className="bg-bg-elevated text-xs text-text-primary border border-border-default rounded px-2 py-1.5 focus:outline-none focus:border-accent-gold min-w-[90px]"
           >
-            <option value="">Move to…</option>
+            <option value="" className="bg-bg-elevated text-text-primary">Move to…</option>
             {moveOptions.map((pos) => (
-              <option key={pos} value={pos}>{pos}</option>
+              <option key={pos} value={pos} className="bg-bg-elevated text-text-primary">{pos}</option>
             ))}
           </select>
           <button
@@ -682,8 +682,8 @@ function PlayerCard({
             className={cn(
               'p-1.5 rounded transition-colors',
               selectedSlot && !isMoving
-                ? 'bg-[#FFC000] text-black hover:bg-amber-300'
-                : 'bg-[#2A2A2A] text-[#494949] cursor-not-allowed',
+                ? 'bg-accent-gold text-black hover:bg-amber-300'
+                : 'bg-bg-elevated text-text-muted cursor-not-allowed',
             )}
             title="Move player"
           >
@@ -695,20 +695,20 @@ function PlayerCard({
       {/* Stats grid */}
       <div>
         {isRoS && !hasRoS ? (
-          <p className="text-[10px] text-[#494949] italic">RoS projection not available for this player</p>
+          <p className="text-[10px] text-text-muted italic">RoS projection not available for this player</p>
         ) : (
           <div className="grid grid-cols-4 sm:grid-cols-8 gap-x-3 gap-y-1">
             {displayCats.map((cat) => (
               <div key={cat} className="text-center">
                 <p className={cn(
                   'text-[9px] uppercase tracking-wider',
-                  isRoS ? 'text-[#FFC000]/60' : 'text-[#494949]',
+                  isRoS ? 'text-accent-gold/60' : 'text-text-muted',
                 )}>
                   {formatCat(cat)}
                 </p>
                 <p className={cn(
                   'text-xs font-semibold tabular-nums',
-                  isRoS ? 'text-[#FFC000]' : 'text-white',
+                  isRoS ? 'text-accent-gold' : 'text-text-primary',
                 )}>
                   {getStat(statValues, cat)}
                 </p>

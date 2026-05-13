@@ -374,6 +374,17 @@ export const CATEGORY_LABEL: Record<RotoCategory, string> = {
   W: 'W', L: 'L', HR_P: 'HR', K_P: 'K', ERA: 'ERA', WHIP: 'WHIP', K_9: 'K/9', QS: 'QS', NSV: 'NSV',
 }
 
+// Design System v2 — persistent category identity colors
+// Usage: small dots on chips/rows so users scan by color instead of reading labels
+export const CATEGORY_COLOR: Record<RotoCategory, string> = {
+  // Batting
+  R: '#3b82f6', H: '#06b6d4', HR_B: '#a855f7', RBI: '#8b5cf6',
+  K_B: '#f43f5e', TB: '#d946ef', AVG: '#eab308', OPS: '#ca8a04', NSB: '#10b981',
+  // Pitching
+  W: '#3b82f6', L: '#f43f5e', HR_P: '#a855f7', K_P: '#06b6d4',
+  ERA: '#f97316', WHIP: '#fb923c', K_9: '#22d3ee', QS: '#10b981', NSV: '#84cc16',
+}
+
 // Categories where lower value wins the week
 export const LOWER_IS_BETTER: RotoCategory[] = ['K_B', 'L', 'HR_P', 'ERA', 'WHIP']
 
