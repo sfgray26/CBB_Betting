@@ -15,8 +15,6 @@ import {
   Clock,
   BarChart3,
   Sparkles,
-  Flame,
-  Snowflake,
   Calendar,
   CalendarOff,
   AlertTriangle,
@@ -602,6 +600,26 @@ export default function RosterPage() {
     [moveMutation],
   )
 
+  // Keep hooks before early returns; loading/error/empty states render below.
+  const filteredSorted = useMemo(() => {
+    const players = roster.data?.players ?? []
+    let filteredPlayers = [...players]
+
+    if (posFilter !== 'All') {
+      filteredPlayers = filteredPlayers.filter((p) =>
+        p.eligible_positions.some((pos) => pos === posFilter || pos.startsWith(posFilter))
+      )
+    }
+
+    if (sortMode === 'name') {
+      filteredPlayers.sort((a, b) => a.player_name.localeCompare(b.player_name))
+    } else if (sortMode === 'ros_value') {
+      filteredPlayers.sort((a, b) => rosValueScore(b) - rosValueScore(a))
+    }
+
+    return filteredPlayers
+  }, [roster.data?.players, posFilter, sortMode])
+
   // ── Loading / Error / Empty states ──────────────────────────────────────
   if (roster.isLoading) {
     return (
@@ -649,25 +667,6 @@ export default function RosterPage() {
       </div>
     )
   }
-
-  // ── Filter + sort ────────────────────────────────────────────────────────
-  const filteredSorted = useMemo(() => {
-    let players = [...data.players]
-
-    if (posFilter !== 'All') {
-      players = players.filter((p) =>
-        p.eligible_positions.some((pos) => pos === posFilter || pos.startsWith(posFilter))
-      )
-    }
-
-    if (sortMode === 'name') {
-      players.sort((a, b) => a.player_name.localeCompare(b.player_name))
-    } else if (sortMode === 'ros_value') {
-      players.sort((a, b) => rosValueScore(b) - rosValueScore(a))
-    }
-
-    return players
-  }, [data.players, posFilter, sortMode])
 
   // Group players by status (only when default sort)
   const useGrouped = sortMode === 'default' && posFilter === 'All'

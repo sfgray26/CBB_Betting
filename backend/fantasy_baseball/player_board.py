@@ -25,6 +25,8 @@ import json
 import logging
 import math
 import statistics
+import time
+from collections import namedtuple
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 
@@ -40,6 +42,44 @@ from backend.fantasy_baseball.fusion_engine import (
     PopulationPrior,
     FusionResult,
 )
+
+# ---------------------------------------------------------------------------
+# Projection name-map TTL cache
+# Caches the 9,686-row player_projections scan as plain Python namedtuples so
+# SQLAlchemy session-scoping is never a problem.  Rebuilt at most once per 30
+# minutes (1800 s) — safe under Python's GIL for concurrent request handling.
+# ---------------------------------------------------------------------------
+
+_ProjectionEntry = namedtuple(
+    "_ProjectionEntry",
+    [
+        "player_name",
+        "player_id",
+        "player_type",
+        "cat_scores",
+        "z_score",
+        # Batting rate stats
+        "avg",
+        "obp",
+        "slg",
+        "ops",
+        # Batting counting stats
+        "hr",
+        "sb",
+        # Pitching stats
+        "era",
+        "whip",
+        "k_per_nine",
+        "bb_per_nine",
+        "w",
+        "qs",
+    ],
+)
+
+# Module-level cache: {"built_at": float, "map": dict[str, _ProjectionEntry]}
+_PROJ_NAME_CACHE: dict = {}
+
+_PROJ_NAME_CACHE_TTL = 1800  # seconds (30 minutes)
 
 
 # ---------------------------------------------------------------------------
@@ -995,23 +1035,80 @@ def _query_statcast_proxy(db: Session, player_id: str, player_type: str,
         return raw_data
 
 
-def _lookup_projection_by_name(db, name: str):
-    """Find PlayerProjection by name. Tries exact match, then difflib fuzzy at 0.85."""
+def _get_proj_name_map(db) -> dict:
+    """
+    Return a normalized-name -> _ProjectionEntry dict for all PlayerProjection
+    rows that have cat_scores populated.
+
+    The result is module-level cached for _PROJ_NAME_CACHE_TTL seconds (30 min).
+    Plain namedtuples are stored — never SQLAlchemy row objects — so the cache
+    survives across DB sessions without detached-instance errors.
+    """
     from backend.models import PlayerProjection
 
-    norm = _normalize_name(name) if name else ""
-    if not norm:
-        return None
+    now = time.monotonic()
+    cached = _PROJ_NAME_CACHE.get("map")
+    built_at = _PROJ_NAME_CACHE.get("built_at", 0.0)
+
+    if cached is not None and (now - built_at) < _PROJ_NAME_CACHE_TTL:
+        return cached
 
     rows = db.query(PlayerProjection).filter(
         PlayerProjection.cat_scores.isnot(None)
     ).all()
 
+    name_map: dict = {}
     for row in rows:
-        if _normalize_name(row.player_name or "") == norm:
-            return row
+        raw_name = row.player_name or ""
+        if not raw_name:
+            continue
+        norm = _normalize_name(raw_name)
+        entry = _ProjectionEntry(
+            player_name=raw_name,
+            player_id=row.player_id,
+            player_type=row.player_type,
+            cat_scores=row.cat_scores,
+            z_score=getattr(row, "z_score", None),
+            avg=row.avg,
+            obp=row.obp,
+            slg=row.slg,
+            ops=row.ops,
+            hr=row.hr,
+            sb=row.sb,
+            era=row.era,
+            whip=row.whip,
+            k_per_nine=row.k_per_nine,
+            bb_per_nine=row.bb_per_nine,
+            w=row.w,
+            qs=row.qs,
+        )
+        name_map[norm] = entry
 
-    name_map = {_normalize_name(r.player_name or ""): r for r in rows if r.player_name}
+    _PROJ_NAME_CACHE["map"] = name_map
+    _PROJ_NAME_CACHE["built_at"] = now
+    logger.debug("[player_board] Rebuilt projection name map: %d entries", len(name_map))
+    return name_map
+
+
+def _lookup_projection_by_name(db, name: str):
+    """
+    Find a _ProjectionEntry by player name using the TTL-cached projection map.
+
+    Returns a _ProjectionEntry namedtuple (not a SQLAlchemy row) so the result
+    is safe to use after the DB session is closed.  Tries exact normalized-name
+    match first, then difflib fuzzy match at cutoff=0.85.
+    """
+    norm = _normalize_name(name) if name else ""
+    if not norm:
+        return None
+
+    name_map = _get_proj_name_map(db)
+
+    # Exact match
+    if norm in name_map:
+        return name_map[norm]
+
+    # Fuzzy match
     matches = _difflib.get_close_matches(norm, name_map.keys(), n=1, cutoff=0.85)
     if matches:
         return name_map[matches[0]]
