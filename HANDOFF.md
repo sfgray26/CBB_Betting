@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-05-13 | **Architect:** Claude Code (Master Architect)
-> **Branch:** `stable/cbb-prod` | **HEAD:** 7d18395 (Phase 1 P0 data bugs fixed)
+> **Branch:** `stable/cbb-prod` | **HEAD:** 56555da (Phase 2 simulation integrity + Waiver Wire page)
 > **Deploy:** `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}` (d319beb live on Railway)
 
 ---
@@ -40,6 +40,17 @@
 | Ownership always 0% | `get_free_agents` fetched from `league/{lk}/players` without `out=ownership` (Yahoo 400). Secondary batch call to `players;player_keys/ownership` needed | `yahoo_client_resilient.py`. Commit 425f9d6 |
 | Simulate roster fetch unhandled exception | `_fetch_rosters_for_simulate` called outside try/except — Yahoo auth error would bypass CORS middleware | Added try/except around roster fetch in `simulate_matchup`. Commit ff2c8b9 |
 | K-1 P0 streaming/dashboard/lineup 422 | All three verified RESOLVED by prior session's code (A-7 streaming fix, dashboard page rewrite, FastAPI static-route priority) | No code change needed |
+
+---
+
+## Phase 2 Fixes (2026-05-13 — later)
+
+| Fix | Bug | Patch |
+|-----|-----|-------|
+| Waiver Wire page | `war-room/waiver` was "COMING NEXT" placeholder — no data visible | Replaced with full React page calling `/api/fantasy/waiver`. Commits f7041fd, 2595f0f |
+| `CategoryDeficit` type mismatch | Frontend used `deficit_z_score` but backend returns `my_total`, `opponent_total`, `deficit`, `winning` — streaming page showed NaN | Updated `types.ts`; streaming page now uses `d.winning` + `d.deficit` |
+| Simulate fuzzy name match | `_fetch_rosters_for_simulate` only exact-matched names — players with accents/suffixes got empty cat_scores | `difflib.get_close_matches(cutoff=0.85)` fallback in `_player_dict`. Commit 3750847 |
+| MCMC simulate from zero | Simulator ignored current Yahoo scoreboard totals — manager leading 8-3 HRs saw "BEHIND" result | Added `my_current_stats` + `opp_current_stats` + `remaining_fraction` params; router fetches live scoreboard and passes anchors. Also added `data_quality`/`my_projection_coverage`/`opp_projection_coverage` to response. Commit 56555da |
 
 ---
 
@@ -210,7 +221,7 @@ Production UI audit completed. Full report: `reports/2026-05-07-ui-uat-audit.md`
 ### P1 (Degraded)
 5. **Budget API not integrated into UI** — `/api/fantasy/budget` is healthy (576ms) but no frontend page calls it; no budget panel exists.
 6. **Matchup API latency ~3,182ms** — Exceeds 2s threshold. No loading skeleton visible during fetch.
-7. **My Roster & Waiver Wire are placeholders** — "COMING NEXT" pages only.
+7. ✅ **Waiver Wire page** — COMPLETE (2026-05-13). Full implementation with category deficits, two-start pitchers, position filter, need score bars, ownership %, hot/cold badges. Roster page was already fully implemented in a prior session.
 8. **Favicon 404** on every page load.
 
 ### P2 (Polish)
