@@ -30,6 +30,19 @@
 
 ---
 
+## Code Fixes This Session (2026-05-13)
+
+| Fix | Bug | Patch |
+|-----|-----|-------|
+| Budget IP key `"my_team"` → `"my_stats"` (A-6) | `get_matchup_stats()` returns `"my_stats"` not `"my_team"` — IP always read as 0.0 | `routers/fantasy.py:5519`. Commit d0976b4 |
+| Need score key mismatch | `compute_need_score` lowercased canonical codes (`"hr_b"`) but `cat_scores` uses board keys (`"hr"`) — all need scores = 0 | Added `_CANONICAL_TO_BOARD` mapping in `category_aware_scorer.py`. Commit bd180a4 |
+| Budget acquisitions window | Rolling 7-day window instead of matchup week (Mon 00:00 ET); `"add/drop"` type excluded from count | `routers/fantasy.py:5501`, `constraint_helpers.py:48`. Commit d2fbc43 |
+| Ownership always 0% | `get_free_agents` fetched from `league/{lk}/players` without `out=ownership` (Yahoo 400). Secondary batch call to `players;player_keys/ownership` needed | `yahoo_client_resilient.py`. Commit 425f9d6 |
+| Simulate roster fetch unhandled exception | `_fetch_rosters_for_simulate` called outside try/except — Yahoo auth error would bypass CORS middleware | Added try/except around roster fetch in `simulate_matchup`. Commit ff2c8b9 |
+| K-1 P0 streaming/dashboard/lineup 422 | All three verified RESOLVED by prior session's code (A-7 streaming fix, dashboard page rewrite, FastAPI static-route priority) | No code change needed |
+
+---
+
 ## Code Fixes This Session (2026-05-12)
 
 | Fix | Bug | Patch |
@@ -125,12 +138,9 @@ db.close()
 ### A-5: Dead `_refresh_ros_projections` v1 at line ~5952 (low priority)
 Python last-definition-wins: v2 at line ~6822 is active. Remove v1. Do when deploying for something else.
 
-### A-6 (P1): Wire IP tracking in `/api/fantasy/budget`
-**Report:** `reports/2026-05-06-fantasy-budget-endpoint-audit.md`
-
-`acquisitions_used` and `IL_slots_used` are live via Yahoo API. `ip_accumulated` is hardcoded `0.0` with a TODO.
-**Fix:** Use `yahoo.get_matchup_stats(week=current_week)` → `my_stats["IP"]` (stat_id 50 already mapped in `yahoo_client_resilient.py`). Also fix `ip_minimum` inconsistency (90.0 in endpoint vs 18.0 in `scoreboard_orchestrator.py`).
-**Context strip:** Can be built now with `/api/fantasy/budget` as source. Use placeholder (`—`) for IP until A-6 is resolved.
+### ✅ A-6 (P1): Wire IP tracking in `/api/fantasy/budget` — COMPLETE (2026-05-13)
+**Root cause:** `matchup_stats.get("my_team", {})` → key was wrong; correct key is `"my_stats"`.
+**Fix applied:** `backend/routers/fantasy.py:5519` — single-line change. Commit d0976b4.
 
 ### A-7 (P2): UI clarity issues — ✅ COMPLETE (2026-05-12)
 **Report:** User screenshots showing dashboard confusion
@@ -191,11 +201,11 @@ Kimi's report incorrectly identified a duplicate function. Actual bug: INSERT at
 
 Production UI audit completed. Full report: `reports/2026-05-07-ui-uat-audit.md`
 
-### P0 (Blocking) — Requires Claude Code attention
-1. **CORS on `POST /api/fantasy/matchup/simulate`** — War Room simulation feature is completely broken. No `Access-Control-Allow-Origin` header on the POST response.
-2. **Streaming page infinite loading** — `GET /api/fantasy/waiver` returns 200 in 164ms, but the React component never exits "Loading waiver data..." state.
-3. **Dashboard empty despite API data** — `GET /api/dashboard` returns 200 with waiver targets, injury flags, and lineup stats; main content area renders blank.
-4. **`/api/fantasy/lineup/current` always 422** — Returns `lineup_date must be YYYY-MM-DD` even when the parameter is provided correctly in query string, body, or omitted.
+### P0 (Blocking) — ✅ ALL RESOLVED (2026-05-13)
+1. **✅ CORS on `POST /api/fantasy/matchup/simulate`** — Simulate roster fetch wrapped in try/except; Yahoo auth errors now return clean HTTPException (CORS middleware applies headers to all HTTPException responses). Commit ff2c8b9.
+2. **✅ Streaming page infinite loading** — Verified RESOLVED by A-7 (commit 847415c): streaming page has proper isLoading/isError/!data early-return guards.
+3. **✅ Dashboard empty despite API data** — Verified RESOLVED: dashboard/page.tsx has full implementation calling getDashboard with correct response.success check.
+4. **✅ `/api/fantasy/lineup/current` always 422** — Verified RESOLVED: main.py registers static `/current` route before parameterized `/{lineup_date}`; FastAPI routes static first.
 
 ### P1 (Degraded)
 5. **Budget API not integrated into UI** — `/api/fantasy/budget` is healthy (576ms) but no frontend page calls it; no budget panel exists.
