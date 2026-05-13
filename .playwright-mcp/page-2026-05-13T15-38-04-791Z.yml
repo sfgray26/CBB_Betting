@@ -1,0 +1,17 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e6]: 🏀
+      - heading "CBB Edge" [level=1] [ref=e7]
+      - paragraph [ref=e8]: College Basketball Betting Analytics
+    - generic [ref=e9]:
+      - paragraph [ref=e10]: Enter your API key to continue
+      - paragraph [ref=e11]: ↗ https://fantasy-app-production-5079.up.railway.app
+      - generic [ref=e12]:
+        - generic [ref=e13]:
+          - generic [ref=e14]: API Key
+          - textbox "API Key" [ref=e15]:
+            - /placeholder: Enter your API key...
+        - button "Sign In" [ref=e16] [cursor=pointer]
+    - paragraph [ref=e17]: CBB Edge Analytics — v9.1
+  - alert [ref=e18]

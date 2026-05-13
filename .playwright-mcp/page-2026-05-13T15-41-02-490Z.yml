@@ -1,0 +1,525 @@
+- generic [ref=e1]:
+  - alert [ref=e18]
+  - generic [ref=e19]:
+    - complementary [ref=e20]:
+      - generic [ref=e21]:
+        - generic [ref=e22]: CBB EDGE
+        - generic [ref=e23]: Analytics
+      - navigation [ref=e24]:
+        - generic [ref=e25]:
+          - paragraph [ref=e26]: Analytics
+          - list [ref=e27]:
+            - listitem [ref=e28]:
+              - link "Dashboard" [ref=e29] [cursor=pointer]:
+                - /url: /dashboard
+                - img [ref=e30]
+                - generic [ref=e35]: Dashboard
+            - listitem [ref=e36]:
+              - link "Performance" [ref=e37] [cursor=pointer]:
+                - /url: /performance
+                - img [ref=e38]
+                - generic [ref=e39]: Performance
+            - listitem [ref=e40]:
+              - link "CLV Analysis" [ref=e41] [cursor=pointer]:
+                - /url: /clv
+                - img [ref=e42]
+                - generic [ref=e45]: CLV Analysis
+            - listitem [ref=e46]:
+              - link "Bet History" [ref=e47] [cursor=pointer]:
+                - /url: /bet-history
+                - img [ref=e48]
+                - generic [ref=e51]: Bet History
+            - listitem [ref=e52]:
+              - link "Calibration" [ref=e53] [cursor=pointer]:
+                - /url: /calibration
+                - img [ref=e54]
+                - generic [ref=e58]: Calibration
+            - listitem [ref=e59]:
+              - link "Alerts" [ref=e60] [cursor=pointer]:
+                - /url: /alerts
+                - img [ref=e61]
+                - generic [ref=e64]: Alerts
+        - generic [ref=e65]:
+          - paragraph [ref=e66]: Trading
+          - list [ref=e67]:
+            - listitem [ref=e68]:
+              - link "Today's Bets" [ref=e69] [cursor=pointer]:
+                - /url: /today
+                - img [ref=e70]
+                - generic [ref=e72]: Today's Bets
+            - listitem [ref=e73]:
+              - link "Live Slate" [ref=e74] [cursor=pointer]:
+                - /url: /live-slate
+                - img [ref=e75]
+                - generic [ref=e77]: Live Slate
+            - listitem [ref=e78]:
+              - link "Odds Monitor" [ref=e79] [cursor=pointer]:
+                - /url: /odds-monitor
+                - img [ref=e80]
+                - generic [ref=e86]: Odds Monitor
+        - generic [ref=e87]:
+          - paragraph [ref=e88]: Fantasy
+          - list [ref=e89]:
+            - listitem [ref=e90]:
+              - link "War Room" [ref=e91] [cursor=pointer]:
+                - /url: /war-room
+                - img [ref=e92]
+                - generic [ref=e101]: War Room
+            - listitem [ref=e102]:
+              - link "My Roster" [ref=e103] [cursor=pointer]:
+                - /url: /war-room/roster
+                - img [ref=e104]
+                - generic [ref=e109]: My Roster
+            - listitem [ref=e110]:
+              - link "Waiver Wire" [active] [ref=e111] [cursor=pointer]:
+                - /url: /war-room/waiver
+                - img [ref=e112]
+                - generic [ref=e113]: Waiver Wire
+            - listitem [ref=e114]:
+              - link "Streaming" [ref=e115] [cursor=pointer]:
+                - /url: /war-room/streaming
+                - img [ref=e116]
+                - generic [ref=e120]: Streaming
+        - generic [ref=e121]:
+          - paragraph [ref=e122]: Admin
+          - list [ref=e123]:
+            - listitem [ref=e124]:
+              - link "Risk Dashboard" [ref=e125] [cursor=pointer]:
+                - /url: /admin
+                - img [ref=e126]
+                - generic [ref=e128]: Risk Dashboard
+      - generic [ref=e132]:
+        - generic [ref=e133]: Portfolio
+        - generic [ref=e134]: "DD: 0.0% | Exp: 0.0%"
+    - generic [ref=e135]:
+      - banner [ref=e136]:
+        - generic [ref=e137]: Dashboard
+        - generic [ref=e138]:
+          - generic [ref=e139]: "Last updated: 2m ago"
+          - button "Refresh data" [ref=e140] [cursor=pointer]:
+            - img [ref=e141]
+          - button "Sign out" [ref=e146] [cursor=pointer]:
+            - img [ref=e147]
+      - main [ref=e150]:
+        - generic [ref=e151]:
+          - generic [ref=e156]:
+            - img [ref=e157]
+            - generic [ref=e158]: Waiver Wire
+            - generic [ref=e159]: vs High&TightyWhitey's
+          - generic [ref=e160]:
+            - paragraph [ref=e161]: This Week's Gaps
+            - generic [ref=e162]:
+              - generic [ref=e163]:
+                - img [ref=e164]
+                - generic [ref=e167]: H_AB
+                - generic [ref=e168]: 0.0 vs 0.0
+              - generic [ref=e169]:
+                - img [ref=e170]
+                - generic [ref=e173]: R
+                - generic [ref=e174]: 3.0 vs 6.0
+              - generic [ref=e175]:
+                - img [ref=e176]
+                - generic [ref=e179]: HR_B
+                - generic [ref=e180]: 0.0 vs 0.0
+              - generic [ref=e181]:
+                - img [ref=e182]
+                - generic [ref=e185]: NSB
+                - generic [ref=e186]: 0.0 vs 1.0
+              - generic [ref=e187]:
+                - img [ref=e188]
+                - generic [ref=e191]: W
+                - generic [ref=e192]: 1.0 vs 1.0
+              - generic [ref=e193]:
+                - img [ref=e194]
+                - generic [ref=e197]: L
+                - generic [ref=e198]: 1.0 vs 0.0
+              - generic [ref=e199]:
+                - img [ref=e200]
+                - generic [ref=e203]: H
+              - generic [ref=e204]:
+                - img [ref=e205]
+                - generic [ref=e208]: RBI
+              - generic [ref=e209]:
+                - img [ref=e210]
+                - generic [ref=e213]: K_B
+          - generic [ref=e214]:
+            - generic [ref=e215]:
+              - button "Need Score" [ref=e216] [cursor=pointer]
+              - button "Projected" [ref=e217] [cursor=pointer]
+            - generic [ref=e218]:
+              - button "All" [ref=e219] [cursor=pointer]
+              - button "SP" [ref=e220] [cursor=pointer]
+              - button "RP" [ref=e221] [cursor=pointer]
+              - button "OF" [ref=e222] [cursor=pointer]
+              - button "1B" [ref=e223] [cursor=pointer]
+              - button "2B" [ref=e224] [cursor=pointer]
+              - button "3B" [ref=e225] [cursor=pointer]
+              - button "SS" [ref=e226] [cursor=pointer]
+              - button "C" [ref=e227] [cursor=pointer]
+          - generic [ref=e228]:
+            - generic [ref=e229]:
+              - img [ref=e230]
+              - paragraph [ref=e235]: Top Available · 25
+            - generic [ref=e236]:
+              - generic [ref=e237]:
+                - generic [ref=e238]:
+                  - paragraph [ref=e239]: Landen Roupp
+                  - generic [ref=e240]:
+                    - img [ref=e241]
+                    - text: HOT
+                - generic [ref=e243]:
+                  - generic [ref=e244]: SF
+                  - generic [ref=e245]: 0% owned
+                  - generic [ref=e246]: SP
+                - generic [ref=e248]: LOW_INJURY_RISK
+              - generic [ref=e249]:
+                - paragraph [ref=e250]: Need Score
+                - generic [ref=e254]: "8.03"
+            - generic [ref=e255]:
+              - generic [ref=e256]:
+                - generic [ref=e257]:
+                  - paragraph [ref=e258]: Mitch Keller
+                  - generic [ref=e259]:
+                    - img [ref=e260]
+                    - text: HOT
+                - generic [ref=e262]:
+                  - generic [ref=e263]: PIT
+                  - generic [ref=e264]: 0% owned
+                  - generic [ref=e265]: SP
+                - generic [ref=e267]: LOW_INJURY_RISK
+              - generic [ref=e268]:
+                - paragraph [ref=e269]: Need Score
+                - generic [ref=e273]: "7.88"
+            - generic [ref=e274]:
+              - generic [ref=e275]:
+                - generic [ref=e276]:
+                  - paragraph [ref=e277]: Max Meyer
+                  - generic [ref=e278]:
+                    - img [ref=e279]
+                    - text: HOT
+                - generic [ref=e281]:
+                  - generic [ref=e282]: MIA
+                  - generic [ref=e283]: 0% owned
+                  - generic [ref=e284]: SP
+                - generic [ref=e286]: LOW_INJURY_RISK
+              - generic [ref=e287]:
+                - paragraph [ref=e288]: Need Score
+                - generic [ref=e292]: "7.61"
+            - generic [ref=e293]:
+              - generic [ref=e294]:
+                - generic [ref=e295]:
+                  - paragraph [ref=e296]: Michael Wacha
+                  - generic [ref=e297]:
+                    - img [ref=e298]
+                    - text: HOT
+                - generic [ref=e300]:
+                  - generic [ref=e301]: KC
+                  - generic [ref=e302]: 0% owned
+                  - generic [ref=e303]: SP
+                - generic [ref=e305]: LOW_INJURY_RISK
+              - generic [ref=e306]:
+                - paragraph [ref=e307]: Need Score
+                - generic [ref=e311]: "7.53"
+            - generic [ref=e312]:
+              - generic [ref=e313]:
+                - generic [ref=e314]:
+                  - paragraph [ref=e315]: Nick Martinez
+                  - generic [ref=e316]:
+                    - img [ref=e317]
+                    - text: HOT
+                - generic [ref=e319]:
+                  - generic [ref=e320]: TB
+                  - generic [ref=e321]: 0% owned
+                  - generic [ref=e322]: SP
+                - generic [ref=e324]: LOW_INJURY_RISK
+              - generic [ref=e325]:
+                - paragraph [ref=e326]: Need Score
+                - generic [ref=e330]: "7.08"
+            - generic [ref=e331]:
+              - generic [ref=e332]:
+                - generic [ref=e333]:
+                  - paragraph [ref=e334]: Michael McGreevy
+                  - generic [ref=e335]:
+                    - img [ref=e336]
+                    - text: HOT
+                - generic [ref=e338]:
+                  - generic [ref=e339]: STL
+                  - generic [ref=e340]: 0% owned
+                  - generic [ref=e341]: SP
+                - generic [ref=e343]: LOW_INJURY_RISK
+              - generic [ref=e344]:
+                - paragraph [ref=e345]: Need Score
+                - generic [ref=e349]: "6.07"
+            - generic [ref=e350]:
+              - generic [ref=e351]:
+                - generic [ref=e352]:
+                  - paragraph [ref=e353]: Grant Taylor
+                  - generic [ref=e354]:
+                    - img [ref=e355]
+                    - text: HOT
+                - generic [ref=e357]:
+                  - generic [ref=e358]: CWS
+                  - generic [ref=e359]: 0% owned
+                  - generic [ref=e360]: SP
+                - generic [ref=e362]: LOW_INJURY_RISK
+              - generic [ref=e363]:
+                - paragraph [ref=e364]: Need Score
+                - generic [ref=e368]: "5.94"
+            - generic [ref=e369]:
+              - generic [ref=e370]:
+                - generic [ref=e371]:
+                  - paragraph [ref=e372]: Ben Brown
+                  - generic [ref=e373]:
+                    - img [ref=e374]
+                    - text: HOT
+                - generic [ref=e376]:
+                  - generic [ref=e377]: CHC
+                  - generic [ref=e378]: 0% owned
+                  - generic [ref=e379]: SP
+                - generic [ref=e381]: LOW_INJURY_RISK
+              - generic [ref=e382]:
+                - paragraph [ref=e383]: Need Score
+                - generic [ref=e387]: "4.43"
+            - generic [ref=e388]:
+              - generic [ref=e389]:
+                - generic [ref=e390]:
+                  - paragraph [ref=e391]: Erik Sabrowski
+                  - generic [ref=e392]:
+                    - img [ref=e393]
+                    - text: HOT
+                - generic [ref=e395]:
+                  - generic [ref=e396]: CLE
+                  - generic [ref=e397]: 0% owned
+                  - generic [ref=e398]: RP
+                - generic [ref=e400]: LOW_INJURY_RISK
+              - generic [ref=e401]:
+                - paragraph [ref=e402]: Need Score
+                - generic [ref=e406]: "4.05"
+            - generic [ref=e407]:
+              - generic [ref=e408]:
+                - generic [ref=e409]:
+                  - paragraph [ref=e410]: Matt Brash
+                  - generic [ref=e411]:
+                    - img [ref=e412]
+                    - text: HOT
+                - generic [ref=e414]:
+                  - generic [ref=e415]: SEA
+                  - generic [ref=e416]: 0% owned
+                  - generic [ref=e417]: RP
+                - generic [ref=e419]: LOW_INJURY_RISK
+              - generic [ref=e420]:
+                - paragraph [ref=e421]: Need Score
+                - generic [ref=e425]: "3.98"
+            - generic [ref=e426]:
+              - generic [ref=e427]:
+                - generic [ref=e428]:
+                  - paragraph [ref=e429]: Dylan Lee
+                  - generic [ref=e430]:
+                    - img [ref=e431]
+                    - text: HOT
+                - generic [ref=e433]:
+                  - generic [ref=e434]: ATL
+                  - generic [ref=e435]: 0% owned
+                  - generic [ref=e436]: RP
+                - generic [ref=e438]: LOW_INJURY_RISK
+              - generic [ref=e439]:
+                - paragraph [ref=e440]: Need Score
+                - generic [ref=e444]: "3.90"
+            - generic [ref=e445]:
+              - generic [ref=e446]:
+                - generic [ref=e447]:
+                  - paragraph [ref=e448]: Mason Montgomery
+                  - generic [ref=e449]:
+                    - img [ref=e450]
+                    - text: HOT
+                - generic [ref=e452]:
+                  - generic [ref=e453]: PIT
+                  - generic [ref=e454]: 0% owned
+                  - generic [ref=e455]: RP
+                - generic [ref=e457]: LOW_INJURY_RISK
+              - generic [ref=e458]:
+                - paragraph [ref=e459]: Need Score
+                - generic [ref=e463]: "3.56"
+            - generic [ref=e464]:
+              - generic [ref=e465]:
+                - generic [ref=e466]:
+                  - paragraph [ref=e467]: Kyle Hurt
+                  - generic [ref=e468]:
+                    - img [ref=e469]
+                    - text: HOT
+                - generic [ref=e471]:
+                  - generic [ref=e472]: LAD
+                  - generic [ref=e473]: 0% owned
+                  - generic [ref=e474]: RP
+                - generic [ref=e476]: LOW_INJURY_RISK
+              - generic [ref=e477]:
+                - paragraph [ref=e478]: Need Score
+                - generic [ref=e482]: "3.11"
+            - generic [ref=e483]:
+              - generic [ref=e484]:
+                - generic [ref=e485]:
+                  - paragraph [ref=e486]: Juan Morillo
+                  - generic [ref=e487]:
+                    - img [ref=e488]
+                    - text: HOT
+                - generic [ref=e490]:
+                  - generic [ref=e491]: AZ
+                  - generic [ref=e492]: 0% owned
+                  - generic [ref=e493]: RP
+                - generic [ref=e495]: LOW_INJURY_RISK
+              - generic [ref=e496]:
+                - paragraph [ref=e497]: Need Score
+                - generic [ref=e501]: "2.93"
+            - generic [ref=e502]:
+              - generic [ref=e503]:
+                - generic [ref=e504]:
+                  - paragraph [ref=e505]: Brant Hurter
+                  - generic [ref=e506]:
+                    - img [ref=e507]
+                    - text: HOT
+                - generic [ref=e509]:
+                  - generic [ref=e510]: DET
+                  - generic [ref=e511]: 0% owned
+                  - generic [ref=e512]: SP
+                - generic [ref=e514]: LOW_INJURY_RISK
+              - generic [ref=e515]:
+                - paragraph [ref=e516]: Need Score
+                - generic [ref=e520]: "2.69"
+            - generic [ref=e521]:
+              - generic [ref=e522]:
+                - generic [ref=e523]:
+                  - paragraph [ref=e524]: Bryan Hudson
+                  - generic [ref=e525]:
+                    - img [ref=e526]
+                    - text: HOT
+                - generic [ref=e528]:
+                  - generic [ref=e529]: CWS
+                  - generic [ref=e530]: 0% owned
+                  - generic [ref=e531]: RP
+                - generic [ref=e533]: LOW_INJURY_RISK
+              - generic [ref=e534]:
+                - paragraph [ref=e535]: Need Score
+                - generic [ref=e539]: "2.49"
+            - generic [ref=e540]:
+              - generic [ref=e541]:
+                - generic [ref=e542]:
+                  - paragraph [ref=e543]: Daniel Lynch IV
+                  - generic [ref=e544]:
+                    - img [ref=e545]
+                    - text: HOT
+                - generic [ref=e547]:
+                  - generic [ref=e548]: KC
+                  - generic [ref=e549]: 0% owned
+                  - generic [ref=e550]: RP
+                - generic [ref=e552]: LOW_INJURY_RISK
+              - generic [ref=e553]:
+                - paragraph [ref=e554]: Need Score
+                - generic [ref=e558]: "2.46"
+            - generic [ref=e559]:
+              - generic [ref=e560]:
+                - generic [ref=e561]:
+                  - paragraph [ref=e562]: Brandyn Garcia
+                  - generic [ref=e563]:
+                    - img [ref=e564]
+                    - text: HOT
+                - generic [ref=e566]:
+                  - generic [ref=e567]: AZ
+                  - generic [ref=e568]: 0% owned
+                  - generic [ref=e569]: RP
+                - generic [ref=e571]: LOW_INJURY_RISK
+              - generic [ref=e572]:
+                - paragraph [ref=e573]: Need Score
+                - generic [ref=e577]: "2.28"
+            - generic [ref=e578]:
+              - generic [ref=e579]:
+                - generic [ref=e580]:
+                  - paragraph [ref=e581]: Didier Fuentes
+                  - generic [ref=e582]:
+                    - img [ref=e583]
+                    - text: HOT
+                - generic [ref=e585]:
+                  - generic [ref=e586]: ATL
+                  - generic [ref=e587]: 0% owned
+                  - generic [ref=e588]: SP
+                - generic [ref=e590]: LOW_INJURY_RISK
+              - generic [ref=e591]:
+                - paragraph [ref=e592]: Need Score
+                - generic [ref=e596]: "2.28"
+            - generic [ref=e597]:
+              - generic [ref=e598]:
+                - generic [ref=e599]:
+                  - paragraph [ref=e600]: Lake Bachar
+                  - generic [ref=e601]:
+                    - img [ref=e602]
+                    - text: HOT
+                - generic [ref=e604]:
+                  - generic [ref=e605]: MIA
+                  - generic [ref=e606]: 0% owned
+                  - generic [ref=e607]: RP
+                - generic [ref=e609]: LOW_INJURY_RISK
+              - generic [ref=e610]:
+                - paragraph [ref=e611]: Need Score
+                - generic [ref=e615]: "2.17"
+            - generic [ref=e616]:
+              - generic [ref=e617]:
+                - generic [ref=e618]:
+                  - paragraph [ref=e619]: Colin Holderman
+                  - generic [ref=e620]:
+                    - img [ref=e621]
+                    - text: HOT
+                - generic [ref=e623]:
+                  - generic [ref=e624]: CLE
+                  - generic [ref=e625]: 0% owned
+                  - generic [ref=e626]: RP
+                - generic [ref=e628]: LOW_INJURY_RISK
+              - generic [ref=e629]:
+                - paragraph [ref=e630]: Need Score
+                - generic [ref=e634]: "2.14"
+            - generic [ref=e635]:
+              - generic [ref=e636]:
+                - generic [ref=e637]:
+                  - paragraph [ref=e638]: Antonio Senzatela
+                  - generic [ref=e639]:
+                    - img [ref=e640]
+                    - text: HOT
+                - generic [ref=e642]:
+                  - generic [ref=e643]: COL
+                  - generic [ref=e644]: 0% owned
+                  - generic [ref=e645]: SP
+                - generic [ref=e647]: LOW_INJURY_RISK
+              - generic [ref=e648]:
+                - paragraph [ref=e649]: Need Score
+                - generic [ref=e653]: "1.55"
+            - generic [ref=e654]:
+              - generic [ref=e655]:
+                - paragraph [ref=e657]: Tyler Samaniego
+                - generic [ref=e658]:
+                  - generic [ref=e659]: BOS
+                  - generic [ref=e660]: 0% owned
+                  - generic [ref=e661]: RP
+                - generic [ref=e663]: LOW_INJURY_RISK
+              - generic [ref=e664]:
+                - paragraph [ref=e665]: Need Score
+                - generic [ref=e669]: "1.49"
+            - generic [ref=e670]:
+              - generic [ref=e671]:
+                - paragraph [ref=e673]: John King
+                - generic [ref=e674]:
+                  - generic [ref=e675]: MIA
+                  - generic [ref=e676]: 0% owned
+                  - generic [ref=e677]: RP
+                - generic [ref=e679]: LOW_INJURY_RISK
+              - generic [ref=e680]:
+                - paragraph [ref=e681]: Need Score
+                - generic [ref=e685]: "1.38"
+            - generic [ref=e686]:
+              - generic [ref=e687]:
+                - paragraph [ref=e689]: Brayan Rocchio
+                - generic [ref=e690]:
+                  - generic [ref=e691]: CLE
+                  - generic [ref=e692]: 0% owned
+                  - generic [ref=e693]: 2B
+                - generic [ref=e695]: BUY_LOW
+              - generic [ref=e696]:
+                - paragraph [ref=e697]: Need Score
+                - generic [ref=e700]: "-0.17"

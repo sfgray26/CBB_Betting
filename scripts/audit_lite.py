@@ -1,4 +1,4 @@
-
+import traceback
 import sys
 import os
 # Add the project root to the path so we can import our services
@@ -32,3 +32,4 @@ try:
 
 except Exception as e:
     print(f"Audit failed: {str(e)}")
+    traceback.print_exc()

@@ -172,7 +172,20 @@
       "Bash(timeout 3)",
       "Bash(set)",
       "Bash(findstr API_KEY)",
-      "Bash(psql *)"
+      "Bash(psql *)",
+      "Bash(timeout 30 bash *)",
+      "Bash(railway psql *)",
+      "Bash(railway connect *)",
+      "Bash(Get-Content \"C:\\\\Users\\\\sfgra\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-sfgra-repos-Fixed-cbb-edge\\\\67bdc46f-11cc-4c53-a9ae-87af88be18b8\\\\tasks\\\\b6kjl4qdx.output\")",
+      "Bash(Select-Object -Last 10)",
+      "Bash(Get-ChildItem *)",
+      "Bash(findstr -i script)",
+      "mcp__plugin_playwright_playwright__browser_type",
+      "mcp__plugin_playwright_playwright__browser_fill_form",
+      "mcp__plugin_playwright_playwright__browser_snapshot",
+      "mcp__plugin_playwright_playwright__browser_take_screenshot",
+      "mcp__plugin_playwright_playwright__browser_wait_for",
+      "mcp__plugin_playwright_playwright__browser_evaluate"
     ]
   },
   "enabledPlugins": {}
