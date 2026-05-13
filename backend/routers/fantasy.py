@@ -98,6 +98,14 @@ router = APIRouter()
 # Module-level MLB probable-starts cache (shared state — same pattern as main.py)
 _STARTS_CACHE: dict = {}
 
+# Matchup response cache — 5-minute TTL matches frontend refetchInterval (5 * 60_000 ms).
+# Stores fully assembled MatchupResponse so all 3 sequential Yahoo calls are skipped on hit.
+_MATCHUP_CACHE: dict = {}
+_MATCHUP_CACHE_TTL = 300  # seconds
+
+# League settings (stat ID map) — 2-hour TTL; never changes mid-season.
+_LEAGUE_SETTINGS_CACHE: dict = {}
+
 
 def _fetch_probable_starts_map(start_date: str, end_date: str) -> dict:
     """Return {pitcher_full_name_lower: starts_count} via public MLB Stats API (6h cached).
@@ -3565,6 +3573,14 @@ async def get_player_valuations(
 @router.get("/api/fantasy/matchup", response_model=MatchupResponse)
 async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
     """Return current week's matchup: opponent name + category-by-category breakdown."""
+    import time as _time
+
+    # Fast path: return cached response if fresh
+    _cached = _MATCHUP_CACHE.get(user)
+    if _cached and (_time.monotonic() - _cached["built_at"]) < _MATCHUP_CACHE_TTL:
+        logger.debug("Matchup: cache hit (age=%.0fs)", _time.monotonic() - _cached["built_at"])
+        return _cached["data"]
+
     try:
         client = get_yahoo_client()
     except YahooAuthError as exc:
@@ -3586,44 +3602,57 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
 
     stat_id_map: dict = dict(_YAHOO_STAT_FALLBACK)
     active_stat_abbrs: set = set()
-    try:
-        settings = client.get_league_settings()
-        stat_cats = (
-            settings
-            .get("settings", [{}])[0]
-            .get("stat_categories", {})
-            .get("stats", [])
-        )
-        _stat_entries: list = []
-        for entry in stat_cats:
-            if isinstance(entry, dict):
-                s = entry.get("stat", {})
-                sid = str(s.get("stat_id", ""))
-                abbr = s.get("display_name") or s.get("abbreviation") or s.get("name") or sid
-                pos_type = s.get("position_type", "")
-                is_display = bool(s.get("is_only_display_stat", 0))
-                if sid:
-                    _stat_entries.append((sid, abbr, pos_type, is_display))
 
-        _abbr_positions: dict = {}
-        for sid, abbr, pos_type, _ in _stat_entries:
-            _abbr_positions.setdefault(abbr, set()).add(pos_type)
+    # League settings cache (2-hour TTL) — stat ID map never changes mid-season
+    _ls_cached = _LEAGUE_SETTINGS_CACHE.get("entry")
+    if _ls_cached and (_time.monotonic() - _ls_cached["built_at"]) < 7200:
+        stat_id_map = _ls_cached["stat_id_map"]
+        active_stat_abbrs = _ls_cached["active_stat_abbrs"]
+    else:
+        try:
+            settings = client.get_league_settings()
+            stat_cats = (
+                settings
+                .get("settings", [{}])[0]
+                .get("stat_categories", {})
+                .get("stats", [])
+            )
+            _stat_entries: list = []
+            for entry in stat_cats:
+                if isinstance(entry, dict):
+                    s = entry.get("stat", {})
+                    sid = str(s.get("stat_id", ""))
+                    abbr = s.get("display_name") or s.get("abbreviation") or s.get("name") or sid
+                    pos_type = s.get("position_type", "")
+                    is_display = bool(s.get("is_only_display_stat", 0))
+                    if sid:
+                        _stat_entries.append((sid, abbr, pos_type, is_display))
 
-        _PITCHER_RENAME = {"HR": "HR_P", "K": "K_P"}
-        _BATTER_RENAME = {"K": "K_B", "HR": "HR_B"}
+            _abbr_positions: dict = {}
+            for sid, abbr, pos_type, _ in _stat_entries:
+                _abbr_positions.setdefault(abbr, set()).add(pos_type)
 
-        for sid, abbr, pos_type, is_display in _stat_entries:
-            final_abbr = abbr
-            if len(_abbr_positions.get(abbr, set())) > 1:
-                if pos_type == "P" and abbr in _PITCHER_RENAME:
-                    final_abbr = _PITCHER_RENAME[abbr]
-                elif pos_type == "B" and abbr in _BATTER_RENAME:
-                    final_abbr = _BATTER_RENAME[abbr]
-            stat_id_map[sid] = final_abbr
-            if not is_display:
-                active_stat_abbrs.add(final_abbr)
-    except Exception as _e:
-        logger.warning("get_league_settings failed, using fallback stat_id_map: %s", _e)
+            _PITCHER_RENAME = {"HR": "HR_P", "K": "K_P"}
+            _BATTER_RENAME = {"K": "K_B", "HR": "HR_B"}
+
+            for sid, abbr, pos_type, is_display in _stat_entries:
+                final_abbr = abbr
+                if len(_abbr_positions.get(abbr, set())) > 1:
+                    if pos_type == "P" and abbr in _PITCHER_RENAME:
+                        final_abbr = _PITCHER_RENAME[abbr]
+                    elif pos_type == "B" and abbr in _BATTER_RENAME:
+                        final_abbr = _BATTER_RENAME[abbr]
+                stat_id_map[sid] = final_abbr
+                if not is_display:
+                    active_stat_abbrs.add(final_abbr)
+
+            _LEAGUE_SETTINGS_CACHE["entry"] = {
+                "stat_id_map": stat_id_map,
+                "active_stat_abbrs": active_stat_abbrs,
+                "built_at": _time.monotonic(),
+            }
+        except Exception as _e:
+            logger.warning("get_league_settings failed, using fallback stat_id_map: %s", _e)
 
     if not active_stat_abbrs and SCORING_CATEGORY_CODES:
         active_stat_abbrs = set(SCORING_CATEGORY_CODES)
@@ -3769,7 +3798,7 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         my_stats = _filter_stats(my_entry[2])
         opp_stats = _filter_stats(opp_entry[2])
 
-        return MatchupResponse(
+        _result = MatchupResponse(
             week=week,
             my_team=MatchupTeamOut(
                 team_key=my_entry[0],
@@ -3783,6 +3812,8 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
             ),
             is_playoffs=is_playoffs,
         )
+        _MATCHUP_CACHE[user] = {"data": _result, "built_at": _time.monotonic()}
+        return _result
 
     return MatchupResponse(week=week, my_team=_stub_my, opponent=_stub_opp, message="Your team was not found in the current week's matchup.")
 

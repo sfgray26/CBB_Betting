@@ -6,6 +6,7 @@ import { endpoints } from '@/lib/api'
 import { Loader2, AlertCircle, Swords, Play } from 'lucide-react'
 import { MatchupHeader } from '@/components/war-room/matchup-header'
 import { CategoryBattlefield } from '@/components/war-room/category-battlefield'
+import { MatchupSkeleton } from '@/components/war-room/matchup-skeleton'
 import type { MatchupSimulateResponse } from '@/lib/types'
 
 export default function WarRoomPage() {
@@ -37,11 +38,8 @@ export default function WarRoomPage() {
 
   if (matchup.isLoading) {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="flex items-center gap-3 text-[#7D7D7D]">
-          <Loader2 className="h-6 w-6 animate-spin" />
-          <span className="text-base tracking-widest uppercase">Loading matchup...</span>
-        </div>
+      <div className="min-h-screen bg-black">
+        <MatchupSkeleton />
       </div>
     )
   }

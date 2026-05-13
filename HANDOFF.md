@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-05-13 | **Architect:** Claude Code (Master Architect)
-> **Branch:** `stable/cbb-prod` | **HEAD:** 72ff2c3 (Player coverage fix — name-based fallback + bridge job)
+> **Branch:** `stable/cbb-prod` | **HEAD:** pending commit (matchup cache + loading skeleton)
 > **Deploy:** `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}` (d319beb live on Railway)
 
 ---
@@ -40,6 +40,23 @@
 | Ownership always 0% | `get_free_agents` fetched from `league/{lk}/players` without `out=ownership` (Yahoo 400). Secondary batch call to `players;player_keys/ownership` needed | `yahoo_client_resilient.py`. Commit 425f9d6 |
 | Simulate roster fetch unhandled exception | `_fetch_rosters_for_simulate` called outside try/except — Yahoo auth error would bypass CORS middleware | Added try/except around roster fetch in `simulate_matchup`. Commit ff2c8b9 |
 | K-1 P0 streaming/dashboard/lineup 422 | All three verified RESOLVED by prior session's code (A-7 streaming fix, dashboard page rewrite, FastAPI static-route priority) | No code change needed |
+
+---
+
+## Phase 3b Fixes (2026-05-13 — waiver performance)
+
+| Fix | Bug | Patch |
+|-----|-----|-------|
+| Projection name-map TTL cache | `_lookup_projection_by_name` scanned all 9,686 `player_projections` rows on every call — 25-50 full table scans per waiver request | Added `_get_proj_name_map(db)` with 1800 s TTL in `player_board.py`. Cache stores `_ProjectionEntry` namedtuples (not ORM rows). `_lookup_projection_by_name` now O(1) on cache hit. Commit pending |
+
+---
+
+## Phase 3c Fixes (2026-05-13 — matchup performance/UI)
+
+| Fix | Bug | Patch |
+|-----|-----|-------|
+| Matchup endpoint TTL cache | `/api/fantasy/matchup` performs multiple Yahoo calls per page load; repeated refreshes were slow and quota-heavy | Added 5-minute per-user `_MATCHUP_CACHE` and 2-hour league-settings cache in `backend/routers/fantasy.py` |
+| War Room loading skeleton | Loading state was a centered spinner with no layout context | Added `MatchupSkeleton` and wired it into `/war-room` loading state |
 
 ---
 
