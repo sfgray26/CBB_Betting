@@ -3,7 +3,7 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
-import type { RosterPlayer, RosterMoveResponse, RosterOptimizeResponse, BudgetData } from '@/lib/types'
+import type { RosterPlayer, RosterMoveResponse, RosterOptimizeResponse, BudgetData, ScoreboardResponse } from '@/lib/types'
 import {
   Users,
   Loader2,
@@ -19,8 +19,8 @@ import {
   CalendarOff,
   AlertTriangle,
   X,
-  DollarSign,
   Gauge,
+  Swords,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -185,6 +185,8 @@ function BudgetPanel({ budget }: { budget: BudgetData }) {
     : budget.ip_pace === 'AHEAD'
       ? 'text-emerald-400'
       : 'text-amber-400'
+  const movesLeft = budget.acquisition_limit - budget.acquisitions_used
+  const movesWarning = budget.acquisition_warning || movesLeft <= 1
 
   return (
     <div className="bg-[#202020] rounded-lg p-4">
@@ -194,42 +196,30 @@ function BudgetPanel({ budget }: { budget: BudgetData }) {
           Constraints
         </p>
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {/* FAAB */}
+      <div className="grid grid-cols-3 gap-4">
+        {/* Weekly Moves */}
         <div>
-          <div className="flex items-center gap-1 mb-1">
-            <DollarSign className="h-3 w-3 text-[#7D7D7D]" />
-            <p className="text-[9px] text-[#494949] uppercase tracking-wider">FAAB</p>
-          </div>
-          <p className={cn(
-            'text-sm font-bold tabular-nums',
-            budget.acquisition_warning ? 'text-amber-400' : 'text-white',
-          )}>
-            ${budget.acquisitions_remaining}
-            <span className="text-[10px] text-[#494949] font-normal ml-1">remaining</span>
-          </p>
-        </div>
-
-        {/* Acquisitions */}
-        <div>
-          <p className="text-[9px] text-[#494949] uppercase tracking-wider mb-1">Acquisitions</p>
-          <div className="flex items-center gap-1.5">
+          <p className="text-[9px] text-[#494949] uppercase tracking-wider mb-1">Weekly Moves</p>
+          <div className="flex items-center gap-1.5 mb-1">
             <div className="flex-1 h-1.5 bg-[#2A2A2A] rounded-full overflow-hidden">
               <div
                 className={cn('h-full rounded-full', acqPct >= 80 ? 'bg-rose-500' : acqPct >= 60 ? 'bg-amber-400' : 'bg-emerald-500')}
                 style={{ width: `${acqPct}%` }}
               />
             </div>
-            <span className={cn('text-xs font-bold tabular-nums', budget.acquisition_warning ? 'text-amber-400' : 'text-white')}>
+            <span className={cn('text-xs font-bold tabular-nums', movesWarning ? 'text-amber-400' : 'text-white')}>
               {budget.acquisitions_used}/{budget.acquisition_limit}
             </span>
           </div>
+          <p className={cn('text-[10px]', movesWarning ? 'text-amber-400 font-semibold' : 'text-[#494949]')}>
+            {movesLeft} remaining
+          </p>
         </div>
 
         {/* IP Pace */}
         <div>
           <p className="text-[9px] text-[#494949] uppercase tracking-wider mb-1">IP Pace</p>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 mb-1">
             <div className="flex-1 h-1.5 bg-[#2A2A2A] rounded-full overflow-hidden">
               <div
                 className="h-full rounded-full bg-blue-500"
@@ -240,6 +230,9 @@ function BudgetPanel({ budget }: { budget: BudgetData }) {
               {budget.ip_pace}
             </span>
           </div>
+          <p className="text-[10px] text-[#494949]">
+            {budget.ip_accumulated.toFixed(1)} / {budget.ip_minimum} IP
+          </p>
         </div>
 
         {/* IL */}
@@ -247,12 +240,12 @@ function BudgetPanel({ budget }: { budget: BudgetData }) {
           <p className="text-[9px] text-[#494949] uppercase tracking-wider mb-1">IL Slots</p>
           <p className="text-sm font-bold text-white tabular-nums">
             {budget.il_used}<span className="text-[#494949] font-normal">/{budget.il_total}</span>
-            {budget.il_used < budget.il_total && (
-              <span className="text-[10px] text-emerald-400 font-semibold ml-1">
-                {budget.il_total - budget.il_used} open
-              </span>
-            )}
           </p>
+          {budget.il_used < budget.il_total && (
+            <p className="text-[10px] text-emerald-400 font-semibold mt-0.5">
+              {budget.il_total - budget.il_used} open
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -260,17 +253,93 @@ function BudgetPanel({ budget }: { budget: BudgetData }) {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Category Summary (active starters only, rate stats computed where possible)
+// Category Summary — raw stats for actual windows; z-score edge for RoS
 // ───────────────────────────────────────────────────────────────────────────
 
 function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewMode: ViewMode }) {
-  // Only sum players not on IL or benched (use current_slot as signal; fall back to status)
   const activePlayers = players.filter((p) => {
     const slot = p.current_slot?.toUpperCase()
     if (slot === 'BN' || slot === 'IL' || slot === 'IL60') return false
     return p.status !== 'IL'
   })
 
+  // ── RoS mode: cat_scores are z-scores (DB: "Dict of category -> z-score")
+  // Sum counting-cat z-scores across starters; average rate-cat z-scores.
+  // Positive = above league average (strength), negative = weakness.
+  if (viewMode === 'ros') {
+    const zSums: Record<string, number[]> = {}
+    const RATE_CATS = new Set(['AVG', 'OPS', 'ERA', 'WHIP', 'K_9'])
+    for (const player of activePlayers) {
+      const vals = player.ros_projection?.values
+      if (!vals) continue
+      for (const [key, val] of Object.entries(vals)) {
+        if (val === null || val === undefined) continue
+        if (!zSums[key]) zSums[key] = []
+        zSums[key].push(val)
+      }
+    }
+    const allCats = [...BATTER_DISPLAY, ...PITCHER_DISPLAY]
+    const hasAnyZ = allCats.some((cat) => (zSums[cat]?.length ?? 0) > 0)
+    if (!hasAnyZ) {
+      return (
+        <div className="bg-[#202020] rounded-lg p-4 text-center">
+          <p className="text-xs text-[#494949]">No RoS projections available for active starters.</p>
+        </div>
+      )
+    }
+    return (
+      <div className="bg-[#202020] rounded-lg p-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-3.5 w-3.5 text-[#FFC000]" />
+            <p className="text-xs font-semibold tracking-widest uppercase text-[#FFC000]">
+              Projected Team Edge
+            </p>
+          </div>
+          <p className="text-[9px] text-[#494949]">
+            Z-scores vs. league avg · green = strength · red = weakness
+          </p>
+        </div>
+        <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-9 gap-3">
+          {allCats.map((cat) => {
+            const vals = zSums[cat]
+            if (!vals || vals.length === 0) return (
+              <div key={cat} className="text-center">
+                <p className="text-[10px] text-[#494949] uppercase tracking-wider">{formatCat(cat)}</p>
+                <p className="text-sm font-bold text-[#2A2A2A]">–</p>
+              </div>
+            )
+            // Rate cats: average z; counting cats: sum z
+            const z = RATE_CATS.has(cat)
+              ? vals.reduce((a, b) => a + b, 0) / vals.length
+              : vals.reduce((a, b) => a + b, 0)
+            const color = z >= 1.5
+              ? 'text-emerald-400'
+              : z >= 0.3
+                ? 'text-emerald-600'
+                : z <= -1.5
+                  ? 'text-rose-400'
+                  : z <= -0.3
+                    ? 'text-rose-600'
+                    : 'text-[#7D7D7D]'
+            return (
+              <div key={cat} className="text-center">
+                <p className="text-[10px] text-[#494949] uppercase tracking-wider">{formatCat(cat)}</p>
+                <p className={cn('text-sm font-bold tabular-nums', color)}>
+                  {z > 0 ? '+' : ''}{z.toFixed(1)}
+                </p>
+              </div>
+            )
+          })}
+        </div>
+        <p className="text-[9px] text-[#494949] mt-2">
+          Counting cats: sum of player z-scores · Rate cats: avg z-score of starters
+        </p>
+      </div>
+    )
+  }
+
+  // ── Actual stat windows (Season / 7D / 14D / 30D)
   const totals: Record<string, number> = {}
   for (const player of activePlayers) {
     const vals = getStatWindow(player, viewMode)
@@ -285,12 +354,11 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
     }
   }
 
-  // Approximate weighted AVG: median of individual averages (true weighted needs H+AB which aren't exposed)
   const avgValues = activePlayers
     .map((p) => getStatWindow(p, viewMode)?.['AVG'])
     .filter((v): v is number => v != null && v > 0)
   const medianAvg = avgValues.length > 0
-    ? avgValues.sort((a, b) => a - b)[Math.floor(avgValues.length / 2)]
+    ? [...avgValues].sort((a, b) => a - b)[Math.floor(avgValues.length / 2)]
     : null
 
   const eraValues = activePlayers
@@ -301,7 +369,7 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
     })
     .filter((v): v is number => v != null && v > 0)
   const medianEra = eraValues.length > 0
-    ? eraValues.sort((a, b) => a - b)[Math.floor(eraValues.length / 2)]
+    ? [...eraValues].sort((a, b) => a - b)[Math.floor(eraValues.length / 2)]
     : null
 
   const whipValues = activePlayers
@@ -312,7 +380,7 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
     })
     .filter((v): v is number => v != null && v > 0)
   const medianWhip = whipValues.length > 0
-    ? whipValues.sort((a, b) => a - b)[Math.floor(whipValues.length / 2)]
+    ? [...whipValues].sort((a, b) => a - b)[Math.floor(whipValues.length / 2)]
     : null
 
   const opsValues = activePlayers
@@ -323,7 +391,7 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
     })
     .filter((v): v is number => v != null && v > 0)
   const medianOps = opsValues.length > 0
-    ? opsValues.sort((a, b) => a - b)[Math.floor(opsValues.length / 2)]
+    ? [...opsValues].sort((a, b) => a - b)[Math.floor(opsValues.length / 2)]
     : null
 
   const k9Values = activePlayers
@@ -334,7 +402,7 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
     })
     .filter((v): v is number => v != null && v > 0)
   const medianK9 = k9Values.length > 0
-    ? k9Values.sort((a, b) => a - b)[Math.floor(k9Values.length / 2)]
+    ? [...k9Values].sort((a, b) => a - b)[Math.floor(k9Values.length / 2)]
     : null
 
   const allCats = [...BATTER_DISPLAY, ...PITCHER_DISPLAY]
@@ -373,6 +441,98 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Matchup Strip — current week category-by-category vs opponent
+// ───────────────────────────────────────────────────────────────────────────
+
+function statusToLabel(status: string | null): 'W' | 'L' | 'T' {
+  if (!status) return 'T'
+  if (status.includes('win')) return 'W'
+  if (status.includes('loss')) return 'L'
+  return 'T'
+}
+
+function MatchupStrip({ scoreboard }: { scoreboard: ScoreboardResponse }) {
+  const { opponent_name, categories_won, categories_lost, categories_tied, overall_win_probability, rows } = scoreboard
+  const winPct = overall_win_probability != null ? Math.round(overall_win_probability * 100) : null
+
+  return (
+    <div className="bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg p-4">
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div className="flex items-center gap-2">
+          <Swords className="h-3.5 w-3.5 text-[#FFC000]" />
+          <p className="text-xs font-semibold tracking-widest uppercase text-[#7D7D7D]">
+            This Week · vs {opponent_name}
+          </p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-bold text-emerald-400">{categories_won}W</span>
+            <span className="text-[10px] text-[#494949]">·</span>
+            <span className="text-xs font-bold text-rose-400">{categories_lost}L</span>
+            <span className="text-[10px] text-[#494949]">·</span>
+            <span className="text-xs font-bold text-amber-400">{categories_tied}T</span>
+          </div>
+          {winPct != null && (
+            <span className={cn(
+              'text-[10px] font-semibold px-2 py-0.5 rounded border',
+              winPct >= 65 ? 'text-emerald-400 border-emerald-800/40 bg-emerald-900/20' :
+              winPct <= 35 ? 'text-rose-400 border-rose-800/40 bg-rose-900/20' :
+              'text-amber-400 border-amber-800/40 bg-amber-900/20',
+            )}>
+              {winPct}% win prob
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Category grid */}
+      <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-9 gap-2">
+        {rows.map((row) => {
+          const outcome = statusToLabel(row.status)
+          const my = row.my_current
+          const opp = row.opp_current
+          const lower = row.is_lower_better
+          const fmtStat = (v: number | null) => {
+            if (v === null || v === undefined) return '–'
+            if (['AVG', 'OPS'].includes(row.category)) return v.toFixed(3).replace(/^0\./, '.')
+            if (['ERA', 'WHIP'].includes(row.category)) return v.toFixed(2)
+            return Math.round(v).toString()
+          }
+          const outcomeBg = outcome === 'W'
+            ? 'bg-emerald-900/30 border-emerald-800/40'
+            : outcome === 'L'
+              ? 'bg-rose-900/30 border-rose-800/40'
+              : 'bg-amber-900/20 border-amber-800/30'
+          const outcomeText = outcome === 'W' ? 'text-emerald-400' : outcome === 'L' ? 'text-rose-400' : 'text-amber-400'
+
+          // Flip logic for lower-is-better cats so red always = bad for me
+          const myStr = fmtStat(my)
+          const oppStr = fmtStat(opp)
+          const myIsAhead = my !== null && opp !== null && (lower ? my < opp : my > opp)
+
+          return (
+            <div key={row.category} className={cn('rounded p-1.5 border text-center', outcomeBg)}>
+              <p className="text-[9px] text-[#7D7D7D] uppercase tracking-wider leading-none mb-1">
+                {row.category_label || formatCat(row.category)}
+              </p>
+              <div className={cn('text-[10px] font-bold leading-none', outcomeText)}>
+                {outcome}
+              </div>
+              <p className="text-[9px] text-[#494949] leading-none mt-1">
+                <span className={myIsAhead ? 'text-white' : ''}>{myStr}</span>
+                <span className="mx-0.5 text-[#2A2A2A]">·</span>
+                {oppStr}
+              </p>
+            </div>
+          )
+        })}
+      </div>
+      <p className="text-[9px] text-[#494949] mt-2">Me · Opponent · W/L based on current stats</p>
     </div>
   )
 }
@@ -588,6 +748,13 @@ export default function RosterPage() {
     staleTime: 10 * 60_000,
   })
 
+  const scoreboard = useQuery({
+    queryKey: ['scoreboard'],
+    queryFn: endpoints.getScoreboard,
+    staleTime: 5 * 60_000,
+    retry: 1,
+  })
+
   const moveMutation = useMutation({
     mutationFn: ({ playerId, toSlot }: { playerId: string; toSlot: string }) =>
       endpoints.movePlayer(playerId, '', toSlot),
@@ -770,6 +937,9 @@ export default function RosterPage() {
 
       {/* Budget panel */}
       {budget.data && <BudgetPanel budget={budget.data.budget} />}
+
+      {/* Matchup context strip */}
+      {scoreboard.data && <MatchupStrip scoreboard={scoreboard.data} />}
 
       {/* Category summary */}
       <CategorySummary players={data.players} viewMode={viewMode} />

@@ -32,6 +32,7 @@ import type {
   WaiverResponse,
   CanonicalProjectionsResponse,
   BudgetResponse,
+  ScoreboardResponse,
   RosterResponse,
   RosterMoveResponse,
   RosterOptimizeResponse,
@@ -320,6 +321,9 @@ export const endpoints = {
 
   getBudget: () =>
     apiFetch<BudgetResponse>('/api/fantasy/budget'),
+
+  getScoreboard: () =>
+    apiFetch<ScoreboardResponse>('/api/fantasy/scoreboard'),
 
   // ─────────────────────────────────────────────────────────────────────────
   // Roster management

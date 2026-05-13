@@ -48,17 +48,43 @@ def count_weekly_acquisitions(
         if txn.get("type") not in ("add", "add/drop"):
             continue
 
-        # Filter to my team (destination team)
-        # Yahoo transaction structure: destination_team_key may be at top level or nested
-        dest_team = txn.get("destination_team_key") or txn.get("destination_team", {}).get("team_key")
-        if dest_team != my_team_key:
+        # Coerce timestamp — Yahoo returns timestamps as strings, not ints
+        raw_ts = txn.get("timestamp")
+        if raw_ts is None:
+            continue
+        try:
+            ts_float = float(raw_ts)
+        except (TypeError, ValueError):
             continue
 
-        # Filter to week window
-        timestamp = txn.get("timestamp")
-        if timestamp is None:
+        if not (week_start_ts <= ts_float <= week_end_ts):
             continue
-        if week_start_ts <= timestamp <= week_end_ts:
+
+        # Check destination team — try multiple structural paths Yahoo uses
+        dest_team = (
+            txn.get("destination_team_key")
+            or txn.get("destination_team", {}).get("team_key")
+        )
+
+        # Fallback: walk transaction_data list for player-level destination
+        if not dest_team:
+            txn_data = txn.get("transaction_data") or txn.get("players") or []
+            if isinstance(txn_data, list):
+                for item in txn_data:
+                    if not isinstance(item, dict):
+                        continue
+                    for _v in item.values():
+                        if isinstance(_v, dict):
+                            dest_team = (
+                                _v.get("destination_team_key")
+                                or _v.get("destination_team", {}).get("team_key")
+                            )
+                            if dest_team:
+                                break
+                    if dest_team:
+                        break
+
+        if dest_team == my_team_key:
             count += 1
 
     return count

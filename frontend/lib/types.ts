@@ -515,6 +515,44 @@ export interface BudgetResponse {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Matchup Scoreboard (category-by-category comparison)
+// ---------------------------------------------------------------------------
+
+export type CategoryStatusTag =
+  | 'locked_win'
+  | 'leaning_win'
+  | 'bubble'
+  | 'leaning_loss'
+  | 'locked_loss'
+
+export interface ScoreboardRow {
+  category: string
+  category_label: string
+  is_lower_better: boolean
+  is_batting: boolean
+  my_current: number | null
+  opp_current: number | null
+  current_margin: number | null
+  my_projected_final: number | null
+  opp_projected_final: number | null
+  projected_margin: number | null
+  status: CategoryStatusTag | null
+  flip_probability: number | null
+  delta_to_flip: number | null
+}
+
+export interface ScoreboardResponse {
+  week: number
+  opponent_name: string
+  categories_won: number
+  categories_lost: number
+  categories_tied: number
+  overall_win_probability: number | null
+  rows: ScoreboardRow[]
+  budget: BudgetData
+}
+
 export interface CanonicalProjectionsResponse {
   players: Array<{
     player_id: string

@@ -1831,9 +1831,9 @@ async def get_fantasy_waiver_recommendations(
             if not scores:
                 return None
             avg = sum(scores) / len(scores)
-            if avg > 0.4:
+            if avg > 0.75:
                 return "HOT"
-            if avg < -0.3:
+            if avg < -0.5:
                 return "COLD"
             return None
 
@@ -2343,7 +2343,7 @@ async def get_waiver_recommendations(
                     _contribs = {k: float(v) for k, v in cat_scores.items() if isinstance(v, (int, float))}
                     if _contribs:
                         _avg = sum(_contribs.values()) / len(_contribs)
-                        _hc = "HOT" if _avg > 0.4 else ("COLD" if _avg < -0.3 else None)
+                        _hc = "HOT" if _avg > 0.75 else ("COLD" if _avg < -0.5 else None)
                 except Exception:
                     pass
 
@@ -5595,14 +5595,21 @@ async def get_constraint_budget(
     # 2. Count acquisitions since Monday 00:00 ET (Yahoo matchup week start)
     try:
         transactions = client.get_transactions(t_type="add")
+        logger.info("budget: fetched %d transactions from Yahoo", len(transactions))
+        if transactions:
+            logger.debug("budget: sample txn[0] keys=%s type=%s ts=%s",
+                         list(transactions[0].keys()),
+                         transactions[0].get("type"),
+                         transactions[0].get("timestamp"))
         days_since_monday = now_et.weekday()  # Monday=0
         week_start = now_et.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days_since_monday)
         week_end = now_et
         acquisitions_used = count_weekly_acquisitions(
             transactions, team_key, week_start, week_end
         )
-    except Exception:
-        pass  # Fall back to 0 — catches YahooAuthError, YahooAPIError, TypeError
+        logger.info("budget: acquisitions_used=%d (week %s–%s)", acquisitions_used, week_start.date(), week_end.date())
+    except Exception as _acq_err:
+        logger.warning("budget: acquisitions count failed: %s", _acq_err, exc_info=True)
 
     # 3. IP tracking - wired to Yahoo matchup stats (A-6 fix)
     ip_accumulated = 0.0
