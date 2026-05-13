@@ -23,6 +23,7 @@ from backend.fantasy_baseball.category_aware_scorer import (
     PlayerCategoryImpactVector,
     marginal_rate_impact,
     score_fa_against_needs,
+    compute_need_score,
     RATE_STAT_PROTECT_THRESHOLD,
     RATE_STAT_PENALTY_MULTIPLIER,
 )
@@ -400,3 +401,66 @@ def test_compute_need_score_uses_marginal_stats():
     )
 
     assert score_with_marginal > score_no_marginal
+
+
+# ---------------------------------------------------------------------------
+# Tests for canonical → board key mapping in compute_need_score
+# ---------------------------------------------------------------------------
+
+def _deficit(category: str, deficit: float = 2.0):
+    from backend.schemas import CategoryDeficitOut
+    return CategoryDeficitOut(
+        category=category,
+        deficit=deficit,
+        my_total=5.0,
+        opponent_total=5.0 - deficit,
+        winning=deficit < 0,
+    )
+
+
+def test_need_score_hr_b_maps_to_hr():
+    """HR_B canonical → 'hr' board key; score must reflect HR contribution."""
+    score = compute_need_score(
+        player_cat_scores={"hr": 2.5, "avg": 1.2},
+        player_z_score=1.0,
+        category_deficits=[_deficit("HR_B", 3.0)],
+        n_cats=10,
+    )
+    # Correct: cat_score = 2.5 * 3.0 = 7.5; blended = 0.4*1.0 + 0.6*(7.5/10) = 0.85
+    # Wrong:   cat_score = 0.0;           blended = 0.4*1.0 = 0.40
+    assert score > 0.5, f"Expected >0.5 (blended HR contribution), got {score:.4f}"
+
+
+def test_need_score_k_b_maps_to_k_bat():
+    """K_B canonical → 'k_bat' board key."""
+    score = compute_need_score(
+        player_cat_scores={"k_bat": 1.8},
+        player_z_score=0.5,
+        category_deficits=[_deficit("K_B", 2.0)],
+        n_cats=10,
+    )
+    # cat_score = 1.8 * 2.0 = 3.6; blended = 0.4*0.5 + 0.6*(3.6/10) = 0.416
+    assert score > 0.40, f"Expected >0.40, got {score:.4f}"
+
+
+def test_need_score_k_p_maps_to_k_pit():
+    """K_P canonical → 'k_pit' board key."""
+    score = compute_need_score(
+        player_cat_scores={"k_pit": 3.0},
+        player_z_score=0.5,
+        category_deficits=[_deficit("K_P", 1.5)],
+        n_cats=10,
+    )
+    assert score > 0.40, f"Expected >0.40, got {score:.4f}"
+
+
+def test_need_score_avg_passthrough():
+    """AVG lowercases cleanly to 'avg' — passthrough path must still work."""
+    score = compute_need_score(
+        player_cat_scores={"avg": 1.5},
+        player_z_score=0.5,
+        category_deficits=[_deficit("AVG", 2.0)],
+        n_cats=10,
+    )
+    # cat_score = 1.5 * 2.0 = 3.0; blended = 0.4*0.5 + 0.6*(3.0/10) = 0.38
+    assert score > 0.35, f"Expected >0.35, got {score:.4f}"
