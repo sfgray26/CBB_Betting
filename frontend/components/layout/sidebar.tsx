@@ -17,6 +17,7 @@ import {
   Waves,
   Users,
   ListFilter,
+  DollarSign,
 } from 'lucide-react'
 
 const SHOW_BRACKET = false
@@ -63,6 +64,7 @@ const navSections = [
       { href: '/war-room/roster',    label: 'My Roster',   icon: Users },
       { href: '/war-room/waiver',    label: 'Waiver Wire', icon: ListFilter },
       { href: '/war-room/streaming', label: 'Streaming',   icon: Waves },
+      { href: '/war-room/budget',    label: 'Budget',      icon: DollarSign },
     ],
     soon: false,
     hidden: false,
