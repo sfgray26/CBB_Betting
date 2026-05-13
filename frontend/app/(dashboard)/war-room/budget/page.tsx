@@ -16,8 +16,8 @@ export default function BudgetPage() {
   if (isLoading) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="flex items-center gap-2 text-[#7D7D7D]">
-          <Loader2 className="h-5 w-5 animate-spin text-[#FFC000]" />
+        <div className="flex items-center gap-2 text-text-secondary">
+          <Loader2 className="h-5 w-5 animate-spin text-accent-gold" />
           <span className="text-sm">Loading budget...</span>
         </div>
       </div>
@@ -27,15 +27,15 @@ export default function BudgetPage() {
   if (isError) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="bg-[#202020] rounded-lg p-6 max-w-md w-full">
-          <div className="flex items-center gap-2 text-rose-400 mb-2">
+        <div className="bg-bg-surface border border-border-subtle rounded-lg p-6 max-w-md w-full">
+          <div className="flex items-center gap-2 text-status-lost mb-2">
             <AlertCircle className="h-5 w-5" />
             <span className="text-sm font-semibold">Failed to load budget</span>
           </div>
-          <p className="text-[#969696] text-sm">
+          <p className="text-text-secondary text-sm">
             {error instanceof Error ? error.message : 'Unknown error'}
           </p>
-          <button onClick={() => refetch()} className="mt-4 text-xs text-[#FFC000] hover:text-amber-300 font-semibold">
+          <button onClick={() => refetch()} className="mt-4 text-xs text-accent-gold hover:text-amber-300 font-semibold">
             Retry
           </button>
         </div>
@@ -55,13 +55,13 @@ export default function BudgetPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <DollarSign className="h-3.5 w-3.5 text-[#FFC000]" />
-          <span className="text-xs font-bold tracking-widest uppercase text-[#FFC000]">
+          <DollarSign className="h-3.5 w-3.5 text-accent-gold" />
+          <span className="text-xs font-bold tracking-widest uppercase text-accent-gold">
             Constraint Budget
           </span>
         </div>
         {fetchedAt && (
-          <span className="text-[10px] text-[#494949]">
+          <span className="text-[10px] text-text-muted">
             {freshness.is_stale ? '⚠ stale · ' : ''}updated {fetchedAt}
           </span>
         )}
@@ -69,7 +69,7 @@ export default function BudgetPage() {
 
       {/* Stale warning */}
       {freshness?.is_stale && (
-        <div className="bg-amber-900/20 border border-amber-700/40 rounded-lg px-3 py-2 text-xs text-amber-300">
+        <div className="bg-status-bubble/10 border border-status-bubble/30 rounded-lg px-3 py-2 text-xs text-status-bubble">
           Budget data is stale — Yahoo stats may not reflect the latest transactions.
         </div>
       )}
@@ -77,12 +77,12 @@ export default function BudgetPage() {
       <BudgetPanel budget={budget} />
 
       {/* Remaining acquisitions callout */}
-      <div className="bg-[#181818] rounded-lg px-4 py-3">
-        <p className="text-xs text-[#7D7D7D]">
-          <span className="text-white font-semibold">{budget.acquisitions_remaining}</span>
+      <div className="bg-bg-surface border border-border-subtle rounded-lg px-4 py-3">
+        <p className="text-xs text-text-secondary">
+          <span className="text-text-primary font-semibold">{budget.acquisitions_remaining}</span>
           {' '}acquisition{budget.acquisitions_remaining !== 1 ? 's' : ''} remaining this season
           {budget.acquisition_warning && (
-            <span className="text-amber-400 ml-2 font-semibold">— budget tight</span>
+            <span className="text-status-bubble ml-2 font-semibold">— budget tight</span>
           )}
         </p>
       </div>

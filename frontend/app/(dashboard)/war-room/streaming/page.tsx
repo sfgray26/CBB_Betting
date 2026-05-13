@@ -16,10 +16,10 @@ export default function StreamingStationPage() {
   if (waiver.isLoading) {
     return (
       <div className="min-h-screen bg-black p-6">
-        <h1 className="text-xl font-bold tracking-widest uppercase text-[#FFC000] mb-6">
+        <h1 className="text-xl font-bold tracking-widest uppercase text-accent-gold mb-6">
           STREAMING STATION
         </h1>
-        <div className="flex items-center gap-2 text-[#7D7D7D]">
+        <div className="flex items-center gap-2 text-text-secondary">
           <Loader2 className="h-4 w-4 animate-spin" />
           <span className="text-sm">Loading waiver data...</span>
         </div>
@@ -30,7 +30,7 @@ export default function StreamingStationPage() {
   if (waiver.isError) {
     return (
       <div className="min-h-screen bg-black p-6">
-        <h1 className="text-xl font-bold tracking-widest uppercase text-[#FFC000] mb-6">
+        <h1 className="text-xl font-bold tracking-widest uppercase text-accent-gold mb-6">
           STREAMING STATION
         </h1>
         <div className="flex items-center gap-2 text-rose-400">
@@ -44,10 +44,10 @@ export default function StreamingStationPage() {
   if (!waiver.data) {
     return (
       <div className="min-h-screen bg-black p-6">
-        <h1 className="text-xl font-bold tracking-widest uppercase text-[#FFC000] mb-6">
+        <h1 className="text-xl font-bold tracking-widest uppercase text-accent-gold mb-6">
           STREAMING STATION
         </h1>
-        <p className="text-[#7D7D7D] text-sm">No waiver data available.</p>
+        <p className="text-text-secondary text-sm">No waiver data available.</p>
       </div>
     )
   }
@@ -69,7 +69,7 @@ export default function StreamingStationPage() {
           STREAMING STATION
         </h1>
         {faab_balance != null && (
-          <span className="text-xs font-semibold tracking-widest text-[#7D7D7D] uppercase">
+          <span className="text-xs font-semibold tracking-widest text-text-secondary uppercase">
             FAAB ${faab_balance.toFixed(0)} remaining
           </span>
         )}

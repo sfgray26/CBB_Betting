@@ -38,7 +38,7 @@ export default function WarRoomPage() {
 
   if (matchup.isLoading) {
     return (
-      <div className="min-h-screen bg-black">
+      <div className="min-h-screen bg-bg-base">
         <MatchupSkeleton />
       </div>
     )
@@ -47,7 +47,7 @@ export default function WarRoomPage() {
   if (matchup.isError) {
     return (
       <div className="min-h-screen bg-black p-6">
-        <div className="flex items-center gap-2 text-rose-500">
+        <div className="flex items-center gap-2 text-status-lost">
           <AlertCircle className="h-6 w-6" />
           <span className="text-base font-mono">{matchup.error?.message ?? 'Failed to load matchup'}</span>
         </div>
@@ -62,14 +62,14 @@ export default function WarRoomPage() {
       <div className="max-w-6xl mx-auto p-6 lg:p-8 space-y-6">
         {/* Page header row */}
         <div className="flex items-center gap-3 mb-2">
-          <Swords className="h-6 w-6 text-[#FFC000]" />
-          <span className="text-lg font-bold tracking-widest uppercase text-[#FFC000]">War Room</span>
+          <Swords className="h-6 w-6 text-accent-gold" />
+          <span className="text-lg font-bold tracking-widest uppercase text-accent-gold">War Room</span>
 
           {/* Run Simulation button */}
           <button
             onClick={handleSimulate}
             disabled={simulateMutation.isPending}
-            className="ml-auto flex items-center gap-2 px-5 py-2.5 bg-[#FFC000] hover:bg-[#E5AC00] disabled:bg-[#494949] disabled:cursor-not-allowed text-black text-sm font-bold tracking-widest uppercase transition-colors rounded-sm"
+            className="ml-auto flex items-center gap-2 px-5 py-2.5 bg-accent-gold hover:bg-amber-500 disabled:bg-text-muted disabled:cursor-not-allowed text-black text-sm font-bold tracking-widest uppercase transition-colors rounded-sm"
           >
             {simulateMutation.isPending ? (
               <>
@@ -87,7 +87,7 @@ export default function WarRoomPage() {
 
         {/* Simulation error message */}
         {simulateMutation.isError && (
-          <div className="flex items-center gap-2 text-rose-500 text-sm bg-[#202020] px-4 py-3 rounded-sm">
+          <div className="flex items-center gap-2 text-status-lost text-sm bg-bg-surface border border-border-subtle px-4 py-3 rounded-sm">
             <AlertCircle className="h-5 w-5" />
             <span>{simulateMutation.error?.message ?? 'Simulation failed'}</span>
           </div>

@@ -3,7 +3,8 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
-import type { RosterPlayer, RosterMoveResponse, RosterOptimizeResponse, BudgetData, ScoreboardResponse } from '@/lib/types'
+import type { RosterPlayer, RosterMoveResponse, RosterOptimizeResponse, BudgetData, ScoreboardResponse, RotoCategory } from '@/lib/types'
+import { CATEGORY_COLOR } from '@/lib/types'
 import {
   Users,
   Loader2,
@@ -161,7 +162,7 @@ function GamePill({ player }: { player: RosterPlayer }) {
 
 function SlotPill({ slot }: { slot?: string | null }) {
   if (!slot) return null
-  const colorClass = SLOT_COLORS[slot] ?? 'bg-[#2A2A2A] text-[#969696]'
+  const colorClass = SLOT_COLORS[slot] ?? 'bg-bg-elevated text-text-secondary'
   return (
     <span className={cn('text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold', colorClass)}>
       {slot}
@@ -303,9 +304,13 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
         <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-9 gap-3">
           {allCats.map((cat) => {
             const vals = zSums[cat]
+            const catColor = CATEGORY_COLOR[cat as RotoCategory]
             if (!vals || vals.length === 0) return (
               <div key={cat} className="text-center">
-                <p className="text-[10px] text-text-muted uppercase tracking-wider">{formatCat(cat)}</p>
+                <div className="flex items-center justify-center gap-1 mb-0.5">
+                  {catColor && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: catColor }} />}
+                  <p className="text-[9px] text-text-muted uppercase tracking-wider">{formatCat(cat)}</p>
+                </div>
                 <p className="text-sm font-bold text-bg-elevated">–</p>
               </div>
             )
@@ -324,7 +329,10 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
                     : 'text-text-secondary'
             return (
               <div key={cat} className="text-center">
-                <p className="text-[10px] text-text-muted uppercase tracking-wider">{formatCat(cat)}</p>
+                <div className="flex items-center justify-center gap-1 mb-0.5">
+                  {catColor && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: catColor }} />}
+                  <p className="text-[9px] text-text-muted uppercase tracking-wider">{formatCat(cat)}</p>
+                </div>
                 <p className={cn('text-sm font-bold tabular-nums', color)}>
                   {z > 0 ? '+' : ''}{z.toFixed(1)}
                 </p>
@@ -430,16 +438,20 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
         </p>
       </div>
       <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-9 gap-3">
-        {allCats.map((cat) => (
-          <div key={cat} className="text-center">
-            <p className="text-[10px] text-text-muted uppercase tracking-wider">
-              {formatCat(cat)}
-            </p>
-            <p className="text-sm font-bold text-text-primary tabular-nums">
-              {getDisplayVal(cat)}
-            </p>
-          </div>
-        ))}
+        {allCats.map((cat) => {
+          const catColor = CATEGORY_COLOR[cat as RotoCategory]
+          return (
+            <div key={cat} className="text-center">
+              <div className="flex items-center justify-center gap-1 mb-0.5">
+                {catColor && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: catColor }} />}
+                <p className="text-[9px] text-text-muted uppercase tracking-wider">{formatCat(cat)}</p>
+              </div>
+              <p className="text-sm font-bold text-text-primary tabular-nums">
+                {getDisplayVal(cat)}
+              </p>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -625,10 +637,13 @@ function PlayerCard({
   const isRoS = viewMode === 'ros'
   const hasRoS = !!player.ros_projection?.values && Object.values(player.ros_projection.values).some((v) => v != null)
 
+  const isIL = player.status === 'IL'
+
   return (
     <div className={cn(
       'bg-bg-surface border border-border-subtle rounded-lg p-4 flex flex-col gap-3 hover:bg-bg-elevated transition-colors duration-150',
       isRoS && hasRoS && 'border-l-2 border-accent-gold/40',
+      isIL && 'bg-rose-900/10 border-rose-900/30',
     )}>
       {/* Identity row */}
       <div className="flex items-start gap-3 flex-wrap sm:flex-nowrap">
@@ -813,8 +828,8 @@ export default function RosterPage() {
   if (roster.isLoading) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="flex items-center gap-2 text-[#7D7D7D]">
-          <Loader2 className="h-5 w-5 animate-spin text-[#FFC000]" />
+        <div className="flex items-center gap-2 text-text-secondary">
+          <Loader2 className="h-5 w-5 animate-spin text-accent-gold" />
           <span className="text-sm">Loading roster…</span>
         </div>
       </div>
@@ -824,15 +839,15 @@ export default function RosterPage() {
   if (roster.isError) {
     return (
       <div className="min-h-[60vh] flex items-center justify-center">
-        <div className="bg-[#202020] rounded-lg p-6 max-w-md w-full">
-          <div className="flex items-center gap-2 text-rose-400 mb-2">
+        <div className="bg-bg-surface border border-border-subtle rounded-lg p-6 max-w-md w-full">
+          <div className="flex items-center gap-2 text-status-lost mb-2">
             <AlertCircle className="h-5 w-5" />
             <span className="text-sm font-semibold">Failed to load roster</span>
           </div>
-          <p className="text-[#969696] text-sm">
+          <p className="text-text-secondary text-sm">
             {roster.error instanceof Error ? roster.error.message : 'Unknown error'}
           </p>
-          <button onClick={() => roster.refetch()} className="mt-4 text-xs text-[#FFC000] hover:text-amber-300 font-semibold">
+          <button onClick={() => roster.refetch()} className="mt-4 text-xs text-accent-gold hover:text-amber-300 font-semibold">
             Retry
           </button>
         </div>
@@ -846,12 +861,12 @@ export default function RosterPage() {
     return (
       <div className="space-y-6">
         <div className="flex items-center gap-2">
-          <Users className="h-3.5 w-3.5 text-[#FFC000]" />
-          <span className="text-xs font-bold tracking-widest uppercase text-[#FFC000]">My Roster</span>
+          <Users className="h-3.5 w-3.5 text-accent-gold" />
+          <span className="text-xs font-bold tracking-widest uppercase text-accent-gold">My Roster</span>
         </div>
-        <div className="bg-[#202020] rounded-lg p-8 text-center">
-          <p className="text-xs font-semibold tracking-widest uppercase text-[#494949]">Empty Roster</p>
-          <p className="text-[#7D7D7D] text-sm mt-2">No players found on your roster.</p>
+        <div className="bg-bg-surface border border-border-subtle rounded-lg p-8 text-center">
+          <p className="text-xs font-semibold tracking-widest uppercase text-text-muted">Empty Roster</p>
+          <p className="text-text-secondary text-sm mt-2">No players found on your roster.</p>
         </div>
       </div>
     )
@@ -874,13 +889,13 @@ export default function RosterPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2">
-          <Users className="h-3.5 w-3.5 text-[#FFC000]" />
-          <span className="text-xs font-bold tracking-widest uppercase text-[#FFC000]">My Roster</span>
-          <span className="text-[10px] text-[#494949]">· {teamLabel} · {data.count} players</span>
+          <Users className="h-3.5 w-3.5 text-accent-gold" />
+          <span className="text-xs font-bold tracking-widest uppercase text-accent-gold">My Roster</span>
+          <span className="text-[10px] text-text-muted">· {teamLabel} · {data.count} players</span>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {data.freshness?.computed_at && (
-            <span className="flex items-center gap-1 text-[10px] text-[#494949]">
+            <span className="flex items-center gap-1 text-[10px] text-text-muted">
               <Clock className="h-3 w-3" />
               {new Date(data.freshness.computed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </span>
@@ -891,8 +906,8 @@ export default function RosterPage() {
             className={cn(
               'flex items-center gap-1.5 text-[10px] px-3 py-1.5 rounded font-semibold tracking-wider uppercase transition-colors',
               optimizeMutation.isPending
-                ? 'bg-[#2A2A2A] text-[#494949] cursor-not-allowed'
-                : 'bg-[#FFC000] text-black hover:bg-amber-300',
+                ? 'bg-bg-elevated text-text-muted cursor-not-allowed'
+                : 'bg-accent-gold text-black hover:bg-amber-300',
             )}
           >
             {optimizeMutation.isPending
@@ -905,23 +920,23 @@ export default function RosterPage() {
 
       {/* Staleness warning */}
       {data.freshness?.is_stale && (
-        <div className="bg-amber-900/20 border border-amber-700/40 rounded-lg p-3 flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0" />
-          <span className="text-sm text-amber-300">Roster data may be stale — last fetched over an hour ago.</span>
+        <div className="bg-status-bubble/10 border border-status-bubble/30 rounded-lg p-3 flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-status-bubble flex-shrink-0" />
+          <span className="text-sm text-status-bubble">Roster data may be stale — last fetched over an hour ago.</span>
         </div>
       )}
 
       {/* Feedback banners */}
       {moveError && (
-        <div className="bg-rose-900/20 border border-rose-800/50 rounded-lg p-3 flex items-center gap-2">
-          <AlertCircle className="h-4 w-4 text-rose-400 flex-shrink-0" />
-          <span className="text-sm text-rose-300">{moveError}</span>
+        <div className="bg-status-lost/10 border border-status-lost/30 rounded-lg p-3 flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 text-status-lost flex-shrink-0" />
+          <span className="text-sm text-status-lost">{moveError}</span>
         </div>
       )}
       {moveSuccess && (
-        <div className="bg-emerald-900/20 border border-emerald-800/50 rounded-lg p-3 flex items-center gap-2">
-          <Activity className="h-4 w-4 text-emerald-400 flex-shrink-0" />
-          <span className="text-sm text-emerald-300">{moveSuccess}</span>
+        <div className="bg-status-safe/10 border border-status-safe/30 rounded-lg p-3 flex items-center gap-2">
+          <Activity className="h-4 w-4 text-status-safe flex-shrink-0" />
+          <span className="text-sm text-status-safe">{moveSuccess}</span>
         </div>
       )}
 
@@ -950,14 +965,14 @@ export default function RosterPage() {
 
         <div className="flex items-center gap-2 flex-wrap">
           {/* Sort */}
-          <div className="flex items-center gap-1 bg-[#181818] border border-[#2A2A2A] rounded-lg p-1">
+          <div className="flex items-center gap-1 bg-bg-surface border border-border-subtle rounded-lg p-1">
             {([['default', 'Default'], ['name', 'A–Z'], ['ros_value', 'RoS Value']] as const).map(([val, label]) => (
               <button
                 key={val}
                 onClick={() => setSortMode(val)}
                 className={cn(
                   'text-[10px] px-2.5 py-1.5 rounded font-semibold tracking-wider uppercase transition-colors',
-                  sortMode === val ? 'bg-[#2A2A2A] text-white border border-[#494949]' : 'text-[#494949] hover:text-[#969696]',
+                  sortMode === val ? 'bg-bg-elevated text-text-primary border border-border-default' : 'text-text-muted hover:text-text-secondary',
                 )}
               >
                 {label}
@@ -974,8 +989,8 @@ export default function RosterPage() {
                 className={cn(
                   'text-[10px] px-2.5 py-1 rounded font-semibold tracking-wider transition-colors',
                   posFilter === pos
-                    ? 'bg-[#2A2A2A] text-white border border-[#494949]'
-                    : 'text-[#494949] hover:text-[#969696]',
+                    ? 'bg-bg-elevated text-text-primary border border-border-default'
+                    : 'text-text-muted hover:text-text-secondary',
                 )}
               >
                 {pos}
@@ -991,8 +1006,8 @@ export default function RosterPage() {
           {activePlayers.length > 0 && (
             <div className="space-y-3">
               <div className="flex items-center gap-2">
-                <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
-                <p className="text-xs font-semibold tracking-widest uppercase text-[#7D7D7D]">
+                <TrendingUp className="h-3.5 w-3.5 text-status-safe" />
+                <p className="text-xs font-semibold tracking-widest uppercase text-text-secondary">
                   Active · {activePlayers.length}
                 </p>
               </div>
@@ -1011,8 +1026,8 @@ export default function RosterPage() {
           {ilPlayers.length > 0 && (
             <div className="space-y-3">
               <div className="flex items-center gap-2">
-                <ShieldAlert className="h-3.5 w-3.5 text-rose-400" />
-                <p className="text-xs font-semibold tracking-widest uppercase text-rose-400">
+                <ShieldAlert className="h-3.5 w-3.5 text-status-lost" />
+                <p className="text-xs font-semibold tracking-widest uppercase text-status-lost">
                   Injured List · {ilPlayers.length}
                 </p>
               </div>
@@ -1031,8 +1046,8 @@ export default function RosterPage() {
           {otherPlayers.length > 0 && (
             <div className="space-y-3">
               <div className="flex items-center gap-2">
-                <CalendarOff className="h-3.5 w-3.5 text-[#494949]" />
-                <p className="text-xs font-semibold tracking-widest uppercase text-[#494949]">
+                <CalendarOff className="h-3.5 w-3.5 text-text-muted" />
+                <p className="text-xs font-semibold tracking-widest uppercase text-text-muted">
                   Not Active · {otherPlayers.length}
                 </p>
               </div>
@@ -1051,8 +1066,8 @@ export default function RosterPage() {
       ) : (
         <div className="space-y-3">
           {filteredSorted.length === 0 ? (
-            <div className="bg-[#202020] rounded-lg p-8 text-center">
-              <p className="text-[#494949] text-sm">No players match this filter.</p>
+            <div className="bg-bg-surface border border-border-subtle rounded-lg p-8 text-center">
+              <p className="text-text-muted text-sm">No players match this filter.</p>
             </div>
           ) : (
             filteredSorted.map((player) => (

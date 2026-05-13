@@ -88,35 +88,45 @@ function HotColdBadge({ hotCold, rankPercentile }: { hotCold?: string | null; ra
   )
 }
 
+function positionBadgeClass(pos: string): string {
+  if (pos === 'SP') return 'bg-blue-900/30 text-blue-400'
+  if (pos === 'RP' || pos === 'P') return 'bg-purple-900/30 text-purple-400'
+  if (pos === 'OF' || pos === 'LF' || pos === 'CF' || pos === 'RF') return 'bg-emerald-900/30 text-emerald-400'
+  if (pos === 'C') return 'bg-amber-900/30 text-amber-400'
+  if (pos === '1B' || pos === '3B') return 'bg-orange-900/30 text-orange-400'
+  if (pos === '2B' || pos === 'SS' || pos === 'MI') return 'bg-sky-900/30 text-sky-400'
+  return 'bg-bg-elevated text-text-secondary'
+}
+
 function PlayerRow({ player }: { player: WaiverAvailablePlayer }) {
   const ownedPct = player.percent_owned ?? player.owned_pct ?? null
   const positions = player.positions ?? (player.position ? [player.position] : [])
   const needMatches = (player.category_need_match ?? []).map((k) => waiverCatLabel(k) ?? k).filter(Boolean)
 
   return (
-    <div className="bg-[#202020] rounded-lg p-4 flex flex-col sm:flex-row sm:items-start gap-3">
+    <div className="bg-bg-surface border border-border-subtle rounded-lg p-4 flex flex-col sm:flex-row sm:items-start gap-3 hover:bg-bg-elevated transition-colors duration-150">
       {/* Identity */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <p className="text-sm font-bold text-white truncate">{player.name}</p>
+          <p className="text-sm font-bold text-text-primary truncate">{player.name}</p>
           <HotColdBadge hotCold={player.hot_cold} />
           {player.injury_status && (
-            <span className="text-[10px] px-1.5 py-0.5 bg-rose-900/30 text-rose-400 border border-rose-800/40 rounded font-semibold">
+            <span className="text-[10px] px-1.5 py-0.5 bg-status-lost/10 text-status-lost border border-status-lost/30 rounded font-semibold">
               {player.injury_status}
             </span>
           )}
         </div>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-          <span className="text-xs text-[#7D7D7D]">{player.team}</span>
+          <span className="text-xs text-text-secondary">{player.team}</span>
           <OwnershipBadge pct={ownedPct} />
           {positions.map((pos) => (
-            <span key={pos} className="text-[10px] px-1.5 py-0.5 bg-[#2A2A2A] text-[#969696] rounded">
+            <span key={pos} className={cn('text-[10px] px-1.5 py-0.5 rounded font-semibold', positionBadgeClass(pos))}>
               {pos}
             </span>
           ))}
         </div>
         {player.two_start && (
-          <p className="text-[10px] text-emerald-400 mt-1 font-semibold">
+          <p className="text-[10px] text-status-safe mt-1 font-semibold">
             2-START WEEK
             {player.start1_opp ? ` · vs ${player.start1_opp}` : ''}
             {player.start2_opp ? `, ${player.start2_opp}` : ''}
@@ -125,9 +135,9 @@ function PlayerRow({ player }: { player: WaiverAvailablePlayer }) {
         {/* Category need matches — shows which of your deficits this player addresses */}
         {needMatches.length > 0 && (
           <div className="flex gap-1 mt-1.5 flex-wrap">
-            <span className="text-[9px] text-[#494949] uppercase tracking-wider self-center">fills:</span>
+            <span className="text-[9px] text-text-muted uppercase tracking-wider self-center">fills:</span>
             {needMatches.map((label) => (
-              <span key={label} className="text-[10px] px-1.5 py-0.5 bg-amber-900/20 text-amber-400 border border-amber-800/30 rounded font-bold">
+              <span key={label} className="text-[10px] px-1.5 py-0.5 bg-status-bubble/10 text-status-bubble border border-status-bubble/30 rounded font-bold">
                 {label}
               </span>
             ))}
@@ -136,7 +146,7 @@ function PlayerRow({ player }: { player: WaiverAvailablePlayer }) {
         {player.statcast_signals && player.statcast_signals.length > 0 && (
           <div className="flex gap-1 mt-1 flex-wrap">
             {player.statcast_signals.map((sig) => (
-              <span key={sig} className="text-[10px] px-1.5 py-0.5 bg-[#1A2A1A] text-emerald-500 border border-emerald-900/40 rounded">
+              <span key={sig} className="text-[10px] px-1.5 py-0.5 bg-status-safe/10 text-status-safe border border-status-safe/20 rounded">
                 {sig}
               </span>
             ))}
@@ -146,9 +156,9 @@ function PlayerRow({ player }: { player: WaiverAvailablePlayer }) {
 
       {/* Match score — higher = better fits your team's current category deficits */}
       <div className="w-full sm:w-40 flex-shrink-0">
-        <p className="text-[9px] text-[#494949] uppercase tracking-wider mb-1">Match Score</p>
+        <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">Match Score</p>
         <NeedBar score={player.need_score} />
-        <p className="text-[9px] text-[#494949] mt-0.5">fit for your gaps</p>
+        <p className="text-[9px] text-text-muted mt-0.5">fit for your gaps</p>
       </div>
     </div>
   )
@@ -176,32 +186,32 @@ function CategoryDeficitsBar({ deficits, opponent }: {
   const hasMore = behind.length > 4 || leading.length > 3
 
   return (
-    <div className="bg-[#202020] rounded-lg p-4 space-y-3">
+    <div className="bg-bg-surface border border-border-subtle rounded-lg p-4 space-y-3">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-[10px] font-semibold tracking-widest uppercase text-[#7D7D7D]">
+          <p className="text-[10px] font-semibold tracking-widest uppercase text-text-secondary">
             This Week&apos;s Matchup{opponent ? ` vs ${opponent}` : ''}
           </p>
-          <p className="text-xs text-[#494949] mt-0.5">
+          <p className="text-xs text-text-muted mt-0.5">
             {netBehind > 0 ? (
-              <span className="text-rose-400 font-semibold">Trailing in {behind.length}</span>
+              <span className="text-status-lost font-semibold">Trailing in {behind.length}</span>
             ) : (
-              <span className="text-emerald-400 font-semibold">Leading in {leading.length}</span>
+              <span className="text-status-safe font-semibold">Leading in {leading.length}</span>
             )}
             {' · '}
-            <span className={leading.length > behind.length ? 'text-emerald-400' : 'text-[#494949]'}>
+            <span className={leading.length > behind.length ? 'text-status-safe' : 'text-text-muted'}>
               {leading.length} W
             </span>
             {' · '}
-            <span className={behind.length > 0 ? 'text-rose-400' : 'text-[#494949]'}>
+            <span className={behind.length > 0 ? 'text-status-lost' : 'text-text-muted'}>
               {behind.length} L
             </span>
-            {tied.length > 0 && <span className="text-[#7D7D7D]"> · {tied.length} T</span>}
+            {tied.length > 0 && <span className="text-text-secondary"> · {tied.length} T</span>}
           </p>
         </div>
         {hasMore && (
-          <button onClick={() => setExpanded(!expanded)} className="text-[10px] text-[#7D7D7D] hover:text-white flex items-center gap-0.5">
+          <button onClick={() => setExpanded(!expanded)} className="text-[10px] text-text-secondary hover:text-text-primary flex items-center gap-0.5">
             {expanded ? <><ChevronUp className="h-3 w-3" /> Less</> : <><ChevronDown className="h-3 w-3" /> More</>}
           </button>
         )}
@@ -210,22 +220,22 @@ function CategoryDeficitsBar({ deficits, opponent }: {
       {/* Behind categories */}
       {behind.length > 0 && (
         <div className="space-y-1">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-rose-400">▼ Behind</p>
+          <p className="text-[9px] font-bold uppercase tracking-widest text-status-lost">▼ Behind</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
             {behindVisible.map((d) => {
               const label = waiverCatLabel(d.category) ?? d.category
               const gap = Math.abs(d.deficit)
               return (
-                <div key={d.category} className="flex items-center justify-between bg-rose-950/20 border border-rose-900/30 rounded px-2.5 py-1.5">
+                <div key={d.category} className="flex items-center justify-between bg-status-lost/10 border border-status-lost/20 rounded px-2.5 py-1.5">
                   <div className="flex items-center gap-1.5">
-                    <TrendingDown className="h-3 w-3 text-rose-400 flex-shrink-0" />
-                    <span className="text-[11px] font-bold text-rose-300 w-10">{label}</span>
+                    <TrendingDown className="h-3 w-3 text-status-lost flex-shrink-0" />
+                    <span className="text-[11px] font-bold text-status-lost/80 w-10">{label}</span>
                   </div>
                   <div className="flex items-center gap-1.5 text-[10px] tabular-nums">
-                    <span className="text-white">{fmtStat(d.category, d.my_total)}</span>
-                    <span className="text-[#494949]">vs</span>
-                    <span className="text-[#7D7D7D]">{fmtStat(d.category, d.opponent_total)}</span>
-                    <span className="text-rose-400 font-bold ml-1">−{fmtStat(d.category, gap)}</span>
+                    <span className="text-text-primary">{fmtStat(d.category, d.my_total)}</span>
+                    <span className="text-text-muted">vs</span>
+                    <span className="text-text-secondary">{fmtStat(d.category, d.opponent_total)}</span>
+                    <span className="text-status-lost font-bold ml-1">−{fmtStat(d.category, gap)}</span>
                   </div>
                 </div>
               )
@@ -237,22 +247,22 @@ function CategoryDeficitsBar({ deficits, opponent }: {
       {/* Leading categories */}
       {leading.length > 0 && (
         <div className="space-y-1">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-emerald-400">▲ Leading</p>
+          <p className="text-[9px] font-bold uppercase tracking-widest text-status-safe">▲ Leading</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
             {leadingVisible.map((d) => {
               const label = waiverCatLabel(d.category) ?? d.category
               const lead = Math.abs(d.deficit)
               return (
-                <div key={d.category} className="flex items-center justify-between bg-emerald-950/20 border border-emerald-900/30 rounded px-2.5 py-1.5">
+                <div key={d.category} className="flex items-center justify-between bg-status-safe/10 border border-status-safe/20 rounded px-2.5 py-1.5">
                   <div className="flex items-center gap-1.5">
-                    <TrendingUp className="h-3 w-3 text-emerald-400 flex-shrink-0" />
-                    <span className="text-[11px] font-bold text-emerald-300 w-10">{label}</span>
+                    <TrendingUp className="h-3 w-3 text-status-safe flex-shrink-0" />
+                    <span className="text-[11px] font-bold text-status-safe/80 w-10">{label}</span>
                   </div>
                   <div className="flex items-center gap-1.5 text-[10px] tabular-nums">
-                    <span className="text-white">{fmtStat(d.category, d.my_total)}</span>
-                    <span className="text-[#494949]">vs</span>
-                    <span className="text-[#7D7D7D]">{fmtStat(d.category, d.opponent_total)}</span>
-                    <span className="text-emerald-400 font-bold ml-1">+{fmtStat(d.category, lead)}</span>
+                    <span className="text-text-primary">{fmtStat(d.category, d.my_total)}</span>
+                    <span className="text-text-muted">vs</span>
+                    <span className="text-text-secondary">{fmtStat(d.category, d.opponent_total)}</span>
+                    <span className="text-status-safe font-bold ml-1">+{fmtStat(d.category, lead)}</span>
                   </div>
                 </div>
               )
@@ -325,9 +335,9 @@ export default function WaiverPage() {
             Waiver Wire
           </span>
         </div>
-        <div className="flex items-center gap-2 text-[10px] text-[#494949]">
+        <div className="flex items-center gap-2 text-[10px] text-text-muted">
           {data?.il_slots_available != null && data.il_slots_available > 0 && (
-            <span className="text-emerald-400">
+            <span className="text-status-safe">
               {data.il_slots_available} IL slot{data.il_slots_available > 1 ? 's' : ''} open
             </span>
           )}
@@ -360,14 +370,14 @@ export default function WaiverPage() {
 
       {/* Sort + position filter controls */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-1 bg-[#202020] rounded-lg p-1">
+        <div className="flex items-center gap-1 bg-bg-surface border border-border-subtle rounded-lg p-1">
           {(['need_score', 'projected_points'] as const).map((s) => (
             <button
               key={s}
               onClick={() => setSort(s)}
               className={cn(
                 'text-[10px] px-3 py-1.5 rounded font-semibold tracking-wider uppercase transition-colors',
-                sort === s ? 'bg-[#FFC000] text-black' : 'text-[#7D7D7D] hover:text-white',
+                sort === s ? 'bg-accent-gold text-black' : 'text-text-secondary hover:text-text-primary',
               )}
             >
               {s === 'need_score' ? 'Match Score' : 'Projected'}
@@ -382,8 +392,8 @@ export default function WaiverPage() {
               className={cn(
                 'text-[10px] px-2.5 py-1 rounded font-semibold tracking-wider transition-colors',
                 posFilter === pos
-                  ? 'bg-[#2A2A2A] text-white border border-[#494949]'
-                  : 'text-[#494949] hover:text-[#969696]',
+                  ? 'bg-bg-elevated text-text-primary border border-border-default'
+                  : 'text-text-muted hover:text-text-secondary',
               )}
             >
               {pos}
@@ -408,8 +418,8 @@ export default function WaiverPage() {
       {/* Top Available */}
       <div className="space-y-3">
         <div className="flex items-center gap-2">
-          <Users className="h-3.5 w-3.5 text-[#FFC000]" />
-          <p className="text-xs font-semibold tracking-widest uppercase text-[#7D7D7D]">
+          <Users className="h-3.5 w-3.5 text-accent-gold" />
+          <p className="text-xs font-semibold tracking-widest uppercase text-text-secondary">
             Top Available · {topAvailable.length}
           </p>
         </div>
