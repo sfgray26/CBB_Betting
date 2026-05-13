@@ -2911,6 +2911,26 @@ async def get_fantasy_roster(
             "Roster season stats batch fetch failed (non-fatal): %s", _season_err
         )
 
+    # Fallback: load ownership % from PositionEligibility if Yahoo live fetch
+    # returned 0.0 (roster endpoint does not include ownership blocks).
+    _pe_ownership: dict[str, float] = {}
+    try:
+        from backend.models import PositionEligibility as _PositionEligibility
+        if player_keys:
+            _pe_rows = db.query(_PositionEligibility).filter(
+                _PositionEligibility.yahoo_player_key.in_(player_keys)
+            ).all()
+            _pe_ownership = {
+                r.yahoo_player_key: r.league_rostered_pct
+                for r in _pe_rows
+                if r.league_rostered_pct is not None
+            }
+    except Exception as _pe_err:
+        logger.warning(
+            "Roster PositionEligibility ownership fallback failed (non-fatal): %s",
+            _pe_err,
+        )
+
     # Resolve BDL and MLBAM IDs via PlayerIDMapping — required for rolling stats
     # and for populating bdl_player_id/mlbam_id in CanonicalPlayerRow output.
     player_key_to_ids = _resolve_roster_player_bdl_ids(db, raw_players)
@@ -2996,6 +3016,10 @@ async def get_fantasy_roster(
 
         # Start with the raw player dict and enrich it.
         merged_player = dict(p)
+
+        # Merge ownership fallback from PositionEligibility if Yahoo returned 0.0
+        if player_key in _pe_ownership and merged_player.get("percent_owned", 0.0) == 0.0:
+            merged_player["percent_owned"] = _pe_ownership[player_key]
 
         # Merge season stats from batch so the mapper can translate them.
         if player_key in season_stats_by_key:
@@ -5597,4 +5621,67 @@ async def get_constraint_budget(
             "staleness_threshold_minutes": 60,
             "is_stale": False,
         },
+    }
+
+
+@router.get("/api/fantasy/coverage")
+async def get_player_coverage(
+    top_n: int = 50,
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """Coverage audit: what fraction of top-N free agents have real cat_scores vs draft board fallback."""
+    from backend.models import PlayerProjection, CanonicalProjection, PlayerIdentity
+    from backend.fantasy_baseball.id_resolution_service import _normalize_name
+
+    proj_names = {
+        _normalize_name(r.player_name or "")
+        for r in db.query(PlayerProjection).filter(
+            PlayerProjection.cat_scores.isnot(None)
+        ).all()
+    }
+    canonical_names = {
+        _normalize_name(str(r.player_id))
+        for r in db.query(CanonicalProjection).filter(
+            CanonicalProjection.source_engine == "SAVANT_ADJUSTED"
+        ).all()
+    }
+    identity_names = {
+        r.normalized_name for r in db.query(PlayerIdentity).all()
+    }
+
+    try:
+        client = get_yahoo_client()
+        players = []
+        for start in range(0, top_n, 25):
+            batch = client.get_free_agents(start=start, count=min(25, top_n - start))
+            players.extend(batch)
+            if len(players) >= top_n:
+                break
+        players = players[:top_n]
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Yahoo fetch failed: {e}")
+
+    results = []
+    for p in players:
+        name = p.get("name", "")
+        norm = _normalize_name(name)
+        has_fg = norm in proj_names
+        has_id = norm in identity_names
+        results.append({
+            "name": name,
+            "percent_owned": p.get("percent_owned", 0.0),
+            "has_fangraphs_cat_scores": has_fg,
+            "has_player_identity": has_id,
+            "data_tier": "FANGRAPHS_ROS" if has_fg else "DRAFT_BOARD_FALLBACK",
+        })
+
+    results.sort(key=lambda x: x["percent_owned"] or 0, reverse=True)
+    total = len(results)
+    return {
+        "total_checked": total,
+        "fangraphs_coverage_pct": round(100 * sum(1 for r in results if r["has_fangraphs_cat_scores"]) / max(total, 1), 1),
+        "identity_coverage_pct": round(100 * sum(1 for r in results if r["has_player_identity"]) / max(total, 1), 1),
+        "missing_fangraphs": [r for r in results if not r["has_fangraphs_cat_scores"]][:20],
+        "players": results,
     }
