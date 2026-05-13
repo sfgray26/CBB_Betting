@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import type { WaiverAvailablePlayer, WaiverResponse } from '@/lib/types'
+import { CATEGORY_LABEL } from '@/lib/types'
 import {
   ListFilter, Loader2, AlertCircle, TrendingUp, TrendingDown,
   Flame, Snowflake, AlertTriangle, Users,
@@ -123,7 +124,9 @@ function CategoryDeficitsBar({ deficits }: { deficits: WaiverResponse['category_
         {losing.map((d) => (
           <div key={d.category} className="flex items-center gap-1 bg-rose-900/20 border border-rose-800/30 rounded px-2 py-1">
             <TrendingDown className="h-3 w-3 text-rose-400" />
-            <span className="text-[10px] font-bold text-rose-400">{d.category}</span>
+            <span className="text-[10px] font-bold text-rose-400">
+                {CATEGORY_LABEL[d.category as keyof typeof CATEGORY_LABEL] ?? d.category}
+              </span>
             <span className="text-[10px] text-[#7D7D7D]">
               {d.my_total.toFixed(1)} vs {d.opponent_total.toFixed(1)}
             </span>
@@ -132,7 +135,9 @@ function CategoryDeficitsBar({ deficits }: { deficits: WaiverResponse['category_
         {winning.map((d) => (
           <div key={d.category} className="flex items-center gap-1 bg-emerald-900/20 border border-emerald-800/30 rounded px-2 py-1">
             <TrendingUp className="h-3 w-3 text-emerald-400" />
-            <span className="text-[10px] font-bold text-emerald-400">{d.category}</span>
+            <span className="text-[10px] font-bold text-emerald-400">
+                {CATEGORY_LABEL[d.category as keyof typeof CATEGORY_LABEL] ?? d.category}
+              </span>
           </div>
         ))}
       </div>

@@ -61,7 +61,7 @@ function actionHint(proj: CategoryProjection | undefined, lowerBetter: boolean):
       const delta = lowerBetter
         ? +(my_proj - opp_proj).toFixed(2)
         : +(opp_proj - my_proj).toFixed(2)
-      if (delta > 0) return `Need +${delta}`
+      if (delta > 0) return lowerBetter ? `Need -${delta}` : `Need +${delta}`
       return lowerBetter ? 'Ratio risk' : 'Hold'
     }
     return 'Close'
@@ -141,7 +141,11 @@ function CategoryRow({ cat, myVal, oppVal, proj }: RowProps) {
 
       {/* Projected final */}
       <span className="w-20 text-right text-sm font-mono text-[#494949] flex-shrink-0 hidden sm:block">
-        {proj ? `${formatStat(cat, proj.my_proj)}→${formatStat(cat, proj.opp_proj)}` : '—'}
+        {proj
+          ? isRatio
+            ? `${Math.round(proj.win_prob * 100)}%`
+            : `${formatStat(cat, proj.my_proj)}→${formatStat(cat, proj.opp_proj)}`
+          : '—'}
       </span>
 
       {/* Status tag */}
@@ -277,7 +281,7 @@ export function CategoryBattlefield({ data, simulate }: Props) {
         <span className="w-14 text-right text-xs font-semibold tracking-widest uppercase text-[#494949]">ME</span>
         <div className="flex-1" />
         <span className="w-14 text-xs font-semibold tracking-widest uppercase text-[#494949]">OPP</span>
-        <span className="w-20 text-right text-xs font-semibold tracking-widest uppercase text-[#494949] hidden sm:block">PROJ</span>
+        <span className="w-20 text-right text-xs font-semibold tracking-widest uppercase text-[#494949] hidden sm:block">PROJ / WIN%</span>
         <span className="w-16 text-right text-xs font-semibold tracking-widest uppercase text-[#494949]">STATUS</span>
         <span className="w-20 text-right text-xs font-semibold tracking-widest uppercase text-[#494949] hidden md:block">ACTION</span>
       </div>

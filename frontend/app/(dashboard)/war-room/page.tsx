@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import { Loader2, AlertCircle, Swords, Play } from 'lucide-react'
@@ -24,6 +24,12 @@ export default function WarRoomPage() {
       setSimulateData(data)
     },
   })
+
+  useEffect(() => {
+    if (matchup.data && !simulateData && !simulateMutation.isPending) {
+      simulateMutation.mutate()
+    }
+  }, [matchup.data]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSimulate = () => {
     simulateMutation.mutate()
@@ -75,7 +81,7 @@ export default function WarRoomPage() {
             ) : (
               <>
                 <Play className="h-4 w-4" />
-                Run Simulation
+                {simulateData ? 'Re-run' : 'Run Simulation'}
               </>
             )}
           </button>
