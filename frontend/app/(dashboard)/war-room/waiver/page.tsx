@@ -1,19 +1,302 @@
 'use client'
 
-import { ListFilter } from 'lucide-react'
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { endpoints } from '@/lib/api'
+import type { WaiverAvailablePlayer, WaiverResponse } from '@/lib/types'
+import {
+  ListFilter, Loader2, AlertCircle, TrendingUp, TrendingDown,
+  Flame, Snowflake, AlertTriangle, Users,
+} from 'lucide-react'
+import { cn } from '@/lib/utils'
+
+const POSITION_FILTERS = ['All', 'SP', 'RP', 'OF', '1B', '2B', '3B', 'SS', 'C']
+
+function NeedBar({ score }: { score: number }) {
+  const pct = Math.min(100, Math.max(0, score * 100))
+  const color = score >= 0.7 ? 'bg-emerald-400' : score >= 0.4 ? 'bg-amber-400' : 'bg-zinc-600'
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 h-1.5 bg-[#2A2A2A] rounded-full overflow-hidden">
+        <div className={cn('h-full rounded-full', color)} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-xs text-white tabular-nums w-8 text-right">
+        {score.toFixed(2)}
+      </span>
+    </div>
+  )
+}
+
+function OwnershipBadge({ pct }: { pct: number | null | undefined }) {
+  if (pct === null || pct === undefined) {
+    return <span className="text-[10px] text-[#494949]">— owned</span>
+  }
+  return (
+    <span className={cn(
+      'text-[10px] tabular-nums',
+      pct >= 70 ? 'text-amber-400' : pct >= 30 ? 'text-[#969696]' : 'text-[#494949]',
+    )}>
+      {pct.toFixed(0)}% owned
+    </span>
+  )
+}
+
+function HotColdBadge({ hotCold }: { hotCold?: string | null }) {
+  if (!hotCold) return null
+  if (hotCold === 'HOT') {
+    return (
+      <span className="flex items-center gap-0.5 text-[10px] text-orange-400 font-semibold">
+        <Flame className="h-3 w-3" /> HOT
+      </span>
+    )
+  }
+  return (
+    <span className="flex items-center gap-0.5 text-[10px] text-sky-400 font-semibold">
+      <Snowflake className="h-3 w-3" /> COLD
+    </span>
+  )
+}
+
+function PlayerRow({ player }: { player: WaiverAvailablePlayer }) {
+  const ownedPct = player.percent_owned ?? player.owned_pct ?? null
+  const positions = player.positions ?? (player.position ? [player.position] : [])
+
+  return (
+    <div className="bg-[#202020] rounded-lg p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+      {/* Identity */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-sm font-bold text-white truncate">{player.name}</p>
+          <HotColdBadge hotCold={player.hot_cold} />
+          {player.injury_status && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-rose-900/30 text-rose-400 border border-rose-800/40 rounded font-semibold">
+              {player.injury_status}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+          <span className="text-xs text-[#7D7D7D]">{player.team}</span>
+          <OwnershipBadge pct={ownedPct} />
+          {positions.map((pos) => (
+            <span key={pos} className="text-[10px] px-1.5 py-0.5 bg-[#2A2A2A] text-[#969696] rounded">
+              {pos}
+            </span>
+          ))}
+        </div>
+        {player.two_start && (
+          <p className="text-[10px] text-emerald-400 mt-1 font-semibold">
+            2-START WEEK
+            {player.start1_opp ? ` · vs ${player.start1_opp}` : ''}
+            {player.start2_opp ? `, ${player.start2_opp}` : ''}
+          </p>
+        )}
+        {player.statcast_signals && player.statcast_signals.length > 0 && (
+          <div className="flex gap-1 mt-1 flex-wrap">
+            {player.statcast_signals.map((sig) => (
+              <span key={sig} className="text-[10px] px-1.5 py-0.5 bg-[#1A2A1A] text-emerald-500 border border-emerald-900/40 rounded">
+                {sig}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Need score bar */}
+      <div className="w-full sm:w-40 flex-shrink-0">
+        <p className="text-[9px] text-[#494949] uppercase tracking-wider mb-1">Need Score</p>
+        <NeedBar score={player.need_score} />
+      </div>
+    </div>
+  )
+}
+
+function CategoryDeficitsBar({ deficits }: { deficits: WaiverResponse['category_deficits'] }) {
+  if (!deficits || deficits.length === 0) return null
+  const losing = deficits.filter((d) => !d.winning).slice(0, 6)
+  const winning = deficits.filter((d) => d.winning).slice(0, 3)
+  return (
+    <div className="bg-[#202020] rounded-lg p-4">
+      <p className="text-[10px] font-semibold tracking-widest uppercase text-[#7D7D7D] mb-3">
+        This Week&apos;s Gaps
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {losing.map((d) => (
+          <div key={d.category} className="flex items-center gap-1 bg-rose-900/20 border border-rose-800/30 rounded px-2 py-1">
+            <TrendingDown className="h-3 w-3 text-rose-400" />
+            <span className="text-[10px] font-bold text-rose-400">{d.category}</span>
+            <span className="text-[10px] text-[#7D7D7D]">
+              {d.my_total.toFixed(1)} vs {d.opponent_total.toFixed(1)}
+            </span>
+          </div>
+        ))}
+        {winning.map((d) => (
+          <div key={d.category} className="flex items-center gap-1 bg-emerald-900/20 border border-emerald-800/30 rounded px-2 py-1">
+            <TrendingUp className="h-3 w-3 text-emerald-400" />
+            <span className="text-[10px] font-bold text-emerald-400">{d.category}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 export default function WaiverPage() {
+  const [sort, setSort] = useState<'need_score' | 'projected_points'>('need_score')
+  const [posFilter, setPosFilter] = useState('All')
+
+  const { data, isLoading, isError, error, refetch } = useQuery({
+    queryKey: ['waiver', sort],
+    queryFn: () => endpoints.getWaiver(sort),
+    staleTime: 3 * 60_000,
+  })
+
+  const filterPlayers = (players: WaiverAvailablePlayer[]) => {
+    if (posFilter === 'All') return players
+    return players.filter((p) => {
+      const positions = p.positions ?? (p.position ? [p.position] : [])
+      return positions.some((pos) => pos === posFilter || pos.startsWith(posFilter))
+    })
+  }
+
+  if (isLoading) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center">
+        <div className="flex items-center gap-2 text-[#7D7D7D]">
+          <Loader2 className="h-5 w-5 animate-spin text-[#FFC000]" />
+          <span className="text-sm">Loading waiver wire…</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (isError) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center">
+        <div className="bg-[#202020] rounded-lg p-6 max-w-md w-full">
+          <div className="flex items-center gap-2 text-rose-400 mb-2">
+            <AlertCircle className="h-5 w-5" />
+            <span className="text-sm font-semibold">Failed to load waiver wire</span>
+          </div>
+          <p className="text-[#969696] text-sm">
+            {error instanceof Error ? error.message : 'Unknown error'}
+          </p>
+          <button onClick={() => refetch()} className="mt-4 text-xs text-[#FFC000] hover:text-amber-300 font-semibold">
+            Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const topAvailable = filterPlayers(data?.top_available ?? [])
+  const twoStarters = filterPlayers(data?.two_start_pitchers ?? [])
+
   return (
-    <div className="min-h-screen bg-black">
-      <div className="max-w-4xl mx-auto p-6">
-        <div className="flex items-center gap-2 mb-6">
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-2">
           <ListFilter className="h-3.5 w-3.5 text-[#FFC000]" />
-          <span className="text-xs font-bold tracking-widest uppercase text-[#FFC000]">Waiver Wire</span>
+          <span className="text-xs font-bold tracking-widest uppercase text-[#FFC000]">
+            Waiver Wire
+          </span>
+          {data?.matchup_opponent && (
+            <span className="text-[10px] text-[#7D7D7D]">vs {data.matchup_opponent}</span>
+          )}
         </div>
-        <div className="bg-[#202020] p-8 text-center">
-          <p className="text-xs font-semibold tracking-widest uppercase text-[#494949]">Coming Next</p>
-          <p className="text-[#7D7D7D] text-sm mt-2">Filter-driven free agent rankings by bubble category</p>
+        <div className="flex items-center gap-2 text-[10px] text-[#494949]">
+          {data?.faab_balance != null && (
+            <span>FAAB: ${data.faab_balance}</span>
+          )}
+          {data?.il_slots_available != null && data.il_slots_available > 0 && (
+            <span className="text-emerald-400">
+              {data.il_slots_available} IL slot{data.il_slots_available > 1 ? 's' : ''} open
+            </span>
+          )}
         </div>
+      </div>
+
+      {/* Alerts */}
+      {data?.urgent_alert && (
+        <div className="bg-amber-900/20 border border-amber-700/40 rounded-lg p-3 flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-amber-400 flex-shrink-0" />
+          <span className="text-sm text-amber-300">{data.urgent_alert.message}</span>
+        </div>
+      )}
+      {data?.closer_alert === 'NO_CLOSERS' && (
+        <div className="bg-rose-900/20 border border-rose-700/40 rounded-lg p-3 flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 text-rose-400 flex-shrink-0" />
+          <span className="text-sm text-rose-300">
+            No closers on your roster — consider adding saves coverage.
+          </span>
+        </div>
+      )}
+
+      {/* Category deficits */}
+      {data?.category_deficits && <CategoryDeficitsBar deficits={data.category_deficits} />}
+
+      {/* Sort + position filter controls */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-1 bg-[#202020] rounded-lg p-1">
+          {(['need_score', 'projected_points'] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setSort(s)}
+              className={cn(
+                'text-[10px] px-3 py-1.5 rounded font-semibold tracking-wider uppercase transition-colors',
+                sort === s ? 'bg-[#FFC000] text-black' : 'text-[#7D7D7D] hover:text-white',
+              )}
+            >
+              {s === 'need_score' ? 'Need Score' : 'Projected'}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-1 flex-wrap">
+          {POSITION_FILTERS.map((pos) => (
+            <button
+              key={pos}
+              onClick={() => setPosFilter(pos)}
+              className={cn(
+                'text-[10px] px-2.5 py-1 rounded font-semibold tracking-wider transition-colors',
+                posFilter === pos
+                  ? 'bg-[#2A2A2A] text-white border border-[#494949]'
+                  : 'text-[#494949] hover:text-[#969696]',
+              )}
+            >
+              {pos}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Two-Start Pitchers */}
+      {twoStarters.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
+            <p className="text-xs font-semibold tracking-widest uppercase text-emerald-400">
+              Two-Start Pitchers · {twoStarters.length}
+            </p>
+          </div>
+          {twoStarters.map((p) => <PlayerRow key={p.player_id} player={p} />)}
+        </div>
+      )}
+
+      {/* Top Available */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Users className="h-3.5 w-3.5 text-[#FFC000]" />
+          <p className="text-xs font-semibold tracking-widest uppercase text-[#7D7D7D]">
+            Top Available · {topAvailable.length}
+          </p>
+        </div>
+        {topAvailable.length === 0 ? (
+          <div className="bg-[#202020] rounded-lg p-8 text-center">
+            <p className="text-[#494949] text-sm">No players match this filter.</p>
+          </div>
+        ) : (
+          topAvailable.map((p) => <PlayerRow key={p.player_id} player={p} />)
+        )}
       </div>
     </div>
   )
