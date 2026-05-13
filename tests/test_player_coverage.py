@@ -21,6 +21,7 @@ def _make_projection_row(name: str, cat_scores: dict):
 def test_name_fallback_finds_projection_when_identity_missing():
     """When Yahoo player has no identity chain, name fallback must find player_projections row."""
     from backend.fantasy_baseball.player_board import get_or_create_projection
+    import backend.fantasy_baseball.player_board as pb
 
     yahoo_player = {
         "name": "Cristopher Sanchez",
@@ -32,8 +33,21 @@ def test_name_fallback_finds_projection_when_identity_missing():
 
     mock_row = _make_projection_row("Cristopher Sanchez", {"era": -1.2, "k_p": 0.9, "w": 0.7})
 
-    with patch("backend.fantasy_baseball.player_board._lookup_projection_by_name") as mock_lookup:
+    # Provide a non-None mock DB session so `if not projection_row and db and name:` is True.
+    # All queries return None so the identity chain produces nothing, letting the name fallback fire.
+    mock_db = MagicMock()
+    mock_db.query.return_value.filter.return_value.first.return_value = None
+
+    def mock_get_db():
+        yield mock_db
+
+    with patch("backend.models.get_db", mock_get_db), \
+         patch("backend.fantasy_baseball.player_board._IDENTITY_RESOLUTION_SERVICE") as mock_svc, \
+         patch("backend.fantasy_baseball.player_board._lookup_projection_by_name") as mock_lookup:
+        mock_svc.resolve.return_value = None
         mock_lookup.return_value = mock_row
+        # Clear any cache entry from prior tests
+        pb._projection_cache.pop("mlb.p.99999", None)
         result = get_or_create_projection(yahoo_player)
 
     assert result.get("cat_scores") == {"era": -1.2, "k_p": 0.9, "w": 0.7}
