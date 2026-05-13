@@ -5692,12 +5692,6 @@ async def get_player_coverage(
             PlayerProjection.cat_scores.isnot(None)
         ).all()
     }
-    canonical_names = {
-        _normalize_name(str(r.player_id))
-        for r in db.query(CanonicalProjection).filter(
-            CanonicalProjection.source_engine == "SAVANT_ADJUSTED"
-        ).all()
-    }
     identity_names = {
         r.normalized_name for r in db.query(PlayerIdentity).all()
     }

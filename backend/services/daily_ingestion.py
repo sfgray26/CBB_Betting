@@ -2535,8 +2535,7 @@ class DailyIngestionOrchestrator:
         t0 = time.monotonic()
 
         async def _run():
-            db_gen = get_db()
-            db = next(db_gen)
+            db = SessionLocal()
             try:
                 existing_norms = {
                     r.normalized_name
@@ -2585,10 +2584,7 @@ class DailyIngestionOrchestrator:
                 self._record_job_run("bridge_mapping_to_identities", "failed")
                 return {"status": "failed", "error": str(exc)}
             finally:
-                try:
-                    next(db_gen)
-                except (StopIteration, Exception):
-                    pass
+                db.close()
 
         return await _with_advisory_lock(LOCK_IDS["bridge_mapping_to_identities"], "bridge_mapping_to_identities", _run)
 
