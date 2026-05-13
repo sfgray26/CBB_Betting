@@ -5495,16 +5495,17 @@ async def get_constraint_budget(
     except (YahooAuthError, YahooAPIError):
         pass  # Fall back to 0
 
-    # 2. Count acquisitions from last 7 days
+    # 2. Count acquisitions since Monday 00:00 ET (Yahoo matchup week start)
     try:
         transactions = client.get_transactions(t_type="add")
-        week_start = now_et - timedelta(days=7)
+        days_since_monday = now_et.weekday()  # Monday=0
+        week_start = now_et.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days_since_monday)
         week_end = now_et
         acquisitions_used = count_weekly_acquisitions(
             transactions, team_key, week_start, week_end
         )
-    except (YahooAuthError, YahooAPIError):
-        pass  # Fall back to 0
+    except Exception:
+        pass  # Fall back to 0 — catches YahooAuthError, YahooAPIError, TypeError
 
     # 3. IP tracking - wired to Yahoo matchup stats (A-6 fix)
     ip_accumulated = 0.0

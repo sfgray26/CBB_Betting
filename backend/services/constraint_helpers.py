@@ -45,7 +45,7 @@ def count_weekly_acquisitions(
     count = 0
     for txn in transactions:
         # Filter to add transactions only
-        if txn.get("type") != "add":
+        if txn.get("type") not in ("add", "add/drop"):
             continue
 
         # Filter to my team (destination team)
