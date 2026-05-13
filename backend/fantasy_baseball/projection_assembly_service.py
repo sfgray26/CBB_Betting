@@ -324,11 +324,14 @@ class ProjectionAssemblyService:
             marginal_data["OBP"] = (proj_obp * pa, pa)
 
         # Category impacts
+        # Note: to_season_counts stubs proj_hr/proj_sb as 0; use board_proj directly.
         batter_values = {
-            "HR": float(counts.get("proj_hr") or 0),
-            "SB": float(counts.get("proj_sb") or 0),
+            "HR": float(board_proj.get("hr") or 0),
             "R": float(counts.get("proj_r") or 0),
             "RBI": float(counts.get("proj_rbi") or 0),
+            "NSB": float(board_proj.get("nsb") or 0),
+            "K_BAT": float(board_proj.get("k_bat") or 0),
+            "TB": float(board_proj.get("tb") or 0),
             "AVG": proj_avg,
             "OBP": proj_obp,
             "OPS": proj_ops,
@@ -424,9 +427,12 @@ class ProjectionAssemblyService:
             marginal_data["WHIP"] = (proj_whip * ip, ip)
 
         pitcher_values = {
-            "W": float(counts.get("proj_w") or 0),
-            "K": float(counts.get("proj_k") or 0),
-            "SV": float(counts.get("proj_sv") or 0),
+            "W": float(board_proj.get("w") or counts.get("proj_w") or 0),
+            "K": float(board_proj.get("k_pit") or counts.get("proj_k") or 0),
+            "SV": float(counts.get("proj_sv") or board_proj.get("sv") or 0),
+            "L": float(board_proj.get("l") or 0),
+            "HR_PIT": float(board_proj.get("hr_pit") or 0),
+            "QS": float(board_proj.get("qs") or 0),
             "ERA": proj_era,
             "WHIP": proj_whip,
             "K9": proj_k9,
@@ -655,7 +661,7 @@ class ProjectionAssemblyService:
                 true marginal rate-stat math in CategoryAwareScorer.
         """
         # Negative categories: lower is better -- flip direction
-        NEGATIVE_CATS = {"ERA", "WHIP"}
+        NEGATIVE_CATS = {"ERA", "WHIP", "K_BAT", "L", "HR_PIT"}
 
         impacts = []
         for category, value in values.items():
@@ -710,7 +716,9 @@ class ProjectionAssemblyService:
         pool["r"] = _zscore_pool(_collect(batters, "r"))
         pool["hr"] = _zscore_pool(_collect(batters, "hr"))
         pool["rbi"] = _zscore_pool(_collect(batters, "rbi"))
-        pool["sb"] = _zscore_pool([p.get("proj", {}).get("nsb") for p in batters])
+        pool["nsb"] = _zscore_pool([p.get("proj", {}).get("nsb") for p in batters])
+        pool["k_bat"] = _zscore_pool([p.get("proj", {}).get("k_bat") for p in batters])
+        pool["tb"] = _zscore_pool([p.get("proj", {}).get("tb") for p in batters])
         pool["avg"] = _zscore_pool(_collect(batters, "avg"))
         pool["ops"] = _zscore_pool(_collect(batters, "ops"))
         pool["obp"] = _zscore_pool([p.get("proj", {}).get("obp") for p in batters])
@@ -719,17 +727,22 @@ class ProjectionAssemblyService:
         pool["w"] = _zscore_pool(_collect(pitchers, "w"))
         pool["k_pit"] = _zscore_pool(_collect(pitchers, "k_pit"))
         pool["sv"] = _zscore_pool(_collect(pitchers, "sv"))
+        pool["l"] = _zscore_pool([p.get("proj", {}).get("l") for p in pitchers])
+        pool["hr_pit"] = _zscore_pool([p.get("proj", {}).get("hr_pit") for p in pitchers])
+        pool["qs"] = _zscore_pool([p.get("proj", {}).get("qs") for p in pitchers])
         pool["era"] = _zscore_pool(_collect(pitchers, "era"))
         pool["whip"] = _zscore_pool(_collect(pitchers, "whip"))
         pool["k9"] = _zscore_pool(_collect(pitchers, "k9"))
 
-        # Map CategoryImpact category strings to pool keys
+        # Map CategoryImpact category strings (lowercased) to pool keys
         return {
             # Batters
             "r": pool["r"],
             "hr": pool["hr"],
             "rbi": pool["rbi"],
-            "sb": pool["sb"],
+            "nsb": pool["nsb"],
+            "k_bat": pool["k_bat"],
+            "tb": pool["tb"],
             "avg": pool["avg"],
             "ops": pool["ops"],
             "obp": pool["obp"],
@@ -737,6 +750,9 @@ class ProjectionAssemblyService:
             "w": pool["w"],
             "k": pool["k_pit"],
             "sv": pool["sv"],
+            "l": pool["l"],
+            "hr_pit": pool["hr_pit"],
+            "qs": pool["qs"],
             "era": pool["era"],
             "whip": pool["whip"],
             "k9": pool["k9"],

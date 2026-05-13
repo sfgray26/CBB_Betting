@@ -1167,9 +1167,17 @@ def _lookup_canonical_by_name(db, name: str, player_type: str):
 
 
 # CategoryImpact.category → player_board cat_scores key mappings
-_CI_BATTER_MAP = {"R": "r", "HR": "hr", "RBI": "rbi", "SB": "sb", "AVG": "avg", "OPS": "ops"}
-_CI_PITCHER_MAP = {"W": "w", "K": "k_pit", "SV": "sv", "ERA": "era", "WHIP": "whip", "K9": "k9"}
-# Note: k_bat, tb, nsb, l, hr_pit, qs are not emitted by ProjectionAssemblyService yet.
+_CI_BATTER_MAP = {
+    "R": "r", "HR": "hr", "RBI": "rbi",
+    "NSB": "nsb", "SB": "nsb",  # SB kept as alias for legacy DB rows
+    "K_BAT": "k_bat", "TB": "tb",
+    "AVG": "avg", "OBP": "obp", "OPS": "ops",
+}
+_CI_PITCHER_MAP = {
+    "W": "w", "K": "k_pit", "SV": "sv",
+    "L": "l", "HR_PIT": "hr_pit", "QS": "qs",
+    "ERA": "era", "WHIP": "whip", "K9": "k9",
+}
 
 
 def _category_impacts_to_cat_scores(impacts, player_type: str) -> dict:

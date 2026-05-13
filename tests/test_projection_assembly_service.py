@@ -361,9 +361,9 @@ class TestZscorePools:
         pool = svc._build_zscore_pools(batters, pitchers)
 
         # Verify all expected keys exist
-        for key in ("r", "hr", "rbi", "sb", "avg", "ops", "obp"):
+        for key in ("r", "hr", "rbi", "nsb", "k_bat", "tb", "avg", "ops", "obp"):
             assert key in pool, f"Missing batter pool key: {key}"
-        for key in ("w", "k", "sv", "era", "whip", "k9"):
+        for key in ("w", "k", "sv", "l", "hr_pit", "qs", "era", "whip", "k9"):
             assert key in pool, f"Missing pitcher pool key: {key}"
 
     def test_pool_returns_valid_mean_std(self):
