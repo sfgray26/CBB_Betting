@@ -4473,10 +4473,42 @@ async def simulate_matchup(
                 status_code=400,
                 detail=f"Roster data required — currently have {my_count} my players, {opp_count} opponent players. Either provide my_roster/opponent_roster or set auto_fetch_rosters=true with Yahoo auth."
             )
+        # Fetch current scoreboard stats to anchor simulation to mid-week reality
+        _current_my: dict = {}
+        _current_opp: dict = {}
+        _remaining_frac: float = 1.0
+        try:
+            _sb_client = get_yahoo_client()
+            _my_tk = os.getenv("YAHOO_TEAM_KEY", "") or _sb_client.get_my_team_key()
+            _week_stats = _sb_client.get_matchup_stats(my_team_key=_my_tk)
+            if _week_stats:
+                _raw_my = _week_stats.get("my_stats", {})
+                _raw_opp = _week_stats.get("opp_stats", {})
+                _SCORE_TO_SIM = {
+                    "HR": "hr_b", "R": "r", "RBI": "rbi", "H": "h",
+                    "TB": "tb", "K": "k_b", "SB": "nsb", "AVG": "avg", "OPS": "ops",
+                    "W": "w", "L": "l", "ERA": "era", "WHIP": "whip",
+                    "K9": "k_9", "QS": "qs", "SV": "nsv",
+                }
+                for _bk, _sk in _SCORE_TO_SIM.items():
+                    if _bk in _raw_my:
+                        _current_my[_sk] = float(_raw_my[_bk] or 0.0)
+                    if _bk in _raw_opp:
+                        _current_opp[_sk] = float(_raw_opp[_bk] or 0.0)
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            _dow = datetime.now(ZoneInfo("America/New_York")).weekday()  # 0=Mon, 6=Sun
+            _remaining_frac = max(0.05, (6 - _dow) / 7.0)
+        except Exception as _anchor_err:
+            logger.warning("simulate_matchup: scoreboard anchor fetch failed: %s", _anchor_err)
+
         result = simulate_weekly_matchup(
             my_roster=my_roster,
             opponent_roster=opponent_roster,
             n_sims=n,
+            my_current_stats=_current_my or None,
+            opp_current_stats=_current_opp or None,
+            remaining_fraction=_remaining_frac,
         )
         return result
     except Exception as exc:
