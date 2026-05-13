@@ -315,14 +315,36 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
     ? whipValues.sort((a, b) => a - b)[Math.floor(whipValues.length / 2)]
     : null
 
+  const opsValues = activePlayers
+    .map((p) => {
+      const vals = getStatWindow(p, viewMode)
+      const isPitcher = p.eligible_positions.some((pos) => ['SP', 'RP', 'P'].includes(pos))
+      return !isPitcher ? vals?.['OPS'] : null
+    })
+    .filter((v): v is number => v != null && v > 0)
+  const medianOps = opsValues.length > 0
+    ? opsValues.sort((a, b) => a - b)[Math.floor(opsValues.length / 2)]
+    : null
+
+  const k9Values = activePlayers
+    .map((p) => {
+      const vals = getStatWindow(p, viewMode)
+      const isPitcher = p.eligible_positions.some((pos) => ['SP', 'RP', 'P'].includes(pos))
+      return isPitcher ? vals?.['K_9'] : null
+    })
+    .filter((v): v is number => v != null && v > 0)
+  const medianK9 = k9Values.length > 0
+    ? k9Values.sort((a, b) => a - b)[Math.floor(k9Values.length / 2)]
+    : null
+
   const allCats = [...BATTER_DISPLAY, ...PITCHER_DISPLAY]
-  const RATE_CATS = ['AVG', 'ERA', 'WHIP', 'OPS', 'K_9']
 
   function getDisplayVal(cat: string): string {
     if (cat === 'AVG') return medianAvg != null ? medianAvg.toFixed(3).replace(/^0\./, '.') : '–'
+    if (cat === 'OPS') return medianOps != null ? medianOps.toFixed(3).replace(/^0\./, '.') : '–'
     if (cat === 'ERA') return medianEra != null ? medianEra.toFixed(2) : '–'
     if (cat === 'WHIP') return medianWhip != null ? medianWhip.toFixed(2) : '–'
-    if (RATE_CATS.includes(cat)) return '–'
+    if (cat === 'K_9') return medianK9 != null ? medianK9.toFixed(1) : '–'
     return (totals[cat] ?? 0).toLocaleString()
   }
 

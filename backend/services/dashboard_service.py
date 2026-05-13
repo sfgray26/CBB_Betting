@@ -448,75 +448,97 @@ class DashboardService:
         prefs: UserPreferences
     ) -> List[WaiverTarget]:
         """
-        B1.3: Get prioritized waiver wire recommendations via WaiverEdgeDetector.
+        B1.3: Get prioritized waiver wire recommendations.
+
+        Uses the same scoreboard-deficit + compute_need_score path as the waiver
+        router so both surfaces show identical scores.  The old WaiverEdgeDetector
+        path returned 0.0 for all players because roster cat_scores couldn't be
+        populated in an async context, giving empty deficits.
         """
+        from backend.fantasy_baseball.player_board import get_or_create_projection
+        from backend.fantasy_baseball.category_aware_scorer import compute_need_score
+        from backend.schemas import CategoryDeficitOut
+
         client = self._get_yahoo_client()
         if not client:
             logger.warning("Yahoo client unavailable - cannot get waiver targets")
             return []
 
         try:
-            my_roster = client.get_roster()
-
-            # Attempt to get opponent roster to improve category deficit scoring
-            opponent_roster: List[dict] = []
-            try:
-                scoreboard = client.get_scoreboard()
-                my_team_key = client.get_my_team_key()
-                for matchup in scoreboard:
-                    teams_raw = matchup.get("teams", {})
-                    opp_key = self._extract_opponent_key(teams_raw, my_team_key)
-                    if opp_key:
-                        opponent_roster = client.get_roster(opp_key)
-                        break
-            except Exception as e:
-                logger.debug(f"Opponent roster unavailable for waiver scoring: {e}")
-
-            moves = self.waiver_detector.get_top_moves(
-                my_roster, opponent_roster, n_candidates=10
-            )
-
-            targets = []
-            for move in moves:
-                fa = move.get("add_player") or {}
-                if not fa:
-                    continue
-
-                need_score = float(move.get("need_score", 0.0))
-                win_gain = float(move.get("win_prob_gain", 0.0))
-                priority_score = need_score + win_gain * 100
-
-                if priority_score > 2.0:
-                    tier = "must_add"
-                elif priority_score > 1.0:
-                    tier = "strong_add"
-                else:
-                    tier = "streamer"
-
-                drop_name = move.get("drop_player_name", "")
-                reason_parts = [f"Need score: {need_score:.2f}"]
-                if drop_name:
-                    reason_parts.append(f"Drop: {drop_name}")
-                if win_gain:
-                    reason_parts.append(f"Win gain: {win_gain:+.1%}")
-                reason = " | ".join(reason_parts)
-
-                targets.append(WaiverTarget(
-                    player_id=str(fa.get("player_id") or fa.get("player_key", "")),
-                    name=fa.get("name", "Unknown"),
-                    team=fa.get("team", ""),
-                    positions=fa.get("positions", []),
-                    percent_owned=float(fa.get("percent_owned", fa.get("owned_pct", 0.0))),
-                    priority_score=priority_score,
-                    tier=tier,
-                    reason=reason,
-                ))
-
-            return targets
-
+            free_agents = client.get_free_agents(count=25)
         except Exception as e:
-            logger.error(f"Failed to get waiver targets: {e}")
+            logger.error(f"Failed to fetch free agents for dashboard: {e}")
             return []
+
+        # Build category deficits from scoreboard — same approach as waiver router.
+        category_deficits: List[CategoryDeficitOut] = []
+        n_cats = 10
+        try:
+            scoreboard = client.get_scoreboard()
+            my_team_key = client.get_my_team_key()
+            for matchup in (scoreboard or []):
+                teams = matchup.get("teams", {})
+                my_stats: dict = {}
+                opp_stats: dict = {}
+                for entry in (teams.values() if isinstance(teams, dict) else teams):
+                    t = entry if isinstance(entry, dict) else {}
+                    t_inner = (t.get("team") or [{}])[0] if isinstance(t.get("team"), list) else t
+                    tk = t_inner.get("team_key", "")
+                    is_mine = tk == my_team_key or my_team_key in tk or tk in my_team_key
+                    raw_stats = {}
+                    for item in (t.get("team_stats", {}).get("stats", {}).get("stat", []) or []):
+                        if isinstance(item, dict):
+                            raw_stats[str(item.get("stat_id", ""))] = item.get("value", 0)
+                    if is_mine:
+                        my_stats = raw_stats
+                    else:
+                        opp_stats = raw_stats
+                if my_stats and opp_stats:
+                    n_cats = max(len(my_stats), 1)
+                    for sid, my_val in my_stats.items():
+                        opp_val = opp_stats.get(sid, 0)
+                        try:
+                            deficit = float(opp_val or 0) - float(my_val or 0)
+                            category_deficits.append(CategoryDeficitOut(
+                                category=sid, deficit=deficit, winning=deficit <= 0
+                            ))
+                        except (TypeError, ValueError):
+                            pass
+                    break
+        except Exception as e:
+            logger.debug(f"Scoreboard deficit computation failed (non-fatal): {e}")
+
+        targets = []
+        for fa in free_agents[:15]:
+            try:
+                proj = get_or_create_projection(fa)
+            except Exception:
+                proj = {}
+
+            cat_scores = proj.get("cat_scores") or {}
+            z_score = float(proj.get("z_score") or fa.get("z_score") or 0.0)
+            need_score = compute_need_score(cat_scores, z_score, category_deficits, n_cats)
+
+            if need_score > 2.0:
+                tier = "must_add"
+            elif need_score > 1.0:
+                tier = "strong_add"
+            else:
+                tier = "streamer"
+
+            targets.append(WaiverTarget(
+                player_id=str(fa.get("player_id") or fa.get("player_key", "")),
+                name=fa.get("name", "Unknown"),
+                team=fa.get("team", ""),
+                positions=fa.get("positions", []),
+                percent_owned=float(fa.get("percent_owned", fa.get("owned_pct", 0.0))),
+                priority_score=need_score,
+                tier=tier,
+                reason=f"Need score: {need_score:.2f}",
+            ))
+
+        targets.sort(key=lambda t: t.priority_score, reverse=True)
+        return targets[:5]
     
     async def _get_injury_flags(self, user_id: str) -> tuple[List[InjuryFlag], int, int]:
         """
@@ -546,7 +568,12 @@ class DashboardService:
             injury_statuses = {"IL", "IL10", "IL60", "DTD", "OUT", "NA"}
             
             for player in roster:
-                status = player.get("status", "")
+                raw_status = player.get("status", "")
+                # Yahoo occasionally sends boolean True for active players — coerce to string
+                if isinstance(raw_status, bool):
+                    status = "" if raw_status else "OUT"
+                else:
+                    status = str(raw_status) if raw_status else ""
                 selected_pos = player.get("selected_position", "")
                 
                 # Check if player is injured
