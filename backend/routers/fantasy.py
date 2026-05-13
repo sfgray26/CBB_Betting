@@ -1770,6 +1770,11 @@ async def get_fantasy_waiver_recommendations(
             if my_matchup_teams:
                 my_tuple, opp_tuple = my_matchup_teams
 
+                # Display-only Yahoo stats that are NOT scoring categories.
+                # H_AB is stat ID 60 ("8/20" string), IP and GS are volume
+                # indicators only — none of these are H2H matchup cats.
+                _NON_SCORING_DISPLAY = frozenset({"H_AB", "IP", "GS"})
+
                 def _stats_dict_from_raw(raw_stats_list: list) -> dict:
                     out: dict = {}
                     for st in raw_stats_list:
@@ -1785,6 +1790,9 @@ async def get_fantasy_waiver_recommendations(
                         # Drop non-scoring Yahoo stat_ids that fall through
                         # translation as bare numeric strings.
                         if isinstance(key2, str) and key2.isdigit():
+                            continue
+                        # Drop display-only stats that are not H2H scoring cats.
+                        if key2 in _NON_SCORING_DISPLAY:
                             continue
                         try:
                             out[key2] = float(stobj.get("value", 0) or 0)
@@ -2167,6 +2175,9 @@ async def get_waiver_recommendations(
             _sid_map: dict = dict(_YAHOO_STAT_FALLBACK)
             if _my_matchup_teams:
 
+                # Display-only Yahoo stats that are NOT scoring categories.
+                _NON_SCORING_DISPLAY_2 = frozenset({"H_AB", "IP", "GS"})
+
                 def _rec_stats_dict(raw_stats_list: list) -> dict:
                     out: dict = {}
                     for _st in raw_stats_list:
@@ -2180,6 +2191,9 @@ async def get_waiver_recommendations(
                             continue
                         _key2 = _sid_map.get(_sid_k, _sid_k)
                         if isinstance(_key2, str) and _key2.isdigit():
+                            continue
+                        # Drop display-only stats that are not H2H scoring cats.
+                        if _key2 in _NON_SCORING_DISPLAY_2:
                             continue
                         try:
                             out[_key2] = float(_so.get("value", 0) or 0)
