@@ -1,7 +1,7 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
-> **Date:** 2026-05-12 | **Architect:** Claude Code (Master Architect)
-> **Branch:** `stable/cbb-prod` | **HEAD:** f6e5a6f (draft board fallback fix)
+> **Date:** 2026-05-13 | **Architect:** Claude Code (Master Architect)
+> **Branch:** `stable/cbb-prod` | **HEAD:** 7d18395 (Phase 1 P0 data bugs fixed)
 > **Deploy:** `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}` (d319beb live on Railway)
 
 ---
