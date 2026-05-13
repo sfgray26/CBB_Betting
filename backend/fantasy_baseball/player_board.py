@@ -20,6 +20,7 @@ Run this module standalone to see rankings:
   python -m backend.fantasy_baseball.player_board
 """
 
+import difflib as _difflib
 import json
 import logging
 import math
@@ -994,6 +995,30 @@ def _query_statcast_proxy(db: Session, player_id: str, player_type: str,
         return raw_data
 
 
+def _lookup_projection_by_name(db, name: str):
+    """Find PlayerProjection by name. Tries exact match, then difflib fuzzy at 0.85."""
+    from backend.models import PlayerProjection
+
+    norm = _normalize_name(name) if name else ""
+    if not norm:
+        return None
+
+    rows = db.query(PlayerProjection).filter(
+        PlayerProjection.cat_scores.isnot(None)
+    ).all()
+
+    for row in rows:
+        if _normalize_name(row.player_name or "") == norm:
+            return row
+
+    name_map = {_normalize_name(r.player_name or ""): r for r in rows if r.player_name}
+    matches = _difflib.get_close_matches(norm, name_map.keys(), n=1, cutoff=0.85)
+    if matches:
+        return name_map[matches[0]]
+
+    return None
+
+
 def get_or_create_projection(yahoo_player: dict) -> dict:
     """
     Return a board-compatible dict using Bayesian fusion (four-state logic).
@@ -1139,6 +1164,19 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
 
     except Exception as e:
         logger.debug(f"[player_board] DB query failed for {name}: {e}")
+
+    # Name-based fallback: query player_projections directly by name when identity
+    # chain fails (e.g. player not yet in player_identities table)
+    if not projection_row and db and name:
+        try:
+            projection_row = _lookup_projection_by_name(db, name)
+            if projection_row:
+                logger.info(
+                    "[player_board] Name-fallback found %s → %s (cat_scores=%s)",
+                    name, projection_row.player_name, bool(projection_row.cat_scores)
+                )
+        except Exception as _nf_err:
+            logger.debug("[player_board] Name-fallback failed for %s: %s", name, _nf_err)
 
     # FAST PATH: If projection_row has curated cat_scores (real dict),
     # use them directly without running fusion. This preserves the pre-Phase 9.5
