@@ -145,7 +145,7 @@ export default function DashboardPage() {
                   >
                     <p className="text-zinc-100 text-sm font-medium">{p.name}</p>
                     <p className="text-zinc-500 text-xs mt-0.5">
-                      {p.team} vs {p.opponent} · {p.game_date}
+                      {p.team} vs {p.opponent || 'TBD'} · {p.game_date}
                     </p>
                     <p className="text-zinc-400 text-xs mt-1">{p.reason}</p>
                   </div>

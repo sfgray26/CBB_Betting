@@ -7,6 +7,7 @@ import {
   BATTER_CATEGORIES,
   PITCHER_CATEGORIES,
   CATEGORY_LABEL,
+  CATEGORY_COLOR,
   LOWER_IS_BETTER,
   RATIO_CATEGORIES,
 } from '@/lib/types'
@@ -43,12 +44,12 @@ function barMyPct(myVal: number | string | null | undefined, oppVal: number | st
 }
 
 function statusLabel(winProb: number | null): { text: string; color: string; description: string } {
-  if (winProb === null) return { text: '—', color: 'text-[#494949]', description: 'No simulation data' }
-  if (winProb > 0.85) return { text: 'SAFE', color: 'text-emerald-400', description: `${Math.round(winProb * 100)}% win prob - Safe lead` }
-  if (winProb > 0.65) return { text: 'LEAD', color: 'text-[#FFC000]', description: `${Math.round(winProb * 100)}% win prob - Leaning ahead` }
-  if (winProb >= 0.35 && winProb <= 0.65) return { text: 'BUBBLE', color: 'text-amber-400', description: `${Math.round(winProb * 100)}% win prob - Could go either way` }
-  if (winProb >= 0.15) return { text: 'BEHIND', color: 'text-orange-400', description: `${Math.round(winProb * 100)}% win prob - Leaning behind` }
-  return { text: 'LOST', color: 'text-rose-400', description: `${Math.round(winProb * 100)}% win prob - Unlikely to win` }
+  if (winProb === null) return { text: '—', color: 'text-text-muted', description: 'No simulation data' }
+  if (winProb > 0.85) return { text: 'SAFE', color: 'text-status-safe', description: `${Math.round(winProb * 100)}% win prob - Safe lead` }
+  if (winProb > 0.65) return { text: 'LEAD', color: 'text-status-lead', description: `${Math.round(winProb * 100)}% win prob - Leaning ahead` }
+  if (winProb >= 0.35 && winProb <= 0.65) return { text: 'BUBBLE', color: 'text-status-bubble', description: `${Math.round(winProb * 100)}% win prob - Could go either way` }
+  if (winProb >= 0.15) return { text: 'BEHIND', color: 'text-status-behind', description: `${Math.round(winProb * 100)}% win prob - Leaning behind` }
+  return { text: 'LOST', color: 'text-status-lost', description: `${Math.round(winProb * 100)}% win prob - Unlikely to win` }
 }
 
 function actionHint(proj: CategoryProjection | undefined, lowerBetter: boolean): string {
@@ -85,83 +86,99 @@ function CategoryRow({ cat, myVal, oppVal, proj }: RowProps) {
   const isRatio = RATIO_CATEGORIES.includes(cat)
   const winning = isWinning(myVal, oppVal, lowerBetter)
   const label = CATEGORY_LABEL[cat]
+  const catColor = CATEGORY_COLOR[cat]
   const pct = barMyPct(myVal, oppVal)
   const winProb = proj?.win_prob ?? null
   const hint = actionHint(proj, lowerBetter)
   const status = statusLabel(winProb)
 
-  const myTextCls =
-    winning === true ? 'text-[#FFC000]' : winning === false ? 'text-[#969696]' : 'text-[#7D7D7D]'
-  const oppTextCls =
-    winning === false ? 'text-[#FFC000]' : 'text-[#7D7D7D]'
+  // Design System v2: my value is always primary white; gold is reserved for CTAs
+  const myTextCls = 'text-text-primary'
+  const oppTextCls = 'text-text-secondary'
+
+  const projDisplay = proj
+    ? isRatio
+      ? `${Math.round(proj.win_prob * 100)}%`
+      : `${formatStat(cat, proj.my_proj)}→${formatStat(cat, proj.opp_proj)}`
+    : '—'
+
+  // Bar colors: my side uses category color when winning, neutral gray when losing
+  const myBarColor = winning === true ? `${catColor}cc` : '#3a3a4d'
+  const oppBarColor = winning === false ? '#969696' : '#2a2a3d'
 
   return (
-    <div className="flex items-center gap-3 py-3 border-b border-[#222] last:border-0 hover:bg-[#222] transition-colors px-2 rounded-sm">
-      {/* Category label */}
-      <span className="w-10 text-sm font-mono font-semibold tracking-wide text-[#7D7D7D] uppercase flex-shrink-0">
-        {label}
-      </span>
+    <div className="border-b border-border-subtle last:border-0 hover:bg-bg-elevated transition-colors duration-150 px-2 rounded-sm">
+      {/* Main row */}
+      <div className="flex items-center gap-3 py-3">
+        {/* Category label with identity dot */}
+        <span className="w-12 text-sm font-semibold tracking-wide text-text-secondary uppercase flex-shrink-0 flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: catColor }} />
+          {label}
+        </span>
 
-      {/* My current value */}
-      <span className={cn('w-14 text-right text-base tabular-nums font-mono flex-shrink-0', myTextCls)}>
-        {formatStat(cat, myVal)}
-      </span>
+        {/* My current value */}
+        <span className={cn('w-14 text-right text-base tabular-nums font-mono flex-shrink-0', myTextCls)}>
+          {formatStat(cat, myVal)}
+        </span>
 
-      {/* Comparison bar */}
-      {isRatio ? (
-        <div className="flex-1" />
-      ) : (
-        <div className="flex-1 flex h-2 gap-px min-w-0">
-          <div className="flex-1 flex justify-end bg-[#111] rounded-l-sm overflow-hidden">
-            <div
-              className="h-full transition-all duration-500"
-              style={{
-                width: `${pct}%`,
-                backgroundColor: winning === true ? '#FFC000' : '#3A3A3A',
-              }}
-            />
+        {/* Comparison bar */}
+        {isRatio ? (
+          <div className="flex-1" />
+        ) : (
+          <div className="flex-1 flex h-2 gap-px min-w-0">
+            <div className="flex-1 flex justify-end bg-bg-inset rounded-l-sm overflow-hidden">
+              <div
+                className="h-full transition-all duration-500"
+                style={{
+                  width: `${pct}%`,
+                  backgroundColor: myBarColor,
+                }}
+              />
+            </div>
+            <div className="w-px bg-border-subtle flex-shrink-0" />
+            <div className="flex-1 bg-bg-inset rounded-r-sm overflow-hidden">
+              <div
+                className="h-full transition-all duration-500"
+                style={{
+                  width: `${100 - pct}%`,
+                  backgroundColor: oppBarColor,
+                }}
+              />
+            </div>
           </div>
-          <div className="w-px bg-[#333] flex-shrink-0" />
-          <div className="flex-1 bg-[#111] rounded-r-sm overflow-hidden">
-            <div
-              className="h-full transition-all duration-500"
-              style={{
-                width: `${100 - pct}%`,
-                backgroundColor: winning === false ? '#969696' : '#2A2A2A',
-              }}
-            />
-          </div>
+        )}
+
+        {/* Opponent current value */}
+        <span className={cn('w-14 text-base tabular-nums font-mono flex-shrink-0', oppTextCls)}>
+          {formatStat(cat, oppVal)}
+        </span>
+
+        {/* Projected final — hidden on mobile, shown sm+ */}
+        <span className="w-20 text-right text-sm font-mono text-text-muted flex-shrink-0 hidden sm:block">
+          {projDisplay}
+        </span>
+
+        {/* Status tag */}
+        <div className="w-16 flex justify-end flex-shrink-0">
+          <span
+            className={cn('text-xs font-bold tracking-wider uppercase', status.color)}
+            title={status.description}
+          >
+            {status.text}
+          </span>
         </div>
-      )}
 
-      {/* Opponent current value */}
-      <span className={cn('w-14 text-base tabular-nums font-mono flex-shrink-0', oppTextCls)}>
-        {formatStat(cat, oppVal)}
-      </span>
-
-      {/* Projected final */}
-      <span className="w-20 text-right text-sm font-mono text-[#494949] flex-shrink-0 hidden sm:block">
-        {proj
-          ? isRatio
-            ? `${Math.round(proj.win_prob * 100)}%`
-            : `${formatStat(cat, proj.my_proj)}→${formatStat(cat, proj.opp_proj)}`
-          : '—'}
-      </span>
-
-      {/* Status tag */}
-      <div className="w-16 flex justify-end flex-shrink-0">
-        <span
-          className={cn('text-xs font-bold tracking-wider uppercase', status.color)}
-          title={status.description}
-        >
-          {status.text}
+        {/* Action hint — hidden on mobile, shown md+ */}
+        <span className="w-20 text-right text-xs font-mono text-text-tertiary tracking-wide flex-shrink-0 hidden md:block">
+          {hint}
         </span>
       </div>
 
-      {/* Action hint */}
-      <span className="w-20 text-right text-xs font-mono text-[#494949] tracking-wide flex-shrink-0 hidden md:block">
-        {hint}
-      </span>
+      {/* Mobile-only second row: proj + action */}
+      <div className="flex items-center justify-between pb-2 sm:hidden text-[10px] font-mono text-text-muted">
+        <span>{projDisplay}</span>
+        {hint && hint !== '—' && <span>{hint}</span>}
+      </div>
     </div>
   )
 }
@@ -240,12 +257,12 @@ export function CategoryBattlefield({ data, simulate }: Props) {
       <div className="flex items-center justify-between gap-4 px-6 pt-5 pb-4 border-b border-[#2A2A2A]">
         {/* Bubble ratings legend */}
         <div className="flex items-center gap-3 text-xs">
-          <span className="text-[#494949] font-semibold tracking-widest uppercase">Win Prob:</span>
-          <span className="text-emerald-400">SAFE &gt;85%</span>
-          <span className="text-[#FFC000]">LEAD 65-85%</span>
-          <span className="text-amber-400">BUBBLE 35-65%</span>
-          <span className="text-orange-400">BEHIND 15-35%</span>
-          <span className="text-rose-400">LOST &lt;15%</span>
+          <span className="text-text-muted font-semibold tracking-widest uppercase">Win Prob:</span>
+          <span className="text-status-safe">SAFE &gt;85%</span>
+          <span className="text-status-lead">LEAD 65-85%</span>
+          <span className="text-status-bubble">BUBBLE 35-65%</span>
+          <span className="text-status-behind">BEHIND 15-35%</span>
+          <span className="text-status-lost">LOST &lt;15%</span>
         </div>
         <div className="flex gap-2">
           {(['all', 'bubbles', 'hitting', 'pitching'] as FilterChip[]).map(chip => (
@@ -267,7 +284,7 @@ export function CategoryBattlefield({ data, simulate }: Props) {
         <select
           value={sort}
           onChange={e => setSort(e.target.value as SortMode)}
-          className="bg-[#252525] text-[#7D7D7D] text-xs tracking-widest uppercase border border-[#2A2A2A] px-3 py-2 focus:outline-none focus:border-[#494949] rounded-sm"
+          className="bg-bg-elevated text-text-secondary text-xs tracking-widest uppercase border border-border-subtle px-3 py-2 focus:outline-none focus:border-border-focus rounded-sm"
         >
           <option value="flip">Sort: Flip Probability</option>
           <option value="margin">Sort: Margin</option>
@@ -277,13 +294,13 @@ export function CategoryBattlefield({ data, simulate }: Props) {
 
       {/* Column headers */}
       <div className="flex items-center gap-3 px-6 pt-4 pb-2">
-        <span className="w-10" />
-        <span className="w-14 text-right text-xs font-semibold tracking-widest uppercase text-[#494949]">ME</span>
+        <span className="w-12" />
+        <span className="w-14 text-right text-xs font-semibold tracking-widest uppercase text-text-muted">ME</span>
         <div className="flex-1" />
-        <span className="w-14 text-xs font-semibold tracking-widest uppercase text-[#494949]">OPP</span>
-        <span className="w-20 text-right text-xs font-semibold tracking-widest uppercase text-[#494949] hidden sm:block">PROJ / WIN%</span>
-        <span className="w-16 text-right text-xs font-semibold tracking-widest uppercase text-[#494949]">STATUS</span>
-        <span className="w-20 text-right text-xs font-semibold tracking-widest uppercase text-[#494949] hidden md:block">ACTION</span>
+        <span className="w-14 text-xs font-semibold tracking-widest uppercase text-text-muted">OPP</span>
+        <span className="w-20 text-right text-xs font-semibold tracking-widest uppercase text-text-muted hidden sm:block">PROJ / WIN%</span>
+        <span className="w-16 text-right text-xs font-semibold tracking-widest uppercase text-text-muted">STATUS</span>
+        <span className="w-20 text-right text-xs font-semibold tracking-widest uppercase text-text-muted hidden md:block">ACTION</span>
       </div>
 
       {filter === 'bubbles' ? (
@@ -308,7 +325,7 @@ export function CategoryBattlefield({ data, simulate }: Props) {
         <>
           {(filter === 'all' || filter === 'hitting') && hitters.length > 0 && (
             <div className="px-6">
-              <p className="text-sm font-semibold tracking-widest uppercase text-[#FFC000] pt-4 pb-2">
+              <p className="text-sm font-semibold tracking-widest uppercase text-accent-gold pt-4 pb-2">
                 BATTING
               </p>
               {hitters.map(({ cat }) => (
@@ -324,7 +341,7 @@ export function CategoryBattlefield({ data, simulate }: Props) {
           )}
           {(filter === 'all' || filter === 'pitching') && pitchers.length > 0 && (
             <div className="px-6 pb-5">
-              <p className="text-sm font-semibold tracking-widest uppercase text-[#FFC000] pt-5 pb-2">
+              <p className="text-sm font-semibold tracking-widest uppercase text-accent-gold pt-5 pb-2">
                 PITCHING
               </p>
               {pitchers.map(({ cat }) => (

@@ -1018,11 +1018,13 @@ class DailyLineupOptimizer:
                 has_start = has_game and is_probable
             else:
                 has_start = True  # RP can pitch any day
-                
+                opponent = ""
+
             result.append({
                 **p,
                 "has_start": has_start,
                 "pitcher_slot": "SP" if is_sp else "RP",
+                "opponent": opponent,
             })
         return result
     
