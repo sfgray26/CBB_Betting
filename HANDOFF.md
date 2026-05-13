@@ -1,8 +1,8 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
 > **Date:** 2026-05-13 | **Architect:** Claude Code (Master Architect)
-> **Branch:** `stable/cbb-prod` | **HEAD:** pending commit (matchup cache + loading skeleton)
-> **Deploy:** `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}` (d319beb live on Railway)
+> **Branch:** `stable/cbb-prod` | **HEAD:** `20349c5` (P2 UX fixes + design system v2 tokens)
+> **Deploy:** `/health` = `{"status":"healthy","database":"connected","scheduler":"running"}` (d319beb live on Railway — **deploy needed**)
 
 ---
 
@@ -253,6 +253,35 @@ Kimi's report incorrectly identified a duplicate function. Actual bug: INSERT at
 
 ---
 
+### K-NEXT-4: UI UAT Audit — ✅ COMPLETE (Kimi performed 2026-05-13)
+
+**Full report:** `reports/2026-05-13-ui-uat-audit.md`  
+**Screenshots:** `reports/uat/2026-05-13-*.png` (7 pages + Lighthouse)
+
+**P0 (Blocking):** None. All pages load without crashes or 5xx.
+
+**P1 (Degraded):**
+1. **Ownership 0% everywhere** — deploy gap (`27304f8` not on production)
+2. **Dashboard waiver targets show `Need score: 0.00`** while Waiver Wire page shows real scores (different pipelines)
+3. **Roster "Move player" buttons universally disabled** — users cannot adjust lineup via UI
+4. **Team totals show "–" for OPS and K/9** — backend aggregation missing these categories
+5. **Budget page is extremely sparse** — same 3 lines as Dashboard, no added value
+6. **Garrett Crochet injury status is boolean `true`** instead of string `"IL"` — API contract violation
+
+**P2 (Polish / Underwhelm) — ✅ #7–11 FIXED see commit `d105af7`:**
+7. ✅ Every waiver pitcher tagged "HOT" — threshold raised
+8. ✅ Two-start pitcher missing opponent — `flag_pitcher_starts` returns "opponent"
+9. ✅ "No streak data available" — `_get_streaks` now uses `PlayerMomentum` table
+10. ✅ War Room mobile hides PROJ/ACTION columns — mobile second row added
+11. ✅ Streaming Station 20+ flat chips — sorted + severity color-coded
+12. Sidebar navigation cluttered — deferred
+
+**Lighthouse:** Accessibility 90, Best Practices 100, SEO 100.
+
+**Top recommendation:** Deploy latest `stable/cbb-prod` (HEAD `20349c5`) to Railway — fixes ownership % + all P1/P2 items from this audit.
+
+---
+
 ## K-1 UI UAT FINDINGS (2026-05-07)
 
 Production UI audit completed. Full report: `reports/2026-05-07-ui-uat-audit.md`
@@ -332,3 +361,59 @@ All 554 scores seeded. avg_confidence=0.191 (pa proxy gives signal but early-sea
 100_041 bridge_mapping_to_identities (5:00 AM ET — seeds player_identities from player_id_mapping)
 Next available: 100_042
 ```
+
+
+---
+
+### K-NEXT-4: UI UAT Audit — ✅ COMPLETE (Kimi performed 2026-05-13)
+
+**Full report:** `reports/2026-05-13-ui-uat-audit.md`  
+**Screenshots:** `reports/uat/2026-05-13-*.png` (7 pages + Lighthouse)
+
+**P0 (Blocking):** None. All pages load without crashes or 5xx.
+
+**P1 (Degraded):**
+1. **Ownership 0% everywhere** — deploy gap (`27304f8` not on production)
+2. **Dashboard waiver targets show `Need score: 0.00`** while Waiver Wire page shows real scores (different pipelines)
+3. **Roster "Move player" buttons universally disabled** — users cannot adjust lineup via UI
+4. **Team totals show "–" for OPS and K/9** — backend aggregation missing these categories
+5. **Budget page is extremely sparse** — same 3 lines as Dashboard, no added value
+6. **Garrett Crochet injury status is boolean `true`** instead of string `"IL"` — API contract violation
+
+**P2 (Polish / Underwhelm) — ✅ #7–11 FIXED (2026-05-13 this session):**
+7. ✅ Every waiver pitcher tagged "HOT" — raised threshold 0.4→0.75, COLD -0.3→-0.5 in `fantasy.py`
+8. ✅ Two-start pitcher missing opponent — `flag_pitcher_starts` now returns "opponent" key; `dashboard_service` reads it; frontend shows "TBD" when empty (commit `d105af7`)
+9. ✅ "No streak data available" — `_get_streaks` rewritten to query `PlayerMomentum` (populated nightly) via `PlayerIDMapping` join; replaced stale `PlayerDailyMetric` path
+10. ✅ War Room mobile hides PROJ/ACTION columns — `CategoryRow` now renders mobile second row (`sm:hidden`) with projected value + action hint
+11. ✅ Streaming Station 20+ flat chips — sorted by abs(deficit); severity color-coded (rose ≥3.0, amber ≥1.0, zinc <1.0, emerald=ahead)
+12. Sidebar navigation cluttered — deferred
+
+**Lighthouse:** Accessibility 90, Best Practices 100, SEO 100.
+
+**Top recommendation:** Deploy latest `stable/cbb-prod` (HEAD `20349c5`) to Railway. That single action makes all of this session's fixes live.
+
+---
+
+### K-NEXT-5: UI Design System v2 — ✅ COMPLETE (Kimi designed 2026-05-13)
+
+**Full spec:** `docs/DESIGN_SYSTEM_V2.md`
+
+**Root cause of "underwhelmed" feeling:** The current UI requires *reading* instead of *recognizing*. Five interrelated problems:
+
+1. **Flat grayscale** — `#09090b` → `#181818` → `#202020` has only 2% lightness jumps. No surface hierarchy.
+2. **No category identity** — "HR" and "ERA" look identical. 20 categories, zero color differentiation.
+3. **Overused gold (`#FFC000`)** — used for headings, winning values, buttons, icons, and alerts simultaneously.
+4. **Low contrast text** — `#7D7D7D` on `#181818` fails WCAG AA. `#494949` is nearly invisible.
+5. **Monotonous typography** — everything is 10–12px uppercase tracking-widest.
+
+**Proposed solution:**
+- **New foundation:** Three distinct surfaces (`bg-base` `#0c0c10`, `bg-surface` `#16161e`, `bg-elevated` `#1f1f2a`) with 4% lightness jumps
+- **Category identity colors:** Every H2H category gets a persistent unique color (blue = runs/hits/wins/ks, purple = power, yellow = rate stats, orange = ERA/WHIP, green = speed/quality)
+- **Semantic status gradient:** Green (`#22c55e`) → lime → amber → orange → red (`#ef4444`) for SAFE→LOST
+- **Gold reserved for:** your winning values + primary CTAs only
+- **Typography hierarchy:** Display 24px → Heading 18px → Title 14px → Body 13px → Label 11px uppercase → Caption 10px
+- **Component redesigns:** Category chips with colored dots, battlefield rows with category-colored bars, gated HOT badges (top 20% only)
+
+**Migration guide included:** 4-step implementation (CSS variables → color map → Tailwind config → component refactors in priority order)
+
+**Ready for Claude Code implementation review.**
