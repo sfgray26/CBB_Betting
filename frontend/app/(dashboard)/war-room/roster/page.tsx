@@ -257,12 +257,26 @@ function BudgetPanel({ budget }: { budget: BudgetData }) {
 // Category Summary — raw stats for actual windows; z-score edge for RoS
 // ───────────────────────────────────────────────────────────────────────────
 
-function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewMode: ViewMode }) {
+function CategorySummary({ players, viewMode, matchupRows }: { players: RosterPlayer[]; viewMode: ViewMode; matchupRows?: ScoreboardResponse['rows'] }) {
   const activePlayers = players.filter((p) => {
     const slot = p.current_slot?.toUpperCase()
     if (slot === 'BN' || slot === 'IL' || slot === 'IL60') return false
     return p.status !== 'IL'
   })
+
+  // Build category→W/L/T map from this week's matchup for tile overlays.
+  // Stores by raw category code AND by display label so lookups work for
+  // both canonical keys (ERA, W) and disambiguated keys (HR_B, K_P, etc.)
+  const outcomeMap: Record<string, 'W' | 'L' | 'T'> = {}
+  for (const row of matchupRows ?? []) {
+    const out = statusToLabel(row.status)
+    outcomeMap[row.category] = out
+    if (row.category_label && row.category_label !== row.category) {
+      outcomeMap[row.category_label] = out
+    }
+  }
+  const wCount = (matchupRows ?? []).filter((r) => statusToLabel(r.status) === 'W').length
+  const lCount = (matchupRows ?? []).filter((r) => statusToLabel(r.status) === 'L').length
 
   // ── RoS mode: cat_scores are z-scores (DB: "Dict of category -> z-score")
   // Sum counting-cat z-scores across starters; average rate-cat z-scores.
@@ -288,61 +302,77 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
         </div>
       )
     }
-    return (
-      <div className="bg-bg-surface border border-border-subtle rounded-lg p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <TrendingUp className="h-3.5 w-3.5 text-accent-gold" />
-            <p className="text-xs font-semibold tracking-widest uppercase text-accent-gold">
-              Projected Team Edge
-            </p>
+
+    // Sort by z-score descending and group into actionable tiers
+    const catEntries = allCats
+      .map((cat) => {
+        const vals = zSums[cat]
+        if (!vals || vals.length === 0) return null
+        const z = RATE_CATS.has(cat)
+          ? vals.reduce((a, b) => a + b, 0) / vals.length
+          : vals.reduce((a, b) => a + b, 0)
+        return { cat, z }
+      })
+      .filter((e): e is { cat: string; z: number } => e !== null)
+      .sort((a, b) => b.z - a.z)
+    const rosStrengths = catEntries.filter((e) => e.z >= 0.3)
+    const rosNeutral = catEntries.filter((e) => e.z > -0.3 && e.z < 0.3)
+    const rosWeaknesses = catEntries.filter((e) => e.z <= -0.3)
+
+    function RosTile({ cat, z }: { cat: string; z: number }) {
+      const catColor = CATEGORY_COLOR[cat as RotoCategory]
+      const color = z >= 1.5 ? 'text-status-safe' : z >= 0.3 ? 'text-status-lead' : z <= -1.5 ? 'text-status-lost' : z <= -0.3 ? 'text-status-behind' : 'text-text-secondary'
+      return (
+        <div className="text-center">
+          <div className="flex items-center justify-center gap-1 mb-0.5">
+            {catColor && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: catColor }} />}
+            <p className="text-[9px] text-text-muted uppercase tracking-wider">{formatCat(cat)}</p>
           </div>
-          <p className="text-[9px] text-text-muted">
-            Z-scores vs. league avg · green = strength · red = weakness
+          <p className={cn('text-sm font-bold tabular-nums', color)}>
+            {z > 0 ? '+' : ''}{z.toFixed(1)}
           </p>
         </div>
-        <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-9 gap-3">
-          {allCats.map((cat) => {
-            const vals = zSums[cat]
-            const catColor = CATEGORY_COLOR[cat as RotoCategory]
-            if (!vals || vals.length === 0) return (
-              <div key={cat} className="text-center">
-                <div className="flex items-center justify-center gap-1 mb-0.5">
-                  {catColor && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: catColor }} />}
-                  <p className="text-[9px] text-text-muted uppercase tracking-wider">{formatCat(cat)}</p>
-                </div>
-                <p className="text-sm font-bold text-bg-elevated">–</p>
-              </div>
-            )
-            // Rate cats: average z; counting cats: sum z
-            const z = RATE_CATS.has(cat)
-              ? vals.reduce((a, b) => a + b, 0) / vals.length
-              : vals.reduce((a, b) => a + b, 0)
-            const color = z >= 1.5
-              ? 'text-status-safe'
-              : z >= 0.3
-                ? 'text-status-lead'
-                : z <= -1.5
-                  ? 'text-status-lost'
-                  : z <= -0.3
-                    ? 'text-status-behind'
-                    : 'text-text-secondary'
-            return (
-              <div key={cat} className="text-center">
-                <div className="flex items-center justify-center gap-1 mb-0.5">
-                  {catColor && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: catColor }} />}
-                  <p className="text-[9px] text-text-muted uppercase tracking-wider">{formatCat(cat)}</p>
-                </div>
-                <p className={cn('text-sm font-bold tabular-nums', color)}>
-                  {z > 0 ? '+' : ''}{z.toFixed(1)}
-                </p>
-              </div>
-            )
-          })}
+      )
+    }
+
+    return (
+      <div className="bg-bg-surface border border-border-subtle rounded-lg p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="h-3.5 w-3.5 text-accent-gold" />
+            <p className="text-xs font-semibold tracking-widest uppercase text-accent-gold">Projected Team Edge</p>
+          </div>
+          <p className="text-[9px] text-text-muted">Z-scores vs. league avg · active starters only</p>
         </div>
-        <p className="text-[9px] text-text-muted mt-2">
-          Counting cats: sum of player z-scores · Rate cats: avg z-score of starters
-        </p>
+        {rosStrengths.length > 0 && (
+          <div>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-status-safe mb-2">▲ Strengths</p>
+            <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-3">
+              {rosStrengths.map(({ cat, z }) => <RosTile key={cat} cat={cat} z={z} />)}
+            </div>
+          </div>
+        )}
+        {rosNeutral.length > 0 && (
+          <div>
+            <p className="text-[9px] font-bold uppercase tracking-widest text-text-muted mb-2">— Neutral</p>
+            <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-3">
+              {rosNeutral.map(({ cat, z }) => <RosTile key={cat} cat={cat} z={z} />)}
+            </div>
+          </div>
+        )}
+        {rosWeaknesses.length > 0 && (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[9px] font-bold uppercase tracking-widest text-status-lost">▼ Needs Work</p>
+              <a href="/war-room/waiver" className="text-[9px] text-text-secondary hover:text-text-primary underline">
+                Find waiver targets →
+              </a>
+            </div>
+            <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-3">
+              {rosWeaknesses.map(({ cat, z }) => <RosTile key={cat} cat={cat} z={z} />)}
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -424,31 +454,52 @@ function CategorySummary({ players, viewMode }: { players: RosterPlayer[]; viewM
     return (totals[cat] ?? 0).toLocaleString()
   }
 
+  const viewLabel = viewMode === 'season' ? 'Season Stats' : viewMode === '7d' ? '7-Day Stats' : viewMode === '14d' ? '14-Day Stats' : '30-Day Stats'
+
   return (
     <div className="bg-bg-surface border border-border-subtle rounded-lg p-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <BarChart3 className="h-3.5 w-3.5 text-accent-gold" />
           <p className="text-xs font-semibold tracking-widest uppercase text-text-secondary">
-            Category Totals
+            {viewLabel}
           </p>
+          {/* Live matchup score inline — connects stats to this week's context */}
+          {wCount + lCount > 0 && (
+            <span className="text-[10px] text-text-muted">
+              ·{' '}
+              <span className="text-status-safe font-bold">{wCount}W</span>
+              {' · '}
+              <span className="text-status-lost font-bold">{lCount}L</span>
+            </span>
+          )}
         </div>
         <p className="text-[9px] text-text-muted">
-          Active starters · {activePlayers.length} players · Rate stats = median
+          {activePlayers.length} active · Rate stats = median
         </p>
       </div>
-      <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-9 gap-3">
+      <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-9 gap-2">
         {allCats.map((cat) => {
           const catColor = CATEGORY_COLOR[cat as RotoCategory]
+          // Double-lookup: scoreboard uses canonical codes (HR, K) while
+          // internal display uses disambiguated codes (HR_B, K_P)
+          const outcome = outcomeMap[cat] ?? outcomeMap[formatCat(cat)]
+          const valueColor = outcome === 'W' ? 'text-status-safe' : outcome === 'L' ? 'text-status-lost' : 'text-text-primary'
+          const tileBg = outcome === 'W' ? 'bg-status-safe/5 border-status-safe/20' : outcome === 'L' ? 'bg-status-lost/5 border-status-lost/20' : 'border-transparent'
           return (
-            <div key={cat} className="text-center">
+            <div key={cat} className={cn('text-center rounded p-1.5 border', tileBg)}>
               <div className="flex items-center justify-center gap-1 mb-0.5">
                 {catColor && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: catColor }} />}
                 <p className="text-[9px] text-text-muted uppercase tracking-wider">{formatCat(cat)}</p>
               </div>
-              <p className="text-sm font-bold text-text-primary tabular-nums">
+              <p className={cn('text-sm font-bold tabular-nums', valueColor)}>
                 {getDisplayVal(cat)}
               </p>
+              {outcome && (
+                <p className={cn('text-[9px] font-bold leading-none mt-0.5', valueColor)}>
+                  {outcome}
+                </p>
+              )}
             </div>
           )
         })}
@@ -950,14 +1001,33 @@ export default function RosterPage() {
         />
       )}
 
-      {/* Budget panel */}
-      {budget.data && <BudgetPanel budget={budget.data.budget} />}
-
-      {/* Matchup context strip */}
+      {/* Matchup context strip — most urgent this-week context first */}
       {scoreboard.data && <MatchupStrip scoreboard={scoreboard.data} />}
 
-      {/* Category summary */}
-      <CategorySummary players={data.players} viewMode={viewMode} />
+      {/* Losing categories callout — action bridge to waiver wire */}
+      {scoreboard.data && (() => {
+        const losers = scoreboard.data!.rows.filter((r) => statusToLabel(r.status) === 'L')
+        if (losers.length === 0) return null
+        return (
+          <div className="flex items-center gap-2 flex-wrap bg-status-lost/5 border border-status-lost/20 rounded-lg px-3 py-2">
+            <span className="text-[10px] font-bold text-status-lost uppercase tracking-wider flex-shrink-0">Losing:</span>
+            {losers.map((r) => (
+              <span key={r.category} className="text-[10px] px-1.5 py-0.5 bg-status-lost/10 border border-status-lost/30 rounded text-status-lost font-bold">
+                {r.category_label || formatCat(r.category)}
+              </span>
+            ))}
+            <a href="/war-room/waiver" className="ml-auto text-[10px] text-text-secondary hover:text-text-primary underline flex-shrink-0">
+              Find waiver targets →
+            </a>
+          </div>
+        )
+      })()}
+
+      {/* Category summary — stats tiles with W/L matchup overlay */}
+      <CategorySummary players={data.players} viewMode={viewMode} matchupRows={scoreboard.data?.rows} />
+
+      {/* Budget panel */}
+      {budget.data && <BudgetPanel budget={budget.data.budget} />}
 
       {/* View toggle + sort + filter controls */}
       <div className="flex flex-col sm:flex-row gap-3 flex-wrap">

@@ -5,8 +5,8 @@ import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import type { WaiverAvailablePlayer, WaiverResponse } from '@/lib/types'
 import {
-  ListFilter, Loader2, AlertCircle, TrendingUp, TrendingDown,
-  Flame, Snowflake, AlertTriangle, Users, ChevronDown, ChevronUp,
+  ListFilter, Loader2, AlertCircle, TrendingUp,
+  Flame, Snowflake, AlertTriangle, Users,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -135,7 +135,7 @@ function PlayerRow({ player }: { player: WaiverAvailablePlayer }) {
         {/* Category need matches — shows which of your deficits this player addresses */}
         {needMatches.length > 0 && (
           <div className="flex gap-1 mt-1.5 flex-wrap">
-            <span className="text-[9px] text-text-muted uppercase tracking-wider self-center">fills:</span>
+            <span className="text-[9px] text-text-muted uppercase tracking-wider self-center">Addresses:</span>
             {needMatches.map((label) => (
               <span key={label} className="text-[10px] px-1.5 py-0.5 bg-status-bubble/10 text-status-bubble border border-status-bubble/30 rounded font-bold">
                 {label}
@@ -168,108 +168,67 @@ function CategoryDeficitsBar({ deficits, opponent }: {
   deficits: WaiverResponse['category_deficits']
   opponent?: string
 }) {
-  const [expanded, setExpanded] = useState(false)
-
-  // Filter out display-only stats (H_AB, IP, GS) and any other non-scoring keys
+  // Filter out display-only stats (H_AB, IP, GS)
   const scored = (deficits ?? []).filter((d) => waiverCatLabel(d.category) !== null)
   if (scored.length === 0) return null
 
-  const behind = scored.filter((d) => !d.winning)
-  const leading = scored.filter((d) => d.winning)
-  // Tied = deficit exactly 0 in both directions
-  const tied = scored.filter((d) => d.deficit === 0)
-  const netBehind = behind.length - tied.length
+  const wCount = scored.filter((d) => d.winning).length
+  const lCount = scored.filter((d) => !d.winning && d.deficit !== 0).length
+  const tCount = scored.filter((d) => d.deficit === 0).length
 
-  // Show first 4 behind, expand to show all
-  const behindVisible = expanded ? behind : behind.slice(0, 4)
-  const leadingVisible = expanded ? leading : leading.slice(0, 3)
-  const hasMore = behind.length > 4 || leading.length > 3
+  function fmtVal(catKey: string, val: number): string {
+    const label = waiverCatLabel(catKey) ?? catKey
+    if (['ERA', 'WHIP', 'AVG', 'OPS', 'K/9', 'K_9'].includes(label) || ['ERA', 'WHIP', 'AVG', 'OPS', 'K/9', 'K_9'].includes(catKey)) {
+      return val.toFixed(2)
+    }
+    return Number.isInteger(val) ? val.toString() : val.toFixed(1)
+  }
 
   return (
-    <div className="bg-bg-surface border border-border-subtle rounded-lg p-4 space-y-3">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-[10px] font-semibold tracking-widest uppercase text-text-secondary">
-            This Week&apos;s Matchup{opponent ? ` vs ${opponent}` : ''}
-          </p>
-          <p className="text-xs text-text-muted mt-0.5">
-            {netBehind > 0 ? (
-              <span className="text-status-lost font-semibold">Trailing in {behind.length}</span>
-            ) : (
-              <span className="text-status-safe font-semibold">Leading in {leading.length}</span>
-            )}
-            {' · '}
-            <span className={leading.length > behind.length ? 'text-status-safe' : 'text-text-muted'}>
-              {leading.length} W
-            </span>
-            {' · '}
-            <span className={behind.length > 0 ? 'text-status-lost' : 'text-text-muted'}>
-              {behind.length} L
-            </span>
-            {tied.length > 0 && <span className="text-text-secondary"> · {tied.length} T</span>}
-          </p>
+    <div className="bg-bg-surface border border-border-subtle rounded-lg p-4">
+      {/* Header — same layout as roster MatchupStrip for visual consistency */}
+      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <p className="text-[10px] font-semibold tracking-widest uppercase text-text-secondary">
+          This Week{opponent ? ` · vs ${opponent}` : ''}
+        </p>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs font-bold text-status-safe">{wCount}W</span>
+          <span className="text-[10px] text-text-muted">·</span>
+          <span className="text-xs font-bold text-status-lost">{lCount}L</span>
+          {tCount > 0 && (
+            <>
+              <span className="text-[10px] text-text-muted">·</span>
+              <span className="text-xs font-bold text-status-bubble">{tCount}T</span>
+            </>
+          )}
         </div>
-        {hasMore && (
-          <button onClick={() => setExpanded(!expanded)} className="text-[10px] text-text-secondary hover:text-text-primary flex items-center gap-0.5">
-            {expanded ? <><ChevronUp className="h-3 w-3" /> Less</> : <><ChevronDown className="h-3 w-3" /> More</>}
-          </button>
-        )}
       </div>
-
-      {/* Behind categories */}
-      {behind.length > 0 && (
-        <div className="space-y-1">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-status-lost">▼ Behind</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-            {behindVisible.map((d) => {
-              const label = waiverCatLabel(d.category) ?? d.category
-              const gap = Math.abs(d.deficit)
-              return (
-                <div key={d.category} className="flex items-center justify-between bg-status-lost/10 border border-status-lost/20 rounded px-2.5 py-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <TrendingDown className="h-3 w-3 text-status-lost flex-shrink-0" />
-                    <span className="text-[11px] font-bold text-status-lost/80 w-10">{label}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-[10px] tabular-nums">
-                    <span className="text-text-primary">{fmtStat(d.category, d.my_total)}</span>
-                    <span className="text-text-muted">vs</span>
-                    <span className="text-text-secondary">{fmtStat(d.category, d.opponent_total)}</span>
-                    <span className="text-status-lost font-bold ml-1">−{fmtStat(d.category, gap)}</span>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Leading categories */}
-      {leading.length > 0 && (
-        <div className="space-y-1">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-status-safe">▲ Leading</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-            {leadingVisible.map((d) => {
-              const label = waiverCatLabel(d.category) ?? d.category
-              const lead = Math.abs(d.deficit)
-              return (
-                <div key={d.category} className="flex items-center justify-between bg-status-safe/10 border border-status-safe/20 rounded px-2.5 py-1.5">
-                  <div className="flex items-center gap-1.5">
-                    <TrendingUp className="h-3 w-3 text-status-safe flex-shrink-0" />
-                    <span className="text-[11px] font-bold text-status-safe/80 w-10">{label}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-[10px] tabular-nums">
-                    <span className="text-text-primary">{fmtStat(d.category, d.my_total)}</span>
-                    <span className="text-text-muted">vs</span>
-                    <span className="text-text-secondary">{fmtStat(d.category, d.opponent_total)}</span>
-                    <span className="text-status-safe font-bold ml-1">+{fmtStat(d.category, lead)}</span>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
+      {/* Pill grid — mirrors MatchupStrip on roster page for a unified visual language */}
+      <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-9 gap-2">
+        {scored.map((d) => {
+          const label = waiverCatLabel(d.category) ?? d.category
+          const isLowerBetter = ['ERA', 'WHIP', 'L', 'HRA'].includes(label)
+          const outcome: 'W' | 'L' | 'T' = d.deficit === 0 ? 'T' : d.winning ? 'W' : 'L'
+          const outcomeBg = outcome === 'W'
+            ? 'bg-status-safe/10 border-status-safe/30'
+            : outcome === 'L'
+              ? 'bg-status-lost/10 border-status-lost/30'
+              : 'bg-status-bubble/10 border-status-bubble/30'
+          const outcomeText = outcome === 'W' ? 'text-status-safe' : outcome === 'L' ? 'text-status-lost' : 'text-status-bubble'
+          const myAhead = isLowerBetter ? d.my_total < d.opponent_total : d.my_total > d.opponent_total
+          return (
+            <div key={d.category} className={cn('rounded p-1.5 border text-center', outcomeBg)}>
+              <p className="text-[9px] text-text-secondary uppercase tracking-wider leading-none mb-1">{label}</p>
+              <div className={cn('text-[10px] font-bold leading-none', outcomeText)}>{outcome}</div>
+              <p className="text-[9px] text-text-muted leading-none mt-1">
+                <span className={myAhead ? 'text-text-primary' : ''}>{fmtVal(d.category, d.my_total)}</span>
+                <span className="mx-0.5 text-border-subtle">·</span>
+                {fmtVal(d.category, d.opponent_total)}
+              </p>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }
@@ -380,7 +339,7 @@ export default function WaiverPage() {
                 sort === s ? 'bg-accent-gold text-black' : 'text-text-secondary hover:text-text-primary',
               )}
             >
-              {s === 'need_score' ? 'Match Score' : 'Projected'}
+              {s === 'need_score' ? 'Match Score' : 'Overall Value'}
             </button>
           ))}
         </div>
