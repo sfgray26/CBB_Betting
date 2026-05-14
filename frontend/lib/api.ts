@@ -319,6 +319,16 @@ export const endpoints = {
   getCanonicalProjections: () =>
     apiFetch<CanonicalProjectionsResponse>('/api/fantasy/projections/canonical'),
 
+  getProjectionStatus: () =>
+    apiFetch<{
+      db_updated_at: string | null
+      db_player_count: number
+      age_hours: number | null
+      is_stale: boolean
+      active_source: string
+      board_player_count: number
+    }>('/api/fantasy/projection-status'),
+
   getBudget: () =>
     apiFetch<BudgetResponse>('/api/fantasy/budget'),
 

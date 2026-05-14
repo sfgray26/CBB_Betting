@@ -790,22 +790,41 @@ def get_board(apply_park_factors: bool = True) -> list[dict]:
     Return the full ranked player board.
 
     Priority:
-    1. Real Steamer/ZiPS CSV data (if data/projections/ CSVs are present)
-    2. Hardcoded estimates (fallback — always available)
+    1. DB RoS projections (FanGraphs ensemble, updated nightly 3:30 AM ET)
+    2. Real Steamer/ZiPS CSV data (if data/projections/ CSVs are present)
+    3. Hardcoded estimates (always available fallback)
 
-    Park factors and risk adjustments are applied on top of either source.
+    Park factors and keeper flags are applied on top of whichever source wins.
     """
     global _BOARD
     if _BOARD is None:
-        # Try real projection data first
+        # 1. DB RoS projections — freshest source, updated nightly by lock 100_036
         try:
-            from backend.fantasy_baseball.projections_loader import load_full_board
-            real_board = load_full_board()
-            if real_board:
-                _BOARD = real_board
-        except Exception:
-            pass
+            from backend.fantasy_baseball.projections_loader import load_db_projections
+            db_board = load_db_projections()
+            if db_board and len(db_board) >= 100:
+                _BOARD = db_board
+                import logging
+                logging.getLogger(__name__).info(
+                    "player_board: loaded %d projections from DB (RoS)", len(_BOARD)
+                )
+        except Exception as _exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "player_board: DB projection load failed: %s", _exc
+            )
 
+        # 2. CSV fallback (Steamer/ZiPS files in data/projections/)
+        if _BOARD is None:
+            try:
+                from backend.fantasy_baseball.projections_loader import load_full_board
+                real_board = load_full_board()
+                if real_board:
+                    _BOARD = real_board
+            except Exception:
+                pass
+
+        # 3. Hardcoded constants (always available)
         if _BOARD is None:
             _BOARD = build_board()
 

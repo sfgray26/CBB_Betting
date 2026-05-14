@@ -6387,6 +6387,15 @@ class DailyIngestionOrchestrator:
                 updated, inserted, skipped, elapsed,
             )
             self._record_job_run("ros_projection_refresh", "success", updated + inserted)
+
+            # Invalidate in-memory board cache so next request loads fresh RoS projections
+            try:
+                from backend.fantasy_baseball.player_board import reset_board_cache
+                reset_board_cache()
+                logger.info("ros_projection_refresh: board cache cleared")
+            except Exception as _cache_exc:
+                logger.warning("ros_projection_refresh: cache clear failed: %s", _cache_exc)
+
             return {
                 "status": "success",
                 "updated": updated,
