@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import { Loader2, AlertCircle, Zap, TrendingUp, TrendingDown } from 'lucide-react'
 import type { WaiverAvailablePlayer, CategoryDeficit } from '@/lib/types'
-import { CATEGORY_LABEL, CATEGORY_COLOR, RotoCategory } from '@/lib/types'
+import { CATEGORY_LABEL, CATEGORY_COLOR } from '@/lib/types'
 
 export default function StreamingStationPage() {
   const waiver = useQuery({

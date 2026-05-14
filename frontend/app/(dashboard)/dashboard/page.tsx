@@ -2,7 +2,7 @@
 
 import { useQuery, keepPreviousData } from "@tanstack/react-query"
 import { endpoints } from "@/lib/api"
-import { CATEGORY_COLOR, type DashboardData, type LineupGap, type InjuryFlag, type WaiverTarget, type StreakPlayer, type RotoCategory } from "@/lib/types"
+import { type DashboardData, type LineupGap, type InjuryFlag, type WaiverTarget, type StreakPlayer } from "@/lib/types"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"

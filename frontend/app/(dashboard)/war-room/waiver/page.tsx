@@ -34,14 +34,6 @@ function waiverCatLabel(key: string): string | null {
   return key  // unknown key: show as-is rather than silently dropping
 }
 
-// Rate stats use 2 decimal places; counting stats use whole numbers
-const RATE_CATS = new Set(['ERA', 'WHIP', 'AVG', 'OPS', 'K/9', 'K_9', 'K(9)'])
-function fmtStat(catKey: string, val: number): string {
-  const label = waiverCatLabel(catKey) ?? catKey
-  if (RATE_CATS.has(label) || RATE_CATS.has(catKey)) return val.toFixed(2)
-  return Number.isInteger(val) ? val.toString() : val.toFixed(1)
-}
-
 function NeedBar({ score }: { score: number }) {
   const pct = Math.min(100, Math.max(0, score * 10)) // scale: 0-10 → 0-100%
   const color = score >= 7.0 ? 'bg-status-safe' : score >= 4.0 ? 'bg-status-bubble' : 'bg-text-muted'
