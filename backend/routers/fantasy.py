@@ -471,6 +471,55 @@ def _resolve_roster_player_bdl_ids(db: Session, raw_players: list[dict]) -> dict
     return player_key_to_ids
 
 # ============================================================================
+# PROJECTION STATUS
+# ============================================================================
+
+@router.get("/api/fantasy/projection-status")
+async def get_projection_status(db: Session = Depends(get_db)):
+    """Return freshness metadata for the active projection source."""
+    from backend.fantasy_baseball import player_board as _pb
+    from backend.models import PlayerProjection
+    from datetime import datetime, timezone
+
+    try:
+        newest = (
+            db.query(PlayerProjection.updated_at)
+            .filter(PlayerProjection.player_type.isnot(None))
+            .order_by(PlayerProjection.updated_at.desc())
+            .first()
+        )
+        db_updated_at = newest[0] if newest else None
+        db_count = db.query(PlayerProjection).filter(
+            PlayerProjection.player_type.isnot(None)
+        ).count()
+    except Exception:
+        db_updated_at = None
+        db_count = 0
+
+    now = datetime.now(timezone.utc)
+    age_hours = None
+    if db_updated_at:
+        ts = db_updated_at.replace(tzinfo=timezone.utc) if db_updated_at.tzinfo is None else db_updated_at
+        age_hours = round((now - ts).total_seconds() / 3600, 1)
+
+    board = _pb._BOARD
+    active_source = "unknown"
+    board_count = 0
+    if board:
+        board_count = len(board)
+        active_source = (board[0] or {}).get("source", "unknown")
+
+    return {
+        "db_updated_at": db_updated_at.isoformat() if db_updated_at else None,
+        "db_player_count": db_count,
+        "age_hours": age_hours,
+        "is_stale": age_hours is None or age_hours > 26,
+        "active_source": active_source,
+        "board_player_count": board_count,
+    }
+
+
+# ============================================================================
 # DRAFT BOARD
 # ============================================================================
 
