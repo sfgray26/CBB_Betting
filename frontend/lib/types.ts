@@ -374,6 +374,17 @@ export const CATEGORY_LABEL: Record<RotoCategory, string> = {
   W: 'W', L: 'L', HR_P: 'HR', K_P: 'K', ERA: 'ERA', WHIP: 'WHIP', K_9: 'K/9', QS: 'QS', NSV: 'NSV',
 }
 
+// Design System v2 — persistent category identity colors
+// Usage: small dots on chips/rows so users scan by color instead of reading labels
+export const CATEGORY_COLOR: Record<RotoCategory, string> = {
+  // Batting
+  R: '#3b82f6', H: '#06b6d4', HR_B: '#a855f7', RBI: '#8b5cf6',
+  K_B: '#f43f5e', TB: '#d946ef', AVG: '#eab308', OPS: '#ca8a04', NSB: '#10b981',
+  // Pitching
+  W: '#3b82f6', L: '#f43f5e', HR_P: '#a855f7', K_P: '#06b6d4',
+  ERA: '#f97316', WHIP: '#fb923c', K_9: '#22d3ee', QS: '#10b981', NSV: '#84cc16',
+}
+
 // Categories where lower value wins the week
 export const LOWER_IS_BETTER: RotoCategory[] = ['K_B', 'L', 'HR_P', 'ERA', 'WHIP']
 
@@ -436,32 +447,66 @@ export interface LineupResponse {
 }
 
 export interface CategoryDeficit {
-  category: RotoCategory
-  deficit_z_score: number
+  category: string
+  my_total: number
+  opponent_total: number
+  deficit: number
+  winning: boolean
 }
 
 export interface WaiverAvailablePlayer {
   player_id: string
   name: string
   team: string
-  positions: string[]
+  position: string
+  positions?: string[]
   need_score: number
+  z_score?: number
   projected_points: number | null
   percent_owned: number | null
-  two_start: boolean
+  owned_pct?: number
+  two_start?: boolean
   start1_date?: string | null
   start1_opp?: string | null
   start2_date?: string | null
   start2_opp?: string | null
   park_factor?: number | null
-  category_need_match?: RotoCategory[]
+  category_need_match?: string[]
+  category_contributions?: Record<string, number>
+  starts_this_week?: number
+  hot_cold?: 'HOT' | 'COLD' | null
+  rank_percentile?: number | null
+  status?: string | null
+  injury_note?: string | null
+  injury_status?: string | null
+  statcast_signals?: string[]
+  statcast_stats?: Record<string, number> | null
+  quality_score?: number | null
+  projected_saves?: number
+  stats?: Record<string, number | null>
+}
+
+export interface WaiverRosterPlayer {
+  player_id: string
+  name: string
+  z_score: number
+  team: string
+  positions: string[]
 }
 
 export interface WaiverResponse {
+  week_end?: string
+  matchup_opponent?: string
   top_available: WaiverAvailablePlayer[]
   two_start_pitchers: WaiverAvailablePlayer[]
   category_deficits: CategoryDeficit[]
   faab_balance: number | null
+  il_slots_used?: number
+  il_slots_available?: number
+  urgent_alert?: { message: string; player_name: string } | null
+  closer_alert?: 'NO_CLOSERS' | 'LOW_CLOSERS' | null
+  pagination?: { page: number; per_page: number; has_next: boolean } | null
+  roster_context?: Record<string, WaiverRosterPlayer>
 }
 
 // ---------------------------------------------------------------------------
@@ -490,6 +535,44 @@ export interface BudgetResponse {
     staleness_threshold_minutes: number
     is_stale: boolean
   }
+}
+
+// ---------------------------------------------------------------------------
+// Matchup Scoreboard (category-by-category comparison)
+// ---------------------------------------------------------------------------
+
+export type CategoryStatusTag =
+  | 'locked_win'
+  | 'leaning_win'
+  | 'bubble'
+  | 'leaning_loss'
+  | 'locked_loss'
+
+export interface ScoreboardRow {
+  category: string
+  category_label: string
+  is_lower_better: boolean
+  is_batting: boolean
+  my_current: number | null
+  opp_current: number | null
+  current_margin: number | null
+  my_projected_final: number | null
+  opp_projected_final: number | null
+  projected_margin: number | null
+  status: CategoryStatusTag | null
+  flip_probability: number | null
+  delta_to_flip: number | null
+}
+
+export interface ScoreboardResponse {
+  week: number
+  opponent_name: string
+  categories_won: number
+  categories_lost: number
+  categories_tied: number
+  overall_win_probability: number | null
+  rows: ScoreboardRow[]
+  budget: BudgetData
 }
 
 export interface CanonicalProjectionsResponse {
@@ -529,6 +612,7 @@ export interface RosterPlayer {
   team: string
   eligible_positions: string[]
   status: string
+  current_slot?: string | null
   game_context?: PlayerGameContext | null
   season_stats?: CategoryStats | null
   rolling_7d?: CategoryStats | null
@@ -572,6 +656,31 @@ export interface RosterMoveResponse {
   to_position: string
   message: string
   warnings?: string[]
+  freshness: {
+    primary_source: string
+    fetched_at?: string | null
+    computed_at: string
+    staleness_threshold_minutes: number
+    is_stale: boolean
+  }
+}
+
+export interface PlayerSlotAssignment {
+  player_key: string
+  player_name: string
+  assigned_slot: string
+  lineup_score: number
+  reasoning: string
+}
+
+export interface RosterOptimizeResponse {
+  success: boolean
+  message: string
+  target_date: string
+  starters: PlayerSlotAssignment[]
+  bench: PlayerSlotAssignment[]
+  unrostered: string[]
+  total_lineup_score: number
   freshness: {
     primary_source: string
     fetched_at?: string | null

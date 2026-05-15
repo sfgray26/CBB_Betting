@@ -43,14 +43,16 @@ def run():
         output.write(f"Sync Error: {str(e)}\n")
 
     message = output.getvalue()
-    print(message)
+    # Fix Windows console encoding for emoji
+    safe_print = lambda s: print(s.encode('ascii', 'ignore').decode('ascii'))
+    safe_print(message)
     
     # Send to Discord via OpenClaw
     if message.strip():
         safe_msg = message.replace('"', "'").replace("`", "")
         # PAUSED (2026-04-21): OpenClaw Discord notifications disabled.
         # os.system(f'openclaw message send --channel discord --target "1477436117426110615" --message "{safe_msg}"')
-        print(f"[PAUSED] Would send: {safe_msg[:80]}...")
+        safe_print(f"[PAUSED] Would send: {safe_msg[:80]}...")
 
 if __name__ == "__main__":
     run()

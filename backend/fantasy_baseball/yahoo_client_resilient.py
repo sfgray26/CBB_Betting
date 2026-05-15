@@ -695,8 +695,26 @@ class YahooFantasyClient:
         players_raw = self._safe_get(slot_0, "players")
         
         # Deduplicate by player_key to prevent roster page duplicates (Bugfix March 28)
+        # Bugfix May 15: Handle missing count field by inferring from dict keys
         players_by_key: dict[str, dict] = {}
         count = int(players_raw.get("count", 0))
+        
+        # If count is 0 or missing but players_raw has entries, infer count from keys
+        if count == 0 and isinstance(players_raw, dict):
+            # Find all numeric keys that could be player indices
+            inferred_indices = []
+            for key in players_raw.keys():
+                if key.isdigit():
+                    try:
+                        inferred_indices.append(int(key))
+                    except ValueError:
+                        continue
+            if inferred_indices:
+                count = max(inferred_indices) + 1
+                logger.warning(
+                    "Yahoo roster missing count field, inferred %d players from keys",
+                    count
+                )
         
         for i in range(count):
             entry = players_raw.get(str(i), {})
@@ -719,7 +737,15 @@ class YahooFantasyClient:
                 if player_id not in players_by_key:
                     players_by_key[player_id] = p
         
-        return list(players_by_key.values())
+        players = list(players_by_key.values())
+
+        # Best-effort: enrich with ownership % via the global players endpoint.
+        self._enrich_ownership_batch(players)
+        
+        # Auto-heal: trigger BDL search for unmapped players (fire-and-forget, non-blocking)
+        self._trigger_auto_heal_for_unmapped(players)
+
+        return players
 
     @staticmethod
     def _extract_selected_position(player_data) -> Optional[str]:
@@ -796,11 +822,12 @@ class YahooFantasyClient:
         players_raw = self._league_section(data, 1).get("players", {})
         players = self._parse_players_block(players_raw)
 
+        player_keys = [p["player_key"] for p in players if p.get("player_key")]
+
         # Best-effort: enrich with season stats via the supported batch endpoint.
         # If the call fails for any reason the players list is still returned
         # with stats={} for each player — the waiver endpoint must not 503.
         try:
-            player_keys = [p["player_key"] for p in players if p.get("player_key")]
             if player_keys:
                 stats_map = self.get_players_stats_batch(player_keys)
                 for p in players:
@@ -809,7 +836,130 @@ class YahooFantasyClient:
         except Exception as _stats_err:
             logger.warning("get_free_agents stats batch failed (non-fatal): %s", _stats_err)
 
+        # Best-effort: enrich with ownership % via the global players endpoint.
+        self._enrich_ownership_batch(players)
+
         return players
+
+    def _enrich_ownership_batch(self, players: list[dict]) -> None:
+        """Mutate *players* in place with real ownership % from Yahoo global endpoint.
+
+        Uses: players;player_keys={k1},{k2},.../ownership
+        Yahoo enforces max 25 player_keys per batch request.
+        """
+        player_keys = [p["player_key"] for p in players if p.get("player_key")]
+        if not player_keys:
+            return
+
+        try:
+            for i in range(0, len(player_keys), 25):
+                chunk_keys = player_keys[i : i + 25]
+                keys_str = ",".join(chunk_keys)
+                own_data = self._get(f"players;player_keys={keys_str}/ownership")
+                own_block = own_data.get("fantasy_content", {}).get("players", {})
+                for raw_entry in own_block.values():
+                    if not isinstance(raw_entry, dict):
+                        continue
+                    player_entry = raw_entry.get("player", [])
+                    pk = None
+                    pct = None
+                    for chunk in (
+                        player_entry if isinstance(player_entry, list) else [player_entry]
+                    ):
+                        if isinstance(chunk, dict):
+                            if "player_key" in chunk:
+                                pk = chunk["player_key"]
+                            own = chunk.get("ownership", {})
+                            if own:
+                                pct_block = own.get("percent_rostered") or own.get(
+                                    "percent_owned"
+                                )
+                                if isinstance(pct_block, dict):
+                                    pct = self._safe_float(pct_block.get("value", 0), 0.0)
+                                elif pct_block is not None:
+                                    pct = self._safe_float(pct_block, 0.0)
+                    if pk and pct is not None and pct > 0.0:
+                        for p in players:
+                            if (
+                                p.get("player_key") == pk
+                                and p.get("percent_owned", 0.0) == 0.0
+                            ):
+                                p["percent_owned"] = pct
+        except Exception as exc:
+            logger.warning("_enrich_ownership_batch failed (non-fatal): %s", exc)
+
+    def _trigger_auto_heal_for_unmapped(self, players: list[dict]) -> None:
+        """
+        Fire-and-forget auto-heal for Yahoo players not in player_id_mapping.
+        
+        This runs asynchronously (non-blocking) to avoid delaying roster response.
+        For each unmapped player, triggers BDL name search to create mapping.
+        """
+        import threading
+        
+        def _heal_worker(player_list: list[dict]) -> None:
+            """Background worker to heal unmapped players."""
+            try:
+                from backend.models import SessionLocal, PlayerIDMapping
+                from backend.services.player_autoheal import PlayerAutoHealService
+                from backend.services.balldontlie import get_bdl_client
+                
+                db = SessionLocal()
+                try:
+                    bdl = get_bdl_client()
+                    heal_svc = PlayerAutoHealService(db_session=db, bdl_client=bdl)
+                    
+                    unmapped = []
+                    for p in player_list:
+                        player_key = p.get("player_key")
+                        player_id = p.get("player_id")
+                        name = p.get("name", "")
+                        
+                        if not player_key:
+                            continue
+                            
+                        # Check if player exists in mapping
+                        existing = (
+                            db.query(PlayerIDMapping)
+                            .filter(PlayerIDMapping.yahoo_key == player_key)
+                            .first()
+                        )
+                        
+                        if existing is None:
+                            unmapped.append({
+                                "name": name,
+                                "yahoo_id": str(player_id) if player_id else "",
+                                "yahoo_key": player_key,
+                            })
+                            logger.warning(
+                                "Unmapped Yahoo player in roster: %s (%s)",
+                                player_key, name
+                            )
+                    
+                    if unmapped:
+                        summary = heal_svc.batch_heal(unmapped)
+                        logger.info(
+                            "Roster auto-heal complete: healed=%d skipped=%d failed=%d",
+                            summary.get("healed", 0),
+                            summary.get("skipped", 0),
+                            summary.get("failed", 0)
+                        )
+                        
+                finally:
+                    db.close()
+            except Exception as exc:
+                logger.warning("Auto-heal worker failed (non-fatal): %s", exc)
+        
+        # Fire-and-forget: start healing in background thread
+        # Don't block the roster response
+        if players:
+            thread = threading.Thread(
+                target=_heal_worker,
+                args=(players,),
+                daemon=True
+            )
+            thread.start()
+            logger.debug("Auto-heal triggered for %d roster players", len(players))
 
     def get_players_stats_batch(self, player_keys: list, stat_type: str = "season") -> dict:
         """Fetch season stats for a batch of players via the supported batch stats endpoint.
@@ -1557,6 +1707,54 @@ class YahooFantasyClient:
             results.append(parsed)
         return results
 
+    def _load_adp_data(self) -> Dict[str, float]:
+        """Load ADP data for ownership estimation."""
+        adp_map = {}
+        adp_data_path = getattr(
+            self,
+            "adp_data_path",
+            os.getenv("ADP_DATA_PATH", "/app/data/projections/adp_yahoo_2026.csv"),
+        )
+        try:
+            with open(adp_data_path, "r") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    name = (
+                        row.get("Name")
+                        or row.get("PLAYER NAME")
+                        or row.get("Player")
+                        or ""
+                    ).strip()
+                    adp = row.get("ADP") or row.get("AVG") or ""
+                    if name and adp:
+                        try:
+                            adp_map[name] = float(adp)
+                        except ValueError:
+                            pass
+        except FileNotFoundError:
+            logger.warning("ADP data not found at %s", adp_data_path)
+
+        return adp_map
+
+    def _estimate_ownership_from_adp(
+        self,
+        player_name: str,
+        adp_data: Dict[str, float]
+    ) -> float:
+        """Estimate ownership percentage from ADP."""
+        adp = adp_data.get(player_name)
+        if not adp:
+            return 0.0
+
+        if adp <= 50:
+            return max(0, 100 - (adp - 1) * 0.2)
+        elif adp <= 100:
+            return max(0, 90 - (adp - 50) * 1.2)
+        elif adp <= 200:
+            return max(0, 30 - (adp - 100) * 0.2)
+        else:
+            return max(0, 10 - (adp - 200) * 0.05)
+
 
 # ---------------------------------------------------------------------------
 # CLI: one-time auth setup
@@ -1851,8 +2049,13 @@ class ResilientYahooClient(YahooFantasyClient):
             with open(self.adp_data_path, 'r') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    name = row.get("Name", "").strip()
-                    adp = row.get("ADP", "")
+                    name = (
+                        row.get("Name")
+                        or row.get("PLAYER NAME")
+                        or row.get("Player")
+                        or ""
+                    ).strip()
+                    adp = row.get("ADP") or row.get("AVG") or ""
                     if name and adp:
                         try:
                             adp_map[name] = float(adp)

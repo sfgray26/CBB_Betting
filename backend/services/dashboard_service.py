@@ -18,7 +18,7 @@ from dataclasses import dataclass, asdict
 
 from sqlalchemy.orm import Session
 
-from backend.models import UserPreferences, SessionLocal, PlayerDailyMetric
+from backend.models import UserPreferences, SessionLocal, PlayerDailyMetric, PlayerMomentum, PlayerIDMapping
 from backend.fantasy_baseball.daily_lineup_optimizer import DailyLineupOptimizer
 from backend.services.waiver_edge_detector import WaiverEdgeDetector
 from backend.services.data_reliability_engine import (
@@ -328,119 +328,129 @@ class DashboardService:
             return [], 0, 9
     
     async def _get_streaks(
-        self, 
-        user_id: str, 
+        self,
+        user_id: str,
         db: Optional[Session] = None
     ) -> tuple[List[StreakPlayer], List[StreakPlayer]]:
         """
-        B1.2: Calculate hot/cold streaks from Statcast data.
-        
-        Uses 7/14/30 day rolling windows from player_daily_metrics.
+        B1.2: Hot/cold streaks from PlayerMomentum (populated nightly by lock 100_020).
+
+        Joins roster player names through PlayerIDMapping.normalized_name → bdl_id
+        → PlayerMomentum.bdl_player_id to produce cohort-relative SURGING/HOT/COLD/COLLAPSING
+        signals for rostered players.
         """
+        import unicodedata
+
         close_db = False
         if db is None:
             db = SessionLocal()
             close_db = True
-        
+
         try:
-            # Get player's rostered players first
             client = self._get_yahoo_client()
-            roster = []
+            roster: list = []
             if client:
                 try:
                     roster = client.get_roster()
                 except Exception as e:
-                    logger.warning(f"Could not fetch roster for streaks: {e}")
-            
-            roster_scoped = bool(roster)
+                    logger.warning("_get_streaks: roster fetch failed: %s", e)
 
-            # Query recent metrics from database
-            recent_date = datetime.utcnow().date() - timedelta(days=1)
-            metrics_q = db.query(PlayerDailyMetric).filter(
-                PlayerDailyMetric.metric_date >= recent_date - timedelta(days=30),
-                PlayerDailyMetric.sport == "mlb"
-            )
-            if roster_scoped:
-                roster_names = {p.get("name", "").lower() for p in roster}
-                metrics_q = metrics_q.filter(
-                    PlayerDailyMetric.player_name.in_(roster_names)
-                )
-            metrics = metrics_q.all()
-
-            if not metrics:
+            if not roster:
                 return [], []
-            
-            hot = []
-            cold = []
 
-            # Build roster lookup for team/positions enrichment (empty when Yahoo unavailable)
-            roster_lookup: dict = {}
-            if roster_scoped:
-                for p in roster:
-                    roster_lookup[p.get("name", "").lower()] = p
+            def _norm(s: str) -> str:
+                return unicodedata.normalize("NFC", s).lower().strip()
 
-            # Dedupe: keep most-recent row per player
-            latest_per_player: dict = {}
-            for m in metrics:
-                key = m.player_id
-                if key not in latest_per_player or m.metric_date > latest_per_player[key].metric_date:
-                    latest_per_player[key] = m
+            roster_by_norm: dict = {_norm(p.get("name", "")): p for p in roster}
+            norm_names = list(roster_by_norm.keys())
 
-            for latest in latest_per_player.values():
-                # Validate data quality
-                validation = self.reliability_engine.validate_statcast_data(
-                    latest.player_id,
-                    {
-                        "player_id": latest.player_id,
-                        "player_name": latest.player_name,
-                        "game_date": latest.metric_date.isoformat(),
-                        "exit_velocity_avg": latest.bat_speed or 0,
-                    },
-                    timestamp=datetime.combine(latest.metric_date, datetime.min.time())
+            # Resolve normalized names → bdl_id via PlayerIDMapping
+            mappings = (
+                db.query(PlayerIDMapping)
+                .filter(PlayerIDMapping.normalized_name.in_(norm_names))
+                .all()
+            )
+            bdl_id_to_roster: dict = {}
+            for m in mappings:
+                if m.bdl_id is not None:
+                    entry = roster_by_norm.get(m.normalized_name)
+                    if entry:
+                        bdl_id_to_roster[m.bdl_id] = entry
+
+            if not bdl_id_to_roster:
+                logger.debug("_get_streaks: no bdl_id matches for roster (PlayerIDMapping may be empty)")
+                return [], []
+
+            # Fetch most recent momentum rows (allow up to 3-day lag for pipeline latency)
+            today = datetime.now(ZoneInfo("America/New_York")).date()
+            cutoff = today - timedelta(days=3)
+            momentum_rows = (
+                db.query(PlayerMomentum)
+                .filter(
+                    PlayerMomentum.bdl_player_id.in_(list(bdl_id_to_roster.keys())),
+                    PlayerMomentum.as_of_date >= cutoff,
                 )
+                .order_by(PlayerMomentum.as_of_date.desc())
+                .all()
+            )
 
-                # Only use data if quality is acceptable
-                if validation.quality_tier in (DataQualityTier.TIER_4_STALE, DataQualityTier.TIER_5_UNAVAILABLE):
-                    logger.debug(f"Skipping stale data for {latest.player_name}")
-                    continue
+            # Dedupe: keep most recent per player
+            latest_per_player: dict = {}
+            for m in momentum_rows:
+                pid = m.bdl_player_id
+                if pid not in latest_per_player or m.as_of_date > latest_per_player[pid].as_of_date:
+                    latest_per_player[pid] = m
 
-                # Calculate trend
-                z_score = latest.z_score_recent or 0
+            hot: list = []
+            cold: list = []
 
-                # Get rolling averages
-                rolling = latest.rolling_window or {}
-                last_7 = rolling.get("7d", {}).get("avg", 0)
-                last_14 = rolling.get("14d", {}).get("avg", 0)
-                last_30 = rolling.get("30d", {}).get("avg", 0)
+            for bdl_id, mom in latest_per_player.items():
+                roster_entry = bdl_id_to_roster.get(bdl_id, {})
+                signal = mom.signal or "STABLE"
+                delta = mom.delta_z or 0.0
 
-                roster_entry = roster_lookup.get(latest.player_name.lower(), {})
+                if signal in ("SURGING", "HOT"):
+                    trend = "hot"
+                elif signal in ("COLD", "COLLAPSING"):
+                    trend = "cold"
+                else:
+                    continue  # STABLE players skip both lists
+
                 streak_player = StreakPlayer(
-                    player_id=latest.player_id,
-                    name=latest.player_name,
+                    player_id=str(bdl_id),
+                    name=roster_entry.get("name", ""),
                     team=roster_entry.get("team", ""),
                     positions=roster_entry.get("positions", []),
-                    trend="hot" if z_score > 0.5 else "cold" if z_score < -0.5 else "neutral",
-                    trend_score=z_score,
-                    last_7_avg=last_7,
-                    last_14_avg=last_14,
-                    last_30_avg=last_30,
-                    reason=f"z-score: {z_score:.2f} (data quality: {validation.quality_tier.value})"
+                    trend=trend,
+                    trend_score=delta,
+                    # PlayerMomentum tracks the 14d-vs-30d delta, not a true
+                    # 7-day average. Keep the legacy response field populated
+                    # so dashboard clients do not render an all-zero trend.
+                    last_7_avg=delta,
+                    last_14_avg=mom.composite_z_14d or 0.0,
+                    last_30_avg=mom.composite_z_30d or 0.0,
+                    reason=f"{signal} · Δ={delta:+.2f}",
                 )
 
-                if z_score > 0.5:
+                if trend == "hot":
                     hot.append(streak_player)
-                elif z_score < -0.5:
+                else:
                     cold.append(streak_player)
-            
-            # Sort by trend score
-            hot.sort(key=lambda x: x.trend_score, reverse=True)
+
+            hot.sort(key=lambda x: -(x.trend_score))
             cold.sort(key=lambda x: x.trend_score)
-            
+
             return hot, cold
-            
+
+        except Exception as e:
+            logger.error("_get_streaks failed: %s", e)
+            return [], []
         finally:
             if close_db:
-                db.close()
+                try:
+                    db.close()
+                except Exception:
+                    pass
     
     async def _get_waiver_targets(
         self,
@@ -448,75 +458,97 @@ class DashboardService:
         prefs: UserPreferences
     ) -> List[WaiverTarget]:
         """
-        B1.3: Get prioritized waiver wire recommendations via WaiverEdgeDetector.
+        B1.3: Get prioritized waiver wire recommendations.
+
+        Uses the same scoreboard-deficit + compute_need_score path as the waiver
+        router so both surfaces show identical scores.  The old WaiverEdgeDetector
+        path returned 0.0 for all players because roster cat_scores couldn't be
+        populated in an async context, giving empty deficits.
         """
+        from backend.fantasy_baseball.player_board import get_or_create_projection
+        from backend.fantasy_baseball.category_aware_scorer import compute_need_score
+        from backend.schemas import CategoryDeficitOut
+
         client = self._get_yahoo_client()
         if not client:
             logger.warning("Yahoo client unavailable - cannot get waiver targets")
             return []
 
         try:
-            my_roster = client.get_roster()
-
-            # Attempt to get opponent roster to improve category deficit scoring
-            opponent_roster: List[dict] = []
-            try:
-                scoreboard = client.get_scoreboard()
-                my_team_key = client.get_my_team_key()
-                for matchup in scoreboard:
-                    teams_raw = matchup.get("teams", {})
-                    opp_key = self._extract_opponent_key(teams_raw, my_team_key)
-                    if opp_key:
-                        opponent_roster = client.get_roster(opp_key)
-                        break
-            except Exception as e:
-                logger.debug(f"Opponent roster unavailable for waiver scoring: {e}")
-
-            moves = self.waiver_detector.get_top_moves(
-                my_roster, opponent_roster, n_candidates=10
-            )
-
-            targets = []
-            for move in moves:
-                fa = move.get("add_player") or {}
-                if not fa:
-                    continue
-
-                need_score = float(move.get("need_score", 0.0))
-                win_gain = float(move.get("win_prob_gain", 0.0))
-                priority_score = need_score + win_gain * 100
-
-                if priority_score > 2.0:
-                    tier = "must_add"
-                elif priority_score > 1.0:
-                    tier = "strong_add"
-                else:
-                    tier = "streamer"
-
-                drop_name = move.get("drop_player_name", "")
-                reason_parts = [f"Need score: {need_score:.2f}"]
-                if drop_name:
-                    reason_parts.append(f"Drop: {drop_name}")
-                if win_gain:
-                    reason_parts.append(f"Win gain: {win_gain:+.1%}")
-                reason = " | ".join(reason_parts)
-
-                targets.append(WaiverTarget(
-                    player_id=str(fa.get("player_id") or fa.get("player_key", "")),
-                    name=fa.get("name", "Unknown"),
-                    team=fa.get("team", ""),
-                    positions=fa.get("positions", []),
-                    percent_owned=float(fa.get("percent_owned", fa.get("owned_pct", 0.0))),
-                    priority_score=priority_score,
-                    tier=tier,
-                    reason=reason,
-                ))
-
-            return targets
-
+            free_agents = client.get_free_agents(count=25)
         except Exception as e:
-            logger.error(f"Failed to get waiver targets: {e}")
+            logger.error(f"Failed to fetch free agents for dashboard: {e}")
             return []
+
+        # Build category deficits from scoreboard — same approach as waiver router.
+        category_deficits: List[CategoryDeficitOut] = []
+        n_cats = 10
+        try:
+            scoreboard = client.get_scoreboard()
+            my_team_key = client.get_my_team_key()
+            for matchup in (scoreboard or []):
+                teams = matchup.get("teams", {})
+                my_stats: dict = {}
+                opp_stats: dict = {}
+                for entry in (teams.values() if isinstance(teams, dict) else teams):
+                    t = entry if isinstance(entry, dict) else {}
+                    t_inner = (t.get("team") or [{}])[0] if isinstance(t.get("team"), list) else t
+                    tk = t_inner.get("team_key", "")
+                    is_mine = tk == my_team_key or my_team_key in tk or tk in my_team_key
+                    raw_stats = {}
+                    for item in (t.get("team_stats", {}).get("stats", {}).get("stat", []) or []):
+                        if isinstance(item, dict):
+                            raw_stats[str(item.get("stat_id", ""))] = item.get("value", 0)
+                    if is_mine:
+                        my_stats = raw_stats
+                    else:
+                        opp_stats = raw_stats
+                if my_stats and opp_stats:
+                    n_cats = max(len(my_stats), 1)
+                    for sid, my_val in my_stats.items():
+                        opp_val = opp_stats.get(sid, 0)
+                        try:
+                            deficit = float(opp_val or 0) - float(my_val or 0)
+                            category_deficits.append(CategoryDeficitOut(
+                                category=sid, deficit=deficit, winning=deficit <= 0
+                            ))
+                        except (TypeError, ValueError):
+                            pass
+                    break
+        except Exception as e:
+            logger.debug(f"Scoreboard deficit computation failed (non-fatal): {e}")
+
+        targets = []
+        for fa in free_agents[:15]:
+            try:
+                proj = get_or_create_projection(fa)
+            except Exception:
+                proj = {}
+
+            cat_scores = proj.get("cat_scores") or {}
+            z_score = float(proj.get("z_score") or fa.get("z_score") or 0.0)
+            need_score = compute_need_score(cat_scores, z_score, category_deficits, n_cats)
+
+            if need_score > 2.0:
+                tier = "must_add"
+            elif need_score > 1.0:
+                tier = "strong_add"
+            else:
+                tier = "streamer"
+
+            targets.append(WaiverTarget(
+                player_id=str(fa.get("player_id") or fa.get("player_key", "")),
+                name=fa.get("name", "Unknown"),
+                team=fa.get("team", ""),
+                positions=fa.get("positions", []),
+                percent_owned=float(fa.get("percent_owned", fa.get("owned_pct", 0.0))),
+                priority_score=need_score,
+                tier=tier,
+                reason=f"Need score: {need_score:.2f}",
+            ))
+
+        targets.sort(key=lambda t: t.priority_score, reverse=True)
+        return targets[:5]
     
     async def _get_injury_flags(self, user_id: str) -> tuple[List[InjuryFlag], int, int]:
         """
@@ -546,7 +578,12 @@ class DashboardService:
             injury_statuses = {"IL", "IL10", "IL60", "DTD", "OUT", "NA"}
             
             for player in roster:
-                status = player.get("status", "")
+                raw_status = player.get("status", "")
+                # Yahoo occasionally sends boolean True for active players — coerce to string
+                if isinstance(raw_status, bool):
+                    status = "" if raw_status else "OUT"
+                else:
+                    status = str(raw_status) if raw_status else ""
                 selected_pos = player.get("selected_position", "")
                 
                 # Check if player is injured
@@ -876,7 +913,7 @@ class DashboardService:
                 info = ProbablePitcherInfo(
                     name=name,
                     team=team,
-                    opponent="",  # Cross-ref with odds map deferred to next pass
+                    opponent=p.get("opponent", ""),
                     game_date=today_str,
                     is_two_start=is_two_start,
                     matchup_quality="neutral",  # Pitcher quality scoring deferred

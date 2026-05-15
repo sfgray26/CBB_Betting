@@ -62,20 +62,31 @@ def parse_innings_pitched(ip: Optional[object]) -> Optional[float]:
     return None
 
 
-def load_probable_pitchers_from_snapshot(db: Session, game_date: date) -> dict[str, str]:
-    """Load persisted probable pitchers for a date, keyed by team abbreviation."""
+def load_probable_pitchers_from_snapshot(db: Session, game_date: date) -> dict[str, dict]:
+    """Load persisted probable pitchers for a date, keyed by team abbreviation.
+    
+    Returns:
+        Dict mapping team -> {"name": str, "handedness": str|None}
+    """
     rows = (
-        db.query(ProbablePitcherSnapshot.team, ProbablePitcherSnapshot.pitcher_name)
+        db.query(
+            ProbablePitcherSnapshot.team,
+            ProbablePitcherSnapshot.pitcher_name,
+            ProbablePitcherSnapshot.handedness,
+        )
         .filter(
             ProbablePitcherSnapshot.game_date == game_date,
             ProbablePitcherSnapshot.pitcher_name.isnot(None),
         )
         .all()
     )
-    result: dict[str, str] = {}
-    for team, pitcher_name in rows:
+    result: dict[str, dict] = {}
+    for team, pitcher_name, handedness in rows:
         if team and pitcher_name:
-            result[normalize_team_abbr(team)] = pitcher_name.lower()
+            result[normalize_team_abbr(team)] = {
+                "name": pitcher_name.lower(),
+                "handedness": handedness,
+            }
     return result
 
 

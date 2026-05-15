@@ -64,6 +64,18 @@ def test_count_weekly_acquisitions_filters_drops():
     assert result == 2
 
 
+def test_count_weekly_acquisitions_add_drop_type():
+    """Yahoo returns 'add/drop' for combined transactions — must count as an acquisition."""
+    transactions = [
+        {"type": "add/drop", "destination_team_key": "mlb.l.123.t.1", "timestamp": 30},
+    ]
+    week_start = datetime(1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    week_end = datetime(1970, 1, 1, 0, 1, 0, tzinfo=timezone.utc)
+
+    result = count_weekly_acquisitions(transactions, "mlb.l.123.t.1", week_start, week_end)
+    assert result == 1
+
+
 def test_count_weekly_acquisitions_nested_destination():
     """Handles nested destination_team structure."""
     transactions = [

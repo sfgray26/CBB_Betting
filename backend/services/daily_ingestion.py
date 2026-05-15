@@ -145,6 +145,7 @@ LOCK_IDS = {
     "market_signals_update": 100_038,  # PR 4.2: Yahoo ownership-based market intelligence
     "matchup_context_update": 100_039,  # PR 5.2: daily hitter matchup context
     "canonical_projection_refresh": 100_040,  # Sprint 2: assemble CanonicalProjection table
+    "bridge_mapping_to_identities": 100_041,  # Coverage: seed player_identities from player_id_mapping
 }
 
 
@@ -1311,6 +1312,17 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Bridge mapping → identities: 5:00 AM ET (after yahoo_id_sync at 4:30 AM)
+        # Seeds player_identities from player_id_mapping so canonical_projections
+        # pipeline can generate SAVANT_ADJUSTED cat_scores for these players.
+        self._scheduler.add_job(
+            self._bridge_mapping_to_identities,
+            CronTrigger(hour=5, minute=0, timezone=tz),
+            id="bridge_mapping_to_identities",
+            name="Bridge Mapping to Identities",
+            replace_existing=True,
+        )
+
         # Player ID mapping sync: 7:00 AM ET (before probable_pitchers needs IDs)
         self._scheduler.add_job(
             self._sync_player_id_mapping,
@@ -1452,6 +1464,7 @@ class DailyIngestionOrchestrator:
             "market_signals_update":        self._compute_market_signals,
             "matchup_context_update":       self._compute_matchup_context,
             "canonical_projection_refresh": self._refresh_canonical_projections,
+            "bridge_mapping_to_identities": self._bridge_mapping_to_identities,
         }
         handler = _handlers.get(job_id)
         if handler is None:
@@ -2384,7 +2397,7 @@ class DailyIngestionOrchestrator:
                                 "yahoo_id_sync: Skipping ambiguous match for name=%r (bdl_ids=%s)",
                                 name, bdl_name_collisions[norm_name],
                             )
-                            unmatched.append({"name": name, "yahoo_id": yahoo_id, "reason": "bdl_name_collision"})
+                            unmatched.append({"name": name, "yahoo_id": yahoo_id, "yahoo_key": yahoo_key, "reason": "bdl_name_collision"})
                             continue
                         bdl_data = bdl_index[norm_name]
                         bdl_id = bdl_data["bdl_id"]
@@ -2408,7 +2421,7 @@ class DailyIngestionOrchestrator:
                                     "yahoo_id_sync: Skipping update for yahoo_key=%s (bdl_id=%d already used by row id=%d)",
                                     yahoo_key, bdl_id, existing_by_bdl.id
                                 )
-                                unmatched.append({"name": name, "yahoo_id": yahoo_id, "reason": "bdl_id_conflict"})
+                                unmatched.append({"name": name, "yahoo_id": yahoo_id, "yahoo_key": yahoo_key, "reason": "bdl_id_conflict"})
                                 continue
                             else:
                                 # Safe to update - bdl_id is either free or already assigned to this row
@@ -2466,12 +2479,12 @@ class DailyIngestionOrchestrator:
                                         "yahoo_id_sync: insert conflict for %s (bdl_id=%s): %s -- skipping",
                                         name, bdl_id, row_exc,
                                     )
-                                    unmatched.append({"name": name, "yahoo_id": yahoo_id, "reason": "insert_conflict"})
+                                    unmatched.append({"name": name, "yahoo_id": yahoo_id, "yahoo_key": yahoo_key, "reason": "insert_conflict"})
                                     continue
                         matched += 1
                         updates += 1
                     else:
-                        unmatched.append({"name": name, "yahoo_id": yahoo_id})
+                        unmatched.append({"name": name, "yahoo_id": yahoo_id, "yahoo_key": yahoo_key})
 
                 db.commit()
             except Exception as exc:
@@ -2487,10 +2500,28 @@ class DailyIngestionOrchestrator:
             finally:
                 db.close()
 
+            # Auto-heal phase: BDL search fallback for players with no name-index match.
+            # Skips collision/conflict reasons (those need manual resolution).
+            auto_healed = 0
+            healable = [p for p in unmatched if p.get("reason", "") not in ("bdl_name_collision", "bdl_id_conflict")]
+            if healable:
+                logger.info("yahoo_id_sync: auto-heal starting for %d unmatched players", len(healable))
+                try:
+                    from backend.services.player_autoheal import PlayerAutoHealService
+                    heal_db = SessionLocal()
+                    try:
+                        heal_svc = PlayerAutoHealService(db_session=heal_db, bdl_client=bdl)
+                        summary = await asyncio.to_thread(heal_svc.batch_heal, healable)
+                        auto_healed = summary.get("healed", 0)
+                    finally:
+                        heal_db.close()
+                except Exception as exc:
+                    logger.warning("yahoo_id_sync: auto-heal failed -- %s", exc)
+
             elapsed = int((time.monotonic() - t0) * 1000)
             logger.info(
-                "yahoo_id_sync: %d matched, %d unmatched, %d upserts, %d backfilled in %dms",
-                matched, len(unmatched), updates, backfilled, elapsed,
+                "yahoo_id_sync: %d matched, %d unmatched, %d upserts, %d backfilled, %d auto-healed in %dms",
+                matched, len(unmatched), updates, backfilled, auto_healed, elapsed,
             )
 
             if unmatched:
@@ -2503,10 +2534,78 @@ class DailyIngestionOrchestrator:
                 "matched": matched,
                 "unmatched": len(unmatched),
                 "backfilled": backfilled,
+                "auto_healed": auto_healed,
                 "elapsed_ms": elapsed,
             }
 
         return await _with_advisory_lock(LOCK_IDS["yahoo_id_sync"], "yahoo_id_sync", _run)
+
+    async def _bridge_mapping_to_identities(self) -> dict:
+        """
+        Create player_identities rows for any player in player_id_mapping
+        that lacks one (lock 100_041, 5:00 AM ET after yahoo_id_sync at 4:30 AM).
+
+        Seeds the identity table so canonical_projections (Statcast-adjusted)
+        can process these players on its nightly 11 PM run.
+        """
+        from backend.models import PlayerIDMapping, PlayerIdentity
+        from backend.fantasy_baseball.id_resolution_service import _normalize_name
+
+        t0 = time.monotonic()
+
+        async def _run():
+            db = SessionLocal()
+            try:
+                existing_norms = {
+                    r.normalized_name
+                    for r in db.query(PlayerIdentity.normalized_name).all()
+                }
+
+                created = 0
+                skipped = 0
+
+                rows = db.query(PlayerIDMapping).filter(
+                    PlayerIDMapping.yahoo_key.isnot(None),
+                    PlayerIDMapping.full_name.isnot(None),
+                ).all()
+
+                for row in rows:
+                    norm = _normalize_name(row.full_name or "")
+                    if not norm or norm in existing_norms:
+                        skipped += 1
+                        continue
+
+                    new_identity = PlayerIdentity(
+                        yahoo_guid=row.yahoo_key,
+                        yahoo_id=row.yahoo_id,
+                        full_name=row.full_name,
+                        normalized_name=norm,
+                        active=True,
+                    )
+                    try:
+                        db.add(new_identity)
+                        db.flush()
+                        existing_norms.add(norm)
+                        created += 1
+                    except Exception as _e:
+                        db.rollback()
+                        logger.debug("bridge_mapping: skip %s — %s", row.full_name, _e)
+                        skipped += 1
+
+                db.commit()
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.info("bridge_mapping_to_identities: created=%d skipped=%d elapsed_ms=%d", created, skipped, elapsed)
+                self._record_job_run("bridge_mapping_to_identities", "success")
+                return {"status": "success", "created": created, "skipped": skipped, "elapsed_ms": elapsed}
+            except Exception as exc:
+                db.rollback()
+                logger.error("bridge_mapping_to_identities: failed — %s", exc, exc_info=True)
+                self._record_job_run("bridge_mapping_to_identities", "failed")
+                return {"status": "failed", "error": str(exc)}
+            finally:
+                db.close()
+
+        return await _with_advisory_lock(LOCK_IDS["bridge_mapping_to_identities"], "bridge_mapping_to_identities", _run)
 
     async def _supplement_statsapi_counting_stats(self) -> dict:
         """
@@ -6307,6 +6406,15 @@ class DailyIngestionOrchestrator:
                 updated, inserted, skipped, elapsed,
             )
             self._record_job_run("ros_projection_refresh", "success", updated + inserted)
+
+            # Invalidate in-memory board cache so next request loads fresh RoS projections
+            try:
+                from backend.fantasy_baseball.player_board import reset_board_cache
+                reset_board_cache()
+                logger.info("ros_projection_refresh: board cache cleared")
+            except Exception as _cache_exc:
+                logger.warning("ros_projection_refresh: cache clear failed: %s", _cache_exc)
+
             return {
                 "status": "success",
                 "updated": updated,
@@ -7158,26 +7266,20 @@ class DailyIngestionOrchestrator:
 
             # The roster endpoint (teams/roster) does NOT include Yahoo's ownership
             # block, so _parse_player() always returns percent_owned=0.0 for rostered
-            # players. Fetch real ownership % from the ADP/players endpoint separately.
-            ownership_by_key: dict[str, float] = {}
+            # players. Enrich with real ownership % via the global players endpoint.
             try:
-                adp_players = await asyncio.to_thread(
-                    yahoo.get_adp_and_injury_feed,
-                    pages=10,
-                    count_per_page=25,
+                await asyncio.to_thread(yahoo._enrich_ownership_batch, all_players)
+                enriched_count = sum(
+                    1 for p in all_players if p.get("percent_owned", 0.0) > 0.0
                 )
-                ownership_by_key = {
-                    p["player_key"]: p["percent_owned"]
-                    for p in adp_players
-                    if p.get("player_key") and isinstance(p.get("percent_owned"), (int, float))
-                }
                 logger.info(
-                    "_sync_position_eligibility: Loaded ownership data for %d players",
-                    len(ownership_by_key),
+                    "_sync_position_eligibility: Enriched ownership for %d/%d players",
+                    enriched_count,
+                    len(all_players),
                 )
             except Exception as exc:
                 logger.warning(
-                    "_sync_position_eligibility: Failed to fetch ownership feed (%s) "
+                    "_sync_position_eligibility: Ownership enrichment failed (%s) "
                     "-- league_rostered_pct will be NULL",
                     exc,
                 )
@@ -7237,9 +7339,8 @@ class DailyIngestionOrchestrator:
                         multi_count = len([p for p in positions if p.upper() != "UTIL"])
 
                         # Upsert: ON CONFLICT (yahoo_player_key) DO UPDATE
-                        # ownership_by_key is pre-loaded from ADP feed (has real % data).
-                        # player_data.get("percent_owned") is always 0.0 from roster endpoint.
-                        rostered_pct = ownership_by_key.get(player_key) or None
+                        # player_data now carries real percent_owned after _enrich_ownership_batch.
+                        rostered_pct = player_data.get("percent_owned") or None
                         stmt = pg_insert(PositionEligibility.__table__).values(
                             yahoo_player_key=player_key,
                             bdl_player_id=None,
@@ -7454,6 +7555,10 @@ class DailyIngestionOrchestrator:
                                 if pitcher_data:
                                     pitcher_name = pitcher_data.get("fullName", "")
                                     mlbam_id = pitcher_data.get("id")
+                                    # Extract handedness from MLB Stats API response
+                                    # Pitcher data includes "pitchHand" with "code": "L" or "R"
+                                    pitch_hand = pitcher_data.get("pitchHand", {})
+                                    handedness = pitch_hand.get("code") if isinstance(pitch_hand, dict) else None
                                     bdl_id = mlbam_to_bdl.get(mlbam_id) if mlbam_id else None
                                     official_records += 1
                                 else:
@@ -7467,6 +7572,20 @@ class DailyIngestionOrchestrator:
                                     pitcher_name = inferred_candidate.pitcher_name
                                     mlbam_id = inferred_candidate.mlbam_id
                                     bdl_id = inferred_candidate.bdl_player_id
+                                    # Try to get handedness from player_id_mapping for inferred pitchers
+                                    handedness = None
+                                    if bdl_id:
+                                        mapping = db.query(PlayerIDMapping).filter(
+                                            PlayerIDMapping.bdl_id == bdl_id
+                                        ).first()
+                                        if mapping and mapping.throws:
+                                            handedness = mapping.throws[0].upper()
+                                    elif mlbam_id:
+                                        mapping = db.query(PlayerIDMapping).filter(
+                                            PlayerIDMapping.mlbam_id == mlbam_id
+                                        ).first()
+                                        if mapping and mapping.throws:
+                                            handedness = mapping.throws[0].upper()
                                     inferred_records += 1
 
                                 # Resolve BDL ID via MLBAM mapping when only official MLBAM is known
@@ -7500,6 +7619,7 @@ class DailyIngestionOrchestrator:
                                         pitcher_name=pitcher_name,
                                         bdl_player_id=bdl_id,
                                         mlbam_id=mlbam_id,
+                                        handedness=handedness,  # "L" or "R"
                                         is_confirmed=bool(pitcher_data and pitcher_data.get("fullName")),
                                         game_time_et=game_time_et_str,
                                         park_factor=pf,
@@ -7519,6 +7639,7 @@ class DailyIngestionOrchestrator:
                                             "pitcher_name": stmt.excluded.pitcher_name,
                                             "bdl_player_id": stmt.excluded.bdl_player_id,
                                             "mlbam_id": stmt.excluded.mlbam_id,
+                                            "handedness": stmt.excluded.handedness,  # Update handedness on conflict
                                             "is_confirmed": stmt.excluded.is_confirmed,
                                             "game_time_et": stmt.excluded.game_time_et,
                                             "park_factor": stmt.excluded.park_factor,

@@ -187,5 +187,6 @@ railway run python -c "from backend.fantasy_baseball.yahoo_client_resilient impo
 100_029 player_id_mapping | 100_030 vorp            | 100_031 projection_cat_scores | 100_032 savant_ingestion
 100_033 bdl_injuries    | 100_034 yahoo_id_sync     | 100_035 cat_scores_backfill | 100_036 ros_projection_refresh
 100_037 opportunity_update | 100_038 market_signals_update | 100_039 matchup_context_update | 100_040 canonical_projection_refresh
-Next available: 100_041
+100_041 bridge_mapping_to_identities
+Next available: 100_042
 ```

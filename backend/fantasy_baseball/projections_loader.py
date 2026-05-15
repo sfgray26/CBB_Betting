@@ -34,6 +34,7 @@ import logging
 import os
 import re as _re
 import statistics
+from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -774,6 +775,117 @@ def export_ros_to_steamer_csvs(
         logger.info("Wrote %d pitching rows to %s", len(pit_out), pit_path)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# DB-backed loader — reads PlayerProjection table (FanGraphs RoS, nightly)
+# ---------------------------------------------------------------------------
+
+def _z_to_tier(z: float) -> int:
+    """Map composite z-score to tier 1–7."""
+    if z >= 4.0: return 1
+    if z >= 2.5: return 2
+    if z >= 1.5: return 3
+    if z >= 0.5: return 4
+    if z >= -0.5: return 5
+    if z >= -1.5: return 6
+    return 7
+
+
+def load_db_projections() -> Optional[list[dict]]:
+    """Load projections from PlayerProjection table (FanGraphs RoS, updated nightly).
+
+    Returns None if DB has < 100 fresh players (caller falls back to CSV/hardcoded).
+    Freshness guard: rows must have been updated within the last 3 days.
+    """
+    try:
+        from backend.models import SessionLocal, PlayerProjection
+    except ImportError:
+        return None
+
+    db = SessionLocal()
+    try:
+        cutoff = datetime.utcnow() - timedelta(days=3)
+        rows = db.query(PlayerProjection).filter(
+            PlayerProjection.player_type.isnot(None),
+            PlayerProjection.updated_at >= cutoff,
+        ).all()
+
+        if len(rows) < 100:
+            logger.info("load_db_projections: only %d fresh rows — skipping DB source", len(rows))
+            return None
+
+        freshest_at = max((r.updated_at for r in rows if r.updated_at), default=None)
+        board = []
+
+        for row in rows:
+            cat_scores = row.cat_scores or {}
+            z = sum(v for v in cat_scores.values() if isinstance(v, (int, float)))
+
+            if row.player_type == 'hitter':
+                avg = row.avg or 0.250
+                ops = row.ops or 0.720
+                proj = {
+                    "pa": 550,
+                    "r": row.r or 0,
+                    "h": int(avg * 550 * 0.275),
+                    "hr": row.hr or 0,
+                    "rbi": row.rbi or 0,
+                    "k_bat": 0,
+                    "tb": int((row.hr or 0) * 1.6 + (row.r or 0) * 0.4 + (row.rbi or 0) * 0.4),
+                    "avg": avg,
+                    "ops": ops,
+                    "slg": max(0.0, ops - (avg + 0.065)),
+                    "nsb": row.sb or 0,
+                }
+                ptype = "batter"
+            else:
+                proj = {
+                    "ip": 150.0 if (row.qs or 0) >= 5 else 65.0,
+                    "w": row.w or 0,
+                    "l": row.l or 0,
+                    "sv": row.nsv or 0,
+                    "qs": row.qs or 0,
+                    "k_pit": row.k_pit or 0,
+                    "era": row.era or 4.50,
+                    "whip": row.whip or 1.30,
+                    "k9": row.k_per_nine or 8.5,
+                    "hr_pit": row.hr_pit or 0,
+                    "nsv": row.nsv or 0,
+                }
+                ptype = "pitcher"
+
+            board.append({
+                "id": row.player_id,
+                "name": row.player_name,
+                "team": row.team or "",
+                "positions": row.positions or [],
+                "type": ptype,
+                "player_type": ptype,
+                "tier": _z_to_tier(z),
+                "rank": 0,
+                "adp": 999.0,
+                "z_score": z,
+                "cat_scores": cat_scores,
+                "proj": proj,
+                "is_keeper": False,
+                "keeper_round": None,
+                "is_proxy": False,
+                "fusion_source": f"db_ros_{row.prior_source or 'fangraphs'}",
+                "components_fused": 1,
+                "xwoba_override": False,
+                "source": "db_ros",
+                "_projection_updated_at": freshest_at.isoformat() if freshest_at else None,
+            })
+
+        board.sort(key=lambda p: p["z_score"], reverse=True)
+        for i, p in enumerate(board):
+            p["rank"] = i + 1
+
+        logger.info("load_db_projections: loaded %d players (freshest: %s)", len(board), freshest_at)
+        return board
+    finally:
+        db.close()
 
 
 if __name__ == "__main__":

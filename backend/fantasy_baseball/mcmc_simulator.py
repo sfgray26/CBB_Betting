@@ -283,6 +283,9 @@ def simulate_weekly_matchup(
     categories: Optional[list[str]] = None,
     n_sims: int = 1000,
     seed: Optional[int] = None,
+    my_current_stats: Optional[dict] = None,
+    opp_current_stats: Optional[dict] = None,
+    remaining_fraction: float = 1.0,
 ) -> dict:
     """
     Monte Carlo simulation of one week's H2H matchup.
@@ -329,27 +332,59 @@ def simulate_weekly_matchup(
             "elapsed_ms": 0.0,
             "categories_simulated": [],
             "category_projections": [],
+            "data_quality": "degraded",
+            "my_projection_coverage": 0.0,
+            "opp_projection_coverage": 0.0,
         }
 
     my_means, my_stds = _roster_means_stds(my_roster, categories)
     opp_means, opp_stds = _roster_means_stds(opponent_roster, categories)
 
+    # Data quality: fraction of roster players with at least one non-zero cat score
+    def _coverage(roster: list[dict]) -> float:
+        if not roster:
+            return 0.0
+        with_scores = sum(
+            1 for p in roster
+            if any(v != 0.0 for v in (p.get("cat_scores") or {}).values())
+        )
+        return with_scores / len(roster)
+
+    my_coverage = _coverage(my_roster)
+    opp_coverage = _coverage(opponent_roster)
+    data_quality = "degraded" if min(my_coverage, opp_coverage) < 0.70 else "ok"
+
     # Vectorized sampling: (n_sims, n_players, n_cats)
     n_cats = len(categories)
 
+    # Scale projected contributions by remaining week fraction
+    if remaining_fraction < 1.0:
+        my_means = my_means * remaining_fraction
+        opp_means = opp_means * remaining_fraction
+
+    # Fixed offset from current scoreboard stats
+    _my_offset = np.zeros(n_cats)
+    _opp_offset = np.zeros(n_cats)
+    if my_current_stats:
+        for j, cat in enumerate(categories):
+            _my_offset[j] = float(my_current_stats.get(cat, 0.0))
+    if opp_current_stats:
+        for j, cat in enumerate(categories):
+            _opp_offset[j] = float(opp_current_stats.get(cat, 0.0))
+
     if my_means.shape[0] > 0:
         my_noise = rng.normal(0.0, my_stds, size=(n_sims,) + my_means.shape)
-        my_totals = _clamp_counts((my_means + my_noise).sum(axis=1), categories)   # (n_sims, n_cats)
+        my_totals = _clamp_counts((my_means + my_noise).sum(axis=1) + _my_offset, categories)
     else:
-        my_totals = np.zeros((n_sims, n_cats))
+        my_totals = np.zeros((n_sims, n_cats)) + _my_offset
 
     if opp_means.shape[0] > 0:
         opp_noise = rng.normal(0.0, opp_stds, size=(n_sims,) + opp_means.shape)
-        opp_totals = _clamp_counts((opp_means + opp_noise).sum(axis=1), categories)  # (n_sims, n_cats)
+        opp_totals = _clamp_counts((opp_means + opp_noise).sum(axis=1) + _opp_offset, categories)
     else:
         # Empty opponent = league average (z=0), still has week-level noise
         avg_std = np.full(n_cats, 2.0)  # team-level noise for 12-player average opponent
-        opp_totals = _clamp_counts(rng.normal(0.0, avg_std, size=(n_sims, n_cats)), categories)
+        opp_totals = _clamp_counts(rng.normal(0.0, avg_std, size=(n_sims, n_cats)) + _opp_offset, categories)
 
     # All cats: higher is better (LOWER_IS_BETTER z-scores inverted at input)
     cat_wins = (my_totals > opp_totals).astype(float)   # (n_sims, n_cats)
@@ -388,6 +423,9 @@ def simulate_weekly_matchup(
         "elapsed_ms": round(elapsed_ms, 1),
         "categories_simulated": categories,
         "category_projections": category_projections,
+        "data_quality": data_quality,
+        "my_projection_coverage": round(my_coverage, 2),
+        "opp_projection_coverage": round(opp_coverage, 2),
     }
 
 

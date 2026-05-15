@@ -6,6 +6,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv*/
 ENV/
 build/
 develop-eggs/
@@ -106,3 +107,14 @@ mcp-shared-config.json
 
 # Claude MCP config (contains secrets)
 .claude/mcp.json
+
+# Playwright browser automation snapshots
+.playwright-mcp/
+.claude/settings.local.json
+.playwright-mcp/
+streaming.png
+waiver-wire.png
+war-room-hub.png
+war-room-scroll*.png
+war-room-after-sim.png
+war-room-sim-*.png

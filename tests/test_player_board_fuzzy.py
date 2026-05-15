@@ -35,6 +35,7 @@ def _make_board_entry(name: str, z: float) -> dict:
 def patch_board(monkeypatch):
     """Inject a controlled board for all fuzzy tests."""
     import backend.fantasy_baseball.player_board as pb
+    import backend.models as _bm
 
     board = [
         _make_board_entry("Cristopher Sanchez", 3.76),
@@ -45,8 +46,16 @@ def patch_board(monkeypatch):
 
     monkeypatch.setattr(pb, "_BOARD", board)
     monkeypatch.setattr(pb, "_projection_cache", {})
-    # get_board() must return the patched _BOARD
     monkeypatch.setattr(pb, "get_board", lambda apply_park_factors=True: board)
+
+    # Block real DB queries so the draft board fallback fires.
+    # get_or_create_projection imports get_db from backend.models each call;
+    # raising on next() makes db=None → the board fallback at the end is reached.
+    def _no_db():
+        raise RuntimeError("no DB in test")
+        yield  # makes this a generator function
+
+    monkeypatch.setattr(_bm, "get_db", _no_db)
     yield
 
 

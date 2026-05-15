@@ -12,12 +12,12 @@ function getState(winProb: number | null): TagState {
 }
 
 const STATE_CONFIG: Record<TagState, { label: string; cls: string }> = {
-  'locked-win':   { label: 'LOCK W',   cls: 'bg-[#FFC000] text-black font-bold' },
-  'leaning-win':  { label: 'LEAN W',   cls: 'border border-[#FFC000] text-[#FFC000]' },
-  'bubble':       { label: 'BUBBLE',   cls: 'border border-[#F59E0B] text-[#F59E0B]' },
-  'leaning-loss': { label: 'LEAN L',   cls: 'border border-[#969696] text-[#969696]' },
-  'locked-loss':  { label: 'LOCK L',   cls: 'bg-[#494949] text-[#969696] font-bold' },
-  'pending':      { label: '—',        cls: 'text-[#494949]' },
+  'locked-win':   { label: 'LOCK W',   cls: 'bg-accent-gold text-black font-bold' },
+  'leaning-win':  { label: 'LEAN W',   cls: 'border border-accent-gold text-accent-gold' },
+  'bubble':       { label: 'BUBBLE',   cls: 'border border-status-bubble text-status-bubble' },
+  'leaning-loss': { label: 'LEAN L',   cls: 'border border-text-secondary text-text-secondary' },
+  'locked-loss':  { label: 'LOCK L',   cls: 'bg-text-muted text-text-secondary font-bold' },
+  'pending':      { label: '—',        cls: 'text-text-muted' },
 }
 
 interface Props {

@@ -9,9 +9,9 @@ interface BudgetPanelProps {
 }
 
 function paceColor(pace: BudgetData["ip_pace"]) {
-  if (pace === "BEHIND") return "text-red-400"
-  if (pace === "AHEAD") return "text-green-400"
-  return "text-amber-400"
+  if (pace === "BEHIND") return "text-status-lost"
+  if (pace === "AHEAD") return "text-status-safe"
+  return "text-status-bubble"
 }
 
 function paceLabel(pace: BudgetData["ip_pace"]) {
@@ -21,11 +21,11 @@ function paceLabel(pace: BudgetData["ip_pace"]) {
 }
 
 function acquisitionColor(used: number, limit: number) {
-  if (limit === 0) return "bg-zinc-600"
+  if (limit === 0) return "bg-text-muted"
   const pct = used / limit
-  if (pct >= 0.8) return "bg-red-500"
-  if (pct >= 0.5) return "bg-amber-400"
-  return "bg-green-500"
+  if (pct >= 0.8) return "bg-status-lost"
+  if (pct >= 0.5) return "bg-status-bubble"
+  return "bg-status-safe"
 }
 
 function StatRow({
@@ -38,10 +38,10 @@ function StatRow({
   sub?: React.ReactNode
 }) {
   return (
-    <div className="flex items-center justify-between py-1.5 border-b border-zinc-800 last:border-0">
-      <span className="text-[#7D7D7D] text-xs">{label}</span>
+    <div className="flex items-center justify-between py-1.5 border-b border-border-subtle last:border-0">
+      <span className="text-text-secondary text-xs">{label}</span>
       <div className="text-right">
-        <span className="text-zinc-100 text-sm font-mono tabular-nums">{value}</span>
+        <span className="text-text-primary text-sm font-mono tabular-nums">{value}</span>
         {sub && <span className="ml-1.5 text-xs">{sub}</span>}
       </div>
     </div>
@@ -60,10 +60,10 @@ export function BudgetPanel({ budget }: BudgetPanelProps) {
       : 0
 
   return (
-    <Card>
+    <Card className="bg-bg-surface border-border-subtle">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-zinc-100 text-sm">
-          <DollarSign className="h-4 w-4 text-amber-400" />
+        <CardTitle className="flex items-center gap-2 text-text-primary text-sm">
+          <DollarSign className="h-4 w-4 text-accent-gold" />
           Constraint Budget
         </CardTitle>
       </CardHeader>
@@ -71,12 +71,12 @@ export function BudgetPanel({ budget }: BudgetPanelProps) {
         {/* Acquisitions */}
         <div>
           <div className="flex items-center justify-between mb-1">
-            <span className="text-[#7D7D7D] text-xs">Acquisitions</span>
-            <span className="text-zinc-100 text-xs font-mono tabular-nums">
+            <span className="text-text-secondary text-xs">Acquisitions</span>
+            <span className="text-text-primary text-xs font-mono tabular-nums">
               {budget.acquisitions_used} / {budget.acquisition_limit}
             </span>
           </div>
-          <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
+          <div className="h-1.5 w-full bg-bg-inset rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full transition-all ${acquisitionColor(
                 budget.acquisitions_used,
@@ -86,7 +86,7 @@ export function BudgetPanel({ budget }: BudgetPanelProps) {
             />
           </div>
           {budget.acquisition_warning && (
-            <p className="text-amber-400 text-[10px] mt-0.5">Running low</p>
+            <p className="text-status-bubble text-[10px] mt-0.5">Running low</p>
           )}
         </div>
 
@@ -96,9 +96,9 @@ export function BudgetPanel({ budget }: BudgetPanelProps) {
           value={`${budget.il_used} / ${budget.il_total}`}
           sub={
             budget.il_used >= budget.il_total ? (
-              <span className="text-red-400">Full</span>
+              <span className="text-status-lost">Full</span>
             ) : (
-              <span className="text-zinc-500">{budget.il_total - budget.il_used} open</span>
+              <span className="text-text-muted">{budget.il_total - budget.il_used} open</span>
             )
           }
         />
@@ -106,12 +106,12 @@ export function BudgetPanel({ budget }: BudgetPanelProps) {
         {/* IP Progress */}
         <div>
           <div className="flex items-center justify-between mb-1">
-            <span className="text-[#7D7D7D] text-xs">Innings Pitched</span>
+            <span className="text-text-secondary text-xs">Innings Pitched</span>
             <span className={`text-xs font-semibold ${paceColor(budget.ip_pace)}`}>
               {paceLabel(budget.ip_pace)}
             </span>
           </div>
-          <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden">
+          <div className="h-1.5 w-full bg-bg-inset rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full transition-all ${
                 budget.ip_pace === "BEHIND"
@@ -124,10 +124,10 @@ export function BudgetPanel({ budget }: BudgetPanelProps) {
             />
           </div>
           <div className="flex items-center justify-between mt-0.5">
-            <span className="text-zinc-600 text-[10px]">
+            <span className="text-text-muted text-[10px]">
               {budget.ip_accumulated.toFixed(1)} IP accumulated
             </span>
-            <span className="text-zinc-600 text-[10px]">
+            <span className="text-text-muted text-[10px]">
               min {budget.ip_minimum.toFixed(0)} IP
             </span>
           </div>

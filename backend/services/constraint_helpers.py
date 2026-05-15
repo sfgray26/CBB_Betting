@@ -45,20 +45,46 @@ def count_weekly_acquisitions(
     count = 0
     for txn in transactions:
         # Filter to add transactions only
-        if txn.get("type") != "add":
+        if txn.get("type") not in ("add", "add/drop"):
             continue
 
-        # Filter to my team (destination team)
-        # Yahoo transaction structure: destination_team_key may be at top level or nested
-        dest_team = txn.get("destination_team_key") or txn.get("destination_team", {}).get("team_key")
-        if dest_team != my_team_key:
+        # Coerce timestamp — Yahoo returns timestamps as strings, not ints
+        raw_ts = txn.get("timestamp")
+        if raw_ts is None:
+            continue
+        try:
+            ts_float = float(raw_ts)
+        except (TypeError, ValueError):
             continue
 
-        # Filter to week window
-        timestamp = txn.get("timestamp")
-        if timestamp is None:
+        if not (week_start_ts <= ts_float <= week_end_ts):
             continue
-        if week_start_ts <= timestamp <= week_end_ts:
+
+        # Check destination team — try multiple structural paths Yahoo uses
+        dest_team = (
+            txn.get("destination_team_key")
+            or txn.get("destination_team", {}).get("team_key")
+        )
+
+        # Fallback: walk transaction_data list for player-level destination
+        if not dest_team:
+            txn_data = txn.get("transaction_data") or txn.get("players") or []
+            if isinstance(txn_data, list):
+                for item in txn_data:
+                    if not isinstance(item, dict):
+                        continue
+                    for _v in item.values():
+                        if isinstance(_v, dict):
+                            dest_team = (
+                                _v.get("destination_team_key")
+                                or _v.get("destination_team", {}).get("team_key")
+                            )
+                            if dest_team:
+                                break
+                    if dest_team:
+                        break
+
+        if dest_team == my_team_key:
             count += 1
 
     return count
@@ -179,6 +205,7 @@ def lookup_opposing_sp(
     player_team: str,
     schedule_entry: dict,
     probable_pitchers: list[dict],
+    db_session=None,  # Optional: for handedness lookup fallback
 ) -> Optional[OpposingSPInfo]:
     """Look up the opposing starting pitcher for a hitter's game today.
 
@@ -186,6 +213,7 @@ def lookup_opposing_sp(
         player_team: Hitter's team abbreviation
         schedule_entry: Today's game entry with home_team, away_team
         probable_pitchers: List of probable pitcher records from DB
+        db_session: Optional DB session for handedness fallback lookup
 
     Returns:
         OpposingSPInfo or None if no game today.
@@ -209,9 +237,18 @@ def lookup_opposing_sp(
     # Find the opposing team's probable pitcher
     for pp in probable_pitchers:
         if pp.get("team") == opposing_team:
+            # Get handedness from probable pitcher record, or look up if missing
+            handedness = pp.get("handedness")
+            if handedness is None and db_session is not None:
+                handedness = _fetch_pitcher_handedness(
+                    db_session,
+                    pp.get("bdl_player_id"),
+                    pp.get("mlbam_id"),
+                    pp.get("name")
+                )
             return OpposingSPInfo(
                 sp_name=pp.get("name"),
-                sp_handedness=pp.get("handedness"),  # "L" or "R"
+                sp_handedness=handedness,  # "L" or "R" (or None if unavailable)
                 opponent_team=opposing_team,
                 home_away=home_away,
             )
@@ -223,6 +260,52 @@ def lookup_opposing_sp(
         opponent_team=opposing_team,
         home_away=home_away,
     )
+
+
+def _fetch_pitcher_handedness(
+    db_session,
+    bdl_player_id: Optional[int],
+    mlbam_id: Optional[int],
+    pitcher_name: Optional[str]
+) -> Optional[str]:
+    """Fetch pitcher handedness from player_id_mapping as fallback.
+    
+    Args:
+        db_session: SQLAlchemy session
+        bdl_player_id: BallDontLie player ID
+        mlbam_id: MLBAM ID
+        pitcher_name: Pitcher name for logging
+        
+    Returns:
+        "L" or "R" if found, None otherwise
+    """
+    try:
+        from backend.models import PlayerIdMapping
+        
+        # Try lookup by BDL ID first (most reliable)
+        if bdl_player_id:
+            mapping = db_session.query(PlayerIdMapping).filter(
+                PlayerIdMapping.player_id == bdl_player_id
+            ).first()
+            if mapping and mapping.throws:
+                return mapping.throws[0].upper()  # "L" or "R"
+        
+        # Fallback to MLBAM ID
+        if mlbam_id:
+            mapping = db_session.query(PlayerIdMapping).filter(
+                PlayerIdMapping.mlbam_id == mlbam_id
+            ).first()
+            if mapping and mapping.throws:
+                return mapping.throws[0].upper()
+                
+    except Exception as e:
+        # Log but don't fail - handedness is enhancement, not requirement
+        import logging
+        logging.getLogger(__name__).debug(
+            f"Could not fetch handedness for {pitcher_name}: {e}"
+        )
+    
+    return None
 
 
 def resolve_playing_status(

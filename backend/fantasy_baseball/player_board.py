@@ -20,10 +20,13 @@ Run this module standalone to see rankings:
   python -m backend.fantasy_baseball.player_board
 """
 
+import difflib as _difflib
 import json
 import logging
 import math
 import statistics
+import time
+from collections import namedtuple
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 
@@ -39,6 +42,44 @@ from backend.fantasy_baseball.fusion_engine import (
     PopulationPrior,
     FusionResult,
 )
+
+# ---------------------------------------------------------------------------
+# Projection name-map TTL cache
+# Caches the 9,686-row player_projections scan as plain Python namedtuples so
+# SQLAlchemy session-scoping is never a problem.  Rebuilt at most once per 30
+# minutes (1800 s) — safe under Python's GIL for concurrent request handling.
+# ---------------------------------------------------------------------------
+
+_ProjectionEntry = namedtuple(
+    "_ProjectionEntry",
+    [
+        "player_name",
+        "player_id",
+        "player_type",
+        "cat_scores",
+        "z_score",
+        # Batting rate stats
+        "avg",
+        "obp",
+        "slg",
+        "ops",
+        # Batting counting stats
+        "hr",
+        "sb",
+        # Pitching stats
+        "era",
+        "whip",
+        "k_per_nine",
+        "bb_per_nine",
+        "w",
+        "qs",
+    ],
+)
+
+# Module-level cache: {"built_at": float, "map": dict[str, _ProjectionEntry]}
+_PROJ_NAME_CACHE: dict = {}
+
+_PROJ_NAME_CACHE_TTL = 1800  # seconds (30 minutes)
 
 
 # ---------------------------------------------------------------------------
@@ -749,22 +790,41 @@ def get_board(apply_park_factors: bool = True) -> list[dict]:
     Return the full ranked player board.
 
     Priority:
-    1. Real Steamer/ZiPS CSV data (if data/projections/ CSVs are present)
-    2. Hardcoded estimates (fallback — always available)
+    1. DB RoS projections (FanGraphs ensemble, updated nightly 3:30 AM ET)
+    2. Real Steamer/ZiPS CSV data (if data/projections/ CSVs are present)
+    3. Hardcoded estimates (always available fallback)
 
-    Park factors and risk adjustments are applied on top of either source.
+    Park factors and keeper flags are applied on top of whichever source wins.
     """
     global _BOARD
     if _BOARD is None:
-        # Try real projection data first
+        # 1. DB RoS projections — freshest source, updated nightly by lock 100_036
         try:
-            from backend.fantasy_baseball.projections_loader import load_full_board
-            real_board = load_full_board()
-            if real_board:
-                _BOARD = real_board
-        except Exception:
-            pass
+            from backend.fantasy_baseball.projections_loader import load_db_projections
+            db_board = load_db_projections()
+            if db_board and len(db_board) >= 100:
+                _BOARD = db_board
+                import logging
+                logging.getLogger(__name__).info(
+                    "player_board: loaded %d projections from DB (RoS)", len(_BOARD)
+                )
+        except Exception as _exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "player_board: DB projection load failed: %s", _exc
+            )
 
+        # 2. CSV fallback (Steamer/ZiPS files in data/projections/)
+        if _BOARD is None:
+            try:
+                from backend.fantasy_baseball.projections_loader import load_full_board
+                real_board = load_full_board()
+                if real_board:
+                    _BOARD = real_board
+            except Exception:
+                pass
+
+        # 3. Hardcoded constants (always available)
         if _BOARD is None:
             _BOARD = build_board()
 
@@ -994,6 +1054,162 @@ def _query_statcast_proxy(db: Session, player_id: str, player_type: str,
         return raw_data
 
 
+def _get_proj_name_map(db) -> dict:
+    """
+    Return a normalized-name -> _ProjectionEntry dict for all PlayerProjection
+    rows that have cat_scores populated.
+
+    The result is module-level cached for _PROJ_NAME_CACHE_TTL seconds (30 min).
+    Plain namedtuples are stored — never SQLAlchemy row objects — so the cache
+    survives across DB sessions without detached-instance errors.
+    """
+    from backend.models import PlayerProjection
+
+    now = time.monotonic()
+    cached = _PROJ_NAME_CACHE.get("map")
+    built_at = _PROJ_NAME_CACHE.get("built_at", 0.0)
+
+    if cached is not None and (now - built_at) < _PROJ_NAME_CACHE_TTL:
+        return cached
+
+    rows = db.query(PlayerProjection).filter(
+        PlayerProjection.cat_scores.isnot(None)
+    ).all()
+
+    name_map: dict = {}
+    for row in rows:
+        raw_name = row.player_name or ""
+        if not raw_name:
+            continue
+        norm = _normalize_name(raw_name)
+        entry = _ProjectionEntry(
+            player_name=raw_name,
+            player_id=row.player_id,
+            player_type=row.player_type,
+            cat_scores=row.cat_scores,
+            z_score=getattr(row, "z_score", None),
+            avg=row.avg,
+            obp=row.obp,
+            slg=row.slg,
+            ops=row.ops,
+            hr=row.hr,
+            sb=row.sb,
+            era=row.era,
+            whip=row.whip,
+            k_per_nine=row.k_per_nine,
+            bb_per_nine=row.bb_per_nine,
+            w=row.w,
+            qs=row.qs,
+        )
+        name_map[norm] = entry
+
+    _PROJ_NAME_CACHE["map"] = name_map
+    _PROJ_NAME_CACHE["built_at"] = now
+    logger.debug("[player_board] Rebuilt projection name map: %d entries", len(name_map))
+    return name_map
+
+
+def _lookup_projection_by_name(db, name: str):
+    """
+    Find a _ProjectionEntry by player name using the TTL-cached projection map.
+
+    Returns a _ProjectionEntry namedtuple (not a SQLAlchemy row) so the result
+    is safe to use after the DB session is closed.  Tries exact normalized-name
+    match first, then difflib fuzzy match at cutoff=0.85.
+    """
+    norm = _normalize_name(name) if name else ""
+    if not norm:
+        return None
+
+    name_map = _get_proj_name_map(db)
+
+    # Exact match
+    if norm in name_map:
+        return name_map[norm]
+
+    # Fuzzy match
+    matches = _difflib.get_close_matches(norm, name_map.keys(), n=1, cutoff=0.85)
+    if matches:
+        return name_map[matches[0]]
+
+    return None
+
+
+def _lookup_canonical_by_name(db, name: str, player_type: str):
+    """Return (CanonicalProjection, [CategoryImpact]) for a SAVANT_ADJUSTED row, or None.
+
+    Bridges through PlayerIdentity because CanonicalProjection has no player_name.
+    Tries mlbam_id first, then negative yahoo_id fallback namespace.
+    """
+    from backend.models import CanonicalProjection, CategoryImpact, PlayerIdentity
+
+    norm = _normalize_name(name) if name else ""
+    if not norm or not db:
+        return None
+
+    identity_row = (
+        db.query(PlayerIdentity)
+        .filter(PlayerIdentity.normalized_name == norm)
+        .first()
+    )
+    if not identity_row:
+        return None
+
+    candidate_ids = []
+    if identity_row.mlbam_id:
+        candidate_ids.append(identity_row.mlbam_id)
+    if identity_row.yahoo_id:
+        candidate_ids.append(-(int(identity_row.yahoo_id)))
+
+    if not candidate_ids:
+        return None
+
+    cp = (
+        db.query(CanonicalProjection)
+        .filter(
+            CanonicalProjection.player_id.in_(candidate_ids),
+            CanonicalProjection.player_type == player_type.upper(),
+            CanonicalProjection.source_engine == "SAVANT_ADJUSTED",
+        )
+        .order_by(CanonicalProjection.projection_date.desc())
+        .first()
+    )
+    if cp is None:
+        return None
+
+    impacts = (
+        db.query(CategoryImpact)
+        .filter(CategoryImpact.canonical_projection_id == cp.id)
+        .all()
+    )
+    return cp, impacts
+
+
+# CategoryImpact.category → player_board cat_scores key mappings
+_CI_BATTER_MAP = {
+    "R": "r", "HR": "hr", "RBI": "rbi",
+    "NSB": "nsb", "SB": "nsb",  # SB kept as alias for legacy DB rows
+    "K_BAT": "k_bat", "TB": "tb",
+    "AVG": "avg", "OBP": "obp", "OPS": "ops",
+}
+_CI_PITCHER_MAP = {
+    "W": "w", "K": "k_pit", "SV": "sv",
+    "L": "l", "HR_PIT": "hr_pit", "QS": "qs",
+    "ERA": "era", "WHIP": "whip", "K9": "k9",
+}
+
+
+def _category_impacts_to_cat_scores(impacts, player_type: str) -> dict:
+    """Convert CategoryImpact rows to player_board-compatible cat_scores dict."""
+    impact_map = _CI_BATTER_MAP if player_type == "batter" else _CI_PITCHER_MAP
+    cat_scores: dict = {}
+    for impact in impacts:
+        board_key = impact_map.get(impact.category)
+        if board_key is not None and impact.z_score is not None:
+            cat_scores[board_key] = round(impact.z_score, 3)
+    return cat_scores
+
+
 def get_or_create_projection(yahoo_player: dict) -> dict:
     """
     Return a board-compatible dict using Bayesian fusion (four-state logic).
@@ -1027,42 +1243,12 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
     if player_key and player_key in _projection_cache and not yahoo_player.get("cat_scores"):
         return _projection_cache[player_key]
 
-    # 2. Check board by exact name match
-    board = get_board()
-    board_by_name = {p["name"].lower(): p for p in board}
-    entry = board_by_name.get(name.lower())
+    # 2. Check board by exact name match ONLY if database lookup fails
+    # This is a fallback for players not in the database (e.g., Christopher Sanchez)
+    # IMPORTANT: Database check happens first (below), draft board is only for missing DB data
 
-    if entry:
-        if player_key:
-            _projection_cache[player_key] = entry
-        return entry
-
-    # 3. Fuzzy name match — handles "José" vs "Jose", suffixes, etc.
-    import difflib as _difflib
-    name_lower = name.lower()
-    clean_name = "".join(c for c in name_lower if c.isalnum() or c == " ")
-    for board_name, board_entry in board_by_name.items():
-        clean_board = "".join(c for c in board_name if c.isalnum() or c == " ")
-        if clean_board == clean_name:
-            if player_key:
-                _projection_cache[player_key] = board_entry
-            return board_entry
-
-    # 3b. Similarity match — handles "Christopher" vs "Cristopher", etc.
-    best_ratio = 0.0
-    best_entry = None
-    for board_name, board_entry in board_by_name.items():
-        clean_board = "".join(c for c in board_name if c.isalnum() or c == " ")
-        ratio = _difflib.SequenceMatcher(None, clean_name, clean_board).ratio()
-        if ratio > best_ratio:
-            best_ratio = ratio
-            best_entry = board_entry
-    if best_ratio >= 0.90 and best_entry is not None:
-        if player_key:
-            _projection_cache[player_key] = best_entry
-        return best_entry
-
-    # 4. Not on board — use Bayesian fusion with real data sources
+    # NOTE: We skip draft board check here and do it AFTER database query
+    # This ensures real DB projections are always preferred over draft board data
     positions = yahoo_player.get("positions") or []
     primary_pos = positions[0] if positions else ""
 
@@ -1170,6 +1356,19 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
     except Exception as e:
         logger.debug(f"[player_board] DB query failed for {name}: {e}")
 
+    # Name-based fallback: query player_projections directly by name when identity
+    # chain fails (e.g. player not yet in player_identities table)
+    if not projection_row and db and name:
+        try:
+            projection_row = _lookup_projection_by_name(db, name)
+            if projection_row:
+                logger.info(
+                    "[player_board] Name-fallback found %s → %s (cat_scores=%s)",
+                    name, projection_row.player_name, bool(projection_row.cat_scores)
+                )
+        except Exception as _nf_err:
+            logger.debug("[player_board] Name-fallback failed for %s: %s", name, _nf_err)
+
     # FAST PATH: If projection_row has curated cat_scores (real dict),
     # use them directly without running fusion. This preserves the pre-Phase 9.5
     # contract used by the waiver/optimize callers and yahoo_id translation tests.
@@ -1208,6 +1407,51 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
         if player_key:
             _projection_cache[player_key] = proxy
         return proxy
+
+    # FAST PATH 2: SAVANT_ADJUSTED CanonicalProjection
+    # PlayerProjection had no curated cat_scores — try the Statcast-fused table.
+    # Covers ~238 players (48% of top-500 fantasy-relevant players).
+    # Missing categories: k_bat, tb, nsb, l, hr_pit, qs (not yet in CategoryImpact).
+    if db is not None:
+        try:
+            canonical_result = _lookup_canonical_by_name(db, name, player_type)
+            if canonical_result is not None:
+                cp, impacts = canonical_result
+                sa_cat_scores = _category_impacts_to_cat_scores(impacts, player_type)
+                if sa_cat_scores:
+                    logger.info(
+                        "[player_board] SAVANT_ADJUSTED fast path: %s → %s cats",
+                        name, list(sa_cat_scores.keys()),
+                    )
+                    if db_gen is not None:
+                        try:
+                            next(db_gen)
+                        except (StopIteration, Exception):
+                            pass
+                    proxy = {
+                        "id": player_key or name.lower().replace(" ", "_"),
+                        "name": name,
+                        "team": yahoo_player.get("team") or yahoo_player.get("editorial_team_abbr") or "",
+                        "positions": positions,
+                        "type": player_type,
+                        "tier": 10,
+                        "rank": 9999,
+                        "adp": 9999.0,
+                        "z_score": sum(sa_cat_scores.values()),
+                        "cat_scores": sa_cat_scores,
+                        "proj": {},
+                        "is_keeper": False,
+                        "keeper_round": None,
+                        "is_proxy": True,
+                        "fusion_source": "savant_adjusted_db",
+                        "components_fused": 2,
+                        "xwoba_override": False,
+                    }
+                    if player_key:
+                        _projection_cache[player_key] = proxy
+                    return proxy
+        except Exception as _cp_err:
+            logger.debug("[player_board] CanonicalProjection lookup failed for %s: %s", name, _cp_err)
 
     # Always invoke helpers — they handle None inputs gracefully and the
     # tests rely on these being patchable as the entry points.
@@ -1281,6 +1525,49 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
     # backfill runs compute_cat_scores() against the full player pool.
     cat_scores = {}
     z_score = 0.0
+
+    # DRAFT BOARD FALLBACK: Only use if we have NO real data from database
+    # This ensures players like Christopher Sanchez (not in DB) still get some projection
+    # while preventing Gavin Williams draft data from overriding real DB projections.
+    if not projection_cat_scores and not steamer_data and not statcast_data:
+        # No database data found - use draft board as fallback
+        logger.info(f"[player_board] No DB data for {name}, checking draft board fallback")
+
+        board = get_board()
+        board_by_name = {p["name"].lower(): p for p in board}
+        entry = board_by_name.get(name.lower())
+
+        if entry:
+            logger.info(f"[player_board] Using draft board fallback for {name}")
+            if player_key:
+                _projection_cache[player_key] = entry
+            return entry
+
+        # Try fuzzy match for draft board
+        import difflib as _difflib
+        clean_name = "".join(c for c in name.lower() if c.isalnum() or c == " ")
+        for board_name, board_entry in board_by_name.items():
+            clean_board = "".join(c for c in board_name if c.isalnum() or c == " ")
+            if clean_board == clean_name:
+                logger.info(f"[player_board] Using draft board fuzzy match for {name}")
+                if player_key:
+                    _projection_cache[player_key] = board_entry
+                return board_entry
+
+        # Similarity match for draft board
+        best_ratio = 0.0
+        best_entry = None
+        for board_name, board_entry in board_by_name.items():
+            clean_board = "".join(c for c in board_name if c.isalnum() or c == " ")
+            ratio = _difflib.SequenceMatcher(None, clean_name, clean_board).ratio()
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best_entry = board_entry
+        if best_ratio >= 0.90 and best_entry is not None:
+            logger.info(f"[player_board] Using draft board similarity match for {name} (ratio={best_ratio:.2f})")
+            if player_key:
+                _projection_cache[player_key] = best_entry
+            return best_entry
 
     # Log which fusion path was taken
     logger.info(f"[player_board] Fusion for {name}: source={fusion_result.source}, "

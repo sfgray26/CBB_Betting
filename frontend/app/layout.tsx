@@ -28,6 +28,10 @@ export const metadata: Metadata = {
   title: 'CBB Edge',
   description: 'College basketball betting analytics',
   manifest: '/manifest.json',
+  icons: {
+    icon: '/icons/icon-192.png',
+    apple: '/icons/icon-192.png',
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',

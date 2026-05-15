@@ -14,6 +14,7 @@ from sqlalchemy.orm import aliased
 from typing import List, Optional, Literal, Dict
 import logging
 import os
+import difflib as _difflib
 import json as _json
 import asyncio
 import unicodedata
@@ -38,6 +39,7 @@ from backend.models import (
     DBAlert,
     PlayerScore,
     PlayerIDMapping,
+    PositionEligibility,
     DecisionResult,
     DecisionExplanation,
     SessionLocal,
@@ -96,6 +98,14 @@ router = APIRouter()
 
 # Module-level MLB probable-starts cache (shared state — same pattern as main.py)
 _STARTS_CACHE: dict = {}
+
+# Matchup response cache — 5-minute TTL matches frontend refetchInterval (5 * 60_000 ms).
+# Stores fully assembled MatchupResponse so all 3 sequential Yahoo calls are skipped on hit.
+_MATCHUP_CACHE: dict = {}
+_MATCHUP_CACHE_TTL = 300  # seconds
+
+# League settings (stat ID map) — 2-hour TTL; never changes mid-season.
+_LEAGUE_SETTINGS_CACHE: dict = {}
 
 
 def _fetch_probable_starts_map(start_date: str, end_date: str) -> dict:
@@ -460,6 +470,55 @@ def _resolve_roster_player_bdl_ids(db: Session, raw_players: list[dict]) -> dict
                     }
 
     return player_key_to_ids
+
+# ============================================================================
+# PROJECTION STATUS
+# ============================================================================
+
+@router.get("/api/fantasy/projection-status")
+async def get_projection_status(db: Session = Depends(get_db)):
+    """Return freshness metadata for the active projection source."""
+    from backend.fantasy_baseball import player_board as _pb
+    from backend.models import PlayerProjection
+    from datetime import datetime, timezone
+
+    try:
+        newest = (
+            db.query(PlayerProjection.updated_at)
+            .filter(PlayerProjection.player_type.isnot(None))
+            .order_by(PlayerProjection.updated_at.desc())
+            .first()
+        )
+        db_updated_at = newest[0] if newest else None
+        db_count = db.query(PlayerProjection).filter(
+            PlayerProjection.player_type.isnot(None)
+        ).count()
+    except Exception:
+        db_updated_at = None
+        db_count = 0
+
+    now = datetime.now(timezone.utc)
+    age_hours = None
+    if db_updated_at:
+        ts = db_updated_at.replace(tzinfo=timezone.utc) if db_updated_at.tzinfo is None else db_updated_at
+        age_hours = round((now - ts).total_seconds() / 3600, 1)
+
+    board = _pb._BOARD
+    active_source = "unknown"
+    board_count = 0
+    if board:
+        board_count = len(board)
+        active_source = (board[0] or {}).get("source", "unknown")
+
+    return {
+        "db_updated_at": db_updated_at.isoformat() if db_updated_at else None,
+        "db_player_count": db_count,
+        "age_hours": age_hours,
+        "is_stale": age_hours is None or age_hours > 26,
+        "active_source": active_source,
+        "board_player_count": board_count,
+    }
+
 
 # ============================================================================
 # DRAFT BOARD
@@ -1358,9 +1417,22 @@ async def get_fantasy_lineup_recommendations(
                 start_time = team_odds[team].get("start_time")
 
             if is_sp and has_start:
-                opp_factor = max(0, 5.0 - opp_implied)
-                park_factor_score = (2.0 - park_factor) * 5
-                sp_score = min(10, opp_factor + park_factor_score)
+                # Enhanced sp_score using run environment data (PR-22)
+                # Components:
+                # 1. Opponent weakness (40%): Lower opp implied runs = better
+                # 2. Park factor (25%): Pitcher-friendly park = better  
+                # 3. Run environment (35%): Low total + high win prob = better
+                
+                opp_factor = max(0, 5.0 - opp_implied) * 0.8  # 0-4 points
+                park_factor_score = max(0, (2.0 - park_factor) * 2.5)  # 0-2.5 points
+                
+                # Get run environment score from team_odds (0-10 scale)
+                run_env_score = team_odds.get(team, {}).get("run_environment_score", 5.0)
+                # Normalize to 0-3.5 points (pitcher wants HIGH run_env_score)
+                run_env_component = (run_env_score / 10.0) * 3.5
+                
+                sp_score = round(opp_factor + park_factor_score + run_env_component, 2)
+                sp_score = min(10, max(0, sp_score))  # Clamp to 0-10
 
             status = "START" if has_start else "NO_START"
             if not is_sp:
@@ -1649,6 +1721,7 @@ async def get_fantasy_waiver_recommendations(
     _closer_alert: Optional[str] = None
     _il_info: dict = {"used": 0, "total": 2, "available": 0}
     _faab_balance: Optional[float] = None
+    _roster_context: dict = {}
 
     try:
         client = get_yahoo_client()
@@ -1686,6 +1759,25 @@ async def get_fantasy_waiver_recommendations(
 
         if not free_agents:
             logger.warning("waiver: no free agents returned from Yahoo API, returning empty response")
+
+        # Augment with dedicated batter pool when no position filter is active.
+        # Yahoo's sort=AR returns pitchers first (5× more pitchers than batters
+        # are available in any league), so page 1 without augmentation is ~90%
+        # pitchers regardless of team needs.
+        if not _yahoo_pos and free_agents is not None:
+            try:
+                _batter_fas = client.get_free_agents(position="OF", start=0, count=per_page)
+                if _batter_fas:
+                    _existing_keys = {p.get("player_key") for p in free_agents}
+                    _new_batters = [p for p in _batter_fas if p.get("player_key") not in _existing_keys]
+                    free_agents = free_agents + _new_batters
+                    logger.info(
+                        "waiver: augmented with %d batters (total pool=%d)",
+                        len(_new_batters),
+                        len(free_agents),
+                    )
+            except Exception as _bat_err:
+                logger.warning("waiver: batter augment failed (non-fatal): %s", _bat_err)
 
         # Fetch scoreboard once and reuse for both opponent resolution and
         # category_deficits — the previous implementation fetched twice and
@@ -1761,6 +1853,11 @@ async def get_fantasy_waiver_recommendations(
             if my_matchup_teams:
                 my_tuple, opp_tuple = my_matchup_teams
 
+                # Display-only Yahoo stats that are NOT scoring categories.
+                # H_AB is stat ID 60 ("8/20" string), IP and GS are volume
+                # indicators only — none of these are H2H matchup cats.
+                _NON_SCORING_DISPLAY = frozenset({"H_AB", "IP", "GS"})
+
                 def _stats_dict_from_raw(raw_stats_list: list) -> dict:
                     out: dict = {}
                     for st in raw_stats_list:
@@ -1776,6 +1873,9 @@ async def get_fantasy_waiver_recommendations(
                         # Drop non-scoring Yahoo stat_ids that fall through
                         # translation as bare numeric strings.
                         if isinstance(key2, str) and key2.isdigit():
+                            continue
+                        # Drop display-only stats that are not H2H scoring cats.
+                        if key2 in _NON_SCORING_DISPLAY:
                             continue
                         try:
                             out[key2] = float(stobj.get("value", 0) or 0)
@@ -1822,9 +1922,9 @@ async def get_fantasy_waiver_recommendations(
             if not scores:
                 return None
             avg = sum(scores) / len(scores)
-            if avg > 0.4:
+            if avg > 0.75:
                 return "HOT"
-            if avg < -0.3:
+            if avg < -0.5:
                 return "COLD"
             return None
 
@@ -1959,6 +2059,7 @@ async def get_fantasy_waiver_recommendations(
                 team=p.get("team") or "",
                 position=positions[0] if positions else "?",
                 need_score=round(need_score, 3),
+                z_score=round(player_z, 3),
                 category_contributions=contributions,
                 owned_pct=p.get("percent_owned", 0.0),
                 starts_this_week=p.get("starts_this_week", 0),
@@ -1971,7 +2072,65 @@ async def get_fantasy_waiver_recommendations(
                 statcast_stats=_sc_dict,
                 statcast_signals=_sc_sigs,
                 quality_score=None,  # TODO: populate from ProbablePitcherSnapshot for pitchers
+                rank_percentile=None,
             )
+
+        def _apply_ownership_fallback(players: list[dict]) -> None:
+            """Fill missing Yahoo ownership from the persisted eligibility snapshot."""
+            player_keys = [p.get("player_key") for p in players if p.get("player_key")]
+            if not player_keys:
+                return
+            try:
+                rows = (
+                    db.query(
+                        PositionEligibility.yahoo_player_key,
+                        PositionEligibility.league_rostered_pct,
+                    )
+                    .filter(PositionEligibility.yahoo_player_key.in_(player_keys))
+                    .all()
+                )
+                ownership_by_key = {}
+                for key, raw_pct in rows:
+                    if raw_pct is None:
+                        continue
+                    pct = float(raw_pct)
+                    if 0.0 < pct <= 1.0:
+                        pct *= 100.0
+                    if pct > 0.0:
+                        ownership_by_key[key] = min(pct, 100.0)
+                filled = 0
+                for p in players:
+                    if float(p.get("percent_owned") or 0.0) > 0.0:
+                        continue
+                    pct = ownership_by_key.get(p.get("player_key"))
+                    if pct is not None:
+                        p["percent_owned"] = pct
+                        p["percent_owned_source"] = "position_eligibility"
+                        filled += 1
+                if filled:
+                    logger.info("waiver: filled ownership fallback for %s players", filled)
+            except Exception as exc:
+                logger.warning("waiver ownership fallback failed (non-fatal): %s", exc)
+
+            try:
+                adp_data = client._load_adp_data()
+                if not adp_data:
+                    return
+                filled = 0
+                for p in players:
+                    if float(p.get("percent_owned") or 0.0) > 0.0:
+                        continue
+                    name = (p.get("name") or "").strip()
+                    pct = client._estimate_ownership_from_adp(name, adp_data)
+                    if pct > 0.0:
+                        p["percent_owned"] = pct
+                        p["percent_owned_estimated"] = True
+                        p["percent_owned_source"] = "adp_proxy"
+                        filled += 1
+                if filled:
+                    logger.info("waiver: filled ADP ownership proxy for %s players", filled)
+            except Exception as exc:
+                logger.warning("waiver ADP ownership fallback failed (non-fatal): %s", exc)
 
         # Fetch MLB probable starts and populate starts_this_week for ALL SP pitchers
         # BEFORE creating top_available — April 21 Issue 2 fix (starts_this_week was 0 for all)
@@ -1985,6 +2144,7 @@ async def get_fantasy_waiver_recommendations(
 
         # Populate starts_this_week for ALL SP pitchers in free_agents
         _populate_starts_this_week(free_agents, starts_map)
+        _apply_ownership_fallback(free_agents)
 
         top_available = [_to_waiver_player(p) for p in free_agents]
         if min_z_score is not None:
@@ -1994,6 +2154,14 @@ async def get_fantasy_waiver_recommendations(
             top_available.sort(key=lambda x: x.owned_pct, reverse=True)
         else:
             top_available.sort(key=lambda x: x.need_score, reverse=True)
+
+        total_ranked = len(top_available)
+        if total_ranked:
+            for idx, player in enumerate(top_available):
+                player.rank_percentile = round(
+                    ((total_ranked - idx) / total_ranked) * 100.0,
+                    1,
+                )
 
         # two_start_pitchers — filter from top_available (starts_this_week already populated)
         two_start_pitchers = sorted(
@@ -2010,6 +2178,36 @@ async def get_fantasy_waiver_recommendations(
 
         from backend.services.waiver_edge_detector import il_capacity_info as _il_cap
         _il_info = _il_cap(my_roster) if my_roster else {"used": 0, "total": 2, "available": 0}
+
+        # Build roster context: weakest player per canonical position (for upgrade comparison UI)
+        # IL players skipped — they don't occupy droppable roster spots
+        _CONTEXT_POSITIONS = frozenset({"SP", "RP", "OF", "1B", "2B", "3B", "SS", "C"})
+        for _rp in (my_roster or []):
+            try:
+                _rp_selected = (_rp.get("selected_position") or "").upper()
+                if _rp_selected in ("IL", "IL10", "IL60"):
+                    continue
+                _rp_proj = _get_proj(_rp)
+                _rp_z = round(_rp_proj.get("z_score", 0.0) if _rp_proj else 0.0, 3)
+                _rp_positions = _rp.get("positions") or []
+                _rp_name = (_rp.get("name") or "").strip()
+                _rp_key = _rp.get("player_key") or _rp_name
+                _rp_team = _rp.get("team") or ""
+                for _pos in _rp_positions:
+                    _canon = "OF" if _pos in ("LF", "CF", "RF") else _pos
+                    if _canon not in _CONTEXT_POSITIONS:
+                        continue
+                    # Keep weakest z_score per position (most droppable)
+                    if _canon not in _roster_context or _rp_z < _roster_context[_canon]["z_score"]:
+                        _roster_context[_canon] = {
+                            "player_id": _rp_key,
+                            "name": _rp_name,
+                            "z_score": _rp_z,
+                            "team": _rp_team,
+                            "positions": _rp_positions,
+                        }
+            except Exception:
+                continue
 
     except YahooAuthError as exc:
         logger.error("Waiver endpoint -- Yahoo auth error: %s", exc)
@@ -2046,6 +2244,7 @@ async def get_fantasy_waiver_recommendations(
         il_slots_used=_il_info["used"],
         il_slots_available=_il_info["available"],
         faab_balance=_faab_balance,
+        roster_context=_roster_context,
     )
 
 
@@ -2158,6 +2357,9 @@ async def get_waiver_recommendations(
             _sid_map: dict = dict(_YAHOO_STAT_FALLBACK)
             if _my_matchup_teams:
 
+                # Display-only Yahoo stats that are NOT scoring categories.
+                _NON_SCORING_DISPLAY_2 = frozenset({"H_AB", "IP", "GS"})
+
                 def _rec_stats_dict(raw_stats_list: list) -> dict:
                     out: dict = {}
                     for _st in raw_stats_list:
@@ -2171,6 +2373,9 @@ async def get_waiver_recommendations(
                             continue
                         _key2 = _sid_map.get(_sid_k, _sid_k)
                         if isinstance(_key2, str) and _key2.isdigit():
+                            continue
+                        # Drop display-only stats that are not H2H scoring cats.
+                        if _key2 in _NON_SCORING_DISPLAY_2:
                             continue
                         try:
                             out[_key2] = float(_so.get("value", 0) or 0)
@@ -2334,7 +2539,7 @@ async def get_waiver_recommendations(
                     _contribs = {k: float(v) for k, v in cat_scores.items() if isinstance(v, (int, float))}
                     if _contribs:
                         _avg = sum(_contribs.values()) / len(_contribs)
-                        _hc = "HOT" if _avg > 0.4 else ("COLD" if _avg < -0.3 else None)
+                        _hc = "HOT" if _avg > 0.75 else ("COLD" if _avg < -0.5 else None)
                 except Exception:
                     pass
 
@@ -2910,6 +3115,26 @@ async def get_fantasy_roster(
             "Roster season stats batch fetch failed (non-fatal): %s", _season_err
         )
 
+    # Fallback: load ownership % from PositionEligibility if Yahoo live fetch
+    # returned 0.0 (roster endpoint does not include ownership blocks).
+    _pe_ownership: dict[str, float] = {}
+    try:
+        from backend.models import PositionEligibility as _PositionEligibility
+        if player_keys:
+            _pe_rows = db.query(_PositionEligibility).filter(
+                _PositionEligibility.yahoo_player_key.in_(player_keys)
+            ).all()
+            _pe_ownership = {
+                r.yahoo_player_key: r.league_rostered_pct
+                for r in _pe_rows
+                if r.league_rostered_pct is not None
+            }
+    except Exception as _pe_err:
+        logger.warning(
+            "Roster PositionEligibility ownership fallback failed (non-fatal): %s",
+            _pe_err,
+        )
+
     # Resolve BDL and MLBAM IDs via PlayerIDMapping — required for rolling stats
     # and for populating bdl_player_id/mlbam_id in CanonicalPlayerRow output.
     player_key_to_ids = _resolve_roster_player_bdl_ids(db, raw_players)
@@ -2995,6 +3220,10 @@ async def get_fantasy_roster(
 
         # Start with the raw player dict and enrich it.
         merged_player = dict(p)
+
+        # Merge ownership fallback from PositionEligibility if Yahoo returned 0.0
+        if player_key in _pe_ownership and merged_player.get("percent_owned", 0.0) == 0.0:
+            merged_player["percent_owned"] = _pe_ownership[player_key]
 
         # Merge season stats from batch so the mapper can translate them.
         if player_key in season_stats_by_key:
@@ -3333,33 +3562,85 @@ async def optimize_roster(
             "score_source": score_source,
         })
 
-    # Sort by lineup score descending
-    player_data.sort(key=lambda x: x["lineup_score"], reverse=True)
+    # Bugfix May 15: Scarcity-aware lineup optimization
+    # Sort by score descending, but with scarcity bonus for C/SS eligibility
+    # Players who can fill scarce positions get priority boost
+    SCARCE_POSITIONS = ["C", "SS", "2B", "3B", "1B"]  # In scarcity order
+    
+    def _scarcity_score(player):
+        """Calculate effective score with scarcity bonus."""
+        base_score = player["lineup_score"]
+        positions = [p.upper() for p in (player.get("eligible_positions") or [])]
+        
+        # Bonus for scarce position eligibility (C=+9, SS=+8, 2B=+7, etc.)
+        scarcity_bonus = 0
+        for i, scarce_pos in enumerate(SCARCE_POSITIONS):
+            if scarce_pos in positions:
+                scarcity_bonus = max(scarcity_bonus, 10 - i)  # C gets +9, SS +8, etc.
+        
+        # Bonus for multi-position flexibility
+        hitting_positions = set(positions) & _HITTER_POSITIONS
+        if len(hitting_positions) >= 3:
+            scarcity_bonus += 3  # Multi-eligible players are valuable
+        
+        return base_score + scarcity_bonus
+    
+    # Sort by effective score (base + scarcity bonus)
+    player_data.sort(key=_scarcity_score, reverse=True)
 
-    # Assign players to slots (greedy algorithm)
+    # Assign players to slots using scarcity-first greedy algorithm
     slot_fill_count = {s: 0 for s in slot_capacity}
     assigned = []  # List of (player_key, slot, score, reasoning)
     placed_keys = set()
+    
+    # Slot priority with scarcity ranking (matches LineupConstraintSolver)
+    # Scarce positions filled first to ensure they get best eligible player
+    SCARCITY_PRIORITY = ["C", "SS", "2B", "3B", "1B", "OF", "Util", "SP", "RP", "P"]
 
-    # Fill hitting slots
+    # Phase 1: Fill scarce hitting slots first (C, SS, 2B, 3B, 1B)
+    for slot in SCARCITY_PRIORITY:
+        if slot not in {"C", "1B", "2B", "3B", "SS"}:
+            continue
+        if slot_fill_count[slot] >= slot_capacity[slot]:
+            continue
+            
+        # Find best eligible player for this scarce slot
+        for player in player_data:
+            if player["player_key"] in placed_keys:
+                continue
+            
+            if _can_fill_slot(player["eligible_positions"], slot, player["name"]):
+                assigned.append({
+                    "player_key": player["player_key"],
+                    "name": player["name"],
+                    "slot": slot,
+                    "score": player["lineup_score"],
+                    "reasoning": f"Score {player['lineup_score']:.1f} ({player.get('score_source', 'default')}), natural {slot} (scarce)",
+                })
+                slot_fill_count[slot] += 1
+                placed_keys.add(player["player_key"])
+                break
+    
+    # Phase 2: Fill remaining slots (OF, Util, pitchers)
     for player in player_data:
         if player["player_key"] in placed_keys:
             continue
 
-        for slot in slot_priority:
-            if slot not in {"C", "1B", "2B", "3B", "SS", "OF", "Util", "SP", "RP", "P"}:
+        for slot in SCARCITY_PRIORITY:
+            if slot not in {"OF", "Util", "SP", "RP", "P"}:
                 continue
             if slot_fill_count[slot] >= slot_capacity[slot]:
                 continue
 
             eligible = _can_fill_slot(player["eligible_positions"], slot, player["name"])
             if eligible:
+                slot_type = "flex" if slot == "Util" else slot
                 assigned.append({
                     "player_key": player["player_key"],
                     "name": player["name"],
                     "slot": slot,
                     "score": player["lineup_score"],
-                    "reasoning": f"Score {player['lineup_score']:.1f} ({player.get('score_source', 'default')}), eligible for {slot}",
+                    "reasoning": f"Score {player['lineup_score']:.1f} ({player.get('score_source', 'default')}), eligible for {slot_type}",
                 })
                 slot_fill_count[slot] += 1
                 placed_keys.add(player["player_key"])
@@ -3540,6 +3821,14 @@ async def get_player_valuations(
 @router.get("/api/fantasy/matchup", response_model=MatchupResponse)
 async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
     """Return current week's matchup: opponent name + category-by-category breakdown."""
+    import time as _time
+
+    # Fast path: return cached response if fresh
+    _cached = _MATCHUP_CACHE.get(user)
+    if _cached and (_time.monotonic() - _cached["built_at"]) < _MATCHUP_CACHE_TTL:
+        logger.debug("Matchup: cache hit (age=%.0fs)", _time.monotonic() - _cached["built_at"])
+        return _cached["data"]
+
     try:
         client = get_yahoo_client()
     except YahooAuthError as exc:
@@ -3561,44 +3850,57 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
 
     stat_id_map: dict = dict(_YAHOO_STAT_FALLBACK)
     active_stat_abbrs: set = set()
-    try:
-        settings = client.get_league_settings()
-        stat_cats = (
-            settings
-            .get("settings", [{}])[0]
-            .get("stat_categories", {})
-            .get("stats", [])
-        )
-        _stat_entries: list = []
-        for entry in stat_cats:
-            if isinstance(entry, dict):
-                s = entry.get("stat", {})
-                sid = str(s.get("stat_id", ""))
-                abbr = s.get("display_name") or s.get("abbreviation") or s.get("name") or sid
-                pos_type = s.get("position_type", "")
-                is_display = bool(s.get("is_only_display_stat", 0))
-                if sid:
-                    _stat_entries.append((sid, abbr, pos_type, is_display))
 
-        _abbr_positions: dict = {}
-        for sid, abbr, pos_type, _ in _stat_entries:
-            _abbr_positions.setdefault(abbr, set()).add(pos_type)
+    # League settings cache (2-hour TTL) — stat ID map never changes mid-season
+    _ls_cached = _LEAGUE_SETTINGS_CACHE.get("entry")
+    if _ls_cached and (_time.monotonic() - _ls_cached["built_at"]) < 7200:
+        stat_id_map = _ls_cached["stat_id_map"]
+        active_stat_abbrs = _ls_cached["active_stat_abbrs"]
+    else:
+        try:
+            settings = client.get_league_settings()
+            stat_cats = (
+                settings
+                .get("settings", [{}])[0]
+                .get("stat_categories", {})
+                .get("stats", [])
+            )
+            _stat_entries: list = []
+            for entry in stat_cats:
+                if isinstance(entry, dict):
+                    s = entry.get("stat", {})
+                    sid = str(s.get("stat_id", ""))
+                    abbr = s.get("display_name") or s.get("abbreviation") or s.get("name") or sid
+                    pos_type = s.get("position_type", "")
+                    is_display = bool(s.get("is_only_display_stat", 0))
+                    if sid:
+                        _stat_entries.append((sid, abbr, pos_type, is_display))
 
-        _PITCHER_RENAME = {"HR": "HR_P", "K": "K_P"}
-        _BATTER_RENAME = {"K": "K_B", "HR": "HR_B"}
+            _abbr_positions: dict = {}
+            for sid, abbr, pos_type, _ in _stat_entries:
+                _abbr_positions.setdefault(abbr, set()).add(pos_type)
 
-        for sid, abbr, pos_type, is_display in _stat_entries:
-            final_abbr = abbr
-            if len(_abbr_positions.get(abbr, set())) > 1:
-                if pos_type == "P" and abbr in _PITCHER_RENAME:
-                    final_abbr = _PITCHER_RENAME[abbr]
-                elif pos_type == "B" and abbr in _BATTER_RENAME:
-                    final_abbr = _BATTER_RENAME[abbr]
-            stat_id_map[sid] = final_abbr
-            if not is_display:
-                active_stat_abbrs.add(final_abbr)
-    except Exception as _e:
-        logger.warning("get_league_settings failed, using fallback stat_id_map: %s", _e)
+            _PITCHER_RENAME = {"HR": "HR_P", "K": "K_P"}
+            _BATTER_RENAME = {"K": "K_B", "HR": "HR_B"}
+
+            for sid, abbr, pos_type, is_display in _stat_entries:
+                final_abbr = abbr
+                if len(_abbr_positions.get(abbr, set())) > 1:
+                    if pos_type == "P" and abbr in _PITCHER_RENAME:
+                        final_abbr = _PITCHER_RENAME[abbr]
+                    elif pos_type == "B" and abbr in _BATTER_RENAME:
+                        final_abbr = _BATTER_RENAME[abbr]
+                stat_id_map[sid] = final_abbr
+                if not is_display:
+                    active_stat_abbrs.add(final_abbr)
+
+            _LEAGUE_SETTINGS_CACHE["entry"] = {
+                "stat_id_map": stat_id_map,
+                "active_stat_abbrs": active_stat_abbrs,
+                "built_at": _time.monotonic(),
+            }
+        except Exception as _e:
+            logger.warning("get_league_settings failed, using fallback stat_id_map: %s", _e)
 
     if not active_stat_abbrs and SCORING_CATEGORY_CODES:
         active_stat_abbrs = set(SCORING_CATEGORY_CODES)
@@ -3744,7 +4046,7 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         my_stats = _filter_stats(my_entry[2])
         opp_stats = _filter_stats(opp_entry[2])
 
-        return MatchupResponse(
+        _result = MatchupResponse(
             week=week,
             my_team=MatchupTeamOut(
                 team_key=my_entry[0],
@@ -3758,6 +4060,8 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
             ),
             is_playoffs=is_playoffs,
         )
+        _MATCHUP_CACHE[user] = {"data": _result, "built_at": _time.monotonic()}
+        return _result
 
     return MatchupResponse(week=week, my_team=_stub_my, opponent=_stub_opp, message="Your team was not found in the current week's matchup.")
 
@@ -4382,7 +4686,12 @@ def _fetch_rosters_for_simulate(db: Session) -> tuple[list, list]:
         if isinstance(positions, str):
             positions = [positions]
         cat_scores: dict[str, float] = {}
-        proj = _proj_by_name.get(_normalize_identity_name(name))
+        _norm_name = _normalize_identity_name(name)
+        proj = _proj_by_name.get(_norm_name)
+        if proj is None and _proj_by_name:
+            _fuzzy = _difflib.get_close_matches(_norm_name, _proj_by_name.keys(), n=1, cutoff=0.85)
+            if _fuzzy:
+                proj = _proj_by_name[_fuzzy[0]]
         if proj and proj.cat_scores:
             for src, dest in _PROJ_TO_SIM_KEY.items():
                 val = proj.cat_scores.get(src)
@@ -4437,7 +4746,11 @@ async def simulate_matchup(
     opponent_roster = payload.opponent_roster
 
     if not my_roster or not opponent_roster:
-        my_roster, opponent_roster = _fetch_rosters_for_simulate(db)
+        try:
+            my_roster, opponent_roster = _fetch_rosters_for_simulate(db)
+        except Exception as _fetch_exc:
+            logger.warning("simulate_matchup: roster fetch failed: %s", _fetch_exc)
+            raise HTTPException(status_code=503, detail=f"Failed to fetch roster data: {_fetch_exc}")
 
     if not my_roster or not opponent_roster:
         my_count = len(my_roster) if my_roster else 0
@@ -4463,10 +4776,42 @@ async def simulate_matchup(
                 status_code=400,
                 detail=f"Roster data required — currently have {my_count} my players, {opp_count} opponent players. Either provide my_roster/opponent_roster or set auto_fetch_rosters=true with Yahoo auth."
             )
+        # Fetch current scoreboard stats to anchor simulation to mid-week reality
+        _current_my: dict = {}
+        _current_opp: dict = {}
+        _remaining_frac: float = 1.0
+        try:
+            _sb_client = get_yahoo_client()
+            _my_tk = os.getenv("YAHOO_TEAM_KEY", "") or _sb_client.get_my_team_key()
+            _week_stats = _sb_client.get_matchup_stats(my_team_key=_my_tk)
+            if _week_stats:
+                _raw_my = _week_stats.get("my_stats", {})
+                _raw_opp = _week_stats.get("opp_stats", {})
+                _SCORE_TO_SIM = {
+                    "HR": "hr_b", "R": "r", "RBI": "rbi", "H": "h",
+                    "TB": "tb", "K": "k_b", "SB": "nsb", "AVG": "avg", "OPS": "ops",
+                    "W": "w", "L": "l", "ERA": "era", "WHIP": "whip",
+                    "K9": "k_9", "QS": "qs", "SV": "nsv",
+                }
+                for _bk, _sk in _SCORE_TO_SIM.items():
+                    if _bk in _raw_my:
+                        _current_my[_sk] = float(_raw_my[_bk] or 0.0)
+                    if _bk in _raw_opp:
+                        _current_opp[_sk] = float(_raw_opp[_bk] or 0.0)
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            _dow = datetime.now(ZoneInfo("America/New_York")).weekday()  # 0=Mon, 6=Sun
+            _remaining_frac = max(0.05, (6 - _dow) / 7.0)
+        except Exception as _anchor_err:
+            logger.warning("simulate_matchup: scoreboard anchor fetch failed: %s", _anchor_err)
+
         result = simulate_weekly_matchup(
             my_roster=my_roster,
             opponent_roster=opponent_roster,
             n_sims=n,
+            my_current_stats=_current_my or None,
+            opp_current_stats=_current_opp or None,
+            remaining_fraction=_remaining_frac,
         )
         return result
     except Exception as exc:
@@ -5495,27 +5840,41 @@ async def get_constraint_budget(
     except (YahooAuthError, YahooAPIError):
         pass  # Fall back to 0
 
-    # 2. Count acquisitions from last 7 days
+    # 2. Count acquisitions since Monday 00:00 ET (Yahoo matchup week start)
     try:
         transactions = client.get_transactions(t_type="add")
-        week_start = now_et - timedelta(days=7)
+        logger.info("budget: fetched %d transactions from Yahoo", len(transactions))
+        if transactions:
+            logger.debug("budget: sample txn[0] keys=%s type=%s ts=%s",
+                         list(transactions[0].keys()),
+                         transactions[0].get("type"),
+                         transactions[0].get("timestamp"))
+        days_since_monday = now_et.weekday()  # Monday=0
+        week_start = now_et.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days_since_monday)
         week_end = now_et
         acquisitions_used = count_weekly_acquisitions(
             transactions, team_key, week_start, week_end
         )
-    except (YahooAuthError, YahooAPIError):
-        pass  # Fall back to 0
+        logger.info("budget: acquisitions_used=%d (week %s–%s)", acquisitions_used, week_start.date(), week_end.date())
+    except Exception as _acq_err:
+        logger.warning("budget: acquisitions count failed: %s", _acq_err, exc_info=True)
 
     # 3. IP tracking - wired to Yahoo matchup stats (A-6 fix)
     ip_accumulated = 0.0
     try:
-        matchup_stats = client.get_matchup_stats(my_team_key=team_key)
+        # Calculate current week for accurate stats (same logic as matchup endpoint)
+        from backend.services.scoreboard_orchestrator import MLB_OPENING_DATE_2026
+        days_since_opening = (now_et.date() - MLB_OPENING_DATE_2026).days
+        current_week = max(1, min(25, (days_since_opening // 7) + 1))
+
+        matchup_stats = client.get_matchup_stats(week=current_week, my_team_key=team_key)
         if matchup_stats:
-            my_stats = matchup_stats.get("my_team", {})
+            my_stats = matchup_stats.get("my_stats", {})
             ip_accumulated = float(my_stats.get("IP", 0.0))
-    except (YahooAuthError, YahooAPIError, Exception):
+    except (YahooAuthError, YahooAPIError, Exception) as exc:
+        logger.warning("budget: failed to fetch IP from matchup stats: %s", exc)
         pass  # Fall back to 0.0
-    ip_minimum = 19.0  # Yahoo H2H standard (innings pitched per week)
+    ip_minimum = 18.0  # Yahoo H2H standard (innings pitched per week) - matches scoreboard_orchestrator.py
 
     budget = compute_budget_state(
         acquisitions_used=acquisitions_used,
@@ -5548,4 +5907,61 @@ async def get_constraint_budget(
             "staleness_threshold_minutes": 60,
             "is_stale": False,
         },
+    }
+
+
+@router.get("/api/fantasy/coverage")
+async def get_player_coverage(
+    top_n: int = 50,
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
+    """Coverage audit: what fraction of top-N free agents have real cat_scores vs draft board fallback."""
+    from backend.models import PlayerProjection, CanonicalProjection, PlayerIdentity
+    from backend.fantasy_baseball.id_resolution_service import _normalize_name
+
+    proj_names = {
+        _normalize_name(r.player_name or "")
+        for r in db.query(PlayerProjection).filter(
+            PlayerProjection.cat_scores.isnot(None)
+        ).all()
+    }
+    identity_names = {
+        r.normalized_name for r in db.query(PlayerIdentity).all()
+    }
+
+    try:
+        client = get_yahoo_client()
+        players = []
+        for start in range(0, top_n, 25):
+            batch = client.get_free_agents(start=start, count=min(25, top_n - start))
+            players.extend(batch)
+            if len(players) >= top_n:
+                break
+        players = players[:top_n]
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Yahoo fetch failed: {e}")
+
+    results = []
+    for p in players:
+        name = p.get("name", "")
+        norm = _normalize_name(name)
+        has_fg = norm in proj_names
+        has_id = norm in identity_names
+        results.append({
+            "name": name,
+            "percent_owned": p.get("percent_owned", 0.0),
+            "has_fangraphs_cat_scores": has_fg,
+            "has_player_identity": has_id,
+            "data_tier": "FANGRAPHS_ROS" if has_fg else "DRAFT_BOARD_FALLBACK",
+        })
+
+    results.sort(key=lambda x: x["percent_owned"] or 0, reverse=True)
+    total = len(results)
+    return {
+        "total_checked": total,
+        "fangraphs_coverage_pct": round(100 * sum(1 for r in results if r["has_fangraphs_cat_scores"]) / max(total, 1), 1),
+        "identity_coverage_pct": round(100 * sum(1 for r in results if r["has_player_identity"]) / max(total, 1), 1),
+        "missing_fangraphs": [r for r in results if not r["has_fangraphs_cat_scores"]][:20],
+        "players": results,
     }

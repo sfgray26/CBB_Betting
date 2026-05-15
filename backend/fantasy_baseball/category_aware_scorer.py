@@ -29,6 +29,16 @@ RATE_STAT_PROTECT_THRESHOLD: float = _get_threshold("scoring.rate_stat_protect",
 # Produces a negative score: player_z * |deficit| * MULTIPLIER.
 RATE_STAT_PENALTY_MULTIPLIER: float = 3.0
 
+# Canonical scoring codes → board keys used in PlayerProjection.cat_scores.
+# cat.lower() is correct for most codes; only non-trivial remappings are listed.
+_CANONICAL_TO_BOARD: dict = {
+    "HR_B": "hr",
+    "HR_P": "hr_pit",
+    "K_9":  "k9",
+    "K_P":  "k_pit",
+    "K_B":  "k_bat",
+}
+
 # League-average standard deviations for rate categories (2025 MLB season approx).
 # Used to convert marginal rate deltas to z-score units in marginal_rate_impact().
 RATE_STAT_LEAGUE_STD: dict[str, float] = {
@@ -107,7 +117,7 @@ def score_fa_against_needs(
             else:
                 total += player_z * max(0.0, deficit)
         else:
-            total += player_z * max(0.0, deficit)
+            total += max(0.0, player_z) * max(0.0, deficit)
 
     return float(total)
 
@@ -203,9 +213,10 @@ def compute_need_score(
     needs_dict: Dict[str, float] = {}
     for cd in category_deficits:
         if isinstance(cd, CategoryDeficitOut):
-            # CategoryDeficitOut.deficit is positive when team is losing
-            # Lowercase category to match board keys in cat_scores
-            needs_dict[cd.category.lower()] = float(cd.deficit)
+            # Translate canonical code (e.g. "HR_B") to board key (e.g. "hr")
+            # so it aligns with PlayerProjection.cat_scores keys.
+            board_key = _CANONICAL_TO_BOARD.get(cd.category.upper(), cd.category.lower())
+            needs_dict[board_key] = float(cd.deficit)
 
     if not needs_dict:
         return float(player_z_score)

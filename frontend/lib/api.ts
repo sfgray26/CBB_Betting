@@ -32,8 +32,10 @@ import type {
   WaiverResponse,
   CanonicalProjectionsResponse,
   BudgetResponse,
+  ScoreboardResponse,
   RosterResponse,
   RosterMoveResponse,
+  RosterOptimizeResponse,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -317,8 +319,21 @@ export const endpoints = {
   getCanonicalProjections: () =>
     apiFetch<CanonicalProjectionsResponse>('/api/fantasy/projections/canonical'),
 
+  getProjectionStatus: () =>
+    apiFetch<{
+      db_updated_at: string | null
+      db_player_count: number
+      age_hours: number | null
+      is_stale: boolean
+      active_source: string
+      board_player_count: number
+    }>('/api/fantasy/projection-status'),
+
   getBudget: () =>
     apiFetch<BudgetResponse>('/api/fantasy/budget'),
+
+  getScoreboard: () =>
+    apiFetch<ScoreboardResponse>('/api/fantasy/scoreboard'),
 
   // ─────────────────────────────────────────────────────────────────────────
   // Roster management
@@ -331,6 +346,12 @@ export const endpoints = {
     apiFetch<RosterMoveResponse>('/api/fantasy/roster/move', {
       method: 'POST',
       body: JSON.stringify({ player_key: playerId, target_position: toSlot }),
+    }),
+
+  optimizeRoster: (targetDate?: string) =>
+    apiFetch<RosterOptimizeResponse>('/api/fantasy/roster/optimize', {
+      method: 'POST',
+      body: JSON.stringify(targetDate ? { target_date: targetDate } : {}),
     }),
 
   setLineup: (payload: {

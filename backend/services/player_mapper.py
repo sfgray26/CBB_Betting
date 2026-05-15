@@ -240,6 +240,7 @@ def map_yahoo_player_to_canonical_row(
     yahoo_player_key = yahoo_player.get("player_key", "")
     bdl_player_id = yahoo_player.get("bdl_player_id")  # If available from join
     mlbam_id = yahoo_player.get("mlbam_id")  # If available from join
+    current_slot = yahoo_player.get("selected_position")  # Yahoo roster slot (BN, SP, IL, etc.)
 
     return CanonicalPlayerRow(
         player_name=player_name,
@@ -260,6 +261,7 @@ def map_yahoo_player_to_canonical_row(
         yahoo_player_key=yahoo_player_key,
         bdl_player_id=bdl_player_id,
         mlbam_id=mlbam_id,
+        current_slot=current_slot,
     )
 
 
