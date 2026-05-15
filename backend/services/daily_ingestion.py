@@ -2397,7 +2397,7 @@ class DailyIngestionOrchestrator:
                                 "yahoo_id_sync: Skipping ambiguous match for name=%r (bdl_ids=%s)",
                                 name, bdl_name_collisions[norm_name],
                             )
-                            unmatched.append({"name": name, "yahoo_id": yahoo_id, "reason": "bdl_name_collision"})
+                            unmatched.append({"name": name, "yahoo_id": yahoo_id, "yahoo_key": yahoo_key, "reason": "bdl_name_collision"})
                             continue
                         bdl_data = bdl_index[norm_name]
                         bdl_id = bdl_data["bdl_id"]
@@ -2421,7 +2421,7 @@ class DailyIngestionOrchestrator:
                                     "yahoo_id_sync: Skipping update for yahoo_key=%s (bdl_id=%d already used by row id=%d)",
                                     yahoo_key, bdl_id, existing_by_bdl.id
                                 )
-                                unmatched.append({"name": name, "yahoo_id": yahoo_id, "reason": "bdl_id_conflict"})
+                                unmatched.append({"name": name, "yahoo_id": yahoo_id, "yahoo_key": yahoo_key, "reason": "bdl_id_conflict"})
                                 continue
                             else:
                                 # Safe to update - bdl_id is either free or already assigned to this row
@@ -2479,12 +2479,12 @@ class DailyIngestionOrchestrator:
                                         "yahoo_id_sync: insert conflict for %s (bdl_id=%s): %s -- skipping",
                                         name, bdl_id, row_exc,
                                     )
-                                    unmatched.append({"name": name, "yahoo_id": yahoo_id, "reason": "insert_conflict"})
+                                    unmatched.append({"name": name, "yahoo_id": yahoo_id, "yahoo_key": yahoo_key, "reason": "insert_conflict"})
                                     continue
                         matched += 1
                         updates += 1
                     else:
-                        unmatched.append({"name": name, "yahoo_id": yahoo_id})
+                        unmatched.append({"name": name, "yahoo_id": yahoo_id, "yahoo_key": yahoo_key})
 
                 db.commit()
             except Exception as exc:
@@ -2500,10 +2500,28 @@ class DailyIngestionOrchestrator:
             finally:
                 db.close()
 
+            # Auto-heal phase: BDL search fallback for players with no name-index match.
+            # Skips collision/conflict reasons (those need manual resolution).
+            auto_healed = 0
+            healable = [p for p in unmatched if p.get("reason", "") not in ("bdl_name_collision", "bdl_id_conflict")]
+            if healable:
+                logger.info("yahoo_id_sync: auto-heal starting for %d unmatched players", len(healable))
+                try:
+                    from backend.services.player_autoheal import PlayerAutoHealService
+                    heal_db = SessionLocal()
+                    try:
+                        heal_svc = PlayerAutoHealService(db_session=heal_db, bdl_client=bdl)
+                        summary = await asyncio.to_thread(heal_svc.batch_heal, healable)
+                        auto_healed = summary.get("healed", 0)
+                    finally:
+                        heal_db.close()
+                except Exception as exc:
+                    logger.warning("yahoo_id_sync: auto-heal failed -- %s", exc)
+
             elapsed = int((time.monotonic() - t0) * 1000)
             logger.info(
-                "yahoo_id_sync: %d matched, %d unmatched, %d upserts, %d backfilled in %dms",
-                matched, len(unmatched), updates, backfilled, elapsed,
+                "yahoo_id_sync: %d matched, %d unmatched, %d upserts, %d backfilled, %d auto-healed in %dms",
+                matched, len(unmatched), updates, backfilled, auto_healed, elapsed,
             )
 
             if unmatched:
@@ -2516,6 +2534,7 @@ class DailyIngestionOrchestrator:
                 "matched": matched,
                 "unmatched": len(unmatched),
                 "backfilled": backfilled,
+                "auto_healed": auto_healed,
                 "elapsed_ms": elapsed,
             }
 
