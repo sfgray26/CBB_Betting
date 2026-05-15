@@ -92,9 +92,14 @@ class PlayerAutoHealService:
             .first()
         )
 
+        # Increment heal_attempts counter
+        if existing is not None:
+            existing.heal_attempts = (existing.heal_attempts or 0) + 1
+
         if existing is not None:
             if existing.source == "manual":
                 logger.debug("auto_heal: skip %s — manual override exists", yahoo_key)
+                self._db.commit()  # Commit the heal_attempts increment
                 return False
             if (
                 existing.source == "bdl_search"
@@ -103,6 +108,7 @@ class PlayerAutoHealService:
                 and _is_fresh(existing.updated_at)
             ):
                 logger.debug("auto_heal: skip %s — fresh bdl_search row", yahoo_key)
+                self._db.commit()  # Commit the heal_attempts increment
                 return False
 
         try:
@@ -134,6 +140,7 @@ class PlayerAutoHealService:
                 existing.normalized_name = _normalize(best_result.full_name)
                 existing.source = "bdl_search"
                 existing.resolution_confidence = best_confidence
+                existing.healed_at = now  # Track when auto-heal succeeded
                 existing.updated_at = now
             else:
                 conflict = (
@@ -156,6 +163,8 @@ class PlayerAutoHealService:
                     normalized_name=_normalize(best_result.full_name),
                     source="bdl_search",
                     resolution_confidence=best_confidence,
+                    heal_attempts=1,
+                    healed_at=now,  # Track when auto-heal succeeded
                 )
                 self._db.add(new_row)
 
