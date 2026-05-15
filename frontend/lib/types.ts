@@ -461,6 +461,7 @@ export interface WaiverAvailablePlayer {
   position: string
   positions?: string[]
   need_score: number
+  z_score?: number
   projected_points: number | null
   percent_owned: number | null
   owned_pct?: number
@@ -485,6 +486,14 @@ export interface WaiverAvailablePlayer {
   stats?: Record<string, number | null>
 }
 
+export interface WaiverRosterPlayer {
+  player_id: string
+  name: string
+  z_score: number
+  team: string
+  positions: string[]
+}
+
 export interface WaiverResponse {
   week_end?: string
   matchup_opponent?: string
@@ -497,6 +506,7 @@ export interface WaiverResponse {
   urgent_alert?: { message: string; player_name: string } | null
   closer_alert?: 'NO_CLOSERS' | 'LOW_CLOSERS' | null
   pagination?: { page: number; per_page: number; has_next: boolean } | null
+  roster_context?: Record<string, WaiverRosterPlayer>
 }
 
 // ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
-import type { WaiverAvailablePlayer, WaiverResponse } from '@/lib/types'
+import type { WaiverAvailablePlayer, WaiverResponse, WaiverRosterPlayer } from '@/lib/types'
 import {
   ListFilter, Loader2, AlertCircle, TrendingUp,
   Flame, Snowflake, AlertTriangle, Users,
@@ -90,10 +90,73 @@ function positionBadgeClass(pos: string): string {
   return 'bg-bg-elevated text-text-secondary'
 }
 
-function PlayerRow({ player }: { player: WaiverAvailablePlayer }) {
+function ZScoreDisplay({ z, rosterPlayer }: {
+  z: number
+  rosterPlayer?: WaiverRosterPlayer | null
+}) {
+  const zColor = z >= 2 ? 'text-status-safe' : z >= 0 ? 'text-text-primary' : 'text-status-lost'
+  const delta = rosterPlayer != null ? z - rosterPlayer.z_score : null
+  const showDelta = delta != null && Math.abs(delta) >= 0.3
+  return (
+    <div>
+      <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">Season Value</p>
+      <div className="flex items-center gap-1.5">
+        <span className={cn('text-sm font-bold tabular-nums', zColor)}>
+          {z >= 0 ? '+' : ''}{z.toFixed(1)}z
+        </span>
+        {showDelta && (
+          <span className={cn(
+            'text-[10px] font-semibold tabular-nums',
+            delta > 0 ? 'text-status-safe' : 'text-status-bubble',
+          )}>
+            {delta > 0 ? '↑' : '↓'}{Math.abs(delta).toFixed(1)}
+          </span>
+        )}
+      </div>
+      {rosterPlayer && showDelta && (
+        <p className="text-[9px] text-text-muted mt-0.5 truncate">
+          vs {rosterPlayer.name.split(' ').slice(-1)[0]}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function PositionContextBanner({ rosterPlayer, position }: {
+  rosterPlayer: WaiverRosterPlayer
+  position: string
+}) {
+  const zColor = rosterPlayer.z_score >= 2 ? 'text-status-safe'
+    : rosterPlayer.z_score >= 0 ? 'text-text-secondary'
+    : 'text-status-lost'
+  return (
+    <div className="bg-bg-surface border border-border-subtle rounded-lg px-4 py-2.5 flex items-center gap-3 flex-wrap">
+      <span className="text-[9px] font-semibold tracking-widest uppercase text-text-muted">
+        {position} Context
+      </span>
+      <div className="w-px h-3 bg-border-subtle flex-shrink-0" />
+      <div className="flex items-center gap-2 flex-1 min-w-0">
+        <span className="text-xs font-semibold text-text-secondary truncate">{rosterPlayer.name}</span>
+        <span className="text-[10px] text-text-muted">{rosterPlayer.team}</span>
+      </div>
+      <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
+        <span className="text-[9px] text-text-muted">weakest at pos</span>
+        <span className={cn('text-sm font-bold tabular-nums', zColor)}>
+          {rosterPlayer.z_score >= 0 ? '+' : ''}{rosterPlayer.z_score.toFixed(1)}z
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function PlayerRow({ player, rosterPlayer }: {
+  player: WaiverAvailablePlayer
+  rosterPlayer?: WaiverRosterPlayer | null
+}) {
   const ownedPct = player.percent_owned ?? player.owned_pct ?? null
   const positions = player.positions ?? (player.position ? [player.position] : [])
   const needMatches = (player.category_need_match ?? []).map((k) => waiverCatLabel(k) ?? k).filter(Boolean)
+  const z = player.z_score ?? null
 
   return (
     <div className="bg-bg-surface border border-border-subtle rounded-lg p-4 flex flex-col sm:flex-row sm:items-start gap-3 hover:bg-bg-elevated transition-colors duration-150">
@@ -146,11 +209,18 @@ function PlayerRow({ player }: { player: WaiverAvailablePlayer }) {
         )}
       </div>
 
-      {/* Match score — higher = better fits your team's current category deficits */}
-      <div className="w-full sm:w-40 flex-shrink-0">
-        <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">Match Score</p>
-        <NeedBar score={player.need_score} />
-        <p className="text-[9px] text-text-muted mt-0.5">fit for your gaps</p>
+      {/* Scores column */}
+      <div className="w-full sm:w-40 flex-shrink-0 space-y-3">
+        {/* Weekly match score */}
+        <div>
+          <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">Match Score</p>
+          <NeedBar score={player.need_score} />
+          <p className="text-[9px] text-text-muted mt-0.5">fit for your gaps</p>
+        </div>
+        {/* Season value (z_score) with roster comparison */}
+        {z != null && (
+          <ZScoreDisplay z={z} rosterPlayer={rosterPlayer} />
+        )}
       </div>
     </div>
   )
@@ -275,6 +345,8 @@ export default function WaiverPage() {
 
   const topAvailable = filterPlayers(data?.top_available ?? [])
   const twoStarters = filterPlayers(data?.two_start_pitchers ?? [])
+  const rosterCtx = data?.roster_context ?? {}
+  const activeRosterPlayer = posFilter !== 'All' ? (rosterCtx[posFilter] ?? null) : null
 
   return (
     <div className="space-y-6">
@@ -353,6 +425,11 @@ export default function WaiverPage() {
         </div>
       </div>
 
+      {/* Position context — shows weakest roster player at active position for upgrade comparison */}
+      {activeRosterPlayer && (
+        <PositionContextBanner rosterPlayer={activeRosterPlayer} position={posFilter} />
+      )}
+
       {/* Two-Start Pitchers */}
       {twoStarters.length > 0 && (
         <div className="space-y-3">
@@ -362,7 +439,9 @@ export default function WaiverPage() {
               Two-Start Pitchers · {twoStarters.length}
             </p>
           </div>
-          {twoStarters.map((p) => <PlayerRow key={p.player_id} player={p} />)}
+          {twoStarters.map((p) => (
+            <PlayerRow key={p.player_id} player={p} rosterPlayer={activeRosterPlayer} />
+          ))}
         </div>
       )}
 
@@ -379,7 +458,9 @@ export default function WaiverPage() {
             <p className="text-text-muted text-sm">No players match this filter.</p>
           </div>
         ) : (
-          topAvailable.map((p) => <PlayerRow key={p.player_id} player={p} />)
+          topAvailable.map((p) => (
+            <PlayerRow key={p.player_id} player={p} rosterPlayer={activeRosterPlayer} />
+          ))
         )}
       </div>
     </div>

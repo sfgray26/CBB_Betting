@@ -403,6 +403,7 @@ class WaiverPlayerOut(BaseModel):
     team: str
     position: str
     need_score: float = 0.0
+    z_score: float = 0.0                    # Season-long composite z-score (sum of cat_scores)
     category_contributions: dict = {}
     owned_pct: float = 0.0
     starts_this_week: int = 0
@@ -418,7 +419,7 @@ class WaiverPlayerOut(BaseModel):
     quality_score: Optional[float] = None   # Pitcher matchup quality [-2.0 to +2.0]. None when not a pitcher FA candidate.
     rank_percentile: Optional[float] = None  # 0-100 list rank; used to gate HOT/COLD badges.
 
-    @field_validator("need_score", "owned_pct", "projected_saves", mode="before")
+    @field_validator("need_score", "z_score", "owned_pct", "projected_saves", mode="before")
     @classmethod
     def default_floats(cls, v):
         """Ensure None becomes 0.0 to prevent NaN in frontend."""
@@ -447,6 +448,7 @@ class WaiverWireResponse(BaseModel):
     il_slots_used: int = 0
     il_slots_available: int = 0
     faab_balance: Optional[float] = None    # Remaining FAAB budget (None if not FAAB league)
+    roster_context: dict = {}               # position → weakest roster player at that pos for comparison UI
 
 
 class RosterMoveRecommendation(BaseModel):
