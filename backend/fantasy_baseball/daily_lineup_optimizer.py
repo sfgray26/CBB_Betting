@@ -88,6 +88,10 @@ class MLBGameOdds:
     implied_home_runs: Optional[float] = None
     implied_away_runs: Optional[float] = None
     park_factor: float = 1.0
+    # Run environment for pitcher streaming (PR-22)
+    home_win_prob: Optional[float] = None   # implied win probability (0-1)
+    away_win_prob: Optional[float] = None   # implied win probability (0-1)
+    game_total: Optional[float] = None      # alias for total, explicit naming
 
 
 @dataclass
@@ -301,6 +305,11 @@ class DailyLineupOptimizer:
                 implied_h, implied_a = None, None
                 if total_f is not None:
                     implied_h, implied_a = self._implied_runs(total_f, spread_f or 0.0)
+                
+                # Compute win probabilities for run environment scoring (PR-22)
+                ml_home = float(odds.ml_home_odds) if odds.ml_home_odds else None
+                ml_away = float(odds.ml_away_odds) if odds.ml_away_odds else None
+                win_h, win_a = self._compute_win_probabilities(ml_home, ml_away)
 
                 games.append(MLBGameOdds(
                     game_id=str(odds.game_id),
@@ -316,6 +325,10 @@ class DailyLineupOptimizer:
                     implied_home_runs=implied_h,
                     implied_away_runs=implied_a,
                     park_factor=_PARK_FACTORS.get(home_abbr, 1.0),
+                    # Run environment data for pitcher streaming (PR-22)
+                    home_win_prob=win_h,
+                    away_win_prob=win_a,
+                    game_total=total_f,
                 ))
 
             logger.info(
@@ -433,6 +446,47 @@ class DailyLineupOptimizer:
         home_runs = max(1.0, min(12.0, home_runs))
         away_runs = max(1.0, min(12.0, away_runs))
         return round(home_runs, 2), round(away_runs, 2)
+
+    @staticmethod
+    def _win_prob_from_moneyline(ml: Optional[float]) -> Optional[float]:
+        """
+        Convert American moneyline odds to implied win probability (0-1).
+        
+        Handles vig removal by normalizing both sides to sum to 1.0.
+        Positive odds (underdog): prob = 100 / (odds + 100)
+        Negative odds (favorite): prob = abs(odds) / (abs(odds) + 100)
+        """
+        if ml is None:
+            return None
+        if ml > 0:
+            raw_prob = 100 / (ml + 100)
+        else:
+            raw_prob = abs(ml) / (abs(ml) + 100)
+        return round(raw_prob, 3)
+
+    def _compute_win_probabilities(
+        self, ml_home: Optional[float], ml_away: Optional[float]
+    ) -> Tuple[Optional[float], Optional[float]]:
+        """
+        Compute vig-adjusted win probabilities for both teams.
+        
+        Returns (home_prob, away_prob) that sum to 1.0, or (None, None) if data missing.
+        """
+        if ml_home is None or ml_away is None:
+            return None, None
+        
+        raw_home = self._win_prob_from_moneyline(ml_home)
+        raw_away = self._win_prob_from_moneyline(ml_away)
+        
+        if raw_home is None or raw_away is None:
+            return None, None
+        
+        # Remove vig by normalizing
+        total = raw_home + raw_away
+        if total == 0:
+            return None, None
+        
+        return round(raw_home / total, 3), round(raw_away / total, 3)
 
     # ------------------------------------------------------------------
     # Batter ranking
@@ -1200,7 +1254,11 @@ class DailyLineupOptimizer:
 
     def _build_team_odds_map(self, games: List[MLBGameOdds]) -> Dict[str, dict]:
         """
-        Build a dict: team_abbrev -> {implied_runs, is_home, opponent, park_factor}
+        Build a dict: team_abbrev -> {implied_runs, is_home, opponent, park_factor,
+        win_prob, game_total, run_environment_score}
+        
+        Run environment score combines game total and win probability to identify
+        favorable pitching conditions (low total + high win prob = good stream).
         """
         result: Dict[str, dict] = {}
         logger.debug(f"[BUILD_MAP] Building team odds map from {len(games)} games")
@@ -1212,19 +1270,43 @@ class DailyLineupOptimizer:
             away_norm = normalize_team_abbr(g.away_abbrev)
             
             if home_norm and away_norm:
+                # Calculate run environment favorability for pitchers
+                # Lower total = better for pitchers (fewer runs expected)
+                # Higher win prob = better for pitchers (more likely to get the W)
+                game_total = g.game_total or 9.0
+                home_win_prob = g.home_win_prob or 0.5
+                away_win_prob = g.away_win_prob or 0.5
+                
+                # Normalize game total to 0-1 scale (7 = best, 11.5 = worst)
+                home_total_score = max(0, min(1, (11.5 - game_total) / 4.5))
+                away_total_score = max(0, min(1, (11.5 - game_total) / 4.5))
+                
+                # Combined run environment score (0-10 scale)
+                # 60% weight on game total (lower is better), 40% on win prob (higher is better)
+                home_run_env = round((home_total_score * 6) + (home_win_prob * 4), 2)
+                away_run_env = round((away_total_score * 6) + (away_win_prob * 4), 2)
+                
                 result[home_norm] = {
                     "implied_runs": g.implied_home_runs if g.implied_home_runs is not None else 4.5,
                     "is_home": True,
                     "opponent": away_norm,
                     "park_factor": g.park_factor,
+                    # Run environment for pitcher streaming (PR-22)
+                    "win_prob": home_win_prob,
+                    "game_total": game_total,
+                    "run_environment_score": home_run_env,
                 }
                 result[away_norm] = {
                     "implied_runs": g.implied_away_runs if g.implied_away_runs is not None else 4.5,
                     "is_home": False,
                     "opponent": home_norm,
                     "park_factor": g.park_factor,
+                    # Run environment for pitcher streaming (PR-22)
+                    "win_prob": away_win_prob,
+                    "game_total": game_total,
+                    "run_environment_score": away_run_env,
                 }
-                logger.debug(f"[BUILD_MAP] Added {home_norm} vs {away_norm} (implied: {g.implied_home_runs}, {g.implied_away_runs})")
+                logger.debug(f"[BUILD_MAP] Added {home_norm} vs {away_norm} (implied: {g.implied_home_runs}, {g.implied_away_runs}, run_env: {home_run_env}/{away_run_env})")
         logger.info(f"[BUILD_MAP] Final team_odds keys: {list(result.keys())}")
         return result
 

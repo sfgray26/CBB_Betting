@@ -1417,9 +1417,22 @@ async def get_fantasy_lineup_recommendations(
                 start_time = team_odds[team].get("start_time")
 
             if is_sp and has_start:
-                opp_factor = max(0, 5.0 - opp_implied)
-                park_factor_score = (2.0 - park_factor) * 5
-                sp_score = min(10, opp_factor + park_factor_score)
+                # Enhanced sp_score using run environment data (PR-22)
+                # Components:
+                # 1. Opponent weakness (40%): Lower opp implied runs = better
+                # 2. Park factor (25%): Pitcher-friendly park = better  
+                # 3. Run environment (35%): Low total + high win prob = better
+                
+                opp_factor = max(0, 5.0 - opp_implied) * 0.8  # 0-4 points
+                park_factor_score = max(0, (2.0 - park_factor) * 2.5)  # 0-2.5 points
+                
+                # Get run environment score from team_odds (0-10 scale)
+                run_env_score = team_odds.get(team, {}).get("run_environment_score", 5.0)
+                # Normalize to 0-3.5 points (pitcher wants HIGH run_env_score)
+                run_env_component = (run_env_score / 10.0) * 3.5
+                
+                sp_score = round(opp_factor + park_factor_score + run_env_component, 2)
+                sp_score = min(10, max(0, sp_score))  # Clamp to 0-10
 
             status = "START" if has_start else "NO_START"
             if not is_sp:
