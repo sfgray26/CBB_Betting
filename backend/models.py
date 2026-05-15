@@ -1874,6 +1874,7 @@ class ProbablePitcherSnapshot(Base):
     pitcher_name = Column(String(100), nullable=True)  # Full name
     bdl_player_id = Column(Integer, nullable=True, index=True)  # FK to player_id_mapping
     mlbam_id = Column(Integer, nullable=True)  # MLBAM ID for cross-reference
+    handedness = Column(String(1), nullable=True)  # "L" or "R"
     is_confirmed = Column(Boolean, nullable=False, default=False)
 
     game_time_et = Column(String(10), nullable=True)  # "7:05 PM" format

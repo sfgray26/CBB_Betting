@@ -695,8 +695,26 @@ class YahooFantasyClient:
         players_raw = self._safe_get(slot_0, "players")
         
         # Deduplicate by player_key to prevent roster page duplicates (Bugfix March 28)
+        # Bugfix May 15: Handle missing count field by inferring from dict keys
         players_by_key: dict[str, dict] = {}
         count = int(players_raw.get("count", 0))
+        
+        # If count is 0 or missing but players_raw has entries, infer count from keys
+        if count == 0 and isinstance(players_raw, dict):
+            # Find all numeric keys that could be player indices
+            inferred_indices = []
+            for key in players_raw.keys():
+                if key.isdigit():
+                    try:
+                        inferred_indices.append(int(key))
+                    except ValueError:
+                        continue
+            if inferred_indices:
+                count = max(inferred_indices) + 1
+                logger.warning(
+                    "Yahoo roster missing count field, inferred %d players from keys",
+                    count
+                )
         
         for i in range(count):
             entry = players_raw.get(str(i), {})

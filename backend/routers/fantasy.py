@@ -1707,6 +1707,7 @@ async def get_fantasy_waiver_recommendations(
     _closer_alert: Optional[str] = None
     _il_info: dict = {"used": 0, "total": 2, "available": 0}
     _faab_balance: Optional[float] = None
+    _roster_context: dict = {}
 
     try:
         client = get_yahoo_client()
@@ -1744,6 +1745,21 @@ async def get_fantasy_waiver_recommendations(
 
         if not free_agents:
             logger.warning("waiver: no free agents returned from Yahoo API, returning empty response")
+
+        # Augment with dedicated batter pool when no position filter is active.
+        # Yahoo's sort=AR returns pitchers first (5× more pitchers than batters
+        # are available in any league), so page 1 without augmentation is ~90%
+        # pitchers regardless of team needs.
+        if not _yahoo_pos and free_agents is not None:
+            try:
+                _batter_fas = client.get_free_agents(position="OF", start=0, count=per_page)
+                if _batter_fas:
+                    _existing_keys = {p.get("player_key") for p in free_agents}
+                    _new_batters = [p for p in _batter_fas if p.get("player_key") not in _existing_keys]
+                    free_agents = free_agents + _new_batters
+                    logger.info("waiver: augmented with %d batters (total pool=%d)", len(_new_batters), len(free_agents))
+            except Exception as _bat_err:
+                logger.warning("waiver: batter augment failed (non-fatal): %s", _bat_err)
 
         # Fetch scoreboard once and reuse for both opponent resolution and
         # category_deficits — the previous implementation fetched twice and
@@ -2025,6 +2041,7 @@ async def get_fantasy_waiver_recommendations(
                 team=p.get("team") or "",
                 position=positions[0] if positions else "?",
                 need_score=round(need_score, 3),
+                z_score=round(player_z, 3),
                 category_contributions=contributions,
                 owned_pct=p.get("percent_owned", 0.0),
                 starts_this_week=p.get("starts_this_week", 0),
@@ -2077,6 +2094,36 @@ async def get_fantasy_waiver_recommendations(
         from backend.services.waiver_edge_detector import il_capacity_info as _il_cap
         _il_info = _il_cap(my_roster) if my_roster else {"used": 0, "total": 2, "available": 0}
 
+        # Build roster context: weakest player per canonical position (for upgrade comparison UI)
+        # IL players skipped — they don't occupy droppable roster spots
+        _CONTEXT_POSITIONS = frozenset({"SP", "RP", "OF", "1B", "2B", "3B", "SS", "C"})
+        for _rp in (my_roster or []):
+            try:
+                _rp_selected = (_rp.get("selected_position") or "").upper()
+                if _rp_selected in ("IL", "IL10", "IL60"):
+                    continue
+                _rp_proj = _get_proj(_rp)
+                _rp_z = round(_rp_proj.get("z_score", 0.0) if _rp_proj else 0.0, 3)
+                _rp_positions = _rp.get("positions") or []
+                _rp_name = (_rp.get("name") or "").strip()
+                _rp_key = _rp.get("player_key") or _rp_name
+                _rp_team = _rp.get("team") or ""
+                for _pos in _rp_positions:
+                    _canon = "OF" if _pos in ("LF", "CF", "RF") else _pos
+                    if _canon not in _CONTEXT_POSITIONS:
+                        continue
+                    # Keep weakest z_score per position (most droppable)
+                    if _canon not in _roster_context or _rp_z < _roster_context[_canon]["z_score"]:
+                        _roster_context[_canon] = {
+                            "player_id": _rp_key,
+                            "name": _rp_name,
+                            "z_score": _rp_z,
+                            "team": _rp_team,
+                            "positions": _rp_positions,
+                        }
+            except Exception:
+                continue
+
     except YahooAuthError as exc:
         logger.error("Waiver endpoint -- Yahoo auth error: %s", exc)
         raise HTTPException(
@@ -2112,6 +2159,7 @@ async def get_fantasy_waiver_recommendations(
         il_slots_used=_il_info["used"],
         il_slots_available=_il_info["available"],
         faab_balance=_faab_balance,
+        roster_context=_roster_context,
     )
 
 
@@ -3429,33 +3477,85 @@ async def optimize_roster(
             "score_source": score_source,
         })
 
-    # Sort by lineup score descending
-    player_data.sort(key=lambda x: x["lineup_score"], reverse=True)
+    # Bugfix May 15: Scarcity-aware lineup optimization
+    # Sort by score descending, but with scarcity bonus for C/SS eligibility
+    # Players who can fill scarce positions get priority boost
+    SCARCE_POSITIONS = ["C", "SS", "2B", "3B", "1B"]  # In scarcity order
+    
+    def _scarcity_score(player):
+        """Calculate effective score with scarcity bonus."""
+        base_score = player["lineup_score"]
+        positions = [p.upper() for p in (player.get("eligible_positions") or [])]
+        
+        # Bonus for scarce position eligibility (C=+9, SS=+8, 2B=+7, etc.)
+        scarcity_bonus = 0
+        for i, scarce_pos in enumerate(SCARCE_POSITIONS):
+            if scarce_pos in positions:
+                scarcity_bonus = max(scarcity_bonus, 10 - i)  # C gets +9, SS +8, etc.
+        
+        # Bonus for multi-position flexibility
+        hitting_positions = set(positions) & _HITTER_POSITIONS
+        if len(hitting_positions) >= 3:
+            scarcity_bonus += 3  # Multi-eligible players are valuable
+        
+        return base_score + scarcity_bonus
+    
+    # Sort by effective score (base + scarcity bonus)
+    player_data.sort(key=_scarcity_score, reverse=True)
 
-    # Assign players to slots (greedy algorithm)
+    # Assign players to slots using scarcity-first greedy algorithm
     slot_fill_count = {s: 0 for s in slot_capacity}
     assigned = []  # List of (player_key, slot, score, reasoning)
     placed_keys = set()
+    
+    # Slot priority with scarcity ranking (matches LineupConstraintSolver)
+    # Scarce positions filled first to ensure they get best eligible player
+    SCARCITY_PRIORITY = ["C", "SS", "2B", "3B", "1B", "OF", "Util", "SP", "RP", "P"]
 
-    # Fill hitting slots
+    # Phase 1: Fill scarce hitting slots first (C, SS, 2B, 3B, 1B)
+    for slot in SCARCITY_PRIORITY:
+        if slot not in {"C", "1B", "2B", "3B", "SS"}:
+            continue
+        if slot_fill_count[slot] >= slot_capacity[slot]:
+            continue
+            
+        # Find best eligible player for this scarce slot
+        for player in player_data:
+            if player["player_key"] in placed_keys:
+                continue
+            
+            if _can_fill_slot(player["eligible_positions"], slot, player["name"]):
+                assigned.append({
+                    "player_key": player["player_key"],
+                    "name": player["name"],
+                    "slot": slot,
+                    "score": player["lineup_score"],
+                    "reasoning": f"Score {player['lineup_score']:.1f} ({player.get('score_source', 'default')}), natural {slot} (scarce)",
+                })
+                slot_fill_count[slot] += 1
+                placed_keys.add(player["player_key"])
+                break
+    
+    # Phase 2: Fill remaining slots (OF, Util, pitchers)
     for player in player_data:
         if player["player_key"] in placed_keys:
             continue
 
-        for slot in slot_priority:
-            if slot not in {"C", "1B", "2B", "3B", "SS", "OF", "Util", "SP", "RP", "P"}:
+        for slot in SCARCITY_PRIORITY:
+            if slot not in {"OF", "Util", "SP", "RP", "P"}:
                 continue
             if slot_fill_count[slot] >= slot_capacity[slot]:
                 continue
 
             eligible = _can_fill_slot(player["eligible_positions"], slot, player["name"])
             if eligible:
+                slot_type = "flex" if slot == "Util" else slot
                 assigned.append({
                     "player_key": player["player_key"],
                     "name": player["name"],
                     "slot": slot,
                     "score": player["lineup_score"],
-                    "reasoning": f"Score {player['lineup_score']:.1f} ({player.get('score_source', 'default')}), eligible for {slot}",
+                    "reasoning": f"Score {player['lineup_score']:.1f} ({player.get('score_source', 'default')}), eligible for {slot_type}",
                 })
                 slot_fill_count[slot] += 1
                 placed_keys.add(player["player_key"])

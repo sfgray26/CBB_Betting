@@ -422,13 +422,12 @@ class DailyLineupOptimizer:
         Convert game total + spread to per-team implied runs.
 
         Spread reflects run differential, so:
-          home_runs = (total - spread_home) / 2 + spread_home
-                    = (total + spread_home) / 2
+          home_runs = (total - spread_home) / 2
           away_runs = total - home_runs
 
         spread_home is negative when home team is favored (e.g., -1.5).
         """
-        home_runs = (total + spread_home) / 2.0
+        home_runs = (total - spread_home) / 2.0
         away_runs = total - home_runs
         # Clamp to realistic range
         home_runs = max(1.0, min(12.0, home_runs))

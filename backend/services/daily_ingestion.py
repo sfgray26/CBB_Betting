@@ -7536,6 +7536,10 @@ class DailyIngestionOrchestrator:
                                 if pitcher_data:
                                     pitcher_name = pitcher_data.get("fullName", "")
                                     mlbam_id = pitcher_data.get("id")
+                                    # Extract handedness from MLB Stats API response
+                                    # Pitcher data includes "pitchHand" with "code": "L" or "R"
+                                    pitch_hand = pitcher_data.get("pitchHand", {})
+                                    handedness = pitch_hand.get("code") if isinstance(pitch_hand, dict) else None
                                     bdl_id = mlbam_to_bdl.get(mlbam_id) if mlbam_id else None
                                     official_records += 1
                                 else:
@@ -7549,6 +7553,20 @@ class DailyIngestionOrchestrator:
                                     pitcher_name = inferred_candidate.pitcher_name
                                     mlbam_id = inferred_candidate.mlbam_id
                                     bdl_id = inferred_candidate.bdl_player_id
+                                    # Try to get handedness from player_id_mapping for inferred pitchers
+                                    handedness = None
+                                    if bdl_id:
+                                        mapping = db.query(PlayerIDMapping).filter(
+                                            PlayerIDMapping.bdl_id == bdl_id
+                                        ).first()
+                                        if mapping and mapping.throws:
+                                            handedness = mapping.throws[0].upper()
+                                    elif mlbam_id:
+                                        mapping = db.query(PlayerIDMapping).filter(
+                                            PlayerIDMapping.mlbam_id == mlbam_id
+                                        ).first()
+                                        if mapping and mapping.throws:
+                                            handedness = mapping.throws[0].upper()
                                     inferred_records += 1
 
                                 # Resolve BDL ID via MLBAM mapping when only official MLBAM is known
@@ -7582,6 +7600,7 @@ class DailyIngestionOrchestrator:
                                         pitcher_name=pitcher_name,
                                         bdl_player_id=bdl_id,
                                         mlbam_id=mlbam_id,
+                                        handedness=handedness,  # "L" or "R"
                                         is_confirmed=bool(pitcher_data and pitcher_data.get("fullName")),
                                         game_time_et=game_time_et_str,
                                         park_factor=pf,
@@ -7601,6 +7620,7 @@ class DailyIngestionOrchestrator:
                                             "pitcher_name": stmt.excluded.pitcher_name,
                                             "bdl_player_id": stmt.excluded.bdl_player_id,
                                             "mlbam_id": stmt.excluded.mlbam_id,
+                                            "handedness": stmt.excluded.handedness,  # Update handedness on conflict
                                             "is_confirmed": stmt.excluded.is_confirmed,
                                             "game_time_et": stmt.excluded.game_time_et,
                                             "park_factor": stmt.excluded.park_factor,

@@ -29,6 +29,18 @@ LOWER_IS_BETTER: frozenset[str] = frozenset(
 YAHOO_ID_INDEX: dict[str, str] = dict(CONTRACT.yahoo_id_index)
 MATCHUP_DISPLAY_ORDER: list[str] = list(CONTRACT.matchup_display_order)
 
+# Display labels for all stats (replaces CATEGORY_DISPLAY_NAMES in daily_briefing)
+# Build from contract's display_label for scoring categories, short_label for others
+DISPLAY_LABELS: dict[str, str] = {
+    code: entry.display_label if entry.is_scoring_category else entry.short_label
+    for code, entry in CONTRACT.stats.items()
+}
+# Add supporting stats
+DISPLAY_LABELS.update({
+    code: entry.display_label
+    for code, entry in CONTRACT.supporting_stats.items()
+})
+
 __all__ = [
     "CONTRACT",
     "SCORING_CATEGORY_CODES",
@@ -37,6 +49,7 @@ __all__ = [
     "LOWER_IS_BETTER",
     "YAHOO_ID_INDEX",
     "MATCHUP_DISPLAY_ORDER",
+    "DISPLAY_LABELS",  # New export for category display names
     "load_contract",
     "FantasyStatContract",
     "StatEntry",

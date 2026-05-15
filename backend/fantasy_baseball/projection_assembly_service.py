@@ -524,6 +524,10 @@ class ProjectionAssemblyService:
                 if row is not None:
                     return row if row.update_method != "prior" else None
             # Fallback: exact name match (players without MLBAM mapping)
+            # SAFETY: Skip if player_name is empty or too short to avoid
+            # ilike("%%") which matches ANY row (Bug 5 fix)
+            if not player_name or len(player_name.strip()) < 2:
+                return None
             row = (
                 self.db.query(PlayerProjection)
                 .filter(PlayerProjection.player_name.ilike(f"%{player_name}%"))

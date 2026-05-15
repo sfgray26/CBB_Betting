@@ -28,18 +28,10 @@ from backend.fantasy_baseball.decision_tracker import DecisionTracker, PlayerDec
 
 logger = logging.getLogger(__name__)
 
-# Human-readable labels for the 18 v2 fantasy categories.
-# Consumers read `name` for UI display; `category` stays as the abbreviation.
-CATEGORY_DISPLAY_NAMES: dict = {
-    "R": "Runs", "HR": "Home Runs", "RBI": "RBI",
-    "SB": "Stolen Bases", "AVG": "Batting Average", "OPS": "OPS",
-    "TB": "Total Bases", "H": "Hits",
-    "K_B": "Strikeouts (Batter)", "HR_B": "HR Allowed (Batter)",
-    "W": "Wins", "QS": "Quality Starts", "SV": "Saves",
-    "K_P": "Strikeouts (Pitcher)", "ERA": "ERA",
-    "WHIP": "WHIP", "K_9": "K/9", "HR_P": "HR Allowed",
-    "NSV": "Net Saves", "NSB": "Net Stolen Bases", "L": "Losses",
-}
+# Migration note: CATEGORY_DISPLAY_NAMES has been moved to stat_contract.DISPLAY_LABELS
+# Import from there for the single source of truth.
+# Keeping this import for backward compatibility during transition period.
+from backend.stat_contract import DISPLAY_LABELS as CATEGORY_DISPLAY_NAMES
 
 
 class DecisionAction(Enum):
