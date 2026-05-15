@@ -3562,133 +3562,110 @@ async def optimize_roster(
             "score_source": score_source,
         })
 
-    # Bugfix May 15: Scarcity-aware lineup optimization
-    # Sort by score descending, but with scarcity bonus for C/SS eligibility
-    # Players who can fill scarce positions get priority boost
-    SCARCE_POSITIONS = ["C", "SS", "2B", "3B", "1B"]  # In scarcity order
-    
-    def _scarcity_score(player):
-        """Calculate effective score with scarcity bonus."""
-        base_score = player["lineup_score"]
-        positions = [p.upper() for p in (player.get("eligible_positions") or [])]
-        
-        # Bonus for scarce position eligibility (C=+9, SS=+8, 2B=+7, etc.)
-        scarcity_bonus = 0
-        for i, scarce_pos in enumerate(SCARCE_POSITIONS):
-            if scarce_pos in positions:
-                scarcity_bonus = max(scarcity_bonus, 10 - i)  # C gets +9, SS +8, etc.
-        
-        # Bonus for multi-position flexibility
-        hitting_positions = set(positions) & _HITTER_POSITIONS
-        if len(hitting_positions) >= 3:
-            scarcity_bonus += 3  # Multi-eligible players are valuable
-        
-        return base_score + scarcity_bonus
-    
-    # Sort by effective score (base + scarcity bonus)
-    player_data.sort(key=_scarcity_score, reverse=True)
+    # Route hitter optimization through the scarcity-aware solver (OR-Tools ILP;
+    # greedy fallback when infeasible or OR-Tools unavailable).
+    _PITCHER_POSITIONS_SET = {"SP", "RP", "P"}
+    hitter_data = [
+        p for p in player_data
+        if not (
+            bool(p.get("eligible_positions"))
+            and {pos.upper() for pos in p["eligible_positions"]}.issubset(_PITCHER_POSITIONS_SET)
+        )
+    ]
+    pitcher_data = [
+        p for p in player_data
+        if (
+            bool(p.get("eligible_positions"))
+            and {pos.upper() for pos in p["eligible_positions"]}.issubset(_PITCHER_POSITIONS_SET)
+        )
+    ]
 
-    # Assign players to slots using scarcity-first greedy algorithm
-    slot_fill_count = {s: 0 for s in slot_capacity}
-    assigned = []  # List of (player_key, slot, score, reasoning)
-    placed_keys = set()
-    
-    # Slot priority with scarcity ranking (matches LineupConstraintSolver)
-    # Scarce positions filled first to ensure they get best eligible player
-    SCARCITY_PRIORITY = ["C", "SS", "2B", "3B", "1B", "OF", "Util", "SP", "RP", "P"]
+    # Build solver inputs (player_key serves as player_id)
+    players_for_solver = [{"player_id": p["player_key"], "name": p["name"]} for p in hitter_data]
+    elite_scores = {
+        p["player_key"]: EliteScore(
+            total_score=p["lineup_score"],
+            environment_score=0.0,
+            matchup_multiplier=1.0,
+            platoon_multiplier=1.0,
+            form_adjusted_woba=0.0,
+            regression_boost=0.0,
+            lineup_spot_bonus=0.0,
+            confidence=1.0,
+            data_quality=p.get("score_source", "default"),
+            reasoning=f"Score {p['lineup_score']:.1f} ({p.get('score_source', 'default')})",
+        )
+        for p in hitter_data
+    }
+    eligibility_map = {
+        p["player_key"]: [pos.upper() for pos in (p.get("eligible_positions") or [])]
+        for p in hitter_data
+    }
 
-    # Phase 1: Fill scarce hitting slots first (C, SS, 2B, 3B, 1B)
-    for slot in SCARCITY_PRIORITY:
-        if slot not in {"C", "1B", "2B", "3B", "SS"}:
-            continue
-        if slot_fill_count[slot] >= slot_capacity[slot]:
-            continue
-            
-        # Find best eligible player for this scarce slot
-        for player in player_data:
-            if player["player_key"] in placed_keys:
-                continue
-            
-            if _can_fill_slot(player["eligible_positions"], slot, player["name"]):
-                assigned.append({
-                    "player_key": player["player_key"],
-                    "name": player["name"],
-                    "slot": slot,
-                    "score": player["lineup_score"],
-                    "reasoning": f"Score {player['lineup_score']:.1f} ({player.get('score_source', 'default')}), natural {slot} (scarce)",
-                })
-                slot_fill_count[slot] += 1
-                placed_keys.add(player["player_key"])
-                break
-    
-    # Phase 2: Fill remaining slots (OF, Util, pitchers)
-    for player in player_data:
+    hitter_assignments = []
+    if players_for_solver:
+        solver = get_lineup_solver()
+        optimized = solver.solve(players_for_solver, elite_scores, eligibility_map)
+        if not optimized.assignments:
+            # ILP infeasible (partial roster) — greedy fills what it can
+            optimized = solver._solve_greedy(players_for_solver, elite_scores, eligibility_map, None)
+        hitter_assignments = optimized.assignments
+
+    # Map solver batting assignments → response format; normalize OF1/OF2/OF3 → "OF"
+    _OF_SOLVER_SLOTS = {PositionSlot.OUTFIELD_1, PositionSlot.OUTFIELD_2, PositionSlot.OUTFIELD_3}
+    placed_keys: set = set()
+    starters = []
+    for sa in hitter_assignments:
+        slot_str = "OF" if sa.slot in _OF_SOLVER_SLOTS else sa.slot.value
+        starters.append(PlayerSlotAssignment(
+            player_key=sa.player_id,
+            player_name=sa.player_name,
+            assigned_slot=slot_str,
+            lineup_score=round(sa.score, 2),
+            reasoning=sa.reason or f"Score {sa.score:.1f}",
+        ))
+        placed_keys.add(sa.player_id)
+
+    # Pitcher slots: simple greedy (SP → RP → P; no position-scarcity concern)
+    pitcher_slot_fill = {"SP": 0, "RP": 0, "P": 0}
+    pitcher_data.sort(key=lambda p: p["lineup_score"], reverse=True)
+    for player in pitcher_data:
         if player["player_key"] in placed_keys:
             continue
-
-        for slot in SCARCITY_PRIORITY:
-            if slot not in {"OF", "Util", "SP", "RP", "P"}:
+        for slot in ["SP", "RP", "P"]:
+            if pitcher_slot_fill[slot] >= slot_capacity[slot]:
                 continue
-            if slot_fill_count[slot] >= slot_capacity[slot]:
-                continue
-
-            eligible = _can_fill_slot(player["eligible_positions"], slot, player["name"])
-            if eligible:
-                slot_type = "flex" if slot == "Util" else slot
-                assigned.append({
-                    "player_key": player["player_key"],
-                    "name": player["name"],
-                    "slot": slot,
-                    "score": player["lineup_score"],
-                    "reasoning": f"Score {player['lineup_score']:.1f} ({player.get('score_source', 'default')}), eligible for {slot_type}",
-                })
-                slot_fill_count[slot] += 1
+            if _can_fill_slot(player["eligible_positions"], slot, player["name"]):
+                starters.append(PlayerSlotAssignment(
+                    player_key=player["player_key"],
+                    player_name=player["name"],
+                    assigned_slot=slot,
+                    lineup_score=round(player["lineup_score"], 2),
+                    reasoning=f"Score {player['lineup_score']:.1f} ({player.get('score_source', 'default')}), eligible for {slot}",
+                ))
+                pitcher_slot_fill[slot] += 1
                 placed_keys.add(player["player_key"])
                 break
 
-    # Fill bench with remaining players
-    bench = []
+    # Bench: hitters unassigned by solver + excess pitchers
+    bench_assignments = []
     unrostered = []
     for player in player_data:
         if player["player_key"] in placed_keys:
             continue
-
-        if len(bench) < slot_capacity["BN"]:
-            bench.append({
-                "player_key": player["player_key"],
-                "name": player["name"],
-                "slot": "BN",
-                "score": player["lineup_score"],
-                "reasoning": f"Bench: score {player['lineup_score']:.1f}",
-            })
+        if len(bench_assignments) < slot_capacity["BN"]:
+            bench_assignments.append(PlayerSlotAssignment(
+                player_key=player["player_key"],
+                player_name=player["name"],
+                assigned_slot="BN",
+                lineup_score=round(player["lineup_score"], 2),
+                reasoning=f"Bench: score {player['lineup_score']:.1f}",
+            ))
             placed_keys.add(player["player_key"])
         else:
             unrostered.append(player["player_key"])
 
-    # Build response
-    starters = [
-        PlayerSlotAssignment(
-            player_key=a["player_key"],
-            player_name=a["name"],
-            assigned_slot=a["slot"],
-            lineup_score=round(a["score"], 2),
-            reasoning=a["reasoning"],
-        )
-        for a in assigned
-    ]
-
-    bench_assignments = [
-        PlayerSlotAssignment(
-            player_key=b["player_key"],
-            player_name=b["name"],
-            assigned_slot="BN",
-            lineup_score=round(b["score"], 2),
-            reasoning=b["reasoning"],
-        )
-        for b in bench
-    ]
-
-    total_score = sum(a["score"] for a in assigned) if assigned else 0.0
+    total_score = sum(a.lineup_score for a in starters) if starters else 0.0
 
     # Build message with staleness warning if needed
     # Use actual_data_date to reflect real data freshness, not requested date
@@ -4244,6 +4221,7 @@ async def dashboard_stream(
 # ============================================================================
 
 from backend.fantasy_baseball.elite_lineup_scorer import (
+    EliteScore,
     get_elite_scorer,
     BatterProfile,
     PitcherProfile,

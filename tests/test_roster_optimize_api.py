@@ -398,3 +398,121 @@ class TestRosterOptimizeEndpoint:
         assert data["target_date"] == "2026-04-22", (
             f"Expected target_date='2026-04-22' in response, got {data.get('target_date')!r}"
         )
+
+    def test_optimize_routes_to_lineup_constraint_solver(self, fantasy_client):
+        """POST /api/fantasy/roster/optimize must route hitter optimization through
+        LineupConstraintSolver.solve(), not an inline greedy allocator."""
+        from backend.fantasy_baseball.lineup_constraint_solver import (
+            PlayerSlotAssignment as SolverAssignment,
+            PositionSlot,
+            OptimizedLineup,
+        )
+
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.100",
+                "name": "Test Catcher",
+                "team": "NYY",
+                "positions": ["C"],
+                "selected_position": "C",
+            }
+        ]
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        solver_result = OptimizedLineup(
+            assignments=[
+                SolverAssignment(
+                    player_id="469.l.72586.p.100",
+                    player_name="Test Catcher",
+                    slot=PositionSlot.CATCHER,
+                    score=72.5,
+                    eligibility=["C"],
+                    reason="Score 72.5 (player_scores)",
+                )
+            ],
+            total_score=72.5,
+            is_optimal=True,
+            solver_type="OR-Tools CP-SAT",
+            unassigned_players=[],
+        )
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            with patch("backend.routers.fantasy.get_lineup_solver") as mock_get_solver:
+                mock_solver = MagicMock()
+                mock_solver.solve.return_value = solver_result
+                mock_get_solver.return_value = mock_solver
+
+                response = fantasy_client.post(
+                    "/api/fantasy/roster/optimize",
+                    json={"target_date": "2026-05-15"},
+                )
+
+        assert response.status_code == 200
+        mock_get_solver.assert_called_once()
+        mock_solver.solve.assert_called_once()
+        data = response.json()
+        catcher = next(
+            (s for s in data["starters"] if s["player_name"] == "Test Catcher"), None
+        )
+        assert catcher is not None, f"Expected Test Catcher in starters; got: {data['starters']}"
+        assert catcher["assigned_slot"] == "C"
+        assert catcher["lineup_score"] == 72.5
+
+    def test_optimize_of_slots_normalized_to_of(self, fantasy_client):
+        """Solver OF1/OF2/OF3 slot values must be normalized to 'OF' in the API response."""
+        from backend.fantasy_baseball.lineup_constraint_solver import (
+            PlayerSlotAssignment as SolverAssignment,
+            PositionSlot,
+            OptimizedLineup,
+        )
+
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.200",
+                "name": "OF Player",
+                "team": "LAD",
+                "positions": ["OF"],
+                "selected_position": "OF",
+            }
+        ]
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        solver_result = OptimizedLineup(
+            assignments=[
+                SolverAssignment(
+                    player_id="469.l.72586.p.200",
+                    player_name="OF Player",
+                    slot=PositionSlot.OUTFIELD_1,
+                    score=65.0,
+                    eligibility=["OF"],
+                    reason="Score 65.0 (player_scores)",
+                )
+            ],
+            total_score=65.0,
+            is_optimal=True,
+            solver_type="OR-Tools CP-SAT",
+            unassigned_players=[],
+        )
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            with patch("backend.routers.fantasy.get_lineup_solver") as mock_get_solver:
+                mock_solver = MagicMock()
+                mock_solver.solve.return_value = solver_result
+                mock_get_solver.return_value = mock_solver
+
+                response = fantasy_client.post(
+                    "/api/fantasy/roster/optimize",
+                    json={"target_date": "2026-05-15"},
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+        of_player = next(
+            (s for s in data["starters"] if s["player_name"] == "OF Player"), None
+        )
+        assert of_player is not None, f"Expected OF Player in starters; got: {data['starters']}"
+        assert of_player["assigned_slot"] == "OF", (
+            f"Expected slot='OF' (not 'OF1'), got {of_player['assigned_slot']!r}"
+        )
