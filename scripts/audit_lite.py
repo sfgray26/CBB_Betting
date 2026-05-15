@@ -23,7 +23,7 @@ try:
     
     db.close()
 
-    print(f"CBB LITE AUDIT REPORT:")
+    print(f"LITE AUDIT REPORT:")
     print(f"- Win Rate: {win_rate:.1f}%")
     print(f"- ROI: {roi:.1f}%")
     print(f"- CLV: {clv:+.3f}")

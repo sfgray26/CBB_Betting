@@ -13,6 +13,15 @@ def run_quality_audit():
         from backend.models import SessionLocal, BetLog, Prediction
         db = SessionLocal()
         
+        # Detect sport context from first prediction
+        sample = db.query(Prediction).order_by(Prediction.id.desc()).limit(1).first()
+        if sample and sample.full_analysis and sample.full_analysis.get('sport') == 'mlb':
+            output.write("🔬 **Autonomous Model Quality Audit (MLB)**\n")
+            output.write("⚠️ NOTE: MLB uses moneyline, not spread. Spread-based drift calculation skipped.\n")
+            output.write("🛠️ Action: Run scripts/mlb_model_quality_audit.py for MLB-specific signal drift.\n")
+            db.close()
+            return output.getvalue()
+        
         # 1. Check Signal Drift (Delta between our projected margin and Market Consensus)
         recent_preds = db.query(Prediction).order_by(Prediction.id.desc()).limit(20).all()
         drift_count = 0
