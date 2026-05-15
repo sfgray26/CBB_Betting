@@ -338,7 +338,7 @@ function StreaksCard({ hot, cold }: { hot: StreakPlayer[]; cold: StreakPlayer[] 
                         <span className="text-text-muted text-xs ml-2">{p.team}</span>
                       </div>
                       <span className="text-status-safe text-xs">
-                        {p.last_7_avg.toFixed(1)} avg/7d
+                        Δ {p.trend_score.toFixed(1)}
                       </span>
                     </li>
                   ))}
@@ -358,7 +358,7 @@ function StreaksCard({ hot, cold }: { hot: StreakPlayer[]; cold: StreakPlayer[] 
                         <span className="text-text-muted text-xs ml-2">{p.team}</span>
                       </div>
                       <span className="text-status-behind text-xs">
-                        {p.last_7_avg.toFixed(1)} avg/7d
+                        Δ {p.trend_score.toFixed(1)}
                       </span>
                     </li>
                   ))}

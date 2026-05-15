@@ -63,9 +63,9 @@ function OwnershipBadge({ pct }: { pct: number | null | undefined }) {
   )
 }
 
-function HotColdBadge({ hotCold, rankPercentile }: { hotCold?: string | null; rankPercentile?: number }) {
+function HotColdBadge({ hotCold, rankPercentile }: { hotCold?: string | null; rankPercentile?: number | null }) {
   // Design System v2: gate badges to top 20% to prevent inflation
-  if (!hotCold || (rankPercentile ?? 100) < 80) return null
+  if (!hotCold || (rankPercentile ?? 0) < 80) return null
   if (hotCold === 'HOT') {
     return (
       <span className="flex items-center gap-0.5 text-[10px] text-status-behind font-semibold">
@@ -101,7 +101,7 @@ function PlayerRow({ player }: { player: WaiverAvailablePlayer }) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <p className="text-sm font-bold text-text-primary truncate">{player.name}</p>
-          <HotColdBadge hotCold={player.hot_cold} />
+          <HotColdBadge hotCold={player.hot_cold} rankPercentile={player.rank_percentile} />
           {player.injury_status && (
             <span className="text-[10px] px-1.5 py-0.5 bg-status-lost/10 text-status-lost border border-status-lost/30 rounded font-semibold">
               {player.injury_status}

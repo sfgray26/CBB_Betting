@@ -423,7 +423,10 @@ class DashboardService:
                     positions=roster_entry.get("positions", []),
                     trend=trend,
                     trend_score=delta,
-                    last_7_avg=0.0,
+                    # PlayerMomentum tracks the 14d-vs-30d delta, not a true
+                    # 7-day average. Keep the legacy response field populated
+                    # so dashboard clients do not render an all-zero trend.
+                    last_7_avg=delta,
                     last_14_avg=mom.composite_z_14d or 0.0,
                     last_30_avg=mom.composite_z_30d or 0.0,
                     reason=f"{signal} · Δ={delta:+.2f}",
