@@ -1745,6 +1745,24 @@ async def get_fantasy_waiver_recommendations(
         if not free_agents:
             logger.warning("waiver: no free agents returned from Yahoo API, returning empty response")
 
+        # Augment with a dedicated batter pool when no position filter is active.
+        # Yahoo's availability-ranked page is pitcher-heavy, so the first page can
+        # underrepresent hitter fits even when matchup needs are on offense.
+        if not _yahoo_pos and free_agents is not None:
+            try:
+                _batter_fas = client.get_free_agents(position="OF", start=0, count=per_page)
+                if _batter_fas:
+                    _existing_keys = {p.get("player_key") for p in free_agents}
+                    _new_batters = [p for p in _batter_fas if p.get("player_key") not in _existing_keys]
+                    free_agents = free_agents + _new_batters
+                    logger.info(
+                        "waiver: augmented with %d batters (total pool=%d)",
+                        len(_new_batters),
+                        len(free_agents),
+                    )
+            except Exception as _bat_err:
+                logger.warning("waiver: batter augment failed (non-fatal): %s", _bat_err)
+
         # Fetch scoreboard once and reuse for both opponent resolution and
         # category_deficits — the previous implementation fetched twice and
         # used a shallow 2-level parser that missed nested team_key/team_stats,

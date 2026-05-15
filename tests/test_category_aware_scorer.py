@@ -56,9 +56,9 @@ class TestCountingStatScoring:
         team_needs = CategoryNeedVector(needs={"r": 1.0})
         fa_impact = PlayerCategoryImpactVector(impacts={"r": -0.5})
         score = score_fa_against_needs(fa_impact, team_needs)
-        # player_z * max(0, 1.0) = -0.5 — this is a valid negative contribution
-        # The existing design allows negative counting scores; they just don't get penalized
-        assert score == pytest.approx(-0.5 * 1.0)
+        # Negative counting-stat impact should not make a needed category look worse
+        # than neutral; rate-stat protection handles true downside penalties.
+        assert score == 0.0
 
     def test_zero_deficit_counting_stat_scores_zero(self):
         """Tied category contributes nothing."""
