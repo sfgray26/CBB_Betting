@@ -34,14 +34,6 @@ function waiverCatLabel(key: string): string | null {
   return key  // unknown key: show as-is rather than silently dropping
 }
 
-// Rate stats use 2 decimal places; counting stats use whole numbers
-const RATE_CATS = new Set(['ERA', 'WHIP', 'AVG', 'OPS', 'K/9', 'K_9', 'K(9)'])
-function fmtStat(catKey: string, val: number): string {
-  const label = waiverCatLabel(catKey) ?? catKey
-  if (RATE_CATS.has(label) || RATE_CATS.has(catKey)) return val.toFixed(2)
-  return Number.isInteger(val) ? val.toString() : val.toFixed(1)
-}
-
 function NeedBar({ score }: { score: number }) {
   const pct = Math.min(100, Math.max(0, score * 10)) // scale: 0-10 → 0-100%
   const color = score >= 7.0 ? 'bg-status-safe' : score >= 4.0 ? 'bg-status-bubble' : 'bg-text-muted'
@@ -71,9 +63,9 @@ function OwnershipBadge({ pct }: { pct: number | null | undefined }) {
   )
 }
 
-function HotColdBadge({ hotCold, rankPercentile }: { hotCold?: string | null; rankPercentile?: number }) {
+function HotColdBadge({ hotCold, rankPercentile }: { hotCold?: string | null; rankPercentile?: number | null }) {
   // Design System v2: gate badges to top 20% to prevent inflation
-  if (!hotCold || (rankPercentile ?? 100) < 80) return null
+  if (!hotCold || (rankPercentile ?? 0) < 80) return null
   if (hotCold === 'HOT') {
     return (
       <span className="flex items-center gap-0.5 text-[10px] text-status-behind font-semibold">
@@ -109,7 +101,7 @@ function PlayerRow({ player }: { player: WaiverAvailablePlayer }) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <p className="text-sm font-bold text-text-primary truncate">{player.name}</p>
-          <HotColdBadge hotCold={player.hot_cold} />
+          <HotColdBadge hotCold={player.hot_cold} rankPercentile={player.rank_percentile} />
           {player.injury_status && (
             <span className="text-[10px] px-1.5 py-0.5 bg-status-lost/10 text-status-lost border border-status-lost/30 rounded font-semibold">
               {player.injury_status}

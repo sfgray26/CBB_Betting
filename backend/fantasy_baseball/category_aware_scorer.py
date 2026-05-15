@@ -117,7 +117,7 @@ def score_fa_against_needs(
             else:
                 total += player_z * max(0.0, deficit)
         else:
-            total += player_z * max(0.0, deficit)
+            total += max(0.0, player_z) * max(0.0, deficit)
 
     return float(total)
 

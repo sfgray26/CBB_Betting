@@ -474,6 +474,7 @@ export interface WaiverAvailablePlayer {
   category_contributions?: Record<string, number>
   starts_this_week?: number
   hot_cold?: 'HOT' | 'COLD' | null
+  rank_percentile?: number | null
   status?: string | null
   injury_note?: string | null
   injury_status?: string | null

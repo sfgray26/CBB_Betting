@@ -39,6 +39,7 @@ from backend.models import (
     DBAlert,
     PlayerScore,
     PlayerIDMapping,
+    PositionEligibility,
     DecisionResult,
     DecisionExplanation,
     SessionLocal,
@@ -1757,7 +1758,11 @@ async def get_fantasy_waiver_recommendations(
                     _existing_keys = {p.get("player_key") for p in free_agents}
                     _new_batters = [p for p in _batter_fas if p.get("player_key") not in _existing_keys]
                     free_agents = free_agents + _new_batters
-                    logger.info("waiver: augmented with %d batters (total pool=%d)", len(_new_batters), len(free_agents))
+                    logger.info(
+                        "waiver: augmented with %d batters (total pool=%d)",
+                        len(_new_batters),
+                        len(free_agents),
+                    )
             except Exception as _bat_err:
                 logger.warning("waiver: batter augment failed (non-fatal): %s", _bat_err)
 
@@ -2054,7 +2059,45 @@ async def get_fantasy_waiver_recommendations(
                 statcast_stats=_sc_dict,
                 statcast_signals=_sc_sigs,
                 quality_score=None,  # TODO: populate from ProbablePitcherSnapshot for pitchers
+                rank_percentile=None,
             )
+
+        def _apply_ownership_fallback(players: list[dict]) -> None:
+            """Fill missing Yahoo ownership from the persisted eligibility snapshot."""
+            player_keys = [p.get("player_key") for p in players if p.get("player_key")]
+            if not player_keys:
+                return
+            try:
+                rows = (
+                    db.query(
+                        PositionEligibility.yahoo_player_key,
+                        PositionEligibility.league_rostered_pct,
+                    )
+                    .filter(PositionEligibility.yahoo_player_key.in_(player_keys))
+                    .all()
+                )
+                ownership_by_key = {}
+                for key, raw_pct in rows:
+                    if raw_pct is None:
+                        continue
+                    pct = float(raw_pct)
+                    if 0.0 < pct <= 1.0:
+                        pct *= 100.0
+                    if pct > 0.0:
+                        ownership_by_key[key] = min(pct, 100.0)
+                filled = 0
+                for p in players:
+                    if float(p.get("percent_owned") or 0.0) > 0.0:
+                        continue
+                    pct = ownership_by_key.get(p.get("player_key"))
+                    if pct is not None:
+                        p["percent_owned"] = pct
+                        p["percent_owned_source"] = "position_eligibility"
+                        filled += 1
+                if filled:
+                    logger.info("waiver: filled ownership fallback for %s players", filled)
+            except Exception as exc:
+                logger.warning("waiver ownership fallback failed (non-fatal): %s", exc)
 
         # Fetch MLB probable starts and populate starts_this_week for ALL SP pitchers
         # BEFORE creating top_available — April 21 Issue 2 fix (starts_this_week was 0 for all)
@@ -2068,6 +2111,7 @@ async def get_fantasy_waiver_recommendations(
 
         # Populate starts_this_week for ALL SP pitchers in free_agents
         _populate_starts_this_week(free_agents, starts_map)
+        _apply_ownership_fallback(free_agents)
 
         top_available = [_to_waiver_player(p) for p in free_agents]
         if min_z_score is not None:
@@ -2077,6 +2121,14 @@ async def get_fantasy_waiver_recommendations(
             top_available.sort(key=lambda x: x.owned_pct, reverse=True)
         else:
             top_available.sort(key=lambda x: x.need_score, reverse=True)
+
+        total_ranked = len(top_available)
+        if total_ranked:
+            for idx, player in enumerate(top_available):
+                player.rank_percentile = round(
+                    ((total_ranked - idx) / total_ranked) * 100.0,
+                    1,
+                )
 
         # two_start_pitchers — filter from top_available (starts_this_week already populated)
         two_start_pitchers = sorted(
