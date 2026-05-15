@@ -2099,6 +2099,26 @@ async def get_fantasy_waiver_recommendations(
             except Exception as exc:
                 logger.warning("waiver ownership fallback failed (non-fatal): %s", exc)
 
+            try:
+                adp_data = client._load_adp_data()
+                if not adp_data:
+                    return
+                filled = 0
+                for p in players:
+                    if float(p.get("percent_owned") or 0.0) > 0.0:
+                        continue
+                    name = (p.get("name") or "").strip()
+                    pct = client._estimate_ownership_from_adp(name, adp_data)
+                    if pct > 0.0:
+                        p["percent_owned"] = pct
+                        p["percent_owned_estimated"] = True
+                        p["percent_owned_source"] = "adp_proxy"
+                        filled += 1
+                if filled:
+                    logger.info("waiver: filled ADP ownership proxy for %s players", filled)
+            except Exception as exc:
+                logger.warning("waiver ADP ownership fallback failed (non-fatal): %s", exc)
+
         # Fetch MLB probable starts and populate starts_this_week for ALL SP pitchers
         # BEFORE creating top_available — April 21 Issue 2 fix (starts_this_week was 0 for all)
         from datetime import date as _dt, timedelta as _td

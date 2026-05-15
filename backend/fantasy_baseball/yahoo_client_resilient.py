@@ -1631,6 +1631,54 @@ class YahooFantasyClient:
             results.append(parsed)
         return results
 
+    def _load_adp_data(self) -> Dict[str, float]:
+        """Load ADP data for ownership estimation."""
+        adp_map = {}
+        adp_data_path = getattr(
+            self,
+            "adp_data_path",
+            os.getenv("ADP_DATA_PATH", "/app/data/projections/adp_yahoo_2026.csv"),
+        )
+        try:
+            with open(adp_data_path, "r") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    name = (
+                        row.get("Name")
+                        or row.get("PLAYER NAME")
+                        or row.get("Player")
+                        or ""
+                    ).strip()
+                    adp = row.get("ADP") or row.get("AVG") or ""
+                    if name and adp:
+                        try:
+                            adp_map[name] = float(adp)
+                        except ValueError:
+                            pass
+        except FileNotFoundError:
+            logger.warning("ADP data not found at %s", adp_data_path)
+
+        return adp_map
+
+    def _estimate_ownership_from_adp(
+        self,
+        player_name: str,
+        adp_data: Dict[str, float]
+    ) -> float:
+        """Estimate ownership percentage from ADP."""
+        adp = adp_data.get(player_name)
+        if not adp:
+            return 0.0
+
+        if adp <= 50:
+            return max(0, 100 - (adp - 1) * 0.2)
+        elif adp <= 100:
+            return max(0, 90 - (adp - 50) * 1.2)
+        elif adp <= 200:
+            return max(0, 30 - (adp - 100) * 0.2)
+        else:
+            return max(0, 10 - (adp - 200) * 0.05)
+
 
 # ---------------------------------------------------------------------------
 # CLI: one-time auth setup
@@ -1925,8 +1973,13 @@ class ResilientYahooClient(YahooFantasyClient):
             with open(self.adp_data_path, 'r') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
-                    name = row.get("Name", "").strip()
-                    adp = row.get("ADP", "")
+                    name = (
+                        row.get("Name")
+                        or row.get("PLAYER NAME")
+                        or row.get("Player")
+                        or ""
+                    ).strip()
+                    adp = row.get("ADP") or row.get("AVG") or ""
                     if name and adp:
                         try:
                             adp_map[name] = float(adp)

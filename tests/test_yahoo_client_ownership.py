@@ -116,4 +116,21 @@ def test_ownership_not_overwritten_if_already_set():
     )
 
 
+def test_adp_loader_accepts_current_yahoo_headers(tmp_path):
+    """Current ADP CSV uses PLAYER NAME/AVG, not the legacy Name/ADP headers."""
+    client = _make_client()
+    adp_path = tmp_path / "adp_yahoo_2026.csv"
+    adp_path.write_text(
+        "PLAYER NAME,TEAM,POS,AVG,BEST,WORST,# TEAMS,STDEV\n"
+        "Ranger Suarez,PHI,SP,156.4,124,193,6,25.0\n",
+        encoding="utf-8",
+    )
+    client.adp_data_path = str(adp_path)
+
+    adp_data = client._load_adp_data()
+
+    assert adp_data["Ranger Suarez"] == pytest.approx(156.4)
+    assert client._estimate_ownership_from_adp("Ranger Suarez", adp_data) > 0.0
+
+
 import pytest
