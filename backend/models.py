@@ -1291,8 +1291,10 @@ class PlayerIDMapping(Base):
     bdl_id               = Column(Integer, nullable=True)       # BDL player.id internal
     full_name            = Column(String(150), nullable=False)
     normalized_name      = Column(String(150), nullable=False)  # lowercase, no accents
-    source               = Column(String(20), nullable=False, default="manual")  # pybaseball|manual|api
+    source               = Column(String(20), nullable=False, default="manual")  # pybaseball|manual|api|bdl_search
     resolution_confidence = Column(Float, nullable=True)        # 0.0-1.0 for fuzzy matches
+    heal_attempts        = Column(Integer, nullable=False, default=0)  # Auto-heal attempt count
+    healed_at            = Column(DateTime(timezone=True), nullable=True)  # When auto-heal succeeded
     created_at           = Column(
         DateTime(timezone=True), nullable=False,
         default=lambda: datetime.now(ZoneInfo("America/New_York"))

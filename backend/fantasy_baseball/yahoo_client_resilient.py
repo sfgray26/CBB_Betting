@@ -741,6 +741,9 @@ class YahooFantasyClient:
 
         # Best-effort: enrich with ownership % via the global players endpoint.
         self._enrich_ownership_batch(players)
+        
+        # Auto-heal: trigger BDL search for unmapped players (fire-and-forget, non-blocking)
+        self._trigger_auto_heal_for_unmapped(players)
 
         return players
 
@@ -884,6 +887,79 @@ class YahooFantasyClient:
                                 p["percent_owned"] = pct
         except Exception as exc:
             logger.warning("_enrich_ownership_batch failed (non-fatal): %s", exc)
+
+    def _trigger_auto_heal_for_unmapped(self, players: list[dict]) -> None:
+        """
+        Fire-and-forget auto-heal for Yahoo players not in player_id_mapping.
+        
+        This runs asynchronously (non-blocking) to avoid delaying roster response.
+        For each unmapped player, triggers BDL name search to create mapping.
+        """
+        import threading
+        
+        def _heal_worker(player_list: list[dict]) -> None:
+            """Background worker to heal unmapped players."""
+            try:
+                from backend.models import SessionLocal, PlayerIDMapping
+                from backend.services.player_autoheal import PlayerAutoHealService
+                from backend.services.balldontlie import get_bdl_client
+                
+                db = SessionLocal()
+                try:
+                    bdl = get_bdl_client()
+                    heal_svc = PlayerAutoHealService(db_session=db, bdl_client=bdl)
+                    
+                    unmapped = []
+                    for p in player_list:
+                        player_key = p.get("player_key")
+                        player_id = p.get("player_id")
+                        name = p.get("name", "")
+                        
+                        if not player_key:
+                            continue
+                            
+                        # Check if player exists in mapping
+                        existing = (
+                            db.query(PlayerIDMapping)
+                            .filter(PlayerIDMapping.yahoo_key == player_key)
+                            .first()
+                        )
+                        
+                        if existing is None:
+                            unmapped.append({
+                                "name": name,
+                                "yahoo_id": str(player_id) if player_id else "",
+                                "yahoo_key": player_key,
+                            })
+                            logger.warning(
+                                "Unmapped Yahoo player in roster: %s (%s)",
+                                player_key, name
+                            )
+                    
+                    if unmapped:
+                        summary = heal_svc.batch_heal(unmapped)
+                        logger.info(
+                            "Roster auto-heal complete: healed=%d skipped=%d failed=%d",
+                            summary.get("healed", 0),
+                            summary.get("skipped", 0),
+                            summary.get("failed", 0)
+                        )
+                        
+                finally:
+                    db.close()
+            except Exception as exc:
+                logger.warning("Auto-heal worker failed (non-fatal): %s", exc)
+        
+        # Fire-and-forget: start healing in background thread
+        # Don't block the roster response
+        if players:
+            thread = threading.Thread(
+                target=_heal_worker,
+                args=(players,),
+                daemon=True
+            )
+            thread.start()
+            logger.debug("Auto-heal triggered for %d roster players", len(players))
 
     def get_players_stats_batch(self, player_keys: list, stat_type: str = "season") -> dict:
         """Fetch season stats for a batch of players via the supported batch stats endpoint.
