@@ -7,6 +7,12 @@ import io
 sys.path.append(os.getcwd())
 
 def run():
+    # MLB Season Guard: todays_bets.py was built for CBB (college basketball)
+    # During MLB season, this script exits gracefully with a pointer to the future MLB version.
+    print("CBB season closed. MLB betting recommendations not yet implemented.")
+    print("Create scripts/mlb_todays_bets.py for MLB-specific recommendations.")
+    return
+
     output = io.StringIO()
     try:
         from backend.models import SessionLocal, BetLog
