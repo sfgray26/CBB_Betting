@@ -920,4 +920,25 @@ class DecisionPipelineStatus(BaseModel):
     decision_results: DecisionResultsStatus
 
 
+# ---------------------------------------------------------------------------
+# PlayerCardResponse — game context for lineup decisions
+# ---------------------------------------------------------------------------
+
+class PlayerCardResponse(BaseModel):
+    """
+    Game context fields for a single player card.
+
+    Caller enriches yahoo_player dict with opponent_team / is_home / game_time /
+    weather before calling map_yahoo_player_to_canonical_row; this schema exposes
+    those fields in consumer-friendly naming for the lineup decision UI.
+    """
+    player_key: str
+    name: str
+    team: Optional[str] = None
+    opponent_team: Optional[str] = None
+    game_time: Optional[datetime] = None
+    is_home: Optional[bool] = None
+    weather: Optional[dict] = None
+
+
 

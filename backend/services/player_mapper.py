@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Set
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 
 from backend.stat_contract import (
@@ -104,13 +104,23 @@ def _map_yahoo_stats_to_category_stats(
 
 
 def _build_player_game_context(yahoo_player: Dict) -> Optional[PlayerGameContext]:
-    """Build PlayerGameContext from Yahoo player data if available."""
-    # Check if player has upcoming game info
-    # Yahoo provides this in various formats - this is a minimal implementation
+    """Build PlayerGameContext from enriched yahoo_player dict.
 
-    # For MVP: return None (game context requires additional Yahoo API calls)
-    # TODO: K-XX: Wire up Yahoo matchup data for game context
-    return None
+    Callers pre-populate opponent_team, is_home, game_time, and weather
+    from schedule data before invoking the mapper. Returns None when no
+    game is scheduled or the dict has not been enriched.
+    """
+    opponent_team = yahoo_player.get("opponent_team")
+    if not opponent_team:
+        return None
+
+    is_home = yahoo_player.get("is_home", False)
+    return PlayerGameContext(
+        opponent=opponent_team,
+        home_away="home" if is_home else "away",
+        game_time=yahoo_player.get("game_time"),
+        weather=yahoo_player.get("weather"),
+    )
 
 
 def _normalize_status(yahoo_player: Dict) -> str:
@@ -360,5 +370,108 @@ def fetch_rolling_stats_for_players(
         yahoo_key = bdl_to_yahoo.get(rs.bdl_player_id)
         if yahoo_key:
             result[yahoo_key] = rs
+
+    return result
+
+
+def fetch_rolling_stats_for_players_all_windows(
+    db: Session,
+    yahoo_player_keys: List[str],
+    as_of_date: Optional[str] = None,
+    window_sizes: Optional[List[int]] = None,
+) -> Dict[int, Dict[str, PlayerRollingStats]]:
+    """
+    Fetch PlayerRollingStats for multiple window sizes in a single database round-trip.
+
+    Returns {window_days: {yahoo_player_key: PlayerRollingStats}}.
+    Eliminates the N × (PlayerIDMapping + PlayerRollingStats) queries that result from
+    calling fetch_rolling_stats_for_players separately for each window size.
+    """
+    from backend.models import PlayerIDMapping
+
+    if window_sizes is None:
+        window_sizes = [7, 14, 30]
+
+    if not yahoo_player_keys:
+        return {w: {} for w in window_sizes}
+
+    query_keys = {str(key) for key in yahoo_player_keys if key}
+    yahoo_ids = {key.rsplit(".", 1)[-1] for key in query_keys}
+
+    # One PlayerIDMapping query for all players (replaces one per window)
+    bdl_ids_query = (
+        db.query(PlayerIDMapping.bdl_id, PlayerIDMapping.yahoo_key, PlayerIDMapping.yahoo_id)
+        .filter(
+            or_(
+                PlayerIDMapping.yahoo_key.in_(query_keys),
+                PlayerIDMapping.yahoo_id.in_(yahoo_ids),
+            )
+        )
+        .all()
+    )
+
+    yahoo_to_bdl: Dict[str, int] = {}
+    for row in bdl_ids_query:
+        if row.bdl_id is None:
+            continue
+        if row.yahoo_key:
+            yahoo_to_bdl[str(row.yahoo_key)] = row.bdl_id
+        if row.yahoo_id:
+            yahoo_to_bdl[str(row.yahoo_id)] = row.bdl_id
+
+    resolved_map: Dict[str, int] = {}
+    for yahoo_key in query_keys:
+        bdl_id = yahoo_to_bdl.get(yahoo_key)
+        if bdl_id is None:
+            bdl_id = yahoo_to_bdl.get(yahoo_key.rsplit(".", 1)[-1])
+        if bdl_id is not None:
+            resolved_map[yahoo_key] = bdl_id
+
+    if not resolved_map:
+        return {w: {} for w in window_sizes}
+
+    target_date = as_of_date or datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d")
+    bdl_id_list = list(set(resolved_map.values()))
+
+    # One PlayerRollingStats query covering all windows
+    rolling_stats = (
+        db.query(PlayerRollingStats)
+        .filter(
+            PlayerRollingStats.bdl_player_id.in_(bdl_id_list),
+            PlayerRollingStats.as_of_date == target_date,
+            PlayerRollingStats.window_days.in_(window_sizes),
+        )
+        .all()
+    )
+
+    # Fallback: if target_date has no data, find the latest available date
+    if not rolling_stats:
+        latest_date_result = (
+            db.query(func.max(PlayerRollingStats.as_of_date))
+            .filter(
+                PlayerRollingStats.bdl_player_id.in_(bdl_id_list),
+                PlayerRollingStats.window_days.in_(window_sizes),
+            )
+            .scalar()
+        )
+        if latest_date_result:
+            target_date = latest_date_result.strftime("%Y-%m-%d")
+            rolling_stats = (
+                db.query(PlayerRollingStats)
+                .filter(
+                    PlayerRollingStats.bdl_player_id.in_(bdl_id_list),
+                    PlayerRollingStats.as_of_date == target_date,
+                    PlayerRollingStats.window_days.in_(window_sizes),
+                )
+                .all()
+            )
+
+    bdl_to_yahoo = {bdl_id: yahoo_key for yahoo_key, bdl_id in resolved_map.items()}
+
+    result: Dict[int, Dict[str, PlayerRollingStats]] = {w: {} for w in window_sizes}
+    for rs in rolling_stats:
+        yahoo_key = bdl_to_yahoo.get(rs.bdl_player_id)
+        if yahoo_key and rs.window_days in result:
+            result[rs.window_days][yahoo_key] = rs
 
     return result
