@@ -315,7 +315,16 @@ def assemble_matchup_scoreboard(
     now_et = datetime.now(ZoneInfo("America/New_York"))
 
     # Step 1: Compute ROW projections (L3)
-    my_row = _project_row_from_player_scores(my_player_scores)
+    # P0 FIX: Use current stats as fallback when no player scores available
+    # This ensures scoreboard shows actual Yahoo stats even without projections
+    if my_player_scores:
+        my_row = _project_row_from_player_scores(my_player_scores)
+    else:
+        # Fallback: preserve current-state ratios/counts rather than zeroing them out.
+        my_row = ROWProjectionResult(
+            **{k: my_current_stats.get(k, 0.0) for k in SCORING_CATEGORY_CODES}
+        )
+    
     # For opponent, use current stats as proxy if no player data available
     if opp_player_scores:
         opp_row = _project_row_from_player_scores(opp_player_scores)

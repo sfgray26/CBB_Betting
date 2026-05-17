@@ -56,3 +56,34 @@ Review the codebase with these P1s as the lens. Identify:
 - The safest path to unify them
 - Any additional bugs or risks not captured above
 - Priority-ranked action plan with estimated effort
+
+---
+
+## Technical Debt
+
+### TODO Registry
+See [docs/TODO.md](./docs/TODO.md) for comprehensive TODO tracking:
+- **28 documented TODOs** across data pipeline, API, and features
+- Categorized by priority (P1-P3) and estimated effort
+- Dependency graph showing implementation order
+
+**High Priority TODOs:**
+1. **Data Freshness Tracking** (DP-2): Track `fetched_at` timestamps and compute `is_stale` for Yahoo data
+2. **Pitcher Quality Score** (DP-1): Populate from ProbablePitcherSnapshot for pitcher streaming
+3. **Game Context Wiring** (DP-3): Wire up Yahoo matchup data (opponent, game_time, weather)
+4. **SP Start Predictions** (DP-8): Use ProbablePitcherSnapshot for accurate 1-start vs 2-start
+
+### Security Audit
+See [docs/SECURITY_AUDIT.md](./docs/SECURITY_AUDIT.md) for full findings:
+- **Overall Risk Level:** MEDIUM
+- **Critical Issues:**
+  - Dev fallback key could activate in production if ENVIRONMENT is misconfigured
+  - CORS origin whitelist should be verified for production
+- **SQL Injection:** No vulnerabilities detected (parameterized queries throughout)
+- **Input Validation:** Good practices with regex patterns for player keys
+
+### Known Limitations
+- Multiple freshness tracking TODOs require Yahoo client instrumentation
+- Game context fields (PR-5 through PR-12) not yet wired to Yahoo API
+- Greenfield categories (W, L, HR_P, NSV) return 0.0 placeholders
+- Freshness metadata partially implemented (fetched_at/is_stale TODOs)

@@ -18,6 +18,7 @@ from sqlalchemy import (
     Date,
     UniqueConstraint,
     Index,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
@@ -26,9 +27,12 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, date
 from zoneinfo import ZoneInfo
+import logging
 import os
 import time
 import random
+
+logger = logging.getLogger(__name__)
 
 _ET = ZoneInfo("America/New_York")
 
@@ -56,13 +60,15 @@ _ASYNC_DATABASE_URL = DATABASE_URL.replace(
 )
 
 # ── Sync engine (keep for all existing sync paths) ──────────────────────────
+_SA_ECHO = os.getenv("SA_ECHO_QUERIES", "false").lower() == "true"
+
 engine = create_engine(
     DATABASE_URL,
     pool_size=20,
     max_overflow=40,
     pool_pre_ping=True,
     pool_recycle=3600,
-    echo=False,
+    echo=_SA_ECHO,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -619,7 +625,7 @@ class PlayerValuationCache(Base):
 def init_db():
     """Initialize database tables"""
     Base.metadata.create_all(bind=engine)
-    print("✅ Database tables created")
+    logger.info("Database tables created")
 
 
 if __name__ == "__main__":
@@ -906,6 +912,17 @@ class PlayerProjection(Base):
     # Timestamps
     created_at = Column(DateTime, default=_now_et)
     updated_at = Column(DateTime, default=_now_et, onupdate=_now_et)
+
+    __table_args__ = (
+        # Partial index covering rows with populated cat_scores.
+        # Supports the name-based projection fallback lookup in get_fantasy_roster
+        # without scanning rows that have never been scored.
+        Index(
+            "idx_pp_cat_scores_nn",
+            "player_id",
+            postgresql_where=text("cat_scores IS NOT NULL AND CAST(cat_scores AS TEXT) <> '{}'"),
+        ),
+    )
 
 
 class PatternDetectionAlert(Base):
@@ -1467,6 +1484,9 @@ class PlayerScore(Base):
         Index("idx_ps_date_window", "as_of_date", "window_days"),
         Index("idx_ps_player_date", "bdl_player_id", "as_of_date"),
         Index("idx_ps_score", "as_of_date", "window_days", "score_0_100"),
+        # Supports optimize_roster's MAX(as_of_date) subquery pattern:
+        # WHERE bdl_player_id IN (...) AND window_days = N AND as_of_date <= ?
+        Index("idx_ps_bdl_window_date", "bdl_player_id", "window_days", "as_of_date"),
     )
 
 

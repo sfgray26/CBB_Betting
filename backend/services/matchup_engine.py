@@ -242,7 +242,8 @@ def _fetch_pitcher_stats(
                 pp.mlbam_id,
                 spm.era,
                 spm.whip,
-                spm.k_9
+                spm.k_9,
+                pp.handedness
             FROM probable_pitchers pp
             LEFT JOIN statcast_pitcher_metrics spm
                    ON CAST(spm.mlbam_id AS INTEGER) = pp.mlbam_id
@@ -256,10 +257,10 @@ def _fetch_pitcher_stats(
         if row is None:
             return None
 
-        name, mlbam_id, era, whip, k9 = row
+        name, mlbam_id, era, whip, k9, handedness = row
         return PitcherStats(
             name=name or "Unknown",
-            hand=None,  # hand not tracked yet; confidence gates handedness component
+            hand=handedness,  # Now fetched from probable_pitchers table
             era=float(era) if era is not None else None,
             whip=float(whip) if whip is not None else None,
             k_per_nine=float(k9) if k9 is not None else None,

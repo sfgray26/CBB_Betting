@@ -8,7 +8,7 @@ Do NOT import from other backend.routers modules here.
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import text, func, or_, and_, inspect
+from sqlalchemy import text, func, or_, and_, inspect, cast, Text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import aliased
 from typing import List, Optional, Literal, Dict
@@ -91,6 +91,7 @@ from backend.services.job_queue_service import submit_job as jq_submit, get_job_
 from backend.services.player_mapper import (
     map_yahoo_player_to_canonical_row,
     fetch_rolling_stats_for_players,
+    fetch_rolling_stats_for_players_all_windows,
 )
 
 logger = logging.getLogger(__name__)
@@ -470,6 +471,39 @@ def _resolve_roster_player_bdl_ids(db: Session, raw_players: list[dict]) -> dict
                     }
 
     return player_key_to_ids
+
+def build_pitcher_quality_map(db: Session, today: date) -> dict[str, float]:
+    """
+    Build a name→quality_score map from ProbablePitcherSnapshot for today through today+7 days.
+
+    Non-fatal: returns empty dict on any exception so the waiver wire still
+    renders when the probable_pitchers table is empty or unavailable.
+    Keeps the highest quality_score when a pitcher has multiple starts in the window.
+    """
+    result: dict[str, float] = {}
+    try:
+        from backend.models import ProbablePitcherSnapshot
+        rows = (
+            db.query(
+                ProbablePitcherSnapshot.pitcher_name,
+                ProbablePitcherSnapshot.quality_score,
+            )
+            .filter(
+                ProbablePitcherSnapshot.game_date >= today,
+                ProbablePitcherSnapshot.game_date <= today + timedelta(days=7),
+                ProbablePitcherSnapshot.quality_score.isnot(None),
+            )
+            .all()
+        )
+        for r in rows:
+            if r.pitcher_name and r.quality_score is not None:
+                key = r.pitcher_name.strip().lower()
+                if key not in result or r.quality_score > result[key]:
+                    result[key] = float(r.quality_score)
+    except Exception:
+        pass
+    return result
+
 
 # ============================================================================
 # PROJECTION STATUS
@@ -2071,9 +2105,15 @@ async def get_fantasy_waiver_recommendations(
                 stats=_translated_stats,
                 statcast_stats=_sc_dict,
                 statcast_signals=_sc_sigs,
-                quality_score=None,  # TODO: populate from ProbablePitcherSnapshot for pitchers
+                quality_score=_pitcher_quality_map.get(name.lower()) if _fa_is_pitcher else None,
                 rank_percentile=None,
             )
+
+        # Bulk quality_score lookup for pitcher FA candidates (enrichment only).
+        # Queries probable_pitchers for today+next 7 days, keyed by pitcher_name.
+        # Non-fatal: any exception leaves the dict empty (quality_score stays None).
+        from datetime import date as _date_type
+        _pitcher_quality_map = build_pitcher_quality_map(db, _date_type.today())
 
         def _apply_ownership_fallback(players: list[dict]) -> None:
             """Fill missing Yahoo ownership from the persisted eligibility snapshot."""
@@ -3079,25 +3119,19 @@ async def get_fantasy_roster(
     # Extract player keys for rolling stats lookup
     player_keys = [p.get("player_key") for p in raw_players if p.get("player_key")]
 
-    # Fetch rolling stats for all players across all window sizes
-    rolling_stats_7d = fetch_rolling_stats_for_players(
+    # Fetch rolling stats for all players across all window sizes in one query.
+    # fetch_rolling_stats_for_players_all_windows does a single PlayerIDMapping
+    # lookup and a single PlayerRollingStats query covering all three windows,
+    # replacing the six DB round-trips that resulted from three separate calls.
+    _rolling_all = fetch_rolling_stats_for_players_all_windows(
         db=db,
         yahoo_player_keys=player_keys,
         as_of_date=now_et.strftime("%Y-%m-%d"),
-        window_days=7,
+        window_sizes=[7, 14, 30],
     )
-    rolling_stats_14d = fetch_rolling_stats_for_players(
-        db=db,
-        yahoo_player_keys=player_keys,
-        as_of_date=now_et.strftime("%Y-%m-%d"),
-        window_days=14,
-    )
-    rolling_stats_30d = fetch_rolling_stats_for_players(
-        db=db,
-        yahoo_player_keys=player_keys,
-        as_of_date=now_et.strftime("%Y-%m-%d"),
-        window_days=30,
-    )
+    rolling_stats_7d = _rolling_all.get(7, {})
+    rolling_stats_14d = _rolling_all.get(14, {})
+    rolling_stats_30d = _rolling_all.get(30, {})
 
     # Fetch Yahoo season stats for all roster players — the canonical router
     # mapper reads yahoo_player["stats"] to populate CanonicalPlayerRow
@@ -3158,20 +3192,20 @@ async def get_fantasy_roster(
 
     # Secondary lookup: by normalized player_name for Steamer rows whose
     # player_id is a Steamer internal key (not Yahoo numeric ID).
-    # Build a name->projection map over ALL projections that have cat_scores.
+    # Single ORM query (replaces the previous raw-SQL-then-re-query pattern).
     _projections_by_name: dict[str, _PlayerProjection] = {}
     try:
-        from sqlalchemy import text as _sqlt
-        _name_proj_ids = [r[0] for r in db.execute(
-            _sqlt("SELECT player_id FROM player_projections WHERE cat_scores IS NOT NULL AND CAST(cat_scores AS TEXT) != '{}'")
-        ).fetchall()]
-        if _name_proj_ids:
-            _name_rows = db.query(_PlayerProjection).filter(
-                _PlayerProjection.player_id.in_(_name_proj_ids)
-            ).all()
-            for _nr in _name_rows:
-                if _nr.player_name:
-                    _projections_by_name[_normalize_identity_name(_nr.player_name)] = _nr
+        _name_rows = (
+            db.query(_PlayerProjection)
+            .filter(
+                _PlayerProjection.cat_scores.isnot(None),
+                cast(_PlayerProjection.cat_scores, Text) != "{}",
+            )
+            .all()
+        )
+        for _nr in _name_rows:
+            if _nr.player_name:
+                _projections_by_name[_normalize_identity_name(_nr.player_name)] = _nr
     except Exception as _nq_err:
         logger.warning("roster: name-projection index build failed: %s", _nq_err)
 

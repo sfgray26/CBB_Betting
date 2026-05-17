@@ -326,6 +326,7 @@ class PlayerGameContext(BaseModel):
     opponent: str
     home_away: str                               # "home" or "away"
     game_time: Optional[datetime] = None
+    weather: Optional[Dict] = None               # PR-6: temp_f, wind_mph, wind_direction, precip_chance
     # Pitcher-specific
     projected_k: Optional[float] = None          # PR-7
     projected_era_impact: Optional[float] = None # PR-8
