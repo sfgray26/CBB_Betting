@@ -4,14 +4,14 @@ import { Slot } from '@radix-ui/react-slot'
 import * as React from 'react'
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/50 disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {
-        default: 'bg-zinc-800 text-zinc-50 hover:bg-zinc-700 border border-zinc-700',
-        primary: 'bg-amber-400 text-zinc-950 hover:bg-amber-300 font-semibold',
-        ghost: 'text-zinc-400 hover:text-zinc-50 hover:bg-zinc-800',
-        destructive: 'bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 border border-rose-500/30',
+        default: 'bg-gray-100 text-gray-900 hover:bg-gray-200 border border-gray-300',
+        primary: 'bg-blue-600 text-white hover:bg-blue-700 font-semibold',
+        ghost: 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
+        destructive: 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200',
       },
       size: {
         sm: 'h-8 px-3 text-xs',

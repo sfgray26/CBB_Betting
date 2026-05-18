@@ -5,42 +5,56 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
-  --background: 240 10% 3.9%;
-  --foreground: 0 0% 98%;
-  --surface: 240 3.7% 15.9%;
-  --border: 240 3.7% 25%;
-  --muted: 240 5% 64.9%;
-
   /* ═══════════════════════════════════════════════════════════════════
-     Design System v2 — Fantasy Baseball Color Tokens
-     Added 2026-05-13. These layer on top of existing vars.
+     Design System v3 — Light Theme Color Tokens
+     Clean, modern light UI for better readability
      ═══════════════════════════════════════════════════════════════════ */
 
-  /* Foundation */
-  --bg-base: #0c0c10;
-  --bg-surface: #16161e;
-  --bg-elevated: #1f1f2a;
-  --bg-inset: #0a0a0f;
-  --border-subtle: #272733;
-  --border-default: #3a3a4d;
-  --border-focus: #6b6b8a;
+  /* Foundation - Clean White/Gray Palette */
+  --background: 0 0% 100%;
+  --foreground: 220 15% 15%;
+  --surface: 220 14% 96%;
+  --border: 220 13% 88%;
+  --muted: 220 12% 45%;
 
-  /* Text */
-  --text-primary: #e8e8f0;
-  --text-secondary: #a0a0b8;
-  --text-tertiary: #6b6b8a;
-  --text-muted: #4a4a60;
+  /* Semantic Background Colors */
+  --bg-base: #ffffff;
+  --bg-surface: #f8f9fa;
+  --bg-elevated: #ffffff;
+  --bg-inset: #f1f3f5;
+  --bg-hover: #e9ecef;
+  --bg-active: #dee2e6;
 
-  /* Status — continuous gradient SAFE → LOST */
-  --status-safe: #22c55e;
-  --status-lead: #84cc16;
-  --status-bubble: #f59e0b;
-  --status-behind: #f97316;
-  --status-lost: #ef4444;
+  /* Border Colors */
+  --border-subtle: #e9ecef;
+  --border-default: #dee2e6;
+  --border-focus: #adb5bd;
 
-  /* Accent */
-  --accent-gold: #FFC000;
-  --accent-gold-dim: #b38900;
+  /* Text Colors - High Contrast for Readability */
+  --text-primary: #212529;
+  --text-secondary: #495057;
+  --text-tertiary: #6c757d;
+  --text-muted: #adb5bd;
+
+  /* Status Colors — Vibrant for Light Theme */
+  --status-safe: #16a34a;
+  --status-lead: #65a30d;
+  --status-bubble: #d97706;
+  --status-behind: #ea580c;
+  --status-lost: #dc2626;
+
+  /* Accent - Professional Blue */
+  --accent-primary: #2563eb;
+  --accent-primary-hover: #1d4ed8;
+  --accent-gold: #d97706;
+  --accent-gold-dim: #b45309;
+
+  /* Signal Colors */
+  --signal-bet: #d97706;
+  --signal-consider: #0891b2;
+  --signal-pass: #6b7280;
+  --signal-win: #16a34a;
+  --signal-loss: #dc2626;
 }
 
 html,
@@ -49,8 +63,8 @@ body {
 }
 
 body {
-  background-color: #09090b;
-  color: #fafafa;
+  background-color: #ffffff;
+  color: #212529;
   font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -61,24 +75,158 @@ body {
 
 @layer base {
   * {
-    border-color: rgb(63 63 70 / 0.4);
+    border-color: rgb(222 226 230 / 0.8);
   }
 
+  /* Light Theme Scrollbar */
   ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
   }
 
   ::-webkit-scrollbar-track {
-    background: #18181b;
+    background: #f1f3f5;
+    border-radius: 4px;
   }
 
   ::-webkit-scrollbar-thumb {
-    background: #3f3f46;
-    border-radius: 3px;
+    background: #c1c7cd;
+    border-radius: 4px;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: #52525b;
+    background: #a5afb6;
+  }
+
+  /* Focus Styles */
+  *:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Card Component */
+  .card {
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: 8px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  }
+
+  .card-elevated {
+    background-color: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  }
+
+  /* Button Styles */
+  .btn-primary {
+    background-color: var(--accent-primary);
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+
+  .btn-primary:hover {
+    background-color: var(--accent-primary-hover);
+  }
+
+  .btn-secondary {
+    background-color: var(--bg-surface);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-default);
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+
+  .btn-secondary:hover {
+    background-color: var(--bg-hover);
+  }
+
+  /* Input Styles */
+  .input {
+    background-color: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    color: var(--text-primary);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    transition: border-color 0.15s ease;
+  }
+
+  .input:focus {
+    border-color: var(--accent-primary);
+    outline: none;
+  }
+
+  .input::placeholder {
+    color: var(--text-muted);
+  }
+
+  /* Navigation */
+  .nav-item {
+    color: var(--text-secondary);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    transition: all 0.15s ease;
+  }
+
+  .nav-item:hover {
+    background-color: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .nav-item.active {
+    background-color: var(--bg-active);
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+
+  /* Status Badges */
+  .badge-safe {
+    background-color: #dcfce7;
+    color: #166534;
+    padding: 0.25rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .badge-warning {
+    background-color: #fef3c7;
+    color: #92400e;
+    padding: 0.25rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .badge-danger {
+    background-color: #fee2e2;
+    color: #991b1b;
+    padding: 0.25rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .badge-neutral {
+    background-color: #f3f4f6;
+    color: #374151;
+    padding: 0.25rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
   }
 }

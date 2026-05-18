@@ -24,7 +24,7 @@ export function KpiCard({
   valueClassName,
 }: KpiCardProps) {
   const trendColor =
-    trend === 'up' ? 'text-emerald-400' : trend === 'down' ? 'text-rose-400' : 'text-zinc-500'
+    trend === 'up' ? 'text-green-600' : trend === 'down' ? 'text-red-600' : 'text-gray-500'
 
   const TrendIcon = trend === 'up' ? TrendingUp : trend === 'down' ? TrendingDown : Minus
 
@@ -33,8 +33,8 @@ export function KpiCard({
       <Card>
         <CardTitle className="mb-3">{title}</CardTitle>
         <div className="animate-pulse space-y-2">
-          <div className="h-8 bg-zinc-800 rounded w-3/4" />
-          <div className="h-4 bg-zinc-800 rounded w-1/2" />
+          <div className="h-8 bg-gray-200 rounded w-3/4" />
+          <div className="h-4 bg-gray-200 rounded w-1/2" />
         </div>
       </Card>
     )
@@ -43,9 +43,9 @@ export function KpiCard({
   return (
     <Card>
       <CardTitle className="mb-3">{title}</CardTitle>
-      <div className={cn('text-2xl font-semibold font-mono tabular-nums text-zinc-50', valueClassName)}>
+      <div className={cn('text-2xl font-semibold font-mono tabular-nums text-gray-900', valueClassName)}>
         {value}
-        {unit && <span className="text-base text-zinc-400 ml-1">{unit}</span>}
+        {unit && <span className="text-base text-gray-500 ml-1">{unit}</span>}
       </div>
       {(delta !== undefined || deltaLabel) && (
         <div className={cn('flex items-center gap-1 mt-2 text-xs', trendColor)}>
@@ -56,7 +56,7 @@ export function KpiCard({
               {delta.toFixed(1)}%
             </span>
           )}
-          {deltaLabel && <span className="text-zinc-500">{deltaLabel}</span>}
+          {deltaLabel && <span className="text-gray-500">{deltaLabel}</span>}
         </div>
       )}
     </Card>

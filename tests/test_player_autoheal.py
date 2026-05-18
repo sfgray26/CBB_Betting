@@ -146,7 +146,8 @@ def test_heal_skips_manual_override():
     assert result is False
     bdl.search_mlb_players.assert_not_called()
     db.add.assert_not_called()
-    db.commit.assert_not_called()
+    # db.commit IS called once to persist the heal_attempts increment
+    db.commit.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
