@@ -5391,7 +5391,7 @@ class DailyIngestionOrchestrator:
                         backtest_games=bt_row.games_played if bt_row else None,
                         # P2: Injury risk modeling fields
                         remaining_games=sim_row.remaining_games if sim_row else None,
-                        injury_risk_multiplier=sim_row.injury_risk_multiplier if sim_row else None,
+                        # injury_risk_multiplier removed — column does not exist on SimulationResult
                     ))
 
                 # Step 4: generate explanations (CPU-bound -- offload to thread pool)
@@ -6452,7 +6452,11 @@ class DailyIngestionOrchestrator:
             if not bat_raw and not pit_raw:
                 persisted_bat, persisted_pit, persisted_at = _load_persisted_ros_cache()
                 if persisted_at is not None:
-                    age_h = (now_et() - persisted_at).total_seconds() / 3600
+                    # FIX: Handle naive datetime from DB vs aware now_et()
+                    _now = now_et()
+                    if persisted_at.tzinfo is None:
+                        _now = _now.replace(tzinfo=None)
+                    age_h = (_now - persisted_at).total_seconds() / 3600
                     if age_h < 4:
                         bat_raw = persisted_bat
                         pit_raw = persisted_pit
@@ -7188,13 +7192,19 @@ class DailyIngestionOrchestrator:
 
         async def _run():
             results = []
+            overall_ok = True
+            total_records = 0
             for lk in leagues:
                 try:
                     result = await run_valuation_worker(lk)
-                    results.append(result)
+                    results.append({"league": lk, "status": "ok", "records": result})
+                    total_records += len(result) if isinstance(result, list) else 1
                 except Exception as exc:
+                    overall_ok = False
+                    results.append({"league": lk, "status": "error", "error": str(exc)})
                     logger.error("valuation_cache: failed for league=%s (%s)", lk, exc)
-            return results
+            status = "ok" if overall_ok else "partial"
+            return {"status": status, "leagues": results, "records": total_records}
 
         self._job_status["valuation_cache"] = {
             "name": "valuation_cache",
