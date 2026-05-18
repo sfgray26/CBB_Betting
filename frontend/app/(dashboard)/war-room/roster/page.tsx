@@ -24,6 +24,7 @@ import {
   Swords,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import YahooRosterView from '@/components/yahoo-roster-view'
 
 // ───────────────────────────────────────────────────────────────────────────
 // Constants
@@ -60,7 +61,7 @@ const SLOT_COLORS: Record<string, string> = {
   P: 'bg-purple-900/30 text-purple-400',
 }
 
-type ViewMode = 'season' | '7d' | '14d' | '30d' | 'ros'
+type ViewMode = 'season' | '7d' | '14d' | '30d' | 'ros' | 'yahoo'
 type SortMode = 'default' | 'name' | 'ros_value'
 type PosFilter = 'All' | 'SP' | 'RP' | 'OF' | '1B' | '2B' | '3B' | 'SS' | 'C'
 
@@ -116,6 +117,7 @@ function ViewToggle({ mode, onChange }: { mode: ViewMode; onChange: (m: ViewMode
     { value: '14d', label: '14D' },
     { value: '30d', label: '30D' },
     { value: 'ros', label: 'RoS Proj' },
+    { value: 'yahoo', label: 'Slots' },
   ]
   return (
     <div className="flex items-center gap-1 bg-bg-surface border border-border-subtle rounded-lg p-1">
@@ -1070,6 +1072,19 @@ export default function RosterPage() {
         </div>
       </div>
 
+      {/* Yahoo-style slot view */}
+      {viewMode === 'yahoo' ? (
+        <YahooRosterView
+          players={data.players}
+          onMove={(player, targetSlot) => {
+            if (player.yahoo_player_key) {
+              handleMove(player.yahoo_player_key, targetSlot)
+            }
+          }}
+          isMoving={moveMutation.isPending}
+        />
+      ) : (
+      <>
       {/* Player list */}
       {useGrouped ? (
         <>
@@ -1152,6 +1167,7 @@ export default function RosterPage() {
           )}
         </div>
       )}
+    </>)
     </div>
   )
 }
