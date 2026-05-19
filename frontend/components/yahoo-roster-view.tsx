@@ -39,24 +39,6 @@ export const ROSTER_SLOTS: { id: string; label: string; type: 'bat' | 'pit' | 'f
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function playerMatchesSlot(player: RosterPlayer, slotId: string): boolean {
-  const pos = slotId.replace(/\d+$/, '')  // strip numeric suffix (OF1 → OF)
-  const current = player.current_slot?.toUpperCase()
-  const eligible = player.eligible_positions?.map((p) => p.toUpperCase()) ?? []
-
-  // Exact current slot match
-  if (current === pos) return true
-
-  // Special: OF1/OF2/OF3 all map to OF
-  if (pos === 'OF' && current?.startsWith('OF')) return true
-
-  // Position eligibility match
-  if (pos === 'Util') return eligible.some((p) => ['C','1B','2B','3B','SS','OF','LF','CF','RF','DH'].includes(p))
-  if (pos === 'P')  return eligible.some((p) => ['SP','RP','P'].includes(p))
-
-  return eligible.includes(pos)
-}
-
 function slotIsPitcher(slotId: string): boolean {
   return ['SP1','SP2','RP1','RP2','P1','P2'].includes(slotId)
 }
@@ -78,8 +60,10 @@ function StreakBadge({ player }: { player: RosterPlayer }) {
   if (!stats) return null
 
   // Simple heuristic: if rolling OPS/ERA is trending well vs season average
-  const isHot = stats.ops != null && (player.season_stats?.ops ?? 0) > 0 && stats.ops > (player.season_stats?.ops ?? 0) * 1.05
-  const isCold = stats.ops != null && (player.season_stats?.ops ?? 0) > 0 && stats.ops < (player.season_stats?.ops ?? 0) * 0.95
+  const rollingOps = stats.values?.['OPS'] ?? null
+  const seasonOps = player.season_stats?.values?.['OPS'] ?? 0
+  const isHot = rollingOps != null && seasonOps > 0 && rollingOps > seasonOps * 1.05
+  const isCold = rollingOps != null && seasonOps > 0 && rollingOps < seasonOps * 0.95
 
   if (isHot) {
     return (
@@ -123,20 +107,22 @@ function SlotPlayerCard({
   const season = player.season_stats
   const ros    = player.ros_projection
 
+  const sv = season?.values
+  const rv = ros?.values
   const keyStats = isPitcher
     ? [
-        { label: 'ERA',  val: season?.era?.toFixed(2) ?? '—', rosVal: ros?.era?.toFixed(2) },
-        { label: 'WHIP', val: season?.whip?.toFixed(2) ?? '—', rosVal: ros?.whip?.toFixed(2) },
-        { label: 'K/9',  val: season?.k_9?.toFixed(1) ?? '—', rosVal: ros?.k_9?.toFixed(1) },
-        { label: 'W',    val: season?.w ?? '—',            rosVal: ros?.w },
-        { label: 'SV',   val: season?.nsv ?? '—',          rosVal: ros?.nsv },
+        { label: 'ERA',  val: sv?.['ERA']  != null ? Number(sv['ERA']).toFixed(2)  : '—', rosVal: rv?.['ERA']  != null ? Number(rv['ERA']).toFixed(2)  : undefined },
+        { label: 'WHIP', val: sv?.['WHIP'] != null ? Number(sv['WHIP']).toFixed(2) : '—', rosVal: rv?.['WHIP'] != null ? Number(rv['WHIP']).toFixed(2) : undefined },
+        { label: 'K/9',  val: sv?.['K_9']  != null ? Number(sv['K_9']).toFixed(1)  : '—', rosVal: rv?.['K_9']  != null ? Number(rv['K_9']).toFixed(1)  : undefined },
+        { label: 'W',    val: sv?.['W']   ?? '—', rosVal: rv?.['W'] },
+        { label: 'SV',   val: sv?.['NSV'] ?? '—', rosVal: rv?.['NSV'] },
       ]
     : [
-        { label: 'AVG',  val: season?.avg?.toFixed(3)?.replace(/^0/, '') ?? '—', rosVal: ros?.avg?.toFixed(3)?.replace(/^0/, '') },
-        { label: 'HR',   val: season?.hr ?? '—',            rosVal: ros?.hr },
-        { label: 'RBI',  val: season?.rbi ?? '—',           rosVal: ros?.rbi },
-        { label: 'SB',   val: season?.nsb ?? season?.sb ?? '—', rosVal: ros?.nsb ?? ros?.sb },
-        { label: 'OPS',  val: season?.ops?.toFixed(3)?.replace(/^0/, '') ?? '—', rosVal: ros?.ops?.toFixed(3)?.replace(/^0/, '') },
+        { label: 'AVG',  val: sv?.['AVG']  != null ? Number(sv['AVG']).toFixed(3).replace(/^0/, '')  : '—', rosVal: rv?.['AVG']  != null ? Number(rv['AVG']).toFixed(3).replace(/^0/, '')  : undefined },
+        { label: 'HR',   val: sv?.['HR_B'] ?? '—', rosVal: rv?.['HR_B'] },
+        { label: 'RBI',  val: sv?.['RBI']  ?? '—', rosVal: rv?.['RBI'] },
+        { label: 'SB',   val: sv?.['NSB']  ?? '—', rosVal: rv?.['NSB'] },
+        { label: 'OPS',  val: sv?.['OPS']  != null ? Number(sv['OPS']).toFixed(3).replace(/^0/, '')  : '—', rosVal: rv?.['OPS']  != null ? Number(rv['OPS']).toFixed(3).replace(/^0/, '')  : undefined },
       ]
 
   return (
@@ -268,10 +254,9 @@ function SlotPlayerCard({
           {player.game_context && (
             <div className="mt-2 flex items-center gap-2 text-[10px] text-text-muted">
               <span>vs {player.game_context.opponent}</span>
-              {player.game_context.is_day_game && <span className="text-amber-400">☀️ Day</span>}
-              {player.game_context.pitcher_hand && (
-                <span className={player.game_context.pitcher_hand === 'L' ? 'text-sky-400' : 'text-text-muted'}>
-                  {player.game_context.pitcher_hand}HP
+              {player.game_context.opposing_sp_handedness && (
+                <span className={player.game_context.opposing_sp_handedness === 'L' ? 'text-sky-400' : 'text-text-muted'}>
+                  vs {player.game_context.opposing_sp_handedness}HP
                 </span>
               )}
             </div>
@@ -303,7 +288,7 @@ function EmptySlot({ slotId }: { slotId: string }) {
 // ---------------------------------------------------------------------------
 // Section header for position groups
 // ---------------------------------------------------------------------------
-function SectionHeader({ title, count, icon: Icon }: { title: string; count: number; icon: any }) {
+function SectionHeader({ title, count, icon: Icon }: { title: string; count: number; icon: React.ComponentType<{ className?: string }> }) {
   return (
     <div className="flex items-center gap-2 mb-2 mt-4 first:mt-0">
       <Icon className="h-4 w-4 text-text-secondary" />
