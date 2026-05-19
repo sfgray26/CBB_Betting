@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
-import { Loader2, AlertCircle, DollarSign } from 'lucide-react'
+import { Loader2, AlertCircle, DollarSign, Calendar, TrendingUp } from 'lucide-react'
 import { BudgetPanel } from '@/components/dashboard/budget-panel'
 
 export default function BudgetPage() {
@@ -76,15 +76,54 @@ export default function BudgetPage() {
 
       <BudgetPanel budget={budget} />
 
+      {/* Season Pace panel */}
+      <div className="bg-bg-surface border border-border-subtle rounded-lg px-4 py-3 space-y-3">
+        <div className="flex items-center gap-2">
+          <Calendar className="h-3.5 w-3.5 text-accent-gold" />
+          <span className="text-xs font-bold tracking-widest uppercase text-accent-gold">
+            Season Pace
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-2">
+          <div>
+            <p className="text-[10px] text-text-muted uppercase tracking-wide">Current Week</p>
+            <p className="text-sm font-semibold text-text-primary">
+              {budget.week_label ?? '—'}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] text-text-muted uppercase tracking-wide">Weeks Left</p>
+            <p className="text-sm font-semibold text-text-primary">
+              {budget.weeks_remaining != null ? budget.weeks_remaining : '—'}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] text-text-muted uppercase tracking-wide">Days in Week</p>
+            <p className="text-sm font-semibold text-text-primary">
+              {budget.days_in_week_remaining != null ? budget.days_in_week_remaining : '—'}
+            </p>
+          </div>
+          <div>
+            <p className="text-[10px] text-text-muted uppercase tracking-wide">Season Adds</p>
+            <p className="text-sm font-semibold text-text-primary">
+              {budget.acquisitions_this_season != null ? budget.acquisitions_this_season : '—'}
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Remaining acquisitions callout */}
       <div className="bg-bg-surface border border-border-subtle rounded-lg px-4 py-3">
-        <p className="text-xs text-text-secondary">
-          <span className="text-text-primary font-semibold">{budget.acquisitions_remaining}</span>
-          {' '}acquisition{budget.acquisitions_remaining !== 1 ? 's' : ''} remaining this season
-          {budget.acquisition_warning && (
-            <span className="text-status-bubble ml-2 font-semibold">— budget tight</span>
-          )}
-        </p>
+        <div className="flex items-center gap-2 mb-1">
+          <TrendingUp className="h-3 w-3 text-text-muted" />
+          <p className="text-xs text-text-secondary">
+            <span className="text-text-primary font-semibold">{budget.acquisitions_remaining}</span>
+            {' '}weekly acquisition{budget.acquisitions_remaining !== 1 ? 's' : ''} remaining
+            {budget.acquisition_warning && (
+              <span className="text-status-bubble ml-2 font-semibold">— budget tight</span>
+            )}
+          </p>
+        </div>
       </div>
     </div>
   )

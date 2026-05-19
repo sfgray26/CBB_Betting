@@ -494,6 +494,69 @@ export interface WaiverRosterPlayer {
   positions: string[]
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Waiver ADD/DROP Recommendations (v3 — rich drop context)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DropPlayerOut {
+  name: string
+  position: string
+  positions: string[]
+  z_score: number
+  cat_scores: Record<string, number>
+  tier: number
+  adp: number
+  percent_owned: number
+  status?: string | null
+  injury_note?: string | null
+  starts_this_week: number
+  positional_impact: string[]
+}
+
+export interface CategoryDelta {
+  add: number
+  drop: number
+  net: number
+  cat_win_prob: number | null  // null = MCMC unavailable; render "—" not "0%"
+}
+
+export interface WaiverRosterContext {
+  active_player_count: number
+  add_weekly_starts: number
+  drop_weekly_starts: number
+}
+
+export interface WaiverRecommendation {
+  action: string
+  add_player?: WaiverAvailablePlayer | null
+  drop_player?: DropPlayerOut | null
+  drop_player_name?: string | null      // compat
+  drop_player_position?: string | null  // compat
+  rationale: string
+  category_targets: string[]
+  need_score: number
+  confidence: number
+  statcast_signals: string[]
+  regression_delta: number
+  win_prob_before: number
+  win_prob_after: number
+  win_prob_gain: number
+  category_win_probs: Record<string, number>
+  mcmc_enabled: boolean
+  quality_score?: number | null
+  category_deltas: Record<string, CategoryDelta>
+  alternative_drops: DropPlayerOut[]
+  positional_impact: string[]
+  roster_context: WaiverRosterContext
+}
+
+export interface WaiverRecommendationsResponse {
+  week_end: string
+  matchup_opponent: string
+  recommendations: WaiverRecommendation[]
+  category_deficits: CategoryDeficit[]
+}
+
 export interface WaiverResponse {
   week_end?: string
   matchup_opponent?: string
@@ -524,6 +587,10 @@ export interface BudgetData {
   ip_minimum: number
   ip_pace: "BEHIND" | "ON_TRACK" | "AHEAD"
   as_of: string
+  week_label?: string
+  weeks_remaining?: number
+  days_in_week_remaining?: number
+  acquisitions_this_season?: number
 }
 
 export interface BudgetResponse {

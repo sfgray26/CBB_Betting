@@ -5946,6 +5946,7 @@ async def get_constraint_budget(
         pass  # Fall back to 0
 
     # 2. Count acquisitions since Monday 00:00 ET (Yahoo matchup week start)
+    transactions: list = []
     try:
         transactions = client.get_transactions(t_type="add")
         logger.info("budget: fetched %d transactions from Yahoo", len(transactions))
@@ -5964,23 +5965,41 @@ async def get_constraint_budget(
     except Exception as _acq_err:
         logger.warning("budget: acquisitions count failed: %s", _acq_err, exc_info=True)
 
-    # 3. IP tracking - wired to Yahoo matchup stats (A-6 fix)
+    # 3. Season calendar — week number, pace metadata
+    from datetime import date as _date
+    _MLB_OPENING_DATE_2026 = _date(2026, 3, 20)  # MLB Opening Day 2026
+    _FANTASY_TOTAL_WEEKS = 25
+    days_since_opening = max(0, (now_et.date() - _MLB_OPENING_DATE_2026).days)
+    season_days_elapsed = days_since_opening
+    current_week = max(1, min(_FANTASY_TOTAL_WEEKS, (days_since_opening // 7) + 1))
+    weeks_remaining = max(0, _FANTASY_TOTAL_WEEKS - current_week)
+    # Days left in the current Yahoo matchup week (weeks run Mon–Sun)
+    days_in_week_remaining = max(0, 7 - now_et.weekday())  # Monday=0 → 7 remaining
+
+    # 4. IP tracking - wired to Yahoo matchup stats (A-6 fix)
     ip_accumulated = 0.0
     try:
-        # Calculate current week for accurate stats (same logic as matchup endpoint)
-        from datetime import date as _date
-        _MLB_OPENING_DATE_2026 = _date(2026, 3, 20)  # MLB Opening Day 2026
-        days_since_opening = (now_et.date() - _MLB_OPENING_DATE_2026).days
-        current_week = max(1, min(25, (days_since_opening // 7) + 1))
-
         matchup_stats = client.get_matchup_stats(week=current_week, my_team_key=team_key)
         if matchup_stats:
             my_stats = matchup_stats.get("my_stats", {})
             ip_accumulated = float(my_stats.get("IP", 0.0))
     except (YahooAuthError, YahooAPIError, Exception) as exc:
         logger.warning("budget: failed to fetch IP from matchup stats: %s", exc)
-        pass  # Fall back to 0.0
     ip_minimum = 18.0  # Yahoo H2H standard (innings pitched per week) - matches scoreboard_orchestrator.py
+
+    # Count season-total acquisitions from the already-fetched transaction list
+    acquisitions_this_season = 0
+    try:
+        season_start = _MLB_OPENING_DATE_2026
+        for txn in transactions:
+            ts = txn.get("timestamp")
+            if not ts:
+                continue
+            txn_dt = datetime.fromtimestamp(int(ts), tz=ZoneInfo("America/New_York"))
+            if txn_dt.date() >= season_start:
+                acquisitions_this_season += 1
+    except Exception:
+        pass  # non-critical; leave as 0
 
     budget = compute_budget_state(
         acquisitions_used=acquisitions_used,
@@ -5989,8 +6008,8 @@ async def get_constraint_budget(
         il_total=il_total,
         ip_accumulated=ip_accumulated,
         ip_minimum=ip_minimum,
-        days_remaining=6,  # Approximate for MVP
-        season_days_elapsed=1,  # Approximate for MVP
+        days_remaining=days_in_week_remaining,
+        season_days_elapsed=season_days_elapsed,
     )
 
     return {
@@ -6005,6 +6024,10 @@ async def get_constraint_budget(
             "ip_minimum": budget.ip_minimum,
             "ip_pace": budget.ip_pace.value,
             "as_of": budget.as_of.isoformat(),
+            "week_label": f"Week {current_week}",
+            "weeks_remaining": weeks_remaining,
+            "days_in_week_remaining": days_in_week_remaining,
+            "acquisitions_this_season": acquisitions_this_season,
         },
         "freshness": {
             "primary_source": "yahoo",
