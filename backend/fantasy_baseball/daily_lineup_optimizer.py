@@ -589,15 +589,21 @@ class DailyLineupOptimizer:
         proj_by_name = {p["name"].lower(): p for p in projections
                         if p.get("type") == "batter" or p.get("player_type") == "batter"}
 
+        _PITCHER_POS = {"SP", "RP", "P"}
         rankings = []
         for player in roster:
             positions = player.get("positions", [])
-            # Skip pitchers - if ANY position is SP/RP/P, they're a pitcher
-            # This handles two-way players (e.g., Shohei Ohtani with SP + Util)
-            if any(p in ("SP", "RP", "P") for p in positions):
+            # Skip pitchers via eligible_positions list AND display_position fallback.
+            # The fallback catches cases where Yahoo's recursive flattening loses
+            # the RP/SP entry from eligible_positions (e.g. selected_position nesting
+            # overwrites the field) but display_position ("RP", "SP/RP", etc.) survives.
+            display_pos = player.get("display_position", "") or ""
+            if any(p in _PITCHER_POS for p in positions):
+                continue
+            if any(pp in display_pos.upper() for pp in _PITCHER_POS):
                 continue
             status = player.get("status")
-            if status in ("IL", "IL60", "NA"):
+            if status in _INACTIVE_STATUSES:
                 continue
 
             name = player.get("name", "")

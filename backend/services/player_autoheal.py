@@ -92,15 +92,14 @@ class PlayerAutoHealService:
             .first()
         )
 
-        # Increment heal_attempts counter
         if existing is not None:
-            existing.heal_attempts = (existing.heal_attempts or 0) + 1
-
-        if existing is not None:
+            # Sacred: never modify a manual row in any way
             if existing.source == "manual":
                 logger.debug("auto_heal: skip %s — manual override exists", yahoo_key)
-                self._db.commit()  # Commit the heal_attempts increment
                 return False
+
+            # Increment heal_attempts counter for non-manual rows
+            existing.heal_attempts = (existing.heal_attempts or 0) + 1
             if (
                 existing.source == "bdl_search"
                 and existing.bdl_id is not None

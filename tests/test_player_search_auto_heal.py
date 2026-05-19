@@ -214,7 +214,8 @@ class TestNoRegression:
 
         assert result is False
         mock_bdl.search_mlb_players.assert_not_called()
-        assert existing.heal_attempts == 1  # Still incremented for observability
+        assert existing.heal_attempts == 0  # No DB write for manual rows
+        mock_db.commit.assert_not_called()
 
     def test_fresh_bdl_search_not_re_processed(self):
         """Fresh auto-healed mappings (< 7 days) are not re-queried."""

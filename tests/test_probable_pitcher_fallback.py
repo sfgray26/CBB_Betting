@@ -6,13 +6,15 @@ def test_load_probable_pitchers_from_snapshot_normalizes_keys():
     from backend.services.probable_pitcher_fallback import load_probable_pitchers_from_snapshot
 
     db = MagicMock()
-    rows = [("TBR", "Shane Baz"), ("NYY", "Gerrit Cole")]
+    rows = [("TBR", "Shane Baz", "R"), ("NYY", "Gerrit Cole", "L")]
     db.query.return_value.filter.return_value.all.return_value = rows
 
     result = load_probable_pitchers_from_snapshot(db, date(2026, 4, 15))
 
-    assert result["TB"] == "shane baz"
-    assert result["NYY"] == "gerrit cole"
+    assert result["TB"]["name"] == "shane baz"
+    assert result["TB"]["handedness"] == "R"
+    assert result["NYY"]["name"] == "gerrit cole"
+    assert result["NYY"]["handedness"] == "L"
 
 
 def test_lineup_optimizer_prefers_snapshot_before_live_api():

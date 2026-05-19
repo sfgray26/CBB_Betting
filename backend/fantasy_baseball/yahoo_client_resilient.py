@@ -690,44 +690,116 @@ class YahooFantasyClient:
             team_key = self.get_my_team_key()
         data = self._get(f"team/{team_key}/roster/players")
         team_data = self._team_section(data)
-        roster = self._safe_get(team_data, "roster")
-        slot_0 = self._safe_get(roster, "0")
+        roster_data = self._safe_get(team_data, "roster")
+        slot_0 = self._safe_get(roster_data, "0")
         players_raw = self._safe_get(slot_0, "players")
-        
-        # Deduplicate by player_key to prevent roster page duplicates (Bugfix March 28)
-        # Bugfix May 15: Handle missing count field by inferring from dict keys
+
+        # Completely empty response (no keys at all, or non-dict converted to {} by _safe_get)
+        if not players_raw:
+            logger.error("Yahoo roster: players_raw is empty for team %s", team_key)
+            raise YahooAPIError(
+                f"Empty roster response: players_raw is empty or malformed for team {team_key}"
+            )
+
         players_by_key: dict[str, dict] = {}
-        count = int(players_raw.get("count", 0))
-        
-        # If count is 0 or missing but players_raw has entries, infer count from keys
-        if count == 0 and isinstance(players_raw, dict):
-            # Find all numeric keys that could be player indices
-            inferred_indices = []
-            for key in players_raw.keys():
-                if key.isdigit():
-                    try:
-                        inferred_indices.append(int(key))
-                    except ValueError:
-                        continue
-            if inferred_indices:
-                count = max(inferred_indices) + 1
+
+        # --- Count validation: parse, type-check, and handle degenerate values ---
+        count_key_present = "count" in players_raw
+        raw_count = players_raw.get("count")
+        count: Optional[int] = None
+
+        if not count_key_present:
+            logger.warning(
+                "Yahoo roster missing 'count' field for team %s, will infer from keys", team_key
+            )
+        elif raw_count is None:
+            logger.warning(
+                "Yahoo roster 'count' field is null for team %s, will infer from keys", team_key
+            )
+        elif not isinstance(raw_count, (int, float)):
+            logger.warning(
+                "Yahoo roster 'count' field is invalid (type=%s) for team %s, will infer from keys",
+                type(raw_count).__name__, team_key,
+            )
+        else:
+            try:
+                count = int(raw_count)
+            except (ValueError, TypeError):
                 logger.warning(
-                    "Yahoo roster missing count field, inferred %d players from keys",
-                    count
+                    "Yahoo roster 'count' field is invalid for team %s, will infer from keys",
+                    team_key,
                 )
-        
+
+        # Collect actual numeric player indices present in players_raw
+        numeric_indices = sorted(
+            int(k) for k in players_raw.keys() if isinstance(k, str) and k.isdigit()
+        )
+        inferred_count = (max(numeric_indices) + 1) if numeric_indices else 0
+
+        if count is not None and count < 0:
+            logger.warning(
+                "Yahoo roster 'count' field is negative (%d) for team %s, inferring from keys",
+                count, team_key,
+            )
+            count = None
+
+        if count is None:
+            count = inferred_count
+        elif count == 0 and inferred_count > 0:
+            logger.warning(
+                "Yahoo roster count=0 but inferred %d players from keys for team %s",
+                inferred_count, team_key,
+            )
+            count = inferred_count
+
+        # Truly empty roster (count=0, no numeric keys) — not an error for new/empty teams
+        if count == 0:
+            logger.warning("Yahoo roster: Empty roster for team %s", team_key)
+            self._enrich_ownership_batch([])
+            self._trigger_auto_heal_for_unmapped([])
+            return []
+
+        # Log count-vs-indices discrepancies
+        if count > inferred_count and inferred_count > 0:
+            logger.warning(
+                "Yahoo roster count mismatch: count=%d but only %d indices found; "
+                "missing indices will be skipped (team=%s)",
+                count, inferred_count, team_key,
+            )
+            count = inferred_count  # only process what's actually present
+        elif inferred_count > count:
+            logger.warning(
+                "Yahoo roster extra indices: count=%d but found %d indices; "
+                "processing only %d (team=%s)",
+                count, inferred_count, count, team_key,
+            )
+
+        # Process players
         for i in range(count):
             entry = players_raw.get(str(i), {})
             entry = self._flatten_league_section(entry) if isinstance(entry, list) else entry
-            player_data = entry.get("player", entry) if isinstance(entry, dict) else entry
+
+            if not entry or not isinstance(entry, dict):
+                logger.debug(
+                    "Yahoo roster: No player data at index %d for team %s, skipping", i, team_key
+                )
+                continue
+
+            player_data = entry.get("player", entry)
+            if not player_data:
+                logger.debug(
+                    "Yahoo roster: No player data at index %d for team %s, skipping", i, team_key
+                )
+                continue
+
             p = self._parse_player(player_data)
 
             # Extract selected_position from roster data (indicates IL, BN, or active slot)
             selected_pos = self._extract_selected_position(player_data)
             if selected_pos:
                 p["selected_position"] = selected_pos
-            
-            # Deduplicate by player_key (line 447-451)
+
+            # Deduplicate by player_key
             player_key_val = p.get("player_key")
             if player_key_val and player_key_val not in players_by_key:
                 players_by_key[player_key_val] = p
@@ -736,12 +808,22 @@ class YahooFantasyClient:
                 player_id = p.get("player_id") or p.get("name", f"unknown_{i}")
                 if player_id not in players_by_key:
                     players_by_key[player_id] = p
-        
+
         players = list(players_by_key.values())
+
+        if count > 0 and not players:
+            logger.error(
+                "Yahoo roster: Roster parsing failed — count=%d but no valid players parsed (team=%s)",
+                count, team_key,
+            )
+        else:
+            logger.info(
+                "Yahoo roster: Processed roster with %d players for team %s", len(players), team_key
+            )
 
         # Best-effort: enrich with ownership % via the global players endpoint.
         self._enrich_ownership_batch(players)
-        
+
         # Auto-heal: trigger BDL search for unmapped players (fire-and-forget, non-blocking)
         self._trigger_auto_heal_for_unmapped(players)
 
@@ -1667,6 +1749,7 @@ class YahooFantasyClient:
             "name": name,
             "team": meta.get("editorial_team_abbr"),
             "positions": [p for p in positions if p],
+            "display_position": meta.get("display_position") or meta.get("display_positions") or "",
             "status": meta.get("status") or None,
             "injury_note": meta.get("injury_note") or None,
             "is_undroppable": meta.get("is_undroppable", 0) in (1, '1', True, 'true'),

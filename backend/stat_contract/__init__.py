@@ -40,6 +40,12 @@ DISPLAY_LABELS.update({
     code: entry.display_label
     for code, entry in CONTRACT.supporting_stats.items()
 })
+# Add short_label aliases (e.g. 'HR' → 'Home Runs' for code 'HR_B')
+DISPLAY_LABELS.update({
+    entry.short_label: entry.display_label
+    for code, entry in CONTRACT.stats.items()
+    if entry.short_label and entry.short_label != code
+})
 
 __all__ = [
     "CONTRACT",

@@ -138,6 +138,40 @@ class SavantIngestionAgent:
         # which breaks csv.DictReader's quoted-field parsing.
         return response.text.lstrip("\ufeff")
 
+    def _parse_csv_robust(self, csv_text: str, is_batter: bool = True) -> list[SavantMetricsRow]:
+        """
+        Parse CSV with fallback to pandas if DictReader fails on malformed newlines.
+
+        Savant occasionally returns CSVs with unquoted newlines in cells.
+        DictReader crashes; pandas handles it gracefully.
+        """
+        rows: list[SavantMetricsRow] = []
+
+        # Try standard DictReader first (fast path)
+        try:
+            reader = csv.DictReader(StringIO(csv_text))
+            for row in reader:
+                parsed = self._parse_batter_row(row) if is_batter else self._parse_pitcher_row(row)
+                if parsed:
+                    rows.append(parsed)
+            return rows
+        except csv.Error:
+            logger.warning("Savant CSV malformed (DictReader failed) — falling back to pandas")
+
+        # Fallback: pandas read_csv handles newlines in quoted fields robustly
+        try:
+            import pandas as pd
+            df = pd.read_csv(StringIO(csv_text), on_bad_lines="skip")
+            for _, row in df.iterrows():
+                row_dict = row.astype(str).to_dict()
+                parsed = self._parse_batter_row(row_dict) if is_batter else self._parse_pitcher_row(row_dict)
+                if parsed:
+                    rows.append(parsed)
+            return rows
+        except Exception as exc:
+            logger.error("Savant CSV fallback parser also failed: %s", exc)
+            return rows
+
     def _parse_batter_row(self, row: dict[str, str]) -> Optional[SavantMetricsRow]:
         """
         Parse a single batter CSV row from Custom Leaderboard.
@@ -437,13 +471,7 @@ class SavantIngestionAgent:
         )
 
         csv_text = self._fetch_csv(url)
-        rows = []
-
-        reader = csv.DictReader(StringIO(csv_text))
-        for row in reader:
-            parsed = self._parse_batter_row(row)
-            if parsed:
-                rows.append(parsed)
+        rows = self._parse_csv_robust(csv_text, is_batter=True)
 
         logger.info("Fetched %d batter rows from Savant Custom Leaderboard", len(rows))
         return rows
@@ -465,13 +493,7 @@ class SavantIngestionAgent:
         )
 
         csv_text = self._fetch_csv(url)
-        rows = []
-
-        reader = csv.DictReader(StringIO(csv_text))
-        for row in reader:
-            parsed = self._parse_pitcher_row(row)
-            if parsed:
-                rows.append(parsed)
+        rows = self._parse_csv_robust(csv_text, is_batter=False)
 
         logger.info("Fetched %d pitcher rows from Savant Custom Leaderboard", len(rows))
         return rows

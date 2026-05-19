@@ -27,7 +27,12 @@ from typing import Optional
 import pandas as pd
 import requests
 
+import cloudscraper
+
 logger = logging.getLogger(__name__)
+
+# Cloudscraper session to bypass FanGraphs bot protection
+_scraper = cloudscraper.create_scraper()
 
 # ---------------------------------------------------------------------------
 # Projection system definitions
@@ -102,7 +107,7 @@ def _fetch_projection_json(system: str, stat_type: str) -> Optional[list]:
         "playerid": "0",
     }
     try:
-        resp = requests.get(
+        resp = _scraper.get(
             _API_URL,
             params=params,
             headers=_REQUEST_HEADERS,

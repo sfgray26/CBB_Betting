@@ -20,7 +20,7 @@ import asyncio
 import unicodedata
 import uuid
 from zoneinfo import ZoneInfo
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from dataclasses import asdict
 
 from backend.models import (
@@ -116,9 +116,12 @@ def _fetch_probable_starts_map(start_date: str, end_date: str) -> dict:
     same cache.  Keys are lowercase full names; values are integer start counts.
     """
     import httpx as _httpx
-    _now = datetime.utcnow()
+    _now = datetime.now(timezone.utc)
     if _STARTS_CACHE.get("data") and _STARTS_CACHE.get("fetched_at"):
-        age_h = (_now - _STARTS_CACHE["fetched_at"]).total_seconds() / 3600
+        _fetched = _STARTS_CACHE["fetched_at"]
+        if _fetched.tzinfo is None:
+            _fetched = _fetched.replace(tzinfo=timezone.utc)
+        age_h = (_now - _fetched).total_seconds() / 3600
         if age_h < 6:
             return _STARTS_CACHE["data"]
     url = (
@@ -3491,9 +3494,6 @@ async def optimize_roster(
         "C": 1, "1B": 1, "2B": 1, "3B": 1, "SS": 1, "OF": 3, "Util": 1,
         "SP": 2, "RP": 2, "P": 1, "BN": 5,
     }
-
-    # Slot priority order (fill in this order)
-    slot_priority = ["C", "1B", "2B", "3B", "SS", "OF", "Util", "SP", "RP", "P"]
 
     try:
         client = get_yahoo_client()
