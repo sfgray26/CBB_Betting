@@ -66,23 +66,39 @@ def count_weekly_acquisitions(
             or txn.get("destination_team", {}).get("team_key")
         )
 
-        # Fallback: walk transaction_data list for player-level destination
+        # Fallback: walk transaction_data or players for player-level destination.
+        # Yahoo MLB returns players as a numeric-keyed dict {"count": N, "0": {...}, ...}
+        # OR as a list — handle both.
         if not dest_team:
             txn_data = txn.get("transaction_data") or txn.get("players") or []
-            if isinstance(txn_data, list):
-                for item in txn_data:
-                    if not isinstance(item, dict):
-                        continue
-                    for _v in item.values():
-                        if isinstance(_v, dict):
-                            dest_team = (
-                                _v.get("destination_team_key")
-                                or _v.get("destination_team", {}).get("team_key")
-                            )
-                            if dest_team:
-                                break
-                    if dest_team:
-                        break
+            if isinstance(txn_data, dict):
+                # Numeric-keyed dict: skip "count" key, iterate over player entries
+                items = [v for k, v in txn_data.items() if k != "count" and isinstance(v, dict)]
+            elif isinstance(txn_data, list):
+                items = txn_data
+            else:
+                items = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                # Check direct keys on this item first
+                dest_team = (
+                    item.get("destination_team_key")
+                    or item.get("destination_team", {}).get("team_key")
+                )
+                if dest_team:
+                    break
+                # Recurse one level into nested dicts (e.g. item["transaction_data"])
+                for _v in item.values():
+                    if isinstance(_v, dict):
+                        dest_team = (
+                            _v.get("destination_team_key")
+                            or _v.get("destination_team", {}).get("team_key")
+                        )
+                        if dest_team:
+                            break
+                if dest_team:
+                    break
 
         if dest_team == my_team_key:
             count += 1

@@ -2343,7 +2343,7 @@ async def get_waiver_recommendations(
     from datetime import date as date_type, timedelta
     from backend.schemas import (
         RosterMoveRecommendation, WaiverRecommendationsResponse,
-        WaiverPlayerOut, CategoryDeficitOut,
+        WaiverPlayerOut, CategoryDeficitOut, DropPlayerOut,
     )
     from backend.fantasy_baseball.player_board import get_or_create_projection as _get_proj
     from backend.fantasy_baseball.statcast_loader import (
@@ -2631,6 +2631,7 @@ async def get_waiver_recommendations(
 
         my_roster_scored: list = []
         _IL_STATUSES = {"IL", "IL10", "IL60", "NA", "OUT", "DL"}
+        _STARTING_SLOTS = {"C", "1B", "2B", "3B", "SS", "OF", "Util", "SP", "RP", "P"}
         for rp in my_roster:
             bp = _get_proj(rp)
             # Derive effective IL status from both status field and selected_position slot.
@@ -2723,6 +2724,45 @@ async def get_waiver_recommendations(
             if not parts:
                 return ""
             return " [" + "; ".join(parts) + "]"
+
+        def _build_drop_out(candidate: dict) -> DropPlayerOut:
+            raw_cats = candidate.get("cat_scores") or {}
+            try:
+                safe_cats = {k: float(v) for k, v in raw_cats.items()}
+            except (ValueError, TypeError):
+                safe_cats = {}
+            return DropPlayerOut(
+                name=candidate["name"],
+                position=candidate["positions"][0] if candidate.get("positions") else "?",
+                positions=candidate.get("positions") or [],
+                z_score=round(candidate.get("z_score", 0.0), 3),
+                cat_scores=safe_cats,
+                tier=candidate.get("tier", 5),
+                adp=candidate.get("adp", 999.0),
+                percent_owned=round(candidate.get("percent_owned", 0.0), 1),
+                status=candidate.get("status"),
+                injury_note=candidate.get("injury_note"),
+                starts_this_week=candidate.get("starts_this_week", 0),
+            )
+
+        def _compute_positional_impact(candidate: dict, add_position: str, roster: list) -> list:
+            active_after = [
+                p for p in roster
+                if p["name"] != candidate["name"]
+                and p.get("status") not in _IL_STATUSES
+            ]
+            cand_positions = set(candidate.get("positions") or [])
+            add_positions = {add_position} if add_position and add_position != "?" else set()
+            warnings = []
+            for pos in cand_positions:
+                if pos not in _STARTING_SLOTS:
+                    continue
+                if pos in add_positions:
+                    continue
+                coverage = sum(1 for p in active_after if pos in p.get("positions", []))
+                if coverage == 0:
+                    warnings.append(f"Drops last {pos}-eligible player")
+            return warnings
 
         for fa in scored_fas[:15]:
             if len(recommendations) >= 5:
@@ -2899,6 +2939,54 @@ async def get_waiver_recommendations(
             if _mcmc.get("mcmc_enabled") and _mcmc.get("win_prob_gain", 0.0) <= 0:
                 continue
 
+            # Build rich drop context fields
+            cat_win_probs_after = _mcmc.get("category_win_probs_after") or {}
+            mcmc_has_cats = bool(cat_win_probs_after)
+            add_cats = fa.category_contributions or {}
+            drop_cats = drop_candidate.get("cat_scores") or {}
+            all_cats = set(add_cats) | set(drop_cats)
+            category_deltas: dict = {}
+            for _cat in all_cats:
+                _add_val = add_cats.get(_cat, 0.0)
+                _drop_val = drop_cats.get(_cat, 0.0)
+                if not isinstance(_add_val, (int, float)) or not isinstance(_drop_val, (int, float)):
+                    continue
+                category_deltas[_cat] = {
+                    "add": round(float(_add_val), 3),
+                    "drop": round(float(_drop_val), 3),
+                    "net": round(float(_add_val) - float(_drop_val), 3),
+                    "cat_win_prob": round(float(cat_win_probs_after[_cat]), 4) if mcmc_has_cats and _cat in cat_win_probs_after else None,
+                }
+            if mcmc_has_cats:
+                _missing_cats = all_cats - set(cat_win_probs_after)
+                if _missing_cats:
+                    logger.warning("category key mismatch: z-score cats %s not in MCMC cat_win_probs_after", _missing_cats)
+
+            positional_impact = _compute_positional_impact(drop_candidate, fa.position, my_roster_scored)
+            drop_out = _build_drop_out(drop_candidate)
+            drop_out.positional_impact = positional_impact
+
+            all_droppable = sorted(
+                [
+                    p for p in my_roster_scored
+                    if not p.get("is_undroppable", False)
+                    and not _is_protected_drop_candidate(p)
+                    and p["name"] != drop_candidate["name"]
+                ],
+                key=_drop_candidate_value,
+            )
+            alternative_drops = []
+            for _alt in all_droppable[:2]:
+                _alt_out = _build_drop_out(_alt)
+                _alt_out.positional_impact = _compute_positional_impact(_alt, fa.position, my_roster_scored)
+                alternative_drops.append(_alt_out)
+
+            roster_context = {
+                "active_player_count": sum(1 for p in my_roster_scored if p.get("status") not in _IL_STATUSES),
+                "add_weekly_starts": fa.starts_this_week,
+                "drop_weekly_starts": drop_candidate.get("starts_this_week", 0),
+            }
+
             recommendations.append(RosterMoveRecommendation(
                 action="ADD_DROP",
                 add_player=fa,
@@ -2918,6 +3006,11 @@ async def get_waiver_recommendations(
                 win_prob_gain=_mcmc.get("win_prob_gain", 0.0),
                 category_win_probs=_mcmc.get("category_win_probs_after", {}),
                 mcmc_enabled=_mcmc.get("mcmc_enabled", False),
+                drop_player=drop_out,
+                category_deltas=category_deltas,
+                alternative_drops=alternative_drops,
+                positional_impact=positional_impact,
+                roster_context=roster_context,
             ))
 
     except YahooAuthError as exc:
@@ -5875,8 +5968,9 @@ async def get_constraint_budget(
     ip_accumulated = 0.0
     try:
         # Calculate current week for accurate stats (same logic as matchup endpoint)
-        from backend.services.scoreboard_orchestrator import MLB_OPENING_DATE_2026
-        days_since_opening = (now_et.date() - MLB_OPENING_DATE_2026).days
+        from datetime import date as _date
+        _MLB_OPENING_DATE_2026 = _date(2026, 3, 20)  # MLB Opening Day 2026
+        days_since_opening = (now_et.date() - _MLB_OPENING_DATE_2026).days
         current_week = max(1, min(25, (days_since_opening // 7) + 1))
 
         matchup_stats = client.get_matchup_stats(week=current_week, my_team_key=team_key)
