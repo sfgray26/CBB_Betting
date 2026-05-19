@@ -368,6 +368,14 @@ class CanonicalPlayerRow(BaseModel):
     bdl_player_id: Optional[int] = None
     mlbam_id: Optional[int] = None
 
+    @field_validator("injury_status", "injury_return_timeline", mode="before")
+    @classmethod
+    def coerce_injury_fields_to_string(cls, v):
+        """Yahoo API returns boolean injury flags; coerce to string so JSON never emits true/false."""
+        if isinstance(v, bool):
+            return "IL" if v else "Active"
+        return v
+
     class Config:
         frozen = True
 

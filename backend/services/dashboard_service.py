@@ -505,12 +505,23 @@ class DashboardService:
                         opp_stats = raw_stats
                 if my_stats and opp_stats:
                     n_cats = max(len(my_stats), 1)
+                    # Translate Yahoo stat IDs -> canonical codes so that
+                    # compute_need_score can match against cat_scores board keys.
+                    from backend.stat_contract import CONTRACT as _CONTRACT
+                    _yahoo_index = _CONTRACT.yahoo_id_index
                     for sid, my_val in my_stats.items():
                         opp_val = opp_stats.get(sid, 0)
                         try:
-                            deficit = float(opp_val or 0) - float(my_val or 0)
+                            my_f   = float(my_val  or 0)
+                            opp_f  = float(opp_val or 0)
+                            deficit = opp_f - my_f
+                            canon = _yahoo_index.get(str(sid), sid)
                             category_deficits.append(CategoryDeficitOut(
-                                category=sid, deficit=deficit, winning=deficit <= 0
+                                category=canon,
+                                my_total=my_f,
+                                opponent_total=opp_f,
+                                deficit=deficit,
+                                winning=deficit <= 0,
                             ))
                         except (TypeError, ValueError):
                             pass
