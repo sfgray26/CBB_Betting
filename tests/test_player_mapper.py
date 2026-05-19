@@ -112,6 +112,36 @@ class TestMapRollingToCategoryStats:
         assert result.values["K_9"] == 9.5
         assert result.values["QS"] == 2.0
 
+    def test_ops_fallback_from_obp_slg(self):
+        rolling = PlayerRollingStats(
+            bdl_player_id=1,
+            as_of_date=datetime(2026, 4, 1).date(),
+            window_days=14,
+            games_in_window=10,
+            w_games=9.5,
+            w_ops=None,
+            w_obp=0.340,
+            w_slg=0.450,
+        )
+        result = _map_rolling_to_category_stats(rolling)
+        assert result is not None
+        assert result.values["OPS"] == pytest.approx(0.790)
+
+    def test_k9_fallback_from_strikeouts_ip(self):
+        rolling = PlayerRollingStats(
+            bdl_player_id=1,
+            as_of_date=datetime(2026, 4, 1).date(),
+            window_days=14,
+            games_in_window=4,
+            w_games=4.0,
+            w_k_per_9=None,
+            w_strikeouts_pit=20.0,
+            w_ip=18.0,
+        )
+        result = _map_rolling_to_category_stats(rolling)
+        assert result is not None
+        assert result.values["K_9"] == pytest.approx(10.0)
+
 
 class TestMapYahooStatsToCategoryStats:
     """Tests for _map_yahoo_stats_to_category_stats()."""
