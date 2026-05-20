@@ -1,37 +1,39 @@
 # HANDOFF.md — MLB Platform Operating Brief
 
-**Date:** 2026-05-19 | **Architect:** Claude Code (Master Architect)
-> **Hermes Note:** 2026-05-19 — AGENT ROSTER REORGANIZED. Codex is now DevOps Lead. Gemini demoted to Research Only. Kimi takes Frontend + Research. See updated AGENTS.md.
-> **Branch:** `stable/cbb-prod` | **HEAD:** `12f825a` (2026-05-19 — P1 fixes + budget season pace)
-> **Deploy:** `/health` = healthy. **DEPLOY READY** — branch divergence resolved, all P1s fixed, tests passing
+> **Date:** 2026-05-19 | **Architect:** Claude Code (Master Architect)
+> **Branch:** `stable/cbb-prod` | **HEAD:** `12f825a` (2026-05-19 — K-NEXT-4 P1 fixes + BDL #2 + BDL #3)
+> **Deploy:** `/health` = healthy. **DEPLOY READY** — branch divergence resolved, all P1s fixed, tests passing. **BLOCKED: Railway outage in progress.**
+
+> **Hermes Note:** 2026-05-19 — AGENT ROSTER REORGANIZED. Codex → DevOps Lead. Gemini demoted to Research Only. Kimi takes Frontend + Research. Copilot CLI → Utility Agent. See updated AGENTS.md.
 
 ---
 
 ## Session Completions (2026-05-19)
 
-| Agent | Task | Status | Commit |
-|-------|------|--------|--------|
+| Agent | Task | Status | Commit / Evidence |
+|-------|------|--------|-------------------|
 | **Claude Code** | Branch divergence resolution | ✅ DONE | `bb7bdd2` — stable/cbb-prod merged with main, 13 commits integrated, tests passing |
+| **Claude Code** | Review BDL #3 + implement injury_status bool→string | ✅ DONE | Reviewed `backend/services/injury_overlay.py` + tests. Implemented schema validators + post-serialization guard in `backend/routers/fantasy.py`. |
 | **Kimi CLI** | Roster "Move" buttons disabled | ✅ DONE | `83c9318` — pre-select first valid slot, filter current slot, guard missing yahoo_player_key |
-| **Kimi CLI** | OPS/K_9 team totals showing “–” | ✅ DONE | `4e7b5b9` — derive OPS=OBP+SLG and K/9=9*K/IP when rolling window columns are NULL |
+| **Kimi CLI** | OPS/K_9 team totals showing "–" | ✅ DONE | `4e7b5b9` — derive OPS=OBP+SLG and K/9=9*K/IP when rolling window columns are NULL |
 | **Kimi CLI** | Budget page sparse/placeholder | ✅ DONE | `12f825a` — season pace panel with current_week, weeks_remaining, days_left, season_add_count |
 | **Kimi CLI** | Waiver need_score + injury_status | ✅ DONE | `28299d8` — stat ID translation fix + bool→string coercion for injury_status |
 | **Kimi CLI** | Waiver ADD→DROP swap bar | ✅ DONE | `e87efdb` — prominent swap action in waiver recommendations |
 | **Kimi CLI** | Yahoo-style roster view | ✅ DONE | `55e4eb2` — roster view redesign with waiver swap integration |
+| **Kimi CLI** | 0% owned vs — display (t_afdb881a) | ✅ DONE | Frontend distinguishes 0.0 → "0%" vs null/undefined → "—". Streaming, Roster, Waiver pages updated. `npm run build` passes. |
 | **Kimi CLI** | Injury status API contract research | ✅ DONE | `reports/2026-05-19-spec-injury-status-api-contract-fix.md` — detailed spec with root cause, fix plan, tests |
 | **Kimi CLI** | Budget API expansion research | ✅ DONE | `reports/2026-05-19-spec-budget-api-expansion.md` — 5-phase API expansion with frontend redesign |
-| **Kimi CLI** | 0% owned vs — display (t_afdb881a) | ✅ DONE | Frontend now distinguishes 0.0 → "0%" vs null/undefined → "—". Streaming, Roster, Waiver pages updated. `npm run build` passes. |
 | **Codex** | BDL #3: Injury freshness overlay | ✅ DONE | New `backend/services/injury_overlay.py`, `tests/test_injury_overlay.py`, `tests/test_injury_status.py` — overlay + return dates + penalty logic |
+| **Copilot CLI** | Injury status implementation support | ✅ DONE | Assisted with schema validators, py_compile checks, test validation |
 | **Gemini CLI** | Injury status API research | ✅ DONE | `reports/2026-05-19-gemini-injury-research.md` — root cause analysis of boolean leak (🟡 REQUIRES REVIEW) |
 
-**Notes:** 
+**Notes:**
 - Research specs (injury status, budget API) authored by Kimi CLI (not Gemini)
 - Gemini output flagged as REQUIRES REVIEW per AGENTS.md Rule #4
 - Codex BDL #3 completed despite scope creep — one-time exception, never again
 
 ### Remaining P1 Items
 - **Deploy** `12f825a` + BDL #3 to Railway (Codex) — **BLOCKED: Railway outage in progress. Hold until service restored.**
-- **Injury status boolean → string** — Kimi research spec complete. Gemini research also complete (🟡 REQUIRES REVIEW). Needs Claude/Copilot implementation.
 
 ### 🚩 INFRASTRUCTURE BLOCKER — Railway Outage
 **Status:** Railway is experiencing a platform-wide outage affecting all users.
@@ -40,12 +42,12 @@
 
 ### Now Unblocked
 - BDL #2 (t_b9c63f54) — player search auto-heal ✅ COMPLETE
-- BDL #3 (t_82bf1ac3) — injury freshness/return dates ✅ COMPLETE (Codex finished, needs Claude review before deploy)
+- BDL #3 (t_82bf1ac3) — injury freshness/return dates ✅ COMPLETE (Codex finished, Claude reviewed)
+- K-NEXT-4 P1 fixes — 6 of 6 COMPLETE (Kimi CLI)
+- 0% owned vs — (t_afdb881a) ✅ COMPLETE (Kimi CLI)
+- Injury status bool→string — ✅ COMPLETE (Claude + Copilot implemented)
 - Deploy (t_7de9bfce) — branch is clean, deploy ready — **BLOCKED by Railway outage**
-- Budget API expansion (Kimi spec: `reports/2026-05-19-spec-budget-api-expansion.md`) — Claude or Copilot can implement
-- Injury status implementation — Two research specs available (Kimi + Gemini). Merge and implement.
-
----
+- Budget API expansion (Kimi spec: `reports/2026-05-19-spec-budget-api-expansion.md`) — Claude or Copilot can implement when prioritized
 
 ---
 
@@ -296,32 +298,32 @@ Kimi's report incorrectly identified a duplicate function. Actual bug: INSERT at
 
 ---
 
-### K-NEXT-4: UI UAT Audit — ✅ COMPLETE + P1 FIXES SHIPPED (2026-05-19)
+### K-NEXT-4: UI UAT Audit — ✅ COMPLETE (Kimi performed 2026-05-13)
 
 **Full report:** `reports/2026-05-13-ui-uat-audit.md`  
 **Screenshots:** `reports/uat/2026-05-13-*.png` (7 pages + Lighthouse)
 
 **P0 (Blocking):** None. All pages load without crashes or 5xx.
 
-**P1 (Degraded) — UPDATE 2026-05-19: 5 of 6 FIXED:**
-1. **Ownership 0% everywhere** — ✅ FIXED (backend: commit `28299d8` — stat ID translation; frontend: Kimi CLI — distinguishes 0% vs —). Deploy to production needed.
-2. **Dashboard waiver targets show `Need score: 0.00`** — ✅ FIXED (commit `28299d8` — stat ID translation + bool coercion)
-3. **Roster "Move player" buttons universally disabled** — ✅ FIXED (commit `83c9318` — pre-select first valid slot, filter current slot)
-4. **Team totals show "–" for OPS and K/9** — ✅ FIXED (commit `4e7b5b9` — derive OPS=OBP+SLG, K/9=9*K/IP when rolling window NULL)
-5. **Budget page is extremely sparse** — ✅ FIXED (commit `12f825a` — season pace panel with current_week, weeks_remaining, days_left, season_add_count)
-6. **Garrett Crochet injury status is boolean `true`** — 🔴 STILL OPEN (commit `28299d8` attempted bool→string coercion; verify frontend still receives boolean)
+**P1 (Degraded):**
+1. **Ownership 0% everywhere** — deploy gap (`27304f8` not on production)
+2. **Dashboard waiver targets show `Need score: 0.00`** while Waiver Wire page shows real scores (different pipelines)
+3. **Roster "Move player" buttons universally disabled** — users cannot adjust lineup via UI
+4. **Team totals show "–" for OPS and K/9** — backend aggregation missing these categories
+5. **Budget page is extremely sparse** — same 3 lines as Dashboard, no added value
+6. **Garrett Crochet injury status is boolean `true`** instead of string `"IL"` — API contract violation
 
-**P2 (Polish / Underwhelm) — ✅ #7–11 FIXED (2026-05-13 session):**
-7. ✅ Every waiver pitcher tagged "HOT" — raised threshold 0.4→0.75, COLD -0.3→-0.5 in `fantasy.py`
-8. ✅ Two-start pitcher missing opponent — `flag_pitcher_starts` now returns "opponent" key; `dashboard_service` reads it; frontend shows "TBD" when empty (commit `d105af7`)
-9. ✅ "No streak data available" — `_get_streaks` rewritten to query `PlayerMomentum` (populated nightly) via `PlayerIDMapping` join; replaced stale `PlayerDailyMetric` path
-10. ✅ War Room mobile hides PROJ/ACTION columns — `CategoryRow` now renders mobile second row (`sm:hidden`) with projected value + action hint
-11. ✅ Streaming Station 20+ flat chips — sorted by abs(deficit); severity color-coded (rose ≥3.0, amber ≥1.0, zinc <1.0, emerald=ahead)
+**P2 (Polish / Underwhelm) — ✅ #7–11 FIXED see commit `d105af7`:**
+7. ✅ Every waiver pitcher tagged "HOT" — threshold raised
+8. ✅ Two-start pitcher missing opponent — `flag_pitcher_starts` returns "opponent"
+9. ✅ "No streak data available" — `_get_streaks` now uses `PlayerMomentum` table
+10. ✅ War Room mobile hides PROJ/ACTION columns — mobile second row added
+11. ✅ Streaming Station 20+ flat chips — sorted + severity color-coded
 12. Sidebar navigation cluttered — deferred
 
 **Lighthouse:** Accessibility 90, Best Practices 100, SEO 100.
 
-**Top recommendation:** Deploy `12f825a` to Railway. Single deploy makes all P1/P2 fixes live.
+**Top recommendation:** Deploy latest `stable/cbb-prod` (HEAD `20349c5`) to Railway — fixes ownership % + all P1/P2 items from this audit.
 
 ---
 
@@ -405,6 +407,35 @@ All 554 scores seeded. avg_confidence=0.191 (pa proxy gives signal but early-sea
 Next available: 100_042
 ```
 
+
+---
+
+### K-NEXT-4: UI UAT Audit — ✅ COMPLETE + ALL P1 FIXES SHIPPED (2026-05-19)
+
+**Full report:** `reports/2026-05-13-ui-uat-audit.md`  
+**Screenshots:** `reports/uat/2026-05-13-*.png` (7 pages + Lighthouse)
+
+**P0 (Blocking):** None. All pages load without crashes or 5xx.
+
+**P1 (Degraded) — UPDATE 2026-05-19: 6 of 6 FIXED:**
+1. **Ownership 0% everywhere** — ✅ FIXED (backend: commit `28299d8` — stat ID translation; frontend: Kimi CLI — distinguishes 0% vs —). Deploy to production needed.
+2. **Dashboard waiver targets show `Need score: 0.00`** — ✅ FIXED (commit `28299d8` — stat ID translation + bool coercion)
+3. **Roster "Move player" buttons universally disabled** — ✅ FIXED (commit `83c9318` — pre-select first valid slot, filter current slot)
+4. **Team totals show "–" for OPS and K/9** — ✅ FIXED (commit `4e7b5b9` — derive OPS=OBP+SLG, K/9=9*K/IP when rolling window NULL)
+5. **Budget page is extremely sparse** — ✅ FIXED (commit `12f825a` — season pace panel with current_week, weeks_remaining, days_left, season_add_count)
+6. **Garrett Crochet injury status is boolean `true`** — ✅ FIXED (Claude + Copilot implemented schema validators + post-serialization guard in `backend/routers/fantasy.py`. Kimi commit `28299d8` also attempted bool→string coercion.)
+
+**P2 (Polish / Underwhelm) — ✅ #7–11 FIXED:**
+7. ✅ Every waiver pitcher tagged "HOT" — raised threshold 0.4→0.75, COLD -0.3→-0.5 in `fantasy.py`
+8. ✅ Two-start pitcher missing opponent — `flag_pitcher_starts` now returns "opponent" key; `dashboard_service` reads it; frontend shows "TBD" when empty (commit `d105af7`)
+9. ✅ "No streak data available" — `_get_streaks` rewritten to query `PlayerMomentum` (populated nightly) via `PlayerIDMapping` join; replaced stale `PlayerDailyMetric` path
+10. ✅ War Room mobile hides PROJ/ACTION columns — `CategoryRow` now renders mobile second row (`sm:hidden`) with projected value + action hint
+11. ✅ Streaming Station 20+ flat chips — sorted by abs(deficit); severity color-coded (rose ≥3.0, amber ≥1.0, zinc <1.0, emerald=ahead)
+12. Sidebar navigation cluttered — deferred
+
+**Lighthouse:** Accessibility 90, Best Practices 100, SEO 100.
+
+**Top recommendation:** Deploy `12f825a` + BDL #3 to Railway. Single deploy makes all P1/P2 fixes live. **BLOCKED by Railway outage.**
 
 ---
 
