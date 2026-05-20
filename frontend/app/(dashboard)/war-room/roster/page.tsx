@@ -56,9 +56,9 @@ const SLOT_COLORS: Record<string, string> = {
   BN: 'bg-bg-elevated text-text-secondary',
   IL: 'bg-status-lost/10 text-status-lost',
   IL60: 'bg-status-lost/10 text-status-lost',
-  SP: 'bg-blue-900/30 text-blue-400',
-  RP: 'bg-purple-900/30 text-purple-400',
-  P: 'bg-purple-900/30 text-purple-400',
+  SP: 'bg-blue-50 text-blue-700',
+  RP: 'bg-purple-50 text-purple-700',
+  P: 'bg-purple-50 text-purple-700',
 }
 
 type ViewMode = 'season' | '7d' | '14d' | '30d' | 'ros' | 'yahoo'
@@ -184,10 +184,10 @@ function BudgetPanel({ budget }: { budget: BudgetData }) {
     ? Math.min(100, (budget.ip_accumulated / budget.ip_minimum) * 100)
     : 0
   const paceColor = budget.ip_pace === 'BEHIND'
-    ? 'text-rose-400'
+    ? 'text-status-lost'
     : budget.ip_pace === 'AHEAD'
-      ? 'text-emerald-400'
-      : 'text-amber-400'
+      ? 'text-status-safe'
+      : 'text-status-bubble'
   const movesLeft = budget.acquisition_limit - budget.acquisitions_used
   const movesWarning = budget.acquisition_warning || movesLeft <= 1
 
@@ -225,7 +225,7 @@ function BudgetPanel({ budget }: { budget: BudgetData }) {
           <div className="flex items-center gap-1.5 mb-1">
             <div className="flex-1 h-1.5 bg-bg-inset rounded-full overflow-hidden">
               <div
-                className="h-full rounded-full bg-blue-500"
+                className="h-full rounded-full bg-accent-primary"
                 style={{ width: `${ipPct}%` }}
               />
             </div>

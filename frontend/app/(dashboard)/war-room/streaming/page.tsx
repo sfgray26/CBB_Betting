@@ -15,7 +15,7 @@ export default function StreamingStationPage() {
 
   if (waiver.isLoading) {
     return (
-      <div className="min-h-screen bg-black p-6">
+      <div className="min-h-screen bg-bg-base p-6">
         <h1 className="text-xl font-bold tracking-widest uppercase text-accent-gold mb-6">
           STREAMING STATION
         </h1>
@@ -29,11 +29,11 @@ export default function StreamingStationPage() {
 
   if (waiver.isError) {
     return (
-      <div className="min-h-screen bg-black p-6">
+      <div className="min-h-screen bg-bg-base p-6">
         <h1 className="text-xl font-bold tracking-widest uppercase text-accent-gold mb-6">
           STREAMING STATION
         </h1>
-        <div className="flex items-center gap-2 text-rose-400">
+        <div className="flex items-center gap-2 text-status-lost">
           <AlertCircle className="h-4 w-4" />
           <span className="text-sm">{waiver.error?.message ?? 'Failed to load waiver data'}</span>
         </div>
@@ -43,7 +43,7 @@ export default function StreamingStationPage() {
 
   if (!waiver.data) {
     return (
-      <div className="min-h-screen bg-black p-6">
+      <div className="min-h-screen bg-bg-base p-6">
         <h1 className="text-xl font-bold tracking-widest uppercase text-accent-gold mb-6">
           STREAMING STATION
         </h1>
