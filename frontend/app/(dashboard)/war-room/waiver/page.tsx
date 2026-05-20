@@ -74,19 +74,19 @@ function HotColdBadge({ hotCold, rankPercentile }: { hotCold?: string | null; ra
     )
   }
   return (
-    <span className="flex items-center gap-0.5 text-[10px] text-sky-400 font-semibold">
+    <span className="flex items-center gap-0.5 text-[10px] text-signal-consider font-semibold">
       <Snowflake className="h-3 w-3" /> COLD
     </span>
   )
 }
 
 function positionBadgeClass(pos: string): string {
-  if (pos === 'SP') return 'bg-blue-900/30 text-blue-400'
-  if (pos === 'RP' || pos === 'P') return 'bg-purple-900/30 text-purple-400'
-  if (pos === 'OF' || pos === 'LF' || pos === 'CF' || pos === 'RF') return 'bg-emerald-900/30 text-emerald-400'
-  if (pos === 'C') return 'bg-amber-900/30 text-amber-400'
-  if (pos === '1B' || pos === '3B') return 'bg-orange-900/30 text-orange-400'
-  if (pos === '2B' || pos === 'SS' || pos === 'MI') return 'bg-sky-900/30 text-sky-400'
+  if (pos === 'SP') return 'bg-blue-50 text-blue-700'
+  if (pos === 'RP' || pos === 'P') return 'bg-purple-50 text-purple-700'
+  if (pos === 'OF' || pos === 'LF' || pos === 'CF' || pos === 'RF') return 'bg-emerald-50 text-emerald-700'
+  if (pos === 'C') return 'bg-amber-50 text-amber-700'
+  if (pos === '1B' || pos === '3B') return 'bg-orange-50 text-orange-700'
+  if (pos === '2B' || pos === 'SS' || pos === 'MI') return 'bg-sky-50 text-sky-700'
   return 'bg-bg-elevated text-text-secondary'
 }
 
