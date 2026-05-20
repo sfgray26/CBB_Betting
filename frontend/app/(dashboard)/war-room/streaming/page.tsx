@@ -194,8 +194,10 @@ function WaiverPlayerRow({
           <span className="text-text-muted text-xs">{positions.join('/')}</span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {player.percent_owned != null && player.percent_owned > 0 && (
+          {player.percent_owned != null ? (
             <span className="text-text-muted text-xs">{player.percent_owned.toFixed(0)}%</span>
+          ) : (
+            <span className="text-text-muted text-xs">—</span>
           )}
           <div className="text-right">
             <span className="text-[8px] text-text-muted uppercase tracking-wider block">Need</span>

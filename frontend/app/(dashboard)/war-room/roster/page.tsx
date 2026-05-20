@@ -723,8 +723,10 @@ function PlayerCard({
           </div>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className="text-xs text-text-secondary">{player.team}</span>
-            {player.ownership_pct != null && player.ownership_pct > 0 && (
+            {player.ownership_pct != null ? (
               <span className="text-[10px] text-text-muted">{player.ownership_pct.toFixed(0)}% owned</span>
+            ) : (
+              <span className="text-[10px] text-text-muted">— owned</span>
             )}
             {eligible.map((pos) => (
               <span key={pos} className="text-[10px] px-1.5 py-0.5 bg-bg-elevated text-text-secondary rounded">

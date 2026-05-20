@@ -26,6 +26,10 @@ from backend.services.data_reliability_engine import (
     DataQualityTier,
     DataSource,
 )
+from backend.services.injury_overlay import (
+    apply_injury_penalty,
+    load_injury_overlays_for_yahoo_players,
+)
 from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient, YahooAuthError
 
 logger = logging.getLogger(__name__)
@@ -66,6 +70,8 @@ class WaiverTarget:
     priority_score: float
     tier: str  # "must_add", "strong_add", "streamer"
     reason: str
+    injury_status: Optional[str] = None
+    estimated_return: Optional[str] = None
 
 
 @dataclass
@@ -480,6 +486,15 @@ class DashboardService:
             logger.error(f"Failed to fetch free agents for dashboard: {e}")
             return []
 
+        injury_overlays: dict[str, object] = {}
+        injury_db = SessionLocal()
+        try:
+            injury_overlays = load_injury_overlays_for_yahoo_players(injury_db, free_agents)
+        except Exception as exc:
+            logger.debug("dashboard waiver injury overlay unavailable (non-fatal): %s", exc)
+        finally:
+            injury_db.close()
+
         # Build category deficits from scoreboard — same approach as waiver router.
         category_deficits: List[CategoryDeficitOut] = []
         n_cats = 10
@@ -539,6 +554,8 @@ class DashboardService:
             cat_scores = proj.get("cat_scores") or {}
             z_score = float(proj.get("z_score") or fa.get("z_score") or 0.0)
             need_score = compute_need_score(cat_scores, z_score, category_deficits, n_cats)
+            overlay = injury_overlays.get(fa.get("player_key") or "")
+            need_score, penalty_note = apply_injury_penalty(need_score, overlay)
 
             if need_score > 2.0:
                 tier = "must_add"
@@ -546,6 +563,10 @@ class DashboardService:
                 tier = "strong_add"
             else:
                 tier = "streamer"
+
+            reason = f"Need score: {need_score:.2f}"
+            if penalty_note:
+                reason = f"{reason} · {penalty_note}"
 
             targets.append(WaiverTarget(
                 player_id=str(fa.get("player_id") or fa.get("player_key", "")),
@@ -555,7 +576,9 @@ class DashboardService:
                 percent_owned=float(fa.get("percent_owned", fa.get("owned_pct", 0.0))),
                 priority_score=need_score,
                 tier=tier,
-                reason=f"Need score: {need_score:.2f}",
+                reason=reason,
+                injury_status=getattr(overlay, "status", None),
+                estimated_return=getattr(overlay, "return_timeline", None),
             ))
 
         targets.sort(key=lambda t: t.priority_score, reverse=True)
@@ -575,6 +598,14 @@ class DashboardService:
         
         try:
             roster = client.get_roster()
+            injury_overlays: dict[str, object] = {}
+            injury_db = SessionLocal()
+            try:
+                injury_overlays = load_injury_overlays_for_yahoo_players(injury_db, roster)
+            except Exception as exc:
+                logger.debug("dashboard injury overlay unavailable (non-fatal): %s", exc)
+            finally:
+                injury_db.close()
             
             # Validate roster data
             validation = self.reliability_engine.validate_yahoo_roster(roster)
@@ -595,6 +626,9 @@ class DashboardService:
                     status = "" if raw_status else "OUT"
                 else:
                     status = str(raw_status) if raw_status else ""
+                overlay = injury_overlays.get(player.get("player_key") or "")
+                if overlay and getattr(overlay, "status", None):
+                    status = overlay.status
                 selected_pos = player.get("selected_position", "")
                 
                 # Check if player is injured
@@ -621,9 +655,9 @@ class DashboardService:
                         player_id=player.get("player_id", ""),
                         name=player.get("name", "Unknown"),
                         status=status or selected_pos or "OUT",
-                        injury_note=player.get("injury_note"),
+                        injury_note=player.get("injury_note") or getattr(overlay, "note", None),
                         severity=severity,
-                        estimated_return=None,  # Would need additional data source
+                        estimated_return=getattr(overlay, "return_timeline", None),
                         action_needed=action
                     ))
                 else:
