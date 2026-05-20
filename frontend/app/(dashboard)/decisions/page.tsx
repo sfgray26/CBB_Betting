@@ -154,14 +154,26 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
                     Slot: <span className="text-zinc-300">{decision.target_slot}</span>
                   </span>
                 )}
-                {decision.drop_player_id && (
-                  <span className="text-xs text-zinc-500">
-                    Drop: <span className="text-zinc-300">
-                      {decision.drop_player_name || `#${decision.drop_player_id}`}
-                    </span>
-                  </span>
-                )}
               </div>
+
+              {/* PROMINENT ADD/DROP SWAP BAR — was buried in tiny text */}
+              {decision.drop_player_id && (
+                <div className="mt-3 flex items-center gap-3 bg-zinc-800/80 rounded-lg px-3 py-2 border border-zinc-700/50">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <span className="text-[10px] uppercase tracking-wider font-semibold text-emerald-400">Add</span>
+                    <span className="text-sm font-semibold text-zinc-100 truncate">{decision.player_name || `Player #${decision.bdl_player_id}`}</span>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <svg className="w-4 h-4 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 8l4 4m0 0l-4 4m4-4H3" />
+                    </svg>
+                  </div>
+                  <div className="flex items-center gap-2 flex-1 min-w-0 justify-end">
+                    <span className="text-sm font-semibold text-zinc-100 truncate">{decision.drop_player_name || `Player #${decision.drop_player_id}`}</span>
+                    <span className="text-[10px] uppercase tracking-wider font-semibold text-rose-400">Drop</span>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <div className="text-right">

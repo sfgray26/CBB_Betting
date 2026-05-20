@@ -218,6 +218,51 @@ def test_roster_populates_bdl_and_mlbam_ids(fantasy_client):
     )
 
 
+def test_roster_overlays_bdl_injury_status_and_return_timeline(fantasy_client):
+    """Roster endpoint must surface fresh BDL injury status + ETA on player rows."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from backend.services.injury_overlay import InjuryOverlay
+
+    mock_roster = [
+        {
+            "player_key": "469.l.72586.p.10001",
+            "name": "Injured Player",
+            "team": "NYY",
+            "positions": ["OF"],
+            "selected_position": "IL",
+        },
+    ]
+
+    mock_client = MagicMock()
+    mock_client.get_roster.return_value = mock_roster
+    mock_client.get_players_stats_batch.return_value = {}
+
+    overlay = InjuryOverlay(
+        status="15-Day-IL",
+        note="Hamstring strain",
+        return_timeline="ETA May 24 · updated 42m ago",
+        ingested_at=datetime(2026, 5, 19, 11, 18, tzinfo=ZoneInfo("America/New_York")),
+        is_stale=False,
+    )
+
+    with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client), \
+         patch("backend.routers.fantasy.fetch_rolling_stats_for_players", return_value={}), \
+         patch("backend.routers.fantasy.fetch_rolling_stats_for_players_all_windows", return_value={7: {}, 14: {}, 30: {}}), \
+         patch("backend.routers.fantasy._resolve_roster_player_bdl_ids", return_value={
+             "469.l.72586.p.10001": {"bdl_id": 12345, "mlbam_id": 67890},
+         }), \
+         patch("backend.routers.fantasy.load_injury_overlays_for_yahoo_players", return_value={
+             "469.l.72586.p.10001": overlay,
+         }):
+        response = fantasy_client.get("/api/fantasy/roster")
+
+    assert response.status_code == 200
+    player = response.json()["players"][0]
+    assert player["injury_status"] == "15-Day-IL"
+    assert player["injury_return_timeline"] == "ETA May 24 · updated 42m ago"
+
+
 # ---------------------------------------------------------------------------
 # Waiver matchup context
 # ---------------------------------------------------------------------------
@@ -568,6 +613,59 @@ def test_waiver_populates_percent_owned_from_ownership_subresource(fantasy_clien
         "owned_pct must be populated from Yahoo ownership subresource — "
         "April 21 audit showed owned_pct=0.0 for all 25 waiver players"
     )
+
+
+def test_waiver_overlays_bdl_injury_freshness_and_penalty(fantasy_client):
+    """Waiver list must surface BDL injury status/ETA and penalize fresh IL adds."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from backend.services.injury_overlay import InjuryOverlay
+
+    mock_client = MagicMock()
+    mock_client.get_roster.return_value = []
+    mock_client.get_faab_balance.return_value = 100
+    mock_client.get_my_team_key.return_value = "469.l.72586.t.7"
+    mock_client.get_scoreboard.return_value = []
+    mock_client.get_league_settings.side_effect = RuntimeError("no settings in test")
+    mock_client.get_free_agents.return_value = [
+        {
+            "player_key": "469.l.72586.p.10001",
+            "name": "Injured Add",
+            "team": "NYY",
+            "positions": ["OF", "Util"],
+            "percent_owned": 19.0,
+        }
+    ]
+
+    overlay = InjuryOverlay(
+        status="15-Day-IL",
+        note="Hamstring strain",
+        return_timeline="ETA May 24 · updated 42m ago",
+        ingested_at=datetime(2026, 5, 19, 11, 18, tzinfo=ZoneInfo("America/New_York")),
+        is_stale=False,
+    )
+
+    with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client), \
+         patch("backend.fantasy_baseball.player_board.get_or_create_projection", return_value={
+             "z_score": 1.5,
+             "cat_scores": {"hr": 0.4, "rbi": 0.2},
+             "proj": {},
+         }), \
+         patch("backend.fantasy_baseball.statcast_loader.get_statcast_batter", return_value=None), \
+         patch("backend.fantasy_baseball.statcast_loader.get_statcast_pitcher", return_value=None), \
+         patch("backend.fantasy_baseball.statcast_loader.build_statcast_signals", return_value=([], 0.0)), \
+         patch("backend.routers.fantasy.load_injury_overlays_for_yahoo_players", return_value={
+             "469.l.72586.p.10001": overlay,
+         }):
+        response = fantasy_client.get("/api/fantasy/waiver")
+
+    assert response.status_code == 200
+    player = response.json()["top_available"][0]
+    assert player["status"] == "15-Day-IL"
+    assert player["injury_status"] == "15-Day-IL"
+    assert player["injury_return_timeline"] == "ETA May 24 · updated 42m ago"
+    assert player["need_score"] == pytest.approx(0.75)
+    assert "HIGH_INJURY_RISK" in player["statcast_signals"]
 
 
 def test_roster_ros_projection_populated_when_player_projection_exists(monkeypatch):

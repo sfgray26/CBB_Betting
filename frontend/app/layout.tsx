@@ -21,12 +21,12 @@ const jetbrains = JetBrains_Mono({
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#09090b',
+  themeColor: '#ffffff',
 }
 
 export const metadata: Metadata = {
   title: 'CBB Edge',
-  description: 'College basketball betting analytics',
+  description: 'Fantasy baseball analytics and insights',
   manifest: '/manifest.json',
   icons: {
     icon: '/icons/icon-192.png',
@@ -34,16 +34,16 @@ export const metadata: Metadata = {
   },
   appleWebApp: {
     capable: true,
-    statusBarStyle: 'black-translucent',
+    statusBarStyle: 'default',
     title: 'CBB Edge',
   },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <body
-        className={`${inter.variable} ${jetbrains.variable} font-sans bg-zinc-950 text-zinc-50 antialiased`}
+        className={`${inter.variable} ${jetbrains.variable} font-sans bg-white text-gray-900 antialiased`}
       >
         <Providers>{children}</Providers>
       </body>

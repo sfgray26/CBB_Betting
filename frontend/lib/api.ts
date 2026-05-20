@@ -30,6 +30,7 @@ import type {
   MatchupSimulateResponse,
   LineupResponse,
   WaiverResponse,
+  WaiverRecommendationsResponse,
   CanonicalProjectionsResponse,
   BudgetResponse,
   ScoreboardResponse,
@@ -315,6 +316,9 @@ export const endpoints = {
 
   getWaiver: (sort: 'need_score' | 'projected_points' = 'need_score') =>
     apiFetch<WaiverResponse>(`/api/fantasy/waiver?sort=${sort}`),
+
+  getWaiverRecommendations: () =>
+    apiFetch<WaiverRecommendationsResponse>('/api/fantasy/waiver/recommendations'),
 
   getCanonicalProjections: () =>
     apiFetch<CanonicalProjectionsResponse>('/api/fantasy/projections/canonical'),

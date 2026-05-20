@@ -87,6 +87,10 @@ from backend.fantasy_baseball.yahoo_client_resilient import (
     get_resilient_yahoo_client,
 )
 from backend.fantasy_baseball.daily_lineup_optimizer import get_lineup_optimizer
+from backend.services.injury_overlay import (
+    apply_injury_penalty,
+    load_injury_overlays_for_yahoo_players,
+)
 from backend.services.job_queue_service import submit_job as jq_submit, get_job_status as jq_status
 from backend.services.player_mapper import (
     map_yahoo_player_to_canonical_row,
@@ -1157,6 +1161,14 @@ async def get_fantasy_lineup_recommendations(
     except Exception as _exc:
         logger.warning("Could not fetch Yahoo roster for lineup optimizer: %s", _exc)
 
+    if _lineup_roster:
+        _lineup_ids = _resolve_roster_player_bdl_ids(db, _lineup_roster)
+        for _player in _lineup_roster:
+            _player_key = _player.get("player_key")
+            if _player_key in _lineup_ids:
+                _player["bdl_player_id"] = _lineup_ids[_player_key].get("bdl_id")
+                _player["mlbam_id"] = _lineup_ids[_player_key].get("mlbam_id")
+
     from backend.fantasy_baseball.daily_lineup_optimizer import normalize_team_abbr
 
     _lineup_projections: list = []
@@ -1169,11 +1181,15 @@ async def get_fantasy_lineup_recommendations(
         except Exception as _exc:
             logger.warning("Could not load player board projections for lineup: %s", _exc)
 
-    _injury_lookup: dict = {
-        p.get("name", "").lower(): (p.get("status") if isinstance(p.get("status"), str) else None)
-        for p in _lineup_roster
-        if p.get("name")
-    }
+    _injury_overlays_by_key = load_injury_overlays_for_yahoo_players(db, _lineup_roster) if _lineup_roster else {}
+    _injury_lookup: dict = {}
+    for p in _lineup_roster:
+        _pname = p.get("name")
+        if not _pname:
+            continue
+        _overlay = _injury_overlays_by_key.get(p.get("player_key") or "")
+        _raw_status = p.get("status") if isinstance(p.get("status"), str) else None
+        _injury_lookup[_pname.lower()] = getattr(_overlay, "status", None) or _raw_status
 
     _name_to_player_key: dict = {
         p.get("name", "").strip().lower(): p.get("player_key", "")
@@ -2054,6 +2070,14 @@ async def get_fantasy_waiver_recommendations(
 
             _status = p.get("status") or None
             _injury_note = p.get("injury_note") or None
+            _injury_status = p.get("injury_status")
+            _injury_timeline = None
+            _overlay = _injury_overlays_by_key.get(p.get("player_key") or "")
+            if _overlay is not None:
+                _status = getattr(_overlay, "status", None) or _status
+                _injury_note = _injury_note or getattr(_overlay, "note", None)
+                _injury_status = getattr(_overlay, "status", None) or _injury_status
+                _injury_timeline = getattr(_overlay, "return_timeline", None)
 
             # Statcast enrichment for waiver player (uses fixed statcast_loader)
             _sc_dict: dict | None = None
@@ -2090,6 +2114,10 @@ async def get_fantasy_waiver_recommendations(
             except Exception:
                 pass
 
+            need_score, _penalty_note = apply_injury_penalty(need_score, _overlay)
+            if _penalty_note and "HIGH_INJURY_RISK" not in _sc_sigs:
+                _sc_sigs.append("HIGH_INJURY_RISK")
+
             return WaiverPlayerOut(
                 player_id=p.get("player_key") or "",
                 name=name,
@@ -2104,7 +2132,8 @@ async def get_fantasy_waiver_recommendations(
                 hot_cold=_hc,
                 status=_status,
                 injury_note=_injury_note,
-                injury_status=p.get("injury_status"),
+                injury_status=_injury_status,
+                injury_return_timeline=_injury_timeline,
                 stats=_translated_stats,
                 statcast_stats=_sc_dict,
                 statcast_signals=_sc_sigs,
@@ -2188,6 +2217,7 @@ async def get_fantasy_waiver_recommendations(
         # Populate starts_this_week for ALL SP pitchers in free_agents
         _populate_starts_this_week(free_agents, starts_map)
         _apply_ownership_fallback(free_agents)
+        _injury_overlays_by_key = load_injury_overlays_for_yahoo_players(db, free_agents) if free_agents else {}
 
         top_available = [_to_waiver_player(p) for p in free_agents]
         if min_z_score is not None:
@@ -2463,6 +2493,11 @@ async def get_waiver_recommendations(
                 _need_vector = None
 
         free_agents = client.get_free_agents(count=40)
+        _recommendation_injury_overlays = (
+            load_injury_overlays_for_yahoo_players(db, free_agents)
+            if free_agents
+            else {}
+        )
 
         # Populate starts_this_week for SP free agents before scoring.
         # Uses the module-level _STARTS_CACHE so the MLB Stats API is called
@@ -2529,6 +2564,17 @@ async def get_waiver_recommendations(
                     except Exception:
                         pass  # fallback to z_score if scorer unavailable
 
+            _status = p.get("status") or None
+            _injury_note = p.get("injury_note") or None
+            _injury_status = p.get("injury_status")
+            _injury_timeline = None
+            _overlay = _recommendation_injury_overlays.get(p.get("player_key") or "")
+            if _overlay is not None:
+                _status = getattr(_overlay, "status", None) or _status
+                _injury_note = _injury_note or getattr(_overlay, "note", None)
+                _injury_status = getattr(_overlay, "status", None) or _injury_status
+                _injury_timeline = getattr(_overlay, "return_timeline", None)
+
             # Translate raw Yahoo stat_ids → display names using _sid_map.
             # stats dict is populated by get_free_agents() via get_players_stats_batch().
             _raw_stats: dict = p.get("stats") or {}
@@ -2575,6 +2621,10 @@ async def get_waiver_recommendations(
             except Exception:
                 pass
 
+            need_score, _penalty_note = apply_injury_penalty(need_score, _overlay)
+            if _penalty_note and "HIGH_INJURY_RISK" not in _sc_sigs:
+                _sc_sigs.append("HIGH_INJURY_RISK")
+
             # hot_cold derived from category z-scores
             _hc: Optional[str] = None
             if cat_scores:
@@ -2603,6 +2653,10 @@ async def get_waiver_recommendations(
                 statcast_signals=_sc_sigs,
                 statcast_stats=_sc_dict,
                 hot_cold=_hc,
+                status=_status,
+                injury_note=_injury_note,
+                injury_status=_injury_status,
+                injury_return_timeline=_injury_timeline,
             )
 
         scored_fas = sorted(
@@ -3268,6 +3322,11 @@ async def get_fantasy_roster(
     # Resolve BDL and MLBAM IDs via PlayerIDMapping — required for rolling stats
     # and for populating bdl_player_id/mlbam_id in CanonicalPlayerRow output.
     player_key_to_ids = _resolve_roster_player_bdl_ids(db, raw_players)
+    injury_overlays_by_key = load_injury_overlays_for_yahoo_players(
+        db,
+        raw_players,
+        now_et=now_et,
+    )
 
     # Batch-query PlayerProjection for all roster players (ros_projection hydration)
     from backend.models import PlayerProjection as _PlayerProjection
@@ -3390,6 +3449,11 @@ async def get_fantasy_roster(
         else:
             logger.debug("roster: ros_projection missing for %s (no matching projection)", p.get("name"))
 
+        overlay = injury_overlays_by_key.get(player_key)
+        if overlay is not None:
+            merged_player["injury_status"] = getattr(overlay, "status", None) or merged_player.get("injury_status")
+            merged_player["injury_note"] = merged_player.get("injury_note") or getattr(overlay, "note", None)
+
         canonical_row = map_yahoo_player_to_canonical_row(
             yahoo_player=merged_player,
             rolling_stats_7d=rs_7d,
@@ -3399,7 +3463,27 @@ async def get_fantasy_roster(
             computed_at=now_et,
             ros_projection=_ros_proj,
         )
+        if overlay is not None:
+            canonical_row = canonical_row.model_copy(
+                update={
+                    "injury_status": overlay.status,
+                    "injury_return_timeline": overlay.return_timeline,
+                }
+            )
         canonical_players.append(canonical_row)
+
+    # Post-serialization guard: log and coerce any boolean injury_status that bypassed validators
+    _guarded = []
+    for _p in canonical_players:
+        if isinstance(_p.injury_status, bool):
+            logger.error(
+                "BOOLEAN LEAK: injury_status for %s is bool %r; coercing to string",
+                _p.player_name,
+                _p.injury_status,
+            )
+            _p = _p.model_copy(update={"injury_status": "IL" if _p.injury_status else None})
+        _guarded.append(_p)
+    canonical_players = _guarded
 
     # Build freshness metadata
     freshness = FreshnessMetadata(
@@ -5946,6 +6030,7 @@ async def get_constraint_budget(
         pass  # Fall back to 0
 
     # 2. Count acquisitions since Monday 00:00 ET (Yahoo matchup week start)
+    transactions: list = []
     try:
         transactions = client.get_transactions(t_type="add")
         logger.info("budget: fetched %d transactions from Yahoo", len(transactions))
@@ -5964,23 +6049,41 @@ async def get_constraint_budget(
     except Exception as _acq_err:
         logger.warning("budget: acquisitions count failed: %s", _acq_err, exc_info=True)
 
-    # 3. IP tracking - wired to Yahoo matchup stats (A-6 fix)
+    # 3. Season calendar — week number, pace metadata
+    from datetime import date as _date
+    _MLB_OPENING_DATE_2026 = _date(2026, 3, 20)  # MLB Opening Day 2026
+    _FANTASY_TOTAL_WEEKS = 25
+    days_since_opening = max(0, (now_et.date() - _MLB_OPENING_DATE_2026).days)
+    season_days_elapsed = days_since_opening
+    current_week = max(1, min(_FANTASY_TOTAL_WEEKS, (days_since_opening // 7) + 1))
+    weeks_remaining = max(0, _FANTASY_TOTAL_WEEKS - current_week)
+    # Days left in the current Yahoo matchup week (weeks run Mon–Sun)
+    days_in_week_remaining = max(0, 7 - now_et.weekday())  # Monday=0 → 7 remaining
+
+    # 4. IP tracking - wired to Yahoo matchup stats (A-6 fix)
     ip_accumulated = 0.0
     try:
-        # Calculate current week for accurate stats (same logic as matchup endpoint)
-        from datetime import date as _date
-        _MLB_OPENING_DATE_2026 = _date(2026, 3, 20)  # MLB Opening Day 2026
-        days_since_opening = (now_et.date() - _MLB_OPENING_DATE_2026).days
-        current_week = max(1, min(25, (days_since_opening // 7) + 1))
-
         matchup_stats = client.get_matchup_stats(week=current_week, my_team_key=team_key)
         if matchup_stats:
             my_stats = matchup_stats.get("my_stats", {})
             ip_accumulated = float(my_stats.get("IP", 0.0))
     except (YahooAuthError, YahooAPIError, Exception) as exc:
         logger.warning("budget: failed to fetch IP from matchup stats: %s", exc)
-        pass  # Fall back to 0.0
     ip_minimum = 18.0  # Yahoo H2H standard (innings pitched per week) - matches scoreboard_orchestrator.py
+
+    # Count season-total acquisitions from the already-fetched transaction list
+    acquisitions_this_season = 0
+    try:
+        season_start = _MLB_OPENING_DATE_2026
+        for txn in transactions:
+            ts = txn.get("timestamp")
+            if not ts:
+                continue
+            txn_dt = datetime.fromtimestamp(int(ts), tz=ZoneInfo("America/New_York"))
+            if txn_dt.date() >= season_start:
+                acquisitions_this_season += 1
+    except Exception:
+        pass  # non-critical; leave as 0
 
     budget = compute_budget_state(
         acquisitions_used=acquisitions_used,
@@ -5989,8 +6092,8 @@ async def get_constraint_budget(
         il_total=il_total,
         ip_accumulated=ip_accumulated,
         ip_minimum=ip_minimum,
-        days_remaining=6,  # Approximate for MVP
-        season_days_elapsed=1,  # Approximate for MVP
+        days_remaining=days_in_week_remaining,
+        season_days_elapsed=season_days_elapsed,
     )
 
     return {
@@ -6005,6 +6108,10 @@ async def get_constraint_budget(
             "ip_minimum": budget.ip_minimum,
             "ip_pace": budget.ip_pace.value,
             "as_of": budget.as_of.isoformat(),
+            "week_label": f"Week {current_week}",
+            "weeks_remaining": weeks_remaining,
+            "days_in_week_remaining": days_in_week_remaining,
+            "acquisitions_this_season": acquisitions_this_season,
         },
         "freshness": {
             "primary_source": "yahoo",

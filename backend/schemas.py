@@ -7,7 +7,7 @@ vulnerabilities on ORM models and generates accurate OpenAPI docs.
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -317,9 +317,13 @@ class LineupPlayerOut(BaseModel):
     @field_validator("injury_status", mode="before")
     @classmethod
     def coerce_injury_status_to_string(cls, v):
-        """Coerce boolean injury_status values to strings (Yahoo API sometimes returns bools)."""
+        """Coerce boolean injury_status to canonical strings.
+
+        bool True  → "IL"  (Yahoo flag means player is on injured list)
+        bool False → None  (no injury; frontend distinguishes null from "Active")
+        """
         if isinstance(v, bool):
-            return "Active" if v else "Inactive"
+            return "IL" if v else None
         return v
 
     # Consumer-facing alias for `status`. Frontend reads `lineup_status`; `status`
@@ -414,6 +418,7 @@ class WaiverPlayerOut(BaseModel):
     status: Optional[str] = None          # Yahoo status: Active, DTD, IL, etc.
     injury_note: Optional[str] = None     # Yahoo injury note text
     injury_status: Optional[str] = None   # Explicit injury status pass-through
+    injury_return_timeline: Optional[str] = None  # BDL ETA + freshness overlay
     stats: dict = {}                        # K-24: actual season stats from Yahoo (stat_id→value)
     statcast_stats: Optional[dict] = None   # PR-15: raw Statcast/FanGraphs metrics (xwOBA, barrel%, etc.)
     quality_score: Optional[float] = None   # Pitcher matchup quality [-2.0 to +2.0]. None when not a pitcher FA candidate.
@@ -426,6 +431,22 @@ class WaiverPlayerOut(BaseModel):
         if v is None or (isinstance(v, float) and v != v):  # v != v checks for NaN
             return 0.0
         return v
+
+
+class DropPlayerOut(BaseModel):
+    """Rich drop candidate for waiver ADD_DROP recommendations."""
+    name: str
+    position: str                        # positions[0], primary slot
+    positions: List[str]
+    z_score: float
+    cat_scores: Dict[str, float]         # type-safe; cast to float at construction
+    tier: int
+    adp: float
+    percent_owned: float
+    status: Optional[str] = None
+    injury_note: Optional[str] = None
+    starts_this_week: int = 0
+    positional_impact: List[str] = []   # e.g. ["Drops last 2B-eligible player"]
 
 
 class PaginationOut(BaseModel):
@@ -471,6 +492,12 @@ class RosterMoveRecommendation(BaseModel):
     mcmc_enabled: bool = False              # True if MCMC simulation ran successfully
 
     quality_score: Optional[float] = None   # Pitcher matchup quality [-2.0 to +2.0]. None when not a pitcher FA candidate.
+    # Rich drop context (v3 — backwards compat: drop_player_name/position still populated)
+    drop_player: Optional[DropPlayerOut] = None
+    category_deltas: Dict[str, Any] = {}    # {cat: {add, drop, net, cat_win_prob|None}}
+    alternative_drops: List[DropPlayerOut] = []
+    positional_impact: List[str] = []
+    roster_context: Dict[str, Any] = {}     # {active_player_count, add_weekly_starts, drop_weekly_starts}
 
     @field_validator("need_score", mode="before")
     @classmethod
@@ -547,9 +574,13 @@ class RosterPlayerOut(BaseModel):
     @field_validator("status", "injury_status", mode="before")
     @classmethod
     def coerce_status_to_string(cls, v):
-        """Coerce boolean status values to strings (Yahoo API sometimes returns bools)."""
+        """Coerce boolean status/injury_status to canonical strings.
+
+        bool True  → "IL"  (Yahoo boolean flag means player is on injured list)
+        bool False → None  (no injury; frontend distinguishes null from "Active")
+        """
         if isinstance(v, bool):
-            return "Active" if v else "Inactive"
+            return "IL" if v else None
         return v
     
     @field_validator("injury_note", mode="before")

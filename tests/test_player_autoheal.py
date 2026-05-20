@@ -146,6 +146,7 @@ def test_heal_skips_manual_override():
     assert result is False
     bdl.search_mlb_players.assert_not_called()
     db.add.assert_not_called()
+    # manual rows are sacred — no writes of any kind (heal_attempts not incremented)
     db.commit.assert_not_called()
 
 

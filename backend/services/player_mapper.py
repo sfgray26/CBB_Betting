@@ -70,6 +70,20 @@ def _map_rolling_to_category_stats(
         if val is not None:
             values[canon_code] = float(val)
 
+    # Fallback: derive OPS from w_obp + w_slg when w_ops is NULL
+    if values.get("OPS") is None:
+        obp = getattr(rolling_stats, "w_obp", None)
+        slg = getattr(rolling_stats, "w_slg", None)
+        if obp is not None and slg is not None:
+            values["OPS"] = float(obp) + float(slg)
+
+    # Fallback: derive K/9 from 9 * w_strikeouts_pit / w_ip when w_k_per_9 is NULL
+    if values.get("K_9") is None:
+        k = getattr(rolling_stats, "w_strikeouts_pit", None)
+        ip = getattr(rolling_stats, "w_ip", None)
+        if k is not None and ip is not None and float(ip) > 0:
+            values["K_9"] = 9.0 * float(k) / float(ip)
+
     return CategoryStats(values=values)
 
 
@@ -234,8 +248,14 @@ def map_yahoo_player_to_canonical_row(
         except ValueError:
             ownership_pct = 0.0
 
-    # PR-21: Injury status
-    injury_status = yahoo_player.get("injury_note") or yahoo_player.get("injury_status")
+    # PR-21: Injury status — Yahoo sometimes returns booleans; coerce before short-circuit OR
+    _raw_note = yahoo_player.get("injury_note")
+    _raw_status = yahoo_player.get("injury_status")
+    if isinstance(_raw_note, bool):
+        _raw_note = "IL" if _raw_note else None
+    if isinstance(_raw_status, bool):
+        _raw_status = "IL" if _raw_status else None
+    injury_status = _raw_note or _raw_status
 
     # PR-22: Freshness metadata
     freshness = FreshnessMetadata(

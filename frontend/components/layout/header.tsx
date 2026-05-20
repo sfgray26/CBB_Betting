@@ -66,22 +66,22 @@ export default function Header({ onMenuClick }: HeaderProps) {
   }
 
   return (
-    <header className="h-14 bg-zinc-900 border-b border-zinc-800 flex items-center px-4 gap-3 flex-shrink-0">
+    <header className="h-14 bg-white border-b border-gray-200 flex items-center px-4 gap-3 flex-shrink-0">
       {/* Hamburger — mobile only */}
       <Button
         variant="ghost"
         size="icon"
         onClick={onMenuClick}
-        className="md:hidden text-zinc-400 hover:text-zinc-50 flex-shrink-0"
+        className="md:hidden text-gray-500 hover:text-gray-900 flex-shrink-0"
         aria-label="Open navigation"
       >
         <Menu className="h-5 w-5" />
       </Button>
 
-      <span className="text-base font-semibold text-zinc-100 flex-1 truncate">{title}</span>
+      <span className="text-base font-semibold text-gray-900 flex-1 truncate">{title}</span>
 
       <div className="flex items-center gap-3">
-        <span className="text-xs text-zinc-500">
+        <span className="text-xs text-gray-500">
           Last updated: {formatSecondsAgo(secondsAgo)}
         </span>
 
@@ -90,7 +90,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
           size="icon"
           onClick={handleRefresh}
           title="Refresh data"
-          className="text-zinc-400 hover:text-zinc-50"
+          className="text-gray-500 hover:text-gray-900"
         >
           <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
         </Button>
@@ -100,7 +100,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
           size="icon"
           onClick={handleLogout}
           title="Sign out"
-          className="text-zinc-400 hover:text-rose-400"
+          className="text-gray-500 hover:text-red-600"
         >
           <LogOut className="h-4 w-4" />
         </Button>

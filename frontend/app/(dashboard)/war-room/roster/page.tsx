@@ -24,6 +24,7 @@ import {
   Swords,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import YahooRosterView from '@/components/yahoo-roster-view'
 
 // ───────────────────────────────────────────────────────────────────────────
 // Constants
@@ -60,7 +61,7 @@ const SLOT_COLORS: Record<string, string> = {
   P: 'bg-purple-900/30 text-purple-400',
 }
 
-type ViewMode = 'season' | '7d' | '14d' | '30d' | 'ros'
+type ViewMode = 'season' | '7d' | '14d' | '30d' | 'ros' | 'yahoo'
 type SortMode = 'default' | 'name' | 'ros_value'
 type PosFilter = 'All' | 'SP' | 'RP' | 'OF' | '1B' | '2B' | '3B' | 'SS' | 'C'
 
@@ -116,6 +117,7 @@ function ViewToggle({ mode, onChange }: { mode: ViewMode; onChange: (m: ViewMode
     { value: '14d', label: '14D' },
     { value: '30d', label: '30D' },
     { value: 'ros', label: 'RoS Proj' },
+    { value: 'yahoo', label: 'Slots' },
   ]
   return (
     <div className="flex items-center gap-1 bg-bg-surface border border-border-subtle rounded-lg p-1">
@@ -667,20 +669,29 @@ function PlayerCard({
   onMove: (playerId: string, toSlot: string) => void
   isMoving: boolean
 }) {
-  const [selectedSlot, setSelectedSlot] = useState('')
-
   const eligible = player.eligible_positions ?? []
   const isPitcher = eligible.some((p) => ['SP', 'RP', 'P'].includes(p))
+  const currentSlot = player.current_slot?.toUpperCase() ?? ''
+
+  // Exclude the player's current slot so every option represents a real move.
+  const moveOptions = Array.from(
+    new Set([...eligible, ...UNIVERSAL_SLOTS])
+  ).filter((s) => s.toUpperCase() !== currentSlot)
+
+  // Auto-select first available target so the button is enabled by default.
+  const [selectedSlot, setSelectedSlot] = useState(() => moveOptions[0] ?? '')
+
   const displayCats = isPitcher ? PITCHER_DISPLAY : BATTER_DISPLAY
   const statValues = getStatWindow(player, viewMode)
 
-  // Move dropdown: eligible positions + universal slots, deduplicated
-  const moveOptions = Array.from(new Set([...eligible, ...UNIVERSAL_SLOTS]))
-
   const handleMoveClick = () => {
-    if (!selectedSlot || !player.yahoo_player_key) return
+    if (!selectedSlot) return
+    if (!player.yahoo_player_key) {
+      console.warn('[Roster] Move skipped: yahoo_player_key missing for', player.player_name)
+      return
+    }
     onMove(player.yahoo_player_key, selectedSlot)
-    setSelectedSlot('')
+    setSelectedSlot(moveOptions[0] ?? '')
   }
 
   const statusClass = STATUS_COLORS[player.status] ?? STATUS_COLORS.playing
@@ -712,8 +723,10 @@ function PlayerCard({
           </div>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className="text-xs text-text-secondary">{player.team}</span>
-            {player.ownership_pct != null && player.ownership_pct > 0 && (
+            {player.ownership_pct != null ? (
               <span className="text-[10px] text-text-muted">{player.ownership_pct.toFixed(0)}% owned</span>
+            ) : (
+              <span className="text-[10px] text-text-muted">— owned</span>
             )}
             {eligible.map((pos) => (
               <span key={pos} className="text-[10px] px-1.5 py-0.5 bg-bg-elevated text-text-secondary rounded">
@@ -1070,6 +1083,19 @@ export default function RosterPage() {
         </div>
       </div>
 
+      {/* Yahoo-style slot view */}
+      {viewMode === 'yahoo' ? (
+        <YahooRosterView
+          players={data.players}
+          onMove={(player, targetSlot) => {
+            if (player.yahoo_player_key) {
+              handleMove(player.yahoo_player_key, targetSlot)
+            }
+          }}
+          isMoving={moveMutation.isPending}
+        />
+      ) : (
+      <>
       {/* Player list */}
       {useGrouped ? (
         <>
@@ -1151,6 +1177,8 @@ export default function RosterPage() {
             ))
           )}
         </div>
+      )}
+      </>
       )}
     </div>
   )

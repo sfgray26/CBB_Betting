@@ -40,33 +40,33 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         {/* Logo / Title */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-amber-400/10 border border-amber-400/20 mb-4">
-            <span className="text-3xl">🏀</span>
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-50 border border-blue-200 mb-4">
+            <span className="text-3xl">⚾</span>
           </div>
-          <h1 className="text-3xl font-bold text-zinc-50 tracking-tight">
-            CBB <span className="text-amber-400">Edge</span>
+          <h1 className="text-3xl font-bold text-gray-900 tracking-tight">
+            CBB <span className="text-blue-600">Edge</span>
           </h1>
-          <p className="mt-2 text-zinc-400 text-sm">
-            College Basketball Betting Analytics
+          <p className="mt-2 text-gray-500 text-sm">
+            Fantasy Baseball Analytics & Insights
           </p>
         </div>
 
         {/* Card */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8 shadow-2xl">
-          <p className="text-zinc-300 text-sm text-center mb-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-8 shadow-xl">
+          <p className="text-gray-700 text-sm text-center mb-4">
             Enter your API key to continue
           </p>
-          <p className="text-zinc-600 text-xs text-center mb-6 font-mono truncate" title={BASE_URL}>
+          <p className="text-gray-400 text-xs text-center mb-6 font-mono truncate" title={BASE_URL}>
             ↗ {BASE_URL}
           </p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label htmlFor="apikey" className="block text-xs font-medium text-zinc-400 uppercase tracking-wider mb-2">
+              <label htmlFor="apikey" className="block text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
                 API Key
               </label>
               <input
@@ -76,12 +76,12 @@ export default function LoginPage() {
                 placeholder="Enter your API key..."
                 value={apiKey}
                 onChange={(e) => setApiKeyState(e.target.value)}
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-3 text-zinc-50 placeholder-zinc-500 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:border-amber-400/50 transition-colors"
+                className="w-full bg-white border border-gray-300 rounded-lg px-4 py-3 text-gray-900 placeholder-gray-400 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-colors"
               />
             </div>
 
             {error && (
-              <div className="bg-rose-500/10 border border-rose-500/30 rounded-lg px-4 py-3 text-rose-400 text-sm">
+              <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-red-600 text-sm">
                 {error}
               </div>
             )}
@@ -89,7 +89,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-amber-400 hover:bg-amber-300 disabled:bg-amber-400/50 disabled:cursor-not-allowed text-zinc-950 font-semibold rounded-lg px-4 py-3 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-amber-400/50 focus:ring-offset-2 focus:ring-offset-zinc-900"
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 disabled:cursor-not-allowed text-white font-semibold rounded-lg px-4 py-3 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-2 focus:ring-offset-white"
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
@@ -106,7 +106,7 @@ export default function LoginPage() {
           </form>
         </div>
 
-        <p className="text-center text-zinc-600 text-xs mt-6">
+        <p className="text-center text-gray-400 text-xs mt-6">
           CBB Edge Analytics &mdash; v9.1
         </p>
       </div>

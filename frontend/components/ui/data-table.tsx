@@ -58,13 +58,13 @@ export function DataTable<T>({
     <div className={cn('overflow-x-auto', className)}>
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-zinc-800">
+          <tr className="border-b border-gray-200">
             {columns.map((col) => (
               <th
                 key={col.key}
                 className={cn(
-                  'px-4 py-3 text-left text-xs font-medium text-zinc-400 uppercase tracking-wider whitespace-nowrap',
-                  col.sortValue && 'cursor-pointer select-none hover:text-zinc-200',
+                  'px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap',
+                  col.sortValue && 'cursor-pointer select-none hover:text-gray-700',
                   col.headerClassName,
                 )}
                 onClick={() => col.sortValue && handleSort(col.key)}
@@ -72,7 +72,7 @@ export function DataTable<T>({
                 <span className="flex items-center gap-1">
                   {col.header}
                   {col.sortValue && (
-                    <span className="text-zinc-600">
+                    <span className="text-gray-400">
                       {sortKey === col.key ? (
                         sortDir === 'asc' ? (
                           <ChevronUp className="h-3 w-3" />
@@ -94,7 +94,7 @@ export function DataTable<T>({
             <tr>
               <td
                 colSpan={columns.length}
-                className="px-4 py-8 text-center text-zinc-500 text-sm"
+                className="px-4 py-8 text-center text-gray-500 text-sm"
               >
                 {emptyMessage}
               </td>
@@ -103,12 +103,12 @@ export function DataTable<T>({
             sorted.map((row) => (
               <tr
                 key={keyExtractor(row)}
-                className="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors"
+                className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
               >
                 {columns.map((col) => (
                   <td
                     key={col.key}
-                    className={cn('px-4 py-3 text-zinc-300', col.className)}
+                    className={cn('px-4 py-3 text-gray-700', col.className)}
                   >
                     {col.accessor(row)}
                   </td>

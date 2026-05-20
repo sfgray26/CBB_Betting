@@ -96,16 +96,16 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
   const drawdown = portfolio?.drawdown_pct ?? 0
   const dotColor =
     drawdown < 5
-      ? 'bg-emerald-400'
+      ? 'bg-green-500'
       : drawdown < 10
-        ? 'bg-amber-400'
-        : 'bg-rose-500'
+        ? 'bg-amber-500'
+        : 'bg-red-500'
 
   return (
     <aside
       className={cn(
         // Base: fixed sidebar, transitions for mobile drawer
-        'fixed left-0 top-0 h-full w-60 bg-zinc-900 border-r border-zinc-800 flex flex-col z-30',
+        'fixed left-0 top-0 h-full w-60 bg-white border-r border-gray-200 flex flex-col z-30',
         'transition-transform duration-200 ease-in-out',
         // Desktop: always visible
         'md:translate-x-0',
@@ -114,11 +114,11 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
       )}
     >
       {/* Logo */}
-      <div className="px-5 py-5 border-b border-zinc-800">
-        <div className="font-bold text-lg text-amber-400 tracking-tight">
+      <div className="px-5 py-5 border-b border-gray-200">
+        <div className="font-bold text-lg text-blue-600 tracking-tight">
           CBB EDGE
         </div>
-        <div className="text-xs text-zinc-500 mt-0.5">
+        <div className="text-xs text-gray-500 mt-0.5">
           Analytics
         </div>
       </div>
@@ -127,7 +127,7 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
       <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-6">
         {navSections.filter((s) => !s.hidden).map((section) => (
           <div key={section.label}>
-            <p className="px-2 mb-2 text-xs font-semibold text-zinc-600 uppercase tracking-wider">
+            <p className="px-2 mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">
               {section.label}
             </p>
             <ul className="space-y-0.5">
@@ -142,10 +142,10 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
                 if (section.soon) {
                   return (
                     <li key={item.href}>
-                      <span className="flex items-center gap-3 px-3 py-2.5 rounded-md text-zinc-600 cursor-not-allowed min-h-[44px]">
+                      <span className="flex items-center gap-3 px-3 py-2.5 rounded-md text-gray-400 cursor-not-allowed min-h-[44px]">
                         <Icon className="h-4 w-4 flex-shrink-0" />
                         <span className="flex-1 text-sm">{item.label}</span>
-                        <span className="text-xs bg-zinc-700/50 text-zinc-500 px-1.5 py-0.5 rounded-full border border-zinc-700">
+                        <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-full border border-gray-200">
                           Soon
                         </span>
                       </span>
@@ -161,8 +161,8 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
                       className={cn(
                         'flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors min-h-[44px]',
                         isActive
-                          ? 'text-amber-400 bg-amber-400/10 border-l-2 border-amber-400 -ml-px pl-[11px]'
-                          : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800',
+                          ? 'text-blue-600 bg-blue-50 border-l-2 border-blue-600 -ml-px pl-[11px]'
+                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100',
                       )}
                     >
                       <Icon className="h-4 w-4 flex-shrink-0" />
@@ -177,13 +177,13 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
       </nav>
 
       {/* Bottom panel */}
-      <div className="border-t border-zinc-800 px-4 py-3 space-y-2">
+      <div className="border-t border-gray-200 px-4 py-3 space-y-2">
         {/* Portfolio chip */}
-        <div className="flex items-center gap-2 px-2 py-2 bg-zinc-800/50 rounded-md">
+        <div className="flex items-center gap-2 px-2 py-2 bg-gray-50 rounded-md">
           <span className={cn('h-2 w-2 rounded-full flex-shrink-0', dotColor)} />
           <div className="flex-1 min-w-0">
-            <div className="text-xs text-zinc-400 leading-none">Portfolio</div>
-            <div className="text-xs font-mono text-zinc-300 mt-0.5 tabular-nums">
+            <div className="text-xs text-gray-500 leading-none">Portfolio</div>
+            <div className="text-xs font-mono text-gray-700 mt-0.5 tabular-nums">
               {portfolio
                 ? `DD: ${drawdown.toFixed(1)}% | Exp: ${portfolio.total_exposure_pct.toFixed(1)}%`
                 : 'Loading...'}

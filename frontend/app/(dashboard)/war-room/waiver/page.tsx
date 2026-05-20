@@ -3,10 +3,10 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
-import type { WaiverAvailablePlayer, WaiverResponse, WaiverRosterPlayer } from '@/lib/types'
+import type { WaiverAvailablePlayer, WaiverResponse, WaiverRosterPlayer, WaiverRecommendation, DropPlayerOut, CategoryDelta } from '@/lib/types'
 import {
   ListFilter, Loader2, AlertCircle, TrendingUp,
-  Flame, Snowflake, AlertTriangle, Users,
+  Flame, Snowflake, AlertTriangle, Users, Zap, ChevronDown, ChevronUp, AlertTriangle as WarnIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -50,7 +50,7 @@ function NeedBar({ score }: { score: number }) {
 }
 
 function OwnershipBadge({ pct }: { pct: number | null | undefined }) {
-  if (pct === null || pct === undefined || pct === 0) {
+  if (pct === null || pct === undefined) {
     return <span className="text-[10px] text-text-muted">— owned</span>
   }
   return (
@@ -295,6 +295,240 @@ function CategoryDeficitsBar({ deficits, opponent }: {
   )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ADD/DROP Recommendation Card
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CAT_LABEL: Record<string, string> = {
+  r: 'R', h: 'H', hr_b: 'HR', rbi: 'RBI', k_b: 'K', tb: 'TB', avg: 'AVG', ops: 'OPS', nsb: 'NSB',
+  w: 'W', l: 'L', hr_p: 'HRA', k_p: 'Ks', era: 'ERA', whip: 'WHIP', k_9: 'K/9', qs: 'QS', nsv: 'SV',
+}
+
+function catLabel(key: string): string {
+  return CAT_LABEL[key.toLowerCase()] ?? key.toUpperCase()
+}
+
+function NetArrow({ net }: { net: number }) {
+  if (net > 0.1) return <span className="text-status-safe font-bold">▲</span>
+  if (net < -0.1) return <span className="text-status-lost font-bold">▼</span>
+  return <span className="text-text-muted">~</span>
+}
+
+function AddPanel({ rec }: { rec: WaiverRecommendation }) {
+  const fa = rec.add_player
+  if (!fa) return null
+  return (
+    <div className="flex-1 min-w-0 space-y-1">
+      <p className="text-[10px] font-bold tracking-widest uppercase text-status-safe">ADD</p>
+      <p className="text-sm font-semibold text-text-primary truncate">{fa.name}</p>
+      <p className="text-[10px] text-text-muted">{fa.position} · {fa.team}</p>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-text-secondary">
+        {fa.z_score !== undefined && (
+          <span>Z <span className="text-text-primary font-mono">{fa.z_score >= 0 ? '+' : ''}{fa.z_score.toFixed(2)}</span></span>
+        )}
+        {(fa.starts_this_week ?? 0) > 0 && (
+          <span className="text-status-safe">{fa.starts_this_week}-start</span>
+        )}
+        {rec.statcast_signals.map((sig) => (
+          <span key={sig} className="text-accent-gold">[{sig}]</span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function DropPanel({ drop }: { drop: DropPlayerOut }) {
+  const zClass = drop.z_score >= 0 ? 'text-text-primary' : 'text-status-lost'
+  return (
+    <div className="flex-1 min-w-0 space-y-1">
+      <p className="text-[10px] font-bold tracking-widest uppercase text-status-lost">DROP</p>
+      <p className="text-sm font-semibold text-text-primary truncate">{drop.name}</p>
+      <p className="text-[10px] text-text-muted">{drop.position} · {drop.percent_owned.toFixed(0)}% owned</p>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-text-secondary">
+        <span>Z <span className={cn('font-mono', zClass)}>{drop.z_score >= 0 ? '+' : ''}{drop.z_score.toFixed(2)}</span></span>
+        <span>T{drop.tier}</span>
+        {drop.status && drop.status !== 'Active' && (
+          <span className="text-status-bubble">{drop.status}</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function CategoryNetRow({ deltas }: { deltas: Record<string, CategoryDelta> }) {
+  const entries = Object.entries(deltas).sort(([a], [b]) => a.localeCompare(b))
+  if (entries.length === 0) return null
+  return (
+    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px]">
+      {entries.map(([cat, d]) => (
+        <span key={cat} className="flex items-center gap-0.5">
+          <NetArrow net={d.net} />
+          <span className="text-text-secondary">{catLabel(cat)}</span>
+          {d.cat_win_prob !== null
+            ? <span className="text-text-muted ml-0.5">{Math.round(d.cat_win_prob * 100)}%</span>
+            : <span className="text-text-muted ml-0.5">—</span>
+          }
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function WinBar({ before, after }: { before: number; after: number }) {
+  const beforePct = Math.round(before * 100)
+  const afterPct = Math.round(after * 100)
+  const gain = afterPct - beforePct
+  return (
+    <div className="flex items-center gap-2 text-[10px]">
+      <span className="text-text-muted">Win%</span>
+      <span className="text-text-secondary tabular-nums">{beforePct}%</span>
+      <span className="text-text-muted">→</span>
+      <span className={cn('font-semibold tabular-nums', afterPct > beforePct ? 'text-status-safe' : afterPct < beforePct ? 'text-status-lost' : 'text-text-secondary')}>
+        {afterPct}%
+      </span>
+      {gain !== 0 && (
+        <span className={cn('tabular-nums', gain > 0 ? 'text-status-safe' : 'text-status-lost')}>
+          {gain > 0 ? '+' : ''}{gain}pp
+        </span>
+      )}
+      <div className="flex-1 h-1.5 bg-bg-inset rounded-full overflow-hidden max-w-[80px]">
+        <div
+          className={cn('h-full rounded-full', afterPct > beforePct ? 'bg-status-safe' : 'bg-status-bubble')}
+          style={{ width: `${afterPct}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
+function RecommendationCard({ rec }: { rec: WaiverRecommendation }) {
+  const [showRationale, setShowRationale] = useState(false)
+  const drop = rec.drop_player
+
+  return (
+    <div className="bg-bg-surface border border-border-subtle rounded-lg overflow-hidden">
+      {/* Two-panel row */}
+      <div className="p-3 flex flex-col sm:flex-row gap-3">
+        {rec.add_player && <AddPanel rec={rec} />}
+        {drop && (
+          <>
+            <div className="hidden sm:block w-px bg-border-subtle self-stretch" />
+            <DropPanel drop={drop} />
+          </>
+        )}
+      </div>
+
+      {/* Category net row */}
+      {Object.keys(rec.category_deltas).length > 0 && (
+        <div className="px-3 pb-2">
+          <CategoryNetRow deltas={rec.category_deltas} />
+        </div>
+      )}
+
+      {/* Win probability */}
+      <div className="px-3 pb-2">
+        {rec.mcmc_enabled
+          ? <WinBar before={rec.win_prob_before} after={rec.win_prob_after} />
+          : <span className="text-[10px] text-text-muted">Win%: unavailable</span>
+        }
+      </div>
+
+      {/* Positional impact warnings */}
+      {drop && drop.positional_impact.length > 0 && (
+        <div className="px-3 pb-2 flex flex-wrap gap-1">
+          {drop.positional_impact.map((msg, i) => (
+            <span key={i} className="flex items-center gap-1 text-[10px] text-status-bubble">
+              <WarnIcon className="h-3 w-3 flex-shrink-0" />
+              {msg}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Alternative drops */}
+      {rec.alternative_drops.length > 0 && (
+        <div className="px-3 pb-2">
+          <span className="text-[10px] text-text-muted">Alt drops: </span>
+          {rec.alternative_drops.map((alt, i) => (
+            <span key={alt.name} className="text-[10px] text-text-secondary">
+              {i > 0 && <span className="mx-1 text-text-muted">·</span>}
+              {alt.name} (Z {alt.z_score >= 0 ? '+' : ''}{alt.z_score.toFixed(1)}, T{alt.tier})
+              {alt.positional_impact.length > 0 && (
+                <span className="text-status-bubble ml-0.5">⚠</span>
+              )}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Roster context */}
+      {(rec.roster_context.add_weekly_starts > 0 || rec.roster_context.drop_weekly_starts > 0) && (
+        <div className="px-3 pb-2 text-[10px] text-text-muted">
+          {rec.roster_context.add_weekly_starts > 0 && (
+            <span className="text-status-safe">+{rec.roster_context.add_weekly_starts} starts</span>
+          )}
+          {rec.roster_context.add_weekly_starts > 0 && rec.roster_context.drop_weekly_starts > 0 && (
+            <span className="mx-1">·</span>
+          )}
+          {rec.roster_context.drop_weekly_starts > 0 && (
+            <span>{drop?.name ?? 'Drop'}: {rec.roster_context.drop_weekly_starts} starts</span>
+          )}
+        </div>
+      )}
+
+      {/* Rationale toggle */}
+      <div className="px-3 pb-3">
+        <button
+          onClick={() => setShowRationale((v) => !v)}
+          className="flex items-center gap-1 text-[10px] text-text-muted hover:text-text-secondary transition-colors"
+        >
+          {showRationale ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+          {showRationale ? 'Hide' : 'Rationale'}
+        </button>
+        {showRationale && (
+          <p className="mt-1 text-[11px] text-text-secondary leading-relaxed">{rec.rationale}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function RecommendationsPanel() {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['waiver-recommendations'],
+    queryFn: () => endpoints.getWaiverRecommendations(),
+    staleTime: 5 * 60_000,
+  })
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 text-text-secondary text-xs py-2">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-accent-gold" />
+        Loading recommendations…
+      </div>
+    )
+  }
+
+  if (isError || !data) return null
+
+  const recs = data.recommendations.filter((r) => r.action === 'ADD_DROP')
+  if (recs.length === 0) return null
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Zap className="h-3.5 w-3.5 text-accent-gold" />
+        <p className="text-xs font-bold tracking-widest uppercase text-accent-gold">
+          ADD/DROP Recommendations · {recs.length}
+        </p>
+      </div>
+      {recs.map((rec, i) => (
+        <RecommendationCard key={i} rec={rec} />
+      ))}
+    </div>
+  )
+}
+
 export default function WaiverPage() {
   const [sort, setSort] = useState<'need_score' | 'projected_points'>('need_score')
   const [posFilter, setPosFilter] = useState('All')
@@ -382,6 +616,9 @@ export default function WaiverPage() {
           </span>
         </div>
       )}
+
+      {/* ADD/DROP Recommendations */}
+      <RecommendationsPanel />
 
       {/* Category deficits */}
       {data?.category_deficits && (

@@ -242,7 +242,9 @@ class ProjectionAssemblyService:
             board_proj["hr"] = live_proj.hr or board_proj.get("hr", 0)
             board_proj["r"] = live_proj.r or board_proj.get("r", 0)
             board_proj["rbi"] = live_proj.rbi or board_proj.get("rbi", 0)
-            board_proj["sb"] = live_proj.sb or board_proj.get("sb", 0)
+            _live_sb = live_proj.sb or board_proj.get("nsb", board_proj.get("sb", 0))
+            board_proj["sb"] = _live_sb   # keep legacy key
+            board_proj["nsb"] = _live_sb  # canonical key consumed by category impacts
 
         pa = float(board_proj.get("pa", 0) or 0)
         # mlbam_id may be None for Yahoo-only players — skip Statcast lookup safely
