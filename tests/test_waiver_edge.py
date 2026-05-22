@@ -6,6 +6,8 @@ from backend.services.waiver_edge_detector import (
     drop_candidate_value,
     is_protected_drop_candidate,
     long_term_hold_floor,
+    _is_il_player,
+    _is_dtd_player,
 )
 
 
@@ -314,3 +316,125 @@ class TestLoadMarketScores:
         assert 101 not in result
         assert result[202] == pytest.approx(81.5)
 
+
+# ---------------------------------------------------------------------------
+# IL / DTD filter (P1 fix — Jack Dreyer / Blake Snell regression)
+# ---------------------------------------------------------------------------
+
+
+class TestILPlayerFilter:
+    """Verify _is_il_player recognises all Yahoo + BDL IL status variants."""
+
+    @pytest.mark.parametrize("status_field,value", [
+        ("status", "IL"),
+        ("status", "IL10"),
+        ("status", "IL60"),
+        ("status", "NA"),
+        ("status", "OUT"),
+        ("injury_status", "15-Day-IL"),
+        ("injury_status", "10-Day-IL"),
+        ("injury_status", "60-Day-IL"),
+        ("injury_status", "IL15"),
+        ("injury_status", "IL60"),
+        ("injury_status", "il"),
+        ("injury_status", "15dayil"),
+    ])
+    def test_il_variants_detected(self, status_field, value):
+        player = {"name": "Test Player", status_field: value}
+        assert _is_il_player(player) is True
+
+    def test_healthy_player_not_il(self):
+        assert _is_il_player({"name": "Healthy", "status": "Active"}) is False
+
+    def test_dtd_is_not_il(self):
+        assert _is_il_player({"name": "DTD Guy", "status": "DTD"}) is False
+
+    def test_dtd_detected(self):
+        assert _is_dtd_player({"name": "DTD Guy", "status": "DTD"}) is True
+        assert _is_dtd_player({"name": "DTD Guy", "injury_status": "day-to-day"}) is True
+
+    def test_healthy_not_dtd(self):
+        assert _is_dtd_player({"name": "Healthy", "status": "Active"}) is False
+
+
+def test_il_players_excluded_from_waiver():
+    """P1 regression: IL players must not appear in waiver recommendations.
+
+    Jack Dreyer (15-Day-IL) was appearing in recommendations because the FA
+    pipeline had no IL status gate.  This test verifies the hard gate works
+    for all common IL status formats.
+    """
+    jack_dreyer_il = {
+        "name": "Jack Dreyer",
+        "positions": ["SP"],
+        "player_key": "469.p.99999",
+        "injury_status": "15-Day-IL",
+        "cat_scores": {"era": 1.5, "k9": 1.2},
+        "z_score": 1.8,
+    }
+    healthy_fa = {
+        "name": "Healthy SP",
+        "positions": ["SP"],
+        "player_key": "469.p.11111",
+        "cat_scores": {"era": 0.8, "k9": 0.6},
+        "z_score": 1.0,
+    }
+    my_roster = [_make_player("Weak SP", ["SP"], {"era": -0.5})]
+    opp_roster = [_make_player("Opp SP", ["SP"], {"era": 1.0})]
+
+    det = WaiverEdgeDetector(mcmc_simulator=None)
+    with patch.object(det, "_fetch_fas", return_value=[jack_dreyer_il, healthy_fa]), \
+         patch.object(WaiverEdgeDetector, "_load_scarcity_lookup", return_value={}):
+        moves = det.get_top_moves(my_roster, opp_roster, n_candidates=10)
+
+    add_names = [m["add_player"]["name"] for m in moves]
+    assert "Jack Dreyer" not in add_names, (
+        "IL player Jack Dreyer must not appear in waiver recommendations"
+    )
+    assert "Healthy SP" in add_names
+
+
+def test_il_player_with_yahoo_status_excluded():
+    """IL players identified via Yahoo short-code status are also excluded."""
+    il_player = {
+        "name": "Injured Guy",
+        "positions": ["OF"],
+        "player_key": "469.p.88888",
+        "status": "IL",
+        "cat_scores": {"hr": 2.0, "rbi": 1.5},
+        "z_score": 2.2,
+    }
+    my_roster = [_make_player("Weak OF", ["OF"], {"hr": -0.2})]
+    opp_roster = [_make_player("Opp OF", ["OF"], {"hr": 1.0})]
+
+    det = WaiverEdgeDetector(mcmc_simulator=None)
+    with patch.object(det, "_fetch_fas", return_value=[il_player]), \
+         patch.object(WaiverEdgeDetector, "_load_scarcity_lookup", return_value={}):
+        moves = det.get_top_moves(my_roster, opp_roster, n_candidates=10)
+
+    assert moves == [], "IL player (Yahoo status='IL') must not produce any waiver recommendations"
+
+
+def test_dtd_player_included_with_warning_and_reduced_score():
+    """DTD players appear in recommendations but with a reduced score and warning."""
+    dtd_player = {
+        "name": "Banged Up",
+        "positions": ["OF"],
+        "player_key": "469.p.77777",
+        "status": "DTD",
+        "cat_scores": {"hr": 1.5, "rbi": 1.0},
+        "z_score": 1.2,
+    }
+    my_roster = [_make_player("Weak OF", ["OF"], {"hr": -0.2})]
+    opp_roster = [_make_player("Opp OF", ["OF"], {"hr": 1.0})]
+
+    det = WaiverEdgeDetector(mcmc_simulator=None)
+    with patch.object(det, "_fetch_fas", return_value=[dtd_player]), \
+         patch.object(WaiverEdgeDetector, "_load_scarcity_lookup", return_value={}):
+        moves = det.get_top_moves(my_roster, opp_roster, n_candidates=10)
+
+    assert len(moves) == 1, "DTD player must still appear in waiver recommendations"
+    move = moves[0]
+    assert move["add_player"]["name"] == "Banged Up"
+    assert move["dtd_warning"] is not None, "DTD move must include a dtd_warning"
+    assert "DTD" in move["dtd_warning"]
