@@ -2275,6 +2275,27 @@ async def get_fantasy_waiver_recommendations(
         il_watch = [p for p in top_available if _is_on_il(p)]
         top_available = [p for p in top_available if not _is_on_il(p)]
 
+        # Annotate waiver candidates with within-league drop intelligence (non-fatal)
+        try:
+            from backend.services.league_transaction_feed import (
+                get_recent_league_drops,
+                build_drop_lookup,
+            )
+            _drops = get_recent_league_drops(client)
+            _drop_lk = build_drop_lookup(_drops)
+            _by_key = _drop_lk["by_key"]
+            _by_name = _drop_lk["by_name"]
+            for _p in top_available + il_watch:
+                _drop = _by_key.get(_p.player_id) or _by_name.get(_p.name.lower())
+                if _drop:
+                    _p.league_drop = {
+                        "dropped_by": _drop.dropped_by_name,
+                        "days_ago": _drop.days_ago,
+                        "team_key": _drop.dropped_by_team,
+                    }
+        except Exception as _txn_err:
+            logger.warning("waiver: league_transaction_feed non-fatal: %s", _txn_err)
+
         if min_z_score is not None:
             top_available = [p for p in top_available if p.need_score >= min_z_score]
         top_available = [p for p in top_available if p.owned_pct <= max_percent_owned]
