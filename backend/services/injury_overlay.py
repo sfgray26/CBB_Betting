@@ -96,10 +96,10 @@ def build_injury_overlay(
     """Build a lightweight overlay with a human-readable return/freshness string.
 
     ETA is computed from ``injury_date`` (retroactive start) plus the IL-type
-    minimum duration when the status contains a recognised IL designator.  This
-    overrides the BDL-supplied ``return_date`` when that date implies a duration
-    that is inconsistent with the IL type (e.g. a 15-Day-IL showing 42 days out
-    because BDL applied a 60-day formula).
+    minimum duration when the status contains a recognised IL designator.  When
+    the BDL-supplied ``return_date`` implies a duration more than 1.2× the IL
+    minimum, the estimate is flagged as uncertain and shown as
+    "ETA: TBD (eligible [earliest_date])" to avoid displaying a fabricated date.
 
     When no IL type can be inferred AND no ``return_date`` is available for an
     IL player, the timeline shows "ETA: Unknown" rather than a fabricated date.
@@ -115,25 +115,31 @@ def build_injury_overlay(
         # Use injury_date (retroactive IL start) as the anchor; fall back to
         # ingested_at only when injury_date is missing.
         ref_date = _coerce_et(injury_date) or ingested_et
-        computed_eta = ref_date + timedelta(days=il_days)
+        computed_eta = ref_date + timedelta(days=il_days)  # earliest eligible date
 
+        tbd_eligibility = False  # True → show "TBD (eligible ...)" not a hard date
         if return_date is None:
             # BDL provided no return_date — compute from IL type minimum.
+            # Show as a specific date: the eligibility date is reliable.
             return_et = computed_eta
         else:
             bdl_et = _coerce_et(return_date)
             assert bdl_et is not None
             implied_days = (bdl_et - ref_date).days
-            if implied_days > il_days * 1.5:
-                # BDL return_date is more than 1.5× the IL minimum away —
-                # likely the wrong IL-type formula was applied (e.g. 60-day
-                # formula on a 15-Day IL).  Use the computed minimum instead.
+            if implied_days > il_days * 1.2:
+                # BDL return_date extends more than 1.2× the IL minimum beyond the
+                # injury start — uncertain estimate (e.g. BDL applied the wrong
+                # IL-type formula, or the doctor has given no confirmed timetable).
+                # Show the eligibility date with a TBD qualifier instead of a
+                # potentially fabricated specific date.
                 return_et = computed_eta
+                tbd_eligibility = True
             else:
                 return_et = bdl_et
     else:
         # Non-IL or unrecognised status: trust BDL's return_date if present.
         return_et = _coerce_et(return_date)
+        tbd_eligibility = False
 
     age = now_et - ingested_et
     is_stale = age > timedelta(minutes=freshness_minutes)
@@ -144,7 +150,10 @@ def build_injury_overlay(
     timeline_parts: list[str] = []
     status_upper = status.upper().replace(" ", "").replace("-", "")
     if return_et is not None:
-        timeline_parts.append(f"ETA {_format_calendar_date(return_et)}")
+        if tbd_eligibility:
+            timeline_parts.append(f"ETA: TBD (eligible {_format_calendar_date(return_et)})")
+        else:
+            timeline_parts.append(f"ETA {_format_calendar_date(return_et)}")
     elif "IL" in status_upper:
         # IL player but no date available — avoid fabricating a date.
         timeline_parts.append("ETA: Unknown")

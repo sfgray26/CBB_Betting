@@ -427,6 +427,7 @@ class WaiverPlayerOut(BaseModel):
     quality_score: Optional[float] = None   # Pitcher matchup quality [-2.0 to +2.0]. None when not a pitcher FA candidate.
     rank_percentile: Optional[float] = None  # 0-100 list rank; used to gate HOT/COLD badges.
     league_drop: Optional[dict] = None      # Recent in-league drop: {"dropped_by": str, "days_ago": float, "team_key": str} or None
+    small_sample: Optional[bool] = None     # True when PA (batters) or IP (pitchers) is below reliable-sample threshold
 
     @field_validator("need_score", "z_score", "owned_pct", "projected_saves", mode="before")
     @classmethod

@@ -656,6 +656,25 @@ class WaiverEdgeDetector:
                 applied_depth_factor = pitcher_depth_factor if fa_is_pitcher else batter_depth_factor
                 score *= applied_depth_factor
 
+            # Small-sample penalty: prevents short hot streaks from over-weighting fringe players.
+            # Pitchers: actual season-to-date IP (Yahoo stat ID "50", threshold 30 IP).
+            # Batters: estimate PA from H (Yahoo stat ID "8", using ~0.265 league-average BA,
+            #   threshold 100 estimated PA ≈ 26.5 H).
+            # Floor factor: 0.5 — at most cuts the score in half for near-zero samples.
+            _stats_dict = fa.get("stats") or {}
+            small_sample = False
+            if fa_is_pitcher:
+                _ip_actual = float(_stats_dict.get("50") or 0.0)
+                if 0.0 < _ip_actual < 30.0:
+                    score *= max(0.5, _ip_actual / 30.0)
+                    small_sample = True
+            else:
+                _h_actual = float(_stats_dict.get("8") or 0.0)
+                _pa_estimate = _h_actual / 0.265 if _h_actual > 0.0 else 0.0
+                if 0.0 < _pa_estimate < 100.0:
+                    score *= max(0.5, _pa_estimate / 100.0)
+                    small_sample = True
+
             fa_positions = fa.get("positions") or []
             drop_candidate = self._weakest_droppable_at(my_roster, fa_positions)
             move = {
@@ -673,6 +692,7 @@ class WaiverEdgeDetector:
                 "mcmc_enabled": False,
                 "category_win_probs": {},
                 "dtd_warning": dtd_warning,
+                "small_sample": small_sample,
             }
             if self._has_dead_2b(my_roster) and "2B" in fa_positions:
                 move["need_score"] *= 1.25

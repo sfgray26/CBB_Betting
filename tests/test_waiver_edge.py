@@ -438,3 +438,110 @@ def test_dtd_player_included_with_warning_and_reduced_score():
     assert move["add_player"]["name"] == "Banged Up"
     assert move["dtd_warning"] is not None, "DTD move must include a dtd_warning"
     assert "DTD" in move["dtd_warning"]
+
+
+# ---------------------------------------------------------------------------
+# Task B: Small-sample penalty — prevents short hot streaks from dominating
+# ---------------------------------------------------------------------------
+
+
+class TestSmallSamplePenalty:
+    """Small-sample penalty depresses need_score for thin-stats players."""
+
+    def _make_fa(self, name, positions, cat_scores, stats=None, z_score=1.0):
+        return {
+            "name": name,
+            "positions": positions,
+            "player_key": f"469.p.{abs(hash(name)) % 90000 + 10000}",
+            "cat_scores": cat_scores,
+            "z_score": z_score,
+            "stats": stats or {},
+        }
+
+    def test_pitcher_small_ip_scores_lower_than_full_sample(self):
+        """Pitcher with 10 actual IP scores lower than identical pitcher with 50 IP."""
+        small_sp = self._make_fa(
+            "New SP", ["SP"], {"era": 2.5, "k9": 2.0},
+            stats={"50": "10.0"}, z_score=2.0,
+        )
+        full_sp = self._make_fa(
+            "Regular SP", ["SP"], {"era": 2.5, "k9": 2.0},
+            stats={"50": "50.0"}, z_score=2.0,
+        )
+        my_roster = [_make_player("Weak SP", ["SP"], {"era": -0.5})]
+        opp_roster = [_make_player("Opp SP", ["SP"], {"era": 1.0})]
+
+        det = WaiverEdgeDetector(mcmc_simulator=None)
+        with patch.object(det, "_fetch_fas", return_value=[small_sp, full_sp]), \
+             patch.object(WaiverEdgeDetector, "_load_scarcity_lookup", return_value={}):
+            moves = det.get_top_moves(my_roster, opp_roster, n_candidates=10)
+
+        small_move = next((m for m in moves if m["add_player"]["name"] == "New SP"), None)
+        full_move = next((m for m in moves if m["add_player"]["name"] == "Regular SP"), None)
+        assert small_move is not None
+        assert full_move is not None
+        assert small_move["need_score"] < full_move["need_score"], (
+            "Small-sample SP (10 IP) must score lower than full-sample SP (50 IP)"
+        )
+        assert small_move["small_sample"] is True
+        assert full_move["small_sample"] is False
+
+    def test_batter_small_hits_scores_lower_than_full_sample(self):
+        """Batter with 5 H (≈19 PA estimate) penalised vs batter with 30 H (≈113 PA)."""
+        hot_batter = self._make_fa(
+            "Jake Bauers", ["1B"], {"hr": 2.0, "rbi": 1.8},
+            stats={"8": "5"}, z_score=1.9,  # 5 H ≈ 19 PA — below 100 threshold
+        )
+        regular_batter = self._make_fa(
+            "Regular 1B", ["1B"], {"hr": 2.0, "rbi": 1.8},
+            stats={"8": "30"}, z_score=1.9,  # 30 H ≈ 113 PA — above threshold
+        )
+        my_roster = [_make_player("Weak 1B", ["1B"], {"hr": -0.3})]
+        opp_roster = [_make_player("Opp 1B", ["1B"], {"hr": 1.2})]
+
+        det = WaiverEdgeDetector(mcmc_simulator=None)
+        with patch.object(det, "_fetch_fas", return_value=[hot_batter, regular_batter]), \
+             patch.object(WaiverEdgeDetector, "_load_scarcity_lookup", return_value={}):
+            moves = det.get_top_moves(my_roster, opp_roster, n_candidates=10)
+
+        bauers_move = next((m for m in moves if m["add_player"]["name"] == "Jake Bauers"), None)
+        regular_move = next((m for m in moves if m["add_player"]["name"] == "Regular 1B"), None)
+        assert bauers_move is not None
+        assert regular_move is not None
+        assert bauers_move["need_score"] < regular_move["need_score"], (
+            "Jake Bauers (5 H ≈ 19 PA) must score lower than regular batter with same cat_scores"
+        )
+        assert bauers_move["small_sample"] is True
+        assert regular_move["small_sample"] is False
+
+    def test_no_stats_no_penalty(self):
+        """Player with empty stats dict skips the penalty — no division by zero."""
+        fa = self._make_fa("No Stats SP", ["SP"], {"era": 1.5}, stats={}, z_score=1.5)
+        my_roster = [_make_player("Weak SP", ["SP"], {"era": -0.5})]
+        opp_roster = [_make_player("Opp SP", ["SP"], {"era": 1.0})]
+
+        det = WaiverEdgeDetector(mcmc_simulator=None)
+        with patch.object(det, "_fetch_fas", return_value=[fa]), \
+             patch.object(WaiverEdgeDetector, "_load_scarcity_lookup", return_value={}):
+            moves = det.get_top_moves(my_roster, opp_roster, n_candidates=10)
+
+        assert len(moves) == 1
+        assert moves[0]["small_sample"] is False
+
+    def test_minimum_penalty_clamped_at_half(self):
+        """Penalty factor is floored at 0.5 — score never drops below half for tiny samples."""
+        tiny_sp = self._make_fa(
+            "Zero IP SP", ["SP"], {"era": 3.0},
+            stats={"50": "1.0"},  # 1 IP — factor = max(0.5, 1/30) = 0.5
+            z_score=3.0,
+        )
+        my_roster = [_make_player("Weak SP", ["SP"], {"era": -0.5})]
+        opp_roster = [_make_player("Opp SP", ["SP"], {"era": 1.0})]
+
+        det = WaiverEdgeDetector(mcmc_simulator=None)
+        with patch.object(det, "_fetch_fas", return_value=[tiny_sp]), \
+             patch.object(WaiverEdgeDetector, "_load_scarcity_lookup", return_value={}):
+            moves = det.get_top_moves(my_roster, opp_roster, n_candidates=10)
+
+        assert len(moves) == 1
+        assert moves[0]["small_sample"] is True

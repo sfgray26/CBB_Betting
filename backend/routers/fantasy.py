@@ -2148,6 +2148,17 @@ async def get_fantasy_waiver_recommendations(
             ):
                 _hc = None
 
+            # Small-sample flag: warn when season-to-date stats are too thin to trust.
+            # Pitchers: use IP (Yahoo stat ID "50"); batters: estimate PA from H (stat "8").
+            _small_sample: Optional[bool] = None
+            if _fa_is_pitcher:
+                _ip_ytd = float(_raw_stats.get("50") or 0.0)
+                _small_sample = 0.0 < _ip_ytd < 30.0
+            else:
+                _h_ytd = float(_raw_stats.get("8") or 0.0)
+                _pa_est = _h_ytd / 0.265 if _h_ytd > 0.0 else 0.0
+                _small_sample = 0.0 < _pa_est < 100.0
+
             return WaiverPlayerOut(
                 player_id=p.get("player_key") or "",
                 name=name,
@@ -2170,6 +2181,7 @@ async def get_fantasy_waiver_recommendations(
                 statcast_signals=_sc_sigs,
                 quality_score=_pitcher_quality_map.get(name.lower()) if _fa_is_pitcher else None,
                 rank_percentile=None,
+                small_sample=_small_sample,
             )
 
         # Bulk quality_score lookup for pitcher FA candidates (enrichment only).
