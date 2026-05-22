@@ -1032,22 +1032,50 @@ class DailyLineupOptimizer:
 
         team_odds = self._build_team_odds_map(self.fetch_mlb_odds(game_date))
         has_slate = len(team_odds) >= 10
-        
+
         # Fetch probable pitchers for accurate start detection
-        probable_pitchers = self._fetch_probable_pitchers_for_date(game_date)
+        try:
+            probable_pitchers = self._fetch_probable_pitchers_for_date(game_date)
+            logger.info(
+                "[flag_pitcher_starts] DIAG: probable_pitchers_teams=%d",
+                len(probable_pitchers),
+            )
+        except Exception as _prob_err:
+            logger.warning(
+                "[flag_pitcher_starts] DIAG: probable_pitchers fetch FAILED: %s — defaulting to empty dict",
+                _prob_err,
+            )
+            probable_pitchers = {}
+
+        _sp_rp_count = sum(
+            1 for p in roster
+            if any(pos in ("SP", "RP", "P") for pos in p.get("positions", []))
+        )
+        logger.info(
+            "[flag_pitcher_starts] DIAG: roster_size=%d, sp_rp_p_eligible=%d",
+            len(roster), _sp_rp_count,
+        )
 
         result = []
         for p in roster:
             positions = p.get("positions", [])
             status = p.get("status")
             player_name = p.get("name", "")
-            
+
             logger.debug(f"[PITCHER_DEBUG] {player_name}: positions={positions}, status={status}")
-            
+
             if not any(pos in ("SP", "RP", "P") for pos in positions):
                 continue
             if status in _INACTIVE_STATUSES:
+                logger.info(
+                    "[flag_pitcher_starts] DIAG: FILTERED %s — status=%s in _INACTIVE_STATUSES",
+                    player_name, status,
+                )
                 continue
+            logger.info(
+                "[flag_pitcher_starts] DIAG: processing %s positions=%s status=%s",
+                player_name, positions, status,
+            )
             
             is_sp = "SP" in positions
             team_raw = p.get("team", "")
@@ -1085,6 +1113,7 @@ class DailyLineupOptimizer:
                 "pitcher_slot": "SP" if is_sp else "RP",
                 "opponent": opponent,
             })
+        logger.info("[flag_pitcher_starts] DIAG: returning %d pitchers", len(result))
         return result
     
     def _fetch_probable_pitchers_for_date(self, game_date: str) -> dict:
