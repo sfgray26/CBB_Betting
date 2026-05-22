@@ -69,8 +69,17 @@ from backend.schemas import (
     DecisionPipelineStatus,
 )
 from backend.contracts import (
+    BulkRosterMove,
+    BulkRosterMoveRequest,
+    BulkRosterMoveResponse,
     CanonicalRosterResponse,
+    DecisionAccuracyResponse,
+    DecisionAccuracyTrendPoint,
     FreshnessMetadata,
+    MatchupPreviewCategoryProjection,
+    MatchupPreviewResponse,
+    ScheduleAdvantage,
+    WeakCategory,
     RosterMoveRequest,
     RosterMoveResponse,
     RosterOptimizeRequest,
@@ -111,6 +120,17 @@ _MATCHUP_CACHE_TTL = 300  # seconds
 
 # League settings (stat ID map) — 2-hour TTL; never changes mid-season.
 _LEAGUE_SETTINGS_CACHE: dict = {}
+
+# Yahoo H2H weeks run Monday–Sunday. Week 1 = March 24–30, 2026 (first Monday on or after Opening Day).
+# Using Opening Day (Mar 20, Thursday) as epoch produces a 4-day offset that causes queries to
+# hit the wrong Yahoo matchup week — Week 10 instead of Week 9 on May 22.
+_MLB_FIRST_MATCHUP_MONDAY = date(2026, 3, 24)
+_FANTASY_TOTAL_WEEKS = 25
+
+
+def _compute_mlb_current_week(today: date) -> int:
+    days_elapsed = max(0, (today - _MLB_FIRST_MATCHUP_MONDAY).days)
+    return max(1, min(_FANTASY_TOTAL_WEEKS, (days_elapsed // 7) + 1))
 
 
 def _fetch_probable_starts_map(start_date: str, end_date: str) -> dict:
@@ -2118,6 +2138,16 @@ async def get_fantasy_waiver_recommendations(
             if _penalty_note and "HIGH_INJURY_RISK" not in _sc_sigs:
                 _sc_sigs.append("HIGH_INJURY_RISK")
 
+            # Suppress HOT for any injured/unavailable player (IL already filtered out;
+            # DTD suppression prevents a misleading badge on players who may not play)
+            _injury_upper = (_injury_status or "").upper()
+            if _hc == "HOT" and (
+                "DTD" in _injury_upper
+                or "IL" in _injury_upper
+                or "DL" in _injury_upper
+            ):
+                _hc = None
+
             return WaiverPlayerOut(
                 player_id=p.get("player_key") or "",
                 name=name,
@@ -2128,6 +2158,7 @@ async def get_fantasy_waiver_recommendations(
                 category_contributions=contributions,
                 owned_pct=p.get("percent_owned", 0.0),
                 starts_this_week=p.get("starts_this_week", 0),
+                two_start=p.get("starts_this_week", 0) >= 2,
                 projected_saves=_raw_nsv,
                 hot_cold=_hc,
                 status=_status,
@@ -2220,6 +2251,30 @@ async def get_fantasy_waiver_recommendations(
         _injury_overlays_by_key = load_injury_overlays_for_yahoo_players(db, free_agents) if free_agents else {}
 
         top_available = [_to_waiver_player(p) for p in free_agents]
+
+        # Reconcile tag contradictions: IL status always overrides LOW_INJURY_RISK
+        _IL_STATUS_VALUES = frozenset({
+            "il", "il10", "il15", "il60", "dl", "dl10", "dl15", "dl60",
+            "10-day-il", "15-day-il", "60-day-il", "injured list",
+        })
+
+        def _is_on_il(player) -> bool:
+            for field in (player.injury_status, player.status):
+                if field and field.lower().replace(" ", "-") in _IL_STATUS_VALUES:
+                    return True
+            return False
+
+        for p in top_available:
+            if _is_on_il(p) and "LOW_INJURY_RISK" in p.statcast_signals:
+                # IL + LOW_INJURY_RISK is a contradiction — remove LOW_INJURY_RISK
+                p.statcast_signals = [s for s in p.statcast_signals if s != "LOW_INJURY_RISK"]
+                if "HIGH_INJURY_RISK" not in p.statcast_signals:
+                    p.statcast_signals.append("HIGH_INJURY_RISK")
+
+        # Separate IL players into a watch list — they should not be in active recommendations
+        il_watch = [p for p in top_available if _is_on_il(p)]
+        top_available = [p for p in top_available if not _is_on_il(p)]
+
         if min_z_score is not None:
             top_available = [p for p in top_available if p.need_score >= min_z_score]
         top_available = [p for p in top_available if p.owned_pct <= max_percent_owned]
@@ -2318,6 +2373,7 @@ async def get_fantasy_waiver_recommendations(
         il_slots_available=_il_info["available"],
         faab_balance=_faab_balance,
         roster_context=_roster_context,
+        il_watch=il_watch,
     )
 
 
@@ -2326,6 +2382,7 @@ async def add_fantasy_waiver_player(
     add_player_key: str = Query(..., description="Yahoo player key to add (mlb.p.XXXXX)"),
     drop_player_key: Optional[str] = Query(None, description="Yahoo player key to drop (mlb.p.XXXXX)"),
     user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
 ):
     """Execute a direct Yahoo add/drop transaction from waiver UI."""
     try:
@@ -2355,6 +2412,26 @@ async def add_fantasy_waiver_player(
         raise HTTPException(status_code=502, detail=f"Yahoo add/drop failed: {exc}") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Waiver add failed: {exc}") from exc
+
+    if ok:
+        from backend.models import RosterAcquisition
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        _now_et = datetime.now(ZoneInfo("America/New_York"))
+        _days_since_monday = _now_et.weekday()
+        _week_start = _now_et.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=_days_since_monday)
+        try:
+            db.add(RosterAcquisition(
+                team_key=team_key,
+                player_added_key=add_key,
+                player_dropped_key=drop_key,
+                executed_at=_now_et,
+                week_start=_week_start,
+            ))
+            db.commit()
+        except Exception as _db_err:
+            db.rollback()
+            logger.warning("waiver/add: failed to persist RosterAcquisition: %s", _db_err)
 
     return {
         "success": bool(ok),
@@ -3645,6 +3722,218 @@ async def move_roster_player(
             staleness_threshold_minutes=60,
             is_stale=False,
         ),
+    )
+
+
+@router.post("/api/fantasy/roster/bulk-apply", response_model=BulkRosterMoveResponse)
+async def bulk_apply_roster_moves(
+    request: BulkRosterMoveRequest,
+):
+    """
+    Apply multiple roster moves atomically via a single set_lineup call.
+
+    All moves are validated before any Yahoo API call is made.
+    Returns 400 if any move fails validation.
+    Returns 200 with applied_count/failed_count/errors after Yahoo processes the lineup.
+    """
+    valid_positions = {
+        "C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "OF", "Util",
+        "SP", "RP", "P",
+        "BN", "IL", "IL60",
+    }
+
+    if not request.moves:
+        raise HTTPException(status_code=400, detail={"errors": ["No moves provided"]})
+
+    # Phase 1: validate positions before touching Yahoo
+    validation_errors: list[str] = []
+    for move in request.moves:
+        if move.target_position not in valid_positions:
+            validation_errors.append(
+                f"Invalid position {move.target_position!r} for player {move.player_key}"
+            )
+
+    if validation_errors:
+        raise HTTPException(status_code=400, detail={"errors": validation_errors})
+
+    try:
+        client = get_yahoo_client()
+    except YahooAuthError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Yahoo not configured -- set YAHOO_REFRESH_TOKEN",
+        ) from exc
+
+    team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+
+    try:
+        raw_players = client.get_roster(team_key=team_key)
+    except YahooAuthError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # Index current roster
+    roster_by_key = {p["player_key"]: p for p in raw_players if p.get("player_key")}
+
+    # Phase 2: validate all player keys exist on roster
+    for move in request.moves:
+        if move.player_key not in roster_by_key:
+            validation_errors.append(f"Player {move.player_key} not found on roster")
+
+    if validation_errors:
+        raise HTTPException(status_code=400, detail={"errors": validation_errors})
+
+    # Build full lineup with all moves applied at once (atomic)
+    move_map = {m.player_key: m.target_position for m in request.moves}
+    lineup = []
+    for player in raw_players:
+        pk = player.get("player_key")
+        if not pk:
+            continue
+        target = move_map.get(pk, player.get("selected_position", "BN"))
+        lineup.append({"player_key": pk, "position": target})
+
+    try:
+        result = client.set_lineup(team_key=team_key, lineup=lineup)
+    except YahooAPIError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    applied = set(result.get("applied", []))
+    move_keys = {m.player_key for m in request.moves}
+    applied_count = len(move_keys & applied)
+    failed_count = len(move_keys) - applied_count
+
+    errors = [
+        f"Player {pk} was not confirmed in Yahoo's applied list"
+        for pk in sorted(move_keys - applied)
+    ]
+
+    return BulkRosterMoveResponse(
+        applied_count=applied_count,
+        failed_count=failed_count,
+        errors=errors,
+    )
+
+
+@router.get("/api/fantasy/matchup-preview", response_model=MatchupPreviewResponse)
+async def get_matchup_preview(
+    db: Session = Depends(get_db),
+):
+    """
+    Next-week H2H matchup preview using MCMC simulation.
+
+    Fetches next week's Yahoo matchup opponent, simulates category win probabilities
+    against a league-average opponent baseline, and surfaces streaming recommendations
+    for categories projected to lose. Falls back to current-week opponent when
+    next week's matchup isn't published yet.
+    """
+    from backend.fantasy_baseball.mcmc_simulator import simulate_weekly_matchup
+    from zoneinfo import ZoneInfo
+
+    try:
+        client = get_yahoo_client()
+    except YahooAuthError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Yahoo not configured — set YAHOO_REFRESH_TOKEN",
+        ) from exc
+
+    # Determine current fantasy week and compute next week
+    current_week_num = 1
+    try:
+        league_meta = client.get_league()
+        current_week_num = int(league_meta.get("current_week", 1))
+    except Exception as _w_err:
+        logger.warning("matchup_preview: league current_week fetch failed: %s", _w_err)
+
+    next_week_num = current_week_num + 1
+
+    # Get next week's opponent name — fall back to current week if not yet published
+    opponent_name = "Unknown"
+    preview_week = next_week_num
+    try:
+        next_stats = client.get_matchup_stats(week=next_week_num)
+        opponent_name = next_stats.get("opponent_name") or "Unknown"
+    except Exception as _nw_err:
+        logger.warning(
+            "matchup_preview: next-week matchup unavailable (%s), falling back to current week",
+            _nw_err,
+        )
+        preview_week = current_week_num
+        try:
+            cur_stats = client.get_matchup_stats()
+            opponent_name = cur_stats.get("opponent_name") or "Unknown"
+        except Exception as _cw_err:
+            logger.warning("matchup_preview: current-week matchup also failed: %s", _cw_err)
+
+    # Build my roster with cat_scores from player_projections table
+    try:
+        my_roster, _ = _fetch_rosters_for_simulate(db)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Roster fetch failed: {exc}") from exc
+
+    if not my_roster:
+        raise HTTPException(
+            status_code=422,
+            detail="No roster data available — check Yahoo API connection",
+        )
+
+    # Simulate full-week projection against league-average opponent (empty = z=0 baseline)
+    try:
+        sim = simulate_weekly_matchup(
+            my_roster=my_roster,
+            opponent_roster=[],
+            n_sims=2000,
+            remaining_fraction=1.0,
+        )
+    except Exception as exc:
+        logger.error("matchup_preview: simulation failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Simulation failed: {exc}") from exc
+
+    _CAT_LABELS: dict[str, str] = {
+        "r": "Runs", "h": "Hits", "hr_b": "HR", "rbi": "RBI",
+        "k_b": "K", "tb": "Total Bases", "avg": "AVG", "ops": "OPS", "nsb": "NSB",
+        "w": "W", "l": "L", "hr_p": "HR", "k_p": "K",
+        "era": "ERA", "whip": "WHIP", "k_9": "K/9", "qs": "QS", "nsv": "NSV",
+    }
+
+    cat_win_probs: dict[str, float] = sim.get("category_win_probs", {})
+    category_projections: list[MatchupPreviewCategoryProjection] = []
+    weak_categories: list[WeakCategory] = []
+
+    for cat, win_prob in sorted(cat_win_probs.items()):
+        category_projections.append(
+            MatchupPreviewCategoryProjection(
+                category=cat,
+                win_prob=round(win_prob, 4),
+            )
+        )
+        if win_prob < 0.4:
+            label = _CAT_LABELS.get(cat, cat.upper())
+            weak_categories.append(
+                WeakCategory(
+                    category=cat,
+                    label=label,
+                    win_prob=round(win_prob, 4),
+                    reason=(
+                        f"Projected to lose {label} ({win_prob:.0%} win rate) — "
+                        f"target streamers with {label} upside"
+                    ),
+                )
+            )
+
+    return MatchupPreviewResponse(
+        week_number=preview_week,
+        opponent_name=opponent_name,
+        opponent_logo=None,
+        overall_win_prob=round(float(sim.get("win_prob", 0.5)), 4),
+        category_projections=category_projections,
+        weak_categories=weak_categories,
+        schedule_advantage=ScheduleAdvantage(my_games=0, opponent_games=0),
+        message=None,
     )
 
 
@@ -5767,6 +6056,66 @@ async def get_decisions_status(
     )
 
 
+@router.get("/api/fantasy/decisions/accuracy", response_model=DecisionAccuracyResponse)
+async def get_decisions_accuracy():
+    """
+    14-day override accuracy summary from the file-based decision tracker.
+
+    Returns per-day accuracy trend and aggregated override comparison stats
+    (how often the user's manual overrides beat the system's recommendations).
+
+    No auth required — read-only, no sensitive data.
+    """
+    from backend.fantasy_baseball.decision_tracker import get_decision_tracker
+
+    tracker = get_decision_tracker()
+
+    end = datetime.now()
+    trend_points: list[DecisionAccuracyTrendPoint] = []
+
+    # Aggregate override stats across the full 14-day window
+    total_decisions = 0
+    override_better = 0
+    override_worse = 0
+    latest_date = end.strftime("%Y-%m-%d")
+
+    for offset in range(13, -1, -1):  # 13 days ago … today (oldest first)
+        day = (end - timedelta(days=offset)).strftime("%Y-%m-%d")
+        acc = tracker.get_daily_accuracy(day)
+
+        if acc is None:
+            trend_points.append(DecisionAccuracyTrendPoint(date=day, accuracy_pct=-1.0))
+            continue
+
+        resolved_count = acc.correct_predictions + acc.incorrect_predictions
+        day_accuracy = (
+            round(acc.correct_predictions / resolved_count, 4)
+            if resolved_count > 0
+            else -1.0
+        )
+        trend_points.append(DecisionAccuracyTrendPoint(date=day, accuracy_pct=day_accuracy))
+
+        # Accumulate from today (offset==0) for the top-level summary
+        if offset == 0:
+            total_decisions = acc.total_decisions
+            override_better = acc.override_better_count
+            override_worse = acc.override_worse_count
+
+    override_total = override_better + override_worse
+    override_accuracy_pct = (
+        round(override_better / override_total, 4) if override_total > 0 else 0.0
+    )
+
+    return DecisionAccuracyResponse(
+        date=latest_date,
+        total_overrides=total_decisions,
+        better_count=override_better,
+        worse_count=override_worse,
+        override_accuracy_pct=override_accuracy_pct,
+        daily_trend=trend_points,
+    )
+
+
 # ============================================================================
 # Phase 4: Matchup Scoreboard (P1 Page)
 # ============================================================================
@@ -6031,6 +6380,9 @@ async def get_constraint_budget(
 
     # 2. Count acquisitions since Monday 00:00 ET (Yahoo matchup week start)
     transactions: list = []
+    days_since_monday = now_et.weekday()  # Monday=0
+    week_start = now_et.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days_since_monday)
+    week_end = now_et
     try:
         transactions = client.get_transactions(t_type="add")
         logger.info("budget: fetched %d transactions from Yahoo", len(transactions))
@@ -6039,34 +6391,59 @@ async def get_constraint_budget(
                          list(transactions[0].keys()),
                          transactions[0].get("type"),
                          transactions[0].get("timestamp"))
-        days_since_monday = now_et.weekday()  # Monday=0
-        week_start = now_et.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days_since_monday)
-        week_end = now_et
         acquisitions_used = count_weekly_acquisitions(
             transactions, team_key, week_start, week_end
         )
-        logger.info("budget: acquisitions_used=%d (week %s–%s)", acquisitions_used, week_start.date(), week_end.date())
+        logger.info("budget: yahoo acquisitions_used=%d (week %s–%s)", acquisitions_used, week_start.date(), week_end.date())
     except Exception as _acq_err:
         logger.warning("budget: acquisitions count failed: %s", _acq_err, exc_info=True)
 
+    # Read local RosterAcquisition rows and take max to eliminate Yahoo API lag
+    try:
+        from backend.models import RosterAcquisition
+        local_count = db.query(RosterAcquisition).filter(
+            RosterAcquisition.team_key == team_key,
+            RosterAcquisition.week_start >= week_start,
+        ).count()
+        if local_count > acquisitions_used:
+            logger.info("budget: local_count=%d > yahoo=%d — using local", local_count, acquisitions_used)
+            acquisitions_used = local_count
+    except Exception as _local_err:
+        logger.warning("budget: local acquisition query failed: %s", _local_err)
+
     # 3. Season calendar — week number, pace metadata
-    from datetime import date as _date
-    _MLB_OPENING_DATE_2026 = _date(2026, 3, 20)  # MLB Opening Day 2026
-    _FANTASY_TOTAL_WEEKS = 25
-    days_since_opening = max(0, (now_et.date() - _MLB_OPENING_DATE_2026).days)
-    season_days_elapsed = days_since_opening
-    current_week = max(1, min(_FANTASY_TOTAL_WEEKS, (days_since_opening // 7) + 1))
+    current_week = _compute_mlb_current_week(now_et.date())
+    # Yahoo sync guard: if our epoch drifts from Yahoo's authoritative value, trust Yahoo
+    try:
+        league_meta = client.get_league()
+        yahoo_week = int(league_meta.get("current_week") or 0)
+        if yahoo_week > 0 and yahoo_week != current_week:
+            logger.warning(
+                "budget: computed week=%d differs from Yahoo current_week=%d — using Yahoo value",
+                current_week,
+                yahoo_week,
+            )
+            current_week = yahoo_week
+    except Exception as _week_sync_err:
+        logger.debug("budget: Yahoo week sync skipped: %s", _week_sync_err)
+    season_days_elapsed = max(0, (now_et.date() - _MLB_FIRST_MATCHUP_MONDAY).days)
     weeks_remaining = max(0, _FANTASY_TOTAL_WEEKS - current_week)
     # Days left in the current Yahoo matchup week (weeks run Mon–Sun)
     days_in_week_remaining = max(0, 7 - now_et.weekday())  # Monday=0 → 7 remaining
 
     # 4. IP tracking - wired to Yahoo matchup stats (A-6 fix)
     ip_accumulated = 0.0
+    ip_data_available = False
     try:
         matchup_stats = client.get_matchup_stats(week=current_week, my_team_key=team_key)
         if matchup_stats:
             my_stats = matchup_stats.get("my_stats", {})
-            ip_accumulated = float(my_stats.get("IP", 0.0))
+            if "IP" in my_stats:
+                ip_accumulated = float(my_stats["IP"])
+                ip_data_available = True
+            elif my_stats:
+                # Stats returned but no IP key — Yahoo may not have committed pitching yet
+                ip_data_available = True
     except (YahooAuthError, YahooAPIError, Exception) as exc:
         logger.warning("budget: failed to fetch IP from matchup stats: %s", exc)
     ip_minimum = 18.0  # Yahoo H2H standard (innings pitched per week) - matches scoreboard_orchestrator.py
@@ -6074,7 +6451,7 @@ async def get_constraint_budget(
     # Count season-total acquisitions from the already-fetched transaction list
     acquisitions_this_season = 0
     try:
-        season_start = _MLB_OPENING_DATE_2026
+        season_start = _MLB_FIRST_MATCHUP_MONDAY
         for txn in transactions:
             ts = txn.get("timestamp")
             if not ts:
@@ -6107,6 +6484,7 @@ async def get_constraint_budget(
             "ip_accumulated": budget.ip_accumulated,
             "ip_minimum": budget.ip_minimum,
             "ip_pace": budget.ip_pace.value,
+            "ip_data_available": ip_data_available,
             "as_of": budget.as_of.isoformat(),
             "week_label": f"Week {current_week}",
             "weeks_remaining": weeks_remaining,

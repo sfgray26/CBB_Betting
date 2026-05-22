@@ -1,0 +1,146 @@
+{
+  "description": "Major Improvement Sprint - Addressing Code Quality, Test Coverage, and Feature Gaps",
+  "tasks": [
+    {
+      "id": "improvement-1-test-coverage",
+      "description": "Create comprehensive test suite for core services. Current coverage is critically low (only 3 test files for 210 Python files). Create tests for: services/matchup_engine.py, services/player_mapper.py, services/row_projector.py. Use pytest, mock external APIs, test edge cases. Target: 80%+ coverage for core logic.",
+      "task_type": "test_generation",
+      "files_affected": [
+        "backend/tests/test_matchup_engine.py",
+        "backend/tests/test_player_mapper.py", 
+        "backend/tests/test_row_projector.py",
+        "backend/tests/conftest.py"
+      ],
+      "priority": 1,
+      "estimated_minutes": 60,
+      "context_files": [
+        "backend/services/matchup_engine.py",
+        "backend/services/player_mapper.py", 
+        "backend/services/row_projector.py",
+        "backend/test_p1_bugs_fixes.py"
+      ],
+      "agent": "codex"
+    },
+    {
+      "id": "improvement-2-remove-prints",
+      "description": "Replace all print statements with proper logging across the codebase. Found 20+ print statements in production code (models.py, services/*.py). Replace with logger.info/debug/warning. Ensure loggers are defined at module level. Add context to log messages. Do NOT remove __main__ block prints or test prints.",
+      "task_type": "multi_file_refactor",
+      "files_affected": [
+        "backend/models.py",
+        "backend/services/team_conference_lookup.py",
+        "backend/services/sentinel.py",
+        "backend/services/possession_sim.py",
+        "backend/services/openclaw_telemetry.py"
+      ],
+      "priority": 2,
+      "estimated_minutes": 30,
+      "context_files": ["backend/logging.conf"],
+      "agent": "codex"
+    },
+    {
+      "id": "improvement-3-quality-score",
+      "description": "Implement TODO at fantasy.py:2074 - populate quality_score from ProbablePitcherSnapshot for pitchers. Add quality_score to the pitcher data pipeline: query ProbablePitcherSnapshot.quality_score, wire through to API response, add tests. This is a missing feature that impacts pitcher streaming recommendations.",
+      "task_type": "api_integration",
+      "files_affected": [
+        "backend/routers/fantasy.py",
+        "backend/schemas.py",
+        "backend/tests/test_pitcher_quality.py"
+      ],
+      "priority": 2,
+      "estimated_minutes": 45,
+      "context_files": [
+        "backend/routers/fantasy.py",
+        "backend/models.py"
+      ],
+      "agent": "claude"
+    },
+    {
+      "id": "improvement-4-stale-data",
+      "description": "Implement TODO at fantasy.py:3277-3280 - track fetched_at timestamps and compute is_stale for Yahoo data. Add fetched_at tracking in yahoo_client_resilient.py, compute is_stale (data > 15 mins old), expose in API responses. Critical for data freshness indicators.",
+      "task_type": "api_integration",
+      "files_affected": [
+        "backend/fantasy_baseball/yahoo_client_resilient.py",
+        "backend/services/player_mapper.py",
+        "backend/services/scoreboard_orchestrator.py",
+        "backend/schemas.py"
+      ],
+      "priority": 3,
+      "estimated_minutes": 40,
+      "context_files": [
+        "backend/fantasy_baseball/yahoo_client_resilient.py",
+        "backend/services/player_mapper.py"
+      ],
+      "agent": "claude"
+    },
+    {
+      "id": "improvement-5-documentation",
+      "description": "Document all TODOs found in codebase (30+ found). Create comprehensive TODO.md with: location, description, priority, estimated effort, dependencies. Organize by category (API, data pipeline, features). Update HERMES.md with technical debt section.",
+      "task_type": "documentation",
+      "files_affected": [
+        "docs/TODO.md",
+        "HERMES.md"
+      ],
+      "priority": 3,
+      "estimated_minutes": 30,
+      "context_files": [
+        "backend/routers/fantasy.py",
+        "backend/services/player_mapper.py",
+        "backend/services/row_projector.py",
+        "backend/services/scoreboard_orchestrator.py"
+      ],
+      "agent": "gemini"
+    },
+    {
+      "id": "improvement-6-game-context",
+      "description": "Implement TODO at player_mapper.py:112,203 - wire up Yahoo matchup data for game context. Add game context fields: opponent_team, game_time, is_home, weather. Query from Yahoo matchup data, expose in PlayerCardResponse. Needed for lineup decisions.",
+      "task_type": "api_integration",
+      "files_affected": [
+        "backend/services/player_mapper.py",
+        "backend/schemas.py",
+        "backend/tests/test_game_context.py"
+      ],
+      "priority": 2,
+      "estimated_minutes": 50,
+      "context_files": [
+        "backend/services/player_mapper.py",
+        "backend/fantasy_baseball/yahoo_client_resilient.py"
+      ],
+      "agent": "claude"
+    },
+    {
+      "id": "improvement-7-performance",
+      "description": "Review and optimize database queries in high-traffic endpoints. Look for N+1 queries in: get_roster, get_scoreboard, optimize_lineup. Add eager loading (joinedload), cache frequent queries, add indexes. Profile with SQLAlchemy logging. Target: <100ms per endpoint.",
+      "task_type": "performance_optimization",
+      "files_affected": [
+        "backend/routers/fantasy.py",
+        "backend/services/scoreboard_orchestrator.py",
+        "backend/models.py"
+      ],
+      "priority": 2,
+      "estimated_minutes": 60,
+      "context_files": [
+        "backend/routers/fantasy.py",
+        "backend/services/scoreboard_orchestrator.py"
+      ],
+      "agent": "claude"
+    },
+    {
+      "id": "improvement-8-security-audit",
+      "description": "Security audit and hardening: Check for SQL injection risks, validate all inputs, ensure proper auth checks, review CORS config, check for secrets in logs. Create security checklist document. Add input validation decorators. Test auth bypass scenarios.",
+      "task_type": "code_review",
+      "files_affected": [
+        "backend/routers/*.py",
+        "backend/main.py",
+        "backend/middleware/*.py",
+        "docs/SECURITY_AUDIT.md"
+      ],
+      "priority": 1,
+      "estimated_minutes": 45,
+      "context_files": [
+        "backend/main.py",
+        "backend/auth.py"
+      ],
+      "agent": "gemini"
+    }
+  ]
+}

@@ -18,6 +18,53 @@ _INJURED_2B_Z_THRESHOLD = -1.0
 # Statuses that indicate player is on IL (doesn't count against active roster)
 _INACTIVE_STATUSES = frozenset({"IL", "IL10", "IL60", "NA", "OUT"})
 
+# Normalised IL status tokens — covers Yahoo short codes and BDL long-form labels.
+_IL_STATUS_TOKENS = frozenset({
+    "il", "il10", "il15", "il60",
+    "10dayil", "15dayil", "60dayil",
+    "na",
+})
+
+
+def _normalize_status(raw: str) -> str:
+    """Lowercase, strip spaces and hyphens for token comparison."""
+    return raw.strip().lower().replace("-", "").replace(" ", "")
+
+
+def _is_il_player(player: dict) -> bool:
+    """Return True if the player is on an IL or listed as OUT.
+
+    Checks both ``injury_status`` (BDL detailed label, e.g. '15-Day-IL') and
+    ``status`` (Yahoo short code, e.g. 'IL', 'IL10').  IL players are NOT
+    available for waiver pickups and must be excluded from recommendations.
+    """
+    for field in ("injury_status", "status"):
+        raw = str(player.get(field) or "").strip()
+        if not raw:
+            continue
+        norm = _normalize_status(raw)
+        if norm == "out":
+            return True
+        if norm in _IL_STATUS_TOKENS:
+            return True
+        # Catch composite strings like "60-Day-IL", "Day-IL", "10DayIL"
+        if norm.startswith("il") or norm.endswith("il") or "dayil" in norm:
+            return True
+    return False
+
+
+def _is_dtd_player(player: dict) -> bool:
+    """Return True if the player is day-to-day (DTD).
+
+    DTD players remain eligible for waiver pickup but receive a score penalty
+    and a warning flag in the recommendation.
+    """
+    for field in ("injury_status", "status"):
+        raw = str(player.get(field) or "").strip().lower()
+        if "dtd" in raw or "day-to-day" in raw:
+            return True
+    return False
+
 # Yahoo IL slot position labels (selected_position values for IL-slotted players)
 _IL_SLOT_POSITIONS = frozenset({"IL", "IL10", "IL60", "IL+"})
 _DEFAULT_IL_SLOTS = int(os.getenv("YAHOO_IL_SLOTS", "2"))
@@ -521,6 +568,21 @@ class WaiverEdgeDetector:
 
         moves = []
         for fa in free_agents[:40]:
+            # ------------------------------------------------------------------
+            # IL / OUT hard gate: skip players not available for pickup.
+            # Yahoo FA list uses status='A' but some IL players slip through.
+            # ------------------------------------------------------------------
+            if _is_il_player(fa):
+                logger.debug(
+                    "Skipping IL/OUT FA from waiver recs: %s (status=%r, injury_status=%r)",
+                    fa.get("name"),
+                    fa.get("status"),
+                    fa.get("injury_status"),
+                )
+                continue
+
+            fa_is_dtd = _is_dtd_player(fa)
+
             # Resolve FA MLBAM ID for marginal math
             fa_yahoo_id_int = None
             try:
@@ -561,6 +623,13 @@ class WaiverEdgeDetector:
 
             if score <= 0 and not has_deficit_signal:
                 score = float(fa.get("z_score") or 0.0)
+
+            # DTD penalty: player is eligible but injury risk warrants reduced score.
+            dtd_warning: Optional[str] = None
+            if fa_is_dtd:
+                from backend.services.injury_overlay import _DTD_PENALTY
+                score = max(0.0, score - _DTD_PENALTY)
+                dtd_warning = f"DTD — score reduced by {_DTD_PENALTY:.2f} ({fa.get('status') or fa.get('injury_status', 'DTD')})"
 
             # Sprint 4: Apply matchup context addend for batters only.
             # Hitter matchup context (opponent ERA/WHIP/park/splits) is only meaningful
@@ -603,6 +672,7 @@ class WaiverEdgeDetector:
                 "win_prob_gain": 0.0,
                 "mcmc_enabled": False,
                 "category_win_probs": {},
+                "dtd_warning": dtd_warning,
             }
             if self._has_dead_2b(my_roster) and "2B" in fa_positions:
                 move["need_score"] *= 1.25

@@ -616,7 +616,7 @@ def test_waiver_populates_percent_owned_from_ownership_subresource(fantasy_clien
 
 
 def test_waiver_overlays_bdl_injury_freshness_and_penalty(fantasy_client):
-    """Waiver list must surface BDL injury status/ETA and penalize fresh IL adds."""
+    """IL players must appear in il_watch (not top_available) with full BDL overlay fields."""
     from datetime import datetime
     from zoneinfo import ZoneInfo
     from backend.services.injury_overlay import InjuryOverlay
@@ -660,11 +660,21 @@ def test_waiver_overlays_bdl_injury_freshness_and_penalty(fantasy_client):
         response = fantasy_client.get("/api/fantasy/waiver")
 
     assert response.status_code == 200
-    player = response.json()["top_available"][0]
+    data = response.json()
+
+    # IL player must NOT appear in active recommendations
+    il_keys = [p["player_id"] for p in data["top_available"]]
+    assert "469.l.72586.p.10001" not in il_keys, (
+        "IL player must not appear in top_available — only in il_watch"
+    )
+
+    # IL player must appear in il_watch with full BDL overlay fields
+    il_watch = data.get("il_watch", [])
+    assert len(il_watch) >= 1, "IL player must be routed to il_watch"
+    player = il_watch[0]
     assert player["status"] == "15-Day-IL"
     assert player["injury_status"] == "15-Day-IL"
     assert player["injury_return_timeline"] == "ETA May 24 · updated 42m ago"
-    assert player["need_score"] == pytest.approx(0.75)
     assert "HIGH_INJURY_RISK" in player["statcast_signals"]
 
 

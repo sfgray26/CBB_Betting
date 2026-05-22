@@ -1,0 +1,45 @@
+{
+  "description": "Example batch for BDL #3 Injury Overlay + Main.py Cleanup",
+  "tasks": [
+    {
+      "id": "bdl-3-injury-overlay",
+      "description": "Implement BDL #3 injury overlay system - fetch injury data from BDL API, integrate into lineup scoring, add IL/DTD status to player cards",
+      "task_type": "api_integration",
+      "files_affected": [
+        "backend/services/balldontlie.py",
+        "backend/services/matchup_engine.py",
+        "backend/schemas.py",
+        "backend/routers/fantasy.py"
+      ],
+      "priority": 2,
+      "estimated_minutes": 45,
+      "context_files": ["HERMES.md", "backend/services/player_autoheal.py"]
+    },
+    {
+      "id": "main-py-cleanup",
+      "description": "Remove 50+ duplicate routes from main.py per HERMES.md strangler-fig pattern - migrate inline routes to proper routers",
+      "task_type": "multi_file_refactor",
+      "files_affected": [
+        "backend/main.py",
+        "backend/routers/edge.py",
+        "backend/routers/fantasy.py",
+        "backend/routers/admin.py"
+      ],
+      "priority": 3,
+      "estimated_minutes": 30,
+      "context_files": ["HERMES.md"]
+    },
+    {
+      "id": "injury-docs",
+      "description": "Document the injury overlay API endpoints, add examples, update API spec with new fields",
+      "task_type": "documentation",
+      "files_affected": [
+        "docs/API_SPEC.md",
+        "README.md"
+      ],
+      "priority": 4,
+      "estimated_minutes": 20,
+      "context_files": []
+    }
+  ]
+}

@@ -107,6 +107,9 @@ mcp-shared-config.json
 
 # Claude MCP config (contains secrets)
 .claude/mcp.json
+.claude/worktrees/
+.claude/worktrees
+.claude/worktrees/**
 
 # Playwright browser automation snapshots
 .playwright-mcp/
