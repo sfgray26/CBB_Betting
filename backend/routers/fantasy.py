@@ -6413,6 +6413,19 @@ async def get_constraint_budget(
 
     # 3. Season calendar — week number, pace metadata
     current_week = _compute_mlb_current_week(now_et.date())
+    # Yahoo sync guard: if our epoch drifts from Yahoo's authoritative value, trust Yahoo
+    try:
+        league_meta = client.get_league()
+        yahoo_week = int(league_meta.get("current_week") or 0)
+        if yahoo_week > 0 and yahoo_week != current_week:
+            logger.warning(
+                "budget: computed week=%d differs from Yahoo current_week=%d — using Yahoo value",
+                current_week,
+                yahoo_week,
+            )
+            current_week = yahoo_week
+    except Exception as _week_sync_err:
+        logger.debug("budget: Yahoo week sync skipped: %s", _week_sync_err)
     season_days_elapsed = max(0, (now_et.date() - _MLB_FIRST_MATCHUP_MONDAY).days)
     weeks_remaining = max(0, _FANTASY_TOTAL_WEEKS - current_week)
     # Days left in the current Yahoo matchup week (weeks run Mon–Sun)
