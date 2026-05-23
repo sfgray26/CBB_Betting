@@ -204,7 +204,7 @@ export interface AsyncJobStatus {
 
 export interface LineupGap {
   position: string
-  severity: "critical" | "warning" | "info"
+  severity: "critical" | "warning" | "optimization" | "info"
   message: string
   suggested_add?: string | null
 }
@@ -231,6 +231,8 @@ export interface WaiverTarget {
   priority_score: number
   tier: "must_add" | "strong_add" | "streamer"
   reason: string
+  need_score?: number
+  category_contributions?: Record<string, number>
 }
 
 export interface InjuryFlag {
@@ -353,6 +355,19 @@ export interface DecisionPipelineStatus {
   }
 }
 
+export interface DecisionAccuracyDaily {
+  date: string
+  accuracy_pct: number
+}
+
+export interface DecisionAccuracyResponse {
+  override_accuracy_pct: number
+  better_count: number
+  worse_count: number
+  total_overrides: number
+  daily_trend: DecisionAccuracyDaily[]
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // War Room — League Scoring Categories
 // H2H 20-cat: batting + pitching, each category scored win/loss vs opponent
@@ -422,6 +437,35 @@ export interface MatchupSimulateResponse {
   category_projections: CategoryProjection[]
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// Weekly Matchup Preview — Next Week Projections
+// ═════════════════════════════════════════════════════════════════════════════
+
+export interface ScheduleAdvantage {
+  my_games: number
+  opponent_games: number
+}
+
+export interface WeakCategory {
+  category: RotoCategory
+  label: string
+  win_prob: number
+  my_proj: number | null
+  opp_proj: number | null
+  reason: string
+}
+
+export interface MatchupPreviewResponse {
+  week_number: number
+  opponent_name: string
+  opponent_logo?: string | null
+  overall_win_prob: number
+  category_projections: CategoryProjection[]
+  weak_categories: WeakCategory[]
+  schedule_advantage: ScheduleAdvantage
+  message?: string | null
+}
+
 export type PlayerStatus = 'start' | 'bench' | 'IL' | 'DTD'
 
 export interface LineupPlayer {
@@ -480,6 +524,7 @@ export interface WaiverAvailablePlayer {
   injury_note?: string | null
   injury_status?: string | null
   statcast_signals?: string[]
+  league_drop?: { team_name: string; days_ago: number } | null
   statcast_stats?: Record<string, number> | null
   quality_score?: number | null
   projected_saves?: number
@@ -586,6 +631,7 @@ export interface BudgetData {
   ip_accumulated: number
   ip_minimum: number
   ip_pace: "BEHIND" | "ON_TRACK" | "AHEAD"
+  ip_data_available?: boolean
   as_of: string
   week_label?: string
   weeks_remaining?: number
@@ -714,6 +760,17 @@ export interface RosterResponse {
     staleness_threshold_minutes: number
     is_stale: boolean
   } | null
+}
+
+export interface BulkRosterMove {
+  player_key: string
+  target_position: string
+}
+
+export interface BulkRosterMoveResponse {
+  applied_count: number
+  failed_count: number
+  errors: string[]
 }
 
 export interface RosterMoveResponse {

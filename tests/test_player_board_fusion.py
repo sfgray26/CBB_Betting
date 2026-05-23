@@ -730,8 +730,10 @@ class TestOutputFormatCompatibility:
         result = get_or_create_projection(yahoo_player)
 
         assert isinstance(result["cat_scores"], dict)
-        # z_score should be sum of cat_scores
-        expected_z = sum(result["cat_scores"].values())
+        # When cat_scores is empty (fusion-path proxy), z_score is position-tiered.
+        # For "1B" position: _PROXY_Z_BY_POSITION["1B"] = -0.2
+        from backend.fantasy_baseball.player_board import _PROXY_Z_BY_POSITION
+        expected_z = _PROXY_Z_BY_POSITION.get("1B", 0.0)
         assert result["z_score"] == pytest.approx(expected_z)
 
     @patch("backend.fantasy_baseball.player_board._query_statcast_proxy")

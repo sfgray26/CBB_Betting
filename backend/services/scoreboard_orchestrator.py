@@ -31,7 +31,7 @@ from backend.services.row_simulation_bridge import (
     prepare_h2h_monte_carlo_inputs,
     summarize_simulation_bundles,
 )
-from backend.services.constraint_helpers import classify_ip_pace
+from backend.services.constraint_helpers import classify_ip_pace, ip_baseball_to_float
 from backend.fantasy_baseball.h2h_monte_carlo import H2HOneWinSimulator, H2HWinResult
 from backend.contracts import (
     MatchupScoreboardRow,
@@ -269,11 +269,15 @@ def compute_budget_state(
     season_days_elapsed: int = 90,
 ) -> ConstraintBudget:
     """Compute ConstraintBudget from raw values."""
+    # Convert base-3 baseball IP notation (10.2 = 10+2/3 = 10.667) to true float.
+    # Use weekly days so that pace reflects the current matchup week, not the season.
+    ip_true = ip_baseball_to_float(ip_accumulated)
+    days_elapsed_weekly = max(1, 7 - days_remaining)
     ip_pace = classify_ip_pace(
-        ip_accumulated=ip_accumulated,
+        ip_accumulated=ip_true,
         ip_minimum=ip_minimum,
-        days_elapsed=season_days_elapsed,
-        days_total=182,  # Full MLB season (approximately)
+        days_elapsed=days_elapsed_weekly,
+        days_total=7,
     )
 
     return ConstraintBudget(

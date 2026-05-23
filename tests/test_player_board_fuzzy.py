@@ -126,3 +126,37 @@ class TestFuzzyNameMatching:
         # Second call should hit cache (result must be identical object)
         result2 = get_or_create_projection(yahoo_player)
         assert result1 is result2
+
+    def test_proxy_catcher_z_higher_than_rp(self):
+        """Catcher proxy gets higher z_score than RP proxy (position-tiered fallback)."""
+        from backend.fantasy_baseball.player_board import get_or_create_projection, _projection_cache
+        _projection_cache.clear()
+
+        catcher = _make_player("Unknown Catcher Xyz", ["C"])
+        rp = _make_player("Unknown Reliever Xyz", ["RP"])
+
+        result_c = get_or_create_projection(catcher)
+        _projection_cache.clear()
+        result_rp = get_or_create_projection(rp)
+
+        assert result_c.get("is_proxy") is True
+        assert result_rp.get("is_proxy") is True
+        assert result_c.get("z_score", 0.0) > result_rp.get("z_score", 0.0), (
+            f"Catcher z={result_c.get('z_score')} should exceed RP z={result_rp.get('z_score')}"
+        )
+
+    def test_proxy_positions_produce_distinct_z_scores(self):
+        """C, OF, and RP proxies each produce a distinct z_score — no single flat value."""
+        from backend.fantasy_baseball.player_board import get_or_create_projection, _projection_cache
+
+        positions_to_test = ["C", "OF", "RP"]
+        results = {}
+        for pos in positions_to_test:
+            _projection_cache.clear()
+            player = _make_player(f"Unknown {pos} Player Xyz", [pos])
+            results[pos] = get_or_create_projection(player).get("z_score", 0.0)
+
+        z_values = list(results.values())
+        assert len(set(z_values)) == len(z_values), (
+            f"Expected 3 distinct z_scores for C/OF/RP, got {results}"
+        )

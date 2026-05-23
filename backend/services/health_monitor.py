@@ -11,6 +11,11 @@ HOURLY_JOBS = {
     "bdl_injuries", "savant_ingestion",
 }
 
+# Jobs that run every 4 hours — threshold is 5h to give one cycle of buffer.
+FOUR_HOUR_JOBS = {
+    "yahoo_adp_injury",
+}
+
 DAILY_JOBS = {
     "fangraphs_ros", "yahoo_id_sync", "statcast_daily", "weekly_recalibration",
 }
@@ -21,16 +26,18 @@ _SUCCESS_STATUSES = {"SUCCESS", "SKIPPED"}
 _THRESHOLDS = {
     **{j: 26 for j in CRITICAL_CHAIN},
     **{j: 2 for j in HOURLY_JOBS},
+    **{j: 5 for j in FOUR_HOUR_JOBS},
     **{j: 26 for j in DAILY_JOBS},
 }
 
 _JOB_CLASS = {
     **{j: "critical_chain" for j in CRITICAL_CHAIN},
     **{j: "hourly" for j in HOURLY_JOBS},
+    **{j: "four_hour" for j in FOUR_HOUR_JOBS},
     **{j: "daily" for j in DAILY_JOBS},
 }
 
-ALL_JOBS = CRITICAL_CHAIN | HOURLY_JOBS | DAILY_JOBS
+ALL_JOBS = CRITICAL_CHAIN | HOURLY_JOBS | FOUR_HOUR_JOBS | DAILY_JOBS
 
 
 def check_pipeline_health(db: Session) -> dict:

@@ -6,9 +6,12 @@ import { endpoints } from '@/lib/api'
 import type { WaiverAvailablePlayer, WaiverResponse, WaiverRosterPlayer, WaiverRecommendation, DropPlayerOut, CategoryDelta } from '@/lib/types'
 import {
   ListFilter, Loader2, AlertCircle, TrendingUp,
-  Flame, Snowflake, AlertTriangle, Users, Zap, ChevronDown, ChevronUp, AlertTriangle as WarnIcon,
+  AlertTriangle, Users, Zap, ChevronDown, ChevronUp, AlertTriangle as WarnIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { ErrorBoundary } from '@/components/error-boundary'
+import { HotColdBadge } from '@/components/hot-cold-badge'
+import { Tooltip } from '@/components/shared/tooltip'
 
 const POSITION_FILTERS = ['All', 'SP', 'RP', 'OF', '1B', '2B', '3B', 'SS', 'C']
 
@@ -34,7 +37,31 @@ function waiverCatLabel(key: string): string | null {
   return key  // unknown key: show as-is rather than silently dropping
 }
 
-function NeedBar({ score }: { score: number }) {
+function formatContributionKey(key: string): string {
+  const labels: Record<string, string> = {
+    HR_B: 'HR', K_B: 'K', K_P: 'Ks', HR_P: 'HRA', K_9: 'K/9', NSB: 'NSB',
+    R: 'R', H: 'H', HR: 'HR', RBI: 'RBI', TB: 'TB', AVG: 'AVG', OPS: 'OPS',
+    W: 'W', L: 'L', ERA: 'ERA', WHIP: 'WHIP', QS: 'QS', SV: 'SV', NSV: 'SV',
+  }
+  return `${labels[key] ?? key} fit`
+}
+
+function NeedScoreTooltipContent({ score, contributions }: { score: number; contributions?: Record<string, number> }) {
+  const tier = score >= 20 ? 'Premium target' : score >= 15 ? 'Strong target' : 'Standard target'
+  const breakdown = contributions
+    ? Object.entries(contributions).map(([k, v]) => `${formatContributionKey(k)}: ${v >= 0 ? '+' : ''}${v.toFixed(1)}`).join(' | ')
+    : null
+
+  return (
+    <div className="space-y-1.5 max-w-[240px]">
+      <p className="font-semibold text-text-primary">{score.toFixed(2)} — {tier}</p>
+      {breakdown && <p className="text-text-secondary">{breakdown}</p>}
+      <p className="text-text-muted text-[10px]">Scores range 0-30. {'>'}20 = premium target</p>
+    </div>
+  )
+}
+
+function NeedBar({ score, contributions }: { score: number; contributions?: Record<string, number> }) {
   const pct = Math.min(100, Math.max(0, score * 10)) // scale: 0-10 → 0-100%
   const color = score >= 7.0 ? 'bg-status-safe' : score >= 4.0 ? 'bg-status-bubble' : 'bg-text-muted'
   return (
@@ -42,9 +69,11 @@ function NeedBar({ score }: { score: number }) {
       <div className="flex-1 h-1.5 bg-bg-inset rounded-full overflow-hidden">
         <div className={cn('h-full rounded-full transition-all duration-700 ease-out', color)} style={{ width: `${pct}%` }} />
       </div>
-      <span className="text-xs text-text-primary tabular-nums w-8 text-right">
-        {score.toFixed(2)}
-      </span>
+      <Tooltip content={<NeedScoreTooltipContent score={score} contributions={contributions} />}>
+        <span className="text-xs text-text-primary tabular-nums w-8 text-right cursor-help underline decoration-dotted">
+          {score.toFixed(2)}
+        </span>
+      </Tooltip>
     </div>
   )
 }
@@ -59,23 +88,6 @@ function OwnershipBadge({ pct }: { pct: number | null | undefined }) {
       pct >= 70 ? 'text-status-bubble' : pct >= 30 ? 'text-text-secondary' : 'text-text-muted',
     )}>
       {pct.toFixed(0)}% owned
-    </span>
-  )
-}
-
-function HotColdBadge({ hotCold, rankPercentile }: { hotCold?: string | null; rankPercentile?: number | null }) {
-  // Design System v2: gate badges to top 20% to prevent inflation
-  if (!hotCold || (rankPercentile ?? 0) < 80) return null
-  if (hotCold === 'HOT') {
-    return (
-      <span className="flex items-center gap-0.5 text-[10px] text-status-behind font-semibold">
-        <Flame className="h-3 w-3" /> HOT
-      </span>
-    )
-  }
-  return (
-    <span className="flex items-center gap-0.5 text-[10px] text-signal-consider font-semibold">
-      <Snowflake className="h-3 w-3" /> COLD
     </span>
   )
 }
@@ -158,12 +170,25 @@ function PlayerRow({ player, rosterPlayer }: {
   const needMatches = (player.category_need_match ?? []).map((k) => waiverCatLabel(k) ?? k).filter(Boolean)
   const z = player.z_score ?? null
 
+  const tierBadge = (() => {
+    const s = player.need_score
+    if (s == null) return null
+    if (s >= 20) return { label: 'PREMIUM', className: 'bg-accent-gold/10 text-accent-gold border border-accent-gold/30' }
+    if (s >= 15) return { label: 'STRONG', className: 'bg-text-muted/10 text-text-secondary border border-text-muted/30' }
+    return null
+  })()
+
   return (
     <div className="bg-bg-surface border border-border-subtle rounded-lg p-4 flex flex-col sm:flex-row sm:items-start gap-3 hover:bg-bg-elevated transition-colors duration-150">
       {/* Identity */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <p className="text-sm font-bold text-text-primary truncate">{player.name}</p>
+          {tierBadge && (
+            <span className={cn('text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wider', tierBadge.className)}>
+              {tierBadge.label}
+            </span>
+          )}
           <HotColdBadge hotCold={player.hot_cold} rankPercentile={player.rank_percentile} />
           {player.injury_status && (
             <span className="text-[10px] px-1.5 py-0.5 bg-status-lost/10 text-status-lost border border-status-lost/30 rounded font-semibold">
@@ -180,6 +205,16 @@ function PlayerRow({ player, rosterPlayer }: {
             </span>
           ))}
         </div>
+        {player.league_drop && (
+          <p className={cn(
+            'text-[10px] mt-1 font-semibold',
+            player.league_drop.days_ago < 3
+              ? 'text-accent-gold'
+              : 'text-text-muted',
+          )}>
+            ⬇️ Dropped {player.league_drop.days_ago === 0 ? 'today' : `${player.league_drop.days_ago} day${player.league_drop.days_ago !== 1 ? 's' : ''} ago`} by {player.league_drop.team_name}
+          </p>
+        )}
         {player.two_start && (
           <p className="text-[10px] text-status-safe mt-1 font-semibold">
             2-START WEEK
@@ -214,8 +249,12 @@ function PlayerRow({ player, rosterPlayer }: {
         {/* Weekly match score */}
         <div>
           <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">Match Score</p>
-          <NeedBar score={player.need_score} />
-          <p className="text-[9px] text-text-muted mt-0.5">fit for your gaps</p>
+          <NeedBar score={player.need_score} contributions={player.category_contributions} />
+          <p className="text-[9px] text-text-muted mt-0.5">
+            {needMatches.length > 0
+              ? `Fits: ${needMatches.slice(0, 3).join(', ')}`
+              : 'fit for your gaps'}
+          </p>
         </div>
         {/* Season value (z_score) with roster comparison */}
         {z != null && (
@@ -496,8 +535,16 @@ function RecommendationCard({ rec }: { rec: WaiverRecommendation }) {
 function RecommendationsPanel() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['waiver-recommendations'],
-    queryFn: () => endpoints.getWaiverRecommendations(),
+    queryFn: async () => {
+      try {
+        return await endpoints.getWaiverRecommendations()
+      } catch (e) {
+        console.error('Waiver recommendations fetch failed:', e)
+        throw e
+      }
+    },
     staleTime: 5 * 60_000,
+    retry: 1,
   })
 
   if (isLoading) {
@@ -529,14 +576,22 @@ function RecommendationsPanel() {
   )
 }
 
-export default function WaiverPage() {
+function WaiverPageInner() {
   const [sort, setSort] = useState<'need_score' | 'projected_points'>('need_score')
   const [posFilter, setPosFilter] = useState('All')
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['waiver', sort],
-    queryFn: () => endpoints.getWaiver(sort),
+    queryFn: async () => {
+      try {
+        return await endpoints.getWaiver(sort)
+      } catch (e) {
+        console.error('Waiver fetch failed:', e)
+        throw e
+      }
+    },
     staleTime: 3 * 60_000,
+    retry: 1,
   })
 
   const filterPlayers = (players: WaiverAvailablePlayer[]) => {
@@ -701,5 +756,13 @@ export default function WaiverPage() {
         )}
       </div>
     </div>
+  )
+}
+
+export default function WaiverPage() {
+  return (
+    <ErrorBoundary>
+      <WaiverPageInner />
+    </ErrorBoundary>
   )
 }

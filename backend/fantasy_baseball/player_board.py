@@ -82,6 +82,25 @@ _PROJ_NAME_CACHE: dict = {}
 _PROJ_NAME_CACHE_TTL = 1800  # seconds (30 minutes)
 
 
+# Proxy z_score fallback by position — used when no DB projection data is available.
+# Prevents all unknown players from collapsing to the same score.
+# Values reflect position scarcity: scarcer positions get a slight bump.
+_PROXY_Z_BY_POSITION: dict[str, float] = {
+    "C":   0.2,    # Catcher — scarcest position
+    "SS":  0.1,
+    "2B":  0.0,
+    "3B":  0.0,
+    "OF":  -0.1,
+    "LF":  -0.1,
+    "CF":  -0.1,
+    "RF":  -0.1,
+    "1B":  -0.2,
+    "DH":  -0.3,
+    "SP":  -0.1,
+    "RP":  -0.4,   # Relievers have lowest marginal fantasy value
+}
+
+
 # ---------------------------------------------------------------------------
 # Raw player data (2026 Steamer/ZiPS consensus)
 # Format: (name, team, positions, type, tier, adp,
@@ -1521,10 +1540,15 @@ def get_or_create_projection(yahoo_player: dict) -> dict:
 
     # cat_scores and z_score: Only pre-computed DB z-scores are used.
     # Fusion engine does NOT compute cat_scores to avoid scale mismatch.
-    # All non-DB proxy players get z_score=0.0 (neutral) until a periodic
-    # backfill runs compute_cat_scores() against the full player pool.
+    # Use a position-tiered fallback so unknowns produce differentiated scores
+    # instead of collapsing to a single value.
     cat_scores = {}
-    z_score = 0.0
+    _primary_pos = positions[0] if positions else None
+    z_score = _PROXY_Z_BY_POSITION.get(_primary_pos or "", 0.0)
+    logger.warning(
+        "[player_board] proxy fallback: %s pos=%s z_score=%.2f (no DB projection)",
+        name, _primary_pos, z_score,
+    )
 
     # DRAFT BOARD FALLBACK: Only use if we have NO real data from database
     # This ensures players like Christopher Sanchez (not in DB) still get some projection

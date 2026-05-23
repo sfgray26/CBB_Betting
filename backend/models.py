@@ -2319,3 +2319,19 @@ class IdentityQuarantine(Base):
         Index("idx_iq_status_created", "status", "created_at"),
         Index("idx_iq_provider_name", "incoming_provider", "incoming_raw_name"),
     )
+
+
+class RosterAcquisition(Base):
+    """Local record of add/drop transactions — eliminates Yahoo API lag on budget counter."""
+    __tablename__ = "roster_acquisitions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    team_key = Column(String(64), nullable=False, index=True)
+    player_added_key = Column(String(32), nullable=False)
+    player_dropped_key = Column(String(32), nullable=True)
+    executed_at = Column(DateTime(timezone=True), nullable=False, default=_now_et)
+    week_start = Column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("idx_ra_team_week", "team_key", "week_start"),
+    )

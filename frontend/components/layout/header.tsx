@@ -21,7 +21,11 @@ const PAGE_TITLES: Record<string, string> = {
   // Fantasy War Room
   '/decisions': 'Daily Decisions',
   '/war-room': 'War Room',
+  '/war-room/roster': 'My Roster',
+  '/war-room/waiver': 'Waiver Wire',
   '/war-room/streaming': 'Streaming Station',
+  '/war-room/budget': 'Budget',
+  '/war-room/preview': 'Weekly Preview',
   '/war-room/roster-lab': 'Roster Lab',
 }
 

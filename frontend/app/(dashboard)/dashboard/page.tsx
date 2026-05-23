@@ -2,7 +2,7 @@
 
 import { useQuery, keepPreviousData } from "@tanstack/react-query"
 import { endpoints } from "@/lib/api"
-import { type DashboardData, type LineupGap, type InjuryFlag, type WaiverTarget, type StreakPlayer } from "@/lib/types"
+import { type DashboardData, type LineupGap, type InjuryFlag, type WaiverTarget, type StreakPlayer, type ProbablePitcherInfo } from "@/lib/types"
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -14,10 +14,16 @@ import {
   Activity,
   Users,
   Star,
+  ArrowRight,
+  Calendar,
+  RefreshCw,
 } from "lucide-react"
+import Link from "next/link"
+import { cn } from "@/lib/utils"
+import { Tooltip } from "@/components/shared/tooltip"
 
 export default function DashboardPage() {
-  const { data: response, isLoading, isFetching, isError, error: queryError } = useQuery({
+  const { data: response, isLoading, isFetching, isError, error: queryError, refetch } = useQuery({
     queryKey: ['dashboard'],
     queryFn: endpoints.getDashboard,
     staleTime: 2 * 60_000,
@@ -127,6 +133,9 @@ export default function DashboardPage() {
           <BudgetPanel budget={budgetResponse.budget} />
         )}
 
+        {/* Probable Pitchers */}
+        <ProbablePitchersCard pitchers={dashboard.probable_pitchers} onRetry={() => refetch()} />
+
         {/* Two-Start Pitchers */}
         {dashboard.two_start_pitchers?.length > 0 && (
           <Card className="lg:col-span-2">
@@ -161,7 +170,17 @@ export default function DashboardPage() {
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
+function severityDotClass(severity: LineupGap['severity']) {
+  switch (severity) {
+    case 'critical': return 'bg-status-lost'
+    case 'warning': return 'bg-status-bubble'
+    case 'optimization': return 'bg-accent-gold'
+    default: return 'bg-text-muted'
+  }
+}
+
 function LineupGapsCard({ gaps }: { gaps: LineupGap[] }) {
+
   return (
     <Card className="bg-bg-surface border-border-subtle">
       <CardHeader>
@@ -183,16 +202,17 @@ function LineupGapsCard({ gaps }: { gaps: LineupGap[] }) {
             {gaps.map((gap, i) => (
               <li key={i} className="flex items-start gap-2">
                 <span
-                  className={`mt-0.5 h-2 w-2 rounded-full shrink-0 ${
-                    gap.severity === "critical"
-                      ? "bg-status-lost"
-                      : gap.severity === "warning"
-                      ? "bg-status-bubble"
-                      : "bg-text-muted"
-                  }`}
+                  className={`mt-0.5 h-2 w-2 rounded-full shrink-0 ${severityDotClass(gap.severity)}`}
                 />
-                <div>
-                  <p className="text-text-secondary text-sm font-medium">{gap.position}</p>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-text-secondary text-sm font-medium">{gap.position}</p>
+                    {gap.severity === 'optimization' && (
+                      <span className="text-[10px] px-1.5 py-0.5 bg-accent-gold/10 text-accent-gold border border-accent-gold/30 rounded font-semibold uppercase tracking-wider">
+                        Optimize
+                      </span>
+                    )}
+                  </div>
                   <p className="text-text-tertiary text-xs">{gap.message}</p>
                   {gap.suggested_add && (
                     <p className="text-accent-gold text-xs mt-0.5">Add: {gap.suggested_add}</p>
@@ -202,6 +222,14 @@ function LineupGapsCard({ gaps }: { gaps: LineupGap[] }) {
             ))}
           </ul>
         )}
+        <div className="mt-3 pt-3 border-t border-border-subtle">
+          <Link
+            href="/war-room/roster"
+            className="inline-flex items-center gap-1 text-[11px] text-text-secondary hover:text-text-primary transition-colors"
+          >
+            View Roster <ArrowRight className="h-3 w-3" />
+          </Link>
+        </div>
       </CardContent>
     </Card>
   )
@@ -261,6 +289,50 @@ function InjuryFlagsCard({ flags }: { flags: InjuryFlag[] }) {
   )
 }
 
+function formatContributionKey(key: string): string {
+  const labels: Record<string, string> = {
+    HR_B: 'HR', K_B: 'K', K_P: 'Ks', HR_P: 'HRA', K_9: 'K/9', NSB: 'NSB',
+    R: 'R', H: 'H', HR: 'HR', RBI: 'RBI', TB: 'TB', AVG: 'AVG', OPS: 'OPS',
+    W: 'W', L: 'L', ERA: 'ERA', WHIP: 'WHIP', QS: 'QS', SV: 'SV', NSV: 'SV',
+  }
+  return `${labels[key] ?? key} fit`
+}
+
+function NeedScoreTierBadge({ score }: { score?: number }) {
+  if (score == null) return null
+  if (score >= 20) {
+    return (
+      <span className="text-[10px] px-1.5 py-0.5 bg-accent-gold/10 text-accent-gold border border-accent-gold/30 rounded font-semibold uppercase tracking-wider">
+        PREMIUM
+      </span>
+    )
+  }
+  if (score >= 15) {
+    return (
+      <span className="text-[10px] px-1.5 py-0.5 bg-text-muted/10 text-text-secondary border border-text-muted/30 rounded font-semibold uppercase tracking-wider">
+        STRONG
+      </span>
+    )
+  }
+  return null
+}
+
+function NeedScoreTooltipContent({ score, contributions }: { score?: number; contributions?: Record<string, number> }) {
+  if (score == null) return null
+  const tier = score >= 20 ? 'Premium target' : score >= 15 ? 'Strong target' : 'Standard target'
+  const breakdown = contributions
+    ? Object.entries(contributions).map(([k, v]) => `${formatContributionKey(k)}: ${v >= 0 ? '+' : ''}${v.toFixed(1)}`).join(' | ')
+    : null
+
+  return (
+    <div className="space-y-1.5 max-w-[240px]">
+      <p className="font-semibold text-text-primary">{score.toFixed(2)} — {tier}</p>
+      {breakdown && <p className="text-text-secondary">{breakdown}</p>}
+      <p className="text-text-muted text-[10px]">Scores range 0-30. {'>'}20 = premium target</p>
+    </div>
+  )
+}
+
 function WaiverTargetsCard({ targets }: { targets: WaiverTarget[] }) {
   return (
     <Card className="bg-bg-surface border-border-subtle">
@@ -277,18 +349,28 @@ function WaiverTargetsCard({ targets }: { targets: WaiverTarget[] }) {
           <ul className="space-y-3">
             {targets.slice(0, 5).map((t, i) => (
               <li key={i} className="flex items-start justify-between gap-2">
-                <div>
-                  <div className="flex items-center gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-text-secondary text-sm font-medium">{t.name}</p>
+                    <NeedScoreTierBadge score={t.need_score} />
                     <span className="text-text-muted text-xs">{t.team}</span>
                     <span className="text-text-tertiary text-xs">
                       {t.positions.join(", ")}
                     </span>
                   </div>
                   <p className="text-text-tertiary text-xs mt-0.5">{t.reason}</p>
-                  <p className="text-text-muted text-xs">
-                    {(t.percent_owned ?? 0) > 0 ? `${t.percent_owned.toFixed(0)}% owned` : '— owned'}
-                  </p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <p className="text-text-muted text-xs">
+                      {(t.percent_owned ?? 0) > 0 ? `${t.percent_owned.toFixed(0)}% owned` : '— owned'}
+                    </p>
+                    {t.need_score != null && (
+                      <Tooltip content={<NeedScoreTooltipContent score={t.need_score} contributions={t.category_contributions} />}>
+                        <span className="text-[10px] text-text-secondary tabular-nums cursor-help underline decoration-dotted">
+                          Need: {t.need_score.toFixed(2)}
+                        </span>
+                      </Tooltip>
+                    )}
+                  </div>
                 </div>
                 <Badge
                   variant="default"
@@ -305,6 +387,61 @@ function WaiverTargetsCard({ targets }: { targets: WaiverTarget[] }) {
               </li>
             ))}
           </ul>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+function ProbablePitchersCard({ pitchers, onRetry }: { pitchers: ProbablePitcherInfo[]; onRetry: () => void }) {
+  return (
+    <Card className="lg:col-span-2">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-text-primary text-sm">
+          <Calendar className="h-4 w-4 text-accent-gold" />
+          Probable Pitchers
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {pitchers.length === 0 ? (
+          <div className="space-y-3">
+            <p className="text-status-bubble text-sm flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+              ⚠️ Pitcher data temporarily unavailable. Your pitching slots are still active on Yahoo.
+            </p>
+            <button
+              onClick={onRetry}
+              className="inline-flex items-center gap-1.5 text-[11px] text-text-secondary hover:text-text-primary transition-colors"
+            >
+              <RefreshCw className="h-3 w-3" /> Retry
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+            {pitchers.map((p) => (
+              <div
+                key={`${p.name}-${p.game_date}`}
+                className="p-3 bg-bg-surface border border-border-subtle rounded-md hover:bg-bg-elevated transition-colors"
+              >
+                <p className="text-text-primary text-sm font-medium">{p.name}</p>
+                <p className="text-text-muted text-xs mt-0.5">
+                  {p.team} vs {p.opponent || 'TBD'} · {p.game_date}
+                </p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className={cn(
+                    'text-[10px] px-1.5 py-0.5 rounded font-semibold',
+                    p.matchup_quality === 'favorable' ? 'bg-status-safe/10 text-status-safe' :
+                    p.matchup_quality === 'unfavorable' ? 'bg-status-lost/10 text-status-lost' :
+                    'bg-status-bubble/10 text-status-bubble'
+                  )}>
+                    {p.matchup_quality}
+                  </span>
+                  <span className="text-[10px] text-text-muted">Stream: {p.stream_score.toFixed(1)}</span>
+                </div>
+                <p className="text-text-secondary text-xs mt-1">{p.reason}</p>
+              </div>
+            ))}
+          </div>
         )}
       </CardContent>
     </Card>

@@ -24,10 +24,13 @@ Hard stops
 """
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -550,6 +553,12 @@ def compute_league_zscores(
         # across player types (two-way players, specialists). Matches models.py
         # docstring: "mean of all applicable non-None per-category Z-scores".
         _total_w = sum(_CATEGORY_WEIGHTS.get(k, 1.0) for k, _ in kv_pairs)
+        if not kv_pairs:
+            logger.warning(
+                "player_id=%d (%s) has no valid Z-score categories in %d-day window — "
+                "composite_z=0.0 (below MIN_SAMPLE=%d or all rate stats suppressed)",
+                pid, player_type, window_days, MIN_SAMPLE,
+            )
         result.composite_z = (
             sum(_CATEGORY_WEIGHTS.get(k, 1.0) * v for k, v in kv_pairs) / _total_w
             if kv_pairs and _total_w > 0 else 0.0

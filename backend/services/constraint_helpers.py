@@ -106,6 +106,18 @@ def count_weekly_acquisitions(
     return count
 
 
+def ip_baseball_to_float(ip: float) -> float:
+    """Convert baseball IP notation to true fractional innings.
+
+    Baseball records IP as X.Y where the decimal digit counts OUTS (0-2),
+    not tenths. 10.2 = 10 full innings + 2 outs = 10 + 2/3 = 10.667.
+    Whole-inning values (10.0) pass through unchanged.
+    """
+    whole = int(ip)
+    outs = round((ip - whole) * 10)  # 0, 1, or 2 outs
+    return whole + outs / 3.0
+
+
 def extract_ip_from_scoreboard(
     matchup_stats: dict[str, float],
 ) -> float:

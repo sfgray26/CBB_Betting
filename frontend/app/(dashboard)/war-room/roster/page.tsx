@@ -3,7 +3,7 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
-import type { RosterPlayer, RosterMoveResponse, RosterOptimizeResponse, BudgetData, ScoreboardResponse, RotoCategory } from '@/lib/types'
+import type { RosterPlayer, RosterMoveResponse, RosterOptimizeResponse, BulkRosterMove, BulkRosterMoveResponse, BudgetData, ScoreboardResponse, RotoCategory } from '@/lib/types'
 import { CATEGORY_COLOR } from '@/lib/types'
 import {
   Users,
@@ -25,6 +25,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import YahooRosterView from '@/components/yahoo-roster-view'
+import { HotColdBadge } from '@/components/hot-cold-badge'
 
 // ───────────────────────────────────────────────────────────────────────────
 // Constants
@@ -469,7 +470,7 @@ function CategorySummary({ players, viewMode, matchupRows }: { players: RosterPl
           {/* Live matchup score inline — connects stats to this week's context */}
           {wCount + lCount > 0 && (
             <span className="text-[10px] text-text-muted">
-              ·{' '}
+              {' · Category W-L: '}
               <span className="text-status-safe font-bold">{wCount}W</span>
               {' · '}
               <span className="text-status-lost font-bold">{lCount}L</span>
@@ -536,6 +537,7 @@ function MatchupStrip({ scoreboard }: { scoreboard: ScoreboardResponse }) {
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-text-muted uppercase tracking-wider">Category W-L</span>
             <span className="text-xs font-bold text-status-safe">{categories_won}W</span>
             <span className="text-[10px] text-text-muted">·</span>
             <span className="text-xs font-bold text-status-lost">{categories_lost}L</span>
@@ -609,14 +611,25 @@ function MatchupStrip({ scoreboard }: { scoreboard: ScoreboardResponse }) {
 function OptimizePanel({
   data,
   onApplyMove,
+  onApplyAll,
   onClose,
   isApplying,
+  isApplyingAll,
 }: {
   data: RosterOptimizeResponse
   onApplyMove: (playerKey: string, slot: string) => void
+  onApplyAll: (moves: BulkRosterMove[]) => void
   onClose: () => void
   isApplying: boolean
+  isApplyingAll: boolean
 }) {
+  const [showConfirm, setShowConfirm] = useState(false)
+
+  const allMoves: BulkRosterMove[] = [...data.starters, ...data.bench].map((a) => ({
+    player_key: a.player_key,
+    target_position: a.assigned_slot,
+  }))
+
   return (
     <div className="bg-bg-surface border border-accent-gold/30 rounded-lg p-4 space-y-4">
       <div className="flex items-center justify-between">
@@ -642,7 +655,7 @@ function OptimizePanel({
             </div>
             <button
               onClick={() => onApplyMove(assignment.player_key, assignment.assigned_slot)}
-              disabled={isApplying}
+              disabled={isApplying || isApplyingAll}
               className="text-[10px] text-accent-gold hover:text-amber-300 font-semibold whitespace-nowrap disabled:opacity-50"
             >
               Apply
@@ -650,6 +663,51 @@ function OptimizePanel({
           </div>
         ))}
       </div>
+
+      {/* Apply All button */}
+      {!showConfirm ? (
+        <button
+          onClick={() => setShowConfirm(true)}
+          disabled={isApplying || isApplyingAll || allMoves.length === 0}
+          className={cn(
+            'w-full flex items-center justify-center gap-2 py-2 rounded text-[11px] font-bold tracking-wider uppercase transition-colors',
+            isApplyingAll
+              ? 'bg-bg-elevated text-text-muted cursor-not-allowed'
+              : 'bg-accent-gold/20 border border-accent-gold/40 text-accent-gold hover:bg-accent-gold/30 disabled:opacity-50 disabled:cursor-not-allowed',
+          )}
+        >
+          {isApplyingAll
+            ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Applying…</>
+            : <><Sparkles className="h-3.5 w-3.5" /> Apply All {allMoves.length} Moves</>}
+        </button>
+      ) : (
+        <div className="border border-accent-gold/30 rounded-lg p-3 space-y-3 bg-bg-elevated">
+          <p className="text-xs font-semibold text-text-primary">Confirm {allMoves.length} moves:</p>
+          <ul className="space-y-1 max-h-40 overflow-y-auto">
+            {[...data.starters, ...data.bench].map((a) => (
+              <li key={a.player_key} className="text-[10px] text-text-secondary flex items-center gap-2">
+                <SlotPill slot={a.assigned_slot} />
+                <span className="truncate">{a.player_name}</span>
+              </li>
+            ))}
+          </ul>
+          <div className="flex gap-2">
+            <button
+              onClick={() => { setShowConfirm(false); onApplyAll(allMoves) }}
+              disabled={isApplyingAll}
+              className="flex-1 py-1.5 rounded text-[10px] font-bold uppercase tracking-wider bg-accent-gold text-black hover:bg-amber-300 disabled:opacity-50 transition-colors"
+            >
+              Confirm
+            </button>
+            <button
+              onClick={() => setShowConfirm(false)}
+              className="flex-1 py-1.5 rounded text-[10px] font-bold uppercase tracking-wider bg-bg-surface border border-border-subtle text-text-secondary hover:text-text-primary transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -663,11 +721,13 @@ function PlayerCard({
   viewMode,
   onMove,
   isMoving,
+  streak,
 }: {
   player: RosterPlayer
   viewMode: ViewMode
   onMove: (playerId: string, toSlot: string) => void
   isMoving: boolean
+  streak?: { trend: string; trend_score: number } | null
 }) {
   const eligible = player.eligible_positions ?? []
   const isPitcher = eligible.some((p) => ['SP', 'RP', 'P'].includes(p))
@@ -720,14 +780,13 @@ function PlayerCard({
               {statusLabel}
             </span>
             <GamePill player={player} />
+            {streak && (
+              <HotColdBadge trend={streak.trend} trendScore={streak.trend_score} />
+            )}
           </div>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             <span className="text-xs text-text-secondary">{player.team}</span>
-            {player.ownership_pct != null ? (
-              <span className="text-[10px] text-text-muted">{player.ownership_pct.toFixed(0)}% owned</span>
-            ) : (
-              <span className="text-[10px] text-text-muted">— owned</span>
-            )}
+            {/* Ownership % is meaningless for rostered players — suppressed on roster page */}
             {eligible.map((pos) => (
               <span key={pos} className="text-[10px] px-1.5 py-0.5 bg-bg-elevated text-text-secondary rounded">
                 {pos}
@@ -834,6 +893,26 @@ export default function RosterPage() {
     retry: 1,
   })
 
+  const streaks = useQuery({
+    queryKey: ['dashboard-streaks'],
+    queryFn: endpoints.getDashboardStreaks,
+    staleTime: 10 * 60_000,
+    retry: 1,
+  })
+
+  // Build name → streak lookup from hot + cold streaks
+  const streakMap = useMemo(() => {
+    const map = new Map<string, { trend: string; trend_score: number }>()
+    if (!streaks.data) return map
+    for (const s of streaks.data.hot_streaks ?? []) {
+      map.set(s.name, { trend: s.trend, trend_score: s.trend_score })
+    }
+    for (const s of streaks.data.cold_streaks ?? []) {
+      map.set(s.name, { trend: s.trend, trend_score: s.trend_score })
+    }
+    return map
+  }, [streaks.data])
+
   const moveMutation = useMutation({
     mutationFn: ({ playerId, toSlot }: { playerId: string; toSlot: string }) =>
       endpoints.movePlayer(playerId, '', toSlot),
@@ -858,6 +937,35 @@ export default function RosterPage() {
       setMoveError(`Optimize failed: ${err.message}`)
     },
   })
+
+  const bulkApplyMutation = useMutation({
+    mutationFn: (moves: BulkRosterMove[]) => endpoints.bulkApplyMoves(moves),
+    onSuccess: (data: BulkRosterMoveResponse) => {
+      setMoveError(null)
+      if (data.failed_count === 0) {
+        setMoveSuccess(`Applied ${data.applied_count} move${data.applied_count !== 1 ? 's' : ''} successfully`)
+        setOptimizeResult(null)
+      } else {
+        setMoveSuccess(`Applied ${data.applied_count} move${data.applied_count !== 1 ? 's' : ''}`)
+        setMoveError(`${data.failed_count} move${data.failed_count !== 1 ? 's' : ''} failed: ${data.errors.join(', ')}`)
+      }
+      queryClient.invalidateQueries({ queryKey: ['roster'] })
+      setTimeout(() => setMoveSuccess(null), 4000)
+    },
+    onError: (err: Error) => {
+      setMoveSuccess(null)
+      setMoveError(`Bulk apply failed: ${err.message}`)
+    },
+  })
+
+  const handleApplyAll = useCallback(
+    (moves: BulkRosterMove[]) => {
+      setMoveError(null)
+      setMoveSuccess(null)
+      bulkApplyMutation.mutate(moves)
+    },
+    [bulkApplyMutation],
+  )
 
   const handleMove = useCallback(
     (playerId: string, toSlot: string) => {
@@ -1009,8 +1117,10 @@ export default function RosterPage() {
         <OptimizePanel
           data={optimizeResult}
           onApplyMove={handleMove}
+          onApplyAll={handleApplyAll}
           onClose={() => setOptimizeResult(null)}
           isApplying={moveMutation.isPending}
+          isApplyingAll={bulkApplyMutation.isPending}
         />
       )}
 
@@ -1114,6 +1224,7 @@ export default function RosterPage() {
                   viewMode={viewMode}
                   onMove={handleMove}
                   isMoving={moveMutation.isPending}
+                  streak={streakMap.get(player.player_name) ?? null}
                 />
               ))}
             </div>
@@ -1134,6 +1245,7 @@ export default function RosterPage() {
                   viewMode={viewMode}
                   onMove={handleMove}
                   isMoving={moveMutation.isPending}
+                  streak={streakMap.get(player.player_name) ?? null}
                 />
               ))}
             </div>
@@ -1154,6 +1266,7 @@ export default function RosterPage() {
                   viewMode={viewMode}
                   onMove={handleMove}
                   isMoving={moveMutation.isPending}
+                  streak={streakMap.get(player.player_name) ?? null}
                 />
               ))}
             </div>
@@ -1173,6 +1286,7 @@ export default function RosterPage() {
                 viewMode={viewMode}
                 onMove={handleMove}
                 isMoving={moveMutation.isPending}
+                streak={streakMap.get(player.player_name) ?? null}
               />
             ))
           )}

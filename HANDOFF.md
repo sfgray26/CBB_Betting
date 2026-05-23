@@ -462,3 +462,157 @@ Next available: 100_042
 **Migration guide included:** 4-step implementation (CSS variables → color map → Tailwind config → component refactors in priority order)
 
 **Ready for Claude Code implementation review.**
+
+---
+
+## 🚨 CRITICAL AUDIT FINDINGS (2026-05-20) — Gemini + Elite Fantasy Manager Assessment
+
+**Source:** Chrome DevTools + Gemini tool audit by user. **Status:** 11 issues identified.
+
+### P1 (Critical)
+
+| # | Issue | Evidence | Assigned | Kanban |
+|---|-------|----------|----------|--------|
+| 1 | **Transaction ledger de-sync** | Budget shows `Acquisitions: 0/8` but user verified add/drop (Thatcher Ballesteros → Dillon Dingler). Roster updated, acquisition counter did NOT increment. | Claude | `t_4911e13f` |
+| 2 | **Waiver wire infinite loading** | UI stuck on "Loading waiver wire..." spinner. Nav shows "Last updated: 2m ago" = backend has data. Frontend Promise chain broken. | Kimi | `t_ccf98143` |
+
+### P2 (High)
+
+| # | Issue | Evidence | Assigned | Kanban |
+|---|-------|----------|----------|--------|
+| 3 | **Category logic errors** | K (batting) flagged LOST at 16 vs 14 (fewer Ks is winning). L (0 vs 2) flagged Bubble instead of SAFE. HR allowed (3 vs 2) flagged Bubble. False ties: HR 4 vs 5 = T, OPS .636 vs .631 = T. Backend treats volume stats as ratios + aggressive rounding. | Claude | `t_94cfce7c` |
+| 4 | **IP pacing inverted** | Shows `10.2 IP | min 18 IP` with green AHEAD badge. 10.2 < 18. Base-3 innings (.1=1/3, .2=2/3) treated as linear float. | Claude | `t_48859ad8` |
+
+### P3 (Medium)
+
+| # | Issue | Evidence | Assigned | Kanban |
+|---|-------|----------|----------|--------|
+| 5 | **CBB betting branding leak** | Fantasy screens show "CBB EDGE Analytics" + "Analytics / Trading / Admin" + bankroll "Portfolio DD: 0.0% | Exp: 0.0%" + Risk Dashboard link. No domain isolation. | Kimi | `t_d17147b1` |
+| 6 | **Page title sync failure** | Budget page (`/war-room/budget`) shows "Dashboard" in header. Routing state machine not consuming path changes. | Kimi | `t_1c38c4fb` |
+| 7 | **Proxy projection fallbacks** | Optimize Lineup shows yellow alert. 8 diverse players (Dingler, Keaschall, Okamoto, Alonso, Walker, Antonacci, Murakami, Pérez) all return identical hardcoded `58.0` proxy_projection. Scoring loop silently injects median fallback on null/error. | Claude | `t_fe223c75` |
+| 8 | **Missing bulk lineup commit** | User must click [Apply] individually for all 14 roster slots. No batch endpoint. | Claude | `t_8b16ae6d` |
+
+### P4 (Low)
+
+| # | Issue | Evidence | Assigned | Kanban |
+|---|-------|----------|----------|--------|
+| 9 | **Stale injury data** | Geraldo Perdomo flagged DTD "ETA Apr 28 · stale · updated 21d ago". Current date May 20. Injury pipeline frozen 3+ weeks. | Codex | `t_55531e21` |
+| 10 | **Streaming filter omissions** | Shows players marked "— owned" (already on roster) and negative need scores (-5.4). No cross-reference against league roster, no value floor. | Kimi | `t_6ce9b496` |
+| 11 | **Kimi devtools audit** | Run comprehensive Chrome DevTools MCP scan after fixes. Console errors, network failures, React warnings, accessibility, performance. | Kimi | `t_adff0d9e` |
+
+---
+
+## ✅ APPROVED WAVE PLAN (2026-05-20) — WAVES 1 & 2 COMPLETE
+
+**Approved by user. 3 waves, domain-isolated parallelism.**
+
+### Wave 1 — ✅ COMPLETE (P1 Critical + Frontend Batch + DevOps)
+
+| Agent | Task | Priority | Kanban | Status |
+|-------|------|----------|--------|--------|
+| **Claude** | Transaction ledger de-sync | P1 Critical | `t_4911e13f` | ✅ RosterAcquisition model + atomic transaction + 7 tests pass |
+| **Kimi** | Waiver loading + Branding + Page titles | P1+P3 | `t_ccf98143`, `t_d17147b1`, `t_1c38c4fb` | ✅ Error boundary + API hardening + route-aware sidebar + title mappings |
+| **Codex** | Stale injury pipeline diagnosis | P4 Low | `t_55531e21` | ✅ Root cause: orphaned ingested_injuries rows |
+| **Copilot** | Stale injury pipeline implementation | P4 Low | `t_55531e21` | ✅ Cleanup block + health monitoring + staleness alarm |
+
+**Wave 1 Evidence:** `reports/2026-05-20-claude-transaction-sync-fix.md`, `reports/2026-05-20-kimi-frontend-batch.md`, `reports/2026-05-20-codex-injury-pipeline.md`, `reports/2026-05-20-copilot-injury-implementation.md`
+
+### Wave 2 — ✅ COMPLETE (P2 High + Backend Math + Frontend Polish)
+
+| Agent | Task | Priority | Kanban | Status |
+|-------|------|----------|--------|--------|
+| **Claude** | Category logic errors | P2 High | `t_94cfce7c` | ✅ LOWER_IS_BETTER deficit logic in dashboard_service.py + 9 new tests |
+| **Claude** | IP pacing inverted | P2 High | `t_48859ad8` | ✅ ip_baseball_to_float() + weekly-scoped pacing + 7 new tests |
+| **Claude** | Matchup engine float casting | P2 High | — | ✅ int() → float() for split counts |
+| **Kimi** | Streaming filters | P4 Low | `t_6ce9b496` | ✅ Hide owned + min need score slider + count indicators |
+
+**Wave 2 Evidence:** `reports/2026-05-20-claude-wave2-math-fixes.md`, `reports/2026-05-20-kimi-streaming-filters.md`
+
+**Note:** Proxy projection fallbacks (`t_fe223c75`) was NOT completed in Wave 2. Moved to Wave 3.
+
+### Wave 4 — ✅ COMPLETE (Production Cleanup + Weekly Preview Feature)
+
+| Agent | Task | Priority | Status |
+|-------|------|----------|--------|
+| **Copilot** | Remove debug endpoints + harden test env | CLEANUP | ✅ 5 debug routers removed from main.py, scripts/setup_test_env.{sh,ps1} created, 17/17 tests pass |
+| **Claude** | Weekly matchup preview backend | P2 FEATURE | ✅ New `GET /api/fantasy/matchup-preview` endpoint, MCMC simulation, streaming recs, 4 tests |
+| **Kimi** | Weekly matchup preview frontend | P2 FEATURE | ✅ New `/war-room/preview` page, sidebar nav, header title, 4.77 kB bundle, tsc clean |
+
+**Wave 4 Evidence:** `reports/2026-05-20-copilot-production-cleanup.md`, `reports/2026-05-20-claude-weekly-preview-backend.md`, `reports/2026-05-20-kimi-weekly-preview-frontend.md`
+
+### Wave 5A — ✅ COMPLETE (2026-05-22: Yahoo Ground-Truth Remediation Wave 1-2)
+
+**Context:** UAT report cross-referenced against live Yahoo data exposed 10 critical discrepancies. Root cause: single off-by-one week boundary bug (Opening Day epoch = Mar 20 Thu instead of Mar 24 Mon) producing 3 symptoms: wrong week, 0 IP, 0 acquisitions.
+
+| Agent | Task | Priority | Status |
+|-------|------|----------|--------|
+| **Claude** | Fix week boundary epoch + Yahoo sync guard + tests | P1 ROOT CAUSE | ✅ `_MLB_FIRST_MATCHUP_MONDAY = date(2026, 3, 24)`, `_compute_mlb_current_week()` helper, 5 new tests |
+| **Kimi** | Preview crash (null guard) + "0% owned" suppression + H2H Category W-L label | P1+P2 UI | ✅ `(data.opponent_name || '?')`, ownership suppressed, "Category W-L:" prefix |
+| **Copilot** | IL hard gate in waiver + IL-type-aware ETA calculation | P1+P2 DATA | ✅ `_IL_STATUS_TOKENS`, `_is_il_player()`, DTD penalty, injury_date-based ETA |
+| **Copilot** | Within-league transaction feed | P2 FEATURE | ✅ `league_transaction_feed.py`, 26 tests, Jung Hoo Lee badge verified |
+| **Kimi** | Dashboard gap cards (optimization severity) + waiver drop badges | P2 UI | ✅ `severityDotClass()`, "View Roster" link, drop badge with color-coded urgency |
+| **Codex** | Deploy to Railway + budget verification | DEPLOY | ✅ Both containers healthy, Week 9 + IP 19.2 confirmed |
+| **Gemini** | Post-deploy UAT smoke test | VALIDATION | ✅ 5/7 checks pass, 2 issues found → escalated to Wave 5B |
+
+**Wave 5A Evidence:** `reports/2026-05-22-claude-week-boundary-fix.md`, `reports/2026-05-22-kimi-frontend-label-fixes.md`, `reports/2026-05-22-copilot-il-filter-eta-fix.md`, `reports/2026-05-22-copilot-transaction-feed.md`, `reports/2026-05-22-kimi-dashboard-waiver-ui.md`, `reports/2026-05-22-codex-deploy.md`, `reports/2026-05-22-gemini-post-deploy-uat.md`
+
+**Known Issues After Wave 5A:**
+- `roster_acquisitions` table missing in prod DB → `acquisitions_used` stays 0
+- Pitchers array empty in `lineup/current` → optimizer non-functional (P0)
+- Roster ownership 0.0% → `_pe_ownership` fallback data likely NULL
+- `dashboard_service._get_lineup_gaps()` only checks empty slots → no rank-based optimization
+- Snell ETA Jun 2 (improved from Jun 30 but should show "TBD" when no timetable)
+
+---
+
+### Wave 5B — IN PROGRESS (2026-05-22: P0 Pitcher Fix + Optimization Engine + UX Polish)
+
+**Goal:** Resolve all remaining blockers to make app genuinely usable. 3 agents in parallel, zero file overlap.
+
+| Agent | Task | Priority | Files |
+|-------|------|----------|-------|
+| **Claude** | P0: Debug why `flag_pitcher_starts()` returns empty in prod + P1: Build rank-based lineup optimization in `_get_lineup_gaps()` | P0+P1 | `daily_lineup_optimizer.py`, `dashboard_service.py` |
+| **Kimi** | Need Score tooltip with breakdown/scale + empty-pitchers fallback UI + tier badges (Gold/Silver) | P2 UX | `dashboard/page.tsx`, `waiver/page.tsx`, `types.ts` |
+| **Copilot** | Create `roster_acquisitions` table in prod + small-sample penalty (<100 PA) + show "ETA: TBD" for uncertain IL returns | P1 DATA | `main.py`, `waiver_edge_detector.py`, `injury_overlay.py` |
+
+**Wave 5B Gate:** Claude pitcher fix verified → All tests pass → **Codex deploys** → Gemini post-deploy UAT
+
+**Post Wave 5B UAT Criteria:**
+- [ ] `lineup/current` returns non-empty pitchers array
+- [ ] Dashboard shows optimization alerts for Harrison/Pérez/Sánchez
+- [ ] `acquisitions_used` shows correct count (1/8)
+- [ ] Need Score has contextual tooltip on hover
+- [ ] Jake Bauers penalized for small sample size
+- [ ] IL players show "ETA: TBD" when no confirmed return date
+
+---
+
+### Wave 5C — PROPOSED (Heavy-Lift Features)
+
+| Agent | Task | Priority | Files Touched |
+|-------|------|----------|---------------|
+| **Copilot** | Fix decision tracker override comparison + expose accuracy endpoint | P2 BUGFIX | `decision_tracker.py`, `fantasy.py` |
+| **Claude** | Trade analyzer backend — category impact delta for proposed trades | P2 FEATURE | New module + router |
+| **Kimi** | Decision accuracy page + hot/cold badges on roster cards | P2+P3 | `/decisions/`, `/war-room/roster` |
+
+---
+
+### Wave 5D — BACKLOG (Deferred)
+
+| Finding | Priority | Reason |
+|---------|----------|--------|
+| Advanced metrics (xwOBA, wRC+, FIP) in player cards | MED | Requires new data source integration |
+| Platoon split indicators on waiver targets | MED | Requires split data pipeline |
+| Two-start pitcher flagging | LOW | Partially exists, needs UI surfacing |
+| Dynamic pitcher projected IP tracking | MED | Requires schedule API integration |
+| 15-minute data refresh on game days | MED | Pipeline/cron configuration |
+| Trade analyzer / ROS value lens | HIGH | Major feature, deferred to Wave 5C |
+
+### Wave Isolation Rules
+1. **No two agents edit `backend/routers/fantasy.py` in the same wave.**
+2. **Backend pytest runs sequentially** per agent, never parallel.
+3. **Frontend `npm run build` gates every Kimi commit.**
+4. **Deploy only after ALL tests in the wave pass.**
+5. **Rollback plan:** Revert to pre-wave commit if any production error detected within 30 min of deploy.
+
+---

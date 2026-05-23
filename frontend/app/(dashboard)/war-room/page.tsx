@@ -54,7 +54,7 @@ export default function WarRoomPage() {
 
   if (matchup.isError) {
     return (
-      <div className="min-h-screen bg-black p-6">
+      <div className="min-h-screen bg-bg-base p-6">
         <div className="flex items-center gap-2 text-status-lost">
           <AlertCircle className="h-6 w-6" />
           <span className="text-base font-mono">{matchup.error?.message ?? 'Failed to load matchup'}</span>
@@ -66,7 +66,7 @@ export default function WarRoomPage() {
   if (!matchup.data) return null
 
   return (
-    <div className="min-h-screen bg-black">
+    <div className="min-h-screen bg-bg-base">
       <div className="max-w-6xl mx-auto p-6 lg:p-8 space-y-6">
         {/* Page header row */}
         <div className="flex items-center gap-3 mb-2">
