@@ -1139,7 +1139,13 @@ class DailyLineupOptimizer:
             try:
                 persisted = load_probable_pitchers_from_snapshot(db, parsed_date)
                 if persisted:
-                    return persisted
+                    # load_probable_pitchers_from_snapshot returns dict[str, dict] with
+                    # {"name": ..., "handedness": ...} values. _is_probable_starter expects
+                    # str values — extract the name to avoid TypeError on "dict in str".
+                    return {
+                        team: v.get("name", "") if isinstance(v, dict) else v
+                        for team, v in persisted.items()
+                    }
             except Exception as exc:
                 logger.warning(f"Failed to load probable pitchers from snapshot: {exc}")
             finally:

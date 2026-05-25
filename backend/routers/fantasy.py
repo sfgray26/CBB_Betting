@@ -2170,6 +2170,7 @@ async def get_fantasy_waiver_recommendations(
                 owned_pct=p.get("percent_owned", 0.0),
                 starts_this_week=p.get("starts_this_week", 0),
                 two_start=p.get("starts_this_week", 0) >= 2,
+                two_start_this_week=p.get("starts_this_week", 0) >= 2,
                 projected_saves=_raw_nsv,
                 hot_cold=_hc,
                 status=_status,
@@ -3375,6 +3376,11 @@ async def get_fantasy_roster(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except YahooAPIError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # Enrich roster players with ownership % — get_roster() omits /ownership subresource;
+    # _enrich_ownership_batch() fetches it via players;player_keys=.../ownership (same as
+    # get_free_agents does). Without this call all roster players show 0.0% owned.
+    client._enrich_ownership_batch(raw_players)
 
     # Extract player keys for rolling stats lookup
     player_keys = [p.get("player_key") for p in raw_players if p.get("player_key")]
@@ -4584,10 +4590,51 @@ from backend.services.dashboard_service import get_dashboard_service
 
 
 @router.get("/api/dashboard")
-async def get_dashboard(user: str = Depends(verify_api_key)):
+async def get_dashboard(
+    user: str = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+):
     """Phase B: Enhanced Dashboard"""
+    from backend.models import PlayerScore, MLBGameLog
     service = get_dashboard_service()
     dashboard = await service.get_dashboard(user_id=user)
+
+    # --- Data freshness indicator ---
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+    last_sync_dt: Optional[datetime] = None
+    try:
+        row = (
+            db.query(func.max(PlayerScore.computed_at))
+            .scalar()
+        )
+        if row is not None:
+            last_sync_dt = row if row.tzinfo else row.replace(tzinfo=ZoneInfo("America/New_York"))
+    except Exception as _fs_err:
+        logger.debug("dashboard: last_sync query failed (non-fatal): %s", _fs_err)
+
+    is_stale = False
+    games_today = False
+    stale_warning: Optional[dict] = None
+    if last_sync_dt is not None:
+        age_seconds = (now_et - last_sync_dt).total_seconds()
+        is_stale = age_seconds > 7200  # >2 hours
+        if is_stale:
+            try:
+                today_et = now_et.date()
+                games_today = (
+                    db.query(MLBGameLog)
+                    .filter(MLBGameLog.game_date == today_et)
+                    .count()
+                ) > 0
+            except Exception:
+                games_today = True  # conservative: assume games if we can't check
+            if games_today:
+                stale_warning = {
+                    "stale": True,
+                    "last_sync": last_sync_dt.isoformat(),
+                    "recommendation": "Lineup data may not reflect today's starting lineups",
+                }
+
     return {
         "success": True,
         "timestamp": dashboard.timestamp,
@@ -4605,6 +4652,8 @@ async def get_dashboard(user: str = Depends(verify_api_key)):
             "probable_pitchers": [asdict(p) for p in dashboard.probable_pitchers],
             "two_start_pitchers": [asdict(p) for p in dashboard.two_start_pitchers],
         },
+        "last_sync": last_sync_dt.isoformat() if last_sync_dt else None,
+        "stale_warning": stale_warning,
         "preferences": dashboard.preferences,
     }
 
@@ -6185,10 +6234,7 @@ async def get_matchup_scoreboard(
 
     # Default to current week if not provided
     if week is None:
-        now_et = datetime.now(ZoneInfo("America/New_York"))
-        # Approximate MLB fantasy week number from Opening Day timing.
-        days_since_opening = (now_et - datetime(now_et.year, 3, 28, tzinfo=ZoneInfo("America/New_York"))).days
-        week = max(1, min(25, (days_since_opening // 7) + 1))
+        week = _compute_mlb_current_week(datetime.now(ZoneInfo("America/New_York")).date())
 
     # Fetch live matchup stats from Yahoo
     matchup_data = {}
@@ -6446,6 +6492,7 @@ async def get_constraint_budget(
 
     # 3. Season calendar — week number, pace metadata
     current_week = _compute_mlb_current_week(now_et.date())
+    league_meta: dict = {}
     # Yahoo sync guard: if our epoch drifts from Yahoo's authoritative value, trust Yahoo
     try:
         league_meta = client.get_league()
@@ -6495,6 +6542,32 @@ async def get_constraint_budget(
     except Exception:
         pass  # non-critical; leave as 0
 
+    # 5. Waiver priority — my team's rolling waiver rank among league teams
+    waiver_priority_out: Optional[dict] = None
+    try:
+        _wpr = client.get_team_waiver_priorities()
+        _num_teams = int(league_meta.get("num_teams", 0))
+        if not _num_teams:
+            _num_teams = len(_wpr)
+        _my_priority = _wpr.get(team_key)
+        if _my_priority is not None and _num_teams > 0:
+            _waiver_type = int(league_meta.get("waiver_type", 0))
+            if _waiver_type == 0:  # rolling waivers
+                if _my_priority <= 3:
+                    _rec = "High priority — use claims aggressively before your rank resets"
+                elif _my_priority <= _num_teams // 2:
+                    _rec = "Moderate priority — be selective with claims"
+                else:
+                    _rec = "Low priority — prioritize free-agent pickups over waiver claims"
+                waiver_priority_out = {
+                    "priority": _my_priority,
+                    "total": _num_teams,
+                    "waiver_type": "rolling",
+                    "recommendation": _rec,
+                }
+    except Exception as _wp_err:
+        logger.debug("budget: waiver_priority fetch non-fatal: %s", _wp_err)
+
     budget = compute_budget_state(
         acquisitions_used=acquisitions_used,
         acquisition_limit=acquisition_limit,
@@ -6524,6 +6597,7 @@ async def get_constraint_budget(
             "days_in_week_remaining": days_in_week_remaining,
             "acquisitions_this_season": acquisitions_this_season,
         },
+        "waiver_priority": waiver_priority_out,
         "freshness": {
             "primary_source": "yahoo",
             "fetched_at": now_et.isoformat(),

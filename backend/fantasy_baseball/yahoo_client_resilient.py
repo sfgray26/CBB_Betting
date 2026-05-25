@@ -508,6 +508,36 @@ class YahooFantasyClient:
         teams_raw = self._league_section(data, 1).get("teams", {})
         return [self._parse_team(team_data) for team_data in self._iter_block(teams_raw, "team")]
 
+    def get_team_waiver_priorities(self) -> dict:
+        """Return {team_key: waiver_priority_int} for all teams in the league.
+
+        Yahoo Fantasy returns ``waiver_priority`` as a 1-based integer ranking
+        inside each team's metadata block.  Only valid for rolling-waiver leagues
+        (waiver_type == 0).  Returns an empty dict on any error so callers can
+        treat the result as optional.
+        """
+        try:
+            data = self._get(f"league/{self.league_key}/teams")
+            teams_raw = self._league_section(data, 1).get("teams", {})
+            priorities: dict = {}
+            for team_list in self._iter_block(teams_raw, "team"):
+                meta: dict = {}
+                first = team_list[0] if team_list and isinstance(team_list[0], list) else team_list
+                for item in first:
+                    if isinstance(item, dict):
+                        meta.update(item)
+                team_key = meta.get("team_key")
+                wp = meta.get("waiver_priority")
+                if team_key and wp is not None:
+                    try:
+                        priorities[team_key] = int(wp)
+                    except (ValueError, TypeError):
+                        pass
+            return priorities
+        except Exception as _e:
+            logger.debug("get_team_waiver_priorities: non-fatal: %s", _e)
+            return {}
+
     def get_league_rosters(self, league_key: str, include_team_key: bool = True) -> list[dict]:
         """Fetch all rosters for all teams in a league."""
         url = f"league/{league_key}/teams/roster"
