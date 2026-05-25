@@ -6234,10 +6234,7 @@ async def get_matchup_scoreboard(
 
     # Default to current week if not provided
     if week is None:
-        now_et = datetime.now(ZoneInfo("America/New_York"))
-        # Approximate MLB fantasy week number from Opening Day timing.
-        days_since_opening = (now_et - datetime(now_et.year, 3, 28, tzinfo=ZoneInfo("America/New_York"))).days
-        week = max(1, min(25, (days_since_opening // 7) + 1))
+        week = _compute_mlb_current_week(datetime.now(ZoneInfo("America/New_York")).date())
 
     # Fetch live matchup stats from Yahoo
     matchup_data = {}

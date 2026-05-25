@@ -92,6 +92,35 @@ def test_count_weekly_acquisitions_nested_destination():
     assert result == 1
 
 
+def test_count_weekly_acquisitions_yahoo_mlb_players_nested():
+    """Yahoo MLB nests destination_team_key inside players.0.transaction_data (a list)."""
+    transactions = [
+        {
+            "type": "add",
+            "timestamp": "30",
+            "players": {
+                "count": "1",
+                "0": {
+                    "player": [{"player_key": "422.p.12345"}],
+                    "transaction_data": [
+                        {
+                            "type": "add",
+                            "source_type": "waivers",
+                            "destination_type": "team",
+                            "destination_team_key": "mlb.l.123.t.1",
+                        }
+                    ],
+                },
+            },
+        }
+    ]
+    week_start = datetime(1970, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    week_end = datetime(1970, 1, 1, 0, 1, 0, tzinfo=timezone.utc)
+
+    result = count_weekly_acquisitions(transactions, "mlb.l.123.t.1", week_start, week_end)
+    assert result == 1
+
+
 # =============================================================================
 # extract_ip_from_scoreboard tests
 # =============================================================================
