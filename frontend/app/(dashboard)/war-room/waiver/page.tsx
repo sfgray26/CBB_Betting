@@ -256,6 +256,21 @@ function PlayerRow({ player, rosterPlayer }: {
             ))}
           </div>
         )}
+        {/* Park factor chip — extreme parks only */}
+        {player.park_factor != null && player.park_factor >= 1.10 && (
+          <div className="flex gap-1 mt-1 flex-wrap">
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-status-safe/15 text-status-safe border border-status-safe/30 rounded font-semibold">
+              PARK+
+            </span>
+          </div>
+        )}
+        {player.park_factor != null && player.park_factor <= 0.92 && (
+          <div className="flex gap-1 mt-1 flex-wrap">
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-blue-400/15 text-blue-400 border border-blue-400/30 rounded font-semibold">
+              PARK-
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Scores column */}

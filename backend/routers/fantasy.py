@@ -2192,6 +2192,7 @@ async def get_fantasy_waiver_recommendations(
                 rank_percentile=None,
                 small_sample=_small_sample,
                 momentum_signal=_momentum_signal_by_bdl_id.get(_bdl_id) if _bdl_id else None,
+                park_factor=round(_get_park_factor(p.get("team") or "", "run"), 3),
             )
 
         # Bulk quality_score lookup for pitcher FA candidates (enrichment only).
@@ -2271,6 +2272,13 @@ async def get_fantasy_waiver_recommendations(
         _populate_starts_this_week(free_agents, starts_map)
         _apply_ownership_fallback(free_agents)
         _injury_overlays_by_key = load_injury_overlays_for_yahoo_players(db, free_agents) if free_agents else {}
+
+        # Park factor lookup (non-fatal import guard)
+        try:
+            from backend.fantasy_baseball.ballpark_factors import get_park_factor as _get_park_factor
+        except ImportError:
+            def _get_park_factor(team: str, factor: str = "run") -> float:  # type: ignore[misc]
+                return 1.0
 
         # Bulk-load latest PlayerMomentum signals for hot/cold badge accuracy.
         # Uses 14-day delta-Z signal (SURGING/HOT/STABLE/COLD/COLLAPSING) instead of
@@ -2669,6 +2677,13 @@ async def get_waiver_recommendations(
         except Exception as _fa_se:
             logger.warning("starts_this_week population failed in recommendations (non-fatal): %s", _fa_se)
 
+        # Park factor lookup for recommendations endpoint (non-fatal import guard)
+        try:
+            from backend.fantasy_baseball.ballpark_factors import get_park_factor as _get_park_factor_rec
+        except ImportError:
+            def _get_park_factor_rec(team: str, factor: str = "run") -> float:  # type: ignore[misc]
+                return 1.0
+
         # Bulk-load latest PlayerMomentum signals for hot/cold badge accuracy.
         # Uses 14-day delta-Z signal (SURGING/HOT/STABLE/COLD/COLLAPSING) instead of
         # season z-score average, which produced false "HOT" labels on slumping players.
@@ -2858,6 +2873,7 @@ async def get_waiver_recommendations(
                 injury_status=_injury_status,
                 injury_return_timeline=_injury_timeline,
                 momentum_signal=_rec_momentum_signal_by_bdl_id.get(_rec_bdl_id) if _rec_bdl_id else None,
+                park_factor=round(_get_park_factor_rec(p.get("team") or "", "run"), 3),
             )
 
         scored_fas = sorted(

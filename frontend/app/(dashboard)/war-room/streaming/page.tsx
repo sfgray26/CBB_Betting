@@ -350,6 +350,21 @@ function WaiverPlayerRow({
           })}
         </div>
       )}
+      {/* Park factor chip — extreme parks only (always shown, independent of category matches) */}
+      {player.park_factor != null && player.park_factor >= 1.10 && (
+        <div className="flex flex-wrap gap-1 mt-1">
+          <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded font-semibold bg-status-safe/15 text-status-safe border border-status-safe/30">
+            PARK+
+          </span>
+        </div>
+      )}
+      {player.park_factor != null && player.park_factor <= 0.92 && (
+        <div className="flex flex-wrap gap-1 mt-1">
+          <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded font-semibold bg-blue-400/15 text-blue-400 border border-blue-400/30">
+            PARK-
+          </span>
+        </div>
+      )}
     </div>
   )
 }
