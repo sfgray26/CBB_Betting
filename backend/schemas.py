@@ -430,6 +430,7 @@ class WaiverPlayerOut(BaseModel):
     small_sample: Optional[bool] = None     # True when PA (batters) or IP (pitchers) is below reliable-sample threshold
     two_start_this_week: bool = False       # True when pitcher has ≥2 probable starts this scoring week (UI badge alias)
     momentum_signal: Optional[str] = None  # SURGING / HOT / STABLE / COLD / COLLAPSING
+    park_factor: float = 1.0      # Ballpark run factor; 1.0=neutral, >1.1=hitter-friendly, <0.92=pitcher-friendly
 
     @field_validator("need_score", "z_score", "owned_pct", "projected_saves", mode="before")
     @classmethod
