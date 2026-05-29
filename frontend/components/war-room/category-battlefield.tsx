@@ -52,7 +52,12 @@ function statusLabel(winProb: number | null): { text: string; color: string; des
   return { text: 'LOST', color: 'text-status-lost', description: `${Math.round(winProb * 100)}% win prob - Unlikely to win` }
 }
 
-function actionHint(proj: CategoryProjection | undefined, lowerBetter: boolean): string {
+function actionHint(
+  proj: CategoryProjection | undefined,
+  lowerBetter: boolean,
+  myCurrentVal?: number | string | null,
+  oppCurrentVal?: number | string | null,
+): string {
   if (!proj) return ''
   const { win_prob, my_proj, opp_proj } = proj
   if (win_prob > 0.95) return 'Protect'
@@ -68,6 +73,9 @@ function actionHint(proj: CategoryProjection | undefined, lowerBetter: boolean):
     return 'Close'
   }
   if (win_prob > 0.65) return 'Hold'
+  // Guard: never suggest Punt? for a category the team is currently winning
+  const currentWinning = isWinning(myCurrentVal, oppCurrentVal, lowerBetter)
+  if (currentWinning === true) return 'Hold'
   return 'Punt?'
 }
 
@@ -89,7 +97,7 @@ function CategoryRow({ cat, myVal, oppVal, proj }: RowProps) {
   const catColor = CATEGORY_COLOR[cat]
   const pct = barMyPct(myVal, oppVal)
   const winProb = proj?.win_prob ?? null
-  const hint = actionHint(proj, lowerBetter)
+  const hint = actionHint(proj, lowerBetter, myVal, oppVal)
   const status = statusLabel(winProb)
 
   // Design System v2: my value is always primary white; gold is reserved for CTAs
