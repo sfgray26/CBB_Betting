@@ -16,6 +16,8 @@ export default function StreamingStationPage() {
     queryKey: ['waiver'],
     queryFn: () => endpoints.getWaiver(),
     staleTime: 5 * 60_000,
+    retry: 1,
+    retryDelay: 2000,
   })
 
   if (waiver.isLoading) {

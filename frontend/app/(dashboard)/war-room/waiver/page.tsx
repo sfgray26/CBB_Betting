@@ -613,6 +613,7 @@ function WaiverPageInner() {
     },
     staleTime: 3 * 60_000,
     retry: 1,
+    retryDelay: 2000,
   })
 
   const filterPlayers = (players: WaiverAvailablePlayer[]) => {
