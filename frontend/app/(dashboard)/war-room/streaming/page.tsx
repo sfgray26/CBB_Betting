@@ -74,8 +74,37 @@ export default function StreamingStationPage() {
     return true
   }
 
-  const filteredTwoStarters = (two_start_pitchers ?? []).filter(passesFilters)
-  const filteredTopAvailable = (top_available ?? []).filter(passesFilters)
+  function deficitWeightedScore(
+    player: WaiverAvailablePlayer,
+    deficits: CategoryDeficit[]
+  ): number {
+    const contribs = player.category_contributions ?? {}
+    const losingDeficits = deficits.filter(d => !d.winning)
+    if (losingDeficits.length === 0) return player.need_score ?? 0
+
+    let score = 0
+    for (const d of losingDeficits) {
+      const contrib = contribs[d.category] ?? 0
+      // Weight by how far behind we are (larger deficit = more important)
+      const weight = Math.min(3.0, 1.0 + Math.abs(d.deficit ?? 0) * 0.3)
+      score += contrib * weight
+    }
+    // Blend 70% deficit-weighted + 30% season need_score to preserve overall quality
+    return score * 0.7 + (player.need_score ?? 0) * 0.3
+  }
+
+  const filteredTwoStarters = (two_start_pitchers ?? [])
+    .filter(passesFilters)
+    .sort((a, b) =>
+      deficitWeightedScore(b, category_deficits ?? []) -
+      deficitWeightedScore(a, category_deficits ?? [])
+    )
+  const filteredTopAvailable = (top_available ?? [])
+    .filter(passesFilters)
+    .sort((a, b) =>
+      deficitWeightedScore(b, category_deficits ?? []) -
+      deficitWeightedScore(a, category_deficits ?? [])
+    )
 
   return (
     <div className="min-h-screen bg-bg-base p-6 space-y-6">
