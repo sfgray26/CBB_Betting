@@ -271,6 +271,15 @@ function WaiverPlayerRow({
           ) : (
             <span className="text-text-muted text-xs">—</span>
           )}
+          {player.momentum_signal && player.momentum_signal !== 'STABLE' && (
+            <span className={
+              ['SURGING','HOT'].includes(player.momentum_signal)
+                ? 'text-status-safe text-xs'
+                : 'text-status-behind text-xs'
+            }>
+              {['SURGING','HOT'].includes(player.momentum_signal) ? '▲' : '▼'}
+            </span>
+          )}
           <div className="text-right">
             <span className="text-[8px] text-text-muted uppercase tracking-wider block">Need</span>
             <span className="text-accent-gold text-xs font-mono font-bold">

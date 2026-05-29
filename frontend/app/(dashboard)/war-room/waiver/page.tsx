@@ -189,7 +189,21 @@ function PlayerRow({ player, rosterPlayer }: {
               {tierBadge.label}
             </span>
           )}
+          {(player.starts_this_week ?? 0) >= 2 && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-status-safe/10 text-status-safe border border-status-safe/30 rounded font-semibold uppercase tracking-wider">
+              2-Start
+            </span>
+          )}
           <HotColdBadge hotCold={player.hot_cold} rankPercentile={player.rank_percentile} />
+          {player.momentum_signal && player.momentum_signal !== 'STABLE' && (
+            <span className={
+              ['SURGING','HOT'].includes(player.momentum_signal)
+                ? 'text-status-safe text-xs'
+                : 'text-status-behind text-xs'
+            }>
+              {['SURGING','HOT'].includes(player.momentum_signal) ? '▲' : '▼'}
+            </span>
+          )}
           {player.injury_status && (
             <span className="text-[10px] px-1.5 py-0.5 bg-status-lost/10 text-status-lost border border-status-lost/30 rounded font-semibold">
               {player.injury_status}
@@ -248,7 +262,14 @@ function PlayerRow({ player, rosterPlayer }: {
       <div className="w-full sm:w-40 flex-shrink-0 space-y-3">
         {/* Weekly match score */}
         <div>
-          <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">Match Score</p>
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-[9px] text-text-muted uppercase tracking-wider">Match Score</p>
+            {player.small_sample && (
+              <span className="text-[10px] px-1.5 py-0.5 bg-status-bubble/10 text-status-bubble border border-status-bubble/30 rounded font-semibold">
+                ⚠️ Small Sample
+              </span>
+            )}
+          </div>
           <NeedBar score={player.need_score} contributions={player.category_contributions} />
           <p className="text-[9px] text-text-muted mt-0.5">
             {needMatches.length > 0

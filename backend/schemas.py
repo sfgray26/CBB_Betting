@@ -429,6 +429,7 @@ class WaiverPlayerOut(BaseModel):
     league_drop: Optional[dict] = None      # Recent in-league drop: {"dropped_by": str, "days_ago": float, "team_key": str} or None
     small_sample: Optional[bool] = None     # True when PA (batters) or IP (pitchers) is below reliable-sample threshold
     two_start_this_week: bool = False       # True when pitcher has ≥2 probable starts this scoring week (UI badge alias)
+    momentum_signal: Optional[str] = None  # SURGING / HOT / STABLE / COLD / COLLAPSING
 
     @field_validator("need_score", "z_score", "owned_pct", "projected_saves", mode="before")
     @classmethod

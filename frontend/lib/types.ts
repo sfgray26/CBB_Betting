@@ -233,6 +233,8 @@ export interface WaiverTarget {
   reason: string
   need_score?: number
   category_contributions?: Record<string, number>
+  small_sample?: boolean
+  starts_this_week?: number
 }
 
 export interface InjuryFlag {
@@ -282,6 +284,9 @@ export interface DashboardData {
   matchup_preview: MatchupPreviewData | null
   probable_pitchers: ProbablePitcherInfo[]
   two_start_pitchers: ProbablePitcherInfo[]
+  last_sync?: string | null
+  stale_warning?: string | null
+  has_mlb_games_today?: boolean
 }
 
 export interface DashboardResponse {
@@ -519,6 +524,7 @@ export interface WaiverAvailablePlayer {
   category_contributions?: Record<string, number>
   starts_this_week?: number
   hot_cold?: 'HOT' | 'COLD' | null
+  momentum_signal?: 'SURGING' | 'HOT' | 'STABLE' | 'COLD' | 'COLLAPSING' | null
   rank_percentile?: number | null
   status?: string | null
   injury_note?: string | null
@@ -529,6 +535,7 @@ export interface WaiverAvailablePlayer {
   quality_score?: number | null
   projected_saves?: number
   stats?: Record<string, number | null>
+  small_sample?: boolean
 }
 
 export interface WaiverRosterPlayer {
@@ -637,6 +644,9 @@ export interface BudgetData {
   weeks_remaining?: number
   days_in_week_remaining?: number
   acquisitions_this_season?: number
+  waiver_priority?: number
+  waiver_total?: number
+  waiver_recommendation?: string | null
 }
 
 export interface BudgetResponse {

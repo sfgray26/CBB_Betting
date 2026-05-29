@@ -2081,10 +2081,18 @@ async def get_fantasy_waiver_recommendations(
             contributions = {k: float(v) for k, v in cat_scores.items() if isinstance(v, (int, float))}
 
             _hc: Optional[str] = None
+            _bdl_id: Optional[int] = None
             try:
-                _hc = _hot_cold_flag(contributions) if contributions else _hot_cold_flag(
-                    {k: v for k, v in (board_player.get("cat_scores") or {}).items()}
-                )
+                _player_name_key = name.lower().strip()
+                _bdl_id = _fa_name_to_bdl_id.get(_player_name_key)
+                if _bdl_id and _bdl_id in _momentum_signal_by_bdl_id:
+                    _mom_sig = _momentum_signal_by_bdl_id[_bdl_id]
+                    _hc = "HOT" if _mom_sig in ("SURGING", "HOT") else (
+                        "COLD" if _mom_sig in ("COLD", "COLLAPSING") else None
+                    )
+                else:
+                    # Fallback: season z-score average (less accurate)
+                    _hc = _hot_cold_flag(contributions) if contributions else None
             except Exception:
                 pass
 
@@ -2183,6 +2191,7 @@ async def get_fantasy_waiver_recommendations(
                 quality_score=_pitcher_quality_map.get(name.lower()) if _fa_is_pitcher else None,
                 rank_percentile=None,
                 small_sample=_small_sample,
+                momentum_signal=_momentum_signal_by_bdl_id.get(_bdl_id) if _bdl_id else None,
             )
 
         # Bulk quality_score lookup for pitcher FA candidates (enrichment only).
@@ -2262,6 +2271,42 @@ async def get_fantasy_waiver_recommendations(
         _populate_starts_this_week(free_agents, starts_map)
         _apply_ownership_fallback(free_agents)
         _injury_overlays_by_key = load_injury_overlays_for_yahoo_players(db, free_agents) if free_agents else {}
+
+        # Bulk-load latest PlayerMomentum signals for hot/cold badge accuracy.
+        # Uses 14-day delta-Z signal (SURGING/HOT/STABLE/COLD/COLLAPSING) instead of
+        # season z-score average, which produced false "HOT" labels on slumping players.
+        _momentum_signal_by_bdl_id: dict[int, str] = {}
+        try:
+            from backend.models import PlayerMomentum as _PM
+            from sqlalchemy import func as _sqlfunc
+            _latest_date = (
+                db.query(_sqlfunc.max(_PM.as_of_date)).scalar()
+            )
+            if _latest_date:
+                _mom_rows = (
+                    db.query(_PM.bdl_player_id, _PM.signal)
+                    .filter(_PM.as_of_date == _latest_date)
+                    .all()
+                )
+                _momentum_signal_by_bdl_id = {r.bdl_player_id: r.signal for r in _mom_rows}
+        except Exception:
+            pass  # non-fatal: falls back to season z-score logic below
+
+        # Build normalized_name→bdl_id lookup for free agents using PlayerIDMapping.
+        # normalized_name is lowercase + ASCII-normalized (matches name.lower().strip() for most players).
+        _fa_name_to_bdl_id: dict[str, int] = {}
+        try:
+            from backend.models import PlayerIDMapping as _PIM
+            _fa_names = [p.get("name", "").strip().lower() for p in free_agents if p.get("name")]
+            if _fa_names:
+                _pim_rows = (
+                    db.query(_PIM.normalized_name, _PIM.bdl_id)
+                    .filter(_PIM.normalized_name.in_(_fa_names))
+                    .all()
+                )
+                _fa_name_to_bdl_id = {r.normalized_name: r.bdl_id for r in _pim_rows if r.bdl_id}
+        except Exception:
+            pass
 
         top_available = [_to_waiver_player(p) for p in free_agents]
 
@@ -2624,6 +2669,41 @@ async def get_waiver_recommendations(
         except Exception as _fa_se:
             logger.warning("starts_this_week population failed in recommendations (non-fatal): %s", _fa_se)
 
+        # Bulk-load latest PlayerMomentum signals for hot/cold badge accuracy.
+        # Uses 14-day delta-Z signal (SURGING/HOT/STABLE/COLD/COLLAPSING) instead of
+        # season z-score average, which produced false "HOT" labels on slumping players.
+        _rec_momentum_signal_by_bdl_id: dict[int, str] = {}
+        try:
+            from backend.models import PlayerMomentum as _PM_rec
+            from sqlalchemy import func as _sqlfunc_rec
+            _rec_latest_date = (
+                db.query(_sqlfunc_rec.max(_PM_rec.as_of_date)).scalar()
+            )
+            if _rec_latest_date:
+                _rec_mom_rows = (
+                    db.query(_PM_rec.bdl_player_id, _PM_rec.signal)
+                    .filter(_PM_rec.as_of_date == _rec_latest_date)
+                    .all()
+                )
+                _rec_momentum_signal_by_bdl_id = {r.bdl_player_id: r.signal for r in _rec_mom_rows}
+        except Exception:
+            pass  # non-fatal: falls back to season z-score logic below
+
+        # Build normalized_name→bdl_id lookup for free agents using PlayerIDMapping.
+        _rec_fa_name_to_bdl_id: dict[str, int] = {}
+        try:
+            from backend.models import PlayerIDMapping as _PIM_rec
+            _rec_fa_names = [p.get("name", "").strip().lower() for p in free_agents if p.get("name")]
+            if _rec_fa_names:
+                _rec_pim_rows = (
+                    db.query(_PIM_rec.normalized_name, _PIM_rec.bdl_id)
+                    .filter(_PIM_rec.normalized_name.in_(_rec_fa_names))
+                    .all()
+                )
+                _rec_fa_name_to_bdl_id = {r.normalized_name: r.bdl_id for r in _rec_pim_rows if r.bdl_id}
+        except Exception:
+            pass
+
         # Bulk quality_score lookup for pitcher FA candidates (enrichment only).
         # Queries probable_pitchers for today+next 7 days, keyed by pitcher_name.
         # Non-fatal: any exception leaves the dict empty (quality_score stays None).
@@ -2736,16 +2816,25 @@ async def get_waiver_recommendations(
             if _penalty_note and "HIGH_INJURY_RISK" not in _sc_sigs:
                 _sc_sigs.append("HIGH_INJURY_RISK")
 
-            # hot_cold derived from category z-scores
+            # hot_cold derived from PlayerMomentum 14d signal (falls back to season z-score average)
             _hc: Optional[str] = None
-            if cat_scores:
-                try:
+            _rec_bdl_id: Optional[int] = None
+            try:
+                _rec_player_name_key = name.lower().strip()
+                _rec_bdl_id = _rec_fa_name_to_bdl_id.get(_rec_player_name_key)
+                if _rec_bdl_id and _rec_bdl_id in _rec_momentum_signal_by_bdl_id:
+                    _mom_sig = _rec_momentum_signal_by_bdl_id[_rec_bdl_id]
+                    _hc = "HOT" if _mom_sig in ("SURGING", "HOT") else (
+                        "COLD" if _mom_sig in ("COLD", "COLLAPSING") else None
+                    )
+                elif cat_scores:
+                    # Fallback: season z-score average (less accurate)
                     _contribs = {k: float(v) for k, v in cat_scores.items() if isinstance(v, (int, float))}
                     if _contribs:
                         _avg = sum(_contribs.values()) / len(_contribs)
                         _hc = "HOT" if _avg > 0.75 else ("COLD" if _avg < -0.5 else None)
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
             # Populate quality_score for pitcher FA candidates only
             is_pitcher_fa = positions and positions[0] in ("SP", "RP", "P")
@@ -2768,6 +2857,7 @@ async def get_waiver_recommendations(
                 injury_note=_injury_note,
                 injury_status=_injury_status,
                 injury_return_timeline=_injury_timeline,
+                momentum_signal=_rec_momentum_signal_by_bdl_id.get(_rec_bdl_id) if _rec_bdl_id else None,
             )
 
         scored_fas = sorted(
