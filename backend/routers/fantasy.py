@@ -2167,6 +2167,10 @@ async def get_fantasy_waiver_recommendations(
                 _pa_est = _h_ytd / 0.265 if _h_ytd > 0.0 else 0.0
                 _small_sample = 0.0 < _pa_est < 100.0
 
+            _starts = _pitcher_starts_by_name.get(name.lower().strip(), [])
+            _start1_opp = _starts[0] if len(_starts) > 0 else None
+            _start2_opp = _starts[1] if len(_starts) > 1 else None
+
             return WaiverPlayerOut(
                 player_id=p.get("player_key") or "",
                 name=name,
@@ -2177,8 +2181,10 @@ async def get_fantasy_waiver_recommendations(
                 category_contributions=contributions,
                 owned_pct=p.get("percent_owned", 0.0),
                 starts_this_week=p.get("starts_this_week", 0),
-                two_start=p.get("starts_this_week", 0) >= 2,
-                two_start_this_week=p.get("starts_this_week", 0) >= 2,
+                two_start=len(_starts) >= 2 or p.get("starts_this_week", 0) >= 2,
+                two_start_this_week=len(_starts) >= 2 or p.get("starts_this_week", 0) >= 2,
+                start1_opp=_start1_opp,
+                start2_opp=_start2_opp,
                 projected_saves=_raw_nsv,
                 hot_cold=_hc,
                 status=_status,
@@ -2313,6 +2319,31 @@ async def get_fantasy_waiver_recommendations(
                     .all()
                 )
                 _fa_name_to_bdl_id = {r.normalized_name: r.bdl_id for r in _pim_rows if r.bdl_id}
+        except Exception:
+            pass
+
+        # Load probable pitcher start opponents for the current scoring week
+        # to populate start1_opp/start2_opp on two-start pitchers.
+        _pitcher_starts_by_name: dict[str, list[str]] = {}
+        try:
+            from backend.models import ProbablePitcherSnapshot as _PPS
+            from datetime import date as _date, timedelta as _td
+            _today = _date.today()
+            _week_end = _today + _td(days=7)
+            _pp_rows = (
+                db.query(_PPS.pitcher_name, _PPS.opponent, _PPS.game_date)
+                .filter(
+                    _PPS.game_date >= _today,
+                    _PPS.game_date <= _week_end,
+                    _PPS.pitcher_name.isnot(None),
+                )
+                .order_by(_PPS.game_date)
+                .all()
+            )
+            for row in _pp_rows:
+                key = (row.pitcher_name or "").strip().lower()
+                if key:
+                    _pitcher_starts_by_name.setdefault(key, []).append(row.opponent or "?")
         except Exception:
             pass
 
