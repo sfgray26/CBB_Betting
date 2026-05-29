@@ -2492,6 +2492,7 @@ async def get_fantasy_waiver_recommendations(
         faab_balance=_faab_balance,
         roster_context=_roster_context,
         il_watch=il_watch,
+        data_as_of=datetime.now(ZoneInfo("America/New_York")),
     )
 
 

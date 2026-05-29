@@ -479,6 +479,7 @@ class WaiverWireResponse(BaseModel):
     faab_balance: Optional[float] = None    # Remaining FAAB budget (None if not FAAB league)
     roster_context: dict = {}               # position → weakest roster player at that pos for comparison UI
     il_watch: List[WaiverPlayerOut] = []    # IL players excluded from top_available — monitor for activation
+    data_as_of: Optional[datetime] = None  # Canonical single timestamp for UI clock
 
 
 class RosterMoveRecommendation(BaseModel):

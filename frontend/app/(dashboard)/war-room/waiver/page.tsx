@@ -690,6 +690,17 @@ function WaiverPageInner() {
               {data.il_slots_available} IL slot{data.il_slots_available > 1 ? 's' : ''} open
             </span>
           )}
+          {data?.data_as_of && (
+            <span>
+              Data as of{' '}
+              {new Date(data.data_as_of).toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                timeZone: 'America/New_York',
+                timeZoneName: 'short',
+              })}
+            </span>
+          )}
         </div>
       </div>
 

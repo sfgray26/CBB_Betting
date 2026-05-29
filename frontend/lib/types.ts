@@ -622,6 +622,7 @@ export interface WaiverResponse {
   closer_alert?: 'NO_CLOSERS' | 'LOW_CLOSERS' | null
   pagination?: { page: number; per_page: number; has_next: boolean } | null
   roster_context?: Record<string, WaiverRosterPlayer>
+  data_as_of?: string | null
 }
 
 // ---------------------------------------------------------------------------
