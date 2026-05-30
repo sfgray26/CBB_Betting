@@ -2327,8 +2327,8 @@ async def get_fantasy_waiver_recommendations(
         _pitcher_starts_by_name: dict[str, list[str]] = {}
         try:
             from backend.models import ProbablePitcherSnapshot as _PPS
-            from datetime import date as _date, timedelta as _td
-            _today = _date.today()
+            from datetime import timedelta as _td
+            _today = datetime.now(ZoneInfo("America/New_York")).date()
             _week_end = _today + _td(days=7)
             _pp_rows = (
                 db.query(_PPS.pitcher_name, _PPS.opponent, _PPS.game_date)
