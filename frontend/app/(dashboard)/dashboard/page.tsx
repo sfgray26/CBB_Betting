@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import { useQuery, keepPreviousData } from "@tanstack/react-query"
 import { endpoints } from "@/lib/api"
 import { type DashboardData, type LineupGap, type InjuryFlag, type WaiverTarget, type StreakPlayer, type ProbablePitcherInfo } from "@/lib/types"
@@ -17,12 +18,26 @@ import {
   ArrowRight,
   Calendar,
   RefreshCw,
+  X,
 } from "lucide-react"
 import Link from "next/link"
 import { cn } from "@/lib/utils"
 import { Tooltip } from "@/components/shared/tooltip"
 
+function formatRelativeTime(iso: string | null | undefined): string {
+  if (!iso) return 'unknown'
+  const diff = Date.now() - new Date(iso).getTime()
+  const minutes = Math.floor(diff / 60000)
+  const hours = Math.floor(diff / 3600000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
 export default function DashboardPage() {
+  const [staleDismissed, setStaleDismissed] = useState(false)
+
   const { data: response, isLoading, isFetching, isError, error: queryError, refetch } = useQuery({
     queryKey: ['dashboard'],
     queryFn: endpoints.getDashboard,
@@ -74,12 +89,33 @@ export default function DashboardPage() {
     )
   }
 
+  const showStaleBanner = !staleDismissed && dashboard.stale_warning && (dashboard.has_mlb_games_today !== false)
+
   return (
     <div className="container mx-auto py-8 px-4">
       {isFetching && (
         <div className="mb-4 text-xs text-text-secondary flex items-center gap-1.5">
           <span className="inline-block h-2 w-2 rounded-full bg-accent-gold animate-pulse" />
           Refreshing…
+        </div>
+      )}
+
+      {/* Stale data warning */}
+      {showStaleBanner && (
+        <div className="mb-4 bg-status-bubble/10 border border-status-bubble/30 rounded-lg p-3 flex items-start gap-3">
+          <AlertCircle className="h-4 w-4 text-status-bubble flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm text-status-bubble">
+              ⚠️ Data may be stale — last updated {formatRelativeTime(dashboard.last_sync)}. Starting lineups may have changed.
+            </p>
+          </div>
+          <button
+            onClick={() => setStaleDismissed(true)}
+            className="text-status-bubble hover:text-text-primary transition-colors flex-shrink-0"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
       )}
 
@@ -180,6 +216,8 @@ function severityDotClass(severity: LineupGap['severity']) {
 }
 
 function LineupGapsCard({ gaps }: { gaps: LineupGap[] }) {
+  const regularGaps = gaps.filter((g) => g.severity !== 'optimization')
+  const optimizationGaps = gaps.filter((g) => g.severity === 'optimization')
 
   return (
     <Card className="bg-bg-surface border-border-subtle">
@@ -198,29 +236,55 @@ function LineupGapsCard({ gaps }: { gaps: LineupGap[] }) {
         {gaps.length === 0 ? (
           <p className="text-text-muted text-sm">No lineup gaps detected.</p>
         ) : (
-          <ul className="space-y-2">
-            {gaps.map((gap, i) => (
-              <li key={i} className="flex items-start gap-2">
-                <span
-                  className={`mt-0.5 h-2 w-2 rounded-full shrink-0 ${severityDotClass(gap.severity)}`}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-text-secondary text-sm font-medium">{gap.position}</p>
-                    {gap.severity === 'optimization' && (
-                      <span className="text-[10px] px-1.5 py-0.5 bg-accent-gold/10 text-accent-gold border border-accent-gold/30 rounded font-semibold uppercase tracking-wider">
-                        Optimize
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-text-tertiary text-xs">{gap.message}</p>
-                  {gap.suggested_add && (
-                    <p className="text-accent-gold text-xs mt-0.5">Add: {gap.suggested_add}</p>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
+          <div className="space-y-4">
+            {/* Critical / Warning / Info gaps */}
+            {regularGaps.length > 0 && (
+              <ul className="space-y-2">
+                {regularGaps.map((gap, i) => (
+                  <li key={i} className="flex items-start gap-2">
+                    <span
+                      className={`mt-0.5 h-2 w-2 rounded-full shrink-0 ${severityDotClass(gap.severity)}`}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-text-secondary text-sm font-medium">{gap.position}</p>
+                      <p className="text-text-tertiary text-xs">{gap.message}</p>
+                      {gap.suggested_add && (
+                        <p className="text-accent-gold text-xs mt-0.5">Add: {gap.suggested_add}</p>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {/* Optimization gaps — separated section */}
+            {optimizationGaps.length > 0 && (
+              <div className={regularGaps.length > 0 ? 'pt-3 border-t border-border-subtle' : ''}>
+                <p className="text-[10px] font-bold tracking-widest uppercase text-accent-gold mb-2">
+                  Sub-Optimal Placement
+                </p>
+                <ul className="space-y-2">
+                  {optimizationGaps.map((gap, i) => (
+                    <li key={i} className="flex items-start gap-2">
+                      <span className="mt-0.5 h-2 w-2 rounded-full shrink-0 bg-accent-gold" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-text-secondary text-sm font-medium">{gap.position}</p>
+                          <span className="text-[10px] px-1.5 py-0.5 bg-accent-gold/10 text-accent-gold border border-accent-gold/30 rounded font-semibold uppercase tracking-wider">
+                            Optimize
+                          </span>
+                        </div>
+                        <p className="text-text-tertiary text-xs">{gap.message}</p>
+                        {gap.suggested_add && (
+                          <p className="text-accent-gold text-xs mt-0.5">Add: {gap.suggested_add}</p>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         )}
         <div className="mt-3 pt-3 border-t border-border-subtle">
           <Link
@@ -353,6 +417,11 @@ function WaiverTargetsCard({ targets }: { targets: WaiverTarget[] }) {
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-text-secondary text-sm font-medium">{t.name}</p>
                     <NeedScoreTierBadge score={t.need_score} />
+                    {(t.starts_this_week ?? 0) >= 2 && (
+                      <span className="text-[10px] px-1.5 py-0.5 bg-status-safe/10 text-status-safe border border-status-safe/30 rounded font-semibold uppercase tracking-wider">
+                        2-Start
+                      </span>
+                    )}
                     <span className="text-text-muted text-xs">{t.team}</span>
                     <span className="text-text-tertiary text-xs">
                       {t.positions.join(", ")}
@@ -369,6 +438,11 @@ function WaiverTargetsCard({ targets }: { targets: WaiverTarget[] }) {
                           Need: {t.need_score.toFixed(2)}
                         </span>
                       </Tooltip>
+                    )}
+                    {t.small_sample && (
+                      <span className="text-[10px] px-1.5 py-0.5 bg-status-bubble/10 text-status-bubble border border-status-bubble/30 rounded font-semibold">
+                        ⚠️ Small Sample
+                      </span>
                     )}
                   </div>
                 </div>

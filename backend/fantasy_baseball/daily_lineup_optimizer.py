@@ -349,7 +349,15 @@ class DailyLineupOptimizer:
             db.close()
 
     def _load_schedule_fallback_games(self, game_date: Optional[str]) -> List[MLBGameOdds]:
-        """Build synthetic game context from persisted probable-pitcher snapshots."""
+        """Build synthetic game context from persisted probable-pitcher snapshots.
+
+        Resolution order:
+          1. ProbablePitcherSnapshot table (fast, already ingested)
+          2. MLB Stats API live schedule call (when snapshot table is empty for the date)
+
+        This ensures we never return an empty game list simply because the nightly
+        ingestion job has not yet run for today.
+        """
         from backend.models import ProbablePitcherSnapshot
 
         target_date = self._parse_game_date(game_date)
@@ -370,7 +378,7 @@ class DailyLineupOptimizer:
             )
         except Exception as exc:
             logger.warning("Failed to load probable-pitcher schedule fallback: %s", exc)
-            return []
+            rows = []
         finally:
             db.close()
 
@@ -415,7 +423,84 @@ class DailyLineupOptimizer:
                 target_date.isoformat(),
                 len(games),
             )
-        return games
+            return games
+
+        # --- Tier 2: MLB Stats API live schedule call ---
+        # ProbablePitcherSnapshot is empty for this date (ingestion not yet run, or
+        # data missing).  Fall through to the MLB Stats API to get at least a list of
+        # teams playing today.  No implied-run data is available here, so we use
+        # neutral park-factor-adjusted totals — same formula as Tier 1 above.
+        logger.info(
+            "schedule_fallback: ProbablePitcherSnapshot empty for %s — "
+            "trying MLB Stats API live schedule",
+            target_date.isoformat(),
+        )
+        try:
+            url = "https://statsapi.mlb.com/api/v1/schedule"
+            params = {
+                "sportId": 1,
+                "date": target_date.isoformat(),
+                "gameType": "R",
+            }
+            resp = requests.get(url, params=params, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+
+            for date_entry in data.get("dates", []):
+                for game in date_entry.get("games", []):
+                    teams = game.get("teams", {})
+                    home_raw = teams.get("home", {}).get("team", {}).get("abbreviation", "")
+                    away_raw = teams.get("away", {}).get("team", {}).get("abbreviation", "")
+                    home_team = normalize_team_abbr(home_raw)
+                    away_team = normalize_team_abbr(away_raw)
+                    if not home_team or not away_team:
+                        continue
+
+                    game_key = f"{away_team}@{home_team}"
+                    if game_key in synthetic_games:
+                        continue  # already have it (shouldn't happen here, but be safe)
+
+                    home_park_factor = _PARK_FACTORS.get(home_team, 1.0)
+                    neutral_total = max(7.0, min(11.5, round(9.0 * home_park_factor, 2)))
+                    implied_home_runs = round(min(7.0, max(2.5, neutral_total / 2.0 + 0.15)), 2)
+                    implied_away_runs = round(min(7.0, max(2.5, neutral_total - implied_home_runs)), 2)
+
+                    # Commence time from the API (ISO-8601, UTC)
+                    commence_raw = game.get("gameDate", "")
+
+                    synthetic_games[game_key] = MLBGameOdds(
+                        game_id=f"statsapi:{target_date.isoformat()}:{game_key}",
+                        commence_time=commence_raw,
+                        home_team=home_team,
+                        away_team=away_team,
+                        home_abbrev=home_team,
+                        away_abbrev=away_team,
+                        implied_home_runs=implied_home_runs,
+                        implied_away_runs=implied_away_runs,
+                        park_factor=home_park_factor,
+                    )
+
+            games = list(synthetic_games.values())
+            if games:
+                logger.info(
+                    "schedule_fallback: MLB Stats API returned %d games for %s",
+                    len(games),
+                    target_date.isoformat(),
+                )
+            else:
+                logger.warning(
+                    "schedule_fallback: MLB Stats API returned 0 games for %s "
+                    "(off-day or API unavailable)",
+                    target_date.isoformat(),
+                )
+        except Exception as exc:
+            logger.warning(
+                "schedule_fallback: MLB Stats API call failed for %s: %s",
+                target_date.isoformat(),
+                exc,
+            )
+
+        return list(synthetic_games.values())
 
     @staticmethod
     def _parse_game_date(game_date: Optional[str]) -> Optional[date]:

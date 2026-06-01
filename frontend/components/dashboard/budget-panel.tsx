@@ -105,6 +105,35 @@ export function BudgetPanel({ budget }: BudgetPanelProps) {
           }
         />
 
+        {/* Waiver Priority */}
+        {budget.waiver_priority != null && budget.waiver_total != null && (
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-text-secondary text-xs">Waiver Priority</span>
+              <span className={`text-xs font-semibold ${
+                budget.waiver_priority <= 3 ? 'text-status-safe' :
+                budget.waiver_priority <= 6 ? 'text-status-bubble' :
+                'text-status-lost'
+              }`}>
+                {budget.waiver_priority} / {budget.waiver_total}
+              </span>
+            </div>
+            <div className="h-1.5 w-full bg-bg-inset rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  budget.waiver_priority <= 3 ? 'bg-status-safe' :
+                  budget.waiver_priority <= 6 ? 'bg-status-bubble' :
+                  'bg-status-lost'
+                }`}
+                style={{ width: `${((budget.waiver_total - budget.waiver_priority + 1) / budget.waiver_total) * 100}%` }}
+              />
+            </div>
+            {budget.waiver_recommendation && (
+              <p className="text-[10px] text-text-muted mt-1">{budget.waiver_recommendation}</p>
+            )}
+          </div>
+        )}
+
         {/* IP Progress */}
         <div>
           <div className="flex items-center justify-between mb-1">

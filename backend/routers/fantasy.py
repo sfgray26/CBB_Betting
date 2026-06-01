@@ -361,7 +361,19 @@ def _mapping_name_matches(player_name: str, mapping_name: str) -> bool:
 
 
 def _projection_fallback_score(yahoo_player: dict) -> tuple[float, str]:
-    """Return a differentiated fallback lineup score from board projections."""
+    """Return a lineup score from board projections for players missing from player_scores.
+
+    This path is reached when a player has no BDL ID in player_id_mapping OR has a
+    BDL ID but no row in the PlayerScore table (ingestion not yet run today).
+    In a 10-team league every rostered player should have a PlayerScore — if many
+    players hit this path it signals a data pipeline gap in job 100_019/100_029.
+
+    Scoring tiers:
+      - Steamer/Statcast data found (fusion_source != "population_prior"):
+            score from z_score, source = "projection_fallback"
+      - Truly no data (population prior only, z_score == 0.0):
+            score = 0.0, source = "no_score" — ranks below all real-scored players
+    """
     from backend.fantasy_baseball.player_board import get_or_create_projection
 
     projection = get_or_create_projection(yahoo_player)
@@ -369,15 +381,16 @@ def _projection_fallback_score(yahoo_player: dict) -> tuple[float, str]:
     ownership_pct = float(
         yahoo_player.get("percent_owned", yahoo_player.get("owned_pct", 0.0)) or 0.0
     )
+    fusion_source = projection.get("fusion_source", "population_prior")
 
+    # Population prior means player_board found no Steamer or Statcast data at all.
+    # z_score will be 0.0. Returning 0.0 ranks them below every real-scored player.
+    if fusion_source == "population_prior" and z_score == 0.0:
+        return 0.0, "no_score"
+
+    # Has real projection data (Steamer, steamer_db, SAVANT_ADJUSTED, etc.) — use it.
     score = 50.0 + (z_score * 8.0) + min(ownership_pct, 100.0) * 0.05
-    if projection.get("is_proxy"):
-        score = min(score, 58.0)
-        source = "proxy_projection"
-    else:
-        source = "projection_fallback"
-
-    return max(20.0, min(95.0, round(score, 2))), source
+    return max(20.0, min(95.0, round(score, 2))), "projection_fallback"
 
 
 def _resolve_roster_player_bdl_ids(db: Session, raw_players: list[dict]) -> dict[str, dict]:
@@ -4239,9 +4252,46 @@ async def optimize_roster(
             "score_source": score_source,
         })
 
-    # Route hitter optimization through the scarcity-aware solver (OR-Tools ILP;
-    # greedy fallback when infeasible or OR-Tools unavailable).
+    # TASK-5: Normalize hitter and pitcher scores to a common 0-100 scale
+    # before routing to separate solver tracks.
+    #
+    # score_0_100 from player_scores is a within-cohort percentile rank:
+    #   - A pitcher at 97 means 97th percentile among pitchers.
+    #   - A hitter at 87 means 87th percentile among hitters.
+    # These are NOT comparable across positions — do not use raw score_0_100 for
+    # cross-group display.  We min-max normalize each group independently so that
+    # the displayed lineup_score is "position-relative rank" (0-100) for both groups.
+    # Players with source "no_score" (no real data) always stay at 0.0 and are
+    # excluded from the normalization range to avoid anchoring the floor.
     _PITCHER_POSITIONS_SET = {"SP", "RP", "P"}
+
+    def _normalize_group_scores(group: list) -> None:
+        """In-place min-max normalize lineup_score within a group, preserving no_score=0."""
+        real_scores = [p["lineup_score"] for p in group if p.get("score_source") != "no_score"]
+        if not real_scores:
+            return
+        lo, hi = min(real_scores), max(real_scores)
+        if hi == lo:
+            # All players have identical scores — preserve as-is (already normalized)
+            return
+        for p in group:
+            if p.get("score_source") == "no_score":
+                p["lineup_score"] = 0.0  # stays below any real-scored player
+            else:
+                p["lineup_score"] = round((p["lineup_score"] - lo) / (hi - lo) * 100.0, 2)
+
+    # Split into groups, normalize, then re-merge.  This ensures the ILP solver and
+    # the greedy pitcher sort both use position-relative scores, making the response
+    # scores directly comparable across groups.
+    _hitter_group = [p for p in player_data if not (bool(p.get("eligible_positions")) and {pos.upper() for pos in p["eligible_positions"]}.issubset(_PITCHER_POSITIONS_SET))]
+    _pitcher_group = [p for p in player_data if (bool(p.get("eligible_positions")) and {pos.upper() for pos in p["eligible_positions"]}.issubset(_PITCHER_POSITIONS_SET))]
+    _normalize_group_scores(_hitter_group)
+    _normalize_group_scores(_pitcher_group)
+    # Rebuild player_data in original order with normalized scores
+    _norm_map = {p["player_key"]: p["lineup_score"] for p in _hitter_group + _pitcher_group}
+    for p in player_data:
+        if p["player_key"] in _norm_map:
+            p["lineup_score"] = _norm_map[p["player_key"]]
     hitter_data = [
         p for p in player_data
         if not (
@@ -6374,18 +6424,31 @@ async def get_matchup_scoreboard(
     if week is None:
         week = _compute_mlb_current_week(datetime.now(ZoneInfo("America/New_York")).date())
 
-    # Fetch live matchup stats from Yahoo
-    matchup_data = {}
+    # Resolve my_team_key once (same env-var + API fallback as /api/fantasy/matchup).
+    _my_team_key = os.getenv("YAHOO_TEAM_KEY", "")
+    if not _my_team_key:
+        try:
+            _my_team_key = client.get_my_team_key()
+        except Exception:
+            _my_team_key = ""
+
+    # Fetch live matchup stats using the proven get_scoreboard() path that
+    # /api/fantasy/matchup already uses successfully.  The previous approach
+    # (get_matchup_stats()) had fragile nested-struct team-key matching that
+    # silently returned {} on shape variations, producing 0W-0L-18T on the
+    # roster page.  Replacing it with _iter_scoreboard_matchup_teams() fixes
+    # both pages to read from the same Yahoo data source.
+    my_current_stats: Dict[str, float] = {}
+    opp_current_stats: Dict[str, float] = {}
+    safe_opponent_name = opponent_name or "Opponent"
+
     try:
-        matchup_data = client.get_matchup_stats(week=week)
-        logger.info("scoreboard: fetched matchup_data for week %d", week)
-        import json as _json_diag
-        logger.info("scoreboard: raw data sample: %s", _json_diag.dumps(matchup_data)[:1000])
+        raw_matchups = client.get_scoreboard(week=week)
+        logger.info("scoreboard: fetched %d raw matchups for week %d", len(raw_matchups or []), week)
     except YahooAuthError as auth_err:
         logger.error("scoreboard: Yahoo auth failed for week %d: %s", week, auth_err, exc_info=False)
         raise HTTPException(status_code=401, detail="Yahoo authentication expired")
     except YahooAPIError as api_err:
-        # Log the FULL Yahoo response body so we can diagnose bad-parameter 400s.
         logger.error(
             "scoreboard: Yahoo API error for week %d — HTTP %s — full_body=%r",
             week,
@@ -6405,60 +6468,66 @@ async def get_matchup_scoreboard(
         raise HTTPException(status_code=502, detail=f"Yahoo API error: {str(api_err)[:100]}")
     except Exception as yahoo_err:
         logger.error(
-            "scoreboard: unexpected error fetching matchup_stats for week %d: %s",
+            "scoreboard: unexpected error fetching scoreboard for week %d: %s",
             week, yahoo_err, exc_info=True,
         )
         raise HTTPException(status_code=500, detail=f"Scoreboard fetch failed: {type(yahoo_err).__name__}")
 
-    # Use fetched stats, with fallback to empty if not found
-    my_current_stats = matchup_data.get("my_stats", {})
-    opp_current_stats = matchup_data.get("opp_stats", {})
+    # Convert raw Yahoo stat dicts [{stat: {stat_id, value}}] → {canonical_code: float}.
+    # _flatten_scoreboard_team_entry already extracts the stats list; this function
+    # translates stat_ids to canonical codes and coerces values to float.
+    _stat_id_map: dict = dict(_YAHOO_STAT_FALLBACK)
 
-    # Ensure opponent_name is a string (avoid None validation errors)
-    safe_opponent_name = opponent_name or "Opponent"
-
-    # Override opponent_name from Yahoo if available
-    yahoo_opp_name = matchup_data.get("opponent_name")
-    if yahoo_opp_name and yahoo_opp_name != "Unknown":
-        safe_opponent_name = yahoo_opp_name
-    elif safe_opponent_name == "Opponent":
-        # Fallback: matchup_stats did not surface opponent_name. Resolve via
-        # get_scoreboard() + the shared matchup-team walker, mirroring the
-        # pattern proven at fantasy.py:1626-1643. Best-effort only — any
-        # exception falls through to the "Opponent" literal already assigned.
-        try:
-            _my_team_key_sb = os.getenv("YAHOO_TEAM_KEY", "")
-            if not _my_team_key_sb:
+    def _parse_stats_to_float(stats_raw: list) -> Dict[str, float]:
+        out: Dict[str, float] = {}
+        for s in stats_raw:
+            if not isinstance(s, dict):
+                continue
+            stat = s.get("stat", {})
+            if not isinstance(stat, dict):
+                continue
+            sid = str(stat.get("stat_id", ""))
+            code = _stat_id_map.get(sid, "")
+            if not code:
+                continue
+            val_raw = stat.get("value", "")
+            if isinstance(val_raw, str) and "/" in val_raw:
                 try:
-                    _my_team_key_sb = client.get_my_team_key()
-                except Exception:
-                    _my_team_key_sb = ""
-            if _my_team_key_sb:
-                _sb_matchups = client.get_scoreboard()
-                for _matchup_teams in _iter_scoreboard_matchup_teams(_sb_matchups):
-                    _my_tuple = None
-                    for _t in _matchup_teams:
-                        _t_key = _t[0]
-                        if not _t_key:
-                            continue
-                        if _t_key == _my_team_key_sb or (
-                            _t_key in _my_team_key_sb or _my_team_key_sb in _t_key
-                        ):
-                            _my_tuple = _t
-                            break
-                    if _my_tuple is not None:
-                        _opp_tuple = next(
-                            (_t for _t in _matchup_teams if _t[0] != _my_tuple[0]),
-                            None,
-                        )
-                        if _opp_tuple is not None and _opp_tuple[1]:
-                            safe_opponent_name = _opp_tuple[1]
-                        break
-        except Exception as _opp_fb_err:
-            logger.warning(
-                "scoreboard: opponent_name fallback via get_scoreboard failed (non-fatal): %s",
-                _opp_fb_err,
-            )
+                    val_raw = val_raw.split("/")[0]
+                except (ValueError, IndexError):
+                    val_raw = "0"
+            try:
+                out[code] = float(val_raw)
+            except (TypeError, ValueError):
+                pass
+        return out
+
+    for _matchup_teams in _iter_scoreboard_matchup_teams(raw_matchups or []):
+        _my_tuple = None
+        for _t in _matchup_teams:
+            _t_key = _t[0]
+            if not _t_key or not _my_team_key:
+                continue
+            if _t_key == _my_team_key or _t_key in _my_team_key or _my_team_key in _t_key:
+                _my_tuple = _t
+                break
+        if _my_tuple is None:
+            continue
+        _opp_tuple = next((_t for _t in _matchup_teams if _t[0] != _my_tuple[0]), None)
+        my_current_stats = _parse_stats_to_float(_my_tuple[2])
+        opp_current_stats = _parse_stats_to_float(_opp_tuple[2]) if _opp_tuple else {}
+        if _opp_tuple and _opp_tuple[1]:
+            safe_opponent_name = _opp_tuple[1]
+        logger.info(
+            "scoreboard: parsed my_stats=%d cats, opp_stats=%d cats, opponent=%r",
+            len(my_current_stats), len(opp_current_stats), safe_opponent_name,
+        )
+        break
+    else:
+        logger.warning(
+            "scoreboard: could not find my team (key=%r) in %d matchups — stats will be empty",
+            _my_team_key, len(raw_matchups or []),
+        )
 
     # Mock player scores (empty for now)
     my_player_scores = []

@@ -1,618 +1,203 @@
-# HANDOFF.md — MLB Platform Operating Brief
+# HANDOFF.md — Crisis Session: Fantasy Baseball Regression (2026-05-31)
 
-> **Date:** 2026-05-19 | **Architect:** Claude Code (Master Architect)
-> **Branch:** `stable/cbb-prod` | **HEAD:** `12f825a` (2026-05-19 — K-NEXT-4 P1 fixes + BDL #2 + BDL #3)
-> **Deploy:** `/health` = healthy. **DEPLOY READY** — branch divergence resolved, all P1s fixed, tests passing. **BLOCKED: Railway outage in progress.**
-
-> **Hermes Note:** 2026-05-19 — AGENT ROSTER REORGANIZED. Codex → DevOps Lead. Gemini demoted to Research Only. Kimi takes Frontend + Research. Copilot CLI → Utility Agent. See updated AGENTS.md.
-
----
-
-## Session Completions (2026-05-19)
-
-| Agent | Task | Status | Commit / Evidence |
-|-------|------|--------|-------------------|
-| **Claude Code** | Branch divergence resolution | ✅ DONE | `bb7bdd2` — stable/cbb-prod merged with main, 13 commits integrated, tests passing |
-| **Claude Code** | Review BDL #3 + implement injury_status bool→string | ✅ DONE | Reviewed `backend/services/injury_overlay.py` + tests. Implemented schema validators + post-serialization guard in `backend/routers/fantasy.py`. |
-| **Kimi CLI** | Roster "Move" buttons disabled | ✅ DONE | `83c9318` — pre-select first valid slot, filter current slot, guard missing yahoo_player_key |
-| **Kimi CLI** | OPS/K_9 team totals showing "–" | ✅ DONE | `4e7b5b9` — derive OPS=OBP+SLG and K/9=9*K/IP when rolling window columns are NULL |
-| **Kimi CLI** | Budget page sparse/placeholder | ✅ DONE | `12f825a` — season pace panel with current_week, weeks_remaining, days_left, season_add_count |
-| **Kimi CLI** | Waiver need_score + injury_status | ✅ DONE | `28299d8` — stat ID translation fix + bool→string coercion for injury_status |
-| **Kimi CLI** | Waiver ADD→DROP swap bar | ✅ DONE | `e87efdb` — prominent swap action in waiver recommendations |
-| **Kimi CLI** | Yahoo-style roster view | ✅ DONE | `55e4eb2` — roster view redesign with waiver swap integration |
-| **Kimi CLI** | 0% owned vs — display (t_afdb881a) | ✅ DONE | Frontend distinguishes 0.0 → "0%" vs null/undefined → "—". Streaming, Roster, Waiver pages updated. `npm run build` passes. |
-| **Kimi CLI** | Injury status API contract research | ✅ DONE | `reports/2026-05-19-spec-injury-status-api-contract-fix.md` — detailed spec with root cause, fix plan, tests |
-| **Kimi CLI** | Budget API expansion research | ✅ DONE | `reports/2026-05-19-spec-budget-api-expansion.md` — 5-phase API expansion with frontend redesign |
-| **Codex** | BDL #3: Injury freshness overlay | ✅ DONE | New `backend/services/injury_overlay.py`, `tests/test_injury_overlay.py`, `tests/test_injury_status.py` — overlay + return dates + penalty logic |
-| **Copilot CLI** | Injury status implementation support | ✅ DONE | Assisted with schema validators, py_compile checks, test validation |
-| **Gemini CLI** | Injury status API research | ✅ DONE | `reports/2026-05-19-gemini-injury-research.md` — root cause analysis of boolean leak (🟡 REQUIRES REVIEW) |
-
-**Notes:**
-- Research specs (injury status, budget API) authored by Kimi CLI (not Gemini)
-- Gemini output flagged as REQUIRES REVIEW per AGENTS.md Rule #4
-- Codex BDL #3 completed despite scope creep — one-time exception, never again
-
-### Remaining P1 Items
-- **Deploy** `12f825a` + BDL #3 to Railway (Codex) — **BLOCKED: Railway outage in progress. Hold until service restored.**
-
-### 🚩 INFRASTRUCTURE BLOCKER — Railway Outage
-**Status:** Railway is experiencing a platform-wide outage affecting all users.
-**Impact:** Deploy is blocked until Railway resolves the issue.
-**Action:** Monitor Railway status. Do NOT attempt deploy until outage is confirmed resolved.
-
-### Now Unblocked
-- BDL #2 (t_b9c63f54) — player search auto-heal ✅ COMPLETE
-- BDL #3 (t_82bf1ac3) — injury freshness/return dates ✅ COMPLETE (Codex finished, Claude reviewed)
-- K-NEXT-4 P1 fixes — 6 of 6 COMPLETE (Kimi CLI)
-- 0% owned vs — (t_afdb881a) ✅ COMPLETE (Kimi CLI)
-- Injury status bool→string — ✅ COMPLETE (Claude + Copilot implemented)
-- Deploy (t_7de9bfce) — branch is clean, deploy ready — **BLOCKED by Railway outage**
-- Budget API expansion (Kimi spec: `reports/2026-05-19-spec-budget-api-expansion.md`) — Claude or Copilot can implement when prioritized
+> **Date:** 2026-05-31 | **Status:** 🚨 CRITICAL REGRESSION DETECTED
+> **Branch:** `stable/cbb-prod` | **HEAD:** `fe7b84b` (2026-05-25)
+> **Last known good:** 2026-05-22 (Wave 5A complete)
+> **Regression window:** May 23–31, 2026 (9 days)
 
 ---
 
-## System Status
+## 🚨 REGRESSION ALERT — ALL MODULES BROKEN
 
-| Component | Status | Notes |
-|---|---|---|
-| Railway deployment | LIVE | FastAPI + uvicorn, us-west1 |
-| `canonical_projections` | LIVE (822 rows) | SAVANT_ADJUSTED=469, STATIC_BOARD=353 — 0 errors |
-| `category_impacts` | LIVE (5,350 rows) | Per-category z-scores + marginal numerator/denominator columns |
-| `player_projections` (FanGraphs RoS) | LIVE (9,686 rows) | prior_source=fangraphs_ros, updated 2026-05-06 15:15 ET |
-| `player_projections.player_type` | fully populated | C-A1 confirmed: 0 NULL rows |
-| `player_identities` | 454/454 resolved | 12-row backfill complete 2026-05-06 |
-| `CANONICAL_PROJECTION_V1` flag | **true** | Nightly job runs at 11 PM ET |
-| `market_signals_enabled` | **true** | avg_market_score=51.53 after d319beb — CALIBRATED |
-| `feature_matchup_enabled` | **true** | C-4 complete |
-| `opportunity_enabled` | **true** | D-2 complete. Fix deployed in current HEAD — upserted=0 bug patched |
-| `/api/fantasy/decisions` route | **LIVE** | Returns ~800 daily decisions — A-4 resolved (pipeline working) |
-| Stuff+/Location+ (FanGraphs) | BLOCKED | Cloudflare blocks Railway IP — P2, do not attempt |
-| Savant Pitch Quality | **LIVE** | 554 scores seeded; avg_confidence=0.191 (below 0.3 threshold) — flags remain false |
-| Savant Park Factors | **LIVE** | 28 venues / 56 rows seeded |
-| `player_market_signals` | LIVE (10,466 rows) | avg_market_score=51.53, BUY_LOW=135 / FAIR=618 / SLEEPER=131 — healthy |
-| `player_opportunity` | **LIVE + SIGNAL** | 2738 rows, avg_z=0.0 (centered), min=-0.598, max=4.082, avg_conf=0.120 |
-| `mlb_player_stats` | LIVE (15,407 rows) | Confirmed populating — now feeds opportunity engine |
+**Source:** UAT Report `UAT_REPORT_FANTASY_BASEBALL_WEEK_10_2026-05-31.md`
+**Verdict:** The War Room suite is functionally non-trustworthy. An elite fantasy manager cannot use it for roster decisions.
+**Root cause assessment:** Empty or broken schedule/games feed cascading through all modules, plus silent fallbacks fabricating confident output.
+
+### Critical System State (as of 2026-05-31 12:09 PM EDT)
+
+| Module | P0 Issues | P1 Issues | Functional Status |
+|--------|-----------|-----------|-------------------|
+| **Lineup Optimizer** | 4 | 2 | ❌ BROKEN — flat 58.0 fallbacks, benches Soto, no schedule gating |
+| **My Roster** | 1 | 1 | ❌ BROKEN — matchup shows 0W-0L-18T, AVG .237 implausible |
+| **Waiver Wire** | 1 | 3 | ❌ BROKEN — no drop recommendations, infinite loading, contradictory tags |
+| **Streaming Station** | 1 | 1 | ❌ BROKEN — duplicate of waiver, wrong ranking axis |
+| **Budget** | 0 | 2 | ⚠️ DEGRADED — IP inconsistency, unlabeled metric |
+| **Weekly Preview** | 2 | 0 | ❌ BROKEN — Unknown opponent, contradictory win% |
+| **Data Integrity** | 1 | 2 | ❌ BROKEN — ownership stale, Josh Jung anomaly |
 
 ---
 
-## Code Fixes This Session (2026-05-13)
+## Immediate Action Plan
 
-| Fix | Bug | Patch |
-|-----|-----|-------|
-| Budget IP key `"my_team"` → `"my_stats"` (A-6) | `get_matchup_stats()` returns `"my_stats"` not `"my_team"` — IP always read as 0.0 | `routers/fantasy.py:5519`. Commit d0976b4 |
-| Need score key mismatch | `compute_need_score` lowercased canonical codes (`"hr_b"`) but `cat_scores` uses board keys (`"hr"`) — all need scores = 0 | Added `_CANONICAL_TO_BOARD` mapping in `category_aware_scorer.py`. Commit bd180a4 |
-| Budget acquisitions window | Rolling 7-day window instead of matchup week (Mon 00:00 ET); `"add/drop"` type excluded from count | `routers/fantasy.py:5501`, `constraint_helpers.py:48`. Commit d2fbc43 |
-| Ownership always 0% | `get_free_agents` fetched from `league/{lk}/players` without `out=ownership` (Yahoo 400). Secondary batch call to `players;player_keys/ownership` needed | `yahoo_client_resilient.py`. Commit 425f9d6 |
-| Simulate roster fetch unhandled exception | `_fetch_rosters_for_simulate` called outside try/except — Yahoo auth error would bypass CORS middleware | Added try/except around roster fetch in `simulate_matchup`. Commit ff2c8b9 |
-| K-1 P0 streaming/dashboard/lineup 422 | All three verified RESOLVED by prior session's code (A-7 streaming fix, dashboard page rewrite, FastAPI static-route priority) | No code change needed |
+### Phase 1 — Foundation (Schedule + Data Unification) — BLOCKING ALL ELSE
 
----
+**Status:** NOT STARTED
+**Critical Path:** Unblocks Optimizer, Streaming, Preview
+**Agent:** DataAgent → Gemini (research + feed investigation) + BackendAgent → Claude Code (implementation)
 
-## Phase 3b Fixes (2026-05-13 — waiver performance)
+### Phase 2 — Optimizer Scoring
 
-| Fix | Bug | Patch |
-|-----|-----|-------|
-| Projection name-map TTL cache | `_lookup_projection_by_name` scanned all 9,686 `player_projections` rows on every call — 25-50 full table scans per waiver request | Added `_get_proj_name_map(db)` with 1800 s TTL in `player_board.py`. Cache stores `_ProjectionEntry` namedtuples (not ORM rows). `_lookup_projection_by_name` now O(1) on cache hit. Commit pending |
+**Status:** NOT STARTED
+**Critical Path:** Makes lineup recommendations trustworthy
+**Agent:** BackendAgent → Claude Code (implementation) + QAAgent → Claude Code (tests)
 
----
+### Phase 3 — Gatekeeping & UX
 
-## Phase 3c Fixes (2026-05-13 — matchup performance/UI)
+**Status:** NOT STARTED
+**Critical Path:** Prevents bad decisions
+**Agent:** FullStackAgent → Claude Code (gating) + FrontendAgent → Codex (UI fixes)
 
-| Fix | Bug | Patch |
-|-----|-----|-------|
-| Matchup endpoint TTL cache | `/api/fantasy/matchup` performs multiple Yahoo calls per page load; repeated refreshes were slow and quota-heavy | Added 5-minute per-user `_MATCHUP_CACHE` and 2-hour league-settings cache in `backend/routers/fantasy.py` |
-| War Room loading skeleton | Loading state was a centered spinner with no layout context | Added `MatchupSkeleton` and wired it into `/war-room` loading state |
+### Phase 4 — Waiver & Streaming
 
----
+**Status:** NOT STARTED
+**Critical Path:** Makes add/drop decisions possible
+**Agent:** BackendAgent → Claude Code (drop recommendations) + FullStackAgent → Claude Code (streaming rebuild) + FrontendAgent → Codex (UI)
 
-## Phase 3 Fixes (2026-05-13 — player coverage)
+### Phase 5 — Roster, Budget, Preview
 
-| Fix | Bug | Patch |
-|-----|-----|-------|
-| Name-based `player_projections` fallback | `get_or_create_projection` had no fallback to query `player_projections` (9,728 rows) by name when identity chain failed — Cristopher Sanchez and other top players got hardcoded draft board estimates instead of real FanGraphs RoS data | Added `_lookup_projection_by_name(db, name)` with difflib fuzzy match (0.85) in `player_board.py`. Commit 148b896 |
-| Coverage audit + API endpoint | No way to measure what % of top players had real vs fallback data | New `scripts/audit_player_coverage.py` + `GET /api/fantasy/coverage` endpoint. Commit 243a87e |
-| Bridge mapping → identities job | `player_identities` table was never auto-populated — new players only added when Yahoo ID sync matched an existing identity entry, blocking SAVANT_ADJUSTED pipeline | New daily `_bridge_mapping_to_identities` job (lock 100_041, 5:00 AM ET) creates `player_identities` rows from `player_id_mapping`. Commit 72ff2c3 |
+**Status:** NOT STARTED
+**Critical Path:** Completes War Room suite
+**Agent:** BackendAgent → Claude Code (roster aggregation, preview opponent) + FrontendAgent → Codex (UI polish)
 
-**Note on Task 2 (canonical projections preference):** `CanonicalProjection` model has no `cat_scores` column — it stores raw Statcast stats + uses `CategoryImpact` rows for z-scores, and uses `source_engine` (not `provenance`). The plan's Task 2 was based on incorrect schema assumptions. Skipped — add as future task after confirming `CategoryImpact`-based cat_scores assembly.
+### Phase 6 — Data Integrity & QA — PARALLEL FROM START
+
+**Status:** NOT STARTED
+**Critical Path:** Catches systemic issues early
+**Agent:** QAAgent → Claude Code (player-ID join verification) + QAAgent → Claude Code (sanity monitors) + QAAgent → Claude Code (debug string audit)
 
 ---
 
-## Phase 2 Fixes (2026-05-13 — later)
+## Known Regression Symptom Cluster
 
-| Fix | Bug | Patch |
-|-----|-----|-------|
-| Waiver Wire page | `war-room/waiver` was "COMING NEXT" placeholder — no data visible | Replaced with full React page calling `/api/fantasy/waiver`. Commits f7041fd, 2595f0f |
-| `CategoryDeficit` type mismatch | Frontend used `deficit_z_score` but backend returns `my_total`, `opponent_total`, `deficit`, `winning` — streaming page showed NaN | Updated `types.ts`; streaming page now uses `d.winning` + `d.deficit` |
-| Simulate fuzzy name match | `_fetch_rosters_for_simulate` only exact-matched names — players with accents/suffixes got empty cat_scores | `difflib.get_close_matches(cutoff=0.85)` fallback in `_player_dict`. Commit 3750847 |
-| MCMC simulate from zero | Simulator ignored current Yahoo scoreboard totals — manager leading 8-3 HRs saw "BEHIND" result | Added `my_current_stats` + `opp_current_stats` + `remaining_fraction` params; router fetches live scoreboard and passes anchors. Also added `data_quality`/`my_projection_coverage`/`opp_projection_coverage` to response. Commit 56555da |
-
----
-
-## Code Fixes This Session (2026-05-12)
-
-| Fix | Bug | Patch |
-|-----|-----|-------|
-| `opportunity_update` upserted=0 | First FK violation (`bdl_player_id` not in `player_id_mapping`) poisoned SQLAlchemy session; all 2738 subsequent `db.execute()` raised `PendingRollbackError` silently caught | SAVEPOINT/RELEASE/ROLLBACK wrapper per row in `_compute_opportunity` loop (~line 3399). Also removed dead `pg_insert(text(...).columns)` |
-| `yahoo_id_sync` UniqueViolation (`_pim_bdl_id_uc`) kills entire transaction | INSERT path uses only `_pim_yahoo_key_uc` as ON CONFLICT target; if two players resolve to same `bdl_id`, `_pim_bdl_id_uc` fires at `db.commit()` → full rollback → 0 updates returned | SAVEPOINT/RELEASE/ROLLBACK around `db.execute(stmt)` in the "new row" INSERT path (~line 2459); failed rows logged as `insert_conflict` and skipped |
-| ✅ Draft board data leak in waiver targets | `get_or_create_projection()` checked draft board (hardcoded player rankings) BEFORE database, returning "Gavin Williams" draft data instead of real Steamer/Statcast projections from DB | Commented out draft board fallback in `player_board.py` lines 1030-1063; function now queries DB first. Commit 2f6f1f7 pushed. |
-
-## Codex Feature Branch Notes (2026-05-07)
-
-Branch: `codex-fantasy-predictive-quality-gates`
-
-Purpose: implement pre-merge predictive-quality hardening for Claude audit before stable/prod merge.
-
-Changes:
-- Add denominator-aware rate gates in `backend/services/scoring_engine.py`: AVG/OBP/OPS require `w_ab >= 20`; ERA/WHIP/K9 require `w_ip >= 8`. Counting stats still score in small samples.
-- Filter invalid/null market rows in `backend/services/waiver_edge_detector.py` before using market score as a waiver tiebreaker.
-- Normalize `daily_snapshots.pipeline_jobs_run` in `backend/services/snapshot_engine.py` to fantasy pipeline job names only.
-- Give canonical RoS/Steamer and component-based fusion rows bounded non-zero confidence in `backend/fantasy_baseball/projection_assembly_service.py` instead of zeroing them solely because sample size is missing.
-
-**Note:** Kimi's K-NEXT-2 report incorrectly identified a duplicate `_sync_yahoo_id_mapping` at line 7682. Verified: only one definition exists (line 2204). The real bug was the missing `_pim_bdl_id_uc` conflict guard on the INSERT path. Both bugs now fixed.
+1. **"No Game" everywhere** — schedule/games feed empty
+2. **Flat 58.0 proxy_projection fallback** — optimizer noise sorting
+3. **Top hitters benched without cause** — Juan Soto benched (OPS .974)
+4. **Pitchers ranked 96–99 vs hitters 87** — scoring scale mismatch
+5. **Matchup zeros (0W-0L-18T)** — data source not unified
+6. **Infinite loading on waiver** — frontend Promise chain broken
+7. **Unknown opponent in Preview** — Week 11 lookup failing
+8. **Contradictory win% (100% vs "losing K")** — fallback default artifact
+9. **Ownership 4% for .307/.839 OPS hitter** — player-ID join broken
+10. **Debug strings leaking** — date banner, score provenance tags
 
 ---
 
-## Previously Deployed Fixes (d319beb — 2026-05-06)
+## Sprint Closure Criteria (Definition of Done)
 
-| Commit | Bug | Fix | Status |
-|--------|-----|-----|--------|
-| `21f96df` | `ros_projection_refresh` UniqueViolation for two-way players | `bat_processed_ids` set + `db.flush()` + pitcher merge preserves batting stats | ✅ |
-| `8388062` | `canonical_projections.player_id` INT4 overflow for large Yahoo IDs | `Column(Integer)` → `Column(BigInteger)` | ✅ |
-| `12b7f5a` | `migration_dedupe_player_id_mapping` UniqueViolation on `_pim_yahoo_key_uc` | Step 3a-pre: NULL loser `yahoo_key` values before merge | ✅ |
-| `b799aec` | Frontend `/decisions` page 404 | Added `GET /api/fantasy/decisions` + `/decisions/status` | ✅ |
-| `612d351` | `backfill_player_type.py` hardcoded credential | Full rewrite — removed credential, `--dry-run`, two-way logic fixed | ✅ |
-| `6f44ebb` | `market_signals_update` column not found | `score_0_100` + `window_days=14` + `MAX(as_of_date)` fallback | ✅ |
-| `ecfa5ba` | `market_signals_update` upserted=0 | 8 SQL INSERT param names fixed | ✅ |
-| `63c936b` | `avg_market_score=99.65` / 881 BUY_LOW | `skill_gap_pct / 100.0` normalization fix | ✅ |
-| `d319beb` | Savant pitch quality: all scores 100.0 (ip=NULL) | Use `pa` as IP proxy for `sample_confidence` | ✅ |
+The sprint closes when:
+- [ ] No P0 remains open
+- [ ] All schedule-dependent modules show real game data (no "No Game" everywhere)
+- [ ] Optimizer produces a lineup where the top-3 OPS hitter is not benched without injury/no-game cause
+- [ ] Waiver Wire shows a recommended drop for every suggested add
+- [ ] Weekly Preview shows a real opponent and internally consistent win probability
+- [ ] QAAgent's cross-check script passes on a 15-player sample
 
 ---
 
-## DevOps Queue
+## Escalation Paths
 
-### D-3/D-4/D-5: COMPLETE ✅
-- opportunity_update: 2738/2738 upserted, avg_z=0.0 (centered), min=-0.598, max=4.082, avg_conf=0.120
+| Situation | Escalate To | How |
+|-----------|-------------|-----|
+| Schedule feed investigation | DataAgent → Gemini | Route with UAT report + "No Game everywhere" evidence |
+| Backend scoring algorithms | BackendAgent → Claude Code | Route with optimizer output showing 58.0 fallbacks |
+| Frontend loading states | FrontendAgent → Codex | Route with "Loading recommendations…" persistence evidence |
+| Data integrity joins | QAAgent → Claude Code | Route with Josh Jung anomaly (ESPN vs CBB Edge) |
+| Railway deployment needed | Codex | Route with full PR + rollback plan |
 
-### D-6: Validate yahoo_id_sync (b82bc14 already live — no deploy needed)
+---
 
-The previous 502 was an HTTP gateway timeout — job ran in background. The `_pim_bdl_id_uc` SAVEPOINT fix is deployed. Trigger and wait 3 min before checking:
+## Guardrails (Do NOT Cross)
 
-```bash
-curl.exe -X POST https://<railway-url>/admin/ingestion/run/yahoo_id_sync \
-     -H "X-API-Key: $ADMIN_API_KEY"
-# 502 is expected (job takes >60s) — do NOT treat as failure
-# Wait 3 minutes, then check job_runs:
-railway run python -c "
-from backend.database import SessionLocal
-from sqlalchemy import text
-db = SessionLocal()
-rows = db.execute(text('''
-    SELECT status, records_processed, error_message, started_at
-    FROM job_runs WHERE job_name = 'yahoo_id_sync'
-    ORDER BY started_at DESC LIMIT 3
-''')).fetchall()
-for r in rows: print(r)
-db.close()
-"
-# Expected: status=success (or completed), records_processed > 0
-# insert_conflict warnings in Railway logs are EXPECTED and fine
-# STOP and escalate to Claude only if status=failed with a NEW error type
+- Do **NOT** mutate user's actual Yahoo lineup (no "Apply" clicks in production)
+- Do **NOT** change z-score valuation framework
+- Do **NOT** add new data providers
+- Do **NOT** implement features beyond UAT report scope
+- If task requires owner clarification → flag as **BLOCKED** and move on
+
+---
+
+## Session Log
+
+### 2026-05-31 13:20 — CRISIS SESSION START
+- **Trigger:** User attached HERMES_ORCHESTRATION_BRIEF.md + UAT_REPORT_FANTASY_BASEBALL_WEEK_10_2026-05-31.md
+- **Assessment:** Significant regression since Wave 5A (2026-05-22). All War Room modules broken.
+- **Action:** HERMES updating HANDOFF.md, then producing task backlog and sprint plan per orchestration brief.
+- **Next:** Delegate Phase 1 tasks (schedule feed) immediately to DataAgent + BackendAgent.
+
+### 2026-05-31 — TASK-1, TASK-4, TASK-5 — Claude Code (cbb-architect)
+
+**TASK-1: Schedule/Games Feed (root cause of "No Game" everywhere)**
+
+Root cause identified: `DailyLineupOptimizer.fetch_mlb_odds()` queries `MLBOddsSnapshot JOIN MLBGameLog` first. When no odds are in the DB (BDL odds ingestion not yet run), it falls to `_load_schedule_fallback_games()` which reads `ProbablePitcherSnapshot`. When THAT table is also empty for today (ingestion jobs not yet fired at startup time), the method returned `[]`. With zero games in `team_odds`, the lineup router's no-game gate (`if _b.status == "START" and not _b.opponent: _b.status = "BENCH"`) benches every roster player.
+
+Fix: Added Tier 2 fallback inside `_load_schedule_fallback_games()` — when `ProbablePitcherSnapshot` is empty for the date, the method now calls the MLB Stats API (`/api/v1/schedule?sportId=1&date=DATE&gameType=R`) to get today's games directly. Park-factor-adjusted neutral implied runs are synthesized (same formula as the snapshot tier). This ensures game context is always available.
+
+File: `backend/fantasy_baseball/daily_lineup_optimizer.py` — method `_load_schedule_fallback_games`
+
+**TASK-4: Flat 58.0 proxy_projection Fallback**
+
+Root cause identified: `_projection_fallback_score()` in `backend/routers/fantasy.py` capped `is_proxy=True` players (no Steamer/Statcast data found) at a score of 58.0. Since the 0-100 scale for real players runs ~50-95, capping proxy players at 58 caused them to rank ahead of real-scored players near the floor. This produced noise-based tie-breaking.
+
+Fix: Changed the `is_proxy` branch to return `(0.0, "no_score")` instead of `(min(score, 58.0), "proxy_projection")`. Players with `no_score` stay at 0.0 after normalization and will only fill slots if no real-scored player is eligible. The `is_not_proxy` path is unchanged (uses z_score from `player_board`).
+
+File: `backend/routers/fantasy.py` — function `_projection_fallback_score`
+
+**TASK-5: Hitter/Pitcher Score Scale Mismatch**
+
+Root cause confirmed: `score_0_100` in `player_scores` is a within-cohort percentile rank. A pitcher at 97 is the 97th percentile among pitchers; a hitter at 87 is 87th among hitters. These are not comparable across position types. The `optimize_roster` endpoint used `score_0_100` directly as `lineup_score` for both groups, making the displayed scores misleading and potentially causing the ILP solver to misrank players when a two-way player straddled both groups.
+
+Fix: Added `_normalize_group_scores()` function inside `optimize_roster()`. After building `player_data`, the function splits players into `_hitter_group` and `_pitcher_group`, applies min-max normalization to the `lineup_score` within each group (excluding `no_score` players), and updates `player_data` in-place. The ILP solver and greedy pitcher sort then operate on position-normalized 0-100 scores. A top-3 hitter at 87 normalizes to ~100 within their group, preventing any cross-scale comparison error.
+
+File: `backend/routers/fantasy.py` — function `optimize_roster`
+
+**Status:** All three fixes implemented. Syntax checks passed locally (both files exit 0).
+
+**Test results:** 3052 passed, 3 skipped, 4 pre-existing failures (in `test_row_projector.py` / `test_row_projector_fixes.py` — confirmed pre-existing on `fe7b84b` before our changes). **Zero regressions introduced.**
+
+---
+
+### 2026-05-31 — Phase 1 Complete — Pending Deploy
+
+**Files changed (unstaged):**
+- `backend/fantasy_baseball/daily_lineup_optimizer.py` — TASK-1 Tier 2 MLB Stats API fallback
+- `backend/routers/fantasy.py` — TASK-4 no_score branch + TASK-5 group normalization
+
+**Delegation to Gemini CLI (DevOps):**
 ```
-
----
-
-## Claude Architect Queue
-
-### ✅ A-1: Fix `player_type` NULL — COMPLETE
-### ✅ A-2: Yahoo ID sync coverage — COMPLETE
-### ✅ A-3: Frontend `/decisions` endpoint — COMPLETE
-
-### ✅ A-4: Decision pipeline starved — RESOLVED (2026-05-11)
-
-**Verdict:** Phantom problem — pipeline is working correctly.
-
-**Diagnostic Results (2026-05-11):**
-- `mlb_game_log`: 609 rows ✅
-- `mlb_player_stats`: 17,459 rows ✅
-- `player_rolling_stats`: 102,040 rows ✅
-- `player_scores`: 99,037 rows ✅
-- `decision_results`: 832 rows ✅
-
-**Root Cause:** HANDOFF.md claim that "decision_results table is empty" was outdated. The pipeline has been functional since at least 2026-05-06. `/api/fantasy/decisions` endpoint returns live recommendations (~800 daily decision results).
-
-### A-5: Dead `_refresh_ros_projections` v1 at line ~5952 (low priority)
-Python last-definition-wins: v2 at line ~6822 is active. Remove v1. Do when deploying for something else.
-
-### ✅ A-6 (P1): Wire IP tracking in `/api/fantasy/budget` — COMPLETE (2026-05-13)
-**Root cause:** `matchup_stats.get("my_team", {})` → key was wrong; correct key is `"my_stats"`.
-**Fix applied:** `backend/routers/fantasy.py:5519` — single-line change. Commit d0976b4.
-
-### A-7 (P2): UI clarity issues — ✅ COMPLETE (2026-05-12)
-**Report:** User screenshots showing dashboard confusion
-
-**Issues identified:**
-1. **Running counts lack context** — Just shows numbers without category names or whether higher/lower is better
-2. **Bubble ratings unclear** — Visual bubbles don't communicate what they represent (z-scores? win probabilities?)
-3. **✅ Waiver targets not showing diverse players** — FIXED (2026-05-12): Two-phase fix applied:
-   - Commit 2f6f1f7: Disabled draft board fallback that was overriding DB data
-   - Commit f6e5a6f: Re-enabled draft board fallback ONLY for players not in database
-   
-   **Result:**
-   - Players in database (Gavin Williams) → use real Steamer/Statcast projections ✅
-   - Players NOT in database (Christopher Sanchez) → use draft board fallback ✅
-   - Tested: Christopher Sanchez (Cy Young contender) now appears with tier 2, ADP 28 ✅
-
-**UI Fixes Applied (2026-05-12):**
-
-**1. Running Counts (Category Deficits) — FIXED**
-   - Added category labels using CATEGORY_LABEL mapping (HR_B → HR, K_B → K, etc.)
-   - Added color-coded arrows: green (TrendingUp) for ahead, red (TrendingDown) for behind
-   - Correct direction logic for LOWER_IS_BETTER categories (K_B, L, HR_P, ERA, WHIP):
-     - Negative z-score = good (ahead) for lower-is-better
-     - Positive z-score = good (ahead) for higher-is-better
-   - Added explanatory text: "(Negative = behind league average)"
-
-**2. Bubble Ratings — FIXED**
-   - Added tooltips to status tags showing exact win probability:
-     - SAFE: "85% win prob - Safe lead"
-     - LEAD: "70% win prob - Leaning ahead"
-     - BUBBLE: "50% win prob - Could go either way"
-     - BEHIND: "30% win prob - Leaning behind"
-     - LOST: "10% win prob - Unlikely to win"
-   - Added visual legend above category battlefield showing ranges:
-     - SAFE >85% | LEAD 65-85% | BUBBLE 35-65% | BEHIND 15-35% | LOST <15%
-
-**Files modified:**
-- `frontend/app/(dashboard)/war-room/streaming/page.tsx` — Category deficits display
-- `frontend/components/war-room/category-battlefield.tsx` — Status tooltips + legend
-
-**Result:** Running counts now show direction (good/bad) with visual indicators; bubble ratings are self-explanatory with tooltips and legend.
-
----
-
-## Kimi Research Queue
-
-### K-NEXT-1: Savant pitch quality ✅ COMPLETE — flags remain FALSE
-
-Scores now differentiated (88.8–112.6) after `pa` proxy fix (d319beb). But `avg_sample_confidence=0.191` is below the >0.3 threshold. This is a season-length issue — PA accumulates over time. Re-check late May when avg PA > 120. No code change needed.
-
-### K-NEXT-2: Yahoo ID sync — ✅ RESOLVED (architect fix applied)
-
-Kimi's report incorrectly identified a duplicate function. Actual bug: INSERT at line ~2459 only handled `_pim_yahoo_key_uc` on conflict, allowing `_pim_bdl_id_uc` to kill the entire transaction on any duplicate bdl_id. Fixed with SAVEPOINT pattern.
-
-### K-NEXT-3: Ownership 0% audit + fix — ✅ COMPLETE (Kimi implemented 2026-05-13)
-
-**Live inspection confirmed:** All players show `0% owned` on roster, dashboard, and waiver pages. API returns `"ownership_pct": 0.0` for every player.
-
-**Root cause:** Yahoo's `team/{team_key}/roster/players` and `league/{league_key}/players` endpoints do **not** include ownership data. The only working endpoint is the global `players;player_keys={keys}/ownership`.
-
-**Fixes applied (commits pending):**
-1. **`backend/fantasy_baseball/yahoo_client_resilient.py`** — Extracted reusable `_enrich_ownership_batch(players)` helper with proper >25 player chunking. Wired into both `get_roster()` and `get_free_agents()`. Fixes the `player_keys[:25]` cap from `425f9d6`.
-2. **`backend/services/daily_ingestion.py`** — Replaced broken `get_adp_and_injury_feed()` ownership source in `_sync_position_eligibility` with `_enrich_ownership_batch(all_players)`.
-3. **`frontend/app/(dashboard)/war-room/streaming/page.tsx`** — Added null-guards on `d.deficit` and `player.need_score` before `.toFixed()` calls to prevent the client-side `TypeError` crash.
-4. **`backend/routers/fantasy.py`** — Task 4 (PositionEligibility fallback) was already implemented by Claude in `243a87e`.
-
-**Validation:** `py_compile` clean on all modified files. `115` targeted pytest cases green (`test_yahoo_client_ownership`, `test_roster_waiver_enrichment_contract`, `test_waiver_integration`, `test_waiver_edge`, `test_ui_contracts`, `test_daily_ingestion`, `test_ingestion_orchestrator`).
-
-**Note:** Live production still shows `0% owned` because the deployed backend is on commit `d319beb` (per HANDOFF.md deploy line), which predates these fixes. A deploy is required for changes to take effect.
-
----
-
-### K-NEXT-4: UI UAT Audit — ✅ COMPLETE (Kimi performed 2026-05-13)
-
-**Full report:** `reports/2026-05-13-ui-uat-audit.md`  
-**Screenshots:** `reports/uat/2026-05-13-*.png` (7 pages + Lighthouse)
-
-**P0 (Blocking):** None. All pages load without crashes or 5xx.
-
-**P1 (Degraded):**
-1. **Ownership 0% everywhere** — deploy gap (`27304f8` not on production)
-2. **Dashboard waiver targets show `Need score: 0.00`** while Waiver Wire page shows real scores (different pipelines)
-3. **Roster "Move player" buttons universally disabled** — users cannot adjust lineup via UI
-4. **Team totals show "–" for OPS and K/9** — backend aggregation missing these categories
-5. **Budget page is extremely sparse** — same 3 lines as Dashboard, no added value
-6. **Garrett Crochet injury status is boolean `true`** instead of string `"IL"` — API contract violation
-
-**P2 (Polish / Underwhelm) — ✅ #7–11 FIXED see commit `d105af7`:**
-7. ✅ Every waiver pitcher tagged "HOT" — threshold raised
-8. ✅ Two-start pitcher missing opponent — `flag_pitcher_starts` returns "opponent"
-9. ✅ "No streak data available" — `_get_streaks` now uses `PlayerMomentum` table
-10. ✅ War Room mobile hides PROJ/ACTION columns — mobile second row added
-11. ✅ Streaming Station 20+ flat chips — sorted + severity color-coded
-12. Sidebar navigation cluttered — deferred
-
-**Lighthouse:** Accessibility 90, Best Practices 100, SEO 100.
-
-**Top recommendation:** Deploy latest `stable/cbb-prod` (HEAD `20349c5`) to Railway — fixes ownership % + all P1/P2 items from this audit.
-
----
-
-## K-1 UI UAT FINDINGS (2026-05-07)
-
-Production UI audit completed. Full report: `reports/2026-05-07-ui-uat-audit.md`
-
-### P0 (Blocking) — ✅ ALL RESOLVED (2026-05-13)
-1. **✅ CORS on `POST /api/fantasy/matchup/simulate`** — Simulate roster fetch wrapped in try/except; Yahoo auth errors now return clean HTTPException (CORS middleware applies headers to all HTTPException responses). Commit ff2c8b9.
-2. **✅ Streaming page infinite loading** — Verified RESOLVED by A-7 (commit 847415c): streaming page has proper isLoading/isError/!data early-return guards.
-3. **✅ Dashboard empty despite API data** — Verified RESOLVED: dashboard/page.tsx has full implementation calling getDashboard with correct response.success check.
-4. **✅ `/api/fantasy/lineup/current` always 422** — Verified RESOLVED: main.py registers static `/current` route before parameterized `/{lineup_date}`; FastAPI routes static first.
-
-### P1 (Degraded)
-5. **Budget API not integrated into UI** — `/api/fantasy/budget` is healthy (576ms) but no frontend page calls it; no budget panel exists.
-6. **Matchup API latency ~3,182ms** — Exceeds 2s threshold. No loading skeleton visible during fetch.
-7. ✅ **Waiver Wire page** — COMPLETE (2026-05-13). Full implementation with category deficits, two-start pitchers, position filter, need score bars, ownership %, hot/cold badges. Roster page was already fully implemented in a prior session.
-8. **Favicon 404** on every page load.
-
-### P2 (Polish)
-9. Login form API key input lacks `id`/`name` attribute (accessibility warning).
-10. `ip_accumulated` mocked at `0.0` — no UI impact since budget is not displayed.
-
----
-
-## Feature Flag State
-
-| Flag | Value | Gate Condition |
-|---|---|---|
-| `CANONICAL_PROJECTION_V1` | **true** | Nightly `canonical_projection_refresh` job active |
-| `market_signals_enabled` | **true** | CALIBRATED — avg 51.53 after d319beb |
-| `feature_matchup_enabled` | **true** | Active |
-| `opportunity_enabled` | **true** | Fix deployed in HEAD — validate after D-3 |
-| `statcast_stuff_plus_enabled` | false | Blocked by Cloudflare — do not enable |
-| `statcast_location_plus_enabled` | false | Blocked by Cloudflare — do not enable |
-| `savant_pitch_quality_enabled` | false | avg_confidence=0.191 < 0.3 — re-check late May |
-| `savant_pitch_quality_waiver_signals_enabled` | false | Enable after main flag |
-| `savant_pitch_quality_projection_adjustments_enabled` | false | Enable last |
-
----
-
-## Known Infrastructure Blockers
-
-### Stuff+/Location+ (FanGraphs/Cloudflare — P2)
-FanGraphs routes through Cloudflare with IP-reputation blocking. Railway IP range blocked. Resolution:
-1. Manual CSV snapshot from browser (monthly)
-2. FanGraphs API subscription (~$80/year)
-3. Savant Pitch Quality (in-house) as proxy — activate when confidence threshold met
-
-### Savant Pitch Quality (inactive — confidence too low)
-All 554 scores seeded. avg_confidence=0.191 (pa proxy gives signal but early-season PA counts are low). Re-validate late May. Feature flags remain false.
-
----
-
-## Architecture Decisions (Locked)
-
-| Decision | Rule |
-|---|---|
-| Counting-stat pipeline | Hybrid provenance: HR/SB from Bayesian rates × PA; R/RBI/SV static Steamer; W formula; K = K/9 × IP/9 |
-| Advanced metrics storage | No new table. `statcast_batter_metrics` + `statcast_pitcher_metrics` → denormalized into `canonical_projections` |
-| TeamContext | Ephemeral runtime dataclass. Quarantined players (PENDING_REVIEW) excluded from PA/IP denominators |
-| CBB betting model | FROZEN — season closed. Do not modify `betting_model.py` |
-| OddsAPI | 20k/month — CBB archival closing lines only. All MLB odds via BDL |
-
----
-
-## Advisory Lock Registry
-
+railway run python -m py_compile backend/fantasy_baseball/daily_lineup_optimizer.py
+railway run python -m py_compile backend/routers/fantasy.py
 ```
-100_001 mlb_odds        | 100_002 statcast          | 100_003 rolling_z         | 100_004 cbb_ratings
-100_005 clv             | 100_006 cleanup           | 100_007 waiver_scan        | 100_008 mlb_brief
-100_009 openclaw_perf   | 100_010 openclaw_sweep    | 100_011 valuation_cache    | 100_012 fangraphs_ros
-100_013 yahoo_adp_injury| 100_014 ensemble_update   | 100_015 projection_freshness| 100_016 mlb_game_log
-100_017 mlb_box_stats   | 100_018 rolling_windows   | 100_019 player_scores      | 100_020 player_momentum
-100_021 ros_simulation  | 100_022 decision_optimization | 100_023 backtesting    | 100_024 explainability
-100_025 snapshot        | 100_026 statsapi_supplement | 100_027 position_eligibility | 100_028 probable_pitchers
-100_029 player_id_mapping | 100_030 vorp            | 100_031 projection_cat_scores | 100_032 savant_ingestion
-100_033 bdl_injuries    | 100_034 yahoo_id_sync     | 100_035 cat_scores_backfill | 100_036 ros_projection_refresh
-100_037 opportunity_update | 100_038 market_signals_update | 100_039 matchup_context_update | 100_040 canonical_projection_refresh
-100_041 bridge_mapping_to_identities (5:00 AM ET — seeds player_identities from player_id_mapping)
-Next available: 100_042
-```
+Then commit and deploy `stable/cbb-prod` to Railway.
 
+**Smoke tests after deploy:**
+- `GET /api/fantasy/lineup/2026-05-31` — at least one player shows a real opponent (not "No Game")
+- `POST /api/fantasy/roster/optimize` — no `lineup_score = 58.0`; no `score_source = "proxy_projection"`
+- DB check: `SELECT team, opponent, game_date FROM probable_pitchers WHERE game_date = CURRENT_DATE LIMIT 10`
+
+**Remaining P0 tasks (Claude Code):**
+- **TASK-7:** Gate optimizer on valid schedule — blocked on TASK-1 deploy
+- **TASK-10:** Drop recommendations for waiver adds (BackendAgent)
+- **TASK-13:** Streaming Station rebuild on projected category contribution (FullStackAgent)
+- **TASK-18:** Week 11 opponent lookup fix (DataAgent + BackendAgent)
 
 ---
 
-### K-NEXT-4: UI UAT Audit — ✅ COMPLETE + ALL P1 FIXES SHIPPED (2026-05-19)
+### 2026-05-31 — TASK-2 — Unify matchup data source (Claude Code)
 
-**Full report:** `reports/2026-05-13-ui-uat-audit.md`  
-**Screenshots:** `reports/uat/2026-05-13-*.png` (7 pages + Lighthouse)
+**Root cause:** `/api/fantasy/scoreboard` (used by `/war-room/roster`) called `get_matchup_stats(week)` which internally calls `get_scoreboard()` but has fragile nested-struct team-key matching. When it failed to find the user's team, it returned `{"my_stats": {}, "opp_stats": {}}` → `assemble_matchup_scoreboard` received all zeros → 0W-0L-18T on the roster page.
 
-**P0 (Blocking):** None. All pages load without crashes or 5xx.
+Meanwhile `/api/fantasy/matchup` (used by `/war-room`) called `get_scoreboard()` directly and used `_iter_scoreboard_matchup_teams()` + `_flatten_scoreboard_team_entry()` which handles all Yahoo response shape variants correctly. This worked fine, showing the live 9-7 score.
 
-**P1 (Degraded) — UPDATE 2026-05-19: 6 of 6 FIXED:**
-1. **Ownership 0% everywhere** — ✅ FIXED (backend: commit `28299d8` — stat ID translation; frontend: Kimi CLI — distinguishes 0% vs —). Deploy to production needed.
-2. **Dashboard waiver targets show `Need score: 0.00`** — ✅ FIXED (commit `28299d8` — stat ID translation + bool coercion)
-3. **Roster "Move player" buttons universally disabled** — ✅ FIXED (commit `83c9318` — pre-select first valid slot, filter current slot)
-4. **Team totals show "–" for OPS and K/9** — ✅ FIXED (commit `4e7b5b9` — derive OPS=OBP+SLG, K/9=9*K/IP when rolling window NULL)
-5. **Budget page is extremely sparse** — ✅ FIXED (commit `12f825a` — season pace panel with current_week, weeks_remaining, days_left, season_add_count)
-6. **Garrett Crochet injury status is boolean `true`** — ✅ FIXED (Claude + Copilot implemented schema validators + post-serialization guard in `backend/routers/fantasy.py`. Kimi commit `28299d8` also attempted bool→string coercion.)
+**Fix:** Replaced the `get_matchup_stats()` call in `/api/fantasy/scoreboard` with `client.get_scoreboard(week=week)` + inline `_parse_stats_to_float()` helper that uses `_iter_scoreboard_matchup_teams()` and the same `_YAHOO_STAT_FALLBACK` stat_id map. Both endpoints now read from the same Yahoo data source via the same parsing path.
 
-**P2 (Polish / Underwhelm) — ✅ #7–11 FIXED:**
-7. ✅ Every waiver pitcher tagged "HOT" — raised threshold 0.4→0.75, COLD -0.3→-0.5 in `fantasy.py`
-8. ✅ Two-start pitcher missing opponent — `flag_pitcher_starts` now returns "opponent" key; `dashboard_service` reads it; frontend shows "TBD" when empty (commit `d105af7`)
-9. ✅ "No streak data available" — `_get_streaks` rewritten to query `PlayerMomentum` (populated nightly) via `PlayerIDMapping` join; replaced stale `PlayerDailyMetric` path
-10. ✅ War Room mobile hides PROJ/ACTION columns — `CategoryRow` now renders mobile second row (`sm:hidden`) with projected value + action hint
-11. ✅ Streaming Station 20+ flat chips — sorted by abs(deficit); severity color-coded (rose ≥3.0, amber ≥1.0, zinc <1.0, emerald=ahead)
-12. Sidebar navigation cluttered — deferred
+**File:** `backend/routers/fantasy.py` — `get_matchup_scoreboard()` (lines ~6426-6510 replaced)
 
-**Lighthouse:** Accessibility 90, Best Practices 100, SEO 100.
+**Syntax check:** Exit 0.
 
-**Top recommendation:** Deploy `12f825a` + BDL #3 to Railway. Single deploy makes all P1/P2 fixes live. **BLOCKED by Railway outage.**
+**Smoke test needed after deploy:**
+- `GET /api/fantasy/scoreboard` — should return real category wins/losses, not all-tied
+- `/war-room/roster` matchup strip should match `/war-room` live score
 
 ---
 
-### K-NEXT-5: UI Design System v2 — ✅ COMPLETE (Kimi designed 2026-05-13)
-
-**Full spec:** `docs/DESIGN_SYSTEM_V2.md`
-
-**Root cause of "underwhelmed" feeling:** The current UI requires *reading* instead of *recognizing*. Five interrelated problems:
-
-1. **Flat grayscale** — `#09090b` → `#181818` → `#202020` has only 2% lightness jumps. No surface hierarchy.
-2. **No category identity** — "HR" and "ERA" look identical. 20 categories, zero color differentiation.
-3. **Overused gold (`#FFC000`)** — used for headings, winning values, buttons, icons, and alerts simultaneously.
-4. **Low contrast text** — `#7D7D7D` on `#181818` fails WCAG AA. `#494949` is nearly invisible.
-5. **Monotonous typography** — everything is 10–12px uppercase tracking-widest.
-
-**Proposed solution:**
-- **New foundation:** Three distinct surfaces (`bg-base` `#0c0c10`, `bg-surface` `#16161e`, `bg-elevated` `#1f1f2a`) with 4% lightness jumps
-- **Category identity colors:** Every H2H category gets a persistent unique color (blue = runs/hits/wins/ks, purple = power, yellow = rate stats, orange = ERA/WHIP, green = speed/quality)
-- **Semantic status gradient:** Green (`#22c55e`) → lime → amber → orange → red (`#ef4444`) for SAFE→LOST
-- **Gold reserved for:** your winning values + primary CTAs only
-- **Typography hierarchy:** Display 24px → Heading 18px → Title 14px → Body 13px → Label 11px uppercase → Caption 10px
-- **Component redesigns:** Category chips with colored dots, battlefield rows with category-colored bars, gated HOT badges (top 20% only)
-
-**Migration guide included:** 4-step implementation (CSS variables → color map → Tailwind config → component refactors in priority order)
-
-**Ready for Claude Code implementation review.**
-
----
-
-## 🚨 CRITICAL AUDIT FINDINGS (2026-05-20) — Gemini + Elite Fantasy Manager Assessment
-
-**Source:** Chrome DevTools + Gemini tool audit by user. **Status:** 11 issues identified.
-
-### P1 (Critical)
-
-| # | Issue | Evidence | Assigned | Kanban |
-|---|-------|----------|----------|--------|
-| 1 | **Transaction ledger de-sync** | Budget shows `Acquisitions: 0/8` but user verified add/drop (Thatcher Ballesteros → Dillon Dingler). Roster updated, acquisition counter did NOT increment. | Claude | `t_4911e13f` |
-| 2 | **Waiver wire infinite loading** | UI stuck on "Loading waiver wire..." spinner. Nav shows "Last updated: 2m ago" = backend has data. Frontend Promise chain broken. | Kimi | `t_ccf98143` |
-
-### P2 (High)
-
-| # | Issue | Evidence | Assigned | Kanban |
-|---|-------|----------|----------|--------|
-| 3 | **Category logic errors** | K (batting) flagged LOST at 16 vs 14 (fewer Ks is winning). L (0 vs 2) flagged Bubble instead of SAFE. HR allowed (3 vs 2) flagged Bubble. False ties: HR 4 vs 5 = T, OPS .636 vs .631 = T. Backend treats volume stats as ratios + aggressive rounding. | Claude | `t_94cfce7c` |
-| 4 | **IP pacing inverted** | Shows `10.2 IP | min 18 IP` with green AHEAD badge. 10.2 < 18. Base-3 innings (.1=1/3, .2=2/3) treated as linear float. | Claude | `t_48859ad8` |
-
-### P3 (Medium)
-
-| # | Issue | Evidence | Assigned | Kanban |
-|---|-------|----------|----------|--------|
-| 5 | **CBB betting branding leak** | Fantasy screens show "CBB EDGE Analytics" + "Analytics / Trading / Admin" + bankroll "Portfolio DD: 0.0% | Exp: 0.0%" + Risk Dashboard link. No domain isolation. | Kimi | `t_d17147b1` |
-| 6 | **Page title sync failure** | Budget page (`/war-room/budget`) shows "Dashboard" in header. Routing state machine not consuming path changes. | Kimi | `t_1c38c4fb` |
-| 7 | **Proxy projection fallbacks** | Optimize Lineup shows yellow alert. 8 diverse players (Dingler, Keaschall, Okamoto, Alonso, Walker, Antonacci, Murakami, Pérez) all return identical hardcoded `58.0` proxy_projection. Scoring loop silently injects median fallback on null/error. | Claude | `t_fe223c75` |
-| 8 | **Missing bulk lineup commit** | User must click [Apply] individually for all 14 roster slots. No batch endpoint. | Claude | `t_8b16ae6d` |
-
-### P4 (Low)
-
-| # | Issue | Evidence | Assigned | Kanban |
-|---|-------|----------|----------|--------|
-| 9 | **Stale injury data** | Geraldo Perdomo flagged DTD "ETA Apr 28 · stale · updated 21d ago". Current date May 20. Injury pipeline frozen 3+ weeks. | Codex | `t_55531e21` |
-| 10 | **Streaming filter omissions** | Shows players marked "— owned" (already on roster) and negative need scores (-5.4). No cross-reference against league roster, no value floor. | Kimi | `t_6ce9b496` |
-| 11 | **Kimi devtools audit** | Run comprehensive Chrome DevTools MCP scan after fixes. Console errors, network failures, React warnings, accessibility, performance. | Kimi | `t_adff0d9e` |
-
----
-
-## ✅ APPROVED WAVE PLAN (2026-05-20) — WAVES 1 & 2 COMPLETE
-
-**Approved by user. 3 waves, domain-isolated parallelism.**
-
-### Wave 1 — ✅ COMPLETE (P1 Critical + Frontend Batch + DevOps)
-
-| Agent | Task | Priority | Kanban | Status |
-|-------|------|----------|--------|--------|
-| **Claude** | Transaction ledger de-sync | P1 Critical | `t_4911e13f` | ✅ RosterAcquisition model + atomic transaction + 7 tests pass |
-| **Kimi** | Waiver loading + Branding + Page titles | P1+P3 | `t_ccf98143`, `t_d17147b1`, `t_1c38c4fb` | ✅ Error boundary + API hardening + route-aware sidebar + title mappings |
-| **Codex** | Stale injury pipeline diagnosis | P4 Low | `t_55531e21` | ✅ Root cause: orphaned ingested_injuries rows |
-| **Copilot** | Stale injury pipeline implementation | P4 Low | `t_55531e21` | ✅ Cleanup block + health monitoring + staleness alarm |
-
-**Wave 1 Evidence:** `reports/2026-05-20-claude-transaction-sync-fix.md`, `reports/2026-05-20-kimi-frontend-batch.md`, `reports/2026-05-20-codex-injury-pipeline.md`, `reports/2026-05-20-copilot-injury-implementation.md`
-
-### Wave 2 — ✅ COMPLETE (P2 High + Backend Math + Frontend Polish)
-
-| Agent | Task | Priority | Kanban | Status |
-|-------|------|----------|--------|--------|
-| **Claude** | Category logic errors | P2 High | `t_94cfce7c` | ✅ LOWER_IS_BETTER deficit logic in dashboard_service.py + 9 new tests |
-| **Claude** | IP pacing inverted | P2 High | `t_48859ad8` | ✅ ip_baseball_to_float() + weekly-scoped pacing + 7 new tests |
-| **Claude** | Matchup engine float casting | P2 High | — | ✅ int() → float() for split counts |
-| **Kimi** | Streaming filters | P4 Low | `t_6ce9b496` | ✅ Hide owned + min need score slider + count indicators |
-
-**Wave 2 Evidence:** `reports/2026-05-20-claude-wave2-math-fixes.md`, `reports/2026-05-20-kimi-streaming-filters.md`
-
-**Note:** Proxy projection fallbacks (`t_fe223c75`) was NOT completed in Wave 2. Moved to Wave 3.
-
-### Wave 4 — ✅ COMPLETE (Production Cleanup + Weekly Preview Feature)
-
-| Agent | Task | Priority | Status |
-|-------|------|----------|--------|
-| **Copilot** | Remove debug endpoints + harden test env | CLEANUP | ✅ 5 debug routers removed from main.py, scripts/setup_test_env.{sh,ps1} created, 17/17 tests pass |
-| **Claude** | Weekly matchup preview backend | P2 FEATURE | ✅ New `GET /api/fantasy/matchup-preview` endpoint, MCMC simulation, streaming recs, 4 tests |
-| **Kimi** | Weekly matchup preview frontend | P2 FEATURE | ✅ New `/war-room/preview` page, sidebar nav, header title, 4.77 kB bundle, tsc clean |
-
-**Wave 4 Evidence:** `reports/2026-05-20-copilot-production-cleanup.md`, `reports/2026-05-20-claude-weekly-preview-backend.md`, `reports/2026-05-20-kimi-weekly-preview-frontend.md`
-
-### Wave 5A — ✅ COMPLETE (2026-05-22: Yahoo Ground-Truth Remediation Wave 1-2)
-
-**Context:** UAT report cross-referenced against live Yahoo data exposed 10 critical discrepancies. Root cause: single off-by-one week boundary bug (Opening Day epoch = Mar 20 Thu instead of Mar 24 Mon) producing 3 symptoms: wrong week, 0 IP, 0 acquisitions.
-
-| Agent | Task | Priority | Status |
-|-------|------|----------|--------|
-| **Claude** | Fix week boundary epoch + Yahoo sync guard + tests | P1 ROOT CAUSE | ✅ `_MLB_FIRST_MATCHUP_MONDAY = date(2026, 3, 24)`, `_compute_mlb_current_week()` helper, 5 new tests |
-| **Kimi** | Preview crash (null guard) + "0% owned" suppression + H2H Category W-L label | P1+P2 UI | ✅ `(data.opponent_name || '?')`, ownership suppressed, "Category W-L:" prefix |
-| **Copilot** | IL hard gate in waiver + IL-type-aware ETA calculation | P1+P2 DATA | ✅ `_IL_STATUS_TOKENS`, `_is_il_player()`, DTD penalty, injury_date-based ETA |
-| **Copilot** | Within-league transaction feed | P2 FEATURE | ✅ `league_transaction_feed.py`, 26 tests, Jung Hoo Lee badge verified |
-| **Kimi** | Dashboard gap cards (optimization severity) + waiver drop badges | P2 UI | ✅ `severityDotClass()`, "View Roster" link, drop badge with color-coded urgency |
-| **Codex** | Deploy to Railway + budget verification | DEPLOY | ✅ Both containers healthy, Week 9 + IP 19.2 confirmed |
-| **Gemini** | Post-deploy UAT smoke test | VALIDATION | ✅ 5/7 checks pass, 2 issues found → escalated to Wave 5B |
-
-**Wave 5A Evidence:** `reports/2026-05-22-claude-week-boundary-fix.md`, `reports/2026-05-22-kimi-frontend-label-fixes.md`, `reports/2026-05-22-copilot-il-filter-eta-fix.md`, `reports/2026-05-22-copilot-transaction-feed.md`, `reports/2026-05-22-kimi-dashboard-waiver-ui.md`, `reports/2026-05-22-codex-deploy.md`, `reports/2026-05-22-gemini-post-deploy-uat.md`
-
-**Known Issues After Wave 5A:**
-- `roster_acquisitions` table missing in prod DB → `acquisitions_used` stays 0
-- Pitchers array empty in `lineup/current` → optimizer non-functional (P0)
-- Roster ownership 0.0% → `_pe_ownership` fallback data likely NULL
-- `dashboard_service._get_lineup_gaps()` only checks empty slots → no rank-based optimization
-- Snell ETA Jun 2 (improved from Jun 30 but should show "TBD" when no timetable)
-
----
-
-### Wave 5B — IN PROGRESS (2026-05-22: P0 Pitcher Fix + Optimization Engine + UX Polish)
-
-**Goal:** Resolve all remaining blockers to make app genuinely usable. 3 agents in parallel, zero file overlap.
-
-| Agent | Task | Priority | Files |
-|-------|------|----------|-------|
-| **Claude** | P0: Debug why `flag_pitcher_starts()` returns empty in prod + P1: Build rank-based lineup optimization in `_get_lineup_gaps()` | P0+P1 | `daily_lineup_optimizer.py`, `dashboard_service.py` |
-| **Kimi** | Need Score tooltip with breakdown/scale + empty-pitchers fallback UI + tier badges (Gold/Silver) | P2 UX | `dashboard/page.tsx`, `waiver/page.tsx`, `types.ts` |
-| **Copilot** | Create `roster_acquisitions` table in prod + small-sample penalty (<100 PA) + show "ETA: TBD" for uncertain IL returns | P1 DATA | `main.py`, `waiver_edge_detector.py`, `injury_overlay.py` |
-
-**Wave 5B Gate:** Claude pitcher fix verified → All tests pass → **Codex deploys** → Gemini post-deploy UAT
-
-**Post Wave 5B UAT Criteria:**
-- [ ] `lineup/current` returns non-empty pitchers array
-- [ ] Dashboard shows optimization alerts for Harrison/Pérez/Sánchez
-- [ ] `acquisitions_used` shows correct count (1/8)
-- [ ] Need Score has contextual tooltip on hover
-- [ ] Jake Bauers penalized for small sample size
-- [ ] IL players show "ETA: TBD" when no confirmed return date
-
----
-
-### Wave 5C — PROPOSED (Heavy-Lift Features)
-
-| Agent | Task | Priority | Files Touched |
-|-------|------|----------|---------------|
-| **Copilot** | Fix decision tracker override comparison + expose accuracy endpoint | P2 BUGFIX | `decision_tracker.py`, `fantasy.py` |
-| **Claude** | Trade analyzer backend — category impact delta for proposed trades | P2 FEATURE | New module + router |
-| **Kimi** | Decision accuracy page + hot/cold badges on roster cards | P2+P3 | `/decisions/`, `/war-room/roster` |
-
----
-
-### Wave 5D — BACKLOG (Deferred)
-
-| Finding | Priority | Reason |
-|---------|----------|--------|
-| Advanced metrics (xwOBA, wRC+, FIP) in player cards | MED | Requires new data source integration |
-| Platoon split indicators on waiver targets | MED | Requires split data pipeline |
-| Two-start pitcher flagging | LOW | Partially exists, needs UI surfacing |
-| Dynamic pitcher projected IP tracking | MED | Requires schedule API integration |
-| 15-minute data refresh on game days | MED | Pipeline/cron configuration |
-| Trade analyzer / ROS value lens | HIGH | Major feature, deferred to Wave 5C |
-
-### Wave Isolation Rules
-1. **No two agents edit `backend/routers/fantasy.py` in the same wave.**
-2. **Backend pytest runs sequentially** per agent, never parallel.
-3. **Frontend `npm run build` gates every Kimi commit.**
-4. **Deploy only after ALL tests in the wave pass.**
-5. **Rollback plan:** Revert to pre-wave commit if any production error detected within 30 min of deploy.
-
----
+*Last updated: 2026-05-31 (Claude Code — TASK-2 complete, pending test results)*
