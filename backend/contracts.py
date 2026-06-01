@@ -502,7 +502,7 @@ class MatchupPreviewResponse(BaseModel):
     week_number: int
     opponent_name: str
     opponent_logo: Optional[str] = None
-    overall_win_prob: float
+    overall_win_prob: Optional[float] = None
     category_projections: List[MatchupPreviewCategoryProjection]
     weak_categories: List[WeakCategory]
     schedule_advantage: ScheduleAdvantage
@@ -556,6 +556,25 @@ class RosterOptimizeRequest(BaseModel):
         frozen = True
 
 
+class LineupMove(BaseModel):
+    """A single player slot change in the proposed lineup diff."""
+    player_key: str
+    player_name: str
+    from_slot: str
+    to_slot: str
+    lineup_score: float
+
+    class Config:
+        frozen = True
+
+
+class ProposedLineupDiff(BaseModel):
+    """Diff showing what changes from current to proposed lineup."""
+    bench_to_start: List[LineupMove] = []
+    start_to_bench: List[LineupMove] = []
+    net_score_impact: float = 0.0
+
+
 class RosterOptimizeResponse(BaseModel):
     """Response from roster optimization."""
     success: bool
@@ -566,6 +585,7 @@ class RosterOptimizeResponse(BaseModel):
     unrostered: List[str]  # player_keys that couldn't fit
     total_lineup_score: float
     freshness: FreshnessMetadata
+    proposed_diff: Optional["ProposedLineupDiff"] = None
 
     class Config:
         frozen = True

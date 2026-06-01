@@ -130,27 +130,34 @@ def _project_row_from_player_scores(
     for player in player_scores:
         player_key = str(player.get("yahoo_player_key") or player.get("bdl_player_id"))
 
-        # Get rolling_14d dict if available
-        rolling_by_player[player_key] = player.get("rolling_14d") or {}
+        # Get rolling_14d dict if available; skip players with no rolling data at all
+        # (including rows from player_scores table which only store z-scores, not raw counts)
+        rolling = player.get("rolling_14d") or {}
+        rolling_by_player[player_key] = rolling
 
-        # Get season stats for blended rate
-        season_by_player[player_key] = {
-            "runs": player.get("runs", 0),
-            "hits": player.get("hits", 0),
-            "home_runs": player.get("home_runs", 0),
-            "rbi": player.get("rbi", 0),
-            "strikeouts_bat": player.get("strikeouts_bat", 0),
-            "total_bases": player.get("total_bases", 0),
-            "net_stolen_bases": player.get("net_stolen_bases", 0),
-            "at_bats": player.get("at_bats", 0),
-            "walks": player.get("walks", 0),
-            "earned_runs": player.get("earned_runs", 0),
-            "ip": player.get("ip", 0),
-            "hits_allowed": player.get("hits_allowed", 0),
-            "walks_allowed": player.get("walks_allowed", 0),
-            "strikeouts_pit": player.get("strikeouts_pit", 0),
-            "quality_starts": player.get("quality_starts", 0),
-        }
+        # Only populate season stats when actual counting fields are present.
+        # PlayerScore rows from the DB have z_* columns, not raw hits/at_bats —
+        # defaulting to 0 would skew AVG toward 0 via the blended rate formula.
+        hits_val = player.get("hits") or 0
+        at_bats_val = player.get("at_bats") or 0
+        if hits_val > 0 or at_bats_val > 0 or player.get("runs") or player.get("ip"):
+            season_by_player[player_key] = {
+                "runs": player.get("runs", 0),
+                "hits": hits_val,
+                "home_runs": player.get("home_runs", 0),
+                "rbi": player.get("rbi", 0),
+                "strikeouts_bat": player.get("strikeouts_bat", 0),
+                "total_bases": player.get("total_bases", 0),
+                "net_stolen_bases": player.get("net_stolen_bases", 0),
+                "at_bats": at_bats_val,
+                "walks": player.get("walks", 0),
+                "earned_runs": player.get("earned_runs", 0),
+                "ip": player.get("ip", 0),
+                "hits_allowed": player.get("hits_allowed", 0),
+                "walks_allowed": player.get("walks_allowed", 0),
+                "strikeouts_pit": player.get("strikeouts_pit", 0),
+                "quality_starts": player.get("quality_starts", 0),
+            }
 
     return compute_row_projection(
         rolling_stats_by_player=rolling_by_player,
@@ -309,6 +316,7 @@ def assemble_matchup_scoreboard(
     il_used: int = 0,
     n_monte_carlo_sims: int = 1000,
     force_stale: bool = False,
+    fetched_at: Optional[datetime] = None,
 ) -> MatchupScoreboardResponse:
     """
     Assemble complete Matchup Scoreboard from all data sources.
@@ -402,12 +410,16 @@ def assemble_matchup_scoreboard(
     projected_tied = sum(1 for r in rows if r.projected_margin is not None and r.projected_margin == 0)
 
     # Step 7: Freshness metadata
+    _is_stale = False
+    if fetched_at is not None:
+        age_minutes = (now_et - fetched_at).total_seconds() / 60
+        _is_stale = age_minutes > 60
     freshness = FreshnessMetadata(
         primary_source="yahoo",
-        fetched_at=None,  # TODO: track from Yahoo client
+        fetched_at=fetched_at,
         computed_at=now_et,
-        staleness_threshold_minutes=60,  # 1 hour
-        is_stale=False,  # TODO: compute from fetched_at
+        staleness_threshold_minutes=60,
+        is_stale=_is_stale,
     )
 
     return MatchupScoreboardResponse(

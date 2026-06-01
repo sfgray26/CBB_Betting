@@ -443,6 +443,7 @@ class WaiverPlayerOut(BaseModel):
 
 class DropPlayerOut(BaseModel):
     """Rich drop candidate for waiver ADD_DROP recommendations."""
+    player_id: str = ""                  # Yahoo player_key for frontend identification
     name: str
     position: str                        # positions[0], primary slot
     positions: List[str]

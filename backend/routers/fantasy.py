@@ -3048,6 +3048,7 @@ async def get_waiver_recommendations(
             except (ValueError, TypeError):
                 safe_cats = {}
             return DropPlayerOut(
+                player_id=candidate.get("player_key", ""),
                 name=candidate["name"],
                 position=candidate["positions"][0] if candidate.get("positions") else "?",
                 positions=candidate.get("positions") or [],
@@ -4039,23 +4040,49 @@ async def get_matchup_preview(
 
     next_week_num = current_week_num + 1
 
+    # Resolve my team key once for scoreboard parsing
+    _preview_my_team_key = os.getenv("YAHOO_TEAM_KEY", "")
+    if not _preview_my_team_key:
+        try:
+            _preview_my_team_key = client.get_my_team_key()
+        except Exception:
+            _preview_my_team_key = ""
+
+    def _extract_opponent_from_scoreboard(week: int) -> str:
+        """Use the same proven get_scoreboard() path as the scoreboard endpoint."""
+        try:
+            raw_sb = client.get_scoreboard(week=week)
+        except Exception:
+            return "Unknown"
+        for _matchup_teams in _iter_scoreboard_matchup_teams(raw_sb or []):
+            _my_t = None
+            for _t in _matchup_teams:
+                _tk = _t[0]
+                if _tk and _preview_my_team_key and (
+                    _tk == _preview_my_team_key
+                    or _tk in _preview_my_team_key
+                    or _preview_my_team_key in _tk
+                ):
+                    _my_t = _t
+                    break
+            if _my_t is not None:
+                _opp = next((_t for _t in _matchup_teams if _t[0] != _my_t[0]), None)
+                if _opp and _opp[1]:
+                    return _opp[1]
+        return "Unknown"
+
     # Get next week's opponent name — fall back to current week if not yet published
     opponent_name = "Unknown"
     preview_week = next_week_num
-    try:
-        next_stats = client.get_matchup_stats(week=next_week_num)
-        opponent_name = next_stats.get("opponent_name") or "Unknown"
-    except Exception as _nw_err:
+    opponent_name = _extract_opponent_from_scoreboard(next_week_num)
+    if opponent_name == "Unknown":
         logger.warning(
-            "matchup_preview: next-week matchup unavailable (%s), falling back to current week",
-            _nw_err,
+            "matchup_preview: next-week (week %d) opponent not found in scoreboard, "
+            "falling back to current week %d",
+            next_week_num, current_week_num,
         )
         preview_week = current_week_num
-        try:
-            cur_stats = client.get_matchup_stats()
-            opponent_name = cur_stats.get("opponent_name") or "Unknown"
-        except Exception as _cw_err:
-            logger.warning("matchup_preview: current-week matchup also failed: %s", _cw_err)
+        opponent_name = _extract_opponent_from_scoreboard(current_week_num)
 
     # Build my roster with cat_scores from player_projections table
     try:
@@ -4115,15 +4142,18 @@ async def get_matchup_preview(
                 )
             )
 
+    # Suppress overall_win_prob when opponent is unknown to avoid misleading 100% default
+    _overall_wp = round(float(sim.get("win_prob", 0.5)), 4) if opponent_name != "Unknown" else None
+
     return MatchupPreviewResponse(
         week_number=preview_week,
         opponent_name=opponent_name,
         opponent_logo=None,
-        overall_win_prob=round(float(sim.get("win_prob", 0.5)), 4),
+        overall_win_prob=_overall_wp,
         category_projections=category_projections,
         weak_categories=weak_categories,
         schedule_advantage=ScheduleAdvantage(my_games=0, opponent_games=0),
-        message=None,
+        message="Opponent not yet published for this week — showing league-average projection" if opponent_name == "Unknown" else None,
     )
 
 
@@ -6442,8 +6472,10 @@ async def get_matchup_scoreboard(
     opp_current_stats: Dict[str, float] = {}
     safe_opponent_name = opponent_name or "Opponent"
 
+    yahoo_fetch_time = datetime.now(ZoneInfo("America/New_York"))
     try:
         raw_matchups = client.get_scoreboard(week=week)
+        yahoo_fetch_time = datetime.now(ZoneInfo("America/New_York"))
         logger.info("scoreboard: fetched %d raw matchups for week %d", len(raw_matchups or []), week)
     except YahooAuthError as auth_err:
         logger.error("scoreboard: Yahoo auth failed for week %d: %s", week, auth_err, exc_info=False)
@@ -6549,6 +6581,7 @@ async def get_matchup_scoreboard(
             il_used=1,
             n_monte_carlo_sims=1000,
             force_stale=False,
+            fetched_at=yahoo_fetch_time,
         )
         logger.debug("scoreboard: assembled scoreboard for week %d", week)
     except ValueError as val_err:
