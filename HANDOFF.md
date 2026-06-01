@@ -200,4 +200,17 @@ Meanwhile `/api/fantasy/matchup` (used by `/war-room`) called `get_scoreboard()`
 
 ---
 
-*Last updated: 2026-05-31 (Claude Code — TASK-2 complete, pending test results)*
+---
+
+### 2026-06-01 — TASK-2 Follow-up — Pending Deploy
+
+**Files changed (unstaged):**
+- `backend/fantasy_baseball/yahoo_client_resilient.py` — flexible Yahoo team-key matching when resolving the user's matchup
+- `backend/routers/fantasy.py` — replace hardcoded scoreboard constraint values with parsed IP and date-derived remaining days
+
+**Validation needed before deploy:**
+- `py_compile` for both files
+- production `/health`
+- production `/api/fantasy/scoreboard` smoke check with real, non-hardcoded constraint values
+
+*Last updated: 2026-06-01 (Codex — follow-up backend fixes queued for deploy)*

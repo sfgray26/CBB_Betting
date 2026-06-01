@@ -1476,18 +1476,27 @@ class YahooFantasyClient:
                             if len(meta_list) > 0:
                                 first_meta = meta_list[0] if isinstance(meta_list[0], dict) else {}
                                 if isinstance(first_meta, dict) and "team_key" in first_meta:
-                                    if first_meta["team_key"] == my_team_key:
+                                    candidate_key = first_meta["team_key"]
+                                    # Flexible substring match: handles Yahoo key prefix
+                                    # variations when YAHOO_TEAM_KEY is not set in env
+                                    if (candidate_key == my_team_key or
+                                            (candidate_key and my_team_key and
+                                             (candidate_key in my_team_key or my_team_key in candidate_key))):
                                         my_matchup = matchup
                                         # Promote unwrapped structure so the stats extraction loop below can access it
                                         teams_wrapper[team_key_str] = team_contents
                                         if "teams" not in my_matchup:
                                             my_matchup["teams"] = teams_wrapper
                                         break
-                    elif isinstance(raw_team, dict) and raw_team.get("team_key") == my_team_key:
-                        my_matchup = matchup
-                        if "teams" not in my_matchup:
-                            my_matchup["teams"] = teams_wrapper
-                        break
+                    elif isinstance(raw_team, dict):
+                        candidate_key = raw_team.get("team_key", "")
+                        if (candidate_key == my_team_key or
+                                (candidate_key and my_team_key and
+                                 (candidate_key in my_team_key or my_team_key in candidate_key))):
+                            my_matchup = matchup
+                            if "teams" not in my_matchup:
+                                my_matchup["teams"] = teams_wrapper
+                            break
             if my_matchup:
                 break
 

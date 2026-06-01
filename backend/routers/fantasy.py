@@ -6561,6 +6561,15 @@ async def get_matchup_scoreboard(
             _my_team_key, len(raw_matchups or []),
         )
 
+    # Derive real constraint values from the parsed stats and current date.
+    # ip_accumulated and days_remaining are computable without extra API calls.
+    # acquisitions_used and il_used require a separate Yahoo call — left for a
+    # dedicated budget-sync task (the budget endpoint already handles those).
+    _now_et = datetime.now(ZoneInfo("America/New_York"))
+    _ip_accumulated = float(my_current_stats.get("IP", 0.0))
+    _ip_minimum = 18.0  # Yahoo H2H weekly IP floor (matches budget endpoint)
+    _days_remaining = max(0, 6 - _now_et.weekday())  # Mon=0 → 6 days left; Sun=6 → 0
+
     # Mock player scores (empty for now)
     my_player_scores = []
 
@@ -6573,10 +6582,10 @@ async def get_matchup_scoreboard(
             opp_current_stats=opp_current_stats,
             my_player_scores=my_player_scores,
             opp_player_scores=None,
-            ip_accumulated=45.0,
-            ip_minimum=90.0,
-            games_remaining=3,
-            days_remaining=4,
+            ip_accumulated=_ip_accumulated,
+            ip_minimum=_ip_minimum,
+            games_remaining=_days_remaining,
+            days_remaining=_days_remaining,
             acquisitions_used=5,
             il_used=1,
             n_monte_carlo_sims=1000,
