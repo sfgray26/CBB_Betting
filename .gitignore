@@ -76,6 +76,7 @@ frontend/tsconfig.tsbuildinfo
 
 # Temporary
 .tmp/
+.dev_server_pid.txt
 
 # Git worktrees
 .worktrees/
