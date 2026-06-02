@@ -10,8 +10,9 @@ from unittest.mock import patch, MagicMock
 
 @pytest.fixture
 def fantasy_client():
-    with patch("backend.schedulers.fantasy_scheduler.start_fantasy_scheduler"):
-        with patch("backend.schedulers.fantasy_scheduler.stop_fantasy_scheduler"):
+    # Patch the actual import in backend/fantasy_app.py (line 27)
+    with patch("backend.fantasy_app.start_fantasy_scheduler"):
+        with patch("backend.fantasy_app.stop_fantasy_scheduler"):
             from backend.fantasy_app import app
             from fastapi.testclient import TestClient
             with TestClient(app) as client:
@@ -130,15 +131,40 @@ class TestMatchupPreviewEndpoint:
         assert "rbi" not in weak_cats
 
     def test_next_week_fallback_when_unavailable(self, fantasy_client):
-        """Falls back to current-week opponent when next week isn't published."""
+        """Falls back to current-week opponent when next week isn't published.
+
+        The matchup-preview endpoint resolves opponent via get_scoreboard() +
+        _iter_scoreboard_matchup_teams() (not get_matchup_stats).  Week 9 returns
+        an empty scoreboard (not yet published); week 8 returns a matchup with the
+        known team key so the opponent name can be extracted.
+        """
         mock_client = self._mock_client()
 
-        def _side_effect(week=None):
-            if week is not None and week > 8:
-                raise Exception("Yahoo: matchup not published yet")
-            return {"opponent_name": "Current Foe", "my_stats": {}, "opp_stats": {}}
+        # Build a minimal Yahoo scoreboard payload that _iter_scoreboard_matchup_teams
+        # can parse: a list of matchup dicts, each with a "teams" dict keyed "0"/"1".
+        # team_key "469.l.72586.t.7" matches mock_client.get_my_team_key().
+        _week8_scoreboard = [
+            {
+                "teams": {
+                    "count": 2,
+                    "0": {"team": [
+                        [{"team_key": "469.l.72586.t.7"}, {"name": "My Team"}],
+                        {"team_stats": {"stats": []}},
+                    ]},
+                    "1": {"team": [
+                        [{"team_key": "469.l.72586.t.3"}, {"name": "Current Foe"}],
+                        {"team_stats": {"stats": []}},
+                    ]},
+                }
+            }
+        ]
 
-        mock_client.get_matchup_stats.side_effect = _side_effect
+        def _sb_side_effect(week=None):
+            if week is not None and week > 8:
+                return []  # week 9 not published yet
+            return _week8_scoreboard
+
+        mock_client.get_scoreboard.side_effect = _sb_side_effect
 
         with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client), \
              patch("backend.fantasy_baseball.mcmc_simulator.simulate_weekly_matchup",
