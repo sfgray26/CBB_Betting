@@ -3851,6 +3851,17 @@ async def move_roster_player(
             ),
         )
 
+    # IL guard: players with an active IL designation cannot be placed in active slots.
+    if _is_il_designated(player_to_move) and request.target_position not in _IL_SLOTS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{player_to_move.get('name', request.player_key)} has IL designation "
+                f"({player_to_move.get('status')}) — must be placed in IL or IL60 slot, "
+                f"not {request.target_position!r}"
+            ),
+        )
+
     # Build lineup list: all players with the moved player's position updated
     lineup = []
     for p in raw_players:
@@ -3967,10 +3978,22 @@ async def bulk_apply_roster_moves(
     # Index current roster
     roster_by_key = {p["player_key"]: p for p in raw_players if p.get("player_key")}
 
-    # Phase 2: validate all player keys exist on roster
+    # Phase 2: validate all player keys exist on roster, then IL guard
     for move in request.moves:
         if move.player_key not in roster_by_key:
             validation_errors.append(f"Player {move.player_key} not found on roster")
+
+    if validation_errors:
+        raise HTTPException(status_code=400, detail={"errors": validation_errors})
+
+    # Phase 3: IL guard — IL-designated players may only go to IL/IL60 slots
+    for move in request.moves:
+        player = roster_by_key.get(move.player_key, {})
+        if _is_il_designated(player) and move.target_position not in _IL_SLOTS:
+            validation_errors.append(
+                f"{player.get('name', move.player_key)} has IL designation "
+                f"({player.get('status')}) — cannot move to {move.target_position!r}"
+            )
 
     if validation_errors:
         raise HTTPException(status_code=400, detail={"errors": validation_errors})
@@ -4252,11 +4275,16 @@ async def optimize_roster(
         # Use the most recent as_of_date in response, or target_date if none found
         actual_data_date = max(as_of_dates) if as_of_dates else target_date
 
-    # Build player data with scores
+    # Build player data with scores; skip IL-designated players (they stay in IL slots)
     player_data = []
+    il_player_count = 0
     for p in raw_players:
         player_key = p.get("player_key")
         if not player_key:
+            continue
+
+        if _is_il_designated(p):
+            il_player_count += 1
             continue
 
         score = 50.0
@@ -4433,6 +4461,8 @@ async def optimize_roster(
         base_msg += f" (Note: Data from {actual_data_date}, not requested {target_date})"
     elif fallback_count:
         base_msg += f" (Used projection fallback for {fallback_count} player{'s' if fallback_count != 1 else ''})"
+    if il_player_count:
+        base_msg += f" ({il_player_count} IL player{'s' if il_player_count != 1 else ''} excluded from active slots)"
 
     return RosterOptimizeResponse(
         success=True,
@@ -4456,6 +4486,18 @@ async def optimize_roster(
 # Any of LF, CF, RF, OF can fill an "OF" slot.
 _OUTFIELD_POSITIONS = {"OF", "LF", "CF", "RF"}
 _HITTER_POSITIONS = {"C", "1B", "2B", "3B", "SS", "OF", "LF", "CF", "RF", "DH"}
+
+# IL slot names accepted by Yahoo's set_lineup API
+_IL_SLOTS = frozenset({"IL", "IL60"})
+
+
+def _is_il_designated(player: dict) -> bool:
+    """Return True if Yahoo status indicates an active IL designation.
+
+    Matches: "IL", "IL10", "IL15", "IL60", "10-Day IL", "15-Day IL", "60-Day IL".
+    """
+    status = (player.get("status") or "").upper().strip()
+    return status.startswith("IL") or "-IL" in status
 
 
 def _can_fill_slot(eligible_positions, slot, player_name) -> bool:
