@@ -10,9 +10,9 @@ from unittest.mock import patch, MagicMock
 
 @pytest.fixture
 def fantasy_client():
-    # Patch the actual import in backend/fantasy_app.py (line 27)
-    with patch("backend.fantasy_app.start_fantasy_scheduler"):
-        with patch("backend.fantasy_app.stop_fantasy_scheduler"):
+    # Patch at source module matching backend/fantasy_app.py line 27 import
+    with patch("backend.schedulers.fantasy_scheduler.start_fantasy_scheduler"):
+        with patch("backend.schedulers.fantasy_scheduler.stop_fantasy_scheduler"):
             from backend.fantasy_app import app
             from fastapi.testclient import TestClient
             with TestClient(app) as client:
