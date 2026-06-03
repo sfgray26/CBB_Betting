@@ -586,6 +586,7 @@ class RosterOptimizeResponse(BaseModel):
     total_lineup_score: float
     freshness: FreshnessMetadata
     proposed_diff: Optional["ProposedLineupDiff"] = None
+    schedule_available: bool = True  # False when no MLB games found for target_date
 
     class Config:
         frozen = True

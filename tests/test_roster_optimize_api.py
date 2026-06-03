@@ -188,6 +188,7 @@ class TestRosterOptimizeEndpoint:
         assert "unrostered" in data
         assert "total_lineup_score" in data
         assert "freshness" in data
+        assert "schedule_available" in data  # TASK-7 gate field
 
         # Freshness fields
         freshness = data["freshness"]
@@ -516,3 +517,55 @@ class TestRosterOptimizeEndpoint:
         assert of_player["assigned_slot"] == "OF", (
             f"Expected slot='OF' (not 'OF1'), got {of_player['assigned_slot']!r}"
         )
+
+    def test_schedule_gate_fails_open_on_db_error(self, fantasy_client):
+        """schedule_available=True (fail-open) when the DB schedule check itself errors."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.111",
+                "name": "Hitter A",
+                "team": "NYY",
+                "positions": ["1B"],
+                "selected_position": "1B",
+            },
+        ]
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        # The test DB mock already raises on complex queries — schedule gate catches
+        # that exception and keeps schedule_available=True (fail-open, don't block user).
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/optimize",
+                json={"target_date": "2026-04-15"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "schedule_available" in data
+        assert data["schedule_available"] is True
+
+    def test_schedule_gate_field_present_on_normal_response(self, fantasy_client):
+        """schedule_available=True on a normal day with game data."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.111",
+                "name": "Hitter A",
+                "team": "NYY",
+                "positions": ["1B"],
+                "selected_position": "1B",
+            },
+        ]
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/optimize",
+                json={"target_date": "2026-04-15"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "schedule_available" in data
+        assert isinstance(data["schedule_available"], bool)

@@ -175,3 +175,41 @@ class TestMatchupPreviewEndpoint:
         data = response.json()
         assert data["opponent_name"] == "Current Foe"
         assert data["week_number"] == 8  # fell back to current week
+
+    def test_opponent_resolved_when_get_my_team_key_fails(self, fantasy_client):
+        """Opponent is still found when get_my_team_key() throws — env default used.
+
+        Regression for the production 'Unknown opponent' bug where get_my_team_key()
+        threw silently and left the matching key as an empty string, causing every
+        scoreboard entry to be skipped.
+        """
+        mock_client = self._mock_client()
+        mock_client.get_my_team_key.side_effect = Exception("Yahoo API timeout")
+
+        _current_scoreboard = [
+            {
+                "teams": {
+                    "count": 2,
+                    "0": {"team": [
+                        [{"team_key": "469.l.72586.t.7"}, {"name": "My Team"}],
+                        {"team_stats": {"stats": []}},
+                    ]},
+                    "1": {"team": [
+                        [{"team_key": "469.l.72586.t.5"}, {"name": "Week Foe"}],
+                        {"team_stats": {"stats": []}},
+                    ]},
+                }
+            }
+        ]
+        mock_client.get_scoreboard.return_value = _current_scoreboard
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client), \
+             patch("backend.fantasy_baseball.mcmc_simulator.simulate_weekly_matchup",
+                   return_value=_MOCK_SIM_RESULT), \
+             patch.dict("os.environ", {"YAHOO_TEAM_KEY": "469.l.72586.t.7"}):
+            response = fantasy_client.get("/api/fantasy/matchup-preview")
+
+        assert response.status_code == 200
+        data = response.json()
+        # Must resolve from scoreboard using env fallback — not "Unknown"
+        assert data["opponent_name"] == "Week Foe"

@@ -4063,21 +4063,34 @@ async def get_matchup_preview(
 
     next_week_num = current_week_num + 1
 
-    # Resolve my team key once for scoreboard parsing
-    _preview_my_team_key = os.getenv("YAHOO_TEAM_KEY", "")
-    if not _preview_my_team_key:
-        try:
-            _preview_my_team_key = client.get_my_team_key()
-        except Exception:
-            _preview_my_team_key = ""
+    # Resolve my team key once for scoreboard parsing.
+    # Use the same default as all other roster endpoints to prevent empty-string fallback
+    # that silently breaks team-key matching in _extract_opponent_from_scoreboard.
+    _preview_my_team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
+    try:
+        # get_my_team_key() is authoritative — prefer it over the env default
+        _live_key = client.get_my_team_key()
+        if _live_key:
+            _preview_my_team_key = _live_key
+    except Exception as _key_err:
+        logger.debug(
+            "matchup_preview: get_my_team_key() failed (%s), using env/default %s",
+            _key_err, _preview_my_team_key,
+        )
 
     def _extract_opponent_from_scoreboard(week: int) -> str:
         """Use the same proven get_scoreboard() path as the scoreboard endpoint."""
         try:
             raw_sb = client.get_scoreboard(week=week)
-        except Exception:
+        except Exception as _sb_err:
+            logger.warning("matchup_preview: get_scoreboard(week=%d) failed: %s", week, _sb_err)
             return "Unknown"
-        for _matchup_teams in _iter_scoreboard_matchup_teams(raw_sb or []):
+        matchups = _iter_scoreboard_matchup_teams(raw_sb or [])
+        logger.debug(
+            "matchup_preview: week=%d scoreboard has %d matchup(s), my_key=%r",
+            week, len(matchups), _preview_my_team_key,
+        )
+        for _matchup_teams in matchups:
             _my_t = None
             for _t in _matchup_teams:
                 _tk = _t[0]
@@ -4092,6 +4105,14 @@ async def get_matchup_preview(
                 _opp = next((_t for _t in _matchup_teams if _t[0] != _my_t[0]), None)
                 if _opp and _opp[1]:
                     return _opp[1]
+        if matchups:
+            logger.warning(
+                "matchup_preview: week=%d had %d matchup(s) but none matched my_key=%r — "
+                "team keys in scoreboard: %s",
+                week, len(matchups),
+                _preview_my_team_key,
+                [t[0] for m in matchups for t in m],
+            )
         return "Unknown"
 
     # Get next week's opponent name — fall back to current week if not yet published
@@ -4203,6 +4224,37 @@ async def optimize_roster(
         "C": 1, "1B": 1, "2B": 1, "3B": 1, "SS": 1, "OF": 3, "Util": 1,
         "SP": 2, "RP": 2, "P": 1, "BN": 5,
     }
+
+    # Schedule gate: check if any MLB games exist for target_date before running solver.
+    # Uses its own SessionLocal so it never consumes the route's db mock in tests.
+    # Fail open (schedule_available=True) if the check itself errors — don't block user.
+    schedule_available = True
+    try:
+        from backend.models import SessionLocal as _SL, ProbablePitcherSnapshot as _PPS
+        _sched_db = _SL()
+        try:
+            _snap_count = _sched_db.query(_PPS).filter(
+                _PPS.game_date == target_date
+            ).count()
+        finally:
+            _sched_db.close()
+        if _snap_count == 0:
+            import requests as _sreq
+            _sr = _sreq.get(
+                "https://statsapi.mlb.com/api/v1/schedule",
+                params={"sportId": 1, "date": target_date, "gameType": "R"},
+                timeout=5,
+            )
+            if _sr.ok:
+                _api_games = sum(
+                    len(d.get("games", []))
+                    for d in _sr.json().get("dates", [])
+                )
+                schedule_available = _api_games > 0
+            else:
+                schedule_available = False
+    except Exception as _sched_err:
+        logger.debug("Schedule gate check failed (non-fatal): %s", _sched_err)
 
     try:
         client = get_yahoo_client()
@@ -4463,6 +4515,8 @@ async def optimize_roster(
         base_msg += f" (Used projection fallback for {fallback_count} player{'s' if fallback_count != 1 else ''})"
     if il_player_count:
         base_msg += f" ({il_player_count} IL player{'s' if il_player_count != 1 else ''} excluded from active slots)"
+    if not schedule_available:
+        base_msg += f" — WARNING: No MLB games found for {target_date} (off-day or schedule not yet available)"
 
     return RosterOptimizeResponse(
         success=True,
@@ -4472,6 +4526,7 @@ async def optimize_roster(
         bench=bench_assignments,
         unrostered=unrostered,
         total_lineup_score=round(total_score, 2),
+        schedule_available=schedule_available,
         freshness=FreshnessMetadata(
             primary_source="yahoo",
             fetched_at=None,
