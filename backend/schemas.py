@@ -427,6 +427,7 @@ class WaiverPlayerOut(BaseModel):
     quality_score: Optional[float] = None   # Pitcher matchup quality [-2.0 to +2.0]. None when not a pitcher FA candidate.
     rank_percentile: Optional[float] = None  # 0-100 list rank; used to gate HOT/COLD badges.
     league_drop: Optional[dict] = None      # Recent in-league drop: {"dropped_by": str, "days_ago": float, "team_key": str} or None
+    dropped_by_team: Optional[str] = None   # Team display name that dropped this player (shortcut from league_drop["dropped_by"])
     small_sample: Optional[bool] = None     # True when PA (batters) or IP (pitchers) is below reliable-sample threshold
     two_start_this_week: bool = False       # True when pitcher has ≥2 probable starts this scoring week (UI badge alias)
     momentum_signal: Optional[str] = None  # SURGING / HOT / STABLE / COLD / COLLAPSING

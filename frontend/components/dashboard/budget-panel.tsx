@@ -159,7 +159,9 @@ export function BudgetPanel({ budget }: BudgetPanelProps) {
           <div className="flex items-center justify-between mt-0.5">
             <span className="text-text-muted text-[10px]">
               {(budget.ip_data_available ?? false)
-                ? `${budget.ip_accumulated.toFixed(1)} IP accumulated`
+                ? budget.ip_as_of
+                  ? `${budget.ip_accumulated.toFixed(1)} IP (as of ${budget.ip_as_of})`
+                  : `${budget.ip_accumulated.toFixed(1)} IP accumulated`
                 : "Yahoo stats syncing…"}
             </span>
             <span className="text-text-muted text-[10px]">

@@ -308,6 +308,33 @@ class TestRosterMoveEndpoint:
         data = response.json()
         assert data["success"] is True
 
+    def test_ineligible_position_returns_400(self, fantasy_client):
+        """Moving a player to a slot they're not eligible for returns 400."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.12345",
+                "name": "Kyle Harrison",
+                "team": "SF",
+                "positions": ["SP"],
+                "selected_position": "BN",
+            },
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/move",
+                json={
+                    "player_key": "469.l.72586.p.12345",
+                    "target_position": "RP",
+                },
+            )
+
+        assert response.status_code == 400
+        assert "not eligible" in response.json()["detail"]
+
     def test_valid_positions_accepted(self, fantasy_client):
         """All valid positions are accepted."""
         valid_positions = [

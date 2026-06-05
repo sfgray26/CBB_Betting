@@ -2403,6 +2403,7 @@ async def get_fantasy_waiver_recommendations(
                         "days_ago": _drop.days_ago,
                         "team_key": _drop.dropped_by_team,
                     }
+                    _p.dropped_by_team = _drop.dropped_by_name or "Unknown Team"
         except Exception as _txn_err:
             logger.warning("waiver: league_transaction_feed non-fatal: %s", _txn_err)
 
@@ -3862,6 +3863,19 @@ async def move_roster_player(
             ),
         )
 
+    # Position eligibility guard: player must be eligible for target slot.
+    if request.target_position not in _EXEMPT_SLOTS:
+        _player_eligible = player_to_move.get("eligible_positions") or player_to_move.get("positions") or []
+        if not _can_fill_slot(_player_eligible, request.target_position, player_to_move.get("name", request.player_key)):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{player_to_move.get('name', request.player_key)} is not eligible for "
+                    f"{request.target_position!r} slot — eligible: "
+                    f"{', '.join(_player_eligible) or 'unknown'}"
+                ),
+            )
+
     # Build lineup list: all players with the moved player's position updated
     lineup = []
     for p in raw_players:
@@ -3994,6 +4008,20 @@ async def bulk_apply_roster_moves(
                 f"{player.get('name', move.player_key)} has IL designation "
                 f"({player.get('status')}) — cannot move to {move.target_position!r}"
             )
+
+    if validation_errors:
+        raise HTTPException(status_code=400, detail={"errors": validation_errors})
+
+    # Phase 4: Position eligibility guard
+    for move in request.moves:
+        if move.target_position not in _EXEMPT_SLOTS:
+            player = roster_by_key.get(move.player_key, {})
+            _eligible = player.get("eligible_positions") or player.get("positions") or []
+            if not _can_fill_slot(_eligible, move.target_position, player.get("name", move.player_key)):
+                validation_errors.append(
+                    f"{player.get('name', move.player_key)} is not eligible for "
+                    f"{move.target_position!r} slot — eligible: {', '.join(_eligible) or 'unknown'}"
+                )
 
     if validation_errors:
         raise HTTPException(status_code=400, detail={"errors": validation_errors})
@@ -4544,6 +4572,9 @@ _HITTER_POSITIONS = {"C", "1B", "2B", "3B", "SS", "OF", "LF", "CF", "RF", "DH"}
 
 # IL slot names accepted by Yahoo's set_lineup API
 _IL_SLOTS = frozenset({"IL", "IL60"})
+
+# Slots that accept any player regardless of position eligibility
+_EXEMPT_SLOTS = frozenset({"BN", "IL", "IL60"})
 
 
 def _is_il_designated(player: dict) -> bool:
@@ -6857,9 +6888,10 @@ async def get_constraint_budget(
     # Days left in the current Yahoo matchup week (weeks run Mon–Sun)
     days_in_week_remaining = max(0, 7 - now_et.weekday())  # Monday=0 → 7 remaining
 
-    # 4. IP tracking - wired to Yahoo matchup stats (A-6 fix)
+    # 4. IP tracking - primary: get_matchup_stats; fallback: get_scoreboard
     ip_accumulated = 0.0
     ip_data_available = False
+    ip_as_of: Optional[str] = None
     try:
         matchup_stats = client.get_matchup_stats(week=current_week, my_team_key=team_key)
         if matchup_stats:
@@ -6867,11 +6899,34 @@ async def get_constraint_budget(
             if "IP" in my_stats:
                 ip_accumulated = float(my_stats["IP"])
                 ip_data_available = True
+                _h = now_et.hour % 12 or 12
+                ip_as_of = f"{_h}:{now_et.strftime('%M')} {'AM' if now_et.hour < 12 else 'PM'} ET"
             elif my_stats:
                 # Stats returned but no IP key — Yahoo may not have committed pitching yet
                 ip_data_available = True
     except (YahooAuthError, YahooAPIError, Exception) as exc:
-        logger.warning("budget: failed to fetch IP from matchup stats: %s", exc)
+        logger.warning("budget: IP primary (get_matchup_stats) failed, trying scoreboard: %s", exc)
+
+    if not ip_data_available:
+        try:
+            _sb_matchups = client.get_scoreboard(week=current_week)
+            for _matchup_teams in _iter_scoreboard_matchup_teams(_sb_matchups or []):
+                for _t_key, _t_name, _t_stats in _matchup_teams:
+                    if _t_key and team_key and (_t_key == team_key or _t_key in team_key or team_key in _t_key):
+                        for _s in _t_stats:
+                            _stat = _s.get("stat", {})
+                            if str(_stat.get("stat_id", "")) == "50":  # stat_id 50 = IP
+                                try:
+                                    ip_accumulated = float(_stat.get("value", 0.0))
+                                    ip_data_available = True
+                                    _h = now_et.hour % 12 or 12
+                                    ip_as_of = f"{_h}:{now_et.strftime('%M')} {'AM' if now_et.hour < 12 else 'PM'} ET"
+                                except (TypeError, ValueError):
+                                    pass
+                        break
+        except Exception as _sb_err:
+            logger.debug("budget: scoreboard IP fallback failed: %s", _sb_err)
+
     ip_minimum = 18.0  # Yahoo H2H standard (innings pitched per week) - matches scoreboard_orchestrator.py
 
     # Count season-total acquisitions from the already-fetched transaction list
@@ -6937,6 +6992,7 @@ async def get_constraint_budget(
             "ip_minimum": budget.ip_minimum,
             "ip_pace": budget.ip_pace.value,
             "ip_data_available": ip_data_available,
+            "ip_as_of": ip_as_of,
             "as_of": budget.as_of.isoformat(),
             "week_label": f"Week {current_week}",
             "weeks_remaining": weeks_remaining,

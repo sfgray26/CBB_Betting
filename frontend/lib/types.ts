@@ -640,6 +640,7 @@ export interface BudgetData {
   ip_minimum: number
   ip_pace: "BEHIND" | "ON_TRACK" | "AHEAD"
   ip_data_available?: boolean
+  ip_as_of?: string
   as_of: string
   week_label?: string
   weeks_remaining?: number
