@@ -204,11 +204,20 @@ function PlayerRow({ player, rosterPlayer }: {
               {['SURGING','HOT'].includes(player.momentum_signal) ? '▲' : '▼'}
             </span>
           )}
-          {player.injury_status && (
-            <span className="text-[10px] px-1.5 py-0.5 bg-status-lost/10 text-status-lost border border-status-lost/30 rounded font-semibold">
-              {player.injury_status}
-            </span>
-          )}
+          {player.injury_status && (() => {
+            const _inj = player.injury_status!.toUpperCase()
+            const isDtd = _inj === 'DTD' || _inj === 'D2D'
+            return (
+              <span className={cn(
+                'text-[10px] px-1.5 py-0.5 rounded font-semibold border',
+                isDtd
+                  ? 'bg-status-bubble/10 text-status-bubble border-status-bubble/30'
+                  : 'bg-status-lost/10 text-status-lost border-status-lost/30',
+              )}>
+                {player.injury_status}
+              </span>
+            )
+          })()}
         </div>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
           <span className="text-xs text-text-secondary">{player.team}</span>
@@ -408,6 +417,9 @@ function AddPanel({ rec }: { rec: WaiverRecommendation }) {
           <span key={sig} className="text-accent-gold">[{sig}]</span>
         ))}
       </div>
+      {fa.availability_note && (
+        <p className="text-[10px] text-status-bubble font-semibold mt-1">⚠ {fa.availability_note}</p>
+      )}
     </div>
   )
 }
@@ -482,6 +494,15 @@ function RecommendationCard({ rec }: { rec: WaiverRecommendation }) {
 
   return (
     <div className="bg-bg-surface border border-border-subtle rounded-lg overflow-hidden">
+      {/* Constraint warning strip */}
+      {rec.constraint_warning && (
+        <div className="px-3 pt-3 pb-0">
+          <div className="flex items-center gap-1.5 text-[11px] text-status-bubble font-semibold">
+            <WarnIcon className="h-3.5 w-3.5 flex-shrink-0" />
+            {rec.constraint_warning}
+          </div>
+        </div>
+      )}
       {/* Two-panel row */}
       <div className="p-3 flex flex-col sm:flex-row gap-3">
         {rec.add_player && <AddPanel rec={rec} />}
