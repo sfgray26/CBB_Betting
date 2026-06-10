@@ -45,6 +45,7 @@ class LineupGap:
     severity: str  # "critical", "warning", "info", "optimization"
     message: str
     suggested_add: Optional[str] = None
+    action_url: Optional[str] = None
 
 
 @dataclass
@@ -339,6 +340,32 @@ class DashboardService:
                     _ph2_db.close()
             except Exception as _ph2_err:
                 logger.warning("_get_lineup_gaps Phase 2 (pitcher swap) failed: %s", _ph2_err)
+
+            # Phase 3: IL crisis detection.
+            # If 3+ rostered players have confirmed injury status but are NOT in IL slots,
+            # the "no gaps" verdict is a false positive. Override with ROSTER EMERGENCY.
+            _IL_CONFIRMED_STATUS = {"il", "il10", "il60", "15-day-il", "60-day-il", "out"}
+            _SAFE_IL_POSITIONS = {"IL", "IL10", "IL60", "NA", "DL"}
+            try:
+                crisis_players = [
+                    p for p in roster
+                    if p.get("selected_position") not in _SAFE_IL_POSITIONS
+                    and (p.get("injury_status") or "").strip().lower() in _IL_CONFIRMED_STATUS
+                ]
+                if len(crisis_players) >= 3:
+                    names = ", ".join(p["name"] for p in crisis_players[:3])
+                    gaps.append(LineupGap(
+                        position="ROSTER",
+                        severity="critical",
+                        message=(
+                            f"ROSTER EMERGENCY: {len(crisis_players)} injured players in active slots "
+                            f"({names}+) — move to IL slots now"
+                        ),
+                        suggested_add=None,
+                        action_url="/war-room/roster",
+                    ))
+            except Exception as _ph3_err:
+                logger.warning("_get_lineup_gaps Phase 3 (IL crisis) failed: %s", _ph3_err)
 
             return gaps, filled_count, len(required_positions)
 
