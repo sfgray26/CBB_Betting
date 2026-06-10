@@ -253,22 +253,39 @@ export function LineupGapsWidget() {
           <div className="space-y-4">
             {regularGaps.length > 0 && (
               <ul className="space-y-2">
-                {regularGaps.map((gap, i) => (
-                  <li key={i} className="flex items-start gap-2">
-                    <span
-                      className={`mt-0.5 h-2 w-2 rounded-full shrink-0 ${severityDotClass(gap.severity)}`}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-text-secondary text-sm font-medium">{gap.position}</p>
-                      <p className="text-text-tertiary text-xs">{gap.message}</p>
-                      {gap.suggested_add && (
-                        <p className="text-accent-gold text-xs mt-0.5">
-                          Add: {gap.suggested_add}
-                        </p>
-                      )}
-                    </div>
-                  </li>
-                ))}
+                {regularGaps.map((gap, i) =>
+                  gap.position === 'ROSTER' ? (
+                    <li key={i} className="flex items-start gap-2 p-2 bg-status-lost/5 border border-status-lost/20 rounded">
+                      <AlertCircle className="mt-0.5 h-4 w-4 text-status-lost shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-status-lost text-sm font-bold">{gap.message}</p>
+                        {gap.action_url && (
+                          <Link
+                            href={gap.action_url}
+                            className="inline-flex items-center gap-1 text-xs text-accent-gold mt-1 hover:underline"
+                          >
+                            Go to Roster <ArrowRight className="h-3 w-3" />
+                          </Link>
+                        )}
+                      </div>
+                    </li>
+                  ) : (
+                    <li key={i} className="flex items-start gap-2">
+                      <span
+                        className={`mt-0.5 h-2 w-2 rounded-full shrink-0 ${severityDotClass(gap.severity)}`}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-text-secondary text-sm font-medium">{gap.position}</p>
+                        <p className="text-text-tertiary text-xs">{gap.message}</p>
+                        {gap.suggested_add && (
+                          <p className="text-accent-gold text-xs mt-0.5">
+                            Add: {gap.suggested_add}
+                          </p>
+                        )}
+                      </div>
+                    </li>
+                  )
+                )}
               </ul>
             )}
 
