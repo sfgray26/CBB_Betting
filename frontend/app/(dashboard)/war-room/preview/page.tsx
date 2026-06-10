@@ -181,8 +181,8 @@ export default function WeeklyPreviewPage() {
           <Eye className="h-6 w-6 text-accent-gold" />
           <span className="text-lg font-bold tracking-widest uppercase text-accent-gold">Weekly Preview</span>
           {data.week_number > 0 && (
-            <span className="text-xs font-semibold tracking-widest text-text-muted uppercase">
-              Week {data.week_number}
+            <span className="text-[10px] px-2 py-1 bg-accent-primary/10 text-accent-primary border border-accent-primary/30 rounded font-bold tracking-wider uppercase">
+              Week {data.week_number} · PREVIEW
             </span>
           )}
         </div>
