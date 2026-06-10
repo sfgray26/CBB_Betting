@@ -207,6 +207,7 @@ export interface LineupGap {
   severity: "critical" | "warning" | "optimization" | "info"
   message: string
   suggested_add?: string | null
+  action_url?: string | null
 }
 
 export interface StreakPlayer {
@@ -536,6 +537,7 @@ export interface WaiverAvailablePlayer {
   projected_saves?: number
   stats?: Record<string, number | null>
   small_sample?: boolean
+  availability_note?: string | null
 }
 
 export interface WaiverRosterPlayer {
@@ -600,6 +602,7 @@ export interface WaiverRecommendation {
   alternative_drops: DropPlayerOut[]
   positional_impact: string[]
   roster_context: WaiverRosterContext
+  constraint_warning?: string | null
 }
 
 export interface WaiverRecommendationsResponse {
