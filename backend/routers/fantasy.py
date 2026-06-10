@@ -12,6 +12,7 @@ from sqlalchemy import text, func, or_, and_, inspect, cast, Text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import aliased
 from typing import List, Optional, Literal, Dict
+from pydantic import BaseModel
 import logging
 import os
 import difflib as _difflib
@@ -2014,6 +2015,21 @@ async def get_fantasy_waiver_recommendations(
                 return "COLD"
             return None
 
+        # Daily availability blacklist: admin-seeded player_keys confirmed OUT or on day-off.
+        _blacklist_keys: set = set()
+        try:
+            from backend.models import DailyAvailabilityOverride as _DAO
+            from zoneinfo import ZoneInfo as _ZI
+            _bl_today = datetime.now(_ZI("America/New_York")).date()
+            _blacklist_keys = {
+                r.player_key
+                for r in db.query(_DAO.player_key)
+                    .filter(_DAO.game_date == _bl_today, _DAO.status.in_(["OUT", "DAY_OFF"]))
+                    .all()
+            }
+        except Exception:
+            pass  # non-fatal: empty blacklist on any error
+
         def _to_waiver_player(p: dict) -> WaiverPlayerOut:
             positions = p.get("positions") or []
             name = (p.get("name") or "").strip()
@@ -2120,6 +2136,17 @@ async def get_fantasy_waiver_recommendations(
                 _injury_status = getattr(_overlay, "status", None) or _injury_status
                 _injury_timeline = getattr(_overlay, "return_timeline", None)
 
+            _pkey = p.get("player_key") or ""
+            if _pkey and _pkey in _blacklist_keys:
+                _avail_note: Optional[str] = "NOT AVAILABLE TODAY — day off confirmed"
+                need_score = 0.0
+            elif _injury_status and any(kw in (_injury_status or "").upper() for kw in ("IL", "DL", "60-DAY", "15-DAY", "10-DAY")):
+                _avail_note = "On IL — check IL slot availability"
+            elif _injury_status and "DTD" in (_injury_status or "").upper():
+                _avail_note = "DTD — confirm before adding"
+            else:
+                _avail_note = None
+
             # Statcast enrichment for waiver player (uses fixed statcast_loader)
             _sc_dict: dict | None = None
             _sc_sigs: list[str] = []
@@ -2184,6 +2211,14 @@ async def get_fantasy_waiver_recommendations(
             _start1_opp = _starts[0] if len(_starts) > 0 else None
             _start2_opp = _starts[1] if len(_starts) > 1 else None
 
+            # Closer role classification from season saves (stat 57 / NSV)
+            _closer_role: Optional[str] = None
+            if _fa_is_pitcher and "RP" in positions:
+                if _raw_nsv >= 2.0:
+                    _closer_role = "CLOSER"
+                else:
+                    _closer_role = "NO_SAVE_ROLE"
+
             return WaiverPlayerOut(
                 player_id=p.get("player_key") or "",
                 name=name,
@@ -2212,6 +2247,8 @@ async def get_fantasy_waiver_recommendations(
                 small_sample=_small_sample,
                 momentum_signal=_momentum_signal_by_bdl_id.get(_bdl_id) if _bdl_id else None,
                 park_factor=round(_get_park_factor(p.get("team") or "", "run"), 3),
+                closer_role=_closer_role,
+                availability_note=_avail_note,
             )
 
         # Bulk quality_score lookup for pitcher FA candidates (enrichment only).
@@ -2459,12 +2496,16 @@ async def get_fantasy_waiver_recommendations(
                         continue
                     # Keep weakest z_score per position (most droppable)
                     if _canon not in _roster_context or _rp_z < _roster_context[_canon]["z_score"]:
+                        _rp_cat_scores = {}
+                        if _rp_proj:
+                            _rp_cat_scores = {k: round(float(v), 3) for k, v in (_rp_proj.get("cat_scores") or {}).items() if isinstance(v, (int, float))}
                         _roster_context[_canon] = {
                             "player_id": _rp_key,
                             "name": _rp_name,
                             "z_score": _rp_z,
                             "team": _rp_team,
                             "positions": _rp_positions,
+                            "cat_scores": _rp_cat_scores,
                         }
             except Exception:
                 continue

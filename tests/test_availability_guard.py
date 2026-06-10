@@ -71,3 +71,15 @@ def test_roster_move_recommendation_constraint_warning_defaults_none():
         confidence=0.7,
     )
     assert rec.constraint_warning is None
+
+
+def test_to_waiver_player_blacklist_preload_present():
+    """get_fantasy_waiver_recommendations must pre-load _blacklist_keys before _to_waiver_player."""
+    import pathlib
+    src = (pathlib.Path(__file__).parent.parent / "backend" / "routers" / "fantasy.py").read_text()
+    assert "_blacklist_keys" in src, (
+        "get_fantasy_waiver_recommendations must define _blacklist_keys before _to_waiver_player"
+    )
+    assert "NOT AVAILABLE TODAY" in src, (
+        "_to_waiver_player must emit 'NOT AVAILABLE TODAY' for blacklisted players"
+    )
