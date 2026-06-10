@@ -432,6 +432,8 @@ class WaiverPlayerOut(BaseModel):
     two_start_this_week: bool = False       # True when pitcher has ≥2 probable starts this scoring week (UI badge alias)
     momentum_signal: Optional[str] = None  # SURGING / HOT / STABLE / COLD / COLLAPSING
     park_factor: float = 1.0      # Ballpark run factor; 1.0=neutral, >1.1=hitter-friendly, <0.92=pitcher-friendly
+    closer_role: Optional[str] = None  # "CLOSER" | "NO_SAVE_ROLE" | None (non-pitcher / unknown)
+    availability_note: Optional[str] = None  # "NOT AVAILABLE TODAY" | "DTD — confirm" | "On IL" | None
 
     @field_validator("need_score", "z_score", "owned_pct", "projected_saves", mode="before")
     @classmethod
@@ -510,6 +512,7 @@ class RosterMoveRecommendation(BaseModel):
     alternative_drops: List[DropPlayerOut] = []
     positional_impact: List[str] = []
     roster_context: Dict[str, Any] = {}     # {active_player_count, add_weekly_starts, drop_weekly_starts}
+    constraint_warning: Optional[str] = None  # "IL slots full — ..." | "FAAB exhausted" | None
 
     @field_validator("need_score", mode="before")
     @classmethod
