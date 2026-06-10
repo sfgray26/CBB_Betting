@@ -83,3 +83,15 @@ def test_to_waiver_player_blacklist_preload_present():
     assert "NOT AVAILABLE TODAY" in src, (
         "_to_waiver_player must emit 'NOT AVAILABLE TODAY' for blacklisted players"
     )
+
+
+def test_admin_availability_override_routes_exist():
+    """POST and DELETE /api/admin/availability-override must exist in admin router source."""
+    import pathlib
+    src = (pathlib.Path(__file__).parent.parent / "backend" / "routers" / "admin.py").read_text()
+    assert "/api/admin/availability-override" in src, (
+        "admin.py must define POST /api/admin/availability-override"
+    )
+    assert "DailyAvailabilityOverride" in src, (
+        "admin.py must import and use DailyAvailabilityOverride"
+    )
