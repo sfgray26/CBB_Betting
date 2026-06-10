@@ -1,5 +1,5 @@
 # Design Spec: Availability Guard + Roster Constraint Awareness
-**Date:** 2026-06-10  
+**Date:** 2026-06-10 (updated post-review)  
 **Branch:** `stable/cbb-prod`  
 **Priority:** P0 (Tasks 1–3), P1 (Task 4)
 
@@ -16,8 +16,47 @@ Four independent augmentations to the War Room suite that prevent unsafe roster 
 ### Problem
 Waiver wire recommendation cards (`AddPanel`) show no indication when the suggested add player is injured or on IL. The `PlayerRow` component shows an `injury_status` badge but uses red for all statuses including DTD — which over-alarms.
 
-### Data Source
-BDL GOAT MLB injury feed. Already ingested into `IngestedInjury` table and loaded via `load_injury_overlays_for_yahoo_players()` in both `get_waiver()` and `get_waiver_recommendations()`. BDL provides `status: "DTD" | "10-Day-IL" | "15-Day-IL" | "60-Day-IL"` — not game-day lineup confirmations. Badge framing is therefore conservative.
+**Caballero pattern (root cause):** BDL injury feed only reflects formal IL/DTD designations (updated ~daily). Manager day-off announcements (e.g., "Caballero won't start June 10") are not captured. Players with no formal injury status but a confirmed day off still ranked as top streamers.
+
+### Data Sources
+
+**Tier 1 — BDL injury feed (automatic, daily):** Provides `status: "DTD" | "10-Day-IL" | "15-Day-IL" | "60-Day-IL"`. Already ingested via `load_injury_overlays_for_yahoo_players()`.
+
+**Tier 2 — Daily availability blacklist (admin-seeded):** New `DailyAvailabilityOverride` DB table allows manual entry for confirmed day-offs and lineup scratches. Populated via admin API for high-value cases. Future: MLB lineup API feed can write to this table automatically.
+
+### New Model — `DailyAvailabilityOverride`
+
+**`backend/models.py`**
+```python
+class DailyAvailabilityOverride(Base):
+    __tablename__ = "daily_availability_overrides"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    player_key = Column(String(64), nullable=False)   # Yahoo player_key
+    player_name = Column(String(128), nullable=False)
+    game_date = Column(Date, nullable=False)           # ET local date
+    status = Column(String(32), nullable=False)        # "OUT" | "DAY_OFF"
+    note = Column(String(256), nullable=True)
+    source = Column(String(32), default="admin")       # "admin" | "mlb_lineup_api" (future)
+    created_at = Column(DateTime, nullable=False, default=func.now())
+    __table_args__ = (UniqueConstraint("player_key", "game_date", name="uq_override_player_date"),)
+```
+
+**Alembic migration required** — new table, no column changes to existing tables.
+
+### Admin Endpoints
+
+**`backend/routers/fantasy.py`** (or a new `admin.py` router)
+
+```
+POST /api/admin/availability-override
+Body: {player_key, player_name, status, note}
+→ Upserts for today's ET date
+
+DELETE /api/admin/availability-override/{player_key}
+→ Removes today's entry for that player
+```
+
+Both endpoints require `verify_api_key` (same auth as all fantasy endpoints).
 
 ### Backend Changes
 
@@ -26,10 +65,38 @@ BDL GOAT MLB injury feed. Already ingested into `IngestedInjury` table and loade
 
 **`backend/routers/fantasy.py`**
 
-In both `get_waiver()` and `get_waiver_recommendations()`, after applying the injury overlay to each player, compute `availability_note`:
-- overlay status contains "IL" (case-insensitive) → `"On IL — check IL slot availability"`
-- overlay status is "DTD" → `"DTD — confirm before adding"`
-- no overlay → `None`
+Pre-load today's blacklist once per request (before `_score_fa` closure):
+```python
+from zoneinfo import ZoneInfo as _ZI
+_today_et = datetime.now(_ZI("America/New_York")).date()
+_blacklist_keys: set[str] = set()
+try:
+    from backend.models import DailyAvailabilityOverride as _DAO
+    _blacklist_keys = {
+        r.player_key
+        for r in db.query(_DAO.player_key)
+            .filter(_DAO.game_date == _today_et, _DAO.status.in_(["OUT", "DAY_OFF"]))
+            .all()
+    }
+except Exception:
+    pass  # non-fatal
+```
+
+In `_score_fa()` (recommendations path) and the equivalent assembly in `get_waiver()`, after computing `_injury_status` from the overlay, derive `availability_note`:
+```python
+_pkey = p.get("player_key") or ""
+if _pkey and _pkey in _blacklist_keys:
+    _avail_note = "NOT AVAILABLE TODAY — day off confirmed"
+    need_score = 0.0   # suppress from top-N ranking
+elif _injury_status and any(kw in _injury_status.upper() for kw in ("IL", "DL", "60-DAY", "15-DAY", "10-DAY")):
+    _avail_note = "On IL — check IL slot availability"
+elif _injury_status and "DTD" in _injury_status.upper():
+    _avail_note = "DTD — confirm before adding"
+else:
+    _avail_note = None
+```
+
+Pass `availability_note=_avail_note` to `WaiverPlayerOut`.
 
 ### Frontend Changes
 
@@ -52,6 +119,10 @@ In both `get_waiver()` and `get_waiver_recommendations()`, after applying the in
 
 ### Problem
 The recommendations engine generates "ADD_DROP" moves for players who are on the waiver wire but currently on IL, even when the user has zero IL slots available. The current code adds a text hint to `rationale` (line 3213) but the recommendation tier remains unchanged and no structured constraint is surfaced.
+
+### IL Slot Counting Clarification
+`il_capacity_info(roster)` returns `{"used": used, "total": total, "available": max(0, total - used)}`.  
+`available` = currently **empty** IL slots (total minus occupied). The spec's logic is correct — no adjustment needed.
 
 ### Backend Changes
 
@@ -134,8 +205,10 @@ if len(crisis_players) >= 3:
 
 **`frontend/app/(dashboard)/dashboard/_components/dashboard-client.tsx` → `LineupGapsWidget`**
 
+`AlertCircle` is already imported at line 14 — no new import needed.
+
 1. Add `action_url?: string` to the `LineupGap` TypeScript type in `frontend/lib/types.ts`.
-2. In `LineupGapsWidget`, for gaps where `gap.position === "ROSTER"` and `gap.severity === "critical"`, render an emergency-styled block instead of the dot + text list item:
+2. In `LineupGapsWidget`, for gaps where `gap.position === "ROSTER"`, render an emergency-styled block:
    ```tsx
    {gap.position === 'ROSTER' ? (
      <li key={i} className="flex items-start gap-2 p-2 bg-status-lost/5 border border-status-lost/20 rounded">
@@ -179,14 +252,16 @@ After the "War Room" span in the page header row, insert:
 
 **`frontend/app/(dashboard)/war-room/preview/page.tsx`**
 
-After the "Weekly Preview" span in the header, insert:
+After the "Weekly Preview" span in the header, insert (using `accent-primary` — the project's blue accent, #2563eb — to distinguish projected from live):
 ```tsx
 {data.week_number > 0 && (
-  <span className="text-[10px] px-2 py-1 bg-text-muted/10 text-text-muted border border-text-muted/30 rounded font-bold tracking-wider uppercase">
+  <span className="text-[10px] px-2 py-1 bg-accent-primary/10 text-accent-primary border border-accent-primary/30 rounded font-bold tracking-wider uppercase">
     Week {data.week_number} · PREVIEW
   </span>
 )}
 ```
+
+Note: `accent-blue` does not exist in the project's Tailwind config. `accent-primary` (#2563eb) is the correct blue token.
 
 ---
 
@@ -194,17 +269,19 @@ After the "Weekly Preview" span in the header, insert:
 
 | File | Change |
 |------|--------|
+| `backend/models.py` | Add `DailyAvailabilityOverride` model |
+| `backend/alembic/versions/` | New migration — create `daily_availability_overrides` table |
 | `backend/schemas.py` | Add `availability_note` to `WaiverPlayerOut`; add `constraint_warning` to `RosterMoveRecommendation` |
-| `backend/routers/fantasy.py` | Compute `availability_note` in waiver assembly; compute `constraint_warning` in recommendations loop |
+| `backend/routers/fantasy.py` | Admin endpoints; blacklist pre-load; `availability_note` in waiver assembly; `constraint_warning` in recommendations loop |
 | `backend/services/dashboard_service.py` | Add `action_url` to `LineupGap`; add IL crisis post-processor in `_get_lineup_gaps()` |
-| `frontend/lib/types.ts` | Add `availability_note`, `constraint_warning`, `action_url` optional fields |
-| `frontend/app/(dashboard)/war-room/waiver/page.tsx` | Color-split injury badge; add `availability_note` to `AddPanel`; add `constraint_warning` strip to `RecommendationCard` |
-| `frontend/app/(dashboard)/dashboard/_components/dashboard-client.tsx` | Emergency-styled roster gap rendering with action link |
+| `frontend/lib/types.ts` | Add `availability_note`, `constraint_warning`, `action_url` optional fields; add `DailyAvailabilityOverride` type |
+| `frontend/app/(dashboard)/war-room/waiver/page.tsx` | Color-split injury badge; `availability_note` in `AddPanel`; `constraint_warning` strip in `RecommendationCard` |
+| `frontend/app/(dashboard)/dashboard/_components/dashboard-client.tsx` | Emergency-styled roster gap with action link |
 | `frontend/app/(dashboard)/war-room/page.tsx` | Week + IN-FLIGHT badge in header |
-| `frontend/app/(dashboard)/war-room/preview/page.tsx` | Week + PREVIEW badge in header |
+| `frontend/app/(dashboard)/war-room/preview/page.tsx` | Week + PREVIEW badge (accent-primary blue) in header |
 
 ## Tests Required
 
-- `tests/test_waiver_recommendations.py` — add case: FA player with IL status + IL full → `constraint_warning` set
-- `tests/test_dashboard_service.py` — add case: roster with 3 IL-status active players → crisis gap appended
-- Syntax checks: `backend/schemas.py`, `backend/routers/fantasy.py`, `backend/services/dashboard_service.py`
+- `tests/test_waiver_recommendations.py` — case: FA with IL status + IL full → `constraint_warning` set; case: blacklisted player_key → `availability_note = "NOT AVAILABLE TODAY"` and `need_score = 0.0`
+- `tests/test_dashboard_service.py` — case: roster with 3+ IL-status active players → crisis gap appended with `action_url`
+- Syntax checks: `backend/models.py`, `backend/schemas.py`, `backend/routers/fantasy.py`, `backend/services/dashboard_service.py`
