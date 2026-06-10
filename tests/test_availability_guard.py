@@ -95,3 +95,27 @@ def test_admin_availability_override_routes_exist():
     assert "DailyAvailabilityOverride" in src, (
         "admin.py must import and use DailyAvailabilityOverride"
     )
+
+
+def test_constraint_warning_il_full_present_in_source():
+    """Recommendations loop must check IL capacity and set constraint_warning."""
+    import pathlib
+    src = (pathlib.Path(__file__).parent.parent / "backend" / "routers" / "fantasy.py").read_text()
+    assert "_il_slots_available" in src, (
+        "fantasy.py must compute _il_slots_available before the recommendations loop"
+    )
+    assert "IL slots full" in src, (
+        "fantasy.py must set constraint_warning 'IL slots full' when no IL capacity"
+    )
+    assert "constraint_warning=_constraint" in src, (
+        "RosterMoveRecommendation must receive constraint_warning=_constraint"
+    )
+
+
+def test_constraint_warning_faab_present_in_source():
+    """Recommendations loop must check FAAB balance."""
+    import pathlib
+    src = (pathlib.Path(__file__).parent.parent / "backend" / "routers" / "fantasy.py").read_text()
+    assert "FAAB budget exhausted" in src, (
+        "fantasy.py must set constraint_warning for zero FAAB"
+    )

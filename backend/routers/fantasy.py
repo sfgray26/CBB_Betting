@@ -3149,6 +3149,17 @@ async def get_waiver_recommendations(
                     warnings.append(f"Drops last {pos}-eligible player")
             return warnings
 
+        # Constraint pre-computations for the recommendation loop.
+        from backend.services.waiver_edge_detector import il_capacity_info as _il_cap
+        _il_slots_available = _il_cap(my_roster)["available"] if my_roster else 0
+
+        # FAAB balance for budget constraint check (non-fatal).
+        _rec_faab_balance: Optional[float] = None
+        try:
+            _rec_faab_balance = client.get_faab_balance()
+        except Exception:
+            pass
+
         for fa in scored_fas[:15]:
             if len(recommendations) >= 5:
                 break
@@ -3366,6 +3377,14 @@ async def get_waiver_recommendations(
                 _alt_out.positional_impact = _compute_positional_impact(_alt, fa.position, my_roster_scored)
                 alternative_drops.append(_alt_out)
 
+            _constraint: Optional[str] = None
+            _fa_injury_upper = (fa.injury_status or "").upper()
+            _IL_KW = ("IL", "DL", "60-DAY", "15-DAY", "10-DAY")
+            if any(kw in _fa_injury_upper for kw in _IL_KW) and _il_slots_available == 0:
+                _constraint = "IL slots full — move an injured player to IL first"
+            elif _rec_faab_balance is not None and _rec_faab_balance < 1:
+                _constraint = "FAAB budget exhausted — free agents only"
+
             roster_context = {
                 "active_player_count": sum(1 for p in my_roster_scored if p.get("status") not in _IL_STATUSES),
                 "add_weekly_starts": fa.starts_this_week,
@@ -3396,6 +3415,7 @@ async def get_waiver_recommendations(
                 alternative_drops=alternative_drops,
                 positional_impact=positional_impact,
                 roster_context=roster_context,
+                constraint_warning=_constraint,
             ))
 
     except YahooAuthError as exc:
