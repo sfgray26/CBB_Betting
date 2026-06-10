@@ -2834,6 +2834,21 @@ async def get_waiver_recommendations(
         except Exception:
             pass
 
+        # Daily availability blacklist for recommendations endpoint (mirrors main waiver path).
+        _rec_blacklist_keys: set = set()
+        try:
+            from backend.models import DailyAvailabilityOverride as _DAO_rec
+            from zoneinfo import ZoneInfo as _ZI_rec
+            _rec_bl_today = datetime.now(_ZI_rec("America/New_York")).date()
+            _rec_blacklist_keys = {
+                r.player_key
+                for r in db.query(_DAO_rec.player_key)
+                    .filter(_DAO_rec.game_date == _rec_bl_today, _DAO_rec.status.in_(["OUT", "DAY_OFF"]))
+                    .all()
+            }
+        except Exception:
+            pass  # non-fatal
+
         def _score_fa(p: dict) -> WaiverPlayerOut:
             positions = p.get("positions") or []
             name = (p.get("name") or "").strip()
@@ -2866,6 +2881,17 @@ async def get_waiver_recommendations(
                 _injury_note = _injury_note or getattr(_overlay, "note", None)
                 _injury_status = getattr(_overlay, "status", None) or _injury_status
                 _injury_timeline = getattr(_overlay, "return_timeline", None)
+
+            _pkey_rec = p.get("player_key") or ""
+            if _pkey_rec and _pkey_rec in _rec_blacklist_keys:
+                _avail_note_rec: Optional[str] = "NOT AVAILABLE TODAY — day off confirmed"
+                need_score = 0.0
+            elif _injury_status and any(kw in (_injury_status or "").upper() for kw in ("IL", "DL", "60-DAY", "15-DAY", "10-DAY")):
+                _avail_note_rec = "On IL — check IL slot availability"
+            elif _injury_status and "DTD" in (_injury_status or "").upper():
+                _avail_note_rec = "DTD — confirm before adding"
+            else:
+                _avail_note_rec = None
 
             # Translate raw Yahoo stat_ids → display names using _sid_map.
             # stats dict is populated by get_free_agents() via get_players_stats_batch().
@@ -2960,6 +2986,7 @@ async def get_waiver_recommendations(
                 injury_return_timeline=_injury_timeline,
                 momentum_signal=_rec_momentum_signal_by_bdl_id.get(_rec_bdl_id) if _rec_bdl_id else None,
                 park_factor=round(_get_park_factor_rec(p.get("team") or "", "run"), 3),
+                availability_note=_avail_note_rec,
             )
 
         scored_fas = sorted(
