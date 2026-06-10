@@ -12,7 +12,6 @@ from sqlalchemy import text, func, or_, and_, inspect, cast, Text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import aliased
 from typing import List, Optional, Literal, Dict
-from pydantic import BaseModel
 import logging
 import os
 import difflib as _difflib
