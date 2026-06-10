@@ -207,7 +207,7 @@ async def lifespan(app: FastAPI):
     # recreating unrelated tables.
     try:
         from sqlalchemy import inspect as _sa_inspect
-        from backend.models import engine as _db_engine, RosterAcquisition
+        from backend.models import engine as _db_engine, RosterAcquisition, DailyAvailabilityOverride
         _inspector = _sa_inspect(_db_engine)
         if "roster_acquisitions" not in _inspector.get_table_names():
             RosterAcquisition.__table__.create(_db_engine)
@@ -216,6 +216,17 @@ async def lifespan(app: FastAPI):
             logger.debug("Lifespan: roster_acquisitions table already exists")
     except Exception as _tbl_exc:
         logger.warning("Lifespan: roster_acquisitions table check failed: %s", _tbl_exc)
+
+    # Ensure daily_availability_overrides table exists (P0 availability guard).
+    # Same surgical pattern as roster_acquisitions above.
+    try:
+        if "daily_availability_overrides" not in _inspector.get_table_names():
+            DailyAvailabilityOverride.__table__.create(_db_engine)
+            logger.info("Lifespan: created daily_availability_overrides table")
+        else:
+            logger.debug("Lifespan: daily_availability_overrides table already exists")
+    except Exception as _dao_exc:
+        logger.warning("Lifespan: daily_availability_overrides table check failed: %s", _dao_exc)
 
     # Start scheduler
     nightly_hour = int(os.getenv("NIGHTLY_CRON_HOUR", "3"))
