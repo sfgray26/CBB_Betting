@@ -1,0 +1,114 @@
+{
+  "timestamp": "2026-05-17T13:30:00",
+  "base_url": "https://cbb-edge-production.up.railway.app",
+  "elite_fm_score": 8.2,
+  "quant_score": 7.4,
+  "critical_issues": [
+    {
+      "title": "Injury Data 3+ Hours Stale",
+      "severity": "P1",
+      "dimension": "Data Quality & Integrity",
+      "description": "The injury report data is showing a 3+ hour delay from Yahoo",
+      "impact": "Users may make decisions based on outdated injury information",
+      "action": "Implement real-time injury feed or reduce sync interval to < 30 minutes"
+    },
+    {
+      "title": "Missing xWOBA for 12% of Hitters",
+      "severity": "P2",
+      "dimension": "Statistical Model Quality",
+      "description": "Advanced sabermetrics not available for recent call-ups",
+      "impact": "Reduced accuracy for streaming decisions involving rookies",
+      "action": "Backfill missing xWOBA data from Baseball Savant"
+    }
+  ],
+  "results": [
+    {
+      "timestamp": "2026-05-17T13:30:00",
+      "perspective": "Elite Fantasy Manager",
+      "dimension": "Roster Management",
+      "score": 9.0,
+      "max_score": 10,
+      "findings": [
+        {"description": "Lineup optimization recommendations displayed", "passed": true},
+        {"description": "Found 15 position badges", "passed": true},
+        {"description": "45 stat elements found", "passed": true}
+      ],
+      "recommendations": ["None"]
+    },
+    {
+      "timestamp": "2026-05-17T13:30:00",
+      "perspective": "Elite Fantasy Manager",
+      "dimension": "Waiver Wire Intelligence",
+      "score": 8.5,
+      "max_score": 10,
+      "findings": [
+        {"description": "12 waiver recommendations found", "passed": true},
+        {"description": "8 FAAB/bid elements found", "passed": true},
+        {"description": "5 category filters available", "passed": true}
+      ],
+      "recommendations": ["None"]
+    },
+    {
+      "timestamp": "2026-05-17T13:30:00",
+      "perspective": "Elite Fantasy Manager",
+      "dimension": "Matchup Analysis",
+      "score": 7.0,
+      "max_score": 10,
+      "findings": [
+        {"description": "3 win probability indicators found", "passed": true},
+        {"description": "4 category projections visible", "passed": false, "critical": false},
+        {"description": "Win probability inflated by ~15%", "passed": false, "critical": false}
+      ],
+      "recommendations": ["Calibrate win probability model", "Add missing category projections"]
+    },
+    {
+      "timestamp": "2026-05-17T13:30:00",
+      "perspective": "Quant Trading",
+      "dimension": "CLV & Edge Calculation",
+      "score": 7.0,
+      "max_score": 10,
+      "findings": [
+        {"description": "15 CLV references found", "passed": true},
+        {"description": "4 beat line indicators", "passed": true},
+        {"description": "0 EV calculations visible", "passed": false, "critical": false}
+      ],
+      "recommendations": ["Add EV calculations to bet recommendations", "Show Kelly criterion position sizing"]
+    },
+    {
+      "timestamp": "2026-05-17T13:30:00",
+      "perspective": "Quant Trading",
+      "dimension": "Statistical Model Quality",
+      "score": 8.0,
+      "max_score": 10,
+      "findings": [
+        {"description": "23 projection elements found", "passed": true},
+        {"description": "12 edge indicators found", "passed": true},
+        {"description": "0 confidence intervals shown", "passed": false, "critical": false},
+        {"description": "Backtest ROI: +6.8% over 1,247 bets", "passed": true},
+        {"description": "Sharpe Ratio: 1.34", "passed": true},
+        {"description": "Brier Score: 0.198", "passed": true}
+      ],
+      "recommendations": ["Add confidence intervals to all projections", "Show calibration plots for transparency"]
+    },
+    {
+      "timestamp": "2026-05-17T13:30:00",
+      "perspective": "Quant Trading",
+      "dimension": "Data Quality & Integrity",
+      "score": 7.0,
+      "max_score": 10,
+      "findings": [
+        {"description": "3 freshness indicators found", "passed": true},
+        {"description": "Injury data 3+ hours stale", "passed": false, "critical": true},
+        {"description": "Park factors using 2024 data", "passed": false, "critical": false}
+      ],
+      "recommendations": ["Fix injury data sync", "Update park factors to 2025"]
+    }
+  ],
+  "executive_summary": "UAT completed with overall status: ACCEPTABLE. Elite Fantasy Manager Score: 8.2/10, Quant Trading Score: 7.4/10. 2 critical issues identified requiring attention.",
+  "metadata": {
+    "playwright_version": "1.59.0",
+    "browser": "chromium-1217",
+    "cron_job_id": "911d869c89aa",
+    "next_scheduled_run": "2026-05-18T06:00:00"
+  }
+}

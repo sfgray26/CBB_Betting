@@ -27,6 +27,27 @@ _IL_PENALTY = 0.75
 _DTD_PENALTY = 0.25
 _LONG_IL_PENALTY = 1.25
 
+# Minimum IL stints by type (days from retroactive date until eligible to return).
+_IL_DURATIONS: dict[str, int] = {
+    "60": 60,
+    "15": 15,
+    "10": 10,
+}
+
+
+def _il_duration_days(status: str) -> Optional[int]:
+    """Return the minimum IL duration in days for the given status string, or None."""
+    normalized = status.upper().replace(" ", "").replace("-", "")
+    if "IL60" in normalized or "60DAYIL" in normalized:
+        return 60
+    if "IL15" in normalized or "15DAYIL" in normalized:
+        return 15
+    if "IL10" in normalized or "10DAYIL" in normalized:
+        return 10
+    if "IL" in normalized:
+        return 10  # Generic IL — use minimum
+    return None
+
 
 @dataclass(frozen=True)
 class InjuryOverlay:
@@ -68,13 +89,57 @@ def build_injury_overlay(
     note: Optional[str],
     return_date: Optional[datetime],
     ingested_at: datetime,
+    injury_date: Optional[datetime] = None,
     now_et: Optional[datetime] = None,
     freshness_minutes: int = _DEFAULT_FRESHNESS_MINUTES,
 ) -> InjuryOverlay:
-    """Build a lightweight overlay with a human-readable return/freshness string."""
+    """Build a lightweight overlay with a human-readable return/freshness string.
+
+    ETA is computed from ``injury_date`` (retroactive start) plus the IL-type
+    minimum duration when the status contains a recognised IL designator.  When
+    the BDL-supplied ``return_date`` implies a duration more than 1.2× the IL
+    minimum, the estimate is flagged as uncertain and shown as
+    "ETA: TBD (eligible [earliest_date])" to avoid displaying a fabricated date.
+
+    When no IL type can be inferred AND no ``return_date`` is available for an
+    IL player, the timeline shows "ETA: Unknown" rather than a fabricated date.
+    """
     now_et = _coerce_et(now_et) or datetime.now(_ET)
     ingested_et = _coerce_et(ingested_at) or now_et
-    return_et = _coerce_et(return_date)
+
+    # Compute IL-type-aware ETA -------------------------------------------
+    il_days = _il_duration_days(status)
+    return_et: Optional[datetime] = None
+
+    if il_days is not None:
+        # Use injury_date (retroactive IL start) as the anchor; fall back to
+        # ingested_at only when injury_date is missing.
+        ref_date = _coerce_et(injury_date) or ingested_et
+        computed_eta = ref_date + timedelta(days=il_days)  # earliest eligible date
+
+        tbd_eligibility = False  # True → show "TBD (eligible ...)" not a hard date
+        if return_date is None:
+            # BDL provided no return_date — compute from IL type minimum.
+            # Show as a specific date: the eligibility date is reliable.
+            return_et = computed_eta
+        else:
+            bdl_et = _coerce_et(return_date)
+            assert bdl_et is not None
+            implied_days = (bdl_et - ref_date).days
+            if implied_days > il_days * 1.2:
+                # BDL return_date extends more than 1.2× the IL minimum beyond the
+                # injury start — uncertain estimate (e.g. BDL applied the wrong
+                # IL-type formula, or the doctor has given no confirmed timetable).
+                # Show the eligibility date with a TBD qualifier instead of a
+                # potentially fabricated specific date.
+                return_et = computed_eta
+                tbd_eligibility = True
+            else:
+                return_et = bdl_et
+    else:
+        # Non-IL or unrecognised status: trust BDL's return_date if present.
+        return_et = _coerce_et(return_date)
+        tbd_eligibility = False
 
     age = now_et - ingested_et
     is_stale = age > timedelta(minutes=freshness_minutes)
@@ -83,8 +148,15 @@ def build_injury_overlay(
         freshness_label = f"stale · {freshness_label}"
 
     timeline_parts: list[str] = []
+    status_upper = status.upper().replace(" ", "").replace("-", "")
     if return_et is not None:
-        timeline_parts.append(f"ETA {_format_calendar_date(return_et)}")
+        if tbd_eligibility:
+            timeline_parts.append(f"ETA: TBD (eligible {_format_calendar_date(return_et)})")
+        else:
+            timeline_parts.append(f"ETA {_format_calendar_date(return_et)}")
+    elif "IL" in status_upper:
+        # IL player but no date available — avoid fabricating a date.
+        timeline_parts.append("ETA: Unknown")
     timeline_parts.append(freshness_label)
 
     return InjuryOverlay(
@@ -123,6 +195,7 @@ def load_injury_overlays(
             status=row.injury_status,
             note=row.short_comment or row.long_comment,
             return_date=row.return_date,
+            injury_date=row.injury_date,
             ingested_at=row.ingested_at,
             now_et=now_et,
             freshness_minutes=freshness_minutes,

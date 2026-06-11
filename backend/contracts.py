@@ -10,7 +10,7 @@ Rules:
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, Field, field_validator
 from zoneinfo import ZoneInfo
@@ -441,6 +441,100 @@ class RosterMoveResponse(BaseModel):
         frozen = True
 
 
+# BulkRosterMove schemas
+class BulkRosterMove(BaseModel):
+    """A single move within a bulk operation."""
+    player_key: str
+    target_position: str
+
+
+class BulkRosterMoveRequest(BaseModel):
+    """Request to apply multiple roster moves atomically."""
+    moves: List[BulkRosterMove]
+
+
+class BulkRosterMoveResponse(BaseModel):
+    """Response from bulk roster move operation."""
+    applied_count: int
+    failed_count: int
+    errors: List[str] = Field(default_factory=list)
+
+    class Config:
+        frozen = True
+
+
+# MatchupPreview schemas — field names must match frontend MatchupPreviewResponse in types.ts
+class MatchupPreviewCategoryProjection(BaseModel):
+    """Per-category projection row for the weekly preview table."""
+    category: str            # lowercase v2 code, e.g. "hr_b", "era"
+    win_prob: float          # probability my team wins this category (0–1)
+    my_proj: Optional[float] = None   # projected stat value (None when simulation-only)
+    opp_proj: Optional[float] = None  # opponent projected stat value
+
+    class Config:
+        frozen = True
+
+
+class WeakCategory(BaseModel):
+    """Category where we're projected to lose — drives streaming recommendations."""
+    category: str            # lowercase v2 code
+    label: str               # human-readable e.g. "ERA"
+    win_prob: float
+    my_proj: Optional[float] = None
+    opp_proj: Optional[float] = None
+    reason: str
+
+    class Config:
+        frozen = True
+
+
+class ScheduleAdvantage(BaseModel):
+    """Games scheduled for each team during the preview week."""
+    my_games: int
+    opponent_games: int
+
+    class Config:
+        frozen = True
+
+
+class MatchupPreviewResponse(BaseModel):
+    """Full next-week matchup preview — shape must match frontend MatchupPreviewResponse."""
+    week_number: int
+    opponent_name: str
+    opponent_logo: Optional[str] = None
+    overall_win_prob: Optional[float] = None
+    category_projections: List[MatchupPreviewCategoryProjection]
+    weak_categories: List[WeakCategory]
+    schedule_advantage: ScheduleAdvantage
+    message: Optional[str] = None
+
+    class Config:
+        frozen = True
+
+
+# DecisionAccuracy schemas
+class DecisionAccuracyTrendPoint(BaseModel):
+    """Accuracy for one day in the trend window."""
+    date: str         # YYYY-MM-DD
+    accuracy_pct: float  # correct_predictions / total_resolved (0–1), -1 when no data
+
+    class Config:
+        frozen = True
+
+
+class DecisionAccuracyResponse(BaseModel):
+    """14-day override accuracy summary for GET /api/fantasy/decisions/accuracy."""
+    date: str               # latest date in the window
+    total_overrides: int    # total override decisions (better + worse)
+    better_count: int       # times user override beat the system
+    worse_count: int        # times system was right and user overrode
+    override_accuracy_pct: float  # better / (better + worse), 0.0 when no overrides
+    daily_trend: List[DecisionAccuracyTrendPoint]  # last 14 days, oldest first
+
+    class Config:
+        frozen = True
+
+
 # P0-10: RosterOptimizeRequest + RosterOptimizeResponse
 class PlayerSlotAssignment(BaseModel):
     """Slot assignment for a single player."""
@@ -462,6 +556,25 @@ class RosterOptimizeRequest(BaseModel):
         frozen = True
 
 
+class LineupMove(BaseModel):
+    """A single player slot change in the proposed lineup diff."""
+    player_key: str
+    player_name: str
+    from_slot: str
+    to_slot: str
+    lineup_score: float
+
+    class Config:
+        frozen = True
+
+
+class ProposedLineupDiff(BaseModel):
+    """Diff showing what changes from current to proposed lineup."""
+    bench_to_start: List[LineupMove] = []
+    start_to_bench: List[LineupMove] = []
+    net_score_impact: float = 0.0
+
+
 class RosterOptimizeResponse(BaseModel):
     """Response from roster optimization."""
     success: bool
@@ -472,7 +585,51 @@ class RosterOptimizeResponse(BaseModel):
     unrostered: List[str]  # player_keys that couldn't fit
     total_lineup_score: float
     freshness: FreshnessMetadata
+    proposed_diff: Optional["ProposedLineupDiff"] = None
+    schedule_available: bool = True  # False when no MLB games found for target_date
 
     class Config:
         frozen = True
 
+
+
+# ---------------------------------------------------------------------------
+# Trade Analyzer schemas
+# ---------------------------------------------------------------------------
+
+class TradePlayerInput(BaseModel):
+    """A single player in a trade request identified by Yahoo player_key."""
+    player_key: str
+    player_name: Optional[str] = None  # Optional; used to help projection lookup
+
+
+class TradeAnalyzeRequest(BaseModel):
+    """Request body for POST /api/fantasy/trade/analyze."""
+    give: List[TradePlayerInput]     # Players you are giving away
+    receive: List[TradePlayerInput]  # Players you are receiving
+    league_id: Optional[str] = None  # Reserved; defaults to env YAHOO_LEAGUE_ID
+
+
+class TradeCategoryDelta(BaseModel):
+    """Projected impact on a single H2H scoring category from this trade."""
+    category: str    # lowercase board key, e.g. "hr", "era", "avg"
+    give_z: float    # Sum of z-scores for that category across give-side players
+    receive_z: float # Sum of z-scores for that category across receive-side players
+    delta: float     # receive_z - give_z  (positive = receiving side helps more)
+    direction: str   # "gain" | "loss" | "neutral"
+
+    class Config:
+        frozen = True
+
+
+class TradeAnalysis(BaseModel):
+    """Full trade analysis result returned by analyze_trade()."""
+    give_players: List[Dict[str, Any]]       # Compact projection summaries for give side
+    receive_players: List[Dict[str, Any]]    # Compact projection summaries for receive side
+    category_deltas: List[TradeCategoryDelta]
+    total_z_delta: float   # Weighted sum of all per-category deltas
+    recommendation: str    # 'strong_accept'|'accept'|'neutral'|'reject'|'strong_reject'
+    summary: str           # Human-readable explanation
+
+    class Config:
+        frozen = True

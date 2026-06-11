@@ -539,3 +539,83 @@ def test_display_delta_whip():
     )
 
     assert "H+BB" in result.display_delta
+
+
+# ===========================================================================
+# Lower-is-better deficit sign correctness (regression for dashboard_service bug)
+# ===========================================================================
+
+def _compute_deficit(my_f: float, opp_f: float, canon: str):
+    """Replicate the fixed dashboard_service deficit logic inline."""
+    from backend.stat_contract import LOWER_IS_BETTER
+    is_lib = canon in LOWER_IS_BETTER
+    if is_lib:
+        deficit = my_f - opp_f
+        winning = my_f < opp_f
+    else:
+        deficit = opp_f - my_f
+        winning = my_f > opp_f
+    return deficit, winning, is_lib
+
+
+def test_deficit_k_b_losing():
+    """K_B: user 16, opp 14. More K = losing. winning=False, deficit>0."""
+    deficit, winning, is_lib = _compute_deficit(16.0, 14.0, "K_B")
+    assert is_lib, "K_B must be in LOWER_IS_BETTER"
+    assert winning is False
+    assert deficit > 0
+
+
+def test_deficit_k_b_winning():
+    """K_B: user 14, opp 16. Fewer K = winning. winning=True, deficit<0."""
+    deficit, winning, _ = _compute_deficit(14.0, 16.0, "K_B")
+    assert winning is True
+    assert deficit < 0
+
+
+def test_deficit_l_winning():
+    """L: user 0 losses, opp 2. 0 < 2 = winning. winning=True, deficit<0."""
+    deficit, winning, is_lib = _compute_deficit(0.0, 2.0, "L")
+    assert is_lib, "L must be in LOWER_IS_BETTER"
+    assert winning is True
+    assert deficit < 0
+
+
+def test_deficit_l_losing():
+    """L: user 2 losses, opp 0. More L = losing. winning=False, deficit>0."""
+    deficit, winning, _ = _compute_deficit(2.0, 0.0, "L")
+    assert winning is False
+    assert deficit > 0
+
+
+def test_deficit_hr_p_losing():
+    """HR_P: user 3, opp 2. More HR allowed = losing. winning=False."""
+    deficit, winning, is_lib = _compute_deficit(3.0, 2.0, "HR_P")
+    assert is_lib, "HR_P must be in LOWER_IS_BETTER"
+    assert winning is False
+    assert deficit > 0
+
+
+def test_deficit_hr_p_winning():
+    """HR_P: user 2, opp 3. Fewer HR allowed = winning. winning=True."""
+    deficit, winning, _ = _compute_deficit(2.0, 3.0, "HR_P")
+    assert winning is True
+    assert deficit < 0
+
+
+def test_deficit_hr_b_not_lower_is_better():
+    """HR_B (batting HR): higher is better. User 5, opp 4 = winning.
+    deficit = opp - me = -1 (negative = I'm ahead)."""
+    deficit, winning, is_lib = _compute_deficit(5.0, 4.0, "HR_B")
+    assert not is_lib, "HR_B should NOT be in LOWER_IS_BETTER"
+    assert winning is True
+    assert deficit < 0  # negative deficit = winning for higher_is_better
+
+
+def test_deficit_ops_winning():
+    """OPS: higher is better. .636 > .631 = winning. No false tie.
+    deficit = opp - me = -0.005 (negative = I'm winning)."""
+    deficit, winning, is_lib = _compute_deficit(0.636, 0.631, "OPS")
+    assert not is_lib
+    assert winning is True
+    assert deficit < 0  # negative = I'm ahead; proves no false-tie rounding

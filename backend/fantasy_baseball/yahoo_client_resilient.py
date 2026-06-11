@@ -508,6 +508,36 @@ class YahooFantasyClient:
         teams_raw = self._league_section(data, 1).get("teams", {})
         return [self._parse_team(team_data) for team_data in self._iter_block(teams_raw, "team")]
 
+    def get_team_waiver_priorities(self) -> dict:
+        """Return {team_key: waiver_priority_int} for all teams in the league.
+
+        Yahoo Fantasy returns ``waiver_priority`` as a 1-based integer ranking
+        inside each team's metadata block.  Only valid for rolling-waiver leagues
+        (waiver_type == 0).  Returns an empty dict on any error so callers can
+        treat the result as optional.
+        """
+        try:
+            data = self._get(f"league/{self.league_key}/teams")
+            teams_raw = self._league_section(data, 1).get("teams", {})
+            priorities: dict = {}
+            for team_list in self._iter_block(teams_raw, "team"):
+                meta: dict = {}
+                first = team_list[0] if team_list and isinstance(team_list[0], list) else team_list
+                for item in first:
+                    if isinstance(item, dict):
+                        meta.update(item)
+                team_key = meta.get("team_key")
+                wp = meta.get("waiver_priority")
+                if team_key and wp is not None:
+                    try:
+                        priorities[team_key] = int(wp)
+                    except (ValueError, TypeError):
+                        pass
+            return priorities
+        except Exception as _e:
+            logger.debug("get_team_waiver_priorities: non-fatal: %s", _e)
+            return {}
+
     def get_league_rosters(self, league_key: str, include_team_key: bool = True) -> list[dict]:
         """Fetch all rosters for all teams in a league."""
         url = f"league/{league_key}/teams/roster"
@@ -1446,18 +1476,27 @@ class YahooFantasyClient:
                             if len(meta_list) > 0:
                                 first_meta = meta_list[0] if isinstance(meta_list[0], dict) else {}
                                 if isinstance(first_meta, dict) and "team_key" in first_meta:
-                                    if first_meta["team_key"] == my_team_key:
+                                    candidate_key = first_meta["team_key"]
+                                    # Flexible substring match: handles Yahoo key prefix
+                                    # variations when YAHOO_TEAM_KEY is not set in env
+                                    if (candidate_key == my_team_key or
+                                            (candidate_key and my_team_key and
+                                             (candidate_key in my_team_key or my_team_key in candidate_key))):
                                         my_matchup = matchup
                                         # Promote unwrapped structure so the stats extraction loop below can access it
                                         teams_wrapper[team_key_str] = team_contents
                                         if "teams" not in my_matchup:
                                             my_matchup["teams"] = teams_wrapper
                                         break
-                    elif isinstance(raw_team, dict) and raw_team.get("team_key") == my_team_key:
-                        my_matchup = matchup
-                        if "teams" not in my_matchup:
-                            my_matchup["teams"] = teams_wrapper
-                        break
+                    elif isinstance(raw_team, dict):
+                        candidate_key = raw_team.get("team_key", "")
+                        if (candidate_key == my_team_key or
+                                (candidate_key and my_team_key and
+                                 (candidate_key in my_team_key or my_team_key in candidate_key))):
+                            my_matchup = matchup
+                            if "teams" not in my_matchup:
+                                my_matchup["teams"] = teams_wrapper
+                            break
             if my_matchup:
                 break
 

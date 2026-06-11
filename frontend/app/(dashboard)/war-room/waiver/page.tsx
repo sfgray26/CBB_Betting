@@ -6,9 +6,12 @@ import { endpoints } from '@/lib/api'
 import type { WaiverAvailablePlayer, WaiverResponse, WaiverRosterPlayer, WaiverRecommendation, DropPlayerOut, CategoryDelta } from '@/lib/types'
 import {
   ListFilter, Loader2, AlertCircle, TrendingUp,
-  Flame, Snowflake, AlertTriangle, Users, Zap, ChevronDown, ChevronUp, AlertTriangle as WarnIcon,
+  AlertTriangle, Users, Zap, ChevronDown, ChevronUp, AlertTriangle as WarnIcon,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { ErrorBoundary } from '@/components/error-boundary'
+import { HotColdBadge } from '@/components/hot-cold-badge'
+import { Tooltip } from '@/components/shared/tooltip'
 
 const POSITION_FILTERS = ['All', 'SP', 'RP', 'OF', '1B', '2B', '3B', 'SS', 'C']
 
@@ -34,7 +37,31 @@ function waiverCatLabel(key: string): string | null {
   return key  // unknown key: show as-is rather than silently dropping
 }
 
-function NeedBar({ score }: { score: number }) {
+function formatContributionKey(key: string): string {
+  const labels: Record<string, string> = {
+    HR_B: 'HR', K_B: 'K', K_P: 'Ks', HR_P: 'HRA', K_9: 'K/9', NSB: 'NSB',
+    R: 'R', H: 'H', HR: 'HR', RBI: 'RBI', TB: 'TB', AVG: 'AVG', OPS: 'OPS',
+    W: 'W', L: 'L', ERA: 'ERA', WHIP: 'WHIP', QS: 'QS', SV: 'SV', NSV: 'SV',
+  }
+  return `${labels[key] ?? key} fit`
+}
+
+function NeedScoreTooltipContent({ score, contributions }: { score: number; contributions?: Record<string, number> }) {
+  const tier = score >= 20 ? 'Premium target' : score >= 15 ? 'Strong target' : 'Standard target'
+  const breakdown = contributions
+    ? Object.entries(contributions).map(([k, v]) => `${formatContributionKey(k)}: ${v >= 0 ? '+' : ''}${v.toFixed(1)}`).join(' | ')
+    : null
+
+  return (
+    <div className="space-y-1.5 max-w-[240px]">
+      <p className="font-semibold text-text-primary">{score.toFixed(2)} — {tier}</p>
+      {breakdown && <p className="text-text-secondary">{breakdown}</p>}
+      <p className="text-text-muted text-[10px]">Scores range 0-30. {'>'}20 = premium target</p>
+    </div>
+  )
+}
+
+function NeedBar({ score, contributions }: { score: number; contributions?: Record<string, number> }) {
   const pct = Math.min(100, Math.max(0, score * 10)) // scale: 0-10 → 0-100%
   const color = score >= 7.0 ? 'bg-status-safe' : score >= 4.0 ? 'bg-status-bubble' : 'bg-text-muted'
   return (
@@ -42,9 +69,11 @@ function NeedBar({ score }: { score: number }) {
       <div className="flex-1 h-1.5 bg-bg-inset rounded-full overflow-hidden">
         <div className={cn('h-full rounded-full transition-all duration-700 ease-out', color)} style={{ width: `${pct}%` }} />
       </div>
-      <span className="text-xs text-text-primary tabular-nums w-8 text-right">
-        {score.toFixed(2)}
-      </span>
+      <Tooltip content={<NeedScoreTooltipContent score={score} contributions={contributions} />}>
+        <span className="text-xs text-text-primary tabular-nums w-8 text-right cursor-help underline decoration-dotted">
+          {score.toFixed(2)}
+        </span>
+      </Tooltip>
     </div>
   )
 }
@@ -63,30 +92,13 @@ function OwnershipBadge({ pct }: { pct: number | null | undefined }) {
   )
 }
 
-function HotColdBadge({ hotCold, rankPercentile }: { hotCold?: string | null; rankPercentile?: number | null }) {
-  // Design System v2: gate badges to top 20% to prevent inflation
-  if (!hotCold || (rankPercentile ?? 0) < 80) return null
-  if (hotCold === 'HOT') {
-    return (
-      <span className="flex items-center gap-0.5 text-[10px] text-status-behind font-semibold">
-        <Flame className="h-3 w-3" /> HOT
-      </span>
-    )
-  }
-  return (
-    <span className="flex items-center gap-0.5 text-[10px] text-sky-400 font-semibold">
-      <Snowflake className="h-3 w-3" /> COLD
-    </span>
-  )
-}
-
 function positionBadgeClass(pos: string): string {
-  if (pos === 'SP') return 'bg-blue-900/30 text-blue-400'
-  if (pos === 'RP' || pos === 'P') return 'bg-purple-900/30 text-purple-400'
-  if (pos === 'OF' || pos === 'LF' || pos === 'CF' || pos === 'RF') return 'bg-emerald-900/30 text-emerald-400'
-  if (pos === 'C') return 'bg-amber-900/30 text-amber-400'
-  if (pos === '1B' || pos === '3B') return 'bg-orange-900/30 text-orange-400'
-  if (pos === '2B' || pos === 'SS' || pos === 'MI') return 'bg-sky-900/30 text-sky-400'
+  if (pos === 'SP') return 'bg-blue-50 text-blue-700'
+  if (pos === 'RP' || pos === 'P') return 'bg-purple-50 text-purple-700'
+  if (pos === 'OF' || pos === 'LF' || pos === 'CF' || pos === 'RF') return 'bg-emerald-50 text-emerald-700'
+  if (pos === 'C') return 'bg-amber-50 text-amber-700'
+  if (pos === '1B' || pos === '3B') return 'bg-orange-50 text-orange-700'
+  if (pos === '2B' || pos === 'SS' || pos === 'MI') return 'bg-sky-50 text-sky-700'
   return 'bg-bg-elevated text-text-secondary'
 }
 
@@ -158,18 +170,54 @@ function PlayerRow({ player, rosterPlayer }: {
   const needMatches = (player.category_need_match ?? []).map((k) => waiverCatLabel(k) ?? k).filter(Boolean)
   const z = player.z_score ?? null
 
+  const tierBadge = (() => {
+    const s = player.need_score
+    if (s == null) return null
+    if (s >= 20) return { label: 'PREMIUM', className: 'bg-accent-gold/10 text-accent-gold border border-accent-gold/30' }
+    if (s >= 15) return { label: 'STRONG', className: 'bg-text-muted/10 text-text-secondary border border-text-muted/30' }
+    return null
+  })()
+
   return (
     <div className="bg-bg-surface border border-border-subtle rounded-lg p-4 flex flex-col sm:flex-row sm:items-start gap-3 hover:bg-bg-elevated transition-colors duration-150">
       {/* Identity */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <p className="text-sm font-bold text-text-primary truncate">{player.name}</p>
-          <HotColdBadge hotCold={player.hot_cold} rankPercentile={player.rank_percentile} />
-          {player.injury_status && (
-            <span className="text-[10px] px-1.5 py-0.5 bg-status-lost/10 text-status-lost border border-status-lost/30 rounded font-semibold">
-              {player.injury_status}
+          {tierBadge && (
+            <span className={cn('text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wider', tierBadge.className)}>
+              {tierBadge.label}
             </span>
           )}
+          {(player.starts_this_week ?? 0) >= 2 && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-status-safe/10 text-status-safe border border-status-safe/30 rounded font-semibold uppercase tracking-wider">
+              2-Start
+            </span>
+          )}
+          <HotColdBadge hotCold={player.hot_cold} rankPercentile={player.rank_percentile} />
+          {player.momentum_signal && player.momentum_signal !== 'STABLE' && (
+            <span className={
+              ['SURGING','HOT'].includes(player.momentum_signal)
+                ? 'text-status-safe text-xs'
+                : 'text-status-behind text-xs'
+            }>
+              {['SURGING','HOT'].includes(player.momentum_signal) ? '▲' : '▼'}
+            </span>
+          )}
+          {player.injury_status && (() => {
+            const _inj = player.injury_status!.toUpperCase()
+            const isDtd = _inj === 'DTD' || _inj === 'D2D'
+            return (
+              <span className={cn(
+                'text-[10px] px-1.5 py-0.5 rounded font-semibold border',
+                isDtd
+                  ? 'bg-status-bubble/10 text-status-bubble border-status-bubble/30'
+                  : 'bg-status-lost/10 text-status-lost border-status-lost/30',
+              )}>
+                {player.injury_status}
+              </span>
+            )
+          })()}
         </div>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
           <span className="text-xs text-text-secondary">{player.team}</span>
@@ -180,6 +228,16 @@ function PlayerRow({ player, rosterPlayer }: {
             </span>
           ))}
         </div>
+        {player.league_drop && (
+          <p className={cn(
+            'text-[10px] mt-1 font-semibold',
+            player.league_drop.days_ago < 3
+              ? 'text-accent-gold'
+              : 'text-text-muted',
+          )}>
+            ⬇️ Dropped {player.league_drop.days_ago === 0 ? 'today' : `${player.league_drop.days_ago} day${player.league_drop.days_ago !== 1 ? 's' : ''} ago`} by {player.league_drop.team_name}
+          </p>
+        )}
         {player.two_start && (
           <p className="text-[10px] text-status-safe mt-1 font-semibold">
             2-START WEEK
@@ -207,15 +265,41 @@ function PlayerRow({ player, rosterPlayer }: {
             ))}
           </div>
         )}
+        {/* Park factor chip — extreme parks only */}
+        {player.park_factor != null && player.park_factor >= 1.10 && (
+          <div className="flex gap-1 mt-1 flex-wrap">
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-status-safe/15 text-status-safe border border-status-safe/30 rounded font-semibold">
+              PARK+
+            </span>
+          </div>
+        )}
+        {player.park_factor != null && player.park_factor <= 0.92 && (
+          <div className="flex gap-1 mt-1 flex-wrap">
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-blue-400/15 text-blue-400 border border-blue-400/30 rounded font-semibold">
+              PARK-
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Scores column */}
       <div className="w-full sm:w-40 flex-shrink-0 space-y-3">
         {/* Weekly match score */}
         <div>
-          <p className="text-[9px] text-text-muted uppercase tracking-wider mb-1">Match Score</p>
-          <NeedBar score={player.need_score} />
-          <p className="text-[9px] text-text-muted mt-0.5">fit for your gaps</p>
+          <div className="flex items-center justify-between mb-1">
+            <p className="text-[9px] text-text-muted uppercase tracking-wider">Match Score</p>
+            {player.small_sample && (
+              <span className="text-[10px] px-1.5 py-0.5 bg-status-bubble/10 text-status-bubble border border-status-bubble/30 rounded font-semibold">
+                ⚠️ Small Sample
+              </span>
+            )}
+          </div>
+          <NeedBar score={player.need_score} contributions={player.category_contributions} />
+          <p className="text-[9px] text-text-muted mt-0.5">
+            {needMatches.length > 0
+              ? `Fits: ${needMatches.slice(0, 3).join(', ')}`
+              : 'fit for your gaps'}
+          </p>
         </div>
         {/* Season value (z_score) with roster comparison */}
         {z != null && (
@@ -333,6 +417,9 @@ function AddPanel({ rec }: { rec: WaiverRecommendation }) {
           <span key={sig} className="text-accent-gold">[{sig}]</span>
         ))}
       </div>
+      {fa.availability_note && (
+        <p className="text-[10px] text-status-bubble font-semibold mt-1">⚠ {fa.availability_note}</p>
+      )}
     </div>
   )
 }
@@ -407,6 +494,15 @@ function RecommendationCard({ rec }: { rec: WaiverRecommendation }) {
 
   return (
     <div className="bg-bg-surface border border-border-subtle rounded-lg overflow-hidden">
+      {/* Constraint warning strip */}
+      {rec.constraint_warning && (
+        <div className="px-3 pt-3 pb-0">
+          <div className="flex items-center gap-1.5 text-[11px] text-status-bubble font-semibold">
+            <WarnIcon className="h-3.5 w-3.5 flex-shrink-0" />
+            {rec.constraint_warning}
+          </div>
+        </div>
+      )}
       {/* Two-panel row */}
       <div className="p-3 flex flex-col sm:flex-row gap-3">
         {rec.add_player && <AddPanel rec={rec} />}
@@ -496,8 +592,16 @@ function RecommendationCard({ rec }: { rec: WaiverRecommendation }) {
 function RecommendationsPanel() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ['waiver-recommendations'],
-    queryFn: () => endpoints.getWaiverRecommendations(),
+    queryFn: async () => {
+      try {
+        return await endpoints.getWaiverRecommendations()
+      } catch (e) {
+        console.error('Waiver recommendations fetch failed:', e)
+        throw e
+      }
+    },
     staleTime: 5 * 60_000,
+    retry: 1,
   })
 
   if (isLoading) {
@@ -529,14 +633,23 @@ function RecommendationsPanel() {
   )
 }
 
-export default function WaiverPage() {
+function WaiverPageInner() {
   const [sort, setSort] = useState<'need_score' | 'projected_points'>('need_score')
   const [posFilter, setPosFilter] = useState('All')
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['waiver', sort],
-    queryFn: () => endpoints.getWaiver(sort),
+    queryFn: async () => {
+      try {
+        return await endpoints.getWaiver(sort)
+      } catch (e) {
+        console.error('Waiver fetch failed:', e)
+        throw e
+      }
+    },
     staleTime: 3 * 60_000,
+    retry: 1,
+    retryDelay: 2000,
   })
 
   const filterPlayers = (players: WaiverAvailablePlayer[]) => {
@@ -596,6 +709,17 @@ export default function WaiverPage() {
           {data?.il_slots_available != null && data.il_slots_available > 0 && (
             <span className="text-status-safe">
               {data.il_slots_available} IL slot{data.il_slots_available > 1 ? 's' : ''} open
+            </span>
+          )}
+          {data?.data_as_of && (
+            <span>
+              Data as of{' '}
+              {new Date(data.data_as_of).toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                timeZone: 'America/New_York',
+                timeZoneName: 'short',
+              })}
             </span>
           )}
         </div>
@@ -701,5 +825,13 @@ export default function WaiverPage() {
         )}
       </div>
     </div>
+  )
+}
+
+export default function WaiverPage() {
+  return (
+    <ErrorBoundary>
+      <WaiverPageInner />
+    </ErrorBoundary>
   )
 }

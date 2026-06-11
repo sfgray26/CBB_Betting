@@ -6,11 +6,14 @@ Each produces a value needed by ConstraintBudget, CanonicalPlayerRow, or
 MatchupScoreboardRow contracts.
 """
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
 from backend.contracts import IPPaceFlag
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -88,7 +91,8 @@ def count_weekly_acquisitions(
                 )
                 if dest_team:
                     break
-                # Recurse one level into nested dicts (e.g. item["transaction_data"])
+                # Recurse one level into nested dicts AND lists.
+                # Yahoo MLB nests destination_team_key inside players.N.transaction_data (a list)
                 for _v in item.values():
                     if isinstance(_v, dict):
                         dest_team = (
@@ -97,13 +101,52 @@ def count_weekly_acquisitions(
                         )
                         if dest_team:
                             break
+                    elif isinstance(_v, list):
+                        for _sub in _v:
+                            if isinstance(_sub, dict):
+                                dest_team = (
+                                    _sub.get("destination_team_key")
+                                    or _sub.get("destination_team", {}).get("team_key")
+                                )
+                                if dest_team:
+                                    break
+                        if dest_team:
+                            break
                 if dest_team:
                     break
 
         if dest_team == my_team_key:
+            logger.info(
+                "count_weekly_acquisitions: MATCH ts=%s dest=%s", raw_ts, dest_team
+            )
             count += 1
+        elif dest_team:
+            logger.debug(
+                "count_weekly_acquisitions: skip ts=%s dest=%s (not my team)", raw_ts, dest_team
+            )
+        else:
+            logger.debug(
+                "count_weekly_acquisitions: no dest_team found ts=%s keys=%s",
+                raw_ts, list(txn.keys()),
+            )
 
+    logger.info(
+        "count_weekly_acquisitions: total=%d window=[%.0f, %.0f]",
+        count, week_start_ts, week_end_ts,
+    )
     return count
+
+
+def ip_baseball_to_float(ip: float) -> float:
+    """Convert baseball IP notation to true fractional innings.
+
+    Baseball records IP as X.Y where the decimal digit counts OUTS (0-2),
+    not tenths. 10.2 = 10 full innings + 2 outs = 10 + 2/3 = 10.667.
+    Whole-inning values (10.0) pass through unchanged.
+    """
+    whole = int(ip)
+    outs = round((ip - whole) * 10)  # 0, 1, or 2 outs
+    return whole + outs / 3.0
 
 
 def extract_ip_from_scoreboard(

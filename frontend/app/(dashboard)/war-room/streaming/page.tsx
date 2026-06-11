@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import { Loader2, AlertCircle, Zap, TrendingUp, TrendingDown } from 'lucide-react'
@@ -7,15 +8,21 @@ import type { WaiverAvailablePlayer, CategoryDeficit } from '@/lib/types'
 import { CATEGORY_LABEL, CATEGORY_COLOR } from '@/lib/types'
 
 export default function StreamingStationPage() {
+  const [hideOwned, setHideOwned] = useState(true)
+  const [minNeedScore, setMinNeedScore] = useState(0.0)
+  const [showTwoStartOnly, setShowTwoStartOnly] = useState(false)
+
   const waiver = useQuery({
     queryKey: ['waiver'],
     queryFn: () => endpoints.getWaiver(),
     staleTime: 5 * 60_000,
+    retry: 1,
+    retryDelay: 2000,
   })
 
   if (waiver.isLoading) {
     return (
-      <div className="min-h-screen bg-black p-6">
+      <div className="min-h-screen bg-bg-base p-6">
         <h1 className="text-xl font-bold tracking-widest uppercase text-accent-gold mb-6">
           STREAMING STATION
         </h1>
@@ -29,11 +36,11 @@ export default function StreamingStationPage() {
 
   if (waiver.isError) {
     return (
-      <div className="min-h-screen bg-black p-6">
+      <div className="min-h-screen bg-bg-base p-6">
         <h1 className="text-xl font-bold tracking-widest uppercase text-accent-gold mb-6">
           STREAMING STATION
         </h1>
-        <div className="flex items-center gap-2 text-rose-400">
+        <div className="flex items-center gap-2 text-status-lost">
           <AlertCircle className="h-4 w-4" />
           <span className="text-sm">{waiver.error?.message ?? 'Failed to load waiver data'}</span>
         </div>
@@ -43,7 +50,7 @@ export default function StreamingStationPage() {
 
   if (!waiver.data) {
     return (
-      <div className="min-h-screen bg-black p-6">
+      <div className="min-h-screen bg-bg-base p-6">
         <h1 className="text-xl font-bold tracking-widest uppercase text-accent-gold mb-6">
           STREAMING STATION
         </h1>
@@ -62,6 +69,45 @@ export default function StreamingStationPage() {
     (a, b) => Math.abs(b.deficit ?? 0) - Math.abs(a.deficit ?? 0)
   )
 
+  function passesFilters(p: WaiverAvailablePlayer): boolean {
+    if (hideOwned && (p.percent_owned == null && p.owned_pct == null)) return false
+    if (p.need_score != null && p.need_score <= minNeedScore) return false
+    if (showTwoStartOnly && !p.two_start) return false
+    return true
+  }
+
+  function deficitWeightedScore(
+    player: WaiverAvailablePlayer,
+    deficits: CategoryDeficit[]
+  ): number {
+    const contribs = player.category_contributions ?? {}
+    const losingDeficits = deficits.filter(d => !d.winning)
+    if (losingDeficits.length === 0) return player.need_score ?? 0
+
+    let score = 0
+    for (const d of losingDeficits) {
+      const contrib = contribs[d.category] ?? 0
+      // Weight by how far behind we are (larger deficit = more important)
+      const weight = Math.min(3.0, 1.0 + Math.abs(d.deficit ?? 0) * 0.3)
+      score += contrib * weight
+    }
+    // Blend 70% deficit-weighted + 30% season need_score to preserve overall quality
+    return score * 0.7 + (player.need_score ?? 0) * 0.3
+  }
+
+  const filteredTwoStarters = (two_start_pitchers ?? [])
+    .filter(passesFilters)
+    .sort((a, b) =>
+      deficitWeightedScore(b, category_deficits ?? []) -
+      deficitWeightedScore(a, category_deficits ?? [])
+    )
+  const filteredTopAvailable = (top_available ?? [])
+    .filter(passesFilters)
+    .sort((a, b) =>
+      deficitWeightedScore(b, category_deficits ?? []) -
+      deficitWeightedScore(a, category_deficits ?? [])
+    )
+
   return (
     <div className="min-h-screen bg-bg-base p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -73,6 +119,53 @@ export default function StreamingStationPage() {
             FAAB ${faab_balance.toFixed(0)} remaining
           </span>
         )}
+      </div>
+
+      {/* Filters */}
+      <div className="bg-bg-surface border border-border-subtle rounded-lg p-4 space-y-4">
+        <p className="text-[10px] font-semibold tracking-widest uppercase text-text-muted">
+          Filters
+        </p>
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          {/* Hide Owned Players */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={hideOwned}
+              onChange={(e) => setHideOwned(e.target.checked)}
+              className="h-4 w-4 rounded border-border-default text-accent-primary focus:ring-accent-primary"
+            />
+            <span className="text-xs text-text-secondary">Hide Owned Players</span>
+          </label>
+
+          {/* 2-Start Only */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showTwoStartOnly}
+              onChange={(e) => setShowTwoStartOnly(e.target.checked)}
+              className="h-4 w-4 rounded border-border-default text-accent-primary focus:ring-accent-primary"
+            />
+            <span className="text-xs text-text-secondary">2-Start SPs Only</span>
+          </label>
+
+          {/* Minimum Need Score */}
+          <div className="flex items-center gap-3 flex-1 max-w-xs">
+            <span className="text-xs text-text-secondary whitespace-nowrap">Min Need Score</span>
+            <input
+              type="range"
+              min="-5"
+              max="10"
+              step="0.1"
+              value={minNeedScore}
+              onChange={(e) => setMinNeedScore(parseFloat(e.target.value))}
+              className="flex-1 h-1.5 bg-bg-inset rounded-lg appearance-none cursor-pointer accent-accent-primary"
+            />
+            <span className="text-xs font-mono font-bold text-accent-gold w-10 text-right">
+              {minNeedScore.toFixed(1)}
+            </span>
+          </div>
+        </div>
       </div>
 
       {/* Category deficits — sorted by magnitude, severity-colored */}
@@ -132,14 +225,19 @@ export default function StreamingStationPage() {
       )}
 
       {/* Two-start pitchers */}
-      {two_start_pitchers?.length > 0 && (
+      {filteredTwoStarters.length > 0 && (
         <div>
           <p className="text-[10px] font-semibold tracking-widest uppercase text-text-muted mb-2 flex items-center gap-1.5">
             <Zap className="h-3 w-3 text-accent-gold" />
-            Two-Start Pitchers ({two_start_pitchers.length})
+            Two-Start Pitchers ({filteredTwoStarters.length})
+            {filteredTwoStarters.length !== (two_start_pitchers ?? []).length && (
+              <span className="text-text-tertiary font-normal normal-case tracking-normal">
+                · {(two_start_pitchers ?? []).length - filteredTwoStarters.length} hidden
+              </span>
+            )}
           </p>
           <div className="space-y-2">
-            {two_start_pitchers.map((p: WaiverAvailablePlayer) => (
+            {filteredTwoStarters.map((p: WaiverAvailablePlayer) => (
               <WaiverPlayerRow key={p.player_id} player={p} highlight behindCats={behindCats} />
             ))}
           </div>
@@ -147,21 +245,26 @@ export default function StreamingStationPage() {
       )}
 
       {/* Top available */}
-      {top_available?.length > 0 && (
+      {filteredTopAvailable.length > 0 && (
         <div>
           <p className="text-[10px] font-semibold tracking-widest uppercase text-text-muted mb-2">
-            Top Available ({top_available.length})
+            Top Available ({filteredTopAvailable.length})
+            {filteredTopAvailable.length !== (top_available ?? []).length && (
+              <span className="text-text-tertiary font-normal normal-case tracking-normal ml-1">
+                · {(top_available ?? []).length - filteredTopAvailable.length} hidden
+              </span>
+            )}
           </p>
           <div className="space-y-1">
-            {top_available.map((p: WaiverAvailablePlayer) => (
+            {filteredTopAvailable.map((p: WaiverAvailablePlayer) => (
               <WaiverPlayerRow key={p.player_id} player={p} behindCats={behindCats} />
             ))}
           </div>
         </div>
       )}
 
-      {top_available?.length === 0 && two_start_pitchers?.length === 0 && (
-        <p className="text-text-secondary text-sm">No waiver targets found for the current period.</p>
+      {filteredTopAvailable.length === 0 && filteredTwoStarters.length === 0 && (
+        <p className="text-text-secondary text-sm">No waiver targets match the current filters.</p>
       )}
     </div>
   )
@@ -198,6 +301,15 @@ function WaiverPlayerRow({
             <span className="text-text-muted text-xs">{player.percent_owned.toFixed(0)}%</span>
           ) : (
             <span className="text-text-muted text-xs">—</span>
+          )}
+          {player.momentum_signal && player.momentum_signal !== 'STABLE' && (
+            <span className={
+              ['SURGING','HOT'].includes(player.momentum_signal)
+                ? 'text-status-safe text-xs'
+                : 'text-status-behind text-xs'
+            }>
+              {['SURGING','HOT'].includes(player.momentum_signal) ? '▲' : '▼'}
+            </span>
           )}
           <div className="text-right">
             <span className="text-[8px] text-text-muted uppercase tracking-wider block">Need</span>
@@ -236,6 +348,21 @@ function WaiverPlayerRow({
               </span>
             )
           })}
+        </div>
+      )}
+      {/* Park factor chip — extreme parks only (always shown, independent of category matches) */}
+      {player.park_factor != null && player.park_factor >= 1.10 && (
+        <div className="flex flex-wrap gap-1 mt-1">
+          <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded font-semibold bg-status-safe/15 text-status-safe border border-status-safe/30">
+            PARK+
+          </span>
+        </div>
+      )}
+      {player.park_factor != null && player.park_factor <= 0.92 && (
+        <div className="flex flex-wrap gap-1 mt-1">
+          <span className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded font-semibold bg-blue-400/15 text-blue-400 border border-blue-400/30">
+            PARK-
+          </span>
         </div>
       )}
     </div>

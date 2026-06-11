@@ -10,6 +10,8 @@
 import Cookies from 'js-cookie'
 import type {
   BetLog,
+  BulkRosterMove,
+  BulkRosterMoveResponse,
   ClvBetEntry,
   CalibrationBucket,
   Alert,
@@ -26,7 +28,9 @@ import type {
   WaiverTarget,
   DecisionsResponse,
   DecisionPipelineStatus,
+  DecisionAccuracyResponse,
   MatchupResponse,
+  MatchupPreviewResponse,
   MatchupSimulateResponse,
   LineupResponse,
   WaiverResponse,
@@ -72,10 +76,16 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
       } else {
         detail = rawDetail ?? ''
       }
-    } catch {}
+    } catch {
+      detail = 'Invalid JSON in error response'
+    }
     throw new Error(`${res.status}${detail ? `: ${detail}` : `: ${path}`}`)
   }
-  return res.json() as Promise<T>
+  try {
+    return (await res.json()) as T
+  } catch {
+    throw new Error(`200 OK but invalid JSON at ${path}`)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -301,12 +311,19 @@ export const endpoints = {
   getDecisionsStatus: () =>
     apiFetch<DecisionPipelineStatus>('/api/fantasy/decisions/status'),
 
+  /** Get decision accuracy / override performance */
+  getDecisionAccuracy: () =>
+    apiFetch<DecisionAccuracyResponse>('/api/fantasy/decisions/accuracy'),
+
   // ═══════════════════════════════════════════════════════════════════════════
   // War Room — Fantasy Baseball Weekly Command Center
   // ═══════════════════════════════════════════════════════════════════════════
 
   getMatchup: () =>
     apiFetch<MatchupResponse>('/api/fantasy/matchup'),
+
+  getMatchupPreview: () =>
+    apiFetch<MatchupPreviewResponse>('/api/fantasy/matchup-preview'),
 
   simulateMatchup: () =>
     apiFetch<MatchupSimulateResponse>('/api/fantasy/matchup/simulate', { method: 'POST' }),
@@ -350,6 +367,12 @@ export const endpoints = {
     apiFetch<RosterMoveResponse>('/api/fantasy/roster/move', {
       method: 'POST',
       body: JSON.stringify({ player_key: playerId, target_position: toSlot }),
+    }),
+
+  bulkApplyMoves: (moves: BulkRosterMove[]) =>
+    apiFetch<BulkRosterMoveResponse>('/api/fantasy/roster/bulk-apply', {
+      method: 'POST',
+      body: JSON.stringify({ moves }),
     }),
 
   optimizeRoster: (targetDate?: string) =>

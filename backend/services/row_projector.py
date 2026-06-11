@@ -39,10 +39,8 @@ from backend.contracts import CanonicalPlayerRow
 from datetime import date
 
 
-# MLB Opening Day 2026 - season start reference point
-# ⚠️ VERIFY from authoritative source (MLB.com, official schedule)
-# Last verified: 2026-04-20 - confirm before deploying
-_MLB_OPENING_DAY = date(2026, 3, 27)
+# First Yahoo H2H matchup Monday — aligns with _MLB_FIRST_MATCHUP_MONDAY in fantasy.py
+_MLB_OPENING_DAY = date(2026, 3, 24)
 
 
 def _days_into_season(as_of_date: Optional[date] = None) -> int:

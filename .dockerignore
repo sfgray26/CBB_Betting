@@ -2,8 +2,13 @@
 .git/
 .gitignore
 
-# Frontend — built separately as its own Railway service
-frontend/
+# Frontend build artifacts — exclude from backend image but keep source
+frontend/node_modules/
+frontend/.next/
+frontend/.swc/
+frontend/out/
+frontend/.env.local
+frontend/tsconfig.tsbuildinfo
 
 # Tests & dev tooling
 tests/

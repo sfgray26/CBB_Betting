@@ -411,6 +411,9 @@ class WaiverPlayerOut(BaseModel):
     category_contributions: dict = {}
     owned_pct: float = 0.0
     starts_this_week: int = 0
+    two_start: bool = False
+    start1_opp: Optional[str] = None
+    start2_opp: Optional[str] = None
     statcast_signals: List[str] = []
     projected_saves: float = 0.0
     projected_points: Optional[float] = None  # None = no projection available (not zero)
@@ -423,6 +426,14 @@ class WaiverPlayerOut(BaseModel):
     statcast_stats: Optional[dict] = None   # PR-15: raw Statcast/FanGraphs metrics (xwOBA, barrel%, etc.)
     quality_score: Optional[float] = None   # Pitcher matchup quality [-2.0 to +2.0]. None when not a pitcher FA candidate.
     rank_percentile: Optional[float] = None  # 0-100 list rank; used to gate HOT/COLD badges.
+    league_drop: Optional[dict] = None      # Recent in-league drop: {"dropped_by": str, "days_ago": float, "team_key": str} or None
+    dropped_by_team: Optional[str] = None   # Team display name that dropped this player (shortcut from league_drop["dropped_by"])
+    small_sample: Optional[bool] = None     # True when PA (batters) or IP (pitchers) is below reliable-sample threshold
+    two_start_this_week: bool = False       # True when pitcher has ≥2 probable starts this scoring week (UI badge alias)
+    momentum_signal: Optional[str] = None  # SURGING / HOT / STABLE / COLD / COLLAPSING
+    park_factor: float = 1.0      # Ballpark run factor; 1.0=neutral, >1.1=hitter-friendly, <0.92=pitcher-friendly
+    closer_role: Optional[str] = None  # "CLOSER" | "NO_SAVE_ROLE" | None (non-pitcher / unknown)
+    availability_note: Optional[str] = None  # "NOT AVAILABLE TODAY" | "DTD — confirm" | "On IL" | None
 
     @field_validator("need_score", "z_score", "owned_pct", "projected_saves", mode="before")
     @classmethod
@@ -435,6 +446,7 @@ class WaiverPlayerOut(BaseModel):
 
 class DropPlayerOut(BaseModel):
     """Rich drop candidate for waiver ADD_DROP recommendations."""
+    player_id: str = ""                  # Yahoo player_key for frontend identification
     name: str
     position: str                        # positions[0], primary slot
     positions: List[str]
@@ -470,6 +482,8 @@ class WaiverWireResponse(BaseModel):
     il_slots_available: int = 0
     faab_balance: Optional[float] = None    # Remaining FAAB budget (None if not FAAB league)
     roster_context: dict = {}               # position → weakest roster player at that pos for comparison UI
+    il_watch: List[WaiverPlayerOut] = []    # IL players excluded from top_available — monitor for activation
+    data_as_of: Optional[datetime] = None  # Canonical single timestamp for UI clock
 
 
 class RosterMoveRecommendation(BaseModel):
@@ -498,6 +512,7 @@ class RosterMoveRecommendation(BaseModel):
     alternative_drops: List[DropPlayerOut] = []
     positional_impact: List[str] = []
     roster_context: Dict[str, Any] = {}     # {active_player_count, add_weekly_starts, drop_weekly_starts}
+    constraint_warning: Optional[str] = None  # "IL slots full — ..." | "FAAB exhausted" | None
 
     @field_validator("need_score", mode="before")
     @classmethod

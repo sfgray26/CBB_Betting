@@ -149,7 +149,7 @@ def test_mlbam_id_not_in_projection_table_returns_empty():
     assert result["team"] == "SEA"
     assert result["is_proxy"] is True
     assert result["cat_scores"] == {}  # Empty because no projection data
-    assert result["z_score"] == 0.0  # NO synthetic baselines
+    assert result["z_score"] == pytest.approx(-0.1)  # SP tiered fallback (no DB projection)
 
 
 def test_bdl_id_fallback_when_mlbam_id_null():

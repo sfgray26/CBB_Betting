@@ -217,8 +217,16 @@ class DecisionTracker:
             high_conf_accuracy=self._accuracy_of(high_conf),
             med_conf_accuracy=self._accuracy_of(med_conf),
             low_conf_accuracy=self._accuracy_of(low_conf),
-            override_better_count=0,  # TODO: Compare user vs system
-            override_worse_count=0,
+            override_better_count=sum(
+                # System was wrong (failure) → user who overrode was right
+                1 for d in resolved
+                if d.user_action is not None and d.outcome == "failure"
+            ),
+            override_worse_count=sum(
+                # System was right (success) → user who overrode was wrong
+                1 for d in resolved
+                if d.user_action is not None and d.outcome == "success"
+            ),
             start_success_rate=self._accuracy_of(start_recs),
             bench_success_rate=self._accuracy_of(bench_recs),
         )

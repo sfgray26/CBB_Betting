@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
-import type { DecisionWithExplanation, DecisionPipelineStatus } from '@/lib/types'
+import type { DecisionWithExplanation, DecisionPipelineStatus, DecisionAccuracyResponse } from '@/lib/types'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -17,6 +17,8 @@ import {
   AlertCircle,
   CheckCircle2,
   Info,
+  BrainCircuit,
+  Target,
 } from 'lucide-react'
 
 type DecisionTypeFilter = 'lineup' | 'waiver'
@@ -125,7 +127,7 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
   const confidencePct = Math.round(decision.confidence * 100)
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900 overflow-hidden">
+    <div className="rounded-lg border border-border-default bg-bg-surface overflow-hidden">
       {/* Main decision row */}
       <div className="p-4 space-y-3">
         {/* Header: player and type */}
@@ -151,7 +153,7 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
                 </span>
                 {decision.target_slot && (
                   <span className="text-xs text-zinc-500">
-                    Slot: <span className="text-zinc-300">{decision.target_slot}</span>
+                    Slot: <span className="text-text-secondary">{decision.target_slot}</span>
                   </span>
                 )}
               </div>
@@ -185,7 +187,7 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
                   ? 'text-emerald-400'
                   : confidencePct >= 60
                     ? 'text-amber-400'
-                    : 'text-zinc-300',
+                    : 'text-text-secondary',
               )}
             >
               {confidencePct}%
@@ -207,14 +209,14 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
 
         {/* Reasoning */}
         {decision.reasoning && (
-          <p className="text-sm text-zinc-300">{decision.reasoning}</p>
+          <p className="text-sm text-text-secondary">{decision.reasoning}</p>
         )}
 
         {/* Explanation toggle */}
         {explanation && (
           <button
             onClick={() => setShowExplanation((v) => !v)}
-            className="flex items-center gap-2 text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+            className="flex items-center gap-2 text-sm text-zinc-500 hover:text-text-secondary transition-colors"
           >
             {showExplanation ? (
               <ChevronUp className="h-4 w-4" />
@@ -228,7 +230,7 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
 
       {/* Explanation panel */}
       {explanation && showExplanation && (
-        <div className="border-t border-zinc-800 bg-zinc-800/30 p-4 space-y-3">
+        <div className="border-t border-border-default bg-zinc-800/30 p-4 space-y-3">
           <div className="text-sm text-zinc-200">{explanation.summary}</div>
 
           {explanation.factors.length > 0 && (
@@ -243,7 +245,7 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
                     className="bg-zinc-800/50 rounded-md p-3 border border-zinc-700/50"
                   >
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium text-zinc-300">
+                      <span className="text-sm font-medium text-text-secondary">
                         {factor.label || factor.name}
                       </span>
                       {factor.value && (
@@ -254,7 +256,7 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
                     </div>
                     {/* Narrative is the high-signal part - hide technical weights */}
                     {factor.narrative && (
-                      <p className="text-xs text-zinc-300 mt-2">{factor.narrative}</p>
+                      <p className="text-xs text-text-secondary mt-2">{factor.narrative}</p>
                     )}
                   </div>
                 ))}
@@ -266,7 +268,7 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
           {(explanation.confidence_narrative || explanation.risk_narrative) && (
             <div className="flex flex-wrap gap-3 text-xs">
               {explanation.confidence_narrative && (
-                <div className="flex items-center gap-1.5 text-zinc-300">
+                <div className="flex items-center gap-1.5 text-text-secondary">
                   <Shield className="h-3.5 w-3.5 text-emerald-400" />
                   <span>{explanation.confidence_narrative}</span>
                 </div>
@@ -280,6 +282,149 @@ function DecisionCard({ item }: { item: DecisionWithExplanation }) {
             </div>
           )}
         </div>
+      )}
+    </div>
+  )
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Sparkline — inline SVG for 14-day accuracy trend
+// ───────────────────────────────────────────────────────────────────────────
+
+function Sparkline({ data, width = 160, height = 40 }: { data: number[]; width?: number; height?: number }) {
+  if (data.length === 0) return <div className="w-[160px] h-[40px]" />
+  const pad = 4
+  const innerW = width - pad * 2
+  const innerH = height - pad * 2
+  const min = Math.min(...data, 0)
+  const max = Math.max(...data, 100)
+  const range = max - min || 1
+
+  const points = data.map((v, i) => {
+    const x = pad + (i / Math.max(data.length - 1, 1)) * innerW
+    const y = pad + innerH - ((v - min) / range) * innerH
+    return `${x},${y}`
+  })
+
+  const areaPath =
+    `${points[0].split(',')[0]},${height} ` +
+    points.join(' ') +
+    ` ${points[points.length - 1].split(',')[0]},${height}`
+
+  return (
+    <svg width={width} height={height} className="overflow-visible">
+      <defs>
+        <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="rgba(234,179,8,0.25)" />
+          <stop offset="100%" stopColor="rgba(234,179,8,0)" />
+        </linearGradient>
+      </defs>
+      <path d={`M ${areaPath} Z`} fill="url(#sparkFill)" />
+      <polyline
+        fill="none"
+        stroke="#eab308"
+        strokeWidth={1.5}
+        points={points.join(' ')}
+      />
+      {points.map((p, i) => {
+        const [x, y] = p.split(',').map(Number)
+        return <circle key={i} cx={x} cy={y} r={2} fill="#eab308" />
+      })}
+    </svg>
+  )
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Decision Accuracy Panel
+// ───────────────────────────────────────────────────────────────────────────
+
+function AccuracyPanel({ accuracy }: { accuracy: DecisionAccuracyResponse | undefined }) {
+  if (!accuracy) return null
+
+  const pct = Math.round(accuracy.override_accuracy_pct ?? 0)
+  const total = accuracy.total_overrides ?? accuracy.better_count + accuracy.worse_count
+  const hasOverrides = total > 0
+
+  // Build 14-day sparkline from daily_trend (pad to 14 if sparse)
+  const trend = accuracy.daily_trend ?? []
+  const sparkData = Array.from({ length: 14 }, (_, i) => {
+    const idx = trend.length - 14 + i
+    return idx >= 0 ? trend[idx].accuracy_pct : 0
+  })
+
+  // Conditional nudge
+  let nudge: string | null = null
+  let nudgeTone: 'good' | 'warn' | 'neutral' = 'neutral'
+  if (!hasOverrides) {
+    nudge = 'Start overriding picks to build your track record.'
+    nudgeTone = 'neutral'
+  } else if (pct >= 70) {
+    nudge = 'Your reads are sharp. Keep trusting your gut on close calls.'
+    nudgeTone = 'good'
+  } else if (pct >= 50) {
+    nudge = 'Split decisions. Consider the confidence bar before overriding.'
+    nudgeTone = 'neutral'
+  } else {
+    nudge = 'Overrides are underperforming. Let the model run on borderline calls.'
+    nudgeTone = 'warn'
+  }
+
+  return (
+    <div className="bg-bg-surface border border-border-subtle rounded-lg p-4 space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <BrainCircuit className="h-4 w-4 text-accent-gold" />
+          <p className="text-xs font-bold tracking-widest uppercase text-text-secondary">
+            Override Accuracy
+          </p>
+        </div>
+        {!hasOverrides && (
+          <span className="text-[10px] text-text-muted">No overrides yet</span>
+        )}
+      </div>
+
+      {hasOverrides && (
+        <div className="flex items-center gap-6 flex-wrap">
+          {/* Big stat */}
+          <div className="flex items-center gap-3">
+            <div className="text-3xl font-bold tabular-nums text-text-primary">
+              {pct}<span className="text-lg text-text-muted">%</span>
+            </div>
+            <div className="text-[10px] text-text-muted leading-tight">
+              <div className="flex items-center gap-1 text-status-safe">
+                <Target className="h-3 w-3" />
+                <span className="font-semibold">{accuracy.better_count} better</span>
+              </div>
+              <div className="flex items-center gap-1 text-status-lost mt-0.5">
+                <Target className="h-3 w-3" />
+                <span className="font-semibold">{accuracy.worse_count} worse</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Sparkline */}
+          {trend.length > 1 && (
+            <div className="flex items-center gap-2">
+              <Sparkline data={sparkData} />
+              <span className="text-[9px] text-text-muted uppercase tracking-wider">
+                14d trend
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {nudge && (
+        <p
+          className={cn(
+            'text-xs',
+            nudgeTone === 'good' && 'text-status-safe',
+            nudgeTone === 'warn' && 'text-status-lost',
+            nudgeTone === 'neutral' && 'text-text-secondary',
+          )}
+        >
+          {nudge}
+        </p>
       )}
     </div>
   )
@@ -354,6 +499,13 @@ export default function DecisionsPage() {
     refetchInterval: 5 * 60 * 1000, // Refresh every 5 minutes
   })
 
+  const { data: accuracyData } = useQuery({
+    queryKey: ['decisions-accuracy'],
+    queryFn: () => endpoints.getDecisionAccuracy(),
+    staleTime: 10 * 60 * 1000,
+    retry: 1,
+  })
+
   return (
     <div className="space-y-6 max-w-4xl">
       {/* Header */}
@@ -363,6 +515,9 @@ export default function DecisionsPage() {
           Trusted decision engine outputs for lineup and waiver optimization.
         </p>
       </div>
+
+      {/* Override accuracy panel */}
+      <AccuracyPanel accuracy={accuracyData} />
 
       {/* Status block - show when decisions are empty or status indicates issues */}
       {statusData && (data?.decisions.length === 0 || statusData.verdict !== 'healthy') && (
@@ -374,7 +529,7 @@ export default function DecisionsPage() {
         {/* Type filter */}
         <div className="flex items-center gap-2">
           <span className="text-xs text-zinc-500 uppercase tracking-wider">Type:</span>
-          <div className="flex bg-zinc-900 rounded-lg p-1 border border-zinc-800">
+          <div className="flex bg-bg-surface rounded-lg p-1 border border-border-default">
             {filterButtons.map((btn) => (
               <button
                 key={btn.value}
@@ -402,14 +557,14 @@ export default function DecisionsPage() {
             type="date"
             value={dateFilter}
             onChange={(e) => setDateFilter(e.target.value)}
-            className="bg-zinc-900 border border-zinc-800 rounded-md px-3 py-1.5 text-xs text-zinc-300 focus:outline-none focus:ring-1 focus:ring-amber-400/50"
+            className="bg-bg-surface border border-border-default rounded-md px-3 py-1.5 text-xs text-text-secondary focus:outline-none focus:ring-1 focus:ring-amber-400/50"
           />
           {dateFilter && (
             <Button
               variant="ghost"
               size="sm"
               onClick={() => setDateFilter('')}
-              className="text-xs text-zinc-500 hover:text-zinc-300 h-7 px-2"
+              className="text-xs text-zinc-500 hover:text-text-secondary h-7 px-2"
             >
               Clear
             </Button>
@@ -429,7 +584,7 @@ export default function DecisionsPage() {
 
       {typeFilter === 'lineup' && lineupCoverage && data && data.decisions.length > 0 && (
         <Card>
-          <div className="flex flex-col gap-2 py-3 text-sm text-zinc-300">
+          <div className="flex flex-col gap-2 py-3 text-sm text-text-secondary">
             <div className="flex items-center gap-2">
               <Info className="h-4 w-4 text-amber-400" />
               <span>

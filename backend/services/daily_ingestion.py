@@ -2100,10 +2100,12 @@ class DailyIngestionOrchestrator:
 
         Fetches the full active injury list and upserts into ingested_injuries.
         Injuries are tracked by (bdl_player_id, injury_status, injury_type) as the
-        natural key. When a player recovers, BDL stops returning their injury entry,
-        and a separate cleanup job handles deletion.
+        natural key. Active rows are refreshed (ingested_at = now) on every run.
 
-        This job runs hourly to keep the injury list fresh for lineup decisions.
+        After each successful upsert pass, resolved injuries are deleted: any row
+        whose ingested_at is more than 2 hours old was not returned by the current
+        BDL feed, meaning the player has recovered. The 2-hour buffer tolerates
+        clock skew and back-to-back runs. Cleanup failure is non-fatal.
         """
         t0 = time.monotonic()
 
@@ -2181,6 +2183,30 @@ class DailyIngestionOrchestrator:
                     rows_upserted += 1
 
                 db.commit()
+
+                # Cleanup resolved injuries: delete rows whose ingested_at was NOT
+                # refreshed by this run (i.e., no longer in the active BDL feed →
+                # player recovered). Buffer of 2h covers clock skew + back-to-back runs.
+                try:
+                    cleanup_cutoff = now - timedelta(hours=2)
+                    cleanup_result = db.execute(
+                        text("DELETE FROM ingested_injuries WHERE ingested_at < :cutoff"),
+                        {"cutoff": cleanup_cutoff},
+                    )
+                    stale_deleted = cleanup_result.rowcount
+                    db.commit()
+                    if stale_deleted:
+                        logger.info(
+                            "bdl_injuries: cleaned up %d resolved injury rows (ingested_at < %s)",
+                            stale_deleted, cleanup_cutoff,
+                        )
+                except Exception as cleanup_exc:
+                    db.rollback()
+                    logger.warning(
+                        "bdl_injuries: resolved injury cleanup failed (non-fatal): %s",
+                        cleanup_exc,
+                    )
+
             except Exception as exc:
                 db.rollback()
                 logger.error("bdl_injuries DB write failed: %s", exc, exc_info=True)
@@ -2206,6 +2232,7 @@ class DailyIngestionOrchestrator:
                 rows_upserted, elapsed,
             )
             self._record_job_run("bdl_injuries", "success", rows_upserted)
+            self._check_injury_staleness()
             return {
                 "status": "success",
                 "records": rows_upserted,
@@ -7905,6 +7932,57 @@ class DailyIngestionOrchestrator:
             )
         except Exception as exc:
             logger.warning("Discord alert failed: %s", exc)
+
+    def _check_injury_staleness(self) -> None:
+        """Warn if bdl_injuries or yahoo_adp_injury has not succeeded in > 7 days.
+
+        Queries DataIngestionLog for the most recent SUCCESS/SKIPPED run of each
+        injury feed job. If either is older than _STALENESS_DAYS, emits a WARNING
+        log and fires a Discord alert if DISCORD_ALERTS_ENABLED is set.
+        Non-fatal: all exceptions are swallowed.
+        """
+        _STALENESS_DAYS = 7
+        now = now_et()
+        db = SessionLocal()
+        try:
+            for job_name in ("bdl_injuries", "yahoo_adp_injury"):
+                latest = (
+                    db.query(DataIngestionLog)
+                    .filter(
+                        DataIngestionLog.job_type == job_name,
+                        DataIngestionLog.status.in_(["SUCCESS", "SKIPPED"]),
+                    )
+                    .order_by(DataIngestionLog.started_at.desc())
+                    .first()
+                )
+                if latest is None:
+                    logger.warning(
+                        "INJURY STALENESS: %s has no recorded successful runs", job_name
+                    )
+                    continue
+                last_run = latest.started_at
+                if last_run.tzinfo is None:
+                    last_run = last_run.replace(tzinfo=ZoneInfo("America/New_York"))
+                age_days = (now - last_run).days
+                if age_days > _STALENESS_DAYS:
+                    logger.warning(
+                        "INJURY STALENESS: %s last success was %dd ago (threshold=%dd)",
+                        job_name, age_days, _STALENESS_DAYS,
+                    )
+                    if os.getenv("DISCORD_ALERTS_ENABLED"):
+                        self._send_discord_alert({
+                            "title": f"\u26a0\ufe0f Injury feed stale: {job_name}",
+                            "description": (
+                                f"Last successful run was **{age_days}d ago**.\n"
+                                f"Threshold: {_STALENESS_DAYS}d. "
+                                f"Stale injury rows may persist in overlay display."
+                            ),
+                            "color": 16776960,  # Yellow
+                        })
+        except Exception as exc:
+            logger.warning("_check_injury_staleness failed (non-fatal): %s", exc)
+        finally:
+            db.close()
 
     def _build_position_map(self, as_of_date: date) -> dict[int, list[str]]:
         """

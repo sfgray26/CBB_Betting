@@ -240,7 +240,7 @@ function BetCard({ p }: { p: PredictionEntry }) {
       )}
 
       {/* Row 4: stats + place button */}
-      <div className="flex items-center justify-between gap-3 pt-1 border-t border-zinc-800">
+      <div className="flex items-center justify-between gap-3 pt-1 border-t border-border-default">
         <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs">
           <div>
             <span className="text-zinc-600">Edge: </span>
@@ -249,7 +249,7 @@ function BetCard({ p }: { p: PredictionEntry }) {
           {modelProjection && (
             <div>
               <span className="text-zinc-600">Model: </span>
-              <span className="text-zinc-300">{modelProjection}</span>
+              <span className="text-text-secondary">{modelProjection}</span>
             </div>
           )}
         </div>
@@ -350,7 +350,7 @@ function ConsiderCard({ p }: { p: PredictionEntry }) {
         </span>
         {modelProjection && (
           <span className="text-zinc-500">
-            Model: <span className="text-zinc-300">{modelProjection}</span>
+            Model: <span className="text-text-secondary">{modelProjection}</span>
           </span>
         )}
       </div>
@@ -364,7 +364,7 @@ function ConsiderCard({ p }: { p: PredictionEntry }) {
 
 function PassRow({ p }: { p: PredictionEntry }) {
   return (
-    <div className="flex items-center justify-between px-3 py-2.5 rounded border border-zinc-800 bg-zinc-900/50 text-sm min-h-[44px]">
+    <div className="flex items-center justify-between px-3 py-2.5 rounded border border-border-default bg-bg-surface/50 text-sm min-h-[44px]">
       <span className="text-zinc-500">
         {p.game.away_team} @ {p.game.home_team}
         {p.game.is_neutral && <span className="ml-1.5 text-xs">(N)</span>}
@@ -412,7 +412,7 @@ export default function TodayPage() {
         <button
           onClick={() => refetch()}
           disabled={isFetching}
-          className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors disabled:opacity-40"
+          className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-text-secondary transition-colors disabled:opacity-40"
         >
           <RefreshCw className={cn('h-3.5 w-3.5', isFetching && 'animate-spin')} />
           {dataUpdatedAt

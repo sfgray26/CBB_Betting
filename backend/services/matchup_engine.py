@@ -331,14 +331,14 @@ def _fetch_hitter_splits(
                 pa_vs_hand=0,
             )
 
-        pa_vs = int(split_row[0] or 0)
-        h_vs  = int(split_row[1] or 0)
-        bb_vs = int(split_row[2] or 0)
-        hr_vs = int(split_row[3] or 0)
-        ab_vs = int(split_row[4] or 0)
-        k_vs  = int(split_row[5] or 0)
-        d_vs  = int(split_row[6] or 0)
-        t_vs  = int(split_row[7] or 0)
+        pa_vs = float(split_row[0] or 0)
+        h_vs  = float(split_row[1] or 0)
+        bb_vs = float(split_row[2] or 0)
+        hr_vs = float(split_row[3] or 0)
+        ab_vs = float(split_row[4] or 0)
+        k_vs  = float(split_row[5] or 0)
+        d_vs  = float(split_row[6] or 0)
+        t_vs  = float(split_row[7] or 0)
 
         denom_vs = ab_vs + bb_vs
         woba_vs  = (h_vs + 0.7 * bb_vs + 1.4 * hr_vs) / denom_vs if denom_vs > 0 else None
@@ -346,11 +346,11 @@ def _fetch_hitter_splits(
         iso_vs   = (2 * d_vs + 3 * t_vs + 4 * hr_vs) / ab_vs if ab_vs > 0 else None
 
         woba_overall = None
-        if overall_row and int(overall_row[3] or 0) > 0:
-            tot_h  = int(overall_row[0] or 0)
-            tot_bb = int(overall_row[1] or 0)
-            tot_hr = int(overall_row[2] or 0)
-            tot_ab = int(overall_row[3] or 0)
+        if overall_row and float(overall_row[3] or 0) > 0:
+            tot_h  = float(overall_row[0] or 0)
+            tot_bb = float(overall_row[1] or 0)
+            tot_hr = float(overall_row[2] or 0)
+            tot_ab = float(overall_row[3] or 0)
             denom_tot = tot_ab + tot_bb
             if denom_tot > 0:
                 woba_overall = (tot_h + 0.7 * tot_bb + 1.4 * tot_hr) / denom_tot

@@ -52,23 +52,6 @@ from backend.services.alerts import check_performance_alerts, run_alert_check
 # TEST ENDPOINTS - REMOVE AFTER SYNC JOB TESTING
 from backend.test_sync_jobs import router as _test_router
 # END TEST ENDPOINTS
-# DB VERIFICATION ENDPOINTS - REMOVE AFTER DATABASE VERIFICATION
-from backend.admin_db_verify import router as _db_verify_router
-# END DB VERIFICATION ENDPOINTS
-# YAHOO API DEBUG ENDPOINTS - REMOVE AFTER DEBUGGING
-from backend.admin_yahoo_debug import router as _yahoo_debug_router
-# END YAHOO API DEBUG ENDPOINTS
-# YAHOO TOKEN REFRESH ENDPOINTS - REMOVE AFTER TOKEN IS SET
-from backend.admin_yahoo_token_refresh import router as _yahoo_token_router
-# END YAHOO TOKEN REFRESH ENDPOINTS
-
-# YAHOO PARSING TEST ENDPOINT - REMOVE AFTER YAHOO API DEBUGGING
-from backend.admin_test_yahoo_parsing import router as _yahoo_parsing_test_router
-# END YAHOO PARSING TEST ENDPOINT
-
-# YAHOO STRUCTURE DUMP ENDPOINT - REMOVE AFTER YAHOO API DEBUGGING
-from backend.admin_yahoo_structure_dump import router as _yahoo_structure_dump_router
-# END YAHOO STRUCTURE DUMP ENDPOINT
 
 # ERA DIAGNOSTIC ENDPOINT - REMOVE AFTER TASK 10 COMPLETE
 from backend.admin_endpoints_era import router as _era_diagnostic_router
@@ -218,6 +201,32 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
     # Startup
     logger.info("🚀 Starting CBB Edge Analyzer")
+
+    # Ensure roster_acquisitions table exists (model was added after initial deploy).
+    # create_all() is not wired to lifespan, so we check surgically to avoid
+    # recreating unrelated tables.
+    try:
+        from sqlalchemy import inspect as _sa_inspect
+        from backend.models import engine as _db_engine, RosterAcquisition, DailyAvailabilityOverride
+        _inspector = _sa_inspect(_db_engine)
+        if "roster_acquisitions" not in _inspector.get_table_names():
+            RosterAcquisition.__table__.create(_db_engine)
+            logger.info("Lifespan: created roster_acquisitions table")
+        else:
+            logger.debug("Lifespan: roster_acquisitions table already exists")
+    except Exception as _tbl_exc:
+        logger.warning("Lifespan: roster_acquisitions table check failed: %s", _tbl_exc)
+
+    # Ensure daily_availability_overrides table exists (P0 availability guard).
+    # Same surgical pattern as roster_acquisitions above.
+    try:
+        if "daily_availability_overrides" not in _inspector.get_table_names():
+            DailyAvailabilityOverride.__table__.create(_db_engine)
+            logger.info("Lifespan: created daily_availability_overrides table")
+        else:
+            logger.debug("Lifespan: daily_availability_overrides table already exists")
+    except Exception as _dao_exc:
+        logger.warning("Lifespan: daily_availability_overrides table check failed: %s", _dao_exc)
 
     # Start scheduler
     nightly_hour = int(os.getenv("NIGHTLY_CRON_HOUR", "3"))
@@ -624,24 +633,15 @@ app = FastAPI(
 from backend.routers.edge import router as _edge_router  # noqa: E402
 from backend.routers.fantasy import router as _fantasy_router  # noqa: E402
 from backend.routers.admin import router as _admin_router  # noqa: E402
+from backend.routers.trade import router as _trade_router  # noqa: E402
 app.include_router(_edge_router)
 app.include_router(_fantasy_router)
 app.include_router(_admin_router)
+app.include_router(_trade_router)
 
 # TEST ENDPOINTS - REMOVE AFTER SYNC JOB TESTING
 app.include_router(_test_router, prefix="/test", tags=["test"])
 # END TEST ENDPOINTS
-# DB VERIFICATION ENDPOINTS - REMOVE AFTER DATABASE VERIFICATION
-app.include_router(_db_verify_router, prefix="/test", tags=["db-verify"])
-# END DB VERIFICATION ENDPOINTS
-# YAHOO API DEBUG ENDPOINTS - REMOVE AFTER DEBUGGING
-app.include_router(_yahoo_debug_router, prefix="/test", tags=["yahoo-debug"])
-# END YAHOO API DEBUG ENDPOINTS
-# YAHOO TOKEN REFRESH ENDPOINTS - REMOVE AFTER TOKEN IS SET
-app.include_router(_yahoo_token_router, prefix="/test", tags=["yahoo-token"])
-app.include_router(_yahoo_parsing_test_router, prefix="/test", tags=["yahoo-parsing-test"])
-app.include_router(_yahoo_structure_dump_router, prefix="/test", tags=["yahoo-structure-dump"])
-# END YAHOO TOKEN REFRESH ENDPOINTS
 # ERA DIAGNOSTIC ENDPOINT - REMOVE AFTER TASK 10 COMPLETE
 app.include_router(_era_diagnostic_router, prefix="/admin", tags=["admin"])
 # END ERA DIAGNOSTIC ENDPOINT

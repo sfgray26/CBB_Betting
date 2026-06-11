@@ -18,12 +18,18 @@ import {
   Users,
   ListFilter,
   DollarSign,
+  Eye,
 } from 'lucide-react'
 
 const SHOW_BRACKET = false
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import { cn } from '@/lib/utils'
+
+function isFantasyRoute(pathname: string): boolean {
+  const fantasyPrefixes = ['/war-room', '/roster', '/waiver', '/budget', '/today', '/decisions']
+  return fantasyPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(prefix + '/'))
+}
 
 const navSections = [
   {
@@ -65,6 +71,7 @@ const navSections = [
       { href: '/war-room/waiver',    label: 'Waiver Wire', icon: ListFilter },
       { href: '/war-room/streaming', label: 'Streaming',   icon: Waves },
       { href: '/war-room/budget',    label: 'Budget',      icon: DollarSign },
+      { href: '/war-room/preview',   label: 'Preview',     icon: Eye },
     ],
     soon: false,
     hidden: false,
@@ -119,13 +126,13 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
           CBB EDGE
         </div>
         <div className="text-xs text-gray-500 mt-0.5">
-          Analytics
+          {isFantasyRoute(pathname) ? 'Fantasy Baseball' : 'Analytics'}
         </div>
       </div>
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-6">
-        {navSections.filter((s) => !s.hidden).map((section) => (
+        {navSections.filter((s) => !s.hidden).filter((s) => !(isFantasyRoute(pathname) && s.label === 'Admin')).map((section) => (
           <div key={section.label}>
             <p className="px-2 mb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">
               {section.label}
@@ -177,20 +184,22 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
       </nav>
 
       {/* Bottom panel */}
-      <div className="border-t border-gray-200 px-4 py-3 space-y-2">
-        {/* Portfolio chip */}
-        <div className="flex items-center gap-2 px-2 py-2 bg-gray-50 rounded-md">
-          <span className={cn('h-2 w-2 rounded-full flex-shrink-0', dotColor)} />
-          <div className="flex-1 min-w-0">
-            <div className="text-xs text-gray-500 leading-none">Portfolio</div>
-            <div className="text-xs font-mono text-gray-700 mt-0.5 tabular-nums">
-              {portfolio
-                ? `DD: ${drawdown.toFixed(1)}% | Exp: ${portfolio.total_exposure_pct.toFixed(1)}%`
-                : 'Loading...'}
+      {!isFantasyRoute(pathname) && (
+        <div className="border-t border-gray-200 px-4 py-3 space-y-2">
+          {/* Portfolio chip */}
+          <div className="flex items-center gap-2 px-2 py-2 bg-gray-50 rounded-md">
+            <span className={cn('h-2 w-2 rounded-full flex-shrink-0', dotColor)} />
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-gray-500 leading-none">Portfolio</div>
+              <div className="text-xs font-mono text-gray-700 mt-0.5 tabular-nums">
+                {portfolio
+                  ? `DD: ${drawdown.toFixed(1)}% | Exp: ${portfolio.total_exposure_pct.toFixed(1)}%`
+                  : 'Loading...'}
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
     </aside>
   )
 }

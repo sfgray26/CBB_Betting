@@ -8,13 +8,15 @@ interface BudgetPanelProps {
   budget: BudgetData
 }
 
-function paceColor(pace: BudgetData["ip_pace"]) {
+function paceColor(pace: BudgetData["ip_pace"], dataAvailable: boolean) {
+  if (!dataAvailable) return "text-text-muted"
   if (pace === "BEHIND") return "text-status-lost"
   if (pace === "AHEAD") return "text-status-safe"
   return "text-status-bubble"
 }
 
-function paceLabel(pace: BudgetData["ip_pace"]) {
+function paceLabel(pace: BudgetData["ip_pace"], dataAvailable: boolean) {
+  if (!dataAvailable) return "PENDING"
   if (pace === "BEHIND") return "BEHIND"
   if (pace === "AHEAD") return "AHEAD"
   return "ON TRACK"
@@ -103,18 +105,49 @@ export function BudgetPanel({ budget }: BudgetPanelProps) {
           }
         />
 
+        {/* Waiver Priority */}
+        {budget.waiver_priority != null && budget.waiver_total != null && (
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-text-secondary text-xs">Waiver Priority</span>
+              <span className={`text-xs font-semibold ${
+                budget.waiver_priority <= 3 ? 'text-status-safe' :
+                budget.waiver_priority <= 6 ? 'text-status-bubble' :
+                'text-status-lost'
+              }`}>
+                {budget.waiver_priority} / {budget.waiver_total}
+              </span>
+            </div>
+            <div className="h-1.5 w-full bg-bg-inset rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  budget.waiver_priority <= 3 ? 'bg-status-safe' :
+                  budget.waiver_priority <= 6 ? 'bg-status-bubble' :
+                  'bg-status-lost'
+                }`}
+                style={{ width: `${((budget.waiver_total - budget.waiver_priority + 1) / budget.waiver_total) * 100}%` }}
+              />
+            </div>
+            {budget.waiver_recommendation && (
+              <p className="text-[10px] text-text-muted mt-1">{budget.waiver_recommendation}</p>
+            )}
+          </div>
+        )}
+
         {/* IP Progress */}
         <div>
           <div className="flex items-center justify-between mb-1">
             <span className="text-text-secondary text-xs">Innings Pitched</span>
-            <span className={`text-xs font-semibold ${paceColor(budget.ip_pace)}`}>
-              {paceLabel(budget.ip_pace)}
+            <span className={`text-xs font-semibold ${paceColor(budget.ip_pace, budget.ip_data_available ?? false)}`}>
+              {paceLabel(budget.ip_pace, budget.ip_data_available ?? false)}
             </span>
           </div>
           <div className="h-1.5 w-full bg-bg-inset rounded-full overflow-hidden">
             <div
               className={`h-full rounded-full transition-all ${
-                budget.ip_pace === "BEHIND"
+                !(budget.ip_data_available ?? false)
+                  ? "bg-text-muted"
+                  : budget.ip_pace === "BEHIND"
                   ? "bg-red-500"
                   : budget.ip_pace === "AHEAD"
                   ? "bg-green-500"
@@ -125,7 +158,11 @@ export function BudgetPanel({ budget }: BudgetPanelProps) {
           </div>
           <div className="flex items-center justify-between mt-0.5">
             <span className="text-text-muted text-[10px]">
-              {budget.ip_accumulated.toFixed(1)} IP accumulated
+              {(budget.ip_data_available ?? false)
+                ? budget.ip_as_of
+                  ? `${budget.ip_accumulated.toFixed(1)} IP (as of ${budget.ip_as_of})`
+                  : `${budget.ip_accumulated.toFixed(1)} IP accumulated`
+                : "Yahoo stats syncing…"}
             </span>
             <span className="text-text-muted text-[10px]">
               min {budget.ip_minimum.toFixed(0)} IP

@@ -18,7 +18,7 @@ from dataclasses import dataclass, asdict
 
 from sqlalchemy.orm import Session
 
-from backend.models import UserPreferences, SessionLocal, PlayerDailyMetric, PlayerMomentum, PlayerIDMapping
+from backend.models import UserPreferences, SessionLocal, PlayerDailyMetric, PlayerMomentum, PlayerIDMapping, PlayerScore
 from backend.fantasy_baseball.daily_lineup_optimizer import DailyLineupOptimizer
 from backend.services.waiver_edge_detector import WaiverEdgeDetector
 from backend.services.data_reliability_engine import (
@@ -34,14 +34,18 @@ from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient, 
 
 logger = logging.getLogger(__name__)
 
+# Minimum score_0_100 gap (0–100 percentile) to flag a sub-optimal pitcher placement.
+SUBOPTIMAL_SCORE_THRESHOLD = 10.0
+
 
 @dataclass
 class LineupGap:
-    """Identifies an unfilled lineup slot."""
+    """Identifies an unfilled or sub-optimally filled lineup slot."""
     position: str
-    severity: str  # "critical", "warning", "info"
+    severity: str  # "critical", "warning", "info", "optimization"
     message: str
     suggested_add: Optional[str] = None
+    action_url: Optional[str] = None
 
 
 @dataclass
@@ -326,13 +330,158 @@ class DashboardService:
                         suggested_add=None  # Would need waiver wire analysis
                     ))
             
+            # Phase 2: sub-optimal pitcher placement
+            try:
+                _ph2_db = SessionLocal()
+                try:
+                    swap_gaps = self._detect_pitcher_swap_gaps(roster, _ph2_db)
+                    gaps.extend(swap_gaps)
+                finally:
+                    _ph2_db.close()
+            except Exception as _ph2_err:
+                logger.warning("_get_lineup_gaps Phase 2 (pitcher swap) failed: %s", _ph2_err)
+
+            # Phase 3: IL crisis detection.
+            # If 3+ rostered players have confirmed injury status but are NOT in IL slots,
+            # the "no gaps" verdict is a false positive. Override with ROSTER EMERGENCY.
+            _IL_CONFIRMED_STATUS = {"il", "il10", "il60", "15-day-il", "60-day-il", "out"}
+            _SAFE_IL_POSITIONS = {"IL", "IL10", "IL60", "NA", "DL"}
+            try:
+                crisis_players = [
+                    p for p in roster
+                    if p.get("selected_position") not in _SAFE_IL_POSITIONS
+                    and (p.get("injury_status") or "").strip().lower() in _IL_CONFIRMED_STATUS
+                ]
+                if len(crisis_players) >= 3:
+                    names = ", ".join(p["name"] for p in crisis_players[:3])
+                    gaps.append(LineupGap(
+                        position="ROSTER",
+                        severity="critical",
+                        message=(
+                            f"ROSTER EMERGENCY: {len(crisis_players)} injured players in active slots "
+                            f"({names}+) — move to IL slots now"
+                        ),
+                        suggested_add=None,
+                        action_url="/war-room/roster",
+                    ))
+            except Exception as _ph3_err:
+                logger.warning("_get_lineup_gaps Phase 3 (IL crisis) failed: %s", _ph3_err)
+
             return gaps, filled_count, len(required_positions)
-            
+
         except Exception as e:
             logger.error(f"Failed to get lineup gaps: {e}")
             self.reliability_engine.record_source_failure(DataSource.YAHOO_API, str(e))
             return [], 0, 9
     
+    def _detect_pitcher_swap_gaps(self, roster: list, db: Session) -> List[LineupGap]:
+        """Phase 2: detect sub-optimal pitcher slot assignments via score_0_100 percentile.
+
+        Compares benched pitchers against starting pitchers using the 14-day
+        PlayerScore.score_0_100 field. Emits an 'optimization' gap when a benched
+        pitcher's score exceeds the starter's by more than SUBOPTIMAL_SCORE_THRESHOLD.
+        """
+        import unicodedata
+
+        try:
+            def _norm(s: str) -> str:
+                return unicodedata.normalize("NFC", s).lower().strip()
+
+            _pitcher_slots = {"SP", "RP", "P"}
+
+            starting_pitchers = [
+                p for p in roster
+                if p.get("selected_position") in _pitcher_slots
+            ]
+            bench_pitchers = [
+                p for p in roster
+                if p.get("selected_position") == "BN"
+                and any(pos in _pitcher_slots for pos in p.get("positions", []))
+            ]
+
+            if not starting_pitchers or not bench_pitchers:
+                return []
+
+            all_pitchers = starting_pitchers + bench_pitchers
+            norm_to_player: dict = {_norm(p.get("name", "")): p for p in all_pitchers}
+            norm_names = list(norm_to_player.keys())
+
+            mappings = (
+                db.query(PlayerIDMapping)
+                .filter(PlayerIDMapping.normalized_name.in_(norm_names))
+                .all()
+            )
+
+            bdl_to_norm: dict = {}
+            for m in mappings:
+                if getattr(m, "bdl_id", None) is not None:
+                    bdl_to_norm[m.bdl_id] = m.normalized_name
+
+            if not bdl_to_norm:
+                logger.debug("_detect_pitcher_swap_gaps: no bdl_id matches for roster pitchers")
+                return []
+
+            today = datetime.now(ZoneInfo("America/New_York")).date()
+            cutoff = today - timedelta(days=3)
+            score_rows = (
+                db.query(PlayerScore)
+                .filter(
+                    PlayerScore.bdl_player_id.in_(list(bdl_to_norm.keys())),
+                    PlayerScore.window_days == 14,
+                    PlayerScore.as_of_date >= cutoff,
+                )
+                .order_by(PlayerScore.as_of_date.desc())
+                .all()
+            )
+
+            seen: set = set()
+            name_to_score: dict = {}
+            for row in score_rows:
+                if row.bdl_player_id in seen:
+                    continue
+                seen.add(row.bdl_player_id)
+                norm_name = bdl_to_norm.get(row.bdl_player_id)
+                if norm_name:
+                    player = norm_to_player.get(norm_name)
+                    if player:
+                        name_to_score[player.get("name", "")] = row.score_0_100 or 0.0
+
+            gaps: List[LineupGap] = []
+            for starter in starting_pitchers:
+                starter_name = starter.get("name", "")
+                starter_slot = starter.get("selected_position", "")
+                starter_score = name_to_score.get(starter_name, 0.0)
+
+                for bench in bench_pitchers:
+                    bench_name = bench.get("name", "")
+                    bench_positions = bench.get("positions", [])
+
+                    if starter_slot not in bench_positions:
+                        continue
+
+                    bench_score = name_to_score.get(bench_name, 0.0)
+
+                    if bench_score - starter_score > SUBOPTIMAL_SCORE_THRESHOLD:
+                        bench_pos_str = "/".join(
+                            p for p in bench_positions if p in _pitcher_slots
+                        )
+                        gaps.append(LineupGap(
+                            position=starter_slot,
+                            severity="optimization",
+                            message=(
+                                f"⚠️ SUB-OPTIMAL: {bench_name} (Score {bench_score:.0f}/100,"
+                                f" {bench_pos_str}) is on BN. Consider moving to {starter_slot}."
+                                f" {starter_name} (Score {starter_score:.0f}/100) would move to BN."
+                            ),
+                            suggested_add=bench_name,
+                        ))
+
+            return gaps
+
+        except Exception as _e:
+            logger.warning("_detect_pitcher_swap_gaps: failed: %s", _e)
+            return []
+
     async def _get_streaks(
         self,
         user_id: str,
@@ -522,21 +671,27 @@ class DashboardService:
                     n_cats = max(len(my_stats), 1)
                     # Translate Yahoo stat IDs -> canonical codes so that
                     # compute_need_score can match against cat_scores board keys.
-                    from backend.stat_contract import CONTRACT as _CONTRACT
+                    from backend.stat_contract import CONTRACT as _CONTRACT, LOWER_IS_BETTER as _LIB
                     _yahoo_index = _CONTRACT.yahoo_id_index
                     for sid, my_val in my_stats.items():
                         opp_val = opp_stats.get(sid, 0)
                         try:
                             my_f   = float(my_val  or 0)
                             opp_f  = float(opp_val or 0)
-                            deficit = opp_f - my_f
                             canon = _yahoo_index.get(str(sid), sid)
+                            _is_lib = canon in _LIB
+                            if _is_lib:
+                                deficit = my_f - opp_f   # positive = I'm losing (more = worse)
+                                winning = my_f < opp_f
+                            else:
+                                deficit = opp_f - my_f   # positive = I'm losing (less = worse)
+                                winning = my_f > opp_f
                             category_deficits.append(CategoryDeficitOut(
                                 category=canon,
                                 my_total=my_f,
                                 opponent_total=opp_f,
                                 deficit=deficit,
-                                winning=deficit <= 0,
+                                winning=winning,
                             ))
                         except (TypeError, ValueError):
                             pass

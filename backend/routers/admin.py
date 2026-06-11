@@ -6,6 +6,7 @@ Do NOT import from other backend.routers modules here.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import text, func, inspect, create_engine
 from typing import Optional
@@ -2264,3 +2265,71 @@ async def get_box_stats_pipeline_health(
     result["verdict"] = "healthy" if not issues else "; ".join(issues)
 
     return result
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Daily Availability Override (admin-seeded blacklist for game-day scratches)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class _AvailabilityOverrideIn(BaseModel):
+    player_key: str
+    player_name: str
+    status: str = "OUT"          # "OUT" | "DAY_OFF"
+    note: Optional[str] = None
+
+
+@router.post("/api/admin/availability-override", tags=["admin"])
+async def create_availability_override(
+    payload: _AvailabilityOverrideIn,
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """Upsert a day-off or scratch override for today (ET). Suppresses player from waiver top rankings."""
+    from backend.models import DailyAvailabilityOverride
+    from zoneinfo import ZoneInfo
+    today_et = datetime.now(ZoneInfo("America/New_York")).date()
+    existing = (
+        db.query(DailyAvailabilityOverride)
+        .filter(
+            DailyAvailabilityOverride.player_key == payload.player_key,
+            DailyAvailabilityOverride.game_date == today_et,
+        )
+        .first()
+    )
+    if existing:
+        existing.status = payload.status
+        existing.note = payload.note
+        existing.player_name = payload.player_name
+    else:
+        db.add(DailyAvailabilityOverride(
+            player_key=payload.player_key,
+            player_name=payload.player_name,
+            game_date=today_et,
+            status=payload.status,
+            note=payload.note,
+            source="admin",
+        ))
+    db.commit()
+    return {"ok": True, "player_key": payload.player_key, "game_date": str(today_et), "status": payload.status}
+
+
+@router.delete("/api/admin/availability-override/{player_key}", tags=["admin"])
+async def delete_availability_override(
+    player_key: str,
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """Remove today's availability override for a player."""
+    from backend.models import DailyAvailabilityOverride
+    from zoneinfo import ZoneInfo
+    today_et = datetime.now(ZoneInfo("America/New_York")).date()
+    deleted = (
+        db.query(DailyAvailabilityOverride)
+        .filter(
+            DailyAvailabilityOverride.player_key == player_key,
+            DailyAvailabilityOverride.game_date == today_et,
+        )
+        .delete()
+    )
+    db.commit()
+    return {"ok": True, "deleted": deleted > 0, "player_key": player_key}

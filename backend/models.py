@@ -2319,3 +2319,42 @@ class IdentityQuarantine(Base):
         Index("idx_iq_status_created", "status", "created_at"),
         Index("idx_iq_provider_name", "incoming_provider", "incoming_raw_name"),
     )
+
+
+class RosterAcquisition(Base):
+    """Local record of add/drop transactions — eliminates Yahoo API lag on budget counter."""
+    __tablename__ = "roster_acquisitions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    team_key = Column(String(64), nullable=False, index=True)
+    player_added_key = Column(String(32), nullable=False)
+    player_dropped_key = Column(String(32), nullable=True)
+    executed_at = Column(DateTime(timezone=True), nullable=False, default=_now_et)
+    week_start = Column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        Index("idx_ra_team_week", "team_key", "week_start"),
+    )
+
+
+class DailyAvailabilityOverride(Base):
+    """Admin-seeded daily availability overrides (day-offs, game-day scratches).
+
+    Populated via POST /api/admin/availability-override.
+    Future: MLB lineup API feed can write source="mlb_lineup_api" entries.
+    """
+    __tablename__ = "daily_availability_overrides"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    player_key = Column(String(64), nullable=False)
+    player_name = Column(String(128), nullable=False)
+    game_date = Column(Date, nullable=False)
+    status = Column(String(32), nullable=False)   # "OUT" | "DAY_OFF"
+    note = Column(String(256), nullable=True)
+    source = Column(String(32), default="admin")  # "admin" | "mlb_lineup_api"
+    created_at = Column(DateTime, default=_now_et)
+
+    __table_args__ = (
+        UniqueConstraint("player_key", "game_date", name="uq_override_player_date"),
+        Index("idx_dao_game_date", "game_date"),
+    )
