@@ -26,6 +26,7 @@ import {
 import { cn } from '@/lib/utils'
 import YahooRosterView from '@/components/yahoo-roster-view'
 import { HotColdBadge } from '@/components/hot-cold-badge'
+import { FreshnessBadge } from '@/components/freshness/freshness-badge'
 
 // ───────────────────────────────────────────────────────────────────────────
 // Constants
@@ -880,6 +881,13 @@ export default function RosterPage() {
     staleTime: 5 * 60_000,
   })
 
+  const { data: globalFreshness, refetch: refetchFreshness } = useQuery({
+    queryKey: ['global-freshness'],
+    queryFn: endpoints.getGlobalFreshness,
+    staleTime: 2 * 60_000,
+    refetchInterval: 5 * 60_000,
+  })
+
   const budget = useQuery({
     queryKey: ['budget'],
     queryFn: endpoints.getBudget,
@@ -1064,6 +1072,15 @@ export default function RosterPage() {
           <Users className="h-3.5 w-3.5 text-accent-gold" />
           <span className="text-xs font-bold tracking-widest uppercase text-accent-gold">My Roster</span>
           <span className="text-[10px] text-text-muted">· {teamLabel} · {data.count} players</span>
+          {globalFreshness && (
+            <FreshnessBadge
+              severity={globalFreshness.severity}
+              minutesAgo={globalFreshness.minutes_ago}
+              warningText={globalFreshness.warning_text}
+              isClickable={true}
+              onRefresh={() => refetchFreshness()}
+            />
+          )}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {data.freshness?.computed_at && (

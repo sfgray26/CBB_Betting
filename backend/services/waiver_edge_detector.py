@@ -7,13 +7,18 @@ import logging
 import os
 import time
 import unicodedata
+from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
+
+from backend.contracts import compute_freshness
 
 logger = logging.getLogger(__name__)
 
 _FA_CACHE: dict = {}
 _FA_CACHE_TTL = 600
 _INJURED_2B_Z_THRESHOLD = -1.0
+_FRESHNESS_TIMESTAMPS: dict[str, Optional[datetime]] = {}
 
 # Statuses that indicate player is on IL (doesn't count against active roster)
 _INACTIVE_STATUSES = frozenset({"IL", "IL10", "IL60", "NA", "OUT"})
@@ -226,6 +231,14 @@ def il_capacity_info(roster: list[dict]) -> dict:
     used = count_il_slots_used(roster)
     total = _DEFAULT_IL_SLOTS
     return {"used": used, "total": total, "available": max(0, total - used)}
+
+
+def get_waiver_freshness() -> dict:
+    return compute_freshness(
+        "waiver_edge_detector",
+        _FRESHNESS_TIMESTAMPS.get("waiver_scan"),
+    ).model_dump()
+
 
 # Maps FA position → roster position group eligible for drop pairing.
 # OF/LF/CF/RF all compete for the same outfield slots.
@@ -715,6 +728,7 @@ class WaiverEdgeDetector:
             moves.append(move)
         # PR 4.5: Sort with market_score as tertiary tiebreaker (higher = better buy signal)
         moves.sort(key=lambda m: (m["win_prob_gain"], m["need_score"], m["market_score"]), reverse=True)
+        _FRESHNESS_TIMESTAMPS["waiver_scan"] = datetime.now(ZoneInfo("America/New_York"))
         return moves[:n_candidates]
 
     def _enrich_players(self, players: list[dict]) -> list[dict]:

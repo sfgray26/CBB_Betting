@@ -1167,6 +1167,46 @@ async def get_fantasy_lineup_current(
         user=user,
     )
 
+
+@router.get("/api/fantasy/lineup-cards", tags=["lineups"])
+def get_lineup_cards(
+    date: Optional[str] = Query(None, description="Date in YYYY-MM-DD format; defaults to today ET"),
+    db: Session = Depends(get_db),
+):
+    """
+    Return confirmed MLB starting lineups for the given date.
+
+    Fetches from MLB Stats API (/api/v1/schedule with lineup hydration).
+    SLA: Data should be fresh by 10:00 AM ET daily.
+
+    Returns lineup cards keyed by game_pk plus freshness/SLA metadata.
+    """
+    from backend.fantasy_baseball.probable_pitcher_fallback import (
+        fetch_daily_lineups,
+        get_lineup_card_freshness,
+    )
+
+    target_date = date or today_et().strftime("%Y-%m-%d")
+
+    try:
+        datetime.strptime(target_date, "%Y-%m-%d")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid date format: {target_date}. Use YYYY-MM-DD.",
+        ) from exc
+
+    lineups = fetch_daily_lineups(target_date)
+    freshness = get_lineup_card_freshness(target_date)
+
+    return {
+        "date": target_date,
+        "game_count": len(lineups),
+        "lineup_cards": lineups,
+        "freshness": freshness,
+    }
+
+
 @router.get("/api/fantasy/lineup/{lineup_date}", response_model=DailyLineupResponse)
 async def get_fantasy_lineup_recommendations(
     lineup_date: str,
@@ -7152,3 +7192,57 @@ async def get_player_coverage(
         "missing_fangraphs": [r for r in results if not r["has_fangraphs_cat_scores"]][:20],
         "players": results,
     }
+
+
+@router.get("/api/fantasy/freshness", tags=["freshness"])
+def get_freshness_report(db: Session = Depends(get_db)):
+    """
+    Return normalized freshness state for all data sources.
+
+    Severity levels:
+    - fresh: age < 60 minutes
+    - warning: 60 <= age < 120 minutes
+    - critical: age >= 120 minutes
+    - unknown: no timestamp available
+    """
+    from backend.contracts import FreshnessReport, FreshnessSeverity, FreshnessState
+    from backend.fantasy_baseball.daily_lineup_optimizer import get_lineup_freshness
+    from backend.services.dashboard_service import DashboardService
+    from backend.services.waiver_edge_detector import get_waiver_freshness
+
+    sources_raw = []
+
+    try:
+        sources_raw.append(get_waiver_freshness())
+    except Exception as e:
+        logger.warning(f"freshness: waiver_edge_detector error: {e}")
+
+    try:
+        sources_raw.append(get_lineup_freshness())
+    except Exception as e:
+        logger.warning(f"freshness: daily_lineup_optimizer error: {e}")
+
+    try:
+        svc = DashboardService()
+        sources_raw.extend(svc.get_freshness_states())
+    except Exception as e:
+        logger.warning(f"freshness: dashboard_service error: {e}")
+
+    sources = [FreshnessState(**s) if isinstance(s, dict) else s for s in sources_raw]
+
+    severities = [s.severity for s in sources]
+    severity_order = {
+        FreshnessSeverity.CRITICAL: 3,
+        FreshnessSeverity.WARNING: 2,
+        FreshnessSeverity.UNKNOWN: 1,
+        FreshnessSeverity.FRESH: 0,
+    }
+    overall = max(severities, key=lambda sv: severity_order.get(sv, 0)) if severities else FreshnessSeverity.UNKNOWN
+
+    report = FreshnessReport(
+        sources=sources,
+        overall_severity=overall,
+        stale_count=sum(1 for s in sources if s.is_stale),
+        fresh_count=sum(1 for s in sources if not s.is_stale),
+    )
+    return report.model_dump()

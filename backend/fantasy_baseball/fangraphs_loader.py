@@ -28,8 +28,6 @@ import pandas as pd
 
 import cloudscraper
 
-import cloudscraper
-
 logger = logging.getLogger(__name__)
 
 # Cloudscraper session to bypass FanGraphs bot protection
@@ -120,11 +118,11 @@ def _fetch_projection_json(system: str, stat_type: str) -> Optional[list]:
             logger.warning("FanGraphs API returned empty/unexpected response for %s/%s", system, stat_type)
             return None
         return data
-    except requests.exceptions.Timeout:
-        logger.error("FanGraphs API timeout for %s/%s", system, stat_type)
-        return None
     except Exception as e:
-        logger.error("FanGraphs API fetch failed for %s/%s: %s", system, stat_type, e)
+        if "timeout" in str(e).lower() or "timed out" in str(e).lower():
+            logger.error("FanGraphs API timeout for %s/%s", system, stat_type)
+        else:
+            logger.error("FanGraphs API fetch failed for %s/%s: %s", system, stat_type, e)
         return None
 
 

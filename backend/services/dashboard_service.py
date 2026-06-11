@@ -18,6 +18,7 @@ from dataclasses import dataclass, asdict
 
 from sqlalchemy.orm import Session
 
+from backend.contracts import compute_freshness
 from backend.models import UserPreferences, SessionLocal, PlayerDailyMetric, PlayerMomentum, PlayerIDMapping, PlayerScore
 from backend.fantasy_baseball.daily_lineup_optimizer import DailyLineupOptimizer
 from backend.services.waiver_edge_detector import WaiverEdgeDetector
@@ -148,6 +149,7 @@ class DashboardData:
     
     # Settings
     preferences: Dict[str, Any]
+    data_freshness: Optional[Dict[str, Any]] = None
 
 
 class DashboardService:
@@ -222,7 +224,12 @@ class DashboardService:
                 self._get_matchup_preview(user_id, team_key),
                 self._get_probable_pitchers(user_id),
             )
-            
+
+            _dashboard_freshness = compute_freshness(
+                source_name="dashboard",
+                last_updated=datetime.now(ZoneInfo("America/New_York")),
+            )
+             
             return DashboardData(
                 timestamp=datetime.now(ZoneInfo("America/New_York")).isoformat(),
                 user_id=user_id,
@@ -238,12 +245,20 @@ class DashboardService:
                 matchup_preview=matchup,
                 probable_pitchers=pitchers,
                 two_start_pitchers=two_starts,
-                preferences=self._prefs_to_dict(prefs)
+                preferences=self._prefs_to_dict(prefs),
+                data_freshness=_dashboard_freshness.model_dump(),
             )
         
         finally:
             if close_db:
                 db.close()
+
+    def get_freshness_states(self) -> List[dict]:
+        """Return freshness metadata for all dashboard data sources."""
+        now = datetime.now(ZoneInfo("America/New_York"))
+        return [
+            compute_freshness("dashboard_service", now).model_dump(),
+        ]
     
     def _get_or_create_preferences(self, db: Session, user_id: str) -> UserPreferences:
         """Get existing preferences or create defaults."""

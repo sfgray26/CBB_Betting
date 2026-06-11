@@ -8,6 +8,7 @@ import {
   ListFilter, Loader2, AlertCircle, TrendingUp,
   AlertTriangle, Users, Zap, ChevronDown, ChevronUp, AlertTriangle as WarnIcon,
 } from 'lucide-react'
+import { FreshnessBadge } from '@/components/freshness/freshness-badge'
 import { cn } from '@/lib/utils'
 import { ErrorBoundary } from '@/components/error-boundary'
 import { HotColdBadge } from '@/components/hot-cold-badge'
@@ -637,6 +638,13 @@ function WaiverPageInner() {
   const [sort, setSort] = useState<'need_score' | 'projected_points'>('need_score')
   const [posFilter, setPosFilter] = useState('All')
 
+  const { data: globalFreshness, refetch: refetchFreshness } = useQuery({
+    queryKey: ['global-freshness'],
+    queryFn: endpoints.getGlobalFreshness,
+    staleTime: 2 * 60_000,
+    refetchInterval: 5 * 60_000,
+  })
+
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['waiver', sort],
     queryFn: async () => {
@@ -704,6 +712,15 @@ function WaiverPageInner() {
           <span className="text-xs font-bold tracking-widest uppercase text-accent-gold">
             Waiver Wire
           </span>
+          {globalFreshness && (
+            <FreshnessBadge
+              severity={globalFreshness.severity}
+              minutesAgo={globalFreshness.minutes_ago}
+              warningText={globalFreshness.warning_text}
+              isClickable={true}
+              onRefresh={() => refetchFreshness()}
+            />
+          )}
         </div>
         <div className="flex items-center gap-2 text-[10px] text-text-muted">
           {data?.il_slots_available != null && data.il_slots_available > 0 && (

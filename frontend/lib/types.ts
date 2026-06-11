@@ -828,3 +828,19 @@ export interface RosterOptimizeResponse {
     is_stale: boolean
   }
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Global Freshness
+// ═════════════════════════════════════════════════════════════════════════════
+
+export interface GlobalFreshnessResponse {
+  severity: 'fresh' | 'warning' | 'critical' | 'unknown'
+  minutes_ago: number | null
+  warning_text: string | null
+  sources?: Array<{
+    name: string
+    severity: 'fresh' | 'warning' | 'critical' | 'unknown'
+    minutes_ago: number | null
+    message?: string | null
+  }>
+}

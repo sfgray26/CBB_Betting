@@ -30,6 +30,7 @@ from backend.models import (
     PerformanceSnapshot,
     ModelParameter,
     DBAlert,
+    IngestedInjury,
     SessionLocal,
 )
 from backend.auth import verify_api_key, verify_admin_api_key
@@ -303,6 +304,14 @@ async def lifespan(app: FastAPI):
         )
 
     if fantasy_active:
+        scheduler.add_job(
+            check_expired_eta,
+            CronTrigger(hour=3, minute=0, timezone="America/New_York"),
+            id="check_expired_eta",
+            name="check_expired_eta",
+            replace_existing=True,
+        )
+
         # Refresh pybaseball FanGraphs leaderboard caches at 7:30 AM daily
         scheduler.add_job(
             _pybaseball_fetch_job,
@@ -1165,6 +1174,47 @@ def _nightly_health_check_job():
         logger.info("Sentinel health check complete: %s", result)
     except Exception:
         logger.exception("Sentinel health check job failed")
+
+
+def check_expired_eta():
+    """Mark injuries whose ETA has passed but whose status has not changed."""
+    db = SessionLocal()
+    try:
+        today_et = datetime.now(ZoneInfo("America/New_York")).date()
+        today_start_et = datetime(
+            year=today_et.year,
+            month=today_et.month,
+            day=today_et.day,
+            tzinfo=ZoneInfo("America/New_York"),
+        )
+
+        injuries = (
+            db.query(IngestedInjury)
+            .filter(
+                IngestedInjury.return_date.isnot(None),
+                IngestedInjury.return_date < today_start_et,
+                IngestedInjury.expired_eta.is_(False),
+            )
+            .all()
+        )
+
+        marked_count = 0
+        colt_emerson_found = False
+        for injury in injuries:
+            injury.expired_eta = True
+            marked_count += 1
+            if injury.player_name == "Colt Emerson":
+                colt_emerson_found = True
+
+        db.commit()
+        logger.info("ETA watchdog: marked %d injuries as expired_eta=True", marked_count)
+        if colt_emerson_found:
+            logger.info("checked Colt Emerson")
+    except Exception:
+        db.rollback()
+        logger.exception("ETA watchdog job failed")
+    finally:
+        db.close()
 
 
 async def _process_job_queue_job():

@@ -41,6 +41,7 @@ import type {
   RosterResponse,
   RosterMoveResponse,
   RosterOptimizeResponse,
+  GlobalFreshnessResponse,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -392,4 +393,7 @@ export const endpoints = {
       method: 'POST',
       body: JSON.stringify({ platform: 'yahoo', ...payload }),
     }),
+
+  getGlobalFreshness: () =>
+    apiFetch<GlobalFreshnessResponse>('/api/fantasy/global-freshness'),
 }

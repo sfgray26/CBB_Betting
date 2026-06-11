@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import { Loader2, AlertCircle, Zap, TrendingUp, TrendingDown } from 'lucide-react'
 import type { WaiverAvailablePlayer, CategoryDeficit } from '@/lib/types'
+import { FreshnessBadge } from '@/components/freshness/freshness-badge'
 import { CATEGORY_LABEL, CATEGORY_COLOR } from '@/lib/types'
 
 export default function StreamingStationPage() {
@@ -18,6 +19,13 @@ export default function StreamingStationPage() {
     staleTime: 5 * 60_000,
     retry: 1,
     retryDelay: 2000,
+  })
+
+  const { data: globalFreshness, refetch: refetchFreshness } = useQuery({
+    queryKey: ['global-freshness'],
+    queryFn: endpoints.getGlobalFreshness,
+    staleTime: 2 * 60_000,
+    refetchInterval: 5 * 60_000,
   })
 
   if (waiver.isLoading) {
@@ -111,9 +119,20 @@ export default function StreamingStationPage() {
   return (
     <div className="min-h-screen bg-bg-base p-6 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold tracking-widest uppercase text-accent-gold">
-          STREAMING STATION
-        </h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-bold tracking-widest uppercase text-accent-gold">
+            STREAMING STATION
+          </h1>
+          {globalFreshness && (
+            <FreshnessBadge
+              severity={globalFreshness.severity}
+              minutesAgo={globalFreshness.minutes_ago}
+              warningText={globalFreshness.warning_text}
+              isClickable={true}
+              onRefresh={() => refetchFreshness()}
+            />
+          )}
+        </div>
         {faab_balance != null && (
           <span className="text-xs font-semibold tracking-widest text-text-secondary uppercase">
             FAAB ${faab_balance.toFixed(0)} remaining

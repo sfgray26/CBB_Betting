@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from backend.contracts import compute_freshness
 from backend.models import SessionLocal
 from backend.services.config_service import get_threshold as _thresh_cfg, is_flag_enabled as _is_flag
 from backend.services.probable_pitcher_fallback import (
@@ -34,7 +35,16 @@ from backend.services.probable_pitcher_fallback import (
 )
 from backend.utils.env_utils import get_float_env
 
+
+# Lazy import to avoid circular deps — used for TBD opponent resolution
+def _get_probable_pitcher_fallback():
+    from backend.fantasy_baseball.probable_pitcher_fallback import resolve_tbd_opponent
+
+    return resolve_tbd_opponent
+
+
 logger = logging.getLogger(__name__)
+_FRESHNESS_TIMESTAMPS: dict[str, Optional[datetime]] = {}
 
 # Additional aliases for common alternate abbreviations
 _TEAM_ALIASES = {
@@ -392,6 +402,15 @@ class DailyLineupOptimizer:
             else:
                 team, opponent, is_home, park_factor = row
             team_norm = normalize_team_abbr(team)
+            if opponent in ("TBD", "N/A", None, ""):
+                resolved = self._resolve_opponent(team_norm, target_date.isoformat())
+                if resolved:
+                    opponent = resolved
+                    logger.debug(
+                        "daily_lineup_optimizer: resolved TBD opponent for %s → %s",
+                        team_norm,
+                        resolved,
+                    )
             opp_norm = normalize_team_abbr(opponent)
             if not team_norm or not opp_norm or is_home is None:
                 continue
@@ -512,6 +531,17 @@ class DailyLineupOptimizer:
                 logger.warning("Could not parse game_date '%s' for schedule fallback", game_date)
                 return None
         return datetime.now(ZoneInfo("America/New_York")).date()
+
+    def _resolve_opponent(self, team_abbreviation: str, target_date: Optional[str]) -> Optional[str]:
+        """Resolve TBD opponent via lineup card API."""
+        if not team_abbreviation:
+            return None
+        try:
+            _resolve_tbd = _get_probable_pitcher_fallback()
+            return _resolve_tbd(team_abbreviation, target_date)
+        except Exception as exc:
+            logger.warning("_resolve_opponent: failed for %s: %s", team_abbreviation, exc)
+            return None
 
 
     @staticmethod
@@ -727,6 +757,15 @@ class DailyLineupOptimizer:
 
             # MATCHUP MODIFIER (30%): daily environment
             opp_team = team_odds.get(team, {}).get("opponent", "")
+            if opp_team in ("TBD", "N/A", None, ""):
+                resolved = self._resolve_opponent(team, game_date)
+                if resolved:
+                    opp_team = resolved
+                    logger.debug(
+                        "daily_lineup_optimizer: resolved TBD opponent for %s → %s",
+                        team,
+                        resolved,
+                    )
             opp_qs = pitcher_quality.get(opp_team)  # None = no data
             matchup_modifier = (
                 (implied_runs - 4.5) * 0.5       # run environment vs league avg
@@ -843,6 +882,15 @@ class DailyLineupOptimizer:
             # Pitcher wants LOW opponent implied runs
             odds_data = team_odds.get(team, {})
             opp_team = odds_data.get("opponent", "")
+            if opp_team in ("TBD", "N/A", None, ""):
+                resolved = self._resolve_opponent(team, game_date)
+                if resolved:
+                    opp_team = resolved
+                    logger.debug(
+                        "daily_lineup_optimizer: resolved TBD opponent for %s → %s",
+                        team,
+                        resolved,
+                    )
             opp_odds = team_odds.get(opp_team, {})
             implied_opp_runs = opp_odds.get("implied_runs", 4.5)
             is_home = odds_data.get("is_home", False)
@@ -1095,6 +1143,7 @@ class DailyLineupOptimizer:
                 if swap_improved:
                     break
 
+        _FRESHNESS_TIMESTAMPS["lineup_optimization"] = datetime.now(ZoneInfo("America/New_York"))
         return slot_results, warnings
 
     # ------------------------------------------------------------------
@@ -1173,6 +1222,15 @@ class DailyLineupOptimizer:
                 # Get expected opponent if team has a game
                 has_game = team in team_odds if has_slate else True
                 opponent = team_odds.get(team, {}).get("opponent", "") if has_slate else ""
+                if opponent in ("TBD", "N/A", None, ""):
+                    resolved = self._resolve_opponent(team, game_date)
+                    if resolved:
+                        opponent = resolved
+                        logger.debug(
+                            "daily_lineup_optimizer: resolved TBD opponent for %s → %s",
+                            team,
+                            resolved,
+                        )
                 
                 # Check if this player matches a probable starter
                 is_probable = self._is_probable_starter(player_name, team, opponent, probable_pitchers)
@@ -1353,6 +1411,7 @@ class DailyLineupOptimizer:
                 for b in self.rank_batters(roster, projections, game_date)
             ]
 
+        _FRESHNESS_TIMESTAMPS["lineup_optimization"] = datetime.now(ZoneInfo("America/New_York"))
         return {
             "game_date": game_date,
             "games": [
@@ -1449,3 +1508,10 @@ def get_lineup_optimizer() -> DailyLineupOptimizer:
     if _optimizer is None:
         _optimizer = DailyLineupOptimizer()
     return _optimizer
+
+
+def get_lineup_freshness() -> dict:
+    return compute_freshness(
+        "daily_lineup_optimizer",
+        _FRESHNESS_TIMESTAMPS.get("lineup_optimization"),
+    ).model_dump()

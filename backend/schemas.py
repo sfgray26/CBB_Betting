@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from backend.contracts import FreshnessMetadata
 
 
@@ -250,6 +250,33 @@ class FantasyDraftBoardResponse(BaseModel):
     """Response for GET /api/fantasy/draft-board."""
     count: int
     players: list[FantasyPlayerResponse]
+
+
+class IngestedInjuryOut(BaseModel):
+    id: int
+    bdl_player_id: int
+    player_name: str
+    injury_date: Optional[datetime] = None
+    return_date: Optional[datetime] = None
+    injury_type: str
+    injury_detail: Optional[str] = None
+    injury_side: Optional[str] = None
+    injury_status: str
+    long_comment: str
+    short_comment: str
+    expired_eta: bool = False
+    eta_warning: Optional[str] = None
+    ingested_at: datetime
+    updated_at: datetime
+
+    @model_validator(mode="after")
+    def populate_eta_warning(self):
+        if self.expired_eta and not self.eta_warning:
+            self.eta_warning = "ETA PASSED — STATUS UNKNOWN"
+        return self
+
+    class Config:
+        from_attributes = True
 
 
 class DraftPickCreate(BaseModel):
@@ -987,4 +1014,17 @@ class PlayerCardResponse(BaseModel):
     weather: Optional[dict] = None
 
 
+class PredictiveStatsObservabilityOut(BaseModel):
+    """Observability snapshot for the predictive stats pipeline."""
+
+    flag_enabled: bool
+    last_pitcher_refresh: Optional[datetime] = None
+    last_batter_refresh: Optional[datetime] = None
+    pitcher_row_count: int = 0
+    batter_row_count: int = 0
+    last_error: Optional[str] = None
+    is_stale: bool = True
+
+    class Config:
+        from_attributes = True
 

@@ -5,6 +5,7 @@ import { useQuery, useMutation } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import { Loader2, AlertCircle, Swords, Play, RefreshCw } from 'lucide-react'
 import { MatchupHeader } from '@/components/war-room/matchup-header'
+import { FreshnessBadge } from '@/components/freshness/freshness-badge'
 import { CategoryBattlefield } from '@/components/war-room/category-battlefield'
 import { MatchupSkeleton } from '@/components/war-room/matchup-skeleton'
 import { cn } from '@/lib/utils'
@@ -91,6 +92,13 @@ export default function WarRoomPage() {
     queryFn: endpoints.getProjectionStatus,
     staleTime: 30 * 60_000,
     refetchInterval: 60 * 60_000,
+  })
+
+  const { data: globalFreshness, refetch: refetchFreshness } = useQuery({
+    queryKey: ['global-freshness'],
+    queryFn: endpoints.getGlobalFreshness,
+    staleTime: 2 * 60_000,
+    refetchInterval: 5 * 60_000,
   })
 
   const simulateMutation = useMutation({
@@ -198,6 +206,17 @@ export default function WarRoomPage() {
                 ? projStatus.age_hours < 1 ? 'FRESH' : `${projStatus.age_hours}H AGO`
                 : 'UNKNOWN'}
             </div>
+          )}
+
+          {/* Global freshness badge */}
+          {globalFreshness && (
+            <FreshnessBadge
+              severity={globalFreshness.severity}
+              minutesAgo={globalFreshness.minutes_ago}
+              warningText={globalFreshness.warning_text}
+              isClickable={true}
+              onRefresh={() => refetchFreshness()}
+            />
           )}
 
           {/* Run Simulation button */}

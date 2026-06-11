@@ -2040,6 +2040,8 @@ class IngestedInjury(Base):
     ingested_at = Column(DateTime(timezone=True), nullable=False, default=_now_et, index=True)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=_now_et,
                        onupdate=_now_et)
+    # expired_eta: set True by nightly cron when return_date < today and status unchanged
+    expired_eta = Column(Boolean, nullable=False, default=False)
 
     __table_args__ = (
         UniqueConstraint("bdl_player_id", "injury_status", "injury_type", name="_ii_player_status_type_uc"),

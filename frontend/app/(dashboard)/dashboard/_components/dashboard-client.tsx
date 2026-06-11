@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useSuspenseQuery, useIsFetching } from "@tanstack/react-query"
+import { useSuspenseQuery, useIsFetching, useQuery } from "@tanstack/react-query"
 import { endpoints } from "@/lib/api"
 import {
   type DashboardData,
@@ -25,6 +25,7 @@ import {
 import Link from "next/link"
 import { cn } from "@/lib/utils"
 import { Tooltip } from "@/components/shared/tooltip"
+import { FreshnessBadge } from "@/components/freshness/freshness-badge"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -144,6 +145,13 @@ export function DashboardHeader() {
   const { data: response } = useDashboardData()
   const isFetchingDashboard = useIsFetching({ queryKey: ["dashboard"] }) > 0
 
+  const { data: globalFreshness, refetch: refetchFreshness } = useQuery({
+    queryKey: ["global-freshness"],
+    queryFn: endpoints.getGlobalFreshness,
+    staleTime: 2 * 60_000,
+    refetchInterval: 5 * 60_000,
+  })
+
   const dashboard: DashboardData | null = response?.success ? response.data : null
   const timestamp: string | undefined = response?.timestamp
 
@@ -181,7 +189,18 @@ export function DashboardHeader() {
       )}
 
       <div className="mb-8">
-        <h1 className="text-xl font-semibold text-text-primary mb-2">Dashboard</h1>
+        <div className="flex items-center gap-3 mb-2">
+          <h1 className="text-xl font-semibold text-text-primary">Dashboard</h1>
+          {globalFreshness && (
+            <FreshnessBadge
+              severity={globalFreshness.severity}
+              minutesAgo={globalFreshness.minutes_ago}
+              warningText={globalFreshness.warning_text}
+              isClickable={true}
+              onRefresh={() => refetchFreshness()}
+            />
+          )}
+        </div>
         <p className="text-text-secondary text-sm">
           Last updated:{" "}
           {new Date(timestamp ?? Date.now()).toLocaleString("en-US", {

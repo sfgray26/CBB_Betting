@@ -247,6 +247,90 @@ class FreshnessMetadata(BaseModel):
         frozen = True
 
 
+class FreshnessSeverity(str, Enum):
+    """Normalized severity classification for data freshness across all services."""
+    FRESH = "fresh"
+    WARNING = "warning"
+    CRITICAL = "critical"
+    UNKNOWN = "unknown"
+
+
+class FreshnessState(BaseModel):
+    """Canonical freshness state attached to any service that returns time-sensitive data."""
+    source_name: str
+    last_updated: Optional[datetime]
+    age_minutes: Optional[float]
+    severity: FreshnessSeverity
+    is_stale: bool
+    message: Optional[str] = None
+
+    class Config:
+        frozen = True
+
+
+def compute_freshness(
+    source_name: str,
+    last_updated: Optional[datetime],
+    warning_minutes: int = 60,
+    critical_minutes: int = 120,
+) -> FreshnessState:
+    """Compute FreshnessState for any data source."""
+    if last_updated is None:
+        return FreshnessState(
+            source_name=source_name,
+            last_updated=None,
+            age_minutes=None,
+            severity=FreshnessSeverity.UNKNOWN,
+            is_stale=True,
+            message=f"{source_name}: no timestamp available",
+        )
+
+    now = _now_et()
+    if last_updated.tzinfo is None:
+        last_updated = last_updated.replace(tzinfo=ZoneInfo("America/New_York"))
+
+    age = (now - last_updated).total_seconds() / 60.0
+    if age < warning_minutes:
+        severity = FreshnessSeverity.FRESH
+        is_stale = False
+        message = None
+    elif age < critical_minutes:
+        severity = FreshnessSeverity.WARNING
+        is_stale = True
+        message = (
+            f"{source_name}: data is {age:.0f} minutes old "
+            f"(warning threshold: {warning_minutes}m)"
+        )
+    else:
+        severity = FreshnessSeverity.CRITICAL
+        is_stale = True
+        message = (
+            f"{source_name}: data is {age:.0f} minutes old "
+            f"(critical threshold: {critical_minutes}m)"
+        )
+
+    return FreshnessState(
+        source_name=source_name,
+        last_updated=last_updated,
+        age_minutes=round(age, 1),
+        severity=severity,
+        is_stale=is_stale,
+        message=message,
+    )
+
+
+class FreshnessReport(BaseModel):
+    """Aggregated freshness report for all data sources. Returned by GET /api/fantasy/freshness."""
+    computed_at: datetime = Field(default_factory=_now_et)
+    sources: List[FreshnessState]
+    overall_severity: FreshnessSeverity
+    stale_count: int
+    fresh_count: int
+
+    class Config:
+        frozen = True
+
+
 # P0-4: CategoryStats
 class CategoryStats(BaseModel):
     """Stats for a single time window across all scoring categories."""
@@ -630,6 +714,19 @@ class TradeAnalysis(BaseModel):
     total_z_delta: float   # Weighted sum of all per-category deltas
     recommendation: str    # 'strong_accept'|'accept'|'neutral'|'reject'|'strong_reject'
     summary: str           # Human-readable explanation
+
+    class Config:
+        frozen = True
+
+
+class PredictiveStatsMeta(BaseModel):
+    """Metadata contract for predictive stats pipeline state."""
+
+    enabled: bool
+    pitcher_stats_available: bool = False
+    batter_stats_available: bool = False
+    last_refresh: Optional[datetime] = None
+    error: Optional[str] = None
 
     class Config:
         frozen = True
