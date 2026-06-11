@@ -2906,7 +2906,7 @@ async def get_waiver_recommendations(
                         from backend.fantasy_baseball.category_aware_scorer import (
                             compute_need_score as _cns,
                         )
-                        n_cats = max(1, len(_need_vector.needs))
+                        n_cats = max(1, len(category_deficits))
                         need_score = _cns(cat_scores, z_score, category_deficits, n_cats)
                     except Exception:
                         pass  # fallback to z_score if scorer unavailable

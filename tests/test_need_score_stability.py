@@ -60,3 +60,16 @@ def test_waiver_wire_response_has_metadata():
     )
     assert r.scoring_model_version == "2.1"
     assert r.scored_at is not None
+
+
+def test_n_cats_formula_consistent_in_source():
+    """Both waiver endpoints must use len(category_deficits) for n_cats, not _need_vector.needs."""
+    import pathlib
+    src = (pathlib.Path(__file__).parent.parent / "backend" / "routers" / "fantasy.py").read_text()
+
+    # The buggy line: n_cats = max(1, len(_need_vector.needs))
+    assert "max(1, len(_need_vector.needs))" not in src, (
+        "Recommendations endpoint must use len(category_deficits) for n_cats, "
+        "not len(_need_vector.needs) — the translated dict can be smaller due to "
+        "_CANONICAL_TO_BOARD key collisions, inflating need_score vs main waiver endpoint"
+    )
