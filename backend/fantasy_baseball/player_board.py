@@ -869,6 +869,7 @@ def reset_board_cache() -> None:
     """
     global _BOARD
     _BOARD = None
+    _projection_cache.clear()  # invalidate per-player cache after ingestion updates DB
     try:
         from backend.fantasy_baseball.projections_loader import load_full_board
         load_full_board.cache_clear()
