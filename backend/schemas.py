@@ -461,6 +461,9 @@ class WaiverPlayerOut(BaseModel):
     park_factor: float = 1.0      # Ballpark run factor; 1.0=neutral, >1.1=hitter-friendly, <0.92=pitcher-friendly
     closer_role: Optional[str] = None  # "CLOSER" | "NO_SAVE_ROLE" | None (non-pitcher / unknown)
     availability_note: Optional[str] = None  # "NOT AVAILABLE TODAY" | "DTD — confirm" | "On IL" | None
+    need_score_ci: Optional[float] = None          # ±confidence interval; None = unknown
+    need_score_volatile: bool = False               # True when score swung >20% vs prior run
+    projection_source: Optional[str] = None        # "steamer+statcast" | "steamer" | "draft_board" | "proxy"
 
     @field_validator("need_score", "z_score", "owned_pct", "projected_saves", mode="before")
     @classmethod
@@ -511,6 +514,8 @@ class WaiverWireResponse(BaseModel):
     roster_context: dict = {}               # position → weakest roster player at that pos for comparison UI
     il_watch: List[WaiverPlayerOut] = []    # IL players excluded from top_available — monitor for activation
     data_as_of: Optional[datetime] = None  # Canonical single timestamp for UI clock
+    scoring_model_version: str = "2.1"             # bumped when need_score formula changes
+    scored_at: Optional[datetime] = None           # when this scoring run completed (ET)
 
 
 class RosterMoveRecommendation(BaseModel):

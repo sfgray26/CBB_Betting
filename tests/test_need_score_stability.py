@@ -16,3 +16,47 @@ def test_reset_board_cache_clears_projection_cache():
         "reset_board_cache() must call _projection_cache.clear() so "
         "post-ingestion DB updates are not masked by in-process cached projections"
     )
+
+
+def test_waiver_player_out_has_stability_fields():
+    """WaiverPlayerOut must accept need_score_ci, need_score_volatile, projection_source."""
+    from backend.schemas import WaiverPlayerOut
+    p = WaiverPlayerOut(
+        player_id="123.p.456",
+        name="José Caballero",
+        team="TB",
+        position="SS",
+        need_score=12.59,
+        need_score_ci=1.89,
+        need_score_volatile=True,
+        projection_source="steamer+statcast",
+    )
+    assert p.need_score_ci == 1.89
+    assert p.need_score_volatile is True
+    assert p.projection_source == "steamer+statcast"
+
+
+def test_waiver_player_out_stability_fields_default_safe():
+    """Stability fields default to None/False so existing callers are unaffected."""
+    from backend.schemas import WaiverPlayerOut
+    p = WaiverPlayerOut(player_id="x", name="X", team="T", position="OF")
+    assert p.need_score_ci is None
+    assert p.need_score_volatile is False
+    assert p.projection_source is None
+
+
+def test_waiver_wire_response_has_metadata():
+    """WaiverWireResponse must expose scored_at and scoring_model_version."""
+    from backend.schemas import WaiverWireResponse
+    from datetime import date, datetime
+    r = WaiverWireResponse(
+        week_end=date.today(),
+        matchup_opponent="Opp",
+        category_deficits=[],
+        top_available=[],
+        two_start_pitchers=[],
+        scored_at=datetime(2026, 6, 11, 10, 0, 0),
+        scoring_model_version="2.1",
+    )
+    assert r.scoring_model_version == "2.1"
+    assert r.scored_at is not None
