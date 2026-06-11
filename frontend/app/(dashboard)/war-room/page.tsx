@@ -175,7 +175,7 @@ export default function WarRoomPage() {
         <div className="flex items-center gap-3 mb-2">
           <Swords className="h-6 w-6 text-accent-gold" />
           <span className="text-lg font-bold tracking-widest uppercase text-accent-gold">War Room</span>
-          {matchup.data && matchup.data.week > 0 && (
+          {matchup.data && matchup.data.week != null && matchup.data.week > 0 && (
             <span className="text-[10px] px-2 py-1 bg-accent-gold/10 text-accent-gold border border-accent-gold/30 rounded font-bold tracking-wider uppercase">
               Week {matchup.data.week} · IN-FLIGHT
             </span>
