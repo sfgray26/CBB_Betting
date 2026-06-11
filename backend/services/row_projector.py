@@ -40,7 +40,7 @@ from datetime import date
 
 
 # First Yahoo H2H matchup Monday — aligns with _MLB_FIRST_MATCHUP_MONDAY in fantasy.py
-_MLB_OPENING_DAY = date(2026, 3, 24)
+_MLB_OPENING_DAY = date(2026, 3, 27)
 
 
 def _days_into_season(as_of_date: Optional[date] = None) -> int:
