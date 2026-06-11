@@ -401,6 +401,9 @@ export const endpoints = {
   analyzeTrade: (givePlayers: string[], receivePlayers: string[]) =>
     apiFetch<TradeAnalysisResponse>('/api/fantasy/trade/analyze', {
       method: 'POST',
-      body: JSON.stringify({ give_players: givePlayers, receive_players: receivePlayers }),
+      body: JSON.stringify({ 
+        give: givePlayers.map(p => ({ player_key: p, player_name: p })), 
+        receive: receivePlayers.map(p => ({ player_key: p, player_name: p })) 
+      }),
     }),
 }
