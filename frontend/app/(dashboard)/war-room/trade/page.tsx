@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
-import type { TradeAnalysisResponse, TradeCategoryDelta, TradePlayer } from '@/lib/types'
+import type { TradeAnalysisResponse, TradeCategoryDelta } from '@/lib/types'
 import { ArrowLeftRight, Plus, X, Loader2, AlertCircle, TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -297,7 +297,7 @@ export default function TradePage() {
               {mutation.error instanceof Error ? mutation.error.message : 'Unknown error'}
             </p>
             <p className="text-xs text-text-muted mt-1">
-              Tip: Use exact player names as they appear on the roster (e.g., "Juan Soto", "Gerrit Cole").
+              Tip: Use exact player names as they appear on the roster (e.g., &ldquo;Juan Soto&rdquo;, &ldquo;Gerrit Cole&rdquo;).
             </p>
           </div>
         </div>
