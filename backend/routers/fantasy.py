@@ -121,6 +121,11 @@ _MATCHUP_CACHE_TTL = 300  # seconds
 # League settings (stat ID map) — 2-hour TTL; never changes mid-season.
 _LEAGUE_SETTINGS_CACHE: dict = {}
 
+# Per-player need_score history for volatility detection.
+# Keyed by player_key → (score: float, ts: datetime).
+# Only entries within the last 60 minutes trigger a volatile flag.
+_NEED_SCORE_HISTORY: dict = {}
+
 # Yahoo H2H weeks run Monday–Sunday. Week 1 = March 24–30, 2026 (first Monday on or after Opening Day).
 # Using Opening Day (Mar 20, Thursday) as epoch produces a 4-day offset that causes queries to
 # hit the wrong Yahoo matchup week — Week 10 instead of Week 9 on May 22.
@@ -2225,6 +2230,35 @@ async def get_fantasy_waiver_recommendations(
             if _penalty_note and "HIGH_INJURY_RISK" not in _sc_sigs:
                 _sc_sigs.append("HIGH_INJURY_RISK")
 
+            # ── Stability metadata ──────────────────────────────────────────
+            _pkey_stab = p.get("player_key") or ""
+            _volatile = False
+            _now_stab = datetime.now(ZoneInfo("America/New_York"))
+            if _pkey_stab and _pkey_stab in _NEED_SCORE_HISTORY:
+                _prev_score, _prev_ts = _NEED_SCORE_HISTORY[_pkey_stab]
+                _age_min = (_now_stab - _prev_ts).total_seconds() / 60.0
+                if _age_min < 60.0 and _prev_score > 0.1:
+                    _delta_pct = abs(need_score - _prev_score) / _prev_score
+                    if _delta_pct > 0.20:
+                        _volatile = True
+                        logger.warning(
+                            "[waiver_volatility] %s: %.2f→%.2f (%.0f%% swing in %.0fm)",
+                            name, _prev_score, need_score, _delta_pct * 100.0, _age_min,
+                        )
+            if _pkey_stab:
+                _NEED_SCORE_HISTORY[_pkey_stab] = (need_score, _now_stab)
+
+            # CI factor: steamer+statcast=15%, steamer=25%, proxy/draft=40%
+            _proj_src = board_player.get("fusion_source") or (
+                "proxy" if board_player.get("is_proxy") else "draft_board"
+            )
+            _ci_factors = {"steamer+statcast": 0.15, "steamer": 0.25}
+            _need_ci: Optional[float] = round(need_score * _ci_factors.get(_proj_src, 0.40), 2) if need_score > 0 else None
+            logger.debug(
+                "[waiver_score] %s need=%.3f ci=±%.2f src=%s volatile=%s n_defs=%d",
+                name, need_score, _need_ci or 0.0, _proj_src, _volatile, len(category_deficits),
+            )
+
             # Suppress HOT for any injured/unavailable player (IL already filtered out;
             # DTD suppression prevents a misleading badge on players who may not play)
             _injury_upper = (_injury_status or "").upper()
@@ -2288,6 +2322,9 @@ async def get_fantasy_waiver_recommendations(
                 park_factor=round(_get_park_factor(p.get("team") or "", "run"), 3),
                 closer_role=_closer_role,
                 availability_note=_avail_note,
+                need_score_ci=_need_ci,
+                need_score_volatile=_volatile,
+                projection_source=_proj_src,
             )
 
         # Bulk quality_score lookup for pitcher FA candidates (enrichment only).
@@ -2587,6 +2624,8 @@ async def get_fantasy_waiver_recommendations(
         roster_context=_roster_context,
         il_watch=il_watch,
         data_as_of=datetime.now(ZoneInfo("America/New_York")),
+        scored_at=datetime.now(ZoneInfo("America/New_York")),
+        scoring_model_version="2.1",
     )
 
 
@@ -2983,6 +3022,34 @@ async def get_waiver_recommendations(
             if _penalty_note and "HIGH_INJURY_RISK" not in _sc_sigs:
                 _sc_sigs.append("HIGH_INJURY_RISK")
 
+            # ── Stability metadata ──────────────────────────────────────────
+            _pkey_stab_rec = p.get("player_key") or ""
+            _volatile_rec = False
+            _now_stab_rec = datetime.now(ZoneInfo("America/New_York"))
+            if _pkey_stab_rec and _pkey_stab_rec in _NEED_SCORE_HISTORY:
+                _prev_score_rec, _prev_ts_rec = _NEED_SCORE_HISTORY[_pkey_stab_rec]
+                _age_min_rec = (_now_stab_rec - _prev_ts_rec).total_seconds() / 60.0
+                if _age_min_rec < 60.0 and _prev_score_rec > 0.1:
+                    _delta_pct_rec = abs(need_score - _prev_score_rec) / _prev_score_rec
+                    if _delta_pct_rec > 0.20:
+                        _volatile_rec = True
+                        logger.warning(
+                            "[waiver_volatility_rec] %s: %.2f→%.2f (%.0f%% swing in %.0fm)",
+                            name, _prev_score_rec, need_score, _delta_pct_rec * 100.0, _age_min_rec,
+                        )
+            if _pkey_stab_rec:
+                _NEED_SCORE_HISTORY[_pkey_stab_rec] = (need_score, _now_stab_rec)
+
+            _proj_src_rec = bp.get("fusion_source") or (
+                "proxy" if bp.get("is_proxy") else "draft_board"
+            )
+            _ci_factors_rec = {"steamer+statcast": 0.15, "steamer": 0.25}
+            _need_ci_rec: Optional[float] = round(need_score * _ci_factors_rec.get(_proj_src_rec, 0.40), 2) if need_score > 0 else None
+            logger.debug(
+                "[waiver_score_rec] %s need=%.3f ci=±%.2f src=%s volatile=%s",
+                name, need_score, _need_ci_rec or 0.0, _proj_src_rec, _volatile_rec,
+            )
+
             # hot_cold derived from PlayerMomentum 14d signal (falls back to season z-score average)
             _hc: Optional[str] = None
             _rec_bdl_id: Optional[int] = None
@@ -3027,6 +3094,9 @@ async def get_waiver_recommendations(
                 momentum_signal=_rec_momentum_signal_by_bdl_id.get(_rec_bdl_id) if _rec_bdl_id else None,
                 park_factor=round(_get_park_factor_rec(p.get("team") or "", "run"), 3),
                 availability_note=_avail_note_rec,
+                need_score_ci=_need_ci_rec,
+                need_score_volatile=_volatile_rec,
+                projection_source=_proj_src_rec,
             )
 
         scored_fas = sorted(

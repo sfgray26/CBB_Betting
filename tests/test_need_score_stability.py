@@ -73,3 +73,24 @@ def test_n_cats_formula_consistent_in_source():
         "not len(_need_vector.needs) — the translated dict can be smaller due to "
         "_CANONICAL_TO_BOARD key collisions, inflating need_score vs main waiver endpoint"
     )
+
+
+def test_need_score_history_and_volatility_logic_present():
+    """fantasy.py must define _NEED_SCORE_HISTORY and reference need_score_volatile."""
+    import pathlib
+    src = (pathlib.Path(__file__).parent.parent / "backend" / "routers" / "fantasy.py").read_text()
+    assert "_NEED_SCORE_HISTORY" in src, (
+        "fantasy.py must define module-level _NEED_SCORE_HISTORY dict for per-player score tracking"
+    )
+    assert "need_score_volatile" in src, (
+        "WaiverPlayerOut constructors must pass need_score_volatile="
+    )
+    assert "need_score_ci" in src, (
+        "WaiverPlayerOut constructors must pass need_score_ci="
+    )
+    assert "projection_source" in src, (
+        "WaiverPlayerOut constructors must pass projection_source="
+    )
+    assert "scored_at" in src, (
+        "WaiverWireResponse must be returned with scored_at= populated"
+    )
