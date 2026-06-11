@@ -844,3 +844,31 @@ export interface GlobalFreshnessResponse {
     message?: string | null
   }>
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Trade Analysis
+// ═════════════════════════════════════════════════════════════════════════════
+
+export interface TradeCategoryDelta {
+  category: string;
+  direction: 'gain' | 'loss' | 'neutral';
+  give_z: number;
+  receive_z: number;
+  delta: number;
+}
+
+export interface TradePlayer {
+  name: string;
+  team?: string;
+  z_score: number;
+}
+
+export interface TradeAnalysisResponse {
+  recommendation: 'strong_accept' | 'accept' | 'neutral' | 'reject' | 'strong_reject';
+  total_z_delta: number;
+  summary: string;
+  give_players: TradePlayer[];
+  receive_players: TradePlayer[];
+  category_deltas: TradeCategoryDelta[];
+}
+

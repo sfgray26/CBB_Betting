@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
-import type { TradeAnalysisResponse, TradeCategoryDelta } from '@/lib/types'
+import type { TradeAnalysisResponse, TradeCategoryDelta, TradePlayer } from '@/lib/types'
 import { ArrowLeftRight, Plus, X, Loader2, AlertCircle, TrendingUp, TrendingDown, Minus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
