@@ -219,10 +219,15 @@ async def lifespan(app: FastAPI):
         logger.warning("Lifespan: roster_acquisitions table check failed: %s", _tbl_exc)
 
     # Ensure daily_availability_overrides table exists (P0 availability guard).
-    # Same surgical pattern as roster_acquisitions above.
+    # Self-contained try block: does not rely on _inspector from the block above
+    # (if that block threw before assigning _inspector, this block would NameError
+    # and silently skip table creation).
     try:
-        if "daily_availability_overrides" not in _inspector.get_table_names():
-            DailyAvailabilityOverride.__table__.create(_db_engine)
+        from sqlalchemy import inspect as _sa_inspect2
+        from backend.models import engine as _db_engine2, DailyAvailabilityOverride as _DAO
+        _dao_inspector = _sa_inspect2(_db_engine2)
+        if "daily_availability_overrides" not in _dao_inspector.get_table_names():
+            _DAO.__table__.create(_db_engine2)
             logger.info("Lifespan: created daily_availability_overrides table")
         else:
             logger.debug("Lifespan: daily_availability_overrides table already exists")
