@@ -52,6 +52,8 @@ function statusLabel(winProb: number | null): { text: string; color: string; des
   return { text: 'LOST', color: 'text-status-lost', description: `${Math.round(winProb * 100)}% win prob - Unlikely to win` }
 }
 
+// P0-5: Fixed action logic with CONCEDE threshold
+// Thresholds: <15% = CONCEDE, 15-35% = PUNT?, >35% = Hold
 function actionHint(
   proj: CategoryProjection | undefined,
   lowerBetter: boolean,
@@ -60,8 +62,18 @@ function actionHint(
 ): string {
   if (!proj) return ''
   const { win_prob, my_proj, opp_proj } = proj
-  if (win_prob > 0.95) return 'Protect'
-  if (win_prob < 0.05) return '—'
+  
+  // CONCEDE: win probability < 15% (not Hold anymore)
+  if (win_prob < 0.15) {
+    return 'CONCEDE'
+  }
+  
+  // PUNT?: win probability 15-35%
+  if (win_prob < 0.35) {
+    return 'PUNT?'
+  }
+  
+  // BUBBLE: 35-65% win probability
   if (win_prob >= 0.35 && win_prob <= 0.65) {
     if (my_proj != null && opp_proj != null) {
       const delta = lowerBetter
@@ -72,11 +84,32 @@ function actionHint(
     }
     return 'Close'
   }
+  
+  // LEAD: win probability > 65%
   if (win_prob > 0.65) return 'Hold'
-  // Guard: never suggest Punt? for a category the team is currently winning
-  const currentWinning = isWinning(myCurrentVal, oppCurrentVal, lowerBetter)
-  if (currentWinning === true) return 'Hold'
-  return 'Punt?'
+  
+  // SAFE: win probability > 95%
+  if (win_prob > 0.95) return 'Protect'
+  
+  return ''
+}
+
+// P0-5: Tooltips explaining why each action is recommended
+function actionTooltip(action: string, winProb: number | null): string | null {
+  if (!action) return null
+  if (action === 'CONCEDE') {
+    return `Projected win probability < 15% (${winProb !== null ? Math.round(winProb * 100) + '%' : 'unknown'}) — concede and protect other categories`
+  }
+  if (action === 'PUNT?') {
+    return `Projected win probability 15-35% (${winProb !== null ? Math.round(winProb * 100) + '%' : 'unknown'}) — consider punting to focus resources elsewhere`
+  }
+  if (action === 'Hold') {
+    return `Projected win probability > 35% (${winProb !== null ? Math.round(winProb * 100) + '%' : 'unknown'}) — keep fighting for this category`
+  }
+  if (action === 'Protect') {
+    return `Projected win probability > 95% (${winProb !== null ? Math.round(winProb * 100) + '%' : 'unknown'}) — safe lead, maintain`
+  }
+  return null
 }
 
 type FilterChip = 'all' | 'bubbles' | 'hitting' | 'pitching'
@@ -98,6 +131,7 @@ function CategoryRow({ cat, myVal, oppVal, proj }: RowProps) {
   const pct = barMyPct(myVal, oppVal)
   const winProb = proj?.win_prob ?? null
   const hint = actionHint(proj, lowerBetter, myVal, oppVal)
+  const tooltip = actionTooltip(hint, winProb)
   const status = statusLabel(winProb)
 
   // Design System v2: my value is always primary white; gold is reserved for CTAs
@@ -177,7 +211,10 @@ function CategoryRow({ cat, myVal, oppVal, proj }: RowProps) {
         </div>
 
         {/* Action hint — hidden on mobile, shown md+ */}
-        <span className="w-20 text-right text-xs font-mono text-text-tertiary tracking-wide flex-shrink-0 hidden md:block">
+        <span
+          className="w-20 text-right text-xs font-mono text-text-tertiary tracking-wide flex-shrink-0 hidden md:block cursor-help"
+          title={tooltip || undefined}
+        >
           {hint}
         </span>
       </div>
