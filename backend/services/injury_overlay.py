@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
+
 from backend.models import IngestedInjury, PlayerIDMapping
 
 _ET = ZoneInfo("America/New_York")
@@ -32,6 +33,7 @@ _IL_DURATIONS: dict[str, int] = {
     "15": 15,
     "10": 10,
 }
+
 
 def _il_duration_days(status: str) -> Optional[int]:
     """Return the minimum IL duration in days for the given status string, or None."""
@@ -54,7 +56,7 @@ class InjuryOverlay:
     return_timeline: Optional[str]
     ingested_at: datetime
     is_stale: bool
-    expired_eta: bool = False  # NEW: Track if ETA has passed
+    expired_eta: bool = False  # True when the estimated return date has passed
 
 
 def _coerce_et(dt: Optional[datetime]) -> Optional[datetime]:
@@ -91,7 +93,7 @@ def build_injury_overlay(
     injury_date: Optional[datetime] = None,
     now_et: Optional[datetime] = None,
     freshness_minutes: int = _DEFAULT_FRESHNESS_MINUTES,
-    expired_eta: bool = False,  # NEW: Pass through expired flag
+    expired_eta: bool = False,
 ) -> InjuryOverlay:
     """Build a lightweight overlay with a human-readable return/freshness string.
 
@@ -99,10 +101,13 @@ def build_injury_overlay(
     minimum duration when the status contains a recognised IL designator.  When
     the BDL-supplied ``return_date`` implies a duration more than 1.2× the IL
     minimum, the estimate is flagged as uncertain and shown as
-    \"ETA: TBD (eligible [earliest_date])\" to avoid displaying a fabricated date.
+    "ETA: TBD (eligible [earliest_date])" to avoid displaying a fabricated date.
 
     When no IL type can be inferred AND no ``return_date`` is available for an
-    IL player, the timeline shows \"ETA: Unknown\" rather than a fabricated date.
+    IL player, the timeline shows "ETA: Unknown" rather than a fabricated date.
+
+    When ``expired_eta`` is True and the resolved return date has passed, the
+    timeline leads with an expired-ETA warning instead of the stale date.
     """
     now_et = _coerce_et(now_et) or datetime.now(_ET)
     ingested_et = _coerce_et(ingested_at) or now_et
@@ -149,11 +154,10 @@ def build_injury_overlay(
 
     timeline_parts: list[str] = []
     status_upper = status.upper().replace(" ", "").replace("-", "")
-    
-    # Add expired ETA warning
-    if expired_eta and return_et and return_et.date() < now_et.date():
+
+    if expired_eta and return_et is not None and return_et.date() < now_et.date():
         timeline_parts.append("⚠️ ETA EXPIRED — CHECK STATUS")
-    
+
     if return_et is not None and not expired_eta:
         if tbd_eligibility:
             timeline_parts.append(f"ETA: TBD (eligible {_format_calendar_date(return_et)})")
@@ -186,33 +190,7 @@ def load_injury_overlays(
     if not player_ids:
         return {}
 
-    # Check for expired ETAs in real-time and mark them in DB
     now_et = _coerce_et(now_et) or datetime.now(_ET)
-    today_start = now_et.replace(hour=0, minute=0, second=0, microsecond=0)
-    
-    # Auto-mark expired ETAs (real-time check, not just nightly cron)
-    try:
-        expired_injuries = (
-            db.query(IngestedInjury)
-            .filter(
-                IngestedInjury.bdl_player_id.in_(player_ids),
-                IngestedInjury.return_date.isnot(None),
-                IngestedInjury.return_date < today_start,
-                IngestedInjury.expired_eta.is_(False),
-            )
-            .all()
-        )
-        if expired_injuries:
-            logger.warning(
-                "injury_overlay: marking %d injuries as expired_eta (real-time check)",
-                len(expired_injuries),
-            )
-            for injury in expired_injuries:
-                injury.expired_eta = True
-            db.commit()
-    except Exception as e:
-        logger.error("injury_overlay: failed to mark expired ETAs: %s", e)
-        db.rollback()
 
     rows = (
         db.query(IngestedInjury)
@@ -225,16 +203,11 @@ def load_injury_overlays(
     for row in rows:
         if row.bdl_player_id in overlays:
             continue
-        
-        # Check if ETA has expired for display
-        return_et = None
-        if row.return_date:
-            return_et = _coerce_et(row.return_date)
-        
-        expired_eta_display = False
-        if return_et and return_et.date() < now_et.date() and row.expired_eta:
-            expired_eta_display = True
-        
+        # Real-time expired-ETA detection: pure date comparison, so the flag
+        # does not depend on the nightly check_expired_eta watchdog having
+        # marked the row yet, and this read path performs no DB writes.
+        return_et = _coerce_et(row.return_date)
+        expired_eta = bool(return_et is not None and return_et.date() < now_et.date())
         overlays[row.bdl_player_id] = build_injury_overlay(
             status=row.injury_status,
             note=row.short_comment or row.long_comment,
@@ -243,98 +216,108 @@ def load_injury_overlays(
             ingested_at=row.ingested_at,
             now_et=now_et,
             freshness_minutes=freshness_minutes,
-            expired_eta=expired_eta_display,
+            expired_eta=expired_eta,
         )
-    
     return overlays
 
 
 def load_injury_overlays_for_yahoo_players(
     db: Session,
-    yahoo_players: list[dict],
+    raw_players: list[dict],
     *,
     now_et: Optional[datetime] = None,
     freshness_minutes: int = _DEFAULT_FRESHNESS_MINUTES,
 ) -> dict[str, InjuryOverlay]:
-    """Load injury overlays for Yahoo player objects, keyed by yahoo_player_key.
-
-    This helper resolves the crosswalk from ``yahoo_player_key`` → ``bdl_player_id``
-    via PlayerIDMapping, then calls ``load_injury_overlays`` with the resolved BDL
-    IDs.
-    """
-    if not yahoo_players:
+    """Resolve Yahoo player keys to BDL IDs, then fetch fresh injury overlays."""
+    if not raw_players:
         return {}
 
-    # Resolve yahoo_player_key → bdl_player_id
-    yahoo_keys = [p.get("player_key") for p in yahoo_players if p.get("player_key")]
-    if not yahoo_keys:
-        return {}
+    player_key_to_bdl: dict[str, int] = {}
+    query_keys: set[str] = set()
+    yahoo_ids: set[str] = set()
 
-    mappings = (
-        db.query(PlayerIDMapping)
-        .filter(PlayerIDMapping.yahoo_player_key.in_(yahoo_keys))
-        .all()
-    )
+    for player in raw_players:
+        player_key = str(player.get("player_key") or "").strip()
+        if not player_key:
+            continue
 
-    key_to_bdl_id: dict[str, int] = {
-        m.yahoo_player_key: m.bdl_player_id
-        for m in mappings
-        if m.bdl_player_id is not None
-    }
+        direct_bdl_id = player.get("bdl_player_id")
+        if direct_bdl_id is not None:
+            player_key_to_bdl[player_key] = int(direct_bdl_id)
+            continue
 
-    bdl_ids = set(key_to_bdl_id.values())
-    overlays_by_bdl_id = load_injury_overlays(
+        query_keys.add(player_key)
+        if ".p." in player_key:
+            yahoo_ids.add(player_key.split(".p.", 1)[-1])
+        elif player.get("player_id"):
+            yahoo_ids.add(str(player.get("player_id")))
+
+    if query_keys or yahoo_ids:
+        predicates = []
+        if query_keys:
+            predicates.append(PlayerIDMapping.yahoo_key.in_(list(query_keys)))
+        if yahoo_ids:
+            predicates.append(PlayerIDMapping.yahoo_id.in_(list(yahoo_ids)))
+
+        rows = (
+            db.query(
+                PlayerIDMapping.yahoo_key,
+                PlayerIDMapping.yahoo_id,
+                PlayerIDMapping.bdl_id,
+            )
+            .filter(
+                PlayerIDMapping.bdl_id.isnot(None),
+                or_(*predicates),
+            )
+            .all()
+        )
+
+        by_key = {row.yahoo_key: row.bdl_id for row in rows if row.yahoo_key and row.bdl_id is not None}
+        by_yahoo_id = {row.yahoo_id: row.bdl_id for row in rows if row.yahoo_id and row.bdl_id is not None}
+
+        for player in raw_players:
+            player_key = str(player.get("player_key") or "").strip()
+            if not player_key or player_key in player_key_to_bdl:
+                continue
+
+            bdl_id = by_key.get(player_key)
+            if bdl_id is None:
+                yahoo_id = player_key.split(".p.", 1)[-1] if ".p." in player_key else str(player.get("player_id") or "")
+                bdl_id = by_yahoo_id.get(yahoo_id)
+            if bdl_id is not None:
+                player_key_to_bdl[player_key] = int(bdl_id)
+
+    overlay_by_bdl = load_injury_overlays(
         db,
-        bdl_ids,
+        player_key_to_bdl.values(),
         now_et=now_et,
         freshness_minutes=freshness_minutes,
     )
 
-    # Map back to yahoo_player_key
     return {
-        yahoo_key: overlays_by_bdl_id[bdl_id]
-        for yahoo_key, bdl_id in key_to_bdl_id.items()
-        if bdl_id in overlays_by_bdl_id
+        player_key: overlay_by_bdl[bdl_id]
+        for player_key, bdl_id in player_key_to_bdl.items()
+        if bdl_id in overlay_by_bdl
     }
 
 
-def apply_injury_penalty(
-    need_score: float,
-    injury: Optional[InjuryOverlay],
-) -> tuple[float, Optional[str]]:
-    """Apply a modest waiver penalty for fresh active injuries.
+def apply_injury_penalty(score: float, overlay: Optional[InjuryOverlay]) -> tuple[float, Optional[str]]:
+    """Apply a modest waiver penalty for fresh active injuries only."""
+    if overlay is None or overlay.is_stale:
+        return round(float(score), 3), None
 
-    Args:
-        need_score: The raw need score computed from category deficits.
-        injury: Injury overlay if the player is injured, else None.
+    status = str(overlay.status or "").upper()
+    penalty = 0.0
+    if "60-DAY" in status or "IL60" in status:
+        penalty = _LONG_IL_PENALTY
+    elif "IL" in status:
+        penalty = _IL_PENALTY
+    elif "DTD" in status or "DAY-TO-DAY" in status:
+        penalty = _DTD_PENALTY
 
-    Returns:
-        A tuple of (adjusted_need_score, penalty_note).
-    """
-    if injury is None:
-        return need_score, None
+    if penalty <= 0.0:
+        return round(float(score), 3), None
 
-    penalty_note = None
-    adjusted_score = need_score
-
-    # Only apply penalty for fresh injuries (non-stale)
-    if not injury.is_stale:
-        status_upper = injury.status.upper().replace(" ", "").replace("-", "")
-
-        if "IL60" in status_upper or "60DAYIL" in status_upper:
-            penalty_note = "60-Day IL"
-            adjusted_score *= _LONG_IL_PENALTY
-        elif "IL15" in status_upper or "15DAYIL" in status_upper:
-            penalty_note = "15-Day IL"
-            adjusted_score *= _IL_PENALTY
-        elif "IL10" in status_upper or "10DAYIL" in status_upper:
-            penalty_note = "10-Day IL"
-            adjusted_score *= _IL_PENALTY
-        elif "IL" in status_upper:
-            penalty_note = "IL"
-            adjusted_score *= _IL_PENALTY
-        elif "DTD" in status_upper:
-            penalty_note = "DTD"
-            adjusted_score *= _DTD_PENALTY
-
-    return adjusted_score, penalty_note
+    adjusted = max(0.0, float(score) - penalty)
+    note = f"Injury penalty -{penalty:.2f} ({overlay.status})"
+    return round(adjusted, 3), note

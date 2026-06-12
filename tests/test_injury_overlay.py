@@ -1,14 +1,33 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import create_engine
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import sessionmaker
+
+from backend.models import IngestedInjury, PlayerIDMapping
 from backend.services.injury_overlay import (
     apply_injury_penalty,
     build_injury_overlay,
+    load_injury_overlays_for_yahoo_players,
     _il_duration_days,
 )
 
 
 _ET = ZoneInfo("America/New_York")
+
+
+@compiles(JSONB, "sqlite")
+def _render_jsonb_as_json_on_sqlite(type_, compiler, **kw):
+    return "JSON"
+
+
+def _make_sqlite_session():
+    engine = create_engine("sqlite:///:memory:")
+    PlayerIDMapping.__table__.create(bind=engine)
+    IngestedInjury.__table__.create(bind=engine)
+    return sessionmaker(bind=engine)()
 
 
 def test_build_injury_overlay_includes_eta_and_freshness_for_fresh_rows():
@@ -67,6 +86,99 @@ def test_apply_injury_penalty_discounts_il_more_than_dtd():
     assert il_score < dtd_score < 2.0
     assert "15-Day-IL" in (il_note or "")
     assert "DTD" in (dtd_note or "")
+
+
+def test_apply_injury_penalty_60_day_il_reduces_score_most():
+    """60-Day IL must reduce the need score, never boost it, and must be
+    harsher than 15-Day IL (regression: c780d56 multiplied by 1.25)."""
+    now_et = datetime(2026, 5, 19, 12, 0, tzinfo=_ET)
+    long_il_overlay = build_injury_overlay(
+        status="60-Day-IL",
+        note="Tommy John surgery",
+        return_date=None,
+        ingested_at=now_et - timedelta(minutes=15),
+        now_et=now_et,
+    )
+    il_overlay = build_injury_overlay(
+        status="15-Day-IL",
+        note="Hamstring strain",
+        return_date=None,
+        ingested_at=now_et - timedelta(minutes=15),
+        now_et=now_et,
+    )
+
+    long_il_score, long_il_note = apply_injury_penalty(2.0, long_il_overlay)
+    il_score, _ = apply_injury_penalty(2.0, il_overlay)
+
+    assert long_il_score < il_score < 2.0
+    assert "60-Day-IL" in (long_il_note or "")
+
+
+# ---------------------------------------------------------------------------
+# Regression: c780d56 review blockers — PlayerIDMapping column names and
+# real-time expired-ETA detection in the Yahoo loader path
+# ---------------------------------------------------------------------------
+
+
+class TestLoadInjuryOverlaysForYahooPlayers:
+    def _seed(self, db, *, return_date, now_et):
+        db.add(
+            PlayerIDMapping(
+                yahoo_key="469.p.111",
+                yahoo_id="111",
+                bdl_id=42,
+                full_name="Colt Emerson",
+                normalized_name="colt emerson",
+            )
+        )
+        db.add(
+            IngestedInjury(
+                id=1,  # BigInteger PK does not autoincrement on sqlite
+                bdl_player_id=42,
+                player_name="Colt Emerson",
+                injury_date=(now_et - timedelta(days=12)).replace(tzinfo=None),
+                return_date=return_date,
+                injury_type="Hamstring",
+                injury_status="10-Day-IL",
+                long_comment="Hamstring strain, eyeing return.",
+                short_comment="Hamstring strain.",
+                raw_payload={},
+                ingested_at=(now_et - timedelta(minutes=30)).replace(tzinfo=None),
+            )
+        )
+        db.commit()
+
+    def test_resolves_player_id_mapping_columns_and_flags_expired_eta(self):
+        """Loader must query PlayerIDMapping.yahoo_key / bdl_id (regression:
+        c780d56 referenced non-existent yahoo_player_key / bdl_player_id) and
+        flag a passed return_date in real time without any DB write."""
+        now_et = datetime(2026, 6, 12, 12, 0, tzinfo=_ET)
+        db = _make_sqlite_session()
+        self._seed(db, return_date=(now_et - timedelta(days=2)).replace(tzinfo=None), now_et=now_et)
+
+        overlays = load_injury_overlays_for_yahoo_players(
+            db, [{"player_key": "469.p.111"}], now_et=now_et,
+        )
+
+        assert "469.p.111" in overlays
+        overlay = overlays["469.p.111"]
+        assert overlay.expired_eta is True
+        assert "EXPIRED" in (overlay.return_timeline or "")
+
+    def test_future_eta_is_not_flagged_expired(self):
+        now_et = datetime(2026, 6, 12, 12, 0, tzinfo=_ET)
+        db = _make_sqlite_session()
+        self._seed(db, return_date=(now_et + timedelta(days=3)).replace(tzinfo=None), now_et=now_et)
+
+        overlays = load_injury_overlays_for_yahoo_players(
+            db, [{"player_key": "469.p.111"}], now_et=now_et,
+        )
+
+        assert "469.p.111" in overlays
+        overlay = overlays["469.p.111"]
+        assert overlay.expired_eta is False
+        assert "EXPIRED" not in (overlay.return_timeline or "")
+        assert "ETA" in (overlay.return_timeline or "")
 
 
 # ---------------------------------------------------------------------------
