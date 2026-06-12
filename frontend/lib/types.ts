@@ -538,6 +538,9 @@ export interface WaiverAvailablePlayer {
   stats?: Record<string, number | null>
   small_sample?: boolean
   availability_note?: string | null
+  need_score_ci?: number | null
+  need_score_volatile?: boolean | null
+  projection_source?: string | null
 }
 
 export interface WaiverRosterPlayer {
@@ -626,6 +629,8 @@ export interface WaiverResponse {
   pagination?: { page: number; per_page: number; has_next: boolean } | null
   roster_context?: Record<string, WaiverRosterPlayer>
   data_as_of?: string | null
+  scoring_model_version?: string | null
+  scored_at?: string | null
 }
 
 // ---------------------------------------------------------------------------

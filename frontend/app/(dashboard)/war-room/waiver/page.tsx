@@ -62,7 +62,7 @@ function NeedScoreTooltipContent({ score, contributions }: { score: number; cont
   )
 }
 
-function NeedBar({ score, contributions }: { score: number; contributions?: Record<string, number> }) {
+function NeedBar({ score, contributions, ci }: { score: number; contributions?: Record<string, number>; ci?: number | null }) {
   const pct = Math.min(100, Math.max(0, score * 10)) // scale: 0-10 → 0-100%
   const color = score >= 7.0 ? 'bg-status-safe' : score >= 4.0 ? 'bg-status-bubble' : 'bg-text-muted'
   return (
@@ -75,6 +75,9 @@ function NeedBar({ score, contributions }: { score: number; contributions?: Reco
           {score.toFixed(2)}
         </span>
       </Tooltip>
+      {ci != null && ci > 0 && (
+        <span className="text-[9px] text-text-muted tabular-nums flex-shrink-0">±{ci.toFixed(1)}</span>
+      )}
     </div>
   )
 }
@@ -219,6 +222,11 @@ function PlayerRow({ player, rosterPlayer }: {
               </span>
             )
           })()}
+          {player.need_score_volatile && (
+            <span className="text-[10px] px-1.5 py-0.5 bg-status-bubble/10 text-status-bubble border border-status-bubble/30 rounded font-semibold">
+              ⚠ Volatile
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
           <span className="text-xs text-text-secondary">{player.team}</span>
@@ -295,7 +303,7 @@ function PlayerRow({ player, rosterPlayer }: {
               </span>
             )}
           </div>
-          <NeedBar score={player.need_score} contributions={player.category_contributions} />
+          <NeedBar score={player.need_score} contributions={player.category_contributions} ci={player.need_score_ci} />
           <p className="text-[9px] text-text-muted mt-0.5">
             {needMatches.length > 0
               ? `Fits: ${needMatches.slice(0, 3).join(', ')}`
