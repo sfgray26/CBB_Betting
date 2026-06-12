@@ -57,8 +57,6 @@ function statusLabel(winProb: number | null): { text: string; color: string; des
 function actionHint(
   proj: CategoryProjection | undefined,
   lowerBetter: boolean,
-  myCurrentVal?: number | string | null,
-  oppCurrentVal?: number | string | null,
 ): string {
   if (!proj) return ''
   const { win_prob, my_proj, opp_proj } = proj
@@ -130,7 +128,7 @@ function CategoryRow({ cat, myVal, oppVal, proj }: RowProps) {
   const catColor = CATEGORY_COLOR[cat]
   const pct = barMyPct(myVal, oppVal)
   const winProb = proj?.win_prob ?? null
-  const hint = actionHint(proj, lowerBetter, myVal, oppVal)
+  const hint = actionHint(proj, lowerBetter)
   const tooltip = actionTooltip(hint, winProb)
   const status = statusLabel(winProb)
 
