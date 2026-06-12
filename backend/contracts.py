@@ -380,13 +380,18 @@ class MatchupScoreboardResponse(BaseModel):
     """Full matchup scoreboard. Returned by GET /api/fantasy/scoreboard."""
     week: int
     opponent_name: str
+    # Live scoring (completed games so far)
     categories_won: int                         # MS-13
     categories_lost: int                        # MS-13
     categories_tied: int                        # MS-13
+    # Projected scoring (rest-of-season projections)
     projected_won: Optional[int] = None         # MS-14
     projected_lost: Optional[int] = None        # MS-14
     projected_tied: Optional[int] = None        # MS-14
+    # Win probability based on projections, NOT live score
     overall_win_probability: Optional[float] = None  # MS-15
+    # Explanation of discrepancy between live and projected scores
+    score_explanation: Optional[str] = None     # P0-4: Clarify win prob vs live
     rows: List[MatchupScoreboardRow]            # 18 rows, one per scoring category
     budget: ConstraintBudget
     freshness: FreshnessMetadata

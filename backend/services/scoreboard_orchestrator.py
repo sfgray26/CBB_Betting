@@ -409,6 +409,15 @@ def assemble_matchup_scoreboard(
     projected_lost = sum(1 for r in rows if r.projected_margin is not None and r.projected_margin < 0)
     projected_tied = sum(1 for r in rows if r.projected_margin is not None and r.projected_margin == 0)
 
+    # Step 6.5: Generate explanation for live vs projected discrepancy
+    score_explanation = None
+    if categories_won > categories_lost and overall_win_prob is not None and overall_win_prob < 0.50:
+        # Leading live but projected to lose
+        score_explanation = f"Leading live ({categories_won}-{categories_lost}-{categories_tied}) but projected to lose ({projected_won}-{projected_lost}-{projected_tied}) based on rest-of-season matchups. Win probability is computed from projections, not current stats."
+    elif categories_won < categories_lost and overall_win_prob is not None and overall_win_prob > 0.50:
+        # Trailing live but projected to win
+        score_explanation = f"Trailing live ({categories_won}-{categories_lost}-{categories_tied}) but projected to win ({projected_won}-{projected_lost}-{projected_tied}) based on rest-of-season matchups. Win probability is computed from projections, not current stats."
+
     # Step 7: Freshness metadata
     _is_stale = False
     if fetched_at is not None:
@@ -432,6 +441,7 @@ def assemble_matchup_scoreboard(
         projected_lost=projected_lost,
         projected_tied=projected_tied,
         overall_win_probability=overall_win_prob,
+        score_explanation=score_explanation,
         rows=rows,
         budget=budget,
         freshness=freshness,
