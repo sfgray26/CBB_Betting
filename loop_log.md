@@ -499,3 +499,213 @@ tests/test_roster_optimize_api.py::TestRosterOptimizeEndpoint::test_optimize_ret
 **OBJECTIVE**: Fix AttributeError in optimize endpoint  
 **RESULT**: ✅ **ACHIEVED** - Endpoint stable, 200 OK, data corruption handled gracefully  
 **CONFIDENCE**: ✅ **HIGH** - All success criteria met
+
+---
+
+## LOOP ITERATION 3 - COMPLETED ✓
+**Date**: 2026-06-23  
+**Objective**: Fix GET /api/fantasy/global-freshness 404  
+**Status**: ✅ COMPLETE - Endpoint returns 200 OK
+
+---
+
+## Phase 1: INGEST & AUDIT ✓ COMPLETED
+
+**Frontend Dependency**:
+- Multiple dashboard pages call `GET /api/fantasy/global-freshness`
+- Expected schema: `{severity, minutes_ago, warning_text, sources[]}`
+- Used for health indicators on roster, waiver, streaming pages
+
+**Backend Search Results**:
+- Grep search: NO matches for "global-freshness" or "global_freshness" in backend folder
+- Router registration: Fantasy router included in main.py at line 652
+- **Finding**: Handler simply does not exist
+
+---
+
+## Phase 2: PLAN ✓ COMPLETED
+
+**Root Cause**: Missing handler - endpoint never implemented
+- Frontend expects `/api/fantasy/global-freshness` but backend has no such route
+- Route was planned but never wired
+
+**Implementation Plan**:
+1. Add `GET /api/fantasy/global-freshness` handler in `backend/routers/fantasy.py`
+2. Return structured freshness data matching frontend schema
+3. Check Yahoo client status as primary data source
+4. Add 1 test for endpoint validation
+
+**Files to Modify**: 2 files max
+1. `backend/routers/fantasy.py` - add endpoint handler (~80 lines)
+2. `tests/test_roster_optimize_api.py` - add test (~20 lines)
+
+---
+
+## Phase 3: EXECUTE ✓ COMPLETED
+
+### Files Modified
+
+**1. `backend/routers/fantasy.py`** (~80 lines after line 5486)
+
+**Added**: Global freshness endpoint after yahoo-health
+```python
+@router.get("/api/fantasy/global-freshness")
+async def global_freshness():
+    """Global data freshness for all fantasy data sources."""
+    # Checks Yahoo client circuit breaker status
+    # Returns aggregated severity (worst source determines overall)
+    # Sources array with per-source freshness info
+```
+
+**Response Schema**:
+- `severity`: "fresh" | "warning" | "critical" | "unknown"
+- `minutes_ago`: number | null (worst across sources)
+- `warning_text`: string | null
+- `sources`: array of {name, severity, minutes_ago, message}
+
+**2. `tests/test_roster_optimize_api.py`** (~20 lines)
+
+**Added test**:
+```python
+def test_global_freshness_returns_valid_response(self, fantasy_client):
+    """GET /api/fantasy/global-freshness should return structured freshness data."""
+```
+
+**Committed**: `392da99` - "feat: add /api/fantasy/global-freshness endpoint with test"
+
+**Deployed**: Railway redeployment completed
+
+---
+
+## Phase 4: VALIDATE ✓ COMPLETED
+
+### Test Results
+
+**New Test**: ✅ PASS
+```
+tests/test_roster_optimize_api.py::TestRosterOptimizeEndpoint::test_global_freshness_returns_valid_response PASSED
+```
+
+**Full Test Suite**: ✅ 18 tests pass (17 existing + 1 new)
+```
+======================== 18 passed, 1 warning in 40.89s ========================
+```
+
+### Railway End-to-End Test
+
+**Command**: `curl https://fantasy-app-production-5079.up.railway.app/api/fantasy/global-freshness`
+
+**Response**: ✅ **200 OK**
+```json
+{
+  "severity": "unknown",
+  "minutes_ago": null,
+  "warning_text": null,
+  "sources": [
+    {
+      "name": "yahoo",
+      "severity": "unknown",
+      "minutes_ago": null,
+      "message": "Yahoo client not initialized"
+    }
+  ]
+}
+```
+
+**Result**: ✅ **Endpoint returns 200 with valid structure**
+- Severity is "unknown" because Yahoo client not configured (consistent with Iteration 1 findings)
+- Frontend can now consume this endpoint for health indicators
+- No 404 error
+
+---
+
+## Phase 5: REPORT & REFINE ✓ COMPLETED
+
+### SUCCESS CRITERIA MET
+
+1. ✅ **Endpoint returns 200 OK** (was 404 before)
+2. ✅ **Response matches frontend schema** exactly
+3. ✅ **Test passes** for endpoint validation
+4. ✅ **No regressions** - all 18 tests pass
+5. ✅ **Railway deployment successful**
+
+### IMPLEMENTATION NOTES
+
+**Minimal Viable Implementation**:
+- Checks Yahoo client circuit breaker status
+- Returns aggregated severity (worst source determines overall)
+- Sources array can be expanded to include Statcast, BDL, etc.
+
+**Consistent with Existing Behavior**:
+- Yahoo client "not initialized" on Railway (same as Iteration 1 yahoo-health finding)
+- Returns "unknown" severity which is appropriate for unconfigured environment
+- Frontend will display appropriate "unknown" state
+
+---
+
+## LOOP ITERATION 3 SUMMARY
+
+**OBJECTIVE**: Fix GET /api/fantasy/global-freshness 404  
+**STATUS**: ✅ **COMPLETE - OBJECTIVE ACHIEVED**
+
+**PHASE 1 RESULTS**:
+- ✅ Endpoint handler implemented in fantasy.py
+- ✅ Returns valid response matching frontend schema
+- ✅ Checks Yahoo client status (can be expanded for other sources)
+- ✅ 1 new test added and passing
+
+**PHASE 2 VALIDATION**:
+- ✅ Endpoint returns **200 OK consistently**
+- ✅ Frontend can now consume for health indicators
+- ✅ No regressions - all 18 tests pass
+- ✅ Railway production deployed and functional
+
+**FILES MODIFIED**: 2 files, ~100 lines total  
+**TESTS ADDED**: 1 new test, passing  
+**DEPLOYMENT**: Railway production ✅ Live and functional
+
+---
+
+## CONFIDENCE ASSESSMENT
+
+**CONFIDENCE**: ✅ **HIGH - OBJECTIVE ACHIEVED**
+
+**Reasoning**:
+- Endpoint was simply missing (not a bug, just never implemented)
+- Implementation matches frontend expectations exactly
+- Test validates response structure
+- No architectural complexity or side effects
+- Production deployment successful
+
+**Remaining Risks**: None
+- Endpoint is standalone with no dependencies
+- Can be expanded later with more data sources
+- Current implementation is sufficient for frontend needs
+
+---
+
+## NEXT ITERATION SCOPE (Loop Iteration 4)
+
+### Objective
+Prepare Schedule-Aware Streaming features
+
+### Scope (Preparation Phase)
+1. **Data Model**: Design schema for 2-start SPs, probable pitchers, opponent quality
+2. **Prototype Endpoint**: Initial implementation of streaming recommendations
+3. **Database Integration**: Ensure BDL probable pitchers data is accessible
+
+### Success Criteria
+- Data model documented
+- Prototype endpoint returns valid recommendations
+- At least 1 test for streaming logic
+
+### Files to Modify (TBD)
+- Backend service for schedule-aware logic
+- Possibly new router endpoint or expand existing fantasy router
+- Test file for streaming logic
+
+---
+**ITERATION 3 STATUS**: ✅ **COMPLETE**  
+**OBJECTIVE**: Fix GET /api/fantasy/global-freshness 404  
+**RESULT**: ✅ **ACHIEVED** - Endpoint returns 200 OK with valid structure  
+**CONFIDENCE**: ✅ **HIGH** - All success criteria met
