@@ -643,3 +643,29 @@ class TestRosterOptimizeEndpoint:
         assert data["detail"]["error_code"] == "ROSTER_DATA_CORRUPTED"
         assert "index" in data["detail"]
         assert data["detail"]["index"] == 0
+
+    def test_global_freshness_returns_valid_response(self, fantasy_client):
+        """GET /api/fantasy/global-freshness should return structured freshness data."""
+        response = fantasy_client.get("/api/fantasy/global-freshness")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Top-level fields
+        assert "severity" in data
+        assert data["severity"] in ["fresh", "warning", "critical", "unknown"]
+        assert "minutes_ago" in data
+        assert "warning_text" in data
+        assert "sources" in data
+
+        # Sources should be an array
+        assert isinstance(data["sources"], list)
+        # At least Yahoo source should be present
+        assert len(data["sources"]) >= 1
+
+        # Each source should have required fields
+        for source in data["sources"]:
+            assert "name" in source
+            assert "severity" in source
+            assert source["severity"] in ["fresh", "warning", "critical", "unknown"]
+            assert "minutes_ago" in source

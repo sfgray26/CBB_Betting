@@ -146,6 +146,26 @@
 
 ---
 
+### HEARTBEAT: ETA Expiration Watchdog
+
+**Trigger:** Daily at 03:00 AM ET (nightly).
+
+**Owner:** Claude (service layer) | Execution: Backend cron job
+
+**Code:** `backend/services/eta_expiration_watchdog.py` — `check_eta_expiration()` + `backend/main.py` lifespan cron
+
+**Action:**
+1. Query `IngestedInjury` where `return_date < now` and `expired_eta = False`.
+2. Mark `expired_eta = True` and set `eta_expiration_checked_at = now`.
+3. Preserve original injury status/comment for reference.
+4. API endpoints show "ETA PASSED — STATUS UNKNOWN" warning when `expired_eta = True`.
+
+**Escalation:**
+- Cron job fails → log ERROR to Railway logs
+- No active injuries → job exits silently (no-op)
+
+---
+
 ### HEARTBEAT: Morning Brief (Fantasy)
 
 **Trigger:** 7:00 AM ET daily via `scripts/openclaw_scheduler.py --morning-brief`.

@@ -5486,6 +5486,88 @@ async def yahoo_health():
     return health_status
 
 
+@router.get("/api/fantasy/global-freshness")
+async def global_freshness():
+    """
+    Global data freshness for all fantasy data sources.
+
+    Returns aggregated freshness info for frontend health indicators.
+    Minimal diagnostic implementation - can be expanded with per-source tracking.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    now = datetime.now(ZoneInfo("America/New_York"))
+    sources = []
+
+    # Check Yahoo Fantasy freshness (if client initialized)
+    try:
+        from backend.fantasy_baseball.yahoo_client_resilient import _client
+        if _client is not None:
+            # Check circuit breaker last success time if available
+            last_yahoo_at = None
+            if hasattr(_client, 'circuit'):
+                stats = _client.circuit.get_stats()
+                last_yahoo_at = stats.get('last_success_time')
+
+            yahoo_minutes_ago = None
+            yahoo_severity = "unknown"
+            if last_yahoo_at:
+                delta = now - last_yahoo_at
+                yahoo_minutes_ago = int(delta.total_seconds() / 60)
+                yahoo_severity = "fresh" if yahoo_minutes_ago < 60 else "warning" if yahoo_minutes_ago < 1440 else "critical"
+
+            sources.append({
+                "name": "yahoo",
+                "severity": yahoo_severity,
+                "minutes_ago": yahoo_minutes_ago,
+                "message": None if yahoo_minutes_ago is None else f"Last successful call {yahoo_minutes_ago} minutes ago"
+            })
+        else:
+            sources.append({
+                "name": "yahoo",
+                "severity": "unknown",
+                "minutes_ago": None,
+                "message": "Yahoo client not initialized"
+            })
+    except Exception as e:
+        sources.append({
+            "name": "yahoo",
+            "severity": "critical",
+            "minutes_ago": None,
+            "message": f"Failed to check Yahoo: {str(e)}"
+        })
+
+    # Aggregate severity (worst source determines overall)
+    severity_order = {"critical": 3, "warning": 2, "fresh": 1, "unknown": 0}
+    worst_severity = max(
+        (severity_order.get(s.get("severity", "unknown"), 0) for s in sources),
+        default=0
+    )
+    severity_map = {3: "critical", 2: "warning", 1: "fresh", 0: "unknown"}
+    overall_severity = severity_map.get(worst_severity, "unknown")
+
+    # Compute minutes_ago as the worst (max) among sources
+    minutes_ago = None
+    for s in sources:
+        if s.get("minutes_ago") is not None:
+            if minutes_ago is None or s["minutes_ago"] > minutes_ago:
+                minutes_ago = s["minutes_ago"]
+
+    warning_text = None
+    if overall_severity == "critical":
+        warning_text = "One or more data sources are critically stale or unavailable"
+    elif overall_severity == "warning":
+        warning_text = "Some data sources are stale but still usable"
+
+    return {
+        "severity": overall_severity,
+        "minutes_ago": minutes_ago,
+        "warning_text": warning_text,
+        "sources": sources
+    }
+
+
 @router.get("/api/fantasy/lineup/elite-optimize/{lineup_date}")
 async def elite_optimize_lineup(
     lineup_date: str,
