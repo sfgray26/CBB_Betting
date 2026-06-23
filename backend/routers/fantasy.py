@@ -5388,6 +5388,61 @@ async def get_job_status(
     return result
 
 
+@router.get("/api/fantasy/yahoo-health")
+async def yahoo_health():
+    """
+    Health check for Yahoo Fantasy API connectivity.
+
+    Returns structured status for frontend diagnostics and proactive UI disabling.
+    Frontend can poll this to disable the 'Optimize Lineup' button when Yahoo is unavailable.
+    """
+    from backend.fantasy_baseball.yahoo_client_resilient import _client, _client_lock
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    health_status = {
+        "status": "unknown",  # healthy | degraded | down
+        "circuit_state": None,  # closed | open | half_open
+        "last_success_at": None,
+        "error": None,
+        "recovery_hint": None,
+    }
+
+    # Check client singleton status
+    if _client is None:
+        health_status.update({
+            "status": "down",
+            "error": "Yahoo client not initialized",
+            "recovery_hint": "Check YAHOO_CLIENT_ID, YAHOO_CLIENT_SECRET, YAHOO_REFRESH_TOKEN environment variables"
+        })
+        return health_status
+
+    # Check circuit breaker
+    try:
+        if hasattr(_client, 'circuit'):
+            cb_stats = _client.circuit.get_stats()
+            health_status["circuit_state"] = cb_stats["state"]
+            if cb_stats["state"] == "open":
+                health_status["status"] = "degraded"
+                health_status["error"] = "Circuit breaker is OPEN after repeated failures"
+                health_status["recovery_hint"] = "Wait 5 minutes for circuit recovery or investigate API failures"
+
+        # Try a lightweight API call (get league metadata)
+        league_meta = _client.get_league()
+        health_status["status"] = "healthy"
+        health_status["last_success_at"] = datetime.now(ZoneInfo("America/New_York")).isoformat()
+
+    except YahooAuthError as exc:
+        health_status["status"] = "down"
+        health_status["error"] = f"Authentication failed: {str(exc)}"
+        health_status["recovery_hint"] = "Re-run OAuth flow: python -m backend.fantasy_baseball.yahoo_client_resilient --auth"
+    except Exception as exc:
+        health_status["status"] = "degraded"
+        health_status["error"] = f"API check failed: {str(exc)}"
+
+    return health_status
+
+
 @router.get("/api/fantasy/lineup/elite-optimize/{lineup_date}")
 async def elite_optimize_lineup(
     lineup_date: str,
