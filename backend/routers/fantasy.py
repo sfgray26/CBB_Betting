@@ -5568,6 +5568,154 @@ async def global_freshness():
     }
 
 
+@router.get("/api/fantasy/streaming/recommendations")
+async def streaming_recommendations(
+    target_date: str = Query(..., description="Target date (YYYY-MM-DD) to analyze for streaming recommendations"),
+    days_ahead: int = Query(7, description="Number of days ahead to analyze for 2-start pitchers"),
+    db: Session = Depends(get_db),
+):
+    """
+    Streaming recommendations for fantasy baseball.
+
+    Returns 2-start starting pitchers in the scoring period with quality ratings.
+    Uses ProbablePitcherSnapshot table (populated daily by ingestion job).
+
+    Response includes:
+    - Two-start pitchers with matchup details
+    - Quality scores (ERA + park factor)
+    - EXCELLENT/GOOD/AVERAGE/AVOID recommendations
+    - Transparency fields for each recommendation
+    """
+    from zoneinfo import ZoneInfo
+    from datetime import datetime, timedelta
+    from backend.models import ProbablePitcherSnapshot
+
+    # Parse target date
+    try:
+        target_dt = datetime.strptime(target_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    now_et = datetime.now(ZoneInfo("America/New_York"))
+
+    # Query probable pitchers for the window
+    end_dt = target_dt + timedelta(days=days_ahead)
+
+    query = db.query(
+        ProbablePitcherSnapshot.bdl_player_id,
+        ProbablePitcherSnapshot.pitcher_name,
+        ProbablePitcherSnapshot.team,
+        ProbablePitcherSnapshot.handedness,
+        ProbablePitcherSnapshot.game_date,
+        ProbablePitcherSnapshot.opponent,
+        ProbablePitcherSnapshot.is_home,
+        ProbablePitcherSnapshot.quality_score,
+        ProbablePitcherSnapshot.is_confirmed,
+        ProbablePitcherSnapshot.game_time_et,
+    ).filter(
+        ProbablePitcherSnapshot.game_date >= target_dt,
+        ProbablePitcherSnapshot.game_date <= end_dt,
+        ProbablePitcherSnapshot.bdl_player_id.isnot(None),
+        ProbablePitcherSnapshot.quality_score.isnot(None),
+    ).order_by(ProbablePitcherSnapshot.game_date, ProbablePitcherSnapshot.team)
+
+    rows = query.all()
+
+    # Group by pitcher
+    pitcher_starts: dict[int, list] = {}
+    for r in rows:
+        pid = r.bdl_player_id
+        if pid not in pitcher_starts:
+            pitcher_starts[pid] = []
+        pitcher_starts[pid].append({
+            "pitcher_name": r.pitcher_name,
+            "team": r.team,
+            "handedness": r.handedness,
+            "date": r.game_date.isoformat(),
+            "opponent": r.opponent,
+            "is_home": r.is_home,
+            "quality_score": round(float(r.quality_score or 0), 2),
+            "is_confirmed": r.is_confirmed,
+            "game_time_et": r.game_time_et,
+        })
+
+    # Identify 2-start pitchers
+    two_starters = []
+    for pid, starts in pitcher_starts.items():
+        if len(starts) >= 2:
+            # Calculate overall quality (average of quality scores)
+            avg_quality = sum(s["quality_score"] for s in starts[:2]) / min(len(starts), 2)
+
+            # Determine recommendation tier
+            if avg_quality >= 1.0:
+                recommendation = "EXCELLENT"
+            elif avg_quality >= 0.3:
+                recommendation = "GOOD"
+            elif avg_quality >= -0.3:
+                recommendation = "AVERAGE"
+            else:
+                recommendation = "AVOID"
+
+            # Determine confidence level
+            confirmed_count = sum(1 for s in starts[:2] if s.get("is_confirmed"))
+            if confirmed_count == 2:
+                confidence = "HIGH"
+            elif confirmed_count == 1:
+                confidence = "MEDIUM"
+            else:
+                confidence = "LOW"
+
+            # Build transparency factors
+            factors = []
+            factors.append(f"starts_count: {len(starts)}")
+            factors.append(f"avg_quality: {avg_quality:.2f}")
+            if confirmed_count > 0:
+                factors.append(f"confirmed_starts: {confirmed_count}")
+
+            two_starters.append({
+                "bdl_player_id": pid,
+                "name": starts[0].get("pitcher_name", "Unknown"),
+                "team": starts[0].get("team", ""),
+                "handedness": starts[0].get("handedness", ""),
+                "starts": starts[:2],  # First 2 starts for the period
+                "overall_quality": round(avg_quality, 2),
+                "recommendation": recommendation,
+                "transparency": {
+                    "quality_score": round(avg_quality, 2),
+                    "factors": factors,
+                    "confidence": confidence,
+                }
+            })
+
+    # Sort by overall_quality descending
+    two_starters.sort(key=lambda x: x["overall_quality"], reverse=True)
+
+    # Get data freshness
+    freshness_query = db.query(
+        func.max(ProbablePitcherSnapshot.fetched_at)
+    ).filter(
+        ProbablePitcherSnapshot.game_date >= target_dt,
+        ProbablePitcherSnapshot.game_date <= end_dt,
+    )
+
+    last_refresh_at = freshness_query.scalar()
+    staleness_ms = None
+    if last_refresh_at:
+        staleness_ms = int((now_et - last_refresh_at.replace(tzinfo=ZoneInfo("America/New_York"))).total_seconds() * 1000)
+
+    return {
+        "target_date": target_date,
+        "analysis_window_days": days_ahead,
+        "two_start_pitchers": two_starters,
+        "freshness": {
+            "last_refresh_at": last_refresh_at.isoformat() if last_refresh_at else None,
+            "staleness_ms": staleness_ms,
+            "query_time_et": now_et.isoformat(),
+        },
+        "data_sources": ["ProbablePitcherSnapshot", "StatcastPerformances (quality_score)"]
+    }
+
+
 @router.get("/api/fantasy/lineup/elite-optimize/{lineup_date}")
 async def elite_optimize_lineup(
     lineup_date: str,
