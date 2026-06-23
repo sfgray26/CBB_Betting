@@ -569,3 +569,77 @@ class TestRosterOptimizeEndpoint:
         data = response.json()
         assert "schedule_available" in data
         assert isinstance(data["schedule_available"], bool)
+
+    def test_optimize_handles_boolean_status_gracefully(self, fantasy_client):
+        """optimize endpoint should handle boolean status values without crashing."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.111",
+                "name": "Test Player",
+                "team": "NYY",
+                "positions": ["1B"],
+                "selected_position": "1B",
+                "status": True,  # Boolean instead of string - data corruption scenario
+            }
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post("/api/fantasy/roster/optimize", json={})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        # Player with boolean status should not cause crash
+
+    def test_optimize_handles_none_status_gracefully(self, fantasy_client):
+        """optimize endpoint should handle None status values without crashing."""
+        mock_roster = [
+            {
+                "player_key": "469.l.72586.p.222",
+                "name": "No Status Player",
+                "team": "BOS",
+                "positions": ["C"],
+                "selected_position": "C",
+                "status": None,  # Missing/None status
+            }
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post("/api/fantasy/roster/optimize", json={})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+    def test_optimize_returns_structured_error_for_non_dict_player(self, fantasy_client):
+        """optimize endpoint should return structured error for corrupted roster data."""
+        mock_roster = [
+            "not_a_dict",  # Completely malformed - should trigger validation error
+            {
+                "player_key": "469.l.72586.p.333",
+                "name": "Valid Player",
+                "team": "BAL",
+                "positions": ["SS"],
+                "selected_position": "SS",
+                "status": "playing",
+            }
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post("/api/fantasy/roster/optimize", json={})
+
+        assert response.status_code == 500
+        data = response.json()
+        assert "detail" in data
+        assert data["detail"]["error_code"] == "ROSTER_DATA_CORRUPTED"
+        assert "index" in data["detail"]
+        assert data["detail"]["index"] == 0

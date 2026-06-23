@@ -4499,6 +4499,30 @@ async def optimize_roster(
     except YahooAPIError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    # Validate roster player data structure before processing
+    # This catches data corruption early and provides actionable error messages
+    for i, p in enumerate(raw_players):
+        if not isinstance(p, dict):
+            logger.error("Roster player at index %d is not a dict: %s", i, type(p))
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "error_code": "ROSTER_DATA_CORRUPTED",
+                    "message": f"Roster player at index {i} has invalid type",
+                    "index": i,
+                    "type": str(type(p)),
+                    "recovery_hint": "Check Yahoo API response format and player data structure"
+                }
+            )
+
+        # Log warning for unexpected status types (helps debug data source)
+        status_val = p.get("status")
+        if status_val is not None and not isinstance(status_val, (str, bool)):
+            logger.warning(
+                "Player %s has unexpected status type=%s (value=%s)",
+                p.get("name", "unknown"), type(status_val), status_val
+            )
+
     # Resolve Yahoo roster keys to BDL IDs using canonical yahoo_key linkage first.
     player_key_to_ids = _resolve_roster_player_bdl_ids(db, raw_players)
 
@@ -4778,8 +4802,27 @@ def _is_il_designated(player: dict) -> bool:
     """Return True if Yahoo status indicates an active IL designation.
 
     Matches: "IL", "IL10", "IL15", "IL60", "10-Day IL", "15-Day IL", "60-Day IL".
+
+    Defensive: handles status as string, boolean, or None.
+    Logs warning for unexpected types to aid data debugging.
     """
-    status = (player.get("status") or "").upper().strip()
+    raw_status = player.get("status")
+
+    # Defensive: handle boolean status values (data corruption/API change)
+    if isinstance(raw_status, bool):
+        logger.warning(
+            "Player %s has boolean status=%s - expected string. "
+            "Treating as NOT IL-designated. Data may be corrupted.",
+            player.get("name", "unknown"), raw_status
+        )
+        return False
+
+    # Defensive: handle None or missing status
+    if raw_status is None:
+        return False
+
+    # Expected case: status is string
+    status = str(raw_status).upper().strip()
     return status.startswith("IL") or "-IL" in status
 
 
