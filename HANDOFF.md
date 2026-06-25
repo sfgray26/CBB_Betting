@@ -217,6 +217,21 @@ Meanwhile `/api/fantasy/matchup` (used by `/war-room`) called `get_scoreboard()`
 
 ---
 
+### 2026-06-23 — CI Flake8 Bug Gate Fixed
+
+**Agent:** Codex
+**Trigger:** GitHub annotation: `Lint — bug gate (flake8 F-errors only)` failing during frontend/build pipeline.
+
+**Root cause:** `backend/routers/fantasy.py` Yahoo health probe assigned `_client.get_league()` to unused local `league_meta`, triggering flake8 `F841`.
+
+**Fix:** Removed the unused assignment while preserving the health-check API call.
+
+**Verification:**
+- `uv run --with flake8==7.0.0 python -m flake8 backend/ --select=F --extend-ignore=F401 --count` → `0`
+- `cd frontend && npm run build` → exit 0; two pre-existing `<img>` warnings remain.
+
+---
+
 ### 2026-06-10 — UAT P0 Fixes Complete — PENDING P1 + DEPLOY
 
 **Source:** Multi-agent swarm response to comprehensive UAT analysis (June 10, 2026)
@@ -360,6 +375,58 @@ Meanwhile `/api/fantasy/matchup` (used by `/war-room`) called `get_scoreboard()`
 ---
 
 *Last updated: 2026-06-10 (P0 deployed, smoke blocked by missing DB migration and Railway SSH command timeout)*
+
+---
+
+### 2026-06-25 — Claude Principal Architect Review — APPROVED FOR CODEX DEPLOYMENT
+
+**User authorization:** The user explicitly overrode the prior Yahoo-mutation
+guardrail and authorized real roster mutations through
+`POST /api/fantasy/roster/action`.
+
+**Reviewed files:**
+- `backend/fantasy_baseball/yahoo_client_resilient.py`
+- `backend/routers/fantasy.py`
+- `backend/schemas.py`
+- `backend/services/yahoo_actions.py`
+- `backend/services/need_score.py`
+- `tests/test_matchup_api.py`
+- `tests/test_streaming_api.py`
+- `tests/test_yahoo_actions.py`
+- `frontend/app/(dashboard)/war-room/streaming/page.tsx`
+- `frontend/components/streaming/streaming-recommendations.tsx`
+- `frontend/components/streaming/streaming-recommendations.test.tsx`
+- `frontend/lib/api.ts`, `frontend/lib/types.ts`, `frontend/tsconfig.json`
+- `loop_log.md`
+
+**Findings and fixes:**
+- Replaced unsafe split ADD → DROP → rollback behavior with one atomic Yahoo
+  `add_drop_player(add_player_key, drop_player_key, team_key)` call.
+- Added canonical `YahooFantasyClient.drop_player()` for standalone DROP; no
+  `add_player_key=None` calls remain.
+- Moved roster-action API models into `backend/schemas.py` and added
+  action-specific request validation.
+- Replaced corrupting `lstrip("mlb.p.")` ID parsing with exact `.p.` suffix parsing.
+- Corrected matchup auth fixture and synchronous timeout simulation.
+- Fixed all streaming component/test build lint errors without behavior changes.
+- Preserved the concurrent need-score bundle and fixed `_sc_sigs` F821 ordering.
+- Cleaned `loop_log.md` trailing whitespace.
+
+**Exact verification:**
+- `uv run --managed-python --python 3.12 --with-requirements requirements.txt --with pytest --with flake8==7.0.0 python -m pytest tests\test_yahoo_actions.py tests\test_matchup_api.py tests\test_streaming_api.py -q`
+  → **20 passed, 1 warning in 16.95s**
+- `uv run --managed-python --python 3.12 --with flake8==7.0.0 python -m flake8 backend\ --select=F --extend-ignore=F401 --count`
+  → **0**
+- `uv run --managed-python --python 3.12 python -m py_compile backend\fantasy_baseball\yahoo_client_resilient.py backend\routers\fantasy.py backend\schemas.py backend\services\need_score.py backend\services\yahoo_actions.py`
+  → **exit 0**
+- `cd frontend && npm run build`
+  → **exit 0**; two pre-existing `<img>` warnings only
+- `git diff --check`
+  → **exit 0**
+
+**Verdict:** **APPROVED FOR CODEX PRODUCTION DEPLOYMENT.** No commit, push, or
+deployment was performed. Production smoke must deliberately select the intended
+Yahoo transaction because this endpoint performs real roster mutations.
 
 ---
 

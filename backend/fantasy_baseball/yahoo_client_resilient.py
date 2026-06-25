@@ -1409,6 +1409,36 @@ class YahooFantasyClient:
             raise YahooAPIError(f"add/drop failed: {resp.status_code} — {resp.text[:300]}", resp.status_code)
         return True
 
+    def drop_player(self, player_key: str, team_key: Optional[str] = None) -> bool:
+        """Drop a rostered player through Yahoo's standalone drop transaction."""
+        if team_key is None:
+            team_key = self.get_my_team_key()
+        self._ensure_token()
+        xml_body = (
+            f'<?xml version="1.0"?><fantasy_content><transaction>'
+            f'<type>drop</type><trader_team_key>{team_key}</trader_team_key>'
+            f'<players><player><player_key>{player_key}</player_key>'
+            f'<transaction_data><type>drop</type>'
+            f'<destination_team_key>LW</destination_team_key>'
+            f'</transaction_data></player></players>'
+            f'</transaction></fantasy_content>'
+        )
+        url = f"{YAHOO_API_BASE}/league/{self.league_key}/transactions"
+        resp = self._session.post(
+            url,
+            data=xml_body.encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._access_token}",
+                "Content-Type": "application/xml",
+            },
+        )
+        if resp.status_code not in (200, 201):
+            raise YahooAPIError(
+                f"drop failed: {resp.status_code} — {resp.text[:300]}",
+                resp.status_code,
+            )
+        return True
+
     def get_transactions(self, t_type: str = "add,drop,trade") -> list[dict]:
         """Recent transactions for the league."""
         data = self._get(

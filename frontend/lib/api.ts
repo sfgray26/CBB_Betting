@@ -43,6 +43,7 @@ import type {
   RosterOptimizeResponse,
   GlobalFreshnessResponse,
   TradeAnalysisResponse,
+  StreamingRecommendationsResponse,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -398,12 +399,17 @@ export const endpoints = {
   getGlobalFreshness: () =>
     apiFetch<GlobalFreshnessResponse>('/api/fantasy/global-freshness'),
 
+  getStreamingRecommendations: (targetDate: string, daysAhead = 7) =>
+    apiFetch<StreamingRecommendationsResponse>(
+      `/api/fantasy/streaming/recommendations?target_date=${targetDate}&days_ahead=${daysAhead}`
+    ),
+
   analyzeTrade: (givePlayers: string[], receivePlayers: string[]) =>
     apiFetch<TradeAnalysisResponse>('/api/fantasy/trade/analyze', {
       method: 'POST',
-      body: JSON.stringify({ 
-        give: givePlayers.map(p => ({ player_key: p, player_name: p })), 
-        receive: receivePlayers.map(p => ({ player_key: p, player_name: p })) 
+      body: JSON.stringify({
+        give: givePlayers.map(p => ({ player_key: p, player_name: p })),
+        receive: receivePlayers.map(p => ({ player_key: p, player_name: p }))
       }),
     }),
 }

@@ -109,8 +109,12 @@ class TestStreamingRecommendationsEndpoint:
         # Check overall quality calculation (average of 1.2 and 0.8)
         assert pitcher["overall_quality"] == 1.0
 
-        # Check recommendation tier (1.0 -> EXCELLENT)
+        # Check recommendation tier (1.0 + HIGH confidence -> EXCELLENT)
         assert pitcher["recommendation"] == "EXCELLENT"
+
+        # Check risk_note (both confirmed -> safe stream)
+        assert "risk_note" in pitcher
+        assert pitcher["risk_note"] == "Both starts confirmed — safe stream"
 
         # Check transparency fields
         assert "transparency" in pitcher
@@ -188,6 +192,143 @@ class TestStreamingRecommendationsEndpoint:
 
         # Should have no 2-start pitchers
         assert data["two_start_pitchers"] == []
+
+    def test_streaming_recommendations_confidence_weighted_matrix(self, fantasy_client):
+        """Endpoint should apply confidence-weighted recommendation matrix."""
+        from backend.models import get_db as get_db_dependency
+
+        def run_test_with_rows(mock_rows, expected_quality, expected_recommendation, expected_confidence, expected_risk_note):
+            """Helper to run a test case with specific mock rows."""
+            mock_base_query = MagicMock()
+            mock_filter = MagicMock()
+            mock_order = MagicMock()
+            mock_base_query.filter.return_value = mock_filter
+            mock_filter.order_by.return_value = mock_order
+            mock_order.all.return_value = mock_rows
+
+            mock_freshness = MagicMock()
+            mock_freshness.scalar.return_value = datetime.now()
+
+            mock_db = MagicMock()
+            mock_db.query.side_effect = [mock_base_query, mock_freshness]
+
+            fantasy_client.app.dependency_overrides[get_db_dependency] = lambda: mock_db
+
+            response = fantasy_client.get("/api/fantasy/streaming/recommendations?target_date=2026-06-24&days_ahead=7")
+            assert response.status_code == 200
+            data = response.json()
+            pitcher = data["two_start_pitchers"][0]
+
+            assert pitcher["overall_quality"] == expected_quality
+            assert pitcher["recommendation"] == expected_recommendation
+            assert pitcher["transparency"]["confidence"] == expected_confidence
+            assert pitcher["risk_note"] == expected_risk_note
+            return pitcher
+
+        # Test Case 1: HIGH quality (1.0) + MEDIUM confidence -> GOOD (not EXCELLENT)
+        mock_rows_medium_conf = [
+            MagicMock(
+                bdl_player_id=11111,
+                pitcher_name="Medium Conf Ace",
+                team="NYY",
+                handedness="R",
+                game_date=date(2026, 6, 24),
+                opponent="BOS",
+                is_home=True,
+                quality_score=1.2,
+                is_confirmed=True,  # 1 confirmed
+                game_time_et="7:05 PM",
+            ),
+            MagicMock(
+                bdl_player_id=11111,
+                pitcher_name="Medium Conf Ace",
+                team="NYY",
+                handedness="R",
+                game_date=date(2026, 6, 29),
+                opponent="BAL",
+                is_home=False,
+                quality_score=0.8,
+                is_confirmed=False,  # 1 projected
+                game_time_et="1:05 PM",
+            ),
+        ]
+        run_test_with_rows(
+            mock_rows_medium_conf,
+            expected_quality=1.0,
+            expected_recommendation="GOOD",
+            expected_confidence="MEDIUM",
+            expected_risk_note="One start projected — monitor for scratches"
+        )
+
+        # Test Case 2: LOW confidence quality pitcher -> AVOID regardless of quality
+        mock_rows_low_conf = [
+            MagicMock(
+                bdl_player_id=22222,
+                pitcher_name="Low Conf Quality",
+                team="LAD",
+                handedness="L",
+                game_date=date(2026, 6, 24),
+                opponent="SF",
+                is_home=True,
+                quality_score=1.5,  # High quality
+                is_confirmed=False,  # Both projected
+                game_time_et="10:10 PM",
+            ),
+            MagicMock(
+                bdl_player_id=22222,
+                pitcher_name="Low Conf Quality",
+                team="LAD",
+                handedness="L",
+                game_date=date(2026, 6, 29),
+                opponent="SD",
+                is_home=False,
+                quality_score=1.0,
+                is_confirmed=False,
+                game_time_et="4:15 PM",
+            ),
+        ]
+        run_test_with_rows(
+            mock_rows_low_conf,
+            expected_quality=1.25,
+            expected_recommendation="AVOID",
+            expected_confidence="LOW",
+            expected_risk_note="Both starts projected — high variance, have backup ready"
+        )
+
+        # Test Case 3: Negative quality but HIGH confidence -> AVOID (quality < -0.3)
+        mock_rows_negative = [
+            MagicMock(
+                bdl_player_id=33333,
+                pitcher_name="Struggling Ace",
+                team="CHC",
+                handedness="R",
+                game_date=date(2026, 6, 24),
+                opponent="MIL",
+                is_home=True,
+                quality_score=-1.0,
+                is_confirmed=True,
+                game_time_et="2:20 PM",
+            ),
+            MagicMock(
+                bdl_player_id=33333,
+                pitcher_name="Struggling Ace",
+                team="CHC",
+                handedness="R",
+                game_date=date(2026, 6, 29),
+                opponent="PIT",
+                is_home=False,
+                quality_score=-0.8,
+                is_confirmed=True,
+                game_time_et="7:05 PM",
+            ),
+        ]
+        run_test_with_rows(
+            mock_rows_negative,
+            expected_quality=-0.9,
+            expected_recommendation="AVOID",
+            expected_confidence="HIGH",
+            expected_risk_note="Both starts confirmed — safe stream"
+        )
 
     def test_streaming_recommendations_validates_date_format(self, fantasy_client):
         """Endpoint should reject invalid date formats."""

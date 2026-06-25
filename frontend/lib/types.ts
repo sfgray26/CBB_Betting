@@ -851,6 +851,53 @@ export interface GlobalFreshnessResponse {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// Streaming Recommendations
+// ═════════════════════════════════════════════════════════════════════════════
+
+export interface StreamingStart {
+  pitcher_name: string
+  team: string
+  handedness: string
+  date: string
+  opponent: string
+  is_home: boolean
+  quality_score: number
+  is_confirmed: boolean
+  game_time_et: string
+}
+
+export interface StreamingPitcher {
+  bdl_player_id: number
+  name: string
+  team: string
+  handedness: string
+  starts: StreamingStart[]
+  overall_quality: number
+  recommendation: 'EXCELLENT' | 'GOOD' | 'AVERAGE' | 'AVOID'
+  risk_note: string
+  transparency: {
+    quality_score: number
+    factors: string[]
+    confidence: 'HIGH' | 'MEDIUM' | 'LOW'
+  }
+}
+
+export interface StreamingFreshness {
+  last_refresh_at: string | null
+  staleness_ms: number | null
+  query_time_et: string
+}
+
+export interface StreamingRecommendationsResponse {
+  target_date: string
+  analysis_window_days: number
+  two_start_pitchers: StreamingPitcher[]
+  one_start_pitchers?: StreamingPitcher[]  // Forward-compatibility
+  freshness: StreamingFreshness
+  data_sources: string[]
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // Trade Analysis
 // ═════════════════════════════════════════════════════════════════════════════
 

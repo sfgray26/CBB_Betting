@@ -67,6 +67,10 @@ from backend.schemas import (
     DecisionExplanationOut,
     FactorDetail,
     DecisionPipelineStatus,
+    RosterActionError,
+    RosterActionRequest,
+    RosterActionResponse,
+    RosterActionWarning,
 )
 from backend.contracts import (
     BulkRosterMove,
@@ -113,10 +117,9 @@ router = APIRouter()
 # Module-level MLB probable-starts cache (shared state — same pattern as main.py)
 _STARTS_CACHE: dict = {}
 
-# Matchup response cache — 5-minute TTL matches frontend refetchInterval (5 * 60_000 ms).
-# Stores fully assembled MatchupResponse so all 3 sequential Yahoo calls are skipped on hit.
-_MATCHUP_CACHE: dict = {}
-_MATCHUP_CACHE_TTL = 300  # seconds
+# Matchup response cache removed (Loop 9) — always fetch live data from Yahoo.
+# Previous 5-minute cache caused staleness: 0W-0L-18T vs 4W-11L-3T across modules.
+# Timeout safety valve added (5s) to prevent hangs on slow Yahoo responses.
 
 # League settings (stat ID map) — 2-hour TTL; never changes mid-season.
 _LEAGUE_SETTINGS_CACHE: dict = {}
@@ -2132,23 +2135,33 @@ async def get_fantasy_waiver_recommendations(
                 else:
                     _raw_nsv = round(float((board_player.get("proj") or {}).get("nsv", 0.0)), 1)
 
-            need_score = 0.0
-            contributions: dict = {}
+            # Calculate need_score using unified service (base + Statcast boost transparent)
+            # Import unified need-score service
+            from backend.services.need_score import (
+                calculate_need_score as _calc_need_score,
+                NeedScoreResult,
+            )
 
             cat_scores = board_player.get("cat_scores", {})
             player_z = board_player.get("z_score", 0.0)
+            _sc_sigs: list[str] = []
 
-            if category_deficits:
-                try:
-                    from backend.fantasy_baseball.category_aware_scorer import (
-                        compute_need_score as _cns,
-                    )
-                    n_cats = max(1, len(category_deficits))
-                    need_score = _cns(cat_scores, player_z, category_deficits, n_cats)
-                except Exception:
-                    need_score = player_z  # fallback to plain z_score
-            else:
-                need_score = player_z
+            # Calculate the base before Statcast enrichment; the transparent boost
+            # is applied after signals are built below.
+            need_score_result: NeedScoreResult = _calc_need_score(
+                player_cat_scores=cat_scores,
+                player_z_score=player_z,
+                category_deficits=category_deficits,
+                n_cats=max(1, len(category_deficits)) if category_deficits else 1,
+                statcast_signals=[],
+                team_context=None,  # Could pass TeamContext if available
+                marginal_stats=None,  # Could pass marginal stats if available
+            )
+
+            # Use base need_score for display (Statcast boost shown separately)
+            need_score = need_score_result.base_need_score
+            statcast_boost = need_score_result.statcast_boost
+            adjusted_need_score = need_score_result.adjusted_need_score
 
             # Use raw cat_scores for hot/cold flag (consistent with recommendations endpoint)
             contributions = {k: float(v) for k, v in cat_scores.items() if isinstance(v, (int, float))}
@@ -2193,7 +2206,6 @@ async def get_fantasy_waiver_recommendations(
 
             # Statcast enrichment for waiver player (uses fixed statcast_loader)
             _sc_dict: dict | None = None
-            _sc_sigs: list[str] = []
             _fa_is_pitcher = positions[0] in ("SP", "RP", "P") if positions else False
             try:
                 if not _fa_is_pitcher:
@@ -2229,6 +2241,17 @@ async def get_fantasy_waiver_recommendations(
             need_score, _penalty_note = apply_injury_penalty(need_score, _overlay)
             if _penalty_note and "HIGH_INJURY_RISK" not in _sc_sigs:
                 _sc_sigs.append("HIGH_INJURY_RISK")
+            need_score_result = _calc_need_score(
+                player_cat_scores=cat_scores,
+                player_z_score=player_z,
+                category_deficits=category_deficits,
+                n_cats=max(1, len(category_deficits)) if category_deficits else 1,
+                statcast_signals=_sc_sigs,
+                team_context=None,
+                marginal_stats=None,
+            )
+            statcast_boost = need_score_result.statcast_boost
+            adjusted_need_score = need_score + statcast_boost
 
             # ── Stability metadata ──────────────────────────────────────────
             _pkey_stab = p.get("player_key") or ""
@@ -2297,7 +2320,9 @@ async def get_fantasy_waiver_recommendations(
                 name=name,
                 team=p.get("team") or "",
                 position=positions[0] if positions else "?",
-                need_score=round(need_score, 3),
+                need_score=round(need_score, 3),  # Base need_score (no Statcast adjustments)
+                statcast_boost=round(statcast_boost, 3) if statcast_boost is not None else None,  # NEW: Statcast adjustment factor
+                adjusted_need_score=round(adjusted_need_score, 3) if adjusted_need_score is not None else None,  # NEW: Base + Boost
                 z_score=round(player_z, 3),
                 category_contributions=contributions,
                 owned_pct=p.get("percent_owned", 0.0),
@@ -2691,6 +2716,75 @@ async def add_fantasy_waiver_player(
         "dropped": drop_key,
         "team_key": team_key,
     }
+
+
+# ---------------------------------------------------------------------------
+# Roster Action Endpoint — validated Yahoo roster mutations
+# Loop Iteration 10 (2026-06-24)
+# ---------------------------------------------------------------------------
+
+@router.post("/api/fantasy/roster/action", response_model=RosterActionResponse)
+async def execute_roster_action(
+    request: RosterActionRequest,
+    user: str = Depends(verify_api_key),
+):
+    """
+    Execute a roster action after a side-effect-free validation phase.
+
+    Two-phase semantics:
+    1. Phase 1: Validate roster space, player availability, position eligibility
+    2. Phase 2: Submit one Yahoo mutation
+
+    ADD_DROP uses Yahoo's atomic add/drop transaction. It is never decomposed
+    into separate mutations, so application-level rollback is not required.
+    """
+    from backend.services.yahoo_actions import (
+        get_yahoo_actions_service,
+        ActionResult,
+    )
+
+    try:
+        service = get_yahoo_actions_service()
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Yahoo Actions Service unavailable: {str(exc)}"
+        ) from exc
+
+    # Execute the action
+    result: ActionResult = await service.execute_action(
+        action=request.action,
+        add_player_id=request.add_player_id,
+        drop_player_id=request.drop_player_id,
+        position=request.position,
+    )
+
+    # Convert service result to response model
+    errors = [
+        RosterActionError(code=e.code, message=e.message)
+        for e in result.errors
+    ] if result.errors else None
+
+    warnings = [
+        RosterActionWarning(code=w.code, message=w.message)
+        for w in result.warnings
+    ] if result.warnings else None
+
+    return RosterActionResponse(
+        success=result.success,
+        transaction_id=result.transaction_id,
+        roster_state=result.roster_state,
+        errors=errors,
+        warnings=warnings,
+        rollback_attempted=result.rollback_attempted,
+        rollback_succeeded=result.rollback_succeeded,
+        manual_action_required=result.manual_action_required,
+        execution_time_et=result.execution_time_et,
+    )
+
+
+# ---------------------------------------------------------------------------
 
 
 @router.get("/api/fantasy/waiver/recommendations")
@@ -4922,14 +5016,12 @@ async def get_player_valuations(
 
 @router.get("/api/fantasy/matchup", response_model=MatchupResponse)
 async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
-    """Return current week's matchup: opponent name + category-by-category breakdown."""
-    import time as _time
+    """Return current week's matchup: opponent name + category-by-category breakdown.
 
-    # Fast path: return cached response if fresh
-    _cached = _MATCHUP_CACHE.get(user)
-    if _cached and (_time.monotonic() - _cached["built_at"]) < _MATCHUP_CACHE_TTL:
-        logger.debug("Matchup: cache hit (age=%.0fs)", _time.monotonic() - _cached["built_at"])
-        return _cached["data"]
+    Live data only (no cache) — 5-second timeout safety valve returns 504 on Yahoo hang.
+    """
+    import time as _time
+    import asyncio
 
     try:
         client = get_yahoo_client()
@@ -5008,7 +5100,17 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         active_stat_abbrs = set(SCORING_CATEGORY_CODES)
 
     try:
-        matchups = client.get_scoreboard()
+        # Timeout safety valve: 5-second limit prevents hanging on slow Yahoo responses
+        matchups = await asyncio.wait_for(
+            asyncio.to_thread(client.get_scoreboard),
+            timeout=5.0,
+        )
+    except asyncio.TimeoutError:
+        logger.error("Matchup fetch timeout (>5s) — Yahoo API slow or unresponsive")
+        raise HTTPException(
+            status_code=504,
+            detail="Yahoo API timeout — matchup data temporarily unavailable",
+        )
     except (YahooAuthError, YahooAPIError) as exc:
         logger.error("Matchup scoreboard fetch failed: %s", exc)
         return MatchupResponse(my_team=_stub_my, opponent=_stub_opp, message="Scoreboard unavailable -- Yahoo API error.")
@@ -5162,7 +5264,6 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
             ),
             is_playoffs=is_playoffs,
         )
-        _MATCHUP_CACHE[user] = {"data": _result, "built_at": _time.monotonic()}
         return _result
 
     return MatchupResponse(week=week, my_team=_stub_my, opponent=_stub_opp, message="Your team was not found in the current week's matchup.")
@@ -5471,7 +5572,7 @@ async def yahoo_health():
                 health_status["recovery_hint"] = "Wait 5 minutes for circuit recovery or investigate API failures"
 
         # Try a lightweight API call (get league metadata)
-        league_meta = _client.get_league()
+        _client.get_league()
         health_status["status"] = "healthy"
         health_status["last_success_at"] = datetime.now(ZoneInfo("America/New_York")).isoformat()
 
@@ -5646,16 +5747,6 @@ async def streaming_recommendations(
             # Calculate overall quality (average of quality scores)
             avg_quality = sum(s["quality_score"] for s in starts[:2]) / min(len(starts), 2)
 
-            # Determine recommendation tier
-            if avg_quality >= 1.0:
-                recommendation = "EXCELLENT"
-            elif avg_quality >= 0.3:
-                recommendation = "GOOD"
-            elif avg_quality >= -0.3:
-                recommendation = "AVERAGE"
-            else:
-                recommendation = "AVOID"
-
             # Determine confidence level
             confirmed_count = sum(1 for s in starts[:2] if s.get("is_confirmed"))
             if confirmed_count == 2:
@@ -5665,12 +5756,32 @@ async def streaming_recommendations(
             else:
                 confidence = "LOW"
 
+            # Determine recommendation tier with confidence-weighted matrix
+            if avg_quality >= 1.0 and confidence == "HIGH":
+                recommendation = "EXCELLENT"
+            elif avg_quality >= 0.3 and confidence in ("HIGH", "MEDIUM"):
+                recommendation = "GOOD"
+            elif confidence == "LOW":
+                recommendation = "AVOID"
+            elif avg_quality >= -0.3:
+                recommendation = "AVERAGE"
+            else:  # avg_quality < -0.3
+                recommendation = "AVOID"
+
             # Build transparency factors
             factors = []
             factors.append(f"starts_count: {len(starts)}")
             factors.append(f"avg_quality: {avg_quality:.2f}")
             if confirmed_count > 0:
                 factors.append(f"confirmed_starts: {confirmed_count}")
+
+            # Build risk note based on confirmation status
+            if confirmed_count == 2:
+                risk_note = "Both starts confirmed — safe stream"
+            elif confirmed_count == 1:
+                risk_note = "One start projected — monitor for scratches"
+            else:
+                risk_note = "Both starts projected — high variance, have backup ready"
 
             two_starters.append({
                 "bdl_player_id": pid,
@@ -5680,6 +5791,7 @@ async def streaming_recommendations(
                 "starts": starts[:2],  # First 2 starts for the period
                 "overall_quality": round(avg_quality, 2),
                 "recommendation": recommendation,
+                "risk_note": risk_note,
                 "transparency": {
                     "quality_score": round(avg_quality, 2),
                     "factors": factors,

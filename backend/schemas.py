@@ -433,8 +433,10 @@ class WaiverPlayerOut(BaseModel):
     name: str
     team: str
     position: str
-    need_score: float = 0.0
-    z_score: float = 0.0                    # Season-long composite z-score (sum of cat_scores)
+    need_score: float = 0.0                  # Base category-aware need-score (no Statcast adjustments)
+    statcast_boost: Optional[float] = None    # Statcast adjustment factor (transparent separate calculation)
+    adjusted_need_score: Optional[float] = None  # Final score (base + Statcast boost) for decisions
+    z_score: float = 0.0                      # Season-long composite z-score (sum of cat_scores)
     category_contributions: dict = {}
     owned_pct: float = 0.0
     starts_this_week: int = 0
@@ -668,6 +670,79 @@ class LineupApplyPlayer(BaseModel):
 class LineupApplyRequest(BaseModel):
     date: Optional[str] = None
     players: List[LineupApplyPlayer]
+
+
+class RosterActionRequest(BaseModel):
+    """Validated Yahoo roster mutation request."""
+
+    action: Literal["ADD", "DROP", "ADD_DROP"]
+    add_player_id: Optional[str] = Field(
+        None,
+        description="Yahoo player key to add, for example 469.p.12345",
+    )
+    drop_player_id: Optional[str] = Field(
+        None,
+        description="Yahoo player key to drop, for example 469.p.67890",
+    )
+    position: Optional[str] = Field(
+        None,
+        description="Intended lineup position; Yahoo initially adds players to the bench",
+    )
+
+    @field_validator("add_player_id", "drop_player_id")
+    @classmethod
+    def validate_player_key(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip()
+        parts = normalized.rsplit(".p.", 1)
+        if len(parts) != 2 or not parts[0] or not parts[1].isdigit():
+            raise ValueError("player keys must use Yahoo format <game_key>.p.<player_id>")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_action_fields(self) -> "RosterActionRequest":
+        if self.action in ("ADD", "ADD_DROP") and not self.add_player_id:
+            raise ValueError(f"add_player_id is required for {self.action}")
+        if self.action in ("DROP", "ADD_DROP") and not self.drop_player_id:
+            raise ValueError(f"drop_player_id is required for {self.action}")
+        if (
+            self.action == "ADD_DROP"
+            and self.add_player_id == self.drop_player_id
+        ):
+            raise ValueError("add_player_id and drop_player_id must be different")
+        return self
+
+
+class RosterActionError(BaseModel):
+    """Machine-readable roster mutation error."""
+
+    code: str
+    message: str
+
+
+class RosterActionWarning(BaseModel):
+    """Non-fatal roster mutation warning."""
+
+    code: str
+    message: str
+
+
+class RosterActionResponse(BaseModel):
+    """Result of a validated Yahoo roster mutation."""
+
+    success: bool
+    transaction_id: Optional[str] = Field(
+        None,
+        description="Locally generated execution reference; Yahoo does not return an ID",
+    )
+    roster_state: Dict[str, Any] = Field(default_factory=dict)
+    errors: Optional[List[RosterActionError]] = None
+    warnings: Optional[List[RosterActionWarning]] = None
+    rollback_attempted: bool = False
+    rollback_succeeded: bool = False
+    manual_action_required: bool = False
+    execution_time_et: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
