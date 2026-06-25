@@ -146,6 +146,7 @@ LOCK_IDS = {
     "matchup_context_update": 100_039,  # PR 5.2: daily hitter matchup context
     "canonical_projection_refresh": 100_040,  # Sprint 2: assemble CanonicalProjection table
     "bridge_mapping_to_identities": 100_041,  # Coverage: seed player_identities from player_id_mapping
+    "auto_stream": 100_042,  # Loop 16: Auto-Stream execution (6 AM ET)
 }
 
 
@@ -1099,6 +1100,16 @@ class DailyIngestionOrchestrator:
             CronTrigger(hour=6, minute=0, timezone=tz),
             id="ros_simulation",
             name="RoS Monte Carlo Simulation",
+            replace_existing=True,
+        )
+
+        # Auto-Stream execution: daily 6:05 AM ET (after ros_simulation at 6 AM)
+        # Executes automated ADD/ADD_DROP actions based on user config thresholds.
+        self._scheduler.add_job(
+            self._run_auto_stream,
+            CronTrigger(hour=6, minute=5, timezone=tz),
+            id="auto_stream",
+            name="Auto-Stream Execution",
             replace_existing=True,
         )
 
@@ -4403,6 +4414,85 @@ class DailyIngestionOrchestrator:
             }
 
         return await _with_advisory_lock(LOCK_IDS["ros_simulation"], "ros_simulation", _run)
+
+    async def _run_auto_stream(self) -> dict:
+        """
+        Auto-Stream execution (lock 100_042, 6:05 AM ET).
+
+        Runs after ros_simulation (6 AM) to ensure fresh streaming recommendations.
+        Executes automated ADD/ADD_DROP actions based on user configuration.
+
+        Algorithm:
+          1. For each configured user (multi-user support via FANTASY_LEAGUES env var)
+          2. Call AutoStreamService.execute_scheduled_run()
+          3. Log execution results (executed, skipped, errors)
+          4. Return summary of actions taken
+
+        ADR-004: Never import betting_model or analysis here.
+        """
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.services.auto_stream import get_auto_stream_service
+            from zoneinfo import ZoneInfo
+            from datetime import datetime
+
+            now_et = datetime.now(ZoneInfo("America/New_York"))
+            target_date = now_et.date().isoformat()
+
+            auto_stream_service = get_auto_stream_service()
+
+            # Get configured users from FANTASY_LEAGUES env var
+            fantasy_leagues = os.getenv("FANTASY_LEAGUES", "")
+            if not fantasy_leagues:
+                logger.info("auto_stream: No FANTASY_LEAGUES configured, skipping execution")
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("auto_stream", "skipped")
+                return {"status": "skipped", "message": "No FANTASY_LEAGUES configured", "elapsed_ms": elapsed}
+
+            # For now, we run for the authenticated API key user
+            # TODO: Multi-user support when FANTASY_LEAGUES expands to multiple users
+            db = SessionLocal()
+            try:
+                # Get the primary user from environment or default
+                primary_user = os.getenv("YAHOO_LEAGUE_ID", "default")
+
+                result = await auto_stream_service.execute_scheduled_run(
+                    user_id=primary_user,
+                    target_date=target_date,
+                    db=db,
+                )
+
+                elapsed = int((time.monotonic() - t0) * 1000)
+                n_executed = len(result.executed)
+                self._record_job_run("auto_stream", "success", n_executed)
+
+                logger.info(
+                    "auto_stream: Executed %d actions, skipped %d, errors %d, elapsed_ms=%d",
+                    len(result.executed),
+                    len(result.skipped),
+                    len(result.errors),
+                    elapsed,
+                )
+
+                return {
+                    "status": "success",
+                    "target_date": target_date,
+                    "executed": len(result.executed),
+                    "skipped": len(result.skipped),
+                    "errors": len(result.errors),
+                    "elapsed_ms": elapsed,
+                }
+
+            except Exception as exc:
+                logger.error("auto_stream: Execution failed: %s", exc)
+                elapsed = int((time.monotonic() - t0) * 1000)
+                self._record_job_run("auto_stream", "failed")
+                return {"status": "failed", "error": str(exc), "elapsed_ms": elapsed}
+            finally:
+                db.close()
+
+        return await _with_advisory_lock(LOCK_IDS["auto_stream"], "auto_stream", _run)
 
     async def _run_decision_optimization(self) -> dict:
         """

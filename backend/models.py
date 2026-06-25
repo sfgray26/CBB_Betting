@@ -1084,6 +1084,16 @@ class UserPreferences(Base):
         "streamer_threshold": 0.3,  # z-score threshold for streamer suggestions
     })
 
+    # Auto-Stream configuration (automated roster actions)
+    auto_stream_config = Column(JSONB, nullable=True, default=lambda: {
+        "enabled": False,
+        "drop_priority": [],  # Ordered list of player IDs to drop first
+        "min_confidence": "HIGH",  # HIGH, MEDIUM, LOW
+        "min_recommendation": "EXCELLENT",  # EXCELLENT, GOOD, AVERAGE
+        "max_adds_per_week": 2,
+        "updated_at": None,
+    })
+
     # Timestamps
     created_at = Column(DateTime, default=_now_et)
     updated_at = Column(DateTime, default=_now_et, onupdate=_now_et)

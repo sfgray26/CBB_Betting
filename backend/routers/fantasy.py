@@ -89,6 +89,7 @@ from backend.contracts import (
     RosterOptimizeRequest,
     RosterOptimizeResponse,
     PlayerSlotAssignment,
+    AutoStreamConfigureRequest,
 )
 from backend.stat_contract import YAHOO_ID_INDEX, SCORING_CATEGORY_CODES
 from backend.utils.time_utils import today_et
@@ -110,6 +111,21 @@ from backend.services.player_mapper import (
     fetch_rolling_stats_for_players,
     fetch_rolling_stats_for_players_all_windows,
 )
+from backend.services.category_comparator import (
+    compare_category,
+    get_canonical_category,
+)
+
+# Auto-Stream service (lazy import to avoid circular imports)
+_auto_stream_service = None
+
+def get_auto_stream_service():
+    """Get singleton AutoStreamService instance."""
+    global _auto_stream_service
+    if _auto_stream_service is None:
+        from backend.services.auto_stream import AutoStreamService
+        _auto_stream_service = AutoStreamService()
+    return _auto_stream_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -2019,23 +2035,17 @@ async def get_fantasy_waiver_recommendations(
 
                 my_stats = _stats_dict_from_raw(my_tuple[2])
                 opp_stats = _stats_dict_from_raw(opp_tuple[2])
-                lower_better = {"ERA", "WHIP", "L", "K(B)", "HRA"}
 
                 for cat, my_val in my_stats.items():
                     opp_val = opp_stats.get(cat, 0.0)
-                    if cat in lower_better:
-                        deficit = my_val - opp_val
-                        winning = my_val < opp_val
-                    else:
-                        deficit = opp_val - my_val
-                        winning = my_val > opp_val
+                    result = compare_category(cat, my_val, opp_val)
                     category_deficits.append(
                         CategoryDeficitOut(
                             category=cat,
                             my_total=my_val,
                             opponent_total=opp_val,
-                            deficit=deficit,
-                            winning=winning,
+                            deficit=result.gap,
+                            winning=(result.verdict == "W"),
                         )
                     )
         except Exception as _cd_err:
@@ -2135,37 +2145,14 @@ async def get_fantasy_waiver_recommendations(
                 else:
                     _raw_nsv = round(float((board_player.get("proj") or {}).get("nsv", 0.0)), 1)
 
-            # Calculate need_score using unified service (base + Statcast boost transparent)
-            # Import unified need-score service
-            from backend.services.need_score import (
-                calculate_need_score as _calc_need_score,
-                NeedScoreResult,
-            )
-
+            # ── Player data extraction ────────────────────────────────────────────
             cat_scores = board_player.get("cat_scores", {})
             player_z = board_player.get("z_score", 0.0)
-            _sc_sigs: list[str] = []
-
-            # Calculate the base before Statcast enrichment; the transparent boost
-            # is applied after signals are built below.
-            need_score_result: NeedScoreResult = _calc_need_score(
-                player_cat_scores=cat_scores,
-                player_z_score=player_z,
-                category_deficits=category_deficits,
-                n_cats=max(1, len(category_deficits)) if category_deficits else 1,
-                statcast_signals=[],
-                team_context=None,  # Could pass TeamContext if available
-                marginal_stats=None,  # Could pass marginal stats if available
-            )
-
-            # Use base need_score for display (Statcast boost shown separately)
-            need_score = need_score_result.base_need_score
-            statcast_boost = need_score_result.statcast_boost
-            adjusted_need_score = need_score_result.adjusted_need_score
 
             # Use raw cat_scores for hot/cold flag (consistent with recommendations endpoint)
             contributions = {k: float(v) for k, v in cat_scores.items() if isinstance(v, (int, float))}
 
+            # Hot/cold from BDL momentum (preferred) or z-score average (fallback)
             _hc: Optional[str] = None
             _bdl_id: Optional[int] = None
             try:
@@ -2182,6 +2169,7 @@ async def get_fantasy_waiver_recommendations(
             except Exception:
                 pass
 
+            # ── Injury status & availability ──────────────────────────────────────
             _status = p.get("status") or None
             _injury_note = p.get("injury_note") or None
             _injury_status = p.get("injury_status")
@@ -2196,7 +2184,6 @@ async def get_fantasy_waiver_recommendations(
             _pkey = p.get("player_key") or ""
             if _pkey and _pkey in _blacklist_keys:
                 _avail_note: Optional[str] = "NOT AVAILABLE TODAY — day off confirmed"
-                need_score = 0.0
             elif _injury_status and any(kw in (_injury_status or "").upper() for kw in ("IL", "DL", "60-DAY", "15-DAY", "10-DAY")):
                 _avail_note = "On IL — check IL slot availability"
             elif _injury_status and "DTD" in (_injury_status or "").upper():
@@ -2204,8 +2191,9 @@ async def get_fantasy_waiver_recommendations(
             else:
                 _avail_note = None
 
-            # Statcast enrichment for waiver player (uses fixed statcast_loader)
+            # ── Statcast enrichment (BEFORE need_score calculation) ────────────────
             _sc_dict: dict | None = None
+            _sc_sigs: list[str] = []
             _fa_is_pitcher = positions[0] in ("SP", "RP", "P") if positions else False
             try:
                 if not _fa_is_pitcher:
@@ -2238,10 +2226,19 @@ async def get_fantasy_waiver_recommendations(
             except Exception:
                 pass
 
-            need_score, _penalty_note = apply_injury_penalty(need_score, _overlay)
-            if _penalty_note and "HIGH_INJURY_RISK" not in _sc_sigs:
-                _sc_sigs.append("HIGH_INJURY_RISK")
-            need_score_result = _calc_need_score(
+            # Add HIGH_INJURY_RISK signal if injury penalty applies
+            if _overlay:
+                _penalty_base, _penalty_note = apply_injury_penalty(0.0, _overlay)
+                if _penalty_note and "HIGH_INJURY_RISK" not in _sc_sigs:
+                    _sc_sigs.append("HIGH_INJURY_RISK")
+
+            # ── Need-score calculation (unified service with Statcast boost) ─────────
+            from backend.services.need_score import (
+                calculate_need_score as _calc_need_score,
+                NeedScoreResult,
+            )
+
+            need_score_result: NeedScoreResult = _calc_need_score(
                 player_cat_scores=cat_scores,
                 player_z_score=player_z,
                 category_deficits=category_deficits,
@@ -2250,8 +2247,20 @@ async def get_fantasy_waiver_recommendations(
                 team_context=None,
                 marginal_stats=None,
             )
+
+            # Base need_score (pure category-aware, no Statcast)
+            need_score = need_score_result.base_need_score
+            # Statcast boost (transparent separate calculation)
             statcast_boost = need_score_result.statcast_boost
-            adjusted_need_score = need_score + statcast_boost
+            # Adjusted need_score (base + Statcast boost)
+            adjusted_need_score = need_score_result.adjusted_need_score
+
+            # Apply injury penalty to final need_score
+            need_score, _penalty_note = apply_injury_penalty(need_score, _overlay)
+
+            # Blacklisted players get zero need_score
+            if _pkey and _pkey in _blacklist_keys:
+                need_score = 0.0
 
             # ── Stability metadata ──────────────────────────────────────────
             _pkey_stab = p.get("player_key") or ""
@@ -2503,7 +2512,7 @@ async def get_fantasy_waiver_recommendations(
         # Reconcile tag contradictions: IL status always overrides LOW_INJURY_RISK
         _IL_STATUS_VALUES = frozenset({
             "il", "il10", "il15", "il60", "dl", "dl10", "dl15", "dl60",
-            "10-day-il", "15-day-il", "60-day-il", "injured list",
+            "10-day-il", "15-day-il", "60-day-il", "injured list", "15dayil",
         })
 
         def _is_on_il(player) -> bool:
@@ -2881,22 +2890,16 @@ async def get_waiver_recommendations(
 
                 _my_stats = _rec_stats_dict(_my_matchup_teams[0][2])
                 _opp_stats = _rec_stats_dict(_my_matchup_teams[1][2])
-                _lower_better = {"ERA", "WHIP", "L", "K(B)", "HRA"}
                 for _cat, _my_val in _my_stats.items():
                     _opp_val = _opp_stats.get(_cat, 0.0)
-                    if _cat in _lower_better:
-                        _deficit = _my_val - _opp_val
-                        _winning = _my_val < _opp_val
-                    else:
-                        _deficit = _opp_val - _my_val
-                        _winning = _my_val > _opp_val
+                    _result = compare_category(_cat, _my_val, _opp_val)
                     category_deficits.append(
                         CategoryDeficitOut(
                             category=_cat,
                             my_total=_my_val,
                             opponent_total=_opp_val,
-                            deficit=_deficit,
-                            winning=_winning,
+                            deficit=_result.gap,
+                            winning=(_result.verdict == "W"),
                         )
                     )
         except Exception as _rec_sb_err:
@@ -3023,6 +3026,7 @@ async def get_waiver_recommendations(
             pass  # non-fatal
 
         def _score_fa(p: dict) -> WaiverPlayerOut:
+            """Score free agent using unified need-score service with transparent Statcast boost."""
             positions = p.get("positions") or []
             name = (p.get("name") or "").strip()
             bp = _get_proj(p)
@@ -3032,18 +3036,8 @@ async def get_waiver_recommendations(
             else:
                 z_score = float(z_score) if z_score is not None else 0.0
             cat_scores = bp.get("cat_scores") or {}
-            need_score = z_score
-            if _need_vector is not None:
-                if cat_scores:
-                    try:
-                        from backend.fantasy_baseball.category_aware_scorer import (
-                            compute_need_score as _cns,
-                        )
-                        n_cats = max(1, len(category_deficits))
-                        need_score = _cns(cat_scores, z_score, category_deficits, n_cats)
-                    except Exception:
-                        pass  # fallback to z_score if scorer unavailable
 
+            # ── Injury status & availability ──────────────────────────────────────
             _status = p.get("status") or None
             _injury_note = p.get("injury_note") or None
             _injury_status = p.get("injury_status")
@@ -3058,7 +3052,6 @@ async def get_waiver_recommendations(
             _pkey_rec = p.get("player_key") or ""
             if _pkey_rec and _pkey_rec in _rec_blacklist_keys:
                 _avail_note_rec: Optional[str] = "NOT AVAILABLE TODAY — day off confirmed"
-                need_score = 0.0
             elif _injury_status and any(kw in (_injury_status or "").upper() for kw in ("IL", "DL", "60-DAY", "15-DAY", "10-DAY")):
                 _avail_note_rec = "On IL — check IL slot availability"
             elif _injury_status and "DTD" in (_injury_status or "").upper():
@@ -3067,7 +3060,6 @@ async def get_waiver_recommendations(
                 _avail_note_rec = None
 
             # Translate raw Yahoo stat_ids → display names using _sid_map.
-            # stats dict is populated by get_free_agents() via get_players_stats_batch().
             _raw_stats: dict = p.get("stats") or {}
             _translated_stats: dict = {}
             for _sk, _sv in _raw_stats.items():
@@ -3076,7 +3068,7 @@ async def get_waiver_recommendations(
                     continue
                 _translated_stats[_tk] = _sv
 
-            # Statcast enrichment — mirrors _to_waiver_player in the waiver list endpoint.
+            # ── Statcast enrichment (BEFORE need_score calculation) ────────────────
             _fa_is_pitcher = positions[0] in ("SP", "RP", "P") if positions else False
             _sc_sigs: list = []
             _sc_dict: Optional[dict] = None
@@ -3112,9 +3104,41 @@ async def get_waiver_recommendations(
             except Exception:
                 pass
 
+            # Add HIGH_INJURY_RISK signal if injury penalty applies
+            if _overlay:
+                _penalty_base, _penalty_note = apply_injury_penalty(0.0, _overlay)
+                if _penalty_note and "HIGH_INJURY_RISK" not in _sc_sigs:
+                    _sc_sigs.append("HIGH_INJURY_RISK")
+
+            # ── Need-score calculation (unified service with Statcast boost) ─────────
+            from backend.services.need_score import (
+                calculate_need_score as _calc_need_score_rec,
+                NeedScoreResult,
+            )
+
+            need_score_result: NeedScoreResult = _calc_need_score_rec(
+                player_cat_scores=cat_scores,
+                player_z_score=z_score,
+                category_deficits=category_deficits,
+                n_cats=max(1, len(category_deficits)) if category_deficits else 1,
+                statcast_signals=_sc_sigs,
+                team_context=None,
+                marginal_stats=None,
+            )
+
+            # Base need_score (pure category-aware, no Statcast)
+            need_score = need_score_result.base_need_score
+            # Statcast boost (transparent separate calculation)
+            statcast_boost = need_score_result.statcast_boost
+            # Adjusted need_score (base + Statcast boost)
+            adjusted_need_score = need_score_result.adjusted_need_score
+
+            # Apply injury penalty to final need_score
             need_score, _penalty_note = apply_injury_penalty(need_score, _overlay)
-            if _penalty_note and "HIGH_INJURY_RISK" not in _sc_sigs:
-                _sc_sigs.append("HIGH_INJURY_RISK")
+
+            # Blacklisted players get zero need_score
+            if _pkey_rec and _pkey_rec in _rec_blacklist_keys:
+                need_score = 0.0
 
             # ── Stability metadata ──────────────────────────────────────────
             _pkey_stab_rec = p.get("player_key") or ""
@@ -3172,7 +3196,9 @@ async def get_waiver_recommendations(
                 name=name,
                 team=p.get("team") or "",
                 position=positions[0] if positions else "?",
-                need_score=round(need_score, 3),
+                need_score=round(need_score, 3),  # Base need_score (no Statcast adjustments)
+                statcast_boost=round(statcast_boost, 3) if statcast_boost is not None else None,  # NEW: Statcast adjustment factor
+                adjusted_need_score=round(adjusted_need_score, 3) if adjusted_need_score is not None else None,  # NEW: Base + Boost
                 category_contributions=cat_scores,
                 owned_pct=p.get("percent_owned", 0.0),
                 starts_this_week=p.get("starts_this_week", 0),
@@ -3218,7 +3244,7 @@ async def get_waiver_recommendations(
         )
 
         my_roster_scored: list = []
-        _IL_STATUSES = {"IL", "IL10", "IL60", "NA", "OUT", "DL"}
+        _IL_STATUSES = {"IL", "IL10", "IL15", "IL60", "NA", "OUT", "DL"}
         _STARTING_SLOTS = {"C", "1B", "2B", "3B", "SS", "OF", "Util", "SP", "RP", "P"}
         for rp in my_roster:
             bp = _get_proj(rp)
@@ -4461,6 +4487,22 @@ async def get_matchup_preview(
             detail="No roster data available — check Yahoo API connection",
         )
 
+    # TBD opponent check: suppress ALL projections when opponent is undetermined
+    # This includes All-Star breaks, bye weeks, and cases where Yahoo hasn't published
+    # the next matchup yet. Return a simplified TBD response instead.
+    _TBD_INDICATORS = {"Unknown", "TBD", "All-Star Break", "Bye Week", "None"}
+    if opponent_name in _TBD_INDICATORS:
+        return MatchupPreviewResponse(
+            week_number=preview_week,
+            opponent_name=opponent_name,
+            opponent_logo=None,
+            overall_win_prob=None,  # No win % without opponent
+            category_projections=[],  # Empty category table
+            weak_categories=[],  # No streaming recommendations
+            schedule_advantage=ScheduleAdvantage(my_games=0, opponent_games=0),
+            message="MATCHUP TBD: Opponent not yet published. Projections unavailable until matchup is confirmed.",
+        )
+
     # Simulate full-week projection against league-average opponent (empty = z=0 baseline)
     try:
         sim = simulate_weekly_matchup(
@@ -4505,18 +4547,15 @@ async def get_matchup_preview(
                 )
             )
 
-    # Suppress overall_win_prob when opponent is unknown to avoid misleading 100% default
-    _overall_wp = round(float(sim.get("win_prob", 0.5)), 4) if opponent_name != "Unknown" else None
-
     return MatchupPreviewResponse(
         week_number=preview_week,
         opponent_name=opponent_name,
         opponent_logo=None,
-        overall_win_prob=_overall_wp,
+        overall_win_prob=round(float(sim.get("win_prob", 0.5)), 4),
         category_projections=category_projections,
         weak_categories=weak_categories,
         schedule_advantage=ScheduleAdvantage(my_games=0, opponent_games=0),
-        message="Opponent not yet published for this week — showing league-average projection" if opponent_name == "Unknown" else None,
+        message=None,
     )
 
 
@@ -5828,6 +5867,108 @@ async def streaming_recommendations(
     }
 
 
+# ---------------------------------------------------------------------------
+# Auto-Stream Configuration
+# ---------------------------------------------------------------------------
+
+@router.post("/api/fantasy/auto-stream/configure")
+async def configure_auto_stream(
+    request: AutoStreamConfigureRequest,
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """
+    Configure Auto-Stream settings for the authenticated user.
+
+    Auto-Stream runs daily at 6 AM ET to execute streaming recommendations
+    based on user configuration.
+
+    Args:
+        request: Configuration with enabled flag, drop priority, thresholds
+        db: Database session
+        user: Authenticated user ID
+
+    Returns:
+        Updated AutoStreamConfig
+    """
+    service = get_auto_stream_service()
+
+    try:
+        config = await service.update_config(
+            user_id=user,
+            enabled=request.enabled,
+            drop_priority=request.drop_priority,
+            min_confidence=request.min_confidence,
+            min_recommendation=request.min_recommendation,
+            max_adds_per_week=request.max_adds_per_week,
+            db=db,
+        )
+
+        return {
+            "success": True,
+            "config": {
+                "enabled": config.enabled,
+                "drop_priority": config.drop_priority,
+                "min_confidence": config.min_confidence,
+                "min_recommendation": config.min_recommendation,
+                "max_adds_per_week": config.max_adds_per_week,
+                "executed_this_week": config.executed_this_week,
+                "last_run_at": config.last_run_at,
+                "next_run_at": config.next_run_at,
+            }
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to configure Auto-Stream: {e}")
+        raise HTTPException(status_code=500, detail="Failed to configure Auto-Stream")
+
+
+@router.get("/api/fantasy/auto-stream/status")
+async def get_auto_stream_status(
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_api_key),
+):
+    """
+    Get current Auto-Stream status for the authenticated user.
+
+    Returns configuration, recent activity, and pending actions.
+
+    Args:
+        db: Database session
+        user: Authenticated user ID
+
+    Returns:
+        AutoStreamStatusResponse with current state
+    """
+    service = get_auto_stream_service()
+
+    try:
+        status = await service.get_status(user_id=user, db=db)
+
+        return {
+            "enabled": status.enabled,
+            "config": {
+                "enabled": status.config.enabled,
+                "drop_priority": status.config.drop_priority,
+                "min_confidence": status.config.min_confidence,
+                "min_recommendation": status.config.min_recommendation,
+                "max_adds_per_week": status.config.max_adds_per_week,
+                "executed_this_week": status.config.executed_this_week,
+                "last_run_at": status.config.last_run_at,
+                "next_run_at": status.config.next_run_at,
+            },
+            "last_run_at": status.last_run_at,
+            "next_run_at": status.next_run_at,
+            "executed_this_week": status.executed_this_week,
+            "pending_actions": status.pending_actions,
+            "recent_log": status.recent_log,
+        }
+    except Exception as e:
+        logger.error(f"Failed to get Auto-Stream status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get Auto-Stream status")
+
+
 @router.get("/api/fantasy/lineup/elite-optimize/{lineup_date}")
 async def elite_optimize_lineup(
     lineup_date: str,
@@ -6673,15 +6814,10 @@ async def get_decisions(
 
                             my_stats_dict = _stats_dict_from_raw(my_tuple[2])
                             opp_stats_dict = _stats_dict_from_raw(opp_tuple[2])
-                            lower_better = {"ERA", "WHIP", "L", "K(B)", "HRA"}
-
                             for cat, my_val_f in my_stats_dict.items():
                                 opp_val_f = opp_stats_dict.get(cat, 0.0)
-                                if cat in lower_better:
-                                    deficit = my_val_f - opp_val_f
-                                else:
-                                    deficit = opp_val_f - my_val_f
-                                _category_deficits.append((cat, deficit))
+                                result = compare_category(cat, my_val_f, opp_val_f)
+                                _category_deficits.append((cat, result.gap))
 
                     if _category_deficits:
                         _CANONICAL_TO_BOARD = {

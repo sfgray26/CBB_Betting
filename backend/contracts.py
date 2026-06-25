@@ -10,7 +10,7 @@ Rules:
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Literal
 
 from pydantic import BaseModel, Field, field_validator
 from zoneinfo import ZoneInfo
@@ -719,6 +719,23 @@ class TradeAnalysis(BaseModel):
     total_z_delta: float   # Weighted sum of all per-category deltas
     recommendation: str    # 'strong_accept'|'accept'|'neutral'|'reject'|'strong_reject'
     summary: str           # Human-readable explanation
+
+    class Config:
+        frozen = True
+
+
+# ---------------------------------------------------------------------------
+# Auto-Stream Configuration Contracts
+# ---------------------------------------------------------------------------
+
+class AutoStreamConfigureRequest(BaseModel):
+    """Request body for POST /api/fantasy/auto-stream/configure."""
+
+    enabled: bool = Field(description="Whether Auto-Stream is enabled")
+    drop_priority: List[str] = Field(default_factory=list, description="Ordered list of player IDs to drop first")
+    min_confidence: Literal["HIGH", "MEDIUM", "LOW"] = Field(default="HIGH", description="Minimum confidence level")
+    min_recommendation: Literal["EXCELLENT", "GOOD", "AVERAGE"] = Field(default="EXCELLENT", description="Minimum recommendation tier")
+    max_adds_per_week: int = Field(default=2, ge=1, le=10, description="Maximum adds per scoring week")
 
     class Config:
         frozen = True
