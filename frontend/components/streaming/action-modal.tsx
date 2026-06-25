@@ -31,10 +31,6 @@ export function ActionModal({
   const [selectedDrop, setSelectedDrop] = useState<string>('')
   const [response, setResponse] = useState<RosterActionResponse | null>(null)
 
-  // Check if button should be disabled
-  const isDisabled =
-    pitcher.recommendation === 'AVOID' || pitcher.transparency.confidence === 'LOW'
-
   // Determine if waiver claim might be needed (heuristic)
   const needsWaiverClaim = pitcher.overall_quality > 0.5
 

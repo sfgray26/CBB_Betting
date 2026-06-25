@@ -136,7 +136,6 @@ class AutoStreamService:
 
     def _reset_weekly_count_if_needed(self) -> None:
         """Reset weekly counter if we've crossed into a new scoring week."""
-        now = datetime.now(ZoneInfo("America/New_York"))
         current_week_start = self._get_week_start()
         if current_week_start > self._week_start:
             self._weekly_count = 0
@@ -507,8 +506,6 @@ class AutoStreamService:
 
             # Execute action
             try:
-                from backend.services.yahoo_actions import YahooActionsService
-
                 actions_service = YahooActionsService()
                 action_type: ActionType = "ADD"
 

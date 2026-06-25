@@ -2905,19 +2905,6 @@ async def get_waiver_recommendations(
         except Exception as _rec_sb_err:
             logger.warning("recommendations scoreboard failed (non-fatal): %s", _rec_sb_err)
 
-        # Build CategoryNeedVector from the parsed category_deficits so FA scoring
-        # is category-aware for this week's matchup.
-        _need_vector = None
-        if category_deficits:
-            try:
-                from backend.fantasy_baseball.category_aware_scorer import CategoryNeedVector as _CNV
-                _need_vector = _CNV(needs={
-                    _CANONICAL_TO_BOARD.get(cd.category, cd.category.lower()): cd.deficit
-                    for cd in category_deficits
-                })
-            except Exception:
-                _need_vector = None
-
         free_agents = client.get_free_agents(count=40)
         _recommendation_injury_overlays = (
             load_injury_overlays_for_yahoo_players(db, free_agents)
