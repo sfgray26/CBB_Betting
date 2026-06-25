@@ -1388,7 +1388,8 @@ class DailyIngestionOrchestrator:
                         "probable_pitchers_morning", "probable_pitchers_afternoon", "probable_pitchers_evening",
                         "bdl_injuries",
                         "opportunity_update", "market_signals_update", "matchup_context_update",
-                        "canonical_projection_refresh"]
+                        "canonical_projection_refresh",
+                        "auto_stream"]
         if _fantasy_leagues:
             _all_job_ids.append("valuation_cache")
         for job_id in _all_job_ids:
