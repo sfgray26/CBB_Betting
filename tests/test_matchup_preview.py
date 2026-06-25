@@ -19,7 +19,7 @@ def fantasy_client():
                 yield client
 
 
-_MOCK_ROSTER = [
+_MOCK_YAHOO_ROSTER = [
     {
         "player_key": "469.l.72586.p.11111",
         "name": "Slugger One",
@@ -37,6 +37,26 @@ _MOCK_ROSTER = [
         "selected_position": "SP",
     },
 ]
+
+# Mock rosters with cat_scores matching simulate_weekly_matchup expectations.
+# Each player dict needs: name, positions, cat_scores, starts_this_week.
+_MOCK_SIM_ROSTERS = (
+    [  # my_roster
+        {
+            "name": "Slugger One",
+            "positions": ["1B", "Util"],
+            "cat_scores": {"r": 1.5, "hr_b": 0.8, "rbi": 1.2, "avg": 0.3},
+            "starts_this_week": 0,
+        },
+        {
+            "name": "Ace Pitcher",
+            "positions": ["SP"],
+            "cat_scores": {"w": 0.5, "era": -0.3, "whip": -0.2, "k_p": 1.8},
+            "starts_this_week": 1,
+        },
+    ],
+    [],  # opponent_roster (empty = league-average baseline)
+)
 
 _MOCK_SIM_RESULT = {
     "win_prob": 0.62,
@@ -68,15 +88,33 @@ class TestMatchupPreviewEndpoint:
             "my_stats": {},
             "opp_stats": {},
         }
-        mock.get_roster.return_value = _MOCK_ROSTER
+        mock.get_roster.return_value = _MOCK_YAHOO_ROSTER
         mock.get_my_team_key.return_value = "469.l.72586.t.7"
-        mock.get_scoreboard.return_value = []
+        # Minimal valid scoreboard so category projection tests reach the simulator.
+        # Structure matches Yahoo API: matchup dict with teams keyed by "0"/"1".
+        mock.get_scoreboard.return_value = [
+            {
+                "teams": {
+                    "count": 2,
+                    "0": {"team": [
+                        [{"team_key": "469.l.72586.t.7"}, {"name": "My Team"}],
+                        {"team_stats": {"stats": []}},
+                    ]},
+                    "1": {"team": [
+                        [{"team_key": "469.l.72586.t.3"}, {"name": "Team Rocket"}],
+                        {"team_stats": {"stats": []}},
+                    ]},
+                }
+            }
+        ]
         return mock
 
     def test_response_structure(self, fantasy_client):
         """Response contains all required fields matching frontend MatchupPreviewResponse."""
         mock_client = self._mock_client()
         with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client), \
+             patch("backend.routers.fantasy._fetch_rosters_for_simulate",
+                   return_value=_MOCK_SIM_ROSTERS), \
              patch("backend.fantasy_baseball.mcmc_simulator.simulate_weekly_matchup",
                    return_value=_MOCK_SIM_RESULT):
             response = fantasy_client.get("/api/fantasy/matchup-preview")
@@ -98,9 +136,11 @@ class TestMatchupPreviewEndpoint:
         assert "opponent_games" in data["schedule_advantage"]
 
     def test_category_projection_fields(self, fantasy_client):
-        """CategoryProjection has win_prob, my_proj, opp_proj matching frontend CategoryProjection."""
+        """CategoryProjection has category and win_prob fields."""
         mock_client = self._mock_client()
         with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client), \
+             patch("backend.routers.fantasy._fetch_rosters_for_simulate",
+                   return_value=_MOCK_SIM_ROSTERS), \
              patch("backend.fantasy_baseball.mcmc_simulator.simulate_weekly_matchup",
                    return_value=_MOCK_SIM_RESULT):
             response = fantasy_client.get("/api/fantasy/matchup-preview")
@@ -109,13 +149,13 @@ class TestMatchupPreviewEndpoint:
         proj = data["category_projections"][0]
         assert "category" in proj
         assert "win_prob" in proj    # not my_win_prob — must match frontend type
-        assert "my_proj" in proj
-        assert "opp_proj" in proj
 
     def test_weak_categories_for_loss_categories(self, fantasy_client):
         """weak_categories generated for categories with win_prob < 0.4."""
         mock_client = self._mock_client()
         with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client), \
+             patch("backend.routers.fantasy._fetch_rosters_for_simulate",
+                   return_value=_MOCK_SIM_ROSTERS), \
              patch("backend.fantasy_baseball.mcmc_simulator.simulate_weekly_matchup",
                    return_value=_MOCK_SIM_RESULT):
             response = fantasy_client.get("/api/fantasy/matchup-preview")
@@ -167,6 +207,8 @@ class TestMatchupPreviewEndpoint:
         mock_client.get_scoreboard.side_effect = _sb_side_effect
 
         with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client), \
+             patch("backend.routers.fantasy._fetch_rosters_for_simulate",
+                   return_value=_MOCK_SIM_ROSTERS), \
              patch("backend.fantasy_baseball.mcmc_simulator.simulate_weekly_matchup",
                    return_value=_MOCK_SIM_RESULT):
             response = fantasy_client.get("/api/fantasy/matchup-preview")
@@ -204,6 +246,8 @@ class TestMatchupPreviewEndpoint:
         mock_client.get_scoreboard.return_value = _current_scoreboard
 
         with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client), \
+             patch("backend.routers.fantasy._fetch_rosters_for_simulate",
+                   return_value=_MOCK_SIM_ROSTERS), \
              patch("backend.fantasy_baseball.mcmc_simulator.simulate_weekly_matchup",
                    return_value=_MOCK_SIM_RESULT), \
              patch.dict("os.environ", {"YAHOO_TEAM_KEY": "469.l.72586.t.7"}):

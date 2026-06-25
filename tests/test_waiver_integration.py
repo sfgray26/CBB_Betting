@@ -436,7 +436,7 @@ class TestILSlotAwareness:
         from backend.services.waiver_edge_detector import count_il_slots_used, il_capacity_info
         import os
 
-        total = int(os.getenv("YAHOO_IL_SLOTS", "2"))
+        total = int(os.getenv("YAHOO_IL_SLOTS", "3"))
         roster = [
             self._make_player("IL", f"InjuredPlayer{i}") for i in range(total)
         ] + [self._make_player("C", "Catcher")]

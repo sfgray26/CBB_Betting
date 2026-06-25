@@ -187,6 +187,7 @@ def test_orchestrator_get_status_returns_all_jobs():
         "yahoo_id_sync", "ros_projection_refresh", "savant_ingestion",
         "opportunity_update", "market_signals_update", "matchup_context_update",
         "canonical_projection_refresh",
+        "auto_stream",
     }
     assert expected_jobs == set(status.keys())
     for job_id, info in status.items():
