@@ -1477,6 +1477,7 @@ class DailyIngestionOrchestrator:
             "matchup_context_update":       self._compute_matchup_context,
             "canonical_projection_refresh": self._refresh_canonical_projections,
             "bridge_mapping_to_identities": self._bridge_mapping_to_identities,
+            "auto_stream":                  self._run_auto_stream,
         }
         handler = _handlers.get(job_id)
         if handler is None:
