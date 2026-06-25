@@ -5892,10 +5892,12 @@ async def configure_auto_stream(
         Updated AutoStreamConfig
     """
     service = get_auto_stream_service()
+    # Use league ID from env var (same as Auto-Stream job), not API user
+    league_user_id = os.getenv("YAHOO_LEAGUE_ID", "default")
 
     try:
         config = await service.update_config(
-            user_id=user,
+            user_id=league_user_id,
             enabled=request.enabled,
             drop_priority=request.drop_priority,
             min_confidence=request.min_confidence,
@@ -5942,9 +5944,11 @@ async def get_auto_stream_status(
         AutoStreamStatusResponse with current state
     """
     service = get_auto_stream_service()
+    # Use league ID from env var (same as Auto-Stream job), not API user
+    league_user_id = os.getenv("YAHOO_LEAGUE_ID", "default")
 
     try:
-        status = await service.get_status(user_id=user, db=db)
+        status = await service.get_status(user_id=league_user_id, db=db)
 
         return {
             "enabled": status.enabled,
