@@ -2383,3 +2383,25 @@ async def run_migration_auto_stream_config(
         "status": "completed",
         "message": "Added auto_stream_config column to user_preferences",
     }
+
+
+@router.post("/admin/auto-stream/trigger", tags=["admin"])
+async def trigger_auto_stream_manual(
+    user: str = Depends(verify_admin_api_key),
+):
+    """
+    Manually trigger Auto-Stream execution for testing.
+
+    Executes the Auto-Stream job synchronously and returns the result.
+    """
+    from backend.main import _ingestion_orchestrator
+    if _ingestion_orchestrator is None:
+        raise HTTPException(status_code=503, detail="Ingestion orchestrator not initialized")
+
+    logger.info("Manual Auto-Stream trigger by %s", user)
+    result = await _ingestion_orchestrator.run_job("auto_stream")
+    return {
+        "triggered_by": user,
+        "timestamp": datetime.now(ZoneInfo("America/New_York")).isoformat(),
+        "result": result,
+    }
