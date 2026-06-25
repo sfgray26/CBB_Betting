@@ -234,3 +234,54 @@ async def test_update_statcast_records_failed_on_exception():
 
             result = await orchestrator._update_statcast()
             assert result["status"] == "failed"
+
+
+# ---------------------------------------------------------------------------
+# Task 5: Preview TBD Opponent Suppression
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_preview_with_tbd_opponent_suppresses_projections():
+    """Preview endpoint must suppress all projections when opponent is TBD."""
+    from fastapi.testclient import TestClient
+    from backend.main import app
+    from unittest.mock import patch, MagicMock
+
+    # Mock Yahoo client to return TBD opponent
+    mock_client = MagicMock()
+    mock_client.get_my_team_key.return_value = "469.l.72586.t.7"
+    mock_client.get_league.return_value = {"current_week": 12}
+    mock_client.get_scoreboard.return_value = []  # Empty scoreboard = TBD opponent
+
+    # Mock roster fetch
+    mock_roster = [
+        {
+            "player_key": "469.p.1",
+            "name": "Test Player",
+            "positions": ["SP"],
+            "selected_position": "SP",
+            "status": "Healthy",
+            "cat_scores": {"w": 5, "k_p": 80, "qs": 3},
+        }
+    ]
+
+    with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+        with patch("backend.routers.fantasy._fetch_rosters_for_simulate", return_value=(mock_roster, [])):
+            client = TestClient(app)
+            response = client.get("/api/fantasy/matchup-preview")
+
+            assert response.status_code == 200
+            data = response.json()
+
+            # Verify TBD state
+            assert data["opponent_name"] in ["Unknown", "TBD"]
+            assert data["overall_win_prob"] is None
+            assert data["category_projections"] == []
+            assert data["weak_categories"] == []
+            assert data["message"] is not None
+            assert "MATCHUP TBD" in data["message"] or "not yet published" in data["message"]
+
+
+# Note: A test for confirmed opponent projections would require complex mocking
+# of the Yahoo scoreboard structure. The TBD suppression test above validates
+# the key fix - that projections are suppressed when opponent is undetermined.

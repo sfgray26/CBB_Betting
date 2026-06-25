@@ -64,6 +64,7 @@ class TestInactiveStatuses:
         """All IL statuses should be in the frozenset."""
         assert "IL" in _INACTIVE_STATUSES
         assert "IL10" in _INACTIVE_STATUSES
+        assert "IL15" in _INACTIVE_STATUSES
         assert "IL60" in _INACTIVE_STATUSES
         assert "NA" in _INACTIVE_STATUSES
         assert "OUT" in _INACTIVE_STATUSES
@@ -162,6 +163,75 @@ class TestRosterEndpoint:
         )
         
         assert player.selected_position is None
+
+
+class TestILSlotAccounting:
+    """Test IL slot counting and capacity logic."""
+
+    def test_il_slot_positions_includes_il15(self):
+        """IL15 should be recognized as a valid IL slot position."""
+        from backend.services.waiver_edge_detector import _IL_SLOT_POSITIONS
+
+        assert "IL15" in _IL_SLOT_POSITIONS
+        assert "IL" in _IL_SLOT_POSITIONS
+        assert "IL10" in _IL_SLOT_POSITIONS
+        assert "IL60" in _IL_SLOT_POSITIONS
+
+    def test_il_capacity_info_full_il_slots(self):
+        """Test IL capacity info with 3/3 IL slots filled."""
+        from backend.services.waiver_edge_detector import il_capacity_info
+
+        roster = [
+            {"name": "IL Player 1", "selected_position": "IL"},
+            {"name": "IL Player 2", "selected_position": "IL10"},
+            {"name": "IL Player 3", "selected_position": "IL60"},
+            {"name": "Active Player 1", "selected_position": "C"},
+            {"name": "Active Player 2", "selected_position": "1B"},
+        ]
+
+        result = il_capacity_info(roster)
+
+        assert result["used"] == 3
+        assert result["total"] == 3
+        assert result["available"] == 0
+
+    def test_il_capacity_info_with_il15_slot(self):
+        """Test that IL15 players are counted in IL slot usage."""
+        from backend.services.waiver_edge_detector import il_capacity_info
+
+        roster = [
+            {"name": "IL Player 1", "selected_position": "IL"},
+            {"name": "IL Player 2", "selected_position": "IL15"},
+            {"name": "Active Player 1", "selected_position": "C"},
+        ]
+
+        result = il_capacity_info(roster)
+
+        assert result["used"] == 2
+        assert result["available"] == 1  # 3 total - 2 used
+
+    def test_il_capacity_info_overcount_edge_case(self):
+        """Test edge case: 5 injured players, 3 IL slots, 2 NA status."""
+        from backend.services.waiver_edge_detector import il_capacity_info
+
+        # 3 players in IL slots
+        # 2 players with NA status (not in IL slots, but marked NA)
+        # Total roster has 5 injured players but only 3 IL slots used
+        roster = [
+            {"name": "IL Murakami", "selected_position": "IL", "status": "IL"},
+            {"name": "IL Crochet", "selected_position": "IL10", "status": "IL"},
+            {"name": "IL Díaz", "selected_position": "IL60", "status": "IL"},
+            {"name": "Soroka 15-day", "selected_position": "IL15", "status": "IL"},
+            {"name": "Max Meyer NA", "selected_position": "NA", "status": "NA"},
+        ]
+
+        result = il_capacity_info(roster)
+
+        # Should count 4 IL slot positions (IL, IL10, IL60, IL15)
+        # NA is separate from IL slots
+        assert result["used"] == 4
+        assert result["total"] == 3  # Default IL slots
+        assert result["available"] == 0  # Over capacity
 
 
 if __name__ == "__main__":

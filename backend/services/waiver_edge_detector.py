@@ -21,7 +21,7 @@ _INJURED_2B_Z_THRESHOLD = -1.0
 _FRESHNESS_TIMESTAMPS: dict[str, Optional[datetime]] = {}
 
 # Statuses that indicate player is on IL (doesn't count against active roster)
-_INACTIVE_STATUSES = frozenset({"IL", "IL10", "IL60", "NA", "OUT"})
+_INACTIVE_STATUSES = frozenset({"IL", "IL10", "IL15", "IL60", "NA", "OUT"})
 
 # Normalised IL status tokens — covers Yahoo short codes and BDL long-form labels.
 _IL_STATUS_TOKENS = frozenset({
@@ -71,8 +71,9 @@ def _is_dtd_player(player: dict) -> bool:
     return False
 
 # Yahoo IL slot position labels (selected_position values for IL-slotted players)
-_IL_SLOT_POSITIONS = frozenset({"IL", "IL10", "IL60", "IL+"})
-_DEFAULT_IL_SLOTS = int(os.getenv("YAHOO_IL_SLOTS", "2"))
+# Includes IL15 for 15-day IL (standard Yahoo designation alongside IL10/IL60)
+_IL_SLOT_POSITIONS = frozenset({"IL", "IL10", "IL15", "IL60", "IL+"})
+_DEFAULT_IL_SLOTS = int(os.getenv("YAHOO_IL_SLOTS", "3"))
 _ELITE_Z_THRESHOLD = 4.0
 _TIER_HOLD_FLOORS = {
     1: 4.5,

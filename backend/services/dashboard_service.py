@@ -31,6 +31,7 @@ from backend.services.injury_overlay import (
     apply_injury_penalty,
     load_injury_overlays_for_yahoo_players,
 )
+from backend.services.category_comparator import compare_category
 from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient, YahooAuthError
 
 logger = logging.getLogger(__name__)
@@ -359,8 +360,8 @@ class DashboardService:
             # Phase 3: IL crisis detection.
             # If 3+ rostered players have confirmed injury status but are NOT in IL slots,
             # the "no gaps" verdict is a false positive. Override with ROSTER EMERGENCY.
-            _IL_CONFIRMED_STATUS = {"il", "il10", "il60", "15-day-il", "60-day-il", "out"}
-            _SAFE_IL_POSITIONS = {"IL", "IL10", "IL60", "NA", "DL"}
+            _IL_CONFIRMED_STATUS = {"il", "il10", "il15", "il60", "15-day-il", "60-day-il", "out", "15dayil"}
+            _SAFE_IL_POSITIONS = {"IL", "IL10", "IL15", "IL60", "NA", "DL"}
             try:
                 crisis_players = [
                     p for p in roster
@@ -686,7 +687,7 @@ class DashboardService:
                     n_cats = max(len(my_stats), 1)
                     # Translate Yahoo stat IDs -> canonical codes so that
                     # compute_need_score can match against cat_scores board keys.
-                    from backend.stat_contract import CONTRACT as _CONTRACT, LOWER_IS_BETTER as _LIB
+                    from backend.stat_contract import CONTRACT as _CONTRACT
                     _yahoo_index = _CONTRACT.yahoo_id_index
                     for sid, my_val in my_stats.items():
                         opp_val = opp_stats.get(sid, 0)
@@ -694,19 +695,13 @@ class DashboardService:
                             my_f   = float(my_val  or 0)
                             opp_f  = float(opp_val or 0)
                             canon = _yahoo_index.get(str(sid), sid)
-                            _is_lib = canon in _LIB
-                            if _is_lib:
-                                deficit = my_f - opp_f   # positive = I'm losing (more = worse)
-                                winning = my_f < opp_f
-                            else:
-                                deficit = opp_f - my_f   # positive = I'm losing (less = worse)
-                                winning = my_f > opp_f
+                            result = compare_category(canon, my_f, opp_f)
                             category_deficits.append(CategoryDeficitOut(
                                 category=canon,
                                 my_total=my_f,
                                 opponent_total=opp_f,
-                                deficit=deficit,
-                                winning=winning,
+                                deficit=result.gap,
+                                winning=(result.verdict == "W"),
                             ))
                         except (TypeError, ValueError):
                             pass
@@ -787,8 +782,8 @@ class DashboardService:
             injured = 0
             
             # Status mappings
-            injury_statuses = {"IL", "IL10", "IL60", "DTD", "OUT", "NA"}
-            
+            injury_statuses = {"IL", "IL10", "IL15", "IL60", "DTD", "OUT", "NA"}
+
             for player in roster:
                 raw_status = player.get("status", "")
                 # Yahoo occasionally sends boolean True for active players — coerce to string
@@ -800,9 +795,9 @@ class DashboardService:
                 if overlay and getattr(overlay, "status", None):
                     status = overlay.status
                 selected_pos = player.get("selected_position", "")
-                
+
                 # Check if player is injured
-                is_injured = status in injury_statuses or selected_pos in ("IL", "IL10", "IL60")
+                is_injured = status in injury_statuses or selected_pos in ("IL", "IL10", "IL15", "IL60")
                 
                 if is_injured:
                     injured += 1
@@ -811,7 +806,7 @@ class DashboardService:
                     if status in ("IL", "IL60") or selected_pos in ("IL", "IL60"):
                         severity = "critical"
                         action = "Move to IL slot immediately"
-                    elif status == "IL10" or selected_pos == "IL10":
+                    elif status in ("IL10", "IL15") or selected_pos in ("IL10", "IL15"):
                         severity = "warning"
                         action = "Consider moving to IL slot"
                     elif status == "DTD":

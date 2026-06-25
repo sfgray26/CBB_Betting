@@ -44,6 +44,8 @@ import type {
   GlobalFreshnessResponse,
   TradeAnalysisResponse,
   StreamingRecommendationsResponse,
+  RosterActionRequest,
+  RosterActionResponse,
 } from '@/lib/types'
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -376,6 +378,12 @@ export const endpoints = {
     apiFetch<BulkRosterMoveResponse>('/api/fantasy/roster/bulk-apply', {
       method: 'POST',
       body: JSON.stringify({ moves }),
+    }),
+
+  rosterAction: (request: RosterActionRequest) =>
+    apiFetch<RosterActionResponse>('/api/fantasy/roster/action', {
+      method: 'POST',
+      body: JSON.stringify(request),
     }),
 
   optimizeRoster: (targetDate?: string) =>

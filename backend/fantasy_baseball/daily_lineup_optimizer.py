@@ -176,7 +176,7 @@ _DEFAULT_BATTER_SLOTS: List[Tuple[str, List[str]]] = [
 ]
 
 # Statuses that mean "occupying an IL slot, not an active roster spot"
-_INACTIVE_STATUSES = frozenset({"IL", "IL10", "IL60", "NA", "OUT"})
+_INACTIVE_STATUSES = frozenset({"IL", "IL10", "IL15", "IL60", "NA", "OUT"})
 
 # Static scarcity rank: lower = scarcer. Mirrors POSITION_SCARCITY in
 # daily_ingestion._sync_position_eligibility (kept in sync manually).
@@ -867,7 +867,7 @@ class DailyLineupOptimizer:
         rankings = []
         for player in free_agents:
             status = player.get("status")
-            if status in ("IL", "IL60", "NA"):
+            if status in ("IL", "IL10", "IL15", "IL60", "NA"):
                 continue
             name = player.get("name", "")
             team_raw = player.get("team", "")

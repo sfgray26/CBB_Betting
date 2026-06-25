@@ -835,6 +835,34 @@ export interface RosterOptimizeResponse {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// Roster Action (Loop Iteration 10)
+// ═════════════════════════════════════════════════════════════════════════════
+
+export interface RosterActionRequest {
+  action: 'ADD' | 'DROP' | 'ADD_DROP'
+  add_player_id: string
+  drop_player_id?: string
+  position?: string
+}
+
+export interface RosterActionError {
+  code: string
+  message: string
+}
+
+export interface RosterActionResponse {
+  success: boolean
+  transaction_id?: string
+  roster_state?: RosterResponse
+  errors?: RosterActionError[]
+  warnings?: RosterActionError[]
+  rollback_attempted?: boolean
+  rollback_succeeded?: boolean
+  manual_action_required?: boolean
+  execution_time_et?: string
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // Global Freshness
 // ═════════════════════════════════════════════════════════════════════════════
 

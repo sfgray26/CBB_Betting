@@ -4,8 +4,9 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
 import type { StreamingPitcher } from '@/lib/types'
-import { Loader2, AlertCircle, ChevronDown, ChevronUp, Filter } from 'lucide-react'
+import { Loader2, AlertCircle, ChevronDown, ChevronUp, Filter, Play, Sparkles } from 'lucide-react'
 import { FreshnessBadge } from '@/components/freshness/freshness-badge'
+import { ActionModal } from './action-modal'
 
 type RecommendationTier = 'EXCELLENT' | 'GOOD' | 'AVERAGE' | 'AVOID' | 'ALL'
 
@@ -24,6 +25,10 @@ export function StreamingRecommendations({ targetDate }: { targetDate: string })
   const [sortField, setSortField] = useState<'quality' | 'name'>('quality')
   const [sortDesc, setSortDesc] = useState(true)
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
+  const [selectedPitcher, setSelectedPitcher] = useState<StreamingPitcher | null>(null)
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [autoStreamEnabled, setAutoStreamEnabled] = useState(false)
+  const [pendingActions, setPendingActions] = useState<number[]>([])
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['streaming-recommendations', targetDate],
@@ -42,6 +47,39 @@ export function StreamingRecommendations({ targetDate }: { targetDate: string })
       }
       return next
     })
+  }
+
+  const openActionModal = (pitcher: StreamingPitcher) => {
+    setSelectedPitcher(pitcher)
+    setIsModalOpen(true)
+  }
+
+  const handleActionSuccess = (transactionId: string) => {
+    // In a real implementation, you might show a toast notification
+    console.log('Action succeeded with transaction:', transactionId)
+    // Refresh the streaming data
+    refetch()
+  }
+
+  const handleAutoStreamToggle = () => {
+    if (!autoStreamEnabled) {
+      // Show confirmation before enabling
+      if (confirm('Auto-Stream will automatically add EXCELLENT + HIGH confidence pitchers. Make sure your drop priority list is configured. Continue?')) {
+        setAutoStreamEnabled(true)
+        // Queue up EXCELLENT + HIGH confidence pitchers
+        const excellentHighPitchers = data?.two_start_pitchers.filter(
+          p => p.recommendation === 'EXCELLENT' && p.transparency.confidence === 'HIGH'
+        ) || []
+        setPendingActions(excellentHighPitchers.map(p => p.bdl_player_id))
+      }
+    } else {
+      setAutoStreamEnabled(false)
+      setPendingActions([])
+    }
+  }
+
+  const cancelPendingAction = (bdlId: number) => {
+    setPendingActions(prev => prev.filter(id => id !== bdlId))
   }
 
   if (isLoading) {
@@ -87,7 +125,7 @@ export function StreamingRecommendations({ targetDate }: { targetDate: string })
 
   return (
     <div className="space-y-4">
-      {/* Header with freshness */}
+      {/* Header with freshness and Auto-Stream toggle */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-semibold tracking-widest uppercase text-text-primary">
@@ -106,7 +144,67 @@ export function StreamingRecommendations({ targetDate }: { targetDate: string })
             />
           )}
         </div>
+
+        {/* Auto-Stream Toggle (Beta) */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleAutoStreamToggle}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${
+              autoStreamEnabled
+                ? 'bg-accent-primary/20 text-accent-primary border-accent-primary/30'
+                : 'bg-bg-inset text-text-muted border-border-subtle hover:border-border-default'
+            }`}
+          >
+            {autoStreamEnabled ? (
+              <>
+                <Sparkles className="h-3.5 w-3.5" />
+                Auto-Stream ON
+              </>
+            ) : (
+              <>
+                <Play className="h-3.5 w-3.5" />
+                Auto-Stream
+              </>
+            )}
+          </button>
+          <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated text-text-muted border border-border-subtle">
+            BETA
+          </span>
+        </div>
       </div>
+
+      {/* Pending Actions Queue */}
+      {autoStreamEnabled && pendingActions.length > 0 && (
+        <div className="bg-accent-primary/10 border border-accent-primary/30 rounded-lg p-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-accent-primary">
+              Pending Actions ({pendingActions.length})
+            </span>
+            <button
+              onClick={() => setAutoStreamEnabled(false)}
+              className="text-xs text-text-muted hover:text-text-primary transition-colors"
+            >
+              Cancel All
+            </button>
+          </div>
+          <div className="space-y-1">
+            {pendingActions.map(id => {
+              const pitcher = data?.two_start_pitchers.find(p => p.bdl_player_id === id)
+              return pitcher ? (
+                <div key={id} className="flex items-center justify-between text-xs bg-bg-surface rounded px-2 py-1">
+                  <span className="text-text-secondary">{pitcher.name}</span>
+                  <button
+                    onClick={() => cancelPendingAction(id)}
+                    className="text-text-muted hover:text-text-lost transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : null
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-bg-elevated border border-border-subtle rounded-lg p-3">
@@ -173,6 +271,8 @@ export function StreamingRecommendations({ targetDate }: { targetDate: string })
               pitcher={pitcher}
               isExpanded={expandedRows.has(pitcher.bdl_player_id)}
               onToggle={() => toggleRow(pitcher.bdl_player_id)}
+              onExecuteAdd={() => openActionModal(pitcher)}
+              isPendingAction={pendingActions.includes(pitcher.bdl_player_id)}
             />
           ))}
         </div>
@@ -182,6 +282,16 @@ export function StreamingRecommendations({ targetDate }: { targetDate: string })
       <div className="text-[10px] text-text-muted uppercase tracking-wider">
         Data sources: {data.data_sources.join(', ')}
       </div>
+
+      {/* Action Modal */}
+      {selectedPitcher && (
+        <ActionModal
+          pitcher={selectedPitcher}
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          onSuccess={handleActionSuccess}
+        />
+      )}
     </div>
   )
 }
@@ -190,12 +300,20 @@ function StreamingPitcherRow({
   pitcher,
   isExpanded,
   onToggle,
+  onExecuteAdd,
+  isPendingAction,
 }: {
   pitcher: StreamingPitcher
   isExpanded: boolean
   onToggle: () => void
+  onExecuteAdd: () => void
+  isPendingAction: boolean
 }) {
   const tierColor = TIER_COLORS[pitcher.recommendation]
+
+  // Check if button should be disabled
+  const isButtonDisabled =
+    pitcher.recommendation === 'AVOID' || pitcher.transparency.confidence === 'LOW' || isPendingAction
 
   return (
     <div className={`bg-bg-surface border rounded-lg overflow-hidden transition-all ${
@@ -247,11 +365,40 @@ function StreamingPitcherRow({
             </div>
           </div>
 
-          {/* Right: Recommendation badge */}
-          <div className="flex-shrink-0">
+          {/* Right: Recommendation badge + Execute Add */}
+          <div className="flex items-center gap-2">
             <span className={`px-3 py-1.5 rounded-md text-xs font-bold border ${tierColor}`}>
               {pitcher.recommendation}
             </span>
+
+            {/* Execute Add button */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onExecuteAdd()
+              }}
+              disabled={isButtonDisabled}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-all ${
+                isButtonDisabled
+                  ? 'bg-bg-inset text-text-muted border-border-subtle cursor-not-allowed opacity-50'
+                  : 'bg-accent-primary/20 text-accent-primary border-accent-primary/30 hover:bg-accent-primary/30 cursor-pointer'
+              }`}
+              title={
+                isButtonDisabled
+                  ? pitcher.recommendation === 'AVOID'
+                    ? 'Cannot add AVOID recommendations'
+                    : pitcher.transparency.confidence === 'LOW'
+                    ? 'Cannot add LOW confidence recommendations'
+                    : 'Action pending'
+                  : 'Add this player to your roster'
+              }
+            >
+              {isPendingAction ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                'Execute Add'
+              )}
+            </button>
           </div>
 
           {/* Expand icon */}
