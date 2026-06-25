@@ -2333,3 +2333,53 @@ async def delete_availability_override(
     )
     db.commit()
     return {"ok": True, "deleted": deleted > 0, "player_key": player_key}
+
+
+@router.post("/admin/migrate/auto-stream-config", tags=["admin"])
+async def run_migration_auto_stream_config(
+    user: str = Depends(verify_admin_api_key),
+    db: Session = Depends(get_db),
+):
+    """
+    Run Auto-Stream configuration migration.
+
+    Adds auto_stream_config JSONB column to user_preferences table.
+    """
+    from sqlalchemy import text
+
+    # Check if column exists
+    check_column = text("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'user_preferences'
+        AND column_name = 'auto_stream_config'
+    """)
+    result = db.execute(check_column).fetchone()
+
+    if result and result[0]:
+        return {
+            "status": "already_exists",
+            "message": "Column auto_stream_config already exists in user_preferences",
+        }
+
+    # Add the column
+    alter_sql = text("""
+        ALTER TABLE user_preferences
+        ADD COLUMN auto_stream_config JSONB
+        DEFAULT '{"enabled": false, "min_confidence": "HIGH", "min_recommendation": "EXCELLENT", "max_adds_per_week": 2, "drop_priority": [], "updated_at": null}'::jsonb
+    """)
+    db.execute(alter_sql)
+
+    # Add comment
+    comment_sql = text("""
+        COMMENT ON COLUMN user_preferences.auto_stream_config
+        IS 'Auto-Stream feature configuration: enabled, drop_priority, min_confidence, min_recommendation, max_adds_per_week'
+    """)
+    db.execute(comment_sql)
+
+    db.commit()
+
+    return {
+        "status": "completed",
+        "message": "Added auto_stream_config column to user_preferences",
+    }
