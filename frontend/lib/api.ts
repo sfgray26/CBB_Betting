@@ -62,34 +62,47 @@ export function clearApiKey(): void {
   Cookies.remove('cbb_api_key')
 }
 
-async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'X-API-Key': getApiKey(),
-      ...options?.headers,
-    },
-  })
-  if (!res.ok) {
-    let detail = ''
-    try {
-      const body = await res.json()
-      const rawDetail = body?.detail
-      if (typeof rawDetail === 'object' && rawDetail !== null) {
-        detail = rawDetail.error || rawDetail.message || JSON.stringify(rawDetail)
-      } else {
-        detail = rawDetail ?? ''
-      }
-    } catch {
-      detail = 'Invalid JSON in error response'
-    }
-    throw new Error(`${res.status}${detail ? `: ${detail}` : `: ${path}`}`)
-  }
+async function apiFetch<T>(path: string, options?: RequestInit, timeoutMs: number = 30000): Promise<T> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+
   try {
-    return (await res.json()) as T
-  } catch {
-    throw new Error(`200 OK but invalid JSON at ${path}`)
+    const res = await fetch(`${BASE_URL}${path}`, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': getApiKey(),
+        ...options?.headers,
+      },
+    })
+    clearTimeout(timeoutId)
+
+    if (!res.ok) {
+      let detail = ''
+      try {
+        const body = await res.json()
+        const rawDetail = body?.detail
+        if (typeof rawDetail === 'object' && rawDetail !== null) {
+          detail = rawDetail.error || rawDetail.message || JSON.stringify(rawDetail)
+        } else {
+          detail = rawDetail ?? ''
+        }
+      } catch {
+        detail = 'Invalid JSON in error response'
+      }
+      throw new Error(`${res.status}${detail ? `: ${detail}` : `: ${path}`}`)
+    }
+    try {
+      return (await res.json()) as T
+    } catch {
+      throw new Error(`200 OK but invalid JSON at ${path}`)
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Request timeout after ${timeoutMs}ms for ${path}`)
+    }
+    throw error
   }
 }
 

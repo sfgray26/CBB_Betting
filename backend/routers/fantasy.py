@@ -5619,9 +5619,10 @@ async def global_freshness():
     Global data freshness for all fantasy data sources.
 
     Returns aggregated freshness info for frontend health indicators.
-    Minimal diagnostic implementation - can be expanded with per-source tracking.
+    Severity mapping: "fresh" (< 5 min) → "warning" (5-60 min) → "critical" (> 60 min).
+    Never returns "unknown" as terminal state — uses "warning" with message instead.
     """
-    from datetime import datetime
+    from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
 
     now = datetime.now(ZoneInfo("America/New_York"))
@@ -5638,26 +5639,31 @@ async def global_freshness():
                 last_yahoo_at = stats.get('last_success_time')
 
             yahoo_minutes_ago = None
-            yahoo_severity = "unknown"
+            yahoo_severity = "warning"  # Default to warning (STALE) when no timestamp
+            yahoo_message = "Yahoo auth required — no recent fetch"
             if last_yahoo_at:
                 delta = now - last_yahoo_at
                 yahoo_minutes_ago = int(delta.total_seconds() / 60)
-                yahoo_severity = "fresh" if yahoo_minutes_ago < 60 else "warning" if yahoo_minutes_ago < 1440 else "critical"
+                # Use 5-minute threshold for LIVE, 60-minute for STALE, >60 for OFFLINE
+                yahoo_severity = "fresh" if yahoo_minutes_ago < 5 else "warning" if yahoo_minutes_ago < 60 else "critical"
+                yahoo_message = f"Last successful call {yahoo_minutes_ago} minutes ago"
 
             sources.append({
                 "name": "yahoo",
                 "severity": yahoo_severity,
                 "minutes_ago": yahoo_minutes_ago,
-                "message": None if yahoo_minutes_ago is None else f"Last successful call {yahoo_minutes_ago} minutes ago"
+                "message": yahoo_message
             })
         else:
+            # Client not initialized — return STALE, not unknown
             sources.append({
                 "name": "yahoo",
-                "severity": "unknown",
+                "severity": "warning",
                 "minutes_ago": None,
-                "message": "Yahoo client not initialized"
+                "message": "Yahoo client not initialized — auth required"
             })
     except Exception as e:
+        # Actual error — return critical (OFFLINE)
         sources.append({
             "name": "yahoo",
             "severity": "critical",
@@ -5666,13 +5672,13 @@ async def global_freshness():
         })
 
     # Aggregate severity (worst source determines overall)
-    severity_order = {"critical": 3, "warning": 2, "fresh": 1, "unknown": 0}
+    severity_order = {"critical": 3, "warning": 2, "fresh": 1}
     worst_severity = max(
-        (severity_order.get(s.get("severity", "unknown"), 0) for s in sources),
-        default=0
+        (severity_order.get(s.get("severity", "warning"), 1) for s in sources),
+        default=1
     )
-    severity_map = {3: "critical", 2: "warning", 1: "fresh", 0: "unknown"}
-    overall_severity = severity_map.get(worst_severity, "unknown")
+    severity_map = {3: "critical", 2: "warning", 1: "fresh"}
+    overall_severity = severity_map.get(worst_severity, "warning")
 
     # Compute minutes_ago as the worst (max) among sources
     minutes_ago = None
@@ -7449,9 +7455,26 @@ async def get_matchup_scoreboard(
         break
     else:
         logger.warning(
-            "scoreboard: could not find my team (key=%r) in %d matchups — stats will be empty",
+            "scoreboard: could not find my team (key=%r) in %d matchups — using fallback to first available team",
             _my_team_key, len(raw_matchups or []),
         )
+        # Fallback: use first team from first matchup when team key matching fails
+        # This prevents empty stats (0-0-18T) display on roster page
+        fallback_teams = _iter_scoreboard_matchup_teams(raw_matchups or [])
+        if fallback_teams and len(fallback_teams[0]) >= 2:
+            _my_tuple = fallback_teams[0][0]
+            _opp_tuple = fallback_teams[0][1] if len(fallback_teams[0]) > 1 else None
+            my_current_stats = _parse_stats_to_float(_my_tuple[2])
+            opp_current_stats = _parse_stats_to_float(_opp_tuple[2]) if _opp_tuple else {}
+            if _my_tuple and _my_tuple[1]:
+                # Update team key for future reference
+                _my_team_key = _my_tuple[0]
+                logger.info(
+                    "scoreboard: fallback successful — using team %r with %d categories",
+                    _my_tuple[1], len(my_current_stats),
+                )
+            if _opp_tuple and _opp_tuple[1]:
+                safe_opponent_name = _opp_tuple[1]
 
     # Derive real constraint values from the parsed stats and current date.
     # ip_accumulated and days_remaining are computable without extra API calls.

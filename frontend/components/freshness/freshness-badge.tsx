@@ -7,13 +7,13 @@ import { RefreshCw } from 'lucide-react'
 /**
  * Sync status levels with human-readable labels.
  * - LIVE: Data updated within 5 minutes
- * - STALE: Data updated 5-60 minutes ago
- * - OFFLINE: Data updated >60 minutes ago or service unavailable
+ * - STALE: Data updated 5-60 minutes ago OR auth required
+ * - OFFLINE: Data updated >60 minutes ago OR fetch failed
  */
 export type SyncStatus = 'live' | 'stale' | 'offline'
 
 interface FreshnessBadgeProps {
-  severity: 'fresh' | 'warning' | 'critical' | 'unknown'
+  severity: 'fresh' | 'warning' | 'critical'
   minutesAgo?: number | null
   warningText?: string | null
   isClickable?: boolean
@@ -24,17 +24,15 @@ interface FreshnessBadgeProps {
 
 /**
  * Convert API severity to sync status with proper labels.
- * Never returns "unknown" as a terminal state - maps to "offline".
+ * Maps: fresh→live, warning→stale, critical→offline.
  */
-function severityToSyncStatus(severity: 'fresh' | 'warning' | 'critical' | 'unknown'): SyncStatus {
+function severityToSyncStatus(severity: 'fresh' | 'warning' | 'critical'): SyncStatus {
   switch (severity) {
     case 'fresh':
       return 'live'
     case 'warning':
       return 'stale'
     case 'critical':
-    case 'unknown':
-    default:
       return 'offline'
   }
 }
@@ -54,11 +52,11 @@ function formatTimestamp(minutesAgo: number | null, status: SyncStatus): string 
   return `· ${days} day ago`
 }
 
-export function computeFreshnessSeverity(minutesAgo: number | null): 'fresh' | 'warning' | 'critical' | 'unknown' {
-  if (minutesAgo == null) return 'unknown'
-  if (minutesAgo > 60) return 'critical'
-  if (minutesAgo > 5) return 'warning'
-  return 'fresh'
+export function computeFreshnessSeverity(minutesAgo: number | null): 'fresh' | 'warning' | 'critical' {
+  if (minutesAgo == null) return 'warning'  // No timestamp → STALE (auth required or pending)
+  if (minutesAgo > 60) return 'critical'  // > 60 min → OFFLINE
+  if (minutesAgo > 5) return 'warning'     // 5-60 min → STALE
+  return 'fresh'                           // < 5 min → LIVE
 }
 
 /**

@@ -867,12 +867,12 @@ export interface RosterActionResponse {
 // ═════════════════════════════════════════════════════════════════════════════
 
 export interface GlobalFreshnessResponse {
-  severity: 'fresh' | 'warning' | 'critical' | 'unknown'
+  severity: 'fresh' | 'warning' | 'critical'
   minutes_ago: number | null
   warning_text: string | null
   sources?: Array<{
     name: string
-    severity: 'fresh' | 'warning' | 'critical' | 'unknown'
+    severity: 'fresh' | 'warning' | 'critical'
     minutes_ago: number | null
     message?: string | null
   }>
