@@ -2334,7 +2334,7 @@ async def get_fantasy_waiver_recommendations(
                 adjusted_need_score=round(adjusted_need_score, 3) if adjusted_need_score is not None else None,  # NEW: Base + Boost
                 z_score=round(player_z, 3),
                 category_contributions=contributions,
-                owned_pct=p.get("percent_owned", 0.0),
+                percent_owned=p.get("percent_owned", 0.0),
                 starts_this_week=p.get("starts_this_week", 0),
                 two_start=len(_starts) >= 2 or p.get("starts_this_week", 0) >= 2,
                 two_start_this_week=len(_starts) >= 2 or p.get("starts_this_week", 0) >= 2,
@@ -2556,9 +2556,9 @@ async def get_fantasy_waiver_recommendations(
 
         if min_z_score is not None:
             top_available = [p for p in top_available if p.need_score >= min_z_score]
-        top_available = [p for p in top_available if p.owned_pct <= max_percent_owned]
+        top_available = [p for p in top_available if p.percent_owned <= max_percent_owned]
         if sort == "percent_owned":
-            top_available.sort(key=lambda x: x.owned_pct, reverse=True)
+            top_available.sort(key=lambda x: x.percent_owned, reverse=True)
         else:
             top_available.sort(key=lambda x: x.need_score, reverse=True)
 
@@ -3420,7 +3420,7 @@ async def get_waiver_recommendations(
 
             fa_is_pitcher = fa.position in ("SP", "RP", "P")
             fa_signals, fa_reg_delta = build_statcast_signals(
-                fa.name, fa_is_pitcher, fa.owned_pct
+                fa.name, fa_is_pitcher, fa.percent_owned
             )
             statcast_boost = statcast_need_score_boost(fa_signals)
             adjusted_need = fa.need_score + statcast_boost
@@ -3482,7 +3482,7 @@ async def get_waiver_recommendations(
             drop_signal_text = _fmt_drop_signals(drop_signals, drop_reg_delta, drop_is_pitcher)
 
             rationale = (
-                f"Add {fa.name} ({fa.position}, {fa.team}, {fa.owned_pct:.0f}% owned), "
+                f"Add {fa.name} ({fa.position}, {fa.team}, {fa.percent_owned:.0f}% owned), "
                 f"drop {drop_candidate['name']} ({drop_candidate['positions'][0] if drop_candidate['positions'] else '?'}). "
                 f"Net gain: {gain:+.1f} ({drop_score_adj:+.1f} -> {adjusted_need:+.1f}){signal_text}{drop_signal_text}."
             )
