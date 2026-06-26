@@ -19,12 +19,27 @@ Usage:
     result = sim.simulate_week_from_projections(my_finals, opp_finals, n_sims=10000)
 """
 
+import hashlib
 import numpy as np
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 from datetime import date
 
 from backend.stat_contract import SCORING_CATEGORY_CODES, BATTING_CODES, PITCHING_CODES, LOWER_IS_BETTER
+
+
+def _seed_from_date(as_of_date: Optional[date] = None) -> int:
+    """
+    Generate deterministic seed from date for consistent Monte Carlo results.
+
+    Seeded by date only (not time), so results are consistent across multiple
+    requests on the same day but update when projections change (next day).
+    """
+    if as_of_date is None:
+        as_of_date = date.today()
+    # Convert date to integer seed using hash for better distribution
+    date_str = as_of_date.isoformat()
+    return int(hashlib.sha256(date_str.encode()).hexdigest(), 16) % (2**31)
 
 
 @dataclass
@@ -135,7 +150,7 @@ class H2HOneWinSimulator:
         opp_proj = self._aggregate_roster(opponent_roster)
 
         # Run Monte Carlo simulation (returns both total wins and per-category matrix)
-        categories_won, category_win_matrix = self._run_simulation(my_proj, opp_proj, n_sims)
+        categories_won, category_win_matrix = self._run_simulation(my_proj, opp_proj, n_sims, as_of_date)
 
         # Analyze results
         win_prob = np.mean(categories_won >= self.WIN_THRESHOLD)
@@ -189,7 +204,7 @@ class H2HOneWinSimulator:
             raise ValueError(f"opp_finals missing categories: {SCORING_CATEGORY_CODES - opp_set}")
 
         # Run Monte Carlo simulation directly from projections
-        categories_won, category_win_matrix = self._run_simulation(my_finals, opp_finals, n_sims)
+        categories_won, category_win_matrix = self._run_simulation(my_finals, opp_finals, n_sims, as_of_date)
 
         # Analyze results
         win_prob = np.mean(categories_won >= self.WIN_THRESHOLD)
@@ -224,6 +239,7 @@ class H2HOneWinSimulator:
         my_proj: Dict[str, float],
         opp_proj: Dict[str, float],
         n_sims: int,
+        as_of_date: Optional[date] = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Run Monte Carlo simulation using NumPy vectorization.
@@ -237,6 +253,11 @@ class H2HOneWinSimulator:
             categories_won: Array of shape (n_sims,) with categories won per sim
             category_win_matrix: Matrix of shape (n_sims, n_categories) with per-category results
         """
+        # CRITICAL: Seed RNG for deterministic results across requests
+        # Seeded by date, so results are consistent within a day but update when projections change
+        seed = _seed_from_date(as_of_date)
+        np.random.seed(seed)
+
         categories = self.HITTING_CATS + self.PITCHING_CATS
         n_categories = len(categories)
 

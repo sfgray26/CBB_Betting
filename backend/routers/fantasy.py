@@ -5250,10 +5250,9 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
 
         my_entry = None
         for t in team_data:
+            # CRITICAL: Use exact match ONLY. Substring matching causes false positives
+            # when team IDs are numeric (e.g., "t.7" matches "t.71", "t.72", etc.)
             if t[0] == my_team_key:
-                my_entry = t
-                break
-            if t[0] and my_team_key and (t[0] in my_team_key or my_team_key in t[0]):
                 my_entry = t
                 break
 
@@ -5634,9 +5633,13 @@ async def global_freshness():
         if _client is not None:
             # Check circuit breaker last success time if available
             last_yahoo_at = None
-            if hasattr(_client, 'circuit'):
-                stats = _client.circuit.get_stats()
-                last_yahoo_at = stats.get('last_success_time')
+            try:
+                if hasattr(_client, 'circuit'):
+                    stats = _client.circuit.get_stats()
+                    last_yahoo_at = stats.get('last_success_time')
+            except Exception:
+                # Circuit breaker stats unavailable — continue with last_yahoo_at = None
+                pass
 
             yahoo_minutes_ago = None
             yahoo_severity = "warning"  # Default to warning (STALE) when no timestamp
@@ -5662,6 +5665,14 @@ async def global_freshness():
                 "minutes_ago": None,
                 "message": "Yahoo client not initialized — auth required"
             })
+    except ImportError:
+        # Import failed — client module unavailable, treat as not initialized (STALE)
+        sources.append({
+            "name": "yahoo",
+            "severity": "warning",
+            "minutes_ago": None,
+            "message": "Yahoo client not available — auth required"
+        })
     except Exception as e:
         # Actual error — return critical (OFFLINE)
         sources.append({
@@ -7438,7 +7449,9 @@ async def get_matchup_scoreboard(
             _t_key = _t[0]
             if not _t_key or not _my_team_key:
                 continue
-            if _t_key == _my_team_key or _t_key in _my_team_key or _my_team_key in _t_key:
+            # CRITICAL: Use exact match ONLY. Substring matching causes false positives
+            # when team IDs are numeric (e.g., "t.7" matches "t.71", "t.72", etc.)
+            if _t_key == _my_team_key:
                 _my_tuple = _t
                 break
         if _my_tuple is None:
@@ -7449,32 +7462,22 @@ async def get_matchup_scoreboard(
         if _opp_tuple and _opp_tuple[1]:
             safe_opponent_name = _opp_tuple[1]
         logger.info(
-            "scoreboard: parsed my_stats=%d cats, opp_stats=%d cats, opponent=%r",
+            "scoreboard: parsed my_stats=%d cats, opp_stats=%d cats, opponent=%r (my_key=%r, my_name=%r)",
             len(my_current_stats), len(opp_current_stats), safe_opponent_name,
+            _my_tuple[0], _my_tuple[1],
         )
         break
     else:
-        logger.warning(
-            "scoreboard: could not find my team (key=%r) in %d matchups — using fallback to first available team",
+        logger.error(
+            "scoreboard: CRITICAL — could not find my team (key=%r) in %d matchups. Returning empty stats.",
             _my_team_key, len(raw_matchups or []),
         )
-        # Fallback: use first team from first matchup when team key matching fails
-        # This prevents empty stats (0-0-18T) display on roster page
-        fallback_teams = _iter_scoreboard_matchup_teams(raw_matchups or [])
-        if fallback_teams and len(fallback_teams[0]) >= 2:
-            _my_tuple = fallback_teams[0][0]
-            _opp_tuple = fallback_teams[0][1] if len(fallback_teams[0]) > 1 else None
-            my_current_stats = _parse_stats_to_float(_my_tuple[2])
-            opp_current_stats = _parse_stats_to_float(_opp_tuple[2]) if _opp_tuple else {}
-            if _my_tuple and _my_tuple[1]:
-                # Update team key for future reference
-                _my_team_key = _my_tuple[0]
-                logger.info(
-                    "scoreboard: fallback successful — using team %r with %d categories",
-                    _my_tuple[1], len(my_current_stats),
-                )
-            if _opp_tuple and _opp_tuple[1]:
-                safe_opponent_name = _opp_tuple[1]
+        # Log all available team keys for debugging
+        all_team_keys = []
+        for mt in _iter_scoreboard_matchup_teams(raw_matchups or []):
+            for t in mt:
+                all_team_keys.append(t[0])
+        logger.error("scoreboard: available team_keys in matchups: %r", all_team_keys)
 
     # Derive real constraint values from the parsed stats and current date.
     # ip_accumulated and days_remaining are computable without extra API calls.
