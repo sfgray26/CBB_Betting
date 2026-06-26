@@ -2359,6 +2359,7 @@ async def get_fantasy_waiver_recommendations(
                 need_score_ci=_need_ci,
                 need_score_volatile=_volatile,
                 projection_source=_proj_src,
+                last_updated=p.get("ownership_updated_at"),
             )
 
         # Bulk quality_score lookup for pitcher FA candidates (enrichment only).
@@ -2377,12 +2378,14 @@ async def get_fantasy_waiver_recommendations(
                     db.query(
                         PositionEligibility.yahoo_player_key,
                         PositionEligibility.league_rostered_pct,
+                        PositionEligibility.updated_at,
                     )
                     .filter(PositionEligibility.yahoo_player_key.in_(player_keys))
                     .all()
                 )
                 ownership_by_key = {}
-                for key, raw_pct in rows:
+                updated_at_by_key = {}
+                for key, raw_pct, updated_at in rows:
                     if raw_pct is None:
                         continue
                     pct = float(raw_pct)
@@ -2390,14 +2393,19 @@ async def get_fantasy_waiver_recommendations(
                         pct *= 100.0
                     if pct > 0.0:
                         ownership_by_key[key] = min(pct, 100.0)
+                    if updated_at is not None:
+                        updated_at_by_key[key] = updated_at
                 filled = 0
                 for p in players:
                     if float(p.get("percent_owned") or 0.0) > 0.0:
+                        # Still track updated_at for live Yahoo data (use current time)
+                        p["ownership_updated_at"] = datetime.now(ZoneInfo("America/New_York"))
                         continue
                     pct = ownership_by_key.get(p.get("player_key"))
                     if pct is not None:
                         p["percent_owned"] = pct
                         p["percent_owned_source"] = "position_eligibility"
+                        p["ownership_updated_at"] = updated_at_by_key.get(p.get("player_key"))
                         filled += 1
                 if filled:
                     logger.info("waiver: filled ownership fallback for %s players", filled)
@@ -2794,6 +2802,32 @@ async def execute_roster_action(
 
 
 # ---------------------------------------------------------------------------
+
+
+@router.post("/api/fantasy/refresh-ownership")
+async def refresh_ownership_data(
+    user: str = Depends(verify_api_key),
+):
+    """
+    Manual ownership% refresh endpoint.
+
+    Loop 28: Allows users to manually trigger ownership refresh to get latest data.
+    Returns sync job result with status and record count.
+    """
+    from backend.services.daily_ingestion import get_ingestion_service
+
+    try:
+        service = get_ingestion_service()
+        result = await service._sync_ownership_only()
+        return {
+            "success": result.get("status") == "success",
+            "records_updated": result.get("records", 0),
+            "elapsed_ms": result.get("elapsed_ms", 0),
+            "message": f"Updated ownership for {result.get('records', 0)} players",
+        }
+    except Exception as exc:
+        logger.error("refresh_ownership_data failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Ownership refresh failed: {str(exc)}")
 
 
 @router.get("/api/fantasy/waiver/recommendations")

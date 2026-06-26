@@ -147,6 +147,7 @@ LOCK_IDS = {
     "canonical_projection_refresh": 100_040,  # Sprint 2: assemble CanonicalProjection table
     "bridge_mapping_to_identities": 100_041,  # Coverage: seed player_identities from player_id_mapping
     "auto_stream": 100_042,  # Loop 16: Auto-Stream execution (6 AM ET)
+    "ownership_refresh": 100_043,  # Loop 28: Ownership% refresh every 30 min during season
 }
 
 
@@ -1352,6 +1353,16 @@ class DailyIngestionOrchestrator:
             replace_existing=True,
         )
 
+        # Ownership% refresh: every 30 minutes during season (7 AM - 11 PM ET)
+        # Loop 28: Keeps ownership data fresh for waiver decisions
+        self._scheduler.add_job(
+            self._sync_ownership_only,
+            CronTrigger(day="*", hour="7-23", minute="*/30", timezone=tz),
+            id="ownership_refresh",
+            name="Ownership% Refresh",
+            replace_existing=True,
+        )
+
         # Probable pitchers sync: 8:30 AM, 4:00 PM, 8:00 PM ET
         # Pitchers announced at varying times throughout the day
         self._scheduler.add_job(
@@ -1384,7 +1395,7 @@ class DailyIngestionOrchestrator:
                         "rolling_z", "clv", "cleanup", "fangraphs_ros", "ros_projection_refresh", "yahoo_adp_injury",
                         "ensemble_update", "projection_cat_scores", "cat_scores_backfill",
                         "projection_freshness", "yahoo_id_sync",
-                        "player_id_mapping", "position_eligibility",
+                        "player_id_mapping", "position_eligibility", "ownership_refresh",
                         "probable_pitchers_morning", "probable_pitchers_afternoon", "probable_pitchers_evening",
                         "bdl_injuries",
                         "opportunity_update", "market_signals_update", "matchup_context_update",
@@ -1454,6 +1465,7 @@ class DailyIngestionOrchestrator:
             "snapshot":              self._run_snapshot,
             "player_id_mapping":     self._sync_player_id_mapping,
             "position_eligibility":  self._sync_position_eligibility,
+            "ownership_refresh":    self._sync_ownership_only,
             "probable_pitchers_morning":   self._sync_probable_pitchers,
             "probable_pitchers_afternoon": self._sync_probable_pitchers,
             "probable_pitchers_evening":   self._sync_probable_pitchers,
@@ -7525,6 +7537,103 @@ class DailyIngestionOrchestrator:
         except Exception as exc:
             logger.error("_sync_position_eligibility: Job failed (%s)", exc)
             self._record_job_run("position_eligibility", "error", 0)
+            return {"status": "error", "records": 0, "elapsed_ms": 0}
+
+    async def _sync_ownership_only(self) -> dict:
+        """
+        Sync ownership% from Yahoo API (lock 100_043).
+
+        Runs every 30 minutes during season to keep ownership data fresh.
+        Lightweight refresh: only updates league_rostered_pct, no full position sync.
+
+        Loop 28: Addresses data staleness issue where ownership shows hours-old values.
+        """
+        logger.info("SYNC JOB ENTRY: _sync_ownership_only - Starting ownership% refresh")
+        t0 = time.monotonic()
+
+        async def _run():
+            from backend.fantasy_baseball.yahoo_client_resilient import YahooFantasyClient
+
+            # Get Yahoo client
+            try:
+                yahoo = YahooFantasyClient()
+            except Exception as exc:
+                logger.warning("_sync_ownership_only: Yahoo client init failed (%s)", exc)
+                self._record_job_run("ownership_refresh", "error", 0)
+                return {"status": "error", "records": 0, "elapsed_ms": 0}
+
+            db = SessionLocal()
+            records_updated = 0
+            try:
+                # Fetch all active player keys from PositionEligibility
+                player_keys = [
+                    row.yahoo_player_key
+                    for row in db.query(PositionEligibility.yahoo_player_key)
+                    .filter(PositionEligibility.yahoo_player_key.isnot(None))
+                    .distinct()
+                    .all()
+                ]
+                logger.info("_sync_ownership_only: Found %d players to refresh", len(player_keys))
+
+                if not player_keys:
+                    self._record_job_run("ownership_refresh", "success", 0)
+                    return {"status": "success", "records": 0, "elapsed_ms": 0}
+
+                # Build player dicts for enrichment (only need player_key)
+                all_players = [{"player_key": pk} for pk in player_keys]
+
+                # Enrich ownership via Yahoo batch API
+                await asyncio.to_thread(yahoo._enrich_ownership_batch, all_players)
+                enriched_count = sum(
+                    1 for p in all_players if p.get("percent_owned", 0.0) > 0.0
+                )
+                logger.info(
+                    "_sync_ownership_only: Enriched ownership for %d/%d players",
+                    enriched_count,
+                    len(all_players),
+                )
+
+                # Update PositionEligibility with new ownership values
+                now = now_et()
+                for player_data in all_players:
+                    player_key = player_data.get("player_key")
+                    pct_owned = player_data.get("percent_owned")
+                    if player_key and pct_owned is not None:
+                        stmt = (
+                            pg_update(PositionEligibility.__table__)
+                            .where(PositionEligibility.yahoo_player_key == player_key)
+                            .values(
+                                league_rostered_pct=pct_owned,
+                                updated_at=now,
+                            )
+                        )
+                        db.execute(stmt)
+                        records_updated += 1
+
+                db.commit()
+                elapsed = int((time.monotonic() - t0) * 1000)
+                logger.info(
+                    "SYNC JOB SUCCESS: _sync_ownership_only - Updated %d records in %d ms",
+                    records_updated,
+                    elapsed,
+                )
+                logger.info("SYNC JOB EXIT: _sync_ownership_only - Completed successfully")
+                self._record_job_run("ownership_refresh", "success", records_updated)
+                return {"status": "success", "records": records_updated, "elapsed_ms": elapsed}
+
+            except Exception as exc:
+                db.rollback()
+                logger.error("_sync_ownership_only: Database error (%s)", exc)
+                self._record_job_run("ownership_refresh", "error", 0)
+                return {"status": "error", "records": 0, "elapsed_ms": 0}
+            finally:
+                db.close()
+
+        try:
+            return await _with_advisory_lock(LOCK_IDS["ownership_refresh"], "ownership_refresh", _run)
+        except Exception as exc:
+            logger.error("_sync_ownership_only: Job failed (%s)", exc)
+            self._record_job_run("ownership_refresh", "error", 0)
             return {"status": "error", "records": 0, "elapsed_ms": 0}
 
     async def _sync_probable_pitchers(self) -> dict:

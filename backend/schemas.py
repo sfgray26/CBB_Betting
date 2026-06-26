@@ -468,6 +468,7 @@ class WaiverPlayerOut(BaseModel):
     need_score_ci: Optional[float] = None          # ±confidence interval; None = unknown
     need_score_volatile: bool = False               # True when score swung >20% vs prior run
     projection_source: Optional[str] = None        # "steamer+statcast" | "steamer" | "draft_board" | "proxy"
+    last_updated: Optional[datetime] = None       # Loop 28: When ownership% was last refreshed
 
     @field_validator("need_score", "z_score", "percent_owned", "projected_saves", mode="before")
     @classmethod
