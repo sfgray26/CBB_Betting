@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useSuspenseQuery, useIsFetching, useQuery } from "@tanstack/react-query"
+import { useSuspenseQuery, useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query"
 import { endpoints } from "@/lib/api"
 import {
   type DashboardData,
@@ -26,6 +26,7 @@ import Link from "next/link"
 import { cn } from "@/lib/utils"
 import { Tooltip } from "@/components/shared/tooltip"
 import { FreshnessBadge } from "@/components/freshness/freshness-badge"
+import { invalidateAllFantasyCaches, FANTASY_QUERY_KEYS } from "@/lib/query-client"
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -142,8 +143,10 @@ function useDashboardData() {
 
 export function DashboardHeader() {
   const [staleDismissed, setStaleDismissed] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const { data: response } = useDashboardData()
   const isFetchingDashboard = useIsFetching({ queryKey: ["dashboard"] }) > 0
+  const queryClient = useQueryClient()
 
   const { data: globalFreshness, refetch: refetchFreshness } = useQuery({
     queryKey: ["global-freshness"],
@@ -159,6 +162,22 @@ export function DashboardHeader() {
     !staleDismissed &&
     dashboard?.stale_warning &&
     (dashboard?.has_mlb_games_today !== false)
+
+  // Global refresh: invalidate all fantasy module caches
+  const handleGlobalRefresh = async () => {
+    setIsRefreshing(true)
+    try {
+      // Invalidate all fantasy caches
+      invalidateAllFantasyCaches()
+      // Wait for refetch to complete (max 5 seconds)
+      await Promise.race([
+        queryClient.refetchQueries({ queryKey: FANTASY_QUERY_KEYS.all }),
+        new Promise(resolve => setTimeout(resolve, 5000)),
+      ])
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 300)
+    }
+  }
 
   return (
     <>
@@ -200,6 +219,19 @@ export function DashboardHeader() {
               onRefresh={() => refetchFreshness()}
             />
           )}
+          <button
+            onClick={handleGlobalRefresh}
+            disabled={isRefreshing}
+            className={cn(
+              "ml-auto flex items-center gap-2 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider rounded border transition-colors",
+              "bg-bg-surface border-border-subtle text-text-secondary hover:bg-bg-subtle hover:text-text-primary",
+              "disabled:opacity-50 disabled:cursor-not-allowed",
+            )}
+            title="Refresh all fantasy module data"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", isRefreshing && "animate-spin")} />
+            {isRefreshing ? "Refreshing…" : "Refresh Data"}
+          </button>
         </div>
         <p className="text-text-secondary text-sm">
           Last updated:{" "}

@@ -438,7 +438,7 @@ class WaiverPlayerOut(BaseModel):
     adjusted_need_score: Optional[float] = None  # Final score (base + Statcast boost) for decisions
     z_score: float = 0.0                      # Season-long composite z-score (sum of cat_scores)
     category_contributions: dict = {}
-    owned_pct: float = 0.0
+    owned_pct: float = Field(default=0.0, serialization_alias="percent_owned", validation_alias="percent_owned")
     starts_this_week: int = 0
     two_start: bool = False
     start1_opp: Optional[str] = None
@@ -466,6 +466,19 @@ class WaiverPlayerOut(BaseModel):
     need_score_ci: Optional[float] = None          # ±confidence interval; None = unknown
     need_score_volatile: bool = False               # True when score swung >20% vs prior run
     projection_source: Optional[str] = None        # "steamer+statcast" | "steamer" | "draft_board" | "proxy"
+
+    # Field serializer to populate percent_owned from owned_pct for frontend compatibility
+    @field_serializer('owned_pct')
+    def serialize_owned_pct(self, value: float) -> float:
+        """Serialize owned_pct as percent_owned for frontend compatibility."""
+        return value
+
+    # Add percent_owned as an alias that maps to owned_pct
+    @computed_field
+    @property
+    def percent_owned(self) -> float:
+        """Frontend compatibility field that maps to owned_pct."""
+        return self.owned_pct
 
     @field_validator("need_score", "z_score", "owned_pct", "projected_saves", mode="before")
     @classmethod

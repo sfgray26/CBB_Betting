@@ -35,20 +35,31 @@ from backend.fantasy_baseball.category_aware_scorer import (
 
 class TestCountingStatScoring:
     def test_positive_deficit_scores_normally(self):
-        """FA with positive HR z-score scores when team needs HR."""
-        team_needs = CategoryNeedVector(needs={"hr": 1.5})
+        """
+        FA with positive HR z-score scores when team needs HR.
+
+        NOTE: After fix, uses compare_category convention where:
+        - For higher-is-better categories (HR): team LOSING means deficit < 0
+        - deficit=-1.5 means team needs HR help (my HR < opp HR)
+        """
+        team_needs = CategoryNeedVector(needs={"hr": -1.5})  # Team losing HR
         fa_impact = PlayerCategoryImpactVector(impacts={"hr": 0.8})
         score = score_fa_against_needs(fa_impact, team_needs)
         assert abs(score - 1.5 * 0.8) < 1e-9
 
     def test_negative_deficit_counting_stat_scores_zero(self):
-        """Team is already winning HR — FA's positive z-score contributes nothing."""
-        team_needs = CategoryNeedVector(needs={"hr": -2.0})
+        """
+        Team is already winning HR — FA's positive z-score contributes nothing.
+
+        NOTE: After fix, positive deficit for HR (higher-is-better) means team WINNING.
+        No contribution when team already leads.
+        """
+        team_needs = CategoryNeedVector(needs={"hr": 2.0})  # Team winning HR (my > opp)
         fa_impact = PlayerCategoryImpactVector(impacts={"hr": 1.2})
         score = score_fa_against_needs(fa_impact, team_needs)
         assert score == 0.0, (
-            "Counting stat with negative deficit must contribute 0, not reward adding players "
-            "to categories the team already leads"
+            "Counting stat with positive deficit (team winning higher-is-better category) "
+            "must contribute 0, not reward adding players to categories the team already leads"
         )
 
     def test_negative_counting_z_score_with_positive_deficit_scores_zero(self):
@@ -193,24 +204,29 @@ class TestMultiCategoryAndEdgeCases:
         """
         Combined score across counting + rate stats is the correct sum.
 
+        NOTE: After fix, uses compare_category convention:
+        - HR (higher-is-better): deficit < 0 means team losing
+        - R (higher-is-better): deficit < 0 means team losing
+        - ERA (lower-is-better): deficit < 0 means team WINNING
+
         Setup:
-          - hr (counting): deficit=1.5, player_z=0.8 → 0.8 * 1.5 = 1.2
-          - era (rate): deficit=-2.0 (team winning heavily, past threshold),
+          - hr (counting): deficit=-1.5 (team losing HR), player_z=0.8 → 0.8 * 1.5 = 1.2
+          - era (rate): deficit=-2.0 (team winning ERA heavily, past threshold),
                         player_z=-0.8 → penalty: -0.8 * 2.0 * MULTIPLIER
-          - r (counting): deficit=0.5, player_z=1.0 → 1.0 * 0.5 = 0.5
+          - r (counting): deficit=-0.5 (team losing R), player_z=1.0 → 1.0 * 0.5 = 0.5
         Total: 1.2 + (-0.8 * 2.0 * RATE_STAT_PENALTY_MULTIPLIER) + 0.5
         """
-        needs = {"hr": 1.5, "era": -2.0, "r": 0.5}
+        needs = {"hr": -1.5, "era": -2.0, "r": -0.5}  # Updated to use correct convention
         impacts = {"hr": 0.8, "era": -0.8, "r": 1.0}
         team_needs = CategoryNeedVector(needs=needs)
         fa_impact = PlayerCategoryImpactVector(impacts=impacts)
 
         score = score_fa_against_needs(fa_impact, team_needs)
 
-        counting_hr = 0.8 * 1.5
-        penalty_era = -0.8 * 2.0 * RATE_STAT_PENALTY_MULTIPLIER
-        counting_r = 1.0 * 0.5
-        expected = counting_hr + penalty_era + counting_r
+        counting_hr = 0.8 * 1.5  # 1.2
+        penalty_era = -0.8 * 2.0 * RATE_STAT_PENALTY_MULTIPLIER  # -4.8
+        counting_r = 1.0 * 0.5  # 0.5
+        expected = counting_hr + penalty_era + counting_r  # -3.1
 
         assert score == pytest.approx(expected), (
             f"Multi-category score mismatch. Expected {expected:.4f}, got {score:.4f}"
@@ -232,8 +248,13 @@ class TestMultiCategoryAndEdgeCases:
         assert score == 0.0
 
     def test_missing_category_in_fa_impacts_treated_as_zero(self):
-        """FA has no score for a needed category → contributes 0."""
-        team_needs = CategoryNeedVector(needs={"nsb": 1.0, "hr": 0.8})
+        """
+        FA has no score for a needed category → contributes 0.
+
+        NOTE: After fix, uses compare_category convention:
+        - HR (higher-is-better): deficit < 0 means team losing, deficit > 0 means team winning
+        """
+        team_needs = CategoryNeedVector(needs={"nsb": -1.0, "hr": -0.8})  # Team losing both
         fa_impact = PlayerCategoryImpactVector(impacts={"hr": 0.5})  # no "nsb" key
         score = score_fa_against_needs(fa_impact, team_needs)
         # nsb: 0.0 * 1.0 = 0; hr: 0.5 * 0.8 = 0.4
@@ -408,13 +429,43 @@ def test_compute_need_score_uses_marginal_stats():
 # ---------------------------------------------------------------------------
 
 def _deficit(category: str, deficit: float = 2.0):
+    """
+    Helper to create CategoryDeficitOut with correct convention.
+
+    NOTE: Uses compare_category convention:
+    - deficit = my_total - opponent_total
+    - For higher-is-better: deficit > 0 means team WINNING
+    - For lower-is-better: deficit > 0 means team LOSING
+
+    The caller should pass the deficit value representing how much the team is losing.
+    We'll negate it for higher-is-better categories to match compare_category output.
+    """
     from backend.schemas import CategoryDeficitOut
+    from backend.services.category_comparator import CATEGORY_DIRECTIONS
+
+    direction = CATEGORY_DIRECTIONS.get(category.upper(), "higher")
+
+    # For higher-is-better: if we want team to be LOSING by X, deficit should be -X
+    # For lower-is-better: if we want team to be LOSING by X, deficit should be +X
+    if direction == "higher":
+        # Higher-is-better: losing means my < opp, so deficit is negative
+        actual_deficit = -deficit  # deficit=3.0 (team losing by 3) → actual_deficit=-3.0
+        my_total = 5.0 - deficit  # Losing by 3
+        opponent_total = 5.0
+        winning = False
+    else:  # "lower"
+        # Lower-is-better: losing means my > opp, so deficit is positive
+        actual_deficit = deficit  # deficit=3.0 (team losing by 3) → actual_deficit=3.0
+        my_total = 5.0 + deficit  # Losing by 3
+        opponent_total = 5.0
+        winning = False
+
     return CategoryDeficitOut(
         category=category,
-        deficit=deficit,
-        my_total=5.0,
-        opponent_total=5.0 - deficit,
-        winning=deficit < 0,
+        deficit=actual_deficit,
+        my_total=my_total,
+        opponent_total=opponent_total,
+        winning=winning,
     )
 
 

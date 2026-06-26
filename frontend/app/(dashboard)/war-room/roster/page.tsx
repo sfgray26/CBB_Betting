@@ -1142,7 +1142,34 @@ export default function RosterPage() {
       )}
 
       {/* Matchup context strip — most urgent this-week context first */}
-      {scoreboard.data && <MatchupStrip scoreboard={scoreboard.data} />}
+      {scoreboard.isLoading ? (
+        <div className="bg-bg-surface border border-border-subtle rounded-lg p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Swords className="h-3.5 w-3.5 text-text-muted" />
+              <div className="h-3.5 w-32 bg-bg-elevated animate-pulse rounded" />
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="h-3 w-20 bg-bg-elevated animate-pulse rounded" />
+              <div className="h-3 w-24 bg-bg-elevated animate-pulse rounded" />
+            </div>
+          </div>
+          <div className="grid grid-cols-5 sm:grid-cols-7 md:grid-cols-9 lg:grid-cols-12 gap-2">
+            {[...Array(9)].map((_, i) => (
+              <div key={i} className="h-12 bg-bg-elevated animate-pulse rounded" />
+            ))}
+          </div>
+        </div>
+      ) : scoreboard.error ? (
+        <div className="bg-status-lost/10 border border-status-lost/30 rounded-lg p-4 flex items-center gap-2">
+          <AlertCircle className="h-4 w-4 text-status-lost" />
+          <span className="text-sm text-status-lost">
+            Failed to load matchup data: {scoreboard.error?.message ?? 'Unknown error'}
+          </span>
+        </div>
+      ) : scoreboard.data ? (
+        <MatchupStrip scoreboard={scoreboard.data} />
+      ) : null}
 
       {/* Losing categories callout — action bridge to waiver wire */}
       {scoreboard.data && (() => {

@@ -7623,8 +7623,10 @@ class DailyIngestionOrchestrator:
                 except Exception as exc:
                     logger.warning("_sync_probable_pitchers: ERA lookup failed (%s) -- quality_score will be 0.5", exc)
 
-                # Fetch schedule for next 7 days from MLB Stats API
-                for days_ahead in range(7):
+                # Fetch schedule for next 8 days (0-7) to match query's days_ahead=7 parameter
+                # Query: end_dt = target_dt + timedelta(days=days_ahead) includes both endpoints
+                # So days_ahead=7 means we need data for target_dt through target_dt+7 (8 days total)
+                for days_ahead in range(8):
                     target_date = today + timedelta(days=days_ahead)
                     date_str = target_date.strftime("%Y-%m-%d")
 

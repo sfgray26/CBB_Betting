@@ -7694,15 +7694,77 @@ async def get_constraint_budget(
     ip_minimum = 18.0  # Yahoo H2H standard (innings pitched per week) - matches scoreboard_orchestrator.py
 
     # Count season-total acquisitions from the already-fetched transaction list
+    # Use the same team filtering as weekly acquisitions to avoid counting league-wide transactions
     acquisitions_this_season = 0
     try:
         season_start = _MLB_FIRST_MATCHUP_MONDAY
+        season_start_ts = datetime.combine(season_start, datetime.min.time(), tzinfo=ZoneInfo("America/New_York")).timestamp()
+        now_ts = now_et.timestamp()
+
         for txn in transactions:
-            ts = txn.get("timestamp")
-            if not ts:
+            # Filter to add transactions only (same logic as count_weekly_acquisitions)
+            if txn.get("type") not in ("add", "add/drop"):
                 continue
-            txn_dt = datetime.fromtimestamp(int(ts), tz=ZoneInfo("America/New_York"))
-            if txn_dt.date() >= season_start:
+
+            # Filter by date range (season_start to now)
+            raw_ts = txn.get("timestamp")
+            if raw_ts is None:
+                continue
+            try:
+                ts_float = float(raw_ts)
+            except (TypeError, ValueError):
+                continue
+
+            if not (season_start_ts <= ts_float <= now_ts):
+                continue
+
+            # Filter by team (same logic as count_weekly_acquisitions)
+            dest_team = (
+                txn.get("destination_team_key")
+                or txn.get("destination_team", {}).get("team_key")
+            )
+
+            # Fallback: walk transaction_data or players for player-level destination
+            if not dest_team:
+                txn_data = txn.get("transaction_data") or txn.get("players") or []
+                if isinstance(txn_data, dict):
+                    items = [v for k, v in txn_data.items() if k != "count" and isinstance(v, dict)]
+                elif isinstance(txn_data, list):
+                    items = txn_data
+                else:
+                    items = []
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    dest_team = (
+                        item.get("destination_team_key")
+                        or item.get("destination_team", {}).get("team_key")
+                    )
+                    if dest_team:
+                        break
+                    for _v in item.values():
+                        if isinstance(_v, dict):
+                            dest_team = (
+                                _v.get("destination_team_key")
+                                or _v.get("destination_team", {}).get("team_key")
+                            )
+                            if dest_team:
+                                break
+                        elif isinstance(_v, list):
+                            for _sub in _v:
+                                if isinstance(_sub, dict):
+                                    dest_team = (
+                                        _sub.get("destination_team_key")
+                                        or _sub.get("destination_team", {}).get("team_key")
+                                    )
+                                    if dest_team:
+                                        break
+                            if dest_team:
+                                break
+                    if dest_team:
+                        break
+
+            if dest_team == team_key:
                 acquisitions_this_season += 1
     except Exception:
         pass  # non-critical; leave as 0
