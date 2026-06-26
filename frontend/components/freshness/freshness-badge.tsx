@@ -121,7 +121,7 @@ export function FreshnessBadge({
     offline: 'OFFLINE',
   }
 
-  const timeText = formatTimestamp(minutesAgo, syncStatus)
+  const timeText = formatTimestamp(minutesAgo ?? null, syncStatus)
 
   return (
     <button
