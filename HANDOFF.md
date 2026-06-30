@@ -7,6 +7,33 @@
 
 ## Current Mission State
 
+### DevOps Update — 2026-06-26 Loop 28 Ownership Refresh
+
+- Commit pushed to `stable/cbb-prod`: `8c438c7 feat: refresh fantasy ownership data`.
+- Backend Railway service `Fantasy-App` deployed successfully: `5f769a92-790f-4149-b07e-c8aa75249198`.
+- Frontend auto-deploy was skipped because the overall GitHub CI suite failed, but the `frontend` job itself passed. Manual frontend Railway deploy completed successfully: `aaf40987-e355-4fb0-a5f3-e121730aa2f2`.
+- Smoke checks:
+  - Backend health: `200 {"status":"healthy","database":"connected","scheduler":"running"}`.
+  - Frontend `/war-room/streaming`: `200`.
+- GitHub CI status for `8c438c7`: workflow failed in backend `test` job at `Lint — bug gate (flake8 F-errors only)`. Public GitHub API exposed job/annotation metadata but not the protected log payload needed to see the exact flake8 lines; requires authenticated/admin log access or a local env with `flake8` installed.
+- `CREDENTIALS.md` remains untracked and was intentionally excluded from commit/deploy.
+
+### DevOps Update — 2026-06-30 Loop 28 Redeploy
+
+- Railway auth restored by user; Codex retried deployment.
+- Backend syntax validation passed for:
+  - `backend/services/daily_ingestion.py`
+  - `backend/schemas.py`
+  - `backend/routers/fantasy.py`
+- Backend Railway service `Fantasy-App` redeployed successfully: `798f77f2-cb6f-4b30-89bd-53cd8ad88a9a`.
+- Frontend Railway service `observant-benevolence` redeployed successfully: `1f0fac56-c972-4482-84b3-07ee0b3ae52a`.
+- Smoke checks:
+  - Backend health: `200 {"status":"healthy","database":"connected","scheduler":"running"}`.
+  - Frontend `/war-room/streaming`: `200`.
+- Runtime logs checked:
+  - Backend scheduler and MLB odds jobs executing successfully; `/health` logged `200`.
+  - Frontend Next.js container started and reported ready.
+
 ### Completed Work
 
 | Loop | Objective | Status | Key Deliverables |

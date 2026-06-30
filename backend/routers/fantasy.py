@@ -4215,6 +4215,16 @@ async def move_roster_player(
             )
 
     # Build lineup list: all players with the moved player's position updated
+    # SWAP LOGIC: If target slot is occupied, move the occupant to the source slot
+    # This handles the common case: "move Walker BN→Util" when Util is already filled
+    target_slot_occupant = None
+    for p in raw_players:
+        occupant_key = p.get("player_key")
+        occupant_pos = p.get("selected_position", "BN")
+        if occupant_key != request.player_key and occupant_pos == request.target_position:
+            target_slot_occupant = p
+            break
+
     lineup = []
     for p in raw_players:
         player_key = p.get("player_key")
@@ -4227,6 +4237,21 @@ async def move_roster_player(
                 "player_key": player_key,
                 "position": request.target_position,
             })
+        elif target_slot_occupant and player_key == target_slot_occupant.get("player_key"):
+            # Move the displaced player to the source slot (swap)
+            # If source was BN/IL, displaced player goes to BN; otherwise to source slot
+            swap_target = from_position if from_position and from_position not in ("BN", "IL", "IL60") else "BN"
+            lineup.append({
+                "player_key": player_key,
+                "position": swap_target,
+            })
+            logger.info(
+                "roster/move: SWAP - moving %s from %s to %s to make room for %s",
+                target_slot_occupant.get("name", player_key),
+                request.target_position,
+                swap_target,
+                request.player_key
+            )
         else:
             # Keep existing position
             existing_pos = p.get("selected_position", "BN")
@@ -4267,7 +4292,13 @@ async def move_roster_player(
 
     success = request.player_key in applied
     if success:
-        message = f"Moved {player_to_move.get('name', request.player_key)} from {from_position} to {request.target_position}"
+        if target_slot_occupant:
+            message = (
+                f"Moved {player_to_move.get('name', request.player_key)} from {from_position} to {request.target_position} "
+                f"(swapped {target_slot_occupant.get('name', target_slot_occupant.get('player_key'))} to {from_position if from_position not in ('BN', 'IL', 'IL60') else 'BN'})"
+            )
+        else:
+            message = f"Moved {player_to_move.get('name', request.player_key)} from {from_position} to {request.target_position}"
         logger.info("roster/move: SUCCESS - %s", message)
     else:
         message = f"Failed to move {player_to_move.get('name', request.player_key)} to {request.target_position}"
