@@ -341,10 +341,10 @@ class LineupPlayerOut(BaseModel):
             return 1.0
         return v
     
-    @field_validator("injury_status", mode="before")
+    @field_validator("status", "injury_status", mode="before")
     @classmethod
-    def coerce_injury_status_to_string(cls, v):
-        """Coerce boolean injury_status to canonical strings.
+    def coerce_status_to_string(cls, v):
+        """Coerce boolean status/injury_status to canonical strings.
 
         bool True  → "IL"  (Yahoo flag means player is on injured list)
         bool False → None  (no injury; frontend distinguishes null from "Active")
@@ -393,6 +393,18 @@ class StartingPitcherOut(BaseModel):
             elif info.field_name == "park_factor":
                 return 1.0  # Neutral park
             return 0.0
+        return v
+
+    @field_validator("status", "injury_status", mode="before")
+    @classmethod
+    def coerce_status_to_string(cls, v):
+        """Coerce boolean status/injury_status to canonical strings.
+
+        bool True  → "IL"  (Yahoo flag means player is on injured list)
+        bool False → None  (no injury; frontend distinguishes null from "Active")
+        """
+        if isinstance(v, bool):
+            return "IL" if v else None
         return v
 
     # has_game mirrors the batter-side contract. Pitchers with no scheduled start
@@ -478,6 +490,18 @@ class WaiverPlayerOut(BaseModel):
             return 0.0
         return v
 
+    @field_validator("status", "injury_status", mode="before")
+    @classmethod
+    def coerce_status_to_string(cls, v):
+        """Coerce boolean status/injury_status to canonical strings.
+
+        bool True  → "IL"  (Yahoo flag means player is on injured list)
+        bool False → None  (no injury; frontend distinguishes null from "Active")
+        """
+        if isinstance(v, bool):
+            return "IL" if v else None
+        return v
+
 
 class DropPlayerOut(BaseModel):
     """Rich drop candidate for waiver ADD_DROP recommendations."""
@@ -494,6 +518,18 @@ class DropPlayerOut(BaseModel):
     injury_note: Optional[str] = None
     starts_this_week: int = 0
     positional_impact: List[str] = []   # e.g. ["Drops last 2B-eligible player"]
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def coerce_status_to_string(cls, v):
+        """Coerce boolean status to canonical strings.
+
+        bool True  → "IL"  (Yahoo flag means player is on injured list)
+        bool False → None  (no injury; frontend distinguishes null from "Active")
+        """
+        if isinstance(v, bool):
+            return "IL" if v else None
+        return v
 
 
 class PaginationOut(BaseModel):
