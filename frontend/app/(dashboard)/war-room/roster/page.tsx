@@ -3,7 +3,7 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { endpoints } from '@/lib/api'
-import type { RosterPlayer, RosterMoveResponse, RosterOptimizeResponse, BulkRosterMove, BulkRosterMoveResponse, BudgetData, ScoreboardResponse, RotoCategory } from '@/lib/types'
+import type { RosterPlayer, RosterMoveResponse, RosterOptimizeResponse, BulkRosterMove, BulkRosterMoveResponse, BudgetData, ScoreboardResponse, RosterResponse, RotoCategory } from '@/lib/types'
 import { CATEGORY_COLOR } from '@/lib/types'
 import {
   Users,
@@ -924,15 +924,40 @@ export default function RosterPage() {
   const moveMutation = useMutation({
     mutationFn: ({ playerId, toSlot }: { playerId: string; toSlot: string }) =>
       endpoints.movePlayer(playerId, '', toSlot),
+    onMutate: async ({ playerId, toSlot }) => {
+      // Cancel any outgoing refetches so they don't overwrite our optimistic update
+      await queryClient.cancelQueries({ queryKey: ['roster'] })
+
+      // Snapshot the previous value
+      const previousRoster = queryClient.getQueryData<RosterResponse>(['roster'])
+
+      // Optimistically update the player's slot in the cache
+      if (previousRoster) {
+        queryClient.setQueryData<RosterResponse>(['roster'], {
+          ...previousRoster,
+          players: previousRoster.players.map((p) =>
+            p.yahoo_player_key === playerId ? { ...p, current_slot: toSlot } : p
+          ),
+        })
+      }
+
+      // Return context with the previous value for rollback
+      return { previousRoster }
+    },
     onSuccess: (data: RosterMoveResponse) => {
       setMoveError(null)
       setMoveSuccess(data.message)
+      // Refetch to ensure cache matches server state
       queryClient.invalidateQueries({ queryKey: ['roster'] })
       setTimeout(() => setMoveSuccess(null), 4000)
     },
-    onError: (err: Error) => {
+    onError: (err: Error, _variables, context) => {
       setMoveSuccess(null)
       setMoveError(err.message)
+      // Rollback to the previous value
+      if (context?.previousRoster) {
+        queryClient.setQueryData(['roster'], context.previousRoster)
+      }
     },
   })
 
