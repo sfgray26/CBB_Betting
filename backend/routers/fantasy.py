@@ -4236,11 +4236,20 @@ async def move_roster_player(
             })
 
     # Apply the lineup change
+    logger.info(
+        "roster/move: attempting move - player=%s from=%s to=%s",
+        request.player_key, from_position, request.target_position
+    )
     try:
         result = client.set_lineup(team_key=team_key, lineup=lineup)
         applied = result.get("applied", [])
         warnings = result.get("warnings", [])
+        logger.info(
+            "roster/move: Yahoo response - applied=%s skipped=%s warnings=%s",
+            applied, result.get("skipped", []), warnings
+        )
     except YahooAPIError as exc:
+        logger.error("roster/move: Yahoo API error - %s", exc)
         return RosterMoveResponse(
             success=False,
             player_key=request.player_key,
@@ -4259,8 +4268,10 @@ async def move_roster_player(
     success = request.player_key in applied
     if success:
         message = f"Moved {player_to_move.get('name', request.player_key)} from {from_position} to {request.target_position}"
+        logger.info("roster/move: SUCCESS - %s", message)
     else:
         message = f"Failed to move {player_to_move.get('name', request.player_key)} to {request.target_position}"
+        logger.warning("roster/move: NOT APPLIED - %s (applied list: %s)", message, applied)
 
     return RosterMoveResponse(
         success=success,
