@@ -5,8 +5,8 @@ Strangler-fig extraction from backend/main.py.
 Do NOT import from other backend.routers modules here.
 """
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func, or_, and_, inspect, cast, Text
 from sqlalchemy.exc import OperationalError, ProgrammingError
@@ -4109,8 +4109,9 @@ async def get_fantasy_roster(
     )
 
 
-@router.post("/api/fantasy/roster/move", response_model=RosterMoveResponse)
+@router.post("/api/fantasy/roster/move")
 async def move_roster_player(
+    req: Request,
     request: RosterMoveRequest,
 ):
     """
@@ -4123,6 +4124,17 @@ async def move_roster_player(
     """
     from pydantic import ValidationError
 
+    # Helper to wrap responses with explicit CORS headers
+    # (ensures browser can read the response regardless of middleware behavior)
+    def _cors_response(resp: RosterMoveResponse) -> JSONResponse:
+        return JSONResponse(
+            content=resp.model_dump(mode="json"),
+            headers={
+                "Access-Control-Allow-Origin": req.headers.get("origin", "*"),
+                "Access-Control-Allow-Credentials": "false",
+            },
+        )
+
     now_et = datetime.now(ZoneInfo("America/New_York"))
 
     # Valid roster slots (LF/CF/RF are Yahoo's granular outfield positions)
@@ -4134,7 +4146,7 @@ async def move_roster_player(
 
     # Validate target position
     if request.target_position not in valid_positions:
-        return RosterMoveResponse(
+        return _cors_response(RosterMoveResponse(
             success=False,
             player_key=request.player_key,
             to_position=request.target_position,
@@ -4146,7 +4158,7 @@ async def move_roster_player(
                 staleness_threshold_minutes=60,
                 is_stale=False,
             ),
-        )
+        ))
 
     # Fetch current roster - initialize client and fetch in one try block for better error handling
     team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
@@ -4156,7 +4168,7 @@ async def move_roster_player(
         raw_players = client.get_roster(team_key=team_key)
     except YahooAuthError as exc:
         logger.error("roster/move: Yahoo auth error - %s", exc)
-        return RosterMoveResponse(
+        return _cors_response(RosterMoveResponse(
             success=False,
             player_key=request.player_key,
             to_position=request.target_position,
@@ -4168,10 +4180,10 @@ async def move_roster_player(
                 staleness_threshold_minutes=60,
                 is_stale=False,
             ),
-        )
+        ))
     except YahooAPIError as exc:
         logger.error("roster/move: Yahoo API error - %s", exc)
-        return RosterMoveResponse(
+        return _cors_response(RosterMoveResponse(
             success=False,
             player_key=request.player_key,
             to_position=request.target_position,
@@ -4183,10 +4195,10 @@ async def move_roster_player(
                 staleness_threshold_minutes=60,
                 is_stale=False,
             ),
-        )
+        ))
     except Exception as exc:
         logger.error("roster/move: Unexpected error fetching roster - %s", exc, exc_info=True)
-        return RosterMoveResponse(
+        return _cors_response(RosterMoveResponse(
             success=False,
             player_key=request.player_key,
             to_position=request.target_position,
@@ -4198,7 +4210,7 @@ async def move_roster_player(
                 staleness_threshold_minutes=60,
                 is_stale=False,
             ),
-        )
+        ))
 
     # Find the player being moved
     player_to_move = None
@@ -4210,7 +4222,7 @@ async def move_roster_player(
             break
 
     if not player_to_move:
-        return RosterMoveResponse(
+        return _cors_response(RosterMoveResponse(
             success=False,
             player_key=request.player_key,
             to_position=request.target_position,
@@ -4222,7 +4234,7 @@ async def move_roster_player(
                 staleness_threshold_minutes=60,
                 is_stale=False,
             ),
-        )
+        ))
 
     # IL guard: players with an active IL designation cannot be placed in active slots.
     if _is_il_designated(player_to_move) and request.target_position not in _IL_SLOTS:
@@ -4232,7 +4244,7 @@ async def move_roster_player(
             player_to_move.get('status'),
             request.target_position
         )
-        return RosterMoveResponse(
+        return _cors_response(RosterMoveResponse(
             success=False,
             player_key=request.player_key,
             from_position=from_position,
@@ -4249,7 +4261,7 @@ async def move_roster_player(
                 staleness_threshold_minutes=60,
                 is_stale=False,
             ),
-        )
+        ))
 
     # Position eligibility guard: player must be eligible for target slot.
     if request.target_position not in _EXEMPT_SLOTS:
@@ -4261,7 +4273,7 @@ async def move_roster_player(
                 request.target_position,
                 _player_eligible
             )
-            return RosterMoveResponse(
+            return _cors_response(RosterMoveResponse(
                 success=False,
                 player_key=request.player_key,
                 from_position=from_position,
@@ -4278,7 +4290,7 @@ async def move_roster_player(
                     staleness_threshold_minutes=60,
                     is_stale=False,
                 ),
-            )
+            ))
 
     # Build lineup list: all players with the moved player's position updated
     # SWAP LOGIC: If target slot is occupied, move the occupant to the source slot
@@ -4341,7 +4353,7 @@ async def move_roster_player(
         )
     except YahooAuthError as exc:
         logger.error("roster/move: Yahoo auth error during set_lineup - %s", exc)
-        return RosterMoveResponse(
+        return _cors_response(RosterMoveResponse(
             success=False,
             player_key=request.player_key,
             from_position=from_position,
@@ -4354,10 +4366,10 @@ async def move_roster_player(
                 staleness_threshold_minutes=60,
                 is_stale=False,
             ),
-        )
+        ))
     except YahooAPIError as exc:
         logger.error("roster/move: Yahoo API error - %s", exc)
-        return RosterMoveResponse(
+        return _cors_response(RosterMoveResponse(
             success=False,
             player_key=request.player_key,
             from_position=from_position,
@@ -4370,10 +4382,10 @@ async def move_roster_player(
                 staleness_threshold_minutes=60,
                 is_stale=False,
             ),
-        )
+        ))
     except Exception as exc:
         logger.error("roster/move: Unexpected error during set_lineup - %s", exc, exc_info=True)
-        return RosterMoveResponse(
+        return _cors_response(RosterMoveResponse(
             success=False,
             player_key=request.player_key,
             from_position=from_position,
@@ -4386,7 +4398,7 @@ async def move_roster_player(
                 staleness_threshold_minutes=60,
                 is_stale=False,
             ),
-        )
+        ))
 
     success = request.player_key in applied
     if success:
@@ -4407,7 +4419,7 @@ async def move_roster_player(
         message = f"Failed to move {player_to_move.get('name', request.player_key)} to {request.target_position}"
         logger.warning("roster/move: NOT APPLIED - %s (applied list: %s)", message, applied)
 
-    return RosterMoveResponse(
+    response_data = RosterMoveResponse(
         success=success,
         player_key=request.player_key,
         from_position=from_position,
@@ -4422,6 +4434,8 @@ async def move_roster_player(
             is_stale=False,
         ),
     )
+
+    return _cors_response(response_data)
 
 
 @router.post("/api/fantasy/roster/bulk-apply", response_model=BulkRosterMoveResponse)
