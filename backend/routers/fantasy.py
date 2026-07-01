@@ -4148,23 +4148,57 @@ async def move_roster_player(
             ),
         )
 
-    try:
-        client = get_yahoo_client()
-    except YahooAuthError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail="Yahoo not configured -- set YAHOO_REFRESH_TOKEN",
-        ) from exc
-
+    # Fetch current roster - initialize client and fetch in one try block for better error handling
     team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
 
-    # Fetch current roster
     try:
+        client = get_yahoo_client()
         raw_players = client.get_roster(team_key=team_key)
     except YahooAuthError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        logger.error("roster/move: Yahoo auth error - %s", exc)
+        return RosterMoveResponse(
+            success=False,
+            player_key=request.player_key,
+            to_position=request.target_position,
+            message=f"Yahoo authentication error: {str(exc)}",
+            freshness=FreshnessMetadata(
+                primary_source="yahoo",
+                fetched_at=None,
+                computed_at=now_et,
+                staleness_threshold_minutes=60,
+                is_stale=False,
+            ),
+        )
     except YahooAPIError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.error("roster/move: Yahoo API error - %s", exc)
+        return RosterMoveResponse(
+            success=False,
+            player_key=request.player_key,
+            to_position=request.target_position,
+            message=f"Yahoo API error: {str(exc)}",
+            freshness=FreshnessMetadata(
+                primary_source="yahoo",
+                fetched_at=None,
+                computed_at=now_et,
+                staleness_threshold_minutes=60,
+                is_stale=False,
+            ),
+        )
+    except Exception as exc:
+        logger.error("roster/move: Unexpected error fetching roster - %s", exc, exc_info=True)
+        return RosterMoveResponse(
+            success=False,
+            player_key=request.player_key,
+            to_position=request.target_position,
+            message=f"Unexpected error: {str(exc)}",
+            freshness=FreshnessMetadata(
+                primary_source="yahoo",
+                fetched_at=None,
+                computed_at=now_et,
+                staleness_threshold_minutes=60,
+                is_stale=False,
+            ),
+        )
 
     # Find the player being moved
     player_to_move = None
@@ -4192,12 +4226,28 @@ async def move_roster_player(
 
     # IL guard: players with an active IL designation cannot be placed in active slots.
     if _is_il_designated(player_to_move) and request.target_position not in _IL_SLOTS:
-        raise HTTPException(
-            status_code=400,
-            detail=(
+        logger.warning(
+            "roster/move: IL designation guard blocked - player=%s status=%s target=%s",
+            player_to_move.get('name', request.player_key),
+            player_to_move.get('status'),
+            request.target_position
+        )
+        return RosterMoveResponse(
+            success=False,
+            player_key=request.player_key,
+            from_position=from_position,
+            to_position=request.target_position,
+            message=(
                 f"{player_to_move.get('name', request.player_key)} has IL designation "
                 f"({player_to_move.get('status')}) — must be placed in IL or IL60 slot, "
                 f"not {request.target_position!r}"
+            ),
+            freshness=FreshnessMetadata(
+                primary_source="yahoo",
+                fetched_at=None,
+                computed_at=now_et,
+                staleness_threshold_minutes=60,
+                is_stale=False,
             ),
         )
 
@@ -4205,12 +4255,28 @@ async def move_roster_player(
     if request.target_position not in _EXEMPT_SLOTS:
         _player_eligible = player_to_move.get("eligible_positions") or player_to_move.get("positions") or []
         if not _can_fill_slot(_player_eligible, request.target_position, player_to_move.get("name", request.player_key)):
-            raise HTTPException(
-                status_code=400,
-                detail=(
+            logger.warning(
+                "roster/move: Position eligibility guard blocked - player=%s target=%s eligible=%s",
+                player_to_move.get('name', request.player_key),
+                request.target_position,
+                _player_eligible
+            )
+            return RosterMoveResponse(
+                success=False,
+                player_key=request.player_key,
+                from_position=from_position,
+                to_position=request.target_position,
+                message=(
                     f"{player_to_move.get('name', request.player_key)} is not eligible for "
                     f"{request.target_position!r} slot — eligible: "
                     f"{', '.join(_player_eligible) or 'unknown'}"
+                ),
+                freshness=FreshnessMetadata(
+                    primary_source="yahoo",
+                    fetched_at=None,
+                    computed_at=now_et,
+                    staleness_threshold_minutes=60,
+                    is_stale=False,
                 ),
             )
 
