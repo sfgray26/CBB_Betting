@@ -4273,6 +4273,22 @@ async def move_roster_player(
             "roster/move: Yahoo response - applied=%s skipped=%s warnings=%s",
             applied, result.get("skipped", []), warnings
         )
+    except YahooAuthError as exc:
+        logger.error("roster/move: Yahoo auth error during set_lineup - %s", exc)
+        return RosterMoveResponse(
+            success=False,
+            player_key=request.player_key,
+            from_position=from_position,
+            to_position=request.target_position,
+            message=f"Yahoo authentication error: {str(exc)}",
+            freshness=FreshnessMetadata(
+                primary_source="yahoo",
+                fetched_at=None,
+                computed_at=now_et,
+                staleness_threshold_minutes=60,
+                is_stale=False,
+            ),
+        )
     except YahooAPIError as exc:
         logger.error("roster/move: Yahoo API error - %s", exc)
         return RosterMoveResponse(
@@ -4281,6 +4297,22 @@ async def move_roster_player(
             from_position=from_position,
             to_position=request.target_position,
             message=f"Yahoo API error: {str(exc)}",
+            freshness=FreshnessMetadata(
+                primary_source="yahoo",
+                fetched_at=None,
+                computed_at=now_et,
+                staleness_threshold_minutes=60,
+                is_stale=False,
+            ),
+        )
+    except Exception as exc:
+        logger.error("roster/move: Unexpected error during set_lineup - %s", exc, exc_info=True)
+        return RosterMoveResponse(
+            success=False,
+            player_key=request.player_key,
+            from_position=from_position,
+            to_position=request.target_position,
+            message=f"Unexpected error: {str(exc)}",
             freshness=FreshnessMetadata(
                 primary_source="yahoo",
                 fetched_at=None,
