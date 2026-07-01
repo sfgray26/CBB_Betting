@@ -816,6 +816,7 @@ function PlayerCard({
             ))}
           </select>
           <button
+            type="button"
             onClick={handleMoveClick}
             disabled={!selectedSlot || isMoving}
             className={cn(
