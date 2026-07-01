@@ -4300,6 +4300,11 @@ async def move_roster_player(
         else:
             message = f"Moved {player_to_move.get('name', request.player_key)} from {from_position} to {request.target_position}"
         logger.info("roster/move: SUCCESS - %s", message)
+
+        # Clear cache so next roster fetch reflects the move
+        # Without this, the 5-min cache returns stale pre-move lineup data
+        client.clear_cache()
+        logger.info("roster/move: Cleared Yahoo client cache after successful move")
     else:
         message = f"Failed to move {player_to_move.get('name', request.player_key)} to {request.target_position}"
         logger.warning("roster/move: NOT APPLIED - %s (applied list: %s)", message, applied)

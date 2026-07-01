@@ -279,3 +279,93 @@ class TestRosterMoveSwapLogic:
 
         player_b_slot = next((p["position"] for p in lineup if p["player_key"] == "469.p.22222"), None)
         assert player_b_slot == "BN"  # Swapped to BN, not IL
+
+    def test_successful_move_clears_yahoo_client_cache(self, fantasy_client):
+        """
+        CRITICAL 2 REGRESSION TEST
+
+        After a successful move, the Yahoo client cache must be cleared
+        so subsequent roster fetches return fresh data from Yahoo, not
+        stale pre-move lineup data from the 5-minute cache.
+
+        Without cache clearing, the UI shows stale data even after refresh.
+        """
+        mock_roster = [
+            {
+                "player_key": "469.p.11111",
+                "name": "Player A",
+                "team": "NYY",
+                "positions": ["1B"],
+                "selected_position": "BN",
+                "status": "playing",
+            },
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+        mock_client.set_lineup.return_value = {
+            "applied": ["469.p.11111"],
+            "skipped": [],
+            "warnings": [],
+        }
+        mock_client.clear_cache = MagicMock()  # Track cache clearing
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/move",
+                json={
+                    "player_key": "469.p.11111",
+                    "target_position": "1B",
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+        # Verify cache was cleared after successful move
+        mock_client.clear_cache.assert_called_once()
+
+    def test_failed_move_does_not_clear_cache(self, fantasy_client):
+        """
+        CRITICAL 2 REGRESSION TEST
+
+        When a move fails (Yahoo rejects it), the cache should NOT be cleared.
+        Only successful moves should invalidate the cache.
+        """
+        mock_roster = [
+            {
+                "player_key": "469.p.11111",
+                "name": "Player A",
+                "team": "NYY",
+                "positions": ["1B"],
+                "selected_position": "BN",
+                "status": "playing",
+            },
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+        # Yahoo rejects the move (empty applied list)
+        mock_client.set_lineup.return_value = {
+            "applied": [],  # No players applied
+            "skipped": ["469.p.11111"],
+            "warnings": [],
+        }
+        mock_client.clear_cache = MagicMock()
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            response = fantasy_client.post(
+                "/api/fantasy/roster/move",
+                json={
+                    "player_key": "469.p.11111",
+                    "target_position": "1B",
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+
+        # Verify cache was NOT cleared after failed move
+        mock_client.clear_cache.assert_not_called()

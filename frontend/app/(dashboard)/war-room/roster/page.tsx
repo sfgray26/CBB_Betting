@@ -947,8 +947,11 @@ export default function RosterPage() {
     onSuccess: (data: RosterMoveResponse) => {
       setMoveError(null)
       setMoveSuccess(data.message)
-      // Refetch to ensure cache matches server state
-      queryClient.invalidateQueries({ queryKey: ['roster'] })
+      // Refetch after a brief delay to ensure optimistic update is visible
+      // Backend clears Yahoo cache, so refetch will return fresh data
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['roster'] })
+      }, 500)
       setTimeout(() => setMoveSuccess(null), 4000)
     },
     onError: (err: Error, _variables, context) => {
