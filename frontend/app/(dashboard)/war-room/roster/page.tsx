@@ -933,12 +933,31 @@ export default function RosterPage() {
       const previousRoster = queryClient.getQueryData<RosterResponse>(['roster'])
 
       // Optimistically update the player's slot in the cache
+      // If target slot is occupied, swap the occupant to the source slot
       if (previousRoster) {
+        const movingPlayer = previousRoster.players.find(p => p.yahoo_player_key === playerId)
+        const fromSlot = movingPlayer?.current_slot ?? 'BN'
+
+        // Find the occupant of the target slot (if any)
+        const occupant = previousRoster.players.find(
+          p => p.yahoo_player_key !== playerId && p.current_slot === toSlot
+        )
+
         queryClient.setQueryData<RosterResponse>(['roster'], {
           ...previousRoster,
-          players: previousRoster.players.map((p) =>
-            p.yahoo_player_key === playerId ? { ...p, current_slot: toSlot } : p
-          ),
+          players: previousRoster.players.map((p) => {
+            if (p.yahoo_player_key === playerId) {
+              // Move the player to the target slot
+              return { ...p, current_slot: toSlot }
+            } else if (occupant && p.yahoo_player_key === occupant.yahoo_player_key) {
+              // Move the displaced player to the source slot (or BN if source was BN/IL)
+              const swapTarget = (fromSlot && fromSlot !== 'BN' && fromSlot !== 'IL' && fromSlot !== 'IL60')
+                ? fromSlot
+                : 'BN'
+              return { ...p, current_slot: swapTarget }
+            }
+            return p
+          }),
         })
       }
 

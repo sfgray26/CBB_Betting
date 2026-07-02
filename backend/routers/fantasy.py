@@ -4127,10 +4127,13 @@ async def move_roster_player(
     # Helper to wrap responses with explicit CORS headers
     # (ensures browser can read the response regardless of middleware behavior)
     def _cors_response(resp: RosterMoveResponse) -> JSONResponse:
+        # Use the request's origin if present, otherwise wildcard
+        # This ensures the header is never None/empty
+        origin = req.headers.get("origin") or "*"
         return JSONResponse(
             content=resp.model_dump(mode="json"),
             headers={
-                "Access-Control-Allow-Origin": req.headers.get("origin", "*"),
+                "Access-Control-Allow-Origin": origin,
                 "Access-Control-Allow-Credentials": "false",
             },
         )

@@ -7987,9 +7987,14 @@ async def admin_refresh_pybaseball(year: int = 2025, user: str = Depends(verify_
 async def global_exception_handler(request, exc):
     """Catch-all exception handler"""
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    origin = request.headers.get("origin") or "*"
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error", "type": type(exc).__name__}
+        content={"detail": "Internal server error", "type": type(exc).__name__},
+        headers={
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "false",
+        },
     )
 
 
