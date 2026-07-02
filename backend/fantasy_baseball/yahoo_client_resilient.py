@@ -109,6 +109,10 @@ class YahooAPICache:
         with self._lock:
             self._cache.clear()
 
+    def clear_all(self) -> None:
+        """Alias for clear() — used by clear_cache()."""
+        self.clear()
+
     def get_stats(self) -> dict:
         """Return cache statistics for monitoring."""
         with self._lock:

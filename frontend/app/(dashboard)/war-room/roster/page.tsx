@@ -966,17 +966,23 @@ export default function RosterPage() {
     },
     onSuccess: (data: RosterMoveResponse) => {
       console.log('[Roster Move] onSuccess:', data)
+      const successMessage = data.message || 'Move completed successfully'
+      console.log('[Roster Move] Setting success banner:', successMessage)
       setMoveError(null)
-      // Use the message from backend, or fallback to a default success message
-      setMoveSuccess(data.message || 'Move completed successfully')
+      setMoveSuccess(successMessage)
+      console.log('[Roster Move] Success banner state set')
       // Invalidate and refetch to ensure we get fresh data, not stale cache
       // This forces a network request even if the query has a long staleTime
       void queryClient.invalidateQueries({ queryKey: ['roster'] }).then(() => {
         // After invalidation completes, refetch from network
+        console.log('[Roster Move] Invalidated roster queries, now refetching')
         return queryClient.refetchQueries({ queryKey: ['roster'] })
       })
       // Clear success message after 4 seconds
-      setTimeout(() => setMoveSuccess(null), 4000)
+      setTimeout(() => {
+        console.log('[Roster Move] Clearing success banner')
+        setMoveSuccess(null)
+      }, 4000)
     },
     onError: (err: Error, _variables, context) => {
       console.log('[Roster Move] onError:', err)
