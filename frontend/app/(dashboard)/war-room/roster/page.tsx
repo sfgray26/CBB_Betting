@@ -967,10 +967,14 @@ export default function RosterPage() {
     onSuccess: (data: RosterMoveResponse) => {
       console.log('[Roster Move] onSuccess:', data)
       setMoveError(null)
-      setMoveSuccess(data.message)
-      // Force immediate refetch to get fresh data from backend
-      // Backend has already cleared Yahoo cache by the time we get here
-      void queryClient.refetchQueries({ queryKey: ['roster'] })
+      // Use the message from backend, or fallback to a default success message
+      setMoveSuccess(data.message || 'Move completed successfully')
+      // Invalidate and refetch to ensure we get fresh data, not stale cache
+      // This forces a network request even if the query has a long staleTime
+      void queryClient.invalidateQueries({ queryKey: ['roster'] }).then(() => {
+        // After invalidation completes, refetch from network
+        return queryClient.refetchQueries({ queryKey: ['roster'] })
+      })
       // Clear success message after 4 seconds
       setTimeout(() => setMoveSuccess(null), 4000)
     },
