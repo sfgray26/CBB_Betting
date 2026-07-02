@@ -20,7 +20,9 @@
 - Frontend roster page changed to call TanStack Query `refetchQueries({ queryKey: ['roster'] })` immediately after successful roster move instead of delayed invalidation.
 - Added frontend debug logs for roster move `onSuccess` and `onError`.
 - Local verification: `npm run build` in `frontend/` passed with existing image/workspace-root warnings only.
-- Deployment status: pending commit/push/Railway frontend redeploy from Codex.
+- Commit pushed to `stable/cbb-prod`: `1b269ac fix: refetch roster after successful move`.
+- Frontend Railway service `observant-benevolence` deployed successfully from repo root: `8a2f39ef-c678-4cc9-b638-361e1c42ab4e`.
+- Deployment note: two earlier manual deploy attempts failed because the snapshot did not include the top-level `frontend/` directory required by the service `rootDirectory=/frontend`; deploying from repo root resolved it.
 
 ### DevOps Update — 2026-06-26 Loop 28 Ownership Refresh
 
