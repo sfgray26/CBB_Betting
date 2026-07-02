@@ -965,16 +965,17 @@ export default function RosterPage() {
       return { previousRoster }
     },
     onSuccess: (data: RosterMoveResponse) => {
+      console.log('[Roster Move] onSuccess:', data)
       setMoveError(null)
       setMoveSuccess(data.message)
-      // Refetch after a brief delay to ensure optimistic update is visible
-      // Backend clears Yahoo cache, so refetch will return fresh data
-      setTimeout(() => {
-        queryClient.invalidateQueries({ queryKey: ['roster'] })
-      }, 500)
+      // Force immediate refetch to get fresh data from backend
+      // Backend has already cleared Yahoo cache by the time we get here
+      void queryClient.refetchQueries({ queryKey: ['roster'] })
+      // Clear success message after 4 seconds
       setTimeout(() => setMoveSuccess(null), 4000)
     },
     onError: (err: Error, _variables, context) => {
+      console.log('[Roster Move] onError:', err)
       setMoveSuccess(null)
       setMoveError(err.message)
       // Rollback to the previous value

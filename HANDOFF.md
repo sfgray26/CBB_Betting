@@ -12,7 +12,15 @@
 - Production log root cause confirmed for `/api/fantasy/roster/move`: Yahoo lineup write succeeds, then the handler crashes during post-write cache invalidation with `AttributeError: 'YahooFantasyClient' object has no attribute 'clear_cache'`.
 - Applied narrow backend guard in `backend/routers/fantasy.py`: cache clear is now best-effort after a successful Yahoo write and cannot convert the move into a 500.
 - Local verification: `python -m py_compile backend/routers/fantasy.py` passed.
-- Deployment status: pending commit/push/Railway backend redeploy from Codex.
+- Commit pushed to `stable/cbb-prod`: `3914d09 fix: prevent roster move post-write cache crash`.
+- Backend Railway service `Fantasy-App` deployed successfully: `d1ad2f69-20a9-4d98-b097-c7521a3d9a2b`.
+
+### DevOps Update — 2026-07-02 Roster Move Frontend Refetch
+
+- Frontend roster page changed to call TanStack Query `refetchQueries({ queryKey: ['roster'] })` immediately after successful roster move instead of delayed invalidation.
+- Added frontend debug logs for roster move `onSuccess` and `onError`.
+- Local verification: `npm run build` in `frontend/` passed with existing image/workspace-root warnings only.
+- Deployment status: pending commit/push/Railway frontend redeploy from Codex.
 
 ### DevOps Update — 2026-06-26 Loop 28 Ownership Refresh
 
