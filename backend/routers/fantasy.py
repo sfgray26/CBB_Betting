@@ -4414,10 +4414,24 @@ async def move_roster_player(
             message = f"Moved {player_to_move.get('name', request.player_key)} from {from_position} to {request.target_position}"
         logger.info("roster/move: SUCCESS - %s", message)
 
-        # Clear cache so next roster fetch reflects the move
-        # Without this, the 5-min cache returns stale pre-move lineup data
-        client.clear_cache()
-        logger.info("roster/move: Cleared Yahoo client cache after successful move")
+        # Clear cache so next roster fetch reflects the move.
+        # Cache invalidation must be best-effort only: the Yahoo write has already
+        # succeeded, so a cache hook mismatch must not turn the move into a 500.
+        clear_cache = getattr(client, "clear_cache", None)
+        if callable(clear_cache):
+            try:
+                clear_cache()
+                logger.info("roster/move: Cleared Yahoo client cache after successful move")
+            except Exception as exc:
+                logger.warning(
+                    "roster/move: Cache clear failed after successful move; continuing: %s",
+                    exc,
+                )
+        else:
+            logger.warning(
+                "roster/move: Yahoo client %s has no clear_cache(); skipping cache clear",
+                type(client).__name__,
+            )
     else:
         message = f"Failed to move {player_to_move.get('name', request.player_key)} to {request.target_position}"
         logger.warning("roster/move: NOT APPLIED - %s (applied list: %s)", message, applied)

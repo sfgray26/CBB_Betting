@@ -7,6 +7,13 @@
 
 ## Current Mission State
 
+### DevOps Update — 2026-07-02 Roster Move Post-Write 500
+
+- Production log root cause confirmed for `/api/fantasy/roster/move`: Yahoo lineup write succeeds, then the handler crashes during post-write cache invalidation with `AttributeError: 'YahooFantasyClient' object has no attribute 'clear_cache'`.
+- Applied narrow backend guard in `backend/routers/fantasy.py`: cache clear is now best-effort after a successful Yahoo write and cannot convert the move into a 500.
+- Local verification: `python -m py_compile backend/routers/fantasy.py` passed.
+- Deployment status: pending commit/push/Railway backend redeploy from Codex.
+
 ### DevOps Update — 2026-06-26 Loop 28 Ownership Refresh
 
 - Commit pushed to `stable/cbb-prod`: `8c438c7 feat: refresh fantasy ownership data`.
