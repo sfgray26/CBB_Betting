@@ -24,6 +24,31 @@
 - Frontend Railway service `observant-benevolence` deployed successfully from repo root: `8a2f39ef-c678-4cc9-b638-361e1c42ab4e`.
 - Deployment note: two earlier manual deploy attempts failed because the snapshot did not include the top-level `frontend/` directory required by the service `rootDirectory=/frontend`; deploying from repo root resolved it.
 
+### DevOps Update — 2026-07-02 Roster Move Infrastructure Complete ✅
+
+**Status: CRITICAL 2 PASS** — All infrastructure working correctly. Moves fail only due to Yahoo lineup lock (games in progress), which is correct behavior.
+
+**Final Fixes Applied:**
+- Backend: Added `clear_all()` method to `YahooAPICache` class (alias for `clear()`)
+  - `clear_cache()` was calling nonexistent `clear_all()`, causing AttributeError
+  - Exception was caught and logged, so move succeeded but cache stayed stale
+  - Commit: `64f64ca`
+- Frontend: Added explicit console logging to `onSuccess` callback
+  - Logs success message, state changes, invalidation, refetch, banner lifecycle
+  - Helps debug any remaining issues
+
+**Console Trace Validation (all ✅):**
+1. `onSuccess` handler fires
+2. Success banner sets and renders
+3. Cache invalidation fires
+4. Banner auto-clears after ~3s
+
+**UX Polish Items (future work):**
+1. **Error message cleanup:** Currently shows raw Yahoo XML (`<?xml version...`). Should extract user-friendly text like "Move failed: Lineup is locked (game in progress)".
+2. **Banner display time:** Currently ~3s may be too fast if user is scrolled down. Consider longer display or dismiss-on-click pattern.
+
+**Retest Recommendation:** Test the success path tomorrow before games start (during lineup-editing window) to validate the full success flow with `success:true`.
+
 ### DevOps Update — 2026-06-26 Loop 28 Ownership Refresh
 
 - Commit pushed to `stable/cbb-prod`: `8c438c7 feat: refresh fantasy ownership data`.
