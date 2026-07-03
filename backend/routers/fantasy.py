@@ -6690,10 +6690,29 @@ async def simulate_matchup(
                 _raw_my = _week_stats.get("my_stats", {})
                 _raw_opp = _week_stats.get("opp_stats", {})
                 _SCORE_TO_SIM = {
-                    "HR": "hr_b", "R": "r", "RBI": "rbi", "H": "h",
-                    "TB": "tb", "K": "k_b", "SB": "nsb", "AVG": "avg", "OPS": "ops",
-                    "W": "w", "L": "l", "ERA": "era", "WHIP": "whip",
-                    "K9": "k_9", "QS": "qs", "SV": "nsv",
+                    # Batting - use canonical codes returned by get_matchup_stats()
+                    "HR_B": "hr_b",
+                    "R": "r",
+                    "RBI": "rbi",
+                    "H": "h",
+                    "TB": "tb",
+                    "K_B": "k_b",
+                    "NSB": "nsb",
+                    "AVG": "avg",
+                    "OPS": "ops",
+                    # Pitching - use canonical codes returned by get_matchup_stats()
+                    "W": "w",
+                    "L": "l",
+                    "HR_P": "hr_p",
+                    "K_P": "k_p",
+                    "ERA": "era",
+                    "WHIP": "whip",
+                    "K_9": "k_9",
+                    "QS": "qs",
+                    "NSV": "nsv",
+                    # Note: IP is returned by Yahoo but not used in simulation
+                    # (included for completeness but not referenced by mcmc_simulator)
+                    "IP": "ip",
                 }
                 for _bk, _sk in _SCORE_TO_SIM.items():
                     if _bk in _raw_my:
