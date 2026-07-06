@@ -958,49 +958,74 @@ class YahooFantasyClient:
         return players
 
     def _enrich_ownership_batch(self, players: list[dict]) -> None:
-        """Mutate *players* in place with real ownership % from Yahoo global endpoint.
+        """Mutate *players* in place with real ownership % from Yahoo league-scoped endpoint.
 
-        Uses: players;player_keys={k1},{k2},.../ownership
+        Uses: league/{league_key}/players;player_keys={k1},{k2},.../ownership
         Yahoo enforces max 25 player_keys per batch request.
+
+        CRITICAL FIX: Ownership endpoint requires league context to return data.
+        Without league prefix, Yahoo returns empty ownership arrays.
         """
         player_keys = [p["player_key"] for p in players if p.get("player_key")]
         if not player_keys:
+            return
+
+        # Get league key for ownership context
+        # self.league_key is already set to "mlb.l.LEAGUE_ID" format in __init__
+        league_key = self.league_key
+        if not league_key or ".l." not in league_key:
+            logger.warning("_enrich_ownership_batch: Invalid league key format: %s", league_key)
             return
 
         try:
             for i in range(0, len(player_keys), 25):
                 chunk_keys = player_keys[i : i + 25]
                 keys_str = ",".join(chunk_keys)
-                own_data = self._get(f"players;player_keys={keys_str}/ownership")
-                own_block = own_data.get("fantasy_content", {}).get("players", {})
-                for raw_entry in own_block.values():
-                    if not isinstance(raw_entry, dict):
+
+                # Use league-scoped endpoint - REQUIRED for ownership data
+                own_data = self._get(f"league/{league_key}/players;player_keys={keys_str}/ownership")
+
+                # League-scoped response structure: fantasy_content.league[1].players
+                fc = own_data.get("fantasy_content", {})
+                league_block = fc.get("league", [])
+                if not isinstance(league_block, list):
+                    league_block = [league_block]
+
+                for league_entry in league_block:
+                    if not isinstance(league_entry, dict):
                         continue
-                    player_entry = raw_entry.get("player", [])
-                    pk = None
-                    pct = None
-                    for chunk in (
-                        player_entry if isinstance(player_entry, list) else [player_entry]
-                    ):
-                        if isinstance(chunk, dict):
-                            if "player_key" in chunk:
-                                pk = chunk["player_key"]
-                            own = chunk.get("ownership", {})
-                            if own:
-                                pct_block = own.get("percent_rostered") or own.get(
-                                    "percent_owned"
-                                )
-                                if isinstance(pct_block, dict):
-                                    pct = self._safe_float(pct_block.get("value", 0), 0.0)
-                                elif pct_block is not None:
-                                    pct = self._safe_float(pct_block, 0.0)
-                    if pk and pct is not None and pct > 0.0:
-                        for p in players:
-                            if (
-                                p.get("player_key") == pk
-                                and p.get("percent_owned", 0.0) == 0.0
-                            ):
-                                p["percent_owned"] = pct
+                    players_block = league_entry.get("players", {})
+                    if not isinstance(players_block, dict):
+                        continue
+
+                    for raw_entry in players_block.values():
+                        if not isinstance(raw_entry, dict):
+                            continue
+                        player_entry = raw_entry.get("player", [])
+                        pk = None
+                        pct = None
+
+                        for chunk in (
+                            player_entry if isinstance(player_entry, list) else [player_entry]
+                        ):
+                            if isinstance(chunk, dict):
+                                if "player_key" in chunk:
+                                    pk = chunk["player_key"]
+                                own = chunk.get("ownership", {})
+                                if own:
+                                    # League context uses percent_rostered (not percent_owned)
+                                    pct_block = own.get("percent_rostered", {})
+                                    if isinstance(pct_block, dict):
+                                        pct = self._safe_float(pct_block.get("value", 0), 0.0)
+                                    elif pct_block is not None:
+                                        pct = self._safe_float(pct_block, 0.0)
+
+                        if pk and pct is not None:
+                            # Update even if pct = 0.0 (zero ownership is valid data)
+                            for p in players:
+                                if p.get("player_key") == pk:
+                                    p["percent_owned"] = pct
+
         except Exception as exc:
             logger.warning("_enrich_ownership_batch failed (non-fatal): %s", exc)
 
