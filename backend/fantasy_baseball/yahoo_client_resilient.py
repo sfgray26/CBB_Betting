@@ -80,7 +80,7 @@ class YahooAPICache:
         self._lock = threading.RLock()
         self._max_size = 256  # Prevent unbounded memory growth
         self._last_cleared_at: Optional[float] = None
-        self._bypass_window_seconds = 2.0  # Bypass cache for 2s after clear
+        self._bypass_window_seconds = 5.0  # Bypass cache for 5s after clear (Yahoo propagation delay)
 
     def get(self, key: str, bypass_window_active: bool = False) -> Optional[dict]:
         """Get cached response if still fresh.
@@ -133,7 +133,11 @@ class YahooAPICache:
         """Check if bypass window is active (cache was cleared recently)."""
         if self._last_cleared_at is None:
             return False
-        return (time.time() - self._last_cleared_at) < self._bypass_window_seconds
+        elapsed = time.time() - self._last_cleared_at
+        is_active = elapsed < self._bypass_window_seconds
+        if is_active:
+            logger.info(f"Cache bypass window active: {elapsed:.2f}s elapsed (window: {self._bypass_window_seconds}s)")
+        return is_active
 
     def get_stats(self) -> dict:
         """Return cache statistics for monitoring."""

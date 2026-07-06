@@ -3870,6 +3870,7 @@ async def get_fantasy_roster(
     Args:
         force_refresh: If True, bypass cache and fetch fresh from Yahoo (use after roster moves)
     """
+    import asyncio
     now_et = datetime.now(ZoneInfo("America/New_York"))
 
     try:
@@ -3882,12 +3883,30 @@ async def get_fantasy_roster(
 
     team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
 
-    try:
-        raw_players = client.get_roster(team_key=team_key, bypass_cache=force_refresh)
-    except YahooAuthError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except YahooAPIError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    # Retry logic for roster fetch to account for Yahoo's propagation delay after moves
+    # If bypass window is active (cache recently cleared), retry up to 3 times with 1s delay
+    max_retries = 3
+    retry_delay = 1.0
+    raw_players = None
+
+    for attempt in range(max_retries):
+        try:
+            bypass_this_attempt = force_refresh or (attempt > 0)
+            raw_players = client.get_roster(team_key=team_key, bypass_cache=bypass_this_attempt)
+            # Successfully fetched roster - exit retry loop
+            break
+        except YahooAuthError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except YahooAPIError as exc:
+            # On last attempt, raise the error
+            if attempt == max_retries - 1:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            # Otherwise, log and retry
+            logger.warning(
+                "Roster fetch attempt %d failed (retrying in %.1fs): %s",
+                attempt + 1, retry_delay, exc
+            )
+            await asyncio.sleep(retry_delay)
 
     # Enrich roster players with ownership % — get_roster() omits /ownership subresource;
     # _enrich_ownership_batch() fetches it via players;player_keys=.../ownership (same as
