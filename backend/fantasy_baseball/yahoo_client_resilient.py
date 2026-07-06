@@ -336,6 +336,7 @@ class YahooFantasyClient:
         should_bypass_cache = bypass_cache or bypass_window_active
 
         # Check cache first (unless bypassing)
+        # Only read from cache if we're NOT bypassing
         if not should_bypass_cache:
             cached_data = self._cache.get(cache_key, bypass_window_active=False)
             if cached_data is not None:
@@ -1993,6 +1994,16 @@ class YahooFantasyClient:
             return max(0, 30 - (adp - 100) * 0.2)
         else:
             return max(0, 10 - (adp - 200) * 0.05)
+
+    def clear_cache(self) -> None:
+        """Clear all cached Yahoo API responses.
+
+        This triggers a 5-second bypass window during which all cache reads
+        are forced to miss, preventing stale data from being returned after
+        roster moves or other mutations.
+        """
+        logger.info("YahooFantasyClient.clear_cache() - clearing cache and starting bypass window")
+        self._cache.clear_all()
 
 
 # ---------------------------------------------------------------------------

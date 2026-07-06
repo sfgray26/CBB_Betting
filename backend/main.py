@@ -325,7 +325,7 @@ async def lifespan(app: FastAPI):
             name="Refresh pybaseball Statcast Leaderboards",
             replace_existing=True,
         )
-        
+
         # Daily Statcast ingestion + Bayesian projection updates at 6:00 AM ET
         # Runs after overnight games complete, before lineup decisions
         scheduler.add_job(
@@ -734,7 +734,7 @@ async def get_all_table_counts(user: str = Depends(verify_admin_api_key)):
         # Get all table names in public schema
         sql_tables = text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
         tables = [r[0] for r in db.execute(sql_tables).fetchall()]
-        
+
         results = {}
         for table in tables:
             try:
@@ -743,7 +743,7 @@ async def get_all_table_counts(user: str = Depends(verify_admin_api_key)):
                 results[table] = count
             except Exception as e:
                 results[table] = f"Error: {str(e)}"
-        
+
         sorted_counts = dict(sorted(results.items()))
         return {
             "status": "success",
@@ -1057,10 +1057,10 @@ async def investigate_statcast_raw_columns(target_date: str = "2026-04-12", user
         df = await asyncio.to_thread(statcast, start_dt=target_date, end_dt=target_date)
         if df is None or df.empty:
             return {"status": "empty", "date": target_date}
-        
+
         # Replace NaNs for JSON
         first_row = df.head(1).replace({pd.NA: None, float('nan'): None}).to_dict(orient="records")[0]
-        
+
         return {
             "status": "success",
             "date": target_date,
@@ -1084,7 +1084,7 @@ async def investigate_statcast_quality(user: str = Depends(verify_admin_api_key)
         with_xwoba = db.query(StatcastPerformance).filter(StatcastPerformance.xwoba > 0).count()
         with_cs = db.query(StatcastPerformance).filter(StatcastPerformance.cs > 0).count()
         with_pitches = db.query(StatcastPerformance).filter(StatcastPerformance.pitches > 0).count()
-        
+
         # Sample of records with zero quality metrics
         sample_zeros = db.query(StatcastPerformance).filter(
             StatcastPerformance.exit_velocity_avg == 0,
@@ -1349,13 +1349,13 @@ def _end_of_day_results_job():
 def _nightly_decision_resolution_job():
     """
     Nightly fantasy baseball decision resolution at 11:59 PM ET.
-    
+
     Resolves all pending lineup decisions from the previous day with actual MLB stats.
     This enables accuracy tracking and trend analysis.
     """
     try:
         from backend.fantasy_baseball.nightly_resolution import resolve_yesterdays_decisions
-        
+
         result = resolve_yesterdays_decisions()
         logger.info(
             "Nightly decision resolution complete: %d resolved, %d no game, %d failed",
@@ -1683,35 +1683,35 @@ def _pybaseball_fetch_job():
 def _statcast_daily_ingestion_job():
     """
     Daily 6:00 AM Statcast ingestion + Bayesian projection updates.
-    
+
     This is the critical data pipeline that:
     1. Pulls yesterday's Statcast data from Baseball Savant
     2. Validates data quality
     3. Runs Bayesian projection updates (prior + likelihood -> posterior)
     4. Stores updated projections for lineup/waiver decisions
-    
+
     Runs before lineup decisions so we have fresh data.
     """
     try:
         from backend.fantasy_baseball.statcast_ingestion import run_daily_ingestion
         from datetime import date, timedelta
-        
+
         # Run for yesterday (most recent completed day)
         target_date = today_et() - timedelta(days=1)
-        
+
         logger.info("=" * 60)
         logger.info("Starting scheduled Statcast daily ingestion")
         logger.info(f"Target date: {target_date}")
         logger.info("=" * 60)
-        
+
         result = run_daily_ingestion(target_date)
-        
+
         if result.get('success'):
             logger.info("Statcast daily ingestion completed successfully")
             logger.info(f"  Records processed: {result.get('records_processed', 0)}")
             logger.info(f"  Projections updated: {result.get('projections_updated', 0)}")
             logger.info(f"  High confidence updates: {result.get('high_confidence_updates', 0)}")
-            
+
             # Log big movers for monitoring
             big_movers = result.get('big_mover_details', [])
             if big_movers:
@@ -1722,7 +1722,7 @@ def _statcast_daily_ingestion_job():
                     logger.info(f"    {mover.get('name')}: {mover.get('prior')} → {mover.get('posterior')} ({direction}{abs(delta):.3f})")
         else:
             logger.error(f"Statcast daily ingestion failed: {result.get('error', 'Unknown error')}")
-            
+
     except Exception as e:
         logger.exception(f"Statcast daily ingestion job failed: {e}")
 
@@ -5199,10 +5199,10 @@ async def get_fantasy_lineup_recommendations(
     try:
         from backend.fantasy_baseball.smart_lineup_selector import get_smart_selector
         _smart_sel = get_smart_selector()
-        
+
         # Try fetching for the requested date first
         _games = _smart_sel.base_optimizer.fetch_mlb_odds(lineup_date)
-        
+
         # If no games found, try the next day (UTC timezone issues)
         # Odds API uses UTC, so evening US games might be on next day UTC
         if not _games:
@@ -5214,7 +5214,7 @@ async def get_fantasy_lineup_recommendations(
                     logger.info(f"[LINEUP_DEBUG] Found games on next day ({next_day}) due to UTC timezone")
             except Exception:
                 pass
-        
+
         logger.info(f"[LINEUP_DEBUG] Fetched {len(_games)} games from Odds API")
         team_odds = _smart_sel.base_optimizer._build_team_odds_map(_games)
         logger.info(f"[LINEUP_DEBUG] team_odds keys: {list(team_odds.keys())}")
@@ -5437,7 +5437,7 @@ async def get_fantasy_lineup_recommendations(
             team = normalize_team_abbr(team_raw)
             is_sp = p.get("pitcher_slot") == "SP"
             has_start = p.get("has_start", False)
-            
+
             logger.debug(f"Processing pitcher: {p.get('name')}, team: {team} (raw: {team_raw}), is_sp: {is_sp}, has_start: {has_start}")
 
             # Get opponent and game context
@@ -5480,7 +5480,7 @@ async def get_fantasy_lineup_recommendations(
 
             # Determine pitcher type
             pitcher_type = "SP" if is_sp else "RP"
-            
+
             logger.debug(f"  Final status: {status}, pitcher_type: {pitcher_type}")
 
             pitchers.append(StartingPitcherOut(
@@ -5574,7 +5574,7 @@ async def get_daily_briefing(
 
     Returns complete decision context with recommendations,
     confidence scores, and actionable alerts.
-    
+
     Args:
         briefing_date: Date in YYYY-MM-DD format
         record_decisions: Whether to save decisions for accuracy tracking (default: true)
@@ -6574,11 +6574,18 @@ async def yahoo_diag(user: str = Depends(verify_api_key)):
 
 
 @app.get("/api/fantasy/roster", response_model=RosterResponse)
-async def get_fantasy_roster(user: str = Depends(verify_api_key)):
+async def get_fantasy_roster(
+    user: str = Depends(verify_api_key),
+    force_refresh: bool = False,
+):
     """
     Return the authenticated user's current Yahoo roster enriched with z-scores.
     Returns 503 if Yahoo credentials are not configured.
+
+    Args:
+        force_refresh: If True, bypass cache and fetch fresh from Yahoo (use after roster moves)
     """
+    import asyncio
     from backend.fantasy_baseball.player_board import get_or_create_projection
 
     try:
@@ -6591,12 +6598,30 @@ async def get_fantasy_roster(user: str = Depends(verify_api_key)):
 
     team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
 
-    try:
-        raw_players = client.get_roster(team_key=team_key)
-    except YahooAuthError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except YahooAPIError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    # Retry logic for roster fetch to account for Yahoo's propagation delay after moves
+    # If bypass window is active (cache recently cleared), retry up to 3 times with 1s delay
+    max_retries = 3
+    retry_delay = 1.0
+    raw_players = None
+
+    for attempt in range(max_retries):
+        try:
+            bypass_this_attempt = force_refresh or (attempt > 0)
+            raw_players = client.get_roster(team_key=team_key, bypass_cache=bypass_this_attempt)
+            # Successfully fetched roster - exit retry loop
+            break
+        except YahooAuthError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except YahooAPIError as exc:
+            # On last attempt, raise the error
+            if attempt == max_retries - 1:
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
+            # Otherwise, log and retry
+            logger.warning(
+                "Roster fetch attempt %d failed (retrying in %.1fs): %s",
+                attempt + 1, retry_delay, exc
+            )
+            await asyncio.sleep(retry_delay)
 
     # Fetch season stats for all roster players (best-effort, non-fatal)
     player_keys_list = [p.get("player_key") for p in raw_players if p.get("player_key")]
@@ -6933,11 +6958,11 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         """Return (team_key, team_name, stats_dict) from Yahoo team entry.
         Stats are keyed by abbreviation (e.g. 'R', 'HR') when stat_id_map is populated,
         otherwise by raw stat_id string.
-        
+
         Handles deeply nested Yahoo response structures with multiple array wrappers."""
         t_meta: dict = {}
         stats_raw: list = []
-        
+
         # Flatten nested array structures that Yahoo returns
         def flatten_entry(entry, depth=0):
             """Recursively flatten nested lists/dicts to extract metadata."""
@@ -6958,9 +6983,9 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                 for key in ["team_key", "name", "team_id", "nickname"]:
                     if key in entry:
                         t_meta[key] = entry[key]
-        
+
         flatten_entry(team_entry)
-        
+
         # Build stats dict
         stats_dict: dict = {}
         for s in stats_raw:
@@ -7020,7 +7045,7 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         # Try multiple key formats Yahoo might use
         team_key = t_meta.get("team_key", "")
         team_name = t_meta.get("name", "") or t_meta.get("nickname", "")
-        
+
         return (team_key, team_name, stats_dict)
 
     for m in matchups:
@@ -7041,7 +7066,7 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
         # Shape A: teams at top level  Shape B: teams nested under "0" (Yahoo indexed format)
         teams = m.get("teams") or m.get("0", {}).get("teams", {})
         team_data: list[tuple[str, str, dict]] = []
-        
+
         # Shape 1: teams is a list of {team: [...]} objects
         if isinstance(teams, list):
             for item in teams:
@@ -7059,7 +7084,7 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
                 if isinstance(entry, dict):
                     team_entry = entry.get("team", entry)  # Use entry itself if no "team" key
                     team_data.append(_extract_team_stats(team_entry))
-        
+
         # Also check for direct team array in matchup (alternate Yahoo format)
         if not team_data and "team" in m:
             direct_teams = m.get("team", [])
@@ -7083,7 +7108,7 @@ async def get_fantasy_matchup(user: str = Depends(verify_api_key)):
             if t[0] and my_team_key and (t[0] in my_team_key or my_team_key in t[0]):
                 my_entry = t
                 break
-        
+
         if my_entry is None:
             continue
 
@@ -7158,7 +7183,7 @@ from backend.services.dashboard_service import get_dashboard_service
 async def get_dashboard(user: str = Depends(verify_api_key)):
     """
     Phase B: Enhanced Dashboard
-    
+
     Returns consolidated dashboard data:
     - Lineup gaps detection
     - Hot/cold streaks
@@ -7205,7 +7230,7 @@ async def update_user_preferences(
 ):
     """
     Update user preferences.
-    
+
     Body can include any of:
     - notifications: dict
     - dashboard_layout: dict
@@ -7422,7 +7447,7 @@ async def elite_optimize_lineup(
 ):
     """
     ELITE lineup optimizer with multi-factor scoring.
-    
+
     Uses:
     - Multiplicative scoring (environment × matchup × platoon)
     - Pitcher quality adjustments (xERA)
@@ -7430,7 +7455,7 @@ async def elite_optimize_lineup(
     - Recent form blending (30% recent, 70% season)
     - xwOBA regression indicators
     - OR-Tools constraint solver for optimal position filling
-    
+
     Returns:
         Optimal lineup with detailed scoring breakdown
     """
@@ -7447,34 +7472,34 @@ async def elite_optimize_lineup(
     except Exception as e:
         logger.error(f"Failed to fetch roster: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch roster")
-    
+
     # Get today's games and odds
     optimizer = DailyLineupOptimizer()
     games = optimizer.fetch_mlb_odds(lineup_date)
     team_odds = optimizer._build_team_odds_map(games)
-    
+
     # Get probable pitchers for matchup quality
     probable_pitchers = optimizer._fetch_probable_pitchers_for_date(lineup_date)
-    
+
     # Score all batters with elite multi-factor scoring
     elite_scorer = get_elite_scorer()
     solver = get_lineup_solver()
-    
+
     player_scores = {}
     eligibility = {}
-    
+
     for player in roster:
         pid = player.get("player_id", "")
         name = player.get("name", "")
         team = player.get("team", "")
         positions = player.get("positions", [])
-        
+
         # Skip pitchers
         if any(p in ("SP", "RP", "P") for p in positions):
             continue
-        
+
         eligibility[pid] = positions
-        
+
         # Build batter profile (would fetch from database in production)
         # For now, use league averages with some defaults
         batter = BatterProfile(
@@ -7486,7 +7511,7 @@ async def elite_optimize_lineup(
             woba_vs_lhp=0.320,
             woba_vs_rhp=0.320,
         )
-        
+
         # Get game context
         odds = team_odds.get(team, {})
         context = GameContext(
@@ -7494,7 +7519,7 @@ async def elite_optimize_lineup(
             park_factor=odds.get("park_factor", 1.0),
             is_home=odds.get("is_home", False),
         )
-        
+
         # Get opposing pitcher
         opp_team = odds.get("opponent", "")
         pitcher_name = probable_pitchers.get(opp_team.lower(), "")
@@ -7504,18 +7529,18 @@ async def elite_optimize_lineup(
             handedness="R",  # Would fetch actual handedness
             xera=4.25,  # Would fetch from Statcast
         )
-        
+
         # Calculate elite score
         score = elite_scorer.calculate_batter_score(batter, pitcher, context)
         player_scores[pid] = score
-    
+
     # Run constraint solver
     lineup = solver.solve(
         players=roster,
         player_scores=player_scores,
         eligibility=eligibility,
     )
-    
+
     return {
         "success": True,
         "lineup_date": lineup_date,
@@ -7541,7 +7566,7 @@ async def elite_optimize_lineup(
 async def analyze_lineup_scarcity(user: str = Depends(verify_api_key)):
     """
     Analyze roster scarcity by position.
-    
+
     Helps identify positional strengths/weaknesses for waiver/trade decisions.
     """
     from backend.fantasy_baseball.lineup_constraint_solver import get_lineup_solver
@@ -7550,15 +7575,15 @@ async def analyze_lineup_scarcity(user: str = Depends(verify_api_key)):
         yahoo = get_yahoo_client()
     except YahooAuthError:
         raise HTTPException(status_code=503, detail="Yahoo not configured")
-    
+
     roster = yahoo.get_roster()
-    
+
     # Build eligibility dict
     eligibility = {p.get("player_id"): p.get("positions", []) for p in roster}
-    
+
     solver = get_lineup_solver()
     analysis = solver.analyze_scarcity(roster, eligibility)
-    
+
     return {
         "success": True,
         "analysis": analysis,
@@ -7573,7 +7598,7 @@ async def compare_scoring_methods(
 ):
     """
     Compare elite multi-factor scoring to simple implied-runs scoring.
-    
+
     Shows the value added by pitcher quality, platoon splits, etc.
     """
     from backend.fantasy_baseball.elite_lineup_scorer import (
@@ -7582,9 +7607,9 @@ async def compare_scoring_methods(
         PitcherProfile,
         GameContext,
     )
-    
+
     scorer = get_elite_scorer()
-    
+
     batter = BatterProfile(
         player_id="test",
         name=player_name,
@@ -7595,22 +7620,22 @@ async def compare_scoring_methods(
         woba_vs_rhp=0.360,
         xwoba=0.355,
     )
-    
+
     pitcher = PitcherProfile(
         name=opponent_pitcher or "Average Pitcher",
         team="BOS",
         handedness="R",
         xera=4.25 if not opponent_pitcher else 5.50,
     )
-    
+
     context = GameContext(
         implied_runs=4.5,
         park_factor=1.0,
         is_home=True,
     )
-    
+
     comparison = scorer.compare_to_simple_score(batter, pitcher, context)
-    
+
     return {
         "success": True,
         "comparison": comparison,
