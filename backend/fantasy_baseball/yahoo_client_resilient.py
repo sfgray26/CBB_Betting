@@ -68,17 +68,32 @@ _token_lock = threading.Lock()
 # In-memory TTL cache for Yahoo API responses (fix 30s timeouts)
 # ---------------------------------------------------------------------------
 class YahooAPICache:
-    """Thread-safe in-memory cache with TTL for Yahoo API responses."""
+    """Thread-safe in-memory cache with TTL for Yahoo API responses.
+
+    Supports bypass window: after cache clear, all reads bypass cache for a short
+    period to account for external API propagation delays (e.g., Yahoo roster moves).
+    """
 
     def __init__(self, default_ttl_seconds: int = 300):
         self._cache: OrderedDict[str, Tuple[dict, float]] = OrderedDict()
         self._default_ttl = default_ttl_seconds
         self._lock = threading.RLock()
         self._max_size = 256  # Prevent unbounded memory growth
+        self._last_cleared_at: Optional[float] = None
+        self._bypass_window_seconds = 2.0  # Bypass cache for 2s after clear
 
-    def get(self, key: str) -> Optional[dict]:
-        """Get cached response if still fresh."""
+    def get(self, key: str, bypass_window_active: bool = False) -> Optional[dict]:
+        """Get cached response if still fresh.
+
+        Args:
+            key: Cache key
+            bypass_window_active: If True, return None to force cache bypass
+        """
         with self._lock:
+            # If bypass window is active, force cache miss
+            if bypass_window_active:
+                return None
+
             if key not in self._cache:
                 return None
 
@@ -105,13 +120,20 @@ class YahooAPICache:
             self._cache[key] = (data, expiry)
 
     def clear(self) -> None:
-        """Clear all cached responses."""
+        """Clear all cached responses and start bypass window."""
         with self._lock:
             self._cache.clear()
+            self._last_cleared_at = time.time()
 
     def clear_all(self) -> None:
         """Alias for clear() — used by clear_cache()."""
         self.clear()
+
+    def is_bypass_window_active(self) -> bool:
+        """Check if bypass window is active (cache was cleared recently)."""
+        if self._last_cleared_at is None:
+            return False
+        return (time.time() - self._last_cleared_at) < self._bypass_window_seconds
 
     def get_stats(self) -> dict:
         """Return cache statistics for monitoring."""
@@ -120,6 +142,8 @@ class YahooAPICache:
                 "size": len(self._cache),
                 "max_size": self._max_size,
                 "keys": list(self._cache.keys()),
+                "bypass_window_active": self.is_bypass_window_active(),
+                "last_cleared_at": self._last_cleared_at,
             }
 
 # ---------------------------------------------------------------------------
@@ -289,19 +313,38 @@ class YahooFantasyClient:
     # HTTP helpers
     # ------------------------------------------------------------------
 
-    def _get(self, path: str, params: Optional[dict] = None) -> dict:
-        """GET from Yahoo API with circuit breaker, timeout, and caching."""
+    def _get(self, path: str, params: Optional[dict] = None, bypass_cache: bool = False) -> dict:
+        """GET from Yahoo API with circuit breaker, timeout, and caching.
+
+        Args:
+            path: API path (e.g., "team/123.l.456.t.7/roster/players")
+            params: Query parameters
+            bypass_cache: If True, skip cache and fetch fresh from Yahoo (for cache invalidation)
+        """
         # Generate cache key from URL + params
         cache_key = self._make_cache_key(path, params)
 
-        # Check cache first
-        cached_data = self._cache.get(cache_key)
-        if cached_data is not None:
-            logger.debug(f"Cache HIT for {path}")
-            return cached_data
+        # Check if bypass window is active (cache was recently cleared)
+        # This ensures fresh reads after roster moves account for Yahoo's API propagation delay
+        bypass_window_active = self._cache.is_bypass_window_active()
 
-        # Cache miss - proceed with API call
-        logger.debug(f"Cache MISS for {path}")
+        # Determine if we should bypass cache
+        should_bypass_cache = bypass_cache or bypass_window_active
+
+        # Check cache first (unless bypassing)
+        if not should_bypass_cache:
+            cached_data = self._cache.get(cache_key, bypass_window_active=False)
+            if cached_data is not None:
+                logger.debug(f"Cache HIT for {path}")
+                return cached_data
+
+        # Cache miss/bypass - proceed with API call
+        if bypass_cache:
+            logger.debug(f"Cache BYPASS for {path} (force refresh)")
+        elif bypass_window_active:
+            logger.debug(f"Cache BYPASS for {path} (bypass window active - cache recently cleared)")
+        else:
+            logger.debug(f"Cache MISS for {path}")
         if not self._cb.should_allow_request():
             raise YahooAPIError("Yahoo API circuit breaker is OPEN — service temporarily unavailable", 503)
 
@@ -342,9 +385,16 @@ class YahooFantasyClient:
                 self._cb.record_success()
                 data = resp.json()
 
-                # Cache the response with smart TTL
-                ttl_seconds = self._get_ttl_for_endpoint(path)
-                self._cache.put(cache_key, data, ttl_seconds)
+                # Cache the response with smart TTL unless this request explicitly
+                # bypassed cache or ran during the post-clear bypass window. Yahoo
+                # can briefly return stale roster data immediately after set_lineup;
+                # caching that response would re-poison the roster cache for the
+                # full TTL.
+                if should_bypass_cache:
+                    logger.debug("Cache STORE SKIPPED for %s (bypass active)", path)
+                else:
+                    ttl_seconds = self._get_ttl_for_endpoint(path)
+                    self._cache.put(cache_key, data, ttl_seconds)
 
                 return data
             except YahooAPIError:
@@ -711,7 +761,7 @@ class YahooFantasyClient:
         data = self._get(f"team/{team_key}/roster/players")
         return data.get("fantasy_content", {})
 
-    def get_roster(self, team_key: Optional[str] = None) -> list[dict]:
+    def get_roster(self, team_key: Optional[str] = None, bypass_cache: bool = False) -> list[dict]:
         """Return full roster for team_key (defaults to authenticated user's team).
 
         Includes selected_position field indicating Yahoo lineup slot:
@@ -719,10 +769,14 @@ class YahooFantasyClient:
         - "BN" = Bench
         - "C", "1B", "2B", "3B", "SS", "OF", "Util" = Active lineup slots
         - "SP", "RP", "P" = Pitcher slots
+
+        Args:
+            team_key: Yahoo team key (e.g., "469.l.72586.t.7")
+            bypass_cache: If True, skip cache and fetch fresh from Yahoo (for cache invalidation)
         """
         if team_key is None:
             team_key = self.get_my_team_key()
-        data = self._get(f"team/{team_key}/roster/players")
+        data = self._get(f"team/{team_key}/roster/players", bypass_cache=bypass_cache)
         team_data = self._team_section(data)
         roster_data = self._safe_get(team_data, "roster")
         slot_0 = self._safe_get(roster_data, "0")

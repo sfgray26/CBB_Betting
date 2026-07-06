@@ -3860,11 +3860,15 @@ async def yahoo_diag(user: str = Depends(verify_api_key)):
 async def get_fantasy_roster(
     user: str = Depends(verify_api_key),
     db: Session = Depends(get_db),
+    force_refresh: bool = False,
 ):
     """Return the authenticated user's current Yahoo roster in CanonicalPlayerRow format.
 
     Phase 4 Workstream B: Returns CanonicalPlayerRow with rolling_14d stats from
     PlayerRollingStats table and season stats from Yahoo.
+
+    Args:
+        force_refresh: If True, bypass cache and fetch fresh from Yahoo (use after roster moves)
     """
     now_et = datetime.now(ZoneInfo("America/New_York"))
 
@@ -3879,7 +3883,7 @@ async def get_fantasy_roster(
     team_key = os.getenv("YAHOO_TEAM_KEY", "469.l.72586.t.7")
 
     try:
-        raw_players = client.get_roster(team_key=team_key)
+        raw_players = client.get_roster(team_key=team_key, bypass_cache=force_refresh)
     except YahooAuthError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except YahooAPIError as exc:
