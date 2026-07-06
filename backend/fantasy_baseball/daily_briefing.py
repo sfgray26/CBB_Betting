@@ -400,9 +400,11 @@ class DailyBriefingGenerator:
         all_confidences = [p.confidence for p in starters + bench]
         overall_confidence = int(sum(all_confidences) / len(all_confidences)) if all_confidences else 50
         
-        # Generate alerts
+        # Generate alerts (including injury alerts)
         alerts = self._generate_alerts(starters, warnings)
-        
+        injury_alerts = self._generate_injury_alerts(roster)
+        alerts.extend(injury_alerts)
+
         briefing = DailyBriefing(
             date=date_obj,
             generated_at=datetime.now(),
@@ -610,28 +612,90 @@ class DailyBriefingGenerator:
         return factors[:3]
     
     def _generate_alerts(
-        self, 
-        starters: List[PlayerBriefing], 
+        self,
+        starters: List[PlayerBriefing],
         warnings: List[str]
     ) -> List[str]:
         """Generate actionable alerts."""
         alerts = []
-        
+
         # Low confidence starters
         low_conf = [s for s in starters if s.confidence < 60]
         if low_conf:
             names = ", ".join(p.player_name for p in low_conf[:3])
             alerts.append(f"Low confidence starters: {names}")
-        
+
         # Ace matchups
         ace_matchups = [s for s in starters if "ace" in str(s.key_factors).lower()]
         if ace_matchups:
             alerts.append(f"⚠️ {len(ace_matchups)} starters facing aces - consider benching")
-        
+
         # Add warnings from selector
         for w in warnings[:3]:
             alerts.append(w)
-        
+
+        return alerts
+
+    def _generate_injury_alerts(self, roster: List[Dict]) -> List[str]:
+        """Generate injury-related alerts from BDL injury data.
+
+        Cross-references roster players with BDL injury overlays to provide
+        actionable injury alerts for IL, DTD, and questionable status players.
+        """
+        from backend.services.injury_overlay import load_injury_overlays_for_yahoo_players
+        from backend.models import SessionLocal
+
+        alerts = []
+
+        if not roster:
+            return alerts
+
+        # Load BDL injury overlays for roster players
+        db = SessionLocal()
+        try:
+            injury_overlays = load_injury_overlays_for_yahoo_players(db, roster)
+
+            # Categorize injuries by severity
+            il_60 = []  # 60-day IL
+            il_15 = []  # 15-day IL
+            il_10 = []  # 10-day IL
+            dtd = []    # Day-to-day
+            na = []     # Not Active / OUT
+
+            for player in roster:
+                player_key = player.get("player_key") or ""
+                overlay = injury_overlays.get(player_key)
+                if not overlay or not overlay.status:
+                    continue
+
+                status_upper = overlay.status.upper().replace("-", "").replace(" ", "")
+                name = player.get("name", "Unknown")
+
+                if "60DAY" in status_upper or "IL60" in status_upper:
+                    il_60.append(name)
+                elif "15DAY" in status_upper or "IL15" in status_upper:
+                    il_15.append(name)
+                elif "10DAY" in status_upper or "IL10" in status_upper or "IL" in status_upper:
+                    il_10.append(name)
+                elif "DTD" in status_upper or "DAYTODAY" in status_upper:
+                    dtd.append(name)
+                elif "NA" in status_upper or "OUT" in status_upper:
+                    na.append(name)
+
+            # Generate alerts by severity
+            if il_60:
+                alerts.append(f"🔴 60-Day IL: {', '.join(il_60[:3])}" + ("..." if len(il_60) > 3 else ""))
+            if il_15:
+                alerts.append(f"🟠 15-Day IL: {', '.join(il_15[:3])}" + ("..." if len(il_15) > 3 else ""))
+            if il_10:
+                alerts.append(f"🟡 IL: {', '.join(il_10[:3])}" + ("..." if len(il_10) > 3 else ""))
+            if dtd:
+                alerts.append(f"🟡 Day-to-Day: {', '.join(dtd[:3])}" + ("..." if len(dtd) > 3 else ""))
+            if na:
+                alerts.append(f"⚪ NA/OUT: {', '.join(na[:3])}" + ("..." if len(na) > 3 else ""))
+        finally:
+            db.close()
+
         return alerts
 
 

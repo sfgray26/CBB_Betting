@@ -1946,9 +1946,9 @@ async def get_fantasy_waiver_recommendations(
                 t_key = t[0]
                 if not t_key:
                     continue
-                if t_key == my_team_key or (
-                    my_team_key and (t_key in my_team_key or my_team_key in t_key)
-                ):
+                # CRITICAL: Use exact match ONLY. Substring matching causes false positives
+                # when team IDs are numeric (e.g., "t.7" matches "t.71", "t.72", etc.)
+                if t_key == my_team_key:
                     my_tuple = t
                     break
             if my_tuple is not None:
@@ -2877,10 +2877,9 @@ async def get_waiver_recommendations(
                 _my_tuple = None
                 for _t in _matchup_teams:
                     _tk = _t[0]
-                    if _tk and (
-                        _tk == my_team_key
-                        or (my_team_key and (_tk in my_team_key or my_team_key in _tk))
-                    ):
+                    # CRITICAL: Use exact match ONLY. Substring matching causes false positives
+                    # when team IDs are numeric (e.g., "t.7" matches "t.71", "t.72", etc.)
+                    if _tk == my_team_key:
                         _my_tuple = _t
                         break
                 if _my_tuple is not None:
@@ -3264,16 +3263,34 @@ async def get_waiver_recommendations(
             is_protected_drop_candidate as _is_protected_drop_candidate,
         )
 
+        # Load BDL injury overlays for my_roster to unify injury status across all endpoints.
+        # This replaces the previous Yahoo status-only approach with the authoritative BDL source.
+        my_roster_injury_overlays = (
+            load_injury_overlays_for_yahoo_players(db, my_roster)
+            if my_roster
+            else {}
+        )
+
         my_roster_scored: list = []
         _IL_STATUSES = {"IL", "IL10", "IL15", "IL60", "NA", "OUT", "DL"}
         _STARTING_SLOTS = {"C", "1B", "2B", "3B", "SS", "OF", "Util", "SP", "RP", "P"}
         for rp in my_roster:
             bp = _get_proj(rp)
-            # Derive effective IL status from both status field and selected_position slot.
-            # Yahoo sometimes returns status=None for IL players but sets selected_position=IL.
-            raw_status = rp.get("status")
-            sel_pos = rp.get("selected_position") or ""
-            effective_status = raw_status if raw_status else (sel_pos if sel_pos in _IL_STATUSES else raw_status)
+            player_key = rp.get("player_key") or ""
+
+            # Use BDL injury overlay status if available (authoritative source).
+            # Fall back to Yahoo status if no overlay exists.
+            injury_overlay = my_roster_injury_overlays.get(player_key)
+            if injury_overlay and injury_overlay.status:
+                effective_status = injury_overlay.status
+                injury_note = injury_overlay.note
+            else:
+                # Yahoo fallback: Derive effective IL status from both status field and selected_position slot.
+                # Yahoo sometimes returns status=None for IL players but sets selected_position=IL.
+                raw_status = rp.get("status")
+                sel_pos = rp.get("selected_position") or ""
+                effective_status = raw_status if raw_status else (sel_pos if sel_pos in _IL_STATUSES else raw_status)
+                injury_note = rp.get("injury_note")
             my_roster_scored.append({
                 "name": (rp.get("name") or "").strip(),
                 "player_key": rp.get("player_key") or "",
@@ -3286,7 +3303,7 @@ async def get_waiver_recommendations(
                 "adp": bp.get("adp"),
                 "starts_this_week": int(rp.get("starts_this_week", 1)),
                 "status": effective_status,
-                "injury_note": rp.get("injury_note"),
+                "injury_note": injury_note,
                 "is_undroppable": bool(rp.get("is_undroppable", 0)),
                 "is_keeper": bool(bp.get("is_keeper", False)),
                 "percent_owned": rp.get("percent_owned", rp.get("owned_pct", 0.0)),
@@ -7931,7 +7948,9 @@ async def get_constraint_budget(
             _sb_matchups = client.get_scoreboard(week=current_week)
             for _matchup_teams in _iter_scoreboard_matchup_teams(_sb_matchups or []):
                 for _t_key, _t_name, _t_stats in _matchup_teams:
-                    if _t_key and team_key and (_t_key == team_key or _t_key in team_key or team_key in _t_key):
+                    # CRITICAL: Use exact match ONLY. Substring matching causes false positives
+                    # when team IDs are numeric (e.g., "t.7" matches "t.71", "t.72", etc.)
+                    if _t_key == team_key:
                         for _s in _t_stats:
                             _stat = _s.get("stat", {})
                             if str(_stat.get("stat_id", "")) == "50":  # stat_id 50 = IP
