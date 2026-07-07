@@ -669,3 +669,57 @@ class TestRosterOptimizeEndpoint:
             assert "severity" in source
             assert source["severity"] in ["fresh", "warning", "critical", "unknown"]
             assert "minutes_ago" in source
+
+    def test_insufficient_projection_data_returns_valid_error_response(self, fantasy_client):
+        """When optimizer returns insufficient data error, response must have all required fields."""
+        # Large roster with many active slots but insufficient projections
+        mock_roster = [
+            {
+                "player_key": f"469.l.72586.p.{i}",
+                "name": f"Player {i}",
+                "team": "NYY",
+                "positions": ["1B" if i % 2 else "OF"],
+                "selected_position": "1B" if i % 2 else "OF",
+            }
+            for i in range(1, 15)  # 14 players
+        ]
+
+        mock_client = MagicMock()
+        mock_client.get_roster.return_value = mock_roster
+
+        # All players hit projection fallback (0.0 score) → insufficient data
+        projection_rows = [{"z_score": 0.0, "is_proxy": True}] * 14
+
+        with patch("backend.routers.fantasy.get_yahoo_client", return_value=mock_client):
+            with patch(
+                "backend.fantasy_baseball.player_board.get_or_create_projection",
+                side_effect=projection_rows,
+            ):
+                response = fantasy_client.post(
+                    "/api/fantasy/roster/optimize",
+                    json={"target_date": "2026-04-15"},
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Error response must have all required fields
+        assert "success" in data
+        assert data["success"] is False
+        assert "message" in data
+        assert "Insufficient projection data" in data["message"]
+        assert "target_date" in data
+        assert data["target_date"] == "2026-04-15"
+        assert "starters" in data
+        assert data["starters"] == []
+        assert "bench" in data
+        assert data["bench"] == []
+        assert "unrostered" in data
+        assert isinstance(data["unrostered"], list)
+        assert "total_lineup_score" in data
+        assert data["total_lineup_score"] == 0.0
+        assert "freshness" in data
+        assert "primary_source" in data["freshness"]
+        assert "computed_at" in data["freshness"]
+        assert "schedule_available" in data
+        assert data["schedule_available"] is True

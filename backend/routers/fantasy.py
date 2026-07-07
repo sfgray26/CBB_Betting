@@ -5144,7 +5144,15 @@ async def optimize_roster(
             starters=[],
             bench=[],
             unrostered=[p["player_key"] for p in player_data],
-            data_date=actual_data_date,
+            total_lineup_score=0.0,
+            freshness=FreshnessMetadata(
+                primary_source="yahoo",
+                fetched_at=None,
+                computed_at=now_et,
+                staleness_threshold_minutes=1440,
+                is_stale=False,
+            ),
+            schedule_available=True,
         )
 
     logger.info(
