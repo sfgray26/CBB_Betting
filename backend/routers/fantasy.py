@@ -4576,6 +4576,21 @@ async def bulk_apply_roster_moves(
         target = move_map.get(pk, player.get("selected_position", "BN"))
         lineup.append({"player_key": pk, "position": target})
 
+    # DIAGNOSTIC: Log the exact payload being sent to Yahoo
+    logger.info(
+        "bulk_apply: Sending lineup to Yahoo - team_key=%s, date=%s, total_players=%d",
+        team_key,
+        datetime.now(ZoneInfo("America/New_York")).strftime("%Y-%m-%d"),
+        len(lineup)
+    )
+    for entry in lineup:
+        logger.info(
+            "bulk_apply: player_key=%s → position=%s",
+            entry.get("player_key"),
+            entry.get("position")
+        )
+    logger.info("bulk_apply: Full lineup payload: %s", lineup)
+
     try:
         result = client.set_lineup(team_key=team_key, lineup=lineup)
     except YahooAPIError as exc:
