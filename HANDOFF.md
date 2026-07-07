@@ -1,7 +1,7 @@
 # HANDOFF.md — Fantasy Baseball Platform (2026-06-25)
 
-> **Date:** 2026-07-07 | **Status:** ✅ CORRUPTION WORKAROUND BUG FIXED AND DEPLOYED — 0% FALLBACK
-> **Branch:** `stable/cbb-prod` | **Commit:** f7bd87e
+> **Date:** 2026-07-07 | **Status:** ✅ IL EXCLUSION & POSITION ELIGIBILITY BUGS FIXED AND VERIFIED
+> **Branch:** `stable/cbb-prod` | **Commit:** 8e3122d
 
 ---
 
@@ -47,6 +47,63 @@ INFO - PlayerIDMapping corruption workaround: 469.p.10918 using alt bdl_id=1635 
 INFO - PlayerIDMapping corruption workaround: 469.p.63023 using alt bdl_id=654344 (score=84.4) instead of 807712
 ...
 ```
+
+---
+
+### Layer 2 Fix — IL Exclusion & Position Eligibility Bugs ✅ DEPLOYED & VERIFIED (2026-07-07)
+
+**Issue:** Optimizer produced dangerous lineups:
+- BUG 1: Garrett Crochet (IL/Shoulder, SP/P only) placed in UTIL slot
+- BUG 2: IL detection missed "Shoulder" injury note
+- BUG 3: Players with no positions classified as hitters
+
+**Root Causes:**
+1. IL detection only checked status keywords (IL, DL, OUT, DTD), not injury body parts
+2. Position classification allowed players with NO positions into hitter pool
+3. No post-optimization safety check to prevent IL players in active slots
+
+**Fix Applied (commit 8e3122d):**
+1. **Expanded IL Detection:**
+   - Added `INJURY_KEYWORDS` with body parts: Shoulder, Elbow, Knee, Arm, Finger, Wrist, Back, Hip, Hamstring, Quad, Ankle
+   - Added injury terms: Strain, Sprain, Fracture, Surgery, Torn, Ruptured, Bruised, Sore, Inflammation
+   - Changed pattern from `rf"\b{keyword}\b"` to `r"\b" + keyword + r"\b"` (fixed f-string backslash error)
+
+2. **Fixed Position Classification:**
+   - Changed hitter classification to require `bool(p.get("eligible_positions"))`
+   - Only players with valid hitting positions go to hitter_data
+   - Pitchers (SP, RP, P) explicitly excluded from UTIL consideration
+
+3. **Added Post-Optimization Safety Check:**
+   - Rejects lineups with IL players in active slots
+   - Returns 500 error with clear message: "Safety check failed: X IL player(s) in active lineup"
+   - Lists problematic players with their slots
+
+**Production Verification:**
+- Optimizer endpoint: 200 OK ✅
+- Message: "5 IL players excluded from active slots" ✅
+- Crochet in active lineup: **False** ✅
+- IL players in active slots: **0** ✅
+- All UTIL players have hitting positions: **True** ✅
+- Total active players: 14
+
+**Test Script:** `backend/scripts/test_il_exclusion.py`
+```
+[OK][OK][OK] ALL TESTS PASSED [OK][OK][OK]
+Total active players: 14
+UTIL players: 0
+Crochet in active: False
+IL players in active: 0
+All UTIL valid: True
+```
+
+**Files Modified:**
+- `backend/routers/fantasy.py`: Lines 5093-5109 (position classification), Lines 5343-5444 (IL detection), Lines 5295-5321 (safety check)
+- `backend/scripts/test_il_exclusion.py`: New test script for validation
+
+**Technical Notes:**
+- Fixed nested f-string backslash error: `rf"\b{keyword}\b"` → `r"\b" + keyword + r"\b"`
+- Fixed nested f-string in error message: Extracted player list string separately
+- IL detection now covers status (IL, DL, OUT, DTD) AND injury notes (Shoulder, Elbow, etc.)
 
 ---
 
