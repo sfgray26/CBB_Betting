@@ -1,59 +1,52 @@
 # HANDOFF.md — Fantasy Baseball Platform (2026-06-25)
 
-> **Date:** 2026-07-07 | **Status:** ✅ LAYER 1 PROJECTION FIX COMPLETE — READY FOR DEPLOYMENT
-> **Branch:** `stable/cbb-prod` | **Current Focus:** Ready for next task
+> **Date:** 2026-07-07 | **Status:** ✅ CORRUPTION WORKAROUND BUG FIXED AND DEPLOYED — 0% FALLBACK
+> **Branch:** `stable/cbb-prod` | **Commit:** f7bd87e
 
 ---
 
 ## Current Mission State
 
-### Layer 1 Fix — Projection Pipeline Data Corruption ✅ COMPLETE (2026-07-07)
+### Layer 1 Fix — Projection Pipeline Data Corruption ✅ DEPLOYED & VERIFIED (2026-07-07)
 
-**Issue:** 42% of roster players (8 of 19) had no projections, causing optimizer to fail with "Insufficient projection data".
+**Issue:** 36% of roster players had no projections in production despite workaround code.
 
-**Root Cause:** `player_id_mapping` table corruption — 495+ players have duplicate rows where `bdl_id` field contains `mlbam_id` values instead of actual BDL IDs.
+**Root Cause of Bug:** The workaround checked `if alt_bdl_id in player_scores_map`, but `player_scores_map`
+was pre-built with only the corrupted bdl_ids from `player_key_to_ids`, NOT the alternatives.
+This caused the workaround to fail for ALL corrupted players.
 
-**Fix Applied:** Enhanced corruption workaround in `backend/routers/fantasy.py` (lines ~4959-5020):
-- **Fallback 1:** When no scores, search for alternatives by same `mlbam_id`
-- **Fallback 2:** When `mlbam_id` is None, search for alternatives by `full_name`
-- **Monitoring:** Added fallback rate logging and alerts (>10% rate, >50% ownership)
+**Fix Applied (commit f7bd87e):**
+- Changed workaround to query DB directly for alternative bdl_id scores
+- Uses same logic as player_scores_map: `as_of_date <= target_date`, `window_days == 14`
+- Both fallback paths (mlbam_id and full_name) now query DB directly
 
-**Players Recovered:**
-- Sam Antonacci: bdl_id=4839465 (score: 54.4) via mlbam_id search
-- Juan Soto: bdl_id=1106 (score: 39.6) via mlbam_id search
-- Carson Benge: bdl_id=4839085 (score: 20.2) via mlbam_id search
-- Munetaka Murakami: bdl_id=4667586 (score: 7.1) via mlbam_id search
-- **Jordan Walker: bdl_id=539 (score: 43.1) via full_name search** ← NEW FIX
+**Players Recovered in Production:**
+- Dillon Dingler: bdl_id=203 (score=52.0) ✅
+- Pete Alonso: bdl_id=1635 (score=68.8) ✅
+- Luke Keaschall: bdl_id=654344 (score=84.4) ✅
+- Sam Antonacci: bdl_id=4839465 (score=64.3) ✅
+- Carson Benge: bdl_id=4839085 (score=78.7) ✅
+- Juan Soto: bdl_id=1106 (score=96.6) ✅
+- Munetaka Murakami: bdl_id=4667586 (score=5.9) ✅
+- Others recovered via fallback paths
 
-**Verification (2026-07-07):**
-- Total roster: 22 players
-- Has projections: 22 players
+**Production Verification:**
+- Total roster: 19 players
+- Has projections: 19 players
 - Fallback: **0 players**
-- **Fallback rate: 0.0%** ✅ TARGET ACHIEVED (<5%)
-
-**Documentation:**
-- `backend/docs/player_id_mapping_corruption_analysis.md` — Comprehensive corruption analysis
-- Decision: Permanent workaround (no data cleanup due to FK constraints)
+- **Fallback rate: 0.0%** ✅ PRODUCTION VERIFIED
+- Optimizer returns 200 with valid lineup ✅
 
 **Files Modified:**
-- `backend/routers/fantasy.py`: Enhanced workaround + monitoring (lines ~4938-5240)
-- `backend/docs/player_id_mapping_corruption_analysis.md`: Full corruption documentation
+- `backend/routers/fantasy.py`: Fixed workaround to query DB directly (commit f7bd87e)
 
-**Monitoring Deployed:**
-- ✅ Log fallback rate per optimization
-- ✅ Alert if fallback rate >10%
-- ✅ Alert if player >50% ownership has no projection
-
----
-
-## Deployment Checklist
-
-### Ready for Railway Deployment:
-- [ ] Push `backend/routers/fantasy.py` to Railway
-- [ ] Push `backend/docs/player_id_mapping_corruption_analysis.md` to Railway
-- [ ] Run smoke test: `POST /api/fantasy/roster/optimize`
-- [ ] Verify 0% fallback on active roster in production
-- [ ] Check logs for monitoring alerts
+**Log Output (Workaround Triggering):**
+```
+INFO - PlayerIDMapping corruption workaround: 469.p.11928 using alt bdl_id=203 (score=52.0) instead of 693307
+INFO - PlayerIDMapping corruption workaround: 469.p.10918 using alt bdl_id=1635 (score=68.8) instead of 624413
+INFO - PlayerIDMapping corruption workaround: 469.p.63023 using alt bdl_id=654344 (score=84.4) instead of 807712
+...
+```
 
 ---
 
