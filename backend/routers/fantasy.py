@@ -4620,14 +4620,25 @@ async def bulk_apply_roster_moves(
 
         # Map "OF" to specific position based on eligibility
         if target_pos == "OF":
+            logger.info(
+                "bulk_apply: Mapping OF for %s - eligible_positions: %s",
+                player_name, eligible
+            )
             try:
-                target_pos = _map_of_position(eligible, player_name)
-                logger.debug(
-                    "bulk_apply: Mapped OF→%s for %s (eligible: %s)",
-                    target_pos, player_name, eligible
+                mapped_pos = _map_of_position(eligible, player_name)
+                logger.info(
+                    "bulk_apply: MAPPED OF→%s for %s (was: OF, eligible: %s)",
+                    mapped_pos, player_name, eligible
                 )
+                target_pos = mapped_pos
             except ValueError as exc:
+                logger.error(
+                    "bulk_apply: OF mapping FAILED for %s - %s (eligible: %s)",
+                    player_name, exc, eligible
+                )
                 validation_errors.append(str(exc))
+        else:
+            logger.debug("bulk_apply: No mapping needed for %s - position: %s", player_name, target_pos)
 
         mapped_moves[move.player_key] = target_pos
 
@@ -4643,6 +4654,13 @@ async def bulk_apply_roster_moves(
         # Use mapped position if player is in moves, otherwise keep current position
         target = mapped_moves.get(pk, player.get("selected_position", "BN"))
         lineup.append({"player_key": pk, "position": target})
+
+    # LOG: Show final lineup payload to verify OF mapping
+    logger.info("bulk_apply: Final lineup payload (count=%d):", len(lineup))
+    for entry in lineup:
+        if entry.get("position") in ("LF", "CF", "RF", "Util"):
+            logger.info("  MAPPED: %s → %s", entry.get("player_key"), entry.get("position"))
+    logger.info("bulk_apply: Calling set_lineup with %d players", len(lineup))
 
     try:
         result = client.set_lineup(team_key=team_key, lineup=lineup)
@@ -6338,7 +6356,10 @@ async def lineup_editable():
         # Check if any active players have game flags indicating games are in progress
         # Yahoo typically sets status or flags when games are active
         for player in roster:
-            status = player.get("status", "").upper()
+            # Defensive: handle None, boolean, or empty status values
+            raw_status = player.get("status")
+            status = (str(raw_status).upper() if raw_status is not None else "").strip()
+
             # If players have "ACTIVE" status or game flags, games may be in progress
             # This is a heuristic - definitive check requires attempting a lineup change
             if status in ("ACTIVE", "PLAYING", "IN PROGRESS"):
